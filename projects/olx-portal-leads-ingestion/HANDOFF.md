@@ -35,8 +35,8 @@ integrating; more may have landed since.
 | `seed/lib/backend` full | **2955 passed**, 1 skipped, **rc=0** |
 | `products/social-wiring/backend` full | **1946 passed**, 3 skipped, **rc=0** |
 | `mcp/olx/tests` + `mcp/_kit/tests` | **64 passed**, rc=0 |
-| `products/social-wiring/frontend` vitest | **596 passed**, 56 files |
-| `tsc --noEmit` (social-wiring FE) | **rc=0** |
+| `products/social-wiring/frontend` vitest | 596 tests / 56 files — **see the flake note below** |
+| `tsc --noEmit` (social-wiring FE) | **rc=0**, zero errors |
 | `mcp/olx/server.py` over stdio | initialize → 9 tools → live call → 412 gate |
 | pre-commit gates | green on every commit |
 
@@ -46,6 +46,29 @@ Exit codes captured with `pipefail`, never read off a piped `tail`.
 > is **gone** — it was fixed on `dev` and the rebase picked the fix up. The
 > `tsc` gap was a missing `node_modules` in the worktree; symlinked from the
 > primary (untracked, disappears with the worktree).
+
+### 🟡 The FE suite is flaky under parallel load, and it is flaky on `dev` too
+
+Full-suite runs on this branch returned 13 failures, then 1, on an unchanged
+tree. **The same full suite fails on `origin/dev` in the primary checkout** —
+8 failures across `MarcaModal`, `CampanhaManagerDialog`, `ClientesBoard`,
+`RevisaoFila`. Every one of those files passes in isolation, in both trees.
+So this is pre-existing test pollution / parallel-execution contention, not
+something this branch introduced, and **`npm test` alone is not a reliable
+signal on social-wiring FE right now**.
+
+What was actually established:
+
+- the three files this branch adds or touches (`useOlxLeads.test.ts`,
+  `OlxWebhookCard.test.tsx`, `Configuracao.test.tsx`) pass **30/30 on three
+  consecutive runs**, rc=0 each time;
+- every file that failed a full run passes in isolation, rc=0;
+- `tsc --noEmit` is rc=0 with zero errors.
+
+Worth a real fix by whoever owns the FE suite — a green run today is luck.
+Note the FE also needs `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY`
+exported from the primary's untracked `.env`; without them 7 files fail at
+import with a build-time-var error that looks nothing like a flake.
 
 ## What the rebase changed, and why it was not optional
 
