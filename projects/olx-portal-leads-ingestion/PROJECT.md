@@ -1,11 +1,17 @@
 # Grupo OLX (ZAP / VivaReal / ImovelWeb) portal-lead ingestion — MCP map + full vertical slice
 
-> **Status:** planned, not started. Authored 2026-08-14; revised 2026-08-17 to
-> make the MCP connector a hard prerequisite (waves + Gate 1).
-> **Intended executor:** dispatch this file to `backend-engineer` /
-> `frontend-engineer` per the wave table. Read `CLAUDE.md` §1 first; self-branch
-> off `origin/dev` before any write. **Waves 1–2 (seed + MCP) can start today;
-> waves 3–4 are blocked on Gate 1, which needs the real key.**
+> **Status: BUILT, not merged, not deployed** (2026-08-17). All four slices are
+> implemented on `feat/olx-portal-leads-mcp` — see `HANDOFF.md` beside this file
+> for the commit list, the verification actually run, and the merge steps.
+> Authored 2026-08-14; revised 2026-08-17 to make the MCP a hard prerequisite.
+>
+> **Gate 1 is still open and still blocks deploy.** It needs the real
+> SECRET_KEY. The receiver is inert until then — an unconfigured secret 401s
+> every delivery by design — so merging is safe, but calling the integration
+> live is not. Waves 3–4 were built ahead of Gate 1 on explicit instruction to
+> finish end-to-end; the contract they build on therefore remains UNVERIFIED
+> until the gate passes, and correcting it afterwards is expected work, not a
+> defect.
 
 ## Context
 
