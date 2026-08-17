@@ -1,6 +1,6 @@
 """Webhook signature verification primitives.
 
-Three patterns cover every inbound webhook NoctusAI receives:
+Five patterns cover every inbound webhook NoctusAI receives:
 
 1. **HMAC-SHA256 with `sha256=…` prefix** — Meta Lead Ads (`X-Hub-Signature-256`),
    GitHub, generic webhook providers that follow the Hub-Signature scheme.
@@ -15,7 +15,15 @@ Three patterns cover every inbound webhook NoctusAI receives:
    `f"{id}.{timestamp}.{body}"`; secret is base64-encoded `whsec_…`.
    Use `verify_svix_signature(svix_id, svix_timestamp, body, signature_header, secret)`.
 
-4. **Vendor SDK** — Stripe ships its own verifier
+4. **HTTP Basic shared secret** — Grupo OLX (ZAP / VivaReal / ImovelWeb)
+   leads. The provider sends `Authorization: Basic base64("<user>:<secret>")`
+   with a fixed username and a per-CRM secret. There is no signature and
+   no body binding: the header proves only that the caller knows the
+   secret, so this is the WEAKEST scheme here — see the caveat on
+   `verify_basic_shared_secret` before choosing it for a new provider.
+   Use `verify_basic_shared_secret(header_value, secret)`.
+
+5. **Vendor SDK** — Stripe ships its own verifier
    (`stripe.Webhook.construct_event`). Don't wrap it. Don't reinvent it.
    See `core/backend/app/services/stripe_service.construct_webhook_event`
    for the call shape.
@@ -41,13 +49,23 @@ DEFAULT_MAX_AGE_SECONDS = 300
 
 logger = logging.getLogger(__name__)
 
-WebhookScheme = Literal["sha256_prefixed", "sha256_hex", "svix"]
+WebhookScheme = Literal[
+    "sha256_prefixed", "sha256_hex", "svix", "basic_shared_secret"
+]
 
 _DEFAULT_SIGNATURE_HEADER: dict[str, str] = {
     "sha256_prefixed": "X-Hub-Signature-256",
     "sha256_hex": "X-Webhook-Hmac-SHA256",
     "svix": "svix-signature",
+    "basic_shared_secret": "Authorization",
 }
+
+#: Username half of the Basic credential Grupo OLX sends. Documented at
+#: developers.grupozap.com/webhooks/security.html as the literal
+#: ``vivareal:<SECRET_KEY>`` — the company rebranded to Grupo OLX but the
+#: credential kept the old name. Callers override via `expected_username`;
+#: `None` accepts any username and checks only the secret half.
+GRUPO_OLX_BASIC_USERNAME = "vivareal"
 
 
 def compute_hmac_sha256_hex(body: bytes, secret: str) -> str:
@@ -211,6 +229,72 @@ def verify_svix_signature(
     return False
 
 
+def verify_basic_shared_secret(
+    header_value: str,
+    secret: str,
+    *,
+    expected_username: Optional[str] = GRUPO_OLX_BASIC_USERNAME,
+) -> bool:
+    """Verify an `Authorization: Basic base64("<user>:<secret>")` header.
+
+    Grupo OLX's lead webhook authenticates this way: no signature, no
+    timestamp, no body binding — just a shared secret in a Basic header.
+
+    **Read this before picking this scheme for a NEW provider.** It is
+    strictly weaker than the HMAC schemes above: the header is identical on
+    every request, so it proves the caller knows the secret and nothing
+    else. It cannot detect a tampered body and it is replayable forever by
+    anyone who captures one request. It is here because the provider gives
+    us no alternative, not because it is adequate. That makes two things
+    mandatory at the receiver, neither of which this function can enforce:
+    TLS on the endpoint, and idempotency on the provider's own event id so
+    a replay is a no-op rather than a duplicate record.
+
+    Returns `False` — never raises — for every malformed shape: a missing
+    or non-`Basic` header, undecodable base64, non-UTF-8 bytes, or a
+    decoded string with no `:`. A malformed header is an authentication
+    failure, and distinguishing *how* it was malformed only leaks
+    information to whoever sent it.
+
+    Args:
+        header_value: Raw `Authorization` header. Empty/`None`-ish ⇒ False.
+        secret: The expected secret half. Empty ⇒ False (an unset secret
+            must never authenticate; the unset case is `webhook_endpoint`'s
+            `bypass_when_unset` decision, made before this is reached).
+        expected_username: Username half to require. `None` skips the
+            username check and verifies only the secret — use when a
+            provider rebrands the username and the secret is what matters.
+
+    Returns:
+        True iff the header decodes to `<expected_username>:<secret>`.
+    """
+    if not header_value or not secret:
+        return False
+
+    prefix, _, encoded = header_value.partition(" ")
+    if prefix.lower() != "basic" or not encoded:
+        return False
+
+    try:
+        decoded = base64.b64decode(encoded.strip(), validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return False
+
+    username, sep, provided = decoded.partition(":")
+    if not sep:
+        return False
+
+    # Both halves compared constant-time, and both compared unconditionally
+    # so a wrong username costs the same as a wrong secret.
+    secret_ok = hmac.compare_digest(provided, secret)
+    username_ok = (
+        True
+        if expected_username is None
+        else hmac.compare_digest(username, expected_username)
+    )
+    return secret_ok and username_ok
+
+
 # ── FastAPI dependency factory ────────────────────────────────────────
 
 
@@ -276,6 +360,7 @@ def webhook_endpoint(
     timestamp_header: Optional[str] = None,
     svix_id_header: str = "svix-id",
     svix_timestamp_header: str = "svix-timestamp",
+    basic_username: Optional[str] = GRUPO_OLX_BASIC_USERNAME,
     max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
     enforce_replay_window: bool = False,
     bypass_when_unset: bool = False,
@@ -292,7 +377,9 @@ def webhook_endpoint(
             have what they need. Return `None` / empty string to signal
             "no secret configured" — handled per `bypass_when_unset`.
         scheme: Which signature shape to verify. `sha256_prefixed` (Meta /
-            GitHub), `sha256_hex` (WAHA, internal), or `svix` (Resend).
+            GitHub), `sha256_hex` (WAHA, internal), `svix` (Resend), or
+            `basic_shared_secret` (Grupo OLX leads — read the caveat on
+            `verify_basic_shared_secret` first; it does not bind the body).
         signature_header: Header to read the signature from. Defaults per
             scheme when None.
         timestamp_header: Optional header carrying a unix timestamp for
@@ -300,6 +387,8 @@ def webhook_endpoint(
             invalid integer raises 401.
         svix_id_header / svix_timestamp_header: Override Svix header names
             if a provider deviates.
+        basic_username: Username half required under `basic_shared_secret`.
+            `None` accepts any username and checks only the secret.
         max_age_seconds: Replay window. Default 300s.
         enforce_replay_window: When True under `scheme="svix"`, require
             the `svix-timestamp` to fall within `±max_age_seconds`.
@@ -360,6 +449,12 @@ def webhook_endpoint(
                 secret,
                 timestamp_value=ts_value,
                 max_age_seconds=max_age_seconds,
+            )
+        elif scheme == "basic_shared_secret":
+            ok = verify_basic_shared_secret(
+                request.headers.get(signature_header, ""),
+                secret,
+                expected_username=basic_username,
             )
         elif scheme == "svix":
             ok = verify_svix_signature(
