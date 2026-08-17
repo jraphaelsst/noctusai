@@ -38,8 +38,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.compliance import (  # noqa: E402
     check_prod_exposure_consent,
+    _find_authorization_candidates,
     _find_authorization_evidence,
     _human_authored_transcript_texts,
+    _is_harness_injected_queue_content,
     _authorization_tier,
     _matches_authorization_intent,
     _resolve_roadmap_milestone,
@@ -721,3 +723,159 @@ class TestEvidenceIsTheUsersSentenceNotTheWholeBlob:
         got = _find_authorization_evidence("igig", "s", home=tmp_path)
         assert got is not None
         assert got[1] == "then deploy igig to prod."
+
+
+class TestAuthorizationEvidenceRanking:
+    """The 2026-08-16 p-studio defect: the gate cited the WRONG message.
+
+    `_find_authorization_evidence` scanned in transcript order and returned
+    the FIRST hit. The user had pasted another session's report — text that
+    merely DESCRIBES this gate, and which carries the slug and a production
+    token precisely because it is about authorizing that product. That
+    forwarded quotation matched, and was recorded as the user's
+    authorization. Their real canonical sentence sat later in the same
+    transcript, `promptSource="typed"`, and was never considered.
+
+    Consent was genuine, so nothing unsafe shipped — but the RECORD's
+    evidence was false, which is the single property the verified-
+    transcription design exists to guarantee.
+    """
+
+    #: Verbatim from the transcript that exposed this (session
+    #: 32951e8d…, line 49): another agent's explanation of the consent
+    #: rule, forwarded by the user. It authorizes nothing.
+    FORWARDED_EXPLANATION = (
+        "this was the last message he sent me, plus the recap piece: "
+        "Publishing p-studio on a public URL is the promotion decision, and "
+        "KB PATTERNS/devops/prod-exposure-consent.md says registering a "
+        "prod-exposure surface is the user's call, never an agent's - an "
+        "agent may only record it, verified against the harness transcript."
+    )
+
+    CANONICAL = "I authorize p-studio to be published to production."
+
+    def test_canonical_typed_beats_earlier_forwarded_quote(self, tmp_path):
+        """The exact regression. Order matters: the decoy is FIRST."""
+        _write_transcript(tmp_path, "s", [
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": self.FORWARDED_EXPLANATION},
+            _typed(self.CANONICAL),
+        ])
+        source, text = _find_authorization_evidence("p-studio", "s", home=tmp_path)
+        assert text == self.CANONICAL, (
+            "must cite the user's real authorization, not a forwarded "
+            "description of the gate that happens to name the product"
+        )
+        assert source == "typed"
+
+    def test_typed_canonical_wins_regardless_of_position(self, tmp_path):
+        """Ranking, not recency — the canonical sentence wins from anywhere."""
+        _write_transcript(tmp_path, "s2", [
+            _typed(self.CANONICAL),
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": self.FORWARDED_EXPLANATION},
+        ])
+        _source, text = _find_authorization_evidence("p-studio", "s2", home=tmp_path)
+        assert text == self.CANONICAL
+
+    def test_latest_wins_among_equally_ranked(self, tmp_path):
+        """Same strength ⇒ the most recent statement is the operative one."""
+        _write_transcript(tmp_path, "s3", [
+            _typed("I authorize demo to be published to production."),
+            _typed("I authorize demo to be published to production."),
+        ])
+        cands = _find_authorization_candidates("demo", "s3", home=tmp_path)
+        assert [c[0] for c in cands] == [0, 0]
+        assert cands[0][1] > cands[1][1], "later message must sort first"
+
+    def test_weaker_evidence_still_accepted_when_it_is_all_there_is(self, tmp_path):
+        """The fix must not turn real consent into a refusal — that is how
+        gates get argued with and then bypassed."""
+        _write_transcript(tmp_path, "s4", [
+            _typed("i authorize igig to go to prod")])
+        got = _find_authorization_evidence("igig", "s4", home=tmp_path)
+        assert got is not None
+
+    def test_no_authorization_still_returns_none(self, tmp_path):
+        """Ranking must not manufacture evidence out of a non-match."""
+        _write_transcript(tmp_path, "s5", [
+            _typed("should we deploy p-studio to prod?"),
+            _typed("dont deploy p-studio to prod yet"),
+        ])
+        assert _find_authorization_evidence("p-studio", "s5", home=tmp_path) is None
+
+    def test_forwarded_quote_alone_is_still_matched_but_ranked_weak(self, tmp_path):
+        """Honest about what did NOT change: this text still matches the
+        heuristic. Ranking fixes WHICH match is cited; it does not claim to
+        tell quotation from speech. Recorded so the residual risk is
+        explicit rather than assumed away."""
+        _write_transcript(tmp_path, "s6", [
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": self.FORWARDED_EXPLANATION}])
+        cands = _find_authorization_candidates("p-studio", "s6", home=tmp_path)
+        if cands:
+            assert cands[0][0] >= 2, "a forwarded quote must never rank as canonical-exact"
+
+
+class TestHarnessInjectedQueueRecordsAreNotHuman:
+    """`queue-operation/enqueue` carries BOTH a real mid-turn human message
+    and the runtime's own background-task notifications — same shape.
+
+    Admitting all of them let harness-written text into the human-evidence
+    layer, which breaks this module's load-bearing property: the record must
+    point at something the AGENT DID NOT WRITE. A task notification quotes
+    tool output and the agent's own prose straight back into the transcript.
+
+    Measured on the session that exposed it (2026-08-16): 21 of 23 enqueue
+    records were `<task-notification>` blocks; two of them matched the
+    authorization heuristic, one at `performative`.
+    """
+
+    NOTIFICATION = (
+        "<task-notification>\n<task-id>abc123</task-id>\n"
+        "<result>I authorize p-studio to be published to production.</result>\n"
+        "</task-notification>"
+    )
+
+    def test_task_notification_is_not_human_evidence(self, tmp_path):
+        _write_transcript(tmp_path, "h1", [
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": self.NOTIFICATION}])
+        texts, detail = _human_authored_transcript_texts("h1", home=tmp_path)
+        assert detail == ""
+        assert texts == [], "the runtime is not the user"
+
+    def test_system_notification_prefix_is_not_human_evidence(self, tmp_path):
+        _write_transcript(tmp_path, "h2", [
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": "[SYSTEM NOTIFICATION - NOT USER INPUT]\nI authorize demo "
+                        "to be published to production."}])
+        texts, _ = _human_authored_transcript_texts("h2", home=tmp_path)
+        assert texts == []
+
+    def test_a_notification_alone_can_never_authorize(self, tmp_path):
+        """The whole point: agent-echoed text must not become consent."""
+        _write_transcript(tmp_path, "h3", [
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": self.NOTIFICATION}])
+        assert _find_authorization_evidence("p-studio", "h3", home=tmp_path) is None
+
+    def test_genuine_mid_turn_message_still_counts(self, tmp_path):
+        """The 2026-08-09 regression must not come back: a real mid-turn
+        authorization appears ONLY in this shape and must still be heard."""
+        _write_transcript(tmp_path, "h4", [
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": "I authorize demo to be published to production."}])
+        texts, _ = _human_authored_transcript_texts("h4", home=tmp_path)
+        assert texts == [("queued", "I authorize demo to be published to production.")]
+        assert _find_authorization_evidence("demo", "h4", home=tmp_path) is not None
+
+    def test_user_quoting_a_notification_mid_message_is_still_heard(self, tmp_path):
+        """Conservative by design — only a message that BEGINS as a harness
+        block is dropped."""
+        _write_transcript(tmp_path, "h5", [
+            {"type": "queue-operation", "operation": "enqueue",
+             "content": "saw this <task-notification> go by. anyway — I authorize "
+                        "demo to be published to production."}])
+        texts, _ = _human_authored_transcript_texts("h5", home=tmp_path)
+        assert len(texts) == 1
