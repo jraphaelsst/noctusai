@@ -138,14 +138,16 @@ implementations.
 
 `check_postgrest_unbounded_query` (AST-based, `libcst`-adjacent use of the
 stdlib `ast` module — never regex, `§ PATTERNS/common/ast.md`) scans
-`seed/**` + `products/*/backend/**` for two shapes:
+`seed/**` + `products/*/backend/**` for two shapes, **at two DIFFERENT
+severities**:
 
 1. A `.select(...)` chain reaching `.execute()` with none of `.range(`,
    `.single(`, `.maybe_single(`, an in-cap literal `.limit(N ≤ 1000)`, or a
-   primary-key `.eq("id", …)` on the chain.
+   primary-key `.eq("id", …)` on the chain. **Severity `info`.**
 2. An `.in_(col, value)` call where `value` is not a small literal collection
    (`≤ 200` elements) and does not sit inside a `for … in <batch-helper>(...)`
    loop (matched by the iterated call's name containing "batch").
+   **Severity `warning`.**
 
 Both shapes accept a `postgrest-unbounded-ok: <why>` rationale comment
 (same-line or up to 3 preceding lines) as an escape hatch — the regex
@@ -154,30 +156,44 @@ requires an actual explanation after the keyword, not just the keyword
 keyword; this one deliberately does not, because the false-positive rate
 here is high enough that a rubber-stampable hatch would get rubber-stamped).
 
-**Severity `warning`, wired into the CLI (`--check-postgrest-unbounded-query`)
-and pre-commit (advisory, staged backend `.py` only, never blocks) — NOT
-blocking.** This is a deliberate, documented choice, not a placeholder:
+**Severity is split by shape, not uniform — this is the load-bearing design
+decision, not a cosmetic one.** A full-tree run on this codebase (2026-08-17)
+found **~700 select-shape candidates** and **~90 `.in_()`-shape candidates**.
+At one badge, the ~90 that are structurally risky REGARDLESS of table
+cardinality (an unbatched `.in_()` on a dynamically-sized collection WILL 400
+once it crosses the URL budget, independent of what the column means — the
+exact shape that took `/clientes/revisao` down) were indistinguishable from
+the ~700 whose risk is entirely a function of a row count pure AST cannot
+see:
 
 - Pure AST analysis has no table-cardinality knowledge. It cannot tell "this
   table has 30 rows in every org, ever" (a lookup/catalog table) from "this
   table has 13 255 rows for one real org" (`leads`) — both compile to the
-  identical `.select(...).eq("org_id", …).execute()` shape.
-- A full-tree run on this codebase (2026-08-17) found **~700 select-shape
-  candidates** and **~90 `.in_()`-shape candidates**. The overwhelming
-  majority of the select-shape hits are almost certainly fine in practice
-  (small per-tenant tables); the `.in_()`-shape hits are higher-signal,
-  because an unbatched `.in_()` on a dynamically-sized collection is a
-  **structural** risk independent of table semantics — it WILL 400 once the
-  collection crosses the URL budget, regardless of what the column means.
+  identical `.select(...).eq("org_id", …).execute()` shape. That ambiguity is
+  irreducible for the select-shape without either a hand-maintained
+  high-cardinality-table allowlist (the exact drift class `§ PATTERNS/devops/
+  product-lockfile-and-slug-drift.md` forbids) or wiring the migration-derived
+  schema cache to reason about row-count-bearing constraints — both out of
+  scope for the keeper's first cut. So the select-shape stays `info`:
+  reported, discoverable when someone audits a specific service, but not
+  claiming to be a defect list. `info` is not invented for this keeper —
+  `tools/noctus/seed/scan_optimizations.py` already uses it for the same
+  register (a real, non-actionable-at-a-glance finding).
+- The `.in_()`-shape has no such ambiguity — it is a **structural** property
+  of the call, not a guess about the table behind it. It stays `warning`.
 - Per `§ PATTERNS/common/methodology-execution-discipline.md`: a keeper that
-  flags a third of every `.execute()` call in the fleet is noise the moment
-  it ships, and a noisy keeper gets ignored (or `--no-verify`'d, which is
-  worse). Observe-first, matching `check_lying_loading_state`'s cadence for a
-  brand-new heuristic detector — promote to blocking once triage shows the
-  false-positive rate is low enough (e.g. after scoping to specific
-  high-cardinality table names, or after wiring in the migration-derived
-  schema cache to reason about UNIQUE constraints — both out of scope for
-  the keeper's first cut).
+  puts ~700 low-actionability findings at the SAME badge as ~90 high-signal
+  ones is noise the moment it ships, and a noisy keeper gets ignored (or
+  `--no-verify`'d, which is worse) — the split is what keeps the `warning`
+  tier meaning something.
+
+**Both tiers stay non-blocking** — wired into the CLI
+(`--check-postgrest-unbounded-query`) and pre-commit (advisory, staged
+backend `.py` only, never blocks), matching `check_lying_loading_state`'s
+observe-first cadence for a brand-new heuristic detector. Promote the
+`.in_()`-shape (`warning`) to blocking once triage shows its false-positive
+rate is low enough; the select-shape (`info`) has no such promotion path
+without the table-cardinality knowledge above.
 
 CLI: `python mcp/noctusai/cli.py --check-postgrest-unbounded-query`.
 

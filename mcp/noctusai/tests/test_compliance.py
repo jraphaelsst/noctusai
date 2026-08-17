@@ -2990,9 +2990,16 @@ class TestCheckPostgrestUnboundedQuery:
     13 255; a backfill silently repointed 1 000 of 1 365 negociações; a
     review queue dropped 177 of 1 177 rows. A second shape: `.in_()` rides
     in the URL query string, so an unbatched ~1 000-item collection is a
-    bare 400 ("JSON could not be generated"). Deliberately heuristic —
-    severity warning, observe-first (see the keeper's own module-level
-    docstring in compliance.py for the full false-positive design notes).
+    bare 400 ("JSON could not be generated"). Deliberately heuristic,
+    observe-first (see the keeper's own module-level docstring in
+    compliance.py for the full false-positive design notes) — AND severity
+    is SPLIT by shape: select-shape -> `info` (risk is a function of a row
+    count this keeper cannot see; a full-tree sweep found ~700 candidates,
+    most almost certainly fine in practice), `.in_()`-shape -> `warning`
+    (structurally risky regardless of table cardinality — the shape that
+    actually took `/clientes/revisao` down; ~90 candidates). Splitting
+    keeps the ~90 that are worth acting on from being diluted by the ~700
+    that are an audit worklist, not a defect list.
     """
 
     def _mk(self, body: str, *, where: str = "products/x/backend/app/services/y_service.py") -> Path:
@@ -3002,14 +3009,18 @@ class TestCheckPostgrestUnboundedQuery:
         target.write_text(body)
         return tmp
 
-    # ── Flag: the row-cap shape ──────────────────────────────────────
+    # ── Flag: the row-cap shape (severity `info`) ──────────────────────
     def test_unbounded_select_flags(self):
         repo = self._mk(
             'rows = db.table("leads").select("*").eq("org_id", oid).execute()\n'
         )
         issues = check_postgrest_unbounded_query(repo)
         assert len(issues) == 1, issues
-        assert issues[0]["severity"] == "warning"
+        assert issues[0]["severity"] == "info", (
+            "select-shape must be `info` — its risk is a function of a row "
+            "count this keeper cannot see, and must not dilute the "
+            "`.in_()`-shape `warning` tier"
+        )
         assert "unbounded PostgREST select" in issues[0]["issue"]
 
     def test_multiline_chain_flags(self):
@@ -3078,7 +3089,8 @@ class TestCheckPostgrestUnboundedQuery:
         )
         assert check_postgrest_unbounded_query(repo) == []
 
-    # ── Flag: unbatched `.in_()` on an unbounded collection ─────────────
+    # ── Flag: unbatched `.in_()` on an unbounded collection (severity
+    #    `warning`) ───────────────────────────────────────────────────────
     def test_unbounded_in_filter_flags(self):
         # `.range(` present so ONLY the `.in_()` shape is under test here —
         # the select-shape check is exercised separately above.
@@ -3089,6 +3101,11 @@ class TestCheckPostgrestUnboundedQuery:
         issues = check_postgrest_unbounded_query(repo)
         assert len(issues) == 1, issues
         assert ".in_()" in issues[0]["issue"]
+        assert issues[0]["severity"] == "warning", (
+            "the .in_()-shape is structurally risky regardless of table "
+            "cardinality — it keeps the `warning` tier, unlike the "
+            "select-shape (`info`)"
+        )
 
     # ── No-flag: `.in_()` with a small literal collection ───────────────
     def test_small_literal_in_filter_passes(self):
@@ -3182,11 +3199,23 @@ class TestCheckPostgrestUnboundedQuery:
         themselves are a triage worklist, not a pass/fail bar — see the
         keeper's module-level docstring for why a full-tree assertion of
         `== []` is not the right contract for a deliberately heuristic,
-        observe-first detector."""
+        observe-first detector.
+
+        Also pins the severity split itself: BOTH shapes must actually be
+        present in a full-tree sweep (this failing would mean one shape's
+        detection silently broke), and every finding must carry one of the
+        two sanctioned tiers — no accidental third value.
+        """
         from tools.noctus.dev.compliance import REPO_ROOT as _ROOT
         issues = check_postgrest_unbounded_query(_ROOT)
         assert issues, "expected the heuristic sweep to find SOME candidates fleet-wide"
-        assert all(i["severity"] == "warning" for i in issues)
+        assert all(i["severity"] in ("info", "warning") for i in issues)
+        assert any(i["severity"] == "info" for i in issues), (
+            "expected select-shape (info) candidates in a full-tree sweep"
+        )
+        assert any(i["severity"] == "warning" for i in issues), (
+            "expected .in_()-shape (warning) candidates in a full-tree sweep"
+        )
 
 
 class TestCheckRootRequirementsSuperset:

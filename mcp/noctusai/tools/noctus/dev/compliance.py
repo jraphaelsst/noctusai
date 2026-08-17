@@ -8420,14 +8420,27 @@ def check_postgrest_schema_qualified_table(repo_root: Path | None = None) -> lis
 # iterated call's name containing "batch" — the `_batched(...)` shape this
 # bug class's own fix introduced). Anything else is flagged.
 #
-# Severity `warning`, non-blocking in pre-commit (matches
+# Severity is SPLIT by shape, not uniform — a full-tree sweep found ~700
+# select-shape candidates against ~90 `.in_()`-shape candidates, and at one
+# badge the ~90 that are structurally risky REGARDLESS of table cardinality
+# (an `.in_()` fed too many values is a bug independent of what the column
+# means) were indistinguishable from the ~700 whose risk is entirely a
+# function of a row count this keeper cannot see:
+#   - `.in_()`-shape -> `warning`.
+#   - select-shape    -> `info` — still reported, still discoverable, but
+#     does not dilute the tier worth acting on. `info` is not invented for
+#     this keeper: `tools/noctus/seed/scan_optimizations.py` already uses it
+#     for the same "real, non-actionable-at-a-glance" register.
+# Both shapes stay non-blocking in pre-commit (matches
 # `check_lying_loading_state`'s observe-first cadence for a brand-new,
-# necessarily-heuristic detector) — promote to blocking once a fleet sweep
-# shows the false-positive rate is low enough. KB §
-# PATTERNS/backend/postgrest-row-cap.md.
+# necessarily-heuristic detector) — promote the `.in_()`-shape to blocking
+# once a fleet sweep shows its false-positive rate is low enough; the
+# select-shape has no such path without table-cardinality knowledge this
+# keeper does not have. KB § PATTERNS/backend/postgrest-row-cap.md.
 # ---------------------------------------------------------------------------
 
-_POSTGREST_ROWCAP_SEVERITY = "warning"
+_POSTGREST_SELECT_SEVERITY = "info"
+_POSTGREST_IN_FILTER_SEVERITY = "warning"
 _POSTGREST_MAX_ROWS_LITERAL = 1000
 _IN_FILTER_LITERAL_MAX = 200
 
@@ -8532,9 +8545,11 @@ def _postgrest_in_call_value_arg(node: ast.Call) -> ast.AST | None:
 
 def check_postgrest_unbounded_query(repo_root: Path | None = None) -> list[dict]:
     """Flag an unbounded PostgREST select reaching `.execute()` with no
-    pagination on the chain, and an `.in_()` fed an unbounded collection —
-    the two-shaped bug class documented in the block comment above. See
-    `KB § PATTERNS/backend/postgrest-row-cap.md`.
+    pagination on the chain (severity `info` — risk is a function of a row
+    count this keeper cannot see), and an `.in_()` fed an unbounded
+    collection (severity `warning` — structurally risky regardless of table
+    cardinality) — the two-shaped bug class documented in the block comment
+    above. See `KB § PATTERNS/backend/postgrest-row-cap.md`.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -8573,13 +8588,13 @@ def check_postgrest_unbounded_query(repo_root: Path | None = None) -> list[dict]
                     for ln in lines[window_start:line_no]
                 )
 
-            def _flag(line_no: int, issue: str) -> None:
+            def _flag(line_no: int, issue: str, severity: str) -> None:
                 if _escape_hatched(line_no):
                     return
                 issues.append({
                     "file": relative,
                     "issue": f"`{relative}:{line_no}` — {issue}",
-                    "severity": _POSTGREST_ROWCAP_SEVERITY,
+                    "severity": severity,
                 })
 
             for node, ancestors in _postgrest_walk_with_ancestors(tree, ()):
@@ -8605,7 +8620,10 @@ def check_postgrest_unbounded_query(repo_root: Path | None = None) -> list[dict]
                         "`_paginate`/`_select_all`-style helper (see "
                         "`portal_roi_service.py` / `clientes_service.py`), or add "
                         "a `postgrest-unbounded-ok: <why>` rationale comment if the "
-                        "result set is genuinely bounded.",
+                        "result set is genuinely bounded. Severity `info`: risk here "
+                        "is entirely a function of a row count this keeper cannot "
+                        "see — audit-worthy, not a structural bug on its own.",
+                        _POSTGREST_SELECT_SEVERITY,
                     )
                 elif node.func.attr == "in_":
                     value = _postgrest_in_call_value_arg(node)
@@ -8627,7 +8645,9 @@ def check_postgrest_unbounded_query(repo_root: Path | None = None) -> list[dict]
                         "length. Batch via a `_batched`-style helper (see "
                         "`clientes_service._batched`), or add a "
                         "`postgrest-unbounded-ok: <why>` rationale comment if the "
-                        "collection is genuinely bounded.",
+                        "collection is genuinely bounded. Severity `warning`: this "
+                        "is structurally risky regardless of table cardinality.",
+                        _POSTGREST_IN_FILTER_SEVERITY,
                     )
 
     return issues
