@@ -107,6 +107,35 @@ point) and reads each ACTIVE product's running container's
 session drops is NOT success by default** — treat it as `status=unverified`
 and run `deploy_verify` immediately for ground truth.
 
+**3a-i. Two corrections from the first live run (2026-08-17).** The first
+cut of `deploy_verify` compared every product in the compose file against
+the prod tip by raw sha inequality — its FIRST real run against prod
+reported 10/11 products drifted, and turned out to be almost entirely false
+alarms. Two fixes, both load-bearing: (1) the roster is now CATALOG-DRIVEN
+(`ativo=true AND deploy_scope='live'` + `core`), not compose-driven — an
+`ativo=false` product can never reach the prod tip, so flagging it drifted
+would make the gate permanently red and train people to ignore it (same
+failure mode as a noisy keeper); the catalog-live+missing-from-the-fleet
+case (a p-studio-shaped absence) is its own `missing` finding, which a
+compose-driven loop could never even see. (2) the drift TEST is no longer
+raw sha inequality — running an older revision is the expected steady state
+here (images rebuild only when their build scope changes,
+`KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`); `deploy_verify`
+now diffs the running revision against the prod tip through
+`deploy_pull`'s build-scope oracle (`_rebuild_decision`, reused verbatim —
+no second hand-rolled "what belongs to a product" mapping) and only flags
+`drift` when that diff actually touches the product's own build inputs (or
+a fleet-wide `seed/`/Dockerfile/compose change).
+
+**3a-ii. Tracked follow-up, not yet chased.** The original 2026-08-13 hang
+(`deploy_image` timed out and the MCP server disconnected) has never been
+root-caused. The leading suspect is `_vps_ssh.py`'s circuit-breaker cooldown
+(up to 600s, `mcp/noctusai/tools/noctus/dev/_vps_ssh.py`) blocking an
+internal SSH call well past whatever timeout the calling harness enforces —
+`deploy_verify` is the honest mitigation (an independent post-hoc witness),
+not a fix for that root cause. Owner-tracked as its own follow-up; not
+chased in the 2026-08-17 pass.
+
 **4. `prod-backup` — the code rollback pointer.** `promote` snapshots the
 outgoing prod sha there before moving `prod`. Check it advanced.
 

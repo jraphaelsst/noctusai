@@ -78,7 +78,22 @@ A deploy is not done until BOTH of these pass:
   in this process** — it re-derives the expected sha FRESH from
   `origin/prod` (never a caller-supplied parameter) and reads each ACTIVE
   product's RUNNING container's `org.opencontainers.image.revision` label
-  directly. `status='verified'` (exit 0) is the only pass. **If
+  directly. ACTIVE means CATALOG-active (`ativo=true AND deploy_scope=
+  'live'` + `core`; `KB § PATTERNS/architect/product-working-scope.md`), not
+  "whatever's in the compose file" — an `ativo=false` product can never
+  reach the prod tip, so a compose-driven roster would flag it drifted on
+  every single run, forever, training people to ignore the gate. And the
+  drift test itself is NOT raw sha inequality — running an older revision is
+  the expected steady state (images rebuild only when their build scope
+  changes, `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`);
+  `deploy_verify` diffs the running revision against the prod tip through
+  `deploy_pull`'s build-scope oracle and only flags `drift` when that diff
+  actually touches the product's own build inputs (or a fleet-wide `seed/`/
+  Dockerfile/compose change). A catalog-active product with NO container at
+  all is its own finding (`missing`) — real (a p-studio-shaped absence,
+  2026-08-17), not silently invisible because a compose-driven loop never
+  iterates a slug it has no service block for. `status='verified'` (exit 0)
+  is the only pass. **If
   `deploy_image` times out or the session drops mid-call, that silence is
   NOT success** — treat it as `status=unverified` and run `deploy_verify`
   immediately for ground truth; never infer "it probably worked" from a tool
