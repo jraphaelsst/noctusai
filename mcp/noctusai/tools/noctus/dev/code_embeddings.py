@@ -112,46 +112,20 @@ _pack_vec = _ec.pack_vec
 # Metadata + chunks table — chunks carry both symbol_name AND kind so
 # queries can filter (e.g. only classes, only async functions). The vec
 # table joins by rowid_alias the same way kb_embeddings does.
-_META_SCHEMA = """
-CREATE TABLE IF NOT EXISTS cache_meta (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS code_chunks (
-  rowid_alias   INTEGER PRIMARY KEY AUTOINCREMENT,
-  path          TEXT NOT NULL,
-  chunk_idx     INTEGER NOT NULL,
-  symbol_name   TEXT NOT NULL,    -- '' for file-level chunks
-  kind          TEXT NOT NULL,    -- 'function' | 'async_function' | 'class' | 'file'
-  chunk_text    TEXT NOT NULL,
-  source_sha    TEXT NOT NULL,
-  cached_at     TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_code_chunks_path ON code_chunks(path);
-CREATE INDEX IF NOT EXISTS idx_code_chunks_kind ON code_chunks(kind);
-"""
-
-_VEC_SCHEMA = f"""
-CREATE VIRTUAL TABLE IF NOT EXISTS code_vec USING vec0(
-  embedding float[{EMBEDDING_DIM}]
-);
-"""
-
-_FALLBACK_SCHEMA = """
-CREATE TABLE IF NOT EXISTS code_embeddings_json (
-  chunk_rowid  INTEGER PRIMARY KEY,
-  embedding    TEXT NOT NULL
-);
-"""
-
-
+#
+# Schema is owned by the shared `_ec.init_schema` — single source of truth
+# (2026-08-14 cache-mirror-join-drift fix: creating ONLY the current
+# process's engine table here is exactly how the two sibling tables
+# drifted out of sync across environments in the first place, since
+# `code_embeddings.py` mirrors `_META_SCHEMA`/`_VEC_SCHEMA`/`_FALLBACK_SCHEMA`
+# above as documentation of the shape `_ec` generates for these table
+# names). See `_embedding_corpus.init_schema` + KB § PATTERNS/devops/
+# cache-deploy-mirror.md.
 def _init_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(_META_SCHEMA)
-    if _HAS_VEC:
-        conn.executescript(_VEC_SCHEMA)
-    else:
-        conn.executescript(_FALLBACK_SCHEMA)
-    conn.commit()
+    _ec.init_schema(
+        conn, "code_chunks", "code_vec", "code_embeddings_json",
+        extra_columns={"symbol_name": "TEXT NOT NULL", "kind": "TEXT NOT NULL"},
+    )
 
 
 # ── Source-tree walker ───────────────────────────────────────────────────────
@@ -286,18 +260,17 @@ def refresh(
             if row and row["source_sha"] == sha:
                 skipped.append(rel)
                 continue
-        # Rebuild this file's rows — clear both engines' tables.
+        # Rebuild this file's rows — clear BOTH engines' tables unconditionally
+        # (2026-08-14 fix), not just the current process's `_HAS_VEC` branch:
+        # a PRIOR refresh of this same file may have run under a DIFFERENT
+        # environment (see `_ec.delete_embedding_rows`).
         cur = conn.execute("SELECT rowid_alias FROM code_chunks WHERE path=?", (rel,))
         old_rowids = [r[0] for r in cur.fetchall()]
         if old_rowids:
-            placeholders = ",".join("?" * len(old_rowids))
-            if _HAS_VEC:
-                conn.execute(f"DELETE FROM code_vec WHERE rowid IN ({placeholders})", old_rowids)
-            else:
-                conn.execute(
-                    f"DELETE FROM code_embeddings_json WHERE chunk_rowid IN ({placeholders})",
-                    old_rowids,
-                )
+            _ec.delete_embedding_rows(
+                conn, vec_table="code_vec", json_table="code_embeddings_json",
+                rowids=old_rowids,
+            )
             conn.execute("DELETE FROM code_chunks WHERE path=?", (rel,))
         try:
             text = src_path.read_text(encoding="utf-8")
@@ -346,14 +319,10 @@ def refresh(
                 )
             total_rows += 1
         if not per_file_ok and per_file_rowids:
-            placeholders = ",".join("?" * len(per_file_rowids))
-            if _HAS_VEC:
-                conn.execute(f"DELETE FROM code_vec WHERE rowid IN ({placeholders})", per_file_rowids)
-            else:
-                conn.execute(
-                    f"DELETE FROM code_embeddings_json WHERE chunk_rowid IN ({placeholders})",
-                    per_file_rowids,
-                )
+            _ec.delete_embedding_rows(
+                conn, vec_table="code_vec", json_table="code_embeddings_json",
+                rowids=per_file_rowids,
+            )
             conn.execute("DELETE FROM code_chunks WHERE path=?", (rel,))
             total_rows -= len(per_file_rowids)
             continue
