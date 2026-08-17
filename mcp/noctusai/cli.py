@@ -270,6 +270,8 @@ def main():
     parser.add_argument("--deploy-image", metavar="PRODUCT", help="Atomic product-image redeploy with rollback (§2a C2): snapshot :previous → compose pull → up -d → health-probe → roll back on health failure. DRY-RUN unless --deploy-image-confirm; never emits rmi/prune/down. MCP: noctus.dev.deploy_image.")
     parser.add_argument("--deploy-image-confirm", action="store_true", help="With --deploy-image: actually perform the image swap (a production action). Without it, plan/dry-run only.")
     parser.add_argument("--deploy-image-source", default="pull", choices=["pull", "local"], help="With --deploy-image: 'pull' (GHCR model, default) compose-pulls the image; 'local' (build-on-VPS model) swaps an already-built local tag.")
+    parser.add_argument("--deploy-verify", action="store_true", help="The INDEPENDENT prod revision-drift witness — read-only, ZERO dependency on --deploy-image having run. Roster is CATALOG-DRIVEN (ativo=true AND deploy_scope='live' + core, not the compose file) — or --deploy-verify-products to check named slugs (incl. inactive ones) deliberately. Per actionable product: running container revision vs the freshly-resolved prod branch tip, fed through the build-scope diff predicate (a stale-but-untouched revision is expected; only a diff touching the product's own build inputs is drift) + health + startup_hook_error. A catalog-live product with no running container is its own 'missing' finding; non-actionable products are reported (never dropped) in skipped_inactive. Exit 0 only when status='verified'. MCP: noctus.dev.deploy_verify.")
+    parser.add_argument("--deploy-verify-products", default=None, help="With --deploy-verify: comma-separated product slugs to check deliberately (bypasses the catalog — every named slug is treated as actionable, including an inactive one). Default: the catalog-derived live roster.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--component-bundle", metavar="NAME", help="Return the structured organ bundle for a seed-lib frontend component (source, types, tests, deps, consumers, wiring_snippet, validation_status, last_touched). KB § PATTERNS/architect/component-bundle-tool.md")
     parser.add_argument("--component-list", action="store_true", help="List all seed organs (reusable components) with derived validation status. Sort with --sort (consumers_desc|name|last_touched); filter with --filter-status (validated|emerging|shelfware|unknown, comma-separated). MCP: noctus.dev.component_list. KB § PATTERNS/architect/component-list-and-validation.md.")
@@ -2270,6 +2272,14 @@ def main():
             source=getattr(args, "deploy_image_source", "pull"),
             confirm=bool(getattr(args, "deploy_image_confirm", False)),
         )
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.deploy_verify:
+        from tools.noctus.dev.deploy_verify import deploy_verify
+        raw = getattr(args, "deploy_verify_products", None)
+        products = [p.strip() for p in raw.split(",") if p.strip()] if raw else None
+        r = deploy_verify(products=products, ssh_host=args.deploy_host)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
 

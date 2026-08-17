@@ -34,7 +34,7 @@ class FakeDocker:
     def __init__(self, running="G0", latest="NEW", health=("up",), snapshot_sticks=True,
                  pull_rc=0, up_rc=0, container_found=True, image_present=True, port="8000",
                  tunnel_restart_rc=0, revision="ABCDEF123456789012", prod_ancestor=True,
-                 fetch_rc=0, prod_ref_rc=0):
+                 fetch_rc=0, prod_ref_rc=0, simulate_silent_noop_recreate=False):
         self.running = running
         self.tags = {f"{self.IMG}:latest": latest}
         self.health = list(health)
@@ -43,6 +43,13 @@ class FakeDocker:
         self.pull_rc, self.up_rc = pull_rc, up_rc
         self.container_found, self.image_present, self.port = container_found, image_present, port
         self.tunnel_restart_rc = tunnel_restart_rc
+        self._acquired_ref: str | None = None  # last non-:previous `docker image inspect` ref
+        # 2026-08-13 phantom-deploy fake: `compose up -d --force-recreate`
+        # returns rc=0 (as it did in the real incident) but the container is
+        # NEVER actually recreated — `.State`/health keep answering as the
+        # OLD container. This is the exact shape the swap-verify guard exists
+        # to catch (a healthy probe that is lying about which container it is).
+        self.simulate_silent_noop_recreate = simulate_silent_noop_recreate
         # PROD-PIN ancestry guard fakes — default models the SAFE/happy path
         # (a properly-promoted image) so pre-existing tests exercise the full
         # code path unmodified; dedicated tests below flip these to exercise
@@ -94,6 +101,7 @@ class FakeDocker:
                 return (0, self.tags[ref] + "\n", "") if ref in self.tags else (1, "", "No such image")
             if tag == "latest" and not self.image_present:
                 return (1, "", "No such image")
+            self._acquired_ref = ref  # the ref `up` is about to recreate the container onto
             return (0, self.tags.get(ref, "") + "\n", "")
         if cmd[:2] == ["docker", "tag"]:
             self.tags[cmd[3]] = self._id_of(cmd[2])
@@ -109,7 +117,14 @@ class FakeDocker:
             if action == "up":
                 if self.up_rc != 0:
                     return (self.up_rc, "", "no such image")
-                self.running = self.tags.get(f"{self.IMG}:latest", "")  # recreate on :latest
+                if self.simulate_silent_noop_recreate:
+                    return (0, "", "")  # rc=0, but `self.running` never moves — the incident
+                # recreate on whatever ref was just acquired (deploy) or retagged
+                # (rollback) — NOT hardcoded to :latest, so a pinned tag=<sha>
+                # deploy is modeled correctly (this is what the swap-verify guard
+                # actually checks: the container must land on THAT id).
+                target_ref = self._acquired_ref or f"{self.IMG}:latest"
+                self.running = self.tags.get(target_ref, "")
                 return (0, "", "")
         return (0, "", "")
 
@@ -143,6 +158,41 @@ def test_deployed_when_healthy():
     assert ["docker", "commit", "noctus-core", "ghcr.io/jraphaelsst/noctus-core:previous"] in f.calls
     assert r["snapshot_id"] == "COMMITTED"
     assert f.count("up") == 1 and "--force-recreate" in f.flat()
+
+
+# ── swap-verify (2026-08-13 phantom-deploy guard) ──────────────────
+def test_deployed_records_landed_revision_and_running_image_id():
+    """The success path also carries the proof, not just the claim."""
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=True)
+    assert r["status"] == "deployed"
+    assert r["running_image_id"] == "NEW"
+    assert r["landed_revision"] == "ABCDEF123456789012"
+
+
+def test_swap_unverified_when_container_never_recreates():
+    """The exact 2026-08-13 shape: `compose up` returns success, the health
+    probe answers 'healthy' — because it's still the OLD container answering
+    — and nothing but this guard would have caught it."""
+    f = FakeDocker(running="OLD_ID", latest="NEW", health=("up",),
+                   simulate_silent_noop_recreate=True)
+    r = _run(f, confirm=True)
+    assert r["status"] == "swap_unverified" and r["exit_code"] == 1
+    assert r["running_image_id"] == "OLD_ID" and r["new_image_id"] == "NEW"
+    assert "phantom-deploy" in r["reason"]
+    assert "deploy_verify" in r["reason"]
+    # never claims success, and never guesses a rollback either
+    assert f.count("tag") == 0  # no retag attempted — no auto-rollback
+
+
+def test_swap_unverified_never_restarts_the_tunnel():
+    """Restarting cloudflared implies 'a real deploy just landed' — must not
+    fire on an unverified swap."""
+    f = FakeDocker(running="OLD_ID", latest="NEW", health=("up",),
+                   simulate_silent_noop_recreate=True)
+    r = _run(f, confirm=True)
+    assert r["status"] == "swap_unverified"
+    assert not any(c[:2] == ["docker", "restart"] for c in f.calls)
 
 
 def test_up_to_date_when_pulled_equals_running():

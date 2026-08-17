@@ -66,20 +66,56 @@ shipped tree.
 
 ## 0.1a · Post-deploy prod smoke — MANDATORY 🔴
 
-A deploy is not done until this passes:
+A deploy is not done until BOTH of these pass:
 
-- `noctus.vps.health` → all healthy, 0 unhealthy.
-- each ACTIVE product's `/api/health` → 200, probed **internally**
+- **(a) REVISION-DRIFT — `noctus.dev.deploy_verify`.** The INDEPENDENT witness
+  (2026-08-13, real: a `deploy_image` call timed out and the MCP server
+  disconnected before reporting anything; the container was still on the
+  *previous* deploy's revision, "Up 2 days", and only a manual `docker
+  inspect` caught it — every git-level signal, `prod`'s tip and
+  `deploy_pull`'s own success, stayed green throughout). `deploy_verify` has
+  **zero dependency on `deploy_image` having run, succeeded, or even existed
+  in this process** — it re-derives the expected sha FRESH from
+  `origin/prod` (never a caller-supplied parameter) and reads each ACTIVE
+  product's RUNNING container's `org.opencontainers.image.revision` label
+  directly. ACTIVE means CATALOG-active (`ativo=true AND deploy_scope=
+  'live'` + `core`; `KB § PATTERNS/architect/product-working-scope.md`), not
+  "whatever's in the compose file" — an `ativo=false` product can never
+  reach the prod tip, so a compose-driven roster would flag it drifted on
+  every single run, forever, training people to ignore the gate. And the
+  drift test itself is NOT raw sha inequality — running an older revision is
+  the expected steady state (images rebuild only when their build scope
+  changes, `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`);
+  `deploy_verify` diffs the running revision against the prod tip through
+  `deploy_pull`'s build-scope oracle and only flags `drift` when that diff
+  actually touches the product's own build inputs (or a fleet-wide `seed/`/
+  Dockerfile/compose change). A catalog-active product with NO container at
+  all is its own finding (`missing`) — real (a p-studio-shaped absence,
+  2026-08-17), not silently invisible because a compose-driven loop never
+  iterates a slug it has no service block for. `status='verified'` (exit 0)
+  is the only pass. **If
+  `deploy_image` times out or the session drops mid-call, that silence is
+  NOT success** — treat it as `status=unverified` and run `deploy_verify`
+  immediately for ground truth; never infer "it probably worked" from a tool
+  going quiet. `deploy_image` itself now closes half of this loop too: after
+  a healthy probe it re-inspects the running container's own image id +
+  revision label and refuses `status='deployed'` (reports
+  `swap_unverified` instead) unless the swap verifiably landed — but that
+  self-check dies with the process if the tool times out, which is exactly
+  why the independent, standalone `deploy_verify` is the one that closes it
+  for real.
+- **(b) HEALTH/CONTENT** — `noctus.vps.health` → all healthy, 0 unhealthy.
+  each ACTIVE product's `/api/health` → 200, probed **internally**
   (`noctus.vps.exec --container`) *and* through the **public edge**
   (programmatic callers need a browser User-Agent or CF WAF 1010 rejects).
-- read `startup_hook_error` in that payload: a product whose lifespan hook
+  read `startup_hook_error` in that payload: a product whose lifespan hook
   failed still returns 200 and reports the failure there, so `status: "ok"`
   alone is not the answer (`KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md`).
 
-On failure: **roll back, do not debug forward in prod.**
+On failure (either leg): **roll back, do not debug forward in prod.**
 
 Order: `predeploy_check` (all active) → CI green → bless (§0.2/§2b) → promote
-(§2b) → `deploy_pull` → `deploy_image` (§2a) → prod smoke.
+(§2b) → `deploy_pull` → `deploy_image` (§2a) → `deploy_verify` → prod smoke.
 
 ## 1 · Code delivery = git (never rsync)
 
