@@ -38,24 +38,34 @@ routes:
   - hostname: erp-imobiliario.noctusai.com
     service:  http://erp-imobiliario:8001
 
-  - hostname: personal-finance.noctusai.com
-    service:  http://personal-finance:8002
-
-  - hostname: therapy-platform.noctusai.com
-    service:  http://therapy-platform:8003
-
   # seed is a FIRST-CLASS deployed product + canary (migration 038).
   - hostname: seed.noctusai.com
     service:  http://seed:8004
 
-  - hostname: daily-life.noctusai.com
-    service:  http://daily-life:8005
-
-  - hostname: adconnect.noctusai.com
-    service:  http://adconnect:8007
-
-  - hostname: dev-team.noctusai.com
-    service:  http://dev-team:8009
+  # ── UN-EXPOSED 2026-08-17 (owner's decision) ───────────────────────────
+  # personal-finance:8002 · therapy-platform:8003 · daily-life:8005 ·
+  # adconnect:8007 · dev-team:8009
+  #
+  # All five are `ativo=false, deploy_scope='dev'` in the product catalog,
+  # yet every one of them was answering 200 on the public internet from an
+  # image 27 seed-changes behind the prod tip — a gap that included the
+  # fatal-startup-hook fix, a starlette bump, and several dependency
+  # security advisories. Five unused services, publicly reachable, running
+  # code the rest of the fleet was deliberately patched off.
+  #
+  # Updating them was the WRONG fix: it would have kept five unused public
+  # endpoints on the internet and cost five image builds for products with
+  # no users. Removing the route removes the surface outright.
+  #
+  # REVERSIBLE BY DESIGN — nothing was deleted. Re-add the two lines here
+  # (and the matching pair in config.yml.template, which is a SECOND
+  # derived artifact this file does not generate), re-run
+  # `deploy/tunnel/route-dns.sh`, and start the container. Reactivating a
+  # product lands in `dev` first anyway per product-working-scope, so it
+  # would be rebuilt on current seed at that point rather than resurrected
+  # at this stale revision.
+  # → KB § PATTERNS/architect/product-working-scope.md
+  # → KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md
 
   - hostname: social-wiring.noctusai.com
     service:  http://social-wiring:8011
@@ -65,6 +75,9 @@ routes:
 
   - hostname: igig.noctusai.com
     service:  http://igig:8013
+
+  - hostname: p-studio.noctusai.com
+    service:  http://p-studio:8014
 
   # ── Short-name aliases (live edge convenience hosts) ─────────────────
   # Shorter public hostnames pointing at the SAME containers as the

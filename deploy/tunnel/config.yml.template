@@ -40,24 +40,22 @@ ingress:
     service: http://core:8000
   - hostname: erp-imobiliario.noctusai.com
     service: http://erp-imobiliario:8001
-  - hostname: personal-finance.noctusai.com
-    service: http://personal-finance:8002
-  - hostname: therapy-platform.noctusai.com
-    service: http://therapy-platform:8003
   - hostname: seed.noctusai.com
     service: http://seed:8004
-  - hostname: daily-life.noctusai.com
-    service: http://daily-life:8005
-  - hostname: adconnect.noctusai.com
-    service: http://adconnect:8007
-  - hostname: dev-team.noctusai.com
-    service: http://dev-team:8009
+  # UN-EXPOSED 2026-08-17 (owner's decision): personal-finance:8002 ·
+  # therapy-platform:8003 · daily-life:8005 · adconnect:8007 · dev-team:8009.
+  # All ativo=false yet publicly answering 200 on images 27 seed-changes
+  # stale. Rationale + the reversal recipe live in ingress.yml — this file is
+  # the second derived artifact of the same route table, so the two must move
+  # together (check_tunnel_ingress_snapshot_sync).
   - hostname: social-wiring.noctusai.com
     service: http://social-wiring:8011
   - hostname: orbity.noctusai.com
     service: http://orbity:8010
   - hostname: igig.noctusai.com
     service: http://igig:8013
+  - hostname: p-studio.noctusai.com
+    service: http://p-studio:8014
   - hostname: erp.noctusai.com
     service: http://erp-imobiliario:8001
   - hostname: social.noctusai.com
