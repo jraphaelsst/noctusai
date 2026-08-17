@@ -57,6 +57,12 @@ from datetime import date
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.persistence import (
+    DEFAULT_MAX_PAGES,
+    DEFAULT_PAGE_SIZE,
+    PagerOverflowError,
+    iter_paged_rows,
+)
 from noctusai_lib.primitives.phone import phone_search_digits
 
 
@@ -223,17 +229,36 @@ def matches_ano_mes(row: dict, filters: LeadFilters) -> bool:
 #: share_pct and chart series in this module derives from `fetch_filtered`,
 #: so that silent cap made all of them wrong (observed 2026-07-22: summary
 #: reported total=1000 against 12,177 real rows). We page explicitly instead.
-_PAGE_SIZE = 1000
+_PAGE_SIZE = DEFAULT_PAGE_SIZE
 
 #: Hard ceiling on the paging loop — a runaway (e.g. a client whose `.range()`
 #: is a no-op) must fail LOUDLY rather than spin or silently truncate.
-_MAX_PAGES = 500
+_MAX_PAGES = DEFAULT_MAX_PAGES
 
 
-class LeadsResultTooLargeError(RuntimeError):
+class LeadsResultTooLargeError(PagerOverflowError):
     """Raised when a filter set resolves to more rows than the pager will
     walk. Deliberately an exception, not a silent truncation: a wrong-but-
-    plausible number in a KPI tile is worse than a visible failure."""
+    plausible number in a KPI tile is worse than a visible failure.
+
+    Subclasses the seed's :class:`PagerOverflowError` so this module keeps
+    its own public name while the shared pager (which owns the loop, the
+    no-progress guard and the ceiling) does the raising — see
+    ``noctusai_lib.integrations.persistence.paging``."""
+
+
+def _with_id_column(columns: str) -> str:
+    """``columns`` with ``id`` guaranteed present.
+
+    ``select("*")`` already includes it; a projection list may not, and
+    the pager refuses to run without its dedup key (deliberately — a
+    guard that silently no-ops brings the infinite loop back)."""
+    if columns.strip() == "*":
+        return columns
+    parts = [part.strip() for part in columns.split(",") if part.strip()]
+    if "id" in parts:
+        return columns
+    return ", ".join(["id", *parts])
 
 
 def fetch_filtered(client: Any, org_id: UUID, filters: LeadFilters) -> list[dict]:
@@ -248,23 +273,21 @@ def fetch_filtered(client: Any, org_id: UUID, filters: LeadFilters) -> list[dict
     and returns the COMPLETE result set. ``.order("id")`` is required for
     the paging to be stable — without a deterministic sort PostgREST may
     return overlapping/missing rows across ranges."""
-    rows: list[dict] = []
-    for page_index in range(_MAX_PAGES):
-        start = page_index * _PAGE_SIZE
+
+    def fetch_page(start: int, end: int):
         query = client.table("leads").select("*").eq("org_id", str(org_id))
         query = apply_db_filters(query, filters)
-        resp = (
-            query.order("id").range(start, start + _PAGE_SIZE - 1).execute()
+        return query.order("id").range(start, end).execute().data
+
+    rows = list(
+        iter_paged_rows(
+            fetch_page,
+            page_size=_PAGE_SIZE,
+            max_pages=_MAX_PAGES,
+            label=f"leads result for org_id={org_id}",
+            overflow_error=LeadsResultTooLargeError,
         )
-        page = list(resp.data or [])
-        rows.extend(page)
-        if len(page) < _PAGE_SIZE:
-            break
-    else:
-        raise LeadsResultTooLargeError(
-            f"leads result exceeded {_MAX_PAGES * _PAGE_SIZE} rows for "
-            f"org_id={org_id} — refusing to return a silently truncated set"
-        )
+    )
 
     rows = [backfill_generated_columns(r) for r in rows]
     rows = [r for r in rows if matches_ano_mes(r, filters)]
@@ -294,24 +317,31 @@ def iter_leads_rows(
     plain ``column=value`` equality filters as kwargs (``.eq(k, v)`` per
     entry) instead of a full ``LeadFilters`` — every current caller only
     needs ``org_id`` scoping plus at most one extra ``eq`` (e.g.
-    ``source_sheet=name``)."""
-    rows: list[dict] = []
-    for page_index in range(_MAX_PAGES):
-        start = page_index * _PAGE_SIZE
-        query = client.table("leads").select(columns).eq("org_id", str(org_id))
+    ``source_sheet=name``).
+
+    ``id`` is forced into the projection even when the caller did not ask
+    for it: the pager's no-progress guard dedupes on it, and the columns
+    callers DO ask for here (``origem_raw``, ``corretor_raw``,
+    ``source_sheet``) are deliberately non-unique — deduping on one of
+    those would collapse rows those callers are counting.
+    """
+    selected = _with_id_column(columns)
+
+    def fetch_page(start: int, end: int):
+        query = client.table("leads").select(selected).eq("org_id", str(org_id))
         for key, value in eq_filters.items():
             query = query.eq(key, value)
-        resp = query.order("id").range(start, start + _PAGE_SIZE - 1).execute()
-        page = list(resp.data or [])
-        rows.extend(page)
-        if len(page) < _PAGE_SIZE:
-            break
-    else:
-        raise LeadsResultTooLargeError(
-            f"leads scan exceeded {_MAX_PAGES * _PAGE_SIZE} rows for "
-            f"org_id={org_id} — refusing to return a silently truncated set"
+        return query.order("id").range(start, end).execute().data
+
+    return list(
+        iter_paged_rows(
+            fetch_page,
+            page_size=_PAGE_SIZE,
+            max_pages=_MAX_PAGES,
+            label=f"leads scan for org_id={org_id}",
+            overflow_error=LeadsResultTooLargeError,
         )
-    return rows
+    )
 
 
 def chunked(items: list, size: int):

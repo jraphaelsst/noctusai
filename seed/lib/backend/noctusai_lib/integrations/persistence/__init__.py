@@ -28,6 +28,12 @@ from pathlib import Path
 from typing import Any
 
 from .fake_adapter import InMemoryRecordStore
+from .paging import (
+    DEFAULT_MAX_PAGES,
+    DEFAULT_PAGE_SIZE,
+    PagerOverflowError,
+    iter_paged_rows,
+)
 from .sqlite_adapter import SqliteRecordStore
 from .supabase_adapter import SupabaseLike, SupabaseRecordStore
 from .types import (
@@ -58,6 +64,11 @@ __all__ = [
     "SupabaseLike",
     # Factory
     "get_record_store",
+    # Offset-paged reads (see paging.py — hazard is the LOOP, not the query)
+    "iter_paged_rows",
+    "PagerOverflowError",
+    "DEFAULT_PAGE_SIZE",
+    "DEFAULT_MAX_PAGES",
 ]
 
 

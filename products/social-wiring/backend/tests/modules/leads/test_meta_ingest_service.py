@@ -245,3 +245,25 @@ class TestBackfillMetaAdsLeads:
         assert result["skipped_existing"] == 0
         assert len(result["errors"]) == 1
         assert result["errors"][0]["meta_lead_id"] == "ml-bad"
+
+    def test_terminates_and_covers_everything_when_range_is_ignored(self):
+        """`MockSupabaseClient.range()` is a documented no-op, so every
+        page here returns the FULL set — the condition under which the
+        offset-only `while True` this function used to run never ended.
+        A real backend or proxy that dropped the Range header would hang
+        production the same way, on the path that touches the most rows.
+
+        Asserts the two properties a mock CAN speak to: the loop
+        terminates, and every row is projected exactly once. Whether
+        PostgREST honours `range` is the 98377d26 bug class and stays a
+        live-verification item."""
+        client = _scoped_mock()
+        self._seed_meta_ads_leads(
+            client, *[_meta_lead(id=f"ml-page-{index}") for index in range(7)]
+        )
+
+        result = meta_ingest_service.backfill_meta_ads_leads(client, ORG, page_size=2)
+
+        assert result["ingested"] == 7
+        assert result["skipped_existing"] == 0  # exactly once, not re-walked
+        assert result["errors"] == []

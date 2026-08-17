@@ -18,6 +18,8 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.persistence import iter_paged_rows
+
 from noctusai_lib.integrations.olx import (
     OLX_SOURCE_SLUG,
     OlxLead,
@@ -32,8 +34,11 @@ logger = logging.getLogger(__name__)
 
 #: PostgREST page size for the bulk backfill. A bare `.select().execute()`
 #: silently caps at PostgREST's default page and reports success — the
-#: 98377d26 bug class, which `MockSupabaseClient.range()` (a no-op) cannot
-#: catch in tests. Paginate explicitly.
+#: 98377d26 bug class (`KB § PATTERNS/backend/postgrest-row-cap.md`).
+#: Paginate explicitly. Matches
+#: `meta_ingest_service._BACKFILL_PAGE_SIZE`; both walk a vendor ledger
+#: whose rows carry a full `raw` payload, so the page stays well under
+#: PostgREST's own cap.
 _BACKFILL_PAGE_SIZE = 500
 
 
@@ -152,60 +157,42 @@ def backfill_olx_leads(
     ``leads``. Explicit, logged, idempotent, and never called from a
     sync/import path automatically — a real trigger is required each time.
 
-    Paged: see `_BACKFILL_PAGE_SIZE`.
+    Paged via the seed's ``iter_paged_rows`` (see `_BACKFILL_PAGE_SIZE`),
+    which owns the loop: its termination rests on progress over unseen
+    rows, not on the backend honouring ``range()``. An offset-only loop
+    here spins forever the moment the pager is a no-op — which is what hung
+    this function on its first run, against the then-no-op mock.
     """
     ingested = 0
     skipped_existing = 0
     errors: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
 
-    offset = 0
-    while True:
-        resp = (
+    def fetch_page(start: int, end: int):
+        return (
             _table(client, "olx_leads")
             .select("*")
             .eq("org_id", str(org_id))
             .order("id")
-            .range(offset, offset + page_size - 1)
+            .range(start, end)
             .execute()
+            .data
         )
-        rows = list(resp.data or [])
-        if not rows:
-            break
 
-        # No-progress guard. The loop's termination must not depend on the
-        # backend honouring `range()` — `MockSupabaseClient.range()` is a
-        # documented no-op, so under the mock every page returns the FULL
-        # set and an offset-only loop spins forever. A real client that
-        # ignored the header would hang production the same way. Advancing
-        # on rows we have not already processed makes progress the
-        # termination condition instead of the pager's cooperation.
-        fresh = [row for row in rows if str(row.get("id")) not in seen_ids]
-        if not fresh:
-            logger.warning(
-                "olx_ingest_service.backfill_olx_leads: page at offset %s returned "
-                "%s row(s), none of them new — the backend appears to ignore "
-                "range(); stopping rather than looping",
-                offset, len(rows),
-            )
-            break
-
-        for row in fresh:
-            seen_ids.add(str(row.get("id")))
-            body = row.get("raw") or {}
-            try:
-                result = ingest_olx_payload(client, org_id, body)
-            except ValueError as exc:
-                errors.append({"origin_lead_id": row.get("id"), "error": str(exc)})
-                continue
-            if result["created"]:
-                ingested += 1
-            else:
-                skipped_existing += 1
-
-        if len(rows) < page_size:
-            break
-        offset += page_size
+    for row in iter_paged_rows(
+        fetch_page,
+        page_size=page_size,
+        label=f"olx_leads backfill for org_id={org_id}",
+    ):
+        body = row.get("raw") or {}
+        try:
+            result = ingest_olx_payload(client, org_id, body)
+        except ValueError as exc:
+            errors.append({"origin_lead_id": row.get("id"), "error": str(exc)})
+            continue
+        if result["created"]:
+            ingested += 1
+        else:
+            skipped_existing += 1
 
     logger.info(
         "olx_ingest_service.backfill_olx_leads: org=%s ingested=%s "
