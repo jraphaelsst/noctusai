@@ -142,14 +142,25 @@ inventory with the status legend · adapter contract · MCP design notes · chan
 log with live-probe dates), `KNOWLEDGE-BASE/MCP-SERVERS/olx.md` + the README
 row, and `KB § INDEX.md`.
 
-**`.mcp.json` registration IS part of this slice** — a connector that is not
-loaded cannot validate anything, and validating the live API is the whole
-purpose of building it first. Add the row alongside the other connectors
-(`"olx": {"command": "mcp/noctusai/.venv/bin/python", "args": ["mcp/olx/server.py"]}`).
-Adding to the keep-list is user-gated (`CLAUDE.md §1` context-budget rule), so
-the engineer stages the edit and **surfaces it for ratification** rather than
-assuming consent. Slice B is not done until `olx.diagnostics.connection_status`
-answers from a live session.
+**`.mcp.json` registration — corrected 2026-08-17 against the tree.** The file
+is **gitignored** (per-machine, absolute `cwd`), so the row cannot ship in a
+commit. The canonical row is documented in `KNOWLEDGE-BASE/MCP-SERVERS/olx.md`:
+
+```json
+"olx": {
+  "command": "mcp/noctusai/.venv/bin/python",
+  "args": ["mcp/olx/server.py"],
+  "cwd": "<repo root>"
+}
+```
+
+Register it **after this branch merges into `dev`**, not before: `cwd` points at
+the primary checkout, whose editable `noctusai_lib` has no `integrations.olx`
+until the merge lands, so a row added early loads a server that ImportErrors at
+every session start. Until then the connector is driven straight from its
+worktree over stdio (`python mcp/olx/server.py`) — which is how the tool surface
+was verified. Adding it to the session keep-list stays the user's call
+(`CLAUDE.md §1` context-budget rule).
 
 ---
 
@@ -256,7 +267,7 @@ product code is written.
 | Wave | Slices | Agent |
 |---|---|---|
 | 1 | **A** (seed contract + parser + normalizer + adapter + webhook scheme) | `backend-engineer` |
-| 2 | **B** (`mcp/olx` + `.mcp.json` row + KB docs) | `backend-engineer` |
+| 2 | **B** (`mcp/olx` + KB docs; `.mcp.json` row post-merge) | `backend-engineer` |
 | — | **🚦 Gate 1 — live validation.** Blocks waves 3–4. See below. | tech-lead + user (key) |
 | 3 | **C** (product backend), **D** (frontend) — parallel, file-disjoint | `backend-engineer` + `frontend-engineer` |
 | 4 | integration on the merged tip, gates, docs sync | tech-lead |

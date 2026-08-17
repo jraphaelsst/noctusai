@@ -159,3 +159,9 @@ scripts/archive-clean-last-sweep.log
 # project-history/vector-costs.ndjson ledger inside a real commit.
 # KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.
 project-history/.vector-costs-spool.ndjson
+
+# Recorded REAL OLX lead bodies contain consumer PII (name, email, phone)
+# — LGPD personal data. The corpus is a LOCAL diagnostic aid for
+# `olx.contract.diff_observed`; it must never enter git history, where it
+# cannot be deleted on request. Keep the directory, drop the contents.
+mcp/olx/fixtures/observed/*.json
