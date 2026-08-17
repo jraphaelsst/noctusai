@@ -52,9 +52,10 @@ filters set), and the importer.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import itertools
+from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 from uuid import UUID
 
 from noctusai_lib.primitives.phone import phone_search_digits
@@ -82,26 +83,122 @@ class LeadFilters:
 
 def apply_db_filters(query: Any, filters: LeadFilters) -> Any:
     """Apply every filter EXCEPT ``q`` to a ``.table("leads")``-style
-    query builder. Returns the same builder (chainable)."""
+    query builder. Returns the same builder (chainable).
+
+    Every ``.in_()`` call below is unbatched HERE by design — this
+    function composes into two different shapes (a single-shot count/page
+    query in ``leads_service._list_leads_db`` and a per-batch call inside
+    ``fetch_filtered``'s pager), and only the CALLER knows which shape it
+    is building, so only the caller can decide whether/how to batch
+    without breaking that shape's ordering/pagination/count semantics.
+    Every real caller guarantees ``filters`` already fits ``.in_()``'s URL
+    budget before reaching here (``needs_in_filter_batching`` +
+    ``_iter_batched_filters``, both in this module) — see the ``.in_()``
+    batching note above ``_IN_FILTER_BATCH``."""
     if filters.de is not None:
         query = query.gte("data_entrada", filters.de.isoformat())
     if filters.ate is not None:
         query = query.lte("data_entrada", filters.ate.isoformat())
     if filters.origem_id:
+        # postgrest-unbounded-ok: batched by every caller before this function
+        # runs — see needs_in_filter_batching/_iter_batched_filters above.
         query = query.in_("origem_id", [str(v) for v in filters.origem_id])
     if filters.corretor_id:
+        # postgrest-unbounded-ok: batched by every caller before this function
+        # runs — see needs_in_filter_batching/_iter_batched_filters above.
         query = query.in_("corretor_id", [str(v) for v in filters.corretor_id])
     if filters.tipo:
+        # postgrest-unbounded-ok: batched by every caller before this function
+        # runs — see needs_in_filter_batching/_iter_batched_filters above.
         query = query.in_("tipo_lead", list(filters.tipo))
     if filters.tier:
+        # postgrest-unbounded-ok: batched by every caller before this function
+        # runs — see needs_in_filter_batching/_iter_batched_filters above.
         query = query.in_("anuncio_tier", list(filters.tier))
     if filters.empreendimento:
+        # postgrest-unbounded-ok: batched by every caller before this function
+        # runs — see needs_in_filter_batching/_iter_batched_filters above.
         query = query.in_("empreendimento", list(filters.empreendimento))
     if filters.regiao:
+        # postgrest-unbounded-ok: batched by every caller before this function
+        # runs — see needs_in_filter_batching/_iter_batched_filters above.
         query = query.in_("regiao", list(filters.regiao))
     if filters.needs_review is not None:
         query = query.eq("needs_review", filters.needs_review)
     return query
+
+
+# ─── `.in_()` batching ────────────────────────────────────────────────────
+#
+# PostgREST puts `.in_(col, values)` values in the URL QUERY STRING, not the
+# request body — a collection large enough blows the request-line budget and
+# the server answers a bare 400 with no hint about length. That took
+# `/clientes/revisao` down in prod on 2026-08-14 with ~1 000 UUIDs (~40 KB
+# request line) — see `clientes_service._IN_FILTER_BATCH` for that fix.
+#
+# Here `.in_()` is a FILTER on a larger query that also carries other
+# filters, ordering and pagination (`_list_leads_db`'s count+page fast path,
+# `fetch_filtered`'s full-scan path) — naively batching just the `.in_()`
+# call and concatenating would silently change ordering and break
+# pagination/count semantics. The fix is two-pronged, matched to each call
+# site:
+#
+# * `fetch_filtered` (this module) already returns the COMPLETE matching
+#   row set with no server-side ordering/pagination commitment beyond
+#   "stable within one filter query" — batching + concatenating here is
+#   correct as-is (see `_iter_batched_filters`'s docstring for why no dedup
+#   is needed).
+# * `_list_leads_db` (`leads_service.py`) does NOT batch — a genuinely
+#   correct batched-and-unioned count+page would need to fetch every
+#   matching row to re-sort/re-slice in Python anyway, which is exactly
+#   what `fetch_filtered` + `list_leads`'s existing Python-sort fallback
+#   already does. `leads_service.list_leads` routes to that fallback
+#   whenever `needs_in_filter_batching(filters)` is true, so the DB-pushed
+#   fast path is simply never invoked with a filter set it cannot batch —
+#   the cost of a full scan lands only on the rare oversized-filter path,
+#   never on the common case.
+_IN_FILTER_BATCH = 200
+
+#: Every `LeadFilters` field `apply_db_filters` pushes through `.in_()` —
+#: the set that can ride the URL query string and therefore needs batching.
+#: `ano`/`mes`/`q` are excluded: the module docstring explains why those
+#: three are never DB-pushed in the first place, so they can never trigger
+#: this failure.
+_IN_FILTER_FIELDS = ("origem_id", "corretor_id", "tipo", "tier", "empreendimento", "regiao")
+
+
+def _field_batches(filters: LeadFilters, field_name: str) -> list[list]:
+    """The field's own value list as a single batch when it already fits
+    one `.in_()` call, else split into `_IN_FILTER_BATCH`-sized chunks."""
+    values = list(getattr(filters, field_name))
+    if len(values) <= _IN_FILTER_BATCH:
+        return [values]
+    return list(chunked(values, _IN_FILTER_BATCH))
+
+
+def needs_in_filter_batching(filters: LeadFilters) -> bool:
+    """True when ANY `.in_()`-pushed filter list is too large for a single
+    request line — passing `filters` as-is to `apply_db_filters` would risk
+    PostgREST's URL query-string budget. Callers use this to route around a
+    DB-pushed single-round-trip path toward one that can batch (see the
+    module note above `_IN_FILTER_BATCH`)."""
+    return any(len(getattr(filters, f)) > _IN_FILTER_BATCH for f in _IN_FILTER_FIELDS)
+
+
+def _iter_batched_filters(filters: LeadFilters) -> Iterator[LeadFilters]:
+    """Yield one `LeadFilters` per cell of the cartesian product of batches
+    across every oversized `.in_()` field, holding every other filter
+    (dates, `needs_review`, in-budget `.in_()` fields, `q`/`ano`/`mes`)
+    identical to `filters`. Every real `leads` row matches EXACTLY ONE
+    cell — each oversized field's batches PARTITION its value set
+    disjointly, and every other filter is identical across cells — so a
+    caller concatenates the raw rows across cells and never needs to
+    dedupe. When no field is oversized this yields `filters` itself, once
+    (a single cell, unbatched) — the common case is a plain pass-through."""
+    per_field = {name: _field_batches(filters, name) for name in _IN_FILTER_FIELDS}
+    names = list(per_field)
+    for combo in itertools.product(*(per_field[name] for name in names)):
+        yield replace(filters, **dict(zip(names, combo)))
 
 
 def backfill_generated_columns(row: dict) -> dict:
@@ -236,18 +333,14 @@ class LeadsResultTooLargeError(RuntimeError):
     plausible number in a KPI tile is worse than a visible failure."""
 
 
-def fetch_filtered(client: Any, org_id: UUID, filters: LeadFilters) -> list[dict]:
-    """Fetch every ``leads`` row (as raw dicts, joins not yet resolved)
-    for ``org_id`` matching ``filters`` — the shared primitive every
-    list/analytics service builds on. ``client`` is already
-    ``social_wiring``-scoped — see
-    ``app/modules/leads/deps.py::get_leads_client``'s docstring for why
-    this deliberately does NOT call ``.schema(...)`` itself.
-
-    Pages through PostgREST's per-response row cap (see ``_PAGE_SIZE``)
-    and returns the COMPLETE result set. ``.order("id")`` is required for
-    the paging to be stable — without a deterministic sort PostgREST may
-    return overlapping/missing rows across ranges."""
+def _fetch_filtered_rows(client: Any, org_id: UUID, filters: LeadFilters) -> list[dict]:
+    """Page through PostgREST's per-response row cap (see ``_PAGE_SIZE``)
+    for ONE filter set and return the complete, unprocessed rows.
+    ``filters`` is assumed to already fit ``.in_()``'s URL budget — callers
+    with an oversized filter set batch BEFORE calling this (see
+    ``fetch_filtered``). ``.order("id")`` is required for the paging to be
+    stable — without a deterministic sort PostgREST may return
+    overlapping/missing rows across ranges."""
     rows: list[dict] = []
     for page_index in range(_MAX_PAGES):
         start = page_index * _PAGE_SIZE
@@ -265,6 +358,31 @@ def fetch_filtered(client: Any, org_id: UUID, filters: LeadFilters) -> list[dict
             f"leads result exceeded {_MAX_PAGES * _PAGE_SIZE} rows for "
             f"org_id={org_id} — refusing to return a silently truncated set"
         )
+    return rows
+
+
+def fetch_filtered(client: Any, org_id: UUID, filters: LeadFilters) -> list[dict]:
+    """Fetch every ``leads`` row (as raw dicts, joins not yet resolved)
+    for ``org_id`` matching ``filters`` — the shared primitive every
+    list/analytics service builds on. ``client`` is already
+    ``social_wiring``-scoped — see
+    ``app/modules/leads/deps.py::get_leads_client``'s docstring for why
+    this deliberately does NOT call ``.schema(...)`` itself.
+
+    Returns the COMPLETE result set, paged past PostgREST's per-response
+    row cap. When any ``.in_()``-pushed filter list is too large for a
+    single request line (``needs_in_filter_batching``), splits across the
+    cartesian product of per-field batches (``_iter_batched_filters``) and
+    concatenates the raw rows from each cell — see that helper's docstring
+    for why concatenation, not dedup, is correct here."""
+    if needs_in_filter_batching(filters):
+        rows = [
+            row
+            for batch_filters in _iter_batched_filters(filters)
+            for row in _fetch_filtered_rows(client, org_id, batch_filters)
+        ]
+    else:
+        rows = _fetch_filtered_rows(client, org_id, filters)
 
     rows = [backfill_generated_columns(r) for r in rows]
     rows = [r for r in rows if matches_ano_mes(r, filters)]
@@ -325,6 +443,7 @@ def chunked(items: list, size: int):
 __all__ = [
     "LeadFilters",
     "apply_db_filters",
+    "needs_in_filter_batching",
     "matches_free_text",
     "matches_ano_mes",
     "fetch_filtered",
