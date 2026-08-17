@@ -14,7 +14,37 @@ const cor = (nome: string) => `oklch(var(--${nome}) / <alpha-value>)`;
 
 export default {
   darkMode: "class",
-  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  // 🔴 The seed's own source MUST be scanned. The FE runs on
+  // `createProductApp` + `createProductLayout`, so the shell (AppShell /
+  // Sidebar / Header) lives in `seed/framework` + `seed/lib` — NOT in
+  // `./src`. Tailwind only emits classes it can SEE, so scanning `./src`
+  // alone purges every utility used inside those components.
+  //
+  // That is not theoretical: it shipped. On 2026-08-17 p-studio went live
+  // with the sidebar `fixed w-64` (those classes happen to also appear in
+  // p-studio's own source, so they survived) while the content wrapper's
+  // responsive offset did NOT — `main` rendered at x=0 UNDERNEATH the
+  // sidebar, titles and KPI cards colliding with the nav. Backend healthy,
+  // bundle valid, page visibly broken.
+  //
+  // Globs mirror `seed/framework/frontend/tailwind.config.factory.ts`
+  // (`DEFAULT_CONTENT`), whose docstring warns of this exact failure.
+  //
+  // WHY NOT the factory itself (the seed-first answer)? The factory applies
+  // `presets: [base]`, and the base preset defines every colour as
+  // `hsl(var(--x))` while this product's palette is OKLCH
+  // (`oklch(var(--x) / <alpha-value>)`, ported from the Lovable prototype).
+  // Adopting the preset today would resolve HSL against OKLCH components and
+  // break every colour. Reconciling the two colour spaces — or giving the
+  // factory a theme seam — is tracked as follow-up; until then this config
+  // stays local BY DECISION, and the content globs must be kept in sync
+  // with the factory's.
+  content: [
+    "./index.html",
+    "./src/**/*.{ts,tsx}",
+    "../../../seed/lib/frontend/src/**/*.{ts,tsx}",
+    "../../../seed/framework/frontend/src/**/*.{ts,tsx}",
+  ],
   theme: {
     extend: {
       colors: {
