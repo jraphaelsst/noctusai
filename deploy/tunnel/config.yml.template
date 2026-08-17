@@ -58,6 +58,8 @@ ingress:
     service: http://orbity:8010
   - hostname: igig.noctusai.com
     service: http://igig:8013
+  - hostname: p-studio.noctusai.com
+    service: http://p-studio:8014
   - hostname: erp.noctusai.com
     service: http://erp-imobiliario:8001
   - hostname: social.noctusai.com
