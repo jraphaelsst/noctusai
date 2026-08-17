@@ -138,6 +138,35 @@ The consent record stores the user's **own words verbatim** (`authorization.phra
 
 `promptSource` distinguishes `typed` (the user composed it) from `suggestion_accepted` (the agent proposed the exact string; the user clicked accept). Both count, because the second is the **click-to-agree** pattern — the counterparty writes the words, the human performs the affirmative act — and the record is still harness-written, so an agent cannot fabricate an acceptance. Provenance is preserved in `authorization.prompt_source` so the two are never conflated. Any other `promptSource` is not human.
 
+### Evidence is RANKED, and the runtime is not a witness (2026-08-16)
+
+Two defects, both found by *using* the gate on the p-studio absorption, both of which produced a **perfectly well-formed record citing evidence that authorized nothing**. Neither was visible in the artifact — which is the lesson that outlives both fixes.
+
+**1 · First-match-wins cited a forwarded quotation.** `_find_authorization_evidence` scanned in transcript order and returned the first hit. The user had pasted another session's report into the conversation; that paste contained the *other agent's explanation of this very gate* — *"registering a prod-exposure surface is the user's call, never an agent's"*. It matched. It grants nothing. Their real authorization — the exact canonical sentence, `promptSource="typed"`, the strongest shape this module defines — sat later in the same transcript and was never looked at.
+
+The generalisation is the dangerous half: **quoting this document into a conversation can satisfy the gate**, because this document necessarily carries the slug and a production token when it discusses a product. Slug-binding — the property that stops an agent repurposing an unrelated *"yes, go ahead"* — cannot help when the quoted text is *about authorizing that exact product*.
+
+Fixed by **ranking**, never by quote-detection:
+
+| rank | evidence |
+|---|---|
+| 0 | canonical sentence, exact · `typed` |
+| 1 | canonical sentence, exact · other human shape |
+| 2–3 | `performative` · typed / other |
+| 4–5 | `directive` · typed / other |
+
+Ties break toward the **latest** message. Quote-detection was rejected deliberately: a heuristic that refuses text for *looking* quoted can refuse a **genuine** authorization, and a gate that refuses real consent is how gates get argued with and then bypassed — the same failure as the exact-match false negative and the unquoted-YAML `ScannerError` above it. Ranking cannot fail that way; it only changes *which* true match is cited, never whether one exists.
+
+**2 · Harness-injected records counted as human.** `queue-operation/enqueue` was admitted wholesale, because a real mid-turn authorization appears *only* in that shape. But **background-task completions arrive in the same shape.** In the session that exposed this, **21 of 23 enqueue records were `<task-notification>` blocks and only 2 were the user** — and two of those notifications matched the authorization heuristic, one at `performative`.
+
+This breaks the property the whole mechanism rests on: *the record must point at something **the agent did not write***. A task notification quotes tool output and the agent's own prose straight back into the transcript, so agent-authored text was being **laundered into the human-evidence layer**. With enough background jobs echoing the phrase, a notification alone could satisfy the gate with no human statement anywhere — the orbity incident's shape, reached by a new route.
+
+`_is_harness_injected_queue_content` now drops them, matched on the **opening marker only** (`<task-notification>`, `[SYSTEM NOTIFICATION`) so a user who quotes a notification mid-message is still heard.
+
+**The record now carries its own audit trail** — `evidence_rank` and `candidates_considered` — because both defects were invisible in a YAML that looked exactly right. A reader can now see what was selected *and that it was selected over something else*.
+
+> **The durable lesson.** Every earlier fix to this gate hardened *who may author* the record. These two are about *what the verifier believes*, and both let machine-written text stand in for a human decision. A verification layer needs the same adversarial reading as the thing it verifies — "the transcript is harness-written, therefore trustworthy" is true of the *file* and false of every *record inside it*.
+
 ### What counts as "the user said it"
 
 `_human_authored_transcript_texts` reads the harness-written `~/.claude/projects/*/<session_id>.jsonl` and accepts exactly two record shapes:
@@ -166,7 +195,7 @@ The transcript is a local plaintext file. This is **not** tamper-proof: an agent
 | `status` | Honest per-product dashboard for every slug currently declared on the three surfaces. `consent_status` ∈ `valid` / `invalid` / `missing_pregate`. |
 | `request` | `ok: false` always — never writes. Returns `target_path`, `already_exists`, `template_yaml`, `instructions`. The hand-authoring path. |
 | `challenge` | Returns the canonical sentence to **ask the user to type**. Writes nothing. |
-| `author` | Writes the record **iff** the canonical phrase is verified against the transcript; otherwise `ok: false` with the reason. The agent supplies the slug and session id; it cannot supply the evidence. |
+| `author` | Writes the record **iff** the canonical phrase is verified against the transcript; otherwise `ok: false` with the reason. The agent supplies the slug and session id; it cannot supply the evidence. Since 2026-08-16 it cites the **highest-ranked** candidate (not the first) and stamps `evidence_rank` + `candidates_considered`. |
 
 ## Scope decision — no backfill for grandfathered products
 
@@ -201,6 +230,7 @@ python mcp/noctusai/cli.py --check-prod-exposure-consent
 
 ## History
 
+- **2026-08-16** — **Evidence ranking + harness-record rejection.** Found by using the gate on the p-studio absorption; see *"Evidence is RANKED"* above. `author` cited a forwarded quotation of this very document as the user's authorization while their genuine `typed` canonical sentence sat unread later in the same transcript; and `queue-operation/enqueue` was admitting the runtime's own `<task-notification>` blocks as human speech (21 of 23 records in that session), which laundered agent-written text into the evidence layer. Fixed by ranking (never quote-detection) + an opening-marker check, with `evidence_rank`/`candidates_considered` stamped into the record so the next such defect is visible in the artifact. 11 regression tests pinned to the real strings from that transcript, including one asserting what did **not** change. The consent decision in that instance was genuine, so nothing unsafe shipped — the *record's evidence* was false, which is the one property this mechanism exists to guarantee.
 - **2026-07-20** — Shipped closing the orbity incident (prod-serving six weeks before validation, zero consent decision on record). Keeper + mechanism (`scaffold_product` invariant + `prod_consent` tool) + regression test proving fire/pass/silent + 8-way sync, same commit.
 - **2026-08-09 (same day, second pass)** — **Conjunctive intent matching + `suggestion_accepted`.** Exact-only matching false-negatived a real authorization; the user pushed back mid-deploy. Loosened *deliberately and tightly*: verb ∧ slug ∧ prod, negation-guarded, pinned against the session's real messages. The line held where it matters — `deploy <slug> to prod` still does not authorize, because an instruction is not a promotion decision. Provenance (`prompt_source`) and the user's verbatim words are now stored in the record.
 - **2026-08-09** — **Verified-transcription redesign.** Two things were wrong, found while igig waited on M5:
