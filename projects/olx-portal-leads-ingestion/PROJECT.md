@@ -1,9 +1,12 @@
 # Grupo OLX (ZAP / VivaReal / ImovelWeb) portal-lead ingestion — MCP map + full vertical slice
 
-> **Status: BUILT, not merged, not deployed** (2026-08-17). All four slices are
-> implemented on `feat/olx-portal-leads-mcp` — see `HANDOFF.md` beside this file
-> for the commit list, the verification actually run, and the merge steps.
-> Authored 2026-08-14; revised 2026-08-17 to make the MCP a hard prerequisite.
+> **Status: BUILT + MCP REGISTERED, not merged, not deployed** (2026-08-17).
+> All four slices are implemented on `feat/olx-portal-leads-mcp`, now REBASED
+> onto `origin/dev` — see `HANDOFF.md` beside this file for the commit list, the
+> verification actually run, what the rebase reconciled, and the merge steps.
+> Authored 2026-08-14; revised 2026-08-17 (MCP a hard prerequisite; then again
+> after the rebase folded this branch's paging doc into the `postgrest-row-cap`
+> pattern `dev` shipped for the same bug class).
 >
 > **Gate 1 is still open and still blocks deploy.** It needs the real
 > SECRET_KEY. The receiver is inert until then — an unconfigured secret 401s
@@ -148,25 +151,25 @@ inventory with the status legend · adapter contract · MCP design notes · chan
 log with live-probe dates), `KNOWLEDGE-BASE/MCP-SERVERS/olx.md` + the README
 row, and `KB § INDEX.md`.
 
-**`.mcp.json` registration — corrected 2026-08-17 against the tree.** The file
-is **gitignored** (per-machine, absolute `cwd`), so the row cannot ship in a
-commit. The canonical row is documented in `KNOWLEDGE-BASE/MCP-SERVERS/olx.md`:
+**`.mcp.json` registration — REGISTERED 2026-08-17, in its pre-merge form.**
+The file is **gitignored** (per-machine, absolute `cwd`), so the row cannot ship
+in a commit; the canonical before/after lives in
+`KNOWLEDGE-BASE/MCP-SERVERS/olx.md § Registration`.
 
-```json
-"olx": {
-  "command": "mcp/noctusai/.venv/bin/python",
-  "args": ["mcp/olx/server.py"],
-  "cwd": "<repo root>"
-}
-```
+The durable row (`args: ["mcp/olx/server.py"]`, `cwd: <repo root>`) cannot be
+used yet: `cwd` is the primary checkout, whose editable `noctusai_lib` gains
+`integrations.olx` only at the merge, so that form would ImportError at every
+session start. So the registered row points `args` at the **worktree's**
+`mcp/olx/server.py` instead — live now, verified over stdio through exactly
+that configuration (`connection_status` answered `ok:false` with the correct
+next-step, 9 tools listed).
 
-Register it **after this branch merges into `dev`**, not before: `cwd` points at
-the primary checkout, whose editable `noctusai_lib` has no `integrations.olx`
-until the merge lands, so a row added early loads a server that ImportErrors at
-every session start. Until then the connector is driven straight from its
-worktree over stdio (`python mcp/olx/server.py`) — which is how the tool surface
-was verified. Adding it to the session keep-list stays the user's call
-(`CLAUDE.md §1` context-budget rule).
+🔴 **Repoint at the merge, before the worktree is cleaned up.** Otherwise the
+row references a file that no longer exists.
+
+Adding it to the session keep-list stays the user's call (`CLAUDE.md §1`
+context-budget rule); it was added on their explicit instruction, so the API
+can be validated against the real key next session.
 
 ---
 
@@ -273,7 +276,7 @@ product code is written.
 | Wave | Slices | Agent |
 |---|---|---|
 | 1 | **A** (seed contract + parser + normalizer + adapter + webhook scheme) | `backend-engineer` |
-| 2 | **B** (`mcp/olx` + KB docs; `.mcp.json` row post-merge) | `backend-engineer` |
+| 2 | **B** (`mcp/olx` + KB docs; `.mcp.json` row REGISTERED, repoint at merge) | `backend-engineer` |
 | — | **🚦 Gate 1 — live validation.** Blocks waves 3–4. See below. | tech-lead + user (key) |
 | 3 | **C** (product backend), **D** (frontend) — parallel, file-disjoint | `backend-engineer` + `frontend-engineer` |
 | 4 | integration on the merged tip, gates, docs sync | tech-lead |

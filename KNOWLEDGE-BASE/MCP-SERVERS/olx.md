@@ -75,21 +75,36 @@ history cannot honour a deletion request. Local diagnostic aid, not an artifact.
 
 ## Registration
 
-`.mcp.json` is **gitignored** (per-machine, absolute `cwd`), so the row is
-documented here rather than committed:
+`.mcp.json` is **gitignored** (per-machine, absolute `cwd`), so the row lives
+here, not in a commit. It is **registered and live as of 2026-08-17**, in the
+pre-merge form:
 
 ```json
 "olx": {
   "command": "mcp/noctusai/.venv/bin/python",
-  "args": ["mcp/olx/server.py"],
+  "args": ["/Users/rapha/.../.claude/worktrees/olx-portal-leads-mcp/mcp/olx/server.py"],
   "cwd": "/Users/rapha/Documents/repository/NoctusAI/noctusai"
 }
 ```
 
-Add it **after** `feat/olx-portal-leads-mcp` merges to `dev` — `cwd` is the
-primary checkout, whose editable `noctusai_lib` gains `integrations.olx` only
-at the merge. Registering earlier loads a server that ImportErrors every
-session. Keep-list membership is the user's call (`CLAUDE.md` §1).
+🔴 **Repoint this at the merge.** The absolute `args` path is the worktree,
+because `cwd`'s editable `noctusai_lib` gains `integrations.olx` only when
+`feat/olx-portal-leads-mcp` lands — the primary-path form would ImportError at
+every session start until then. Once merged, and **before**
+`task_branch action=cleanup` removes the worktree, replace `args` with the
+durable relative form:
+
+```json
+  "args": ["mcp/olx/server.py"],
+```
+
+Cleaning the worktree without repointing leaves a server row whose file is
+gone: loud at session start, one line to fix, but it will look like a broken
+connector to whoever hits it first.
+
+Keep-list membership is the user's call (`CLAUDE.md` §1); this row was added on
+their explicit instruction so the API can be validated against the live key
+next session.
 
 ## Tests
 
