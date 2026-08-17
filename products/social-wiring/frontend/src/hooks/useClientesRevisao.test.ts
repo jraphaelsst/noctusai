@@ -71,7 +71,6 @@ beforeEach(() => {
 
 function grupo(overrides: Partial<RevisaoGrupo> = {}): RevisaoGrupo {
   return {
-    grupo_id: "g1",
     motivo: "C5",
     chave_canonica: "+5511974781330",
     candidatos: [
@@ -89,12 +88,12 @@ describe("normalizeRevisaoPage", () => {
   });
 
   it("paginates a bare array client-side when the backend has no server-side pagination", () => {
-    const groups = Array.from({ length: 5 }, (_, i) => grupo({ grupo_id: `g${i}` }));
+    const groups = Array.from({ length: 5 }, (_, i) => grupo({ chave_canonica: `+551190000000${i}` }));
     const result = normalizeRevisaoPage(groups, { page: 2, page_size: 2 });
     expect(result.total).toBe(5);
     expect(result.pages).toBe(3);
     expect(result.page).toBe(2);
-    expect(result.items.map((g) => g.grupo_id)).toEqual(["g2", "g3"]);
+    expect(result.items.map((g) => g.chave_canonica)).toEqual(["+5511900000002", "+5511900000003"]);
   });
 
   it("returns an empty page for a bare-null response, never throws", () => {

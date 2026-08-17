@@ -62,8 +62,17 @@ export interface RevisaoCandidato {
   ultimo_contato_em?: string | null;
 }
 
+/**
+ * NOTE: identity is `chave_canonica`, not a `grupo_id` — the backend
+ * (`clientes_router.py::list_revisao`/`merge_grupo`/`manter_separados`)
+ * never emits a `grupo_id` field; `POST .../{grupo}/merge` and
+ * `.../manter-separados` both match their path param against
+ * `chave_canonica`. An earlier revision of this type declared a
+ * `grupo_id` field nothing on the backend ever populated — every
+ * merge/manter-separados click silently POSTed to `.../undefined/...`
+ * and 404'd. Fixed alongside the pagination-envelope bug (2026-08-17).
+ */
 export interface RevisaoGrupo {
-  grupo_id: string;
   motivo: RevisaoMotivo;
   chave_canonica: string;
   candidatos: RevisaoCandidato[];

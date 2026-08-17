@@ -506,6 +506,37 @@ def _seed_review_group(scoped, *, key="+5511900000004"):
     return key, g1, g2
 
 
+def _seed_n_review_groups(scoped, n: int) -> list[str]:
+    """`n` independent 2-candidate review groups, each under its own key
+    (`+551190002{i:02d}`) — used by the pagination/ordering tests below,
+    which need MULTIPLE groups rather than `_seed_review_group`'s single
+    one. Returns the keys in seeded (= grouping) order."""
+    keys = [f"+551190002{i:02d}" for i in range(n)]
+    clientes_rows: list[dict] = []
+    touch_rows: list[dict] = []
+    for i, key in enumerate(keys):
+        a, b = str(uuid4()), str(uuid4())
+        clientes_rows += [
+            _cliente(a, f"Pessoa {i}A", incerta=True),
+            _cliente(b, f"Pessoa {i}B", incerta=True),
+        ]
+        touch_rows += [
+            _touch(
+                str(uuid4()), a, origem_id=f"L{i}A",
+                ocorreu_em="2026-01-01T00:00:00+00:00", chave=key,
+            ),
+            _touch(
+                str(uuid4()), b, origem_id=f"L{i}B",
+                ocorreu_em="2026-01-01T00:00:00+00:00", chave=key,
+            ),
+        ]
+    scoped.set_table_data("clientes", clientes_rows)
+    scoped.set_table_data("cliente_touches", touch_rows)
+    scoped.set_table_data("cliente_merges", [])
+    scoped.set_table_data("cliente_revisao_rejeitadas", [])
+    return keys
+
+
 class TestRevisao:
     def test_non_empty_against_seeded_fixture(self, client, scoped):
         """The Phase 1 checkpoint's central assertion (contract §5): a
@@ -513,11 +544,72 @@ class TestRevisao:
         key, _g1, _g2 = _seed_review_group(scoped)
         resp = client.get("/api/clientes/revisao", headers=_auth())
         assert resp.status_code == 200, resp.text
-        groups = resp.json()["groups"]
-        assert groups, "review queue came back empty against seeded review data"
-        assert groups[0]["chave_canonica"] == key
-        assert groups[0]["motivo"] == "C5"
-        assert len(groups[0]["candidatos"]) == 2
+        items = resp.json()["items"]
+        assert items, "review queue came back empty against seeded review data"
+        assert items[0]["chave_canonica"] == key
+        assert items[0]["motivo"] == "C5"
+        assert len(items[0]["candidatos"]) == 2
+
+    def test_response_envelope_matches_fe_contract(self, client, scoped):
+        """`products/social-wiring/frontend/src/hooks/useClientesRevisao.ts`
+        `normalizeRevisaoPage` recognizes exactly TWO shapes: a paginated
+        envelope `{items,total,page,pages}` (matching `PageOut` /
+        `ClientesPage` / `ImovelPage`) or a bare array — NOT a
+        `{groups:[...]}` envelope. A `{groups:[...]}` response silently
+        fell through both branches to an empty page while HTTP 200'ing
+        with real data (live incident: 350 real groups rendered as "fila
+        de revisão vazia"). Pin the exact key set so this route can never
+        quietly regress to a bespoke third shape."""
+        _seed_review_group(scoped)
+        resp = client.get("/api/clientes/revisao", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        assert set(resp.json().keys()) == {"items", "total", "page", "pages"}
+
+    def test_pagination_honors_page_and_page_size(self, client, scoped):
+        """Independent of the envelope-shape bug: the route previously
+        ignored `page`/`page_size` entirely and shipped every group (plus
+        every candidate row) in one payload."""
+        _seed_n_review_groups(scoped, 5)
+        resp = client.get(
+            "/api/clientes/revisao", params={"page": 2, "page_size": 2}, headers=_auth()
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] == 5
+        assert body["pages"] == 3
+        assert body["page"] == 2
+        assert len(body["items"]) == 2
+
+    def test_rejected_excluded_before_pagination(self, client, scoped):
+        """The subtle ordering requirement: `manter-separados` exclusion
+        MUST run BEFORE pagination, not after. Build 3 groups, reject the
+        FIRST, then request page 1 at page_size=2 — with filter-then-
+        paginate the 2 remaining groups fill the page exactly; with
+        paginate-then-filter the page would silently come back short (1
+        item on a page sized for 2), hiding real remaining work instead
+        of surfacing it on the next page."""
+        keys = _seed_n_review_groups(scoped, 3)
+        rejected_key = keys[0]
+
+        sanity = client.get(
+            "/api/clientes/revisao", params={"page": 1, "page_size": 10}, headers=_auth()
+        )
+        assert sanity.json()["total"] == 3
+
+        reject_resp = client.post(
+            f"/api/clientes/revisao/{rejected_key}/manter-separados", headers=_auth()
+        )
+        assert reject_resp.status_code == 200, reject_resp.text
+
+        resp = client.get(
+            "/api/clientes/revisao", params={"page": 1, "page_size": 2}, headers=_auth()
+        )
+        body = resp.json()
+        assert body["total"] == 2, "rejected group must not count toward total"
+        assert len(body["items"]) == 2, (
+            "page came back short — filter must run before pagination, not after"
+        )
+        assert rejected_key not in {g["chave_canonica"] for g in body["items"]}
 
 
 class TestMergeGrupo:
@@ -541,7 +633,7 @@ class TestMergeGrupo:
         assert all(t["cliente_id"] == g1 for t in touches)
 
         # the group no longer has 2+ candidates -> it must not resurface
-        revisao = client.get("/api/clientes/revisao", headers=_auth()).json()["groups"]
+        revisao = client.get("/api/clientes/revisao", headers=_auth()).json()["items"]
         assert key not in {g["chave_canonica"] for g in revisao}
 
     def test_unknown_grupo_404(self, client, scoped):
@@ -602,19 +694,19 @@ class TestManterSeparados:
     def test_durable_across_subsequent_reads(self, client, scoped):
         key, _g1, _g2 = _seed_review_group(scoped)
 
-        before = client.get("/api/clientes/revisao", headers=_auth()).json()["groups"]
+        before = client.get("/api/clientes/revisao", headers=_auth()).json()["items"]
         assert key in {g["chave_canonica"] for g in before}
 
         resp = client.post(f"/api/clientes/revisao/{key}/manter-separados", headers=_auth())
         assert resp.status_code == 200, resp.text
         assert resp.json() == {"chave_canonica": key, "rejeitado": True}
 
-        after = client.get("/api/clientes/revisao", headers=_auth()).json()["groups"]
+        after = client.get("/api/clientes/revisao", headers=_auth()).json()["items"]
         assert key not in {g["chave_canonica"] for g in after}
 
         # a THIRD read (simulating "next page load") must still exclude it —
         # this is the durability assertion, not a per-request cache.
-        again = client.get("/api/clientes/revisao", headers=_auth()).json()["groups"]
+        again = client.get("/api/clientes/revisao", headers=_auth()).json()["items"]
         assert key not in {g["chave_canonica"] for g in again}
 
     def test_idempotent_double_call(self, client, scoped):
