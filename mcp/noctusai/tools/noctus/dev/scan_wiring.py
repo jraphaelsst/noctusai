@@ -50,6 +50,14 @@ This tool is the automated mechanism named in the rule doc § 2a.
 """
 from __future__ import annotations
 
+# accept-with-rationale: "MCP detectors keep raw `import ast`" in
+# KB § PATTERNS/common/accept-with-rationale.md — `_factory_router_routes`
+# below is read-only analysis (find-callers + name-resolution: "is this
+# f-string Name bound to the enclosing factory function's own parameter"),
+# exactly the `ast`-appropriate case `KB § PATTERNS/common/ast.md` carves
+# out ("read-only / analysis-only... find-callers, find-pattern, name-
+# resolution"); it never writes code back, so `libcst` buys nothing here.
+import ast
 import logging
 import re
 from dataclasses import dataclass, field
@@ -447,27 +455,242 @@ class _BeRouteScan:
     raw_decorator_paths: list[tuple[str, str]] = field(default_factory=list)  # (method, raw_path)
 
 
-def _routes_from_file(content: str) -> tuple[list[tuple[str, str]], set[str]]:
-    """Return (per-file full routes, prefixes-found) for one Python file.
+# ---------------------------------------------------------------------------
+# Leg A — factory-router resolution (AST): a `montar_router(prefixo=...)`
+# shaped helper builds the SAME CRUD shape N times instead of N hand-written
+# router files (the DRY rule this repo enforces — `KB § PATTERNS/architect/
+# project-execution.md`). Regex-only extraction is BLIND to it: the prefix
+# at the `APIRouter(prefix=f"/api/{prefixo}", ...)` call site is an f-string,
+# not a quoted literal, so `_APIROUTER_PREFIX_RE` never matches, the file's
+# `file_prefixes` comes back empty, and every route the factory legitimately
+# registers reads as "does not exist" (8 false-positive `high` findings on
+# p-studio's `cadastros_router.py`, discovered 2026-08).
+#
+# AST-first BY CONSTRUCTION (`KB § PATTERNS/common/ast.md`): "is this f-string
+# interpolation a bare Name bound to the enclosing function's OWN parameter"
+# is a scoping question regex cannot express without re-implementing a
+# Python name resolver. `ast` (stdlib) is the right tool here specifically
+# because this is read-only analysis, never a rewrite — the boundary
+# `KB § PATTERNS/common/ast.md` draws for when `ast` (vs. `libcst`) is
+# appropriate.
+# ---------------------------------------------------------------------------
+
+def _joinedstr_template(
+    node: ast.JoinedStr, allowed_params: set[str],
+) -> list[tuple[str, str]] | None:
+    """Decompose an f-string AST into `[("lit", text) | ("param", name), …]`
+    — ONLY when every interpolation is a bare `Name` referencing one of the
+    enclosing function's OWN parameters. Anything else (an attribute/call/
+    subscript expression, a `Name` that is not a known parameter, a nested
+    f-string, …) returns `None` — the caller then skips the whole factory
+    for this file rather than guess (under-resolve, never mis-resolve)."""
+    parts: list[tuple[str, str]] = []
+    for value in node.values:
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            parts.append(("lit", value.value))
+        elif isinstance(value, ast.FormattedValue):
+            inner = value.value
+            if isinstance(inner, ast.Name) and inner.id in allowed_params:
+                parts.append(("param", inner.id))
+            else:
+                return None
+        else:
+            return None
+    return parts
+
+
+def _factory_shape(fn: ast.FunctionDef | ast.AsyncFunctionDef):
+    """Detect the `montar_router`-shaped factory in one module-level
+    function. Returns `(router_var, template_parts, decorator_routes,
+    decorator_lines, positional_params, all_params)`, or `None` when `fn`
+    does not match (most functions won't — deliberately narrow)."""
+    positional_params = [a.arg for a in (*fn.args.posonlyargs, *fn.args.args)]
+    all_params = set(positional_params) | {a.arg for a in fn.args.kwonlyargs}
+    if not all_params:
+        return None
+
+    router_var: str | None = None
+    template_parts: list[tuple[str, str]] | None = None
+    for stmt in ast.walk(fn):
+        if stmt is fn or not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        call = stmt.value
+        if not (
+            isinstance(target, ast.Name)
+            and isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Name)
+            and call.func.id == "APIRouter"
+        ):
+            continue
+        prefix_kw = next((kw for kw in call.keywords if kw.arg == "prefix"), None)
+        if prefix_kw is None or not isinstance(prefix_kw.value, ast.JoinedStr):
+            continue  # a literal-string prefix here is already regex-handled
+        parts = _joinedstr_template(prefix_kw.value, all_params)
+        if parts is None:
+            continue  # interpolates something other than a bare own-param
+        router_var, template_parts = target.id, parts
+        break
+
+    if router_var is None or template_parts is None:
+        return None
+
+    decorator_routes: list[tuple[str, str]] = []
+    decorator_lines: set[int] = set()
+    for node in ast.walk(fn):
+        if node is fn or not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for dec in node.decorator_list:
+            if not (
+                isinstance(dec, ast.Call)
+                and isinstance(dec.func, ast.Attribute)
+                and isinstance(dec.func.value, ast.Name)
+                and dec.func.value.id == router_var
+                and dec.func.attr in _HTTP_METHODS
+            ):
+                continue
+            if dec.args and not (
+                isinstance(dec.args[0], ast.Constant) and isinstance(dec.args[0].value, str)
+            ):
+                continue  # non-literal path arg — skip THIS decorator, not the factory
+            path = dec.args[0].value if dec.args else "/"
+            decorator_routes.append((dec.func.attr, path))
+            decorator_lines.add(dec.lineno)
+
+    if not decorator_routes:
+        return None
+    return router_var, template_parts, decorator_routes, decorator_lines, positional_params, all_params
+
+
+def _bind_call_args(
+    call: ast.Call, positional_params: list[str], all_params: set[str],
+) -> dict[str, ast.expr]:
+    """Best-effort positional+keyword argument binding for one call to the
+    factory. A `*args`/`**kwargs` spread is deliberately NOT unpacked (we
+    can't attribute it to a specific parameter) — the bound parameter is
+    then simply absent, and `_resolve_prefix_template` treats an absent
+    binding as unresolvable (falls back to the wildcard placeholder)."""
+    binding: dict[str, ast.expr] = {}
+    for i, arg in enumerate(call.args):
+        if isinstance(arg, ast.Starred):
+            continue
+        if i < len(positional_params):
+            binding[positional_params[i]] = arg
+    for kw in call.keywords:
+        if kw.arg is not None and kw.arg in all_params:
+            binding[kw.arg] = kw.value
+    return binding
+
+
+def _resolve_prefix_template(
+    template_parts: list[tuple[str, str]], binding: dict[str, ast.expr],
+) -> str:
+    """Render the factory's prefix template against one call's resolved
+    argument bindings. A parameter bound to a literal string resolves
+    exactly; a parameter that is unbound OR bound to a non-literal
+    expression falls back to `_PLACEHOLDER` (`{*}`) — the SAME wildcard
+    segment marker `_normalize_path` already produces for a FastAPI
+    `{id}` segment, so the resulting route still MATCHES any FE call of the
+    same shape rather than silently vanishing (this detector's own
+    under-report > over-report charter — a route we can't pin down exactly
+    is still a route, not an absence)."""
+    out: list[str] = []
+    for kind, val in template_parts:
+        if kind == "lit":
+            out.append(val)
+            continue
+        node = binding.get(val)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            out.append(node.value)
+        else:
+            out.append(_PLACEHOLDER)
+    return "".join(out)
+
+
+def _factory_router_routes(content: str) -> tuple[list[tuple[str, str]], set[int]]:
+    """AST-resolve every route registered through a `montar_router`-shaped
+    factory in ONE file. Returns `(routes, decorator_lines)` — `routes` is
+    the fully-joined `(method, normalized_path)` set (one entry per
+    factory call-site × per decorator route in its body); `decorator_lines`
+    is the 1-based line numbers of the `@router_var.<method>(...)`
+    decorators consumed here, so the caller's plain-regex decorator scan can
+    exclude them (already resolved — precisely, or as an explicit wildcard —
+    re-offering them under unrelated prefixes found elsewhere in the file
+    would just add noise).
+
+    Best-effort: a parse failure, or ANY shape this function doesn't
+    recognise (a dynamic prefix built some other way — `.format()`, string
+    concatenation, an f-string interpolating something other than a bare
+    OWN parameter, a factory that isn't module-level, …) contributes NOTHING
+    and consumes NO lines — the existing regex path runs over those lines
+    completely unchanged. Under-resolving here is safe (worst case: today's
+    pre-existing behavior for that one file); mis-resolving would not be.
+    """
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return [], set()
+
+    routes: list[tuple[str, str]] = []
+    consumed_lines: set[int] = set()
+    for fn in tree.body:
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        shape = _factory_shape(fn)
+        if shape is None:
+            continue
+        _router_var, template_parts, decorator_routes, decorator_lines, positional_params, all_params = shape
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == fn.name
+            ):
+                continue
+            binding = _bind_call_args(node, positional_params, all_params)
+            prefix = _resolve_prefix_template(template_parts, binding)
+            for method, raw_path in decorator_routes:
+                routes.append((method, _join_route(prefix, raw_path)))
+        consumed_lines |= decorator_lines
+
+    return routes, consumed_lines
+
+
+def _routes_from_file(
+    content: str,
+) -> tuple[list[tuple[str, str]], set[str], list[tuple[str, str]]]:
+    """Return (per-file full routes, prefixes-found, non-factory bare
+    decorators) for one Python file.
 
     Each file is treated as a unit: the file's `APIRouter(prefix=...)`
     declarations form the file's prefix set; every `@router.<method>` decorator
     in the file is joined to EACH file-local prefix (a file usually has one).
-    A file with NO APIRouter prefix contributes its bare decorator paths so
-    a same-origin / prefix-at-mount-time route still resolves.
+    A file with NO APIRouter prefix contributes its bare decorator paths (the
+    3rd element) so the caller can re-offer them under prefixes discovered
+    elsewhere (covers prefix-at-mount-time).
+
+    ALSO resolves factory-registered routes (`_factory_router_routes`) — a
+    router built by a helper function called with literal keyword/positional
+    arguments in the same module (`KB § PATTERNS/common/ast.md`). Decorators
+    consumed there are excluded from BOTH the joined `full_routes` above AND
+    the returned bare-decorator list — they're already resolved (precisely,
+    or as an explicit wildcard); re-offering them under unrelated prefixes
+    found elsewhere in the product would just add noise / mis-joins.
     """
     file_prefixes = {m.group("prefix") for m in _APIROUTER_PREFIX_RE.finditer(content)}
     include_prefixes = {m.group("prefix") for m in _INCLUDE_ROUTER_PREFIX_RE.finditer(content)}
+    factory_routes, factory_lines = _factory_router_routes(content)
     decorators = [
         (m.group("method").lower(), m.group("path") or "/")
         for m in _BE_ROUTE_RE.finditer(content)
+        if (content.count("\n", 0, m.start()) + 1) not in factory_lines
     ]
-    full_routes: list[tuple[str, str]] = []
+    full_routes: list[tuple[str, str]] = list(factory_routes)
     join_prefixes = file_prefixes or {""}
     for method, raw in decorators:
         for prefix in join_prefixes:
             full_routes.append((method, _join_route(prefix, raw)))
-    return full_routes, (file_prefixes | include_prefixes)
+    return full_routes, (file_prefixes | include_prefixes), decorators
 
 
 def _join_route(prefix: str, raw: str) -> str:
@@ -499,15 +722,17 @@ def _scan_backend_routes(be_root: Path, repo_root: Path | None = None) -> _BeRou
     bare_decorators: list[tuple[str, str]] = []
 
     def _ingest(content: str) -> None:
-        full_routes, prefixes = _routes_from_file(content)
+        full_routes, prefixes, decorators = _routes_from_file(content)
         scan.prefixes |= prefixes
         for r in full_routes:
             scan.routes.add(r)
         # Track decorator paths that had no file-local prefix (their joined
         # route is the bare path) so we can re-offer them under seed prefixes.
+        # `decorators` already excludes factory-resolved lines (see
+        # `_routes_from_file`) — those are done, re-offering them here would
+        # just re-join them under unrelated prefixes.
         if not prefixes:
-            for m in _BE_ROUTE_RE.finditer(content):
-                bare_decorators.append((m.group("method").lower(), m.group("path") or "/"))
+            bare_decorators.extend(decorators)
 
     if scan_root.exists():
         for path in scan_root.rglob("*"):

@@ -242,6 +242,127 @@ class TestLegADynamicPaths:
         assert len(result["indeterminate_routes"]) == 1
 
 
+class TestLegAFactoryRouterResolution:
+    """Regression (2026-08, discovered on p-studio's `cadastros_router.py`):
+    a router built by a FACTORY function — `APIRouter(prefix=f"/api/{param}",
+    ...)` where `param` is the factory's own parameter, called with LITERAL
+    keyword arguments at module level — was invisible to the regex-only
+    extraction (the prefix isn't a quoted literal at the `APIRouter(...)`
+    call site), so every route the factory legitimately registers read as
+    "does not exist": 8 false-positive `high` findings, red CI.
+
+    Deliberately uses a DIFFERENT factory name / parameter name / resource
+    names than p-studio's `montar_router(prefixo=...)` — this pins the
+    SHAPE, not a p-studio special-case (the fix must not be a hidden
+    slug-branch)."""
+
+    _FACTORY_ROUTER_PY = (
+        "from fastapi import APIRouter\n"
+        "\n"
+        "def build_crud_router(*, resource: str, tag: str):\n"
+        '    router = APIRouter(prefix=f"/api/{resource}", tags=[tag])\n'
+        "\n"
+        '    @router.get("")\n'
+        "    def listar():\n        return []\n"
+        "\n"
+        '    @router.post("")\n'
+        "    def criar():\n        return {}\n"
+        "\n"
+        '    @router.get("/{item_id}")\n'
+        "    def obter(item_id: str):\n        return {}\n"
+        "\n"
+        '    @router.patch("/{item_id}")\n'
+        "    def atualizar(item_id: str):\n        return {}\n"
+        "\n"
+        "    return router\n"
+        "\n"
+        'widgets_router = build_crud_router(resource="widgets", tag="widgets")\n'
+        'gadgets_router = build_crud_router(resource="gadgets", tag="gadgets")\n'
+    )
+    _MAIN_PY = (
+        "from fastapi import FastAPI\n"
+        "from app.routers.crud import widgets_router, gadgets_router\n"
+        "app = FastAPI()\n"
+        "app.include_router(widgets_router)\n"
+        "app.include_router(gadgets_router)\n"
+    )
+
+    def test_factory_resolved_routes_not_flagged(self, tmp_path: Path):
+        """THE repro: FE calls hitting the factory's CONCRETE, literally-
+        resolved routes (both call-sites, both CRUD verbs) must NOT be
+        flagged — this is the false-positive class itself."""
+        repo = _mk_product(tmp_path, "widget-co", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/crud.py": self._FACTORY_ROUTER_PY,
+            "frontend/src/pages/Widgets.tsx": (
+                "await api.get('/api/widgets');\n"
+                "await api.post('/api/widgets', body);\n"
+                "await api.patch(`/api/widgets/${id}`, body);\n"
+            ),
+            "frontend/src/pages/Gadgets.tsx": (
+                "await api.get('/api/gadgets');\n"
+                "await api.patch(`/api/gadgets/${id}`, body);\n"
+            ),
+        })
+        result = scan_wiring("widget-co", repo_root=repo)
+        assert result["missing_routes"] == [], result["missing_routes"]
+        assert result["backend_routes_found"] >= 8  # 4 verbs x 2 call-sites
+
+    def test_factory_router_still_flags_genuine_miss(self, tmp_path: Path):
+        """🔴 Not a blanket mute: a method the factory never registers
+        (DELETE — only get/post/get-by-id/patch are wired) is STILL flagged
+        missing, on the SAME factory-produced file/product as the positive
+        case above."""
+        repo = _mk_product(tmp_path, "widget-co", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/crud.py": self._FACTORY_ROUTER_PY,
+            "frontend/src/pages/Widgets.tsx": (
+                "await api.delete(`/api/widgets/${id}`);\n"
+            ),
+        })
+        result = scan_wiring("widget-co", repo_root=repo)
+        assert len(result["missing_routes"]) == 1
+        assert "DELETE" in result["missing_routes"][0]["detail"]
+
+    def test_factory_router_wrong_resource_still_flagged(self, tmp_path: Path):
+        """A resource the factory was never CALLED with (no `sprockets_router
+        = build_crud_router(resource="sprockets", ...)` call-site exists) is
+        still a genuine miss — the factory shape doesn't make every possible
+        prefix magically exist."""
+        repo = _mk_product(tmp_path, "widget-co", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/crud.py": self._FACTORY_ROUTER_PY,
+            "frontend/src/pages/Sprockets.tsx": (
+                "await api.get('/api/sprockets');\n"
+            ),
+        })
+        result = scan_wiring("widget-co", repo_root=repo)
+        assert len(result["missing_routes"]) == 1
+        assert "sprockets" in result["missing_routes"][0]["detail"]
+
+    def test_factory_call_with_non_literal_prefix_arg_falls_back_to_wildcard(self, tmp_path: Path):
+        """The call-site binding for the templated parameter is NOT a
+        literal (`resource=dynamic_name`) — segment count/shape IS known
+        (single dynamic prefix segment) but its literal value is not.
+        Per the detector's under-report > over-report charter this must
+        still produce a route (as a wildcard `{*}` prefix segment) rather
+        than silently vanish — an FE call of the same shape must NOT be
+        flagged missing."""
+        router_py = self._FACTORY_ROUTER_PY + (
+            "dynamic_name = 'whatever'\n"
+            "dynamic_router = build_crud_router(resource=dynamic_name, tag='dyn')\n"
+        )
+        repo = _mk_product(tmp_path, "widget-co", {
+            "backend/app/main.py": self._MAIN_PY,
+            "backend/app/routers/crud.py": router_py,
+            "frontend/src/pages/Anything.tsx": (
+                "await api.get('/api/literally-anything');\n"
+            ),
+        })
+        result = scan_wiring("widget-co", repo_root=repo)
+        assert result["missing_routes"] == [], result["missing_routes"]
+
+
 class TestNormalizePath:
     def test_dynamic_segments_normalize_equal(self):
         assert _normalize_path("/api/plans/${planId}") == _normalize_path("/api/plans/{plan_id}")

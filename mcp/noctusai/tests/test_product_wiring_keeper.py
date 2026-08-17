@@ -99,6 +99,54 @@ class TestCheckFeRouteMissing:
         product = _mk_file(tmp_path, "backend-only", "backend/app/main.py", _MAIN_PY)
         assert check_fe_route_missing(product) == []
 
+    # -- factory-router shape (2026-08 regression: p-studio's `cadastros_
+    # router.py` — `APIRouter(prefix=f"/api/{param}")` built by a factory
+    # function called with literal kwargs — read as 8 missing routes at
+    # this exact keeper. Full positive/negative/wildcard-fallback coverage
+    # lives in `test_scan_wiring.py::TestLegAFactoryRouterResolution` (the
+    # shared predicate `check_fe_route_missing` wraps); this pins the same
+    # fix at the KEEPER surface, per this file's own convention. --
+
+    _FACTORY_ROUTER_PY = (
+        "from fastapi import APIRouter\n"
+        "\n"
+        "def build_crud_router(*, resource: str, tag: str):\n"
+        '    router = APIRouter(prefix=f"/api/{resource}", tags=[tag])\n'
+        "\n"
+        '    @router.get("")\n'
+        "    def listar():\n        return []\n"
+        "\n"
+        '    @router.post("")\n'
+        "    def criar():\n        return {}\n"
+        "\n"
+        "    return router\n"
+        "\n"
+        'widgets_router = build_crud_router(resource="widgets", tag="widgets")\n'
+    )
+
+    def test_factory_router_resolved_route_not_flagged(self, tmp_path: Path) -> None:
+        _mk_file(tmp_path, "widget-co", "backend/app/main.py", _MAIN_PY)
+        product = _mk_file(
+            tmp_path, "widget-co", "backend/app/routers/crud.py", self._FACTORY_ROUTER_PY,
+        )
+        product = _mk_file(
+            tmp_path, "widget-co", "frontend/src/pages/Widgets.tsx",
+            "await api.post('/api/widgets', body);\n",
+        )
+        assert check_fe_route_missing(product) == []
+
+    def test_factory_router_genuine_miss_still_flagged_high(self, tmp_path: Path) -> None:
+        _mk_file(tmp_path, "widget-co", "backend/app/main.py", _MAIN_PY)
+        _mk_file(tmp_path, "widget-co", "backend/app/routers/crud.py", self._FACTORY_ROUTER_PY)
+        product = _mk_file(
+            tmp_path, "widget-co", "frontend/src/pages/Widgets.tsx",
+            "await api.delete('/api/widgets/1');\n",
+        )
+        issues = check_fe_route_missing(product)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == "high"
+        assert "DELETE" in issues[0]["issue"]
+
 
 # ---------------------------------------------------------------------------
 # Leg B — check_name_on_nome_select
