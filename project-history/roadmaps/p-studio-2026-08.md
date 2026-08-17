@@ -236,6 +236,30 @@ Recorded here because they are live, not hypothetical:
   it as a description of live state. Rotating the password remains the
   user's, per `PROJECT.md § 4`.
 
+  **Closed 2026-08-17 — the account was REMOVED, not rotated.** On the user's
+  explicit instruction, `admin@pstudio.local`
+  (`7cfc5a7c-0503-4950-9301-d71e816c8f94`) was deleted from the live database
+  and forward migration
+  `products/p-studio/backend/migrations/007_remover_admin_de_desenvolvimento.sql`
+  records it. Blast radius was measured before the delete, not after:
+  `organizations.owner_id` 0 · `audit_logs` 0 · `notifications` 0 ·
+  `api_keys.created_by` 0 · `ai_consent` 0 · `ai_feedback` 0 —
+  only `noctus_users` (1) and the `auth` cascade (identities, sessions). Org
+  `P Studio` (`cb78914a-…`) survives with 0 members by design; the real owner
+  arrives via `p_studio.invitations` (migration `006`). Domain seeds intact
+  (8 serviços, 9 equipamentos).
+
+  > **The agent that removed it first repeated the exact error this entry
+  > documents.** It reported the account to the user as a live `senha123`
+  > exposure — reading `002:90` and inferring the database — *without having
+  > read this section*, which had settled the question three days earlier. The
+  > user approved the deletion against that overstated premise. The removal
+  > still stands on its own merits (a dev-labelled admin/owner account, live
+  > in production auth, password of record unknown), but the justification
+  > given at the time was wrong. Third instance of file-inferred-as-live-state
+  > on this project. If a fourth appears, this stops being a note and becomes
+  > a keeper.
+
 - ~~`url_base = 'http://localhost:5176'` is a localhost URL in a shared
   platform table~~ — **also mischaracterized.** Every one of the 13 catalog
   rows carries `http://localhost:<port>`, including the four products

@@ -57,16 +57,23 @@ frontends) nem com o `dilidu` (8010/5175). Vale registrar, porém, uma colisão
 
 ## Credenciais de desenvolvimento
 
-A migration `002_plataforma_e_seeds.sql` provisiona um admin local:
+A migration `002_plataforma_e_seeds.sql` provisiona um admin local
+(`admin@pstudio.local`, senha `senha123` no arquivo). **Num banco novo essa
+conta não sobrevive**: a `007_remover_admin_de_desenvolvimento.sql` roda logo
+depois e a remove — de propósito, porque as migrations deste produto rodam
+contra o Supabase de PRODUÇÃO, compartilhado pela frota, e uma conta
+admin/owner rotulada como "de desenvolvimento" não tem o que fazer lá.
 
-| Email | Senha |
-|---|---|
-| `admin@pstudio.local` | `senha123` |
+Para entrar em ambiente local, provisione um usuário pelo fluxo normal da
+plataforma (convite — `p_studio.invitations`, migration `006`).
 
-⚠️ Só para ambiente local. Em produção o usuário é provisionado pelo fluxo
-normal da plataforma. (O protótipo gravou a senha real do dono do estúdio no
-histórico do git — ver `_NOC_ABSORPTION/01-DATA-MODEL.md` § Security findings.
-Essa senha precisa ser rotacionada.)
+⚠️ A conta semeada foi removida do banco vivo em **2026-08-17**; ela existia
+desde 2026-08-13. A senha viva **não** era `senha123` (conferido em
+2026-08-14 — ver `project-history/roadmaps/p-studio-2026-08.md`
+§ Known hazards); o arquivo da `002` não é registro fiel do que rodou. O
+protótipo Lovable gravou a senha real do dono do estúdio no histórico do git
+— ver `_NOC_ABSORPTION/01-DATA-MODEL.md` § Security findings. Essa senha
+precisa ser rotacionada.
 
 ## Arquitetura
 
