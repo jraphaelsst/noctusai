@@ -106,48 +106,15 @@ def _connect() -> sqlite3.Connection:
 _pack_vec = _ec.pack_vec
 
 
-# Metadata table (always present — used in both engines).
-_META_SCHEMA = """
-CREATE TABLE IF NOT EXISTS cache_meta (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS kb_chunks (
-  rowid_alias  INTEGER PRIMARY KEY AUTOINCREMENT,
-  path         TEXT NOT NULL,
-  chunk_idx    INTEGER NOT NULL,
-  chunk_text   TEXT NOT NULL,
-  source_sha   TEXT NOT NULL,
-  cached_at    TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_kb_chunks_path ON kb_chunks(path);
-"""
-
-# Fast-path: vec0 virtual table for the binary embedding column. Joined to
-# kb_chunks via rowid for the chunk_text / metadata.
-_VEC_SCHEMA = f"""
-CREATE VIRTUAL TABLE IF NOT EXISTS kb_vec USING vec0(
-  embedding float[{EMBEDDING_DIM}]
-);
-"""
-
-# Fallback-path: JSON column on the same kb_chunks table when sqlite-vec is
-# unavailable. The schema differs by ONE column to keep migrations trivial.
-_FALLBACK_SCHEMA = """
-CREATE TABLE IF NOT EXISTS kb_embeddings_json (
-  chunk_rowid  INTEGER PRIMARY KEY,    -- → kb_chunks.rowid_alias
-  embedding    TEXT NOT NULL           -- JSON-serialized list[float]
-);
-"""
-
-
+# Schema (kb_chunks + kb_vec + kb_embeddings_json) is owned by the shared
+# `_ec.init_schema` — single source of truth (2026-08-14 cache-mirror-
+# join-drift fix: creating ONLY the current process's engine table here,
+# duplicated from `_embedding_corpus`'s copy, is exactly how the two
+# sibling tables drifted out of sync across environments in the first
+# place). See `_embedding_corpus.init_schema` + KB § PATTERNS/devops/
+# cache-deploy-mirror.md.
 def _init_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(_META_SCHEMA)
-    if _HAS_VEC:
-        conn.executescript(_VEC_SCHEMA)
-    else:
-        conn.executescript(_FALLBACK_SCHEMA)
-    conn.commit()
+    _ec.init_schema(conn, "kb_chunks", "kb_vec", "kb_embeddings_json")
 
 
 # v4.0 N=4 consolidation: chunker + embedder now in _embedding_corpus.
@@ -202,20 +169,17 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
             if row and row["source_sha"] == sha:
                 skipped.append(rel)
                 continue
-        # Rebuild this doc's rows — delete from both engines' tables.
-        # rowids of kb_chunks are referenced by kb_vec AND kb_embeddings_json;
-        # collect old rowids and clear both.
+        # Rebuild this doc's rows — delete from BOTH engines' tables
+        # unconditionally (2026-08-14 fix), not just the current process's
+        # `_HAS_VEC` branch: a PRIOR refresh of this same doc may have run
+        # under a DIFFERENT environment (see `_ec.delete_embedding_rows`).
         cur = conn.execute("SELECT rowid_alias FROM kb_chunks WHERE path=?", (rel,))
         old_rowids = [r[0] for r in cur.fetchall()]
         if old_rowids:
-            placeholders = ",".join("?" * len(old_rowids))
-            if _HAS_VEC:
-                conn.execute(f"DELETE FROM kb_vec WHERE rowid IN ({placeholders})", old_rowids)
-            else:
-                conn.execute(
-                    f"DELETE FROM kb_embeddings_json WHERE chunk_rowid IN ({placeholders})",
-                    old_rowids,
-                )
+            _ec.delete_embedding_rows(
+                conn, vec_table="kb_vec", json_table="kb_embeddings_json",
+                rowids=old_rowids,
+            )
             conn.execute("DELETE FROM kb_chunks WHERE path=?", (rel,))
         try:
             text = md.read_text(encoding="utf-8")
@@ -262,14 +226,10 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
             total_rows += 1
         if not per_doc_ok and per_doc_rowids:
             # all-or-nothing per doc — roll back the partial inserts.
-            placeholders = ",".join("?" * len(per_doc_rowids))
-            if _HAS_VEC:
-                conn.execute(f"DELETE FROM kb_vec WHERE rowid IN ({placeholders})", per_doc_rowids)
-            else:
-                conn.execute(
-                    f"DELETE FROM kb_embeddings_json WHERE chunk_rowid IN ({placeholders})",
-                    per_doc_rowids,
-                )
+            _ec.delete_embedding_rows(
+                conn, vec_table="kb_vec", json_table="kb_embeddings_json",
+                rowids=per_doc_rowids,
+            )
             conn.execute("DELETE FROM kb_chunks WHERE path=?", (rel,))
             total_rows -= len(per_doc_rowids)
             continue

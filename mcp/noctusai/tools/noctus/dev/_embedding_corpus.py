@@ -437,12 +437,147 @@ def init_schema(
     json_table: str,
     extra_columns: Optional[dict[str, str]] = None,
 ) -> None:
+    """Create the chunks table + BOTH sibling embedding tables.
+
+    Before 2026-08-14 this created ONLY the current process's engine table
+    (`if HAS_VEC: vec else: json`). `sqlite-vec` is an opportunistically
+    pip-installed, UNPINNED package (absent from every requirements.txt /
+    pyproject.toml in this repo) — present in `mcp/noctusai/.venv` (the
+    MCP-server + pre-push venv) but not in the repo-root `venv` or a fresh
+    CI checkout. A cache refreshed across environments with different
+    `HAS_VEC` values over its lifetime therefore only ever got ONE of its
+    two sibling tables created, so a later delete running under the OTHER
+    environment had nowhere to clean up the previous generation's rows —
+    both tables silently drifted into disjoint halves of the corpus (see
+    `delete_embedding_rows` below + KB § PATTERNS/devops/
+    cache-deploy-mirror.md — the 2026-08-14 cache-mirror-join-drift root
+    cause). Creating BOTH tables unconditionally here closes that gap.
+
+    `json_table` is a PLAIN table (zero extension dependency) — always
+    safe to create. `vec_table` is a vec0 VIRTUAL table — only creatable
+    when the sqlite-vec extension is loaded on this connection (HAS_VEC).
+    """
     conn.executescript(meta_schema_sql(chunks_table, extra_columns))
+    conn.executescript(json_fallback_schema_sql(json_table))
     if HAS_VEC:
         conn.executescript(vec_schema_sql(vec_table))
-    else:
-        conn.executescript(json_fallback_schema_sql(json_table))
     conn.commit()
+
+
+def delete_embedding_rows(
+    conn: sqlite3.Connection,
+    *,
+    vec_table: str,
+    json_table: str,
+    rowids: list[int],
+) -> None:
+    """Delete `rowids` from BOTH sibling embedding tables, unconditionally.
+
+    NOT gated on the current process's `HAS_VEC` alone (the pre-2026-08-14
+    bug) — a row may have been WRITTEN by a different process/environment
+    than the one running this delete (the pre-push githook's venv vs. the
+    long-lived MCP-server venv vs. CI can each have a different sqlite-vec
+    availability), so cleaning only "this process's" engine strands the
+    OTHER engine's rows as permanent orphans referencing a since-deleted
+    chunk rowid. `json_table` is always reachable (plain table). The
+    `vec_table` delete only runs when `HAS_VEC` — a documented residual
+    boundary: an environment without the extension cannot reach a vec0
+    virtual table at all, so it cannot clean vec-side orphans it did not
+    create. In practice the canonical write path (pre-push + the MCP
+    server) both run under the sqlite-vec-capable venv, so this covers
+    the dominant case. KB § PATTERNS/devops/cache-deploy-mirror.md.
+    """
+    if not rowids:
+        return
+    placeholders = ",".join("?" * len(rowids))
+    conn.execute(
+        f"DELETE FROM {json_table} WHERE chunk_rowid IN ({placeholders})", rowids
+    )
+    if HAS_VEC:
+        conn.execute(
+            f"DELETE FROM {vec_table} WHERE rowid IN ({placeholders})", rowids
+        )
+
+
+def backfill_cross_engine_embeddings(
+    conn: sqlite3.Connection,
+    *,
+    chunks_table: str,
+    vec_table: str,
+    json_table: str,
+) -> dict[str, Any]:
+    """One-time LOSSLESS repair for the 2026-08-14 cache-mirror-join-drift
+    incident.
+
+    Root cause (see `delete_embedding_rows`): every chunk's embedding lives
+    in EXACTLY ONE sibling table (never both, never neither — verified
+    empirically across all 4 local caches before this fix shipped). This
+    copies every embedding that exists ONLY in `json_table` across into
+    `vec_table` — same vector, decoded+re-packed, ZERO re-embed / zero
+    OpenAI spend — so both engines become self-consistent supersets of
+    every LIVE chunk's embedding. It then prunes rows in either sibling
+    table that reference a chunk rowid no longer present in `chunks_table`
+    (genuine garbage from a since-superseded doc generation).
+
+    Requires `HAS_VEC` (the copy target is a vec0 virtual table) — returns
+    `status='skipped-no-vec'` otherwise (a no-op, not an error: run this
+    from an environment with sqlite-vec loaded, e.g. `mcp/noctusai/.venv`).
+    Idempotent — safe to re-run (rows already in `vec_table` are skipped).
+
+    Returns `{ok, status, copied_json_to_vec, deleted_orphan_json,
+    deleted_orphan_vec, chunks_total}`.
+    """
+    if not HAS_VEC:
+        return {
+            "ok": True, "status": "skipped-no-vec",
+            "copied_json_to_vec": 0, "deleted_orphan_json": 0,
+            "deleted_orphan_vec": 0, "chunks_total": 0,
+        }
+
+    live_rowids = {
+        r[0] for r in conn.execute(
+            f"SELECT rowid_alias FROM {chunks_table}"
+        ).fetchall()
+    }
+    existing_vec_rowids = {
+        r[0] for r in conn.execute(f"SELECT rowid FROM {vec_table}").fetchall()
+    }
+
+    copied = 0
+    for chunk_rowid, embedding_json in conn.execute(
+        f"SELECT chunk_rowid, embedding FROM {json_table}"
+    ).fetchall():
+        if chunk_rowid in existing_vec_rowids or chunk_rowid not in live_rowids:
+            continue
+        try:
+            vec = json.loads(embedding_json)
+        except (TypeError, ValueError):
+            continue
+        conn.execute(
+            f"INSERT INTO {vec_table}(rowid, embedding) VALUES (?, ?)",
+            (chunk_rowid, pack_vec(vec)),
+        )
+        copied += 1
+
+    # Prune true garbage — sibling rows whose chunk no longer exists (a doc
+    # generation superseded since that row was written).
+    deleted_json = conn.execute(
+        f"DELETE FROM {json_table} WHERE chunk_rowid NOT IN "
+        f"(SELECT rowid_alias FROM {chunks_table})"
+    ).rowcount
+    deleted_vec = conn.execute(
+        f"DELETE FROM {vec_table} WHERE rowid NOT IN "
+        f"(SELECT rowid_alias FROM {chunks_table})"
+    ).rowcount
+
+    conn.commit()
+    return {
+        "ok": True, "status": "repaired",
+        "copied_json_to_vec": copied,
+        "deleted_orphan_json": deleted_json,
+        "deleted_orphan_vec": deleted_vec,
+        "chunks_total": len(live_rowids),
+    }
 
 
 # ── Markdown corpus spec + refresh + search ────────────────────────────────
@@ -472,17 +607,12 @@ def _delete_rows_for_path(conn: sqlite3.Connection, corpus: MarkdownCorpus, rel:
     old_rowids = [r[0] for r in cur.fetchall()]
     if not old_rowids:
         return
-    placeholders = ",".join("?" * len(old_rowids))
-    if HAS_VEC:
-        conn.execute(
-            f"DELETE FROM {corpus.vec_table} WHERE rowid IN ({placeholders})",
-            old_rowids,
-        )
-    else:
-        conn.execute(
-            f"DELETE FROM {corpus.json_table} WHERE chunk_rowid IN ({placeholders})",
-            old_rowids,
-        )
+    delete_embedding_rows(
+        conn,
+        vec_table=corpus.vec_table,
+        json_table=corpus.json_table,
+        rowids=old_rowids,
+    )
     conn.execute(f"DELETE FROM {corpus.chunks_table} WHERE path=?", (rel,))
 
 
@@ -523,14 +653,9 @@ def prune_orphan_chunks(
                 (orphan,),
             ).fetchall()
         ]
-        if rowids:
-            ph = ",".join("?" * len(rowids))
-            if HAS_VEC:
-                conn.execute(f"DELETE FROM {vec_table} WHERE rowid IN ({ph})", rowids)
-            else:
-                conn.execute(
-                    f"DELETE FROM {json_table} WHERE chunk_rowid IN ({ph})", rowids
-                )
+        delete_embedding_rows(
+            conn, vec_table=vec_table, json_table=json_table, rowids=rowids
+        )
         conn.execute(
             f"DELETE FROM {chunks_table} WHERE path=?{organ_filter}", (orphan,)
         )
@@ -658,17 +783,12 @@ def refresh_markdown_corpus(
             total_rows += 1
 
         if not per_doc_ok and per_doc_rowids:
-            ph = ",".join("?" * len(per_doc_rowids))
-            if HAS_VEC:
-                conn.execute(
-                    f"DELETE FROM {corpus.vec_table} WHERE rowid IN ({ph})",
-                    per_doc_rowids,
-                )
-            else:
-                conn.execute(
-                    f"DELETE FROM {corpus.json_table} WHERE chunk_rowid IN ({ph})",
-                    per_doc_rowids,
-                )
+            delete_embedding_rows(
+                conn,
+                vec_table=corpus.vec_table,
+                json_table=corpus.json_table,
+                rowids=per_doc_rowids,
+            )
             conn.execute(
                 f"DELETE FROM {corpus.chunks_table} WHERE path=?", (rel,)
             )
@@ -838,7 +958,7 @@ __all__ = [
     "now_iso", "sha_file",
     "chunk_markdown", "embed_sync", "cosine", "top_k_similar", "pack_vec", "connect_cache",
     "meta_schema_sql", "vec_schema_sql", "json_fallback_schema_sql",
-    "init_schema",
+    "init_schema", "delete_embedding_rows", "backfill_cross_engine_embeddings",
     "MarkdownCorpus", "refresh_markdown_corpus", "search_markdown_corpus",
     "aggregate_source_sha",
 ]
