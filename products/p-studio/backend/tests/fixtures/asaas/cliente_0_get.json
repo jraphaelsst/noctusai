@@ -1,0 +1,57 @@
+{
+  "_procedencia": "capturado da API viva do Asaas (sandbox)",
+  "gravado_em": "2026-08-13T20:32:13+00:00",
+  "requisicao": {
+    "method": "GET",
+    "url": "https://api-sandbox.asaas.com/v3/customers",
+    "params": {
+      "externalReference": "fixture-cliente-p-studio",
+      "limit": "1"
+    },
+    "body": null
+  },
+  "resposta": {
+    "status": 200,
+    "body": {
+      "object": "list",
+      "hasMore": false,
+      "totalCount": 1,
+      "limit": 1,
+      "offset": 0,
+      "data": [
+        {
+          "object": "customer",
+          "id": "cus_000008686126",
+          "dateCreated": "2026-08-13",
+          "name": "[REDIGIDO]",
+          "email": "[REDIGIDO]",
+          "company": null,
+          "phone": null,
+          "mobilePhone": null,
+          "address": "[REDIGIDO]",
+          "addressNumber": null,
+          "complement": null,
+          "province": "[REDIGIDO]",
+          "postalCode": "[REDIGIDO]",
+          "cpfCnpj": "[REDIGIDO]",
+          "personType": "[REDIGIDO]",
+          "deleted": false,
+          "additionalEmails": null,
+          "externalReference": "fixture-cliente-p-studio",
+          "notificationDisabled": false,
+          "observations": null,
+          "municipalInscription": null,
+          "stateInscription": null,
+          "canDelete": true,
+          "cannotBeDeletedReason": null,
+          "canEdit": true,
+          "cannotEditReason": null,
+          "city": "[REDIGIDO]",
+          "cityName": "São Paulo",
+          "state": "[REDIGIDO]",
+          "country": "Brasil"
+        }
+      ]
+    }
+  }
+}

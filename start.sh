@@ -62,6 +62,7 @@ PRODUCTS=(
   "knowledge-extractor:Knowledge Extractor:8012:8150"
   "orbity:Orbity:8010:8140"
   "igig:IgIg:8013:8170"
+  "p-studio:P Studio:8014:8180"
 )
 # END_PRODUCTS_REGISTRY
 

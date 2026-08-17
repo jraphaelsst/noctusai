@@ -1,0 +1,30 @@
+-e seed/lib/backend
+-e seed/framework/backend
+fastapi==0.121.0
+uvicorn[standard]==0.30.6
+supabase==2.9.1
+pydantic==2.13.4
+pydantic-settings==2.5.2
+python-dotenv==1.2.2
+# Transitivo: pydantic EmailStr → email-validator; FastAPI Form/File → python-multipart
+email-validator>=2.0.0
+python-multipart>=0.0.9
+# Cliente HTTP dos provedores de cobrança (app/providers/). Já vinha como
+# transitivo do supabase; agora é dependência direta. Mesma faixa do resto da
+# frota — `MockTransport`, de que a suíte de contrato do Asaas depende, é
+# estável em toda a série 0.27.x, então o pino exato não comprava
+# reprodutibilidade nenhuma e só criava divergência de frota (pego por
+# `TestDependencyAudit::test_no_python_mismatches`).
+httpx>=0.27.0
+PyJWT==2.13.0
+slowapi>=0.1.9
+
+# Observabilidade (opcional)
+sentry-sdk[fastapi]==1.45.1
+
+# Cache (opcional)
+redis==5.0.1
+
+# Testes
+pytest>=8.0.0
+pytest-asyncio>=0.21.0

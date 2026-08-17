@@ -32,11 +32,15 @@ class FakeGit:
 
     `status_output` overrides the `git status --porcelain` response (default: "").
     `stash_rc` controls the return code for `git stash push` (default: 0).
+    `diff_output` overrides the plain (non `--diff-filter=U`) `git diff
+    --name-only a...b` response — used by the migration-collision-gate tests
+    to script "this branch introduces these migration files" (default: "",
+    i.e. no files — the gate is a no-op unless a test opts in).
     """
 
     def __init__(self, refs, anc, logs=None, porcelain="", head_sha=None,
                  rebase_rcs=None, push_rcs=None, conflicts=None,
-                 status_output="", stash_rc=0):
+                 status_output="", stash_rc=0, diff_output=""):
         self.refs = dict(refs)
         self.anc = anc
         self.logs = logs or {}
@@ -47,6 +51,7 @@ class FakeGit:
         self.conflicts = conflicts or []
         self.status_output = status_output
         self.stash_rc = stash_rc
+        self.diff_output = diff_output
         self.calls: list[tuple[list[str], str | None]] = []
 
     def __call__(self, cmd, cwd=None):
@@ -68,7 +73,7 @@ class FakeGit:
         if sub == "diff":        # diff --name-only [--diff-filter=U] a..b
             if "--diff-filter=U" in cmd:
                 return (0, "\n".join(self.conflicts), "")
-            return (0, "", "")
+            return (0, self.diff_output, "")
         if sub == "status":
             return (0, self.status_output, "")
         if sub == "worktree":
@@ -1636,3 +1641,209 @@ def test_genuinely_dirty_non_ledger_file_still_blocked():
     # CRITICAL: must NEVER push a conflicted/dirty state to dev.
     assert not push_calls, (
         f"must NEVER push when real task files are dirty; push_calls={push_calls}")
+
+
+# ---------------------------------------------------------------------------
+# `action='integrate'` migration-number-collision gate — the SECOND backstop.
+#
+# `migration_check` is injected (mirrors the `settle=` / `salvage_recorder=`
+# test seams already used above) — no real filesystem scan here, only the
+# gate's OWN logic: does it fire when relevant, stay silent when not, filter
+# to the right directories, and never crash the whole integrate on an
+# unexpected exception. The REAL `check_migration_number_collision` behavior
+# is already covered end-to-end in test_compliance.py; the REAL
+# `_default_migration_collision_check` wrapper is covered separately below
+# against a real temp git repo.
+# ---------------------------------------------------------------------------
+
+
+def _migration_diff_output(*paths: str) -> str:
+    return "\n".join(paths)
+
+
+def test_migration_collision_blocks_before_push():
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        diff_output=_migration_diff_output(
+            "products/core/backend/migrations/050_x.sql"
+        ),
+    )
+    checked = []
+
+    def fake_check(abs_wt_path):
+        checked.append(abs_wt_path)
+        return [{
+            "product": "core",
+            "file": "products/core/backend/migrations/",
+            "issue": "migration number 050 is claimed by 2 files",
+            "severity": "high",
+        }]
+
+    res = T.task_branch(
+        action="integrate", slug="x", confirm=True, run=fake,
+        migration_check=fake_check,
+    )
+    assert res["status"] == "blocked", res
+    assert res["exit_code"] == 1
+    assert len(res["migration_collision_findings"]) == 1
+    assert res["introduced_migrations"] == ["products/core/backend/migrations/050_x.sql"]
+    assert fake.pushes() == [], "must NEVER push when a migration collision is found"
+    assert len(checked) == 1, "the checker must run exactly once"
+
+
+def test_migration_collision_in_unrelated_directory_does_not_block():
+    """A finding in a DIFFERENT product's migrations dir than what THIS
+    branch introduces must not false-block an unrelated integrate."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        diff_output=_migration_diff_output(
+            "products/core/backend/migrations/050_x.sql"
+        ),
+    )
+
+    def fake_check(abs_wt_path):
+        return [{
+            "product": "other-product",
+            "file": "products/other-product/backend/migrations/",
+            "issue": "unrelated collision",
+            "severity": "high",
+        }]
+
+    res = T.task_branch(
+        action="integrate", slug="x", confirm=True, run=fake,
+        migration_check=fake_check,
+    )
+    assert res["status"] == "integrated", res
+    assert len(fake.pushes()) == 1
+
+
+def test_no_introduced_migrations_skips_the_check_entirely():
+    """Zero migrations touched by this branch ⇒ the checker is never called
+    (scoped, not a blanket repo-wide gate on every integrate)."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        # diff_output defaults to "" — no migrations introduced.
+    )
+
+    def must_not_be_called(abs_wt_path):
+        raise AssertionError("migration_check must not run when nothing was introduced")
+
+    res = T.task_branch(
+        action="integrate", slug="x", confirm=True, run=fake,
+        migration_check=must_not_be_called,
+    )
+    assert res["status"] == "integrated", res
+    assert len(fake.pushes()) == 1
+
+
+def test_migration_check_exception_does_not_crash_integrate():
+    """A broken checker degrades to 'no findings' rather than taking down
+    the whole integrate — the gate is a net, not a new failure mode."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        diff_output=_migration_diff_output(
+            "products/core/backend/migrations/050_x.sql"
+        ),
+    )
+
+    def broken_check(abs_wt_path):
+        raise RuntimeError("boom")
+
+    res = T.task_branch(
+        action="integrate", slug="x", confirm=True, run=fake,
+        migration_check=broken_check,
+    )
+    assert res["status"] == "integrated", res
+    assert len(fake.pushes()) == 1
+
+
+def test_migration_check_not_invoked_with_injected_run_and_no_explicit_check():
+    """Gating symmetry with settle_fn: an injected runner (test/custom
+    context) must NOT trigger the REAL default checker."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        diff_output=_migration_diff_output(
+            "products/core/backend/migrations/050_x.sql"
+        ),
+    )
+    # No `migration_check=` passed — with an injected `run`, migration_check_fn
+    # resolves to None, so the gate is skipped regardless of diff_output.
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
+    assert res["status"] == "integrated", res
+    assert len(fake.pushes()) == 1
+
+
+def test_migration_collision_blocks_before_stash_leaves_worktree_clean():
+    """A blocked migration-collision integrate must still pop any benign
+    auto-stash before returning — no orphan stash left behind."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        porcelain="",
+        status_output=" M project-history/branch-tree.ndjson\n",
+        diff_output=_migration_diff_output(
+            "products/core/backend/migrations/050_x.sql"
+        ),
+    )
+
+    def fake_check(abs_wt_path):
+        return [{
+            "product": "core", "file": "products/core/backend/migrations/",
+            "issue": "collision", "severity": "high",
+        }]
+
+    res = T.task_branch(
+        action="integrate", slug="x", confirm=True, run=fake,
+        migration_check=fake_check,
+    )
+    assert res["status"] == "blocked", res
+    # `-C <wt> stash ...` form (see `_stash_benign_artifacts` / `_pop_stash`)
+    # — "stash" sits at cmd[3], not cmd[1].
+    stash_calls = [c for c, _cwd in fake.calls if "stash" in c]
+    assert stash_calls, f"expected at least one stash call; calls={fake.calls}"
+    assert any("pop" in c for c in stash_calls), (
+        f"stash must be popped before returning blocked; stash_calls={stash_calls}"
+    )
+
+
+class TestDefaultMigrationCollisionCheck:
+    """`_default_migration_collision_check` against a real filesystem tree —
+    the thin production wrapper around `check_migration_number_collision`,
+    exercised for real (not injected) since it is trivial glue. Leg A (the
+    on-disk duplicate scan) needs no real git repo; `tmp_path` is not one,
+    so Leg B degrades gracefully to no findings (already covered directly in
+    test_compliance.py's `TestCheckMigrationNumberCollision`)."""
+
+    def test_flags_a_real_on_disk_duplicate(self, tmp_path):
+        mig = tmp_path / "products" / "core" / "backend" / "migrations"
+        mig.mkdir(parents=True)
+        (mig / "050_a.sql").write_text("SELECT 1;\n")
+        (mig / "050_b.sql").write_text("SELECT 1;\n")
+
+        findings = T._default_migration_collision_check(str(tmp_path))
+
+        assert any(f["severity"] == "high" and "050" in f["issue"] for f in findings), findings
+
+    def test_clean_tree_returns_no_findings(self, tmp_path):
+        mig = tmp_path / "products" / "core" / "backend" / "migrations"
+        mig.mkdir(parents=True)
+        (mig / "050_a.sql").write_text("SELECT 1;\n")
+
+        assert T._default_migration_collision_check(str(tmp_path)) == []

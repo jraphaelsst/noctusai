@@ -1,0 +1,14 @@
+{
+  "_procedencia": "capturado da API viva do Asaas (sandbox)",
+  "gravado_em": "2026-08-13T20:32:11+00:00",
+  "requisicao": {
+    "method": "GET",
+    "url": "https://api-sandbox.asaas.com/v3/payments/pay_000000000000",
+    "params": {},
+    "body": null
+  },
+  "resposta": {
+    "status": 404,
+    "texto": ""
+  }
+}

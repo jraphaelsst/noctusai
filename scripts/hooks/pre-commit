@@ -297,20 +297,30 @@ fi
 # the working tree alone: `ls migrations/` and `git log origin/dev` are both
 # blind to an UNPUSHED sibling branch, so three concurrent sessions on
 # 2026-08-03 each reserved a number correctly by local evidence and still
-# collided (two claimed 040; a third shipped a duplicate 041 to dev).
-# Leg A (duplicate on disk) blocks; Leg B (cross-branch claim) warns.
+# collided (two claimed 040; a third shipped a duplicate 041 to dev). A
+# second, DIFFERENT blind spot bit again on 2026-08-13: a migration merged by
+# a parallel worktree BEFORE this worktree rebased was invisible to disk AND
+# to Leg B alike (`origin/dev`'s own advance isn't captured by either).
+# Leg A (duplicate on disk) blocks; Leg B (cross-branch claim) warns — this
+# is the LAST-RESORT backstop; the PICK-CORRECTLY-UP-FRONT half of the fix is
+# `noctus.dev.next_migration_number` / `noctus.dev.scaffold_migration`
+# (unions disk + origin/dev + every local branch) and a SECOND backstop at
+# `noctus.dev.task_branch(action='integrate')` that BLOCKS (not warns) on
+# what this pre-commit gate only catches if the engineer ever commits.
 STAGED_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/backend/migrations/.*\.sql$' || true)
 if [[ -n "$STAGED_MIGRATIONS" ]] && have_py; then
     echo "[pre-commit] Migration staged — checking for a number collision..."
     if ! "$PY" "$CLI" --check-migration-number-collision --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] migration-number-collision check FAILED. Commit aborted." >&2
         echo "[pre-commit] Two migrations share a numeric prefix — apply-order is undefined." >&2
-        echo "[pre-commit] Renumber yours to the next free number. To find one safely (this is" >&2
-        echo "[pre-commit] the ONLY check that sees unpushed sibling branches):" >&2
-        echo "[pre-commit]   for b in \$(git branch --format='%(refname:short)'); do" >&2
-        echo "[pre-commit]     f=\$(git diff --name-only origin/dev...\$b | grep backend/migrations/)" >&2
-        echo "[pre-commit]     [ -n \"\$f\" ] && echo \"\$b -> \$f\"" >&2
-        echo "[pre-commit]   done" >&2
+        echo "[pre-commit] Renumber yours to the next free number via the MCP tool" >&2
+        echo "[pre-commit] noctus.dev.next_migration_number (product_slug=<product>) — it" >&2
+        echo "[pre-commit] unions this worktree's disk, freshly-fetched origin/dev (catches a" >&2
+        echo "[pre-commit] parallel worktree's migration that already merged, 2026-08-13), AND" >&2
+        echo "[pre-commit] every local branch (catches an unpushed sibling's commit, 2026-08-03)" >&2
+        echo "[pre-commit] — this is the ONLY check that sees unpushed sibling branches, the same" >&2
+        echo "[pre-commit] reason this pre-commit gate exists. noctus.dev.scaffold_migration calls" >&2
+        echo "[pre-commit] it internally, so a freshly-scaffolded migration is never wrong here." >&2
         exit 1
     fi
 fi

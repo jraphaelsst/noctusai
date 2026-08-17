@@ -1,0 +1,24 @@
+{
+  "_procedencia": "capturado da API viva do Asaas (sandbox)",
+  "gravado_em": "2026-08-13T20:32:11+00:00",
+  "requisicao": {
+    "method": "GET",
+    "url": "https://api-sandbox.asaas.com/v3/payments",
+    "params": {
+      "externalReference": "sonda-que-nao-existe",
+      "limit": "1"
+    },
+    "body": null
+  },
+  "resposta": {
+    "status": 200,
+    "body": {
+      "object": "list",
+      "hasMore": false,
+      "totalCount": 0,
+      "limit": 1,
+      "offset": 0,
+      "data": []
+    }
+  }
+}

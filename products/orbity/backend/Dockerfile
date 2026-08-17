@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# seed — CANONICAL thin product image (the reference every product mirrors).
+# orbity — thin product image (generated from products/seed/backend/Dockerfile; edit there + re-propagate).
 #
 # Project: containerization-single-container. Single container: uvicorn
 # serves the API AND the built SPA on ONE port (the seed factory's
@@ -58,7 +58,7 @@ RUN npm run build   # → /app/products/orbity/frontend/dist
 FROM noctus-seed-backend-base:dev AS runtime
 ARG GIT_SHA
 LABEL org.opencontainers.image.revision="${GIT_SHA}" \
-      org.opencontainers.image.title="noctus-seed"
+      org.opencontainers.image.title="noctus-orbity"
 WORKDIR /app
 
 # Product-specific Python deps (seed lib/framework already in the base
@@ -67,8 +67,7 @@ COPY products/orbity/backend/requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \
     && pip install -r /tmp/req.clean.txt
-# {{BACKEND_EXTRA}} — product extras (e.g. dev-team: COPY dev_team +
-# pip install -e /opt/dev_team). Seed has none.
+# (no product extras)
 
 # Product backend code + the built SPA.
 COPY products/orbity/backend/ ./products/orbity/backend/

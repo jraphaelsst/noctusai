@@ -33,22 +33,38 @@ from typing import Any
 from settings import REPO_ROOT
 from workspace import resolve_caller_root
 
-# slug → backend port. Mirrors vite.config.factory PRODUCT_MAP + start.sh.
-# Frozen verbatim from scripts/propagate-{composes,dockerfiles}.sh — the
-# scripts hardcode this identical list; parity requires the same set/order.
-PRODUCTS: list[tuple[str, str]] = [
-    ("core", "8000"),
-    ("erp-imobiliario", "8001"),
-    ("personal-finance", "8002"),
-    ("therapy-platform", "8003"),
-    ("daily-life", "8005"),
-    ("adconnect", "8007"),
-    ("dev-team", "8009"),
-    ("social-wiring", "8011"),
-    ("knowledge-extractor", "8012"),
-    ("orbity", "8010"),
-    ("igig", "8013"),
-]
+# slug → backend port, DERIVED from the `start.sh` PRODUCTS registry.
+#
+# This was a hardcoded literal list, justified by a comment reading "Frozen
+# verbatim from scripts/propagate-{composes,dockerfiles}.sh — the scripts
+# hardcode this identical list; parity requires the same set/order." Those
+# scripts no longer exist, so the parity constraint that froze the list is
+# gone — what remained was a hand-maintained slug set, the exact shape
+# `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md` says drifts.
+#
+# It had already drifted silently: a product registered in `start.sh` but
+# absent here gets NO Dockerfile and NO compose from `--propagate`, and the
+# command still exits 0 with a cheerful "written" list that simply omits it.
+# Found 2026-08-13 absorbing p-studio, which propagate skipped without a word.
+#
+# `seed` is excluded deliberately — `products/seed/` is the canonical SOURCE
+# both generators read from, never a generated target. It is the only
+# registry row that must not appear here, and dropping it preserves the old
+# list's exact order.
+def _load_products() -> list[tuple[str, str]]:
+    from noctusai_lib.config.cors_registry import parse_products_registry
+
+    entries = parse_products_registry(REPO_ROOT / "start.sh")
+    if not entries:
+        raise RuntimeError(
+            "start.sh PRODUCTS registry parsed empty — refusing to propagate "
+            "against an unknown product set. A silent empty list here would "
+            "regenerate nothing and report success."
+        )
+    return [(e["slug"], str(e["backend_port"])) for e in entries if e["slug"] != "seed"]
+
+
+PRODUCTS: list[tuple[str, str]] = _load_products()
 
 # ── compose substitution constants (verbatim from propagate-composes.sh) ──
 _C_VITE_SUPABASE = (

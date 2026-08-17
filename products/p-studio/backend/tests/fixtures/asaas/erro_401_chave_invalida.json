@@ -1,0 +1,22 @@
+{
+  "_procedencia": "capturado do sandbox real do Asaas",
+  "gravado_em": "2026-08-11T00:00:00Z",
+  "nota": "Chave deliberadamente inválida. É a única troca que pode ser capturada sem conta — e ainda assim é tráfego real, não inventado. As demais fixtures saem de scripts/gravar_asaas.py com uma chave de sandbox de verdade.",
+  "requisicao": {
+    "method": "GET",
+    "url": "https://api-sandbox.asaas.com/v3/payments",
+    "params": { "externalReference": "teste", "limit": 1 },
+    "body": null
+  },
+  "resposta": {
+    "status": 401,
+    "body": {
+      "errors": [
+        {
+          "code": "invalid_access_token",
+          "description": "A chave de API fornecida é inválida"
+        }
+      ]
+    }
+  }
+}

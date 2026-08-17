@@ -1,0 +1,244 @@
+"""App: health, CORS e proteção padrão das rotas."""
+import pytest
+
+from app.main import app
+
+PROTEGIDAS = [
+    "/api/me",
+    "/api/dashboard",
+    "/api/clientes-metricas",
+    "/api/clientes",
+    "/api/imoveis",
+    "/api/servicos",
+    "/api/equipamentos",
+    "/api/negocios",
+    "/api/captacoes",
+    "/api/producoes",
+    "/api/financeiro",
+    "/api/financeiro/resumo",
+    "/api/financeiro/por-cliente",
+]
+
+# Catálogos de etapas/status: constantes do domínio, não dados da organização.
+# São públicas de propósito — a tela precisa das colunas do kanban antes de
+# ter qualquer dado, e nenhuma delas revela informação do estúdio.
+PUBLICAS = ["/api/health", "/api/negocios/etapas", "/api/producoes/etapas",
+            "/api/financeiro/status"]
+
+
+@pytest.mark.parametrize("rota", PUBLICAS)
+def test_rotas_publicas_dispensam_token(client_anon, rota):
+    assert client_anon.get(rota).status_code == 200
+
+
+def test_health(client_anon):
+    """`/api/health` é o do seed (`_create_health_router`), não mais uma
+    rota local — o corpo carrega `version` e `startup_hook_error` além de
+    `status`/`product`, e `product` é o nome de exibição passado a
+    `create_product_app(name=...)` ("P Studio"), não o slug. Nenhum campo é
+    checado a mais do que isto: `version` muda com todo release, e travar o
+    valor aqui testaria o número, não o contrato.
+    """
+    res = client_anon.get("/api/health")
+    assert res.status_code == 200
+    corpo = res.json()
+    assert corpo["status"] == "ok"
+    assert corpo["product"] == "P Studio"
+    assert corpo["startup_hook_error"] is None
+    assert "version" in corpo
+
+
+@pytest.mark.parametrize("rota", PROTEGIDAS)
+def test_rotas_protegidas_exigem_token(client_anon, rota):
+    assert client_anon.get(rota).status_code == 401
+
+
+def test_cors_libera_o_frontend(client_anon):
+    """Desde a absorção, CORS é resolvido pelo `@registry:own:p-studio` de
+    `noctusai_lib.config.cors_registry` — não mais um `http://localhost:5176`
+    fixo (porta do Vite standalone pré-absorção, morta). O registro sempre
+    inclui os alts universais de dev (`5173`/`3000`); qual porta do P Studio
+    entra no registry é resolvido em `start.sh` (fora do escopo deste
+    slice)."""
+    res = client_anon.get("/api/health", headers={"Origin": "http://localhost:5173"})
+    assert res.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_cors_nao_libera_origem_desconhecida(client_anon):
+    res = client_anon.get("/api/health", headers={"Origin": "https://mal.example"})
+    assert "access-control-allow-origin" not in res.headers
+
+
+def test_todas_as_rotas_de_dominio_estao_registradas():
+    """Guarda contra um router esquecido no `include_router` do main."""
+    caminhos = {r.path for r in app_routes()}
+    for prefixo in ("/api/clientes", "/api/imoveis", "/api/servicos",
+                    "/api/equipamentos", "/api/negocios", "/api/captacoes",
+                    "/api/producoes", "/api/financeiro", "/api/integracoes"):
+        assert prefixo in caminhos or any(c.startswith(prefixo) for c in caminhos), \
+            f"router ausente: {prefixo}"
+
+
+def app_routes():
+    from app.main import app
+
+    return app.routes
+
+
+# ── guarda estrutural ────────────────────────────────────────────────────
+#
+# As listas acima documentam a intenção, mas não impedem o acidente: quem
+# criar uma rota nova e esquecer o `Depends(get_current_user)` não aparece em
+# lista nenhuma. Este teste caminha pela árvore de dependências de TODA rota
+# registrada e exige autenticação, salvo isenção explícita e justificada.
+#
+# O webhook forçou isto a existir: ele é a primeira rota pública que escreve,
+# e a divisão binária "protegida ou pública" deixou de descrever a realidade.
+
+ISENTAS = {
+    # Catálogos de domínio — constantes, não dados da organização.
+    ("GET", "/api/health"),
+    ("GET", "/api/negocios/etapas"),
+    ("GET", "/api/producoes/etapas"),
+    ("GET", "/api/financeiro/status"),
+    # Webhook: quem chama é o provedor, não o navegador. Autenticado por
+    # segredo compartilhado no header (`verificar_token_asaas`), não por JWT.
+    ("POST", "/api/integracoes/asaas/webhook"),
+    # Documentação do FastAPI.
+    ("GET", "/docs"), ("GET", "/docs/oauth2-redirect"),
+    ("GET", "/redoc"), ("GET", "/openapi.json"),
+    # Ops endpoints bakeados por `create_product_app()` (`mount_health_endpoints`):
+    # o healthcheck do container e a probe de deploy leem `/_health`/`/_ready`
+    # sem token, e `/_version` expõe só o SHA/versão do build — nenhum revela
+    # dado da organização.
+    ("GET", "/_health"), ("GET", "/_ready"), ("GET", "/_version"),
+    # `noctusai_seed.routers` — fluxo de aceite de convite, mesma categoria do
+    # webhook: quem chama ainda não tem sessão (é o link do e-mail de convite,
+    # não o navegador logado). `validate` recebe o token como query param;
+    # `accept` aceita `authorization` OPCIONAL (o caminho anônimo cria a
+    # identidade a partir de nome+senha do corpo — ver docstring de
+    # `accept_invite` em noctusai_seed/routers.py). Isenção de JWT não é
+    # isenção de autenticação: o token do convite É a credencial.
+    ("GET", "/api/team/accept/validate"), ("POST", "/api/team/accept"),
+}
+
+# Routers padrão que o P Studio passou a montar via
+# `standard_routers=["health", "notificacoes", "team", "status_paginas"]`
+# (traz o produto ao mínimo da casa — ver `products/igig/backend/app/main.py`).
+# Essas rotas checam autenticação manualmente dentro do handler
+# (`user, _ = await deps.get_current_user(authorization)` sobre um parâmetro
+# `Header(None)`), não via FastAPI `Depends(...)` — então não aparecem na
+# árvore de dependências que `_depende_de_autenticacao` caminha, mesmo sendo
+# genuinamente protegidas. Seu comportamento 401-sem-token é o exato objeto
+# de `tests/integration/test_e2e_flows.py::TestAuthBoundary` (subclasse de
+# `noctusai_lib.testing.AuthBoundarySuite`) — este guard não precisa
+# reprovar o que aquela suíte já prova; ele confia no MÓDULO (conjunto
+# fechado: só os dois arquivos do framework), não no nome da rota, então uma
+# rota nova do framework continua coberta automaticamente, e uma rota nova
+# do P Studio que esqueça `Depends(get_current_user)` continua caindo aqui.
+_MODULOS_FRAMEWORK_AUTENTICADOS = {
+    "noctusai_seed.routers",
+    "noctusai_seed.status_pagina_router",
+}
+
+
+def _depende_de_autenticacao(rota) -> bool:
+    """Procura `get_current_user` na árvore de dependências da rota.
+
+    Duas formas de "autenticado" convivem desde a absorção dos
+    `standard_routers` do framework: `Depends(get_current_user)` do P Studio
+    (achado percorrendo a árvore) e a checagem manual do framework sobre
+    `Header(None)` (achada pelo módulo do endpoint — ver
+    `_MODULOS_FRAMEWORK_AUTENTICADOS` acima). Rotas do framework que NÃO
+    exigem token (`/api/health`, `/api/team/accept*`) já saíram do caminho
+    antes de chegar aqui, via `ISENTAS`.
+    """
+    from app.dependencies import get_current_user
+
+    endpoint = getattr(rota, "endpoint", None)
+    if getattr(endpoint, "__module__", None) in _MODULOS_FRAMEWORK_AUTENTICADOS:
+        return True
+
+    dependente = getattr(rota, "dependant", None)
+    if dependente is None:
+        return False
+
+    pilha = [dependente]
+    while pilha:
+        atual = pilha.pop()
+        if atual.call is get_current_user:
+            return True
+        pilha.extend(atual.dependencies)
+    return False
+
+
+def test_toda_rota_exige_autenticacao_ou_esta_isenta():
+    faltando = []
+    for rota in app_routes():
+        metodos = getattr(rota, "methods", None)
+        if not metodos:
+            continue
+        for metodo in metodos - {"HEAD", "OPTIONS"}:
+            if (metodo, rota.path) in ISENTAS:
+                continue
+            if not _depende_de_autenticacao(rota):
+                faltando.append(f"{metodo} {rota.path}")
+
+    assert not faltando, (
+        "rotas sem autenticação e sem isenção declarada:\n  "
+        + "\n  ".join(sorted(faltando))
+        + "\n\nAdicione Depends(get_current_user) ou justifique em ISENTAS."
+    )
+
+
+def test_o_webhook_esta_isento_mas_exige_o_segredo():
+    """Isenção de JWT não é isenção de autenticação."""
+    from app.routers.integracoes_router import verificar_token_asaas
+
+    rota = next(
+        r for r in app_routes()
+        if getattr(r, "path", "") == "/api/integracoes/asaas/webhook"
+    )
+    chamadas = [d.call for d in rota.dependant.dependencies]
+    assert verificar_token_asaas in chamadas
+
+
+# ── tradução de erro de provedor ─────────────────────────────────────────
+#
+# O handler existe desde a camada de provedores, mas nada verificava o mapa de
+# status. Ele ganhou testes quando o 404 real do Asaas apareceu: uma cobrança
+# apagada no painel do banco chegava à tela como 502, indistinguível de "o
+# Asaas caiu".
+
+import pytest as _pytest
+
+from app.main import REPASSADOS, tratar_erro_provedor
+from app.providers.erros import ErroProvedor
+
+
+def _status(status: int) -> int:
+    erro = ErroProvedor("asaas", "falhou", status=status)
+    return tratar_erro_provedor(None, erro).status_code
+
+
+@_pytest.mark.parametrize("status", sorted(REPASSADOS))
+def test_status_acionavel_pelo_chamador_passa_direto(status):
+    assert _status(status) == status
+
+
+@_pytest.mark.parametrize("status", [400, 401, 403, 422, 500, 502])
+def test_o_resto_vira_502(status):
+    """400/422 do provedor significam que o payload que NÓS montamos estava
+    errado. Repassar 400 culparia o usuário por um bug nosso."""
+    assert _status(status) == 502
+
+
+def test_o_corpo_carrega_o_trace_id():
+    """O suporte do banco pede isto; devolver junto evita a ida e volta."""
+    import json
+
+    erro = ErroProvedor("asaas", "falhou", status=502, trace_id="abc-123",
+                        codigo="x")
+    corpo = json.loads(tratar_erro_provedor(None, erro).body)
+    assert corpo["trace_id"] == "abc-123"
+    assert corpo["provedor"] == "asaas"

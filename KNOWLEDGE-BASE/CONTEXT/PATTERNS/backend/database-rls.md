@@ -148,7 +148,21 @@ Numbered SQL files in `products/<name>/backend/migrations/001_*.sql`, `002_*.sql
 - Idempotent: use `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS` where Postgres supports them.
 - RLS enabled in the same migration that creates the table. No "enable RLS later" follow-ups.
 - Seed data, if any, goes in a separate `00X_seed_*.sql` file.
-- **Next number wins:** pick the next unused number in the product's `migrations/` directory (e.g. `016_metas_domain.sql` after `015_invitations.sql`).
+- **Next number wins — but "next" is not `max(local NN) + 1`.** Use `noctus.dev.next_migration_number` (or just `noctus.dev.scaffold_migration`, which calls it internally) rather than eyeballing `ls migrations/`. See § Migration-number collision safety below.
+
+### Migration-number collision safety — cross-worktree, not just cross-file
+
+Two migrations sharing a numeric prefix have undefined apply-order. This bit twice: 2026-08-03 (three concurrent sessions each picked a number from `ls migrations/` + `git log origin/dev` — both blind to a sibling branch that hadn't pushed; two collided on `040`) and 2026-08-13 (a parallel worktree's migration merged and deployed FIRST; the other worktree, mid-authoring its own same-numbered file, had not rebased and so never saw it — ~1600 lines of rework before the tech-lead caught it at integration).
+
+**Pick correctly at authoring time — `noctus.dev.scaffold_migration` / `noctus.dev.next_migration_number`.** The number is computed from THREE unioned sources, none sufficient alone:
+
+1. This worktree's own `migrations/` directory — the naive signal.
+2. `origin/dev`, freshly fetched — the authoritative merged state. Catches a migration a parallel worktree already merged that this worktree hasn't rebased onto (the 2026-08-13 shape).
+3. Every LOCAL branch (git refs are shared across every worktree of one clone) diffed against `origin/dev` — catches a sibling worktree's committed-but-unpushed migration (the 2026-08-03 shape).
+
+`scaffold_migration` consumes this internally, so using the standard authoring tool is sufficient — no extra step to remember. Call `next_migration_number` directly only to preview a number before scaffolding, or to sanity-check a hand-picked one.
+
+**Two backstops catch what authoring-time missed.** `check_migration_number_collision` (a `check_*` keeper — the compliance-not-authoring layer) runs at `pre-commit` whenever a migration is staged: **Leg A** (severity `high`, blocking) flags a duplicate number already ON DISK; **Leg B** (severity `warning`, non-blocking) flags a number two DIFFERENT local branches both claim, latent until one of them merges second. Leg B stays a warning at commit time deliberately — blocking it would punish whichever branch happens to commit first for something not their fault (the collision belongs to whoever merges *second*, who may not be this commit). The SECOND backstop is `noctus.dev.task_branch(action='integrate')`: after the branch rebases onto fresh `origin/dev` (so Leg A's plain directory scan now sees both the merged state and this branch's own migration together) it re-runs the same unmodified keeper, scoped to the directories this branch's own migrations touch, and BLOCKS (not warns) on any finding — Leg A or Leg B. Blocking is safe here specifically because whoever calls `integrate` right now is, by definition, the one about to land, i.e. always the "merges second" party relative to any still-unmerged sibling; there is no legitimate first-mover to punish.
 
 ### Single 001 migration convention (fresh-start optimization)
 

@@ -1,0 +1,33 @@
+# Segredos. Esta é a primeira linha do arquivo de propósito.
+#
+# Existe uma chave de PRODUÇÃO do Asaas no `backend/.env` — ela move dinheiro
+# de verdade. Este repositório já teve uma senha em texto puro commitada uma
+# vez; a segunda vez não pode acontecer por falta de um arquivo de três linhas.
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+*.local
+
+# Editor / SO
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Paleta terracota do P Studio, herdada do protótipo. Os valores são os
+ * componentes OKLCH soltos (L C H) — o `tailwind.config.ts` os embrulha em
+ * `oklch(... / <alpha-value>)` para que `bg-primary/10` continue funcionando.
+ */
+@layer base {
+  :root {
+    --radius: 0.625rem;
+
+    --background: 0.99 0.004 60;
+    --foreground: 0.18 0.01 40;
+    --card: 1 0 0;
+    --card-foreground: 0.18 0.01 40;
+    --popover: 1 0 0;
+    --popover-foreground: 0.18 0.01 40;
+
+    /* Terracota */
+    --primary: 0.58 0.14 40;
+    --primary-foreground: 0.99 0.005 60;
+
+    --secondary: 0.96 0.008 60;
+    --secondary-foreground: 0.22 0.01 40;
+    --muted: 0.96 0.008 60;
+    --muted-foreground: 0.5 0.015 45;
+    --accent: 0.94 0.02 45;
+    --accent-foreground: 0.22 0.01 40;
+    --destructive: 0.58 0.22 27;
+    --destructive-foreground: 0.99 0.003 60;
+    --border: 0.92 0.008 60;
+    --input: 0.92 0.008 60;
+    --ring: 0.58 0.14 40;
+
+    --sidebar: 0.985 0.005 60;
+    --sidebar-foreground: 0.22 0.01 40;
+    --sidebar-primary: 0.58 0.14 40;
+    --sidebar-primary-foreground: 0.99 0.005 60;
+    --sidebar-accent: 0.95 0.012 55;
+    --sidebar-accent-foreground: 0.22 0.01 40;
+    --sidebar-border: 0.92 0.008 60;
+    --sidebar-ring: 0.58 0.14 40;
+
+    /* Status (spec § 9) */
+    --status-lead: 0.72 0.01 60;
+    --status-scheduled: 0.62 0.13 240;
+    --status-captured: 0.78 0.14 85;
+    --status-editing: 0.55 0.18 300;
+    --status-delivered: 0.7 0.16 145;
+    --status-received: 0.5 0.15 150;
+    --status-late: 0.6 0.22 27;
+    --status-cancelled: 0.25 0.01 40;
+  }
+
+  .dark {
+    --background: 0.16 0.008 40;
+    --foreground: 0.96 0.005 60;
+    --card: 0.2 0.01 40;
+    --card-foreground: 0.96 0.005 60;
+    --popover: 0.2 0.01 40;
+    --popover-foreground: 0.96 0.005 60;
+    --primary: 0.68 0.15 40;
+    --primary-foreground: 0.16 0.008 40;
+    --secondary: 0.26 0.012 40;
+    --secondary-foreground: 0.96 0.005 60;
+    --muted: 0.26 0.012 40;
+    --muted-foreground: 0.7 0.01 50;
+    --accent: 0.3 0.02 40;
+    --accent-foreground: 0.96 0.005 60;
+    --destructive: 0.65 0.2 27;
+    --destructive-foreground: 0.96 0.005 60;
+    --border: 0.3 0.012 40;
+    --input: 0.32 0.012 40;
+    --ring: 0.68 0.15 40;
+
+    --sidebar: 0.18 0.01 40;
+    --sidebar-foreground: 0.96 0.005 60;
+    --sidebar-primary: 0.68 0.15 40;
+    --sidebar-primary-foreground: 0.16 0.008 40;
+    --sidebar-accent: 0.26 0.012 40;
+    --sidebar-accent-foreground: 0.96 0.005 60;
+    --sidebar-border: 0.3 0.012 40;
+    --sidebar-ring: 0.68 0.15 40;
+
+    /* Status escurecidos o suficiente para contrastar no fundo escuro. */
+    --status-lead: 0.72 0.01 60;
+    --status-scheduled: 0.7 0.13 240;
+    --status-captured: 0.82 0.14 85;
+    --status-editing: 0.68 0.18 300;
+    --status-delivered: 0.75 0.16 145;
+    --status-received: 0.68 0.15 150;
+    --status-late: 0.7 0.2 27;
+    --status-cancelled: 0.72 0.01 40;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+
+  .font-display {
+    letter-spacing: -0.02em;
+  }
+}

@@ -1,4 +1,4 @@
-# Canonical per-product compose fragment — SINGLE CONTAINER.
+# orbity compose — SINGLE CONTAINER (generated from products/seed/docker-compose.yml; edit there + re-propagate).
 #
 # Project: containerization-single-container. This file at products/orbity/
 # is the reference; every other product's docker-compose.yml is generated

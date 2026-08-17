@@ -1,0 +1,65 @@
+{
+  "_procedencia": "capturado da API viva do Asaas (sandbox)",
+  "gravado_em": "2026-08-13T20:32:14+00:00",
+  "requisicao": {
+    "method": "GET",
+    "url": "https://api-sandbox.asaas.com/v3/payments/pay_dqz3709qpgfb5i8e",
+    "params": {},
+    "body": null
+  },
+  "resposta": {
+    "status": 200,
+    "body": {
+      "object": "payment",
+      "id": "pay_dqz3709qpgfb5i8e",
+      "dateCreated": "2026-08-13",
+      "customer": "cus_000008686126",
+      "checkoutSession": null,
+      "paymentLink": null,
+      "value": 1800.0,
+      "netValue": 1799.01,
+      "originalValue": null,
+      "interestValue": null,
+      "description": "Ensaio fotográfico + drone",
+      "billingType": "BOLETO",
+      "canBePaidAfterDueDate": true,
+      "pixTransaction": null,
+      "status": "PENDING",
+      "dueDate": "2026-08-20",
+      "originalDueDate": "2026-08-20",
+      "paymentDate": null,
+      "clientPaymentDate": null,
+      "installmentNumber": null,
+      "invoiceUrl": "https://sandbox.asaas.com/i/dqz3709qpgfb5i8e",
+      "invoiceNumber": "16586510",
+      "externalReference": "fixture-lancamento-2026-08-13",
+      "deleted": false,
+      "anticipated": false,
+      "anticipable": false,
+      "creditDate": null,
+      "estimatedCreditDate": null,
+      "transactionReceiptUrl": null,
+      "nossoNumero": "12931361",
+      "bankSlipUrl": "https://sandbox.asaas.com/b/pdf/dqz3709qpgfb5i8e",
+      "lastInvoiceViewedDate": null,
+      "lastBankSlipViewedDate": null,
+      "discount": {
+        "value": 0.0,
+        "limitDate": null,
+        "dueDateLimitDays": 0,
+        "type": "FIXED"
+      },
+      "fine": {
+        "value": 0.0,
+        "type": "FIXED"
+      },
+      "interest": {
+        "value": 0.0,
+        "type": "PERCENTAGE"
+      },
+      "postalService": false,
+      "escrow": null,
+      "refunds": null
+    }
+  }
+}

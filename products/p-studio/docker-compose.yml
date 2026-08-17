@@ -1,0 +1,113 @@
+# p-studio compose — SINGLE CONTAINER (generated from products/seed/docker-compose.yml; edit there + re-propagate).
+#
+# Project: containerization-single-container. This file at products/p-studio/
+# is the reference; every other product's docker-compose.yml is generated
+# from it by scripts/propagate-composes.sh (slug + port substitution +
+# per-product VITE args). When the pattern evolves, edit THIS file and
+# re-propagate.
+#
+# One service `<slug>` (was <slug>-backend + <slug>-frontend): uvicorn
+# serves the API AND the built SPA on ONE port (the seed factory
+# `serve_spa` seam — Phase 1). nginx + the per-product `<slug>-net`
+# private network are gone (nothing to isolate — it's one container).
+#
+# `<slug>-tunnel` is MANDATORY in the standardized pattern (always wired)
+# but profile-gated (only RUNS when asked) — "wired in, consumed when
+# needed". Cloudflare quick-tunnel for webhook/OAuth/demo testing.
+#
+# Network: `noctus-net` is now `external: true` — the two-project split
+# (noctusai-products / noctusai-infra) means the shared fabric is created
+# ONCE outside any single compose project. start.sh ensures it exists
+# (`docker network create noctus-net`) before any `up`. Standalone use
+# (`cd products/seed && docker compose up`) requires it pre-created:
+#   docker network create noctus-net   # one-time
+#
+# Build context = repo root (seed bases + product code reachable). The
+# image inherits the shared seed bases — run scripts/infra/build-base-images.sh
+# first (start.sh orders this in Phase 5).
+
+services:
+  p-studio:
+    build:
+      context: ../..
+      dockerfile: products/p-studio/backend/Dockerfile
+      # ONE container, ONE shape (project: containerization-single-env).
+      # The local fleet builds the `runtime-watch` target: same single
+      # container, plus node + the watch entrypoint (vite build --watch +
+      # uvicorn --reload). No `dev` command, no sidecar, no separate
+      # project. Deploy/CI build the default `runtime` target (slim,
+      # baked dist, plain uvicorn — node absent) — that's the shippable
+      # image; this compose is the LOCAL orchestration.
+      target: runtime-watch
+      args:
+        # Boot-critical Supabase vars — baked at build (Vite inlines
+        # them; empty ⇒ blank-page throw). Backend URL stays runtime.
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+        VITE_CORE_URL: ${VITE_CORE_URL:-}
+    container_name: dev-noctus-p-studio
+    image: ghcr.io/jraphaelsst/noctus-p-studio:${NOCTUS_IMAGE_TAG:-dev}
+    env_file:
+      - ../../.env
+    # Source bind-mounted → edits reflect with no rebuild: vite
+    # build --watch refreshes dist/, uvicorn --reload restarts on .py.
+    volumes:
+      - ./backend:/app/products/p-studio/backend
+      - ./frontend:/app/products/p-studio/frontend
+      # Anonymous volume — MUST come after the ./frontend bind-mount. The
+      # host frontend/ dir has darwin-arm64 node_modules (or none); without
+      # this it shadows the image's linux node_modules → the watch
+      # entrypoint dies with "vite: not found" or "Cannot find module
+      # '@rollup/rollup-linux-*'". Docker seeds an anonymous volume from
+      # the image layer on first create, so the container keeps its own
+      # platform-correct node_modules while source stays live-editable.
+      - /app/products/p-studio/frontend/node_modules
+      - ../../seed:/app/seed
+      # Same shadow problem as above, for the SEED framework/lib FE
+      # node_modules: the ../../seed bind-mount (node_modules-less in any
+      # clean checkout/CI/worktree) would mask the glibc deps the
+      # Dockerfile installs for the tailwind/vite factory require. These
+      # anon volumes MUST come AFTER ../../seed (nested-after-parent);
+      # Docker seeds them from the image layer so the factory require
+      # resolves while seed source stays live-editable. (§3.2b)
+      - /app/seed/framework/frontend/node_modules
+      - /app/seed/lib/frontend/node_modules
+    ports:
+      - "8014:8014"
+    networks:
+      - noctus-net
+    # Restart policy is a dev↔prod-divergent knob (deploy-config-contract).
+    # Default `unless-stopped` is PROD-SAFE (auto-restart on crash/reboot — no
+    # prod-config change needed). Dev sets `NOCTUS_RESTART_POLICY=no` via
+    # start.sh so a host sleep / Docker relaunch does NOT resurrect stale dev
+    # containers (the 2026-05-29 stale-container drift). KB § PATTERNS/devops/deploy-config-contract.md.
+    restart: ${NOCTUS_RESTART_POLICY:-unless-stopped}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8014/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  p-studio-tunnel:
+    # Cloudflare quick-tunnel → ephemeral *.trycloudflare.com pointing at
+    # this product's single container. `--protocol http2` forces TCP from
+    # the start (QUIC/UDP dies behind NATs in ~5min and cannot
+    # re-register — see KB § PATTERNS/containerization.md § Troubleshooting).
+    image: cloudflare/cloudflared:latest
+    container_name: dev-noctus-p-studio-tunnel
+    command: tunnel --no-autoupdate --protocol http2 --url http://p-studio:8014
+    depends_on:
+      p-studio:
+        condition: service_healthy
+    networks:
+      - noctus-net
+    restart: ${NOCTUS_RESTART_POLICY:-unless-stopped}
+    profiles:
+      - tunnel-p-studio
+      - tunnel-all
+
+networks:
+  noctus-net:
+    name: noctus-net
+    external: true

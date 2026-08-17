@@ -29,7 +29,9 @@ from settings import REPO_ROOT
 from workspace import resolve_caller_root
 
 from .compliance import (
+    _AUTHORIZATION_RANKS,
     _PROD_BUILD_PUSH_REL,
+    _find_authorization_candidates,
     _find_authorization_evidence,
     _PROD_COMPOSE_REL,
     _PROD_CONSENT_DIR_REL,
@@ -221,6 +223,7 @@ def _author(
             "error": "consent_ref is required (<roadmap path>#<✅ milestone>)",
         }
 
+    candidates = _find_authorization_candidates(slug, session_id)
     evidence = _find_authorization_evidence(slug, session_id)
     if evidence is None:
         ok, reason = _verify_authorization_phrase(slug, {
@@ -264,6 +267,13 @@ def _author(
         f"  phrase: {json.dumps(evidence_text)}\n"
         f"  prompt_source: {evidence_source}\n"
         f"  tier: {_authorization_tier(slug, evidence_text) or 'unknown'}\n"
+        # Evidence strength + how many other human messages ALSO matched.
+        # Recorded because the 2026-08-16 defect was invisible in the
+        # artifact: the record looked perfectly well-formed while citing a
+        # sentence that authorized nothing. An auditor can now see what was
+        # selected and that something was selected OVER something else.
+        f"  evidence_rank: {_AUTHORIZATION_RANKS.get(candidates[0][0], 'unknown') if candidates else 'unknown'}\n"
+        f"  candidates_considered: {len(candidates)}\n"
         f"  session_id: {session_id}\n"
         f"  transcript_sha256: {digest}\n"
         f"  recorded_at: {now}\n"

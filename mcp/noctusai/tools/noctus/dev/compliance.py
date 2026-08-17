@@ -8976,6 +8976,66 @@ _ACCEPTED_MIGRATION_DUPLICATES: set[tuple[str, str]] = {
 }
 
 
+def _migration_branch_claims(
+    root: Path, num_re: "re.Pattern[str]", dev_ref: str = "origin/dev",
+) -> dict[tuple[str, str], dict[str, set[str]]]:
+    """Every migration filename claimed on a LOCAL branch, keyed by (directory, number).
+
+    Extracted from Leg B below so `noctus.dev.next_migration_number` can reuse
+    the identical git-plumbing instead of re-deriving it: both need "what does
+    every local branch (git refs are shared across every worktree of this one
+    clone, including unpushed sibling worktrees) claim for a given migration
+    number", just consumed differently — the keeper flags a DIFFERENT-filename
+    collision under one number; the numbering tool folds every claimed number
+    into its search for the next free slot.
+
+    Returns `{}` (never raises) when git is unavailable — callers decide what
+    "no signal" means for them; this function does not know which caller it
+    is serving.
+    """
+    import subprocess
+
+    try:
+        branches = subprocess.run(
+            ["git", "branch", "--format=%(refname:short)"],
+            cwd=root, capture_output=True, text=True, timeout=30,
+        ).stdout.split()
+    except (subprocess.SubprocessError, OSError):
+        return {}
+
+    # Key on (migration DIRECTORY, number) -> {filename: {branches}}.
+    #
+    # Comparing FILENAMES matters: a stack of sibling branches off one
+    # initiative all carry the SAME migration file, which is not a collision.
+    # Only two DIFFERENT filenames under one number are.
+    #
+    # Keying on the DIRECTORY rather than the product matters too. Apply-order
+    # is only undefined between files the SAME runner applies, and each
+    # migrations directory is its own sequence. A product may legitimately
+    # carry a second, dialect-specific set — igig ships
+    # `backend/migrations/sqlite/` mirroring its Postgres files and numbered to
+    # MATCH them (006 ↔ 006), which is a deliberate pairing, not a race.
+    claims: dict[tuple[str, str], dict[str, set[str]]] = {}
+    for branch in branches:
+        try:
+            out = subprocess.run(
+                ["git", "diff", "--name-only", f"{dev_ref}...{branch}"],
+                cwd=root, capture_output=True, text=True, timeout=30,
+            ).stdout.splitlines()
+        except (subprocess.SubprocessError, OSError):
+            continue
+        for path in out:
+            if "/backend/migrations/" not in path or not path.endswith(".sql"):
+                continue
+            parts = path.split("/")
+            name = parts[-1]
+            directory = "/".join(parts[:-1])
+            m = num_re.match(name)
+            if m:
+                claims.setdefault((directory, m.group(1)), {}).setdefault(name, set()).add(branch)
+    return claims
+
+
 def check_migration_number_collision(repo_root: Path | None = None) -> list[dict]:
     """Flag two migrations claiming the same number — including on UNPUSHED branches.
 
@@ -9006,7 +9066,6 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
     Scans `products/*/backend/migrations/*.sql`.
     """
     import re
-    import subprocess
 
     root = repo_root or REPO_ROOT
     findings: list[dict] = []
@@ -9050,49 +9109,14 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
                     })
 
     # ── Leg B — same number claimed by multiple local branches ──
-    try:
-        branches = subprocess.run(
-            ["git", "branch", "--format=%(refname:short)"],
-            cwd=root, capture_output=True, text=True, timeout=30,
-        ).stdout.split()
-    except (subprocess.SubprocessError, OSError):
-        # No git, or git is unhappy — Leg A already ran; do not fail the
-        # keeper over an unavailable branch list, but do not pretend it was
-        # checked either (the caller sees only Leg A findings).
-        return findings
-
-    # Key on (migration DIRECTORY, number) -> {filename: {branches}}.
-    #
-    # Comparing FILENAMES matters: a stack of sibling branches off one
-    # initiative all carry the SAME migration file, which is not a collision.
-    # Only two DIFFERENT filenames under one number are.
-    #
-    # Keying on the DIRECTORY rather than the product matters too. Apply-order
-    # is only undefined between files the SAME runner applies, and each
-    # migrations directory is its own sequence. A product may legitimately
-    # carry a second, dialect-specific set — igig ships
-    # `backend/migrations/sqlite/` mirroring its Postgres files and numbered to
-    # MATCH them (006 ↔ 006), which is a deliberate pairing, not a race. Leg A
-    # already scopes this way (a non-recursive glob per directory); Leg B keyed
-    # on the product and so reported every mirrored pair as a collision.
-    claims: dict[tuple[str, str], dict[str, set[str]]] = {}
-    for branch in branches:
-        try:
-            out = subprocess.run(
-                ["git", "diff", "--name-only", f"origin/dev...{branch}"],
-                cwd=root, capture_output=True, text=True, timeout=30,
-            ).stdout.splitlines()
-        except (subprocess.SubprocessError, OSError):
-            continue
-        for path in out:
-            if "/backend/migrations/" not in path or not path.endswith(".sql"):
-                continue
-            parts = path.split("/")
-            name = parts[-1]
-            directory = "/".join(parts[:-1])
-            m = num_re.match(name)
-            if m:
-                claims.setdefault((directory, m.group(1)), {}).setdefault(name, set()).add(branch)
+    # `_migration_branch_claims` returns `{}` (not raises) when git is
+    # unavailable; Leg A already ran, so an empty claims dict here just means
+    # this loop finds nothing to flag — it does NOT distinguish "checked,
+    # clean" from "git unavailable" for the caller. That distinction doesn't
+    # matter to this function's return value (either way, no Leg B findings
+    # are added), only to a caller that cares WHY (see
+    # `noctus.dev.next_migration_number`, which surfaces it as a warning).
+    claims = _migration_branch_claims(root, num_re)
 
     for (directory, number), by_name in sorted(claims.items()):
         if len(by_name) > 1:
@@ -15212,6 +15236,41 @@ def _canonical_authorization_phrase(slug: str) -> str:
     return f"I authorize {slug} to be published to production."
 
 
+#: Markers that open a HARNESS-INJECTED `queue-operation` record. These
+#: arrive in the same shape as a mid-turn human message but are written by
+#: the runtime, not the user.
+_HARNESS_QUEUE_PREFIXES: tuple[str, ...] = (
+    "<task-notification>",
+    "[SYSTEM NOTIFICATION",
+)
+
+
+def _is_harness_injected_queue_content(content: str) -> bool:
+    """True when an `enqueue` record is the RUNTIME talking, not the user.
+
+    **Why this exists** (2026-08-16, found while fixing the evidence-ranking
+    defect). `queue-operation/enqueue` was admitted wholesale as "the human
+    speaking", because a real mid-turn authorization appears only in that
+    shape. But background-task completions arrive in the SAME shape: in the
+    transcript that exposed this, 21 of 23 enqueue records were
+    `<task-notification>` blocks and only 2 were the user.
+
+    That breaks the load-bearing property of this whole module — the record
+    must point at something **the agent did not write**. A task notification
+    quotes tool output and the agent's own prose back into the transcript,
+    so agent-authored text was being laundered into the human-evidence
+    layer. Measured, not theorised: two notification records in that session
+    matched the authorization heuristic, one of them at `performative`.
+
+    Matched on the OPENING marker only, deliberately conservative: a user
+    who quotes a notification mid-message is still heard, and only a message
+    that BEGINS as a harness block is dropped. Structural, not a guess about
+    tone — these markers are emitted by the runtime and never typed at a
+    prompt.
+    """
+    return content.lstrip().startswith(_HARNESS_QUEUE_PREFIXES)
+
+
 def _human_authored_transcript_texts(
     session_id: str, home: Path | None = None
 ) -> tuple[list[str], str]:
@@ -15266,7 +15325,9 @@ def _human_authored_transcript_texts(
             rtype = rec.get("type")
             if rtype == "queue-operation":
                 if rec.get("operation") == "enqueue":
-                    entries.append(("queued", str(rec.get("content") or "")))
+                    content = str(rec.get("content") or "")
+                    if not _is_harness_injected_queue_content(content):
+                        entries.append(("queued", content))
                 continue
             source = rec.get("promptSource")
             if rtype != "user" or source not in _HUMAN_PROMPT_SOURCES or rec.get("isMeta"):
@@ -15365,36 +15426,123 @@ def _verify_authorization_phrase(
     return True, ""
 
 
-def _find_authorization_evidence(
+#: Evidence strength, LOWEST IS STRONGEST. The exact canonical sentence
+#: outranks any heuristic match, and a `typed` prompt outranks any other
+#: human shape at the same strength.
+_AUTHORIZATION_RANKS: dict[int, str] = {
+    0: "canonical-exact/typed",
+    1: "canonical-exact/other",
+    2: "performative/typed",
+    3: "performative/other",
+    4: "directive/typed",
+    5: "directive/other",
+}
+
+
+def _rank_authorization_sentence(slug: str, source: str, sentence: str) -> int | None:
+    """Score one sentence as authorization evidence. None = not evidence."""
+    norm = lambda s: " ".join(s.split()).casefold()  # noqa: E731
+    exact = norm(_canonical_authorization_phrase(slug)) in norm(sentence)
+    typed = source == "typed"
+    if exact:
+        return 0 if typed else 1
+    tier = _authorization_tier(slug, sentence)
+    if tier == "performative":
+        return 2 if typed else 3
+    if tier == "directive":
+        return 4 if typed else 5
+    return None
+
+
+def _find_authorization_candidates(
     slug: str, session_id: str, home: Path | None = None
-) -> tuple[str, str] | None:
-    """Return `(source, text)` of the human message that authorizes `slug`,
-    or None. Used to record WHAT the user actually said, verbatim, rather
-    than restating it in the agent's own words."""
+) -> list[tuple[int, int, str, str]]:
+    """Every human message in `session_id` that could authorize `slug`, as
+    `(rank, index, source, sentence)` sorted strongest-first.
+
+    **Why every candidate and not the first match** (2026-08-16). This
+    scanned in transcript order and returned the FIRST hit. On p-studio it
+    therefore cited, as the user's authorization, a sentence the user had
+    PASTED while forwarding another session's report — text that merely
+    *describes* this gate ("registering a prod-exposure surface is the
+    user's call, never an agent's"). It grants nothing. The user's real
+    authorization — the exact canonical sentence, `promptSource="typed"`,
+    the strongest shape this module defines — sat later in the same
+    transcript and was never looked at.
+
+    The decision was genuine, so nothing unsafe shipped; the RECORD's
+    evidence was false, which is the one property the verified-transcription
+    redesign exists to guarantee. An auditor reading that field would
+    reasonably conclude an agent manufactured consent.
+
+    The generalisation is the dangerous part: **quoting this gate's own
+    documentation into a conversation can satisfy the gate**, because that
+    documentation necessarily carries the slug and a production token when
+    it discusses a product. Slug-binding — the thing that stops an agent
+    repurposing an unrelated "yes, go ahead" — cannot help when the quoted
+    text is *about authorizing that exact product*.
+
+    Fixed by ranking rather than by quote-detection. Rejecting text that
+    "looks quoted" would be a heuristic that can refuse a GENUINE
+    authorization, and a gate that refuses real consent is how gates get
+    argued with and then bypassed (the same lesson as the exact-match false
+    negative of 2026-08-09 and the unquoted-YAML parse error before it).
+    Ranking is deterministic and cannot produce that failure: it only ever
+    changes WHICH true match is cited, never whether one exists.
+
+    Ties break toward the LATEST message — the most recent statement of a
+    decision is the operative one.
+    """
     import re
 
     entries, detail = _human_authored_transcript_texts(session_id, home=home)
     if detail:
-        return None
-    canonical = _canonical_authorization_phrase(slug)
+        return []
     norm = lambda s: " ".join(s.split()).casefold()  # noqa: E731
-    for source, text in entries:
+    ncanon = norm(_canonical_authorization_phrase(slug))
+
+    out: list[tuple[int, int, str, str]] = []
+    for idx, (source, text) in enumerate(entries):
         flat = " ".join(text.split())
-        if norm(canonical) not in norm(flat) and not _matches_authorization_intent(slug, flat):
+        if ncanon not in norm(flat) and not _matches_authorization_intent(slug, flat):
             continue
         # Narrow to the AUTHORIZING SENTENCE. A real message often quotes
         # the agent back at itself (2026-08-09: the matching message was
         # ~900 chars, most of it the agent's own text pasted in). Storing
         # the whole blob would put the AGENT's words inside the field that
         # is supposed to hold the USER's, which defeats the audit property.
+        best: tuple[int, str] | None = None
         for sentence in re.split(r"(?<=[.!?])\s+|\n+", flat):
             s = sentence.strip()
             if not s:
                 continue
-            if norm(canonical) in norm(s) or _matches_authorization_intent(slug, s):
-                return source, s
-        return source, flat  # matched across sentences; keep it whole
-    return None
+            r = _rank_authorization_sentence(slug, source, s)
+            if r is not None and (best is None or r < best[0]):
+                best = (r, s)
+        if best is None:
+            # Matched across sentence boundaries; keep the message whole.
+            r = _rank_authorization_sentence(slug, source, flat)
+            if r is None:
+                continue
+            best = (r, flat)
+        out.append((best[0], idx, source, best[1]))
+
+    # rank ascending (strongest first); within a rank, latest message first.
+    out.sort(key=lambda c: (c[0], -c[1]))
+    return out
+
+
+def _find_authorization_evidence(
+    slug: str, session_id: str, home: Path | None = None
+) -> tuple[str, str] | None:
+    """Return `(source, text)` of the STRONGEST human message that authorizes
+    `slug`, or None. Used to record WHAT the user actually said, verbatim,
+    rather than restating it in the agent's own words."""
+    candidates = _find_authorization_candidates(slug, session_id, home=home)
+    if not candidates:
+        return None
+    _rank, _idx, source, sentence = candidates[0]
+    return source, sentence
 
 
 def _validate_prod_consent_record(

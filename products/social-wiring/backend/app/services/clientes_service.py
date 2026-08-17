@@ -201,6 +201,47 @@ def _t(client: Any, name: str):
     return client.table(name)
 
 
+_IN_FILTER_BATCH = 200
+
+
+def _batched(items: list, size: int):
+    """Yield `items` in chunks of `size`. PostgREST `in_` values ride in the
+    URL query string, so an unbounded id list becomes an over-long request
+    line and a bare 400 — see `list_review_groups`."""
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def _paginate_query(run) -> list[dict]:
+    """Drain a range-parameterised query past PostgREST's 1 000-row cap.
+    `run(start, end)` must apply `.range(start, end)` and execute."""
+    out: list[dict] = []
+    start = 0
+    while True:
+        rows = (run(start, start + _PAGE - 1)).data or []
+        out.extend(rows)
+        if len(rows) < _PAGE:
+            return out
+        start += _PAGE
+
+
+def _select_all_where(
+    client: Any, table: str, org_id: UUID, eq_filters: dict, columns: str = "*"
+) -> list[dict]:
+    """`_select_all` plus extra equality filters, paginated."""
+    out: list[dict] = []
+    start = 0
+    while True:
+        query = _t(client, table).select(columns).eq("org_id", str(org_id))
+        for k, v in eq_filters.items():
+            query = query.eq(k, v)
+        rows = query.range(start, start + _PAGE - 1).execute().data or []
+        out.extend(rows)
+        if len(rows) < _PAGE:
+            return out
+        start += _PAGE
+
+
 def _select_all(
     client: Any, table: str, org_id: UUID, columns: str = "*"
 ) -> list[dict]:
@@ -819,24 +860,34 @@ def list_review_groups(client: Any, org_id: UUID) -> list[dict]:
     the rows, so persisting it would be a second source of truth that
     could drift the moment a candidate's `nome` is edited.
     """
-    incerta_rows = (
-        _t(client, "clientes")
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("identidade_incerta", True)
-        .execute()
-    ).data or []
+    # 🔴 Paginated: an unpaginated select caps at 1 000 rows and reports
+    # success. There are 1 177 identidade_incerta clientes live, so a bare
+    # read silently dropped 177 of them from the queue.
+    incerta_rows = _select_all_where(
+        client, "clientes", org_id, {"identidade_incerta": True}
+    )
     if not incerta_rows:
         return []
 
+    # 🔴 Batched: PostgREST puts `in_` values in the URL QUERY STRING. ~1 000
+    # UUIDs is a ~40 KB request line, which the server rejects with a bare
+    # 400 ("JSON could not be generated") — that is what took /clientes/revisao
+    # down in production on 2026-08-14. The batch size keeps the longest
+    # request line comfortably under the usual 8 KB limit
+    # (200 x 38 chars ~= 7.6 KB, and each batch is still paginated).
     ids = [r["id"] for r in incerta_rows]
-    touch_rows = (
-        _t(client, "cliente_touches")
-        .select("cliente_id,chave_canonica")
-        .eq("org_id", str(org_id))
-        .in_("cliente_id", ids)
-        .execute()
-    ).data or []
+    touch_rows: list[dict] = []
+    for batch in _batched(ids, _IN_FILTER_BATCH):
+        touch_rows.extend(
+            _paginate_query(
+                lambda start, end, b=batch: _t(client, "cliente_touches")
+                .select("cliente_id,chave_canonica")
+                .eq("org_id", str(org_id))
+                .in_("cliente_id", b)
+                .range(start, end)
+                .execute()
+            )
+        )
     key_by_cliente: dict[str, str] = {}
     for t in touch_rows:
         if t.get("chave_canonica"):

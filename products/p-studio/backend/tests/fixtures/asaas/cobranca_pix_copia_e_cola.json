@@ -1,0 +1,20 @@
+{
+  "_procedencia": "capturado da API viva do Asaas (sandbox)",
+  "gravado_em": "2026-08-13T20:32:15+00:00",
+  "requisicao": {
+    "method": "GET",
+    "url": "https://api-sandbox.asaas.com/v3/payments/pay_gpvm8f5j9mao8tu6/pixQrCode",
+    "params": {},
+    "body": null
+  },
+  "resposta": {
+    "status": 200,
+    "body": {
+      "success": true,
+      "encodedImage": "iVBORw0KGgoAAAANSUhEUgAAAcIAAAHCAQAAAABUY/ToAAADFklEQVR4Xu2UQY7bUAxDvcv9b9RjeTcFH6k/0wEKF7OpAlBO7C+Jj1lIzvXxw/h1fa/8a5R8ipJPUfIpSj5Fyaf4b+R9ES8dXnxf7uqpPOdbTStLbibT0oXRi49t5KP0iyX3kovJU721D6xExMPE8VNZcj0ZhXNZAFIMUPKdSFNKrU0kVbvke5BmJB7qhTQvMzfycS+5mTwTf7yiLPnXawF5wi1vAPO+7ee98BpMlFxLSq6mICTRZ+a2gM9VcjVp1jURdERwmXfVgpK7SeXXCDjYRM8jZ1VsQbXkWpKmbuLQSKESRZfPD7hecjd5u3kpUHzR047CXiU3k8x+4IkshJ7QLmJBVnIxqe4lNMMP49T6sbpjVHIxScsn1z9xid2MWcn1pJLgOmsDNPZsCBsgIzvEsuRaMqxPUqcUG4OTkZZcTTJ0lTzrkNoNKC9GmPmRknvJjxk4BB0eueGHIh4lV5MWTEl5JKDW4mDrq+RuEtY1A8H1VI1TbDipX3IvSc3UNUdH5MJu74cEQkuuJZFrxEjonYozUhVPp+ReMghThxV+uaZu/I6q5HZSVRtEQOLGdRZgNAJL7iVvVTN7TofhGEu+6ZVcTYbRZ5YiIB2UuuVbcjc5rJg5XcrysODC0cWSu8kz5zNoDtJgJ7Oxfrlfci2JKHtgh8DfQbYj3ZJrSUSqHdjYUVIC0VVyOekELMJbf8y2oBTn8Su5mlQdzGce5nWkDOUfMFhyM6nxataZ/lH+2WML5idK7iW9CijQGBm17Qa5S24nA4C4GScMxlGl2JVcTSbQ5JLdJPaYg7slN5NHeRxs87kZr9kWFdCVXEzysqo2L28QHf0ixxObL292yYVkQFPJRTD86E9l9qXkWnLCbNSYULHSSbw/Si4mz4xN+nZr5ty+WN78VwOX3EvqxB1EGbp5IMUmJiWXkyakk/ScoNVmJU5Xv1PyHUimLCVVCdRBObpBS+4nX3px9TSMixl52iKVkptJl1CDymiEx4nWsSu5l/z8D6aIUqyKlh4KdcnV5I+i5FOUfIqST1HyKUo+xZuRvwGqrpejc/wGwgAAAABJRU5ErkJggg==",
+      "payload": "00020101021226820014br.gov.bcb.pix2560pix-h.asaas.com/qr/cobv/74fe0f9f-a682-4bd2-a59b-b27b3c2948d45204000053039865802BR5922Joao Raphael Tangerino6005Cotia61080670915062070503***630427E0",
+      "expirationDate": "2027-08-18 23:59:59",
+      "description": "Sonda de contrato Pix"
+    }
+  }
+}
