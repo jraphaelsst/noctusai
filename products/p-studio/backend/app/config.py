@@ -33,7 +33,23 @@ class PStudioSettings(ProductSettings):
     #
     # O ATRIBUTO segue `settings.org_id`, então nada no código muda; só a
     # variável de ambiente ganha prefixo.
-    org_id: str = Field(validation_alias="P_STUDIO_ORG_ID")
+    # Default "" DE PROPÓSITO, pelo mesmo motivo escrito no bloco de cobrança
+    # logo abaixo: quem exige a credencial é o CAMINHO QUE A USA, não a
+    # importação. Sem default, `settings = PStudioSettings()` (fim deste
+    # arquivo, padrão da casa em toda a frota) explodia com ValidationError
+    # em qualquer processo que apenas IMPORTASSE este módulo sem a env var —
+    # e o teste de seed-lib `test_per_product_cors_sentinel` faz exatamente
+    # isso: importa o config de cada produto do registry para ler
+    # `model_fields['cors_origins'].default`, uma leitura de CLASSE que nunca
+    # precisou de uma instância válida. Resultado: `dev` ficou vermelho no
+    # instante em que a absorção pôs `p-studio` no registry.
+    #
+    # 🔴 "" NÃO é um valor utilizável e nunca deve virar um: `org_id` carimba
+    # todo INSERT e escopa toda leitura, então um "" que vazasse para uma
+    # query seria um erro silencioso — a classe de bug que este repositório
+    # trata como inaceitável. O guard está em `dependencies.get_current_user`,
+    # o único ponto onde este campo entra num request, e recusa alto.
+    org_id: str = Field("", validation_alias="P_STUDIO_ORG_ID")
 
     # ── Provedor de cobrança ─────────────────────────────────────────────
     # Todos com default: o app precisa subir sem credencial de banco, e a
