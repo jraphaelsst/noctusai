@@ -52,6 +52,8 @@ import logging
 from typing import Any, Iterable, Mapping, Optional
 from unittest.mock import MagicMock
 
+from postgrest.exceptions import APIError as _PostgrestAPIError
+
 from noctusai_lib.testing._schema_cache import get_schema_map
 from noctusai_lib.testing.schema_errors import (
     MockCheckViolation,
@@ -59,6 +61,44 @@ from noctusai_lib.testing.schema_errors import (
     MockUnknownTableError,
 )
 import copy
+
+# ---------------------------------------------------------------------------
+# PostgREST row-cap + URL-length fidelity
+# ---------------------------------------------------------------------------
+#
+# 🔴 Root-enabler for a class of prod bugs (`KB § PATTERNS/backend/
+# postgrest-row-cap.md`): a real PostgREST/Supabase deployment silently caps
+# ANY select at `db-max-rows` rows — no error, no warning, `response.data`
+# just has fewer rows than the table. Before this mock modeled that cap, an
+# unpaginated `.select().execute()` in a test returned the ENTIRE fixture no
+# matter how large, so the exact bug that shipped to prod (portal-roi
+# reporting 1 000 leads instead of 13 255; a backfill silently skipping 365
+# of 1 365 rows) was UNTESTABLE — the mock and prod disagreed on the one
+# behavior that mattered. `_POSTGREST_MAX_ROWS` is Supabase's default
+# `db-max-rows`; every unbounded/under-ranged select now truncates here too.
+#
+# A SECOND, related failure: PostgREST serializes `.in_(col, values)` into
+# the URL QUERY STRING, not the body. A collection large enough blows the
+# request-line budget and the server answers a bare 400 ("JSON could not be
+# generated") with no hint about length — that took `/clientes/revisao` down
+# in prod on 2026-08-14. `_IN_FILTER_URL_BUDGET_BYTES` mirrors the common
+# 8 KB request-line limit so the mock raises the SAME `postgrest.exceptions.
+# APIError` shape production hit, instead of silently succeeding with a
+# collection no real deployment would accept.
+_POSTGREST_MAX_ROWS = 1000
+_IN_FILTER_URL_BUDGET_BYTES = 8000
+
+
+def _in_filter_url_bytes(value: Any) -> int:
+    """Approximate the query-string bytes `.in_(col, value)` would add to
+    the request line — PostgREST comma-joins the values inline in the URL.
+    Non-iterable / unmeasurable values return 0 (no false positives)."""
+    if value is None or isinstance(value, (str, bytes)):
+        return 0
+    try:
+        return sum(len(str(v)) + 1 for v in value)
+    except TypeError:
+        return 0
 
 # Type alias: per-product CHECK-constraint manifest. Maps
 #   {table_name: {column_name: (allowed_value, ...)}}
@@ -649,6 +689,23 @@ class _FilterMixin:
 
     def in_(self, col, value=None, *a, **k):
         self._check_col(col, "in_")
+        url_bytes = _in_filter_url_bytes(value)
+        if url_bytes > _IN_FILTER_URL_BUDGET_BYTES:
+            # Same failure, same shape as production: PostgREST puts `in_`
+            # values in the URL query string, so a large collection is an
+            # over-long request line — the server answers a bare 400, not a
+            # helpful message. Mirrors the exact APIError the container logs
+            # showed for `/clientes/revisao` (2026-08-14): {'message': 'JSON
+            # could not be generated', 'code': 400, 'details': "b'Bad
+            # Request'"}. Batch via a helper like `clientes_service._batched`
+            # before calling `.in_()`.
+            raise _PostgrestAPIError(
+                {
+                    "message": "JSON could not be generated",
+                    "code": "400",
+                    "details": "b'Bad Request'",
+                }
+            )
         self._record("in_", col, value)
         return self
 
@@ -811,18 +868,32 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         self._table = table
         self._strict_unknown_tables = strict_unknown_tables
         self._predicates: list[tuple[str, str, Any]] = []
+        # PostgREST window state — see module-level `_POSTGREST_MAX_ROWS`
+        # docstring. `_offset` defaults to 0 (PostgREST's own default);
+        # `_limit_n` stays `None` until `.range()`/`.limit()` narrows it —
+        # `None` means "as many as the row cap allows", not "unbounded".
+        self._offset = 0
+        self._limit_n: Optional[int] = None
 
     def order(self, col, *a, **k):
         self._check_col(col, "order")
         return self
 
-    def limit(self, *a, **k):
+    def limit(self, size=None, *a, **k):
+        if size is not None:
+            self._limit_n = size
         return self
 
-    def range(self, *a, **k):
+    def range(self, start, end, *a, **k):
+        # Mirrors the real SDK: `.range(start, end)` is `offset=start` +
+        # `limit=end - start + 1` (postgrest._sync.request_builder.range).
+        self._offset = start
+        self._limit_n = end - start + 1
         return self
 
-    def offset(self, *a, **k):
+    def offset(self, size=None, *a, **k):
+        if size is not None:
+            self._offset = size
         return self
 
     def single(self):
@@ -859,16 +930,36 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
                 out.append(row)
         return out
 
+    def _windowed_rows(self, filtered: list) -> list:
+        """Apply `.range()`/`.limit()`/`.offset()` PLUS PostgREST's own
+        `db-max-rows` cap — see module-level docstring. The cap wins even
+        when a caller explicitly asks for more (`.range(0, 4999)` against a
+        server with `db-max-rows=1000` still comes back with 1 000 rows,
+        silently); an unbounded select is just the `_limit_n is None` case
+        of the same rule, starting at offset 0.
+        """
+        start = self._offset
+        cap_end = start + _POSTGREST_MAX_ROWS - 1
+        if self._limit_n is None:
+            end = cap_end
+        else:
+            end = min(start + self._limit_n - 1, cap_end)
+        return filtered[start : end + 1]
+
     def execute(self):
         # Response queue wins — propagation / predicate-filtering suppressed,
         # mirroring the UPDATE/DELETE contract documented at module-level.
         if self._response_queue is not None:
             return self._do_execute()
         filtered = self._filtered_rows()
-        data = filtered
-        if self._single_mode and isinstance(data, list):
-            data = data[0] if data else None
-        self._single_mode = False
+        if self._single_mode:
+            # `.single()`/`.maybe_single()` request the
+            # `vnd.pgrst.object+json` shape, not a `Range` window — no
+            # row-cap window applies (the result is 0 or 1 row either way).
+            data = filtered[0] if filtered else None
+            self._single_mode = False
+            return MockSupabaseResponse(data=data, count=self._count)
+        data = self._windowed_rows(filtered) if isinstance(filtered, list) else filtered
         return MockSupabaseResponse(data=data, count=self._count)
 
 

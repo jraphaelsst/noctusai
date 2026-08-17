@@ -270,11 +270,12 @@ class TestListClientes:
         eager, pre-filter `count` (the same limitation `test_ativo_false_...`
         et al. document): this DOES exercise the real `pages = ceil(total /
         page_size)` arithmetic `clientes_service.list_clientes` computes.
-        Real `.range()` truncation of `items` is verified separately —
-        `MockSelectBuilder.range()` is a documented no-op (never truncates
-        the mock's returned rows), so item-count-per-page can only be
-        proven honestly against the corretor_id path below, which does its
-        OWN Python-side slicing (see `test_corretor_id_path_truncates_by_page_size`)."""
+
+        `items` truncation IS now provable here too — `MockSelectBuilder.
+        range()` used to be a documented no-op (never truncated the mock's
+        returned rows; see `KB § PATTERNS/backend/postgrest-row-cap.md` for
+        why that was itself the root enabler of a SEVEN-instance prod bug
+        class), so this assertion did not exist until the mock was fixed."""
         ids = [str(uuid4()) for _ in range(5)]
         scoped.set_table_data(
             "clientes", [_cliente(i, f"Pessoa {n}") for n, i in enumerate(ids)]
@@ -286,6 +287,7 @@ class TestListClientes:
         assert body["total"] == 5
         assert body["pages"] == 3
         assert body["page"] == 1
+        assert len(body["items"]) == 2, "page_size=2 must bound the returned items too"
 
     def test_corretor_id_filter(self, client, scoped):
         corretor_a, corretor_b = str(uuid4()), str(uuid4())
@@ -311,10 +313,10 @@ class TestListClientes:
     def test_corretor_id_path_truncates_by_page_size(self, client, scoped):
         """The `corretor_id` cross-filter path does its OWN Python-side
         `items[start:start+page_size]` slicing (`clientes_router.py`'s
-        `list_clientes_route`) — unlike the default path, this is NOT
-        delegated to the mock's no-op `.range()`, so it is the one place
-        real pagination truncation is honestly provable under
-        `MockSupabaseClient`."""
+        `list_clientes_route`), NOT the `.range()`-delegated default path —
+        this pins that Python-side slice specifically (`test_pagination_
+        arithmetic` above now covers the `.range()`-delegated path since
+        `MockSelectBuilder.range()` stopped being a no-op)."""
         corretor = str(uuid4())
         cliente_ids = [str(uuid4()) for _ in range(3)]
         lead_ids = [f"L{i}" for i in range(3)]
@@ -385,15 +387,22 @@ class TestClienteDetail:
 
 
 class TestTouches:
-    def test_chronological_and_paginated(self, client, scoped):
+    def test_paginated_by_page_size(self, client, scoped):
         """`get_touches` asks the DB for `.order("ocorreu_em", desc=True)`
-        + `.range(...)` — real PostgREST honors both. `MockSelectBuilder`
-        does not (`.order()`/`.range()` are documented no-ops on the mock,
-        same class as the `count="exact"` limitation other tests in this
-        file note), so under the mock every touch for the cliente comes
-        back regardless of `page_size` — the honest assertion here is that
-        the FULL, correctly cliente-scoped set is returned, not a specific
-        order or truncation length."""
+        + `.range(...)` — real PostgREST honors both.
+
+        `MockSelectBuilder.range()` now actually slices (it used to be a
+        no-op with no row ceiling — the same root enabler that let SEVEN
+        row-cap bugs ship to prod undetected in one session; see
+        `KB § PATTERNS/backend/postgrest-row-cap.md`), so this test used to
+        assert the FULL, unbounded set came back regardless of `page_size`
+        — the honest thing to assert given the mock at the time. `.order()`
+        stays a DOCUMENTED no-op on the mock (only real PostgREST sorts),
+        so this deliberately does NOT assert a specific chronological
+        order — only what the mock can now actually prove: `page_size`
+        bounds each page's item count, and the two pages partition the
+        full set with no touch dropped or duplicated.
+        """
         a1 = str(uuid4())
         t1, t2, t3 = str(uuid4()), str(uuid4()), str(uuid4())
         scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
@@ -405,12 +414,32 @@ class TestTouches:
                 _touch(t3, a1, origem_id="L3", ocorreu_em="2026-02-01T00:00:00+00:00"),
             ],
         )
-        resp = client.get(
-            f"/api/clientes/{a1}/touches", params={"page_size": 2}, headers=_auth()
+        resp1 = client.get(
+            f"/api/clientes/{a1}/touches",
+            params={"page_size": 2, "page": 1},
+            headers=_auth(),
         )
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert {t["id"] for t in body["items"]} == {t1, t2, t3}
+        assert resp1.status_code == 200, resp1.text
+        body1 = resp1.json()
+        assert len(body1["items"]) == 2, "page_size=2 must bound page 1 to 2 items"
+        assert body1["total"] == 3
+        assert body1["pages"] == 2
+
+        resp2 = client.get(
+            f"/api/clientes/{a1}/touches",
+            params={"page_size": 2, "page": 2},
+            headers=_auth(),
+        )
+        assert resp2.status_code == 200, resp2.text
+        body2 = resp2.json()
+        assert len(body2["items"]) == 1, "the remaining touch must land on page 2"
+
+        ids_page1 = {t["id"] for t in body1["items"]}
+        ids_page2 = {t["id"] for t in body2["items"]}
+        assert ids_page1.isdisjoint(ids_page2), "pages must not overlap"
+        assert ids_page1 | ids_page2 == {t1, t2, t3}, (
+            "every touch must appear exactly once across pages"
+        )
 
     def test_404_unknown_cliente(self, client, scoped):
         scoped.set_table_data("clientes", [])
