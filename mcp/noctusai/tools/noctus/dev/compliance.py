@@ -8976,6 +8976,66 @@ _ACCEPTED_MIGRATION_DUPLICATES: set[tuple[str, str]] = {
 }
 
 
+def _migration_branch_claims(
+    root: Path, num_re: "re.Pattern[str]", dev_ref: str = "origin/dev",
+) -> dict[tuple[str, str], dict[str, set[str]]]:
+    """Every migration filename claimed on a LOCAL branch, keyed by (directory, number).
+
+    Extracted from Leg B below so `noctus.dev.next_migration_number` can reuse
+    the identical git-plumbing instead of re-deriving it: both need "what does
+    every local branch (git refs are shared across every worktree of this one
+    clone, including unpushed sibling worktrees) claim for a given migration
+    number", just consumed differently — the keeper flags a DIFFERENT-filename
+    collision under one number; the numbering tool folds every claimed number
+    into its search for the next free slot.
+
+    Returns `{}` (never raises) when git is unavailable — callers decide what
+    "no signal" means for them; this function does not know which caller it
+    is serving.
+    """
+    import subprocess
+
+    try:
+        branches = subprocess.run(
+            ["git", "branch", "--format=%(refname:short)"],
+            cwd=root, capture_output=True, text=True, timeout=30,
+        ).stdout.split()
+    except (subprocess.SubprocessError, OSError):
+        return {}
+
+    # Key on (migration DIRECTORY, number) -> {filename: {branches}}.
+    #
+    # Comparing FILENAMES matters: a stack of sibling branches off one
+    # initiative all carry the SAME migration file, which is not a collision.
+    # Only two DIFFERENT filenames under one number are.
+    #
+    # Keying on the DIRECTORY rather than the product matters too. Apply-order
+    # is only undefined between files the SAME runner applies, and each
+    # migrations directory is its own sequence. A product may legitimately
+    # carry a second, dialect-specific set — igig ships
+    # `backend/migrations/sqlite/` mirroring its Postgres files and numbered to
+    # MATCH them (006 ↔ 006), which is a deliberate pairing, not a race.
+    claims: dict[tuple[str, str], dict[str, set[str]]] = {}
+    for branch in branches:
+        try:
+            out = subprocess.run(
+                ["git", "diff", "--name-only", f"{dev_ref}...{branch}"],
+                cwd=root, capture_output=True, text=True, timeout=30,
+            ).stdout.splitlines()
+        except (subprocess.SubprocessError, OSError):
+            continue
+        for path in out:
+            if "/backend/migrations/" not in path or not path.endswith(".sql"):
+                continue
+            parts = path.split("/")
+            name = parts[-1]
+            directory = "/".join(parts[:-1])
+            m = num_re.match(name)
+            if m:
+                claims.setdefault((directory, m.group(1)), {}).setdefault(name, set()).add(branch)
+    return claims
+
+
 def check_migration_number_collision(repo_root: Path | None = None) -> list[dict]:
     """Flag two migrations claiming the same number — including on UNPUSHED branches.
 
@@ -9006,7 +9066,6 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
     Scans `products/*/backend/migrations/*.sql`.
     """
     import re
-    import subprocess
 
     root = repo_root or REPO_ROOT
     findings: list[dict] = []
@@ -9050,49 +9109,14 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
                     })
 
     # ── Leg B — same number claimed by multiple local branches ──
-    try:
-        branches = subprocess.run(
-            ["git", "branch", "--format=%(refname:short)"],
-            cwd=root, capture_output=True, text=True, timeout=30,
-        ).stdout.split()
-    except (subprocess.SubprocessError, OSError):
-        # No git, or git is unhappy — Leg A already ran; do not fail the
-        # keeper over an unavailable branch list, but do not pretend it was
-        # checked either (the caller sees only Leg A findings).
-        return findings
-
-    # Key on (migration DIRECTORY, number) -> {filename: {branches}}.
-    #
-    # Comparing FILENAMES matters: a stack of sibling branches off one
-    # initiative all carry the SAME migration file, which is not a collision.
-    # Only two DIFFERENT filenames under one number are.
-    #
-    # Keying on the DIRECTORY rather than the product matters too. Apply-order
-    # is only undefined between files the SAME runner applies, and each
-    # migrations directory is its own sequence. A product may legitimately
-    # carry a second, dialect-specific set — igig ships
-    # `backend/migrations/sqlite/` mirroring its Postgres files and numbered to
-    # MATCH them (006 ↔ 006), which is a deliberate pairing, not a race. Leg A
-    # already scopes this way (a non-recursive glob per directory); Leg B keyed
-    # on the product and so reported every mirrored pair as a collision.
-    claims: dict[tuple[str, str], dict[str, set[str]]] = {}
-    for branch in branches:
-        try:
-            out = subprocess.run(
-                ["git", "diff", "--name-only", f"origin/dev...{branch}"],
-                cwd=root, capture_output=True, text=True, timeout=30,
-            ).stdout.splitlines()
-        except (subprocess.SubprocessError, OSError):
-            continue
-        for path in out:
-            if "/backend/migrations/" not in path or not path.endswith(".sql"):
-                continue
-            parts = path.split("/")
-            name = parts[-1]
-            directory = "/".join(parts[:-1])
-            m = num_re.match(name)
-            if m:
-                claims.setdefault((directory, m.group(1)), {}).setdefault(name, set()).add(branch)
+    # `_migration_branch_claims` returns `{}` (not raises) when git is
+    # unavailable; Leg A already ran, so an empty claims dict here just means
+    # this loop finds nothing to flag — it does NOT distinguish "checked,
+    # clean" from "git unavailable" for the caller. That distinction doesn't
+    # matter to this function's return value (either way, no Leg B findings
+    # are added), only to a caller that cares WHY (see
+    # `noctus.dev.next_migration_number`, which surfaces it as a warning).
+    claims = _migration_branch_claims(root, num_re)
 
     for (directory, number), by_name in sorted(claims.items()):
         if len(by_name) > 1:

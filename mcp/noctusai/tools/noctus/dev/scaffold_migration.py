@@ -78,34 +78,229 @@ def _migrations_dir(product_slug: str, products_dir: Path) -> Path:
     return products_dir / product_slug / "backend" / "migrations"
 
 
-def _next_number(migrations_dir: Path) -> int | None:
-    """Walk migrations_dir, return max(NN)+1, or None if no migrations exist.
-
-    None = "scaffold the product first" — we do NOT silently start at 001
-    because a missing migrations dir means the product itself is missing
-    the seed migration `001_seed.sql`, and a 001 emitted by the migration
-    scaffolder would step on the product scaffolder's territory.
-    """
-    found_any = False
-    max_nn = 0
-    for child in migrations_dir.iterdir():
-        if not child.is_file():
-            continue
-        m = _NN_RE.match(child.name)
-        if not m:
-            continue
-        found_any = True
-        nn = int(m.group(1))
-        if nn > max_nn:
-            max_nn = nn
-    if not found_any:
-        return None
-    return max_nn + 1
-
-
 def _format_number(n: int) -> str:
     """Three-digit zero-padded prefix to match the platform convention."""
     return f"{n:03d}"
+
+
+def _resolve_migrations_dir(
+    product_slug: str,
+    *,
+    worktree_path: str | Path | None,
+    products_dir: Path | None,
+) -> tuple[Path | None, Path | None, dict | None]:
+    """Resolve ``(base_products_dir, migrations_dir, error)``.
+
+    Shared by ``scaffold_migration`` and ``next_migration_number`` — both need
+    the identical "does this product / its migrations dir exist" gate with
+    the identical error text. A caller seeing two DIFFERENT error strings for
+    the same failure from two different tools is its own kind of drift.
+    """
+    if products_dir is not None:
+        base_products_dir = products_dir
+    elif worktree_path is not None:
+        base_products_dir = resolve_caller_root(worktree_path) / "products"
+    else:
+        base_products_dir = PRODUCTS_DIR
+
+    product_dir = base_products_dir / product_slug
+    if not product_dir.is_dir():
+        return None, None, {
+            "error": (
+                f"Product '{product_slug}' not found at {product_dir}. "
+                f"Scaffold the product first via noctus.dev.scaffold_product."
+            )
+        }
+
+    migrations_dir = _migrations_dir(product_slug, base_products_dir)
+    if not migrations_dir.is_dir():
+        return None, None, {
+            "error": (
+                f"Product '{product_slug}' has no backend/migrations/ directory "
+                f"(expected at {migrations_dir}). Scaffold the product first via "
+                f"noctus.dev.scaffold_product — it ships 001_seed.sql."
+            )
+        }
+    return base_products_dir, migrations_dir, None
+
+
+def _origin_dev_migration_files(
+    repo_root: Path,
+    migrations_rel: str,
+    *,
+    dev_ref: str,
+    skip_fetch: bool,
+) -> tuple[list[str] | None, str | None]:
+    """Filenames present under ``migrations_rel`` on ``dev_ref`` RIGHT NOW.
+
+    This is the leg the 2026-08-13 incident needed and neither the on-disk
+    scan nor the local-branch scan (`_migration_branch_claims`) provides: a
+    migration MERGED (and deployed) by a parallel worktree is invisible to
+    ``ls migrations/`` in a worktree that has not rebased, and invisible to
+    `git diff origin/dev...<branch>` too — that diff is relative to the
+    merge-base, so it only shows what a LOCAL branch added, never what
+    `origin/dev` itself gained after the branch forked. Reading `dev_ref`'s
+    tree directly, after a fresh fetch, is the only source that answers
+    "what is actually merged, right now" independent of this worktree's own
+    rebase state.
+
+    Best-effort: a fetch failure (offline) degrades to whatever `dev_ref`
+    already resolves to locally (or to "no signal" if it doesn't resolve at
+    all) — this function NEVER raises and NEVER silently pretends nothing is
+    wrong; a degradation always returns a warning string as the second
+    element.
+    """
+    import subprocess
+
+    if not skip_fetch:
+        try:
+            subprocess.run(
+                ["git", "fetch", "origin", "--quiet"],
+                cwd=repo_root, capture_output=True, timeout=30,
+            )
+        except (subprocess.SubprocessError, OSError):
+            # Non-fatal — fall through and try ls-tree against whatever
+            # `dev_ref` already resolves to locally.
+            pass
+    try:
+        result = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", dev_ref, "--", migrations_rel],
+            cwd=repo_root, capture_output=True, text=True, timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None, f"git unavailable — could not read {dev_ref}"
+    if result.returncode != 0:
+        return None, (
+            f"{dev_ref} did not resolve (no git repo, no such ref, or fetch "
+            f"failed and no cached copy exists) — this source was skipped"
+        )
+    names = [line.rsplit("/", 1)[-1] for line in result.stdout.splitlines() if line.strip()]
+    return names, None
+
+
+def next_migration_number(
+    product_slug: str,
+    *,
+    worktree_path: str | Path | None = None,
+    products_dir: Path | None = None,
+    dev_ref: str = "origin/dev",
+    skip_fetch: bool = False,
+) -> dict:
+    """Compute the next SAFE migration number for a product.
+
+    NOT the naive ``max(NN) + 1`` a plain ``ls migrations/`` gives you — that
+    naive computation is exactly what produced two files both numbered `049`
+    on 2026-08-13 (a parallel worktree's migration had already merged and
+    deployed; this worktree's own directory listing didn't know). Three
+    sources are unioned, none of which is sufficient alone:
+
+    1. **This worktree's own ``migrations/`` directory** — the naive signal.
+       Catches nothing outside this checkout.
+    2. **``origin/dev``, freshly fetched** — the AUTHORITATIVE merged state,
+       independent of whether this worktree has rebased. Catches the exact
+       2026-08-13 incident (see ``_origin_dev_migration_files``).
+    3. **Every LOCAL branch** (git refs are shared across every worktree of
+       this one clone — a sibling worktree's branch is a local ref here too)
+       diffed against ``origin/dev``. Catches a sibling worktree's
+       committed-but-UNPUSHED migration — the 2026-08-03 incident
+       ``check_migration_number_collision``'s docstring cites, and the exact
+       gap plain ``ls migrations/`` + ``git log origin/dev`` both miss.
+
+    Returns (on success)::
+
+        {
+            "product": "<slug>",
+            "migrations_dir": "<path>",
+            "next_number": 50,
+            "claims": [{"number": "049", "file": "049_x.sql", "source": "disk"}, ...],
+            "sources_checked": ["disk", "origin/dev", "local-branches"],
+            "warnings": [...],   # non-fatal source degradation, e.g. no network
+        }
+
+    or ``{"error": str}`` when the product / its migrations dir doesn't
+    exist, or when the UNION of all three sources is empty (mirrors
+    ``scaffold_migration``'s "empty migrations/ dir" guard — do NOT silently
+    propose `1` for a product that should be getting `001_seed.sql` from
+    ``noctus.dev.scaffold_product`` instead).
+
+    ``skip_fetch=True`` skips the network round-trip (source 2 falls back to
+    whatever ``origin/dev`` already resolves to locally) — for a fast,
+    offline-safe answer, or for tests. NEVER raises.
+    """
+    if not product_slug:
+        return {"error": "product_slug must be a non-empty string"}
+
+    base_products_dir, migrations_dir, err = _resolve_migrations_dir(
+        product_slug, worktree_path=worktree_path, products_dir=products_dir,
+    )
+    if err is not None:
+        return err
+    assert base_products_dir is not None and migrations_dir is not None  # narrows for mypy/readers
+
+    repo_root = (
+        resolve_caller_root(worktree_path) if worktree_path is not None
+        else base_products_dir.parent
+    )
+
+    claims: list[dict] = []
+    warnings: list[str] = []
+
+    # ── Source 1: this worktree's own directory ──
+    for f in sorted(migrations_dir.glob("*.sql")):
+        m = _NN_RE.match(f.name)
+        if m:
+            claims.append({"number": m.group(1), "file": f.name, "source": "disk"})
+
+    # ── Source 2: origin/dev, freshly fetched ──
+    migrations_rel = f"products/{product_slug}/backend/migrations"
+    dev_files, dev_warning = _origin_dev_migration_files(
+        repo_root, migrations_rel, dev_ref=dev_ref, skip_fetch=skip_fetch,
+    )
+    if dev_warning:
+        warnings.append(dev_warning)
+    for name in dev_files or []:
+        m = _NN_RE.match(name)
+        if m:
+            claims.append({"number": m.group(1), "file": name, "source": dev_ref})
+
+    # ── Source 3: every local branch (sibling worktrees share this .git) ──
+    try:
+        from .compliance import _migration_branch_claims
+        branch_claims = _migration_branch_claims(repo_root, _NN_RE, dev_ref=dev_ref)
+    except Exception as exc:  # pragma: no cover - defensive; see _migration_branch_claims contract
+        branch_claims = {}
+        warnings.append(f"local-branch scan unavailable: {exc}")
+    for (directory, number), by_name in branch_claims.items():
+        if directory != migrations_rel:
+            continue
+        for name, branches in by_name.items():
+            claims.append({
+                "number": number,
+                "file": name,
+                "source": f"branch:{','.join(sorted(branches))}",
+            })
+
+    if not claims:
+        return {
+            "error": (
+                f"Product '{product_slug}' has an empty migrations/ directory "
+                f"and no migrations found on {dev_ref} or any local branch. "
+                f"Scaffold the product first via noctus.dev.scaffold_product — "
+                f"it ships 001_seed.sql, after which subsequent migrations land "
+                f"via this tool."
+            )
+        }
+
+    next_n = max(int(c["number"]) for c in claims) + 1
+
+    return {
+        "product": product_slug,
+        "migrations_dir": str(migrations_dir),
+        "next_number": next_n,
+        "claims": sorted(claims, key=lambda c: (c["number"], c["file"], c["source"])),
+        "sources_checked": ["disk", dev_ref, "local-branches"],
+        "warnings": warnings,
+    }
 
 
 def _build_with_table_block(schema: str, table: str) -> str:
@@ -217,6 +412,7 @@ def scaffold_migration(
     with_updated_at: list[str] | None = None,
     worktree_path: str | Path | None = None,
     products_dir: Path | None = None,
+    skip_fetch: bool = False,
 ) -> dict:
     """Emit the next-numbered migration SQL file for ``<product_slug>``.
 
@@ -249,10 +445,19 @@ def scaffold_migration(
             Defaults to ``<worktree_path or server-startup>/products``.
             Tests pass tmp_path-based dirs; the MCP tool registration leaves
             it as None so the worktree-aware default wins.
+        skip_fetch: Skip the ``git fetch origin`` round-trip inside the
+            number computation (see ``next_migration_number``). Off by
+            default — correctness (seeing a sibling worktree's already-merged
+            migration) outweighs the network round-trip cost for an
+            authoring-time call. Set True for a fast offline-safe scaffold.
 
-    Returns ``{"created": True, "path": str, "number": int, "schema": str}``
-    on success, or ``{"error": str}`` on failure. NEVER raises — the caller
-    (MCP server) is meant to surface the error string verbatim.
+    Returns ``{"created": True, "path": str, "number": int, "schema": str,
+    "warnings": list[str]}`` on success, or ``{"error": str}`` on failure.
+    ``warnings`` is normally empty; it carries a note when the number
+    computation degraded (e.g. no network for the ``origin/dev`` fetch) — the
+    file still gets the best available number, but with reduced confidence
+    from that one source. NEVER raises — the caller (MCP server) is meant to
+    surface the error string verbatim.
     """
     if not product_slug:
         return {"error": "product_slug must be a non-empty string"}
@@ -271,45 +476,30 @@ def scaffold_migration(
                 "error": "with_updated_at entries must be non-empty strings"
             }
 
-    # Resolution order: explicit `products_dir` test seam wins; otherwise
-    # route via `worktree_path` (caller-aware); otherwise fall back to the
-    # server-startup workspace's PRODUCTS_DIR.
-    if products_dir is not None:
-        base_products_dir = products_dir
-    elif worktree_path is not None:
-        base_products_dir = resolve_caller_root(worktree_path) / "products"
-    else:
-        base_products_dir = PRODUCTS_DIR
+    base_products_dir, migrations_dir, err = _resolve_migrations_dir(
+        product_slug, worktree_path=worktree_path, products_dir=products_dir,
+    )
+    if err is not None:
+        return err
+    assert base_products_dir is not None and migrations_dir is not None
 
-    product_dir = base_products_dir / product_slug
-    if not product_dir.is_dir():
-        return {
-            "error": (
-                f"Product '{product_slug}' not found at {product_dir}. "
-                f"Scaffold the product first via noctus.dev.scaffold_product."
-            )
-        }
-
-    migrations_dir = _migrations_dir(product_slug, base_products_dir)
-    if not migrations_dir.is_dir():
-        return {
-            "error": (
-                f"Product '{product_slug}' has no backend/migrations/ directory "
-                f"(expected at {migrations_dir}). Scaffold the product first via "
-                f"noctus.dev.scaffold_product — it ships 001_seed.sql."
-            )
-        }
-
-    next_n = _next_number(migrations_dir)
-    if next_n is None:
-        return {
-            "error": (
-                f"Product '{product_slug}' has an empty migrations/ directory. "
-                f"Scaffold the product first via noctus.dev.scaffold_product — "
-                f"it ships 001_seed.sql, after which subsequent migrations land "
-                f"via this tool."
-            )
-        }
+    # Correct-by-construction numbering: `scaffold_migration` is the
+    # canonical authoring entrypoint, so it must not carry its own naive
+    # max(NN)+1 — that WAS the bug (an engineer who never separately ran
+    # `noctus.dev.next_migration_number` or the pre-commit keeper got a wrong
+    # number from the moment they scaffolded, undetected until the tech-lead's
+    # eventual commit). Delegating here means using the standard tool is
+    # sufficient; no extra step to remember.
+    number_result = next_migration_number(
+        product_slug,
+        worktree_path=worktree_path,
+        products_dir=products_dir,
+        skip_fetch=skip_fetch,
+    )
+    if "error" in number_result:
+        return number_result
+    next_n = number_result["next_number"]
+    warnings = number_result["warnings"]
 
     resolved_schema = schema if schema is not None else _slug_to_default_schema(product_slug)
     if not resolved_schema:
@@ -318,9 +508,11 @@ def scaffold_migration(
     filename = f"{_format_number(next_n)}_{migration_name}.sql"
     target = migrations_dir / filename
     if target.exists():
-        # Defensive — _next_number already advances past the highest NN, so
-        # this should be unreachable unless something raced us. Surface it
-        # explicitly rather than silently overwriting (no-silent-errors rule).
+        # Defensive — next_migration_number already advances past every
+        # claimed NN across disk/origin-dev/local-branches, so this should be
+        # unreachable unless something raced us in the instant between the
+        # computation and this write. Surface it explicitly rather than
+        # silently overwriting (no-silent-errors rule).
         return {"error": f"Refusing to overwrite existing file at {target}"}
 
     sql_body = _build_sql(
@@ -348,6 +540,7 @@ def scaffold_migration(
         "path": str(target),
         "number": next_n,
         "schema": resolved_schema,
+        "warnings": warnings,
     }
 
 
@@ -357,9 +550,14 @@ def register(server) -> None:
         description=(
             "Emit the next-numbered migration SQL file for a product, "
             "pre-wired with set_search_path / updated_at / RLS helpers from "
-            "noctusai_lib.domain.sql_templates. Pass `worktree_path` when "
-            "calling from inside a git worktree so the migration lands in "
-            "the worktree, not the MCP server's startup workspace."
+            "noctusai_lib.domain.sql_templates. The number is computed "
+            "correct-by-construction via noctus.dev.next_migration_number "
+            "(disk + freshly-fetched origin/dev + every local branch — not "
+            "the naive max(NN)+1 that collided twice, 2026-08-03 and "
+            "2026-08-13). Pass `worktree_path` when calling from inside a "
+            "git worktree so the migration lands in the worktree, not the "
+            "MCP server's startup workspace. `skip_fetch=True` for a fast "
+            "offline-safe scaffold (skips the origin/dev fetch)."
         ),
     )
     def _scaffold_migration(
@@ -369,6 +567,7 @@ def register(server) -> None:
         with_table: str | None = None,
         with_updated_at: list[str] | None = None,
         worktree_path: str | None = None,
+        skip_fetch: bool = False,
     ) -> dict:
         return scaffold_migration(
             product_slug,
@@ -377,4 +576,38 @@ def register(server) -> None:
             with_table=with_table,
             with_updated_at=with_updated_at,
             worktree_path=worktree_path,
+            skip_fetch=skip_fetch,
+        )
+
+    @server.tool(
+        name="noctus.dev.next_migration_number",
+        description=(
+            "Compute the next SAFE migration number for a product — not the "
+            "naive max(NN)+1 that `ls migrations/` gives you. Cross-"
+            "references THIS worktree's migrations/ directory, `origin/dev` "
+            "(freshly fetched — the authoritative merged state, catches a "
+            "migration a PARALLEL worktree already merged that this worktree "
+            "hasn't rebased onto — the 2026-08-13 incident), AND every LOCAL "
+            "branch (git refs are shared across every worktree of this one "
+            "clone, so a sibling worktree's committed-but-unpushed migration "
+            "is visible — the 2026-08-03 incident). Read-only: the only "
+            "network call is `git fetch`; nothing is written or reserved. "
+            "`noctus.dev.scaffold_migration` calls this internally, so a "
+            "scaffolded migration is correct by construction — call this "
+            "directly only to PREVIEW the number before scaffolding, or to "
+            "sanity-check a hand-picked one. Pass `worktree_path` when "
+            "calling from inside a git worktree. `skip_fetch=True` for a "
+            "fast offline-safe answer (falls back to whatever origin/dev "
+            "already resolves to locally)."
+        ),
+    )
+    def _next_migration_number(
+        product_slug: str,
+        worktree_path: str | None = None,
+        skip_fetch: bool = False,
+    ) -> dict:
+        return next_migration_number(
+            product_slug,
+            worktree_path=worktree_path,
+            skip_fetch=skip_fetch,
         )

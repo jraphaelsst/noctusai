@@ -532,3 +532,123 @@ class TestReadSurface:
 
         with pytest.raises(svc.ClienteNotFound):
             svc.update_cliente(client, ORG, str(uuid4()), nome="X")
+
+
+# ─── PostgREST 1 000-row cap — the bug class the shared mock cannot see ────
+#
+# 🔴 `MockSupabaseClient.range()` is a NO-OP (`seed/lib/backend/noctusai_lib/
+# testing/mocks.py`) and the mock applies no row ceiling, so a raw
+# `.select().execute()` and a paginated `_select_all()` are INDISTINGUISHABLE
+# under it. That is not a small gap: it makes this entire bug class untestable
+# by construction, which is why it has now shipped twice — `filter_options`
+# (fixed in c5a34390) and `_repoint_negociacoes` (found live 2026-08-13, having
+# repointed 1 000 of 1 365 negociações while reporting `orphaned: []`).
+#
+# The double below models the real ceiling: an unpaginated select truncates,
+# a `.range()`d one does not. Against the pre-fix code this test FAILS.
+
+class _CappingSelect:
+    """Wraps a real mock select chain and enforces PostgREST's row cap
+    unless the caller paginated with `.range()`."""
+
+    def __init__(self, inner, cap: int):
+        self._inner, self._cap, self._ranged = inner, cap, False
+
+    def __getattr__(self, name):
+        attr = getattr(self._inner, name)
+        if not callable(attr):
+            return attr
+
+        def _proxy(*a, **k):
+            if name == "range":
+                self._ranged = True
+            result = attr(*a, **k)
+            return self if result is self._inner else result
+
+        return _proxy
+
+    def execute(self):
+        resp = self._inner.execute()
+        if not self._ranged and isinstance(resp.data, list) and len(resp.data) > self._cap:
+            resp.data = resp.data[: self._cap]
+        return resp
+
+
+class _CappingClient:
+    def __init__(self, inner, cap: int = 3):
+        self._inner, self._cap = inner, cap
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def table(self, name):
+        real = self._inner.table(name)
+        original_select = real.select
+
+        def _select(*a, **k):
+            return _CappingSelect(original_select(*a, **k), self._cap)
+
+        real.select = _select
+        return real
+
+
+class TestPostgrestRowCap:
+    def test_repoint_paginates_past_the_row_cap(self):
+        """With a cap BELOW the negociações count, an unpaginated select would
+        silently see only the first `cap` rows and leave the rest NULL while
+        reporting zero orphans — exactly the live 2026-08-13 failure."""
+        inner = _seed_full_fixture()
+        neg_count = len(inner.table("negociacoes_venda").select("*").execute().data)
+        assert neg_count > 2, "fixture must exceed the cap for this to be meaningful"
+
+        client = _CappingClient(inner, cap=2)
+        report = svc.run_backfill(client, ORG)
+
+        assert report.negociacoes_orphaned == []
+        assert report.negociacoes_repointed == neg_count, (
+            f"repointed {report.negociacoes_repointed} of {neg_count} — an "
+            "unpaginated select was capped and reported success anyway"
+        )
+        rows = inner.table("negociacoes_venda").select("*").execute().data
+        assert all(r["cliente_id"] is not None for r in rows)
+
+
+# ── /clientes/revisao took production down on 2026-08-14 ──────────────────
+#
+# `list_review_groups` did two unbounded things at once:
+#   1. `select("*")` over `clientes` — capped at 1 000, silently dropping 177
+#      of the 1 177 identidade_incerta rows;
+#   2. `.in_("cliente_id", ids)` with ~1 000 UUIDs — PostgREST puts `in_`
+#      values in the URL QUERY STRING, so that is a ~40 KB request line. The
+#      server answered a bare 400 ("JSON could not be generated") and the
+#      review queue — the whole point of Phase 1 — showed an error page.
+#
+# These pin the batching invariant directly, because the shared mock has no
+# URL-length limit and therefore cannot reproduce the 400 on its own.
+
+class TestReviewGroupsBatching:
+    def test_batched_splits_at_the_configured_size(self):
+        items = list(range(450))
+        batches = list(svc._batched(items, svc._IN_FILTER_BATCH))
+        assert [len(b) for b in batches] == [200, 200, 50]
+        assert [x for b in batches for x in b] == items, "batching must not lose or reorder ids"
+
+    def test_in_filter_batch_keeps_the_request_line_under_8kb(self):
+        """A UUID is 36 chars; PostgREST adds quoting/commas (~38 each) and
+        the whole list rides in the query string. 8 KB is the common server
+        request-line limit."""
+        worst_case = svc._IN_FILTER_BATCH * 38
+        assert worst_case < 8000, (
+            f"a batch of {svc._IN_FILTER_BATCH} ids is ~{worst_case} bytes of "
+            "query string — that is the 400 that took /clientes/revisao down"
+        )
+
+    def test_no_unbounded_in_filter_survives_in_the_review_path(self):
+        """Structural guard: the id list must reach `in_` through `_batched`.
+        A future edit that drops the loop reintroduces the outage."""
+        import inspect
+        src = inspect.getsource(svc.list_review_groups)
+        assert "_batched(" in src, "list_review_groups must batch its in_ filter"
+        assert ".in_(\"cliente_id\", ids)" not in src, (
+            "the unbounded in_(ids) call is back — this is the 2026-08-14 outage"
+        )

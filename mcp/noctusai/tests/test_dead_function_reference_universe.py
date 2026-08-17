@@ -37,11 +37,20 @@ from tools.noctus.seed import scan_optimizations as so
 
 # The exact keepers the broken detector wanted deleted. Named literally so a
 # future refactor that renames one has to come here and think.
+#
+# 2026-08-14 — `check_migration_number_collision` REMOVED, and the removal is
+# the point of this note. It stopped being a valid SPECIMEN because the
+# migration-number reservation work (`c164d560`) made `scaffold_migration.py`
+# and `task_branch.py` reference it from inside `tools/`. It is now genuinely
+# tree-visible, so it can no longer demonstrate the narrow-universe false
+# positive this module exists to pin. The test below detected that itself and
+# said "rewrite it against a keeper that still isn't" — this is that rewrite,
+# not a silenced failure. Six specimens remain, and the emptiness guard below
+# stops this list being whittled to nothing by repeating the manoeuvre.
 KEEPERS_THAT_WERE_REPORTED_DEAD = [
     "check_primary_checkout_commit",
     "check_tunnel_ingress_snapshot_sync",
     "check_branch_tree_mirror",
-    "check_migration_number_collision",
     "check_conflict_markers",
     "check_codification_pipeline_health",
     "check_postgrest_schema_qualified_table",
@@ -63,6 +72,17 @@ class TestReferenceUniverse:
             f"only {len(tools_files)} python files found under "
             f"{so._DEFAULT_TOOLS_DIR} — check _SKIP_DIRS for an entry that "
             "matches a parent directory of the repo itself"
+        )
+
+    def test_specimen_list_is_not_empty(self):
+        """Guards the guard, again. Removing a specimen that legitimately went
+        tree-visible (see the 2026-08-14 note) is correct; emptying the list by
+        repeating that is not — both assertions below pass vacuously on an
+        empty list, so attrition would silently retire this whole module."""
+        assert len(KEEPERS_THAT_WERE_REPORTED_DEAD) >= 3, (
+            f"only {len(KEEPERS_THAT_WERE_REPORTED_DEAD)} specimen(s) left to "
+            "demonstrate the narrow-universe false positive — add a "
+            "currently-unreferenced keeper rather than shrinking the list"
         )
 
     def test_consumer_roots_exist(self):

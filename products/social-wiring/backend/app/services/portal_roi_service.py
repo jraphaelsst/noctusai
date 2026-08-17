@@ -326,7 +326,7 @@ class PortalRoiService:
             query = query.gte("data_entrada", periodo_inicio.isoformat())
         if periodo_fim is not None:
             query = query.lte("data_entrada", periodo_fim.isoformat())
-        rows = list(query.execute().data or [])
+        rows = _paginate(query)
         counts: dict[str, int] = {}
         for row in rows:
             oid = row.get("origem_id")
@@ -342,7 +342,7 @@ class PortalRoiService:
             query = query.gte("data_venda", periodo_inicio.isoformat())
         if periodo_fim is not None:
             query = query.lte("data_venda", periodo_fim.isoformat())
-        rows = list(query.execute().data or [])
+        rows = _paginate(query)
         agg: dict[str, tuple[int, float]] = {}
         for row in rows:
             oid = row.get("origem_id")
@@ -531,6 +531,34 @@ class PortalRoiService:
             return False
         self._table("lead_campanhas").delete().eq("id", str(campanha_id)).execute()
         return True
+
+
+_PAGE = 1000
+
+
+def _paginate(query, *, page_size: int | None = None) -> list[dict]:
+    """Drain a PostgREST query past its row cap.
+
+    🔴 An unpaginated `.execute()` silently returns AT MOST 1 000 rows and
+    reports success. On 2026-08-14 that made `/portal-roi` display **1 000
+    leads instead of 13 255** — every per-portal count, and every CPL derived
+    from one, was wrong, with no error anywhere. Same class as
+    `imoveis_service.filter_options` (c5a34390) and the negociações repoint
+    (98377d26); this file already paginated `_fetch_campanhas_rows` and
+    `_select_all` while two sibling queries did not.
+
+    Any query whose result set is not provably bounded below 1 000 goes
+    through here.
+    """
+    page_size = page_size or _PAGE
+    out: list[dict] = []
+    start = 0
+    while True:
+        rows = query.range(start, start + page_size - 1).execute().data or []
+        out.extend(rows)
+        if len(rows) < page_size:
+            return out
+        start += page_size
 
 
 def _cpl(investimento: Optional[float], total_leads: int) -> Optional[float]:
