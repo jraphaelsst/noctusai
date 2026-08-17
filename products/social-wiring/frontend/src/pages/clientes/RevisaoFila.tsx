@@ -55,7 +55,7 @@ export default function RevisaoFila() {
   // other page in this product — TanStack v5's isLoading is false mid-refetch).
   const loading = queue.isPending || queue.isFetching;
   const data = queue.data;
-  const visibleItems = (data?.items ?? []).filter((g) => !resolvedIds.has(g.grupo_id));
+  const visibleItems = (data?.items ?? []).filter((g) => !resolvedIds.has(g.chave_canonica));
   const isSuccessEmpty = !loading && !queue.isError && (data?.total ?? 0) === 0;
 
   // Walkability: a page that empties out purely because everything on it
@@ -82,10 +82,10 @@ export default function RevisaoFila() {
 
   function handleMerge(grupo: RevisaoGrupo) {
     merge.mutate(
-      { grupoId: grupo.grupo_id },
+      { grupoId: grupo.chave_canonica },
       {
         onSuccess: (result) => {
-          markResolved(grupo.grupo_id);
+          markResolved(grupo.chave_canonica);
           toast.success("Grupo mesclado.", {
             description: `As ${grupo.candidatos.length} pessoas foram unidas em um único cliente.`,
             duration: 10000,
@@ -112,9 +112,9 @@ export default function RevisaoFila() {
   }
 
   function handleManterSeparados(grupo: RevisaoGrupo) {
-    manterSeparados.mutate(grupo.grupo_id, {
+    manterSeparados.mutate(grupo.chave_canonica, {
       onSuccess: () => {
-        markResolved(grupo.grupo_id);
+        markResolved(grupo.chave_canonica);
         toast.success("Mantidos separados.", {
           description: "Este grupo não vai mais aparecer na fila de revisão.",
         });
@@ -148,13 +148,13 @@ export default function RevisaoFila() {
           <div className="grid gap-4 lg:grid-cols-2">
             {visibleItems.map((grupo) => (
               <RevisaoGrupoCard
-                key={grupo.grupo_id}
+                key={grupo.chave_canonica}
                 grupo={grupo}
                 onMerge={handleMerge}
                 onManterSeparados={handleManterSeparados}
-                merging={merge.isPending && merge.variables?.grupoId === grupo.grupo_id}
+                merging={merge.isPending && merge.variables?.grupoId === grupo.chave_canonica}
                 rejecting={
-                  manterSeparados.isPending && manterSeparados.variables === grupo.grupo_id
+                  manterSeparados.isPending && manterSeparados.variables === grupo.chave_canonica
                 }
               />
             ))}

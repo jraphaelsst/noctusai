@@ -215,6 +215,22 @@ class PageOut(BaseModel):
     pages: int = 1
 
 
+def _paginate_items(items: list[dict], page: int, page_size: int) -> PageOut:
+    """Python-side pagination over an already-filtered, already-fetched
+    list — for read paths whose filtering can't happen at the DB query
+    level, so `clientes_service`'s `.range()`-based `list_clientes`/
+    `get_touches` (DB-side pagination, `count="exact"`) don't apply.
+    Shared by the `corretor_id` cross-filter branch of
+    `list_clientes_route` and `list_revisao`, so this `ceil(total/
+    page_size)` arithmetic exists in exactly ONE place for this
+    pagination style rather than a 3rd/4th hand-copy (DRY N=3 rule)."""
+    total = len(items)
+    start = max(0, (page - 1) * page_size)
+    page_items = items[start : start + page_size]
+    pages = max(1, (total + page_size - 1) // page_size)
+    return PageOut(items=page_items, total=total, page=page, pages=pages)
+
+
 class ClientePatchBody(StrictHttpModel):
     """PATCH body — `nome` and `ativo` are the only client-writable
     lifecycle fields. `arquivado_em`/`inativo_em` are derived
@@ -225,16 +241,6 @@ class ClientePatchBody(StrictHttpModel):
 
     nome: Optional[str] = None
     ativo: Optional[bool] = None
-
-
-class RevisaoGrupoOut(BaseModel):
-    chave_canonica: str
-    motivo: str
-    candidatos: list[dict] = Field(default_factory=list)
-
-
-class RevisaoGruposOut(BaseModel):
-    groups: list[RevisaoGrupoOut] = Field(default_factory=list)
 
 
 class MergeGrupoBody(StrictHttpModel):
@@ -287,28 +293,40 @@ async def list_clientes_route(
     matching = _all_clientes(client, org_id, ativo=ativo, q=q)
     items = [c for c in matching if c["id"] in allowed]
     items.sort(key=lambda c: c.get("ultimo_contato_em") or "", reverse=True)
-    total = len(items)
-    start = max(0, (page - 1) * page_size)
-    page_items = items[start : start + page_size]
-    pages = max(1, (total + page_size - 1) // page_size)
-    return PageOut(items=page_items, total=total, page=page, pages=pages)
+    return _paginate_items(items, page, page_size)
 
 
-@router.get("/revisao", response_model=RevisaoGruposOut)
+@router.get("/revisao", response_model=PageOut)
 async def list_revisao(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(12, ge=1, le=100),
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
-) -> RevisaoGruposOut:
-    """The review queue (contract §5) — every unresolved C4-C6 group,
-    with `POST .../manter-separados` decisions durably excluded (see
-    migration `049`). `clientes_service.list_review_groups` itself has no
-    "don't resurface" concept — that filtering is this router's job."""
+) -> PageOut:
+    """The review queue (contract §5) — the canonical paginated envelope
+    (`{items,total,page,pages}`, matching `list_clientes_route`'s
+    `PageOut` / `ClientesPage` / `ImovelPage`) rather than a bespoke
+    `{groups:[...]}` shape. This is a house-shape requirement, not
+    cosmetic: the FE's `useClientesRevisao.ts::normalizeRevisaoPage`
+    only recognizes THIS envelope or a bare array — a `{groups:[...]}`
+    response silently fell through both branches to an empty page while
+    returning 200 with real data (live incident, ~350 groups rendered as
+    "fila vazia").
+
+    `POST .../manter-separados` decisions are durably excluded (see
+    migration `049`) BEFORE pagination, not after: filtering must run
+    against the FULL candidate set. Paginate-then-filter would silently
+    shrink whichever page a rejected group used to occupy — a page that
+    reports `page_size` slots but delivers fewer, hiding real remaining
+    work rather than surfacing it on the next page.
+    `clientes_service.list_review_groups` itself has no "don't resurface"
+    concept — that filtering is this router's job."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     groups = svc.list_review_groups(client, org_id)
     rejected = _rejected_keys(client, org_id)
     visible = [g for g in groups if g["chave_canonica"] not in rejected]
-    return RevisaoGruposOut(groups=[RevisaoGrupoOut(**g) for g in visible])
+    return _paginate_items(visible, page, page_size)
 
 
 @router.post("/revisao/{grupo}/merge", response_model=MergeGrupoOut)

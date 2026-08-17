@@ -47,7 +47,6 @@ vi.mock("@/hooks/useClientesRevisao", async () => {
 
 function grupo(overrides: Partial<any> = {}) {
   return {
-    grupo_id: "g1",
     motivo: "C5",
     chave_canonica: "+5511974781330",
     candidatos: [
@@ -120,10 +119,10 @@ describe("RevisaoFila — empty queue (success, not failure)", () => {
 describe("RevisaoFila — groups to review", () => {
   const twoGroups = {
     items: [
-      grupo({ grupo_id: "g1", motivo: "C5" }),
+      grupo({ motivo: "C5" }),
       grupo({
-        grupo_id: "g2",
         motivo: "C4",
+        chave_canonica: "+5511900000000",
         candidatos: [
           { id: "cand3", nome: "Ana", chave_canonica: "+5511900000000", touch_count: 1 },
           { id: "cand4", nome: "Ana Paula", chave_canonica: "+5511900000000", touch_count: 3 },
@@ -161,7 +160,7 @@ describe("RevisaoFila — groups to review", () => {
     const [mesclarBtn] = getAllByTestId("revisao-mesclar-btn");
     fireEvent.click(mesclarBtn);
     expect(mockMerge.mutate).toHaveBeenCalledWith(
-      { grupoId: "g1" },
+      { grupoId: "+5511974781330" },
       expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
     );
   });
@@ -172,7 +171,7 @@ describe("RevisaoFila — groups to review", () => {
     const [manterBtn] = getAllByTestId("revisao-manter-separados-btn");
     fireEvent.click(manterBtn);
     expect(mockManterSeparados.mutate).toHaveBeenCalledWith(
-      "g1",
+      "+5511974781330",
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
