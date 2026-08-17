@@ -94,6 +94,33 @@ we can prove the contract before a single real lead exists.
 6. **The body is a hint, not truth.** There is no signature. Idempotency on
    `eventId` is the compensation; `GET /v1/mensagens/{id}` is the escalation, in
    the background, never in the request path.
+7. **🔴 No model call anywhere in the delivery path — an LLM outage must never
+   cost a lead.** *(User, 2026-08-17: "we must be really careful here to dont let
+   any model's outage affect our app.")* Concretely, and these are testable
+   invariants, not aspirations:
+   - **The receiver imports no LLM client.** Not `noctusai_lib.integrations.llm`,
+     not an embedding call, not a classifier. The vendor gives us 1.5 seconds; a
+     model call cannot fit, and a model *outage* inside that window converts a
+     provider incident into lost customer enquiries. A keeper-style import
+     assertion in the receiver's test file pins this.
+   - **Enrichment is downstream of durability, never upstream.** The order is
+     always: verify → persist to `imovelweb_lead_events` → answer 2xx → resolve
+     org → write the ledger → project into `leads` → *then* enrich. Every step
+     after the durable write is independently retryable from the inbox, so an
+     outage in any of them delays a lead rather than dropping it.
+   - **Enrichment failures are degradations, not errors.** `smartlead` is a
+     nullable column for this reason. If the enrichment call fails — vendor
+     down, model down, quota exhausted — the lead is already in `leads` and
+     working. Never mark the event `error` for a failed enrichment; never block
+     the projection on it.
+   - **If lead scoring is ever added, it is a separate job reading the ledger**,
+     with its own retry and its own failure surface — never a step in ingestion.
+     LGPD Art. 20 also engages there (§10.5), so the separation is doubly
+     motivated.
+   - **The same rule applies to our own tooling.** `mcp/imovelweb`'s zero-IO
+     contract tools must keep working with no credentials and no network, which
+     is what makes the connector usable for diagnosis *during* an outage rather
+     than another thing that is down.
 
 ---
 

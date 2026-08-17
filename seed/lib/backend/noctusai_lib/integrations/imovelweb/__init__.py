@@ -36,6 +36,15 @@ flips it. → `projects/imovelweb-portal-leads-ingestion/PROJECT.md`
 
 from __future__ import annotations
 
+from .auth import (
+    REFRESH_SKEW_SECONDS,
+    AccessToken,
+    ImovelWebAuth,
+    InMemoryTokenCache,
+    TokenCache,
+    parse_expiry,
+    token_from_payload,
+)
 from .contract import (
     IMOVELWEB_FIELD_SPECS,
     IMOVELWEB_RESPONSE_SEMANTICS,
@@ -69,6 +78,15 @@ from .errors import (
     ImovelWebError,
     ImovelWebUpstreamError,
     redact_secrets,
+)
+from .factory import make_imovelweb_client
+from .fake import FakeImovelWebClient
+from .protocol import ImovelWebAdapter
+from .real import (
+    DEFAULT_TIMEOUT_SECONDS,
+    RATE_LIMIT_BUCKET,
+    ImovelWebClient,
+    describe_error_body,
 )
 from .normalizers import (
     IMOVELWEB_DEFAULT_SOURCE_SLUG,
@@ -141,4 +159,20 @@ __all__ = [
     "ImovelWebError",
     "ImovelWebUpstreamError",
     "redact_secrets",
+    # auth
+    "AccessToken",
+    "ImovelWebAuth",
+    "InMemoryTokenCache",
+    "REFRESH_SKEW_SECONDS",
+    "TokenCache",
+    "parse_expiry",
+    "token_from_payload",
+    # adapter quartet — Protocol + Fake + Real + factory, shipped whole
+    "DEFAULT_TIMEOUT_SECONDS",
+    "FakeImovelWebClient",
+    "ImovelWebAdapter",
+    "ImovelWebClient",
+    "RATE_LIMIT_BUCKET",
+    "describe_error_body",
+    "make_imovelweb_client",
 ]
