@@ -5,7 +5,11 @@
 // so this is a supported entry, not a reach into internals. When the organ
 // swap lands (roadmap T4) the peer set arrives with it.
 import { extractErrorMessage } from "@noctusai/lib/api";
-import { supabase } from "./supabase";
+// Canonical seed Supabase client (auth-only usage — see infra.tsx's
+// createProductInfra) — replaces the product's own hand-rolled
+// `lib/supabase.ts`, retired when App.tsx/main.tsx moved onto
+// createProductApp's standard Supabase auth wiring.
+import { supabase } from "@noctusai/seed/infra";
 
 // House single-container model: uvicorn serves the built SPA + API on the
 // SAME origin (via the seed `serve_spa` seam), so the default is same-origin

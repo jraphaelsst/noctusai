@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getSession = vi.fn();
 
-vi.mock("@/lib/supabase", () => ({
+vi.mock("@noctusai/seed/infra", () => ({
   supabase: { auth: { getSession: () => getSession() } },
 }));
 

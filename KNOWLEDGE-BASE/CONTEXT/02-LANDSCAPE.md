@@ -47,8 +47,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 19 | 31 | 654 |
 | Igig | 10 | 6 | 17 | 9 | 17 | 261 |
-| P Studio | 8 | 8 | 10 | 1 | 19 | 311 |
-| **Total** | **216** | **225** | **388** | **223** | **573** | **7,618** |
+| P Studio | 8 | 8 | 11 | 1 | 19 | 311 |
+| **Total** | **216** | **225** | **389** | **223** | **573** | **7,618** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

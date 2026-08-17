@@ -15,6 +15,7 @@
         "@dnd-kit/sortable": "^10.0.0",
         "@dnd-kit/utilities": "^3.2.2",
         "@noctusai/lib": "file:../../../seed/lib/frontend",
+        "@noctusai/seed": "file:../../../seed/framework/frontend",
         "@radix-ui/react-collapsible": "^1.1.12",
         "@radix-ui/react-hover-card": "^1.1.15",
         "@radix-ui/react-tabs": "^1.1.12",
