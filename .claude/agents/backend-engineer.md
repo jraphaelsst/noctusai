@@ -7,6 +7,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/backend.md
   - CONTEXT/PATTERNS/backend/database-rls.md
   - CONTEXT/PATTERNS/backend/postgrest-schema-targeting.md
+  - CONTEXT/PATTERNS/backend/postgrest-row-cap.md
   - CONTEXT/PATTERNS/backend/invitation-acceptance.md
   - CONTEXT/PATTERNS/backend/pydantic-strict-http.md
   - CONTEXT/PATTERNS/backend/seed-fake-real-adapter.md
@@ -62,6 +63,7 @@ Implement server-side slices to the architect's contracts — routers → servic
 - **RLS scopes per org.** Every data-access path scoped by org; admin-endpoints never bypass via service role. → `KB § PATTERNS/backend/database-rls.md` · `KB § backend/04-DATABASE.md`
 - **An endpoint whose job is a side effect must be tested on its WRITES, not its status code.** Accepting an invitation is three writes (identity → `noctus_users` membership → invitation status); the seed shipped only the third for 3 months, returning 200 the whole time. Mounting a standard router is also a schema commitment — verify its tables exist in that product's schema. → `KB § PATTERNS/backend/invitation-acceptance.md`
 - **PostgREST table names are BARE.** The client already carries its schema, so `.table(f"{schema}.x")` resolves as `<schema>.<schema>.x` → a 500 that reads like a missing migration; mocks key by the string you hand them, so a qualified fixture agrees with a qualified caller and stays green. Keeper `check_postgrest_schema_qualified_table`. → `KB § PATTERNS/backend/postgrest-schema-targeting.md`
+- **An unbounded PostgREST select silently caps at 1 000 rows — no error.** `.in_()` values ride in the URL query string too, so an unbatched ~1 000-item collection is a bare 400; paginate via `_paginate`/`_select_all` and batch via `_batched`. `MockSupabaseClient` now enforces the same cap (it didn't — that's why SEVEN instances shipped in one session with green tests). Keeper `check_postgrest_unbounded_query` (heuristic, observe-first; severity split — select-shape `info`, `.in_()`-shape `warning`, so the structural half isn't diluted). → `KB § PATTERNS/backend/postgrest-row-cap.md`
 - **Webhook verify-before-side-effect.** HMAC sha256 / hex / Svix via `noctusai_lib.security.webhook_signatures`; Stripe SDK is the carve-out. → `KB § PATTERNS/security/webhook-signatures.md` (security-owned; backend implements)
 - **Outbound rate limiting.** Every third-party call routes through `noctusai_lib.integrations.rate_limit` — `acquire`/`acquire_async` pacing (token bucket per provider) + `retry_with_backoff`/`_async` (honors `Retry-After`, else exp backoff). Bursting gets us banned (Meta ads-backfill throttle). Distinct from inbound slowapi limits. → `KB § PATTERNS/common/outbound-rate-limiting.md`
 - **Realtime = one bus, provider-neutral.** Every live surface publishes/subscribes through `noctusai_lib.realtime` (`RealtimeBus` Protocol + `FakeRealtimeBus`/`RedisRealtimeBus` + `create_sse_router`) — Redis Streams not bare pub/sub, so `Last-Event-ID` resume actually replays the reconnect gap; never a per-product SSE/WS reinvention. → `KB § PATTERNS/common/realtime-sse-bus.md`

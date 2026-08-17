@@ -8369,6 +8369,291 @@ def check_postgrest_schema_qualified_table(repo_root: Path | None = None) -> lis
 
 
 # ---------------------------------------------------------------------------
+# `check_postgrest_unbounded_query` — PostgREST silently caps ANY select at
+# `db-max-rows` (Supabase default 1 000) — no error, no warning,
+# `response.data` just comes back short. SEVEN instances of this shipped to
+# production in a single session (2026-08-13/14): portal-roi reported 1 000
+# leads instead of 13 255; a backfill silently repointed 1 000 of 1 365
+# negociações and reported "clean"; a review queue dropped 177 of 1 177 rows
+# — every one a correct-looking 200 with wrong data. A SECOND, related shape:
+# PostgREST serializes `.in_(col, values)` into the URL QUERY STRING, so an
+# unbatched ~1 000-item collection is a ~40 KB request line and the server
+# answers a bare 400 ("JSON could not be generated") with no hint about
+# length — the incident that actually took `/clientes/revisao` down.
+#
+# The root enabler was `MockSupabaseClient.range()` being a no-op with no row
+# ceiling — every one of the seven had a PASSING unit test, because the mock
+# returned whatever the fixture held, never PostgREST's real 1 000-row cap.
+# `noctusai_lib.testing.mocks` now models the cap (same commit as this
+# keeper — gate<->methodology sync, `KB § PATTERNS/common/gate-methodology-
+# sync.md`); this keeper is the STATIC backstop for call sites the mock fix
+# can only catch once someone writes a fixture with >1 000 rows.
+#
+# AST-based (`KB § PATTERNS/common/ast.md`): a regex over `.execute(` cannot
+# tell a real fluent PostgREST chain from the same characters inside a
+# docstring or a `KB §` reference (like this comment block), and cannot walk
+# BACK up a chain to see whether `.range()`/`.limit()`/`.single()` bounded it.
+#
+# Deliberately heuristic, NOT exhaustive — a keeper that flags every
+# `.select(...).execute()` in the codebase is noise the moment it ships, and
+# a noisy keeper gets `--no-verify`d. Exemptions (each is a REAL shape that
+# recurs across products, not a guess):
+#   - `.single()` / `.maybe_single()` anywhere in the chain — PostgREST
+#     returns 0 or 1 row for these; no cap can bite.
+#   - `.range(` anywhere in the chain — the call site is already
+#     pagination-aware (matches `_paginate`/`_select_all`'s own internals —
+#     see `portal_roi_service.py` / `clientes_service.py`).
+#   - `.limit(N)` with N a literal <= `_POSTGREST_MAX_ROWS_LITERAL` — provably
+#     inside the cap. A non-literal or over-cap `.limit(...)` is NOT
+#     exempted: that is the same silent-truncation bug with an extra step.
+#   - `.eq("id", ...)` anywhere in the chain — a primary-key equality
+#     provably bounds the result to <= 1 row (the `_get_campanha` /
+#     `_get_origem` / `_get_cliente` shape recurring across this workspace).
+#   - a same-line or up-to-3-preceding-line `postgrest-unbounded-ok: <why>`
+#     rationale comment — must state WHY, not just cite the keeper (mirrors
+#     `check_postgrest_schema_qualified_table`'s escape hatch, with an
+#     explicit reason required so it cannot be rubber-stamped).
+#
+# The `.in_()` shape is checked separately: `.in_(col, ids)` is exempt when
+# `ids` is a small literal collection (<= `_IN_FILTER_LITERAL_MAX`) OR the
+# call sits inside a `for … in <batch-helper>(...)` loop (matched by the
+# iterated call's name containing "batch" — the `_batched(...)` shape this
+# bug class's own fix introduced). Anything else is flagged.
+#
+# Severity is SPLIT by shape, not uniform — a full-tree sweep found ~700
+# select-shape candidates against ~90 `.in_()`-shape candidates, and at one
+# badge the ~90 that are structurally risky REGARDLESS of table cardinality
+# (an `.in_()` fed too many values is a bug independent of what the column
+# means) were indistinguishable from the ~700 whose risk is entirely a
+# function of a row count this keeper cannot see:
+#   - `.in_()`-shape -> `warning`.
+#   - select-shape    -> `info` — still reported, still discoverable, but
+#     does not dilute the tier worth acting on. `info` is not invented for
+#     this keeper: `tools/noctus/seed/scan_optimizations.py` already uses it
+#     for the same "real, non-actionable-at-a-glance" register.
+# Both shapes stay non-blocking in pre-commit (matches
+# `check_lying_loading_state`'s observe-first cadence for a brand-new,
+# necessarily-heuristic detector) — promote the `.in_()`-shape to blocking
+# once a fleet sweep shows its false-positive rate is low enough; the
+# select-shape has no such path without table-cardinality knowledge this
+# keeper does not have. KB § PATTERNS/backend/postgrest-row-cap.md.
+# ---------------------------------------------------------------------------
+
+_POSTGREST_SELECT_SEVERITY = "info"
+_POSTGREST_IN_FILTER_SEVERITY = "warning"
+_POSTGREST_MAX_ROWS_LITERAL = 1000
+_IN_FILTER_LITERAL_MAX = 200
+
+_POSTGREST_ROWCAP_RATIONALE_RE = re.compile(
+    r"postgrest-unbounded-ok\s*[:\-]\s*\S.{9,}", re.IGNORECASE
+)
+_POSTGREST_ROWCAP_RATIONALE_WINDOW = 3
+
+
+def _postgrest_chain_links(node: ast.Call) -> list[str]:
+    """Method-call names in a fluent chain ending at `node`, root-first.
+
+    `db.table("x").select("*").eq("y", 1).execute()` ->
+    `["table", "select", "eq", "execute"]`. Stops at the first link that is
+    not `<Call>.<attr>` — i.e. the chain's root expression.
+    """
+    calls: list[str] = []
+    current: ast.AST = node
+    while isinstance(current, ast.Call) and isinstance(current.func, ast.Attribute):
+        calls.append(current.func.attr)
+        current = current.func.value
+    calls.reverse()
+    return calls
+
+
+def _postgrest_chain_calls_named(node: ast.Call, name: str) -> list[ast.Call]:
+    """Every `ast.Call` in the chain ending at `node` whose method is `name`
+    (e.g. every `.eq(...)`), root-first."""
+    out: list[ast.Call] = []
+    current: ast.AST = node
+    while isinstance(current, ast.Call) and isinstance(current.func, ast.Attribute):
+        if current.func.attr == name:
+            out.append(current)
+        current = current.func.value
+    out.reverse()
+    return out
+
+
+def _postgrest_literal_int(node: ast.AST) -> int | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
+        return node.value
+    return None
+
+
+def _postgrest_eq_bounds_to_one(node: ast.Call) -> bool:
+    """True if `.eq("id", ...)` sits in the chain — a primary-key equality
+    provably bounds the result to at most one row."""
+    for eq_call in _postgrest_chain_calls_named(node, "eq"):
+        if not eq_call.args:
+            continue
+        first = eq_call.args[0]
+        if isinstance(first, ast.Constant) and first.value == "id":
+            return True
+    return False
+
+
+def _postgrest_limit_within_cap(node: ast.Call) -> bool:
+    """True if a `.limit(N)` in the chain has a literal N within the cap. A
+    non-literal or over-cap `.limit(...)` does NOT exempt the call — it is
+    the same silent-truncation bug wearing an explicit-looking number."""
+    for limit_call in _postgrest_chain_calls_named(node, "limit"):
+        if not limit_call.args:
+            continue
+        value = _postgrest_literal_int(limit_call.args[0])
+        if value is not None and value <= _POSTGREST_MAX_ROWS_LITERAL:
+            return True
+    return False
+
+
+def _postgrest_walk_with_ancestors(node: ast.AST, ancestors: tuple[ast.AST, ...]):
+    """`ast.walk` variant that also yields each node's ancestor chain (root
+    first) — needed to tell whether an `.in_()` call sits inside a
+    `for batch in _batched(...)` loop."""
+    yield node, ancestors
+    for child in ast.iter_child_nodes(node):
+        yield from _postgrest_walk_with_ancestors(child, ancestors + (node,))
+
+
+def _postgrest_in_call_is_batched(ancestors: tuple[ast.AST, ...]) -> bool:
+    """True if any ancestor `for` loop iterates a call whose name contains
+    "batch" — the `_batched(...)` shape this bug class's own fix uses."""
+    for ancestor in ancestors:
+        if not isinstance(ancestor, ast.For):
+            continue
+        it = ancestor.iter
+        if isinstance(it, ast.Call):
+            fname = _postgrest_callee_name(it) or ""
+            if "batch" in fname.lower():
+                return True
+    return False
+
+
+def _postgrest_in_call_value_arg(node: ast.Call) -> ast.AST | None:
+    """The value argument of `.in_(col, value)`, positional or keyword."""
+    if len(node.args) >= 2:
+        return node.args[1]
+    for kw in node.keywords:
+        if kw.arg == "value":
+            return kw.value
+    return None
+
+
+def check_postgrest_unbounded_query(repo_root: Path | None = None) -> list[dict]:
+    """Flag an unbounded PostgREST select reaching `.execute()` with no
+    pagination on the chain (severity `info` — risk is a function of a row
+    count this keeper cannot see), and an `.in_()` fed an unbounded
+    collection (severity `warning` — structurally risky regardless of table
+    cardinality) — the two-shaped bug class documented in the block comment
+    above. See `KB § PATTERNS/backend/postgrest-row-cap.md`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for scan_root in _postgrest_scan_roots(root):
+        for path in sorted(scan_root.rglob("*.py")):
+            if any(p in _POSTGREST_QUALIFIED_EXCLUDED_PARTS for p in path.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            # Cheap pre-filter — most modules never touch PostgREST at all.
+            if not any(marker in content for marker in (".execute(", ".in_(")):
+                continue
+            try:
+                relative = str(path.relative_to(root))
+            except ValueError:
+                logger.debug("compliance: file outside repo root: %s", path)
+                continue
+            try:
+                tree = ast.parse(content)
+            except SyntaxError as exc:
+                logger.debug("compliance: cannot parse %s (%s)", path, exc)
+                continue
+
+            lines = content.splitlines()
+
+            def _escape_hatched(line_no: int) -> bool:
+                window_start = max(0, line_no - 1 - _POSTGREST_ROWCAP_RATIONALE_WINDOW)
+                return any(
+                    _POSTGREST_ROWCAP_RATIONALE_RE.search(ln)
+                    for ln in lines[window_start:line_no]
+                )
+
+            def _flag(line_no: int, issue: str, severity: str) -> None:
+                if _escape_hatched(line_no):
+                    return
+                issues.append({
+                    "file": relative,
+                    "issue": f"`{relative}:{line_no}` — {issue}",
+                    "severity": severity,
+                })
+
+            for node, ancestors in _postgrest_walk_with_ancestors(tree, ()):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                    continue
+
+                if node.func.attr == "execute":
+                    chain = _postgrest_chain_links(node)
+                    if "select" not in chain:
+                        continue  # insert/update/delete/upsert — different shape
+                    if any(c in chain for c in ("range", "single", "maybe_single")):
+                        continue
+                    if _postgrest_limit_within_cap(node):
+                        continue
+                    if _postgrest_eq_bounds_to_one(node):
+                        continue
+                    _flag(
+                        node.lineno,
+                        "unbounded PostgREST select reaches `.execute()` with no "
+                        "`.range()`/pagination on the chain — PostgREST silently "
+                        f"caps at {_POSTGREST_MAX_ROWS_LITERAL} rows and reports "
+                        "success (no error, no warning). Paginate via a "
+                        "`_paginate`/`_select_all`-style helper (see "
+                        "`portal_roi_service.py` / `clientes_service.py`), or add "
+                        "a `postgrest-unbounded-ok: <why>` rationale comment if the "
+                        "result set is genuinely bounded. Severity `info`: risk here "
+                        "is entirely a function of a row count this keeper cannot "
+                        "see — audit-worthy, not a structural bug on its own.",
+                        _POSTGREST_SELECT_SEVERITY,
+                    )
+                elif node.func.attr == "in_":
+                    value = _postgrest_in_call_value_arg(node)
+                    if value is None:
+                        continue
+                    if (
+                        isinstance(value, (ast.List, ast.Tuple, ast.Set))
+                        and len(value.elts) <= _IN_FILTER_LITERAL_MAX
+                    ):
+                        continue
+                    if _postgrest_in_call_is_batched(ancestors):
+                        continue
+                    _flag(
+                        node.lineno,
+                        "`.in_()` fed a collection with no provable bound and no "
+                        "batching loop — PostgREST puts `in_` values in the URL "
+                        "QUERY STRING, so a large collection is a bare 400 "
+                        '("JSON could not be generated") with no hint about '
+                        "length. Batch via a `_batched`-style helper (see "
+                        "`clientes_service._batched`), or add a "
+                        "`postgrest-unbounded-ok: <why>` rationale comment if the "
+                        "collection is genuinely bounded. Severity `warning`: this "
+                        "is structurally risky regardless of table cardinality.",
+                        _POSTGREST_IN_FILTER_SEVERITY,
+                    )
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_playwright_supabase_env` — the E2E-harness sibling of
 # `check_dockerfile_vite_supabase_args`. Every product's frontend Playwright
 # config whose `webServer` boots the real SPA MUST inject the boot-critical

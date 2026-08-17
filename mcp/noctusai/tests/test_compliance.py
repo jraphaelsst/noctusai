@@ -18,6 +18,7 @@ from tools.noctus.dev.compliance import (
     check_detector_has_regression_test,
     check_migration_number_collision,
     check_postgrest_schema_qualified_table,
+    check_postgrest_unbounded_query,
     check_primary_checkout_commit,
     check_section_7_placeholder_consistency,
     check_slowapi_with_pep563,
@@ -2979,6 +2980,241 @@ class TestCheckPostgrestSchemaQualifiedTable:
         assert issues == [], (
             "Schema-qualified PostgREST table name(s) present — each is a "
             f"guaranteed runtime 500: {[i['file'] for i in issues]}"
+        )
+
+
+class TestCheckPostgrestUnboundedQuery:
+    """PostgREST silently caps ANY select at `db-max-rows` (1 000) — no
+    error, no warning. SEVEN instances of this shipped to production in one
+    session (2026-08-13/14): portal-roi reported 1 000 leads instead of
+    13 255; a backfill silently repointed 1 000 of 1 365 negociações; a
+    review queue dropped 177 of 1 177 rows. A second shape: `.in_()` rides
+    in the URL query string, so an unbatched ~1 000-item collection is a
+    bare 400 ("JSON could not be generated"). Deliberately heuristic,
+    observe-first (see the keeper's own module-level docstring in
+    compliance.py for the full false-positive design notes) — AND severity
+    is SPLIT by shape: select-shape -> `info` (risk is a function of a row
+    count this keeper cannot see; a full-tree sweep found ~700 candidates,
+    most almost certainly fine in practice), `.in_()`-shape -> `warning`
+    (structurally risky regardless of table cardinality — the shape that
+    actually took `/clientes/revisao` down; ~90 candidates). Splitting
+    keeps the ~90 that are worth acting on from being diluted by the ~700
+    that are an audit worklist, not a defect list.
+    """
+
+    def _mk(self, body: str, *, where: str = "products/x/backend/app/services/y_service.py") -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="postgrest_unbounded_test_"))
+        target = tmp / where
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body)
+        return tmp
+
+    # ── Flag: the row-cap shape (severity `info`) ──────────────────────
+    def test_unbounded_select_flags(self):
+        repo = self._mk(
+            'rows = db.table("leads").select("*").eq("org_id", oid).execute()\n'
+        )
+        issues = check_postgrest_unbounded_query(repo)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "info", (
+            "select-shape must be `info` — its risk is a function of a row "
+            "count this keeper cannot see, and must not dilute the "
+            "`.in_()`-shape `warning` tier"
+        )
+        assert "unbounded PostgREST select" in issues[0]["issue"]
+
+    def test_multiline_chain_flags(self):
+        """The dominant style in this workspace wraps the chain in parens
+        across several lines — must still parse as one Call chain."""
+        repo = self._mk(
+            "rows = (\n"
+            '    db.table("leads")\n'
+            '    .select("*")\n'
+            '    .eq("org_id", oid)\n'
+            "    .execute()\n"
+            ")\n"
+        )
+        issues = check_postgrest_unbounded_query(repo)
+        assert len(issues) == 1, issues
+
+    # ── No-flag: paginated via `.range()` ────────────────────────────
+    def test_ranged_select_passes(self):
+        repo = self._mk(
+            'rows = db.table("leads").select("*").eq("org_id", oid)'
+            ".range(0, 999).execute()\n"
+        )
+        assert check_postgrest_unbounded_query(repo) == []
+
+    # ── No-flag: `.single()` / `.maybe_single()` bound to <= 1 row ──────
+    def test_single_passes(self):
+        repo = self._mk('rows = db.table("leads").select("*").single().execute()\n')
+        assert check_postgrest_unbounded_query(repo) == []
+
+    def test_maybe_single_passes(self):
+        repo = self._mk(
+            'rows = db.table("leads").select("*").maybe_single().execute()\n'
+        )
+        assert check_postgrest_unbounded_query(repo) == []
+
+    # ── No-flag: `.limit(N)` with N within the cap ────────────────────
+    def test_small_literal_limit_passes(self):
+        repo = self._mk('rows = db.table("leads").select("*").limit(50).execute()\n')
+        assert check_postgrest_unbounded_query(repo) == []
+
+    # ── Flag: `.limit(N)` OVER the cap — same bug, an extra step ────────
+    def test_over_cap_literal_limit_flags(self):
+        repo = self._mk('rows = db.table("leads").select("*").limit(5000).execute()\n')
+        issues = check_postgrest_unbounded_query(repo)
+        assert len(issues) == 1, issues
+
+    def test_non_literal_limit_flags(self):
+        repo = self._mk(
+            'rows = db.table("leads").select("*").limit(page_size).execute()\n'
+        )
+        issues = check_postgrest_unbounded_query(repo)
+        assert len(issues) == 1, issues
+
+    # ── No-flag: `.eq("id", ...)` provably bounds to <= 1 row ───────────
+    def test_pk_equality_passes(self):
+        repo = self._mk(
+            'rows = db.table("leads").select("*").eq("org_id", oid)'
+            '.eq("id", lid).execute()\n'
+        )
+        assert check_postgrest_unbounded_query(repo) == []
+
+    # ── No-flag: insert/update/delete — a different shape entirely ──────
+    def test_update_chain_passes(self):
+        repo = self._mk(
+            'db.table("leads").update({"x": 1}).eq("id", lid).execute()\n'
+        )
+        assert check_postgrest_unbounded_query(repo) == []
+
+    # ── Flag: unbatched `.in_()` on an unbounded collection (severity
+    #    `warning`) ───────────────────────────────────────────────────────
+    def test_unbounded_in_filter_flags(self):
+        # `.range(` present so ONLY the `.in_()` shape is under test here —
+        # the select-shape check is exercised separately above.
+        repo = self._mk(
+            'rows = db.table("clientes").select("*").in_("id", ids)'
+            ".range(0, 999).execute()\n"
+        )
+        issues = check_postgrest_unbounded_query(repo)
+        assert len(issues) == 1, issues
+        assert ".in_()" in issues[0]["issue"]
+        assert issues[0]["severity"] == "warning", (
+            "the .in_()-shape is structurally risky regardless of table "
+            "cardinality — it keeps the `warning` tier, unlike the "
+            "select-shape (`info`)"
+        )
+
+    # ── No-flag: `.in_()` with a small literal collection ───────────────
+    def test_small_literal_in_filter_passes(self):
+        repo = self._mk(
+            'rows = db.table("leads").select("*").in_("status", ["a", "b"])'
+            ".range(0, 999).execute()\n"
+        )
+        assert check_postgrest_unbounded_query(repo) == []
+
+    # ── No-flag: `.in_()` inside a `_batched(...)` loop ──────────────────
+    def test_batched_in_filter_passes(self):
+        repo = self._mk(
+            "for batch in _batched(ids, 200):\n"
+            '    rows = db.table("clientes").select("*").in_("id", batch)'
+            ".range(0, 999).execute()\n"
+        )
+        assert check_postgrest_unbounded_query(repo) == []
+
+    # ── No-flag: escape hatch, WITH a stated reason ──────────────────────
+    def test_escape_hatch_with_reason_suppresses(self):
+        repo = self._mk(
+            "# postgrest-unbounded-ok: origens is a fixed catalog, <30 rows\n"
+            'rows = db.table("lead_sources").select("*").eq("org_id", oid).execute()\n'
+        )
+        assert check_postgrest_unbounded_query(repo) == []
+
+    # ── Flag: escape hatch WITHOUT a stated reason does NOT suppress ────
+    def test_escape_hatch_without_reason_does_not_suppress(self):
+        """The hatch must state WHY — a bare keyword is a rubber stamp,
+        not a rationale, and stays flagged."""
+        repo = self._mk(
+            "# postgrest-unbounded-ok\n"
+            'rows = db.table("lead_sources").select("*").eq("org_id", oid).execute()\n'
+        )
+        issues = check_postgrest_unbounded_query(repo)
+        assert len(issues) == 1, issues
+
+    # ── No-flag: PROSE describing the bug (why this is AST-based) ───────
+    def test_docstring_mentioning_the_bug_does_not_self_flag(self):
+        repo = self._mk(
+            '"""Never write db.table("leads").select("*").execute() unpaginated."""\n'
+            'x = db.table("leads").select("*").range(0, 999).execute()\n'
+        )
+        assert check_postgrest_unbounded_query(repo) == []
+
+    def test_unparseable_file_is_skipped_not_crashed(self):
+        repo = self._mk('rows = db.table("leads"\n')  # syntax error
+        assert check_postgrest_unbounded_query(repo) == []
+
+    # ── The shipped reference implementations must be clean ─────────────
+    def test_reference_pagination_helper_bodies_do_not_self_flag(self):
+        """`_paginate`/`_select_all`/`_select_all_where`/`_paginate_query`
+        (`portal_roi_service.py` / `clientes_service.py`) are the fix recipe
+        this keeper points call sites at, via their OWN `.range(...)`
+        chains — they must not flag themselves, or the keeper would be
+        telling people to paginate the pagination helper. Extracted via AST
+        (never imported — product `app.*` package names collide across
+        products in one process) from the real, checked-in files."""
+        import ast as _ast
+
+        from tools.noctus.dev.compliance import REPO_ROOT as _ROOT
+
+        targets = [
+            (
+                _ROOT / "products/social-wiring/backend/app/services/clientes_service.py",
+                ("_select_all", "_select_all_where", "_paginate_query"),
+            ),
+            (
+                _ROOT / "products/social-wiring/backend/app/services/portal_roi_service.py",
+                ("_paginate",),
+            ),
+        ]
+        for path, fn_names in targets:
+            content = path.read_text(encoding="utf-8")
+            tree = _ast.parse(content)
+            found = {n.name for n in _ast.walk(tree) if isinstance(n, _ast.FunctionDef)}
+            for fn_name in fn_names:
+                assert fn_name in found, f"{fn_name} not found in {path} — helper renamed?"
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.FunctionDef) and node.name in fn_names:
+                    src = _ast.get_source_segment(content, node)
+                    repo = self._mk(src)
+                    issues = check_postgrest_unbounded_query(repo)
+                    assert issues == [], (
+                        f"reference pagination helper {node.name} self-flagged: {issues}"
+                    )
+
+    def test_real_repo_sweep_runs_and_finds_candidates(self):
+        """Sanity: the keeper actually runs against the real tree (not an
+        empty/broken scan silently producing zero everywhere). The findings
+        themselves are a triage worklist, not a pass/fail bar — see the
+        keeper's module-level docstring for why a full-tree assertion of
+        `== []` is not the right contract for a deliberately heuristic,
+        observe-first detector.
+
+        Also pins the severity split itself: BOTH shapes must actually be
+        present in a full-tree sweep (this failing would mean one shape's
+        detection silently broke), and every finding must carry one of the
+        two sanctioned tiers — no accidental third value.
+        """
+        from tools.noctus.dev.compliance import REPO_ROOT as _ROOT
+        issues = check_postgrest_unbounded_query(_ROOT)
+        assert issues, "expected the heuristic sweep to find SOME candidates fleet-wide"
+        assert all(i["severity"] in ("info", "warning") for i in issues)
+        assert any(i["severity"] == "info" for i in issues), (
+            "expected select-shape (info) candidates in a full-tree sweep"
+        )
+        assert any(i["severity"] == "warning" for i in issues), (
+            "expected .in_()-shape (warning) candidates in a full-tree sweep"
         )
 
 

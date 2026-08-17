@@ -495,6 +495,31 @@ if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
     fi
 fi
 
+# ─── 6h. PostgREST unbounded-query gate (advisory, only when backend Python ──
+# changed) ──────────────────────────────────────────────────────────────
+# Keeper `check_postgrest_unbounded_query` + `KB § PATTERNS/backend/
+# postgrest-row-cap.md`. PostgREST silently caps ANY select at `db-max-rows`
+# (Supabase default 1 000) — no error, no warning. SEVEN instances of this
+# shipped to production in one session (2026-08-13/14: portal-roi reported
+# 1 000 leads instead of 13 255; a backfill silently repointed 1 000 of
+# 1 365 negociações; a review queue dropped 177 of 1 177 rows), plus an
+# `.in_()` fed an unbatched ~1 000-item collection ("JSON could not be
+# generated", a bare 400) — that shape is severity `warning` (structurally
+# risky regardless of table cardinality); the select-shape above is severity
+# `info` (risk is a function of a row count this keeper cannot see, so it
+# does not dilute the warning tier). Deliberately heuristic — observe-first
+# cadence on a brand-new detector at EITHER tier (never blocks a commit,
+# matches `check_lying_loading_state`'s cadence); scoped to staged backend
+# .py so frontend-only commits pay nothing. Reuses `$STAGED_BACKEND_PY`
+# computed for the schema-qualified gate above.
+if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
+    echo "[pre-commit] backend .py staged — checking for unbounded PostgREST queries..."
+    "$PY" "$CLI" --check-postgrest-unbounded-query --worktree-path "$REPO_ROOT" || true
+    # advisory only (both severity tiers) — the CLI itself always exits 0
+    # for this gate; never block the commit on a brand-new heuristic detector's
+    # findings.
+fi
+
 # ─── 7. CLAUDE.md router discipline (blocking, only when CLAUDE.md staged) ──
 # Keeper `check_claude_md_router` + `KB § PATTERNS/claude-md-router-discipline.md`.
 # CLAUDE.md is the always-on router: §1 rules stay one-line (rule + `→` pointer),
