@@ -767,6 +767,43 @@ def _process_file(
     return True
 
 
+def render_kb_counts(target: Path, source_text: str) -> str:
+    """Return ``source_text`` with every ``kb-counts`` block that belongs to
+    ``target`` regenerated from the tree. **Writes nothing, anywhere.**
+
+    The pure sibling of :func:`update_kb_counts`, and the reason it exists is
+    the merge driver. ``scripts/hooks/merge-kb-counts.sh`` has to regenerate
+    the counts inside git's *merge result* (a temp file, ``%A``), not inside
+    the working-tree file. It used to do that by copying the temp file over
+    the real path, calling ``--update-kb-counts``, and copying back — which
+    left the working tree modified as a side effect, for EVERY kb-counts doc,
+    not just the one being merged.
+
+    A single merge hides that (git overwrites the working tree afterwards
+    anyway). A rebase does not: the sequencer applies one commit per pick, and
+    the counts the driver just wrote reflect the intermediate tree, so the
+    next pick aborts with "Your local changes would be overwritten by merge"
+    and the rebase can never finish. Observed 2026-08-17 replaying 10 commits
+    over ``dev``.
+
+    A merge driver's contract is to write ``%A`` and nothing else. This
+    function is what lets it keep that contract.
+
+    ``target`` is the real repo path (git's ``%P``), which selects WHICH
+    blocks apply; ``source_text`` is the content to rewrite. Unknown target ⇒
+    returned unchanged, since a file with no registered regions has no counts
+    to regenerate.
+    """
+    repo = Path(REPO_ROOT)
+    resolved = Path(target).resolve()
+    text = source_text
+    for _name, (path, renderer) in _regions(repo).items():
+        if path.resolve() != resolved:
+            continue
+        text = _replace_region(text, _name, renderer(repo))
+    return text
+
+
 def update_kb_counts(check: bool = False) -> dict[str, Any]:
     """Native port of scripts/update-kb-counts.py.
 

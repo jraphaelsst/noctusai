@@ -556,3 +556,119 @@ def test_commands_surface_is_in_scanned_set(tmp_path):
     _mk_command(tmp_path, "x.md", "`KB § PATTERNS/common/does-not-exist.md`\n")
     gaps = methodology_reference_gaps(tmp_path)
     assert any("commands/x.md" in g for g in gaps), gaps
+
+
+# ──────────────────────────────────────────────────────────────────
+# render_kb_counts — the PURE sibling of update_kb_counts
+#
+# These exist because the merge driver used to regenerate counts by
+# writing to the real working-tree path. That side effect is invisible in
+# a single merge (git overwrites the tree from %A right after) but makes
+# `git rebase` unfinishable: the counts written during pick N reflect the
+# intermediate tree, so pick N+1 aborts with "Your local changes would be
+# overwritten by merge", and --continue reschedules the same pick forever.
+# Purity is the property that fixes it, so purity is what is asserted.
+# ──────────────────────────────────────────────────────────────────
+
+def _counts_doc(body: str) -> str:
+    return (
+        "# Landscape\n\n"
+        "<!-- kb-counts:start:inventory -->\n"
+        f"{body}\n"
+        "<!-- kb-counts:end:inventory -->\n\n"
+        "Prose that must survive untouched.\n"
+    )
+
+
+def test_render_kb_counts_writes_nothing_to_the_tree(tmp_path, monkeypatch):
+    target = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "02-LANDSCAPE.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    original = _counts_doc("| stale | 1 |")
+    target.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        kb_sync, "_regions",
+        lambda repo: {"inventory": (target, lambda r: "| fresh | 2 |")},
+    )
+
+    out = kb_sync.render_kb_counts(target, original)
+
+    assert "| fresh | 2 |" in out
+    # THE assertion: the file on disk is byte-identical to before.
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_render_kb_counts_rewrites_the_supplied_text_not_the_file(tmp_path, monkeypatch):
+    """The driver renders git's merge result (%A), which is NOT the
+    working-tree copy — so the source text is what gets rewritten."""
+    target = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "02-LANDSCAPE.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_counts_doc("| on-disk | 0 |"), encoding="utf-8")
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        kb_sync, "_regions",
+        lambda repo: {"inventory": (target, lambda r: "| fresh | 2 |")},
+    )
+
+    merge_result = _counts_doc("<<<<<<< HEAD\n| a | 1 |\n=======\n| b | 1 |\n>>>>>>> x")
+    out = kb_sync.render_kb_counts(target, merge_result)
+
+    assert "| fresh | 2 |" in out
+    # Count-only conflict markers sat INSIDE the block — regenerating the
+    # block is what removes them, which is the whole point of the driver.
+    assert "<<<<<<<" not in out
+    assert "| on-disk | 0 |" not in out
+
+
+def test_render_kb_counts_preserves_prose_outside_the_block(tmp_path, monkeypatch):
+    target = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "02-LANDSCAPE.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        kb_sync, "_regions",
+        lambda repo: {"inventory": (target, lambda r: "| fresh | 2 |")},
+    )
+
+    out = kb_sync.render_kb_counts(target, _counts_doc("| stale | 1 |"))
+
+    assert "Prose that must survive untouched." in out
+
+
+def test_render_kb_counts_leaves_a_prose_conflict_for_the_human(tmp_path, monkeypatch):
+    """A conflict OUTSIDE the counts block is a real semantic conflict.
+    Regeneration must not erase it — the driver's marker check is what
+    surfaces it, and it can only fire if the markers survive."""
+    target = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "02-LANDSCAPE.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        kb_sync, "_regions",
+        lambda repo: {"inventory": (target, lambda r: "| fresh | 2 |")},
+    )
+
+    source = _counts_doc("| stale | 1 |") + (
+        "\n<<<<<<< HEAD\nours prose\n=======\ntheirs prose\n>>>>>>> x\n"
+    )
+    out = kb_sync.render_kb_counts(target, source)
+
+    assert "<<<<<<<" in out
+    assert "ours prose" in out and "theirs prose" in out
+
+
+def test_render_kb_counts_unknown_target_is_returned_unchanged(tmp_path, monkeypatch):
+    """A file with no registered regions has no counts to regenerate."""
+    known = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "02-LANDSCAPE.md"
+    known.parent.mkdir(parents=True, exist_ok=True)
+    known.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        kb_sync, "_regions",
+        lambda repo: {"inventory": (known, lambda r: "| fresh | 2 |")},
+    )
+
+    other = tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "01-PHILOSOPHY.md"
+    source = _counts_doc("| stale | 1 |")
+
+    assert kb_sync.render_kb_counts(other, source) == source

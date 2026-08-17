@@ -47,28 +47,49 @@ Exit codes captured with `pipefail`, never read off a piped `tail`.
 > `tsc` gap was a missing `node_modules` in the worktree; symlinked from the
 > primary (untracked, disappears with the worktree).
 
-### 🟡 The FE suite is flaky under parallel load, and it is flaky on `dev` too
+### 🟡 The FE suite times out under parallel load, on `dev` as well
 
-Full-suite runs on this branch returned 13 failures, then 1, on an unchanged
-tree. **The same full suite fails on `origin/dev` in the primary checkout** —
-8 failures across `MarcaModal`, `CampanhaManagerDialog`, `ClientesBoard`,
-`RevisaoFila`. Every one of those files passes in isolation, in both trees.
-So this is pre-existing test pollution / parallel-execution contention, not
-something this branch introduced, and **`npm test` alone is not a reliable
-signal on social-wiring FE right now**.
+**First, an env correction that invalidated the earlier numbers.** This
+worktree was created with a bare `git worktree add`, so it had no
+`node_modules`. Those were originally hand-symlinked, including a whole-dir
+symlink at `products/social-wiring/frontend/node_modules` → the primary's real
+directory. That is the exact shape `task_branch`'s env-wiring fixed as a
+primary-contamination bug on 2026-07-20, and it had a second consequence here:
+`@noctusai/{lib,seed}` resolved through it to the **primary's** seed, so FE
+runs were building against `dev`'s seed frontend, not this branch's.
 
-What was actually established:
+Re-wired using the toolkit's own planner/applier rather than by hand
+(`_plan_env_wiring` / `_apply_env_wiring`), which converts the stale symlink to
+a real worktree directory, overlays one symlink per primary package, and
+re-points `@noctusai` at the **worktree's** seed. 3,740 links, 0 failures. The
+primary was checked and is uncontaminated — its `@noctusai` links are relative
+and predate this work (nothing was ever `npm install`ed through the symlink).
 
+**With the wiring correct**, the full suite is stable at **591 passed / 5
+failed**, twice running. The failures are `Test timed out in 5000ms` —
+resource starvation under parallel load, not assertion failures — and they
+move between runs (`ClientesBoard` ×2 and `RevisaoFila` ×2 are constant;
+the fifth alternates between `Configuracao` and `CampanhaManagerDialog`).
+**The same suite fails on `origin/dev` in the primary checkout** (8 failures
+across `MarcaModal`, `CampanhaManagerDialog`, `ClientesBoard`, `RevisaoFila`),
+so it is pre-existing and not from this branch.
+
+What is actually established:
+
+- every failing file passes **in isolation**, rc=0, in both trees;
 - the three files this branch adds or touches (`useOlxLeads.test.ts`,
-  `OlxWebhookCard.test.tsx`, `Configuracao.test.tsx`) pass **30/30 on three
-  consecutive runs**, rc=0 each time;
-- every file that failed a full run passes in isolation, rc=0;
-- `tsc --noEmit` is rc=0 with zero errors.
+  `OlxWebhookCard.test.tsx`, `Configuracao.test.tsx`) pass **30/30 across
+  three consecutive runs**;
+- `tsc --noEmit` is **rc=0**, zero errors, with the corrected wiring.
 
-Worth a real fix by whoever owns the FE suite — a green run today is luck.
-Note the FE also needs `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY`
-exported from the primary's untracked `.env`; without them 7 files fail at
-import with a build-time-var error that looks nothing like a flake.
+Worth a real fix by whoever owns the FE suite — raising `testTimeout` or
+capping `maxThreads` would likely do it. Not touched here: dev-owned files.
+
+> The FE also needs `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY`
+> exported from the primary's untracked `.env` — `wire_env` does not wire
+> `.env`. Without them 7 files fail at import with a build-time-var error that
+> reads nothing like a flake. Prefer `task_branch action=start wire_env=true`
+> for a new worktree so none of this is manual.
 
 ## What the rebase changed, and why it was not optional
 
@@ -93,21 +114,33 @@ a live symptom. It is *how the hang was found*, not why it matters — a client
 or proxy dropping the `Range` header still hangs production, on the path
 touching the most rows, with no test watching. The docstrings say that.
 
-**Rebase mechanics, if you hit the same wall.** Replaying over `dev` fights
-`.gitattributes`' `merge=kb-counts` driver on `02-LANDSCAPE.md`: it re-derives
-the counts block on every 3-way merge, so the tree is dirty again between
-picks and every `--continue` aborts. Neutralise the driver for the rebase only:
+**Rebase mechanics — the wall is gone, and the fix ships in this branch.**
+Replaying over `dev` used to stall forever: `.gitattributes` gives
+`02-LANDSCAPE.md` a `merge=kb-counts` driver, and that driver regenerated the
+counts by writing to the **real working-tree path**, so the tree was dirty
+again between picks and every `--continue` aborted (stalled at pick 7/10,
+indefinitely, with the todo list growing on each attempt).
+
+A merge driver's contract is to write `%A` and nothing else. The driver now
+keeps it, via a new pure CLI mode:
 
 ```
-GIT_CONFIG_COUNT=2 \
-  GIT_CONFIG_KEY_0=core.hooksPath      GIT_CONFIG_VALUE_0=/dev/null \
-  GIT_CONFIG_KEY_1=merge.kb-counts.driver GIT_CONFIG_VALUE_1=true \
-  git rebase origin/dev
+python mcp/noctusai/cli.py --render-kb-counts <repo-rel-path> --source <file> --out <file>
 ```
 
-The counts are machine-derived and the pre-commit hook regenerates them on the
-next real commit, so keeping "ours" loses nothing. **Merging instead of
-rebasing does not work here**: the merge commit stages `dev`'s
+`git rebase origin/dev` now needs **no flags, no env, no overrides** — proven
+on an isolated repro worktree at the pre-fix tip: 7/10 stall → all 10 picks
+applied, stopping only on the two genuine doc conflicts, with `02-LANDSCAPE.md`
+auto-merging exactly as the driver intends. Detail:
+`KB § PATTERNS/common/auto-generated-merge-drivers.md`.
+
+> ⚠️ The driver git actually executes is the **primary checkout's** copy
+> (`git config merge.kb-counts.driver` holds an absolute path), so the fix only
+> takes effect locally once this branch lands on `dev`. Until then a rebase
+> still stalls. That is an argument for merging this sooner, not for reviving
+> the workaround.
+
+**Do not merge instead of rebasing**: a merge commit stages `dev`'s
 `deploy/consent/p-studio.prod.yml` alongside 64 other paths and
 `check_prod_exposure_consent` refuses it — correctly, that gate exists to stop
 consent slipping through inside an unrelated diff.
