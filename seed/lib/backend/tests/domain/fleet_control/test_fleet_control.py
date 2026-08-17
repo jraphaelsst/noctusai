@@ -27,8 +27,23 @@ from noctusai_lib.domain.fleet_control import (
     validate_action,
 )
 
-# A fixed registered-slug set so tests don't depend on the live registry.
-REGISTERED = {"core", "erp-imobiliario", "social-wiring", "therapy-platform"}
+# A fixed registered-slug set so these tests don't depend on the live registry.
+#
+# not-a-product-set — these are SYNTHETIC fixture slugs, deliberately NOT real
+# product names. `check_hardcoded_product_slug_set` is right to distrust a
+# frozen slug set, but deriving this one from `parse_products_registry()` would
+# be the wrong fix: it would couple a unit test to live product data, make it
+# drift every time a product is activated or retired, and weaken the very
+# assertions it exists for — proving an UNREGISTERED slug is rejected requires
+# a known, closed registered set.
+#
+# They were real slugs until 2026-08-17 ({core, erp-imobiliario, social-wiring,
+# therapy-platform}), which is exactly why this comment exists: the set still
+# named `therapy-platform` long after it went `ativo=false`, and nobody
+# noticed, because for a fixture it never mattered. Real names invite a future
+# reader to "helpfully" sync them to the fleet. Synthetic names cannot be
+# mistaken for a registry mirror, so there is nothing to sync.
+REGISTERED = {"alpha-svc", "beta-svc", "gamma-svc", "delta-svc"}
 
 
 class RecordingRunner:
@@ -49,26 +64,26 @@ class RecordingRunner:
 
 # ── Fake behaviour ─────────────────────────────────────────────────
 def test_fake_status_lists_registered_running():
-    c = FakeContainerController(slugs=["core", "social-wiring"], registered_slugs=REGISTERED)
+    c = FakeContainerController(slugs=["alpha-svc", "gamma-svc"], registered_slugs=REGISTERED)
     statuses = c.status()
-    assert {s.slug for s in statuses} == {"core", "social-wiring"}
+    assert {s.slug for s in statuses} == {"alpha-svc", "gamma-svc"}
     assert all(isinstance(s, ContainerStatus) for s in statuses)
     assert all(s.running and s.health == "healthy" for s in statuses)
     assert all(s.container == f"noctus-{s.slug}" for s in statuses)
 
 
 def test_fake_stop_then_start_mutates_state():
-    c = FakeContainerController(slugs=["core"], registered_slugs=REGISTERED)
-    r = c.act("core", "stop")
+    c = FakeContainerController(slugs=["alpha-svc"], registered_slugs=REGISTERED)
+    r = c.act("alpha-svc", "stop")
     assert isinstance(r, ActResult) and r.ok and r.verb == "stop"
     assert c.status()[0].running is False and c.status()[0].state == "exited"
-    c.act("core", "start")
+    c.act("alpha-svc", "start")
     assert c.status()[0].running is True and c.status()[0].state == "running"
 
 
 def test_fake_restart_keeps_running():
-    c = FakeContainerController(slugs=["core"], registered_slugs=REGISTERED)
-    r = c.act("core", "restart")
+    c = FakeContainerController(slugs=["alpha-svc"], registered_slugs=REGISTERED)
+    r = c.act("alpha-svc", "restart")
     assert r.ok and r.verb == "restart"
     assert c.status()[0].running is True
 
@@ -77,23 +92,26 @@ def test_fake_restart_keeps_running():
 @pytest.mark.parametrize("verb", ["rm", "rmi", "exec", "down", "run", "kill", "prune", "logs", "STOP", "stop;rm"])
 def test_validate_action_rejects_non_allowlisted_verb(verb):
     with pytest.raises(FleetControlError):
-        validate_action("core", verb, registered_slugs=REGISTERED)
+        validate_action("alpha-svc", verb, registered_slugs=REGISTERED)
 
 
-@pytest.mark.parametrize("slug", ["unknown-product", "core; rm -rf /", "../etc", "core x", "", "Core", "core$(id)"])
+@pytest.mark.parametrize(
+    "slug",
+    ["unknown-product", "alpha-svc; rm -rf /", "../etc", "alpha-svc x", "", "Alpha-Svc", "alpha-svc$(id)"],
+)
 def test_validate_action_rejects_unregistered_or_bad_slug(slug):
     with pytest.raises(FleetControlError):
         validate_action(slug, "start", registered_slugs=REGISTERED)
 
 
 def test_validate_action_returns_safe_container_name():
-    assert validate_action("core", "restart", registered_slugs=REGISTERED) == "noctus-core"
+    assert validate_action("alpha-svc", "restart", registered_slugs=REGISTERED) == "noctus-alpha-svc"
 
 
 def test_fake_act_also_enforces_allowlist():
-    c = FakeContainerController(slugs=["core"], registered_slugs=REGISTERED)
+    c = FakeContainerController(slugs=["alpha-svc"], registered_slugs=REGISTERED)
     with pytest.raises(FleetControlError):
-        c.act("core", "rm")
+        c.act("alpha-svc", "rm")
     with pytest.raises(FleetControlError):
         c.act("not-a-product", "start")
 
@@ -102,7 +120,7 @@ def test_real_act_rejects_before_shelling():
     r = RecordingRunner()
     c = DockerComposeController(runner=r, registered_slugs=REGISTERED)
     with pytest.raises(FleetControlError):
-        c.act("core", "exec")
+        c.act("alpha-svc", "exec")
     with pytest.raises(FleetControlError):
         c.act("evil; rm -rf /", "start")
     # NOTHING was shelled — the allowlist short-circuits before the runner.
@@ -113,15 +131,15 @@ def test_real_act_rejects_before_shelling():
 def test_real_act_emits_only_docker_verb_container():
     r = RecordingRunner()
     c = DockerComposeController(runner=r, registered_slugs=REGISTERED)
-    res = c.act("social-wiring", "restart")
-    assert res.ok and res.container == "noctus-social-wiring"
-    assert r.calls == [["docker", "restart", "noctus-social-wiring"]]
+    res = c.act("gamma-svc", "restart")
+    assert res.ok and res.container == "noctus-gamma-svc"
+    assert r.calls == [["docker", "restart", "noctus-gamma-svc"]]
 
 
 def test_real_status_emits_ps_and_parses():
     ps_out = (
-        "noctus-core\trunning\tUp 2 hours (healthy)\n"
-        "noctus-social-wiring\texited\tExited (0) 5 minutes ago\n"
+        "noctus-alpha-svc\trunning\tUp 2 hours (healthy)\n"
+        "noctus-gamma-svc\texited\tExited (0) 5 minutes ago\n"
         "some-other\trunning\tUp 1 hour\n"           # non-noctus → filtered
         "noctus-not-registered\trunning\tUp 1 hour\n"  # noctus- but not registered → filtered
     )
@@ -130,16 +148,16 @@ def test_real_status_emits_ps_and_parses():
     statuses = {s.slug: s for s in c.status()}
     # Every registered slug appears (absent ones show state="absent").
     assert set(statuses) == REGISTERED
-    assert statuses["core"].running and statuses["core"].health == "healthy"
-    assert not statuses["social-wiring"].running and statuses["social-wiring"].state == "exited"
-    assert statuses["therapy-platform"].state == "absent"
+    assert statuses["alpha-svc"].running and statuses["alpha-svc"].health == "healthy"
+    assert not statuses["gamma-svc"].running and statuses["gamma-svc"].state == "exited"
+    assert statuses["delta-svc"].state == "absent"
     assert r.calls[0] == ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}\t{{.Status}}"]
 
 
 def test_real_act_failure_returns_not_ok():
     r = RecordingRunner(rc=1, action_out="No such container")
     c = DockerComposeController(runner=r, registered_slugs=REGISTERED)
-    res = c.act("core", "stop")
+    res = c.act("alpha-svc", "stop")
     assert res.ok is False and "No such container" in res.message
 
 
@@ -148,11 +166,11 @@ def test_no_banned_token_emitted_token_exact():
     """Across status + every ALLOWED action, no emitted argv TOKEN equals a
     banned destructive docker subcommand. Token-exact (not substring) because
     e.g. '--format' legitimately contains 'rm'."""
-    r = RecordingRunner(ps_out="noctus-core\trunning\tUp (healthy)\n")
+    r = RecordingRunner(ps_out="noctus-alpha-svc\trunning\tUp (healthy)\n")
     c = DockerComposeController(runner=r, registered_slugs=REGISTERED)
     c.status()
     for verb in FC.ALLOWED_VERBS:
-        c.act("core", verb)
+        c.act("alpha-svc", verb)
     emitted_tokens = {tok for call in r.calls for tok in call}
     for banned in BANNED_TOKENS:
         assert banned not in emitted_tokens, (
