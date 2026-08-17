@@ -45,6 +45,22 @@ def get_current_user(
     if user is None:
         raise HTTPException(status_code=401, detail="Sessão inválida ou expirada")
 
+    # `settings.org_id` tem default "" para que IMPORTAR `app.config` não
+    # exija a env var (ver o comentário longo em config.py). Este é o único
+    # ponto onde o valor entra num request, então é aqui que ele precisa ser
+    # real. Recusa ALTO em vez de deixar "" escopar queries: um org_id vazio
+    # carimbaria INSERTs e filtraria leituras contra nada — erro silencioso.
+    # 500, não 401: o token do usuário está bom; quem está mal configurado é
+    # o deploy, e confundir os dois manda o operador depurar o login errado.
+    if not settings.org_id:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "P_STUDIO_ORG_ID não configurado neste deploy — o backend não "
+                "sabe a qual organização carimbar as escritas."
+            ),
+        )
+
     metadata = user.user_metadata or {}
     return CurrentUser(
         id=user.id,
