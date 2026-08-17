@@ -1,0 +1,26 @@
+consented_by: joaoraphaelsst@gmail.com
+consented_on: 2026-08-17
+consent_ref: 'project-history/roadmaps/p-studio-2026-08.md#M3: validation'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "I authorize p-studio to be published to production."
+  prompt_source: typed
+  session_id: 2795fdef-dced-4138-85b9-026aacdaba45
+  recorded_at: 2026-08-17T00:00:00+00:00
+  # transcript_sha256 is DELIBERATELY ABSENT. `noctus.dev.prod_consent
+  # action=author` computes it by hashing the harness-written transcript, and
+  # the noctusai MCP server is down in this session (it dropped mid-deploy on
+  # 2026-08-13 and has not been reconnected), so the tool could not be called.
+  # Writing a hash by hand would be fabricating the very evidence the gate
+  # exists to verify — the opposite of what this field is for. The phrase above
+  # was typed verbatim by the owner in-session and is recoverable from the
+  # session transcript; re-run `prod_consent action=author` once the MCP
+  # server is back if a machine-verified hash is wanted on the record.
+
+# WHY M3 AND NOT M4. `consent_ref` points at `M3: validation` (✅ reached
+# 2026-08-16) — the milestone `dev_validated: true` actually attests to.
+# `M4: prod promote` is the milestone this consent UNBLOCKS, and it is
+# deliberately NOT ✅. The roadmap says so in its own words: marking M4 ✅ now,
+# to satisfy the gate that reads M4, "would be the exact shape the gate exists
+# to prevent." M4 flips ✅ after the promote actually lands.
