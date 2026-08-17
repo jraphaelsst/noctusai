@@ -12,6 +12,28 @@ This module is the single chokepoint. Every VPS tool routes its real SSH through
 worktrees (fail2ban counts against the whole connection history, so the back-off
 state must be shared too — it lives in the git-common cache dir).
 
+THE 2026-08-13 ADDENDUM (root-caused post-incident, not merely mitigated). A
+``deploy_image`` call timed out without ever returning and the MCP server that
+hosted it dropped; the container was NEVER swapped, yet every branch-level signal
+read green for two days. Root cause, verified by reading every call site: EVERY
+production caller (``deploy_image``, ``deploy_pull``, ``vps_exec``, ``vps``,
+``tunnel_config``, ``vps_exec_sql``, ``ensure_product_url_roster``) invokes
+``run_remote`` with **no** ``timeout=`` — which meant ``subprocess.run`` got
+``timeout=None`` and could block **literally forever** if the SSH transport
+connected fine but the REMOTE command hung (a wedged docker daemon, a stalled
+pull, a dead TCP session that never sends FIN). That block happens *inside* the
+cross-process ``_state_lock``, so it also silently stalls every OTHER VPS tool in
+every other process/worktree — which is consistent with a two-day ambiguous
+window. The 600s circuit-breaker COOLDOWN itself is NOT this bug: an OPEN circuit
+returns in microseconds, deliberately, without ever calling the real runner (see
+below) — it cannot itself be the source of a multi-minute internal block. The real
+gap was the *absence* of any per-attempt ceiling on the underlying command. Fixed
+below by giving ``run_remote`` an always-finite default per-attempt timeout
+(``_DEFAULT_REMOTE_TIMEOUT`` / ``NOCTUS_SSH_TIMEOUT``) that no caller can silently
+opt out of, and by classifying a LOCAL wall-clock kill distinctly from a genuine
+transport failure so a slow-but-connected remote command can never poison the
+fail2ban-avoidance circuit breaker (see ``_LOCAL_TIMEOUT_RC``).
+
 Behaviour (all knobs env-overridable):
   • connection MULTIPLEXING (``ControlMaster``, on by default) — the PRIMARY
     defense: one persistent master connection is reused for every op, so a whole
@@ -27,15 +49,39 @@ Behaviour (all knobs env-overridable):
     (``NOCTUS_SSH_CIRCUIT_FAILS``, default 2 → ≤4 real attempts escape, under the
     prod VPS sshd maxretry of 5) OPEN the circuit for a cooldown
     (``NOCTUS_SSH_CIRCUIT_COOLDOWN``, default 600s ≥ typical fail2ban bantime).
-    While OPEN, return immediately WITHOUT connecting. A success closes it.
+    While OPEN, return immediately WITHOUT connecting — this path is a FAST FAIL,
+    never a wait: it compares a wall-clock timestamp and returns in microseconds,
+    with a message naming the exact reopen time + how to override, so a caller can
+    always distinguish "cooling down" (fast, explicit, observable) from "working"
+    (bounded by the ceiling below, never silent). A success closes it.
+  • per-attempt wall-clock CEILING (``NOCTUS_SSH_TIMEOUT``, default 120s via
+    ``_DEFAULT_REMOTE_TIMEOUT``) — the 2026-08-13 fix: every real ssh attempt is
+    now ALWAYS bounded, whether or not the caller passes ``timeout=``. A caller
+    that never specified one (every production caller, before this fix) used to
+    get ``subprocess.run(timeout=None)`` — genuinely unbounded. Passing an
+    explicit ``timeout=`` still works for a known-long op; ``None`` now means
+    "use the default ceiling", never "no ceiling" — that footgun no longer exists.
   • the read-modify-write of the shared state + the attempt itself run under an
     exclusive cross-process/worktree file lock (``_state_lock``) so concurrent
     tools SERIALIZE — no storm can form (measured: 8 concurrent tools escaped 48
     attempts unlocked vs 4 locked). Degrades to a warned no-op if flock is absent.
+    Because every attempt is now ceiling-bounded (above), the WORST-CASE total
+    time any caller can be blocked — including the lock hold — is finite and
+    computable: ``min_interval + rate_window + 2×ceiling`` (the ``2×`` is the one
+    backed-off retry) ≈ 3 + 60 + 240 = 303s at defaults, comfortably under the
+    600s cooldown and, critically, ALWAYS FINITE — never the open-ended hang the
+    2026-08-13 incident hit.
   • failure classification — only a genuine CONNECTION failure (ssh's own exit 255
     or a connection-error stderr) counts toward the streak. A remote command that
-    RAN and returned nonzero (the edge is healthy) never trips the circuit.
+    RAN and returned nonzero (the edge is healthy) never trips the circuit. A LOCAL
+    wall-clock kill of a command that connected fine but ran long (``_LOCAL_TIMEOUT_RC``,
+    distinct from ssh's own 255) is likewise excluded — the transport is proven
+    healthy (we got past the connect phase), so a slow remote docker op must never
+    be misread as a connection failure and spuriously trip the fail2ban breaker.
   • one backed-off internal retry on a connection failure (≤2 attempts per call).
+    A LOCAL wall-clock kill is NOT retried (the remote side may still be finishing;
+    retrying a possibly-still-running ``docker compose up`` risks double side effects)
+    — it surfaces immediately instead.
   • escape hatch — ``force=True`` / ``NOCTUS_SSH_FORCE=1`` bypasses an open circuit
     for one attempt; the open-circuit error surfaces the state-path to delete.
 
@@ -75,6 +121,27 @@ _DEFAULT_CIRCUIT_FAILS = 2        # consecutive conn failures before OPEN.
 # > 5 = could self-trip the ban on a single storm; N=2 → 4 attempts ≤ 5 (margin 1).
 _DEFAULT_CIRCUIT_COOLDOWN = 600.0  # seconds OPEN (≥ typical fail2ban bantime)
 _DEFAULT_CONNECT_TIMEOUT = 10     # ssh -o ConnectTimeout=<n>
+# WHY (2026-08-13 incident): ConnectTimeout only bounds the TCP+auth handshake —
+# it does NOT bound how long the REMOTE command (e.g. `docker compose pull`, a
+# wedged docker daemon) is allowed to run once connected. Before this constant,
+# every production caller left `run_remote(timeout=...)` unset, which meant
+# `subprocess.run(timeout=None)` — a genuinely UNBOUNDED wait, held inside the
+# cross-process `_state_lock`, so one hung remote command could silently stall
+# every VPS tool in every process/worktree. 120s is generous for the docker
+# introspection/tag/commit/exec-curl calls every VPS tool actually issues
+# (normally sub-second) while still being a FINITE, caller-visible ceiling — the
+# structural fix: `run_remote` now NEVER forwards `timeout=None` to the real ssh
+# runner (see `run_remote`'s `remote_timeout` resolution). Override per-call via
+# `run_remote(..., timeout=<n>)` for a known-long op (e.g. a large image pull);
+# override the default fleet-wide via `NOCTUS_SSH_TIMEOUT`.
+_DEFAULT_REMOTE_TIMEOUT = 120.0
+# Sentinel returncode for a LOCAL wall-clock kill (subprocess.TimeoutExpired) —
+# deliberately NOT ssh's own 255 (genuine transport/connect failure) so it can
+# never be misclassified as a connection failure by `_is_connection_failure` and
+# spuriously trip the fail2ban-avoidance circuit breaker over a merely-slow (but
+# CONNECTED) remote command. 124 mirrors the POSIX `timeout(1)` convention for
+# "command timed out" — recognizable, not otherwise used by ssh itself.
+_LOCAL_TIMEOUT_RC = 124
 # Sliding-window rate cap — PROACTIVELY pace so a burst can never form (prevent,
 # don't react). WHY (2026-07-14): a fleet deploy's sustained ~50 connections
 # tripped an upstream connection-rate limit (ISP outbound-22 throttle — confirmed
@@ -293,7 +360,15 @@ def _is_connection_failure(rc: int, stderr: str) -> bool:
     ssh's own connect/transport failure code. A nonzero rc that is NOT 255 and
     carries no connection-error marker means the edge is healthy and the REMOTE
     command failed — that must NOT trip the circuit.
+
+    A LOCAL wall-clock kill (``_LOCAL_TIMEOUT_RC`` — the caller's own ``timeout=``
+    ceiling firing on a merely-slow but CONNECTED remote command) is explicitly
+    excluded, defense-in-depth on top of its rc/message already not matching: a
+    slow remote op must never be misread as "can't reach the host" and spuriously
+    trip the fail2ban-avoidance circuit (2026-08-13 fix — see module docstring).
     """
+    if rc == _LOCAL_TIMEOUT_RC:
+        return False
     if rc == 255:
         return True
     low = (stderr or "").lower()
@@ -304,6 +379,11 @@ def _is_connection_failure(rc: int, stderr: str) -> bool:
 def _real_ssh(
     ssh_host: str, remote_cmd: str, connect_timeout: int, timeout: float | None
 ) -> tuple[int, str, str]:
+    """``timeout`` bounds the WHOLE subprocess (connect + remote command). Production
+    callers always route through ``run_remote``, which resolves ``timeout`` to a
+    concrete finite value before it ever reaches here (see ``_DEFAULT_REMOTE_TIMEOUT``)
+    — ``None`` is accepted defensively (e.g. a direct/test call) but is never what a
+    real deploy path forwards."""
     args = [
         "ssh",
         "-o", f"ConnectTimeout={connect_timeout}",
@@ -321,8 +401,23 @@ def _real_ssh(
         r = subprocess.run(args, **kwargs)
         return r.returncode, (r.stdout or ""), (r.stderr or "")
     except subprocess.TimeoutExpired:
-        # A local wall-clock timeout is a connection-class failure.
-        return 255, "", f"ssh local timeout after {timeout}s: Connection timed out"
+        # A LOCAL wall-clock kill is deliberately NOT ssh's own 255/connection-class
+        # code (2026-08-13 fix): `-o ConnectTimeout=<connect_timeout>` already bounds
+        # the connect+auth phase to `connect_timeout` seconds and ssh self-terminates
+        # with its OWN transport error well before this fires (since `timeout` here is
+        # always > `connect_timeout`). Reaching this branch is therefore overwhelming
+        # evidence the SSH session connected fine and the REMOTE COMMAND itself ran
+        # long — a reachability-neutral outcome that must not be misread as "can't
+        # reach the host" (see `_LOCAL_TIMEOUT_RC` + `_is_connection_failure`). The
+        # message deliberately avoids every `_CONN_ERROR_MARKERS` phrase.
+        return (
+            _LOCAL_TIMEOUT_RC,
+            "",
+            f"ssh: local wall-clock ceiling of {timeout}s exceeded — the remote "
+            f"command was still running when killed (connected fine; this is a slow "
+            f"remote op, not a reachability problem). Pass a larger timeout= for a "
+            f"known-long operation.",
+        )
 
 
 def _iso(ts: float) -> str:
@@ -356,6 +451,14 @@ def run_remote(
     runner already expects. Never raises on a back-off: an OPEN circuit returns a
     structured ``(255, "", <message>)`` so callers degrade gracefully.
 
+    ``timeout`` bounds the underlying ssh attempt's wall clock. 2026-08-13 fix:
+    ``None`` (the default — what EVERY production caller passed, pre-fix) no
+    longer means "unbounded"; it means "use ``NOCTUS_SSH_TIMEOUT`` /
+    ``_DEFAULT_REMOTE_TIMEOUT``". A caller that genuinely needs a longer window
+    for a known-long op (e.g. a large image pull) still passes an explicit
+    ``timeout=`` — but a silent, caller-invisible, unbounded block is no longer
+    reachable through this chokepoint at all.
+
     ``_now`` / ``_sleep`` / ``_state_path`` / ``_runner`` are test seams (inject to
     run with zero real SSH and zero real sleep).
     """
@@ -365,6 +468,12 @@ def run_remote(
     state_path = Path(_state_path) if _state_path is not None else _default_state_path()
     ctimeout = connect_timeout if connect_timeout is not None else _env_int(
         "NOCTUS_SSH_CONNECT_TIMEOUT", _DEFAULT_CONNECT_TIMEOUT
+    )
+    # 2026-08-13 fix: NEVER forward `timeout=None` to the real runner — that was
+    # the actual root cause of the deploy_image hang (see module docstring), not
+    # the circuit-breaker cooldown. `None` now resolves to a finite default.
+    remote_timeout = timeout if timeout is not None else _env_float(
+        "NOCTUS_SSH_TIMEOUT", _DEFAULT_REMOTE_TIMEOUT
     )
     forced = _force_enabled(force)
 
@@ -387,9 +496,11 @@ def run_remote(
         # ── circuit OPEN? back off without connecting (unless forced) ──
         open_until = entry["circuit_open_until"]
         if open_until and now() < open_until and not forced:
+            remaining = max(0.0, open_until - now())
             msg = (
-                f"ssh circuit OPEN for {ssh_host}: {entry['consecutive_failure_count']} "
-                f"consecutive connection failures; backing off until {_iso(open_until)} "
+                f"ssh circuit OPEN for {ssh_host} — FAST FAIL, no connection attempted: "
+                f"{entry['consecutive_failure_count']} consecutive connection failures; "
+                f"cooling down for {remaining:.0f}s more, until {_iso(open_until)}, "
                 f"to avoid tripping fail2ban. Pass force=True / set NOCTUS_SSH_FORCE=1 to "
                 f"override, or delete {state_path}."
             )
@@ -419,10 +530,12 @@ def run_remote(
                     sleep(wait)
 
         # ── attempt (with ONE backed-off retry on a connection failure) ──
-        rc, out, err = runner(ssh_host, remote_cmd, ctimeout, timeout)
+        # `remote_timeout` (never None) bounds this — and the retry — so the total
+        # time this call can hold `_state_lock` is finite by construction.
+        rc, out, err = runner(ssh_host, remote_cmd, ctimeout, remote_timeout)
         if _is_connection_failure(rc, err):
             sleep(min_interval)
-            rc, out, err = runner(ssh_host, remote_cmd, ctimeout, timeout)
+            rc, out, err = runner(ssh_host, remote_cmd, ctimeout, remote_timeout)
 
         # ── update shared state ──
         attempt_ts = now()

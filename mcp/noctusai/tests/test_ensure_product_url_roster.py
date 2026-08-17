@@ -271,16 +271,29 @@ class TestEnsureProductUrlRosterOrchestration:
             # deploy root (dirname of the .env), not SSH's default home (/root).
             assert t.recreated_in == "/opt/noctus/noctusai"
 
-    def test_real_transport_recreate_cds_into_project_dir(self):
+    def test_real_transport_recreate_cds_into_project_dir(self, monkeypatch, tmp_path):
         """SubprocessSshTransport.recreate_core must cd into project_dir before
         docker compose (else the relative compose path resolves against /root)."""
         from unittest import mock
+        from tools.noctus.dev import _vps_ssh as VSS
         from tools.noctus.dev.ensure_product_url_roster import SubprocessSshTransport
+
+        # Isolate the throttle's shared-state resolution (`cache_dir()` shells out
+        # to `git rev-parse --git-common-dir`) from the blanket `subprocess.run`
+        # patch below — without this, the SAME mock intercepts that internal git
+        # call too, returns empty stdout, and `cache_dir()` silently resolves to
+        # (and WRITES a real throttle-state file into) the wrong directory.
+        monkeypatch.setattr(VSS, "_STATE_PATH_CACHE", tmp_path / "throttle.json", raising=False)
 
         captured = {}
 
-        def _fake_run(argv, capture_output, text):
+        def _fake_run(argv, **kwargs):
+            # `**kwargs` (not a fixed capture_output/text signature): the
+            # 2026-08-13 fix makes `_vps_ssh._real_ssh` ALWAYS pass a finite
+            # `timeout=` (never silently omitted), so any subprocess.run fake
+            # must tolerate it — this is the intended, structural change.
             captured["cmd"] = argv[-1]
+            captured["kwargs"] = kwargs
             return mock.Mock(returncode=0, stdout="", stderr="")
 
         tr = SubprocessSshTransport(ssh_host="noctus-vps")
@@ -289,6 +302,9 @@ class TestEnsureProductUrlRosterOrchestration:
                                        "/opt/noctus/noctusai")
         assert ok is True and err == ""
         assert captured["cmd"].startswith("cd /opt/noctus/noctusai && docker compose")
+        # 2026-08-13 fix: a `docker compose up -d --force-recreate` over SSH is now
+        # ALWAYS wall-clock bounded — never `timeout=None` (the deploy_image hang).
+        assert captured["kwargs"].get("timeout") is not None
 
     def test_ssh_read_failure_returns_error(self):
         t = FakeSshTransport(read_ok=False)
