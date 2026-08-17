@@ -65,8 +65,17 @@ captured the envelope and left the entire absorption debt standing.
   the fleet's containers corrected orbity's OCI image title, which had been
   publishing as `noctus-seed`.
 
-- **M3: validation** — the `KB § GUIDES/production-deploy.md § 0.1` gate that
-  `dev_validated: true` attests to. → ✅ **reached 2026-08-16.**
+- **M3: validation** — the § 0.1 gate `dev_validated: true` attests to. → ✅ **reached 2026-08-16.**
+
+  (`KB § GUIDES/production-deploy.md § 0.1`. The bullet's first line is kept
+  on ONE line deliberately: `_resolve_roadmap_milestone` matches the anchor
+  substring and the ✅ **within a single line**, so wrapping `M3: validation`
+  away from its ✅ makes `consent_ref: '…#M3: validation'` fail to resolve —
+  a formatting false-negative, not a missing milestone. Same failure family as
+  the unquoted-`consent_ref` `ScannerError` that `prod-exposure-consent.md`
+  records: the gate reads as "your consent was rejected" when the real fault is
+  a line break. Any milestone used as a `consent_ref` anchor must keep both on
+  one line.)
 
   The container leg, which was the open one, closed against a real running
   image (`ghcr.io/jraphaelsst/noctus-p-studio:dev`, single container, port
