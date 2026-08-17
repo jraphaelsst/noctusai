@@ -60,8 +60,12 @@ we can prove the contract before a single real lead exists.
 - **Branch base — stack on `feat/olx-portal-leads-mcp`, not `origin/dev`.** *(Six hard dependencies exist only on that branch — §8. The sibling agent is still active there; conflicts get resolved at merge time by whoever merges. Branching from `dev` would force duplicating all six, including a second `leads.external_source` migration.)*
 - **MCP connector is a prerequisite gate, not a follow-up.** *(`mcp/imovelweb` is built and validated against sandbox before the product code is trusted. The OLX project made the same call with far weaker justification — no sandbox, one authenticated endpoint.)*
 - **Scope is all four legs** — lead events · reconciliation/backfill · smartlead enrichment · listing events (`AVISO_*`). *(See the `AVISO_*` gate in §7 Q1 — it is not purely an engineering call.)*
-- **This session is design-only.** *(No implementation. The deliverable is this document, the KB integration doc, and the lossless corrections in §6 Phase A0.)*
-- **User confirmed the plan before any code.** *(Approved 2026-08-17 via plan mode; four decisions above are the user's, quoted from the answers, not inferred.)*
+- **Touch only our own tree.** *(User, 2026-08-17: "dont touch work that is not yours. We got other agents working in parallel and the last to finish its job will deal with merging branches." Rules out editing `integrations/olx/`, `vista/client.py`, `mcp/olx/`, `migrations/051_*.sql`, `KB § INTEGRATIONS/olx.md` or the OLX project docs from this branch. Findings against them are **recorded and handed off** — §6 Phase A0 — never applied here. It also rules out us doing the merge: whoever finishes last does.)*
+- **Shell first, dynamicize on demand.** *(User: "so we build a shell, then we dinamicize that shell if we need to propagate that." Build the ImovelWeb package concretely; generalize only when a second consumer actually needs it. This is the user's own framing of the §5.10 T3 verdict — fork now, lift at the named trigger — and it extends to T1/T2: local helpers first, seed lift once the OLX branch lands.)*
+- **LGPD posture confirmed.** *(User: "about the LGPD matter, that's the right fit." The CPF is not stored in a typed column, not projected into `leads`, never returned, never logged — §5.2 and §10.)*
+- **RLS hardening is deferred until after integration validation.** *(User: "After we validate integrations i'll decide on RLS policies for more robustness on safety matters." Ship the baseline two-policy shape — `_select_own_org` + the literal `service_role_bypass` — and do not invent stricter policies ahead of that decision. Revisit after Gate 2.)*
+- **This session is design + seed shell.** *(No product wiring, no migration applied.)*
+- **User confirmed the plan before any code.** *(Approved 2026-08-17 via plan mode; the decisions above are the user's, quoted from the answers, not inferred.)*
 
 ---
 
@@ -635,14 +639,40 @@ Mount beside `<OlxWebhookCard />` in `src/pages/leads/Configuracao.tsx`.
 
 ## 6. Implementation phases
 
-### Phase A0 — Corrections and DRY lifts (prerequisite) 🔒 *(blocked on nothing; do first)*
-- [ ] Qualify + date-stamp the ImovelWeb vendor-identity claim in the OLX artifacts — **never delete** (lossless-refactor): `KB § INTEGRATIONS/olx.md` §0/§9, `integrations/olx/{__init__,types,endpoints}.py`, `portal_leads/__init__.py`, `migrations/051_*.sql` header, `mcp/olx/server.py`, `KB § MCP-SERVERS/{README,olx}.md`, `projects/olx-portal-leads-ingestion/HANDOFF.md` (its ImovelWeb-direct hypothesis is now refuted)
-- [ ] Rename 051's `olx_lead_events_service_role` / `olx_leads_service_role` policies to the literal `service_role_bypass` — they are currently invisible to `check_admin_endpoint_service_role_bypass`
-- [ ] **T1** lift: `noctusai_lib/integrations/endpoint_status.py`; rewrite `vista/client.py` + `olx/endpoints.py` to import it
-- [ ] **T2** lift: `noctusai_lib/integrations/redaction.py::redact_secrets`; alias the two existing names
-- [ ] **T4**: count the ISO-date recurrence; lift if N≥3
-- [ ] Confirm `mcp/olx/tools/webhook.py`'s `GRUPO_OLX_BASIC_USERNAME` re-export path before assuming the analogue for ImovelWeb
-- [ ] Seed + product suites green after the lifts
+### Phase A0 — Findings handed off to the OLX branch owner 🅿️ *(not ours to apply)*
+
+> **Ownership rule (user, 2026-08-17): do not touch work that is not yours.**
+> Parallel agents are live, and the last to finish handles merging. Everything
+> below lives inside `feat/olx-portal-leads-mcp`'s active file set, so this phase
+> **records** the findings and does not apply them. They are surfaced to that
+> branch's owner; if the branch is abandoned, they fold into §8 contingency (b).
+
+- [ ] **Handed off — vendor-identity framing.** The OLX artifacts read as if
+      ZAP · VivaReal · OLX · ImovelWeb · Casa Mineira were one *vendor*. They are
+      one *pipe*; ImovelWeb and Casa Mineira are Navent / Grupo QuintoAndar. The
+      bridge in `KB § INTEGRATIONS/olx.md` §0 is real and should be **qualified,
+      never deleted** (lossless-refactor). Affects `olx.md` §0/§9,
+      `integrations/olx/{__init__,types,endpoints}.py`, `portal_leads/__init__.py`,
+      `migrations/051_*.sql` header, `mcp/olx/server.py`,
+      `KB § MCP-SERVERS/{README,olx}.md`, and
+      `projects/olx-portal-leads-ingestion/HANDOFF.md` (whose ImovelWeb-direct
+      hypothesis is now refuted).
+- [ ] **Handed off — 051's service-role policies are keeper-invisible.** They are
+      named `olx_lead_events_service_role` / `olx_leads_service_role`, but
+      `check_admin_endpoint_service_role_bypass` matches the **literal** name
+      `service_role_bypass` (see `products/core/backend/migrations/030_*.sql:13`;
+      98 policies repo-wide use the literal). 051 is unmerged, so it is a free fix
+      for its owner. **Our migration uses the literal name regardless.**
+- [ ] **Handed off — `routers/olx_webhook.py:172` does `.select("*")`** on the
+      events table, returning the full lead payload to any authenticated org
+      member. Tolerable for the OLX payload; fatal for ours, which carries a CPF —
+      so our `GET /events` selects an explicit column list. Their call.
+- [ ] **Ours, deferred to Phase A** — T1/T2/T4 lifts touch `vista/client.py` and
+      `olx/endpoints.py`, both outside our tree. Build the ImovelWeb shell with
+      **local** `endpoint_status` + `redaction` helpers first; lift to
+      `noctusai_lib/integrations/{endpoint_status,redaction}.py` and rewrite the
+      two call sites only once the OLX branch has landed. The N≥3 obligation is
+      real and recorded — it is *sequenced*, not waived.
 
 **Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
 
@@ -662,16 +692,36 @@ Mount beside `<OlxWebhookCard />` in `src/pages/leads/Configuracao.tsx`.
 
 **Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
 
-### Phase Gate-0 — Spec-only verification (no credentials required)
-- [ ] 0.1 Download `/v2/api-docs?group=opennavent-realestate` from **both** hosts; record version strings
-- [ ] 0.2 Resolve `configuracao` vs `configuracion` for the callback-config path
-- [ ] 0.3 Resolve the simulator path (`geracao/eventos` vs `generacion/evento`)
-- [ ] **0.4 Read the EN2 callback model — does it carry an agency code?** *(Blocks the language choice, and therefore `contract.py`, `webhook.py`, the resolution chain and the migration column set)*
-- [ ] 0.5 Extract exact field lists + types for all five variants
-- [ ] 0.6 `Mensaje.id` / `idMensaje` vs the callback's `eventId` / `messageId` — same id space? *(Blocks the reconcile dedup key)*
-- [ ] 0.7 `OAuth2AccessToken`: `expiresIn` units, `expiration` encoding
-- [ ] 0.8 Does login accept Basic + form body, not only query params?
-- [ ] 0.9 `ConfiguracionCallback` field names; is `subscriptions` settable via `PUT /callbacks` or only `PUT /callbacks/{evento}`?
+### Phase Gate-0 — Spec-only verification ⏳ *(ran 2026-08-17; 3 of 9 settled, 5 provably NOT answerable without credentials)*
+
+**The headline: Gate 0 is much smaller than planned, and knowing why is the finding.**
+Two structural facts, both discovered by running it:
+
+1. **The Swagger spec contains ZERO callback-body definitions.** It models only
+   the API *we call*. Grepping every definition for `eventId` / `idEvento` /
+   `tipoEvento` / `eventType` / `leadOrigin` / `originLeadId` / `clientListingId`
+   returns an empty set. The pushed bodies are **prose-only**, so the language
+   question cannot be settled from the spec — it moves to Gate 1.7, where an
+   emitted event is observed. *This vindicates the language-parameterized
+   `contract.py`: the design survives not knowing, which a hardcoded single-language
+   parser would not have.*
+2. **`/v1/**` returns 401 before routing.** Spring Security's filter chain runs
+   ahead of the dispatcher, so a bogus `/v1/definitely-not-a-real-endpoint-xyz`
+   also answers 401 (while `/nope`, outside the secured pattern, answers 404).
+   **An unauthenticated probe therefore cannot discriminate a real path from a
+   typo** — which retires the whole "probe both spellings" idea and is worth
+   remembering before designing any future probe against this vendor.
+
+- [x] **0.1 ✅** Both specs download unauthenticated. Prod `api-br-open.navent.com` → `2.105.01-RC1`; sandbox `api-br-sandbox-open.navent.com` → `ON-10172`. Path sets are identical **except** the sandbox exposes `POST /v1/callbacks/geracao/eventos`, which prod does not.
+- [x] **0.2 ⚠️ Not probeable — resolved by inference instead.** The spec is generated from the running BR code and spells it **`/v1/configuracao/callbacks`**; `configuracion` appears only in hand-written prose. Treat the spec spelling as authoritative, keep both in `IMOVELWEB_PATH_VARIANTS`, confirm at Gate 1.
+- [x] **0.3 ⚠️ Not probeable — same inference.** **`/v1/callbacks/geracao/eventos`** is in the sandbox's generated spec; `/v1/callbacks/generacion/evento` is prose-only. Same treatment.
+- [ ] **0.4 ❌ MOVED TO GATE 1.7.** Whether the EN2 body carries an agency code cannot be read from the spec (finding 1). **It no longer blocks Phase A** — `contract.py` is language-parameterized by design — but it *does* block the runtime `imovelweb_callback_language` default and org-resolution rung 1.
+- [ ] **0.5 ❌ MOVED TO GATE 1.7.** Same reason. The five variants stay transcribed from prose, every `FieldSpec.verified=False`.
+- [ ] **0.6 ❌ MOVED TO GATE 1.12.** `Mensaje.id` / `idMensaje` vs the callback's `eventId` / `messageId` needs live data from both surfaces. Still the reconcile-dedup blocker.
+- [x] **0.7 ✅** `OAuth2AccessToken.expiration` is `string` / `format: date-time` (ISO-8601); `expiresIn` is `int32` (seconds, per OAuth2 convention); `refreshToken` is `OAuth2RefreshToken {value}` and carries **no expiry of its own**. So `_parse_expiry` handles **two** shapes, not four: prefer `expiration`, fall back to `now + expiresIn`. Confirm `expiration` is actually populated at Gate 1.2.
+- [ ] **0.8 ❌ MOVED TO GATE 1.2.** Whether login accepts `Authorization: Basic` + a form body cannot be tested — the grant handler never runs unauthenticated.
+- [x] **0.9 ✅** `ConfiguracionCallback` carries `subscriptions: string[]`, so a single `PUT /v1/configuracao/callbacks` **can** set URL + header + language + subscriptions atomically; `PUT /callbacks/{evento}` is the incremental path. Register atomically, then read back and diff.
+- [x] **0.10 ✅ (new, unplanned)** **Errors are XML, not JSON.** A 401 returns `Content-Type: application/xml` with `<UnauthorizedException><error>unauthorized</error><error_description>…</error_description></UnauthorizedException>`, despite `produces: */*`. `real.py` must not assume a JSON error envelope — parse defensively and fall back to the raw text, or every upstream failure surfaces as a confusing decode error instead of the vendor's actual message.
 
 **Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
 

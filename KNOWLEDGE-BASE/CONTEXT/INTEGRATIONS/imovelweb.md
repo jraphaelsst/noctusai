@@ -42,6 +42,33 @@ Four consequences that drive every design decision downstream:
 **3xx counts as success**, not just 2xx — the vendor is explicit. Never rely on
 it; do record it (`IMOVELWEB_RESPONSE_SEMANTICS`).
 
+## 0a. What the spec does and does not tell you (Gate 0, 2026-08-17)
+
+Three facts worth knowing before you plan any verification against this vendor.
+
+1. **The spec models zero callback bodies.** `/v2/api-docs?group=opennavent-realestate`
+   is public and complete for the API *we call* — but grepping every definition
+   for `eventId` / `idEvento` / `tipoEvento` / `eventType` / `leadOrigin` /
+   `originLeadId` / `clientListingId` returns an empty set. The bodies they
+   **push** are documented in prose only. So §2's tables cannot be confirmed from
+   the machine-readable source, and the language question (§2) is settled by
+   *observing an emitted event*, not by reading. This is why `contract.py` is
+   language-parameterized rather than pinned: the design has to survive not
+   knowing.
+2. **`/v1/**` returns 401 before routing.** Spring Security's filter chain runs
+   ahead of the dispatcher, so `/v1/definitely-not-a-real-endpoint-xyz` also
+   answers 401, while `/nope` — outside the secured pattern — answers 404.
+   **An unauthenticated probe cannot tell a real path from a typo.** That retires
+   the obvious way to settle the two `configuracao`/`configuracion` and
+   `geracao`/`generacion` spellings; the generated spec's spelling is the better
+   evidence, since prose is hand-written and the spec is not.
+3. **Errors are XML, not JSON.** A 401 answers `Content-Type: application/xml`
+   with `<UnauthorizedException><error>unauthorized</error><error_description>An
+   Authentication object was not found in the SecurityContext</error_description></UnauthorizedException>`,
+   despite the spec declaring `produces: */*`. `real.py` must parse defensively
+   and fall back to raw text — otherwise every upstream failure surfaces as a
+   JSON decode error instead of the vendor's actual message.
+
 ## 1. Authentication — two directions
 
 **Outbound (us → vendor): OAuth2 client credentials.**
@@ -296,7 +323,9 @@ simulator `/v1/callbacks/generacion/evento` where the spec says
 
 | Date | What changed | Evidence |
 |---|---|---|
-| 2026-08-17 | Doc transcribed from the live Swagger spec + vendor docs. Nothing probed. Corrects `KB § INTEGRATIONS/olx.md` §0's vendor-identity claim. | spec JSON + vendor HTML only |
+| 2026-08-17 | Doc transcribed from the live Swagger spec + vendor docs. | spec JSON + vendor HTML |
+| 2026-08-17 | **Gate 0 ran.** Prod spec `2.105.01-RC1`, sandbox `ON-10172`; identical path sets except the sandbox-only `POST /v1/callbacks/geracao/eventos`. `OAuth2AccessToken.expiration` is ISO `date-time`, `expiresIn` is int32 seconds, `refreshToken` has no expiry of its own. `ConfiguracionCallback` carries `subscriptions[]`, so one `PUT` sets everything atomically. | both specs downloaded |
+| 2026-08-17 | **Two structural findings — see §0a.** The spec models zero callback bodies, and `/v1/**` 401s before routing. | live probes |
 
 > **Fill this in at Gates 0/1/2.** `imovelweb.contract.diff_observed` and
 > `imovelweb.diagnostics.fetch_swagger` produce the input; record the observation
