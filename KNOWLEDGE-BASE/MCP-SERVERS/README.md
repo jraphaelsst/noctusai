@@ -108,6 +108,37 @@ Gate 1.
 
 ---
 
+### imovelweb — ImovelWeb / OpenNavent portal-leads connector MCP 🚧 *(specified, not built)*
+
+**Type**: Connector (composes `mcp/_kit`; wraps `noctusai_lib.integrations.imovelweb`)
+
+The **ImovelWeb pipe** — ImovelWeb · Wimoveis · Casa Mineira via OpenNavent
+(Navent / Grupo QuintoAndar), a **different vendor from Grupo OLX** even
+though the OLX pipe also carries an ImovelWeb bridge. Phase B of
+`projects/imovelweb-portal-leads-ingestion/PROJECT.md`; nothing exists in
+`mcp/imovelweb/` yet. Built BEFORE the product receiver for the same reason
+as `olx`, plus two of its own: `PUT /v1/configuracao/callbacks` is
+integrator-wide, so one bad call redirects every agency's leads and belongs
+behind a confirm-gate with a read-back diff; and unlike OLX there **is** a
+sandbox with an event simulator, so the contract is provable before any real
+traffic. The vendor allows 1.5 s for our response and retries for 72 h before
+marking a callback `VENCIDO`. Secrets in `mcp/imovelweb/.env` (gitignored).
+Registration is **user-gated** and must wait until
+`feat/imovelweb-portal-leads` merges. Full reference: [imovelweb.md](imovelweb.md).
+
+Tools: `imovelweb.contract.{describe,validate_payload,diff_observed}` ·
+`imovelweb.callbacks.{get_config,put_config,subscribe,unsubscribe}` ·
+`imovelweb.leads.{get_message,list_messages,get_smartlead,list_contact_actions}` ·
+`imovelweb.agencies.list` · `imovelweb.sandbox.emit_event` ·
+`imovelweb.webhook.{record_delivery,simulate}` ·
+`imovelweb.diagnostics.{connection_status,probe,list_known_endpoints,fetch_swagger}`.
+Writes confirm-gated (412). `fetch_swagger` exists because this vendor
+publishes an unauthenticated OpenAPI spec — the doc-vs-reality loop closes
+without waiting for traffic. Contract tools need no credentials;
+`describe` reports `verified_against_live_traffic: false` until Gate 1.
+
+---
+
 ## Adding a New MCP Server
 
 1. Create a directory: `MCP-SERVERS/{server-name}/`

@@ -31,6 +31,26 @@ One pipe carries every Grupo OLX portal. ImovelWeb and Casa Mineira join it
 once the advertiser emails `atendimento@imovelweb.com.br` for an activation
 code and registers it in Gestor de Leads — **unverified**, and item 4 of Gate 1.
 
+> **Qualified 2026-08-17.** The *bridge* above is real —
+> `developers.grupozap.com/leadManager/imovelweb_casamineira` documents it. The
+> **vendor-identity framing is not**: ImovelWeb and Casa Mineira are not Grupo
+> OLX properties. ImovelWeb is a Navent brand, and QuintoAndar acquired Navent's
+> real-estate operations in 2022; it runs its own API, sandbox and callback
+> system (`KB § INTEGRATIONS/imovelweb.md`). The title of this page and the
+> package docstrings still read as if the five portals were one vendor — they
+> are one *pipe*, which is a different claim. Two consequences:
+> 1. Leads reaching us through this bridge arrive as `leadOrigin: "Grupo OLX"`
+>    and are **not portal-attributable**. The direct ImovelWeb integration is the
+>    one that names the portal.
+> 2. An advertiser activated on **both** pipes sends each enquiry twice, under
+>    two different vendor ids (`originLeadId` here, `eventId` there), which
+>    `uq_sw_leads_org_external_lead` will not catch because `external_source`
+>    differs. → `projects/imovelweb-portal-leads-ingestion/PROJECT.md` §5.
+>
+> The remaining docstring/title corrections are tracked as Phase A0 of that
+> project rather than applied here, because this branch is stacked on a live
+> `feat/olx-portal-leads-mcp` and those files are still being edited there.
+
 ## 1. Authentication
 
 **HTTP Basic**, no signature, no timestamp:
