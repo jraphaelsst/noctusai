@@ -51,6 +51,7 @@ def register_all(server) -> None:
     from . import dependabot_sync
     from . import deploy_image
     from . import deploy_pull
+    from . import deploy_verify
     from . import disk_usage
     from . import dispatch_preflight
     from . import engineer_brief_compose
@@ -165,6 +166,7 @@ def register_all(server) -> None:
     dependabot_sync.register(server)
     deploy_image.register(server)
     deploy_pull.register(server)
+    deploy_verify.register(server)
     disk_usage.register(server)
     dispatch_budget.register(server)
     dispatch_preflight.register(server)

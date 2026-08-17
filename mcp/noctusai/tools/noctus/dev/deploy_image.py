@@ -12,8 +12,14 @@ wraps that update so it is atomic:
      pulled image id == the running one, it's a no-op (status up_to_date).
   3. DEPLOY — `docker compose up -d <product>` (recreate on the new image).
   4. HEALTH-PROBE — poll the container health until healthy / unhealthy / timeout.
-  5. ROLLBACK on failure — retag the snapshot id back to `:<tag>` + `up -d` →
-     production returns to the last-known-good image; re-probe to confirm.
+  5. SWAP-VERIFY — a healthy probe does NOT prove the swap landed (2026-08-13:
+     a healthy OLD container, never actually recreated, would have satisfied
+     every earlier step). Re-inspect the RUNNING container's own image id +
+     baked revision label; refuse to report `deployed` if either doesn't
+     verifiably match what was intended.
+  6. ROLLBACK on health failure — retag the snapshot id back to `:<tag>` +
+     `up -d` → production returns to the last-known-good image; re-probe to
+     confirm.
 
 DRY-RUN by default (read-only: reports the current image + the plan); pass
 confirm=True to perform the swap (the 412-style production write gate). BY
@@ -23,8 +29,12 @@ can neither delete the rollback image nor tear the fleet down (a colocated test
 asserts no banned token is ever emitted).
 
 IO is injectable (`run_remote`, `sleep`, `now`) so the colocated test drives
-every path — planned / up_to_date / deployed / rolled_back / error — with zero
-real SSH and zero real waiting.
+every path — planned / up_to_date / deployed / swap_unverified / rolled_back /
+error — with zero real SSH and zero real waiting. `noctus.dev.deploy_verify`
+is the sibling INDEPENDENT witness — callable standalone, with no dependency
+on this tool having run at all (the exact property the 2026-08-13 incident
+was missing: this tool timed out and disconnected mid-swap, and nothing but a
+manual `docker inspect` caught it).
 """
 from __future__ import annotations
 
@@ -274,7 +284,18 @@ def deploy_image(
     verifiable identity; source='local' also skips it — a build-on-VPS image
     is a deliberate human action taken right there on the box).
 
-    status ∈ {planned, up_to_date, deployed, rolled_back, error}.
+    SWAP-VERIFY (2026-08-13): a healthy probe alone never proves the swap
+    landed — the 2026-08-13 incident was a healthy OLD container that
+    `compose up -d` silently never recreated. After a healthy probe, this
+    re-inspects the RUNNING container's own image id + baked revision label
+    (not the pulled image/tag) and REFUSES to report `deployed` — status
+    `swap_unverified`, no auto-rollback (an unverified swap could equally be
+    a transient inspect glitch on a genuinely-landed container; guessing at
+    a correction here would be exactly the bug this guards against) — unless
+    both verifiably match what was intended. `noctus.dev.deploy_verify` is
+    the independent, standalone check for the same ground truth.
+
+    status ∈ {planned, up_to_date, deployed, swap_unverified, rolled_back, error}.
     Never raises on an operational failure — it returns it (no silent errors)."""
     if not product or not product.strip():
         return {"ok": False, "status": "error", "exit_code": 1, "error": "product required"}
@@ -436,6 +457,53 @@ def deploy_image(
     health, states = _poll_health(runner, napper, container, health_timeout, poll_interval,
                                   port=port, startup_grace=startup_grace)
     if health == "healthy":
+        # ── SWAP-VERIFY (2026-08-13 phantom-deploy guard) — a HEALTHY probe
+        #    only proves *some* container answers on that port; it does NOT
+        #    prove the swap actually happened. The 2026-08-13 incident: the
+        #    OLD container was healthy and "Up 2 days" — `compose up -d` had
+        #    silently never recreated it, and this exact code path was about
+        #    to return status='deployed' anyway. Re-inspect the RUNNING
+        #    container (not the pulled image) for its actual id + its own
+        #    baked revision label — the only two things that prove a
+        #    recreate landed. `_image_revision` on a container name reads
+        #    `.Config.Labels` off the CONTAINER's own inspect, same as it
+        #    does for an image ref. ──
+        rc_ri, running_image_id, _e_ri = _docker(runner, "inspect", "-f", "{{.Image}}", container)
+        running_image_id = running_image_id.strip()
+        landed_revision = _image_revision(runner, container)
+        intended_revision = base.get("source_revision") or _image_revision(runner, f"{image}:{tag}")
+        swap_landed = running_image_id == new_image_id
+        revision_landed = intended_revision is None or landed_revision == intended_revision
+        if not (swap_landed and revision_landed):
+            # REFUSE to report success on an unverified swap (no silent
+            # errors) — and do NOT auto-rollback: we cannot tell "the swap
+            # silently no-op'd" from "a transient inspect glitch just
+            # misread a genuinely-landed container", so guessing at a
+            # corrective action here would be exactly as unsafe as the bug
+            # this guards against. Report every observed fact and name the
+            # independent witness that resolves it.
+            return {
+                **base, "status": "swap_unverified", "exit_code": 1,
+                "new_image_id": new_image_id, "health": health, "health_states": states,
+                "running_image_id": running_image_id, "landed_revision": landed_revision,
+                "intended_revision": intended_revision,
+                "reason": (
+                    f"`compose up -d --force-recreate {product}` returned success and "
+                    f"the health probe reports healthy, but the RUNNING container does "
+                    f"not verifiably match what was deployed "
+                    f"(running_image_id={running_image_id[:19]!r} vs "
+                    f"intended={new_image_id[:19]!r}; landed_revision="
+                    f"{(landed_revision or 'none')[:12]!r} vs intended_revision="
+                    f"{(intended_revision or 'none')[:12]!r}). This is the exact "
+                    "2026-08-13 phantom-deploy shape: a healthy container that is NOT "
+                    "the one just deployed. REFUSING to report 'deployed'. Do NOT "
+                    "assume this is safe or broken — run `noctus.dev.deploy_verify` "
+                    "(independent of this call) to get ground truth, then decide "
+                    "manually whether to retry the recreate or investigate."
+                ),
+            }
+        base["running_image_id"] = running_image_id
+        base["landed_revision"] = landed_revision
         # ── LEG (a): tunnel re-resolve — restart cloudflared so the stale
         #    pre-recreate origin connection is dropped. Only on real deploys
         #    (confirm=True + a recreate actually happened). ──
@@ -491,8 +559,14 @@ def register(server) -> None:
             "container untouched) unless the pulled image's baked git revision is a "
             "verified ancestor of origin/prod — closes the hole where a floating "
             ":latest can carry an un-promoted main tip; pass skip_ancestry_check=True "
-            "to override deliberately. status: planned | "
-            "up_to_date | deployed | rolled_back | error. See KB § GUIDES/production-deploy.md § 2a (C2)."
+            "to override deliberately. SWAP-VERIFY (2026-08-13): a healthy probe alone "
+            "never proves the swap landed — after a healthy probe this re-inspects the "
+            "RUNNING container's own image id + revision label (not the pulled tag) and "
+            "REFUSES status='deployed' (returns 'swap_unverified' instead, no "
+            "auto-rollback) unless both verifiably match. status: planned | up_to_date | "
+            "deployed | swap_unverified | rolled_back | error. Independent standalone "
+            "witness for the same ground truth: noctus.dev.deploy_verify. See "
+            "KB § GUIDES/production-deploy.md § 2a (C2)."
         ),
     )
     def _deploy_image(

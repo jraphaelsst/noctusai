@@ -84,6 +84,28 @@ probe, with **automatic rollback to the `:previous` snapshot on a failed
 probe**. This is what makes prod-first defensible at all: a broken image
 never stays serving. It also carries the PROD-PIN ancestry guard, which
 refuses a `:latest` whose baked revision is not an ancestor of `origin/prod`.
+Since 2026-08-13 it also SWAP-VERIFIES: a healthy probe alone never proved
+the recreate landed (a healthy *old* container satisfies it identically), so
+after a healthy probe it re-inspects the RUNNING container's own image id +
+revision label and refuses `status='deployed'` — reports `swap_unverified`
+instead, no auto-rollback — unless both verifiably match. That self-check
+still dies with the process if the tool times out, which is exactly why
+point 3a exists.
+
+**3a. `noctus.dev.deploy_verify` — the INDEPENDENT witness, MANDATORY.** The
+2026-08-13 incident: `deploy_image` timed out and the MCP server
+disconnected before reporting anything; every git-level signal (`prod`'s
+tip, `deploy_pull`'s own success) stayed green throughout, and only a
+manual `docker inspect` caught that the container was still on the
+*previous* revision. `deploy_verify` closes that hole — it has **zero
+dependency on `deploy_image` having run, succeeded, or even existed in this
+process**: it re-derives the expected sha FRESH from `origin/prod` (never a
+caller-supplied parameter — a wrong answer there would defeat the whole
+point) and reads each ACTIVE product's running container's
+`org.opencontainers.image.revision` label directly. `status='verified'`
+(exit 0) is the only pass. **A `deploy_image` call that times out or whose
+session drops is NOT success by default** — treat it as `status=unverified`
+and run `deploy_verify` immediately for ground truth.
 
 **4. `prod-backup` — the code rollback pointer.** `promote` snapshots the
 outgoing prod sha there before moving `prod`. Check it advanced.
@@ -93,8 +115,8 @@ After the swap: `noctus.vps.health` must read all-healthy, and each ACTIVE
 product's `/api/health` must answer 200 — probed on the VPS via
 `noctus.vps.exec --container` (internal) *and* through the public edge.
 Programmatic edge callers need a browser User-Agent or Cloudflare WAF rule
-1010 rejects them. A deploy is not "done" until this passes; if it fails,
-roll back rather than debug forward.
+1010 rejects them. A deploy is not "done" until BOTH this AND `deploy_verify`
+(point 3a) pass; if either fails, roll back rather than debug forward.
 
 **6. `startup_hook_error` on `/api/health`.** A product whose lifespan hook
 failed still serves and now says so in that field. Read it during smoke —
@@ -102,7 +124,8 @@ failed still serves and now says so in that field. Read it during smoke —
 → `KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md`
 
 **Order:** `predeploy_check` (all active) → CI green → `bless` → `promote` →
-`deploy_pull` → `deploy_image` per product → prod smoke → (rollback on fail).
+`deploy_pull` → `deploy_image` per product → `deploy_verify` → prod smoke →
+(rollback on fail).
 
 ---
 
