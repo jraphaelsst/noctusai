@@ -74,6 +74,7 @@ class TestMint:
     def test_stores_the_digest_never_the_plaintext(self, client):
         minted = _mint(client)
 
+        # postgrest-unbounded-ok: one row, minted by this test.
         rows = client.table("portal_receiver_tokens").select("*").execute().data
         stored = rows[0]
 

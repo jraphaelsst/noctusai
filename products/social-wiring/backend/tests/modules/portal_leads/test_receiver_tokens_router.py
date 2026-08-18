@@ -122,6 +122,8 @@ class TestMint:
 
         assert resp.status_code == 422
         # And nothing was persisted — no orphan token nobody can use.
+        # postgrest-unbounded-ok: asserting the table is EMPTY; a cap
+        # cannot hide rows that were never inserted.
         rows = (
             leads_client.table("portal_receiver_tokens").select("*").execute().data
         )
@@ -145,6 +147,8 @@ class TestMint:
         )
 
         assert resp.status_code == 503
+        # postgrest-unbounded-ok: asserting the table is EMPTY; a cap
+        # cannot hide rows that were never inserted.
         rows = (
             leads_client.table("portal_receiver_tokens").select("*").execute().data
         )
