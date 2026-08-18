@@ -81,7 +81,13 @@ def _list_org_ids(admin_client: Any) -> list[UUID]:
     return [UUID(o) for o in sorted(seen)]
 
 
-def run_clientes_backfill(*, cfg: Any = None, admin_client: Any = None) -> dict[str, Any]:
+def run_clientes_backfill(
+    *,
+    cfg: Any = None,
+    admin_client: Any = None,
+    admin_factory: Any = None,
+    backfill_fn: Any = None,
+) -> dict[str, Any]:
     """Body of the scheduled job — one `run_backfill` per org, degrading per org.
 
     A failure resolving one org must not stop the others, for the same reason
@@ -89,15 +95,24 @@ def run_clientes_backfill(*, cfg: Any = None, admin_client: Any = None) -> dict[
     should not freeze every other tenant's board.
 
     Returns a per-org summary so the caller (and the tests) can assert on what
-    actually happened rather than on log text. `cfg` / `admin_client` are the
-    Class-B DI test seams — production passes neither.
+    actually happened rather than on log text.
+
+    Every collaborator arrives through a Class-B kwarg seam — `cfg`, the admin
+    client (either directly or via `admin_factory`, so the "no client at all"
+    branch is reachable without patching), and `backfill_fn`. Production passes
+    none of them. This is deliberate and load-bearing: substituting a
+    collaborator through a declared seam keeps the real code path under test,
+    whereas `monkeypatch.setattr` on our own module replaces the thing the test
+    claims to exercise. → KB § PATTERNS/compliance/testing.md (no monkey-
+    patching, including in tests; `check_seed_compliance` enforces it).
     """
     cfg = cfg or settings
     if not cfg.clientes_backfill_enabled:
         logger.debug("clientes_backfill: disabled via settings — skipping run")
         return {"skipped": "disabled", "orgs": []}
 
-    admin = admin_client or get_admin_client()
+    resolve_admin = admin_factory or get_admin_client
+    admin = admin_client if admin_client is not None else resolve_admin()
     if admin is None:
         logger.warning("clientes_backfill: no admin client — skipping run")
         return {"skipped": "no-admin-client", "orgs": []}
@@ -110,7 +125,7 @@ def run_clientes_backfill(*, cfg: Any = None, admin_client: Any = None) -> dict[
     results: list[dict[str, Any]] = []
     for org_id in org_ids:
         try:
-            report = clientes_service.run_backfill(admin, org_id)
+            report = (backfill_fn or clientes_service.run_backfill)(admin, org_id)
         except Exception:
             # Named, logged, and carried in the return value — a swallowed
             # per-org failure that left no trace would be the silent-error
@@ -143,16 +158,19 @@ def run_clientes_backfill(*, cfg: Any = None, admin_client: Any = None) -> dict[
     return {"skipped": None, "orgs": results}
 
 
-def _run_clientes_backfill_job() -> None:
+def _run_clientes_backfill_job(*, run_fn: Any = None) -> None:
     """Scheduler entrypoint — swallows ALL exceptions so a bug in one run
-    never crashes the scheduler or de-registers the job."""
+    never crashes the scheduler or de-registers the job.
+
+    `run_fn` is the seam that lets a test drive the swallow branch with a
+    throwing double instead of patching this module."""
     try:
-        run_clientes_backfill()
+        (run_fn or run_clientes_backfill)()
     except Exception:
         logger.error("clientes_backfill: job run failed", exc_info=True)
 
 
-def configure() -> None:
+def configure(*, cfg: Any = None, scheduler: Any = None) -> None:
     """Register the steady-state pass on the seed-side scheduler.
 
     Called from ``app/main.py`` at import time (mirrors
@@ -161,14 +179,15 @@ def configure() -> None:
     ``noctusai_lib.api.scheduler.register`` replaces the job on
     re-registration.
     """
-    seed_scheduler.register(
+    cfg = cfg or settings
+    (scheduler or seed_scheduler).register(
         "clientes_backfill",
         _run_clientes_backfill_job,
-        hours=settings.clientes_backfill_interval_hours,
+        hours=cfg.clientes_backfill_interval_hours,
     )
     logger.info(
         "clientes_backfill scheduler configured: every %dh",
-        settings.clientes_backfill_interval_hours,
+        cfg.clientes_backfill_interval_hours,
     )
 
 

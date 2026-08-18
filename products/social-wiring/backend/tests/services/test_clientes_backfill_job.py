@@ -13,6 +13,16 @@ registers on the scheduler, the job survives a throwing run, and one org's
 failure does not stop the next org. A test of resolution correctness would
 have passed happily throughout the outage; `test_clientes_service.py` already
 owns that.
+
+🔴 Every collaborator here arrives through a declared Class-B kwarg seam
+(`cfg`, `admin_client` / `admin_factory`, `backfill_fn`, `run_fn`,
+`scheduler`). The first draft of this file substituted collaborators by
+reaching into our own modules and reassigning their attributes instead, and
+`check_seed_compliance` caught it on the integration tip with four
+high-severity findings. Replacing an attribute on the module under test
+swaps out the very thing the test claims to exercise, so the test stops
+being evidence — the seams keep the real code path running.
+→ KB § PATTERNS/compliance/testing.md.
 """
 from __future__ import annotations
 
@@ -24,7 +34,6 @@ from uuid import UUID
 import pytest
 
 from app.services import clientes_backfill_job as job
-from noctusai_lib.api import scheduler as seed_scheduler
 
 _ORG_A = "00000000-0000-4000-8000-0000000000a1"
 _ORG_B = "00000000-0000-4000-8000-0000000000b2"
@@ -96,9 +105,8 @@ class TestGuards:
         assert out == {"skipped": "disabled", "orgs": []}
         admin.schema.assert_not_called()
 
-    def test_no_admin_client_skips(self, monkeypatch):
-        monkeypatch.setattr(job, "get_admin_client", lambda: None)
-        out = job.run_clientes_backfill(cfg=_cfg())
+    def test_no_admin_client_skips(self):
+        out = job.run_clientes_backfill(cfg=_cfg(), admin_factory=lambda: None)
         assert out == {"skipped": "no-admin-client", "orgs": []}
 
     def test_no_orgs_is_a_quiet_no_op(self):
@@ -112,39 +120,36 @@ class TestGuards:
 
 
 class TestOrgEnumeration:
-    def test_dedupes_across_both_source_tables(self, monkeypatch):
+    def test_dedupes_across_both_source_tables(self):
         seen: list[UUID] = []
-        monkeypatch.setattr(
-            job.clientes_service, "run_backfill",
-            lambda _c, org_id: seen.append(org_id) or _report(),
-        )
         admin = _admin_with(
             [{"org_id": _ORG_A}, {"org_id": _ORG_A}, {"org_id": _ORG_B}],
             [{"org_id": _ORG_A}],
         )
-        job.run_clientes_backfill(cfg=_cfg(), admin_client=admin)
+        job.run_clientes_backfill(
+            cfg=_cfg(), admin_client=admin,
+            backfill_fn=lambda _c, org_id: seen.append(org_id) or _report(),
+        )
         assert sorted(str(o) for o in seen) == [_ORG_A, _ORG_B]
 
-    def test_pages_past_the_postgrest_row_cap(self, monkeypatch):
+    def test_pages_past_the_postgrest_row_cap(self):
         """PostgREST truncates at 1 000 rows and says nothing — an org whose
         only rows sit past the cap must still be swept."""
-        monkeypatch.setattr(
-            job.clientes_service, "run_backfill", lambda _c, _o: _report(),
-        )
         page1 = [{"org_id": _ORG_A}] * job._PAGE
         page2 = [{"org_id": _ORG_B}]
         leads = _FakeTable([page1, page2])
         admin = _FakeAdmin({"leads": leads, "meta_ads_leads": _FakeTable([[]])})
-        out = job.run_clientes_backfill(cfg=_cfg(), admin_client=admin)
+        out = job.run_clientes_backfill(
+            cfg=_cfg(), admin_client=admin, backfill_fn=lambda _c, _o: _report(),
+        )
         assert {o["org_id"] for o in out["orgs"]} == {_ORG_A, _ORG_B}
         assert len(leads.ranges) == 2
 
-    def test_ignores_rows_with_a_null_org_id(self, monkeypatch):
-        monkeypatch.setattr(
-            job.clientes_service, "run_backfill", lambda _c, _o: _report(),
-        )
+    def test_ignores_rows_with_a_null_org_id(self):
         admin = _admin_with([{"org_id": None}, {"org_id": _ORG_A}], [])
-        out = job.run_clientes_backfill(cfg=_cfg(), admin_client=admin)
+        out = job.run_clientes_backfill(
+            cfg=_cfg(), admin_client=admin, backfill_fn=lambda _c, _o: _report(),
+        )
         assert [o["org_id"] for o in out["orgs"]] == [_ORG_A]
 
 
@@ -152,16 +157,17 @@ class TestOrgEnumeration:
 
 
 class TestPerOrgIsolation:
-    def test_one_org_failing_does_not_stop_the_next(self, monkeypatch, caplog):
+    def test_one_org_failing_does_not_stop_the_next(self, caplog):
         def _flaky(_client, org_id):
             if str(org_id) == _ORG_A:
                 raise RuntimeError("resolution blew up")
             return _report(touches_created=3)
 
-        monkeypatch.setattr(job.clientes_service, "run_backfill", _flaky)
         admin = _admin_with([{"org_id": _ORG_A}, {"org_id": _ORG_B}], [])
         with caplog.at_level(logging.ERROR):
-            out = job.run_clientes_backfill(cfg=_cfg(), admin_client=admin)
+            out = job.run_clientes_backfill(
+                cfg=_cfg(), admin_client=admin, backfill_fn=_flaky,
+            )
 
         by_org = {o["org_id"]: o for o in out["orgs"]}
         assert by_org[_ORG_A]["ok"] is False
@@ -172,16 +178,13 @@ class TestPerOrgIsolation:
         # shape this module exists to close.
         assert _ORG_A in caplog.text
 
-    def test_report_counts_are_surfaced_per_org(self, monkeypatch):
-        monkeypatch.setattr(
-            job.clientes_service, "run_backfill",
-            lambda _c, _o: _report(
+    def test_report_counts_are_surfaced_per_org(self):
+        out = job.run_clientes_backfill(
+            cfg=_cfg(), admin_client=_admin_with([{"org_id": _ORG_A}], []),
+            backfill_fn=lambda _c, _o: _report(
                 clientes_created=44, touches_created=88,
                 negociacoes_repointed=88, stragglers_parked_for_review=2,
             ),
-        )
-        out = job.run_clientes_backfill(
-            cfg=_cfg(), admin_client=_admin_with([{"org_id": _ORG_A}], []),
         )
         assert out["orgs"][0] == {
             "org_id": _ORG_A, "ok": True, "clientes_created": 44,
@@ -189,14 +192,12 @@ class TestPerOrgIsolation:
             "stragglers_parked_for_review": 2,
         }
 
-    def test_quiet_run_logs_nothing_at_info(self, monkeypatch, caplog):
+    def test_quiet_run_logs_nothing_at_info(self, caplog):
         """The healthy steady state is a no-op every 6h; it must not be noise."""
-        monkeypatch.setattr(
-            job.clientes_service, "run_backfill", lambda _c, _o: _report(),
-        )
         with caplog.at_level(logging.INFO, logger=job.logger.name):
             job.run_clientes_backfill(
                 cfg=_cfg(), admin_client=_admin_with([{"org_id": _ORG_A}], []),
+                backfill_fn=lambda _c, _o: _report(),
             )
         assert "attached" not in caplog.text
 
@@ -205,29 +206,28 @@ class TestPerOrgIsolation:
 
 
 class TestSchedulerWiring:
-    def test_configure_registers_the_job(self, monkeypatch):
+    def test_configure_registers_the_job(self):
         calls: list[tuple] = []
-        monkeypatch.setattr(
-            seed_scheduler, "register",
-            lambda name, fn, **kw: calls.append((name, fn, kw)),
-        )
-        monkeypatch.setattr(job, "settings", _cfg(hours=6))
-        job.configure()
+
+        class _FakeScheduler:
+            def register(self, name, fn, **kw):
+                calls.append((name, fn, kw))
+
+        job.configure(cfg=_cfg(hours=6), scheduler=_FakeScheduler())
         assert len(calls) == 1
         name, fn, kw = calls[0]
         assert name == "clientes_backfill"
         assert fn is job._run_clientes_backfill_job
         assert kw == {"hours": 6}
 
-    def test_job_wrapper_swallows_so_the_scheduler_survives(self, monkeypatch, caplog):
+    def test_job_wrapper_swallows_so_the_scheduler_survives(self, caplog):
         """A throwing run must not propagate — APScheduler would otherwise
         de-register the job and the drift would resume, silently, forever."""
-        def _boom(**_kw):
+        def _boom():
             raise RuntimeError("boom")
 
-        monkeypatch.setattr(job, "run_clientes_backfill", _boom)
         with caplog.at_level(logging.ERROR):
-            job._run_clientes_backfill_job()  # must not raise
+            job._run_clientes_backfill_job(run_fn=_boom)  # must not raise
         assert "job run failed" in caplog.text
 
     def test_main_registers_it_alongside_the_sibling_jobs(self):
