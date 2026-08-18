@@ -98,6 +98,7 @@ from .normalizers import (
     resolve_source_slug,
 )
 from .types import (
+    IMOVELWEB_BASIC_USERNAME,
     IMOVELWEB_CALLBACK_LANGUAGES,
     IMOVELWEB_CONTACT_TYPES,
     IMOVELWEB_EVENT_TYPES,
@@ -105,6 +106,8 @@ from .types import (
     IMOVELWEB_LEAD_ORIGINS,
     CallbackConfig,
     ImovelWebLead,
+    basic_credential,
+    receiver_url_problems,
 )
 from .webhook import detect_callback_language, parse_imovelweb_callback
 
@@ -112,11 +115,14 @@ __all__ = [
     # types
     "CallbackConfig",
     "ImovelWebLead",
+    "IMOVELWEB_BASIC_USERNAME",
     "IMOVELWEB_CALLBACK_LANGUAGES",
     "IMOVELWEB_CONTACT_TYPES",
     "IMOVELWEB_EVENT_TYPES",
     "IMOVELWEB_LEAD_EVENT_TYPES",
     "IMOVELWEB_LEAD_ORIGINS",
+    "basic_credential",
+    "receiver_url_problems",
     # contract
     "FieldSpec",
     "IMOVELWEB_FIELD_SPECS",

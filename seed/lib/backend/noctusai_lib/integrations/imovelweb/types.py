@@ -17,6 +17,7 @@ Vendor: Navent / Grupo QuintoAndar. Not Grupo OLX — see
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -259,8 +260,124 @@ class CallbackConfig:
             subscriptions=tuple(subs),
         )
 
+# ---------------------------------------------------------------------------
+# The inbound credential.
+#
+# There is no signature scheme: the vendor forwards, verbatim, whatever
+# header value we registered. So this pair of helpers IS the inbound
+# security boundary, and it lives in the seed rather than in the connector
+# or the receiver because all three have to agree on it byte-for-byte. A
+# local copy in any one of them is a fork that fails as a 401 nobody can
+# explain.
+# ---------------------------------------------------------------------------
+
+#: The username half of the Basic credential we register with the vendor.
+#: Deliberately NOT Grupo OLX's `vivareal` default — a different vendor on a
+#: different pipe, and reusing that value would make the two receivers
+#: interchangeable, which they are not.
+IMOVELWEB_BASIC_USERNAME = "noctusai-imovelweb"
+
+
+def basic_credential(secret: str, *, username: str = IMOVELWEB_BASIC_USERNAME) -> str:
+    """Build the `authorizationHeaderValue` we register with the vendor.
+
+    Includes the literal `"Basic "` prefix, because the vendor forwards the
+    string as-is and our own verifier requires it — a malformed credential
+    fails at OUR end and reads like a vendor problem.
+    """
+    token = base64.b64encode(f"{username}:{secret}".encode()).decode("ascii")
+    return f"Basic {token}"
+
+
+# ---------------------------------------------------------------------------
+# Receiver-URL sanity.
+#
+# The registered URL is environment-specific and the registration is
+# integrator-wide, so a config pointing at a dev tunnel blackholes
+# PRODUCTION leads with no error surfacing anywhere: the vendor believes it
+# delivered, we never saw it, and the only symptom is leads that stop
+# arriving. Pure, so the connector's write tool and the product's register
+# service share one answer instead of two drifting ones.
+# ---------------------------------------------------------------------------
+
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"})
+
+#: Hosts that exist only for as long as somebody's laptop is open.
+_EPHEMERAL_TUNNEL_SUFFIXES = (
+    ".ngrok.io", ".ngrok-free.app", ".ngrok.app",
+    ".trycloudflare.com", ".loca.lt", ".serveo.net",
+    ".tunnelmole.net", ".devtunnels.ms", ".lhr.life", ".localhost.run",
+)
+
+
+def receiver_url_problems(url: Optional[str]) -> tuple[str, ...]:
+    """Reasons this URL must not be registered with the live vendor.
+
+    Empty tuple means it looks like a real public endpoint. This does not
+    prove reachability — only the vendor's first delivery does that — it
+    rules out the three shapes that are certainly wrong.
+    """
+    problems: list[str] = []
+    if not url:
+        return ("no receiver url",)
+
+    if not url.startswith(("http://", "https://")):
+        problems.append(
+            f"url must start with http:// or https:// (got {url!r})"
+        )
+
+    # Host = between the scheme and the first '/', '?' or '#'.
+    remainder = url.split("://", 1)[-1]
+    for separator in ("/", "?", "#"):
+        remainder = remainder.split(separator, 1)[0]
+    host = remainder.split("@")[-1]
+    if host.startswith("["):  # bracketed IPv6
+        host = host.split("]", 1)[0] + "]"
+    else:
+        host = host.split(":", 1)[0]
+    host = host.lower()
+
+    if host in _LOCAL_HOSTS or host.endswith(".local") or host.endswith(".localhost"):
+        problems.append(
+            f"{host!r} is local — the vendor cannot reach it, and registering "
+            "it silently blackholes every agency's leads"
+        )
+    elif _is_private_ipv4(host):
+        problems.append(
+            f"{host!r} is a private address — unreachable from the vendor's "
+            "network, and the failure is invisible on our side"
+        )
+    elif any(host.endswith(suffix) for suffix in _EPHEMERAL_TUNNEL_SUFFIXES):
+        problems.append(
+            f"{host!r} is an ephemeral tunnel — it stops existing when the "
+            "tunnel closes, and the callback config is INTEGRATOR-WIDE, so "
+            "the whole fleet's leads go with it"
+        )
+
+    if url.startswith("http://") and host not in _LOCAL_HOSTS:
+        problems.append(
+            "plaintext http:// — the credential is a static header with no "
+            "signature, so TLS is the only thing protecting it in transit"
+        )
+
+    return tuple(problems)
+
+
+def _is_private_ipv4(host: str) -> bool:
+    parts = host.split(".")
+    if len(parts) != 4 or not all(p.isdigit() for p in parts):
+        return False
+    first, second = int(parts[0]), int(parts[1])
+    return (
+        first == 10
+        or (first == 192 and second == 168)
+        or (first == 172 and 16 <= second <= 31)
+        or first == 169 and second == 254
+    )
+
 
 __all__ = [
+    "IMOVELWEB_BASIC_USERNAME",
     "IMOVELWEB_CALLBACK_LANGUAGES",
     "IMOVELWEB_CONTACT_TYPES",
     "IMOVELWEB_EVENT_TYPES",
@@ -268,4 +385,6 @@ __all__ = [
     "IMOVELWEB_LEAD_ORIGINS",
     "CallbackConfig",
     "ImovelWebLead",
+    "basic_credential",
+    "receiver_url_problems",
 ]
