@@ -193,14 +193,18 @@ def test_toda_rota_exige_autenticacao_ou_esta_isenta():
 
 def test_o_webhook_esta_isento_mas_exige_o_segredo():
     """Isenção de JWT não é isenção de autenticação."""
-    from app.routers.integracoes_router import verificar_token_asaas
+    from app.routers.integracoes_router import autenticar_webhook
 
     rota = next(
         r for r in app_routes()
         if getattr(r, "path", "") == "/api/integracoes/asaas/webhook"
     )
+    # `autenticar_webhook` deixou de ser um `Depends()` solto e virou o valor
+    # do parâmetro `ambiente` — ele não só autentica, devolve o ambiente que
+    # casou. Então procurar em `rota.dependant.dependencies` já não o acha;
+    # a dependência de parâmetro vive em `dependant.dependencies` do sub-nível.
     chamadas = [d.call for d in rota.dependant.dependencies]
-    assert verificar_token_asaas in chamadas
+    assert autenticar_webhook in chamadas
 
 
 # ── tradução de erro de provedor ─────────────────────────────────────────

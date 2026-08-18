@@ -118,6 +118,8 @@ class FakeQuery:
         self._orders: list[tuple[str, bool]] = []
         self._payload = None
         self._count = None
+        self._limit = None
+        self._conflito: list[str] = []
 
     # builders --------------------------------------------------------
     def select(self, *_args, count=None, **_kw):
@@ -137,6 +139,28 @@ class FakeQuery:
 
     def delete(self):
         self._op = "delete"
+        return self
+
+    def upsert(self, row, on_conflict=None, **_kw):
+        """INSERT … ON CONFLICT (<cols>) DO UPDATE, como o PostgREST.
+
+        `on_conflict` é uma string separada por vírgula (`"org_id,provider"`),
+        exatamente o que o `token_store` do seed passa. Reproduzido com a
+        semântica do Postgres — conflito ATUALIZA a linha existente em vez de
+        empilhar uma segunda — porque a alternativa (fake que sempre insere)
+        deixaria passar precisamente o bug que o UPSERT existe para impedir:
+        duas credenciais para o mesmo (org, provedor), com a leitura pegando
+        a errada. Este produto já foi mordido duas vezes por um fake mais
+        permissivo que o Postgres (ver `p-studio-2026-08.md § Open questions`);
+        não é hora de abrir a terceira.
+        """
+        self._op = "upsert"
+        self._payload = row
+        self._conflito = [c.strip() for c in (on_conflict or "id").split(",")]
+        return self
+
+    def limit(self, n):
+        self._limit = n
         return self
 
     def eq(self, field, value):
@@ -211,7 +235,10 @@ class FakeQuery:
 
         if self._op == "select":
             data = self._ordenar([copy.deepcopy(r) for r in rows if self._match(r)])
-            return SimpleNamespace(data=data, count=len(data) if self._count else None)
+            total = len(data)
+            if self._limit is not None:
+                data = data[: self._limit]
+            return SimpleNamespace(data=data, count=total if self._count else None)
 
         if self._op == "insert":
             novas = self._payload if isinstance(self._payload, list) else [self._payload]
@@ -226,6 +253,31 @@ class FakeQuery:
                 rows.append(row)
                 inseridas.append(copy.deepcopy(row))
             return SimpleNamespace(data=inseridas, count=None)
+
+        if self._op == "upsert":
+            novas = self._payload if isinstance(self._payload, list) else [self._payload]
+            resultado = []
+            for bruta in novas:
+                for campo, valor in bruta.items():
+                    _checar_tipo_uuid(campo, valor)
+                alvo = None
+                for existente in rows:
+                    if all(
+                        str(existente.get(c)) == str(bruta.get(c))
+                        for c in self._conflito
+                    ):
+                        alvo = existente
+                        break
+                if alvo is None:
+                    row = {**DEFAULTS.get(self._table, {}), **bruta}
+                    row.setdefault("id", str(uuid.uuid4()))
+                    row.setdefault("created_at", AGORA)
+                    rows.append(row)
+                    resultado.append(copy.deepcopy(row))
+                else:
+                    alvo.update(bruta)
+                    resultado.append(copy.deepcopy(alvo))
+            return SimpleNamespace(data=resultado, count=None)
 
         if self._op == "update":
             atingidas = [r for r in rows if self._match(r)]
@@ -337,6 +389,15 @@ DEFAULTS: dict[str, dict] = {
         "url_fatura": None, "linha_digitavel": None, "pix_copia_e_cola": None,
         "sincronizado_em": None,
         **_TIMESTAMPS,
+    },
+    # Migration 008 — credenciais cifradas + ambiente ativo.
+    "provedor_credenciais": {
+        "org_id": None, "provider": None, "encrypted_tokens": None,
+        "metadata": {}, **_TIMESTAMPS,
+    },
+    "integracao_config": {
+        "org_id": None, "provedor": "asaas", "ambiente": "sandbox",
+        "atualizado_em": AGORA,
     },
     "provedor_eventos": {
         "org_id": None, "provedor": "asaas", "evento_id": None, "tipo": None,

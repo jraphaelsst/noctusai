@@ -16,7 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client
 
 from app.config import settings
-from app.database import get_anon_client, get_user_client
+from app.database import get_admin_client, get_anon_client, get_user_client
 
 security = HTTPBearer(auto_error=False)
 
@@ -72,6 +72,69 @@ def get_current_user(
     )
 
 
+def get_credenciais_service():
+    """O service de credenciais, sobre o client service-role.
+
+    Service-role e não JWT: `p_studio.provedor_credenciais` não tem policy de
+    leitura para `authenticated` (migration 008). Quem AUTORIZA é o
+    `get_current_user` da rota; este objeto já recebeu a decisão tomada.
+    """
+    from app.services.credenciais_service import CredenciaisService
+
+    return CredenciaisService(get_admin_client(), settings.org_id)
+
+
+def resolver_provedor(ambiente: Optional[str] = None):
+    """Monta o adapter de cobrança. Banco primeiro, `.env` depois, alto no fim.
+
+    A escada é explícita de propósito — cada degrau é uma decisão nomeada, e o
+    último RECUSA em vez de devolver algo inerte. Um fallback silencioso aqui
+    produziria o pior sintoma possível: "emiti a cobrança e não aconteceu
+    nada".
+
+    1. `PROVEDOR_COBRANCA=fake` → Fake. Opt-in explícito; é como a suíte e o
+       dev local rodam sem banco de credenciais nenhum.
+    2. Com `ENCRYPTION_KEY` no deploy → lê a credencial cifrada do ambiente
+       ativo (ou do `ambiente` pedido — o webhook passa o dele). Uma linha que
+       existe e não decifra levanta `CredentialDecryptError` e sobe: chave de
+       cifra errada é lacuna de deploy, não "não configurado".
+    3. Sem `ENCRYPTION_KEY` (ou sem linha no banco) e COM `ASAAS_API_KEY` no
+       `.env` → caminho legado, que continua funcionando.
+    4. Nada em lugar nenhum → `ProvedorNaoConfigurado` (503) apontando para a
+       tela que resolve.
+    """
+    from app.providers import construir_provedor
+    from app.providers.erros import ProvedorNaoConfigurado
+    from app.services.credenciais import BASE_URL_POR_AMBIENTE
+
+    nome = (settings.provedor_cobranca or "asaas").strip().lower()
+    if nome == "fake":
+        from app.providers import ProvedorFake
+
+        return ProvedorFake()
+
+    if settings.encryption_key:
+        servico = get_credenciais_service()
+        alvo = ambiente or servico.ambiente_ativo()
+        # `CredentialDecryptError` NÃO é capturado aqui — ver docstring.
+        bundle = servico.credencial(alvo)
+        if bundle and bundle.get("api_key"):
+            return construir_provedor(
+                nome,
+                api_key=bundle["api_key"],
+                base_url=BASE_URL_POR_AMBIENTE[alvo],
+            )
+
+    if settings.asaas_api_key:
+        return construir_provedor(
+            nome,
+            api_key=settings.asaas_api_key,
+            base_url=settings.asaas_base_url,
+        )
+
+    raise ProvedorNaoConfigurado(nome, "a chave de API em Integrações")
+
+
 def get_provedor_cobranca():
     """O provedor de cobrança configurado.
 
@@ -83,6 +146,4 @@ def get_provedor_cobranca():
 
         app.dependency_overrides[get_provedor_cobranca] = lambda: ProvedorFake()
     """
-    from app.providers import provedor_padrao
-
-    return provedor_padrao()
+    return resolver_provedor()

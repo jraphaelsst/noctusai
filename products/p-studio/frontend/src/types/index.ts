@@ -320,3 +320,45 @@ export interface Dashboard {
   captacoes_por_semana: SerieSemanal[];
   funil: EtapaResumo[];
 }
+
+// ── Integração de cobrança ─────────────────────────────────────────────────
+
+/** Ambientes do provedor. `sandbox` é o default de um deploy que não escolheu. */
+export type AmbienteProvedor = "sandbox" | "producao";
+
+/**
+ * Estado de UM ambiente, como o backend o devolve. Nunca carrega a chave de
+ * API — só a máscara. O token do webhook tem rota própria.
+ */
+export interface CredencialAmbiente {
+  ambiente: AmbienteProvedor;
+  configurado: boolean;
+  /** Preenchido quando a linha existe mas não decifra (ENCRYPTION_KEY trocada). */
+  erro: string | null;
+  api_key_mascarada: string | null;
+  webhook_token_configurado: boolean;
+  base_url: string;
+  atualizado_em: string | null;
+}
+
+export interface StatusCredenciais {
+  provedor: string;
+  ambiente_ativo: AmbienteProvedor;
+  ambientes: CredencialAmbiente[];
+  /** `null` quando o deploy não sabe o próprio endereço público. */
+  webhook_url: string | null;
+}
+
+/** Uma linha da fila de eventos do provedor (`p_studio.provedor_eventos`). */
+export interface ProvedorEvento {
+  id: string;
+  provedor: string;
+  evento_id: string | null;
+  tipo: string | null;
+  cobranca_id: string | null;
+  lancamento_id: string | null;
+  efeito: string | null;
+  erro: string | null;
+  processado_em: string | null;
+  created_at: string;
+}

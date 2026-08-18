@@ -61,11 +61,29 @@ class PStudioSettings(ProductSettings):
     # agora. Trocar de provedor é trocar esta variável e o adapter.
     provedor_cobranca: str = "asaas"
 
+    # 🔴 As três variáveis abaixo são o caminho de DESENVOLVIMENTO. Em produção
+    # a credencial vive cifrada em `p_studio.provedor_credenciais` (migration
+    # 008) e é gerenciada pela tela de Integrações — ver
+    # `app/services/credenciais.py`. Elas continuam existindo porque a suíte e
+    # o dev local rodam sem banco de credenciais, e porque um deploy que ainda
+    # não cadastrou nada precisa continuar de pé. A resolução é banco-primeiro,
+    # env-depois, e está em `dependencies.get_provedor_cobranca`.
     asaas_api_key: str = ""
     asaas_base_url: str = "https://api-sandbox.asaas.com/v3"
     # Segredo compartilhado que o Asaas devolve no header `asaas-access-token`
     # de cada notificação. Não há assinatura HMAC.
     asaas_webhook_token: str = ""
+
+    # Chave Fernet que cifra as credenciais em repouso. Sem ela o produto
+    # RECUSA gravar credencial (`EncryptionNotConfigured` → 503) em vez de
+    # gravar em claro — o degradar-em-silêncio é justamente o que o
+    # `token_store` do seed faria sozinho, e o que não queremos aqui.
+    #
+    # Declarada no produto e não em `ProductSettings` porque hoje N=2 (só o
+    # social-wiring tem o campo). Regra de recorrência: N=2 é triagem, N≥3 é
+    # formalização obrigatória — o terceiro consumidor promove isto ao seed.
+    # → `KB § PATTERNS/architect/project-execution.md`
+    encryption_key: str = ""
 
 
 settings = PStudioSettings()

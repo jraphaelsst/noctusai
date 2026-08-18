@@ -36,22 +36,35 @@ __all__ = [
     "ProvedorFake",
     "ProvedorNaoConfigurado",
     "StatusCobranca",
+    "construir_provedor",
+    "limpar_cache",
     "provedor_padrao",
 ]
 
-_cache: dict[str, ProvedorCobranca] = {}
+# Memoização por CREDENCIAL, não por nome do provedor.
+#
+# Era `{nome: provedor}` enquanto a chave vinha do `.env` e não mudava sem
+# reiniciar o processo. Agora a chave vem do banco e o dono do estúdio pode
+# trocá-la pela UI: uma cache por nome devolveria para sempre o adapter
+# construído com a chave ANTIGA, e o sintoma seria "salvei a chave nova e
+# continua dando 401" — sem nada no log ligando uma coisa à outra. A chave da
+# cache é (nome, base_url, api_key), então trocar a credencial troca a entrada.
+_cache: dict[tuple[str, str, str], ProvedorCobranca] = {}
 
 
-def provedor_padrao() -> ProvedorCobranca:
-    """O provedor configurado em `PROVEDOR_COBRANCA`.
+def construir_provedor(
+    nome: str, *, api_key: str = "", base_url: str = ""
+) -> ProvedorCobranca:
+    """Monta (ou reaproveita) o adapter para uma credencial específica.
 
-    Memoizado: o adapter mantém um `httpx.Client` vivo para reaproveitar
-    conexão, e não faz sentido reabrir a cada requisição.
+    Memoizado porque o adapter mantém um `httpx.Client` vivo para reaproveitar
+    conexão — reabrir a cada requisição é desperdício.
     """
-    nome = (settings.provedor_cobranca or "asaas").strip().lower()
+    nome = (nome or "asaas").strip().lower()
+    chave = (nome, base_url, api_key)
 
-    if nome in _cache:
-        return _cache[nome]
+    if chave in _cache:
+        return _cache[chave]
 
     if nome == "fake":
         provedor: ProvedorCobranca = ProvedorFake()
@@ -59,12 +72,9 @@ def provedor_padrao() -> ProvedorCobranca:
         # Import tardio: manter `app.providers` importável sem httpx montado.
         from app.providers.asaas import ProvedorAsaas
 
-        if not settings.asaas_api_key:
+        if not api_key:
             raise ProvedorNaoConfigurado("asaas", "ASAAS_API_KEY")
-        provedor = ProvedorAsaas(
-            api_key=settings.asaas_api_key,
-            base_url=settings.asaas_base_url,
-        )
+        provedor = ProvedorAsaas(api_key=api_key, base_url=base_url)
     else:
         raise ErroProvedor(
             nome,
@@ -73,10 +83,27 @@ def provedor_padrao() -> ProvedorCobranca:
             status=500,
         )
 
-    _cache[nome] = provedor
+    _cache[chave] = provedor
     return provedor
 
 
+def provedor_padrao() -> ProvedorCobranca:
+    """O provedor do `.env` — caminho de DESENVOLVIMENTO e de fallback.
+
+    Em produção a credencial vem do banco, cifrada, e quem resolve é
+    `app.dependencies.get_provedor_cobranca`. Este caminho permanece porque
+    (a) a suíte e o dev local rodam com `PROVEDOR_COBRANCA=fake` sem banco de
+    credenciais nenhum, e (b) um deploy que ainda não migrou continua
+    funcionando. Não é caminho morto: é o degrau de baixo, e está explícito.
+    """
+    return construir_provedor(
+        settings.provedor_cobranca,
+        api_key=settings.asaas_api_key,
+        base_url=settings.asaas_base_url,
+    )
+
+
 def limpar_cache() -> None:
-    """Descarta os provedores memoizados. Usado nos testes."""
+    """Descarta os provedores memoizados. Usado nos testes e após gravar uma
+    credencial nova pela UI."""
     _cache.clear()

@@ -37,6 +37,7 @@ import {
   Camera,
   Users,
   Home,
+  Plug,
 } from "lucide-react";
 
 // Pages
@@ -50,6 +51,7 @@ const Servicos = lazyWithReload(() => import("@/pages/Servicos"));
 const Financeiro = lazyWithReload(() => import("@/pages/Financeiro"));
 const Equipamentos = lazyWithReload(() => import("@/pages/Equipamentos"));
 const Clientes = lazyWithReload(() => import("@/pages/Clientes"));
+const Integracoes = lazyWithReload(() => import("@/pages/Integracoes"));
 const NotFound = lazyWithReload(() => import("@/pages/NotFound"));
 
 // Nav — os nove destinos do produto, mesma ordem/labels do AppLayout anterior.
@@ -69,6 +71,11 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
       { name: "Equipamentos", href: "/equipamentos", icon: Camera, route: "equipamentos" },
       { name: "Clientes", href: "/clientes", icon: Users, route: "clientes" },
+      // `route` casa com `p_studio.status_pagina.nome_pagina` — a linha que a
+      // migration 008 insere. Sem ela a página existiria na rota e não
+      // apareceria no menu, que é exatamente o "route-exists ≠ wired" que
+      // este produto já pagou uma vez.
+      { name: "Integrações", href: "/integracoes", icon: Plug, route: "integracoes" },
     ],
   },
 ];
@@ -89,6 +96,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Financeiro", href: "/financeiro", icon: Wallet },
       { name: "Equipamentos", href: "/equipamentos", icon: Camera },
       { name: "Clientes", href: "/clientes", icon: Users },
+      { name: "Integrações", href: "/integracoes", icon: Plug },
     ],
   },
 ];
@@ -114,6 +122,7 @@ export default createProductApp({
     { path: "/financeiro", component: Financeiro },
     { path: "/equipamentos", component: Equipamentos },
     { path: "/clientes", component: Clientes },
+    { path: "/integracoes", component: Integracoes },
   ],
   Layout,
   ...infra.appConfig,

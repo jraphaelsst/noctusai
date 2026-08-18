@@ -128,22 +128,81 @@ captured the envelope and left the entire absorption debt standing.
 - **M4: prod promote** — `p-studio.noctusai.com`. Registers the three
   prod-exposure surfaces (`deploy/fleet/docker-compose.prod.yml` ·
   `deploy/tunnel/ingress.yml` · `deploy/fleet/build-scope.txt`). Gated on the
-  user's consent per `KB § PATTERNS/devops/prod-exposure-consent.md`. → ⬜
+  user's consent per `KB § PATTERNS/devops/prod-exposure-consent.md`.
+  → ✅ **reached 2026-08-17.**
+
+  Verified live 2026-08-18, not inferred from the tree: `noctus-p-studio`
+  healthy on the VPS, `GET https://p-studio.noctusai.com/api/health` → **200**
+  `{"status":"ok","product":"P Studio"}`, `/` serves the SPA, `/api/clientes`
+  and `/api/integracoes/eventos` both strict **401**. All three exposure
+  surfaces registered; `deploy/consent/p-studio.prod.yml` written (`0c0422f2`).
 
   **Authorization status.** The user typed the canonical phrase — *"I authorize
-  p-studio to be published to production."* — in-session on **2026-08-13**. That
-  is the decision, and it is durable in the harness transcript. The record
-  `deploy/consent/p-studio.prod.yml` is **not yet written**, because its
-  `consent_ref` must resolve to a ✅ milestone and `dev_validated: true` must
-  attest to a validation that has not run yet. Marking M4 ✅ now, to satisfy the
-  gate that reads M4, would be the exact shape the gate exists to prevent.
-  Authorization is obtained; readiness is not. They are different legs.
+  p-studio to be published to production."* — in-session on **2026-08-13**. The
+  consent record's `transcript_sha256` is deliberately absent (the noctusai MCP
+  server was down when it was authored; a hand-written hash would fabricate the
+  evidence the gate exists to verify). Re-run `prod_consent action=author` if a
+  machine-verified hash is wanted on the record.
+
+  > **This bullet read ⬜ until 2026-08-18, three days after the promote
+  > landed.** Nothing re-opens a roadmap on deploy, so a milestone that flips in
+  > the world does not flip on paper, and the next reader plans against a state
+  > that ended days ago. Recorded rather than silently corrected because it is
+  > the same failure family this roadmap already documents twice — reading an
+  > artifact and reporting it as the state of the world. Here the artifact was
+  > the roadmap itself.
+
+- **M4b: the integration was deployed switched OFF** — and every gate passed.
+  → ✅ **closed 2026-08-18.**
+
+  Found by probing the live webhook: `POST /api/integracoes/asaas/webhook`
+  answered **503**, which is `integracoes_router.py` saying `ASAAS_WEBHOOK_TOKEN`
+  is empty. It was empty because **no Asaas key was ever registered as
+  required-in-prod anywhere**: `BASELINE_REQUIRED_PROD_ENV` (seed
+  `deploy_config.py`) contains exactly one key, `REDIS_SESSION_ENCRYPTION_KEY`,
+  and `ASAAS_API_KEY` / `ASAAS_WEBHOOK_TOKEN` / `PROVEDOR_COBRANCA` /
+  `P_STUDIO_ORG_ID` appear nowhere in `deploy/`, `mcp/` or the KB. So
+  `predeploy_check p-studio` returned **ready, 7/7** on a deploy whose entire
+  billing integration was inert. Green meant "the code is fine", and nobody had
+  claimed otherwise.
+
+  Also found the same day, and the reason the product still showed nothing:
+  `useEmitirCobranca` and `useSincronizarCobranca` had existed in
+  `hooks/useApi.ts` since the absorption and **no page consumed either one**.
+  The backend could issue a boleto; the UI had no button. Textbook
+  route-exists-≠-wired, on the FE side.
+
+  **The fix is not an env var.** Credentials moved into the database, Fernet-
+  encrypted (migration `008_credenciais_provedor.sql`), consuming the seed's
+  `noctusai_lib.security.token_store` through a product seam
+  (`app/services/credenciais.py`) — no crypto or persistence code written in the
+  product. Both environments are stored; a non-secret `integracao_config.ambiente`
+  row selects which one issues charges, defaulting to `sandbox` so a deploy that
+  never chose cannot emit a real boleto by omission. The owner manages all of it
+  from the new `/integracoes` page. `.env` remains as an explicit legacy rung in
+  `dependencies.resolver_provedor`'s ladder, whose last step **refuses** rather
+  than returning something inert.
 
 - **M5: real webhook envelope captured** — the reason the roadmap exists.
   Register the **sandbox** webhook, pay a sandbox charge, capture the real body
   to `tests/fixtures/asaas/webhook_liquidada.json` with `_procedencia`, replay
   it offline, confirm `provedor_eventos.efeito='recebido'` and no duplicate row
   on re-delivery. Closes `cadu/_INTEGRACOES_BANCARIAS/03-ASAAS.md § 6`. → ⬜
+
+  **Unblocked 2026-08-18.** Every prerequisite is now in place: a public URL
+  (M4), a credential store the owner can fill without a redeploy (M4b), and a
+  UI that can actually emit a charge. What remains is the act itself — register
+  the webhook in the Asaas sandbox panel, create a cliente *with* `cpf_cnpj`,
+  emit, pay in the simulator, capture. The `/integracoes` page shows both the
+  URL to register and the token to paste.
+
+  The webhook guard authenticates against the stored token of **every**
+  configured environment, not just the active one, and returns which matched.
+  Sandbox and production are separate webhooks in the Asaas panel and can both
+  be registered; validating only against the active one would 401 the other, and
+  15 consecutive non-2xx **halt that environment's delivery queue** until
+  someone reactivates it by hand. Which environment issues charges and which may
+  notify us are different axes.
 
 ---
 

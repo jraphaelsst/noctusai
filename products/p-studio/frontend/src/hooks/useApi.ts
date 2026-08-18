@@ -6,8 +6,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, qs } from "@/lib/api";
 import type {
+  AmbienteProvedor,
   Captacao,
   Cliente,
+  CredencialAmbiente,
   ClienteMetricas,
   Dashboard,
   Equipamento,
@@ -17,9 +19,11 @@ import type {
   Lancamento,
   Negocio,
   Producao,
+  ProvedorEvento,
   ReceitaCliente,
   ResumoFinanceiro,
   Servico,
+  StatusCredenciais,
 } from "@/types";
 
 // ── Cadastros ──────────────────────────────────────────────────────────────
@@ -154,3 +158,82 @@ export function useApiMutation<TArgs = any, TResult = any>(
     onError: (e: Error) => toast.error(e.message),
   });
 }
+
+// ── Integração de cobrança ─────────────────────────────────────────────────
+//
+// `useEmitirCobranca` / `useSincronizarCobranca` (acima) existiam desde a
+// migração 003 e NENHUMA tela as consumia — as rotas do backend estavam
+// prontas e o produto não tinha por onde emitir uma cobrança. Estes hooks
+// fecham o outro lado: credenciais, ambiente ativo e a fila de eventos.
+
+export const useCredenciais = () =>
+  useQuery({
+    queryKey: ["integracoes", "credenciais"],
+    queryFn: () => api.get<StatusCredenciais>("/api/integracoes/credenciais"),
+  });
+
+export const useSalvarCredencial = () =>
+  useApiMutation<
+    { ambiente: AmbienteProvedor; api_key: string; webhook_token?: string },
+    CredencialAmbiente
+  >(
+    ["integracoes"],
+    ({ ambiente, ...body }) =>
+      api.put<CredencialAmbiente>(`/api/integracoes/credenciais/${ambiente}`, body),
+    "Credencial salva"
+  );
+
+export const useRemoverCredencial = () =>
+  useApiMutation<AmbienteProvedor, void>(
+    ["integracoes"],
+    (ambiente) => api.del<void>(`/api/integracoes/credenciais/${ambiente}`),
+    "Credencial removida"
+  );
+
+export const useDefinirAmbiente = () =>
+  useApiMutation<AmbienteProvedor, StatusCredenciais>(
+    ["integracoes"],
+    (ambiente) =>
+      api.patch<StatusCredenciais>("/api/integracoes/credenciais/ativo", { ambiente }),
+    "Ambiente alterado"
+  );
+
+/**
+ * Lê o segredo do webhook em claro. `enabled` é obrigatório e default `false`:
+ * o segredo só viaja quando alguém PEDE, nunca ao abrir a tela.
+ */
+export const useWebhookToken = (ambiente: AmbienteProvedor, enabled: boolean) =>
+  useQuery({
+    queryKey: ["integracoes", "webhook-token", ambiente],
+    queryFn: () =>
+      api.get<{ ambiente: AmbienteProvedor; webhook_token: string }>(
+        `/api/integracoes/credenciais/${ambiente}/webhook-token`
+      ),
+    enabled,
+    // Segredo não fica em cache além da sessão da tela.
+    gcTime: 0,
+    staleTime: 0,
+  });
+
+export const useRotacionarWebhookToken = () =>
+  useApiMutation<AmbienteProvedor, { ambiente: AmbienteProvedor; webhook_token: string }>(
+    ["integracoes"],
+    (ambiente) =>
+      api.post<{ ambiente: AmbienteProvedor; webhook_token: string }>(
+        `/api/integracoes/credenciais/${ambiente}/webhook-token`
+      ),
+    "Token do webhook rotacionado"
+  );
+
+export const useEventosProvedor = () =>
+  useQuery({
+    queryKey: ["integracoes", "eventos"],
+    queryFn: () => api.get<ProvedorEvento[]>("/api/integracoes/eventos"),
+  });
+
+export const useReprocessarEventos = () =>
+  useApiMutation<void, { total: number; ok: number; erro: number }>(
+    ["integracoes", "financeiro", "dashboard"],
+    () => api.post<{ total: number; ok: number; erro: number }>("/api/integracoes/reprocessar"),
+    "Fila reprocessada"
+  );

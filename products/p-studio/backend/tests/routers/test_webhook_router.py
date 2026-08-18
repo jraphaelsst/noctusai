@@ -297,4 +297,9 @@ def test_webhook_sem_token_configurado_da_503(client_anon, admin_db, provedor, m
     res = client_anon.post(ROTA, json={}, headers=TOKEN)
 
     assert res.status_code == 503
-    assert "ASAAS_WEBHOOK_TOKEN" in res.json()["error"]["message"]
+    # A mensagem mudou de "defina ASAAS_WEBHOOK_TOKEN" para o caminho que hoje
+    # resolve de verdade — a credencial vive cifrada no banco e é cadastrada
+    # pela tela, não mais por env var (migration 008). A PROPRIEDADE testada é
+    # a mesma: sem segredo configurado, falha FECHADA e a culpa é nossa (503),
+    # nunca 200 e nunca 401.
+    assert "Integrações" in res.json()["error"]["message"]

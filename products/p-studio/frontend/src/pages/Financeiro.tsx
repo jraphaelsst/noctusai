@@ -1,13 +1,28 @@
 import { useState } from "react";
-import { AlertCircle, CheckCircle2, DollarSign, Pencil, Plus, TrendingUp, Wallet } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Copy,
+  DollarSign,
+  ExternalLink,
+  FileText,
+  Pencil,
+  Plus,
+  RefreshCw,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/lib/api";
 import {
   useApiMutation,
   useClientes,
+  useEmitirCobranca,
   useLancamentos,
   useNegocios,
   useReceitaPorCliente,
   useResumoFinanceiro,
+  useSincronizarCobranca,
   useStatusFinanceiro,
 } from "@/hooks/useApi";
 import {
@@ -34,7 +49,7 @@ import {
 import { FORMAS_PAGAMENTO, LABEL_FORMA_PAGAMENTO, TOM_FINANCEIRO } from "@/lib/status";
 import { fmtData, fmtMoeda, hojeISO } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-import type { Lancamento } from "@/types";
+import type { FormaCobranca, Lancamento } from "@/types";
 
 const FORM_VAZIO = {
   cliente_id: "",
@@ -66,6 +81,11 @@ export default function Financeiro() {
   const [baixa, setBaixa] = useState<Lancamento | null>(null);
   const [formBaixa, setFormBaixa] = useState({ pago_em: hojeISO(), forma_pagamento: "pix" });
   const [confirmando, setConfirmando] = useState<string | null>(null);
+  // A cobrança emitida abre num painel próprio: linha digitável e PIX
+  // copia-e-cola são para COPIAR, e não cabem numa célula de tabela.
+  const [cobranca, setCobranca] = useState<Lancamento | null>(null);
+  const [formaCobranca, setFormaCobranca] = useState<FormaCobranca>("boleto");
+  const [emitindo, setEmitindo] = useState<Lancamento | null>(null);
 
   const set = (k: string, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -83,6 +103,21 @@ export default function Financeiro() {
     "Recebimento registrado"
   );
   const excluir = useApiMutation(invalida, (id: string) => api.del(`/api/financeiro/${id}`), "Lançamento excluído");
+  const emitirCobranca = useEmitirCobranca();
+  const sincronizar = useSincronizarCobranca();
+
+  /** Emite e já abre o painel com o boleto/PIX — o dono precisa do código
+   *  AGORA, para mandar ao cliente; obrigá-lo a reabrir a linha seria
+   *  esconder o resultado do ato que ele acabou de pedir. */
+  const confirmarEmissao = async () => {
+    if (!emitindo) return;
+    const atualizado = await emitirCobranca.mutateAsync({
+      id: emitindo.id,
+      forma: formaCobranca,
+    });
+    setEmitindo(null);
+    setCobranca(atualizado);
+  };
 
   const rotuloStatus = (id: string) => (statusLista ?? []).find((s) => s.id === id)?.label ?? id;
 
@@ -216,6 +251,7 @@ export default function Financeiro() {
               <Th>Vencimento</Th>
               <Th>Pagamento</Th>
               <Th>Forma</Th>
+              <Th>Cobrança</Th>
               <Th>Status</Th>
               <Th />
             </tr>
@@ -233,12 +269,58 @@ export default function Financeiro() {
                   {l.forma_pagamento ? LABEL_FORMA_PAGAMENTO[l.forma_pagamento as string] ?? l.forma_pagamento : "—"}
                 </Td>
                 <Td>
+                  {l.provedor_cobranca_id ? (
+                    <button
+                      type="button"
+                      onClick={() => setCobranca(l)}
+                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                      title="Ver boleto / PIX"
+                    >
+                      <FileText className="h-3 w-3" />
+                      {l.provedor_status ?? "emitida"}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </Td>
+                <Td>
                   <StatusBadge tom={TOM_FINANCEIRO[l.status_exibido as string] ?? "lead"}>
                     {rotuloStatus(l.status_exibido as string)}
                   </StatusBadge>
                 </Td>
                 <Td>
                   <div className="flex justify-end gap-1">
+                    {/* Emitir só faz sentido uma vez: com `provedor_cobranca_id`
+                        preenchido a rota é idempotente e devolve a mesma
+                        cobrança, então o botão vira "sincronizar". */}
+                    {!l.provedor_cobranca_id &&
+                      l.status !== "recebido" &&
+                      l.status !== "cancelado" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Emitir cobrança no provedor"
+                          onClick={() => {
+                            setEmitindo(l);
+                            setFormaCobranca(
+                              (l.forma_pagamento as FormaCobranca) === "pix" ? "pix" : "boleto"
+                            );
+                          }}
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                      )}
+                    {l.provedor_cobranca_id && l.status !== "recebido" && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Reconsultar o provedor"
+                        loading={sincronizar.isPending}
+                        onClick={() => sincronizar.mutate(l.id)}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                    )}
                     {l.status !== "recebido" && l.status !== "cancelado" && (
                       <Button
                         variant="ghost"
@@ -388,6 +470,95 @@ export default function Financeiro() {
         </div>
       </Modal>
 
+      {/* ── Emitir cobrança ── */}
+      <Modal
+        open={emitindo !== null}
+        onClose={() => setEmitindo(null)}
+        title="Emitir cobrança"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            {emitindo?.cliente_nome} — {fmtMoeda(emitindo?.valor)} · vence{" "}
+            {fmtData(emitindo?.vencimento)}
+          </p>
+          <Field label="Forma de cobrança">
+            <Select
+              value={formaCobranca}
+              onChange={(e) => setFormaCobranca(e.target.value as FormaCobranca)}
+            >
+              <option value="boleto">Boleto</option>
+              <option value="pix">PIX</option>
+              <option value="cartao">Cartão</option>
+              <option value="indefinido">Deixar o cliente escolher</option>
+            </Select>
+          </Field>
+          <p className="rounded border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            A cobrança é registrada no provedor configurado em{" "}
+            <strong className="text-foreground">Integrações</strong>. O cliente
+            precisa ter CPF/CNPJ cadastrado, e o lançamento precisa de
+            vencimento — sem eles a emissão é recusada com a mensagem dizendo
+            qual campo falta.
+          </p>
+          <Button
+            className="w-full"
+            onClick={confirmarEmissao}
+            loading={emitirCobranca.isPending}
+          >
+            Emitir
+          </Button>
+        </div>
+      </Modal>
+
+      {/* ── Cobrança emitida: boleto / PIX / fatura ── */}
+      <Modal
+        open={cobranca !== null}
+        onClose={() => setCobranca(null)}
+        title="Cobrança emitida"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            {cobranca?.cliente_nome} — {fmtMoeda(cobranca?.valor)}
+            {cobranca?.provedor_status && ` · ${cobranca.provedor_status}`}
+          </p>
+
+          {cobranca?.linha_digitavel && (
+            <CampoCopiavel
+              rotulo="Linha digitável"
+              valor={cobranca.linha_digitavel}
+            />
+          )}
+          {cobranca?.pix_copia_e_cola && (
+            <CampoCopiavel
+              rotulo="PIX copia e cola"
+              valor={cobranca.pix_copia_e_cola}
+            />
+          )}
+          {cobranca?.url_fatura && (
+            <a
+              href={cobranca.url_fatura}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+            >
+              <ExternalLink className="h-4 w-4" /> Abrir fatura no provedor
+            </a>
+          )}
+
+          {!cobranca?.linha_digitavel &&
+            !cobranca?.pix_copia_e_cola &&
+            !cobranca?.url_fatura && (
+              <p className="text-sm text-muted-foreground">
+                O provedor ainda não devolveu os códigos de pagamento. Use
+                &ldquo;reconsultar&rdquo; na linha para buscar de novo.
+              </p>
+            )}
+
+          <p className="text-xs text-muted-foreground">
+            Sincronizada em {fmtData(cobranca?.sincronizado_em)}
+          </p>
+        </div>
+      </Modal>
+
       {/* ── Baixa ── */}
       <Modal open={baixa !== null} onClose={() => setBaixa(null)} title="Registrar recebimento">
         <div className="space-y-3">
@@ -418,6 +589,39 @@ export default function Financeiro() {
           </Button>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+/**
+ * Campo somente-leitura com botão de copiar.
+ *
+ * Linha digitável e PIX copia-e-cola existem para serem COPIADOS e colados
+ * num app de banco — mostrá-los sem o botão transformaria a tela num teste de
+ * transcrição de 48 dígitos.
+ */
+function CampoCopiavel({ rotulo, valor }: { rotulo: string; valor: string }) {
+  return (
+    <div>
+      <p className="mb-1 text-xs font-medium text-muted-foreground">{rotulo}</p>
+      <div className="flex items-center gap-2">
+        <code className="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 text-xs">
+          {valor}
+        </code>
+        <Button
+          variant="ghost"
+          size="icon"
+          title="Copiar"
+          onClick={() =>
+            navigator.clipboard
+              .writeText(valor)
+              .then(() => toast.success(`${rotulo} copiado`))
+              .catch(() => toast.error("Não foi possível copiar — copie manualmente."))
+          }
+        >
+          <Copy className="h-4 w-4" />
+        </Button>
+      </div>
     </div>
   );
 }
