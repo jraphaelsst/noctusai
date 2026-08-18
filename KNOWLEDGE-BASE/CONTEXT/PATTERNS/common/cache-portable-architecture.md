@@ -86,6 +86,17 @@ bash scripts/install-hooks.sh
 python mcp/noctusai/cli.py --cache-pull
 ```
 
+⚠️ `--cache-pull-only=<names>` is a **modifier** for `--cache-pull`, not a
+command — passing it alone parses fine and pulls nothing.
+
+🔴 This flow was **broken from the start until 2026-08-18** — the pull wrote
+an invented schema for all seven caches and would have reported `ok: true`
+over an unreadable cache on exactly the fresh clone it exists to serve. Fixed
++ gated by a round-trip test; the failure and the structural fix are written
+up in `KB § PATTERNS/devops/cache-deploy-mirror.md § 2026-08-18`. If you are
+bootstrapping a machine, check the `warnings` key in the result: a pull can
+succeed and still hand back a degraded cache.
+
 ## Legacy migration (one-time, idempotent)
 
 `cache_backend.cache_path()` runs a one-time migration on first invocation per repo_root:

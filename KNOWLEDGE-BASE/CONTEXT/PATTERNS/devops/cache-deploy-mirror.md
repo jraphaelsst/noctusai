@@ -146,6 +146,90 @@ now holds only what that run's mirror could see). The next correct
 corpus; there is no need to separately "undo" the shrink — TRUNCATE+INSERT
 is self-correcting on the next successful run.
 
+## 🔴 2026-08-18 — the PULL direction was fiction (Tier-2 was write-only)
+
+The mirror ships local → prod. `cache_pull` is the inverse, and the whole
+justification for Tier-2 — "bootstrap a fresh clone without paying the
+OpenAI re-embed" — rests on it. It had **never worked, for any of the seven
+caches.**
+
+**What was wrong.** The pull path carried its own hand-authored copy of
+every local schema (`_LOCAL_SCHEMA_INIT`) and its own copy of every column
+list. Neither copy matched anything real:
+
+| Cache | Pull believed | Actually |
+|---|---|---|
+| `code_chunks` | PK `(path, symbol_name, chunk_idx)` | `rowid_alias` AUTOINCREMENT + a NOT NULL `kind` |
+| `*_embeddings_json` | `(path, chunk_idx, embedding_json)` | `(chunk_rowid → chunks.rowid_alias, embedding)` |
+| `*_vec` | — never created, never written | the table every vector read goes through |
+| `keeper_patterns` | `pattern_id, tier, description, test_locator` | `keeper_name, pattern_kind, pattern_value, …` |
+| `agent_context` | `section, body, bundle_sha` | `section_kind, section_path, section_value` |
+| `auto_improvement` | `event_id, kind, stage, note` | `ts, agent, scope, kind, target, description, status` |
+
+**Why nobody noticed.** Two covers, both of which are the real lesson:
+
+1. **No test.** The mirror direction had 16; the pull had zero. An untested
+   inverse is an assumption, not a backup.
+2. **The only production caller is fresh-clone auto-pull-on-empty** — rare,
+   and it *swallows* failures by design (`except Exception: … return False`,
+   correct on its own terms: a machine with no prod reachability must still
+   boot). So the one path that exercised it also silenced it.
+
+**How it surfaced.** Restoring a locally-damaged code-embeddings cache:
+`NOT NULL constraint failed: code_chunks.kind`. That error was **luck** — it
+fired only because a real table already existed to collide with. On a
+genuinely fresh clone the invented DDL would have been `CREATE`d, the INSERT
+would have succeeded, and `cache_pull` would have reported `ok: true` over a
+cache no reader can query. Same shape as the 2026-08-14 incident above:
+green status over an empty result set.
+
+**The fix — delete the duplicate, don't patch it.**
+
+- **One spec, both directions.** `_SIMPLE_CACHE_SPEC` + `_EMBEDDING_CACHE_SPEC`
+  are now the single definition of every cache's column contract, consumed by
+  mirror *and* pull. The mirror's four inline column lists were folded into it.
+- **Canonical DDL only.** `_init_local_schema` calls `_ec.init_schema`
+  (the same entrypoint the refresh path uses, `extra_columns` and all) for the
+  four embedding caches and each module's own `_SCHEMA` for the other three.
+  There is now exactly one definition of each local schema in the repo.
+- **Real write shape.** The pull inserts chunks one at a time to capture the
+  `rowid_alias` both embedding siblings key on, then writes the json sibling
+  **and** the vec sibling (when sqlite-vec is loaded) — never a half-populated
+  pair, which is precisely the drift the 2026-08-14 section describes.
+- **`kind` round-trips.** The prod table gained a nullable `kind` column plus
+  an idempotent `ALTER … ADD COLUMN IF NOT EXISTS` migration leg for the
+  already-provisioned instance. Rows mirrored before that read back NULL; the
+  pull writes the declared sentinel `'unknown'` and **reports the count** in
+  `warnings` rather than inventing an AST classification. One mirror run from
+  a healthy local cache makes it real.
+- **Degradation is reported, not swallowed.** `pull_one_cache` returns
+  `warnings` for NULL embeddings in prod, sentinel backfills, and a json-only
+  pull (sqlite-vec absent); `cache_backend`'s auto-pull logs them at WARNING
+  instead of dropping them.
+
+**The gate** (`tests/test_cache_pull.py`): `TestSchemaParity` asserts the spec
+against **both** real schemas — the local DDL by creating it and reading
+`PRAGMA table_info`, and the prod DDL by *parsing* `_PG_INIT_DDL` rather than
+restating it (a restated list would be a third copy — the bug itself).
+`TestRoundTrip` mirrors a seeded cache out and pulls it back, asserting the
+rowid join the search path uses actually resolves. Verified as a gate by
+mutation: reintroducing a `bundle_sha`-class invented column fails it.
+
+🔴 **Deploy order — read this before the first mirror after this change.**
+The code-embeddings mirror now WRITES `kind`, so prod must have the column
+first. `noctus.dev.init_prod_cache_schema` carries the
+`ALTER TABLE … ADD COLUMN IF NOT EXISTS kind TEXT` leg and is safe to re-run —
+but an operator who reasons "the schema already exists, skip it" gets a
+failing mirror, because the `CREATE TABLE IF NOT EXISTS` above the ALTER is a
+no-op on a provisioned instance and can never add a column. Run
+`init_prod_cache_schema` → then `cache_deploy_mirror confirm=True`.
+
+> **The transferable rule.** A backup you have never restored is not a backup.
+> Any write path with an inverse owes that inverse a round-trip test, and a
+> schema that exists in two places will drift — derive the second from the
+> first or gate them against each other.
+
+
 ## When to call `cache_deploy_mirror`
 
 - At deploy time, AFTER `noctus.dev.release stage=promote` but BEFORE

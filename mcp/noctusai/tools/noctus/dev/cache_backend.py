@@ -284,6 +284,13 @@ def _try_auto_pull(cache_name: str, repo_root: Path) -> bool:
         _AUTO_PULLED_ROOTS.add(repo_root)
         _log.info("cache auto-pull: %s pulled %d rows from remote",
                   cache_name, result.get("rows_pulled", 0))
+        # A pull can succeed and still hand back a degraded cache (embeddings
+        # NULL in prod, a legacy column backfilled with a sentinel, or the
+        # vec sibling unwritten because sqlite-vec is absent here).
+        # `pull_one_cache` reports those; swallowing them here would put the
+        # silence back one level up.
+        for warning in result.get("warnings", []):
+            _log.warning("cache auto-pull: %s — %s", cache_name, warning)
         return True
     _log.info("cache auto-pull: %s failed (%s)", cache_name, result.get("error"))
     _AUTO_PULLED_ROOTS.add(repo_root)
