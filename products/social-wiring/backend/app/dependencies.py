@@ -26,6 +26,7 @@ Wave 2 of ``platform-auth-modernization`` (2026-05-20) adds:
 import asyncio as _asyncio
 import logging as _logging
 import uuid as _uuid
+import weakref as _weakref
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -127,6 +128,42 @@ def get_admin_client():
     if _use_sqlite:
         return _sqlite_client
     return _db.get_admin_client()
+
+
+_scoped_client_cache: "_weakref.WeakKeyDictionary[Any, dict[str, Any]]" = (
+    _weakref.WeakKeyDictionary()
+)
+
+
+def get_scoped_admin_client(schema: str = "social_wiring") -> Any:
+    """Schema-scoped admin client, cached by the underlying admin-client
+    OBJECT (never re-derived per call) — the formalized version of a
+    pattern that had already independently recurred THREE times before
+    this one: `app/modules/leads/deps.py::get_leads_client`,
+    `app/services/portal_roi_service.py::get_portal_roi_client`,
+    `app/routers/clientes_router.py::get_clientes_client`. All three fix
+    the SAME confirmed `MockSupabaseClient` defect: `.schema(name)`
+    returns a BRAND NEW wrapper with an EMPTY per-table row cache on
+    every call, so re-deriving the schema binding per request silently
+    loses every prior write the instant two separate calls re-scope. A
+    real Supabase client is stateless HTTP-request shaping either way —
+    this is a pure test-correctness fix, zero production behaviour
+    change.
+
+    This is the FOURTH occurrence (the clientes-inactivity settings
+    endpoints below), i.e. the N≥3 DRY-recurrence trigger
+    (`KB § PATTERNS/architect/project-execution.md § 2.7`). The three
+    existing local copies are NOT migrated onto this shared helper here
+    — doing so is out of this change's scope and flagged as a
+    `scoped-improvement:` in the delivery note instead, so this edit
+    stays limited to what it actually needs."""
+    admin = get_admin_client()
+    per_admin = _scoped_client_cache.setdefault(admin, {})
+    cached = per_admin.get(schema)
+    if cached is None:
+        cached = admin.schema(schema)
+        per_admin[schema] = cached
+    return cached
 
 
 def get_core_client():

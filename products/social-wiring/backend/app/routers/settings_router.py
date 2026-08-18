@@ -38,10 +38,13 @@ from app.dependencies import (
     get_admin_client,
     get_current_user,
     get_current_user_org,
+    get_scoped_admin_client,
     get_settings,
     get_user_client,
 )
 from app.schemas.settings import (
+    ClientesInactivityConfigStatus,
+    ClientesInactivityConfigUpdate,
     EmailTestRequest,
     EmailTestResult,
     InstagramAppConfigStatus,
@@ -69,6 +72,7 @@ from app.services.app_config_store import (
     resolve_instagram_app_creds,
     resolve_meta_app_creds,
 )
+from app.services import clientes_inactivity_service
 from app.services.chatbot_service import append_memory as _append_chat_memory
 from noctusai_lib.integrations.vista import (
     VistaError as CRMServiceError,
@@ -792,6 +796,65 @@ def _extract_waha_session_status(payload) -> str | None:
                         return str(item.get("status") or item.get("state") or "present")
         return "listed" if payload else "empty"
     return None
+
+
+# ─── clientes inactivity threshold tab (D16, roadmap lead-card-hub-2026-08)
+#
+# Config is admin-gated (mirrors the Meta App tab's `_require_admin` on the
+# write side; the read side is open to any authenticated org member — same
+# split `get_meta_app_config_status` uses) and persisted per-org in
+# `social_wiring.clientes_inactivity_config` (migration `058`), NOT in the
+# app-wide encrypted `app_integration_config` store the Meta/Instagram App
+# tabs above use — that store is documented, in its own migration header
+# AND in `noctusai_lib.security.app_config`'s module docstring, as one row
+# per config KEY for the WHOLE deployment, never per-org. This threshold
+# genuinely varies per tenant (D16), so it gets its own tiny org_id-keyed
+# table instead of a namespaced key jammed into a store that says, in
+# writing, that it does not do that. See
+# `app/services/clientes_inactivity_service.py`'s module docstring for the
+# full reasoning + the unconfigured-vs-disabled (0) state split.
+
+
+@router.get("/clientes-inactivity", response_model=ClientesInactivityConfigStatus)
+def get_clientes_inactivity_config(
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> ClientesInactivityConfigStatus:
+    """Current effective threshold for this org — the sweep's own default
+    fallback when unconfigured, or the org's own stored value."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    client = get_scoped_admin_client("social_wiring")
+    resolved = clientes_inactivity_service.get_threshold_config(
+        client, org_id, default_days=cfg.clientes_inactivity_threshold_days_default
+    )
+    return ClientesInactivityConfigStatus(
+        threshold_days=resolved["threshold_days"],
+        configured=resolved["configured"],
+        default_threshold_days=cfg.clientes_inactivity_threshold_days_default,
+    )
+
+
+@router.put("/clientes-inactivity", response_model=ClientesInactivityConfigStatus)
+def update_clientes_inactivity_config(
+    payload: ClientesInactivityConfigUpdate,
+    auth: tuple = Depends(get_current_user_org),
+    cfg: SocialWiringSettings = Depends(get_settings),
+) -> ClientesInactivityConfigStatus:
+    """Admin-gated write for the org's inactivity threshold.
+    `threshold_days=0` explicitly disables the sweep for this org — a
+    valid, intentional value, not an error (see `ClientesInactivityConfigUpdate`'s
+    docstring)."""
+    user, _token, raw_org = auth
+    _require_admin(user, "Clientes inactivity threshold")
+    org_id = coerce_org_uuid(raw_org)
+    client = get_scoped_admin_client("social_wiring")
+    clientes_inactivity_service.set_threshold_days(client, org_id, payload.threshold_days)
+    return ClientesInactivityConfigStatus(
+        threshold_days=payload.threshold_days,
+        configured=True,
+        default_threshold_days=cfg.clientes_inactivity_threshold_days_default,
+    )
 
 
 # Re-export both routers — main.py registers them via routers=[...].

@@ -361,6 +361,115 @@ class TestIdempotency:
         assert l2_touch["cliente_id"] == cliente["id"]
 
 
+# ─── D16 reactivation-on-touch — `_reactivate_if_inactive` ──────────────
+#
+# roadmap `project-history/roadmaps/lead-card-hub-2026-08.md` D16. A fresh
+# touch attaching to a cliente the inactivity sweep
+# (`clientes_inactivity_service.py`) had previously put to sleep must flip
+# it back to `ativo=true` — leaving it hidden after a genuine new inquiry
+# would be the exact same silent-disappearance failure the sweep exists to
+# prevent, just inverted. This exercises the SAME reconciliation path
+# `TestStragglerReconciliation` above does (`_attach_touches`, reached
+# through a second `run_backfill` pass once an identity is already
+# resolved) — reactivation is a side effect bolted onto that existing path,
+# not a new one.
+
+
+class TestReactivationOnTouch:
+    def test_new_touch_reactivates_a_swept_inactive_cliente(self):
+        client = _scoped_client()
+        client.set_table_data("leads", [_lead("L1", "Solo Pessoa", K1)])
+        client.set_table_data("meta_ads_leads", [])
+        client.set_table_data("negociacoes_venda", [])
+        first = svc.run_backfill(client, ORG)
+        assert first.clientes_reactivated == 0
+        [cliente] = _clientes(client)
+
+        # Simulate the inactivity sweep having put this cliente to sleep.
+        client.table("clientes").update({
+            "ativo": False,
+            "inativo_em": "2026-06-01T00:00:00+00:00",
+            "inativo_threshold_dias": 180,
+        }).eq("id", cliente["id"]).execute()
+        [asleep] = _clientes(client)
+        assert asleep["ativo"] is False
+
+        # A NEW touch under the same key lands.
+        client.set_table_data(
+            "leads",
+            [
+                _lead("L1", "Solo Pessoa", K1),
+                _lead("L2", "Solo Pessoa", K1, data="2026-07-01"),
+            ],
+        )
+        second = svc.run_backfill(client, ORG)
+
+        assert second.clientes_reactivated == 1
+        [refreshed] = _clientes(client)
+        assert refreshed["ativo"] is True
+        assert refreshed["inativo_em"] is None
+        assert refreshed["inativo_threshold_dias"] is None
+        assert refreshed["reativado_em"] is not None
+
+    def test_a_manually_archived_cliente_is_never_reactivated_by_a_touch(self):
+        """The test that must fail without the `arquivado_em` guard: a
+        naive version of `_reactivate_if_inactive` that only checks
+        `ativo` would resurrect a cliente a human deliberately archived.
+        Verified failing first by temporarily dropping the
+        `current.get("arquivado_em") is not None` check — see the
+        delivery note."""
+        client = _scoped_client()
+        client.set_table_data("leads", [_lead("L1", "Solo Pessoa", K1)])
+        client.set_table_data("meta_ads_leads", [])
+        client.set_table_data("negociacoes_venda", [])
+        svc.run_backfill(client, ORG)
+        [cliente] = _clientes(client)
+
+        # A HUMAN archived this one — deliberate, terminal, not the sweep.
+        client.table("clientes").update({
+            "ativo": False,
+            "arquivado_em": "2026-06-01T00:00:00+00:00",
+        }).eq("id", cliente["id"]).execute()
+
+        client.set_table_data(
+            "leads",
+            [
+                _lead("L1", "Solo Pessoa", K1),
+                _lead("L2", "Solo Pessoa", K1, data="2026-07-01"),
+            ],
+        )
+        second = svc.run_backfill(client, ORG)
+
+        assert second.clientes_reactivated == 0
+        [refreshed] = _clientes(client)
+        assert refreshed["ativo"] is False
+        assert refreshed["arquivado_em"] == "2026-06-01T00:00:00+00:00"
+        assert refreshed.get("reativado_em") is None
+
+    def test_an_already_active_cliente_is_left_alone(self):
+        """The common case (no sweep ever touched this cliente) must not
+        set `reativado_em` at all — that field means something specific
+        ("this row was reactivated"), not "a touch landed"."""
+        client = _scoped_client()
+        client.set_table_data("leads", [_lead("L1", "Solo Pessoa", K1)])
+        client.set_table_data("meta_ads_leads", [])
+        client.set_table_data("negociacoes_venda", [])
+        svc.run_backfill(client, ORG)
+
+        client.set_table_data(
+            "leads",
+            [
+                _lead("L1", "Solo Pessoa", K1),
+                _lead("L2", "Solo Pessoa", K1, data="2026-07-01"),
+            ],
+        )
+        second = svc.run_backfill(client, ORG)
+
+        assert second.clientes_reactivated == 0
+        [refreshed] = _clientes(client)
+        assert refreshed.get("reativado_em") is None
+
+
 # ─── P1.4 completion — collapse duplicate negociações sharing a cliente ────
 #
 # The board defect (roadmap `project-history/roadmaps/lead-card-hub-2026-08.

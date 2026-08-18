@@ -128,7 +128,11 @@ def _register_media_wiring() -> ModuleRegistration:
         router as clientes_router,
     )
     from app.services.meta import scheduler as meta_insights_scheduler
-    from app.services import clientes_backfill_job, whatsapp_backfill
+    from app.services import (
+        clientes_backfill_job,
+        clientes_inactivity_service,
+        whatsapp_backfill,
+    )
 
     # Register the daily IG-snapshot job on the seed scheduler now (import
     # time) so it lands before `start_scheduler()` fires in app/lifespan.py
@@ -143,6 +147,11 @@ def _register_media_wiring() -> ModuleRegistration:
     # the one-shot backfill to its cliente. Same import-time registration
     # rule as the two jobs above: before `start_scheduler()` in lifespan.
     clientes_backfill_job.configure()
+    # lead-card-hub P1.5 (D16) — the 180-day inactivity sweep. Same
+    # import-time registration rule; see
+    # `app/services/clientes_inactivity_service.py`'s module docstring for
+    # why `048` shipping the columns did NOT mean this was already wired.
+    clientes_inactivity_service.configure()
 
     # ONE combined router (`/api/auth` + `/api/settings/api-tokens`) —
     # see the module docstring above for why this calls the factory

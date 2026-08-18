@@ -144,21 +144,30 @@ def run_clientes_backfill(
             "negociacoes_repointed": report.negociacoes_repointed,
             "negociacoes_collapsed": report.negociacoes_collapsed,
             "stragglers_parked_for_review": report.stragglers_parked_for_review,
+            # D16's reactivation half: a new touch attaching to a cliente
+            # the inactivity sweep (`clientes_inactivity_service.py`) had
+            # put to sleep flips it back to `ativo=true` right here, at
+            # touch-insert time — see `_reactivate_if_inactive`'s
+            # docstring for why that lives here rather than in the sweep.
+            "clientes_reactivated": report.clientes_reactivated,
         })
         if (
             report.clientes_created or report.touches_created
             or report.negociacoes_repointed or report.negociacoes_collapsed
+            or report.clientes_reactivated
         ):
             # Only speak up when the pass actually attached something. A quiet
             # no-op run every interval is the healthy state and should not be
             # noise in the log.
             logger.info(
                 "clientes_backfill: org %s — %d cliente(s), %d touch(es), "
-                "%d negociac%s repointed, %d collapsed into a sibling",
+                "%d negociac%s repointed, %d collapsed into a sibling, "
+                "%d reactivated",
                 org_id, report.clientes_created, report.touches_created,
                 report.negociacoes_repointed,
                 "ão" if report.negociacoes_repointed == 1 else "ões",
                 report.negociacoes_collapsed,
+                report.clientes_reactivated,
             )
     return {"skipped": None, "orgs": results}
 

@@ -214,3 +214,36 @@ class InstagramAppConfigStatus(BaseModel):
     app_id_configured: bool
     app_secret_configured: bool
     app_id_masked: str | None = None
+
+
+# ─── clientes inactivity threshold (D16, roadmap lead-card-hub-2026-08) ─
+class ClientesInactivityConfigUpdate(BaseModel):
+    """Inbound payload for PUT /settings/clientes-inactivity.
+
+    `threshold_days = 0` is a valid, meaningful value: it explicitly
+    disables the inactivity sweep for this org. There is no separate
+    "unset" wire value — the DISTINCT "never configured, use the
+    platform default" state is represented by there being no row at all
+    for this org (`clientes_inactivity_config`), which this write
+    endpoint can never produce (a PUT always upserts a row). See
+    `app/services/clientes_inactivity_service.py`'s module docstring for
+    the full unconfigured-vs-disabled reasoning."""
+
+    threshold_days: int = Field(ge=0)
+
+    class Config:
+        extra = "forbid"
+
+
+class ClientesInactivityConfigStatus(BaseModel):
+    """Outbound shape for PUT/GET /settings/clientes-inactivity.
+
+    `configured` distinguishes "this org has its own stored value"
+    (`threshold_days` is that value) from "falling back to the platform
+    default" (`threshold_days` is `clientes_inactivity_threshold_days_
+    default`, currently 180) — a Settings UI needs this to render
+    "using the default (180)" vs. "set to 45" correctly."""
+
+    threshold_days: int
+    configured: bool
+    default_threshold_days: int

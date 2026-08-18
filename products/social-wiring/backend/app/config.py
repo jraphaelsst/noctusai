@@ -135,6 +135,26 @@ class SocialWiringSettings(ProductSettings):
     # for no practical gain.
     clientes_backfill_interval_hours: int = 6
 
+    # ─── clientes inactivity sweep (D16, roadmap lead-card-hub-2026-08) ─
+    # `048` (P1.1) added `clientes.ativo`/`inativo_em`/`arquivado_em` and a
+    # manual restore path, but nothing ever SET `inativo_em` automatically
+    # — the working Ativos/Inativos tabs made this look finished, which is
+    # exactly why the gap stayed open five days after Phase 1 shipped. See
+    # `app/services/clientes_inactivity_service.py` for the sweep this
+    # closes and `058_clientes_inactivity_sweep.sql` for its schema.
+    clientes_inactivity_sweep_enabled: bool = True
+    # The org-level default (D16: "180 days"). An org's OWN configured
+    # value (`clientes_inactivity_config.threshold_days`, settable via
+    # `PUT /api/settings/clientes-inactivity`) always wins when present;
+    # this is only the fallback for an org that has never configured one.
+    # Not itself editable in the UI — D16 asks for a PER-ORG override, not
+    # a redefinition of the platform default.
+    clientes_inactivity_threshold_days_default: int = 180
+    # Same interval as the sibling `clientes_backfill` sweep (6h) — no
+    # reason for inactivity detection to lag behind or run more often than
+    # the pass that actually attaches new touches.
+    clientes_inactivity_sweep_interval_hours: int = 6
+
     # ─── Redis (upload-job tracking, Phase 2+) ─────────────────────────
     redis_url: str = "redis://localhost:6379/0"
 

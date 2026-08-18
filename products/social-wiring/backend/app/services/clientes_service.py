@@ -153,6 +153,12 @@ class BackfillReport:
     # `negociacoes_venda` rows can share one `cliente_id`. This counts rows
     # this run marked `substituida_por` on — see `_collapse_negociacoes`.
     negociacoes_collapsed: int = 0
+    # D16 (roadmap lead-card-hub-2026-08) — a new touch attaching to a
+    # cliente the inactivity sweep had previously marked inactive flips it
+    # back on right here (`_reactivate_if_inactive`). Counted separately
+    # from `clientes_created`: this is an UPDATE on an EXISTING row, not a
+    # new identity.
+    clientes_reactivated: int = 0
 
     @property
     def touches_expected(self) -> int:
@@ -194,6 +200,7 @@ class BackfillReport:
             "negociacoes_already_pointed": self.negociacoes_already_pointed,
             "negociacoes_orphaned": list(self.negociacoes_orphaned),
             "negociacoes_collapsed": self.negociacoes_collapsed,
+            "clientes_reactivated": self.clientes_reactivated,
         }
 
 
@@ -548,6 +555,54 @@ def _attach_touches(
     _insert_touches(client, org_id, cliente_id, members, key, report, dry_run=dry_run)
     if not dry_run:
         _recompute_span(client, org_id, cliente_id)
+        _reactivate_if_inactive(client, org_id, cliente_id, report)
+
+
+def _reactivate_if_inactive(
+    client: Any, org_id: UUID, cliente_id: str, report: BackfillReport
+) -> None:
+    """D16's reactivation half: a fresh touch attaching to an EXISTING
+    cliente the inactivity sweep (`clientes_inactivity_service.py`) had
+    put to sleep means the person is reachable again — leaving them
+    hidden after a new inquiry would be the exact same silent-
+    disappearance failure the sweep exists to avoid, just inverted.
+
+    Deliberately lives HERE (touch-insert time), not in the sweep: this is
+    the one place a subsequent `clientes_backfill_job` run already
+    discovers a new touch landing on an already-resolved identity
+    (`_reconcile_against_existing` -> `_attach_touches`), so reactivating
+    right here costs nothing extra — the sweep would otherwise have to
+    re-scan every inactive cliente's touch history on every tick just to
+    catch this.
+
+    Reads the row FRESH (not a snapshot a caller up the stack might be
+    holding) so this cannot race a concurrent sweep tick into a stale
+    write. Only reactivates a cliente the SWEEP put to sleep
+    (`arquivado_em IS NULL`) — a MANUALLY archived cliente
+    (`arquivado_em IS NOT NULL`) is a deliberate human decision this
+    function must never override; see this module's / `clientes_
+    inactivity_service.py`'s state table for the full
+    ativo/inativo_em/arquivado_em matrix."""
+    rows = (
+        _t(client, "clientes")
+        .select("ativo,arquivado_em")
+        .eq("id", cliente_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not rows:
+        return
+    current = rows[0]
+    if current.get("ativo") or current.get("arquivado_em") is not None:
+        return  # already active, or a manual archive — not this function's call
+    _t(client, "clientes").update({
+        "ativo": True,
+        "inativo_em": None,
+        "inativo_threshold_dias": None,
+        "reativado_em": _now(),
+        "updated_at": _now(),
+    }).eq("id", cliente_id).eq("org_id", str(org_id)).execute()
+    report.clientes_reactivated += 1
 
 
 def _recompute_span(client: Any, org_id: UUID, cliente_id: str) -> None:
@@ -912,8 +967,16 @@ def get_touches(
 
 
 def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) -> dict:
-    """PATCH (§5 `PATCH /api/clientes/{id}`) — nome, ativo/arquivado (D4)."""
-    allowed = {"nome", "ativo", "arquivado_em", "inativo_em"}
+    """PATCH (§5 `PATCH /api/clientes/{id}`) — nome, ativo/arquivado (D4).
+
+    `reativado_em` / `inativo_threshold_dias` are server-derived-only (see
+    `clientes_router.py::update_cliente_route`, which is the only caller
+    that ever passes them) — never accepted from the request body itself;
+    `ClientePatchBody` doesn't even declare them as fields."""
+    allowed = {
+        "nome", "ativo", "arquivado_em", "inativo_em",
+        "reativado_em", "inativo_threshold_dias",
+    }
     payload = {k: v for k, v in updates.items() if k in allowed}
     if not payload:
         return _require_cliente(client, org_id, cliente_id)

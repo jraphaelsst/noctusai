@@ -478,6 +478,14 @@ async def update_cliente_route(
         if updates["ativo"]:
             updates["arquivado_em"] = None
             updates["inativo_em"] = None
+            updates["inativo_threshold_dias"] = None
+            # D16 — the manual-restore-wins signal the inactivity sweep
+            # (`clientes_inactivity_service.py`) reads via
+            # GREATEST(ultimo_contato_em, reativado_em). Without this, a
+            # restored cliente whose most recent REAL touch is still
+            # older than the org's threshold would be swept right back
+            # to inactive on the very next scheduled tick.
+            updates["reativado_em"] = _now()
         else:
             updates["arquivado_em"] = _now()
 

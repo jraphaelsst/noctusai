@@ -50,6 +50,11 @@ def _report(**kw) -> SimpleNamespace:
     base = dict(
         clientes_created=0, touches_created=0, negociacoes_repointed=0,
         negociacoes_collapsed=0, stragglers_parked_for_review=0,
+        # D16 (roadmap lead-card-hub-2026-08) — added when
+        # `_reactivate_if_inactive` started populating this field on the
+        # real `BackfillReport`; defaulted here so every existing caller
+        # of this helper keeps working unchanged.
+        clientes_reactivated=0,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -191,6 +196,7 @@ class TestPerOrgIsolation:
             "org_id": _ORG_A, "ok": True, "clientes_created": 44,
             "touches_created": 88, "negociacoes_repointed": 88,
             "negociacoes_collapsed": 3, "stragglers_parked_for_review": 2,
+            "clientes_reactivated": 0,
         }
 
     def test_quiet_run_logs_nothing_at_info(self, caplog):

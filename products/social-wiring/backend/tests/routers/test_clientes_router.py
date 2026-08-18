@@ -481,6 +481,35 @@ class TestPatchCliente:
         assert body["ativo"] is True
         assert body["arquivado_em"] is None
 
+    def test_patch_ativo_true_after_a_sweep_sets_reativado_em_and_clears_inativo(
+        self, client, scoped
+    ):
+        """D16 — the manual-restore-wins signal
+        (`clientes_inactivity_service.py`'s
+        `GREATEST(ultimo_contato_em, reativado_em)` silence check) has to
+        actually get SET by this route, or a restore that survives one
+        scheduled tick is a lie. Also clears the sweep's own
+        `inativo_em`/`inativo_threshold_dias` bookkeeping — a restored
+        cliente should not still claim "inactive since ... (threshold
+        180d)" anywhere."""
+        a1 = str(uuid4())
+        scoped.set_table_data(
+            "clientes",
+            [{
+                **_cliente(a1, "Ana", ativo=False),
+                "inativo_em": "2026-06-01T00:00:00+00:00",
+                "inativo_threshold_dias": 180,
+                "reativado_em": None,
+            }],
+        )
+        resp = client.patch(f"/api/clientes/{a1}", json={"ativo": True}, headers=_auth())
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["ativo"] is True
+        assert body["inativo_em"] is None
+        assert body["inativo_threshold_dias"] is None
+        assert body["reativado_em"] is not None
+
     def test_patch_404(self, client, scoped):
         scoped.set_table_data("clientes", [])
         resp = client.patch(
