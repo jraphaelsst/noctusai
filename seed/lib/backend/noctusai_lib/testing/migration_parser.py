@@ -5,7 +5,7 @@ Phase 0 discovery (`projects/mock-supabase-schema-validation` §5.1) showed
 the migration corpus is uniform enough for a hand-rolled parser: 269
 column-defining DDL statements across 48 files, all fitting one of three
 shapes (CREATE TABLE, ALTER TABLE ADD COLUMN, ALTER TABLE DROP COLUMN).
-No quoted identifiers, no RENAME COLUMN, no weird dialect. 120 CREATE
+No quoted identifiers, no weird dialect. 120 CREATE
 FUNCTION bodies and 11 DO blocks must be handled — function bodies are
 skipped wholesale, DO blocks are walked (they can wrap conditional
 ADD COLUMN guards).
@@ -78,6 +78,27 @@ _DROP_COLUMN_CLAUSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# RENAME. The module docstring above used to assert the corpus contained
+# "no RENAME COLUMN" — true when it was written, false from migration
+# `060` (social-wiring's `negociacoes_venda` -> `atendimentos`).
+#
+# Leaving it unhandled is not a neutral gap. Renaming a table made the new
+# name unknown to the schema map, so the mock stopped validating it
+# entirely (graceful degradation — the blind spot reopens silently for
+# that table), while the OLD column name survived on the *other* side of
+# the rename and every honest query against the new name failed with
+# "table has no column X" naming a column the migration plainly creates.
+# One rename produced both a false failure and a silent hole at once.
+_RENAME_TABLE_CLAUSE_RE = re.compile(
+    rf"\bRENAME\s+TO\s+(?P<new_table>{_IDENT})\b",
+    re.IGNORECASE,
+)
+
+_RENAME_COLUMN_CLAUSE_RE = re.compile(
+    rf"\bRENAME\s+COLUMN\s+(?P<old>{_IDENT})\s+TO\s+(?P<new>{_IDENT})\b",
+    re.IGNORECASE,
+)
+
 
 def _alter_table_segments(stmt: str):
     """Yield `(schema, table, body)` per ALTER TABLE head in `stmt`.
@@ -108,6 +129,12 @@ _CONSTRAINT_KEYWORDS = (
 # ---------------------------------------------------------------------------
 
 
+# `$$` or `$tag$` — Postgres' dollar-quote openers. `pg_get_functiondef`
+# emits `$function$`, so a migration written by copying a live definition
+# out of the database uses the tagged form.
+_DOLLAR_TAG_RE = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$")
+
+
 def _strip_line_comments(sql: str) -> str:
     """Strip `-- ...` comments. Preserves line structure."""
     # Remove -- comments to end of line, keep the newline.
@@ -125,36 +152,45 @@ def _walk_statements(sql: str) -> Iterable[str]:
 
     Handles:
       - semicolon-separated statements at paren-depth 0
-      - $$ ... $$ dollar-quoted blocks (function bodies, DO blocks) treated atomically
+      - $$ ... $$ AND $tag$ ... $tag$ dollar-quoted blocks (function bodies,
+        DO blocks) treated atomically
       - nested parens in types/defaults/constraints
 
-    We do NOT handle tag variants ($tag$ ... $tag$) because none exist in our corpus.
+    Tag variants used to be unhandled ("none exist in our corpus"), which
+    stopped being true the moment a migration was written by copying a
+    function definition out of the database: `pg_get_functiondef` emits
+    `AS $function$ ... $function$`, not `$$`. The failure was silent and
+    total — an unrecognised opener left the walker treating the function
+    BODY as ordinary SQL, so every `;` inside it split a statement, and the
+    whole file parsed to nothing. social-wiring's migration `060` produced
+    exactly that: an empty schema map, which downstream reads as "this table
+    has no columns" rather than as a parse failure.
     """
     i = 0
     n = len(sql)
     start = 0
     paren_depth = 0
-    in_dollar = False
-    dollar_start = -1
+    dollar_tag: str | None = None   # the exact opener, e.g. "$$" or "$function$"
 
     while i < n:
         ch = sql[i]
 
-        if in_dollar:
-            # Look for the closing $$
-            if ch == "$" and i + 1 < n and sql[i + 1] == "$":
-                in_dollar = False
-                i += 2
+        if dollar_tag is not None:
+            # Only the MATCHING tag closes the block — `$$` must not close a
+            # `$function$`, or the tail of the body leaks back into the SQL.
+            if ch == "$" and sql.startswith(dollar_tag, i):
+                i += len(dollar_tag)
+                dollar_tag = None
                 continue
             i += 1
             continue
 
-        # Not inside a $$-block: check for opening $$
-        if ch == "$" and i + 1 < n and sql[i + 1] == "$":
-            in_dollar = True
-            dollar_start = i
-            i += 2
-            continue
+        if ch == "$":
+            m = _DOLLAR_TAG_RE.match(sql, i)
+            if m:
+                dollar_tag = m.group(0)
+                i += len(dollar_tag)
+                continue
 
         # Handle string literals (single-quoted) — skip contents to avoid
         # interpreting `;` or `(` inside strings.
@@ -304,14 +340,25 @@ def _qualify(schema: str | None, table: str) -> str:
     return f"{(schema or 'public').lower()}.{table.lower()}"
 
 
-def parse_sql(sql: str, *, source_label: str = "<unknown>") -> dict[str, set[str]]:
+def parse_sql(
+    sql: str,
+    *,
+    source_label: str = "<unknown>",
+    into: dict[str, set[str]] | None = None,
+) -> dict[str, set[str]]:
     """Parse a blob of SQL into a `{qualified_table: {columns}}` map.
 
     WARN + skip per-table on any shape that doesn't parse.
+
+    `into` accumulates across calls. Migrations apply SEQUENTIALLY against
+    one evolving schema, so anything that mutates an existing table — a
+    rename, a `DROP COLUMN` — is only meaningful when the parse can see
+    what earlier files built. Passing a shared map is how `parse_files`
+    models that; omitting it parses one blob in isolation.
     """
     sql_clean = _strip_block_comments(_strip_line_comments(sql))
 
-    schema_map: dict[str, set[str]] = {}
+    schema_map: dict[str, set[str]] = {} if into is None else into
 
     for stmt in _walk_statements(sql_clean):
         # Quick-reject statements that can't define a column.
@@ -358,11 +405,45 @@ def parse_sql(sql: str, *, source_label: str = "<unknown>") -> dict[str, set[str
                     if existing:
                         existing.discard(m.group("column"))
 
+        # RENAME — same DO-block-tolerant scan as ADD/DROP above. Applied
+        # AFTER them so a single migration that adds a column and then
+        # renames the table still lands the column on the new name.
+        if "RENAME" in upper:
+            for schema, table, body in _alter_table_segments(stmt):
+                qualified = _qualify(schema, table)
+
+                for m in _RENAME_COLUMN_CLAUSE_RE.finditer(body):
+                    existing = schema_map.get(qualified)
+                    if existing and m.group("old") in existing:
+                        existing.discard(m.group("old"))
+                        existing.add(m.group("new"))
+                    elif existing is not None:
+                        # The column was never recorded — the rename is real
+                        # in Postgres but our map cannot represent it. Add the
+                        # new name anyway (a query against it is legitimate)
+                        # rather than leave a hole that reads as "no such
+                        # column".
+                        existing.add(m.group("new"))
+
+                for m in _RENAME_TABLE_CLAUSE_RE.finditer(body):
+                    new_qualified = _qualify(schema, m.group("new_table"))
+                    cols = schema_map.pop(qualified, None)
+                    if cols is not None:
+                        # Carry the columns across; a later migration's
+                        # ADD COLUMN on the new name merges into the same set.
+                        schema_map.setdefault(new_qualified, set()).update(cols)
+
     return schema_map
 
 
 def parse_files(paths: Iterable[Path]) -> dict[str, set[str]]:
     """Parse multiple migration files in order, merging into one schema map."""
+    # ONE accumulating map, threaded through every file in order — not a
+    # per-file parse merged at the end. The old shape could only ever ADD:
+    # each file was parsed against an empty map, so a later migration's
+    # `DROP COLUMN` or `RENAME` had nothing to act on and was silently
+    # discarded by the union merge. That made the map a record of every
+    # column that ever existed rather than the schema as it now stands.
     merged: dict[str, set[str]] = {}
     for path in paths:
         try:
@@ -370,9 +451,7 @@ def parse_files(paths: Iterable[Path]) -> dict[str, set[str]]:
         except OSError as exc:
             logger.warning("mock-schema: could not read %s: %s — skipping", path, exc)
             continue
-        partial = parse_sql(sql, source_label=str(path))
-        for table, cols in partial.items():
-            merged.setdefault(table, set()).update(cols)
+        parse_sql(sql, source_label=str(path), into=merged)
     return merged
 
 

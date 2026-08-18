@@ -11,7 +11,7 @@
  * Stages are per-organization DB rows the user edits via "Configurar etapas";
  * renaming one relabels every card and every history row that references it.
  * The defaults are erp-imobiliario's, verbatim since migration 037
- * (Qualificação → Visitas → Proposta → Negociação → Fechado).
+ * (Qualificação → Visitas → Proposta → Atendimento → Fechado).
  */
 import { useState } from "react";
 import { Search } from "lucide-react";
@@ -23,8 +23,8 @@ import { LeadDetailModal } from "@/components/LeadDetailModal";
 import { formatValor } from "./formatValor";
 import { funilPipeline } from "@/lib/pipelines";
 import { useAceitarProposta } from "@/hooks/usePipelineSeam";
-import { NegociacaoCard } from "./components/NegociacaoCard";
-import { origemDaNegociacao, type CardOrigem } from "@/types/pipeline";
+import { AtendimentoCard } from "./components/AtendimentoCard";
+import { origemDoAtendimento, type CardOrigem } from "@/types/pipeline";
 
 export default function FunilVendas() {
   const [busca, setBusca] = useState("");
@@ -68,15 +68,15 @@ export default function FunilVendas() {
             ))}
           </div>
         }
-        onCardClick={(negociacao) => setDetalhe(origemDaNegociacao(negociacao))}
-        renderCard={(negociacao, { isDragging }) => (
-          <NegociacaoCard
-            negociacao={negociacao}
+        onCardClick={(atendimento) => setDetalhe(origemDoAtendimento(atendimento))}
+        renderCard={(atendimento, { isDragging }) => (
+          <AtendimentoCard
+            atendimento={atendimento}
             isDragging={isDragging}
             onAceitarProposta={aceitarProposta}
             // Scope the pending state to the card actually being accepted —
             // a bare `isPending` would spin every card in the column.
-            aceitandoProposta={aceitando && variables === negociacao.id}
+            aceitandoProposta={aceitando && variables === atendimento.id}
           />
         )}
       />

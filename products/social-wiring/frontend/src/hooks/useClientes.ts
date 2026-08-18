@@ -10,7 +10,7 @@
  * to observed behaviour. §5 pins the board row's *filters* explicitly
  * (`?ativo=`, `?q=`, `?corretor_id=`, pagination) but does NOT pin the row's
  * exact JSON shape beyond §4's schema columns — every field below traces to
- * a §4 column; `touch_count` / `negociacoes_abertas` are ASSUMED present
+ * a §4 column; `touch_count` / `atendimentos_abertos` are ASSUMED present
  * (so a card can show "14 toques" without a second request) and rendered as
  * "—" rather than a lying zero if the live response omits them.
  */
@@ -36,7 +36,7 @@ export interface Cliente {
   ultimo_contato_em: string | null;
   /** ASSUMPTION — see file header. `undefined`/`null` renders "—", never "0". */
   touch_count?: number | null;
-  negociacoes_abertas?: number | null;
+  atendimentos_abertos?: number | null;
   /**
    * lead-card-hub-p2-PROJECT.md §3: "the board list endpoint must return
    * these counts inline for every card [so it can render card faces

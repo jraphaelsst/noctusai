@@ -1,7 +1,7 @@
 import type { PipelineStage } from "@noctusai/lib/components";
 
 /** The lead a Funil card was spawned from (`social_wiring.leads`). */
-export interface NegociacaoLead {
+export interface AtendimentoLead {
   id: string;
   cliente_nome: string | null;
   contato: string | null;
@@ -15,13 +15,13 @@ export interface NegociacaoLead {
 /**
  * The campaign lead a Funil card was spawned from (`meta_ads_leads`).
  *
- * Projected WIDER than `NegociacaoLead` on purpose. A lead-origin card can
+ * Projected WIDER than `AtendimentoLead` on purpose. A lead-origin card can
  * fetch its whole record from `GET /api/leads/{id}` when the detail modal
  * opens; a campaign lead has no such endpoint — there IS no `leads` row for
  * it — so this projection IS the record, and the modal renders straight
  * from it. See `app/modules/pipeline/configs.py`.
  */
-export interface NegociacaoCampanha {
+export interface AtendimentoCampanha {
   id: string;
   full_name: string | null;
   email: string | null;
@@ -49,7 +49,7 @@ export interface NegociacaoCampanha {
  * 🔴 The old invariant here ("exactly ONE of `lead`/`campanha` is present,
  * enforced by migration 034's CHECK") is **no longer true**, and believing it
  * is now a bug. `048` retired that CHECK and `054` collapses every
- * `negociacoes_venda` row sharing a `cliente_id` into one survivor, so a card
+ * `atendimentos` row sharing a `cliente_id` into one survivor, so a card
  * can legitimately carry BOTH origins: its own, plus whatever was merged from
  * the rows folded into it. That is the point — the user's report was that the
  * two shapes are both true and both needed.
@@ -58,9 +58,9 @@ export interface NegociacaoCampanha {
  * A survivor spawned from a campaign has `lead_id === null` while carrying a
  * populated `lead` merged from a collapsed sibling. Branch on the OBJECT
  * (`n.lead`), never on the FK, or the lead detail for a collapsed card never
- * opens — see `origemDaNegociacao`.
+ * opens — see `origemDoAtendimento`.
  */
-export interface NegociacaoVenda {
+export interface Atendimento {
   id: string;
   org_id: string;
   lead_id: string | null;
@@ -74,8 +74,8 @@ export interface NegociacaoVenda {
   arquivado: boolean;
   closed_at: string | null;
   created_at: string;
-  lead?: NegociacaoLead | null;
-  campanha?: NegociacaoCampanha | null;
+  lead?: AtendimentoLead | null;
+  campanha?: AtendimentoCampanha | null;
   /** The person this card is about (`social_wiring.clientes`, migration 048). */
   cliente_id?: string | null;
   /**
@@ -84,25 +84,25 @@ export interface NegociacaoVenda {
    * undo affordance has the data without another round trip, and so "what did
    * this card absorb?" is answerable from the card itself.
    */
-  colapsadas?: NegociacaoColapsada[];
+  colapsadas?: AtendimentoColapsado[];
 }
 
-/** A `negociacoes_venda` row collapsed into a survivor. Marked, never deleted. */
-export interface NegociacaoColapsada {
+/** A `atendimentos` row collapsed into a survivor. Marked, never deleted. */
+export interface AtendimentoColapsado {
   id: string;
   lead_id: string | null;
   meta_ads_lead_id: string | null;
   titulo: string | null;
   status: "aberta" | "aceita" | "perdida";
   colapsada_em: string | null;
-  lead?: NegociacaoLead | null;
-  campanha?: NegociacaoCampanha | null;
+  lead?: AtendimentoLead | null;
+  campanha?: AtendimentoCampanha | null;
 }
 
 export interface ProcessoVenda {
   id: string;
   org_id: string;
-  negociacao_venda_id: string;
+  atendimento_id: string;
   etapa_id: string;
   etapa_rel?: PipelineStage | null;
   valor: number;
@@ -116,20 +116,20 @@ export interface ProcessoVenda {
    * "click the card to see the lead" would be true on one board and false on
    * the other.
    */
-  negociacao?: {
+  atendimento?: {
     id: string;
     titulo: string | null;
     valor_estimado: number | null;
     closed_at: string | null;
     lead_id: string | null;
     meta_ads_lead_id: string | null;
-    lead?: NegociacaoLead | null;
-    campanha?: NegociacaoCampanha | null;
+    lead?: AtendimentoLead | null;
+    campanha?: AtendimentoCampanha | null;
   } | null;
 }
 
 /** Display name for a card, whichever origin it has. */
-export function nomeDaNegociacao(n: NegociacaoVenda): string {
+export function nomeDoAtendimento(n: Atendimento): string {
   return (
     n.titulo ||
     n.lead?.cliente_nome ||
@@ -142,13 +142,13 @@ export function nomeDaNegociacao(n: NegociacaoVenda): string {
 }
 
 /** The contact string a card should show + deep-link the Leads page by. */
-export function contatoDaNegociacao(n: NegociacaoVenda): string | null {
+export function contatoDoAtendimento(n: Atendimento): string | null {
   return n.lead?.contato ?? n.campanha?.phone ?? n.campanha?.email ?? null;
 }
 
 /** Display name for a processo card — the deal it came from. */
 export function nomeDoProcesso(p: ProcessoVenda): string {
-  const neg = p.negociacao;
+  const neg = p.atendimento;
   return (
     neg?.titulo ||
     neg?.lead?.cliente_nome ||
@@ -178,15 +178,15 @@ export function nomeDoProcesso(p: ProcessoVenda): string {
  */
 export interface CardOrigem {
   leadId: string | null;
-  campanha: NegociacaoCampanha | null;
+  campanha: AtendimentoCampanha | null;
 }
 
-export function origemDaNegociacao(n: NegociacaoVenda): CardOrigem {
+export function origemDoAtendimento(n: Atendimento): CardOrigem {
   return { leadId: n.lead?.id ?? n.lead_id, campanha: n.campanha ?? null };
 }
 
 export function origemDoProcesso(p: ProcessoVenda): CardOrigem {
-  const neg = p.negociacao;
+  const neg = p.atendimento;
   return {
     leadId: neg?.lead?.id ?? neg?.lead_id ?? null,
     campanha: neg?.campanha ?? null,

@@ -43,7 +43,7 @@ import {
   leadDetailSections,
 } from '@/pages/leads/leadDetailSections';
 import type { Lead } from '@/pages/leads/types';
-import type { NegociacaoCampanha } from '@/types/pipeline';
+import type { AtendimentoCampanha } from '@/types/pipeline';
 
 export interface LeadDetailModalProps {
   open: boolean;
@@ -53,7 +53,7 @@ export interface LeadDetailModalProps {
   /** Fetch the record by id (a board card, lead origin). */
   leadId?: string | null;
   /** Render straight from the card's projection (a board card, campaign origin). */
-  campanha?: NegociacaoCampanha | null;
+  campanha?: AtendimentoCampanha | null;
   /** Prepended to the footer — e.g. "Arquivar" on the Processos board. */
   actions?: DetailAction[];
   onEdit?: (lead: Lead) => void;

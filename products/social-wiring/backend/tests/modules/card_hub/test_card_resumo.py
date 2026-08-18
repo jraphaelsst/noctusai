@@ -38,7 +38,7 @@ class TestCardResumo:
         assert body["badges"]["tem_descricao"] is False
         assert body["badges"]["checklist_total"] == 0
         assert body["badges"]["temperatura"] is None
-        assert body["negociacoes"] == []
+        assert body["atendimentos"] == []
 
     def test_badges_are_computed_correctly(self, client, scoped):
         cid = str(uuid4())

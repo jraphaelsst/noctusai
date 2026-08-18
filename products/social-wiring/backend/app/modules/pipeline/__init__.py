@@ -23,7 +23,7 @@ def register() -> Any:
     from app.main import ModuleRegistration
     from app.modules.pipeline.routers.boards import (
         funil_router,
-        negociacoes_router,
+        atendimentos_router,
         processos_router,
     )
     from app.modules.pipeline.routers.stages import (
@@ -41,7 +41,7 @@ def register() -> Any:
             funil_stages_router,
             processos_stages_router,
             funil_router,
-            negociacoes_router,
+            atendimentos_router,
             processos_router,
         ],
     )

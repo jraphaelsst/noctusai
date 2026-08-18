@@ -6,7 +6,7 @@
  * exist on this branch yet). Every shape below traces to a §3 table/route;
  * where §3 names a field without pinning its exact shape, the assumption is
  * called out inline (mirrors `useClientes.ts`'s convention for
- * `touch_count`/`negociacoes_abertas`).
+ * `touch_count`/`atendimentos_abertos`).
  *
  * `components/card/**` (S3, ruling in §0) is presentational-only and may
  * import these types freely — they carry no fetching logic.
@@ -204,7 +204,7 @@ export interface CardBadges {
 
 /**
  * `GET /clientes/{id}/card` — §3. `cliente` reuses the P1 `Cliente` shape
- * (§3: "existing GET /clientes/{id} shape"); `negociacoes` is D17's
+ * (§3: "existing GET /clientes/{id} shape"); `atendimentos` is D17's
  * active-plus-closed history and is intentionally untyped here — no shape
  * for it appears anywhere in this contract or in `types/pipeline.ts`, and
  * inventing one would be building past the contract (§5 anti-goal).
@@ -221,7 +221,7 @@ export interface CardResumo {
   descricao: Descricao | null;
   datas: CardDatas;
   badges: CardBadges;
-  negociacoes: unknown[];
+  atendimentos: unknown[];
 }
 
 // ─── Timeline (D9 — one thread) ────────────────────────────────────────────

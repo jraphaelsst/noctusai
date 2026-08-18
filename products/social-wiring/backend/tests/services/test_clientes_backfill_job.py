@@ -3,7 +3,7 @@
 🔴 What this guards. `clientes_service.run_backfill` was written re-runnable
 and then never re-run: no router, no scheduler job, no DB trigger called it
 after the one manual pass on 2026-08-13. Five days later 44 `leads` + 44
-`meta_ads_leads` rows had no `cliente_touches` row and 88 `negociacoes_venda`
+`meta_ads_leads` rows had no `cliente_touches` row and 88 `atendimentos`
 rows had a NULL `cliente_id`, all created after that pass. The board stopped
 showing new arrivals and nothing said so.
 
@@ -48,8 +48,8 @@ def _cfg(*, enabled: bool = True, hours: int = 6) -> SimpleNamespace:
 
 def _report(**kw) -> SimpleNamespace:
     base = dict(
-        clientes_created=0, touches_created=0, negociacoes_repointed=0,
-        negociacoes_collapsed=0, stragglers_parked_for_review=0,
+        clientes_created=0, touches_created=0, atendimentos_repointed=0,
+        atendimentos_collapsed=0, stragglers_parked_for_review=0,
         # D16 (roadmap lead-card-hub-2026-08) — added when
         # `_reactivate_if_inactive` started populating this field on the
         # real `BackfillReport`; defaulted here so every existing caller
@@ -188,14 +188,14 @@ class TestPerOrgIsolation:
             cfg=_cfg(), admin_client=_admin_with([{"org_id": _ORG_A}], []),
             backfill_fn=lambda _c, _o: _report(
                 clientes_created=44, touches_created=88,
-                negociacoes_repointed=88, negociacoes_collapsed=3,
+                atendimentos_repointed=88, atendimentos_collapsed=3,
                 stragglers_parked_for_review=2,
             ),
         )
         assert out["orgs"][0] == {
             "org_id": _ORG_A, "ok": True, "clientes_created": 44,
-            "touches_created": 88, "negociacoes_repointed": 88,
-            "negociacoes_collapsed": 3, "stragglers_parked_for_review": 2,
+            "touches_created": 88, "atendimentos_repointed": 88,
+            "atendimentos_collapsed": 3, "stragglers_parked_for_review": 2,
             "clientes_reactivated": 0,
         }
 

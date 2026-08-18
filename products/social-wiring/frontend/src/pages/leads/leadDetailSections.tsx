@@ -7,7 +7,7 @@
  * surfaces open the same `EntityDetailDialog`:
  *
  *   - the Leads table row      (`BaseDeLeads`)
- *   - a Funil de Vendas card   (`NegociacaoCard`)
+ *   - a Funil de Vendas card   (`AtendimentoCard`)
  *   - a Processos de Venda card (`ProcessoCard`)
  *
  * None of them knows which fields a lead has. They ask here. Adding a
@@ -29,7 +29,7 @@ import type { DetailSection } from '@noctusai/lib/components';
 import { formatPhone } from '@noctusai/lib/phone';
 
 import type { Lead, LeadSource } from '@/pages/leads/types';
-import type { NegociacaoCampanha } from '@/types/pipeline';
+import type { AtendimentoCampanha } from '@/types/pipeline';
 
 const TIPO_LABEL: Record<Lead['tipo_lead'], string> = {
   novo: 'Novo',
@@ -151,7 +151,7 @@ export function leadDetailSections(lead: Lead): DetailSection[] {
  * useful thing on the record and, before this modal existed, visible
  * nowhere in the UI at all.
  */
-export function campanhaDetailSections(campanha: NegociacaoCampanha): DetailSection[] {
+export function campanhaDetailSections(campanha: AtendimentoCampanha): DetailSection[] {
   const answers = campanha.answers ?? {};
   const answerFields = Object.entries(answers).map(([pergunta, resposta]) => ({
     label: pergunta,

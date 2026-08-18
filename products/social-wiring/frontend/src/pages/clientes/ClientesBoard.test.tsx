@@ -84,7 +84,7 @@ function cliente(overrides: Partial<any> = {}) {
     primeiro_contato_em: "2026-01-01",
     ultimo_contato_em: "2026-08-01",
     touch_count: 4,
-    negociacoes_abertas: 1,
+    atendimentos_abertos: 1,
     ...overrides,
   };
 }
@@ -144,7 +144,7 @@ describe("ClientesBoard — one card per human", () => {
             chave_tipo: null,
             identidade_incerta: true,
             touch_count: 1,
-            negociacoes_abertas: 0,
+            atendimentos_abertos: 0,
           }),
         ],
         total: 9320,

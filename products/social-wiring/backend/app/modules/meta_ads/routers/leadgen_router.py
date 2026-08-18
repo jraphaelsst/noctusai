@@ -19,7 +19,7 @@ secret), which is why both are named explicitly everywhere here.
 
 ``bypass_when_unset=False`` is a DELIBERATE deviation from the seed
 skeleton's ``True``. A forged POST here writes lead PII into
-``meta_ads_leads`` AND auto-spawns a ``negociacoes_venda`` funnel card via
+``meta_ads_leads`` AND auto-spawns a ``atendimentos`` funnel card via
 migration 034's trigger — unauthenticated write-through to the operator's
 CRM. The bypass affordance exists for early-dev; this credential is already
 live in production, so an unset secret must fail LOUDLY rather than silently

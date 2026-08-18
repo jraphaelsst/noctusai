@@ -19,10 +19,10 @@ import {
 import type { Lead, LeadSource } from "./types";
 import {
   nomeDoProcesso,
-  origemDaNegociacao,
+  origemDoAtendimento,
   origemDoProcesso,
-  type NegociacaoCampanha,
-  type NegociacaoVenda,
+  type AtendimentoCampanha,
+  type Atendimento,
   type ProcessoVenda,
 } from "@/types/pipeline";
 
@@ -60,7 +60,7 @@ const LEAD: Lead = {
   updated_at: null,
 };
 
-const CAMPANHA: NegociacaoCampanha = {
+const CAMPANHA: AtendimentoCampanha = {
   id: "m1",
   full_name: "Leonora Lira",
   email: "leonora@example.com",
@@ -175,7 +175,7 @@ describe("campanhaDetailSections", () => {
   });
 });
 
-function sections0(c: NegociacaoCampanha) {
+function sections0(c: AtendimentoCampanha) {
   return campanhaDetailSections(c).flatMap((s) => s.fields);
 }
 
@@ -206,21 +206,21 @@ describe("card → origin resolution", () => {
     lead_id: "l1",
     meta_ads_lead_id: null,
     campanha: null,
-  } as unknown as NegociacaoVenda;
+  } as unknown as Atendimento;
 
   const negCampanha = {
     id: "n2",
     lead_id: null,
     meta_ads_lead_id: "m1",
     campanha: CAMPANHA,
-  } as unknown as NegociacaoVenda;
+  } as unknown as Atendimento;
 
   it("a lead-origin card is opened by id (fetched whole)", () => {
-    expect(origemDaNegociacao(negLead)).toEqual({ leadId: "l1", campanha: null });
+    expect(origemDoAtendimento(negLead)).toEqual({ leadId: "l1", campanha: null });
   });
 
   it("a campaign-origin card is opened from its own projection — there is no leads row", () => {
-    expect(origemDaNegociacao(negCampanha)).toEqual({ leadId: null, campanha: CAMPANHA });
+    expect(origemDoAtendimento(negCampanha)).toEqual({ leadId: null, campanha: CAMPANHA });
   });
 
   it("a processo resolves to the SAME origin as the negociação it came from", () => {
@@ -228,9 +228,9 @@ describe("card → origin resolution", () => {
     // its lead one hop further out, through the deal.
     const processo = {
       id: "p1",
-      negociacao: { id: "n1", lead_id: "l1", campanha: null },
+      atendimento: { id: "n1", lead_id: "l1", campanha: null },
     } as unknown as ProcessoVenda;
-    expect(origemDoProcesso(processo)).toEqual(origemDaNegociacao(negLead));
+    expect(origemDoProcesso(processo)).toEqual(origemDoAtendimento(negLead));
   });
 
   it("a processo whose negociação did not load resolves to nothing, not a crash", () => {
@@ -250,17 +250,17 @@ describe("card → origin resolution", () => {
     meta_ads_lead_id: "m1",
     campanha: CAMPANHA,
     lead: { id: "l9", cliente_nome: "Ana Silva", contato: "11999998888" },
-  } as unknown as NegociacaoVenda;
+  } as unknown as Atendimento;
 
   it("a collapsed card opens the lead merged from its sibling, despite a null FK", () => {
-    expect(origemDaNegociacao(negColapsadaComLeadMesclado)).toEqual({
+    expect(origemDoAtendimento(negColapsadaComLeadMesclado)).toEqual({
       leadId: "l9",
       campanha: CAMPANHA,
     });
   });
 
   it("a collapsed card still carries BOTH origins — that is the whole point", () => {
-    const origem = origemDaNegociacao(negColapsadaComLeadMesclado);
+    const origem = origemDoAtendimento(negColapsadaComLeadMesclado);
     expect(origem.leadId).not.toBeNull();
     expect(origem.campanha).not.toBeNull();
   });
@@ -268,7 +268,7 @@ describe("card → origin resolution", () => {
   it("a processo behind a collapsed negociação reaches the merged lead too", () => {
     const processo = {
       id: "p3",
-      negociacao: {
+      atendimento: {
         id: "n3",
         lead_id: null,
         campanha: CAMPANHA,
@@ -281,13 +281,13 @@ describe("card → origin resolution", () => {
 
 describe("nomeDoProcesso", () => {
   it("prefers the deal title", () => {
-    const p = { negociacao: { titulo: "Apto 42" } } as unknown as ProcessoVenda;
+    const p = { atendimento: { titulo: "Apto 42" } } as unknown as ProcessoVenda;
     expect(nomeDoProcesso(p)).toBe("Apto 42");
   });
 
   it("falls back through the origin before giving up", () => {
     const p = {
-      negociacao: { titulo: null, lead: { cliente_nome: "Maria Silva" } },
+      atendimento: { titulo: null, lead: { cliente_nome: "Maria Silva" } },
     } as unknown as ProcessoVenda;
     expect(nomeDoProcesso(p)).toBe("Maria Silva");
   });

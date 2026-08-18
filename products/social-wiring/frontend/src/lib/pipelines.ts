@@ -10,26 +10,26 @@
 import { api } from "@/lib/api";
 import { createPipelineHooks } from "@noctusai/lib/components";
 
-import type { NegociacaoVenda, ProcessoVenda } from "@/types/pipeline";
+import type { Atendimento, ProcessoVenda } from "@/types/pipeline";
 
 /**
  * Funil de Vendas.
  *
  * `boardEndpoint` and `moveEndpoint` differ because the board is a VIEW
- * (`/api/funil`) while the card is a RESOURCE (`/api/negociacoes-venda`).
+ * (`/api/funil`) while the card is a RESOURCE (`/api/atendimentos-venda`).
  */
-export const funilPipeline = createPipelineHooks<NegociacaoVenda>(
+export const funilPipeline = createPipelineHooks<Atendimento>(
   {
     queryKey: "sw-funil",
     boardEndpoint: "/api/funil",
     stagesEndpoint: "/api/funil/etapas",
-    moveEndpoint: "/api/negociacoes-venda",
+    moveEndpoint: "/api/atendimentos-venda",
     getCardId: (n) => n.id,
     getCardValue: (n) => Number(n.valor_estimado || 0),
     entityLabel: "negociação",
     // Accepting a proposal moves the deal onto the other board, and the Leads
     // surface shows lead state that a funnel action can change.
-    invalidateOnSettle: ["sw-processos", "negociacoes-venda", "leads"],
+    invalidateOnSettle: ["sw-processos", "atendimentos-venda", "leads"],
   },
   api,
 );

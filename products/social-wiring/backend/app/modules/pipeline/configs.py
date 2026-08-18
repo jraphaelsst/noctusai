@@ -15,9 +15,9 @@ carries both nested joins and the UI renders whichever is present.
 P1.4 COMPLETION — ONE CARD PER PERSON (lead-card-hub roadmap §1/§5)
 ---------------------------------------------------------------------
 A Meta lead fires BOTH `spawn_funil_card_on_lead` and
-`spawn_funil_card_on_meta_lead` for the same human, so `negociacoes_venda`
+`spawn_funil_card_on_meta_lead` for the same human, so `atendimentos`
 can hold several rows sharing one `cliente_id` (migration `048`). Migration
-`054` + `clientes_service._collapse_negociacoes` mark every loser with
+`054` + `clientes_service._collapse_atendimentos` mark every loser with
 `substituida_por` (never deleting a row — D3's reversibility bar). The read
 path here is the other half: `obter_funil` excludes `substituida_por IS NOT
 NULL` rows and `attach_colapsadas` merges the union of every folded row's
@@ -37,10 +37,10 @@ from noctusai_lib.primitives.phone import phone_search_digits
 
 PIPELINE_FUNIL = PipelineConfig(
     pipeline="funil",
-    card_table="negociacoes_venda",
+    card_table="atendimentos",
     value_field="valor_estimado",
     entity_label="negociação",
-    entity_kind="negociacao_venda",
+    entity_kind="atendimento",
     # No `clientes` table in this schema — the card's origin is a lead, and the
     # history row does not denormalise one. Explicitly None rather than left at
     # the default, which would make the primitive look for a column that does
@@ -79,11 +79,11 @@ _CAMPANHA_CARD_FIELDS = (
 )
 _STAGE_FIELDS = "id, slug, label, cor, papel, posicao"
 
-NEGOCIACAO_SELECT = (
+ATENDIMENTO_SELECT = (
     "*,"
-    f"lead:leads!negociacoes_venda_lead_id_fkey({_LEAD_CARD_FIELDS}),"
-    f"campanha:meta_ads_leads!negociacoes_venda_meta_ads_lead_id_fkey({_CAMPANHA_CARD_FIELDS}),"
-    f"etapa_rel:pipeline_stages!negociacoes_venda_etapa_id_fkey({_STAGE_FIELDS})"
+    f"lead:leads!atendimentos_lead_id_fkey({_LEAD_CARD_FIELDS}),"
+    f"campanha:meta_ads_leads!atendimentos_meta_ads_lead_id_fkey({_CAMPANHA_CARD_FIELDS}),"
+    f"etapa_rel:pipeline_stages!atendimentos_etapa_id_fkey({_STAGE_FIELDS})"
 )
 
 # A processo card must open the SAME modal as the funil card it came from, so
@@ -92,10 +92,10 @@ NEGOCIACAO_SELECT = (
 # to see the lead" would be true on one board and false on the other.
 PROCESSO_SELECT = (
     "*,"
-    "negociacao:negociacoes_venda!processos_venda_negociacao_venda_id_fkey"
+    "atendimento:atendimentos!processos_venda_atendimento_id_fkey"
     "(id, titulo, valor_estimado, closed_at, lead_id, meta_ads_lead_id,"
-    f"lead:leads!negociacoes_venda_lead_id_fkey({_LEAD_CARD_FIELDS}),"
-    f"campanha:meta_ads_leads!negociacoes_venda_meta_ads_lead_id_fkey({_CAMPANHA_CARD_FIELDS})),"
+    f"lead:leads!atendimentos_lead_id_fkey({_LEAD_CARD_FIELDS}),"
+    f"campanha:meta_ads_leads!atendimentos_meta_ads_lead_id_fkey({_CAMPANHA_CARD_FIELDS})),"
     f"etapa_rel:pipeline_stages!processos_venda_etapa_id_fkey({_STAGE_FIELDS})"
 )
 
@@ -109,9 +109,9 @@ _NEGOCIACAO_FIELDS = (
     "cliente_id", "colapsadas",
 )
 _PROCESSO_FIELDS = (
-    "id", "org_id", "negociacao_venda_id", "etapa_id", "valor", "observacoes",
+    "id", "org_id", "atendimento_id", "etapa_id", "valor", "observacoes",
     "kanban_pos", "arquivado", "created_at", "updated_at",
-    "negociacao", "etapa_rel",
+    "atendimento", "etapa_rel",
 )
 # One entry per negociação folded into a survivor — enough for a future
 # audit/undo affordance, never the whole row (`org_id`/`kanban_pos`/etc.
@@ -127,7 +127,7 @@ _COLAPSADA_FIELDS = (
 _IN_FILTER_BATCH = 200
 
 
-def negociacao_to_dto(row: dict[str, Any] | None) -> dict[str, Any] | None:
+def atendimento_to_dto(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if not row:
         return row
     return {k: row.get(k) for k in _NEGOCIACAO_FIELDS if k in row}
@@ -146,7 +146,7 @@ def _batched(items: list, size: int):
 
 
 def _fetch_colapsadas(client: Any, org_id: str, survivor_ids: list[str]) -> dict[str, list[dict]]:
-    """Every `negociacoes_venda` row folded into one of `survivor_ids`,
+    """Every `atendimentos` row folded into one of `survivor_ids`,
     keyed by `substituida_por`. Batched (an unbounded `in_` overflows the
     request line — see `_IN_FILTER_BATCH`) and paginated via the seed's
     `iter_paged_rows` rather than a hand-rolled `while True: range(...)`
@@ -159,8 +159,8 @@ def _fetch_colapsadas(client: Any, org_id: str, survivor_ids: list[str]) -> dict
     for batch in _batched(survivor_ids, _IN_FILTER_BATCH):
         def _fetch_page(start: int, end: int, _batch=batch):
             return (
-                client.table("negociacoes_venda")
-                .select(NEGOCIACAO_SELECT)
+                client.table("atendimentos")
+                .select(ATENDIMENTO_SELECT)
                 .eq("org_id", org_id)
                 .in_("substituida_por", _batch)
                 .order("id")
@@ -170,7 +170,7 @@ def _fetch_colapsadas(client: Any, org_id: str, survivor_ids: list[str]) -> dict
             )
 
         for row in iter_paged_rows(
-            _fetch_page, label=f"negociacoes colapsadas para org_id={org_id}",
+            _fetch_page, label=f"atendimentos colapsadas para org_id={org_id}",
         ):
             by_survivor.setdefault(row["substituida_por"], []).append(row)
     return by_survivor
@@ -199,11 +199,11 @@ def _merge_origem(survivor: dict, colapsadas: list[dict]) -> None:
 
 
 def attach_colapsadas(client: Any, org_id: str, rows: list[dict]) -> list[dict]:
-    """Enrich each surviving `negociacoes_venda` row with the union of
+    """Enrich each surviving `atendimentos` row with the union of
     every origin folded into it by migration `054` / `_collapse_
-    negociacoes` — see the module docstring's "P1.4 completion" section.
+    atendimentos` — see the module docstring's "P1.4 completion" section.
     Mutates and returns `rows`; every row gets a `colapsadas` key (empty
-    list when nothing was folded into it), so `negociacao_to_dto`'s
+    list when nothing was folded into it), so `atendimento_to_dto`'s
     whitelist lookup (`if k in row`) always finds it.
     """
     by_survivor = _fetch_colapsadas(client, org_id, [r["id"] for r in rows])
@@ -259,7 +259,7 @@ def _matches_phone(row: dict, needle: str) -> bool:
     return False
 
 
-def search_negociacoes(rows: list[dict], query: str) -> list[dict]:
+def search_atendimentos(rows: list[dict], query: str) -> list[dict]:
     """Free-text filter across whichever origin the card has."""
     q = query.lower()
 
@@ -284,7 +284,7 @@ def search_processos(rows: list[dict], query: str) -> list[dict]:
     q = query.lower()
 
     def matches(row: dict) -> bool:
-        neg = row.get("negociacao") or {}
+        neg = row.get("atendimento") or {}
         haystack = (neg.get("titulo"), row.get("observacoes")) + _origin_haystack(neg)
         if any(q in str(v or "").lower() for v in haystack):
             return True

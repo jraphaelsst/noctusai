@@ -116,7 +116,7 @@ beforeEach(() => {
 
 describe("useCardResumo", () => {
   it("GETs /api/clientes/{id}/card", async () => {
-    mockGet.mockResolvedValue({ cliente: {}, tags: [], membros: [], datas: {}, badges: {}, negociacoes: [] });
+    mockGet.mockResolvedValue({ cliente: {}, tags: [], membros: [], datas: {}, badges: {}, atendimentos: [] });
     const hook = useCardResumo("cl1") as any;
     await hook._queryFn();
     expect(mockGet).toHaveBeenCalledWith("/api/clientes/cl1/card");

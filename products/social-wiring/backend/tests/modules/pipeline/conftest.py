@@ -31,6 +31,8 @@ FUNIL_STAGES = [
         ("contato", "Contato", None),
         ("qualificado", "Qualificado", None),
         ("proposta", "Proposta", "proposta_aceite"),
+        # The STAGE keeps its name — after migration 060 it is the only
+        # negociação in the system, which is the point of the rename.
         ("negociacao", "Negociação", None),
         ("fechado", "Fechado", "final"),
     ])
@@ -56,7 +58,7 @@ STAGE_ID = {s["slug"]: s["id"] for s in FUNIL_STAGES}
 PROC_STAGE_ID = {s["slug"]: s["id"] for s in PROC_STAGES}
 
 
-def negociacao(nid="neg-1", etapa="novo", status="aberta", **over):
+def atendimento(nid="neg-1", etapa="novo", status="aberta", **over):
     row = {
         "id": nid,
         "org_id": ORG_A,
@@ -81,13 +83,13 @@ def processo(pid="proc-1", etapa="contrato", **over):
     row = {
         "id": pid,
         "org_id": ORG_A,
-        "negociacao_venda_id": "neg-1",
+        "atendimento_id": "neg-1",
         "etapa_id": PROC_STAGE_ID[etapa],
         "valor": 1000,
         "observacoes": None,
         "kanban_pos": 0,
         "arquivado": False,
-        "negociacao": {"id": "neg-1", "titulo": "Lead Teste"},
+        "atendimento": {"id": "neg-1", "titulo": "Lead Teste"},
         "etapa_rel": next(s for s in PROC_STAGES if s["id"] == PROC_STAGE_ID[etapa]),
     }
     row.update(over)
@@ -112,7 +114,7 @@ def http_client(mock_db):
 
     scoped.set_table_data("pipeline_stages", FUNIL_STAGES + PROC_STAGES + [OTHER_ORG_STAGE])
     scoped.set_table_data("pipeline_movimentos", [])
-    scoped.set_table_data("negociacoes_venda", [])
+    scoped.set_table_data("atendimentos", [])
     scoped.set_table_data("processos_venda", [])
 
     with (
@@ -134,5 +136,5 @@ def auth_headers() -> dict:
 
 __all__ = [
     "ORG_A", "ORG_B", "FUNIL_STAGES", "PROC_STAGES", "OTHER_ORG_STAGE",
-    "STAGE_ID", "PROC_STAGE_ID", "negociacao", "processo", "auth_headers",
+    "STAGE_ID", "PROC_STAGE_ID", "atendimento", "processo", "auth_headers",
 ]

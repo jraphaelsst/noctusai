@@ -22,14 +22,14 @@ from .conftest import (
     PROC_STAGE_ID,
     STAGE_ID,
     auth_headers,
-    negociacao,
+    atendimento,
     processo,
 )
 
 
 class TestFunilBoard:
     def test_emits_every_configured_stage(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [negociacao("neg-1", "novo")])
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
         r = http_client.get("/api/funil", headers=auth_headers())
         assert r.status_code == 200
         colunas = r.json()["data"]
@@ -46,10 +46,10 @@ class TestFunilBoard:
         assert OTHER_ORG_STAGE["id"] not in ids
 
     def test_groups_and_totals(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [
-            negociacao("neg-1", "proposta", valor_estimado=1000),
-            negociacao("neg-2", "proposta", valor_estimado=500),
-            negociacao("neg-3", "novo", valor_estimado=250),
+        http_client.scoped.set_table_data("atendimentos", [
+            atendimento("neg-1", "proposta", valor_estimado=1000),
+            atendimento("neg-2", "proposta", valor_estimado=500),
+            atendimento("neg-3", "novo", valor_estimado=250),
         ])
         r = http_client.get("/api/funil", headers=auth_headers())
         colunas = {c["stage"]["slug"]: c for c in r.json()["data"]}
@@ -58,15 +58,15 @@ class TestFunilBoard:
         assert colunas["novo"]["total"] == 1
 
     def test_closed_deals_are_off_the_board(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [
-            negociacao("neg-1", "fechado", status="aceita", closed_at="2026-07-28T00:00:00Z"),
+        http_client.scoped.set_table_data("atendimentos", [
+            atendimento("neg-1", "fechado", status="aceita", closed_at="2026-07-28T00:00:00Z"),
         ])
         r = http_client.get("/api/funil", headers=auth_headers())
         assert all(c["total"] == 0 for c in r.json()["data"])
 
     def test_dto_strips_unknown_columns(self, http_client):
         http_client.scoped.set_table_data(
-            "negociacoes_venda", [negociacao("neg-1", "novo", coluna_interna="não vaza")]
+            "atendimentos", [atendimento("neg-1", "novo", coluna_interna="não vaza")]
         )
         r = http_client.get("/api/funil", headers=auth_headers())
         cards = [c for col in r.json()["data"] for c in col["cards"]]
@@ -76,8 +76,8 @@ class TestFunilBoard:
 class TestP14OneCardPerPerson:
     """P1.4 completion (lead-card-hub roadmap §1/§5): a Meta lead fires
     BOTH `spawn_funil_card_on_lead` and `spawn_funil_card_on_meta_lead`, so
-    one human can end up with two `negociacoes_venda` rows. Migration `054`
-    + `clientes_service._collapse_negociacoes` mark the loser
+    one human can end up with two `atendimentos` rows. Migration `054`
+    + `clientes_service._collapse_atendimentos` mark the loser
     (`substituida_por`) without deleting it; `obter_funil` excludes it and
     merges the union of both origins' data onto the survivor."""
 
@@ -89,12 +89,12 @@ class TestP14OneCardPerPerson:
     }
 
     def test_only_the_survivor_reaches_the_board(self, http_client):
-        survivor = negociacao("neg-survivor", "novo", cliente_id="c1")
-        loser = negociacao(
+        survivor = atendimento("neg-survivor", "novo", cliente_id="c1")
+        loser = atendimento(
             "neg-loser", "novo", cliente_id="c1", substituida_por="neg-survivor",
             lead=None, campanha=self._CAMPANHA,
         )
-        http_client.scoped.set_table_data("negociacoes_venda", [survivor, loser])
+        http_client.scoped.set_table_data("atendimentos", [survivor, loser])
         r = http_client.get("/api/funil", headers=auth_headers())
         assert r.status_code == 200
         cards = [c for col in r.json()["data"] for c in col["cards"]]
@@ -105,12 +105,12 @@ class TestP14OneCardPerPerson:
         campaign-origin only. Both must still be reachable from the ONE
         card the board now shows — `leadDetailSections` renders from
         `lead`, `campanhaDetailSections` from `campanha`."""
-        survivor = negociacao("neg-survivor", "novo", cliente_id="c1")
-        loser = negociacao(
+        survivor = atendimento("neg-survivor", "novo", cliente_id="c1")
+        loser = atendimento(
             "neg-loser", "novo", cliente_id="c1", substituida_por="neg-survivor",
             lead=None, campanha=self._CAMPANHA,
         )
-        http_client.scoped.set_table_data("negociacoes_venda", [survivor, loser])
+        http_client.scoped.set_table_data("atendimentos", [survivor, loser])
         r = http_client.get("/api/funil", headers=auth_headers())
         [card] = [c for col in r.json()["data"] for c in col["cards"]]
         assert card["lead"]["cliente_nome"] == "Lead Teste"  # survivor's own
@@ -126,12 +126,12 @@ class TestP14OneCardPerPerson:
         shape, but possible) must never have its own data overwritten by a
         sibling's."""
         own_campanha = {**self._CAMPANHA, "id": "m-own", "full_name": "Own"}
-        survivor = negociacao("neg-survivor", "novo", cliente_id="c1", campanha=own_campanha)
-        loser = negociacao(
+        survivor = atendimento("neg-survivor", "novo", cliente_id="c1", campanha=own_campanha)
+        loser = atendimento(
             "neg-loser", "novo", cliente_id="c1", substituida_por="neg-survivor",
             campanha=self._CAMPANHA,
         )
-        http_client.scoped.set_table_data("negociacoes_venda", [survivor, loser])
+        http_client.scoped.set_table_data("atendimentos", [survivor, loser])
         r = http_client.get("/api/funil", headers=auth_headers())
         [card] = [c for col in r.json()["data"] for c in col["cards"]]
         assert card["campanha"]["id"] == "m-own"
@@ -140,8 +140,8 @@ class TestP14OneCardPerPerson:
         """No person layer resolved yet (or ever, for a keyless lead) must
         never make a card vanish from the board — the no-silent-errors leg
         of this slice."""
-        orphan = negociacao("neg-orphan", "novo", cliente_id=None)
-        http_client.scoped.set_table_data("negociacoes_venda", [orphan])
+        orphan = atendimento("neg-orphan", "novo", cliente_id=None)
+        http_client.scoped.set_table_data("atendimentos", [orphan])
         r = http_client.get("/api/funil", headers=auth_headers())
         cards = [c for col in r.json()["data"] for c in col["cards"]]
         assert [c["id"] for c in cards] == ["neg-orphan"]
@@ -155,16 +155,16 @@ class TestP14OneCardPerPerson:
         postgrest-row-cap.md` documents."""
         from app.modules.pipeline import configs as cfg
 
-        survivor = negociacao("neg-survivor", "novo", cliente_id="c1")
+        survivor = atendimento("neg-survivor", "novo", cliente_id="c1")
         siblings = [
-            negociacao(
+            atendimento(
                 f"neg-loser-{i}", "novo", cliente_id="c1",
                 substituida_por="neg-survivor", lead=None,
                 campanha={**self._CAMPANHA, "id": f"m{i}"},
             )
             for i in range(cfg._IN_FILTER_BATCH + 5)
         ]
-        http_client.scoped.set_table_data("negociacoes_venda", [survivor, *siblings])
+        http_client.scoped.set_table_data("atendimentos", [survivor, *siblings])
         r = http_client.get("/api/funil", headers=auth_headers())
         assert r.status_code == 200
         [card] = [c for col in r.json()["data"] for c in col["cards"]]
@@ -172,17 +172,17 @@ class TestP14OneCardPerPerson:
 
 
 class TestNoCreateEndpoint:
-    def test_post_negociacoes_is_not_routable(self, http_client):
+    def test_post_atendimentos_is_not_routable(self, http_client):
         """Cards exist because a lead arrived — the DB trigger owns creation."""
-        r = http_client.post("/api/negociacoes-venda", json={}, headers=auth_headers())
+        r = http_client.post("/api/atendimentos-venda", json={}, headers=auth_headers())
         assert r.status_code == 405
 
 
 class TestMoverEtapa:
     def test_move_writes_history(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [negociacao("neg-1", "novo")])
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
         r = http_client.post(
-            "/api/negociacoes-venda/neg-1/mover-etapa",
+            "/api/atendimentos-venda/neg-1/mover-etapa",
             json={"para_etapa_id": STAGE_ID["contato"]},
             headers=auth_headers(),
         )
@@ -197,9 +197,9 @@ class TestMoverEtapa:
         assert rows[0]["org_id"]
 
     def test_same_stage_move_writes_no_history(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [negociacao("neg-1", "novo")])
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
         r = http_client.post(
-            "/api/negociacoes-venda/neg-1/mover-etapa",
+            "/api/atendimentos-venda/neg-1/mover-etapa",
             json={"para_etapa_id": STAGE_ID["novo"], "novo_indice": 2},
             headers=auth_headers(),
         )
@@ -207,20 +207,20 @@ class TestMoverEtapa:
         assert http_client.scoped.table("pipeline_movimentos").inserted_payloads == []
 
     def test_move_to_another_orgs_stage_404s(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [negociacao("neg-1", "novo")])
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
         r = http_client.post(
-            "/api/negociacoes-venda/neg-1/mover-etapa",
+            "/api/atendimentos-venda/neg-1/mover-etapa",
             json={"para_etapa_id": OTHER_ORG_STAGE["id"]},
             headers=auth_headers(),
         )
         assert r.status_code == 404
 
     def test_move_refuses_a_closed_deal(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [
-            negociacao("neg-1", "fechado", status="aceita", closed_at="2026-07-28T00:00:00Z"),
+        http_client.scoped.set_table_data("atendimentos", [
+            atendimento("neg-1", "fechado", status="aceita", closed_at="2026-07-28T00:00:00Z"),
         ])
         r = http_client.post(
-            "/api/negociacoes-venda/neg-1/mover-etapa",
+            "/api/atendimentos-venda/neg-1/mover-etapa",
             json={"para_etapa_id": STAGE_ID["novo"]},
             headers=auth_headers(),
         )
@@ -229,9 +229,9 @@ class TestMoverEtapa:
 
 class TestAceitarProposta:
     def test_accept_from_the_role_stage_spawns_a_processo(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [negociacao("neg-1", "proposta")])
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "proposta")])
         r = http_client.post(
-            "/api/negociacoes-venda/neg-1/aceitar-proposta", headers=auth_headers()
+            "/api/atendimentos-venda/neg-1/aceitar-proposta", headers=auth_headers()
         )
         assert r.status_code == 200
         body = r.json()["data"]
@@ -240,12 +240,12 @@ class TestAceitarProposta:
         assert len(inserted) == 1
         # lands on the FIRST configured processos stage, derived from order
         assert inserted[0]["etapa_id"] == PROC_STAGE_ID["contrato"]
-        assert inserted[0]["negociacao_venda_id"] == "neg-1"
+        assert inserted[0]["atendimento_id"] == "neg-1"
 
     def test_accept_is_refused_outside_the_role_stage(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [negociacao("neg-1", "novo")])
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
         r = http_client.post(
-            "/api/negociacoes-venda/neg-1/aceitar-proposta", headers=auth_headers()
+            "/api/atendimentos-venda/neg-1/aceitar-proposta", headers=auth_headers()
         )
         assert r.status_code == 400
         assert http_client.scoped.table("processos_venda").inserted_payloads == []
@@ -257,17 +257,17 @@ class TestAceitarProposta:
             for s in http_client.scoped.table("pipeline_stages").select("*").execute().data
         ]
         http_client.scoped.set_table_data("pipeline_stages", renamed)
-        http_client.scoped.set_table_data("negociacoes_venda", [negociacao("neg-1", "proposta")])
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "proposta")])
         r = http_client.post(
-            "/api/negociacoes-venda/neg-1/aceitar-proposta", headers=auth_headers()
+            "/api/atendimentos-venda/neg-1/aceitar-proposta", headers=auth_headers()
         )
         assert r.status_code == 200
 
     def test_second_accept_is_idempotent(self, http_client):
-        http_client.scoped.set_table_data("negociacoes_venda", [negociacao("neg-1", "proposta")])
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "proposta")])
         http_client.scoped.set_table_data("processos_venda", [processo("proc-1")])
         r = http_client.post(
-            "/api/negociacoes-venda/neg-1/aceitar-proposta", headers=auth_headers()
+            "/api/atendimentos-venda/neg-1/aceitar-proposta", headers=auth_headers()
         )
         assert r.status_code == 200
         assert r.json()["data"]["already_accepted"] is True
@@ -319,10 +319,10 @@ class TestNoAuth:
         ("patch", "/api/funil/etapas/fstage-0", {"label": "Nova"}),
         ("delete", "/api/funil/etapas/fstage-0", None),
         ("post", "/api/funil/etapas/reordenar", {"ordem": ["fstage-0"]}),
-        ("get", "/api/negociacoes-venda", None),
-        ("post", "/api/negociacoes-venda/neg-1/mover-etapa", {"para_etapa_id": "fstage-1"}),
-        ("post", "/api/negociacoes-venda/neg-1/aceitar-proposta", None),
-        ("post", "/api/negociacoes-venda/neg-1/perder", {}),
+        ("get", "/api/atendimentos-venda", None),
+        ("post", "/api/atendimentos-venda/neg-1/mover-etapa", {"para_etapa_id": "fstage-1"}),
+        ("post", "/api/atendimentos-venda/neg-1/aceitar-proposta", None),
+        ("post", "/api/atendimentos-venda/neg-1/perder", {}),
         ("get", "/api/processos-venda", None),
         ("get", "/api/processos-venda/etapas", None),
         ("post", "/api/processos-venda/proc-1/mover-etapa", {"para_etapa_id": "pstage-1"}),
@@ -389,37 +389,37 @@ class TestBoardSearchFindsTheNumberTheCardShows:
         }
 
     def test_funil_matches_the_displayed_canonical_number(self):
-        from app.modules.pipeline.configs import search_negociacoes
+        from app.modules.pipeline.configs import search_atendimentos
 
-        assert search_negociacoes([self._funil_row()], "+5511981912534")
+        assert search_atendimentos([self._funil_row()], "+5511981912534")
 
     def test_funil_matches_a_partial_digit_fragment(self):
-        from app.modules.pipeline.configs import search_negociacoes
+        from app.modules.pipeline.configs import search_atendimentos
 
-        assert search_negociacoes([self._funil_row()], "981912534")
+        assert search_atendimentos([self._funil_row()], "981912534")
 
     def test_funil_name_search_still_works(self):
-        from app.modules.pipeline.configs import search_negociacoes
+        from app.modules.pipeline.configs import search_atendimentos
 
-        assert search_negociacoes([self._funil_row()], "maria")
-        assert not search_negociacoes([self._funil_row()], "joão")
+        assert search_atendimentos([self._funil_row()], "maria")
+        assert not search_atendimentos([self._funil_row()], "joão")
 
     def test_campaign_origin_matches_its_already_canonical_phone(self):
-        from app.modules.pipeline.configs import search_negociacoes
+        from app.modules.pipeline.configs import search_atendimentos
 
-        assert search_negociacoes([self._campanha_row()], "5511964540451")
+        assert search_atendimentos([self._campanha_row()], "5511964540451")
 
     def test_a_different_number_does_not_match(self):
-        from app.modules.pipeline.configs import search_negociacoes
+        from app.modules.pipeline.configs import search_atendimentos
 
-        assert not search_negociacoes([self._funil_row()], "+5511999999999")
+        assert not search_atendimentos([self._funil_row()], "+5511999999999")
 
-    def test_processos_reaches_the_phone_through_the_negociacao(self):
+    def test_processos_reaches_the_phone_through_the_atendimento(self):
         # The processo board must answer the same query the funil board does,
         # or two boards showing the same deals disagree.
         from app.modules.pipeline.configs import search_processos
 
-        processo = {"id": "p1", "observacoes": None, "negociacao": self._funil_row()}
+        processo = {"id": "p1", "observacoes": None, "atendimento": self._funil_row()}
         assert search_processos([processo], "+5511981912534")
 
 
@@ -439,8 +439,8 @@ class TestBoardReadsPagePastTheRowCap:
     _OVER_CAP = 1200
 
     def test_funil_returns_every_card_past_the_cap(self, http_client):
-        rows = [negociacao(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]
-        http_client.scoped.set_table_data("negociacoes_venda", rows)
+        rows = [atendimento(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]
+        http_client.scoped.set_table_data("atendimentos", rows)
 
         r = http_client.get("/api/funil", headers=auth_headers())
 
@@ -452,11 +452,11 @@ class TestBoardReadsPagePastTheRowCap:
         )
         assert len({c["id"] for c in cards}) == self._OVER_CAP, "a page was served twice"
 
-    def test_negociacoes_list_returns_every_row_past_the_cap(self, http_client):
-        rows = [negociacao(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]
-        http_client.scoped.set_table_data("negociacoes_venda", rows)
+    def test_atendimentos_list_returns_every_row_past_the_cap(self, http_client):
+        rows = [atendimento(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]
+        http_client.scoped.set_table_data("atendimentos", rows)
 
-        r = http_client.get("/api/negociacoes-venda", headers=auth_headers())
+        r = http_client.get("/api/atendimentos-venda", headers=auth_headers())
 
         assert r.status_code == 200
         assert len(r.json()["data"]) == self._OVER_CAP

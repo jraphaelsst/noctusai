@@ -342,3 +342,93 @@ def test_add_and_drop_in_one_statement_are_both_applied():
     """
 
     assert parse_sql(sql)["app.t"] == {"id", "new"}
+
+
+class TestRename:
+    """`ALTER TABLE ... RENAME` — unsupported until migration 060
+    (social-wiring `negociacoes_venda` -> `atendimentos`) needed it.
+
+    The gap was not neutral. An unhandled table rename left the NEW name
+    absent from the schema map, which silently disables validation for that
+    table, while the OLD column name survived on the other side — so an
+    honest query against the new column failed with "table has no column X"
+    naming a column the migration plainly creates. One rename produced a
+    false failure and a silent hole simultaneously.
+    """
+
+    def test_table_rename_carries_its_columns(self):
+        schema = parse_sql(
+            """
+            CREATE TABLE social_wiring.negociacoes_venda (
+                id UUID PRIMARY KEY,
+                org_id UUID NOT NULL,
+                titulo TEXT
+            );
+            ALTER TABLE social_wiring.negociacoes_venda RENAME TO atendimentos;
+            """
+        )
+        assert "social_wiring.atendimentos" in schema
+        assert "social_wiring.negociacoes_venda" not in schema, (
+            "the old name must not linger — a query against it should fail"
+        )
+        assert {"id", "org_id", "titulo"} <= schema["social_wiring.atendimentos"]
+
+    def test_column_rename_swaps_old_for_new(self):
+        schema = parse_sql(
+            """
+            CREATE TABLE social_wiring.processos_venda (
+                id UUID PRIMARY KEY,
+                negociacao_venda_id UUID NOT NULL
+            );
+            ALTER TABLE social_wiring.processos_venda
+                RENAME COLUMN negociacao_venda_id TO atendimento_id;
+            """
+        )
+        cols = schema["social_wiring.processos_venda"]
+        assert "atendimento_id" in cols
+        assert "negociacao_venda_id" not in cols
+
+    def test_rename_inside_a_do_block_is_seen(self):
+        """Renames are guarded by DO blocks for idempotency — Postgres has
+        no `RENAME COLUMN IF EXISTS`. The walker treats DO as atomic, so the
+        clause must still be found inside the body."""
+        schema = parse_sql(
+            """
+            CREATE TABLE social_wiring.processos_venda (
+                id UUID PRIMARY KEY,
+                negociacao_venda_id UUID NOT NULL
+            );
+            DO $$
+            BEGIN
+              IF EXISTS (SELECT 1 FROM information_schema.columns
+                         WHERE table_name='processos_venda'
+                           AND column_name='negociacao_venda_id') THEN
+                ALTER TABLE social_wiring.processos_venda
+                  RENAME COLUMN negociacao_venda_id TO atendimento_id;
+              END IF;
+            END $$;
+            """
+        )
+        cols = schema["social_wiring.processos_venda"]
+        assert "atendimento_id" in cols
+        assert "negociacao_venda_id" not in cols
+
+    def test_add_column_after_a_rename_lands_on_the_new_table(self):
+        schema = parse_sql(
+            """
+            CREATE TABLE social_wiring.old_name (id UUID PRIMARY KEY);
+            ALTER TABLE social_wiring.old_name RENAME TO new_name;
+            ALTER TABLE social_wiring.new_name ADD COLUMN IF NOT EXISTS extra_col TEXT;
+            """
+        )
+        assert schema["social_wiring.new_name"] == {"id", "extra_col"}
+        assert "social_wiring.old_name" not in schema
+
+    def test_rename_if_exists_is_handled(self):
+        schema = parse_sql(
+            """
+            CREATE TABLE social_wiring.a (id UUID PRIMARY KEY);
+            ALTER TABLE IF EXISTS social_wiring.a RENAME TO b;
+            """
+        )
+        assert "social_wiring.b" in schema

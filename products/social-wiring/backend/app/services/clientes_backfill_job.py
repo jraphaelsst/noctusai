@@ -11,7 +11,7 @@ scheduler job, and no database trigger on `leads` / `meta_ads_leads`.
 
 WhatsApp intake never stopped. Measured against the live project five days
 later: 44 `leads` and 44 `meta_ads_leads` rows had no `cliente_touches` row,
-and 88 `negociacoes_venda` rows had a NULL `cliente_id` — every one of them
+and 88 `atendimentos` rows had a NULL `cliente_id` — every one of them
 created AFTER the backfill ran, none of them keyless (all 44 leads carried a
 valid `contato_norm`, so all were fully resolvable). The board simply stopped
 showing new arrivals, at roughly nine leads a day, and nothing said so.
@@ -141,8 +141,8 @@ def run_clientes_backfill(
             "ok": True,
             "clientes_created": report.clientes_created,
             "touches_created": report.touches_created,
-            "negociacoes_repointed": report.negociacoes_repointed,
-            "negociacoes_collapsed": report.negociacoes_collapsed,
+            "atendimentos_repointed": report.atendimentos_repointed,
+            "atendimentos_collapsed": report.atendimentos_collapsed,
             "stragglers_parked_for_review": report.stragglers_parked_for_review,
             # D16's reactivation half: a new touch attaching to a cliente
             # the inactivity sweep (`clientes_inactivity_service.py`) had
@@ -153,7 +153,7 @@ def run_clientes_backfill(
         })
         if (
             report.clientes_created or report.touches_created
-            or report.negociacoes_repointed or report.negociacoes_collapsed
+            or report.atendimentos_repointed or report.atendimentos_collapsed
             or report.clientes_reactivated
         ):
             # Only speak up when the pass actually attached something. A quiet
@@ -161,12 +161,11 @@ def run_clientes_backfill(
             # noise in the log.
             logger.info(
                 "clientes_backfill: org %s — %d cliente(s), %d touch(es), "
-                "%d negociac%s repointed, %d collapsed into a sibling, "
+                "%d atendimento(s) repointed, %d collapsed into a sibling, "
                 "%d reactivated",
                 org_id, report.clientes_created, report.touches_created,
-                report.negociacoes_repointed,
-                "ão" if report.negociacoes_repointed == 1 else "ões",
-                report.negociacoes_collapsed,
+                report.atendimentos_repointed,
+                report.atendimentos_collapsed,
                 report.clientes_reactivated,
             )
     return {"skipped": None, "orgs": results}

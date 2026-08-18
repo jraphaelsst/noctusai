@@ -95,7 +95,7 @@ export function ClienteCard({ cliente, onRestore, restoring, onOpen }: ClienteCa
 
         <div className="flex flex-wrap gap-3 pt-1 text-xs text-muted-foreground">
           <span>{formatCountOrDash(cliente.touch_count)} toques</span>
-          <span>{formatCountOrDash(cliente.negociacoes_abertas)} negociações</span>
+          <span>{formatCountOrDash(cliente.atendimentos_abertos)} negociações</span>
         </div>
 
         <p className="text-xs text-muted-foreground">

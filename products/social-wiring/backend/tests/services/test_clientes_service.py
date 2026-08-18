@@ -46,7 +46,7 @@ def _meta_lead(id_, nome, phone=None, email=None, created_time="2026-01-01T00:00
     }
 
 
-def _negociacao(id_, *, lead_id=None, meta_ads_lead_id=None):
+def _atendimento(id_, *, lead_id=None, meta_ads_lead_id=None):
     return {
         "id": id_,
         "org_id": ORG,
@@ -80,10 +80,10 @@ META_LEADS = [
     _meta_lead("M2", "Nova Pessoa", phone=K6, created_time="2026-07-01T00:00:00+00:00"),
 ]
 NEGOCIACOES = [
-    _negociacao("N1", lead_id="L1"),   # Group A (K1, C1) -> survivor cliente
-    _negociacao("N2", meta_ads_lead_id="M2"),  # Group G (K6, C1)
-    _negociacao("N3", lead_id="L3"),   # Group B (K2, C2) -> the SURVIVOR's own row
-    _negociacao("N4", lead_id="L5"),   # Group C (K3, C4, review) -> a review cliente
+    _atendimento("N1", lead_id="L1"),   # Group A (K1, C1) -> survivor cliente
+    _atendimento("N2", meta_ads_lead_id="M2"),  # Group G (K6, C1)
+    _atendimento("N3", lead_id="L3"),   # Group B (K2, C2) -> the SURVIVOR's own row
+    _atendimento("N4", lead_id="L5"),   # Group C (K3, C4, review) -> a review cliente
 ]
 
 
@@ -91,7 +91,7 @@ def _seed_full_fixture() -> MockSupabaseClient:
     client = _scoped_client()
     client.set_table_data("leads", [dict(r) for r in LEADS])
     client.set_table_data("meta_ads_leads", [dict(r) for r in META_LEADS])
-    client.set_table_data("negociacoes_venda", [dict(r) for r in NEGOCIACOES])
+    client.set_table_data("atendimentos", [dict(r) for r in NEGOCIACOES])
     return client
 
 
@@ -218,21 +218,21 @@ class TestRunBackfillFullFixture:
         assert cliente["chave_canonica"] is None
         assert cliente["identidade_incerta"] is True
 
-    def test_negociacoes_repointed_with_zero_orphans(self):
+    def test_atendimentos_repointed_with_zero_orphans(self):
         client = _seed_full_fixture()
         report = svc.run_backfill(client, ORG)
-        assert report.negociacoes_orphaned == []
-        assert report.negociacoes_repointed == 4
-        assert report.negociacoes_already_pointed == 0
+        assert report.atendimentos_orphaned == []
+        assert report.atendimentos_repointed == 4
+        assert report.atendimentos_already_pointed == 0
 
-        rows = client.table("negociacoes_venda").select("*").execute().data
+        rows = client.table("atendimentos").select("*").execute().data
         assert all(r["cliente_id"] is not None for r in rows)
 
-    def test_negociacao_on_a_merged_row_resolves_through_the_moved_touch(self):
+    def test_atendimento_on_a_merged_row_resolves_through_the_moved_touch(self):
         client = _seed_full_fixture()
         svc.run_backfill(client, ORG)
         [survivor] = [c for c in _clientes(client) if c["chave_canonica"] == K2]
-        [n3] = [r for r in client.table("negociacoes_venda").select("*").execute().data if r["id"] == "N3"]
+        [n3] = [r for r in client.table("atendimentos").select("*").execute().data if r["id"] == "N3"]
         assert n3["cliente_id"] == survivor["id"]
 
 
@@ -247,11 +247,11 @@ class TestRunBackfillDryRun:
         assert report.clientes_created == 11
         assert report.touches_created == 14
         assert report.merges_created == 1
-        # No clientes/cliente_touches/cliente_merges/negociacoes writes.
+        # No clientes/cliente_touches/cliente_merges/atendimentos writes.
         assert _clientes(client) == []
         assert _touches(client) == []
         assert _merges(client) == []
-        rows = client.table("negociacoes_venda").select("*").execute().data
+        rows = client.table("atendimentos").select("*").execute().data
         assert all(r["cliente_id"] is None for r in rows)
 
     def test_dry_run_never_reads_cliente_touches(self):
@@ -261,7 +261,7 @@ class TestRunBackfillDryRun:
         client.set_table_data("leads", [_lead("L1", "Solo", K1)])
         client.set_table_data("meta_ads_leads", [])
         # No set_table_data for cliente_touches/clientes/cliente_merges/
-        # negociacoes_venda at all — a read attempt would 500 for real.
+        # atendimentos at all — a read attempt would 500 for real.
         report = svc.run_backfill(client, ORG, dry_run=True)
         assert report.leads_scanned == 1
         assert report.clientes_created == 1
@@ -284,8 +284,8 @@ class TestIdempotency:
         assert second.clientes_created == 0
         assert second.touches_created == 0
         assert second.merges_created == 0
-        assert second.negociacoes_repointed == 0
-        assert second.negociacoes_already_pointed == 4
+        assert second.atendimentos_repointed == 0
+        assert second.atendimentos_already_pointed == 4
         assert len(_clientes(client)) == clientes_before
         assert len(_touches(client)) == touches_before
 
@@ -293,7 +293,7 @@ class TestIdempotency:
         client = _scoped_client()
         client.set_table_data("leads", [_lead("L1", "Solo Pessoa", K1)])
         client.set_table_data("meta_ads_leads", [])
-        client.set_table_data("negociacoes_venda", [])
+        client.set_table_data("atendimentos", [])
         first = svc.run_backfill(client, ORG)
         assert first.clientes_created == 1
         [cliente] = _clientes(client)
@@ -319,7 +319,7 @@ class TestIdempotency:
         client = _scoped_client()
         client.set_table_data("leads", [_lead("L1", "Solo Pessoa", K1)])
         client.set_table_data("meta_ads_leads", [])
-        client.set_table_data("negociacoes_venda", [])
+        client.set_table_data("atendimentos", [])
         svc.run_backfill(client, ORG)
 
         client.set_table_data(
@@ -346,7 +346,7 @@ class TestIdempotency:
         client = _scoped_client()
         client.set_table_data("leads", [_lead("L1", "Solo Pessoa", K1)])
         client.set_table_data("meta_ads_leads", [])
-        client.set_table_data("negociacoes_venda", [])
+        client.set_table_data("atendimentos", [])
         svc.run_backfill(client, ORG)
         [cliente] = _clientes(client)
 
@@ -380,7 +380,7 @@ class TestReactivationOnTouch:
         client = _scoped_client()
         client.set_table_data("leads", [_lead("L1", "Solo Pessoa", K1)])
         client.set_table_data("meta_ads_leads", [])
-        client.set_table_data("negociacoes_venda", [])
+        client.set_table_data("atendimentos", [])
         first = svc.run_backfill(client, ORG)
         assert first.clientes_reactivated == 0
         [cliente] = _clientes(client)
@@ -421,7 +421,7 @@ class TestReactivationOnTouch:
         client = _scoped_client()
         client.set_table_data("leads", [_lead("L1", "Solo Pessoa", K1)])
         client.set_table_data("meta_ads_leads", [])
-        client.set_table_data("negociacoes_venda", [])
+        client.set_table_data("atendimentos", [])
         svc.run_backfill(client, ORG)
         [cliente] = _clientes(client)
 
@@ -453,7 +453,7 @@ class TestReactivationOnTouch:
         client = _scoped_client()
         client.set_table_data("leads", [_lead("L1", "Solo Pessoa", K1)])
         client.set_table_data("meta_ads_leads", [])
-        client.set_table_data("negociacoes_venda", [])
+        client.set_table_data("atendimentos", [])
         svc.run_backfill(client, ORG)
 
         client.set_table_data(
@@ -477,7 +477,7 @@ class TestReactivationOnTouch:
 # `ingest_meta_lead` writing `leads`) AND `spawn_funil_card_on_meta_lead`
 # (writing `meta_ads_leads` directly), so one human's `leads` row and
 # `meta_ads_leads` row resolve to the SAME cliente (048's backfill) and each
-# spawn their own `negociacoes_venda` card. `_collapse_negociacoes` mirrors
+# spawn their own `atendimentos` card. `_collapse_atendimentos` mirrors
 # migration `054`'s SQL survivor rule exactly — tested directly here since
 # it is the whole of the new behaviour and going through the full
 # `run_backfill` identity-resolution machinery would only add noise.
@@ -490,13 +490,13 @@ class TestCollapseNegociacoes:
         {"id": "st-fechado", "org_id": ORG, "pipeline": "funil", "posicao": 5},
     ]
 
-    def _client(self, negociacoes: list[dict]) -> MockSupabaseClient:
+    def _client(self, atendimentos: list[dict]) -> MockSupabaseClient:
         client = _scoped_client()
         client.set_table_data("pipeline_stages", [dict(s) for s in self._STAGES])
-        client.set_table_data("negociacoes_venda", [dict(n) for n in negociacoes])
+        client.set_table_data("atendimentos", [dict(n) for n in atendimentos])
         return client
 
-    def _negociacao(self, id_, *, cliente_id, etapa="st-novo", status="aberta",
+    def _atendimento(self, id_, *, cliente_id, etapa="st-novo", status="aberta",
                      created_at="2026-01-01T00:00:00Z", substituida_por=None):
         return {
             "id": id_, "org_id": ORG, "cliente_id": cliente_id, "etapa_id": etapa,
@@ -506,49 +506,49 @@ class TestCollapseNegociacoes:
 
     def _run(self, client) -> svc.BackfillReport:
         report = svc.BackfillReport(org_id=ORG, dry_run=False)
-        svc._collapse_negociacoes(client, ORG, report)
+        svc._collapse_atendimentos(client, ORG, report)
         return report
 
     def _rows_by_id(self, client) -> dict[str, dict]:
-        rows = client.table("negociacoes_venda").select("*").execute().data
+        rows = client.table("atendimentos").select("*").execute().data
         return {r["id"]: r for r in rows}
 
     def test_furthest_advanced_stage_wins(self):
         client = self._client([
-            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+            self._atendimento("n1", cliente_id="c1", etapa="st-novo",
                               created_at="2026-01-01T00:00:00Z"),
-            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+            self._atendimento("n2", cliente_id="c1", etapa="st-proposta",
                               created_at="2026-01-02T00:00:00Z"),
         ])
         report = self._run(client)
-        assert report.negociacoes_collapsed == 1
+        assert report.atendimentos_collapsed == 1
         rows = self._rows_by_id(client)
         assert rows["n2"]["substituida_por"] is None
         assert rows["n1"]["substituida_por"] == "n2"
         assert rows["n1"]["colapsada_em"] is not None
 
-    def test_an_open_negociacao_is_never_hidden_behind_a_closed_one(self):
+    def test_an_open_atendimento_is_never_hidden_behind_a_closed_one(self):
         """The exact risk `054`'s header calls out: a `perdida` negociação
         that reached a further stage before closing must not outrank a
         currently-`aberta` one — `obter_funil` only ever shows `aberta`
         cards, so losing this tie would make the open deal vanish from the
         board entirely, which is worse than the duplicate being fixed."""
         client = self._client([
-            self._negociacao("n_closed", cliente_id="c1", etapa="st-fechado",
+            self._atendimento("n_closed", cliente_id="c1", etapa="st-fechado",
                               status="perdida", created_at="2026-01-01T00:00:00Z"),
-            self._negociacao("n_open", cliente_id="c1", etapa="st-novo",
+            self._atendimento("n_open", cliente_id="c1", etapa="st-novo",
                               status="aberta", created_at="2026-01-02T00:00:00Z"),
         ])
         report = self._run(client)
-        assert report.negociacoes_collapsed == 1
+        assert report.atendimentos_collapsed == 1
         rows = self._rows_by_id(client)
         assert rows["n_open"]["substituida_por"] is None
         assert rows["n_closed"]["substituida_por"] == "n_open"
 
     def test_tie_break_is_oldest_created_at_then_lower_id(self):
         client = self._client([
-            self._negociacao("n_b", cliente_id="c1", created_at="2026-01-01T00:00:00Z"),
-            self._negociacao("n_a", cliente_id="c1", created_at="2026-01-01T00:00:00Z"),
+            self._atendimento("n_b", cliente_id="c1", created_at="2026-01-01T00:00:00Z"),
+            self._atendimento("n_a", cliente_id="c1", created_at="2026-01-01T00:00:00Z"),
         ])
         self._run(client)
         rows = self._rows_by_id(client)
@@ -561,28 +561,28 @@ class TestCollapseNegociacoes:
         rendering — it can never be collapsed, because collapsing requires
         a `cliente_id` to group by."""
         client = self._client([
-            self._negociacao("n1", cliente_id=None),
+            self._atendimento("n1", cliente_id=None),
         ])
         report = self._run(client)
-        assert report.negociacoes_collapsed == 0
+        assert report.atendimentos_collapsed == 0
         assert self._rows_by_id(client)["n1"]["substituida_por"] is None
 
-    def test_a_lone_negociacao_for_a_cliente_is_left_alone(self):
-        client = self._client([self._negociacao("n1", cliente_id="c1")])
+    def test_a_lone_atendimento_for_a_cliente_is_left_alone(self):
+        client = self._client([self._atendimento("n1", cliente_id="c1")])
         report = self._run(client)
-        assert report.negociacoes_collapsed == 0
+        assert report.atendimentos_collapsed == 0
         assert self._rows_by_id(client)["n1"]["substituida_por"] is None
 
     def test_idempotent_a_second_pass_on_unchanged_data_is_a_no_op(self):
         client = self._client([
-            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+            self._atendimento("n1", cliente_id="c1", etapa="st-novo",
                               created_at="2026-01-01T00:00:00Z"),
-            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+            self._atendimento("n2", cliente_id="c1", etapa="st-proposta",
                               created_at="2026-01-02T00:00:00Z"),
         ])
         self._run(client)
         second = self._run(client)
-        assert second.negociacoes_collapsed == 0
+        assert second.atendimentos_collapsed == 0
         rows = self._rows_by_id(client)
         assert rows["n1"]["substituida_por"] == "n2"
         assert rows["n2"]["substituida_por"] is None
@@ -593,19 +593,19 @@ class TestCollapseNegociacoes:
         the first pass — this is what makes the sweep a projection, not a
         one-shot snapshot."""
         client = self._client([
-            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+            self._atendimento("n1", cliente_id="c1", etapa="st-novo",
                               created_at="2026-01-01T00:00:00Z"),
-            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+            self._atendimento("n2", cliente_id="c1", etapa="st-proposta",
                               created_at="2026-01-02T00:00:00Z"),
         ])
         self._run(client)  # n1 folds into n2
 
-        client.table("negociacoes_venda").insert(
-            self._negociacao("n3", cliente_id="c1", etapa="st-novo",
+        client.table("atendimentos").insert(
+            self._atendimento("n3", cliente_id="c1", etapa="st-novo",
                               created_at="2026-01-03T00:00:00Z")
         ).execute()
         second = self._run(client)
-        assert second.negociacoes_collapsed == 1
+        assert second.atendimentos_collapsed == 1
         rows = self._rows_by_id(client)
         assert rows["n2"]["substituida_por"] is None       # still the survivor
         assert rows["n3"]["substituida_por"] == "n2"
@@ -616,28 +616,28 @@ class TestCollapseNegociacoes:
         nothing was ever deleted, so restoring is a plain UPDATE on the
         two columns this migration added."""
         client = self._client([
-            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+            self._atendimento("n1", cliente_id="c1", etapa="st-novo",
                               created_at="2026-01-01T00:00:00Z"),
-            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+            self._atendimento("n2", cliente_id="c1", etapa="st-proposta",
                               created_at="2026-01-02T00:00:00Z"),
         ])
         self._run(client)
-        client.table("negociacoes_venda").update(
+        client.table("atendimentos").update(
             {"substituida_por": None, "colapsada_em": None}
         ).eq("id", "n1").execute()
         assert self._rows_by_id(client)["n1"]["substituida_por"] is None
 
     def test_independent_clientes_never_interact(self):
         client = self._client([
-            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+            self._atendimento("n1", cliente_id="c1", etapa="st-novo",
                               created_at="2026-01-01T00:00:00Z"),
-            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+            self._atendimento("n2", cliente_id="c1", etapa="st-proposta",
                               created_at="2026-01-02T00:00:00Z"),
-            self._negociacao("n3", cliente_id="c2", etapa="st-novo",
+            self._atendimento("n3", cliente_id="c2", etapa="st-novo",
                               created_at="2026-01-01T00:00:00Z"),
         ])
         report = self._run(client)
-        assert report.negociacoes_collapsed == 1
+        assert report.atendimentos_collapsed == 1
         rows = self._rows_by_id(client)
         assert rows["n3"]["substituida_por"] is None  # sole card for c2
 
@@ -822,7 +822,7 @@ class TestReadSurface:
 # `.select().execute()` and a paginated `_select_all()` are INDISTINGUISHABLE
 # under it. That is not a small gap: it makes this entire bug class untestable
 # by construction, which is why it has now shipped twice — `filter_options`
-# (fixed in c5a34390) and `_repoint_negociacoes` (found live 2026-08-13, having
+# (fixed in c5a34390) and `_repoint_atendimentos` (found live 2026-08-13, having
 # repointed 1 000 of 1 365 negociações while reporting `orphaned: []`).
 #
 # The double below models the real ceiling: an unpaginated select truncates,
@@ -879,18 +879,18 @@ class TestPostgrestRowCap:
         silently see only the first `cap` rows and leave the rest NULL while
         reporting zero orphans — exactly the live 2026-08-13 failure."""
         inner = _seed_full_fixture()
-        neg_count = len(inner.table("negociacoes_venda").select("*").execute().data)
+        neg_count = len(inner.table("atendimentos").select("*").execute().data)
         assert neg_count > 2, "fixture must exceed the cap for this to be meaningful"
 
         client = _CappingClient(inner, cap=2)
         report = svc.run_backfill(client, ORG)
 
-        assert report.negociacoes_orphaned == []
-        assert report.negociacoes_repointed == neg_count, (
-            f"repointed {report.negociacoes_repointed} of {neg_count} — an "
+        assert report.atendimentos_orphaned == []
+        assert report.atendimentos_repointed == neg_count, (
+            f"repointed {report.atendimentos_repointed} of {neg_count} — an "
             "unpaginated select was capped and reported success anyway"
         )
-        rows = inner.table("negociacoes_venda").select("*").execute().data
+        rows = inner.table("atendimentos").select("*").execute().data
         assert all(r["cliente_id"] is not None for r in rows)
 
 

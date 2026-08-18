@@ -116,7 +116,7 @@ def _lead(id_, *, corretor_id=None) -> dict:
     }
 
 
-def _negociacao(id_, cliente_id, *, valor=1000.0) -> dict:
+def _atendimento(id_, cliente_id, *, valor=1000.0) -> dict:
     return {
         "id": id_,
         "org_id": ORG_ID,
@@ -358,7 +358,7 @@ class TestListClientes:
 
 
 class TestClienteDetail:
-    def test_includes_negociacoes_and_touch_count(self, client, scoped):
+    def test_includes_atendimentos_and_touch_count(self, client, scoped):
         a1 = str(uuid4())
         scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
         scoped.set_table_data(
@@ -369,14 +369,14 @@ class TestClienteDetail:
             ],
         )
         scoped.set_table_data(
-            "negociacoes_venda",
-            [_negociacao(str(uuid4()), a1), _negociacao(str(uuid4()), a1)],
+            "atendimentos",
+            [_atendimento(str(uuid4()), a1), _atendimento(str(uuid4()), a1)],
         )
         resp = client.get(f"/api/clientes/{a1}", headers=_auth())
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["id"] == a1
-        assert len(body["negociacoes"]) == 2
+        assert len(body["atendimentos"]) == 2
         assert body["touch_count"] == 2
 
     def test_404_unknown(self, client, scoped):

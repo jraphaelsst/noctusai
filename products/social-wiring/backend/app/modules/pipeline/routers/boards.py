@@ -1,5 +1,5 @@
 """
-Funil de Vendas + Processos de Venda — `/api/funil`, `/api/negociacoes-venda`,
+Funil de Vendas + Processos de Venda — `/api/funil`, `/api/atendimentos-venda`,
 `/api/processos-venda`.
 
 Every stage-move goes through `noctusai_lib.domain.pipeline.move_card`, which
@@ -10,7 +10,7 @@ cannot ship without an audit trail the way erp's Processos board once did.
 Cards are NOT created here. A card exists because a lead arrived, and the
 trigger installed by migration 034 spawns it — for leads from the router, from
 the workbook importer, and from the Meta Lead-Ads sync alike. There is
-deliberately no `POST /api/negociacoes-venda`.
+deliberately no `POST /api/atendimentos-venda`.
 """
 from __future__ import annotations
 
@@ -35,20 +35,20 @@ from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import get_current_user_org_unified
 from app.modules.pipeline.configs import (
-    NEGOCIACAO_SELECT,
+    ATENDIMENTO_SELECT,
     PIPELINE_FUNIL,
     PIPELINE_PROCESSOS,
     PROCESSO_SELECT,
     attach_colapsadas,
-    negociacao_to_dto,
+    atendimento_to_dto,
     processo_to_dto,
-    search_negociacoes,
+    search_atendimentos,
     search_processos,
 )
 from app.modules.pipeline.deps import pipeline_context
 
 funil_router = APIRouter(prefix="/api/funil", tags=["funil"])
-negociacoes_router = APIRouter(prefix="/api/negociacoes-venda", tags=["negociacoes-venda"])
+atendimentos_router = APIRouter(prefix="/api/atendimentos-venda", tags=["atendimentos-venda"])
 processos_router = APIRouter(prefix="/api/processos-venda", tags=["processos-venda"])
 
 STATUS_ABERTA = "aberta"
@@ -87,7 +87,7 @@ class MoverEtapaRequest(StrictHttpModel):
     novo_indice: Optional[int] = None
 
 
-class NegociacaoUpdate(StrictHttpModel):
+class AtendimentoUpdate(StrictHttpModel):
     titulo: Optional[str] = Field(default=None, max_length=255)
     valor_estimado: Optional[float] = Field(default=None, ge=0)
     arquivado: Optional[bool] = None
@@ -123,8 +123,8 @@ def obter_funil(
 
     def build_query():
         query = (
-            ctx.db.table("negociacoes_venda")
-            .select(NEGOCIACAO_SELECT)
+            ctx.db.table("atendimentos")
+            .select(ATENDIMENTO_SELECT)
             .eq("org_id", ctx.org_id)
             .eq("status", STATUS_ABERTA)
             .is_("substituida_por", "null")
@@ -138,15 +138,15 @@ def obter_funil(
     rows = _fetch_all(build_query, label="funil negociações")
     rows = attach_colapsadas(ctx.db, ctx.org_id, rows)
     if busca:
-        rows = search_negociacoes(rows, busca)
+        rows = search_atendimentos(rows, busca)
 
     return success_response(
-        group_into_colunas(PIPELINE_FUNIL, stages, rows, row_to_dto=negociacao_to_dto)
+        group_into_colunas(PIPELINE_FUNIL, stages, rows, row_to_dto=atendimento_to_dto)
     )
 
 
-@negociacoes_router.get("")
-def listar_negociacoes(
+@atendimentos_router.get("")
+def listar_atendimentos(
     status: Optional[str] = Query(None),
     lead_id: Optional[str] = Query(None),
     incluir_arquivados: bool = Query(False),
@@ -160,8 +160,8 @@ def listar_negociacoes(
     ctx = pipeline_context(auth)
     def build_query():
         query = (
-            ctx.db.table("negociacoes_venda")
-            .select(NEGOCIACAO_SELECT)
+            ctx.db.table("atendimentos")
+            .select(ATENDIMENTO_SELECT)
             .eq("org_id", ctx.org_id)
             .is_("substituida_por", "null")
         )
@@ -174,13 +174,13 @@ def listar_negociacoes(
         return query
 
     rows = _fetch_all(build_query, label="negociações")
-    return success_response([negociacao_to_dto(r) for r in rows])
+    return success_response([atendimento_to_dto(r) for r in rows])
 
 
-@negociacoes_router.patch("/{negociacao_id}")
-def atualizar_negociacao(
-    negociacao_id: str,
-    body: NegociacaoUpdate,
+@atendimentos_router.patch("/{atendimento_id}")
+def atualizar_atendimento(
+    atendimento_id: str,
+    body: AtendimentoUpdate,
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
     ctx = pipeline_context(auth)
@@ -188,61 +188,61 @@ def atualizar_negociacao(
     if not data:
         raise ValidationError_("Nenhum campo para atualizar.")
     rows = (
-        ctx.db.table("negociacoes_venda")
+        ctx.db.table("atendimentos")
         .update(data)
-        .eq("id", negociacao_id)
+        .eq("id", atendimento_id)
         .eq("org_id", ctx.org_id)
         .execute()
         .data
         or []
     )
     if not rows:
-        raise NotFoundError("Negociação", negociacao_id)
-    return success_response(negociacao_to_dto(rows[0]))
+        raise NotFoundError("Atendimento", atendimento_id)
+    return success_response(atendimento_to_dto(rows[0]))
 
 
-@negociacoes_router.post("/{negociacao_id}/mover-etapa")
-def mover_negociacao(
-    negociacao_id: str,
+@atendimentos_router.post("/{atendimento_id}/mover-etapa")
+def mover_atendimento(
+    atendimento_id: str,
     body: MoverEtapaRequest,
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
     ctx = pipeline_context(auth)
 
     current = (
-        ctx.db.table("negociacoes_venda")
+        ctx.db.table("atendimentos")
         .select("id, status")
-        .eq("id", negociacao_id)
+        .eq("id", atendimento_id)
         .eq("org_id", ctx.org_id)
         .execute()
         .data
         or []
     )
     if not current:
-        raise NotFoundError("Negociação", negociacao_id)
+        raise NotFoundError("Atendimento", atendimento_id)
     # A closed deal is off the board; moving it would resurrect it into a stage
     # while its status still says closed.
     if current[0]["status"] != STATUS_ABERTA:
         raise ValidationError_(
-            f"Negociação não está aberta (status: {current[0]['status']})."
+            f"Atendimento não está aberta (status: {current[0]['status']})."
         )
 
     row = move_card(
         ctx.db,
         PIPELINE_FUNIL,
-        card_id=negociacao_id,
+        card_id=atendimento_id,
         to_stage_id=body.para_etapa_id,
         user_id=ctx.user_id,
         novo_indice=body.novo_indice,
         motivo=body.motivo,
         org_id=ctx.org_id,
     )
-    return success_response(negociacao_to_dto(row))
+    return success_response(atendimento_to_dto(row))
 
 
-@negociacoes_router.post("/{negociacao_id}/aceitar-proposta")
+@atendimentos_router.post("/{atendimento_id}/aceitar-proposta")
 def aceitar_proposta(
-    negociacao_id: str,
+    atendimento_id: str,
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
     """Accept the proposal: close the negociação and open its processo.
@@ -250,43 +250,43 @@ def aceitar_proposta(
     The seam between the two boards. Gated on the stage's ROLE, never its name,
     so renaming or reordering "Proposta" cannot break it.
 
-    IDEMPOTENT: `processos_venda.negociacao_venda_id` is UNIQUE, so a second
+    IDEMPOTENT: `processos_venda.atendimento_id` is UNIQUE, so a second
     processo is impossible. A repeat click short-circuits on the pre-check; a
     genuinely concurrent one loses the insert race and is caught below.
     """
     ctx = pipeline_context(auth)
 
     current = (
-        ctx.db.table("negociacoes_venda")
+        ctx.db.table("atendimentos")
         .select("id, etapa_id, status, valor_estimado")
-        .eq("id", negociacao_id)
+        .eq("id", atendimento_id)
         .eq("org_id", ctx.org_id)
         .execute()
         .data
         or []
     )
     if not current:
-        raise NotFoundError("Negociação", negociacao_id)
-    negociacao = current[0]
+        raise NotFoundError("Atendimento", atendimento_id)
+    atendimento = current[0]
 
     existing = (
         ctx.db.table("processos_venda")
         .select(PROCESSO_SELECT)
-        .eq("negociacao_venda_id", negociacao_id)
+        .eq("atendimento_id", atendimento_id)
         .execute()
         .data
         or []
     )
     if existing:
         return success_response({
-            "negociacao": negociacao_to_dto(negociacao),
+            "atendimento": atendimento_to_dto(atendimento),
             "processo": processo_to_dto(existing[0]),
             "already_accepted": True,
         })
 
-    if negociacao["status"] != STATUS_ABERTA:
+    if atendimento["status"] != STATUS_ABERTA:
         raise ValidationError_(
-            f"Negociação não está aberta (status: {negociacao['status']})."
+            f"Atendimento não está aberta (status: {atendimento['status']})."
         )
 
     stage_aceite = stage_by_role(ctx.db, PIPELINE_FUNIL, STAGE_ROLE_ACCEPT, org_id=ctx.org_id)
@@ -295,7 +295,7 @@ def aceitar_proposta(
             "Nenhuma etapa do funil está marcada como etapa de aceite de proposta. "
             "Defina o papel 'proposta_aceite' em uma etapa nas configurações do funil."
         )
-    if negociacao.get("etapa_id") != stage_aceite["id"]:
+    if atendimento.get("etapa_id") != stage_aceite["id"]:
         raise ValidationError_(
             f"Só é possível aceitar a proposta de uma negociação na etapa "
             f"'{stage_aceite['label']}'."
@@ -308,9 +308,9 @@ def aceitar_proposta(
             ctx.db.table("processos_venda")
             .insert({
                 "org_id": ctx.org_id,
-                "negociacao_venda_id": negociacao_id,
+                "atendimento_id": atendimento_id,
                 "etapa_id": etapa_inicial["id"],
-                "valor": negociacao.get("valor_estimado") or 0,
+                "valor": atendimento.get("valor_estimado") or 0,
             })
             .execute()
             .data
@@ -323,7 +323,7 @@ def aceitar_proposta(
         existing = (
             ctx.db.table("processos_venda")
             .select(PROCESSO_SELECT)
-            .eq("negociacao_venda_id", negociacao_id)
+            .eq("atendimento_id", atendimento_id)
             .execute()
             .data
             or []
@@ -331,7 +331,7 @@ def aceitar_proposta(
         if not existing:
             raise
         return success_response({
-            "negociacao": negociacao_to_dto(negociacao),
+            "atendimento": atendimento_to_dto(atendimento),
             "processo": processo_to_dto(existing[0]),
             "already_accepted": True,
         })
@@ -339,9 +339,9 @@ def aceitar_proposta(
     # The deal leaves the Funil entirely. `closed_at` is what makes cycle-time
     # measurable — the CHECK in 034 refuses a closed status without it.
     fechada = (
-        ctx.db.table("negociacoes_venda")
+        ctx.db.table("atendimentos")
         .update({"status": "aceita", "closed_at": "now()"})
-        .eq("id", negociacao_id)
+        .eq("id", atendimento_id)
         .eq("org_id", ctx.org_id)
         .execute()
         .data
@@ -349,31 +349,31 @@ def aceitar_proposta(
     )
 
     return success_response({
-        "negociacao": negociacao_to_dto(fechada[0] if fechada else negociacao),
+        "atendimento": atendimento_to_dto(fechada[0] if fechada else atendimento),
         "processo": processo_to_dto(created[0]),
         "already_accepted": False,
     })
 
 
-@negociacoes_router.post("/{negociacao_id}/perder")
-def perder_negociacao(
-    negociacao_id: str,
+@atendimentos_router.post("/{atendimento_id}/perder")
+def perder_atendimento(
+    atendimento_id: str,
     body: PerderRequest,
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
     ctx = pipeline_context(auth)
     rows = (
-        ctx.db.table("negociacoes_venda")
+        ctx.db.table("atendimentos")
         .update({"status": "perdida", "closed_at": "now()"})
-        .eq("id", negociacao_id)
+        .eq("id", atendimento_id)
         .eq("org_id", ctx.org_id)
         .execute()
         .data
         or []
     )
     if not rows:
-        raise NotFoundError("Negociação", negociacao_id)
-    return success_response(negociacao_to_dto(rows[0]))
+        raise NotFoundError("Atendimento", atendimento_id)
+    return success_response(atendimento_to_dto(rows[0]))
 
 
 # ───────────────────────── Processos de Venda board ─────────────────────────

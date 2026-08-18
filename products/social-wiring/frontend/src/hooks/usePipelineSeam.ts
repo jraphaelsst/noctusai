@@ -10,10 +10,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
-import type { NegociacaoVenda, ProcessoVenda } from "@/types/pipeline";
+import type { Atendimento, ProcessoVenda } from "@/types/pipeline";
 
 interface AceitarPropostaResult {
-  negociacao: NegociacaoVenda;
+  atendimento: Atendimento;
   processo: ProcessoVenda;
   /** True when the deal was already in execution — a repeat click, not an error. */
   already_accepted: boolean;
@@ -23,9 +23,9 @@ export function useAceitarProposta() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (negociacaoId: string) => {
+    mutationFn: async (atendimentoId: string) => {
       const result: any = await api.post(
-        `/api/negociacoes-venda/${negociacaoId}/aceitar-proposta`,
+        `/api/atendimentos-venda/${atendimentoId}/aceitar-proposta`,
       );
       return (result?.data ?? result) as AceitarPropostaResult;
     },
@@ -49,7 +49,7 @@ export function useAceitarProposta() {
       // until something else happened to refetch it.
       queryClient.invalidateQueries({ queryKey: ["sw-funil"] });
       queryClient.invalidateQueries({ queryKey: ["sw-processos"] });
-      queryClient.invalidateQueries({ queryKey: ["negociacoes-venda"] });
+      queryClient.invalidateQueries({ queryKey: ["atendimentos-venda"] });
     },
   });
 }

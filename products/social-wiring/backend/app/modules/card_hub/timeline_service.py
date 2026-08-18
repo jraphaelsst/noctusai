@@ -10,12 +10,12 @@ created at the moment it's written; a movement IS the moment it happened)
 
 `movimento` reads `pipeline_movimentos` — written by
 `app.modules.pipeline` (migration 034) — via a READ-ONLY join through
-`negociacoes_venda`/`processos_venda`. This module never imports from or
+`atendimentos`/`processos_venda`. This module never imports from or
 writes to `app.modules.pipeline` (ruling S1); it only queries tables that
 module owns, exactly as the contract's §1 "already exists, do not
-rebuild" table names it. `negociacoes_venda.cliente_id` is nullable until
+rebuild" table names it. `atendimentos.cliente_id` is nullable until
 slice `054` (P1.4, parallel) finishes repointing every card — a `funil`
-card whose `negociacoes_venda.cliente_id` is still NULL simply has no
+card whose `atendimentos.cliente_id` is still NULL simply has no
 `movimento` entries yet; this is the expected, honest, and improving-
 over-time state, not a bug in this module.
 """
@@ -122,15 +122,15 @@ def _gather_touches(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
 
 
 def _gather_movimentos(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
-    negociacoes = _paged_rows(client, "negociacoes_venda", org_id, eq_filters={"cliente_id": str(cliente_id)})
-    negociacao_ids = [n["id"] for n in negociacoes]
-    if not negociacao_ids:
+    atendimentos = _paged_rows(client, "atendimentos", org_id, eq_filters={"cliente_id": str(cliente_id)})
+    atendimento_ids = [n["id"] for n in atendimentos]
+    if not atendimento_ids:
         return []
 
-    processos = _in_batched_rows(client, "processos_venda", org_id, "negociacao_venda_id", negociacao_ids)
+    processos = _in_batched_rows(client, "processos_venda", org_id, "atendimento_id", atendimento_ids)
     processo_ids = [p["id"] for p in processos]
 
-    funil_moves = _in_batched_rows(client, "pipeline_movimentos", org_id, "entidade_id", negociacao_ids)
+    funil_moves = _in_batched_rows(client, "pipeline_movimentos", org_id, "entidade_id", atendimento_ids)
     funil_moves = [m for m in funil_moves if m.get("pipeline") == "funil"]
     processo_moves = (
         _in_batched_rows(client, "pipeline_movimentos", org_id, "entidade_id", processo_ids)
@@ -422,7 +422,7 @@ def get_card_resumo(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     tags_out = card_hub_services.get_cliente_tags(client, org_id, cliente_id)["items"]
     membros_out = card_hub_services.get_membros(client, org_id, cliente_id)["items"]
 
-    negociacoes = _paged_rows(client, "negociacoes_venda", org_id, eq_filters={"cliente_id": str(cliente_id)})
+    atendimentos = _paged_rows(client, "atendimentos", org_id, eq_filters={"cliente_id": str(cliente_id)})
 
     return {
         "cliente": cliente,
@@ -439,7 +439,7 @@ def get_card_resumo(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             "recorrencia": cliente.get("recorrencia"),
         },
         "badges": compute_badges(client, org_id, cliente_id, cliente),
-        "negociacoes": negociacoes,
+        "atendimentos": atendimentos,
     }
 
 

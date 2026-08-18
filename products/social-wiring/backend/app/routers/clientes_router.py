@@ -436,7 +436,7 @@ async def get_cliente_route(
     client=Depends(get_clientes_client),
 ) -> dict:
     """One person + negociações (active AND closed, D17) + touch count
-    (contract §5). `negociacoes_venda` has no read surface exported by
+    (contract §5). `atendimentos` has no read surface exported by
     `clientes_service.py` (Slice A's file list is the resolution engine
     + backfill; this read is Slice B's own, queried directly here — no
     write, no modification to that module)."""
@@ -446,8 +446,8 @@ async def get_cliente_route(
     if cliente is None:
         raise NotFoundError("clientes", str(cliente_id))
 
-    negociacoes = (
-        _t(client, "negociacoes_venda")
+    atendimentos = (
+        _t(client, "atendimentos")
         .select("*")
         .eq("org_id", str(org_id))
         .eq("cliente_id", str(cliente_id))
@@ -457,7 +457,7 @@ async def get_cliente_route(
 
     return {
         **cliente,
-        "negociacoes": negociacoes,
+        "atendimentos": atendimentos,
         "touch_count": touches["total"],
     }
 

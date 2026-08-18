@@ -7,7 +7,7 @@ is unit-testable without a database (`048_clientes_person_layer.sql`'s header
 explains why). This module is the I/O layer: it fetches `leads` /
 `meta_ads_leads` rows, calls into `identidade_service` to decide what to do
 with them, and writes `clientes` / `cliente_touches` / `cliente_merges` /
-`negociacoes_venda.cliente_id`.
+`atendimentos.cliente_id`.
 
 Slice B (routers, contract §5) imports this module's public functions —
 `list_clientes`, `get_cliente`, `get_touches`, `update_cliente`,
@@ -19,7 +19,7 @@ RUNNING THE BACKFILL — DRY-RUN FIRST (feeds contract §7)
 ----------------------------------------------------------
 `run_backfill(client, org_id, dry_run=True)` only ever SELECTs from
 `leads`/`meta_ads_leads` — it never touches `clientes`/`cliente_touches`/
-`cliente_merges`/`negociacoes_venda`, so it can run against the LIVE
+`cliente_merges`/`atendimentos`, so it can run against the LIVE
 database with NO prerequisite (this migration does not even need to be
 applied yet). This is what should feed the tech-lead's "state the row
 counts, get an explicit decision" conversation with the user (§7) — the
@@ -53,7 +53,7 @@ Safe to call repeatedly on a live, growing `leads` table:
      combined old+new row set — flagged as a documented limitation (a
      follow-up could fold new evidence back into a PAST decision; this
      backfill never does that automatically).
-3. `negociacoes_venda.cliente_id` repoint only ever touches rows where
+3. `atendimentos.cliente_id` repoint only ever touches rows where
    `cliente_id IS NULL`, so re-running never re-derives an already-set
    value.
 
@@ -145,14 +145,14 @@ class BackfillReport:
     clientes_created: int = 0
     touches_created: int = 0
     merges_created: int = 0
-    negociacoes_repointed: int = 0
-    negociacoes_already_pointed: int = 0
-    negociacoes_orphaned: list = field(default_factory=list)
+    atendimentos_repointed: int = 0
+    atendimentos_already_pointed: int = 0
+    atendimentos_orphaned: list = field(default_factory=list)
     # P1.4 completion (lead-card-hub roadmap §1/§5): a Meta lead fires BOTH
     # `spawn_funil_card_on_lead` and `spawn_funil_card_on_meta_lead`, so two
-    # `negociacoes_venda` rows can share one `cliente_id`. This counts rows
-    # this run marked `substituida_por` on — see `_collapse_negociacoes`.
-    negociacoes_collapsed: int = 0
+    # `atendimentos` rows can share one `cliente_id`. This counts rows
+    # this run marked `substituida_por` on — see `_collapse_atendimentos`.
+    atendimentos_collapsed: int = 0
     # D16 (roadmap lead-card-hub-2026-08) — a new touch attaching to a
     # cliente the inactivity sweep had previously marked inactive flips it
     # back on right here (`_reactivate_if_inactive`). Counted separately
@@ -196,10 +196,10 @@ class BackfillReport:
             "touches_created": self.touches_created,
             "touches_expected": self.touches_expected,
             "merges_created": self.merges_created,
-            "negociacoes_repointed": self.negociacoes_repointed,
-            "negociacoes_already_pointed": self.negociacoes_already_pointed,
-            "negociacoes_orphaned": list(self.negociacoes_orphaned),
-            "negociacoes_collapsed": self.negociacoes_collapsed,
+            "atendimentos_repointed": self.atendimentos_repointed,
+            "atendimentos_already_pointed": self.atendimentos_already_pointed,
+            "atendimentos_orphaned": list(self.atendimentos_orphaned),
+            "atendimentos_collapsed": self.atendimentos_collapsed,
             "clientes_reactivated": self.clientes_reactivated,
         }
 
@@ -288,7 +288,7 @@ def _now() -> str:
 def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> BackfillReport:
     """Resolve identity for every `leads`/`meta_ads_leads` row for `org_id`
     not already represented in `cliente_touches`, and repoint
-    `negociacoes_venda.cliente_id` for whatever that resolution newly
+    `atendimentos.cliente_id` for whatever that resolution newly
     covers. See the module docstring for the idempotency/concurrency
     contract and the dry-run/prod-read note.
     """
@@ -329,7 +329,7 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> Backfil
         _resolve_group(client, org_id, group_rows, report, dry_run=dry_run)
 
     if not dry_run:
-        _repoint_negociacoes(client, org_id, report)
+        _repoint_atendimentos(client, org_id, report)
         # P1.4 completion: collapse whatever now shares a cliente_id — both
         # the sets this run just repointed AND any that already existed
         # from a prior run. Steady-state by construction: this call sits
@@ -337,7 +337,7 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> Backfil
         # runs per org, so a new duplicate pair never needs its own
         # one-shot migration the way `048`'s did (see
         # `clientes_backfill_job.py`'s module docstring for that lesson).
-        _collapse_negociacoes(client, org_id, report)
+        _collapse_atendimentos(client, org_id, report)
 
     return report
 
@@ -660,17 +660,17 @@ def _record_merge(
     _t(client, "cliente_merges").insert(row).execute()
 
 
-def _repoint_negociacoes(client: Any, org_id: UUID, report: BackfillReport) -> None:
+def _repoint_atendimentos(client: Any, org_id: UUID, report: BackfillReport) -> None:
     # 🔴 MUST paginate. An unpaginated PostgREST select silently caps at 1 000
     # rows and reports success — it did exactly that on the live 2026-08-13
     # backfill, repointing 1 000 of 1 365 negociações and returning
-    # `negociacoes_orphaned: []`, i.e. "clean". The 365 left with a NULL
+    # `atendimentos_orphaned: []`, i.e. "clean". The 365 left with a NULL
     # cliente_id were invisible in the report. Note `touches` two lines below
     # already used `_select_all`: the helper existed, in this same function,
     # and one of the two queries simply did not use it.
     rows = _select_all(
         client,
-        "negociacoes_venda",
+        "atendimentos",
         org_id,
         columns="id,lead_id,meta_ads_lead_id,cliente_id",
     )
@@ -682,7 +682,7 @@ def _repoint_negociacoes(client: Any, org_id: UUID, report: BackfillReport) -> N
 
     for n in rows:
         if n.get("cliente_id"):
-            report.negociacoes_already_pointed += 1
+            report.atendimentos_already_pointed += 1
             continue
 
         origem: Optional[tuple[str, str]] = None
@@ -693,17 +693,17 @@ def _repoint_negociacoes(client: Any, org_id: UUID, report: BackfillReport) -> N
 
         cliente_id = by_origem.get(origem) if origem else None
         if cliente_id is None:
-            report.negociacoes_orphaned.append(n["id"])
+            report.atendimentos_orphaned.append(n["id"])
             continue
 
-        _t(client, "negociacoes_venda").update({"cliente_id": cliente_id}).eq(
+        _t(client, "atendimentos").update({"cliente_id": cliente_id}).eq(
             "id", n["id"]
         ).execute()
-        report.negociacoes_repointed += 1
+        report.atendimentos_repointed += 1
 
 
-def _collapse_negociacoes(client: Any, org_id: UUID, report: BackfillReport) -> None:
-    """P1.4 completion — collapse `negociacoes_venda` rows that share a
+def _collapse_atendimentos(client: Any, org_id: UUID, report: BackfillReport) -> None:
+    """P1.4 completion — collapse `atendimentos` rows that share a
     `cliente_id` into one Funil board card (roadmap `project-history/
     roadmaps/lead-card-hub-2026-08.md` §1: `spawn_funil_card_on_lead` +
     `spawn_funil_card_on_meta_lead` fire for the SAME Meta-sourced human,
@@ -738,7 +738,7 @@ def _collapse_negociacoes(client: Any, org_id: UUID, report: BackfillReport) -> 
     """
     rows = _select_all(
         client,
-        "negociacoes_venda",
+        "atendimentos",
         org_id,
         columns="id,cliente_id,etapa_id,status,created_at,substituida_por",
     )
@@ -766,11 +766,11 @@ def _collapse_negociacoes(client: Any, org_id: UUID, report: BackfillReport) -> 
         ordered = sorted(group, key=_sort_key)
         survivor = ordered[0]
         for loser in ordered[1:]:
-            _t(client, "negociacoes_venda").update({
+            _t(client, "atendimentos").update({
                 "substituida_por": survivor["id"],
                 "colapsada_em": _now(),
             }).eq("id", loser["id"]).execute()
-            report.negociacoes_collapsed += 1
+            report.atendimentos_collapsed += 1
 
 
 # ─── merge / undo (also used by Slice B's review router) ────────────────

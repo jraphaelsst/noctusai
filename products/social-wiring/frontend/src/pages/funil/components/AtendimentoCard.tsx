@@ -21,37 +21,37 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatPhone } from "@noctusai/lib/phone";
 import {
-  contatoDaNegociacao,
-  nomeDaNegociacao,
-  type NegociacaoVenda,
+  contatoDoAtendimento,
+  nomeDoAtendimento,
+  type Atendimento,
 } from "@/types/pipeline";
 
-export interface NegociacaoCardProps {
-  negociacao: NegociacaoVenda;
+export interface AtendimentoCardProps {
+  atendimento: Atendimento;
   isDragging?: boolean;
-  onAceitarProposta?: (negociacaoId: string) => void;
+  onAceitarProposta?: (atendimentoId: string) => void;
   aceitandoProposta?: boolean;
 }
 
-export function NegociacaoCard({
-  negociacao,
+export function AtendimentoCard({
+  atendimento,
   isDragging,
   onAceitarProposta,
   aceitandoProposta,
-}: NegociacaoCardProps) {
-  const nome = nomeDaNegociacao(negociacao);
-  const contatoRaw = contatoDaNegociacao(negociacao);
+}: AtendimentoCardProps) {
+  const nome = nomeDoAtendimento(atendimento);
+  const contatoRaw = contatoDoAtendimento(atendimento);
   // Through the platform's one phone seam, so the card shows the same string
   // as the modal, the Leads table and a WhatsApp lookup. An e-mail passes
   // through untouched — `formatPhone` returns what it cannot canonicalize.
   const contato = contatoRaw?.includes("@") ? contatoRaw : formatPhone(contatoRaw);
-  const deCampanha = !!negociacao.meta_ads_lead_id;
+  const deCampanha = !!atendimento.meta_ads_lead_id;
 
   // The accept seam is keyed on the stage's ROLE, never its name — stages are
   // user-editable, so renaming "Proposta" must not remove this button.
   const podeAceitar =
-    negociacao.etapa_rel?.papel === "proposta_aceite" &&
-    negociacao.status === "aberta" &&
+    atendimento.etapa_rel?.papel === "proposta_aceite" &&
+    atendimento.status === "aberta" &&
     !!onAceitarProposta;
 
   return (
@@ -59,7 +59,7 @@ export function NegociacaoCard({
       className={`cursor-pointer rounded-lg border bg-card p-3 shadow-sm transition-colors hover:border-primary/40 ${
         isDragging ? "opacity-60" : ""
       }`}
-      data-testid="negociacao-card"
+      data-testid="atendimento-card"
     >
       <div className="flex items-start gap-3">
         <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
@@ -77,13 +77,13 @@ export function NegociacaoCard({
                 Campanha
               </Badge>
             ) : (
-              negociacao.lead?.origem_raw && (
-                <Badge variant="outline">{negociacao.lead.origem_raw}</Badge>
+              atendimento.lead?.origem_raw && (
+                <Badge variant="outline">{atendimento.lead.origem_raw}</Badge>
               )
             )}
-            {negociacao.lead?.empreendimento && (
+            {atendimento.lead?.empreendimento && (
               <Badge variant="outline" className="truncate max-w-[140px]">
-                {negociacao.lead.empreendimento}
+                {atendimento.lead.empreendimento}
               </Badge>
             )}
           </div>
@@ -101,7 +101,7 @@ export function NegociacaoCard({
             // an un-stopped click would start a drag and open the detail modal
             // on top of accepting the proposal.
             e.stopPropagation();
-            onAceitarProposta?.(negociacao.id);
+            onAceitarProposta?.(atendimento.id);
           }}
         >
           <CheckCircle2 className="mr-1 h-4 w-4" />
