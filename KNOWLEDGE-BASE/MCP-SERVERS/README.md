@@ -108,15 +108,16 @@ Gate 1.
 
 ---
 
-### imovelweb — ImovelWeb / OpenNavent portal-leads connector MCP 🚧 *(specified, not built)*
+### imovelweb — ImovelWeb / OpenNavent portal-leads connector MCP *(built; unregistered)*
 
 **Type**: Connector (composes `mcp/_kit`; wraps `noctusai_lib.integrations.imovelweb`)
 
 The **ImovelWeb pipe** — ImovelWeb · Wimoveis · Casa Mineira via OpenNavent
 (Navent / Grupo QuintoAndar), a **different vendor from Grupo OLX** even
 though the OLX pipe also carries an ImovelWeb bridge. Phase B of
-`projects/imovelweb-portal-leads-ingestion/PROJECT.md`; nothing exists in
-`mcp/imovelweb/` yet. Built BEFORE the product receiver for the same reason
+`projects/imovelweb-portal-leads-ingestion/PROJECT.md`; 19 tools live in
+`mcp/imovelweb/`, unregistered until the branch merges. Built BEFORE the
+product receiver for the same reason
 as `olx`, plus two of its own: `PUT /v1/configuracao/callbacks` is
 integrator-wide, so one bad call redirects every agency's leads and belongs
 behind a confirm-gate with a read-back diff; and unlike OLX there **is** a

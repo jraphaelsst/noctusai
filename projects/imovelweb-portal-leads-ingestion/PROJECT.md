@@ -3,12 +3,13 @@
 > **This is a living document, not a rigid checklist.** Revise phases, fold in
 > optimizations, update the Change Log as you learn.
 >
-> **Design-only as of 2026-08-17.** No implementation code has been written. This
-> document is the brief a future engineer executes from.
+> **Phases A and B have shipped** (seed package + MCP connector, on
+> `feat/imovelweb-portal-leads`, unmerged). Everything from Gate 1 onwards is
+> blocked on sandbox credentials, which is a user action, not an engineering one.
 
 - **Created:** 2026-08-17
-- **Last updated:** 2026-08-17
-- **Status:** 🅿️ Design locked → Gate 0 ready (Gate 0 needs no credentials — start there)
+- **Last updated:** 2026-08-18
+- **Status:** ⏳ A ✅ · B ✅ · Gate 0 ran (partial, by design) · **Gate 1 blocked on the user: request sandbox credentials from `integracao@imovelweb.com.br`** — the draft email is at `gate-1-credential-request.md` and carries one open decision (ReadOnly vs Read-and-Write)
 - **Owner / stakeholders:** jraphaelsst · tech-lead orchestrator
 - **Related docs:** `KB § INTEGRATIONS/imovelweb.md` (the vendor contract) · `KB § MCP-SERVERS/imovelweb.md` · `KB § INTEGRATIONS/olx.md` (the sibling pipe) · `projects/olx-portal-leads-ingestion/PROJECT.md` + `HANDOFF.md` (the template this mirrors) · `KB § PATTERNS/security/webhook-signatures.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `KB § PATTERNS/security/lgpd.md` · `KB § PATTERNS/backend/database-rls.md` · `KB § PATTERNS/backend/di-test-seam.md`
 - **Project slug:** `imovelweb-portal-leads-ingestion` at `projects/` — cross-cutting (seed package + MCP connector + product slice), named for symmetry with `olx-portal-leads-ingestion`.
@@ -703,21 +704,65 @@ Mount beside `<OlxWebhookCard />` in `src/pages/leads/Configuracao.tsx`.
 
 **Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
 
-### Phase A — Seed package
-- [ ] `integrations/imovelweb/{__init__,types,contract,webhook,normalizers,errors,endpoints}.py` (pure)
-- [ ] `integrations/imovelweb/{auth,protocol,fake,real,factory}.py` (IO — the full quartet, no half-ship)
-- [ ] `tests/integrations/imovelweb/` — `test_webhook_parsing` (all five languages, `detect_callback_language`, no-event-id ⇒ `None`, unknown enums pass through, offset variants) · `test_contract` (per-language schema, `diff_observed`, error-vs-warning split) · `test_normalizers` (pipe-vs-slug separation, `wimoveis` fallback, timestamp refusal, no `corretor_id`, no CPF) · `test_auth` · `test_adapter` (Fake/Real/factory selection, lenient construction, 424-on-first-call, `_is_retryable`) · `test_callback_config` · `test_sandbox_guard`
-- [ ] Every `FieldSpec.verified=False`, every baseline expected status `None`
+### Phase A — Seed package ✅ *(2026-08-17 · 220 tests green by exit code)*
+- [x] `integrations/imovelweb/{__init__,types,contract,webhook,normalizers,errors,endpoints}.py` (pure)
+- [x] `integrations/imovelweb/{auth,protocol,fake,real,factory}.py` (IO — the full quartet, no half-ship)
+- [x] `tests/integrations/imovelweb/` — the eight suites as specified, plus `test_receiver_credential`
+- [x] Every `FieldSpec.verified=False`, every baseline expected status `None`
 
-**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
+**Improvements:**
 
-### Phase B — MCP connector + ops doc
-- [ ] `mcp/imovelweb/**` per §5.8, composing `mcp/_kit`
-- [ ] `mcp/imovelweb/tests/test_smoke.py` — every registry tool; 412 asserted **before** any side effect; 424 when unconfigured; the sandbox guard refuses a prod host
-- [ ] `KB § MCP-SERVERS/imovelweb.md` + a section in `KB § MCP-SERVERS/README.md`; registration row **documented, not applied**
-- [ ] Drive the server over stdio from the worktree: initialize → list tools → one zero-IO call
+1. **Two bugs the tests caught, both fixed in the CODE.** `full_phone` produced
+   `31+5531999998888`, because the vendor documents `phone` as
+   international-with-`+` *and* `phoneNumber` as "ddd + phone" — both cannot
+   hold. The resolution order is now phoneNumber → an already-prefixed phone →
+   bare-local concatenation, and the contradiction is vendor question 18.
+   Separately, the timezone guard in `imovelweb_timestamp_to_date` was
+   decorative: `.date()` on an aware datetime already yields the local date, so
+   `replace(tzinfo=BR)` did nothing. The real safeguard is negative — never
+   `.astimezone(utc)` before `.date()` — and the docstring now says that, with a
+   23:30 BRT test pinning it.
+2. **The inbound credential moved into the seed** (`basic_credential`,
+   `receiver_url_problems`, `IMOVELWEB_BASIC_USERNAME`) rather than living in its
+   first caller. The connector, the receiver and the register service must agree
+   on it byte-for-byte; a local copy in any one of them is a fork whose only
+   symptom is a 401 nobody can explain.
+3. **No model call anywhere on the lead path** — a design principle added after
+   a run of upstream API errors during this project. The vendor allows 1.5 s to
+   answer; a model call cannot fit, and a model *outage* inside that window would
+   convert someone else's incident into lost customer enquiries. A test walks the
+   package's own imports and fails if anything reaches a model provider, so the
+   rule is mechanical rather than remembered.
 
-**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
+### Phase B — MCP connector + ops doc ✅ *(2026-08-18 · 19 tools · 79 tests green by exit code)*
+- [x] `mcp/imovelweb/**` per §5.8, composing `mcp/_kit`
+- [x] `mcp/imovelweb/tests/test_smoke.py` — every registry tool; 412 asserted **before** any side effect (proven with a client that raises on ANY call); 424 when unconfigured; the sandbox guard refuses a prod host
+- [x] `KB § MCP-SERVERS/imovelweb.md` + a section in `KB § MCP-SERVERS/README.md`; registration row **documented, not applied**
+- [x] Tool registry loads and answers with zero credentials and zero network
+
+**Improvements:**
+
+1. **The write-tool list is pinned to the descriptors, not maintained beside
+   them.** `test_write_tools_are_all_declared_here` derives the write set from
+   the descriptions and asserts it equals the list the confirm-gate test
+   iterates. A new write tool that nobody remembered to add would otherwise slip
+   past the gate test silently — the exact failure the gate exists to prevent.
+2. **Redaction became policy rather than a log helper.** Results are serialized,
+   stripped of all three secrets, and re-parsed, so a secret embedded mid-string
+   is caught as well as one in its own field; a value that cannot be serialized
+   RAISES rather than being returned unredacted. `identificationId` is replaced
+   with a placeholder and the KEY is kept, so the fact that a CPF arrived stays
+   visible even when its value does not.
+3. **`webhook.simulate` measures the 1.5-second budget locally.** That budget is
+   the single most design-forcing fact in this integration, and until now it
+   could only be measured at Gate 1 against the vendor. Measuring it against our
+   own receiver makes it available from Phase C onward, which is when the handler
+   shape is still cheap to change.
+4. **Ordering discovered while building:** `imovelweb.contract.diff_observed` as a
+   handler name shadowed the seed function imported into the same module, and the
+   test that reached for the handler by attribute got the seed function instead.
+   Fixed by aliasing the import — a module that exports two different things under
+   one name is a trap for the next reader, not just for a test.
 
 ### Phase Gate-0 — Spec-only verification ⏳ *(ran 2026-08-17; 3 of 9 settled, 5 provably NOT answerable without credentials)*
 
@@ -969,4 +1014,6 @@ commit plan changes with the code). Three project-specific notes:
 
 | Date | Change | By |
 |---|---|---|
+| 2026-08-18 | **Phase B shipped** — `mcp/imovelweb/` with 19 tools, 79 tests green by exit code; `_kit` 31 and the full seed suite 3175/1-skipped re-run clean. Beyond the spec: the integrator-wide `put_config` also refuses a localhost / private / ephemeral-tunnel URL (shared with the future product service via the seed's `receiver_url_problems`), `probe` marks every `/v1/**` row non-discriminating because Gate 0 proved 401-before-routing, and `webhook.simulate` measures our receiver against the vendor's 1.5-second budget locally. Docs synced same commit; **not registered in `.mcp.json`** — the row's `cwd` points at the primary checkout, whose editable `noctusai_lib` has no `integrations.imovelweb` until the merge. | tech-lead orchestrator |
+| 2026-08-17 | **Phase A shipped** — the seed package whole (pure half + the Protocol/Fake/Real/factory quartet), 220 tests green by exit code. Two real bugs caught by the tests and fixed in the code (`full_phone` concatenation, a decorative timezone guard); the inbound credential lifted into the seed so connector, receiver and register service cannot drift; and a no-model-on-the-lead-path principle added with a mechanical import test. | tech-lead orchestrator |
 | 2026-08-17 | Initial project drafted from `templates/PROJECT-TEMPLATE.md` after interrogation of jraphaelsst (4 decisions in §2). Vendor contract researched from the live OpenNavent Swagger spec + `open-classifieds.notion.site/bra`; recorded in `KB § INTEGRATIONS/imovelweb.md`. **Refutes the OLX project's ImovelWeb-direct hypothesis**: ImovelWeb is Navent/Grupo QuintoAndar, not Grupo OLX, and has its own API, sandbox and callback system. | tech-lead orchestrator |

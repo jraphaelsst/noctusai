@@ -1,10 +1,14 @@
 # `imovelweb` MCP server — ImovelWeb / OpenNavent portal leads (operations)
 
-> **🚧 NOT BUILT YET.** This is the specification the connector is built to —
-> Phase B of `projects/imovelweb-portal-leads-ingestion/PROJECT.md`. Nothing in
-> `mcp/imovelweb/` exists on `dev`. The doc lands ahead of the code on purpose:
-> the connector is a **prerequisite gate**, so its surface is agreed before it is
-> written, and the pointer from `KB § INTEGRATIONS/imovelweb.md` resolves.
+> **BUILT, NOT REGISTERED.** 19 tools live in `mcp/imovelweb/` on
+> `feat/imovelweb-portal-leads` (Phase B of
+> `projects/imovelweb-portal-leads-ingestion/PROJECT.md`), with 79 tests green.
+> It is **not on `dev`** and **not in `.mcp.json`** — see § Registration for why
+> registering before the merge breaks every session start.
+>
+> What it has NOT done yet is talk to the vendor: no credentials exist, so every
+> credentialed tool has only ever returned its typed 424. Gate 1 is what turns
+> this from "the code is right" into "the vendor agrees".
 >
 > Spec + wire detail live in `KB § CONTEXT/INTEGRATIONS/imovelweb.md`. This is
 > the operations doc: what the connector is for, its tool surface, config, and
@@ -36,7 +40,7 @@ response, retries a failure until 72 hours have passed, then marks the callback
 `VENCIDO`. A receiver written against unverified prose either loses leads or
 duplicates them.
 
-## Tool surface — ~16 tools
+## Tool surface — 19 tools
 
 | Tool | Kind | REST / effect |
 |---|---|---|
@@ -73,6 +77,23 @@ Three surface rules that are not negotiable:
   A `PUT` that silently drops `subscriptions` is otherwise invisible, and an
   empty subscription list delivers nothing at all, silently. The vendor cannot
   tell you what you had before, so we keep it.
+- **`callbacks.put_config` refuses a localhost / private / ephemeral-tunnel
+  URL** (`allow_local_url=true` overrides, for a rehearsal). The registration is
+  integrator-wide, so an unreachable one does not error — the vendor believes it
+  delivered, we never see the lead, and the only symptom is leads that quietly
+  stop arriving for every agency at once. Shared with the product's register
+  service via `noctusai_lib.integrations.imovelweb.receiver_url_problems`, so
+  the two cannot drift.
+- **`diagnostics.probe` reports what it cannot settle.** Gate 0 proved `/v1/**`
+  answers 401 *before* routing, so a bogus path returns the same 401 as a real
+  one. Every such row is marked non-discriminating and points at
+  `fetch_swagger`. Printing `as_expected` for an invented number teaches an
+  operator that the report lies.
+- **`webhook.simulate` measures the response against the 1.5-second budget.**
+  A receiver that answers in 1.8 s is not slow, it is losing leads: the vendor
+  scores the timeout an error regardless of the status code. The measurement is
+  local and needs no vendor credentials, so it is available from Phase C
+  onwards rather than only at Gate 1.
 
 Every tool result passes through `redact_secrets(text, client_secret, token,
 callback_header_value)` — **three** secrets, not one. `imovelweb.leads.get_message`
@@ -102,7 +123,7 @@ missing rather than reporting the whole connector dead:
 
 | Capability | Vars | Source |
 |---|---|---|
-| vendor API (auth, callbacks, leads, agencies, sandbox) | `IMOVELWEB_CLIENT_ID`, `IMOVELWEB_CLIENT_SECRET`, `IMOVELWEB_REGION` (`br`), `IMOVELWEB_SANDBOX` (`true`/`false`) | `integracao@imovelweb.com.br` — one email for sandbox, a second for production |
+| vendor API (auth, callbacks, leads, agencies, sandbox) | `IMOVELWEB_CLIENT_ID`, `IMOVELWEB_CLIENT_SECRET`, `IMOVELWEB_REGION` (`br`), `IMOVELWEB_SANDBOX` (`true`/`false`), optional `IMOVELWEB_BASE_URL` | `integracao@imovelweb.com.br` — one email for sandbox, a second for production |
 | inbound (receiver simulation) | `IMOVELWEB_WEBHOOK_SECRET`, `IMOVELWEB_RECEIVER_URL` | **we choose the secret**; it must match what the product receiver validates, or a simulation proves nothing |
 
 The webhook secret is registered *by us* as
