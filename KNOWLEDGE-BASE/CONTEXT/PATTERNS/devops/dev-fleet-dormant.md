@@ -127,14 +127,32 @@ no second hand-rolled "what belongs to a product" mapping) and only flags
 `drift` when that diff actually touches the product's own build inputs (or
 a fleet-wide `seed/`/Dockerfile/compose change).
 
-**3a-ii. Tracked follow-up, not yet chased.** The original 2026-08-13 hang
-(`deploy_image` timed out and the MCP server disconnected) has never been
-root-caused. The leading suspect is `_vps_ssh.py`'s circuit-breaker cooldown
-(up to 600s, `mcp/noctusai/tools/noctus/dev/_vps_ssh.py`) blocking an
-internal SSH call well past whatever timeout the calling harness enforces —
-`deploy_verify` is the honest mitigation (an independent post-hoc witness),
-not a fix for that root cause. Owner-tracked as its own follow-up; not
-chased in the 2026-08-17 pass.
+**3a-ii. Root-caused (2026-08-17) — the circuit-breaker cooldown was NOT it.**
+The original 2026-08-13 hang (`deploy_image` timed out and the MCP server
+disconnected) was investigated by reading every `_vps_ssh.run_remote` call
+site. The leading suspect — the 600s circuit-breaker cooldown — turned out
+to be a FAST FAIL by design: an OPEN circuit returns in microseconds without
+ever calling the real runner, so it cannot itself be the source of a
+multi-minute internal block. The real gap: EVERY production caller
+(`deploy_image`, `deploy_pull`, `vps_exec`, `vps`, `tunnel_config`,
+`vps_exec_sql`, `ensure_product_url_roster`) left `run_remote(timeout=...)`
+unset, so `subprocess.run` got `timeout=None` — genuinely UNBOUNDED — and
+could block forever if the SSH transport connected fine but the REMOTE
+command hung (a wedged docker daemon, a stalled pull). That block happens
+*inside* the cross-process `_state_lock`, so it also silently stalls every
+OTHER VPS tool in every process/worktree — consistent with a two-day
+ambiguous window. Fixed in `mcp/noctusai/tools/noctus/dev/_vps_ssh.py`:
+`run_remote` now NEVER forwards `timeout=None` downstream — `None` resolves
+to a finite default (`_DEFAULT_REMOTE_TIMEOUT` = 120s, env
+`NOCTUS_SSH_TIMEOUT`), bounding every attempt (and, by construction, the
+`_state_lock` hold) to a computable worst case (`min_interval + rate_window
++ 2×ceiling` ≈ 303s at defaults — always finite). A LOCAL wall-clock kill is
+classified distinctly from a genuine transport failure (`_LOCAL_TIMEOUT_RC`,
+not ssh's own 255) so a slow-but-connected remote command can never
+misclassify as a connection failure and spuriously trip the fail2ban breaker.
+`deploy_verify` remains the independent witness regardless — this fix makes
+the specific 2026-08-13 hang mechanism structurally impossible, not
+redundant with it.
 
 **4. `prod-backup` — the code rollback pointer.** `promote` snapshots the
 outgoing prod sha there before moving `prod`. Check it advanced.

@@ -27,9 +27,11 @@ class FakeRunner:
     def __init__(self, scripted: list[tuple[int, str, str]]):
         self.scripted = list(scripted)
         self.calls: list[tuple[str, str]] = []  # (ssh_host, remote_cmd)
+        self.timeouts: list[float | None] = []  # the `timeout` each call actually received
 
     def __call__(self, ssh_host, remote_cmd, connect_timeout, timeout):
         self.calls.append((ssh_host, remote_cmd))
+        self.timeouts.append(timeout)
         if not self.scripted:
             return 0, "", ""
         return self.scripted.pop(0)
@@ -382,3 +384,169 @@ def test_rate_cap_disabled_when_zero(monkeypatch, sleeps, state_path):
     for _ in range(5):
         _run(runner, clock, sleep, state_path)  # 5 rapid calls, same instant
     assert captured == []                        # cap disabled → never paces
+
+
+# ── 2026-08-13 fix: no caller can ever reach an unbounded subprocess.run ─────
+# Context: `deploy_image` timed out without returning and the MCP server that
+# hosted it dropped; the container was never swapped, yet every branch-level
+# signal read green for two days (found only by a direct `docker inspect`).
+# Root cause: EVERY production caller left `run_remote(timeout=...)` unset, so
+# `_real_ssh` received `timeout=None` → `subprocess.run(timeout=None)` — a
+# genuinely unbounded wait, taken while holding the cross-process `_state_lock`.
+# The circuit-breaker COOLDOWN itself was NOT the cause (it fast-fails, see
+# `test_circuit_open_is_a_fast_fail_not_a_wait` below); the missing per-attempt
+# ceiling was.
+class TestUnboundedTimeoutFix:
+    def test_default_timeout_forwarded_when_caller_omits_it(self, monkeypatch, sleeps, state_path):
+        """The historical footgun: NO production caller passes `timeout=`. Before
+        the fix this reached `_real_ssh` as `None` (unbounded). After the fix it
+        must reach the runner as a concrete finite float — the module default."""
+        monkeypatch.setenv("NOCTUS_SSH_MIN_INTERVAL", "0")
+        captured, sleep = sleeps
+        clock = Clock()
+        runner = FakeRunner([OK])
+
+        _run(runner, clock, sleep, state_path)  # no timeout= passed, exactly like every real caller
+
+        assert runner.timeouts == [VSS._DEFAULT_REMOTE_TIMEOUT]
+        assert all(t is not None for t in runner.timeouts)  # NEVER None downstream
+
+    def test_default_timeout_env_overridable(self, monkeypatch, sleeps, state_path):
+        monkeypatch.setenv("NOCTUS_SSH_MIN_INTERVAL", "0")
+        monkeypatch.setenv("NOCTUS_SSH_TIMEOUT", "17")
+        captured, sleep = sleeps
+        clock = Clock()
+        runner = FakeRunner([OK])
+
+        _run(runner, clock, sleep, state_path)
+
+        assert runner.timeouts == [17.0]
+
+    def test_explicit_timeout_still_wins_over_default(self, monkeypatch, sleeps, state_path):
+        """A caller with a genuinely long known op (e.g. a large image pull) can
+        still opt into a bigger window — explicit always beats the default."""
+        monkeypatch.setenv("NOCTUS_SSH_MIN_INTERVAL", "0")
+        captured, sleep = sleeps
+        clock = Clock()
+        runner = FakeRunner([OK])
+
+        _run(runner, clock, sleep, state_path, timeout=300.0)
+
+        assert runner.timeouts == [300.0]
+
+    def test_real_ssh_never_forwards_timeout_none_to_subprocess(self, monkeypatch):
+        """Defense-in-depth at the actual `subprocess.run` boundary: even if
+        something upstream regresses and passes `timeout=None` through, confirm
+        what `_real_ssh` does with an explicit finite value — this is the seam a
+        future regression would have to defeat."""
+        captured = {}
+
+        class _R:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+
+        def fake_run(args, **kwargs):
+            captured["kwargs"] = kwargs
+            return _R()
+
+        monkeypatch.setattr(VSS.subprocess, "run", fake_run)
+        VSS._real_ssh("noctus-vps", "echo hi", 8, 42.0)
+        assert captured["kwargs"].get("timeout") == 42.0
+
+
+class TestLocalTimeoutClassification:
+    """A local wall-clock kill of a CONNECTED-but-slow remote command must never
+    be misread as a connection failure — that would spuriously trip the
+    fail2ban-avoidance circuit breaker over ordinary remote-command slowness."""
+
+    def test_real_ssh_timeout_expired_returns_local_timeout_sentinel(self, monkeypatch):
+        def fake_run(args, **kwargs):
+            raise VSS.subprocess.TimeoutExpired(cmd=args, timeout=kwargs.get("timeout"))
+
+        monkeypatch.setattr(VSS.subprocess, "run", fake_run)
+        rc, out, err = VSS._real_ssh("noctus-vps", "docker compose up -d", 10, 120.0)
+
+        assert rc == VSS._LOCAL_TIMEOUT_RC
+        assert rc != 255  # NOT ssh's own transport-failure code
+        assert out == ""
+        assert "still running" in err or "wall-clock" in err
+
+    def test_local_timeout_message_matches_no_connection_error_marker(self, monkeypatch):
+        """The message _is_connection_failure scans must not accidentally trip
+        it via a marker substring (e.g. "connection timed out", "port 22")."""
+        def fake_run(args, **kwargs):
+            raise VSS.subprocess.TimeoutExpired(cmd=args, timeout=kwargs.get("timeout"))
+
+        monkeypatch.setattr(VSS.subprocess, "run", fake_run)
+        rc, _out, err = VSS._real_ssh("noctus-vps", "cmd", 10, 120.0)
+
+        assert VSS._is_connection_failure(rc, err) is False
+
+    def test_local_timeout_does_not_trip_circuit_even_repeatedly(
+        self, monkeypatch, sleeps, state_path
+    ):
+        """Mirrors test_remote_nonzero_does_not_trip_circuit: a slow-but-connected
+        remote op, repeated past the circuit-fails threshold, must never open the
+        circuit — the edge is proven reachable every single time."""
+        monkeypatch.setenv("NOCTUS_SSH_MIN_INTERVAL", "0")
+        monkeypatch.setenv("NOCTUS_SSH_CIRCUIT_FAILS", "3")
+        captured, sleep = sleeps
+        clock = Clock()
+        LOCAL_TIMEOUT = (VSS._LOCAL_TIMEOUT_RC, "", "ssh: local wall-clock ceiling of 120.0s exceeded")
+        runner = FakeRunner([LOCAL_TIMEOUT] * 6)
+
+        for _ in range(6):
+            rc, _o, err = _run(runner, clock, sleep, state_path)
+            assert rc == VSS._LOCAL_TIMEOUT_RC
+            assert "circuit OPEN" not in err
+
+        import json
+        entry = json.loads(state_path.read_text())[HOST]
+        assert entry["consecutive_failure_count"] == 0
+        assert entry["circuit_open_until"] == 0.0
+        # exactly one attempt per call — a local timeout is NOT retried
+        assert len(runner.calls) == 6
+
+    def test_local_timeout_is_not_retried(self, monkeypatch, sleeps, state_path):
+        """Unlike a connection failure (one backed-off retry), a local wall-clock
+        kill surfaces immediately — the remote side may still be finishing, and
+        retrying a possibly-still-running `docker compose up` risks double
+        side effects."""
+        monkeypatch.setenv("NOCTUS_SSH_MIN_INTERVAL", "3")
+        monkeypatch.setenv("NOCTUS_SSH_CIRCUIT_FAILS", "99")
+        captured, sleep = sleeps
+        clock = Clock()
+        LOCAL_TIMEOUT = (VSS._LOCAL_TIMEOUT_RC, "", "ssh: local wall-clock ceiling exceeded")
+        runner = FakeRunner([LOCAL_TIMEOUT, OK])  # a retry, if it happened, would see OK
+
+        rc, _o, _e = _run(runner, clock, sleep, state_path)
+
+        assert rc == VSS._LOCAL_TIMEOUT_RC          # the ONE attempt's result, unretried
+        assert len(runner.calls) == 1                # not 2 — no backed-off retry fired
+
+
+# ── circuit-OPEN is a fast fail, never an internal wait ──────────────────────
+def test_circuit_open_is_a_fast_fail_not_a_wait(monkeypatch, sleeps, state_path):
+    """The residual flagged post-2026-08-13: does an OPEN circuit itself block a
+    caller for up to the 600s cooldown? No — it must return in one comparison,
+    with zero sleeps and zero runner calls. This is the structural proof."""
+    monkeypatch.setenv("NOCTUS_SSH_MIN_INTERVAL", "0")
+    monkeypatch.setenv("NOCTUS_SSH_CIRCUIT_FAILS", "2")
+    monkeypatch.setenv("NOCTUS_SSH_CIRCUIT_COOLDOWN", "600")
+    captured, sleep = sleeps
+    clock = Clock()
+    runner = FakeRunner([CONN_FAIL] * 4)
+
+    for _ in range(2):
+        _run(runner, clock, sleep, state_path)  # opens the circuit
+    calls_before = len(runner.calls)
+    sleeps_before = len(captured)
+
+    rc, out, err = _run(runner, clock, sleep, state_path)  # circuit is OPEN now
+
+    assert rc == 255 and out == ""
+    assert "FAST FAIL" in err
+    assert "no connection attempted" in err
+    assert len(runner.calls) == calls_before   # zero new ssh attempts
+    assert len(captured) == sleeps_before       # zero new sleeps — no internal wait at all
