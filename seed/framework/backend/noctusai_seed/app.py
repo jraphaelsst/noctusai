@@ -27,7 +27,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from typing import Callable, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 from fastapi import FastAPI
 
@@ -68,6 +68,7 @@ def create_product_app(
     health_config: Optional[HealthEndpointConfig] = None,
     serve_spa: Optional[str] = None,
     required_prod_config: Optional[list[str]] = None,
+    max_body_path_overrides: Optional[Mapping[str, int]] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -165,6 +166,16 @@ def create_product_app(
             via ``MissingProdConfigError`` listing every missing key; no-op in
             dev. Opt-in (default None) — the deploy-config-contract seam every
             product inherits. See ``KB § PATTERNS/deploy-config-contract.md``.
+        max_body_path_overrides: Per-route request-body-size cap, layered on
+            top of the app-wide ``settings.max_body_bytes`` (default 1 MB —
+            right for webhooks, wrong for uploads). ``{"<path-prefix>":
+            <max-bytes>, ...}``; the longest matching prefix of the request
+            path wins, everything else keeps the app-wide default. Falls
+            back to ``settings.max_body_path_overrides`` when the kwarg is
+            omitted, so a product can declare it via its settings class
+            instead if that fits its wiring better. Default `None` — no
+            overrides, unchanged behavior. See
+            ``noctusai_lib.api.middleware.MaxBodySizeMiddleware``.
     """
     # 1. Configure logging
     app_name = schema.replace("_", "-").replace(" ", "-").lower()
@@ -354,7 +365,10 @@ def create_product_app(
     app.state.deps = deps
 
     # 8. Apply shared configuration (Sentry, CORS, exceptions, middleware, rate limiting)
-    configure_app(app, settings, limiter=limiter)
+    configure_app(
+        app, settings, limiter=limiter,
+        max_body_path_overrides=max_body_path_overrides,
+    )
 
     # 9. Register the standard routers the product opted into.
     #    `standard_routers` defaults to `()` — explicit opt-in per the

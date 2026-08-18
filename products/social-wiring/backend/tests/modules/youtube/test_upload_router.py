@@ -267,6 +267,36 @@ class TestUploadFromCodeValidation:
         assert "CA0190" in resp.text
 
 
+class TestUploadMaxBodySizePathOverride:
+    """`app.main`'s `max_body_path_overrides={"/api/videos/upload": 500 MB}`
+    must actually reach `noctusai_seed.create_product_app` and get wired
+    into `MaxBodySizeMiddleware` — a >1 MB request under
+    `/api/videos/upload` should reach the router, not get 413'd by the
+    seed's app-wide 1 MB default (`settings.max_body_bytes`, unchanged by
+    this product). Unit coverage for the override mechanism itself lives
+    in the seed's `test_max_body_size_middleware.py`; this is the
+    integration proof that THIS product's wiring actually applies it."""
+
+    def test_upload_over_1mb_reaches_router_not_413(self, client, override_settings):
+        override_settings(**_COMPLETE_CREDS)
+        big_file = {"file": ("v.mp4", b"x" * (2 * 1024 * 1024), "video/mp4")}  # 2 MB
+
+        resp = client.post(
+            "/api/videos/upload/from-code",
+            files=big_file,
+            data={"product_code": "ONE0000"},
+        )
+
+        # Product-code resolution runs BEFORE the file is staged to disk
+        # (see `upload_video_from_code`'s docstring), so an unknown code
+        # in the empty mock catalog still 404s — the SAME response the
+        # (small-file) catalog-miss test above asserts. What matters here
+        # is that it is 404, not 413: a 413 would mean the middleware
+        # rejected the 2 MB body before the router ever ran.
+        assert resp.status_code == 404
+        assert "ONE0000" in resp.text
+
+
 class _FakeReadTable:
     def __init__(self, rows: list[dict]):
         self._rows = rows

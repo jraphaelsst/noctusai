@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 import uuid
 import logging
-from typing import Callable, Optional
+from typing import Callable, Mapping, Optional
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -134,8 +134,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
 
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
-    """Reject requests whose body exceeds `max_bytes` with 413 before any
-    handler runs.
+    """Reject requests whose body exceeds a per-route cap with 413 before
+    any handler runs.
 
     Two checks, cheapest-first:
 
@@ -150,17 +150,56 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     incoming bytes. Handlers / dependencies that read `request.body()`
     behave normally below the cap.
 
-    Override the cap per product via `settings.webhook_max_body_bytes`
-    (or pass `max_bytes` directly when wiring).
+    **Per-path overrides.** `max_bytes` is the app-wide default (right for
+    webhooks — the flat cap exists to stop an unbounded stream forcing
+    full buffering before HMAC verification). A route that legitimately
+    receives larger payloads (file/photo uploads) needs a bigger cap
+    *without* weakening the default everywhere else. Pass
+    `path_overrides={"<path-prefix>": <max-bytes>, ...}`; the LONGEST
+    matching prefix of `request.url.path` wins, and a path matching no
+    prefix falls back to `max_bytes`. Both checks above honor the
+    resolved per-path limit — an override that only patched one of them
+    would depend on whether the client happened to send a Content-Length,
+    which is worse than no override at all.
+
+    Override the cap per product via `settings.max_body_bytes` /
+    `settings.max_body_path_overrides` (see `configure_app` /
+    `create_product_app`), or pass `max_bytes` / `path_overrides` directly
+    when wiring.
     """
 
-    def __init__(self, app, *, max_bytes: int = DEFAULT_MAX_BODY_BYTES):
+    def __init__(
+        self,
+        app,
+        *,
+        max_bytes: int = DEFAULT_MAX_BODY_BYTES,
+        path_overrides: Optional[Mapping[str, int]] = None,
+    ):
         super().__init__(app)
         if max_bytes <= 0:
             raise ValueError("max_bytes must be positive")
         self.max_bytes = max_bytes
+        self.path_overrides: dict[str, int] = {}
+        for prefix, limit in (path_overrides or {}).items():
+            if limit <= 0:
+                raise ValueError(
+                    f"path_overrides[{prefix!r}] must be positive, got {limit}"
+                )
+            self.path_overrides[prefix] = limit
+
+    def _limit_for(self, path: str) -> int:
+        """Longest-matching-prefix override, else the app-wide default."""
+        best_len = -1
+        best_limit = self.max_bytes
+        for prefix, limit in self.path_overrides.items():
+            if len(prefix) > best_len and path.startswith(prefix):
+                best_len = len(prefix)
+                best_limit = limit
+        return best_limit
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        limit = self._limit_for(request.url.path)
+
         cl = request.headers.get("content-length")
         if cl is not None:
             try:
@@ -170,31 +209,45 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
                     status_code=400,
                     content={"detail": "invalid Content-Length header"},
                 )
-            if declared > self.max_bytes:
-                return _payload_too_large_response(self.max_bytes, declared)
+            if declared > limit:
+                return _payload_too_large_response(limit, declared)
+            return await call_next(request)
 
         # Streaming counter — only matters for chunked / unset-Content-Length.
-        if cl is None:
-            original_receive = request.receive
-            counter = {"n": 0}
-            cap = self.max_bytes
+        original_receive = request.receive
+        counter = {"n": 0}
 
-            async def counting_receive():
-                msg = await original_receive()
-                if msg["type"] == "http.request":
-                    counter["n"] += len(msg.get("body", b"") or b"")
-                    if counter["n"] > cap:
-                        return {"type": "http.disconnect"}
-                return msg
+        async def counting_receive():
+            msg = await original_receive()
+            if msg["type"] == "http.request":
+                counter["n"] += len(msg.get("body", b"") or b"")
+                if counter["n"] > limit:
+                    return {"type": "http.disconnect"}
+            return msg
 
-            request._receive = counting_receive  # noqa: SLF001 — Starlette idiom
+        request._receive = counting_receive  # noqa: SLF001 — Starlette idiom
 
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # A tripped counter disconnects the ASGI receive channel, which
+            # Starlette surfaces deep inside body parsing as
+            # `ClientDisconnect` — deliberately NOT routed through any
+            # registered exception handler (Starlette's own policy: no
+            # point sending a response to a client that already hung up).
+            # We're still attached from out here though, so turn a
+            # genuinely-tripped cap into a clean 413 instead of letting it
+            # surface as an opaque, unhandled 500. Anything that raised
+            # WITHOUT tripping the cap is an unrelated downstream error
+            # and must propagate untouched.
+            if counter["n"] > limit:
+                return _payload_too_large_response(limit, counter["n"])
+            raise
 
-        # When the streaming counter tripped, downstream typically raises;
-        # catch the case where it returned a plain 200 anyway by re-checking.
-        if cl is None and "counter" in dir() and counter["n"] > self.max_bytes:  # pragma: no cover
-            return _payload_too_large_response(self.max_bytes, counter["n"])
+        # Cap tripped but the handler never read the body (so nothing
+        # downstream ever saw the disconnect) — still trips.
+        if counter["n"] > limit:
+            return _payload_too_large_response(limit, counter["n"])
 
         return response
 

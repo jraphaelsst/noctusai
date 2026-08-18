@@ -40,6 +40,10 @@ class ProductSettings(BaseAppSettings):
     # Inbound request body cap. Applies to every endpoint via
     # `MaxBodySizeMiddleware`; bumps the 1 MB default for products that
     # legitimately receive large payloads (file-upload-via-webhook, etc.).
+    # Prefer keeping this at 1 MB and using per-route overrides instead —
+    # see `max_body_path_overrides` on `create_product_app` /
+    # `configure_app` for upload routes that need a bigger cap without
+    # weakening the DoS guard everywhere else (webhooks in particular).
     max_body_bytes: int = 1 * 1024 * 1024  # 1 MB
 
     # Rate limit applied to inbound webhook routes via the product's

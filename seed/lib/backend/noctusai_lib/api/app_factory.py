@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Mapping
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,6 +42,7 @@ def configure_app(
     cors_allow_headers: list[str] | None = None,
     cors_expose_headers: list[str] | None = None,
     max_body_bytes: int | None = None,
+    max_body_path_overrides: Mapping[str, int] | None = None,
     allow_credentials: bool = True,
     product_name: str | None = None,
 ) -> None:
@@ -65,10 +67,23 @@ def configure_app(
                             Defaults to standard set with correlation ID headers.
         cors_expose_headers: Custom list of exposed CORS headers.
                              Defaults to correlation ID and response time headers.
-        max_body_bytes: Override the body-size cap (default 1 MB or
-                        `settings.max_body_bytes` when present). Set to a
-                        higher value for products that legitimately receive
-                        large payloads (file-upload-via-webhook, etc.).
+        max_body_bytes: Override the app-wide body-size cap (default 1 MB
+                        or `settings.max_body_bytes` when present). Set to
+                        a higher value for products that legitimately
+                        receive large payloads (file-upload-via-webhook,
+                        etc.). Keep the default low for webhook routes —
+                        this is the DoS guard those routes rely on; use
+                        `max_body_path_overrides` instead of raising this
+                        for the routes that actually need more room.
+        max_body_path_overrides: Per-route cap override (default `None` or
+                        `settings.max_body_path_overrides` when present).
+                        `{"<path-prefix>": <max-bytes>, ...}` — the longest
+                        matching prefix of the request path wins; a path
+                        matching no prefix uses `max_body_bytes`. Use this
+                        for upload routes (documents/photos/video) that need
+                        a bigger cap WITHOUT raising the app-wide default
+                        that keeps webhook routes DoS-guarded. See
+                        `noctusai_lib.api.middleware.MaxBodySizeMiddleware`.
         allow_credentials: Whether to send credentials in CORS responses.
                            Defaults to True. Mutually exclusive with a
                            wildcard `cors_origins='*'` — boot refuses the
@@ -195,9 +210,15 @@ def configure_app(
     # -----------------------------------------------------------------------
     if max_body_bytes is None:
         max_body_bytes = getattr(settings, "max_body_bytes", DEFAULT_MAX_BODY_BYTES)
+    if max_body_path_overrides is None:
+        max_body_path_overrides = getattr(settings, "max_body_path_overrides", None)
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
-    app.add_middleware(MaxBodySizeMiddleware, max_bytes=max_body_bytes)
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        max_bytes=max_body_bytes,
+        path_overrides=max_body_path_overrides,
+    )
 
     # -----------------------------------------------------------------------
     # Exception handlers

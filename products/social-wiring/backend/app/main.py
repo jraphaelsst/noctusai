@@ -267,6 +267,22 @@ assert _standard == _STANDARD_ROUTERS, (
     f"to match the MODULES seam (and re-audit)."
 )
 
+# Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
+# 1 MB — see `noctusai_seed.ProductSettings`) exists to DoS-guard inbound
+# webhooks; browser uploads legitimately exceed it and need their own,
+# larger, per-route ceiling instead of weakening the default everywhere.
+# The longest matching prefix wins (see
+# `noctusai_lib.api.middleware.MaxBodySizeMiddleware`).
+_MAX_BODY_PATH_OVERRIDES = {
+    # Browser drag-and-drop video upload (POST /api/videos/upload[/from-code]).
+    # `stage_browser_upload` streams straight to disk (no full-body
+    # buffering), so the ceiling only needs to bound worst-case disk use
+    # per upload, not memory — 500 MB comfortably covers a phone/drone
+    # property walkthrough video (typically 100-300 MB for a few minutes
+    # of 1080p/4K) while still refusing an unbounded multi-GB stream.
+    "/api/videos/upload": 500 * 1024 * 1024,  # 500 MB
+}
+
 app = create_product_app(
     name="Social Wiring",
     schema="social_wiring",
@@ -281,6 +297,7 @@ app = create_product_app(
     # debounce queue. See app/lifespan.py for the contract.
     lifespan_startup=on_startup,
     lifespan_shutdown=on_shutdown,
+    max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py`:
     # consent_features="app.services.ai_consent_features",
