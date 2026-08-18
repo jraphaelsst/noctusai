@@ -1,9 +1,20 @@
 # Grupo OLX (ZAP / VivaReal / ImovelWeb) portal-lead ingestion — MCP map + full vertical slice
 
-> **Status:** planned, not started. Authored 2026-08-14 by the tech-lead session.
-> **Intended executor:** dispatch this file to `backend-engineer` / `frontend-engineer`
-> per the wave table at the bottom. Read `CLAUDE.md` §1 first; self-branch off
-> `origin/dev` before any write.
+> **Status: BUILT + MCP REGISTERED, not merged, not deployed** (2026-08-17).
+> All four slices are implemented on `feat/olx-portal-leads-mcp`, now REBASED
+> onto `origin/dev` — see `HANDOFF.md` beside this file for the commit list, the
+> verification actually run, what the rebase reconciled, and the merge steps.
+> Authored 2026-08-14; revised 2026-08-17 (MCP a hard prerequisite; then again
+> after the rebase folded this branch's paging doc into the `postgrest-row-cap`
+> pattern `dev` shipped for the same bug class).
+>
+> **Gate 1 is still open and still blocks deploy.** It needs the real
+> SECRET_KEY. The receiver is inert until then — an unconfigured secret 401s
+> every delivery by design — so merging is safe, but calling the integration
+> live is not. Waves 3–4 were built ahead of Gate 1 on explicit instruction to
+> finish end-to-end; the contract they build on therefore remains UNVERIFIED
+> until the gate passes, and correcting it afterwards is expected work, not a
+> defect.
 
 ## Context
 
@@ -45,6 +56,17 @@ not `zap` — one connector serves every Grupo OLX portal.
 **Anti-fork rule for this build:** the payload contract is defined **once**, in
 the seed, and imported by *both* the MCP server and the product receiver.
 The MCP is a map over the same module the runtime uses, never a second copy.
+
+**Sequencing rule — the MCP is a PREREQUISITE, not a parallel track.** Slices A
+and B ship first, and the connector is **registered and actually callable**. It
+is then pointed at the real Grupo OLX surface with the real key, and every
+divergence between the vendor's prose and what the API really does is corrected
+in the seed `contract.py` and recorded in the KB doc's change log. Only once
+**Gate 1** (below) passes do slices C and D get dispatched, so the product
+receiver is built against a *verified* contract. A doc-only contract is a guess
+until something has called the API — building the product on one would mean
+discovering the divergence in production, on leads that cannot be replayed
+after 14 days.
 
 ---
 
@@ -116,6 +138,8 @@ mcp/olx/
 | `olx.diagnostics.connection_status` | READ, no API call | `{ok, configured, receiver_url, has_webhook_secret, has_api_key, homologation_state, next_step}` |
 | `olx.diagnostics.probe` | READ | Walks `OLX_ENDPOINT_BASELINE`; reports `unexpected` rather than raw status (a documented 401/405 is not a fault) |
 | `olx.diagnostics.list_known_endpoints` | READ | Static catalog derived from the same baseline + the wrapping tool per path |
+| `olx.webhook.record_delivery` | WRITE 🔒 | Persists one **real** inbound body (pasted, or read from the receiver's `olx_lead_events`) into `mcp/olx/fixtures/observed/<origin_lead_id>.json`, secret-free. The corpus every later assertion is made against |
+| `olx.contract.diff_observed` | READ, zero-IO | Diffs the recorded corpus against `contract.py` → fields present live but undocumented, documented but never seen, type/enum mismatches, and required-fields that arrived null. **This is the tool that closes the doc-vs-reality loop** and its output is what gets written into the KB change log |
 
 Both write tools carry the house `confirm: bool = False` gate — `confirm != True`
 ⇒ typed error `status=412`, **no side effect** (`_kit.errors.confirmation_required_message`).
@@ -127,9 +151,25 @@ inventory with the status legend · adapter contract · MCP design notes · chan
 log with live-probe dates), `KNOWLEDGE-BASE/MCP-SERVERS/olx.md` + the README
 row, and `KB § INDEX.md`.
 
-**`.mcp.json` registration is deliberately NOT part of this slice** — the
-keep-list is user-gated (`CLAUDE.md §1` context-budget rule). The server is
-built, tested and documented; the user decides whether it gets loaded per session.
+**`.mcp.json` registration — REGISTERED 2026-08-17, in its pre-merge form.**
+The file is **gitignored** (per-machine, absolute `cwd`), so the row cannot ship
+in a commit; the canonical before/after lives in
+`KNOWLEDGE-BASE/MCP-SERVERS/olx.md § Registration`.
+
+The durable row (`args: ["mcp/olx/server.py"]`, `cwd: <repo root>`) cannot be
+used yet: `cwd` is the primary checkout, whose editable `noctusai_lib` gains
+`integrations.olx` only at the merge, so that form would ImportError at every
+session start. So the registered row points `args` at the **worktree's**
+`mcp/olx/server.py` instead — live now, verified over stdio through exactly
+that configuration (`connection_status` answered `ok:false` with the correct
+next-step, 9 tools listed).
+
+🔴 **Repoint at the merge, before the worktree is cleaned up.** Otherwise the
+row references a file that no longer exists.
+
+Adding it to the session keep-list stays the user's call (`CLAUDE.md §1`
+context-budget rule); it was added on their explicit instruction, so the API
+can be validated against the real key next session.
 
 ---
 
@@ -229,18 +269,55 @@ Contract-first: builds against the endpoints declared in C2, in parallel with C.
 
 ## Execution
 
-Self-branch off `origin/dev` (never work on `dev`), then three waves of
-file-disjoint dispatch:
+Self-branch off `origin/dev` (never work on `dev`). **MCP-first**: the connector
+is built, registered and validated against the real API before a single line of
+product code is written.
 
 | Wave | Slices | Agent |
 |---|---|---|
-| 1 | **A** (seed contract + parser + adapter + webhook scheme) | `backend-engineer` |
-| 2 | **B** (mcp/olx + KB docs), **C** (product backend), **D** (frontend) — parallel, file-disjoint | `backend-engineer` ×2 + `frontend-engineer` |
-| 3 | integration on the merged tip, gates, docs sync | tech-lead |
+| 1 | **A** (seed contract + parser + normalizer + adapter + webhook scheme) | `backend-engineer` |
+| 2 | **B** (`mcp/olx` + KB docs; `.mcp.json` row REGISTERED, repoint at merge) | `backend-engineer` |
+| — | **🚦 Gate 1 — live validation.** Blocks waves 3–4. See below. | tech-lead + user (key) |
+| 3 | **C** (product backend), **D** (frontend) — parallel, file-disjoint | `backend-engineer` + `frontend-engineer` |
+| 4 | integration on the merged tip, gates, docs sync | tech-lead |
 
-B, C and D all import Slice A, so A lands first; wave 2 builds against A's
-published surface plus the endpoint contract declared above. Re-run the gates
-on the **merged tip**, not per-branch — derived artifacts couple the slices.
+A and B are sequential (B imports A's `contract.py` / `endpoints.py`). C and D
+are parallel and build against the **post-Gate-1** contract plus the endpoint
+shapes declared above. Re-run the gates on the **merged tip**, not per-branch —
+derived artifacts couple the slices.
+
+### 🚦 Gate 1 — live validation (the reason the MCP comes first)
+
+Needs the real SECRET_KEY (and the Gestor de Leads `X-API-KEY` / `X-Agent-Name`
+if we also want the outbound direction). Nothing in wave 3 starts until every
+line here is green or explicitly waived in writing.
+
+1. `olx.diagnostics.connection_status` answers from a live session — proves the
+   connector is registered, loaded, and reading its `.env`.
+2. `olx.diagnostics.probe` runs against the real hosts. Every row is either
+   `as_expected` or lands in `unexpected` **and gets its baseline row corrected**
+   in `endpoints.py`. A guessed expected-status is worse than none — it trains
+   us to ignore the report.
+3. `olx.leads.push confirm=true` against `/v1/addLeads` with the real key
+   returns 200 (or a typed, *understood* rejection). This is the only
+   authenticated live call the vendor exposes to us, so it is the only proof the
+   credentials and the base URL are right.
+4. At least one **real** inbound delivery is captured via
+   `olx.webhook.record_delivery` — from their beta endpoint validator pointed at
+   a temporary public receiver, or from the first homologation traffic.
+5. `olx.contract.diff_observed` reports **zero unexplained divergence**. Any
+   divergence is fixed in the seed `contract.py` first, and both the fix and the
+   observation date go into `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/olx.md`'s change
+   log. Specifically resolve, with evidence rather than inference:
+   - does `leadOrigin` ever carry the portal name, or is it always `Grupo OLX`?
+     (decides whether the `grupo-olx` splitter is buildable at all)
+   - is the Basic username literally `vivareal`, or has it been rebranded?
+   - which `extraData` keys actually arrive, and for which `leadType`s?
+   - do ImovelWeb leads land on this pipe once activated, and how are they marked?
+6. The KB doc is rewritten from **observed** behaviour, with the doc-only rows
+   explicitly labelled as such (vista.md's `✅ live-200 / 🔒 live-401 / ❌ live-404
+   / 📖 doc-only / ❓ referenced` legend). That rewritten doc — not the vendor's
+   HTML — is the brief wave 3 is dispatched with.
 
 ## Verification
 

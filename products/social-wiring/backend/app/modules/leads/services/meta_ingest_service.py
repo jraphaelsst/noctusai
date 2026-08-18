@@ -62,6 +62,8 @@ from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.persistence import iter_paged_rows
+
 from app.modules.leads.importer.resolvers import resolve_corretor
 from app.modules.leads.services import dimensions_service, leads_service
 from app.modules.leads.services.query import backfill_generated_columns
@@ -342,7 +344,10 @@ def backfill_meta_ads_leads(
     Paged read over ``meta_ads_leads`` (mirrors ``query.py``'s
     ">1000 rows silently truncated" caution — a bare ``.select().
     execute()`` here would silently backfill only PostgREST's default
-    page and report success)."""
+    page and report success). The loop itself is the seed's
+    ``iter_paged_rows``: its termination does not depend on the backend
+    honouring ``range()``, which an offset-only ``while True`` here did.
+    """
     _, corretor_map = dimensions_service.build_resolution_maps(client, org_id)
     forms_cache: dict[str, tuple[dict[str, str], dict[str, str]]] = {}
 
@@ -350,45 +355,42 @@ def backfill_meta_ads_leads(
     skipped_existing = 0
     errors: list[dict[str, Any]] = []
 
-    offset = 0
-    while True:
-        resp = (
+    def fetch_page(start: int, end: int):
+        return (
             _table(client, "meta_ads_leads")
             .select("*")
             .eq("org_id", str(org_id))
             .order("id")
-            .range(offset, offset + page_size - 1)
+            .range(start, end)
             .execute()
+            .data
         )
-        rows = list(resp.data or [])
-        if not rows:
-            break
 
-        for row in rows:
-            form_id = row.get("form_id")
-            if form_id not in forms_cache:
-                forms_cache[form_id] = _form_question_maps(client, form_id)
-            question_types, question_labels = forms_cache[form_id]
-            try:
-                result = ingest_meta_lead(
-                    client,
-                    org_id,
-                    row,
-                    corretor_map=corretor_map,
-                    question_types=question_types,
-                    question_labels=question_labels,
-                )
-            except ValueError as exc:
-                errors.append({"meta_lead_id": row.get("id"), "error": str(exc)})
-                continue
-            if result["created"]:
-                ingested += 1
-            else:
-                skipped_existing += 1
-
-        if len(rows) < page_size:
-            break
-        offset += page_size
+    for row in iter_paged_rows(
+        fetch_page,
+        page_size=page_size,
+        label=f"meta_ads_leads backfill for org_id={org_id}",
+    ):
+        form_id = row.get("form_id")
+        if form_id not in forms_cache:
+            forms_cache[form_id] = _form_question_maps(client, form_id)
+        question_types, question_labels = forms_cache[form_id]
+        try:
+            result = ingest_meta_lead(
+                client,
+                org_id,
+                row,
+                corretor_map=corretor_map,
+                question_types=question_types,
+                question_labels=question_labels,
+            )
+        except ValueError as exc:
+            errors.append({"meta_lead_id": row.get("id"), "error": str(exc)})
+            continue
+        if result["created"]:
+            ingested += 1
+        else:
+            skipped_existing += 1
 
     logger.info(
         "meta_ingest_service.backfill_meta_ads_leads: org=%s ingested=%s "

@@ -47,23 +47,49 @@ _CREATE_TABLE_HEAD_RE = re.compile(
     re.IGNORECASE,
 )
 
-_ALTER_ADD_COLUMN_RE = re.compile(
+# One `ALTER TABLE [IF EXISTS] [ONLY] [schema.]table` head. The clauses
+# that follow are matched SEPARATELY (below) rather than folded into this
+# pattern, because a single ALTER may carry many of them:
+#
+#     ALTER TABLE social_wiring.leads
+#         ADD COLUMN IF NOT EXISTS external_source  TEXT,
+#         ADD COLUMN IF NOT EXISTS external_lead_id TEXT;
+#
+# A combined `ALTER…[\s\S]*?ADD COLUMN (\w+)` pattern captures only the
+# FIRST clause: `finditer` resumes after the match, and the next attempt
+# needs another `ALTER TABLE` head that is not there. Every column after
+# the first was silently missing from the mock schema registry — across
+# ~20 fleet migrations — so a test touching one failed with "table has no
+# column X" naming a column the migration plainly adds.
+_ALTER_TABLE_HEAD_RE = re.compile(
     rf"\bALTER\s+TABLE(?:\s+IF\s+EXISTS)?\s+"
     rf"(?:ONLY\s+)?"
-    rf"(?:(?P<schema>{_IDENT})\.)?(?P<table>{_IDENT})\b"
-    rf"[\s\S]*?"  # DOTALL-like (may cross lines — "ALTER TABLE foo\n    ADD COLUMN...")
+    rf"(?:(?P<schema>{_IDENT})\.)?(?P<table>{_IDENT})\b",
+    re.IGNORECASE,
+)
+
+_ADD_COLUMN_CLAUSE_RE = re.compile(
     rf"\bADD\s+COLUMN(?:\s+IF\s+NOT\s+EXISTS)?\s+(?P<column>{_IDENT})\b",
     re.IGNORECASE,
 )
 
-_ALTER_DROP_COLUMN_RE = re.compile(
-    rf"\bALTER\s+TABLE(?:\s+IF\s+EXISTS)?\s+"
-    rf"(?:ONLY\s+)?"
-    rf"(?:(?P<schema>{_IDENT})\.)?(?P<table>{_IDENT})\b"
-    rf"[\s\S]*?"
+_DROP_COLUMN_CLAUSE_RE = re.compile(
     rf"\bDROP\s+COLUMN(?:\s+IF\s+EXISTS)?\s+(?P<column>{_IDENT})\b",
     re.IGNORECASE,
 )
+
+
+def _alter_table_segments(stmt: str):
+    """Yield `(schema, table, body)` per ALTER TABLE head in `stmt`.
+
+    `body` runs to the next ALTER head (or the end), so each head owns
+    exactly its own clauses — several ALTERs inside one DO block stay
+    correctly attributed instead of bleeding into each other.
+    """
+    heads = list(_ALTER_TABLE_HEAD_RE.finditer(stmt))
+    for index, head in enumerate(heads):
+        end = heads[index + 1].start() if index + 1 < len(heads) else len(stmt)
+        yield head.group("schema"), head.group("table"), stmt[head.end():end]
 
 # Table-level constraints inside a CREATE TABLE body that must NOT be
 # parsed as columns. Matched at line start (after optional whitespace).
@@ -322,16 +348,15 @@ def parse_sql(sql: str, *, source_label: str = "<unknown>") -> dict[str, set[str
         # ALTER TABLE ADD COLUMN — may appear standalone OR inside DO block
         # body. Our statement walker treats DO as atomic, so scan for
         # ALTER ... ADD COLUMN matches inside the whole stmt.
-        if "ADD COLUMN" in upper:
-            for m in _ALTER_ADD_COLUMN_RE.finditer(stmt):
-                qualified = _qualify(m.group("schema"), m.group("table"))
-                schema_map.setdefault(qualified, set()).add(m.group("column"))
-        if "DROP COLUMN" in upper:
-            for m in _ALTER_DROP_COLUMN_RE.finditer(stmt):
-                qualified = _qualify(m.group("schema"), m.group("table"))
-                existing = schema_map.get(qualified)
-                if existing:
-                    existing.discard(m.group("column"))
+        if "ADD COLUMN" in upper or "DROP COLUMN" in upper:
+            for schema, table, body in _alter_table_segments(stmt):
+                qualified = _qualify(schema, table)
+                for m in _ADD_COLUMN_CLAUSE_RE.finditer(body):
+                    schema_map.setdefault(qualified, set()).add(m.group("column"))
+                for m in _DROP_COLUMN_CLAUSE_RE.finditer(body):
+                    existing = schema_map.get(qualified)
+                    if existing:
+                        existing.discard(m.group("column"))
 
     return schema_map
 

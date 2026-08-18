@@ -3,7 +3,8 @@
 Uses a fresh FastAPI app + TestClient to assert the dep factory:
   - reads the body once
   - resolves the secret via the supplied resolver (sync OR async)
-  - verifies per the configured scheme (`sha256_prefixed`, `sha256_hex`, `svix`)
+  - verifies per the configured scheme (`sha256_prefixed`, `sha256_hex`, `svix`,
+    `basic_shared_secret`)
   - bypasses with WARNING when `bypass_when_unset=True` and resolver returns None
   - returns 401 on signature mismatch / missing-required-headers / expired timestamp
 """
@@ -266,3 +267,106 @@ def test_endpoint_resolver_can_return_plain_string():
         "/wh", content=body, headers={"X-Hub-Signature-256": _hub_sig(body, "shh")},
     )
     assert resp.status_code == 200
+
+
+# -- basic_shared_secret (Grupo OLX leads) -----------------------------------
+
+
+def _basic_header(username: str, secret: str) -> str:
+    return "Basic " + base64.b64encode(f"{username}:{secret}".encode()).decode("ascii")
+
+
+def test_endpoint_accepts_valid_basic_shared_secret():
+    secret = "594F803B380A41396ED63DCA39503542"
+    dep = webhook_endpoint(
+        secret_resolver=static_secret_resolver(secret),
+        scheme="basic_shared_secret",
+    )
+    client = _make_app(dep)
+
+    resp = client.post(
+        "/wh",
+        content=b'{"originLeadId":"abc"}',
+        headers={"Authorization": _basic_header("vivareal", secret)},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["body"] == '{"originLeadId":"abc"}'
+
+
+def test_endpoint_rejects_wrong_basic_secret_with_401():
+    dep = webhook_endpoint(
+        secret_resolver=static_secret_resolver("right"),
+        scheme="basic_shared_secret",
+    )
+    client = _make_app(dep)
+
+    resp = client.post(
+        "/wh",
+        content=b"{}",
+        headers={"Authorization": _basic_header("vivareal", "wrong")},
+    )
+
+    assert resp.status_code == 401
+
+
+def test_endpoint_rejects_missing_authorization_header_with_401():
+    dep = webhook_endpoint(
+        secret_resolver=static_secret_resolver("k"),
+        scheme="basic_shared_secret",
+    )
+    client = _make_app(dep)
+
+    assert client.post("/wh", content=b"{}").status_code == 401
+
+
+def test_endpoint_basic_scheme_defaults_to_the_authorization_header():
+    """The scheme's default `signature_header` must be `Authorization` —
+    a wrong default would silently read an absent header and 401 every
+    genuine delivery."""
+    secret = "k"
+    dep = webhook_endpoint(
+        secret_resolver=static_secret_resolver(secret),
+        scheme="basic_shared_secret",
+    )
+    client = _make_app(dep)
+
+    resp = client.post(
+        "/wh", content=b"{}", headers={"Authorization": _basic_header("vivareal", secret)}
+    )
+
+    assert resp.status_code == 200
+
+
+def test_endpoint_basic_username_override_is_honoured():
+    secret = "k"
+    dep = webhook_endpoint(
+        secret_resolver=static_secret_resolver(secret),
+        scheme="basic_shared_secret",
+        basic_username="grupoolx",
+    )
+    client = _make_app(dep)
+
+    assert client.post(
+        "/wh", content=b"{}", headers={"Authorization": _basic_header("grupoolx", secret)}
+    ).status_code == 200
+    assert client.post(
+        "/wh", content=b"{}", headers={"Authorization": _basic_header("vivareal", secret)}
+    ).status_code == 401
+
+
+def test_endpoint_basic_scheme_unset_secret_401s_when_bypass_disabled():
+    """The OLX receiver runs `bypass_when_unset=False`: an unconfigured
+    secret must 401, never wave the delivery through."""
+    dep = webhook_endpoint(
+        secret_resolver=static_secret_resolver(None),
+        scheme="basic_shared_secret",
+        bypass_when_unset=False,
+    )
+    client = _make_app(dep)
+
+    resp = client.post(
+        "/wh", content=b"{}", headers={"Authorization": _basic_header("vivareal", "k")}
+    )
+
+    assert resp.status_code == 401

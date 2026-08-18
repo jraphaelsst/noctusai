@@ -14,18 +14,33 @@
 # from the merged tree is always the correct resolution.
 #
 # WHAT THIS DRIVER DOES (git invokes:  driver %O %A %B %P):
-#   1. write git's merge result (%A — may carry conflict markers, but ONLY inside
-#      a counts block when the churn is count-only) to the real path %P;
-#   2. run `--update-kb-counts` → regenerates EVERY kb-counts block from the tree,
-#      overwriting the churn (and any conflict markers that sat between the
-#      start/end markers) with fresh, correct numbers;
-#   3. if NO conflict markers remain → exit 0 (resolved). If markers REMAIN
-#      (a genuine concurrent PROSE edit outside the counts blocks) → restore %A
-#      and exit 1 so git surfaces the real conflict to the human.
+#   1. ask the CLI to render %A's content with every kb-counts block that
+#      belongs to %P regenerated from the tree — `--render-kb-counts` writes
+#      ONLY to the `--out` scratch file we hand it, never to a tracked file;
+#   2. if NO conflict markers remain in that render → write it to %A, exit 0
+#      (resolved). If markers REMAIN (a genuine concurrent PROSE edit outside
+#      the counts blocks) → leave %A untouched and exit 1 so git surfaces the
+#      real conflict to the human.
 #
 # Counts-only churn → silently correct. Real prose conflict → still surfaced.
 # Mirrors the `.gitattributes merge=union` precedent for append-only ndjson;
 # `union` is wrong for a TABLE (it duplicates rows), so we regenerate instead.
+#
+# 🔴 THE DRIVER WRITES %A AND NOTHING ELSE. That is git's contract for a merge
+# driver, and breaking it broke rebase. The original implementation copied %A
+# over the real path, ran `--update-kb-counts` (which rewrites EVERY kb-counts
+# doc in the tree, not just the merged one), and copied back — leaving the
+# working tree modified as a side effect. A single merge hides that, because
+# git overwrites the working tree from %A immediately afterwards. A REBASE does
+# not: the sequencer applies one commit per pick, and the counts written during
+# pick N reflect the intermediate tree, so pick N+1 aborts with "Your local
+# changes to the following files would be overwritten by merge" — forever.
+# `git rebase --continue` then reschedules the same pick, so the rebase cannot
+# finish and the todo list grows on every attempt. Observed 2026-08-17 replaying
+# 10 commits over `dev`; the tempting fix is to neutralise the driver for the
+# rebase (`-c merge.kb-counts.driver=true`), which is a workaround around a
+# defect in this file. Keep this driver side-effect-free instead.
+#
 # Registered (local git config, not committed) by scripts/hooks/install-hooks.sh.
 # KB § PATTERNS/common/auto-generated-merge-drivers.md
 # ──────────────────────────────────────────────────────────────────────────
@@ -37,12 +52,12 @@ PATHNAME="${4:-}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-# Fallback: if git didn't pass %P (older git), we can't safely regenerate in place
-# → behave like the default driver (leave %A as-is, signal conflict).
+# Fallback: if git didn't pass %P (older git), we don't know WHICH doc's blocks
+# to regenerate → behave like the default driver (leave %A as-is, signal
+# conflict) rather than guess.
 if [[ -z "$PATHNAME" ]]; then
     exit 1
 fi
-TARGET="$REPO_ROOT/$PATHNAME"
 
 # venv-aware Python resolution — identical contract to scripts/hooks/pre-commit
 # (worktrees have no venv of their own → fall back to the main repo's via
@@ -61,20 +76,30 @@ CLI="$REPO_ROOT/mcp/noctusai/cli.py"
 
 has_markers() { grep -qE '^(<<<<<<<|=======|>>>>>>>)' "$1" 2>/dev/null; }
 
-# 1. Materialize git's merge result into the real working-tree path.
-cp "$CURRENT" "$TARGET"
+# Scratch file for the render. Cleaned up on every exit path, including the
+# `set -e` ones — a merge driver that litters temp files into the repo is the
+# same class of side effect this driver was rewritten to stop having.
+RENDERED="$(mktemp "${TMPDIR:-/tmp}/kb-counts-render.XXXXXX")"
+trap 'rm -f "$RENDERED"' EXIT
 
-# 2. Regenerate the counts blocks from the tree (best-effort: if python/CLI is
-#    unavailable we fall through to the marker check below, which surfaces the
-#    conflict rather than silently committing churn).
+# 1. Render %A's content with the counts blocks regenerated from the tree.
+#    Pure — nothing is written to the working tree. If python/the CLI is
+#    unavailable, or the render fails for any reason, we fall through to the
+#    marker check with the UNRENDERED merge result, which surfaces the conflict
+#    rather than silently committing churn.
 if { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; } && [[ -f "$CLI" ]]; then
-    "$PY" "$CLI" --update-kb-counts --worktree-path "$REPO_ROOT" >/dev/null 2>&1 || true
+    if ! "$PY" "$CLI" --render-kb-counts "$PATHNAME" --source "$CURRENT" \
+            --out "$RENDERED" --worktree-path "$REPO_ROOT" >/dev/null 2>&1; then
+        cp "$CURRENT" "$RENDERED"
+    fi
+else
+    cp "$CURRENT" "$RENDERED"
 fi
 
-# 3. Decide: clean → resolved; markers remain → real (prose) conflict, surface it.
-if has_markers "$TARGET"; then
-    cp "$CURRENT" "$TARGET"   # leave the conflicted version on disk for the human
+# 2. Decide: clean → resolved; markers remain → real (prose) conflict, surface
+#    it with %A exactly as git left it.
+if has_markers "$RENDERED"; then
     exit 1
 fi
-cp "$TARGET" "$CURRENT"       # hand the regenerated, conflict-free file back to git
+cp "$RENDERED" "$CURRENT"     # hand the regenerated, conflict-free file back to git
 exit 0

@@ -85,6 +85,29 @@ Exposes the Supabase ativos (properties) database as MCP tools for AI agents. En
 
 ---
 
+### olx — Grupo OLX portal-leads connector MCP
+
+**Type**: Connector (composes `mcp/_kit`; wraps `noctusai_lib.integrations.olx`)
+
+The **Grupo OLX lead pipe** — ZAP · VivaReal · OLX · ImovelWeb · Casa
+Mineira, one connector because they share one webhook. Built BEFORE the
+product receiver on purpose: the integration is inbound-only with no
+sandbox, and OLX discards an undelivered lead after 14 days with no
+replay, so a receiver written against unverified prose loses real leads.
+The connector's job is to make the contract inspectable, testable,
+exercisable and correctable against live behaviour. Secrets in
+`mcp/olx/.env` (gitignored). Registration is **user-gated** and must wait
+until `feat/olx-portal-leads-mcp` merges. Full reference: [olx.md](olx.md).
+
+Tools: `olx.webhook.{describe_contract,validate_payload,record_delivery,
+simulate}` · `olx.contract.diff_observed` · `olx.leads.push` ·
+`olx.diagnostics.{connection_status,probe,list_known_endpoints}`. Writes
+confirm-gated (412). The contract tools need no credentials at all;
+`describe_contract` reports `verified_against_live_traffic: false` until
+Gate 1.
+
+---
+
 ## Adding a New MCP Server
 
 1. Create a directory: `MCP-SERVERS/{server-name}/`

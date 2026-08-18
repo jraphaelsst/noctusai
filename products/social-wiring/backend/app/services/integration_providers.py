@@ -33,6 +33,42 @@ __all__ = ["PROVIDERS", "SUPPORTED_PROVIDER_IDS"]
 #   tutorial_url  str | None — external setup guide
 PROVIDERS: list[dict[str, Any]] = [
     {
+        # Grupo OLX covers ZAP, VivaReal, OLX and — once the advertiser
+        # asks ImovelWeb for an activation code — ImovelWeb and Casa
+        # Mineira too. One provider row, because they are one integration.
+        #
+        # `oauth_supported: False` is the vendor's shape, not a shortcut:
+        # OLX issues a static per-CRM secret at homologation and has no
+        # OAuth flow at all.
+        "id": "olx",
+        "display_name": "Grupo OLX (ZAP / VivaReal / ImovelWeb)",
+        "icon": "olx",
+        "oauth_supported": False,
+        "manual_entry": True,
+        "manual_key_fields": [
+            {
+                "name": "webhook_secret",
+                "label": "Chave do webhook (SECRET_KEY)",
+                "type": "password",
+                "placeholder": "Fornecida pelo Grupo OLX na homologação",
+            },
+            {
+                "name": "api_key",
+                "label": "X-API-KEY (Gestor de Leads)",
+                "type": "password",
+                "placeholder": "Opcional — apenas para enviar leads AO OLX",
+            },
+            {
+                "name": "agent_name",
+                "label": "X-Agent-Name (Gestor de Leads)",
+                "type": "text",
+                "placeholder": "Opcional — acompanha o X-API-KEY",
+            },
+        ],
+        "scopes": [],
+        "tutorial_url": "https://developers.grupozap.com/webhooks/integration_leads.html",
+    },
+    {
         "id": "youtube",
         "display_name": "YouTube",
         "icon": "youtube",

@@ -46,6 +46,7 @@ import {
   useLeadSourceUnmapped,
   useLeadSources,
 } from "@/hooks/useLeadsSources";
+import OlxWebhookCard from "./components/OlxWebhookCard";
 import {
   useLeadCorretorAliasMutations,
   useLeadCorretorAliases,
@@ -924,7 +925,9 @@ function CorretoresConfig() {
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function Configuracao() {
-  const [section, setSection] = useState<"origens" | "corretores">("origens");
+  const [section, setSection] = useState<"origens" | "corretores" | "portais">(
+    "origens",
+  );
 
   return (
     <div className="space-y-4" data-testid="leads-config-success">
@@ -945,9 +948,25 @@ export default function Configuracao() {
         >
           Corretores
         </Button>
+        <Button
+          variant={section === "portais" ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setSection("portais")}
+          data-testid="config-section-portais"
+        >
+          Portais
+        </Button>
       </div>
 
-      {section === "origens" ? <OrigensConfig /> : <CorretoresConfig />}
+      {section === "origens" ? (
+        <OrigensConfig />
+      ) : section === "corretores" ? (
+        <CorretoresConfig />
+      ) : (
+        <div className="space-y-4" data-testid="portais-config">
+          <OlxWebhookCard />
+        </div>
+      )}
     </div>
   );
 }

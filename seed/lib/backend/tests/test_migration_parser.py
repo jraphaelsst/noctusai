@@ -275,3 +275,70 @@ def test_case_insensitive_keywords():
     result = parse_sql(sql)
     assert "lowercase.foo" in result
     assert result["lowercase.foo"] == {"id", "name", "extra"}
+
+
+# -- multi-clause ALTER TABLE ------------------------------------------------
+
+
+def test_alter_table_registers_every_add_column_not_just_the_first():
+    """A single ALTER may carry many ADD COLUMN clauses, and ~20 fleet
+    migrations do. The previous combined regex captured only the first:
+    `finditer` resumed past the match and then needed another ALTER TABLE
+    head that was not there, so every later column was silently missing
+    from the mock schema registry."""
+    sql = """
+    ALTER TABLE social_wiring.leads
+        ADD COLUMN IF NOT EXISTS external_source  TEXT,
+        ADD COLUMN IF NOT EXISTS external_lead_id TEXT;
+    """
+
+    schema_map = parse_sql(sql)
+
+    assert schema_map["social_wiring.leads"] == {"external_source", "external_lead_id"}
+
+
+def test_alter_table_registers_three_or_more_columns():
+    sql = """
+    ALTER TABLE erp.clientes
+      ADD COLUMN IF NOT EXISTS lead_score INTEGER CHECK (lead_score >= 0),
+      ADD COLUMN IF NOT EXISTS lead_score_justificativa TEXT,
+      ADD COLUMN IF NOT EXISTS lead_score_atualizado_em TIMESTAMPTZ;
+    """
+
+    assert parse_sql(sql)["erp.clientes"] == {
+        "lead_score", "lead_score_justificativa", "lead_score_atualizado_em",
+    }
+
+
+def test_two_alter_statements_do_not_bleed_into_each_other():
+    """Clause attribution is per-head: a body runs only to the NEXT ALTER
+    head, so a second table's columns never land on the first."""
+    sql = """
+    ALTER TABLE app.first ADD COLUMN a TEXT;
+    ALTER TABLE app.second ADD COLUMN b TEXT, ADD COLUMN c TEXT;
+    """
+
+    schema_map = parse_sql(sql)
+
+    assert schema_map["app.first"] == {"a"}
+    assert schema_map["app.second"] == {"b", "c"}
+
+
+def test_multi_clause_drop_column_removes_every_named_column():
+    sql = """
+    CREATE TABLE app.t (id UUID, a TEXT, b TEXT, c TEXT);
+    ALTER TABLE app.t
+        DROP COLUMN IF EXISTS a,
+        DROP COLUMN IF EXISTS b;
+    """
+
+    assert parse_sql(sql)["app.t"] == {"id", "c"}
+
+
+def test_add_and_drop_in_one_statement_are_both_applied():
+    sql = """
+    CREATE TABLE app.t (id UUID, old TEXT);
+    ALTER TABLE app.t ADD COLUMN new TEXT, DROP COLUMN old;
+    """
+
+    assert parse_sql(sql)["app.t"] == {"id", "new"}

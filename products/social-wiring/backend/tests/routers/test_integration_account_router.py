@@ -141,6 +141,11 @@ class TestProviders:
             "meta",
             "instagram",
             "n8n",
+            # Grupo OLX — ZAP · VivaReal · OLX · ImovelWeb · Casa Mineira.
+            # One row, because they are one integration sharing one lead
+            # webhook. Manual-entry only: OLX issues a static per-CRM
+            # secret at homologation and has no OAuth flow.
+            "olx",
         } == ids
 
     def test_youtube_provider_has_oauth_supported(self, client):

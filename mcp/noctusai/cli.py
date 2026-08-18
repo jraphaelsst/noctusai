@@ -241,6 +241,9 @@ def main():
     # muscle-memory CLI surface + the pre-commit thin-dispatcher entry). ──
     parser.add_argument("--mole", metavar="MODE", choices=["scan", "sweep"], help="Storage-hygiene mole (absorbed scripts/mole.sh). MODE=scan|sweep. Pair --force for a destructive sweep. MCP: noctus.dev.mole.")
     parser.add_argument("--update-kb-counts", action="store_true", help="Regenerate KB derived count blocks (absorbed scripts/update-kb-counts.py). Pair --check for drift-only (exit 1 on drift). MCP: noctus.dev.kb_sync.")
+    parser.add_argument("--render-kb-counts", metavar="REPO_REL_PATH", help="Regenerate REPO_REL_PATH's kb-counts blocks from the tree and write the result to --out. Touches NO tracked file (the pure sibling of --update-kb-counts). Pair --source FILE to rewrite that file's content instead of the working-tree copy — this is how the merge driver scripts/hooks/merge-kb-counts.sh regenerates counts inside git's merge result (%%A) without mutating the working tree, which is what used to make `git rebase` unfinishable. KB § PATTERNS/common/auto-generated-merge-drivers.md.")
+    parser.add_argument("--source", metavar="FILE", help="Content source for --render-kb-counts (default: the target path itself).")
+    parser.add_argument("--out", metavar="FILE", help="Destination for --render-kb-counts. Required: the render goes to a file, never stdout, so the CLI banner (and any future stdout logging) cannot corrupt a doc via the merge driver.")
     parser.add_argument("--check", action="store_true", help="Drift-check mode for --update-kb-counts / --render-project-history / --gen-promotions-index / --propagate (report only, exit 1 on drift; no write).")
     parser.add_argument("--force", action="store_true", help="Authorize the destructive path for --mole sweep / --archive-clean / --cleanup-stale-worktrees (default = dry-run/report).")
     parser.add_argument("--sync-seed-template", action="store_true", help="Sync products/seed → templates/product-seed (absorbed scripts/sync-seed-template.sh). Pair --dry for preview. MCP: noctus.dev.sync_seed_template.")
@@ -2144,6 +2147,30 @@ def main():
         r = run_mole(mode=args.mole, force=args.force)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.render_kb_counts:
+        # Pure with respect to the REPO: the only thing written is --out, which
+        # the caller owns (the merge driver hands us its own temp file).
+        # Diagnostics go to stderr and the exit code is non-zero on failure, so
+        # the driver can fall back to surfacing the conflict rather than acting
+        # on a half-rendered file.
+        # Imported HERE, not at module top: --worktree-path rebinds
+        # settings.REPO_ROOT above, and only a lazy import sees the override.
+        from settings import REPO_ROOT as _REPO_ROOT
+        from tools.kb_sync import render_kb_counts
+        if not args.out:
+            print("--render-kb-counts requires --out FILE", file=sys.stderr)
+            sys.exit(2)
+        target = Path(_REPO_ROOT) / args.render_kb_counts
+        source = Path(args.source).expanduser() if args.source else target
+        if not source.is_file():
+            print(f"--render-kb-counts: no such source file: {source}", file=sys.stderr)
+            sys.exit(2)
+        Path(args.out).expanduser().write_text(
+            render_kb_counts(target, source.read_text(encoding="utf-8")),
+            encoding="utf-8",
+        )
+        sys.exit(0)
 
     elif args.update_kb_counts:
         from tools.kb_sync import update_kb_counts

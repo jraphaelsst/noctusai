@@ -95,26 +95,20 @@ thing tests cannot route around). If a fixture legitimately needs >1 000
 rows, either paginate the test's own read the same way production would, or
 seed the fixture at/under the cap and assert the cap's edge explicitly.
 
-### Layer 2 — the fix recipe
+### Layer 2 — the canonical pager, not a recipe to copy
+
+**Do not hand-roll the loop. Compose
+`noctusai_lib.integrations.persistence.iter_paged_rows`.**
 
 ```python
-_PAGE = 1000
+from noctusai_lib.integrations.persistence import iter_paged_rows
 
-def _select_all(client, table, org_id, columns="*"):
-    """Fetch EVERY row for org_id, paginating past PostgREST's row cap."""
-    out, start = [], 0
-    while True:
-        result = (
-            client.table(table).select(columns)
-            .eq("org_id", str(org_id))
-            .range(start, start + _PAGE - 1)
-            .execute()
-        )
-        rows = result.data or []
-        out.extend(rows)
-        if len(rows) < _PAGE:
-            return out
-        start += _PAGE
+def fetch_page(start, end):                      # INCLUSIVE, PostgREST's own convention
+    return (client.table("olx_leads").select("*").eq("org_id", str(org_id))
+            .order("id").range(start, end).execute().data)
+
+for row in iter_paged_rows(fetch_page, page_size=500, label=f"olx backfill {org_id}"):
+    ...
 
 _IN_FILTER_BATCH = 200  # ~200 UUIDs ≈ 7.6 KB, under the ~8 KB request-line budget
 
@@ -123,16 +117,60 @@ def _batched(items, size):
         yield items[i : i + size]
 ```
 
-Every `.select(...).execute()` whose result set is not **provably** bounded
-below 1 000 goes through a `_select_all`/`_paginate`-shaped helper. Every
-`.in_(col, ids)` whose `ids` is not a small, statically-bounded collection
-goes through `_batched` first, with each batch itself paginated (a batch can
-still exceed 1 000 matching rows on the OTHER side of the filter).
+The caller keeps query construction (filters differ at every call site) and
+**must** `.order(id_key)` — without a deterministic sort PostgREST may return
+overlapping or missing rows across ranges, which no guard can repair.
 
-See `products/social-wiring/backend/app/services/portal_roi_service.py`
-(`_paginate`, `_select_all`) and `.../clientes_service.py` (`_select_all`,
-`_select_all_where`, `_paginate_query`, `_batched`) for the shipped reference
-implementations.
+Every `.select(...).execute()` whose result set is not **provably** bounded
+below 1 000 goes through the pager. Every `.in_(col, ids)` whose `ids` is not a
+small, statically-bounded collection goes through `_batched` first, with each
+batch itself paginated (a batch can still exceed 1 000 matching rows on the
+OTHER side of the filter).
+
+#### Why a helper and not the four-line recipe (added 2026-08-17)
+
+The recipe used to be inlined here, and four services copied it. Two things
+made that untenable within days, both surfaced by the Grupo OLX backfill —
+which **hung on its first test run**:
+
+**The loop has a second failure mode the recipe does not address.** `while
+True: … range(offset, offset + n - 1)` terminates *only if the backend honours
+`range()`*. One that ignores it returns the same page forever. That is not
+hypothetical — it is exactly what `MockSupabaseClient.range()` did before
+Layer 1 landed, and a client or proxy that dropped the `Range` header would do
+it in production, on the path that touches the most rows, with no test
+watching. Fixing the truncation without noticing the hang is the real trap:
+the two `query.py` pagers carried a `_MAX_PAGES` ceiling and were fine, while
+the backfills written later from the same shape were not.
+
+**Four copies is four places to fix it.** At N=5 (`portal_roi_service`,
+`clientes_service`, the `leads` query pager, the Meta backfill, the OLX
+backfill) the recurrence rule applies: the loop becomes one seed function.
+
+What `iter_paged_rows` guarantees beyond the recipe:
+
+| Property | Behaviour |
+|---|---|
+| Termination | Dedupes on `id_key` and advances on unseen rows, so it never depends on the backend cooperating |
+| Non-advancing pager, **over-long** page | Real PostgREST never over-delivers ⇒ the range was disregarded and page 1 already carried everything: warn, stop, nothing lost |
+| Non-advancing pager, **full repeated** page | Equally consistent with "this is everything" and "this is a capped prefix" — indistinguishable, so it **raises** rather than answer a guess |
+| Page ceiling | `page_size * max_pages` (500 000 rows default) raises; callers pass `overflow_error=` to keep their own public exception name (social-wiring's `LeadsResultTooLargeError` subclasses `PagerOverflowError`) |
+| Missing `id_key` | Raises. Degrading the guard to a no-op when the column was not selected would bring the hang straight back |
+
+That last one has a call-site consequence worth copying: `iter_leads_rows`
+forces `id` into the projection, because the columns its callers ask for
+(`origem_raw`, `corretor_raw`, `source_sheet`) are non-unique and deduping on
+one of those would collapse rows they are counting.
+
+**Migrated:** `modules/leads/services/query.py` (`fetch_filtered`,
+`iter_leads_rows`), `modules/leads/services/meta_ingest_service.py`,
+`modules/portal_leads/services/olx_ingest_service.py`.
+**Not yet migrated** — still correct against real PostgREST, but each carries
+its own loop: `app/services/portal_roi_service.py` (`_paginate`,
+`_select_all`), `app/services/clientes_service.py` (`_select_all`,
+`_select_all_where`, `_paginate_query`), `app/services/imoveis_service.py`,
+`app/modules/email_marketing/services/contact_service.py`. Worth a sweep;
+`_batched` stays where it is, it solves the other half.
 
 ### Layer 3 — the keeper
 
