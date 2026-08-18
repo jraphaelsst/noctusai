@@ -92,6 +92,28 @@ class FakeProvider:
             return self._embeddings.popleft()
         return [0.0] * 1536  # shape-correct default matching OpenAI small
 
+    async def generate_embeddings_batch(
+        self,
+        texts: List[str],
+        *,
+        model: str,
+        api_key: str,
+        **kwargs: Any,
+    ) -> List[List[float]]:
+        """ONE recorded call for the whole batch — mirrors OpenAIProvider's
+        real batch shape so a test can assert "N texts -> 1 call" rather than
+        falling back to the high-level per-item degrade path."""
+        self._record(
+            "generate_embeddings_batch", texts=list(texts), model=model, api_key=api_key
+        )
+        out: List[List[float]] = []
+        for _ in texts:
+            if self._embeddings:
+                out.append(self._embeddings.popleft())
+            else:
+                out.append([0.0] * 1536)
+        return out
+
     async def transcribe_audio(
         self,
         audio: bytes,

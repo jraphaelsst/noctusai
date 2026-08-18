@@ -20,9 +20,12 @@ How it works (educate the reader)
     3. For every TypeScript file (`*.ts`, `*.tsx`): emit one chunk per file
        (TS AST in Python is a heavier dep than this surface warrants — the
        roadmap is explicit on this).
-    4. Each chunk → 1536-D vector via the shared seed embedder
-       (`noctusai_lib.integrations.llm.generate_embedding` — same provider
-       as KB embeddings, no new external dep).
+    4. A file's chunks → 1536-D vectors via the shared seed embedder,
+       BATCHED (`noctusai_lib.integrations.llm.generate_embeddings_batch` —
+       same provider as KB embeddings, no new external dep). One HTTP
+       round-trip per `_iter_batches()` slice (default 64 chunks/request),
+       not one per chunk — the fix for the 2026-08 pre-push retry-storm
+       where a 508-chunk refresh fired 508 independently-retried requests.
     5. Stored as float32 BLOBs in sqlite-vec (fast path) or JSON in the
        fallback table (pure-Python cosine scan).
     6. Query time: embed the query → cosine sort → return top-K
@@ -208,6 +211,8 @@ def _chunk_typescript(text: str) -> list[tuple[str, str, str]]:
 
 # v4.0 N=4 consolidation: embed/cosine delegate to _embedding_corpus.
 _embed_sync = _ec.embed_sync
+_embed_batch_sync = _ec.embed_batch_sync
+_iter_batches = _ec.iter_batches
 _cosine = _ec.cosine
 
 
@@ -286,38 +291,62 @@ def refresh(
         now = _now_iso()
         per_file_ok = True
         per_file_rowids: list[int] = []
-        for idx, (symbol, kind, chunk_text) in enumerate(chunks):
+        # Batch the embed calls — ONE HTTP round-trip per `_iter_batches()`
+        # slice instead of one PER CHUNK. This is the fix for the 2026-08
+        # pre-push retry-storm: a 508-chunk refresh used to fire 508
+        # independently-paced-and-retried requests (507 retries observed —
+        # roughly one per chunk — despite OpenAI itself being healthy
+        # throughout); the embeddings endpoint accepts an array `input`, so
+        # batching collapses that to ceil(chunks/batch_size) requests. A
+        # batch failure fails ALL chunks in that slice together, preserving
+        # the existing per-FILE all-or-nothing rollback below (a file's
+        # earlier-batch rows are rolled back too — never partially cached).
+        enumerated_chunks = list(enumerate(chunks))
+        for batch in _iter_batches(enumerated_chunks):
+            batch_texts = [item[1][2] for item in batch]  # chunk_text
             try:
-                vec = _embed_sync(chunk_text)
+                vecs = _embed_batch_sync(batch_texts)
             except Exception as e:  # noqa: BLE001
-                errors.append({"path": rel, "chunk_idx": idx, "error": str(e)[:200]})
-                per_file_ok = False
-                break
-            if len(vec) != EMBEDDING_DIM:
                 errors.append({
-                    "path": rel, "chunk_idx": idx,
-                    "error": f"unexpected dim {len(vec)} (want {EMBEDDING_DIM})",
+                    "path": rel, "chunk_idx": batch[0][0], "error": str(e)[:200],
                 })
                 per_file_ok = False
                 break
-            cur = conn.execute(
-                "INSERT INTO code_chunks(path,chunk_idx,symbol_name,kind,"
-                "chunk_text,source_sha,cached_at) VALUES (?,?,?,?,?,?,?)",
-                (rel, idx, symbol, kind, chunk_text, sha, now),
-            )
-            row_id = cur.lastrowid
-            per_file_rowids.append(row_id)
-            if _HAS_VEC:
-                conn.execute(
-                    "INSERT INTO code_vec(rowid, embedding) VALUES (?, ?)",
-                    (row_id, _pack_vec(vec)),
+            if len(vecs) != len(batch):
+                errors.append({
+                    "path": rel, "chunk_idx": batch[0][0],
+                    "error": f"batch embed returned {len(vecs)} vectors for {len(batch)} inputs",
+                })
+                per_file_ok = False
+                break
+            dim_bad = next((i for i, v in enumerate(vecs) if len(v) != EMBEDDING_DIM), None)
+            if dim_bad is not None:
+                errors.append({
+                    "path": rel, "chunk_idx": batch[dim_bad][0],
+                    "error": f"unexpected dim {len(vecs[dim_bad])} (want {EMBEDDING_DIM})",
+                })
+                per_file_ok = False
+                break
+
+            for (idx, (symbol, kind, chunk_text)), vec in zip(batch, vecs):
+                cur = conn.execute(
+                    "INSERT INTO code_chunks(path,chunk_idx,symbol_name,kind,"
+                    "chunk_text,source_sha,cached_at) VALUES (?,?,?,?,?,?,?)",
+                    (rel, idx, symbol, kind, chunk_text, sha, now),
                 )
-            else:
-                conn.execute(
-                    "INSERT INTO code_embeddings_json(chunk_rowid, embedding) VALUES (?, ?)",
-                    (row_id, json.dumps(vec)),
-                )
-            total_rows += 1
+                row_id = cur.lastrowid
+                per_file_rowids.append(row_id)
+                if _HAS_VEC:
+                    conn.execute(
+                        "INSERT INTO code_vec(rowid, embedding) VALUES (?, ?)",
+                        (row_id, _pack_vec(vec)),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO code_embeddings_json(chunk_rowid, embedding) VALUES (?, ?)",
+                        (row_id, json.dumps(vec)),
+                    )
+                total_rows += 1
         if not per_file_ok and per_file_rowids:
             _ec.delete_embedding_rows(
                 conn, vec_table="code_vec", json_table="code_embeddings_json",

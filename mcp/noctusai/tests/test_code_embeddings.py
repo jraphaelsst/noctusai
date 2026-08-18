@@ -33,24 +33,40 @@ def tmp_repo(tmp_path, monkeypatch):
     return tmp_path
 
 
+def _deterministic_vector(text: str) -> list[float]:
+    """Deterministic 'embedding': sha256 → 1536-D float vector."""
+    import hashlib
+
+    seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:4], "big")
+    return [((seed * (i + 1)) % 1000) / 1000.0 - 0.5 for i in range(ce.EMBEDDING_DIM)]
+
+
 @pytest.fixture
 def fake_embed(monkeypatch):
-    """Deterministic 'embedding': sha256 → 1536-D float vector.
+    """Deterministic 'embedding' — patches BOTH the single-text (`_embed_sync`,
+    used at query time by `search()`) and the batch (`_embed_batch_sync`, used
+    by `refresh()`) funnels, so every call path in this test module is covered
+    without callers needing to know which one a given code path uses.
+
+    `_fake_batch` records call-count + per-call batch sizes on itself (`.calls`)
+    so tests can assert the request-count win directly (batching collapses N
+    chunks into `ceil(N/batch_size)` provider calls, not N).
 
     Also mocks `vector_costs.log_refresh_batch` so tests don't pollute the
     real durable ledger at `project-history/vector-costs.ndjson`.
     """
-    import hashlib
+    def _fake_batch(texts: list[str]) -> list[list[float]]:
+        _fake_batch.calls.append(len(texts))
+        return [_deterministic_vector(t) for t in texts]
 
-    def _fake(text: str) -> list[float]:
-        seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:4], "big")
-        return [((seed * (i + 1)) % 1000) / 1000.0 - 0.5 for i in range(ce.EMBEDDING_DIM)]
+    _fake_batch.calls = []
 
-    monkeypatch.setattr(ce, "_embed_sync", _fake)
+    monkeypatch.setattr(ce, "_embed_sync", _deterministic_vector)
+    monkeypatch.setattr(ce, "_embed_batch_sync", _fake_batch)
     # Isolate from the real vector-costs ledger.
     from tools.noctus.dev import vector_costs as _vc
     monkeypatch.setattr(_vc, "log_refresh_batch", lambda **kwargs: None)
-    return _fake
+    return _fake_batch
 
 
 # ── Cosine helper ────────────────────────────────────────────────────────────
@@ -308,10 +324,10 @@ class TestRefreshAndSearch:
             "    return 'will fail' * 20\n"
         )
 
-        def _boom(text: str) -> list[float]:
+        def _boom(texts: list[str]) -> list[list[float]]:
             raise RuntimeError("provider unreachable")
 
-        monkeypatch.setattr(ce, "_embed_sync", _boom)
+        monkeypatch.setattr(ce, "_embed_batch_sync", _boom)
         result = ce.refresh(repo_root=tmp_repo)
         assert result["ok"] is False
         assert any("provider unreachable" in e["error"] for e in result["errors"])
@@ -386,6 +402,133 @@ class TestCodeNeighbors:
         )
         ce.refresh(repo_root=tmp_repo)
         assert ce.code_neighbors("mcp/x.py", "does_not_exist") == []
+
+
+# ── Embed batching — the 2026-08 retry-storm fix ────────────────────────────
+def _many_functions_source(n: int) -> str:
+    """A single Python source with `n` distinct top-level functions — each
+    one is its own chunk under `_chunk_python`, so this is the lever for
+    controlling chunk COUNT independent of file count."""
+    parts = []
+    for i in range(n):
+        parts.append(
+            f"def fn_{i}():\n"
+            f"    'docstring padding to clear the min-chunk size threshold for func {i}'\n"
+            f"    return {i} * 2 + 1\n"
+        )
+    return "\n".join(parts)
+
+
+class TestEmbedBatching:
+    """Proves the root fix: a refresh with MANY chunks makes FEW provider
+    calls (batched), not one call per chunk — and that batching never
+    breaks the per-file source_sha idempotency contract."""
+
+    def test_many_chunks_collapse_into_few_provider_calls(self, tmp_repo, fake_embed, monkeypatch):
+        # Deterministic batch size for the assertion (independent of the
+        # env-tunable default).
+        from tools.noctus.dev import _embedding_corpus as _ec
+        monkeypatch.setenv("NOCTUS_EMBED_BATCH_SIZE", "20")
+
+        n_chunks = 137  # deliberately not a multiple of the batch size
+        (tmp_repo / "mcp" / "many.py").write_text(_many_functions_source(n_chunks))
+
+        result = ce.refresh(repo_root=tmp_repo)
+        assert result["ok"] is True
+        assert result["rows_written"] == n_chunks
+
+        # BEFORE this fix: n_chunks embed calls (one per chunk, each its own
+        # HTTP round-trip). AFTER: ceil(n_chunks / batch_size) calls.
+        import math
+        expected_calls = math.ceil(n_chunks / 20)
+        assert len(fake_embed.calls) == expected_calls
+        assert expected_calls < n_chunks  # the actual win, asserted directly
+        # Every call except (maybe) the last is a full batch; texts are never
+        # dropped or duplicated across batches.
+        assert sum(fake_embed.calls) == n_chunks
+
+    def test_unchanged_file_makes_zero_embed_calls(self, tmp_repo, fake_embed):
+        """Idempotency contract intact: a file whose content (source_sha) is
+        unchanged must not re-embed ANY of its chunks — batching must not
+        weaken the per-file skip-if-unchanged guard."""
+        (tmp_repo / "mcp" / "stable.py").write_text(_many_functions_source(30))
+        ce.refresh(repo_root=tmp_repo)
+        assert len(fake_embed.calls) > 0  # first pass did embed
+
+        fake_embed.calls.clear()
+        result = ce.refresh(repo_root=tmp_repo)  # nothing changed
+        assert result["rows_written"] == 0
+        assert "mcp/stable.py" in result["skipped"]
+        assert fake_embed.calls == []  # zero provider calls — true no-op
+
+    def test_batch_failure_rolls_back_whole_file(self, tmp_repo, monkeypatch):
+        """A batch that fails mid-file rolls back EVERY row for that file
+        (including chunks embedded by an earlier successful batch in the
+        same file) — the per-file all-or-nothing contract survives batching
+        even though failure is now detected at batch, not chunk, granularity."""
+        monkeypatch.setenv("NOCTUS_EMBED_BATCH_SIZE", "5")
+        (tmp_repo / "mcp" / "flaky.py").write_text(_many_functions_source(12))
+
+        call_n = {"n": 0}
+
+        def _flaky_batch(texts: list[str]) -> list[list[float]]:
+            call_n["n"] += 1
+            if call_n["n"] == 2:  # first batch (5 chunks) succeeds, second fails
+                raise RuntimeError("simulated 429 exhaustion")
+            return [_deterministic_vector(t) for t in texts]
+
+        monkeypatch.setattr(ce, "_embed_batch_sync", _flaky_batch)
+        result = ce.refresh(repo_root=tmp_repo)
+        assert result["ok"] is False
+        # Nothing persisted for the file — including the first batch's 5
+        # rows, which must be rolled back too.
+        assert ce.list_files() == []
+
+    def test_cost_logging_sums_tokens_across_batches_not_per_batch(self, tmp_repo, monkeypatch):
+        """The vector-costs ledger row must reflect the WHOLE refresh's real
+        chunk/token totals summed across every batch call — not one row
+        mis-attributed to a single batch, and not `chunk_count` conflated
+        with the number of provider CALLS."""
+        monkeypatch.setenv("NOCTUS_EMBED_BATCH_SIZE", "10")
+        n_chunks = 25  # -> 3 batch calls (10, 10, 5) at batch size 10
+        (tmp_repo / "mcp" / "costly.py").write_text(_many_functions_source(n_chunks))
+
+        # Simulate the REAL usage-capture path: each batch call reports the
+        # provider's total_tokens for JUST that batch via the usage sink.
+        from tools.noctus.dev import _embedding_corpus as _ec
+
+        class _FakeUsageEvent:
+            def __init__(self, total_tokens):
+                self.total_tokens = total_tokens
+                self.prompt_tokens = total_tokens
+                self.cost_estimate_usd = total_tokens * 0.00001
+
+        class _FakeConfig:
+            usage_sink = None
+
+        fake_config = _FakeConfig()
+        monkeypatch.setattr(
+            "noctusai_lib.integrations.llm.client.get_llm_config",
+            lambda: fake_config,
+        )
+
+        def _batch_with_usage(texts: list[str]) -> list[list[float]]:
+            import asyncio
+            tokens_this_batch = len(texts) * 100  # deterministic per-call usage
+            if fake_config.usage_sink is not None:
+                asyncio.run(fake_config.usage_sink.record(_FakeUsageEvent(tokens_this_batch)))
+            return [_deterministic_vector(t) for t in texts]
+
+        monkeypatch.setattr(ce, "_embed_batch_sync", _batch_with_usage)
+
+        with patch("tools.noctus.dev.vector_costs.log_refresh_batch") as mock_log:
+            result = ce.refresh(repo_root=tmp_repo)
+        assert result["ok"] is True
+        assert result["rows_written"] == n_chunks
+        kwargs = mock_log.call_args.kwargs
+        assert kwargs["chunk_count"] == n_chunks  # rows, not provider-call count
+        # 25 chunks * 100 tokens/chunk, summed across all 3 batch calls.
+        assert kwargs["actual_tokens"] == n_chunks * 100
 
 
 # ── Cost instrumentation hook ───────────────────────────────────────────────
