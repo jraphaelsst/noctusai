@@ -192,6 +192,7 @@ def _register_media_wiring() -> ModuleRegistration:
     )
 
 
+from app.modules.card_hub import register as _card_hub
 from app.modules.email_marketing import register as _register_email_marketing
 from app.modules.leads import register as _leads
 from app.modules.mailchimp import register as _mailchimp
@@ -207,7 +208,24 @@ from app.modules.youtube import register as _youtube
 # / Phase 8 (youtube) / Leads-module (leads) / Meta-Ads-console (meta_ads)
 # module ``register`` callables here — the assembly loop below needs NO
 # edit.
+#
+# 🔴 `_card_hub` is placed FIRST, deliberately BEFORE
+# `_register_media_wiring` — route-ordering hazard, not an arbitrary
+# choice. `_register_media_wiring`'s ``clientes_router`` declares a bare
+# ``GET/PATCH /{cliente_id}`` (one path segment, plain-string matcher —
+# FastAPI/Starlette do not auto-derive a UUID regex from the Python type
+# hint). `card_hub`'s ``GET/POST /api/clientes/tags`` is a literal
+# 1-segment path with the SAME shape, and Starlette matches the app's
+# route table in REGISTRATION order across every mounted router, not
+# just within one — the first structural match wins even if its own
+# type coercion then 422s (this is exactly why ``clientes_router.py``
+# itself declares ``/revisao`` before its own ``/{cliente_id}``; the
+# same hazard now spans two routers, so it is resolved at the MODULES
+# level instead of inside either router). Every other card_hub path is
+# disambiguated by segment count or a distinct literal 2nd segment, so
+# no other module needs reordering for this.
 MODULES = [
+    _card_hub,
     _register_media_wiring,
     _youtube,
     _register_email_marketing,
