@@ -176,7 +176,7 @@ def get_threshold_config(
     """Resolve the org's configured threshold AND whether it is actually
     configured (a row exists) or falling back to `default_days`. The
     settings endpoint (`GET /api/settings/clientes-inactivity`) needs
-    BOTH — a UI rendering "using the default (180)" vs. "set to 45" needs
+    BOTH — a UI rendering "using the default (365)" vs. "set to 45" needs
     to tell those two apart, not just see the resolved integer."""
     rows = (
         scoped_client.table(_CONFIG_TABLE)
@@ -194,7 +194,9 @@ def get_threshold_days(scoped_client: Any, org_id: UUID, *, default_days: int) -
     """Resolve just the effective threshold value — the sweep's own call
     shape, thin wrapper over :func:`get_threshold_config`. No row for this
     org -> the org never configured one -> `default_days` (the platform
-    default, 180). A row WHOSE `threshold_days` is 0 is a DIFFERENT,
+    default, 365 since 2026-08-18 — migration `059`; D16 originally said
+    180, and `migrations/APPLIED.md` records why it moved). A row WHOSE
+    `threshold_days` is 0 is a DIFFERENT,
     explicit state (the org turned the sweep off) — the caller decides
     what to do with a 0, this function only ever reports what is actually
     stored. See this module's docstring / `058`'s header for why these

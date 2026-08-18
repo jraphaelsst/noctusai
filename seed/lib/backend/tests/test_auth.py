@@ -1039,3 +1039,84 @@ class TestRequireCredentialOr422:
             value = require_credential_or_422("openai_api_key")
         mock_resolve.assert_called_once_with("openai_api_key", None)
         assert value == "env-key"
+
+
+class TestTransportFailureIsNot401:
+    """Token validation is a NETWORK CALL to Supabase. A transport failure
+    means "I could not ask whether this token is valid" — which is not the
+    same claim as "this token is invalid", and must never be reported as
+    401.
+
+    Born 2026-08-18: a VPN MTU mismatch broke the TLS handshake to Supabase
+    from inside a container. Login worked in the browser, every API call
+    then 401'd, and the SPA bounced to the login page — the UI blamed the
+    user's session for a dropped packet.
+    """
+
+    @staticmethod
+    def _client_raising(exc):
+        def _factory():
+            class _Auth:
+                def get_user(self, _token):
+                    raise exc
+
+            class _Client:
+                auth = _Auth()
+
+            return _Client()
+
+        return _factory
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            ConnectionError("connection reset"),
+            TimeoutError("timed out"),
+            OSError("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF in violation of protocol"),
+        ],
+        ids=["connection-reset", "timeout", "tls-eof"],
+    )
+    async def test_unreachable_auth_provider_is_503_not_401(self, exc):
+        from noctusai_lib.api.auth import _get_current_user
+
+        with pytest.raises(HTTPException) as ei:
+            await _get_current_user(
+                authorization="Bearer some-token",
+                _get_supabase_client=self._client_raising(exc),
+            )
+        assert ei.value.status_code == 503, (
+            f"{type(exc).__name__} is a transport failure; reporting it as "
+            f"{ei.value.status_code} tells the user they are logged out when "
+            "the real fault is that the auth provider was unreachable"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_genuinely_bad_token_is_still_401(self):
+        """The 503 path must not swallow real auth failures — an
+        application-level rejection stays a 401."""
+        from noctusai_lib.api.auth import _get_current_user
+
+        def _factory():
+            class _Auth:
+                def get_user(self, _token):
+                    raise ValueError("invalid JWT")
+
+            class _Client:
+                auth = _Auth()
+
+            return _Client()
+
+        with pytest.raises(HTTPException) as ei:
+            await _get_current_user(
+                authorization="Bearer bad-token", _get_supabase_client=_factory
+            )
+        assert ei.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_missing_header_is_still_401(self):
+        from noctusai_lib.api.auth import _get_current_user
+
+        with pytest.raises(HTTPException) as ei:
+            await _get_current_user(authorization=None)
+        assert ei.value.status_code == 401

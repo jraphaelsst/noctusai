@@ -23,6 +23,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+
+from app.config import SocialWiringSettings
+
+# Bind to the SETTING, never a literal. These assertions exist to prove the
+# endpoint reports whatever the platform default IS — not to pin a
+# particular number. When the default moved 180 -> 365 on 2026-08-18 the
+# literals here went red for no reason other than being literals, which is
+# a test failing at its own maintenance rather than at a defect.
+PLATFORM_DEFAULT = SocialWiringSettings.model_fields[
+    "clientes_inactivity_threshold_days_default"
+].default
 from noctusai_lib.testing import MockSupabaseClient, MockUser, MockUserResponse, bind_consent_module_to_mock
 
 _URL = "/api/settings/clientes-inactivity"
@@ -118,14 +129,15 @@ class TestDefaultAndOverride:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["configured"] is False
-        assert body["threshold_days"] == 180
-        assert body["default_threshold_days"] == 180
+        assert body["threshold_days"] == PLATFORM_DEFAULT
+        assert body["default_threshold_days"] == PLATFORM_DEFAULT
 
     def test_a_put_then_a_get_round_trips_the_configured_value(self, admin_client):
         put_resp = admin_client.put(_URL, json={"threshold_days": 45}, headers=_auth_header())
         assert put_resp.status_code == 200, put_resp.text
         assert put_resp.json() == {
-            "threshold_days": 45, "configured": True, "default_threshold_days": 180,
+            "threshold_days": 45, "configured": True,
+            "default_threshold_days": PLATFORM_DEFAULT,
         }
 
         get_resp = admin_client.get(_URL, headers=_auth_header())
@@ -141,7 +153,8 @@ class TestDefaultAndOverride:
         resp = admin_client.put(_URL, json={"threshold_days": 0}, headers=_auth_header())
         assert resp.status_code == 200, resp.text
         assert resp.json() == {
-            "threshold_days": 0, "configured": True, "default_threshold_days": 180,
+            "threshold_days": 0, "configured": True,
+            "default_threshold_days": PLATFORM_DEFAULT,
         }
 
     def test_negative_threshold_is_rejected_at_the_boundary(self, admin_client):

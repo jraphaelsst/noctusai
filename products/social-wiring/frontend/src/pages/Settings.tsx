@@ -1,17 +1,20 @@
 /**
- * Settings page — two-tab configuration cockpit.
+ * Settings page — multi-tab configuration cockpit.
  *
  *   Notifications tab    SMTP + WAHA status (read-only) + recipient CRUD
  *   API Keys tab         Read-only health badges from /api/settings/keys/status
+ *   Clientes tab         Inactivity-sweep threshold (D16) — read open to any
+ *                         org member, write admin-gated (see ClientesInactivityTab)
  *
  * NOTE: The YouTube connection tab was removed — YouTube accounts are now
  * managed in the unified Conexoes page (/conexoes).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   CheckCircle2,
   CircleAlert,
+  Clock,
   Loader2,
   Plus,
   Trash2,
@@ -40,6 +43,8 @@ import {
   useSaveMetaApp,
   useInstagramAppStatus,
   useSaveInstagramApp,
+  useClientesInactivityConfig,
+  useSaveClientesInactivityConfig,
   type KeyStatusEntry,
   type Recipient,
   type RecipientCreate,
@@ -660,6 +665,184 @@ function InstagramAppSection() {
   );
 }
 
+// ─── Clientes inactivity threshold tab (D16, roadmap lead-card-hub-2026-08) ─
+// Read is open to any authenticated org member (mirrors the backend split
+// documented in `settings_router.py`); only the write is admin-gated. So
+// unlike MetaAppSection/InstagramAppSection above (hidden entirely from a
+// non-admin), this section is always rendered — a non-admin sees the
+// effective value read-only rather than a form that would 403 on submit.
+//
+// `canEdit` is checked against `org.role` directly (owner/admin), NOT the
+// broader `isAdminOrDev` flag the sibling sections use — the backend's
+// `_require_admin` only accepts owner/admin, and showing an editable form
+// to a role the backend will reject is exactly the "let them submit and
+// eat a 403" outcome this slice's brief calls out. See this dispatch's
+// `drift-found:` note re: MetaAppSection/InstagramAppSection using the
+// broader flag against the same admin-only backend gate.
+//
+// State coverage: loading (spinner) / error (retry) / success, with the
+// "unconfigured — falling back to the platform default" case standing in
+// for "empty" (there is no list here to be literally empty; an org that
+// never set its own value is the closest analogue, and is rendered
+// distinctly from both "configured" and "disabled").
+function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
+  const { data, loading, isError, refetch } = useClientesInactivityConfig();
+  const { mutate: save, isPending: saving } = useSaveClientesInactivityConfig();
+  const [draft, setDraft] = useState("");
+  const [dirty, setDirty] = useState(false);
+
+  // Keep the draft synced to the resolved server value — but only until the
+  // admin starts typing, so a background refetch never stomps an in-flight
+  // edit.
+  useEffect(() => {
+    if (data && !dirty) {
+      setDraft(String(data.threshold_days));
+    }
+  }, [data, dirty]);
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center p-12">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 p-12 text-center">
+          <p className="text-sm text-muted-foreground">
+            Nao foi possivel carregar o limite de inatividade de clientes.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            data-testid="clientes-inactivity-retry-btn"
+          >
+            Tentar novamente
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const disabledForOrg = data.threshold_days === 0;
+  const parsedDraft = Number(draft);
+  const isValid =
+    draft.trim() !== "" && Number.isInteger(parsedDraft) && parsedDraft >= 0;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isValid) {
+      toast.error("Informe um numero inteiro maior ou igual a 0.");
+      return;
+    }
+    save(parsedDraft, { onSuccess: () => setDirty(false) });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <Clock className="h-5 w-5 text-muted-foreground" />
+          <div>
+            <CardTitle>Inatividade de clientes</CardTitle>
+            <CardDescription>
+              Clientes sem contato ha mais de N dias sao marcados como
+              inativos e saem do quadro; podem ser restaurados a qualquer
+              momento.
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="rounded-md border p-3" data-testid="clientes-inactivity-status">
+          <div className="mb-1 flex items-center justify-between">
+            <p className="text-sm font-medium">Limite atual</p>
+            <Badge
+              variant={disabledForOrg ? "destructive" : "default"}
+              className="gap-1 font-mono text-[11px]"
+              data-testid="clientes-inactivity-status-badge"
+            >
+              {disabledForOrg ? (
+                <CircleAlert className="h-3 w-3" />
+              ) : (
+                <CheckCircle2 className="h-3 w-3" />
+              )}
+              {disabledForOrg
+                ? "desativado"
+                : data.configured
+                  ? "personalizado"
+                  : "padrao da plataforma"}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {disabledForOrg
+              ? "A varredura automatica esta desativada para esta organizacao — nenhum cliente e marcado como inativo automaticamente."
+              : data.configured
+                ? `${data.threshold_days} dia(s) sem contato ate marcar como inativo.`
+                : `${data.default_threshold_days} dia(s) sem contato (padrao da plataforma — esta organizacao ainda nao personalizou este valor).`}
+          </p>
+        </div>
+
+        {!canEdit && (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="clientes-inactivity-readonly-note"
+          >
+            Somente administradores da organizacao podem alterar este valor.
+          </p>
+        )}
+
+        {canEdit && (
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-3"
+            data-testid="clientes-inactivity-form"
+          >
+            <div className="space-y-1">
+              <Label htmlFor="clientes-inactivity-days">
+                Dias sem contato ate marcar como inativo
+              </Label>
+              <Input
+                id="clientes-inactivity-days"
+                type="number"
+                min={0}
+                step={1}
+                inputMode="numeric"
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setDirty(true);
+                }}
+                disabled={saving}
+                data-testid="clientes-inactivity-input"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use 0 para desativar a varredura automatica nesta
+                organizacao. Clientes marcados como inativos automaticamente
+                podem ser restaurados a qualquer momento na aba Inativos do
+                quadro de Clientes.
+              </p>
+            </div>
+            <Button
+              type="submit"
+              disabled={saving || !isValid}
+              data-testid="clientes-inactivity-save-btn"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Salvar"}
+            </Button>
+          </form>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Visibilidade de paginas tab (owner/admin/dev) ──────────────────────
 // The status_pagina write-side organ lives in the seed lib and takes the
 // product's own api client — see StatusPaginaPanel (@noctusai/lib).
@@ -676,6 +859,12 @@ export default function Settings() {
     ssoCtx.org.role === "owner" ||
     ssoCtx.org.role === "admin" ||
     ssoCtx.org.role === "dev";
+  // Precise owner/admin check for the clientes-inactivity write form — the
+  // backend's `_require_admin` accepts only these two roles (not "dev"),
+  // so this stays narrower than `isAdminOrDev` on purpose. See
+  // ClientesInactivityTab's header comment.
+  const canEditClientesInactivity =
+    ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-8">
@@ -689,11 +878,12 @@ export default function Settings() {
       <Tabs defaultValue="notifications" className="w-full">
         <TabsList
           className={`grid w-full ${
-            isAdminOrDev ? "grid-cols-3 sm:max-w-md" : "grid-cols-2 sm:max-w-xs"
+            isAdminOrDev ? "grid-cols-4 sm:max-w-lg" : "grid-cols-3 sm:max-w-md"
           }`}
         >
           <TabsTrigger value="notifications">Notificacoes</TabsTrigger>
           <TabsTrigger value="keys">Chaves API</TabsTrigger>
+          <TabsTrigger value="clientes">Clientes</TabsTrigger>
           {isAdminOrDev && (
             <TabsTrigger value="visibilidade">Visibilidade</TabsTrigger>
           )}
@@ -704,6 +894,9 @@ export default function Settings() {
         </TabsContent>
         <TabsContent value="keys" className="mt-6">
           <ApiKeysTab isAdminOrDev={isAdminOrDev} />
+        </TabsContent>
+        <TabsContent value="clientes" className="mt-6">
+          <ClientesInactivityTab canEdit={canEditClientesInactivity} />
         </TabsContent>
         {isAdminOrDev && (
           <TabsContent value="visibilidade" className="mt-6">

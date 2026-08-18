@@ -83,6 +83,13 @@ const mockUseInstagramAppStatus = vi.fn();
 const mockSaveInstagram = vi.fn();
 const mockRefreshInstagram = vi.fn();
 
+// D16 (lead-card-hub): the clientes-inactivity tab. Defaults to the
+// "never configured, using the platform default" shape so every OTHER
+// suite in this file renders the tab without caring about it; the
+// inactivity tests below override per-case.
+const mockUseClientesInactivityConfig = vi.fn();
+const mockSaveInactivity = vi.fn();
+
 vi.mock("@/hooks/useSettings", () => ({
   useRecipients: mockUseRecipients,
   useKeysStatus: mockUseKeysStatus,
@@ -90,6 +97,11 @@ vi.mock("@/hooks/useSettings", () => ({
   useSaveMetaApp: () => ({ save: mockSave, saving: false }),
   useInstagramAppStatus: mockUseInstagramAppStatus,
   useSaveInstagramApp: () => ({ save: mockSaveInstagram, saving: false }),
+  useClientesInactivityConfig: mockUseClientesInactivityConfig,
+  useSaveClientesInactivityConfig: () => ({
+    mutate: mockSaveInactivity,
+    isPending: false,
+  }),
 }));
 
 // `useMarcas` calls TanStack's `useQuery` directly, so without a
@@ -168,6 +180,17 @@ beforeEach(() => {
   mockSaveInstagram.mockReset();
   mockSaveInstagram.mockResolvedValue(undefined);
   mockRefreshInstagram.mockReset();
+  // The unconfigured shape — no org row, so the effective value IS the
+  // platform default. Every suite in this file renders the whole page, so
+  // this has to be a valid resolved state or unrelated tests fail on a tab
+  // they do not care about.
+  mockUseClientesInactivityConfig.mockReturnValue({
+    data: { threshold_days: 365, configured: false, default_threshold_days: 365 },
+    loading: false,
+    isError: false,
+    refetch: vi.fn(),
+  });
+  mockSaveInactivity.mockReset();
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -437,5 +460,96 @@ describe("Settings — recipient client scoping", () => {
     // "clear this" from "leave it alone", so an omitted key would no-op and a
     // recipient could never be returned to the org-wide tier.
     expect(update).toHaveBeenCalledWith("r1", { marca_id: null });
+  });
+});
+
+// ─── Clientes inactivity threshold (D16) ─────────────────────────────────
+// The three states here are NOT interchangeable and the UI is the only
+// place a user can tell them apart:
+//   · no org row      → the platform default applies, nobody chose it
+//   · a configured N  → somebody chose N
+//   · a configured 0  → somebody deliberately turned the sweep OFF
+// Rendering 0 as an empty field, or "unconfigured" as a bare number, would
+// each quietly misrepresent what the system is about to do to the board —
+// and this sweep hides ~46% of clientes at the shipped default.
+describe("Settings — clientes inactivity threshold", () => {
+  function stubInactivity(over: Record<string, unknown>) {
+    mockUseClientesInactivityConfig.mockReturnValue({
+      data: { threshold_days: 365, configured: false, default_threshold_days: 365, ...over },
+      loading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+  }
+
+  it("says the value is the platform default when the org never configured one", async () => {
+    setUser("admin");
+    stubInactivity({ configured: false, threshold_days: 365, default_threshold_days: 365 });
+    const { getByTestId } = await renderSettingsOnKeysTab();
+
+    expect(getByTestId("clientes-inactivity-status-badge").textContent).toContain(
+      "padrao da plataforma"
+    );
+    expect(getByTestId("clientes-inactivity-status").textContent).toContain("365");
+  });
+
+  it("says 'personalizado' and shows the org's own number when configured", async () => {
+    setUser("admin");
+    stubInactivity({ configured: true, threshold_days: 45 });
+    const { getByTestId } = await renderSettingsOnKeysTab();
+
+    expect(getByTestId("clientes-inactivity-status-badge").textContent).toContain(
+      "personalizado"
+    );
+    expect(getByTestId("clientes-inactivity-status").textContent).toContain("45");
+  });
+
+  it("renders 0 as an explicit 'desativado' state, never as an empty value", async () => {
+    setUser("admin");
+    stubInactivity({ configured: true, threshold_days: 0 });
+    const { getByTestId } = await renderSettingsOnKeysTab();
+
+    expect(getByTestId("clientes-inactivity-status-badge").textContent).toContain(
+      "desativado"
+    );
+    // The distinguishing sentence — a blank field would be indistinguishable
+    // from "not set", which is a DIFFERENT state with the opposite effect.
+    expect(getByTestId("clientes-inactivity-status").textContent).toContain(
+      "desativada"
+    );
+    // 0 is a real value and must round-trip into the editable field.
+    expect((getByTestId("clientes-inactivity-input") as HTMLInputElement).value).toBe("0");
+  });
+
+  it("is read-only for a non-admin — no form, and it says why", async () => {
+    setUser("member");
+    stubInactivity({});
+    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+
+    expect(queryByTestId("clientes-inactivity-form")).toBeNull();
+    expect(getByTestId("clientes-inactivity-readonly-note")).toBeTruthy();
+    // The current value is still VISIBLE to a non-admin — they need to know
+    // why people are leaving the board even if they cannot change it.
+    expect(getByTestId("clientes-inactivity-status")).toBeTruthy();
+  });
+
+  it("saves the typed threshold for an admin", async () => {
+    setUser("admin");
+    stubInactivity({ configured: true, threshold_days: 365 });
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+
+    fireEvent.change(getByTestId("clientes-inactivity-input"), {
+      target: { value: "540" },
+    });
+    fireEvent.submit(getByTestId("clientes-inactivity-form"));
+
+    // `mutate(value, { onSuccess })` — the second arg is how the component
+    // clears its dirty flag once the server confirms, so assert the VALUE
+    // and that a success callback was supplied, rather than pinning the
+    // exact options object.
+    expect(mockSaveInactivity).toHaveBeenCalledTimes(1);
+    const [value, opts] = mockSaveInactivity.mock.calls[0];
+    expect(value).toBe(540);
+    expect(typeof (opts as any)?.onSuccess).toBe("function");
   });
 });

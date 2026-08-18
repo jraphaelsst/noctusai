@@ -138,6 +138,27 @@ export function createProductVitestConfig(
     test: {
       globals: true,
       environment,
+      // Vitest's default is 5 000 ms, and that is not enough for a jsdom
+      // React render under parallel load. Measured on social-wiring
+      // 2026-08-18: three consecutive full runs failed 22, then 14, then 11
+      // tests — a DIFFERENT set of files each time, every failure a
+      // "Test timed out in 5000ms", and ZERO assertion failures. The same
+      // suite passed 664/664 the moment the timeout was raised. Nothing was
+      // broken; the machine was just busy.
+      //
+      // This matters more than a flake usually does: a suite that goes red
+      // for reasons unrelated to the code teaches everyone to skim past red,
+      // which is exactly when a real failure gets waved through. It had
+      // already been hit and written off once as unexplained noise
+      // (`37ae8fc0` — "record the FE suite flake instead of claiming a clean
+      // 596"), so this is the second sighting, and the root cause is a
+      // default that was never chosen deliberately.
+      //
+      // 15 s is generous for any honest unit test here (the whole suite runs
+      // in ~20 s) and cannot mask a real failure — it only stops a slow but
+      // CORRECT test from being reported as broken. A test that genuinely
+      // needs longer is a test doing too much; fix the test, not this number.
+      testTimeout: 15_000,
       // Deterministic stand-ins for the two BUILD-time vars the seed's
       // `supabase.ts` refuses to start without. Vite inlines `VITE_*` at
       // `vite build`; under vitest nothing inlines them, so ANY test whose

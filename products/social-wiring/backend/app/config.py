@@ -143,13 +143,18 @@ class SocialWiringSettings(ProductSettings):
     # `app/services/clientes_inactivity_service.py` for the sweep this
     # closes and `058_clientes_inactivity_sweep.sql` for its schema.
     clientes_inactivity_sweep_enabled: bool = True
-    # The org-level default (D16: "180 days"). An org's OWN configured
-    # value (`clientes_inactivity_config.threshold_days`, settable via
+    # The org-level default. D16 originally shipped this at 180 days;
+    # raised to 365 on 2026-08-18 after the live measurement in
+    # `migrations/APPLIED.md` showed 180 would sweep 70% of the ~10 200
+    # live `clientes` inactive on the very first tick (365 sweeps 46%) —
+    # see `migrations/059_clientes_inactivity_default_365.sql` for the
+    # matching DB-column-default change. An org's OWN configured value
+    # (`clientes_inactivity_config.threshold_days`, settable via
     # `PUT /api/settings/clientes-inactivity`) always wins when present;
     # this is only the fallback for an org that has never configured one.
-    # Not itself editable in the UI — D16 asks for a PER-ORG override, not
-    # a redefinition of the platform default.
-    clientes_inactivity_threshold_days_default: int = 180
+    # Not itself editable in the UI — the per-org override is (D16); the
+    # platform default is a deploy-time constant, changed here.
+    clientes_inactivity_threshold_days_default: int = 365
     # Same interval as the sibling `clientes_backfill` sweep (6h) — no
     # reason for inactivity detection to lag behind or run more often than
     # the pass that actually attaches new touches.

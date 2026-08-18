@@ -132,6 +132,37 @@ async def _get_current_user(
         return user_response.user, token
     except HTTPException:
         raise
+    except (TimeoutError, OSError) as exc:
+        # 🔴 NOT a 401. Validation here is a NETWORK CALL to Supabase, so a
+        # transport failure (DNS, TLS handshake, connection reset, timeout)
+        # means "I could not ask whether this token is valid" — which is
+        # nothing like "this token is invalid". Reporting it as 401 tells
+        # the user they are logged out and sends the SPA to the login page,
+        # while the real fault is server-side and the credentials are fine.
+        #
+        # That is not hypothetical: on 2026-08-18 a VPN MTU mismatch (host
+        # tunnel 1380, container 1500) broke the TLS 1.3 handshake to
+        # Supabase from inside a container. Login succeeded in the browser,
+        # every API call then 401'd, and the app bounced to home — the UI
+        # blamed the user's session for what was a dropped packet. Twenty
+        # minutes went into "why is login broken" because the error said
+        # the wrong thing.
+        #
+        # `ssl.SSLError`, `socket.timeout`, `ConnectionError` and httpx's
+        # transport errors are all `OSError`/`TimeoutError` subclasses, so
+        # this catches the transport family without guessing at any one
+        # client library's exception tree.
+        logger.error(
+            "auth: could not reach the auth provider to validate a token — "
+            "reporting 503, NOT 401 (the caller's credentials are not in "
+            "question here): %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Serviço de autenticação indisponível. Tente novamente.",
+        ) from exc
     except Exception:
         raise HTTPException(status_code=401, detail="Não autenticado")
 

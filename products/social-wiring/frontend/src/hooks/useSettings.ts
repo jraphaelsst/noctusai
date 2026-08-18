@@ -7,6 +7,7 @@
  * in the unified Conexoes page via useIntegrationAccounts.
  */
 import { useEffect, useState, useCallback } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { toast } from "sonner";
 
@@ -235,6 +236,80 @@ export function useSaveMetaApp() {
   }, []);
 
   return { save, saving };
+}
+
+// ─── Clientes inactivity threshold tab (D16, roadmap lead-card-hub-2026-08) ─
+// Unlike the sibling hooks above, this pair uses TanStack Query directly
+// (matches the newer hooks in this product — e.g. `useOlxLeads.ts`) rather
+// than the manual useState/useEffect shape, precisely so the loading gate
+// below can be honest.
+export interface ClientesInactivityConfig {
+  /** The EFFECTIVE threshold — either the org's own configured value, or
+   * `default_threshold_days` when `configured` is false. `0` is a real,
+   * deliberate value: the org explicitly disabled the sweep — never
+   * render it as an empty/blank field. */
+  threshold_days: number;
+  /** `false` = no org row exists yet; `threshold_days` is the platform
+   * default, not something anyone chose. `true` = an org admin set this
+   * value explicitly (including explicitly setting it to 0). */
+  configured: boolean;
+  /** The platform-wide fallback (`app/config.py`'s
+   * `clientes_inactivity_threshold_days_default`) — shown so the UI can
+   * say "usando o padrão da plataforma (N dias)" instead of a bare number
+   * with no context. */
+  default_threshold_days: number;
+}
+
+export const CLIENTES_INACTIVITY_KEY = ["settings", "clientes-inactivity"] as const;
+
+/**
+ * useClientesInactivityConfig — GET /api/settings/clientes-inactivity.
+ * Open to any authenticated org member (read is not admin-gated on the
+ * backend — only the write is); see `settings_router.py`'s header comment
+ * on that split.
+ *
+ * 🔴 Loading is gated on `isPending || isFetching`, never `isLoading`.
+ * Under TanStack v5, `isLoading` is false during a background refetch, so
+ * gating on it alone would let a stale/empty branch render over an
+ * already-resolved value — this product shipped exactly that bug once
+ * already (`check_lying_loading_state`).
+ */
+export function useClientesInactivityConfig() {
+  const query = useQuery({
+    queryKey: CLIENTES_INACTIVITY_KEY,
+    queryFn: () =>
+      api.get<ClientesInactivityConfig>("/api/settings/clientes-inactivity"),
+  });
+  return {
+    ...query,
+    loading: query.isPending || query.isFetching,
+  };
+}
+
+/**
+ * useSaveClientesInactivityConfig — PUT /api/settings/clientes-inactivity.
+ * Admin-gated on the backend (owner/admin org role) — callers must check
+ * that themselves before rendering the form (see `Settings.tsx`); a
+ * non-admin submit here would just surface the 403 as a toast, which is
+ * exactly the outcome the UI is meant to avoid by not showing the form.
+ */
+export function useSaveClientesInactivityConfig() {
+  const qc = useQueryClient();
+  return useMutation<ClientesInactivityConfig, unknown, number>({
+    mutationFn: (threshold_days) =>
+      api.put<ClientesInactivityConfig>("/api/settings/clientes-inactivity", {
+        threshold_days,
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(CLIENTES_INACTIVITY_KEY, data);
+      toast.success("Limite de inatividade de clientes atualizado.");
+    },
+    onError: (err: any) => {
+      toast.error(
+        err?.message ?? "Falha ao salvar o limite de inatividade de clientes."
+      );
+    },
+  });
 }
 
 // ─── Instagram App credentials tab ──────────────────────────────────────
