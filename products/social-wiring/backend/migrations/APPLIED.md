@@ -27,6 +27,7 @@
 | `054_negociacoes_venda_collapse.sql` | ✅ **2026-08-18** | probe + apply + post-verify (below) |
 | `056_card_hub_core.sql` | ✅ **2026-08-18** | probe + apply + post-verify (below) |
 | `057_card_hub_documentos.sql` | ✅ **2026-08-18** | probe + apply + post-verify (below) |
+| `058_clientes_inactivity_sweep.sql` | ✅ **2026-08-18** | probe + apply + post-verify (below) |
 
 `052` and `053` are claimed by branches not yet on `dev` (`feat/imovelweb-portal-leads`,
 `feat/grupo-olx-multitenant-receiver`) — **the numbers are taken, the migrations are not
@@ -60,6 +61,31 @@ the dependencies (`public.current_org_id()`, `lead_corretores`, `pipeline_stages
 `public = false`, 5 object-level storage policies, 9 document types of which **7 active** —
 `rg` and `cpf` are seeded `ativo = false` and refused by construction until the LGPD
 data-category intake in `LGPD-WARNINGS.md` is resolved by a human.
+
+**`058` — D16 inactivity.** Two nullable columns on `clientes` + the per-org
+`clientes_inactivity_config` table. Schema-only: **the migration changes no data.**
+
+🔴 **But the SWEEP it enables will, and the number is large.** Measured on the live data at
+apply time, against the ratified 180-day threshold:
+
+| Threshold | Clientes still active | Swept inactive | % swept |
+|---:|---:|---:|---:|
+| 30 days | 381 | 9 823 | 96 % |
+| 90 days | 1 515 | 8 689 | 85 % |
+| **180 days (D16, ratified)** | **3 072** | **7 132** | **70 %** |
+| 365 days | 5 498 | 4 706 | 46 % |
+| 730 days | 9 086 | 1 118 | 11 % |
+
+Total 10 204 clientes; contact history spans 2024-03-19 → 2026-08-18. Today **0** are
+inactive and **0** are manually archived, so the first sweep tick is a step change from
+nothing to 7 132.
+
+**Nothing has happened yet** — the scheduler runs inside the deployed container and this
+code is not deployed. The window to change the threshold (via `PUT /api/settings/
+clientes-inactivity`, or by seeding a `clientes_inactivity_config` row) is **before the
+first deploy**. Raised with the user 2026-08-18; 180 stays the ratified default until they
+say otherwise. Recorded here because "70 % of the board disappears on first tick" is not
+something anyone should discover from the UI.
 
 ## 🔴 Open item this apply surfaced
 
