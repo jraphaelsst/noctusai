@@ -42,18 +42,35 @@ is usually the wrong seam.
 
 ---
 
-## 2 · Data model — migrations `053` (core) and `055` (documents)
+## 2 · Data model — migrations `056` (core) and `057` (documents)
 
 Schema `social_wiring`. Every table: `org_id uuid not null`, RLS enabled with the same
 `current_org_id()` predicate the rest of the schema uses (`011_rls_current_org_id.sql`),
 plus a `service_role` policy. Every table gets `created_at timestamptz not null default now()`.
 
-### `053` — core card surface
+### `056` — core card surface
 
-**`cliente_notas`** — free-form annotations (Trello *Descrição* + *Comentários*).
+**`cliente_notas`** — annotations.
 `id` · `org_id` · `cliente_id → clientes(id) ON DELETE CASCADE` · `autor_id uuid` (profiles) ·
-`corpo text not null` · `editado_em timestamptz null` · `deleted_at timestamptz null`.
+`corpo text not null` · **`tipo text not null default 'comentario' check (tipo in ('descricao','comentario'))`** ·
+`editado_em timestamptz null` · `deleted_at timestamptz null`.
 Soft-delete only — a deleted note leaves a tombstone in the timeline, it does not rewrite history.
+
+🔴 **CORRECTION (2026-08-18).** The first draft of this contract gave notes a single
+undifferentiated `corpo`, conflating two distinct Trello concepts: **Descrição** (exactly one
+per card, edited in place, top of the left pane) and **Comentários** (many, chronological,
+right pane). With no discriminator the frontend was forced to guess — it shipped "the oldest
+*loaded* note is the description", which breaks the moment a card's history exceeds one page.
+The gap was surfaced by the frontend engineer and fixed here rather than worked around there.
+
+A partial unique index enforces **at most one live `descricao` per cliente**
+(`where tipo = 'descricao' and deleted_at is null`) — a DB constraint, not an application
+promise. Consequences: `POST .../notas` takes `{corpo, tipo?}` (default `comentario`) and
+returns a **typed error** on a second `descricao`; the timeline emits only `comentario` as
+`kind: "nota"` — **the description is card state, not an activity event**, and putting it in
+the thread would make every edit look like a new comment; `CardResumo` carries
+`descricao: {id, corpo, editado_em} | null`, and `badges.tem_descricao` derives from it rather
+than from "any note exists".
 
 **`cliente_tags`** — the org's tag catalogue (D6: **one** system, no separate "classification").
 `id` · `org_id` · `nome text not null` · `cor text not null` (hex) · `UNIQUE (org_id, lower(nome))`.
@@ -85,7 +102,7 @@ user-created (screenshot 07). **Multiple checklists per card is required** (scre
 `id` · `checklist_id ON DELETE CASCADE` · `texto text not null` · `concluido boolean not null default false` ·
 `concluido_em` · `concluido_por` · `posicao integer not null`.
 
-### `055` — documents, LGPD-complete (D5 · ruling S2)
+### `057` — documents, LGPD-complete (D5 · ruling S2)
 
 **`cliente_documentos`** —
 `id` · `org_id` · `cliente_id` · `storage_path text not null` · `nome_original text not null` ·
@@ -206,7 +223,7 @@ concluidos}` — the progress bar is served, not counted in the browser.
 GET    /api/clientes/{id}/documentos                      → {items:[Documento], total}
 POST   /api/clientes/{id}/documentos    (multipart)       → 201 Documento
 GET    /api/clientes/{id}/documentos/{did}/url            → 200 {url, expires_at}   (logs 'view')
-DELETE /api/clientes/{id}/documentos/{did} {motivo}       → 204  (soft; logs 'delete')
+DELETE /api/clientes/{id}/documentos/{did}?motivo=...    → 204  (soft; logs 'delete')
 GET    /api/clientes/{id}/documentos/{did}/acessos        → {items:[Acesso], total}
 GET    /api/clientes/documentos/tipos                     → {items:[TipoDocumento], total}
 ```
@@ -216,6 +233,20 @@ categoria_lgpd, retencao_ate, enviado_por: {id,nome}, created_at, thumbnail_url|
 
 Limits enforced **server-side**: max size, MIME allow-list. A rejected upload returns a typed
 error naming the limit it hit — never a generic 400.
+
+🔴 **CORRECTION (2026-08-18): `motivo` is a QUERY PARAM, not a body.** The seed `ApiClient.delete()`
+has no body parameter, so a DELETE-with-body forced the frontend into a raw `fetch` workaround —
+and DELETE bodies are poorly supported across the stack generally. `motivo` stays **required**:
+an LGPD delete without a recorded reason is not an LGPD delete.
+
+🔴 **The upload ceiling is NOT a card-hub number.** A 1 MB **app-wide** body cap
+(`MaxBodySizeMiddleware`, `settings.max_body_bytes`) sits in front of every route, so the first
+implementation had to cap documents at 800 KB just to fit under it — which makes photos
+impossible. Found in passing: the same cap has been silently killing `POST /api/videos/upload`
+(browser drag-drop) since it shipped. Fixed at the right level — a per-path override in the seed
+middleware — rather than by raising the cap app-wide, which would weaken the DoS guard on the
+webhook routes where it actually earns its keep. **The frontend must never hardcode the limit**;
+the server's typed error is the single source of truth.
 
 ### Card summary (the badge row — screenshot 11)
 

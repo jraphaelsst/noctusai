@@ -10,23 +10,27 @@
 > `assets/lead-card-hub-2026-08/trello-reference/`; read that folder's README, it maps
 > each shot to what it fixes about the design).
 >
-> **Status (re-audited against the tree 2026-08-18): Phase 0 shipped · Phase 1 ~80 %
-> shipped with three named gaps · Phase 2 not started.** All **17 decisions** below are
-> user-ratified in the 2026-08-07 session, and **§7 is closed**.
+> **Status (2026-08-18, end of session): Phase 0 shipped · Phase 1 gap 1 CLOSED, gap 2 still
+> open · Phase 2 backend + frontend built.** All **17 decisions** below are user-ratified in
+> the 2026-08-07 session, and **§7 is closed**.
 >
-> 🔴 **The three Phase-1 gaps — read these before claiming Phase 1 is done:**
-> 1. **P1.4's card collapse never happened.** The schema half landed (`cliente_id` on
->    `negociacoes_venda`, `exactly_one_origin` retired, rows repointed) but nothing
->    collapses the 125 duplicate pairs, and `app/modules/pipeline/` + `pages/funil/`
->    contain **zero** references to `cliente_id`. **`/funil` still shows two cards per
->    human** — the exact defect that started this roadmap. The requirement was quietly
->    reduced to "add column + backfill" in `lead-card-hub-p1-PROJECT.md`, so it was
->    dropped from the contract, not just from the code.
-> 2. **P1.5's 180-day rule does not exist.** Manual archive/restore works; no sweep sets
->    `inativo_em` and no configurable threshold is stored anywhere.
-> 3. **The cliente timeline is served but never rendered.** `GET /clientes/{id}` and
->    `GET /clientes/{id}/touches` have no frontend consumer; `ClienteCard` has no click
->    target at all.
+> 🔴 **NOTHING BELOW IS APPLIED TO A DATABASE.** Migrations `054`, `056`, `057` are written,
+> parse-verified and test-covered, but **not applied** — and dev + prod share one Supabase
+> project, so applying them is a production schema change and the user's decision. Until they
+> are applied the funil + card code reads columns that do not exist. This product has been bitten
+> by that exact sequencing twice (`040`/`041`, then `050` — see `71bb2e4c`).
+>
+> **Phase-1 gaps — current state:**
+> 1. ✅ **P1.4's collapse SHIPPED 2026-08-18** (`054` + `c2c0ff9b`/`6834da0d`). One card per
+>    person: losers are marked `substituida_por`/`colapsada_em`, never deleted, and the survivor
+>    carries the **union** of both origins. The survivor rule needed a tier the roadmap did not
+>    have — see the decision log. Steady-state collapse runs in the 6-hourly sweep, so pair 126
+>    folds itself.
+> 2. 🔴 **STILL OPEN — P1.5's 180-day rule does not exist.** Manual archive/restore works; no
+>    sweep sets `inativo_em`, and no configurable threshold is stored anywhere. **D16 is
+>    unimplemented**; do not let the working Ativos/Inativos tabs suggest otherwise.
+> 3. ✅ **The cliente timeline is rendered** — `ClientesBoard` mounts a card dialog, and
+>    `GET /clientes/{id}/timeline` is a real consumer of the previously-dead feed.
 >
 > **Scope ruling (user-ratified): the card hub is a SHARED ORGAN**, built in
 > `noctusai_lib` + `@noctusai/lib` and consumed by **social-wiring** *and*
@@ -520,3 +524,9 @@ than guessed. All four were answered before any code was designed against them.
 | 2026-08-18 | **Phase 1 re-audited against the tree; the header status was stale in both directions.** It claimed "Phases 1–5 design-only" while slices A/B/C had shipped — and the shipped work is itself ~80 %, not done. Three gaps named in the header. The one that matters: **P1.4's collapse of the 125 duplicate pairs was never built**, and `app/modules/pipeline/` has zero references to `cliente_id`, so `/funil` still renders two cards per human. The requirement was reduced to "add column + backfill + assert zero NULLs" in `products/social-wiring/projects/lead-card-hub-p1-PROJECT.md` — i.e. **the contract was narrowed, not just the implementation**, which is why every green checkpoint downstream of it was honest and still wrong. Recorded rather than silently re-scoped: the origin defect in §1 is not fixed. |
 | 2026-08-18 | **D13 reversed for Phase 2 — the card is built product-local in social-wiring, not as a shared organ.** The objection was put to the user at decision time (an unproven seam is usually the wrong seam, and D13 + replication-to-seed both say the right count of per-product implementations is zero); they chose *"social wiring only for now"* anyway. Recorded as `[A]` accept-with-rationale, with one mandatory mitigation: everything under `components/card/**` stays presentational — props in, callbacks out, zero product-specific imports, data access confined to one hook — so lifting it to `@noctusai/lib` when erp arrives is a move rather than a rewrite. Contract + full mitigation in `products/social-wiring/projects/lead-card-hub-p2-PROJECT.md` §0. |
 | 2026-08-18 | **Phase 2 contract authored before any card code** (`noc-contract-first`): migrations `053` (notas · tags · membros · datas+lembretes · checklists) and `055` (documentos, LGPD-complete per D5 — object RLS, table-driven retention, append-only access log, identity-document types withheld until an `lgpd_flag` intake is filed), the `/api/clientes/{id}/timeline` discriminated union that finally renders `pipeline_movimentos`, and the `CardResumo.badges` block that lets the board draw card faces without N+1 calls. Trello's own `Card.badges` shape was the precedent — `checkItems`/`comments`/`attachments`/`description`/`due` is what a board needs, and 261 operations of their API say so. |
+| 2026-08-18 | **P1.4 SHIPPED — and the roadmap's own survivor rule needed correcting to ship it.** "Keeping the furthest-advanced stage", read literally across every status, lets a *lost* deal that reached a late stage outrank a currently-open one; since `obter_funil` renders only `status='aberta'`, the open deal would have vanished from the board. A card that silently disappears is worse than one that is silently doubled, so the rule became: open beats closed → furthest stage by the org's own `pipeline_stages.posicao` → oldest → lowest id. Surfaced in the migration header and the docstring rather than quietly chosen. |
+| 2026-08-18 | **Fixed on contact while in the pipeline module: three unbounded board reads.** The funil board, the negociações list and the processos board were bare `.select().execute()`; PostgREST caps those at 1000 rows with no error and no signal, and they were under the cap only by the luck of their per-org + status filtering. All three now compose the seed pager, with regression tests confirmed to FAIL against the unpaged read ("board returned 1000 of 1200"). This is the bug class this product has shipped to production most often. |
+| 2026-08-18 | **The frontend half of `054` was nearly missed, and would have been invisible.** `origemDaNegociacao` read the `lead_id` FK, but a collapsed survivor spawned from a campaign has a NULL FK while carrying a real `lead` merged from its sibling — so the lead detail would never open on exactly the cards the collapse creates. `types/pipeline.ts` also still documented migration 034's retired CHECK as a live invariant. Lesson worth keeping: **a DTO change that is purely additive on the wire can still break a consumer that branches on the wrong field**, and the stale doc comment is what made the wrong field look right. |
+| 2026-08-18 | **Phase 2 built: migrations `056`/`057` + the `card_hub` module + the full card UI.** 33 routes verified mounted by booting the app, not by trusting the suite. Both contract corrections (the `cliente_notas.tipo` discriminator, `motivo` as a query param) came from the *frontend* engineer hitting them and were fixed at the source rather than worked around in the UI — which is the whole return on authoring the contract before either side built. |
+| 2026-08-18 | **A 1 MB app-wide body cap made "documents and photos" impossible — and had been silently killing browser video upload all along.** `MaxBodySizeMiddleware` applied one flat limit to every route, so the card's document surface was forced to 800 KB to fit under it, and `POST /api/videos/upload` has 413'd for any real video since it shipped (nobody noticed; the Drive-folder path works around it). Fixed at the right level — a per-path override in the seed — rather than by raising the cap app-wide, which would have weakened the DoS guard on the webhook routes where it genuinely earns its keep. A second, older bug fell out of writing the tests: the middleware's streaming leg surfaced a tripped cap as an unhandled `ClientDisconnect`/500 instead of a 413, for **every** consumer since it shipped, because the streaming leg had no test at all. |
+| 2026-08-18 | **Migration-number collision with a parallel session.** `feat/grupo-olx-multitenant-receiver` claimed `053` while the card backend was building; the integrate gate caught it on rebase — the moment a latent, pre-commit-warning-only collision becomes real. Ours renumbered to `056`/`057` rather than rewriting another session's branch. Worth remembering that `next_migration_number` is a snapshot, not a reservation: it was correct when called and stale forty minutes later. |
