@@ -177,31 +177,25 @@ class TestPortalAttribution:
         source = olx_ingest_service.get_or_create_olx_source(client, ORG)
         assert result["lead"]["origem_id"] == source["id"]
 
-    def test_a_split_resolves_a_different_source_row(self, monkeypatch):
+    def test_a_split_resolves_a_different_source_row(self, client):
         """Proves the seam works end-to-end with a rule in place, without
         shipping one. `zap` already exists in CANONICAL_SOURCES, so this
-        needs no migration — which is the property being asserted."""
-        from functools import partial
+        needs no migration — which is the property being asserted.
 
-        from noctusai_lib.integrations.olx import (
-            PortalRule,
-            resolve_portal_source_slug,
-        )
-        from noctusai_lib.testing import MockSupabaseClient
+        The rules go in through the `portal_rules` DI seam; nothing is
+        patched, so the shipped resolver and the shipped ingest path both
+        really run (`KB § PATTERNS/backend/di-test-seam.md`)."""
+        from noctusai_lib.integrations.olx import PortalRule
 
         rule = PortalRule(
             slug="zap", field="leadOrigin", contains="Grupo OLX",
             evidence="test-only — never shipped in OLX_PORTAL_RULES",
         )
-        # Injecting the RULES, not replacing the resolver: the real
-        # function still runs, so this exercises the shipped matching.
-        monkeypatch.setattr(
-            olx_ingest_service, "resolve_portal_source_slug",
-            partial(resolve_portal_source_slug, rules=(rule,)),
-        )
 
-        db = MockSupabaseClient().schema("social_wiring")
-        result = olx_ingest_service.ingest_olx_lead(db, ORG, _lead())
+        db = client
+        result = olx_ingest_service.ingest_olx_lead(
+            db, ORG, _lead(), portal_rules=(rule,)
+        )
 
         assert result["source_slug"] == "zap"
         zap = olx_ingest_service.get_or_create_olx_source(db, ORG, "zap")

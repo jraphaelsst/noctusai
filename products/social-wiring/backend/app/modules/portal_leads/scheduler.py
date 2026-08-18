@@ -48,9 +48,9 @@ def _drain_sync(
     default_org = None
     try:
         from app.dependencies import coerce_org_uuid
-        from app.services.app_config_store import resolve_olx_config
+        from app.modules.portal_leads.deps import get_olx_config
 
-        configured = resolve_olx_config().leads_org_id
+        configured = get_olx_config().leads_org_id
         if configured:
             default_org = coerce_org_uuid(configured)
     except Exception as exc:  # noqa: BLE001 — config gap must not kill the drain

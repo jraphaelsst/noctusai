@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import base64
 import copy
-from unittest.mock import patch
-
 import pytest
 
 from noctusai_lib.integrations.olx import OLX_SAMPLE_LEAD
 
+from app.modules.portal_leads.deps import configure_portal_leads, reset_portal_leads
 from app.services.app_config_store import OlxConfig
 
 from tests.modules.portal_leads.conftest import ORG_A, WEBHOOK_SECRET
@@ -35,11 +34,22 @@ def _body(**overrides):
 
 
 @pytest.fixture
-def configured(monkeypatch):
-    """The receiver's secret + a single-tenant default org."""
+def configured():
+    """The receiver's secret + a single-tenant default org.
+
+    Injected through the module's config seam — NOT
+    `patch("...resolve_olx_config")`. Patching our own module is
+    forbidden here (`KB § PATTERNS/backend/di-test-seam.md`) and
+    `check_all_products` flags it high-severity, for a concrete reason: a
+    patched attribute proves the stub works, not the wiring, and it keeps
+    passing after the call site stops using that function.
+    """
     config = OlxConfig(webhook_secret=WEBHOOK_SECRET, leads_org_id=ORG_A)
-    with patch("app.services.app_config_store.resolve_olx_config", return_value=config):
+    configure_portal_leads(config_provider=lambda: config)
+    try:
         yield config
+    finally:
+        reset_portal_leads()
 
 
 class TestAuthentication:
@@ -69,11 +79,11 @@ class TestAuthentication:
         """`bypass_when_unset=False`. An unconfigured receiver that
         accepted anything would write attacker-supplied leads into a real
         CRM — strictly worse than being temporarily down."""
-        with patch(
-            "app.services.app_config_store.resolve_olx_config",
-            return_value=OlxConfig(),
-        ):
+        configure_portal_leads(config_provider=OlxConfig)
+        try:
             resp = http_client.post(URL, json=_body(), headers=_basic("anything"))
+        finally:
+            reset_portal_leads()
 
         assert resp.status_code == 401
 

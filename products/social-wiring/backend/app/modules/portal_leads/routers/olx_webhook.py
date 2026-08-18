@@ -40,6 +40,7 @@ from noctusai_lib.security.webhook_signatures import (
 from app.config import settings
 from app.dependencies import coerce_org_uuid, get_current_user_org_unified
 from app.modules.leads.deps import get_leads_client
+from app.modules.portal_leads.deps import get_olx_config
 from app.modules.portal_leads.services.olx_webhook_service import (
     STATUS_IGNORED,
     OlxWebhookService,
@@ -55,21 +56,18 @@ router = APIRouter(prefix="/api/portals/olx", tags=["portal-leads-olx"])
 async def _resolve_olx_secret(request: Request, body: bytes) -> ResolvedSecret:
     """The per-CRM webhook secret — DB-first, env fallback.
 
-    Resolved per-request, never captured at import: an import-time
-    capture cannot be monkeypatched, which silently defeats the tests
-    meant to prove this works.
+    Resolved per-request through the module's config seam, never captured
+    at import: an import-time capture would not see an operator rotating
+    the secret, and would force tests to patch our own module to say
+    anything about this path (`app/modules/portal_leads/deps.py`).
     """
-    from app.services.app_config_store import resolve_olx_config
-
-    config = resolve_olx_config()
+    config = get_olx_config()
     return ResolvedSecret(secret=config.webhook_secret or None)
 
 
 def get_olx_service(client: Any = Depends(get_leads_client)) -> OlxWebhookService:
     """DI seam — the named dependency a test overrides."""
-    from app.services.app_config_store import resolve_olx_config
-
-    config = resolve_olx_config()
+    config = get_olx_config()
     default_org = None
     if config.leads_org_id:
         try:

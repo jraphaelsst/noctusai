@@ -27,10 +27,12 @@ from uuid import UUID
 from noctusai_lib.integrations.persistence import iter_paged_rows
 
 from noctusai_lib.integrations.olx import (
+    OLX_PORTAL_RULES,
     OLX_SOURCE_SLUG,
     OlxLead,
     olx_lead_to_lead_payload,
     parse_olx_lead_webhook,
+    PortalRule,
     resolve_portal_source_slug,
 )
 
@@ -129,7 +131,13 @@ def store_olx_lead(client: Any, org_id: UUID, lead: OlxLead) -> None:
     }).execute()
 
 
-def ingest_olx_lead(client: Any, org_id: UUID, lead: OlxLead) -> dict[str, Any]:
+def ingest_olx_lead(
+    client: Any,
+    org_id: UUID,
+    lead: OlxLead,
+    *,
+    portal_rules: tuple[PortalRule, ...] = OLX_PORTAL_RULES,
+) -> dict[str, Any]:
     """Idempotent single-lead ingest: one `OlxLead` → one ``leads`` row.
 
     Re-running with the same ``origin_lead_id`` is a no-op returning the
@@ -152,14 +160,20 @@ def ingest_olx_lead(client: Any, org_id: UUID, lead: OlxLead) -> dict[str, Any]:
     # deliberately empty — the payload names no portal. Routing through it
     # anyway is the point: when Gate 1 shows a real discriminator, the
     # split is a `PortalRule` entry in the seed, not an edit here.
-    attribution = resolve_portal_source_slug(lead)
+    attribution = resolve_portal_source_slug(lead, rules=portal_rules)
     source = get_or_create_olx_source(client, org_id, attribution.slug)
     payload = olx_lead_to_lead_payload(lead, origem_source_id=source["id"])
     created = leads_service.create_lead(client, org_id, payload)
     return {"lead": created, "created": True, "source_slug": attribution.slug}
 
 
-def ingest_olx_payload(client: Any, org_id: UUID, payload: dict) -> dict[str, Any]:
+def ingest_olx_payload(
+    client: Any,
+    org_id: UUID,
+    payload: dict,
+    *,
+    portal_rules: tuple[PortalRule, ...] = OLX_PORTAL_RULES,
+) -> dict[str, Any]:
     """`ingest_olx_lead` from a raw delivery body. Raises `ValueError`
     when the body has no `originLeadId` — without it there is no dedup
     key, so storing it would risk duplicating on the retry."""
@@ -169,7 +183,7 @@ def ingest_olx_payload(client: Any, org_id: UUID, payload: dict) -> dict[str, An
             "ingest_olx_payload: body has no usable originLeadId — refusing to "
             "store a lead that cannot be deduplicated against its retries"
         )
-    return ingest_olx_lead(client, org_id, lead)
+    return ingest_olx_lead(client, org_id, lead, portal_rules=portal_rules)
 
 
 def backfill_olx_leads(
