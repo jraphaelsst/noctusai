@@ -56,6 +56,47 @@ cp .env.example .env && $EDITOR .env
 echo 'NOCTUS_IMAGE_TAG=<git-sha-or-latest>' >> .env
 ```
 
+### 🔴 `deploy/fleet/.env` — required, and NOT the same file as the root `.env`
+
+```bash
+# In deploy/fleet/, next to docker-compose.prod.yml:
+ln -sfn .env.fleet .env
+```
+
+**Why this is not optional.** Two different mechanisms are at play and they
+do not substitute for each other:
+
+| Mechanism | Reads | Feeds |
+|---|---|---|
+| `env_file: ../../.env` | the ROOT `.env` | variables INSIDE the container |
+| `${VAR}` interpolation | a file named `.env` in the compose project dir, or the shell | the compose file TEXT before it is parsed |
+
+`x-cache-env` builds the cache DSN by interpolation
+(`postgresql://noctus_cache:${NOCTUS_CACHE_PG_PASSWORD}@…`). Declaring that
+variable in `.env.fleet` alone does **nothing** for interpolation — compose
+never reads a file by that name. Without the symlink the password expands to
+the empty string and every product silently gets
+`postgresql://noctus_cache:@noctus-cache-pg:5432/…`.
+
+That is precisely what production was running until 2026-08-18. It failed
+quietly: the containers were healthy, `/api/health` returned `ok`, and only
+an out-of-fleet connection attempt surfaced it (`fe_sendauth: no password
+supplied`) — the role has had a real SCRAM password all along, so the
+credential was never missing, only never interpolated.
+
+Compose auto-reads `.env` from the project directory, so the symlink keeps
+ONE source of truth (`.env.fleet`) and fixes every future invocation
+— including `noctus.dev.deploy_image`, which shells out to
+`docker compose` without `--env-file`. Verify with:
+
+```bash
+# expect 0 — any hit is an un-interpolated (empty-password) DSN
+docker compose -f docker-compose.prod.yml config | grep -c 'noctus_cache:@'
+```
+
+> `deploy/fleet/.env` is gitignored, so this is HOST state. It does not
+> travel with the repo — re-create it on any rebuilt or additional VPS.
+
 ## Step 1 — build + push images (on the BUILD HOST / CI, NOT the VPS)
 
 ```bash
@@ -93,10 +134,26 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 docker compose -f deploy/fleet/compose.infra.prod.yml up -d
 # docker compose -f deploy/fleet/compose.infra.prod.yml --profile waha up -d
 
-# product fleet
+# product fleet — NAME THE SERVICES (see the warning below)
 docker compose -f deploy/fleet/docker-compose.prod.yml pull
-docker compose -f deploy/fleet/docker-compose.prod.yml up -d
+docker compose -f deploy/fleet/docker-compose.prod.yml up -d \
+  core erp-imobiliario igig orbity p-studio seed social-wiring
 ```
+
+> 🔴 **A bare `up -d` starts EVERY service in the file, including the
+> deliberately-dormant products.** The compose file is the *fleet* set (what
+> CAN run); `deploy/fleet/build-scope.txt` is the *live* set (what SHOULD).
+> Products that are `ativo=false` in the catalog are stopped on purpose, and
+> a bare `up -d` silently restarts all of them — measured 2026-08-18, when it
+> brought back five dormant containers.
+>
+> This does **not** re-expose them publicly: un-exposure lives in the
+> Cloudflare tunnel ingress, which compose never touches, so they came back
+> as `running` but still `404` at the edge. The cost is VPS RAM and CPU, not
+> exposure. Re-stop with `docker stop noctus-<slug>` per container.
+>
+> Derive the live list rather than copying it:
+> `grep -v '^#' deploy/fleet/build-scope.txt | grep -v '^$'`
 
 ## Step 3 — verify health (+ stagger note)
 
