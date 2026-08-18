@@ -9,7 +9,7 @@
 
 - **Created:** 2026-08-17
 - **Last updated:** 2026-08-18
-- **Status:** ⏳ A ✅ · B ✅ · Gate 0 ran (partial, by design) · **Gate 1 blocked on the user: request sandbox credentials from `integracao@imovelweb.com.br`** — the draft email is at `gate-1-credential-request.md` and carries one open decision (ReadOnly vs Read-and-Write)
+- **Status:** ⏳ A ✅ · B ✅ · C ✅ · D ✅ · Gate 0 ran (partial, by design) · **EVERYTHING BUILDABLE WITHOUT CREDENTIALS IS BUILT.** The only open input is Gate 1: sandbox credentials from `integracao@imovelweb.com.br`. The draft email is at `gate-1-credential-request.md` and carries one user decision (ReadOnly vs Read-and-Write). Nothing is live: the receiver 401s every delivery until a secret is configured, and the migration is a file that has not been applied.
 - **Owner / stakeholders:** jraphaelsst · tech-lead orchestrator
 - **Related docs:** `KB § INTEGRATIONS/imovelweb.md` (the vendor contract) · `KB § MCP-SERVERS/imovelweb.md` · `KB § INTEGRATIONS/olx.md` (the sibling pipe) · `projects/olx-portal-leads-ingestion/PROJECT.md` + `HANDOFF.md` (the template this mirrors) · `KB § PATTERNS/security/webhook-signatures.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `KB § PATTERNS/security/lgpd.md` · `KB § PATTERNS/backend/database-rls.md` · `KB § PATTERNS/backend/di-test-seam.md`
 - **Project slug:** `imovelweb-portal-leads-ingestion` at `projects/` — cross-cutting (seed package + MCP connector + product slice), named for symmetry with `olx-portal-leads-ingestion`.
@@ -827,22 +827,64 @@ Two structural facts, both discovered by running it:
 
 **Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
 
-### Phase C — Product slice
-- [ ] Migration `0NN_imovelweb_portal_leads.sql` per §5.7 — **file only, not applied**
-- [ ] `routers/imovelweb_webhook.py` + the five services + `scheduler.py` extension + `__init__.py` registration
-- [ ] `app/config.py`, `app_config_store.py`, `integration_providers.py`
-- [ ] Fix `MockRequestBuilder.upsert()` **or** keep read-then-write — never an untestable upsert
-- [ ] `tests/modules/portal_leads/test_imovelweb_*` — the four mandated webhook cases (§9 Tests), the auth boundary at strict `== 401`, the four service suites
-- [ ] Security-advisor consult on the diff
+### Phase C — Product slice ✅ *(2026-08-18 · 2092 passed / 3 skipped by exit code)*
+- [x] Migration `052_imovelweb_portal_leads.sql` per §5.7 — **file only, not applied**
+- [x] `routers/imovelweb_webhook.py` + four services + `scheduler.py` extension + `__init__.py` registration
+- [x] `app/config.py`, `app_config_store.py`, `integration_providers.py`, and the `portal_leads/deps.py` config seam extended for a second vendor
+- [x] Kept read-then-write, with a `NOC-REMEDIATE[perf-single-write]` marker — never an untestable upsert
+- [x] `tests/modules/portal_leads/test_imovelweb_*` — the four mandated webhook cases, the auth boundary at strict `== 401`, the four service suites (109 tests)
+- [ ] Security-advisor consult on the diff *(deferred to Gate 2 with the LGPD review — nothing is live yet)*
 
-**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
+**Improvements:**
 
-### Phase D — Frontend slice *(parallel with C — file-disjoint)*
-- [ ] `useImovelWebLeads.ts` (+ tests) — `isPending || isFetching`, derived `stuck` + `reconcileShare`
-- [ ] `ImovelWebWebhookCard.tsx` (+ tests) — the seven panels of §5.9
-- [ ] Mount in `Configuracao.tsx`; `npm test && npm run build && npx tsc --noEmit`
+1. **The mock's `upsert()` decided the shape, and the decision is recorded
+   rather than silent.** Collapsing `record_event` into one write is the
+   obvious answer to a 1.5-second budget, but `MockRequestBuilder.upsert()`
+   is still a no-op, so an upsert path tests green and duplicates live.
+   Teaching it conflict-target propagation changes test behaviour at ~70 call
+   sites across the fleet — its own piece of work, not a side effect of this
+   one. So: read-then-write, a `NOC-REMEDIATE[perf-single-write]` marker
+   naming the prerequisite, budget instrumentation, and a test asserting the
+   ROUND-TRIP COUNT (deterministic) rather than wall-clock latency (flaky) —
+   because the count is what actually changes when someone adds one more
+   lookup to the request path.
+2. **A duplicate class the OLX pipe cannot have, closed without waiting for
+   the vendor.** A pulled `Mensaje` has no `eventId`, so reconciliation mints
+   a synthetic key and the same enquiry can arrive twice under two ids.
+   Whether the two id spaces relate is Gate 0.6, still unanswered — but
+   `messageId` closes it regardless, and it is present on exactly the class
+   where the overlap can happen, since reconciliation only ever pulls
+   MESSAGES. The ledger keeps both deliveries; only the projection dedupes.
+3. **Consumed rather than forked, after grepping first.** The `portal_leads`
+   config seam (extended for a second vendor, not copied), the seed's
+   `receiver_url_problems`, and `iter_paged_rows`. The OLX branch's
+   `portal_split` rule table was evaluated and deliberately NOT consumed: it
+   infers an unknown portal from an unknown discriminator, while this vendor
+   names the portal outright, so routing through it would mean writing
+   `evidence` strings for a documented field.
+4. **Two tests were wrong and got fixed as tests, not by weakening the
+   code.** A zero-budget latency assertion failed because sub-0.1ms work
+   rounds to 0.0; and a "contact fan-out" case reused one `messageId`, which
+   is the same message twice — the guard collapsed it correctly.
 
-**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
+### Phase D — Frontend slice ✅ *(2026-08-18 · 629 tests, tsc + build clean by exit code)*
+- [x] `useImovelWebLeads.ts` (+ 16 tests) — `isPending || isFetching`, derived `stuck` + `reconcileShare`
+- [x] `ImovelWebWebhookCard.tsx` (+ 17 tests) — the panels of §5.9, including the callback-configuration panel
+- [x] Mounted in `Configuracao.tsx`; `npx vitest run && npm run build && npx tsc --noEmit` all exit 0
+
+**Improvements:**
+
+1. **`reconcileShare` is `null`, not `0`, when nothing has arrived.** Zero
+   would render as "the fast path is working" when there is simply no data —
+   the same class of lie as the loading-state trap, one level up.
+2. **"Not registered yet" is deliberately not red.** Only a MISMATCH is a
+   fault. Colouring first-time setup as a failure teaches an operator to
+   ignore the colour, which costs the two states that genuinely are red.
+3. **Two house facts learned the hard way, fixed in the code:** this project
+   wires no jest-dom matchers (`toBeTruthy()` is the style), and the
+   design-system `Skeleton` does not forward arbitrary props — a
+   `data-testid` on it vanishes silently, which would have made that
+   assertion test nothing at all.
 
 ### Phase Gate-2 — Production verification 🅿️ *(blocked on user: production credentials)*
 - [ ] 2.1 Prod login + probe; baselines corrected for prod
@@ -856,8 +898,10 @@ Two structural facts, both discovered by running it:
 
 **Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
 
-### Phase E — Integration
-- [ ] Rebase onto `origin/dev` once the OLX branch lands; **re-run every gate on the merged tip** — per-branch green ≠ integration green
+### Phase E — Integration ⏳ *(the rebase is DONE; the bless waits on Gate 2)*
+- [x] **Rebased onto `origin/dev` 2026-08-18** — the OLX branch had already merged, so contingency (a) applied and the ten commits replayed clean. Everything from Phase C onward was built ON the merged tip, not on a stale base.
+- [x] Every suite re-run after the rebase: seed 3188/1-skipped, MCP 146, product backend 2092/3-skipped, frontend 629, tsc + build. All by exit code.
+- [ ] Final re-run at bless time — per-branch green ≠ integration green, and `dev` moves
 - [ ] Register the `.mcp.json` row (post-merge only)
 - [ ] Eight-way sync verified; `noctus.hound.scan` clean
 
@@ -1027,6 +1071,7 @@ commit plan changes with the code). Three project-specific notes:
 
 | Date | Change | By |
 |---|---|---|
+| 2026-08-18 | **Phases C and D shipped, on the merged tip.** The OLX branch had landed in `origin/dev`, so the branch was rebased first (contingency (a)) and everything after was built on the merged tree. Backend: migration 052, the receiver, four services, the scheduler jobs, the config layer, 109 tests. Frontend: the hook, the health card with its callback-configuration panel, 33 tests. Suites after the rebase: seed 3188/1, MCP 146, product 2092/3, frontend 629, tsc + build — all by exit code. Three LGPD flags recorded via `noctus.dev.lgpd_flag`. Fixed on contact: `KB § PATTERNS/security/webhook-signatures.md` still said "four shapes" after `basic_shared_secret` made it five, and neither portal receiver had registered itself in the adopters list. | tech-lead orchestrator |
 | 2026-08-18 | **Gate 0 re-run through the connector, and it settled two questions inference could not.** 0.2 and 0.3 confirmed from the generated spec on both hosts (`configuracao` / `geracao` present, the Spanish spellings absent); every baseline endpoint confirmed to exist; two endpoints the adapter calls added to the baseline; and the vendor's WAF found to 403 `Python-urllib/*` by name. Three new Gate-0 findings recorded (0.11–0.13). | tech-lead orchestrator |
 | 2026-08-18 | **Phase B shipped** — `mcp/imovelweb/` with 19 tools, 79 tests green by exit code; `_kit` 31 and the full seed suite 3175/1-skipped re-run clean. Beyond the spec: the integrator-wide `put_config` also refuses a localhost / private / ephemeral-tunnel URL (shared with the future product service via the seed's `receiver_url_problems`), `probe` marks every `/v1/**` row non-discriminating because Gate 0 proved 401-before-routing, and `webhook.simulate` measures our receiver against the vendor's 1.5-second budget locally. Docs synced same commit; **not registered in `.mcp.json`** — the row's `cwd` points at the primary checkout, whose editable `noctusai_lib` has no `integrations.imovelweb` until the merge. | tech-lead orchestrator |
 | 2026-08-17 | **Phase A shipped** — the seed package whole (pure half + the Protocol/Fake/Real/factory quartet), 220 tests green by exit code. Two real bugs caught by the tests and fixed in the code (`full_phone` concatenation, a decorative timezone guard); the inbound credential lifted into the seed so connector, receiver and register service cannot drift; and a no-model-on-the-lead-path principle added with a mechanical import test. | tech-lead orchestrator |
