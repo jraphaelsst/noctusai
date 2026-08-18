@@ -16,8 +16,7 @@ in this fleet) and the page itself (``.order().range()``) to Postgres
 for the COMMON case: sort by a real column (``data_entrada``,
 ``cliente_nome``, ``created_at``) with none of ``q``/``ano``/``mes`` set.
 
-Three things are NOT DB-pushed here, each for the same reason
-``query.py``'s module docstring gives:
+Four things are NOT DB-pushed here:
 
 * ``q`` — not evaluated server-side by ``apply_db_filters`` (see there).
 * ``ano``/``mes`` — ``GENERATED ALWAYS`` columns; a mock-inserted row has
@@ -27,13 +26,23 @@ Three things are NOT DB-pushed here, each for the same reason
   label (``lead_sources.label`` / ``lead_corretores.nome``), which the
   bare ``leads`` table has no column for; sorting requires the full
   row set resolved against ``refs`` in Python, same as before.
+* any ``.in_()``-pushed filter list too large for a single request line
+  (``query.needs_in_filter_batching`` — PostgREST puts ``.in_()`` values
+  in the URL query string, so an oversized ``corretor_id``/
+  ``empreendimento``/etc. list would otherwise blow the request-line
+  budget and 400, the same class of failure that took
+  ``/clientes/revisao`` down in prod on 2026-08-14). The DB-pushed fast
+  path below never learns to batch its own ``.in_()`` calls — see
+  ``query.py``'s ``.in_()`` batching note for why the fallback is the
+  correct place for that cost to land, not this path.
 
-Any of the three still routes through the ORIGINAL ``fetch_filtered`` +
+Any of the four still routes through the ORIGINAL ``fetch_filtered`` +
 Python sort/slice path — unchanged, still the safety net for those
-cases. This is a deliberate, narrower win than "always one round-trip":
-it eliminates the full-fetch for the sort/filter combination the Leads
-page actually opens with by default (``data_entrada`` desc, no
-`q`/`ano`/`mes`), not every combination.
+cases (and, for the fourth, the ONLY path that batches). This is a
+deliberate, narrower win than "always one round-trip": it eliminates the
+full-fetch for the sort/filter combination the Leads page actually opens
+with by default (``data_entrada`` desc, no `q`/`ano`/`mes`, in-budget
+`.in_()` lists), not every combination.
 """
 from __future__ import annotations
 
@@ -50,6 +59,7 @@ from app.modules.leads.services.query import (
     apply_db_filters,
     backfill_generated_columns,
     fetch_filtered,
+    needs_in_filter_batching,
     to_rpc_params,
 )
 
@@ -301,14 +311,26 @@ def list_leads(
     """Return ``(page_rows, total)``. Pushes count + page to Postgres for
     the common case (see the module docstring); falls back to the
     original filter-all-then-Python-sort-then-slice path (via
-    ``fetch_filtered``) when the sort needs a joined label or any of
-    ``q``/``ano``/``mes`` is set."""
+    ``fetch_filtered``) when the sort needs a joined label, any of
+    ``q``/``ano``/``mes`` is set, or any ``.in_()``-pushed filter list is
+    too large for a single request line (``needs_in_filter_batching`` —
+    see ``query.py``'s ``.in_()`` batching note). That last case reuses
+    ``fetch_filtered``'s own batching rather than teaching the DB-pushed
+    count+page path to batch too: a genuinely correct batched-and-unioned
+    count+page would need every matching row fetched to re-sort/re-slice
+    in Python anyway, which is exactly what this fallback already does."""
     sort = sort if sort in _SORTABLE else "data_entrada"
     order = order if order in ("asc", "desc") else "desc"
     page = max(1, page)
     page_size = max(1, min(page_size, 200))
 
-    needs_python_fallback = sort not in _DB_SORTABLE or filters.q or filters.ano or filters.mes
+    needs_python_fallback = (
+        sort not in _DB_SORTABLE
+        or filters.q
+        or filters.ano
+        or filters.mes
+        or needs_in_filter_batching(filters)
+    )
     if not needs_python_fallback:
         return _list_leads_db(
             client, org_id, filters, page=page, page_size=page_size, sort=sort, order=order
