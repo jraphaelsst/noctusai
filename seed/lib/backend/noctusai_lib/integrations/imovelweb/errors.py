@@ -33,7 +33,7 @@ def redact_secrets(text: Optional[str], *secrets: Optional[str]) -> Optional[str
     authorization header value we register with the vendor. All three must
     be passed.
 
-    NOC-REMEDIATE[dry-lift]: this is the third instance of the same helper
+    NOC-REMEDIATE[dry-lift]: third instance of the same helper — 2026-08-17
     (`vista/client.py::redact_api_key`, `olx/errors.py::redact_secret`,
     here), so the recurrence rule says it MUST formalize to
     `noctusai_lib/integrations/redaction.py::redact_secrets`. The lift is

@@ -12,7 +12,7 @@ from typing import Any, Optional
 # ---------------------------------------------------------------------------
 # Endpoint status vocabulary.
 #
-# NOC-REMEDIATE[dry-lift]: third instance of this vocabulary
+# NOC-REMEDIATE[dry-lift]: third instance of this vocabulary — 2026-08-17
 # (`vista/client.py`, `olx/endpoints.py`, here). `olx/endpoints.py` already
 # carries the obligation in a comment — the recurrence rule says a THIRD
 # connector MUST lift it to `noctusai_lib/integrations/endpoint_status.py`

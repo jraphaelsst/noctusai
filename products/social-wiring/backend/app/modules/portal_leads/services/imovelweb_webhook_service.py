@@ -113,7 +113,7 @@ class ImovelWebWebhookService:
         Called BEFORE the response goes out, so a crash mid-processing still
         leaves the body recoverable.
 
-        NOC-REMEDIATE[perf-single-write]: this is a SELECT followed by an
+        NOC-REMEDIATE[perf-single-write]: SELECT-then-INSERT, not one upsert — 2026-08-18
         INSERT — two round-trips inside a 1.5-second budget. Collapsing it
         into one `upsert(..., ignore_duplicates=True)` is the obvious fix and
         is deliberately NOT taken yet: `MockRequestBuilder.upsert()` is a
