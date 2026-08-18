@@ -25,12 +25,15 @@ def register() -> Any:
     drain — same pattern as `meta_ads.register()`.
     """
     from app.main import ModuleRegistration
-    from app.modules.portal_leads.routers import olx_webhook
+    from app.modules.portal_leads.routers import olx_webhook, receiver_tokens
     from app.modules.portal_leads.scheduler import configure as _configure_scheduler
 
     _configure_scheduler()
 
-    return ModuleRegistration(routers=[olx_webhook.router], standard_routers=())
+    return ModuleRegistration(
+        routers=[olx_webhook.router, receiver_tokens.router],
+        standard_routers=(),
+    )
 
 
 __all__ = ["register"]
