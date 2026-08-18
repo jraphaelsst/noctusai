@@ -24,12 +24,20 @@ integrations receive the two lead events and nothing else.
 | Listing events (`AVISO_*`, `CREDITO`) | ❌ | ✅ |
 | What else it grants | nothing | **publish / unpublish / delete our clients' listings on ImovelWeb** |
 | Overlap | — | collides with `products/erp-imobiliario`'s existing outbound XML feed — two systems able to change the same listings |
+| API surface it opens | the ~15 lead/agency/config endpoints we use | **~55**: reading the generated spec on 2026-08-18 showed 40 further endpoints, almost all listing publication (`anuncios`, `lancamentos`, `multimidia`, `tipopropriedade`, `locais`, agency `usuarios`) |
 
 **Recommendation: ask for ReadOnly.** The lead legs carry the value we are
 actually after, and read/write can be requested later as a separate credential
 without reworking anything we build — the package, the receiver and the
 subscription code are identical either way. Asking for write access we do not yet
 use widens the blast radius for a feature nobody has requested.
+
+Reading the vendor's spec sharpened this rather than changing it. Read-and-Write
+is not "the same integration plus four event types": it opens a whole publication
+API — roughly 40 endpoints that can create, associate, force-publish and unpublish
+listings — the same territory `erp-imobiliario` already reaches by XML feed. That
+is a second writer to the same data, which is a design decision about the ERP, not
+a checkbox on a credential request.
 
 To flip it: change *"integração ReadOnly (somente leitura)"* to *"integração de
 Leitura e Escrita"* in §1 of the email and add the `AVISO_*` events to §2.

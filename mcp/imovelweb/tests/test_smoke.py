@@ -725,6 +725,36 @@ class TestFetchSwagger:
             result = run(diagnostics.fetch_swagger({}))
         assert "not JSON" in result["hosts"]["prod_br"]["error"]
 
+    def test_sends_an_identifying_user_agent(self):
+        # The vendor's edge 403s `Python-urllib/*` — urllib's default — while
+        # serving the same public URL to curl. Observed 2026-08-18. Without
+        # this header the tool reports a network fault for a WAF rejection.
+        spec = _SpecResp(self._spec(["/v1/imobiliarias"]))
+        with patch("urllib.request.urlopen", side_effect=[spec, spec]) as opened:
+            run(diagnostics.fetch_swagger({}))
+        sent = opened.call_args[0][0].get_header("User-agent")
+        assert sent and "urllib" not in sent
+        assert "noctusai" in sent
+
+    def test_probe_sends_it_too(self, monkeypatch):
+        monkeypatch.setenv("IMOVELWEB_CLIENT_ID", "cid")
+        monkeypatch.setenv("IMOVELWEB_CLIENT_SECRET", SECRET)
+        settings_module.get_settings.cache_clear()
+        with patch("urllib.request.urlopen", return_value=_Resp(401)) as opened:
+            run(diagnostics.probe({}))
+        assert "noctusai" in opened.call_args[0][0].get_header("User-agent")
+
+    def test_a_403_is_named_an_edge_rejection_not_a_missing_spec(self):
+        import urllib.error
+
+        error = urllib.error.HTTPError("u", 403, "forbidden", {}, None)
+        with patch("urllib.request.urlopen", side_effect=error):
+            result = run(diagnostics.fetch_swagger({}))
+        # The spec needs no credentials, so "not served" would send an
+        # operator hunting for a key that was never required.
+        assert "edge refused" in result["hosts"]["prod_br"]["error"]
+        assert "User-Agent" in result["next_step"]
+
     def test_unreachable_hosts_say_it_is_our_network_not_authorization(self):
         import urllib.error
 

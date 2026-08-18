@@ -51,14 +51,27 @@ IMOVELWEB_SANDBOX_WINDOW = "07:00-21:00 UTC-3"
 IMOVELWEB_SWAGGER_PATH = "/v2/api-docs?group=opennavent-realestate"
 
 # ---------------------------------------------------------------------------
-# Unresolved path spellings.
+# Path spellings — SETTLED against the generated spec on 2026-08-18.
 #
-# The hand-written docs and the generated spec disagree. Gate 0 established
-# that we CANNOT settle this by probing: `/v1/**` returns 401 before routing
-# (Spring Security's filter chain runs ahead of the dispatcher), so a bogus
-# path answers 401 exactly like a real one. The spec is generated from the
-# running BR code and the prose is not, so the spec spelling leads — but both
-# are kept, and Gate 1 confirms with credentials.
+# The hand-written docs and the generated spec disagreed. Probing could not
+# settle it: `/v1/**` returns 401 before routing (Spring Security's filter
+# chain runs ahead of the dispatcher), so a bogus path answers 401 exactly
+# like a real one.
+#
+# What settled it was reading the vendor's own generated spec from BOTH BR
+# hosts (`imovelweb.diagnostics.fetch_swagger`, prod `2.105.01-RC1` /
+# sandbox `ON-10172`):
+#
+#   * `/v1/configuracao/callbacks`      PRESENT (get, put)
+#   * `/v1/configuracion/callbacks`     ABSENT
+#   * `/v1/callbacks/geracao/eventos`   PRESENT (post) — sandbox host ONLY
+#   * `/v1/callbacks/generacion/evento` ABSENT
+#
+# So the first spelling in each tuple is confirmed and the second is a
+# documentation artefact. The losing spellings are KEPT rather than deleted:
+# the spec is generated from the running BR code, which makes absence strong
+# evidence but not proof — an undocumented alias controller would not appear.
+# Gate 1 retires them for good with a credentialed call.
 # ---------------------------------------------------------------------------
 IMOVELWEB_PATH_VARIANTS: dict[str, tuple[str, ...]] = {
     # (spec spelling first, prose spelling second)
@@ -118,6 +131,16 @@ IMOVELWEB_ENDPOINT_BASELINE: tuple[dict[str, Any], ...] = (
     {"method": "GET", "path": "/v2/imobiliarias/{codigoImobiliaria}/mensagens",
      "status": ENDPOINT_UNVERIFIED, "expected_status": None,
      "notes": "Paged reconciliation read. fromDate=yyyyMMdd."},
+    {"method": "GET", "path": "/v1/imobiliarias/{codigoImobiliaria}/mensagens",
+     "status": ENDPOINT_UNVERIFIED, "expected_status": None,
+     "notes": "The v1 read. Accepts `yyyyMMdd HH:mm:ss`, so it takes a "
+              "narrower window than the v2 paged read."},
+    {"method": "GET",
+     "path": "/v1/imobiliarias/{codigoImobiliaria}/anuncios/{codigoAnuncio}/mensagens",
+     "status": ENDPOINT_UNVERIFIED, "expected_status": None,
+     "notes": "Per-listing messages. `ImovelWebAdapter.list_listing_messages` "
+              "calls this — it was missing from this baseline until "
+              "fetch_swagger diffed the client against the spec on 2026-08-18."},
     {"method": "GET", "path": "/v1/mensagens/{idMensaje}",
      "status": ENDPOINT_UNVERIFIED, "expected_status": None,
      "notes": "Authoritative re-fetch. Background only — an upstream "

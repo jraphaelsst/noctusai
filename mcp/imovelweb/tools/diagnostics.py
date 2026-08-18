@@ -73,6 +73,18 @@ _TOOL_BY_PATH = {
     "<our receiver>": "imovelweb.webhook.simulate",
 }
 
+#: Sent on every outbound request this module makes.
+#:
+#: Not cosmetic. The vendor's edge 403s `Python-urllib/*` outright — the
+#: default urllib header — while accepting curl, a browser, and this string.
+#: Observed 2026-08-18: the public spec answered 200 to curl and 403 to
+#: urllib from the same machine, seconds apart. Without this the connector
+#: reports "network or DNS on our side" for a request the vendor's WAF is
+#: rejecting by name, which sends an operator debugging the wrong layer.
+#: Identifying ourselves honestly is also the right thing to send; there is
+#: no need to impersonate a browser.
+USER_AGENT = "noctusai-imovelweb-connector/1.0 (+https://noctusai.com.br)"
+
 _PROBE_CAVEAT = (
     "Gate 0 proved that /v1/** answers 401 BEFORE routing — a bogus path "
     "returns the same 401 as a real one — so a 401 here confirms only that "
@@ -127,7 +139,9 @@ async def connection_status(args: dict) -> dict:
 def _probe_one(url: str, timeout: float) -> tuple[Optional[int], float, Optional[str]]:
     started = time.monotonic()
     try:
-        request = urllib.request.Request(url, method="GET")  # noqa: S310 — fixed baseline
+        request = urllib.request.Request(  # noqa: S310 — fixed baseline
+            url, method="GET", headers={"User-Agent": USER_AGENT}
+        )
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             return int(response.status), round((time.monotonic() - started) * 1000, 1), None
     except urllib.error.HTTPError as exc:
@@ -261,12 +275,27 @@ def _normalize_path(path: str) -> str:
 def _fetch_spec(url: str, timeout: float) -> dict[str, Any]:
     started = time.monotonic()
     try:
-        request = urllib.request.Request(url, method="GET")  # noqa: S310 — fixed host
+        request = urllib.request.Request(  # noqa: S310 — fixed host
+            url, method="GET", headers={"User-Agent": USER_AGENT}
+        )
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             body = response.read().decode("utf-8", errors="replace")
             status = int(response.status)
     except urllib.error.HTTPError as exc:
-        return {"url": url, "http_status": int(exc.code), "error": "spec not served"}
+        code = int(exc.code)
+        if code in (401, 403):
+            # This endpoint is public, so a 401/403 is the vendor's EDGE
+            # refusing our client, not an authorization problem we can fix
+            # with credentials. Saying "not served" would send an operator
+            # hunting for a key that was never required.
+            reason = (
+                f"the vendor's edge refused this client ({code}) — the spec "
+                "itself is public and needs no credentials, so this is a "
+                "User-Agent / WAF rejection, not an authorization failure"
+            )
+        else:
+            reason = "spec not served"
+        return {"url": url, "http_status": code, "error": reason}
     except (urllib.error.URLError, OSError, ValueError) as exc:
         return {"url": url, "http_status": None, "error": str(exc)}
 
@@ -320,11 +349,23 @@ async def fetch_swagger(args: dict) -> dict:
 
     reachable = any(data.get("path_count") for data in hosts.values())
     if not reachable:
-        next_step = (
-            "Neither host served a spec. This endpoint is PUBLIC and needs no "
-            "credentials, so a failure here is network or DNS on our side, not "
-            "an authorization problem."
-        )
+        refused = [
+            name for name, data in hosts.items()
+            if data.get("http_status") in (401, 403)
+        ]
+        if refused:
+            next_step = (
+                f"The vendor's edge refused us on {', '.join(refused)}. The spec "
+                "is public, so this is a client-level rejection — check the "
+                "User-Agent this connector sends before assuming credentials or "
+                "network are the problem."
+            )
+        else:
+            next_step = (
+                "Neither host served a spec. This endpoint is PUBLIC and needs "
+                "no credentials, so a failure here is network or DNS on our "
+                "side, not an authorization problem."
+            )
     elif not (served - baseline) and not (baseline - served):
         next_step = (
             "The spec and IMOVELWEB_ENDPOINT_BASELINE agree. Record the spec "

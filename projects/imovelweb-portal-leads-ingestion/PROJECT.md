@@ -738,7 +738,7 @@ Mount beside `<OlxWebhookCard />` in `src/pages/leads/Configuracao.tsx`.
 - [x] `mcp/imovelweb/**` per §5.8, composing `mcp/_kit`
 - [x] `mcp/imovelweb/tests/test_smoke.py` — every registry tool; 412 asserted **before** any side effect (proven with a client that raises on ANY call); 424 when unconfigured; the sandbox guard refuses a prod host
 - [x] `KB § MCP-SERVERS/imovelweb.md` + a section in `KB § MCP-SERVERS/README.md`; registration row **documented, not applied**
-- [x] Tool registry loads and answers with zero credentials and zero network
+- [x] Driven over real stdio from the worktree: `initialize` → `tools/list` (19) → `contract.describe` (answers with no credentials) → `callbacks.put_config` with no `confirm` (typed 412, `registered: false`, nothing called)
 
 **Improvements:**
 
@@ -763,8 +763,18 @@ Mount beside `<OlxWebhookCard />` in `src/pages/leads/Configuracao.tsx`.
    test that reached for the handler by attribute got the seed function instead.
    Fixed by aliasing the import — a module that exports two different things under
    one name is a trap for the next reader, not just for a test.
+5. **The connector found a defect in itself on its first live run.** Pointed at
+   the real public spec, `fetch_swagger` returned 403 from both hosts and reported
+   "network or DNS on our side". The actual cause: the vendor's edge 403s
+   `Python-urllib/*` by name — the same URL answered 200 to curl seconds later.
+   Fixed by sending an identifying User-Agent (no browser impersonation needed;
+   an honest `noctusai-imovelweb-connector/1.0` is accepted) and by classifying a
+   401/403 on a public endpoint as a client rejection rather than a missing spec.
+   Worth noting as a class: a diagnostic tool that misattributes a failure is
+   worse than one that fails, because it sends an operator to the wrong layer
+   with confidence.
 
-### Phase Gate-0 — Spec-only verification ⏳ *(ran 2026-08-17; 3 of 9 settled, 5 provably NOT answerable without credentials)*
+### Phase Gate-0 — Spec-only verification ⏳ *(ran 2026-08-17, re-run through the connector 2026-08-18; 5 of 9 settled, 4 provably NOT answerable without credentials)*
 
 **The headline: Gate 0 is much smaller than planned, and knowing why is the finding.**
 Two structural facts, both discovered by running it:
@@ -785,14 +795,17 @@ Two structural facts, both discovered by running it:
    remembering before designing any future probe against this vendor.
 
 - [x] **0.1 ✅** Both specs download unauthenticated. Prod `api-br-open.navent.com` → `2.105.01-RC1`; sandbox `api-br-sandbox-open.navent.com` → `ON-10172`. Path sets are identical **except** the sandbox exposes `POST /v1/callbacks/geracao/eventos`, which prod does not.
-- [x] **0.2 ⚠️ Not probeable — resolved by inference instead.** The spec is generated from the running BR code and spells it **`/v1/configuracao/callbacks`**; `configuracion` appears only in hand-written prose. Treat the spec spelling as authoritative, keep both in `IMOVELWEB_PATH_VARIANTS`, confirm at Gate 1.
-- [x] **0.3 ⚠️ Not probeable — same inference.** **`/v1/callbacks/geracao/eventos`** is in the sandbox's generated spec; `/v1/callbacks/generacion/evento` is prose-only. Same treatment.
+- [x] **0.2 ✅ SETTLED 2026-08-18** via `imovelweb.diagnostics.fetch_swagger`. `/v1/configuracao/callbacks` is present on both hosts with `get` and `put`; `/v1/configuracion/callbacks` is absent from both specs entirely. The Spanish spelling is a documentation artefact. Kept in `IMOVELWEB_PATH_VARIANTS` rather than deleted: the spec is generated from the running code, so absence is strong evidence but not proof of no alias controller. Gate 1 retires it.
+- [x] **0.3 ✅ SETTLED 2026-08-18**, same run. `/v1/callbacks/geracao/eventos` is present with `post`, on the **sandbox host only**; `/v1/callbacks/generacion/evento` is absent from both. Same treatment.
 - [ ] **0.4 ❌ MOVED TO GATE 1.7.** Whether the EN2 body carries an agency code cannot be read from the spec (finding 1). **It no longer blocks Phase A** — `contract.py` is language-parameterized by design — but it *does* block the runtime `imovelweb_callback_language` default and org-resolution rung 1.
 - [ ] **0.5 ❌ MOVED TO GATE 1.7.** Same reason. The five variants stay transcribed from prose, every `FieldSpec.verified=False`.
 - [ ] **0.6 ❌ MOVED TO GATE 1.12.** `Mensaje.id` / `idMensaje` vs the callback's `eventId` / `messageId` needs live data from both surfaces. Still the reconcile-dedup blocker.
 - [x] **0.7 ✅** `OAuth2AccessToken.expiration` is `string` / `format: date-time` (ISO-8601); `expiresIn` is `int32` (seconds, per OAuth2 convention); `refreshToken` is `OAuth2RefreshToken {value}` and carries **no expiry of its own**. So `_parse_expiry` handles **two** shapes, not four: prefer `expiration`, fall back to `now + expiresIn`. Confirm `expiration` is actually populated at Gate 1.2.
 - [ ] **0.8 ❌ MOVED TO GATE 1.2.** Whether login accepts `Authorization: Basic` + a form body cannot be tested — the grant handler never runs unauthenticated.
 - [x] **0.9 ✅** `ConfiguracionCallback` carries `subscriptions: string[]`, so a single `PUT /v1/configuracao/callbacks` **can** set URL + header + language + subscriptions atomically; `PUT /callbacks/{evento}` is the incremental path. Register atomically, then read back and diff.
+- [x] **0.11 ✅ (new, unplanned — 2026-08-18)** **Every endpoint we had written down exists.** 15/15 baseline rows confirmed against the generated spec, `in_baseline_not_in_spec` empty. The same diff caught two endpoints the ADAPTER calls that the baseline had not listed (`/v1/imobiliarias/{cod}/mensagens`, `/v1/imobiliarias/{cod}/anuncios/{cod}/mensagens`) — the baseline was not a complete map of our own client, and now is.
+- [x] **0.12 ✅ (new, unplanned — 2026-08-18)** **The vendor's edge 403s `Python-urllib/*` by name.** The public spec answered 200 to curl and 403 to urllib from the same machine, seconds apart. The connector now sends an identifying User-Agent and classifies a 401/403 on this public endpoint as a client rejection rather than "not served" — otherwise the tool blames our network for a WAF decision and an operator debugs the wrong layer.
+- [x] **0.13 ✅ (new, unplanned — 2026-08-18)** **40 spec endpoints sit outside our baseline, and they are almost entirely the listing-publication surface** (`anuncios`, `lancamentos`, `multimidia`, `tipopropriedade`, `locais`, `imobiliarias/{}/usuarios`). That is not scope we missed: it overlaps `products/erp-imobiliario`'s outbound XML feed and needs Read-and-Write credentials. It sharpens open question 19 — the ReadOnly-vs-Read-and-Write decision buys or forfeits this whole surface, not just the `AVISO_*` events.
 - [x] **0.10 ✅ (new, unplanned)** **Errors are XML, not JSON.** A 401 returns `Content-Type: application/xml` with `<UnauthorizedException><error>unauthorized</error><error_description>…</error_description></UnauthorizedException>`, despite `produces: */*`. `real.py` must not assume a JSON error envelope — parse defensively and fall back to the raw text, or every upstream failure surfaces as a confusing decode error instead of the vendor's actual message.
 
 **Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`._
@@ -1014,6 +1027,7 @@ commit plan changes with the code). Three project-specific notes:
 
 | Date | Change | By |
 |---|---|---|
+| 2026-08-18 | **Gate 0 re-run through the connector, and it settled two questions inference could not.** 0.2 and 0.3 confirmed from the generated spec on both hosts (`configuracao` / `geracao` present, the Spanish spellings absent); every baseline endpoint confirmed to exist; two endpoints the adapter calls added to the baseline; and the vendor's WAF found to 403 `Python-urllib/*` by name. Three new Gate-0 findings recorded (0.11–0.13). | tech-lead orchestrator |
 | 2026-08-18 | **Phase B shipped** — `mcp/imovelweb/` with 19 tools, 79 tests green by exit code; `_kit` 31 and the full seed suite 3175/1-skipped re-run clean. Beyond the spec: the integrator-wide `put_config` also refuses a localhost / private / ephemeral-tunnel URL (shared with the future product service via the seed's `receiver_url_problems`), `probe` marks every `/v1/**` row non-discriminating because Gate 0 proved 401-before-routing, and `webhook.simulate` measures our receiver against the vendor's 1.5-second budget locally. Docs synced same commit; **not registered in `.mcp.json`** — the row's `cwd` points at the primary checkout, whose editable `noctusai_lib` has no `integrations.imovelweb` until the merge. | tech-lead orchestrator |
 | 2026-08-17 | **Phase A shipped** — the seed package whole (pure half + the Protocol/Fake/Real/factory quartet), 220 tests green by exit code. Two real bugs caught by the tests and fixed in the code (`full_phone` concatenation, a decorative timezone guard); the inbound credential lifted into the seed so connector, receiver and register service cannot drift; and a no-model-on-the-lead-path principle added with a mechanical import test. | tech-lead orchestrator |
 | 2026-08-17 | Initial project drafted from `templates/PROJECT-TEMPLATE.md` after interrogation of jraphaelsst (4 decisions in §2). Vendor contract researched from the live OpenNavent Swagger spec + `open-classifieds.notion.site/bra`; recorded in `KB § INTEGRATIONS/imovelweb.md`. **Refutes the OLX project's ImovelWeb-direct hypothesis**: ImovelWeb is Navent/Grupo QuintoAndar, not Grupo OLX, and has its own API, sandbox and callback system. | tech-lead orchestrator |
