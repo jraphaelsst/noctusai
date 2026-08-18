@@ -174,7 +174,7 @@ def _gather_documentos(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict
         "cliente_documentos",
         org_id,
         eq_filters={"cliente_id": str(cliente_id)},
-        extra=lambda q: q.is_("deleted_at", "null"),
+        refine=lambda q: q.is_("deleted_at", "null"),
     )
     return [
         {

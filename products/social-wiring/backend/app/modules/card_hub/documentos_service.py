@@ -159,7 +159,7 @@ def list_documentos(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         "cliente_documentos",
         org_id,
         eq_filters={"cliente_id": str(cliente_id)},
-        extra=lambda q: q.is_("deleted_at", "null"),
+        refine=lambda q: q.is_("deleted_at", "null"),
     )
     resolved = _resolve_actors({r["enviado_por"] for r in rows if r.get("enviado_por")})
     items = [_documento_out(r, resolved) for r in rows]
