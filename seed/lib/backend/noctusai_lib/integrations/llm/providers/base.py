@@ -55,6 +55,22 @@ class LLMProvider(Protocol):
         """Return a single embedding vector for the given text."""
         ...
 
+    # `generate_embeddings_batch` — OPTIONAL per provider, same rule as
+    # `chat_completion_stream` below: the high-level
+    # `noctusai_lib.integrations.llm.generate_embeddings_batch` duck-types
+    # via `getattr(prov, "generate_embeddings_batch", None)` and degrades to
+    # a per-text `generate_embedding` loop when a provider hasn't implemented
+    # it, so it is intentionally NOT declared here (adding it as a required
+    # Protocol member would force a stub on every provider, including ones
+    # with no embeddings support at all, e.g. Anthropic). OpenAI implements
+    # it as one `/embeddings` call with an array `input` — the fix for the
+    # 2026-08 per-chunk-request retry-storm (508 chunks -> 508 requests ->
+    # self-inflicted 429s). Signature (for providers that add it):
+    #
+    #   async def generate_embeddings_batch(
+    #       self, texts: list[str], *, model: str, api_key: str, **kwargs: Any,
+    #   ) -> list[list[float]]: ...   # order-preserving, one entry per text
+
     async def transcribe_audio(
         self,
         audio: bytes,

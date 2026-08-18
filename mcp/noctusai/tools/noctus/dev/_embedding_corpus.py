@@ -45,6 +45,8 @@ from typing import Any, Callable, Iterable, Iterator, Optional, TypeVar
 from .cache_backend import apply_locking_pragmas
 from ._llm_bootstrap import ensure_llm_configured
 
+_T = TypeVar("_T")
+
 
 # ── Knobs ──────────────────────────────────────────────────────────────────
 EMBEDDING_DIM = 1536      # OpenAI text-embedding-3-small.
@@ -123,7 +125,12 @@ def _embed_min_interval_s() -> float:
 def _throttle_embed() -> None:
     """Block until at least `_embed_min_interval_s()` has elapsed since the
     previous embed call. No-op when the interval is 0. Process-local (one
-    refresh runs in one process); not a distributed limiter."""
+    refresh runs in one process); not a distributed limiter.
+
+    Shared by BOTH `embed_sync` (one text) and `embed_batch_sync` (many texts
+    in one HTTP request) — the gate paces HTTP ROUND-TRIPS, not chunks, so a
+    100-chunk batch call consumes the same one throttle slot a single-chunk
+    call would."""
     global _last_embed_monotonic
     interval = _embed_min_interval_s()
     if interval <= 0:
@@ -151,11 +158,78 @@ def embed_sync(text: str) -> list[float]:
     Proactively rate-limited (see `_throttle_embed`): consecutive embeds are
     spaced ≥ NOCTUS_EMBED_MIN_INTERVAL_MS apart so a full-corpus refresh paces
     itself under the OpenAI limit instead of relying on 429 backoff.
+
+    Single-text — used for QUERY-time embeds (search()) where there is only
+    ever one text. Refresh LOOPS should call `embed_batch_sync` instead (see
+    its docstring for why per-chunk single calls self-inflict rate limits).
     """
     from noctusai_lib.integrations.llm import generate_embedding
     ensure_llm_configured()
     _throttle_embed()
     return run_coro_blocking(generate_embedding(text))
+
+
+# ── Batch size knob ─────────────────────────────────────────────────────────
+# OpenAI's /embeddings endpoint accepts an array `input` of up to 2048 items
+# per request, with a combined-token budget well above what this default
+# risks (the largest chunk shape in this repo — code_embeddings' 6000-char
+# AST chunks — is ~1500 tokens; 64 * 1500 = 96k tokens, comfortably under the
+# per-request ceiling). Conservative default; tune per-environment via
+# NOCTUS_EMBED_BATCH_SIZE without a code change (mirrors the
+# NOCTUS_EMBED_MIN_INTERVAL_MS pacing knob above).
+_DEFAULT_EMBED_BATCH_SIZE = 64
+
+
+def _embed_batch_size() -> int:
+    raw = os.environ.get("NOCTUS_EMBED_BATCH_SIZE")
+    try:
+        n = int(raw) if raw is not None else _DEFAULT_EMBED_BATCH_SIZE
+    except ValueError:
+        n = _DEFAULT_EMBED_BATCH_SIZE
+    return max(1, n)
+
+
+def iter_batches(items: list[_T], batch_size: int | None = None) -> Iterator[list[_T]]:
+    """Slice `items` into consecutive chunks of ≤ `batch_size` (default:
+    `_embed_batch_size()`, env-tunable). Generic — used to batch (idx, text)
+    pairs for the embed-corpus refresh loops."""
+    n = batch_size if batch_size is not None else _embed_batch_size()
+    for i in range(0, len(items), n):
+        yield items[i:i + n]
+
+
+# ── Batch embedding (sync wrap) ─────────────────────────────────────────────
+def embed_batch_sync(texts: list[str]) -> list[list[float]]:
+    """Sync-wrap `noctusai_lib.integrations.llm.generate_embeddings_batch` —
+    ONE HTTP round-trip for MANY texts.
+
+    **This is the fix for the 2026-08 pre-push retry-storm.** Every refresh
+    loop (code/kb/corpus/memory embeddings) used to call `embed_sync()` once
+    PER CHUNK: 508 chunks meant 508 separate OpenAI requests, each
+    independently paced+retried — self-inflicted 429s (OpenAI itself was
+    healthy the whole time; a single direct embed call always succeeded).
+    The `/embeddings` endpoint accepts an ARRAY `input`, so calling this once
+    per `iter_batches()` slice collapses N chunks into `ceil(N/batch_size)`
+    requests — 508 chunks at the default batch size of 64 is 8 requests, not
+    508.
+
+    Same self-configuring + pacing contract as `embed_sync` (see its
+    docstring): `ensure_llm_configured()` + `_throttle_embed()` — the
+    throttle gates ONE HTTP round-trip regardless of how many texts ride
+    inside it, so a batch of 64 consumes the same one pacing slot a single
+    chunk would.
+
+    Order-preserving: `result[i]` embeds `texts[i]`. Returns `[]` for an
+    empty list without making any call (no-op — preserves the per-chunk
+    source_sha idempotency contract: an unchanged file's chunks never reach
+    this function at all, since the caller's source_sha guard skips the
+    whole file upstream)."""
+    if not texts:
+        return []
+    from noctusai_lib.integrations.llm import generate_embeddings_batch
+    ensure_llm_configured()
+    _throttle_embed()
+    return run_coro_blocking(generate_embeddings_batch(texts))
 
 
 # ── Real-usage capture ─────────────────────────────────────────────────────
@@ -267,7 +341,6 @@ def cosine(a: list[float], b: list[float]) -> float:
 
 
 # ── Top-K similarity ranking ────────────────────────────────────────────────
-_T = TypeVar("_T")
 
 
 def top_k_similar(
@@ -747,40 +820,59 @@ def refresh_markdown_corpus(
             f"VALUES ({placeholders})"
         )
 
-        for idx, chunk in enumerate(chunks):
+        # Batch the embed calls — ONE HTTP round-trip per `iter_batches()`
+        # slice instead of one PER CHUNK (the 2026-08 retry-storm root
+        # cause: N chunks used to mean N independently-paced-and-retried
+        # requests). A batch failure fails ALL chunks in that slice
+        # together, preserving the existing per-DOC all-or-nothing rollback
+        # below (this doc's earlier-batch rows are rolled back too — a doc's
+        # cached rows are never left partially embedded).
+        for batch in iter_batches(list(enumerate(chunks))):
+            batch_texts = [c for _idx, c in batch]
             try:
-                vec = embed_sync(chunk)
+                vecs = embed_batch_sync(batch_texts)
             except Exception as e:  # noqa: BLE001
-                errors.append({"path": rel, "chunk_idx": idx, "error": str(e)[:200]})
+                errors.append({
+                    "path": rel, "chunk_idx": batch[0][0], "error": str(e)[:200],
+                })
                 per_doc_ok = False
                 break
-            if len(vec) != EMBEDDING_DIM:
+            if len(vecs) != len(batch):
                 errors.append({
-                    "path": rel, "chunk_idx": idx,
-                    "error": f"unexpected dim {len(vec)} (want {EMBEDDING_DIM})",
+                    "path": rel, "chunk_idx": batch[0][0],
+                    "error": f"batch embed returned {len(vecs)} vectors for {len(batch)} inputs",
+                })
+                per_doc_ok = False
+                break
+            dim_bad = next((i for i, v in enumerate(vecs) if len(v) != EMBEDDING_DIM), None)
+            if dim_bad is not None:
+                errors.append({
+                    "path": rel, "chunk_idx": batch[dim_bad][0],
+                    "error": f"unexpected dim {len(vecs[dim_bad])} (want {EMBEDDING_DIM})",
                 })
                 per_doc_ok = False
                 break
 
-            extra_values = [extras.get(col) for col in extra_col_names]
-            row_values = (
-                *extra_values, rel, idx, chunk, sha, ts,
-            )
-            cur = conn.execute(insert_sql, row_values)
-            row_id = cur.lastrowid
-            per_doc_rowids.append(row_id)
-            if HAS_VEC:
-                conn.execute(
-                    f"INSERT INTO {corpus.vec_table}(rowid, embedding) VALUES (?, ?)",
-                    (row_id, pack_vec(vec)),
+            for (idx, chunk), vec in zip(batch, vecs):
+                extra_values = [extras.get(col) for col in extra_col_names]
+                row_values = (
+                    *extra_values, rel, idx, chunk, sha, ts,
                 )
-            else:
-                conn.execute(
-                    f"INSERT INTO {corpus.json_table}(chunk_rowid, embedding) "
-                    f"VALUES (?, ?)",
-                    (row_id, json.dumps(vec)),
-                )
-            total_rows += 1
+                cur = conn.execute(insert_sql, row_values)
+                row_id = cur.lastrowid
+                per_doc_rowids.append(row_id)
+                if HAS_VEC:
+                    conn.execute(
+                        f"INSERT INTO {corpus.vec_table}(rowid, embedding) VALUES (?, ?)",
+                        (row_id, pack_vec(vec)),
+                    )
+                else:
+                    conn.execute(
+                        f"INSERT INTO {corpus.json_table}(chunk_rowid, embedding) "
+                        f"VALUES (?, ?)",
+                        (row_id, json.dumps(vec)),
+                    )
+                total_rows += 1
 
         if not per_doc_ok and per_doc_rowids:
             delete_embedding_rows(
@@ -956,7 +1048,8 @@ def aggregate_source_sha(sources: Iterable[tuple[str, Path, dict]]) -> str:
 __all__ = [
     "EMBEDDING_DIM", "MAX_CHUNK_CHARS", "MIN_CHUNK_CHARS", "HAS_VEC",
     "now_iso", "sha_file",
-    "chunk_markdown", "embed_sync", "cosine", "top_k_similar", "pack_vec", "connect_cache",
+    "chunk_markdown", "embed_sync", "embed_batch_sync", "iter_batches",
+    "cosine", "top_k_similar", "pack_vec", "connect_cache",
     "meta_schema_sql", "vec_schema_sql", "json_fallback_schema_sql",
     "init_schema", "delete_embedding_rows", "backfill_cross_engine_embeddings",
     "MarkdownCorpus", "refresh_markdown_corpus", "search_markdown_corpus",

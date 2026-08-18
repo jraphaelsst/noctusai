@@ -127,6 +127,64 @@ class OpenAIProvider:
             logger.error("OpenAI generate_embedding failed: %s", exc)
             raise LLMAPIError("openai", str(exc)) from exc
 
+    async def generate_embeddings_batch(
+        self,
+        texts: list[str],
+        *,
+        model: str,
+        api_key: str,
+        org_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> list[list[float]]:
+        """Embed MANY texts in ONE OpenAI API call — the embeddings endpoint
+        accepts an array ``input`` natively (up to 2048 items/request). This
+        is the root fix for the 2026-08 pre-push retry-storm: the cache
+        refresh loops used to call ``generate_embedding`` once PER CHUNK
+        (508 chunks -> 508 requests, each independently paced+retried),
+        which self-inflicted 429s even though the account and OpenAI itself
+        were healthy throughout. One request for N chunks means N/batch_size
+        requests instead of N — the caller (the embed-corpus refresh loops)
+        owns the batch SIZE; this method just embeds whatever list it's
+        given in a single round-trip.
+
+        Order-preserving: OpenAI's ``/embeddings`` response is index-ordered
+        to match the request's ``input`` array 1:1 (documented API
+        contract) — sorted defensively here rather than trusted blindly.
+        """
+        from ..usage import record_usage
+        from noctusai_lib.integrations import rate_limit
+
+        if not texts:
+            return []
+        client = self._client_for(api_key)
+        # ONE pacing token for the WHOLE batch — it is one HTTP request
+        # regardless of how many texts ride inside it.
+        await rate_limit.acquire_async("openai_embed")
+        try:
+            response = await client.embeddings.create(
+                model=model,
+                input=texts,
+                **kwargs,
+            )
+            usage = getattr(response, "usage", None)
+            await record_usage(
+                provider="openai",
+                model=model,
+                operation="embedding",
+                org_id=org_id,
+                prompt_tokens=getattr(usage, "prompt_tokens", None),
+                completion_tokens=None,
+                total_tokens=getattr(usage, "total_tokens", None),
+            )
+            ordered = sorted(response.data, key=lambda d: d.index)
+            return [d.embedding for d in ordered]
+        except OpenAIError as exc:
+            logger.error(
+                "OpenAI generate_embeddings_batch failed (%d texts): %s",
+                len(texts), exc,
+            )
+            raise LLMAPIError("openai", str(exc)) from exc
+
     async def transcribe_audio(
         self,
         audio: bytes,

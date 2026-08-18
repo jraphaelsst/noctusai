@@ -215,6 +215,36 @@ class TestFakeProvider:
         )
         assert vec == [0.1, 0.2, 0.3]
 
+    def test_batch_embedding_is_one_recorded_call_for_many_texts(self):
+        """The batching contract at the fake-provider level — mirrors the
+        real OpenAIProvider's ONE `/embeddings` call per batch shape (KB §
+        PATTERNS/common/vectorize-embed-cache-framework.md, the 2026-08
+        retry-storm fix)."""
+        from noctusai_lib.integrations.llm.providers.fake_provider import FakeProvider
+
+        fake = FakeProvider()
+        texts = [f"chunk-{i}" for i in range(50)]
+        vecs = asyncio.run(
+            fake.generate_embeddings_batch(texts, model="text-embedding-3-small", api_key="k")
+        )
+        assert len(vecs) == 50
+        assert all(len(v) == 1536 for v in vecs)
+        batch_calls = [c for c in fake.calls if c["method"] == "generate_embeddings_batch"]
+        assert len(batch_calls) == 1  # ONE call recorded for all 50 texts
+        assert batch_calls[0]["texts"] == texts
+
+    def test_batch_embedding_consumes_scripted_responses_in_order(self):
+        from noctusai_lib.integrations.llm.providers.fake_provider import FakeProvider
+
+        fake = FakeProvider(embedding_responses=[[1.0], [2.0], [3.0]])
+        vecs = asyncio.run(
+            fake.generate_embeddings_batch(["a", "b"], model="m", api_key="k")
+        )
+        assert vecs == [[1.0], [2.0]]
+        # Third scripted response still available for the next call.
+        vec3 = asyncio.run(fake.generate_embedding(text="c", model="m", api_key="k"))
+        assert vec3 == [3.0]
+
     def test_transcription_and_vision_scripted(self):
         from noctusai_lib.integrations.llm.providers.fake_provider import FakeProvider
 
@@ -267,3 +297,252 @@ class TestOpenAIProviderStructure:
         from noctusai_lib.integrations.llm.providers.openai_provider import OpenAIProvider
 
         assert OpenAIProvider.name == "openai"
+
+
+# ── OpenAIProvider.generate_embeddings_batch — the 2026-08 retry-storm fix ──
+#
+# Root cause: `generate_embedding` sends `input=<one string>` — one chunk,
+# one HTTP request. A 508-chunk refresh loop calling it per-chunk fired 508
+# independently-paced-and-retried requests (507 retries observed — ~1 per
+# chunk — even though OpenAI itself was healthy the whole time: a single
+# direct embed call always succeeded). `generate_embeddings_batch` sends
+# `input=<array>` — the SAME endpoint accepts many texts in ONE request.
+# These tests mock the `AsyncOpenAI` client directly (no network) and assert
+# the request SHAPE: one `embeddings.create` call, `input` is the whole list,
+# one rate-limit token consumed (not one per text), response re-ordered by
+# `index` rather than trusted positionally.
+
+class _FakeEmbeddingDatum:
+    def __init__(self, index: int, embedding: list[float]) -> None:
+        self.index = index
+        self.embedding = embedding
+
+
+class _FakeUsage:
+    def __init__(self, prompt_tokens: int, total_tokens: int) -> None:
+        self.prompt_tokens = prompt_tokens
+        self.total_tokens = total_tokens
+
+
+class _FakeEmbeddingsResponse:
+    def __init__(self, data: list, usage) -> None:
+        self.data = data
+        self.usage = usage
+
+
+class TestOpenAIProviderBatchEmbedding:
+    def _provider_with_mock_client(self, monkeypatch, response):
+        """An OpenAIProvider whose `_client_for` returns a stub client with a
+        mocked `embeddings.create` — no network, no real API key needed."""
+        from unittest.mock import AsyncMock, MagicMock
+        from noctusai_lib.integrations.llm.providers.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider()
+        mock_client = MagicMock()
+        mock_client.embeddings.create = AsyncMock(return_value=response)
+        monkeypatch.setattr(provider, "_client_for", lambda api_key: mock_client)
+
+        # Pacing/backoff aren't the thing under test here — no-op them so the
+        # request-SHAPE assertions aren't entangled with real sleep/jitter.
+        from noctusai_lib.integrations import rate_limit
+        acquire_calls = {"n": 0}
+
+        async def _fake_acquire(bucket, tokens=1.0):
+            acquire_calls["n"] += 1
+            return 0.0
+
+        monkeypatch.setattr(rate_limit, "acquire_async", _fake_acquire)
+        return provider, mock_client, acquire_calls
+
+    def test_one_request_for_many_texts(self, monkeypatch):
+        response = _FakeEmbeddingsResponse(
+            data=[
+                _FakeEmbeddingDatum(0, [0.1, 0.2]),
+                _FakeEmbeddingDatum(1, [0.3, 0.4]),
+                _FakeEmbeddingDatum(2, [0.5, 0.6]),
+            ],
+            usage=_FakeUsage(prompt_tokens=30, total_tokens=30),
+        )
+        provider, mock_client, acquire_calls = self._provider_with_mock_client(
+            monkeypatch, response
+        )
+        texts = ["alpha", "beta", "gamma"]
+        vecs = asyncio.run(
+            provider.generate_embeddings_batch(texts, model="text-embedding-3-small", api_key="sk-x")
+        )
+        assert mock_client.embeddings.create.await_count == 1  # ONE HTTP request
+        call_kwargs = mock_client.embeddings.create.await_args.kwargs
+        assert call_kwargs["input"] == texts  # the WHOLE list, one request
+        assert call_kwargs["model"] == "text-embedding-3-small"
+        assert vecs == [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
+        assert acquire_calls["n"] == 1  # one pacing token for the whole batch
+
+    def test_response_reordered_by_index_not_trusted_positionally(self, monkeypatch):
+        """Defends against a provider (or a future SDK version) returning
+        `data` out of request order — index-based sort keeps `result[i]`
+        matched to `texts[i]` regardless."""
+        response = _FakeEmbeddingsResponse(
+            data=[
+                _FakeEmbeddingDatum(2, [9.0]),
+                _FakeEmbeddingDatum(0, [7.0]),
+                _FakeEmbeddingDatum(1, [8.0]),
+            ],
+            usage=_FakeUsage(prompt_tokens=3, total_tokens=3),
+        )
+        provider, _client, _acq = self._provider_with_mock_client(monkeypatch, response)
+        vecs = asyncio.run(
+            provider.generate_embeddings_batch(["a", "b", "c"], model="m", api_key="k")
+        )
+        assert vecs == [[7.0], [8.0], [9.0]]
+
+    def test_empty_list_makes_no_request(self, monkeypatch):
+        response = _FakeEmbeddingsResponse(data=[], usage=_FakeUsage(0, 0))
+        provider, mock_client, acquire_calls = self._provider_with_mock_client(
+            monkeypatch, response
+        )
+        vecs = asyncio.run(
+            provider.generate_embeddings_batch([], model="m", api_key="k")
+        )
+        assert vecs == []
+        assert mock_client.embeddings.create.await_count == 0
+        assert acquire_calls["n"] == 0
+
+    def test_openai_error_wrapped_as_llm_api_error(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from openai import APIError
+        from noctusai_lib.integrations.llm import LLMAPIError
+        from noctusai_lib.integrations.llm.providers.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider()
+        mock_client = MagicMock()
+        boom = APIError("rate limited", request=MagicMock(), body=None)
+        mock_client.embeddings.create = AsyncMock(side_effect=boom)
+        monkeypatch.setattr(provider, "_client_for", lambda api_key: mock_client)
+        from noctusai_lib.integrations import rate_limit
+        monkeypatch.setattr(
+            rate_limit, "acquire_async", AsyncMock(return_value=0.0)
+        )
+        with pytest.raises(LLMAPIError):
+            asyncio.run(
+                provider.generate_embeddings_batch(["x"], model="m", api_key="k")
+            )
+
+
+# ── High-level `generate_embeddings_batch` dispatcher ────────────────────────
+#
+# `noctusai_lib.integrations.llm.embeddings.generate_embeddings_batch` is the
+# funnel every refresh loop calls. It must: (a) route to a provider's native
+# `generate_embeddings_batch` when present (the batching win), and (b)
+# degrade gracefully to one `generate_embedding` call per text for a provider
+# that hasn't implemented batch support — same result shape either way, so
+# callers never special-case by provider.
+#
+# Follows the SAME real-plumbing seam `test_refusal.py` established
+# (`register()` a test-owned provider class + `configure_llm()` — no
+# monkeypatching of our own `get_provider`/`generate_embeddings_batch` code):
+# `get_provider()` instantiates the registered class with no args and caches
+# it by name, so call logs live at CLASS scope (mirroring
+# `_ScriptedVisionProvider._visions` there).
+
+
+class _CountingBatchProvider:
+    """Registered test provider WITH native batch support."""
+
+    calls: list[list[str]] = []
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.calls = []
+
+    async def generate_embeddings_batch(self, texts, *, model, api_key, org_id=None, **kwargs):
+        type(self).calls.append(list(texts))
+        return [[float(len(t))] for t in texts]
+
+    async def generate_embedding(self, text, *, model, api_key, org_id=None, **kwargs):
+        raise AssertionError(
+            "must not fall back to per-text calls when the provider has "
+            "native batch support — that would silently lose the batching win"
+        )
+
+    async def close(self) -> None:  # pragma: no cover — cleanup
+        return None
+
+
+class _NoBatchProvider:
+    """Registered test provider WITHOUT batch support — the degrade path."""
+
+    calls: list[str] = []
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.calls = []
+
+    async def generate_embedding(self, text, *, model, api_key, org_id=None, **kwargs):
+        type(self).calls.append(text)
+        return [float(len(text))]
+
+    async def close(self) -> None:  # pragma: no cover — cleanup
+        return None
+
+
+@pytest.fixture
+def counting_batch_provider():
+    from noctusai_lib.integrations.llm.client import _provider_cache, configure_llm
+    from noctusai_lib.integrations.llm.config import LLMConfig
+    from noctusai_lib.integrations.llm.registry import register
+
+    _CountingBatchProvider.reset()
+    register("countingbatch", _CountingBatchProvider)
+    configure_llm(
+        LLMConfig(
+            key_provider=lambda provider, org_id=None: "test-key",
+            default_provider="countingbatch",
+        )
+    )
+    yield _CountingBatchProvider
+    _provider_cache.clear()
+
+
+@pytest.fixture
+def no_batch_provider():
+    from noctusai_lib.integrations.llm.client import _provider_cache, configure_llm
+    from noctusai_lib.integrations.llm.config import LLMConfig
+    from noctusai_lib.integrations.llm.registry import register
+
+    _NoBatchProvider.reset()
+    register("nobatch", _NoBatchProvider)
+    configure_llm(
+        LLMConfig(
+            key_provider=lambda provider, org_id=None: "test-key",
+            default_provider="nobatch",
+        )
+    )
+    yield _NoBatchProvider
+    _provider_cache.clear()
+
+
+class TestGenerateEmbeddingsBatchDispatcher:
+    def test_routes_to_provider_native_batch(self, counting_batch_provider):
+        from noctusai_lib.integrations.llm import generate_embeddings_batch
+
+        texts = ["a", "b", "c"]
+        vecs = asyncio.run(generate_embeddings_batch(texts))
+        assert vecs == [[1.0], [1.0], [1.0]]
+        assert counting_batch_provider.calls == [texts]  # ONE call, not a loop
+
+    def test_degrades_to_per_text_loop_when_provider_lacks_batch(self, no_batch_provider):
+        """A provider without `generate_embeddings_batch` still gets a
+        correct, order-preserving result — just via one `generate_embedding`
+        call per text instead of one batch call."""
+        from noctusai_lib.integrations.llm import generate_embeddings_batch
+
+        vecs = asyncio.run(generate_embeddings_batch(["a", "bb", "ccc"]))
+        assert vecs == [[1.0], [2.0], [3.0]]
+        assert no_batch_provider.calls == ["a", "bb", "ccc"]  # order preserved, one call each
+
+    def test_empty_list_short_circuits(self, counting_batch_provider):
+        from noctusai_lib.integrations.llm import generate_embeddings_batch
+
+        vecs = asyncio.run(generate_embeddings_batch([]))
+        assert vecs == []
+        assert counting_batch_provider.calls == []  # no provider call made at all

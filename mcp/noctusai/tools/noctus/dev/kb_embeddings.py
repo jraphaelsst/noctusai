@@ -11,12 +11,17 @@ Why this exists
 
 How it works (educate the reader)
     1. Each `KNOWLEDGE-BASE/**/*.md` doc is chunked (by H2 with paragraph
-       overlap), passed through OpenAI `text-embedding-3-small` (the seed
-       default at `noctusai_lib.integrations.llm.generate_embedding` —
-       NO new external dep; same provider + same credential chain as ERP's
-       embedding_service).
-    2. Each chunk → 1536-D vector. Stored as JSON in sqlite alongside the
-       chunk text + source SHA.
+       overlap), embedded via the seed's `text-embedding-3-small` — NO new
+       external dep; same provider + same credential chain as ERP's
+       embedding_service.
+    2. A doc's chunks → 1536-D vectors, BATCHED
+       (`noctusai_lib.integrations.llm.generate_embeddings_batch`, via
+       `_embedding_corpus.embed_batch_sync` + `iter_batches`). One HTTP
+       round-trip per batch, not one per chunk — the fix for the 2026-08
+       pre-push retry-storm (kb-embeddings is one of the four OpenAI-backed
+       pre-push refreshes; a large KB diff used to fire one
+       independently-retried request per chunk). Stored as JSON in sqlite
+       alongside the chunk text + source SHA.
     3. At query time: embed the query, compute cosine similarity vs every
        cached vector (pure-Python; ~500 chunks × 1536-D is trivial),
        return top-K {path, chunk_text, score}.
@@ -120,6 +125,8 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 # v4.0 N=4 consolidation: chunker + embedder now in _embedding_corpus.
 _chunk_markdown = _ec.chunk_markdown
 _embed_sync = _ec.embed_sync
+_embed_batch_sync = _ec.embed_batch_sync
+_iter_batches = _ec.iter_batches
 
 
 # v4.0 N=4 consolidation: cosine now in _embedding_corpus.
@@ -192,38 +199,63 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
         now = _now_iso()
         per_doc_ok = True
         per_doc_rowids: list[int] = []
-        for idx, chunk in enumerate(chunks):
+        # Batch the embed calls — ONE HTTP round-trip per `_iter_batches()`
+        # slice instead of one PER CHUNK. This is the fix for the 2026-08
+        # pre-push retry-storm: kb-embeddings is one of the four OpenAI-
+        # backed pre-push refreshes, and a large KB diff used to fire one
+        # independently-paced-and-retried request per chunk (mirrors the
+        # code_embeddings.py root cause exactly — 508 chunks -> 507 retries
+        # observed there, despite OpenAI itself being healthy the whole
+        # time). A batch failure fails ALL chunks in that slice together,
+        # preserving the existing per-DOC all-or-nothing rollback below (a
+        # doc's earlier-batch rows are rolled back too — never partially
+        # cached).
+        enumerated_chunks = list(enumerate(chunks))
+        for batch in _iter_batches(enumerated_chunks):
+            batch_texts = [c for _idx, c in batch]
             try:
-                vec = _embed_sync(chunk)
+                vecs = _embed_batch_sync(batch_texts)
             except Exception as e:  # noqa: BLE001 — surface the provider error
-                errors.append({"path": rel, "chunk_idx": idx, "error": str(e)[:200]})
-                per_doc_ok = False
-                break
-            if len(vec) != EMBEDDING_DIM:
                 errors.append({
-                    "path": rel, "chunk_idx": idx,
-                    "error": f"unexpected dim {len(vec)} (want {EMBEDDING_DIM}) — model changed?",
+                    "path": rel, "chunk_idx": batch[0][0], "error": str(e)[:200],
                 })
                 per_doc_ok = False
                 break
-            cur = conn.execute(
-                "INSERT INTO kb_chunks(path,chunk_idx,chunk_text,source_sha,cached_at) "
-                "VALUES (?,?,?,?,?)",
-                (rel, idx, chunk, sha, now),
-            )
-            row_id = cur.lastrowid
-            per_doc_rowids.append(row_id)
-            if _HAS_VEC:
-                conn.execute(
-                    "INSERT INTO kb_vec(rowid, embedding) VALUES (?, ?)",
-                    (row_id, _pack_vec(vec)),
+            if len(vecs) != len(batch):
+                errors.append({
+                    "path": rel, "chunk_idx": batch[0][0],
+                    "error": f"batch embed returned {len(vecs)} vectors for {len(batch)} inputs",
+                })
+                per_doc_ok = False
+                break
+            dim_bad = next((i for i, v in enumerate(vecs) if len(v) != EMBEDDING_DIM), None)
+            if dim_bad is not None:
+                errors.append({
+                    "path": rel, "chunk_idx": batch[dim_bad][0],
+                    "error": f"unexpected dim {len(vecs[dim_bad])} (want {EMBEDDING_DIM}) — model changed?",
+                })
+                per_doc_ok = False
+                break
+
+            for (idx, chunk), vec in zip(batch, vecs):
+                cur = conn.execute(
+                    "INSERT INTO kb_chunks(path,chunk_idx,chunk_text,source_sha,cached_at) "
+                    "VALUES (?,?,?,?,?)",
+                    (rel, idx, chunk, sha, now),
                 )
-            else:
-                conn.execute(
-                    "INSERT INTO kb_embeddings_json(chunk_rowid, embedding) VALUES (?, ?)",
-                    (row_id, json.dumps(vec)),
-                )
-            total_rows += 1
+                row_id = cur.lastrowid
+                per_doc_rowids.append(row_id)
+                if _HAS_VEC:
+                    conn.execute(
+                        "INSERT INTO kb_vec(rowid, embedding) VALUES (?, ?)",
+                        (row_id, _pack_vec(vec)),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO kb_embeddings_json(chunk_rowid, embedding) VALUES (?, ?)",
+                        (row_id, json.dumps(vec)),
+                    )
+                total_rows += 1
         if not per_doc_ok and per_doc_rowids:
             # all-or-nothing per doc — roll back the partial inserts.
             _ec.delete_embedding_rows(

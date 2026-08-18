@@ -56,7 +56,7 @@ from .client import (
     shutdown_llm,
 )
 from .config import KeyProvider, LLMConfig
-from .embeddings import generate_embedding
+from .embeddings import generate_embedding, generate_embeddings_batch
 from .vision import analyze_image
 from .refusal import analyze_image_with_refusal_retry, looks_like_refusal
 from .budget import (
@@ -145,6 +145,7 @@ __all__ = [
     "chat_completion_stream",
     "build_cached_messages",
     "generate_embedding",
+    "generate_embeddings_batch",
     "transcribe_audio",
     "analyze_image",
     "looks_like_refusal",

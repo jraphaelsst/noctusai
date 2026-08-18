@@ -36,6 +36,65 @@ blocked=0
 # loop reuses the captured lines (git provides stdin exactly once).
 PUSH_LINES="$(cat)"
 
+# ─── Bounded external-API refresh wrapper (2026-08 retry-storm fix) ────────
+# The embedding refreshes below call OpenAI. `git push` runs this hook to
+# completion BEFORE the network transfer even starts, so a refresh that
+# hangs (a self-inflicted retry storm, or a genuine provider outage) blocks
+# the ENTIRE push for however long the hang lasts — no bound. That's exactly
+# how a `dev -> main` bless push exceeded a 10-minute caller-side ceiling
+# TWICE in one session (2026-08), both times leaving the caller unable to
+# tell whether the ref had moved. The root cause (508 chunks -> 508
+# individually-retried requests) is fixed upstream via batching
+# (_embedding_corpus.embed_batch_sync — KB § PATTERNS/common/
+# vectorize-embed-cache-framework.md), which collapses the common case to a
+# handful of requests finishing in seconds. This wrapper is the STRUCTURAL
+# backstop underneath that fix: every OpenAI-backed refresh gets a hard
+# wall-clock ceiling, so `git push`'s total worst-case duration is a KNOWN,
+# BOUNDED constant regardless of provider behavior — the push can no longer
+# end in an ambiguous state just because a refresh (which is already
+# advisory — `|| true` below) happened to be slow. On expiry the refresh is
+# ABANDONED, never silently: a clear one-line message is printed, and the
+# source_sha guard makes the abandonment safe — nothing was embedded that
+# won't simply be re-attempted (and complete, now bounded) on the next push.
+# Falls back to unbounded (prior behavior) on a machine without GNU
+# `timeout`/`gtimeout` (bare macOS without coreutils) — best-effort, never a
+# hard dependency for the hook to run at all.
+_TIMEOUT_BIN_PP="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"
+EMBED_REFRESH_TIMEOUT_SECS="${NOCTUS_EMBED_REFRESH_TIMEOUT_SECS:-120}"
+
+_pp_bounded_refresh() {
+    # $1 = label (for the printed message); remaining args = the command.
+    #
+    # NOTE on shape: this is deliberately an `if PIPELINE; then … else … fi`,
+    # NOT `PIPELINE || true` — under `set -e`+`pipefail`, appending `|| true`
+    # to a failing pipeline runs `true` as its OWN trivial pipeline right
+    # after, which BASH THEN USES TO OVERWRITE `PIPESTATUS` (PIPESTATUS
+    # always reflects the most-recently-executed pipeline — `true`'s, not
+    # the real command's) — so a subsequent `"${PIPESTATUS[0]}"` read would
+    # silently see `0` even when the wrapped refresh timed out (124). The
+    # `if/else` form reads `PIPESTATUS` from INSIDE the `else` branch, before
+    # anything else runs, so the real exit code is captured correctly.
+    local label="$1"; shift
+    local rc=0
+    if [[ -n "$_TIMEOUT_BIN_PP" ]]; then
+        if "$_TIMEOUT_BIN_PP" "$EMBED_REFRESH_TIMEOUT_SECS" "$@" 2>&1 | tail -1 | sed "s/^/[pre-push] ${label}: /"; then
+            rc=0
+        else
+            rc="${PIPESTATUS[0]}"
+        fi
+    else
+        if "$@" 2>&1 | tail -1 | sed "s/^/[pre-push] ${label}: /"; then
+            rc=0
+        else
+            rc="${PIPESTATUS[0]}"
+        fi
+    fi
+    if [[ "$rc" -eq 124 ]]; then
+        echo "[pre-push] ${label}: TIMED OUT after ${EMBED_REFRESH_TIMEOUT_SECS}s — refresh ABANDONED this push (source_sha-guarded; self-heals on the next refresh; nothing landed silently)."
+    fi
+    return 0
+}
+
 # ─── Change-GATED cache refresh (v4.1 2026-05-30) ───────────────────────
 # Pre-commit no longer refreshes kb/code embeddings; the push boundary is the
 # batching unit. v4.0 refreshed ALL 8 caches on EVERY push ("belt-and-suspenders")
@@ -121,9 +180,14 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
         fi
 
         ran=0
-        if [[ $kb     -eq 1 ]]; then echo "[pre-push] kb sources changed → refreshing kb-embeddings";   "$PY_PP" "$CLI_PP" --refresh-kb-embeddings     2>&1 | tail -1 | sed 's/^/[pre-push] kb-embed: /'   || true; ran=1; fi
-        if [[ $code   -eq 1 ]]; then echo "[pre-push] py changed → refreshing code-embeddings";          "$PY_PP" "$CLI_PP" --refresh-code-embeddings   2>&1 | tail -1 | sed 's/^/[pre-push] code-embed: /' || true; ran=1; fi
-        if [[ $md     -eq 1 ]]; then echo "[pre-push] markdown changed → refreshing corpus-embeddings";  "$PY_PP" "$CLI_PP" --refresh-corpus-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] corpus-embed: /' || true; ran=1; fi
+        # The four OpenAI-backed refreshes (kb/code/corpus/memory-embeddings)
+        # run through `_pp_bounded_refresh` — see the wrapper's comment above
+        # for why. keeper/agent-context/auto-improvement/noc-graph are local
+        # computations with no external API call, so they carry no
+        # retry-storm risk and stay unwrapped (unbounded, as before).
+        if [[ $kb     -eq 1 ]]; then echo "[pre-push] kb sources changed → refreshing kb-embeddings";   _pp_bounded_refresh kb-embed     "$PY_PP" "$CLI_PP" --refresh-kb-embeddings;     ran=1; fi
+        if [[ $code   -eq 1 ]]; then echo "[pre-push] py changed → refreshing code-embeddings";          _pp_bounded_refresh code-embed   "$PY_PP" "$CLI_PP" --refresh-code-embeddings;   ran=1; fi
+        if [[ $md     -eq 1 ]]; then echo "[pre-push] markdown changed → refreshing corpus-embeddings";  _pp_bounded_refresh corpus-embed "$PY_PP" "$CLI_PP" --refresh-corpus-embeddings; ran=1; fi
         if [[ $comp   -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-keeper-cache           2>&1 | tail -1 | sed 's/^/[pre-push] keeper: /'           || true; ran=1; fi
         if [[ $agents -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-agent-context-cache    2>&1 | tail -1 | sed 's/^/[pre-push] agent-context: /'    || true; ran=1; fi
         if [[ $ndjson -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-auto-improvement-cache 2>&1 | tail -1 | sed 's/^/[pre-push] auto-improvement: /' || true; ran=1; fi
@@ -136,7 +200,7 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
         # near-no-op dir-walk when nothing changed, self-healing when it did). This is
         # memory's gate — its own content sha, since git can't be. No manual work.
         echo "[pre-push] memory dir is out-of-repo → refreshing memory-embeddings (source_sha-guarded)"
-        "$PY_PP" "$CLI_PP" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[pre-push] memory-embed: /' || true; ran=1
+        _pp_bounded_refresh memory-embed "$PY_PP" "$CLI_PP" --refresh-memory-embeddings; ran=1
         [[ $ran -eq 0 ]] && echo "[pre-push] no embeddable/graph sources changed in this push — skipped all refreshes."
     fi
 fi
