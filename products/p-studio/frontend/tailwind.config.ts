@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import { createTailwindConfig } from "../../../seed/framework/frontend/tailwind.config.factory";
 
 /**
  * Tokens de design do P Studio — terracota sobre branco quente.
@@ -12,40 +13,38 @@ import type { Config } from "tailwindcss";
  */
 const cor = (nome: string) => `oklch(var(--${nome}) / <alpha-value>)`;
 
-export default {
+// 🔴 The seed's own source MUST be scanned. The FE runs on
+// `createProductApp` + `createProductLayout`, so the shell (AppShell /
+// Sidebar / Header) lives in `seed/framework` + `seed/lib` — NOT in
+// `./src`. Tailwind only emits classes it can SEE, so scanning `./src`
+// alone purges every utility used inside those components.
+//
+// That is not theoretical: it shipped. On 2026-08-17 p-studio went live
+// with the sidebar `fixed w-64` (those classes happen to also appear in
+// p-studio's own source, so they survived) while the content wrapper's
+// responsive offset did NOT — `main` rendered at x=0 UNDERNEATH the
+// sidebar, titles and KPI cards colliding with the nav. Backend healthy,
+// bundle valid, page visibly broken.
+//
+// That incident is exactly why this file no longer maintains its own
+// content-glob list: `createTailwindConfig()`'s `DEFAULT_CONTENT` IS the
+// canonical scan set (`./src` + `./index.html` + `seed/lib` +
+// `seed/framework`), and this product inherits it instead of hand-syncing
+// a copy that can silently drift from the factory's.
+//
+// The palette below still can't adopt the factory's `presets: [base]`,
+// though: the base preset's colours are `hsl(var(--x))`, this product's
+// are OKLCH (`oklch(var(--x) / <alpha-value>)`, ported from the Lovable
+// prototype) — merging would resolve one colour space's CSS vars through
+// the other's colour function and break every token that survives. So
+// this uses the factory's `ownTheme` seam: content globs + the
+// `tailwindcss-animate` plugin are still seed-owned, but the *preset* is
+// swapped out wholesale for this product's own theme rather than merged
+// with the base one. See `tailwind.config.factory.ts`'s "Theme seam" doc
+// for the full trade-off.
+export default createTailwindConfig({
   darkMode: "class",
-  // 🔴 The seed's own source MUST be scanned. The FE runs on
-  // `createProductApp` + `createProductLayout`, so the shell (AppShell /
-  // Sidebar / Header) lives in `seed/framework` + `seed/lib` — NOT in
-  // `./src`. Tailwind only emits classes it can SEE, so scanning `./src`
-  // alone purges every utility used inside those components.
-  //
-  // That is not theoretical: it shipped. On 2026-08-17 p-studio went live
-  // with the sidebar `fixed w-64` (those classes happen to also appear in
-  // p-studio's own source, so they survived) while the content wrapper's
-  // responsive offset did NOT — `main` rendered at x=0 UNDERNEATH the
-  // sidebar, titles and KPI cards colliding with the nav. Backend healthy,
-  // bundle valid, page visibly broken.
-  //
-  // Globs mirror `seed/framework/frontend/tailwind.config.factory.ts`
-  // (`DEFAULT_CONTENT`), whose docstring warns of this exact failure.
-  //
-  // WHY NOT the factory itself (the seed-first answer)? The factory applies
-  // `presets: [base]`, and the base preset defines every colour as
-  // `hsl(var(--x))` while this product's palette is OKLCH
-  // (`oklch(var(--x) / <alpha-value>)`, ported from the Lovable prototype).
-  // Adopting the preset today would resolve HSL against OKLCH components and
-  // break every colour. Reconciling the two colour spaces — or giving the
-  // factory a theme seam — is tracked as follow-up; until then this config
-  // stays local BY DECISION, and the content globs must be kept in sync
-  // with the factory's.
-  content: [
-    "./index.html",
-    "./src/**/*.{ts,tsx}",
-    "../../../seed/lib/frontend/src/**/*.{ts,tsx}",
-    "../../../seed/framework/frontend/src/**/*.{ts,tsx}",
-  ],
-  theme: {
+  ownTheme: {
     extend: {
       colors: {
         background: cor("background"),
@@ -94,5 +93,4 @@ export default {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
-} satisfies Config;
+}) satisfies Config;
