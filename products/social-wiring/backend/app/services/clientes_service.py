@@ -148,6 +148,11 @@ class BackfillReport:
     negociacoes_repointed: int = 0
     negociacoes_already_pointed: int = 0
     negociacoes_orphaned: list = field(default_factory=list)
+    # P1.4 completion (lead-card-hub roadmap §1/§5): a Meta lead fires BOTH
+    # `spawn_funil_card_on_lead` and `spawn_funil_card_on_meta_lead`, so two
+    # `negociacoes_venda` rows can share one `cliente_id`. This counts rows
+    # this run marked `substituida_por` on — see `_collapse_negociacoes`.
+    negociacoes_collapsed: int = 0
 
     @property
     def touches_expected(self) -> int:
@@ -188,6 +193,7 @@ class BackfillReport:
             "negociacoes_repointed": self.negociacoes_repointed,
             "negociacoes_already_pointed": self.negociacoes_already_pointed,
             "negociacoes_orphaned": list(self.negociacoes_orphaned),
+            "negociacoes_collapsed": self.negociacoes_collapsed,
         }
 
 
@@ -317,6 +323,14 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> Backfil
 
     if not dry_run:
         _repoint_negociacoes(client, org_id, report)
+        # P1.4 completion: collapse whatever now shares a cliente_id — both
+        # the sets this run just repointed AND any that already existed
+        # from a prior run. Steady-state by construction: this call sits
+        # inside the SAME 6-hourly sweep `clientes_backfill_job` already
+        # runs per org, so a new duplicate pair never needs its own
+        # one-shot migration the way `048`'s did (see
+        # `clientes_backfill_job.py`'s module docstring for that lesson).
+        _collapse_negociacoes(client, org_id, report)
 
     return report
 
@@ -631,6 +645,77 @@ def _repoint_negociacoes(client: Any, org_id: UUID, report: BackfillReport) -> N
             "id", n["id"]
         ).execute()
         report.negociacoes_repointed += 1
+
+
+def _collapse_negociacoes(client: Any, org_id: UUID, report: BackfillReport) -> None:
+    """P1.4 completion — collapse `negociacoes_venda` rows that share a
+    `cliente_id` into one Funil board card (roadmap `project-history/
+    roadmaps/lead-card-hub-2026-08.md` §1: `spawn_funil_card_on_lead` +
+    `spawn_funil_card_on_meta_lead` fire for the SAME Meta-sourced human,
+    so one person gets two cards — 125 pairs measured, 100% forward rate).
+
+    Mirrors migration `054`'s SQL survivor rule EXACTLY (same three-way
+    order, same interpretation call), so the one-shot migration and this
+    steady-state pass never disagree about which row wins:
+
+      1. `status == 'aberta'` (open) beats any closed status — an open
+         deal is never hidden behind a closed one, so it can never
+         silently vanish from `obter_funil` (which only shows `aberta`
+         cards);
+      2. among rows of the same openness, the FURTHEST-ADVANCED STAGE
+         wins, resolved from THIS org's own `pipeline_stages.posicao`
+         for the `funil` pipeline — never a hardcoded slug, since stages
+         are user-editable rows;
+      3. tie-break: the oldest `created_at`;
+      4. final tie-break: the lower `id`, so an identical timestamp still
+         resolves deterministically.
+
+    Only rows with `cliente_id IS NOT NULL AND substituida_por IS NULL`
+    are candidates. A row already collapsed by a prior run therefore
+    drops out of the grouping on the very next call — that is what makes
+    this idempotent across the 6-hourly sweep, exactly like every other
+    step in this module (see the module docstring's IDEMPOTENCY section).
+    Nothing is ever deleted: a loser is marked (`substituida_por`,
+    `colapsada_em`), never removed, so it stays reversible by nulling
+    those two columns alone (D3's undo bar, applied here without a
+    separate `cliente_merges`-shaped table because there is nothing to
+    reconstruct — the row itself never stopped existing).
+    """
+    rows = _select_all(
+        client,
+        "negociacoes_venda",
+        org_id,
+        columns="id,cliente_id,etapa_id,status,created_at,substituida_por",
+    )
+    stage_rows = _select_all_where(
+        client, "pipeline_stages", org_id, {"pipeline": "funil"},
+        columns="id,posicao",
+    )
+    posicao_by_etapa = {s["id"]: s.get("posicao", -1) for s in stage_rows}
+
+    groups: dict[str, list[dict]] = {}
+    for n in rows:
+        if not n.get("cliente_id") or n.get("substituida_por"):
+            continue
+        groups.setdefault(n["cliente_id"], []).append(n)
+
+    def _sort_key(n: dict) -> tuple:
+        aberta_first = 0 if n.get("status") == "aberta" else 1
+        posicao_desc = -posicao_by_etapa.get(n.get("etapa_id"), -1)
+        created = n.get("created_at") or ""
+        return (aberta_first, posicao_desc, created, str(n["id"]))
+
+    for cliente_id, group in groups.items():
+        if len(group) < 2:
+            continue
+        ordered = sorted(group, key=_sort_key)
+        survivor = ordered[0]
+        for loser in ordered[1:]:
+            _t(client, "negociacoes_venda").update({
+                "substituida_por": survivor["id"],
+                "colapsada_em": _now(),
+            }).eq("id", loser["id"]).execute()
+            report.negociacoes_collapsed += 1
 
 
 # ─── merge / undo (also used by Slice B's review router) ────────────────

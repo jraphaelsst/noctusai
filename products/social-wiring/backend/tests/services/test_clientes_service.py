@@ -361,6 +361,178 @@ class TestIdempotency:
         assert l2_touch["cliente_id"] == cliente["id"]
 
 
+# ─── P1.4 completion — collapse duplicate negociações sharing a cliente ────
+#
+# The board defect (roadmap `project-history/roadmaps/lead-card-hub-2026-08.
+# md` §1): a Meta lead fires BOTH `spawn_funil_card_on_lead` (via
+# `ingest_meta_lead` writing `leads`) AND `spawn_funil_card_on_meta_lead`
+# (writing `meta_ads_leads` directly), so one human's `leads` row and
+# `meta_ads_leads` row resolve to the SAME cliente (048's backfill) and each
+# spawn their own `negociacoes_venda` card. `_collapse_negociacoes` mirrors
+# migration `054`'s SQL survivor rule exactly — tested directly here since
+# it is the whole of the new behaviour and going through the full
+# `run_backfill` identity-resolution machinery would only add noise.
+
+
+class TestCollapseNegociacoes:
+    _STAGES = [
+        {"id": "st-novo", "org_id": ORG, "pipeline": "funil", "posicao": 0},
+        {"id": "st-proposta", "org_id": ORG, "pipeline": "funil", "posicao": 3},
+        {"id": "st-fechado", "org_id": ORG, "pipeline": "funil", "posicao": 5},
+    ]
+
+    def _client(self, negociacoes: list[dict]) -> MockSupabaseClient:
+        client = _scoped_client()
+        client.set_table_data("pipeline_stages", [dict(s) for s in self._STAGES])
+        client.set_table_data("negociacoes_venda", [dict(n) for n in negociacoes])
+        return client
+
+    def _negociacao(self, id_, *, cliente_id, etapa="st-novo", status="aberta",
+                     created_at="2026-01-01T00:00:00Z", substituida_por=None):
+        return {
+            "id": id_, "org_id": ORG, "cliente_id": cliente_id, "etapa_id": etapa,
+            "status": status, "created_at": created_at,
+            "substituida_por": substituida_por, "colapsada_em": None,
+        }
+
+    def _run(self, client) -> svc.BackfillReport:
+        report = svc.BackfillReport(org_id=ORG, dry_run=False)
+        svc._collapse_negociacoes(client, ORG, report)
+        return report
+
+    def _rows_by_id(self, client) -> dict[str, dict]:
+        rows = client.table("negociacoes_venda").select("*").execute().data
+        return {r["id"]: r for r in rows}
+
+    def test_furthest_advanced_stage_wins(self):
+        client = self._client([
+            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+                              created_at="2026-01-01T00:00:00Z"),
+            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+                              created_at="2026-01-02T00:00:00Z"),
+        ])
+        report = self._run(client)
+        assert report.negociacoes_collapsed == 1
+        rows = self._rows_by_id(client)
+        assert rows["n2"]["substituida_por"] is None
+        assert rows["n1"]["substituida_por"] == "n2"
+        assert rows["n1"]["colapsada_em"] is not None
+
+    def test_an_open_negociacao_is_never_hidden_behind_a_closed_one(self):
+        """The exact risk `054`'s header calls out: a `perdida` negociação
+        that reached a further stage before closing must not outrank a
+        currently-`aberta` one — `obter_funil` only ever shows `aberta`
+        cards, so losing this tie would make the open deal vanish from the
+        board entirely, which is worse than the duplicate being fixed."""
+        client = self._client([
+            self._negociacao("n_closed", cliente_id="c1", etapa="st-fechado",
+                              status="perdida", created_at="2026-01-01T00:00:00Z"),
+            self._negociacao("n_open", cliente_id="c1", etapa="st-novo",
+                              status="aberta", created_at="2026-01-02T00:00:00Z"),
+        ])
+        report = self._run(client)
+        assert report.negociacoes_collapsed == 1
+        rows = self._rows_by_id(client)
+        assert rows["n_open"]["substituida_por"] is None
+        assert rows["n_closed"]["substituida_por"] == "n_open"
+
+    def test_tie_break_is_oldest_created_at_then_lower_id(self):
+        client = self._client([
+            self._negociacao("n_b", cliente_id="c1", created_at="2026-01-01T00:00:00Z"),
+            self._negociacao("n_a", cliente_id="c1", created_at="2026-01-01T00:00:00Z"),
+        ])
+        self._run(client)
+        rows = self._rows_by_id(client)
+        assert rows["n_a"]["substituida_por"] is None
+        assert rows["n_b"]["substituida_por"] == "n_a"
+
+    def test_a_cliente_id_is_null_row_is_never_touched(self):
+        """The no-silent-errors leg: a card whose identity resolution has
+        not run yet (or never will, e.g. a nameless straggler) must keep
+        rendering — it can never be collapsed, because collapsing requires
+        a `cliente_id` to group by."""
+        client = self._client([
+            self._negociacao("n1", cliente_id=None),
+        ])
+        report = self._run(client)
+        assert report.negociacoes_collapsed == 0
+        assert self._rows_by_id(client)["n1"]["substituida_por"] is None
+
+    def test_a_lone_negociacao_for_a_cliente_is_left_alone(self):
+        client = self._client([self._negociacao("n1", cliente_id="c1")])
+        report = self._run(client)
+        assert report.negociacoes_collapsed == 0
+        assert self._rows_by_id(client)["n1"]["substituida_por"] is None
+
+    def test_idempotent_a_second_pass_on_unchanged_data_is_a_no_op(self):
+        client = self._client([
+            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+                              created_at="2026-01-01T00:00:00Z"),
+            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+                              created_at="2026-01-02T00:00:00Z"),
+        ])
+        self._run(client)
+        second = self._run(client)
+        assert second.negociacoes_collapsed == 0
+        rows = self._rows_by_id(client)
+        assert rows["n1"]["substituida_por"] == "n2"
+        assert rows["n2"]["substituida_por"] is None
+
+    def test_a_new_duplicate_after_a_prior_collapse_still_gets_folded(self):
+        """Steady state (item 3 of the brief): a duplicate that arrives
+        AFTER a prior collapse must fold too, not just the ones caught by
+        the first pass — this is what makes the sweep a projection, not a
+        one-shot snapshot."""
+        client = self._client([
+            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+                              created_at="2026-01-01T00:00:00Z"),
+            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+                              created_at="2026-01-02T00:00:00Z"),
+        ])
+        self._run(client)  # n1 folds into n2
+
+        client.table("negociacoes_venda").insert(
+            self._negociacao("n3", cliente_id="c1", etapa="st-novo",
+                              created_at="2026-01-03T00:00:00Z")
+        ).execute()
+        second = self._run(client)
+        assert second.negociacoes_collapsed == 1
+        rows = self._rows_by_id(client)
+        assert rows["n2"]["substituida_por"] is None       # still the survivor
+        assert rows["n3"]["substituida_por"] == "n2"
+        assert rows["n1"]["substituida_por"] == "n2"        # untouched by the 2nd pass
+
+    def test_reversible_nulling_both_columns_restores_visibility(self):
+        """D3's undo bar, applied without a `cliente_merges`-shaped table:
+        nothing was ever deleted, so restoring is a plain UPDATE on the
+        two columns this migration added."""
+        client = self._client([
+            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+                              created_at="2026-01-01T00:00:00Z"),
+            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+                              created_at="2026-01-02T00:00:00Z"),
+        ])
+        self._run(client)
+        client.table("negociacoes_venda").update(
+            {"substituida_por": None, "colapsada_em": None}
+        ).eq("id", "n1").execute()
+        assert self._rows_by_id(client)["n1"]["substituida_por"] is None
+
+    def test_independent_clientes_never_interact(self):
+        client = self._client([
+            self._negociacao("n1", cliente_id="c1", etapa="st-novo",
+                              created_at="2026-01-01T00:00:00Z"),
+            self._negociacao("n2", cliente_id="c1", etapa="st-proposta",
+                              created_at="2026-01-02T00:00:00Z"),
+            self._negociacao("n3", cliente_id="c2", etapa="st-novo",
+                              created_at="2026-01-01T00:00:00Z"),
+        ])
+        report = self._run(client)
+        assert report.negociacoes_collapsed == 1
+        rows = self._rows_by_id(client)
+        assert rows["n3"]["substituida_por"] is None  # sole card for c2
+
+
 # ─── merge / undo ─────────────────────────────────────────────────────────
 
 

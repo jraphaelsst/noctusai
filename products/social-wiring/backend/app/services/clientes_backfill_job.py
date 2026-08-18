@@ -142,18 +142,23 @@ def run_clientes_backfill(
             "clientes_created": report.clientes_created,
             "touches_created": report.touches_created,
             "negociacoes_repointed": report.negociacoes_repointed,
+            "negociacoes_collapsed": report.negociacoes_collapsed,
             "stragglers_parked_for_review": report.stragglers_parked_for_review,
         })
-        if report.clientes_created or report.touches_created or report.negociacoes_repointed:
+        if (
+            report.clientes_created or report.touches_created
+            or report.negociacoes_repointed or report.negociacoes_collapsed
+        ):
             # Only speak up when the pass actually attached something. A quiet
             # no-op run every interval is the healthy state and should not be
             # noise in the log.
             logger.info(
                 "clientes_backfill: org %s — %d cliente(s), %d touch(es), "
-                "%d negociac%s repointed",
+                "%d negociac%s repointed, %d collapsed into a sibling",
                 org_id, report.clientes_created, report.touches_created,
                 report.negociacoes_repointed,
                 "ão" if report.negociacoes_repointed == 1 else "ões",
+                report.negociacoes_collapsed,
             )
     return {"skipped": None, "orgs": results}
 

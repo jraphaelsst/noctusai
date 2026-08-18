@@ -11,12 +11,28 @@ The card here is a NEGOCIAÇÃO spawned from a lead — see migration 034. Unlik
 erp, whose cards hang off `clientes`, a card here points at either a
 `social_wiring.leads` row or a `social_wiring.meta_ads_leads` row, so the DTO
 carries both nested joins and the UI renders whichever is present.
+
+P1.4 COMPLETION — ONE CARD PER PERSON (lead-card-hub roadmap §1/§5)
+---------------------------------------------------------------------
+A Meta lead fires BOTH `spawn_funil_card_on_lead` and
+`spawn_funil_card_on_meta_lead` for the same human, so `negociacoes_venda`
+can hold several rows sharing one `cliente_id` (migration `048`). Migration
+`054` + `clientes_service._collapse_negociacoes` mark every loser with
+`substituida_por` (never deleting a row — D3's reversibility bar). The read
+path here is the other half: `obter_funil` excludes `substituida_por IS NOT
+NULL` rows and `attach_colapsadas` merges the union of every folded row's
+`lead`/`campanha` data onto the survivor, so the ONE card the board now
+shows still carries BOTH origin field sets — `leadDetailSections` renders
+from `lead`, `campanhaDetailSections` from `campanha`, exactly as before,
+whichever origin the data came from. `colapsadas` additionally lists the
+folded siblings for a future audit/undo UI; nothing renders from it yet.
 """
 from __future__ import annotations
 
 from typing import Any
 
 from noctusai_lib.domain.pipeline import PipelineConfig
+from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 from noctusai_lib.primitives.phone import phone_search_digits
 
 PIPELINE_FUNIL = PipelineConfig(
@@ -89,12 +105,26 @@ _NEGOCIACAO_FIELDS = (
     "id", "org_id", "lead_id", "meta_ads_lead_id", "etapa_id", "status",
     "titulo", "valor_estimado", "kanban_pos", "arquivado", "closed_at",
     "created_at", "updated_at", "lead", "campanha", "etapa_rel",
+    # P1.4 completion — see the module docstring.
+    "cliente_id", "colapsadas",
 )
 _PROCESSO_FIELDS = (
     "id", "org_id", "negociacao_venda_id", "etapa_id", "valor", "observacoes",
     "kanban_pos", "arquivado", "created_at", "updated_at",
     "negociacao", "etapa_rel",
 )
+# One entry per negociação folded into a survivor — enough for a future
+# audit/undo affordance, never the whole row (`org_id`/`kanban_pos`/etc.
+# would be noise once folded).
+_COLAPSADA_FIELDS = (
+    "id", "lead_id", "meta_ads_lead_id", "titulo", "status", "colapsada_em",
+    "lead", "campanha",
+)
+
+#: PostgREST `in_` values ride in the URL query string — see
+#: `clientes_service.list_review_groups`'s precedent (the same batch
+#: keeps a ~200-UUID request line comfortably under the usual 8 KB limit).
+_IN_FILTER_BATCH = 200
 
 
 def negociacao_to_dto(row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -107,6 +137,83 @@ def processo_to_dto(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if not row:
         return row
     return {k: row.get(k) for k in _PROCESSO_FIELDS if k in row}
+
+
+def _batched(items: list, size: int):
+    """Yield `items` in chunks of `size` — see `_IN_FILTER_BATCH`."""
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def _fetch_colapsadas(client: Any, org_id: str, survivor_ids: list[str]) -> dict[str, list[dict]]:
+    """Every `negociacoes_venda` row folded into one of `survivor_ids`,
+    keyed by `substituida_por`. Batched (an unbounded `in_` overflows the
+    request line — see `_IN_FILTER_BATCH`) and paginated via the seed's
+    `iter_paged_rows` rather than a hand-rolled `while True: range(...)`
+    loop (that loop only terminates if the backend honours `range()` —
+    see that helper's module docstring for the two independent hazards
+    this fleet has already hit)."""
+    if not survivor_ids:
+        return {}
+    by_survivor: dict[str, list[dict]] = {}
+    for batch in _batched(survivor_ids, _IN_FILTER_BATCH):
+        def _fetch_page(start: int, end: int, _batch=batch):
+            return (
+                client.table("negociacoes_venda")
+                .select(NEGOCIACAO_SELECT)
+                .eq("org_id", org_id)
+                .in_("substituida_por", _batch)
+                .order("id")
+                .range(start, end)
+                .execute()
+                .data
+            )
+
+        for row in iter_paged_rows(
+            _fetch_page, label=f"negociacoes colapsadas para org_id={org_id}",
+        ):
+            by_survivor.setdefault(row["substituida_por"], []).append(row)
+    return by_survivor
+
+
+def _merge_origem(survivor: dict, colapsadas: list[dict]) -> None:
+    """Union the origin field sets across a collapsed group onto the
+    survivor. A collapse folds cards, not data — BOTH `leadDetailSections`
+    and `campanhaDetailSections` must still be reachable from the ONE card
+    the board now shows, so a survivor missing one origin adopts it from
+    the first sibling that carries it. Never overwrites data the survivor
+    already has of its own."""
+    if not survivor.get("lead"):
+        for c in colapsadas:
+            if c.get("lead"):
+                survivor["lead"] = c["lead"]
+                break
+    if not survivor.get("campanha"):
+        for c in colapsadas:
+            if c.get("campanha"):
+                survivor["campanha"] = c["campanha"]
+                break
+    survivor["colapsadas"] = [
+        {k: c.get(k) for k in _COLAPSADA_FIELDS} for c in colapsadas
+    ]
+
+
+def attach_colapsadas(client: Any, org_id: str, rows: list[dict]) -> list[dict]:
+    """Enrich each surviving `negociacoes_venda` row with the union of
+    every origin folded into it by migration `054` / `_collapse_
+    negociacoes` — see the module docstring's "P1.4 completion" section.
+    Mutates and returns `rows`; every row gets a `colapsadas` key (empty
+    list when nothing was folded into it), so `negociacao_to_dto`'s
+    whitelist lookup (`if k in row`) always finds it.
+    """
+    by_survivor = _fetch_colapsadas(client, org_id, [r["id"] for r in rows])
+    for row in rows:
+        colapsadas = by_survivor.get(row["id"], [])
+        if colapsadas:
+            _merge_origem(row, colapsadas)
+        else:
+            row.setdefault("colapsadas", [])
+    return rows
 
 
 #: Below this, a digit run is too short to be a phone fragment; matching on it

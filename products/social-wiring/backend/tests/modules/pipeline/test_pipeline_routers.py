@@ -73,6 +73,104 @@ class TestFunilBoard:
         assert cards and "coluna_interna" not in cards[0]
 
 
+class TestP14OneCardPerPerson:
+    """P1.4 completion (lead-card-hub roadmap §1/§5): a Meta lead fires
+    BOTH `spawn_funil_card_on_lead` and `spawn_funil_card_on_meta_lead`, so
+    one human can end up with two `negociacoes_venda` rows. Migration `054`
+    + `clientes_service._collapse_negociacoes` mark the loser
+    (`substituida_por`) without deleting it; `obter_funil` excludes it and
+    merges the union of both origins' data onto the survivor."""
+
+    _CAMPANHA = {
+        "id": "m1", "full_name": "Ana Silva", "email": None, "phone": "11999998888",
+        "campaign_id": "camp-1", "campaign_name": "Campanha X", "form_id": None,
+        "form_name": None, "ad_id": None, "adset_id": None, "platform": "facebook",
+        "is_organic": False, "created_time": "2026-01-01T00:00:00Z", "answers": {"q": "a"},
+    }
+
+    def test_only_the_survivor_reaches_the_board(self, http_client):
+        survivor = negociacao("neg-survivor", "novo", cliente_id="c1")
+        loser = negociacao(
+            "neg-loser", "novo", cliente_id="c1", substituida_por="neg-survivor",
+            lead=None, campanha=self._CAMPANHA,
+        )
+        http_client.scoped.set_table_data("negociacoes_venda", [survivor, loser])
+        r = http_client.get("/api/funil", headers=auth_headers())
+        assert r.status_code == 200
+        cards = [c for col in r.json()["data"] for c in col["cards"]]
+        assert [c["id"] for c in cards] == ["neg-survivor"]
+
+    def test_dto_carries_the_union_of_both_origins(self, http_client):
+        """The survivor here is lead-origin only; the collapsed sibling is
+        campaign-origin only. Both must still be reachable from the ONE
+        card the board now shows — `leadDetailSections` renders from
+        `lead`, `campanhaDetailSections` from `campanha`."""
+        survivor = negociacao("neg-survivor", "novo", cliente_id="c1")
+        loser = negociacao(
+            "neg-loser", "novo", cliente_id="c1", substituida_por="neg-survivor",
+            lead=None, campanha=self._CAMPANHA,
+        )
+        http_client.scoped.set_table_data("negociacoes_venda", [survivor, loser])
+        r = http_client.get("/api/funil", headers=auth_headers())
+        [card] = [c for col in r.json()["data"] for c in col["cards"]]
+        assert card["lead"]["cliente_nome"] == "Lead Teste"  # survivor's own
+        assert card["campanha"] == self._CAMPANHA               # merged from the sibling
+        assert card["colapsadas"] == [{
+            "id": "neg-loser", "lead_id": "lead-neg-loser", "meta_ads_lead_id": None,
+            "titulo": "Lead Teste", "status": "aberta", "colapsada_em": None,
+            "lead": None, "campanha": self._CAMPANHA,
+        }]
+
+    def test_survivor_missing_neither_origin_gets_no_merge_but_keeps_its_own(self, http_client):
+        """A survivor that already carries BOTH origins (not this defect's
+        shape, but possible) must never have its own data overwritten by a
+        sibling's."""
+        own_campanha = {**self._CAMPANHA, "id": "m-own", "full_name": "Own"}
+        survivor = negociacao("neg-survivor", "novo", cliente_id="c1", campanha=own_campanha)
+        loser = negociacao(
+            "neg-loser", "novo", cliente_id="c1", substituida_por="neg-survivor",
+            campanha=self._CAMPANHA,
+        )
+        http_client.scoped.set_table_data("negociacoes_venda", [survivor, loser])
+        r = http_client.get("/api/funil", headers=auth_headers())
+        [card] = [c for col in r.json()["data"] for c in col["cards"]]
+        assert card["campanha"]["id"] == "m-own"
+
+    def test_a_cliente_id_less_card_still_renders(self, http_client):
+        """No person layer resolved yet (or ever, for a keyless lead) must
+        never make a card vanish from the board — the no-silent-errors leg
+        of this slice."""
+        orphan = negociacao("neg-orphan", "novo", cliente_id=None)
+        http_client.scoped.set_table_data("negociacoes_venda", [orphan])
+        r = http_client.get("/api/funil", headers=auth_headers())
+        cards = [c for col in r.json()["data"] for c in col["cards"]]
+        assert [c["id"] for c in cards] == ["neg-orphan"]
+        assert cards[0]["colapsadas"] == []
+
+    def test_sibling_fetch_batches_past_the_in_filter_limit(self, http_client):
+        """`_fetch_colapsadas`'s `in_("substituida_por", ...)` must survive
+        more collapsed siblings than one PostgREST `in_` call's URL budget
+        (`_IN_FILTER_BATCH`) — an unbatched call over-long request line is
+        a bare 400, the exact class `KB § PATTERNS/backend/
+        postgrest-row-cap.md` documents."""
+        from app.modules.pipeline import configs as cfg
+
+        survivor = negociacao("neg-survivor", "novo", cliente_id="c1")
+        siblings = [
+            negociacao(
+                f"neg-loser-{i}", "novo", cliente_id="c1",
+                substituida_por="neg-survivor", lead=None,
+                campanha={**self._CAMPANHA, "id": f"m{i}"},
+            )
+            for i in range(cfg._IN_FILTER_BATCH + 5)
+        ]
+        http_client.scoped.set_table_data("negociacoes_venda", [survivor, *siblings])
+        r = http_client.get("/api/funil", headers=auth_headers())
+        assert r.status_code == 200
+        [card] = [c for col in r.json()["data"] for c in col["cards"]]
+        assert len(card["colapsadas"]) == len(siblings)
+
+
 class TestNoCreateEndpoint:
     def test_post_negociacoes_is_not_routable(self, http_client):
         """Cards exist because a lead arrived — the DB trigger owns creation."""
@@ -323,3 +421,52 @@ class TestBoardSearchFindsTheNumberTheCardShows:
 
         processo = {"id": "p1", "observacoes": None, "negociacao": self._funil_row()}
         assert search_processos([processo], "+5511981912534")
+
+
+class TestBoardReadsPagePastTheRowCap:
+    """PostgREST caps any single response at `db-max-rows` (1000 on Supabase)
+    with no error and no truncation signal, so a bare `.select().execute()`
+    returns a plausible, WRONG answer. This product has shipped that bug
+    repeatedly — a summary reporting `total=1000` against 12 177 real rows,
+    and 365 of 1 365 negociações silently skipped (`98377d26`).
+
+    The board reads were under the cap only by the luck of their per-org +
+    `status='aberta'` filtering, which is not a property anyone maintains on
+    purpose. `MockSupabaseClient` models the cap, so these tests fail against
+    an unpaged read rather than merely documenting the intent.
+    """
+
+    _OVER_CAP = 1200
+
+    def test_funil_returns_every_card_past_the_cap(self, http_client):
+        rows = [negociacao(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]
+        http_client.scoped.set_table_data("negociacoes_venda", rows)
+
+        r = http_client.get("/api/funil", headers=auth_headers())
+
+        assert r.status_code == 200
+        cards = [c for col in r.json()["data"] for c in col["cards"]]
+        assert len(cards) == self._OVER_CAP, (
+            f"board returned {len(cards)} of {self._OVER_CAP} — the read was "
+            "truncated at PostgREST's row cap instead of paging past it"
+        )
+        assert len({c["id"] for c in cards}) == self._OVER_CAP, "a page was served twice"
+
+    def test_negociacoes_list_returns_every_row_past_the_cap(self, http_client):
+        rows = [negociacao(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]
+        http_client.scoped.set_table_data("negociacoes_venda", rows)
+
+        r = http_client.get("/api/negociacoes-venda", headers=auth_headers())
+
+        assert r.status_code == 200
+        assert len(r.json()["data"]) == self._OVER_CAP
+
+    def test_processos_board_returns_every_row_past_the_cap(self, http_client):
+        rows = [processo(f"proc-{i:05d}") for i in range(self._OVER_CAP)]
+        http_client.scoped.set_table_data("processos_venda", rows)
+
+        r = http_client.get("/api/processos-venda", headers=auth_headers())
+
+        assert r.status_code == 200
+        cards = [c for col in r.json()["data"] for c in col["cards"]]
+        assert len(cards) == self._OVER_CAP

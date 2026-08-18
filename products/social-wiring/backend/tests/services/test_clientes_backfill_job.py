@@ -49,7 +49,7 @@ def _cfg(*, enabled: bool = True, hours: int = 6) -> SimpleNamespace:
 def _report(**kw) -> SimpleNamespace:
     base = dict(
         clientes_created=0, touches_created=0, negociacoes_repointed=0,
-        stragglers_parked_for_review=0,
+        negociacoes_collapsed=0, stragglers_parked_for_review=0,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -183,13 +183,14 @@ class TestPerOrgIsolation:
             cfg=_cfg(), admin_client=_admin_with([{"org_id": _ORG_A}], []),
             backfill_fn=lambda _c, _o: _report(
                 clientes_created=44, touches_created=88,
-                negociacoes_repointed=88, stragglers_parked_for_review=2,
+                negociacoes_repointed=88, negociacoes_collapsed=3,
+                stragglers_parked_for_review=2,
             ),
         )
         assert out["orgs"][0] == {
             "org_id": _ORG_A, "ok": True, "clientes_created": 44,
             "touches_created": 88, "negociacoes_repointed": 88,
-            "stragglers_parked_for_review": 2,
+            "negociacoes_collapsed": 3, "stragglers_parked_for_review": 2,
         }
 
     def test_quiet_run_logs_nothing_at_info(self, caplog):

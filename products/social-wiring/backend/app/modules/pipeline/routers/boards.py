@@ -29,6 +29,7 @@ from noctusai_lib.domain.pipeline import (
     resolve_initial_stage,
     stage_by_role,
 )
+from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.primitives.responses import success_response
 
@@ -38,6 +39,7 @@ from app.modules.pipeline.configs import (
     PIPELINE_FUNIL,
     PIPELINE_PROCESSOS,
     PROCESSO_SELECT,
+    attach_colapsadas,
     negociacao_to_dto,
     processo_to_dto,
     search_negociacoes,
@@ -50,6 +52,32 @@ negociacoes_router = APIRouter(prefix="/api/negociacoes-venda", tags=["negociaco
 processos_router = APIRouter(prefix="/api/processos-venda", tags=["processos-venda"])
 
 STATUS_ABERTA = "aberta"
+
+
+def _fetch_all(build_query, *, label: str) -> list[dict]:
+    """Walk an offset-paged PostgREST read to completion.
+
+    Every board read here used to be a bare `.select().execute()`, which
+    PostgREST silently caps at `db-max-rows` (1000 on Supabase) with no
+    error and no truncation signal. That is the single bug class this
+    product has shipped to production most often — a summary reporting
+    `total=1000` against 12 177 real rows (2026-07-22), and 365 of 1 365
+    negociações silently skipped (`98377d26`). The board was under the cap
+    only by the luck of its per-org + `status='aberta'` filtering, which is
+    not a property anyone maintains on purpose.
+
+    `build_query` returns a FRESH query per page on purpose: a PostgREST
+    builder accumulates state, so reusing one would compound `.range()`
+    across pages. Termination is the pager's problem, not ours
+    (`noctusai_lib.integrations.persistence.iter_paged_rows`) — an
+    offset loop that trusts the backend to honour `range()` hangs forever
+    against one that does not.
+    """
+
+    def fetch_page(start: int, end: int):
+        return build_query().order("id").range(start, end).execute().data
+
+    return list(iter_paged_rows(fetch_page, label=label))
 
 
 class MoverEtapaRequest(StrictHttpModel):
@@ -84,22 +112,31 @@ def obter_funil(
     incluir_arquivados: bool = Query(False),
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
-    """Kanban columns of OPEN negociações, grouped by the org's configured stages."""
+    """Kanban columns of OPEN negociações, grouped by the org's configured
+    stages — ONE card per person (P1.4): a row collapsed into a sibling
+    (`substituida_por IS NOT NULL`) is excluded here, and the survivor's
+    DTO carries the union of every folded row's origin data — see
+    `configs.attach_colapsadas`.
+    """
     ctx = pipeline_context(auth)
     stages = list_stages(ctx.db, PIPELINE_FUNIL, org_id=ctx.org_id)
 
-    query = (
-        ctx.db.table("negociacoes_venda")
-        .select(NEGOCIACAO_SELECT)
-        .eq("org_id", ctx.org_id)
-        .eq("status", STATUS_ABERTA)
-    )
-    if not incluir_arquivados:
-        query = query.eq("arquivado", False)
-    if etapa_id:
-        query = query.eq("etapa_id", etapa_id)
+    def build_query():
+        query = (
+            ctx.db.table("negociacoes_venda")
+            .select(NEGOCIACAO_SELECT)
+            .eq("org_id", ctx.org_id)
+            .eq("status", STATUS_ABERTA)
+            .is_("substituida_por", "null")
+        )
+        if not incluir_arquivados:
+            query = query.eq("arquivado", False)
+        if etapa_id:
+            query = query.eq("etapa_id", etapa_id)
+        return query
 
-    rows = query.execute().data or []
+    rows = _fetch_all(build_query, label="funil negociações")
+    rows = attach_colapsadas(ctx.db, ctx.org_id, rows)
     if busca:
         rows = search_negociacoes(rows, busca)
 
@@ -115,16 +152,28 @@ def listar_negociacoes(
     incluir_arquivados: bool = Query(False),
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
-    """Flat list — the board uses `/api/funil` instead."""
+    """Flat list — the board uses `/api/funil` instead. Same P1.4 exclusion
+    as `obter_funil` (a collapsed row is never a valid list entry), without
+    the origin-merge — this endpoint has no frontend consumer today (see
+    the delivery note) and keeping it a plain projection avoids paying the
+    sibling-fetch cost for a path nothing reads."""
     ctx = pipeline_context(auth)
-    query = ctx.db.table("negociacoes_venda").select(NEGOCIACAO_SELECT).eq("org_id", ctx.org_id)
-    if status:
-        query = query.eq("status", status)
-    if lead_id:
-        query = query.eq("lead_id", lead_id)
-    if not incluir_arquivados:
-        query = query.eq("arquivado", False)
-    rows = query.execute().data or []
+    def build_query():
+        query = (
+            ctx.db.table("negociacoes_venda")
+            .select(NEGOCIACAO_SELECT)
+            .eq("org_id", ctx.org_id)
+            .is_("substituida_por", "null")
+        )
+        if status:
+            query = query.eq("status", status)
+        if lead_id:
+            query = query.eq("lead_id", lead_id)
+        if not incluir_arquivados:
+            query = query.eq("arquivado", False)
+        return query
+
+    rows = _fetch_all(build_query, label="negociações")
     return success_response([negociacao_to_dto(r) for r in rows])
 
 
@@ -339,13 +388,15 @@ def obter_processos(
     ctx = pipeline_context(auth)
     stages = list_stages(ctx.db, PIPELINE_PROCESSOS, org_id=ctx.org_id)
 
-    query = ctx.db.table("processos_venda").select(PROCESSO_SELECT).eq("org_id", ctx.org_id)
-    if not incluir_arquivados:
-        query = query.eq("arquivado", False)
-    if etapa_id:
-        query = query.eq("etapa_id", etapa_id)
+    def build_query():
+        query = ctx.db.table("processos_venda").select(PROCESSO_SELECT).eq("org_id", ctx.org_id)
+        if not incluir_arquivados:
+            query = query.eq("arquivado", False)
+        if etapa_id:
+            query = query.eq("etapa_id", etapa_id)
+        return query
 
-    rows = query.execute().data or []
+    rows = _fetch_all(build_query, label="processos de venda")
     if busca:
         rows = search_processos(rows, busca)
 
