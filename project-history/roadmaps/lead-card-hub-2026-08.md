@@ -14,11 +14,19 @@
 > open · Phase 2 backend + frontend built.** All **17 decisions** below are user-ratified in
 > the 2026-08-07 session, and **§7 is closed**.
 >
-> 🔴 **NOTHING BELOW IS APPLIED TO A DATABASE.** Migrations `054`, `056`, `057` are written,
-> parse-verified and test-covered, but **not applied** — and dev + prod share one Supabase
-> project, so applying them is a production schema change and the user's decision. Until they
-> are applied the funil + card code reads columns that do not exist. This product has been bitten
-> by that exact sequencing twice (`040`/`041`, then `050` — see `71bb2e4c`).
+> ✅ **`054`, `056`, `057` APPLIED to the live database 2026-08-18** (user green-lit), each
+> after a `BEGIN…probe…ROLLBACK` dry run against the live schema, then post-verified. Applied
+> state + the verification queries live in
+> `products/social-wiring/backend/migrations/APPLIED.md` — **that file, or the database
+> itself, not a migration header**: headers here have been wrong in both directions.
+>
+> 🔴 **The collapse was 3.6× bigger than this document predicted.** §1 measured **125**
+> duplicate pairs on 2026-08-07; the real apply collapsed **451 rows across 322 groups**,
+> taking the board from 1 461 cards to 1 010. Not a defect — identity resolution has since
+> attached ~10 200 clientes, so repeat-contact people share a `cliente_id`. Checked before
+> applying: **0 groups span more than 30 days**, so no genuinely separate negotiation was
+> folded. Nothing was deleted (row total unchanged at 1 461). **The §1 numbers are a
+> 2026-08-07 snapshot and should not be quoted as current.**
 >
 > **Phase-1 gaps — current state:**
 > 1. ✅ **P1.4's collapse SHIPPED 2026-08-18** (`054` + `c2c0ff9b`/`6834da0d`). One card per
@@ -530,3 +538,6 @@ than guessed. All four were answered before any code was designed against them.
 | 2026-08-18 | **Phase 2 built: migrations `056`/`057` + the `card_hub` module + the full card UI.** 33 routes verified mounted by booting the app, not by trusting the suite. Both contract corrections (the `cliente_notas.tipo` discriminator, `motivo` as a query param) came from the *frontend* engineer hitting them and were fixed at the source rather than worked around in the UI — which is the whole return on authoring the contract before either side built. |
 | 2026-08-18 | **A 1 MB app-wide body cap made "documents and photos" impossible — and had been silently killing browser video upload all along.** `MaxBodySizeMiddleware` applied one flat limit to every route, so the card's document surface was forced to 800 KB to fit under it, and `POST /api/videos/upload` has 413'd for any real video since it shipped (nobody noticed; the Drive-folder path works around it). Fixed at the right level — a per-path override in the seed — rather than by raising the cap app-wide, which would have weakened the DoS guard on the webhook routes where it genuinely earns its keep. A second, older bug fell out of writing the tests: the middleware's streaming leg surfaced a tripped cap as an unhandled `ClientDisconnect`/500 instead of a 413, for **every** consumer since it shipped, because the streaming leg had no test at all. |
 | 2026-08-18 | **Migration-number collision with a parallel session.** `feat/grupo-olx-multitenant-receiver` claimed `053` while the card backend was building; the integrate gate caught it on rebase — the moment a latent, pre-commit-warning-only collision becomes real. Ours renumbered to `056`/`057` rather than rewriting another session's branch. Worth remembering that `next_migration_number` is a snapshot, not a reservation: it was correct when called and stale forty minutes later. |
+| 2026-08-18 | **`054`/`056`/`057` applied to the live database**, each probe-then-apply-then-verify. The one number worth carrying forward: this document's headline "125 duplicate pairs" was a 2026-08-07 snapshot and the real collapse was **451 rows / 322 groups** (board 1 461 → 1 010). The gap is not error, it is elapsed time — identity resolution attached ~10 200 clientes in between, so repeat-contact people now share a `cliente_id`. The lesson generalises: **a measured number in a durable design doc silently becomes a claim about the past**, and eleven days was enough to make it misleading. Verified before applying that 0 groups span >30 days, so nothing genuinely distinct was folded. |
+| 2026-08-18 | **Recorded applied-migration state in `migrations/APPLIED.md`, because the repo had no such record and headers lie.** `048` and `050` both carried "not applied" notes long after they were applied; the earlier audit could only *infer* their state from commit messages. A header is written once at authoring time and nothing updates it when the migration runs, so it records an intention, not a fact. The new file says so explicitly and points at the live DB as the only authority. Flagged there as worth automating: a `noctus.dev.*` tool diffing `migrations/` against `information_schema` would end the guesswork. |
+| 2026-08-18 | **Open item surfaced BY the apply, not by review: D17 vs. the collapse rule.** `054` collapses on `cliente_id` with no time or deal-identity dimension. Safe today (no group >30 days), but D17 says a person accumulates negotiations over time and closed ones stay as history — so a customer who bought in 2024 and negotiates again now would have two legitimately distinct deals folded into one board card. The card dialog lists every negotiation so nothing is lost, but a second *open* deal renders nowhere on the board face. Watch query is in `APPLIED.md`. |

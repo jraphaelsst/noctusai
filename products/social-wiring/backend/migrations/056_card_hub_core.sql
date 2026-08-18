@@ -20,7 +20,13 @@
 --
 -- FORWARD-ONLY, IDEMPOTENT (CREATE ... IF NOT EXISTS / ADD COLUMN IF NOT
 -- EXISTS / DROP POLICY IF EXISTS before CREATE POLICY), matching every
--- migration in this product. 🔴 MIGRATION FILE ONLY -- not applied to any
+-- ✅ APPLIED to the live Supabase project 2026-08-18 (user green-lit), after a
+-- BEGIN…probe…ROLLBACK dry run against the live schema. Verified post-apply.
+-- Applied state is recorded in `products/social-wiring/backend/migrations/APPLIED.md`
+-- — do NOT trust this header alone; see that file for why it exists.
+--
+-- migration in this product. (Historical note, now superseded by the stamp
+-- above: MIGRATION FILE ONLY -- not applied to any
 -- database by this change. Apply via `noctus.dev.migrate_product` only
 -- after the tech-lead has an explicit go-ahead.
 -- ============================================================================

@@ -74,6 +74,11 @@
 -- changes, rather than correct only by the current data's good luck.
 --
 -- FORWARD-ONLY, IDEMPOTENT, matching every migration in this product.
+-- ✅ APPLIED to the live Supabase project 2026-08-18 (user green-lit), after a
+-- BEGIN…probe…ROLLBACK dry run against the live schema. Verified post-apply.
+-- Applied state is recorded in `products/social-wiring/backend/migrations/APPLIED.md`
+-- — do NOT trust this header alone; see that file for why it exists.
+--
 -- 🔴 Applying this (like `048`, `050`) is the tech-lead's + user's decision,
 -- not this file's -- see contract §7. The engineer who wrote this did NOT
 -- have a database to verify it against; see the delivery note for how far

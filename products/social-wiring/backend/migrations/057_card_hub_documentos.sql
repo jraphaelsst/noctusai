@@ -38,7 +38,13 @@
 -- itself only needed because it predated a trusted helper, is unnecessary
 -- here).
 --
--- FORWARD-ONLY, IDEMPOTENT. 🔴 MIGRATION FILE ONLY -- not applied to any
+-- ✅ APPLIED to the live Supabase project 2026-08-18 (user green-lit), after a
+-- BEGIN…probe…ROLLBACK dry run against the live schema. Verified post-apply.
+-- Applied state is recorded in `products/social-wiring/backend/migrations/APPLIED.md`
+-- — do NOT trust this header alone; see that file for why it exists.
+--
+-- FORWARD-ONLY, IDEMPOTENT. (Historical note, now superseded by the stamp
+-- above: MIGRATION FILE ONLY -- not applied to any
 -- database by this change. Apply via `noctus.dev.migrate_product` only
 -- after the tech-lead has an explicit go-ahead.
 -- ============================================================================
