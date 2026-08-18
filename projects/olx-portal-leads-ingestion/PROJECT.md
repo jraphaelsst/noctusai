@@ -363,8 +363,18 @@ re-runs then, and the observed statuses get written into the change log of
   once activated, and what distinguishes them in the payload. If they do →
   priority #2 is a config step + a splitter. If not → a direct ImovelWeb
   adapter reusing Slice A's shape.
-- Whether OLX registers one endpoint per CRM or per advertiser — decides
-  whether org resolution step 1 or step 2 is the primary path.
+- ~~Whether OLX registers one endpoint per CRM or per advertiser — decides
+  whether org resolution step 1 or step 2 is the primary path.~~
+  **ANSWERED 2026-08-18, by observation.** The URL is **per advertiser**: it is
+  a free-text field the advertiser fills in their own Canal Pro
+  (Configurações → Integrações → Leads → "Receber leads no CRM"), and the value
+  saved on One Consultoria Imobiliária's account is
+  `https://prod.lastro.services/api/public/v1/leads/webhook/grupozap/10b7165c-…`
+  — a homologated CRM carrying a **per-advertiser UUID in the path**, delivering
+  successfully (3× `Sucesso`, 17–18/08/26). So org-resolution **rung 1**
+  (path-scoped org token) is the primary path, and rung 3 (`OLX_LEADS_ORG_ID`)
+  demotes to a single-tenant fallback. Confirmation with the vendor is §2 of
+  `gate-1-homologation-request.md`; the observation stands on its own either way.
 - Whether `clientListingId` values match our `imoveis.codigo` for this client.
 
 ## Sources
@@ -375,3 +385,74 @@ re-runs then, and the observed statuses get written into the change log of
 - [Gestor de Leads — API](https://developers.grupozap.com/leadManager/api_lead_integration.html)
 - [Gestor de Leads — ImovelWeb e Casa Mineira](https://developers.grupozap.com/leadManager/imovelweb_casamineira.html)
 - [olxbr/crm-lead-integration (reference samples)](https://github.com/olxbr/crm-lead-integration)
+
+---
+
+# Phase 2 — from "built and inert" to "receiving leads" (2026-08-18)
+
+> Phase 1 shipped the pipe and merged it. This phase makes it *reachable*.
+> Branch: `feat/grupo-olx-multitenant-receiver`.
+
+## Where Phase 1 actually left things (verified 2026-08-18, not read off a handoff)
+
+| Claim | Reality |
+|---|---|
+| Migration 051 applied | **Yes** — `social_wiring.olx_lead_events` + `olx_leads` exist in prod. The Phase-1 handoff says "NOT applied"; it is stale. |
+| Leads arriving | **Zero.** Both tables empty; all 13,379 rows in `leads` carry `external_source = 'meta-lead-ads'` and nothing else. |
+| Receiver reachable | `POST /api/portals/olx/leads` is deployed, but no `SECRET_KEY` is configured ⇒ `bypass_when_unset=False` ⇒ **401 on every delivery, by design**. |
+| Tenant model | `resolve_olx_config` is **app-global** — one `webhook_secret`, one `OLX_LEADS_ORG_ID`. Single-tenant. |
+| Per-org credentials | The seam exists unused: `integration_accounts` already ships an `olx` provider row with a `webhook_secret` field. |
+
+## Decisions taken (user, 2026-08-18)
+
+| # | Decision | Consequence |
+|---|---|---|
+| D1 | **NoctusAI takes the Canal Pro URL and forwards to Lais** | We own delivery. Grupo OLX has already received its 2xx, so a failed forward is a **permanently lost** lead for Lais — store-then-forward with our own retry is mandatory, not a nicety. |
+| D2 | **Homologate as a multi-tenant CRM** | Receiver needs a per-advertiser path token; per-org secret lookup replaces the global one. |
+| D3 | **Lais is a permanent downstream**, not a migration bridge | The forwarder gets the durable path: delivery log, retry, visible failure surface. |
+| D4 | **Promote core's webhook deliverer into the seed** | `products/core/backend/app/services/webhook_delivery.py` is the existing mechanism (HMAC, retries, delivery log, 30-day retention). N=2 ⇒ lift to `noctusai_lib`, both products consume. |
+| D5 | **ImovelWeb decided after Grupo OLX is live** | `feat/imovelweb-portal-leads` stays parked, unpushed. Do not merge it in this phase. |
+| D6 | **Per-portal split is a completion requirement, not a launch blocker** | It cannot be a launch gate: the split needs an observation, and the observation needs traffic that only launching produces. |
+
+## The constraint D6 exists because of
+
+**No documented field names the portal.** `leadOrigin` ∈ {`Grupo OLX`,
+`MCMV_OLX`} only, across all 14 contract fields — re-verified against the live
+vendor docs on 2026-08-18. `clientListingId` → `imoveis` does not help either:
+the same listing is published to every portal. Three ways the split can become
+real, in order of cost:
+
+1. the vendor names a field (asked as §5 Q2 of `gate-1-homologation-request.md`);
+2. a real delivery shows a discriminator → one `PortalRule`, a **data** change,
+   no migration (every portal slug already ships in `CANONICAL_SOURCES`);
+3. ImovelWeb/Casa Mineira arrive via a **per-account activation code**, so they
+   may be separable by construction even if the payload stays silent.
+
+Until one lands, every lead attributes to the `grupo-olx` umbrella and
+`origem_raw` keeps `leadOrigin / leadType` so the split stays recoverable.
+`PortalRule` refuses construction without recorded evidence — that guard is the
+reason this is a delay and not a wrong number in Portal ROI.
+
+## Slices
+
+| # | Slice | Blocked on |
+|---|---|---|
+| **0** | `gate-1-homologation-request.md` — send it | **user** |
+| 1 | Promote core's webhook deliverer → `noctusai_lib` canonical organ | — |
+| 2 | Multi-tenant receiver: `POST /api/portals/olx/leads/{org_token}`, per-org secret from `integration_accounts`, org token issuance + UI | — |
+| 3 | Durable Lais forwarder consuming slice 1 | slice 1 |
+| 4 | Switch the Canal Pro URL to ours | 0 + 2 + 3 green; **user** action, reversible |
+| 5 | Per-portal `PortalRule` split | live traffic ∨ vendor answer |
+
+Slice 2 keeps the existing tokenless route working — it is the single-tenant
+fallback (rung 3) and removing it would break a homologation we have not yet
+completed.
+
+## Open — carried forward
+
+- Whether Lastro's endpoint validates the Basic secret it receives. If it does,
+  the forwarder must replay the same `Authorization` header; if it does not, the
+  forward needs whatever scheme Lastro expects. **Ask Lastro**, do not probe.
+- The full per-advertiser UUID in the Canal Pro field is truncated in the
+  evidence screenshot (`10b7165c-17a4-4565-acb2-53c9c447…`). Read the whole
+  value before building the forwarder target.
