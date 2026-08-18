@@ -160,3 +160,51 @@ over stdio from the worktree. Keep-list membership is the user's call.
   "cwd": "<repo>"
 }
 ```
+
+---
+
+## 8 · Session wrap survey (2026-08-18) — so you inherit it, not re-run it
+
+Five surfaces checked at wrap. Two defects found in this slice and
+**delivered in-flight**; three items parked with reasons.
+
+**Delivered:**
+- Migration 052 had no structural test. Written (29 assertions) — the
+  parse-based style needs no DB and no `pglast`.
+- My three `NOC-REMEDIATE` markers carried no date, so the scanner could
+  never age them. Dated.
+
+**Clean:**
+- **No auto-improvement entries opened this session** — the 40 open
+  entries in the cache are all pre-existing, newest 2026-08-14, none
+  mentioning imovelweb. Nothing owed by this session, and no s-stage
+  backfill is due.
+- **No silent skips in this slice.** 455 tests across seed/mcp/product
+  imovelweb modules, zero skipped. (Fleet-wide there are 4 pre-existing
+  skips: 1 intentional in the seed, 3 gated on `pglast` not being
+  installed — not this project's, and the reason 052's test avoids that
+  dependency entirely.)
+- **No stale worktrees, no orphan branches to prune.** 26 peer worktrees,
+  and the only one with uncommitted work is this one (now clean).
+
+**Parked, with reasons — do NOT treat these as forgotten:**
+
+1. **`code-embeddings` and `noc-graph` caches are stale.** Not refreshed
+   deliberately: the refresh writes shared cache state, and another agent
+   currently has **uncommitted work in the cache tooling itself**
+   (`mcp/noctusai/tools/noctus/dev/cache_deploy_mirror.py` in the primary
+   checkout — a DDL comment-splitting fix and a numpy-float32 JSON fix,
+   both dated 2026-08-18). Refreshing mid-edit invites a collision. They
+   also auto-refresh at push, which is your step, not mine.
+2. **The primary checkout has that uncommitted file on `dev`.** Surfaced,
+   not touched — it is not this session's work, and `dev` in the primary
+   checkout refuses work commits anyway. Check with whoever owns it before
+   merging anything that touches cache tooling.
+3. **No `branch_pointer` row was written for this branch.** Registering
+   one writes `project-history/branch-tree.ndjson` in the primary
+   checkout, which would dirty the tree that other agent is working in.
+   The branch is named at the top of this file instead; register it when
+   you push, if you want it.
+
+**Not done, by instruction:** no push, no merge, no deploy, no migration
+applied. All fourteen commits are local on `feat/imovelweb-portal-leads`.
