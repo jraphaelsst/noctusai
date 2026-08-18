@@ -271,3 +271,160 @@ async def test_streaming_path_still_honors_default_without_override():
     assert resp.status_code == 413
     assert resp.json()["limit_bytes"] == 256
     assert counter["handled"] == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# path_overrides — single-segment-wildcard patterns
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Motivating shape: `POST /api/clientes/{cliente_id}/documentos` — a
+# path parameter (dynamic UUID) sits BEFORE the segment that actually
+# needs the bigger cap. A plain prefix can't express "this exact suffix
+# under a parameterised segment" without either stopping short at
+# `/api/clientes` (too broad — would also raise the cap on every JSON
+# clientes route) or being unwritable (the id is dynamic). The pattern
+# `"/api/clientes/*/documentos"` matches ONLY that exact 4-segment shape.
+
+_PATTERN_OVERRIDES = {"/api/clientes/*/documentos": 2048}
+
+
+def _make_pattern_app(*, max_bytes: int = 256) -> tuple[TestClient, dict]:
+    app = FastAPI()
+    app.add_middleware(
+        MaxBodySizeMiddleware, max_bytes=max_bytes, path_overrides=_PATTERN_OVERRIDES
+    )
+    counter = {"handled": 0}
+
+    def _mk(path):
+        async def _handler(request: Request):
+            counter["handled"] += 1
+            body = await request.body()
+            return {"path": path, "len": len(body)}
+        return _handler
+
+    # The route the override targets.
+    app.add_api_route(
+        "/api/clientes/{cliente_id}/documentos", _mk("documentos"), methods=["POST"],
+    )
+    # Same segment COUNT (4), but a DIFFERENT literal at the wildcard's
+    # neighboring position — must NOT match.
+    app.add_api_route(
+        "/api/clientes/documentos/tipos", _mk("tipos"), methods=["POST"],
+    )
+    # Same segment count (4), but the LAST segment differs — must NOT match.
+    app.add_api_route(
+        "/api/clientes/{cliente_id}/timeline", _mk("timeline"), methods=["POST"],
+    )
+    # Fewer segments (2) — the bare collection route — must NOT match.
+    app.add_api_route("/api/clientes", _mk("collection"), methods=["POST"])
+    # More segments (5) — a sub-resource under documentos — must NOT match.
+    app.add_api_route(
+        "/api/clientes/{cliente_id}/documentos/{documento_id}/url",
+        _mk("doc-url"),
+        methods=["POST"],
+    )
+
+    return TestClient(app), counter
+
+
+def test_pattern_override_matches_exact_wildcard_shape():
+    client, counter = _make_pattern_app()
+    cid = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    # 1500B: over the 256B default, under the pattern's 2048B override.
+    resp = client.post(f"/api/clientes/{cid}/documentos", content=b"x" * 1500)
+    assert resp.status_code == 200
+    assert counter["handled"] == 1
+
+
+def test_pattern_override_rejects_body_over_its_own_cap():
+    client, counter = _make_pattern_app()
+    cid = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    resp = client.post(f"/api/clientes/{cid}/documentos", content=b"x" * 4000)
+    assert resp.status_code == 413
+    assert resp.json()["limit_bytes"] == 2048  # names the pattern's own limit
+    assert counter["handled"] == 0
+
+
+def test_pattern_override_does_not_widen_same_segment_count_sibling():
+    """`/api/clientes/documentos/tipos` has the SAME segment count (4) as
+    the targeted pattern, but "documentos" sits at the WILDCARD's
+    position rather than the literal `documentos` tail — must still be
+    rejected under the 256B default, not the 2048B override. Guards
+    against the exact "too-broad override silently weakens the guard"
+    failure mode this feature exists to prevent."""
+    client, counter = _make_pattern_app()
+    resp = client.post("/api/clientes/documentos/tipos", content=b"x" * 1500)
+    assert resp.status_code == 413
+    assert resp.json()["limit_bytes"] == 256
+    assert counter["handled"] == 0
+
+
+def test_pattern_override_does_not_match_different_final_segment():
+    """`/api/clientes/{id}/timeline` — same shape up to the wildcard, but
+    the tail segment is `timeline`, not `documentos`. Must keep the
+    app-wide default."""
+    client, counter = _make_pattern_app()
+    cid = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    resp = client.post(f"/api/clientes/{cid}/timeline", content=b"x" * 1500)
+    assert resp.status_code == 413
+    assert resp.json()["limit_bytes"] == 256
+    assert counter["handled"] == 0
+
+
+def test_pattern_override_does_not_match_shorter_collection_route():
+    client, counter = _make_pattern_app()
+    resp = client.post("/api/clientes", content=b"x" * 1500)
+    assert resp.status_code == 413
+    assert resp.json()["limit_bytes"] == 256
+    assert counter["handled"] == 0
+
+
+def test_pattern_override_does_not_match_longer_sub_resource_route():
+    client, counter = _make_pattern_app()
+    cid = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    did = "11111111-2222-3333-4444-555555555555"
+    resp = client.post(
+        f"/api/clientes/{cid}/documentos/{did}/url", content=b"x" * 1500
+    )
+    assert resp.status_code == 413
+    assert resp.json()["limit_bytes"] == 256
+    assert counter["handled"] == 0
+
+
+def test_pattern_and_plain_prefix_overrides_coexist():
+    """Sanity: adding a pattern override doesn't disturb an unrelated
+    plain-prefix override in the same middleware instance."""
+    app = FastAPI()
+    app.add_middleware(
+        MaxBodySizeMiddleware,
+        max_bytes=256,
+        path_overrides={**_PATTERN_OVERRIDES, **_OVERRIDES},
+    )
+    counter = {"handled": 0}
+
+    @app.post("/api/clientes/{cliente_id}/documentos")
+    async def documentos(request: Request, cliente_id: str):
+        counter["handled"] += 1
+        await request.body()
+        return {"ok": True}
+
+    @app.post("/uploads/echo")
+    async def uploads_echo(request: Request):
+        counter["handled"] += 1
+        await request.body()
+        return {"ok": True}
+
+    client = TestClient(app)
+    cid = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+    # Pattern override (2048B) applies to the documentos route.
+    assert client.post(f"/api/clientes/{cid}/documentos", content=b"x" * 1500).status_code == 200
+    # Plain-prefix override (2048B, from _OVERRIDES["/uploads"]) applies independently.
+    assert client.post("/uploads/echo", content=b"x" * 1500).status_code == 200
+    assert counter["handled"] == 2
+
+
+def test_construction_rejects_non_positive_pattern_override():
+    with pytest.raises(ValueError):
+        MaxBodySizeMiddleware(
+            app=None, max_bytes=1024, path_overrides={"/api/clientes/*/documentos": 0}
+        )

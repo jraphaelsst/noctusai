@@ -281,6 +281,23 @@ _MAX_BODY_PATH_OVERRIDES = {
     # property walkthrough video (typically 100-300 MB for a few minutes
     # of 1080p/4K) while still refusing an unbounded multi-GB stream.
     "/api/videos/upload": 500 * 1024 * 1024,  # 500 MB
+    # Client document/photo upload (POST /api/clientes/{cliente_id}/documentos
+    # — card_hub, lead-card-hub Phase 2, migration 057). `{cliente_id}` is a
+    # dynamic UUID path param BEFORE the segment that needs the bigger cap,
+    # so a plain prefix can't express this: `/api/clientes` alone would also
+    # raise the cap on every JSON clientes route (list/create/tags/timeline/
+    # notas/...), silently weakening the guard everywhere else under this
+    # router. The `*` wildcard matches exactly that one dynamic segment and
+    # nothing else (see `noctusai_lib.api.middleware.MaxBodySizeMiddleware`'s
+    # docstring). Unlike the video path, `upload_documento_route` reads the
+    # WHOLE file into memory (`await file.read()`) before handing it to
+    # storage, so this ceiling bounds memory, not just disk — 30 MB covers a
+    # phone photo (3-8 MB) and a larger HDR/RAW-derived export (brief:
+    # "25 MB+") with headroom, while staying far below the video path's
+    # disk-bound 500 MB. `documentos_service.MAX_UPLOAD_BYTES` (25 MB) is the
+    # real business-policy limit and stays comfortably under this outer
+    # bound — the middleware is the platform-wide safety net, not the policy.
+    "/api/clientes/*/documentos": 30 * 1024 * 1024,  # 30 MB
 }
 
 app = create_product_app(

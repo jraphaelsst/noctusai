@@ -62,12 +62,14 @@ class TestUpload:
         assert "Tipo de arquivo não permitido" in resp.json()["error"]["message"]
 
     def test_upload_rejects_oversized_file_naming_the_limit(self, client, scoped, fake_storage):
-        """`oversized` sits ABOVE `MAX_UPLOAD_BYTES` but BELOW the
-        platform's `MaxBodySizeMiddleware` cap (1 MB default) — so this
-        endpoint's own typed-error check is what fires, not the
-        app-wide 413 (see `MAX_UPLOAD_BYTES`'s docstring for why the two
-        limits are close enough together in this product for this to
-        matter for test design)."""
+        """`oversized` sits ABOVE `MAX_UPLOAD_BYTES` (25 MB) but BELOW
+        `app/main.py`'s per-route `MaxBodySizeMiddleware` override for
+        this exact endpoint (30 MB) — so this endpoint's own typed-error
+        check is what fires, not the platform's 413 (see
+        `MAX_UPLOAD_BYTES`'s docstring + `app/main.py`'s
+        `_MAX_BODY_PATH_OVERRIDES` for why the two limits are deliberately
+        close-but-distinct: the middleware is the outer safety net, this
+        is the real business policy)."""
         cid = str(uuid4())
         scoped.set_table_data("clientes", [cliente_row(cid)])
         scoped.set_table_data("cliente_documento_tipos", [documento_tipo_row("contrato")])
@@ -111,6 +113,58 @@ class TestUpload:
             headers=_auth(),
         )
         assert resp.status_code == 400
+
+    def test_oversized_rejection_names_a_real_mb_number(self, client, scoped, fake_storage):
+        """At the current 25 MB `MAX_UPLOAD_BYTES`, the message must name
+        a truthful, non-zero MB figure — the regression this guards is
+        `MAX_UPLOAD_BYTES // (1024 * 1024)` silently evaluating to 0 for
+        any sub-megabyte cap (see `test_oversized_rejection_names_a_real_kb_number_below_1mb`
+        for that exact case, reproduced via monkeypatch)."""
+        from app.modules.card_hub.documentos_service import MAX_UPLOAD_BYTES
+
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        scoped.set_table_data("cliente_documento_tipos", [documento_tipo_row("contrato")])
+
+        oversized = b"0" * (MAX_UPLOAD_BYTES + 1)
+        resp = client.post(
+            f"/api/clientes/{cid}/documentos",
+            files={"file": ("grande.pdf", oversized, "application/pdf")},
+            data={"tipo_documento": "contrato"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 400, resp.text
+        message = resp.json()["error"]["message"]
+        assert "25.0MB" in message  # the real ceiling, named precisely
+        assert "limite de 0MB" not in message  # the exact broken phrase the bug produced
+
+    def test_oversized_rejection_names_a_real_kb_number_below_1mb(
+        self, client, scoped, fake_storage, monkeypatch
+    ):
+        """Reproduces the exact bug: a sub-megabyte cap must NOT format
+        as "0MB". `MAX_UPLOAD_BYTES // (1024 * 1024)` for an 800 KB cap
+        evaluates to 0 — this is the historical value that produced
+        "excede o limite de 0MB" before `_format_bytes_human` existed."""
+        import app.modules.card_hub.documentos_service as documentos_service
+
+        sub_megabyte_cap = 800 * 1024  # 800 KB — the exact legacy value
+        monkeypatch.setattr(documentos_service, "MAX_UPLOAD_BYTES", sub_megabyte_cap)
+
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        scoped.set_table_data("cliente_documento_tipos", [documento_tipo_row("contrato")])
+
+        oversized = b"0" * (sub_megabyte_cap + 1)
+        resp = client.post(
+            f"/api/clientes/{cid}/documentos",
+            files={"file": ("grande.pdf", oversized, "application/pdf")},
+            data={"tipo_documento": "contrato"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 400, resp.text
+        message = resp.json()["error"]["message"]
+        assert "0MB" not in message
+        assert "800KB" in message  # the real ceiling, named in KB below 1 MB
 
 
 class TestListAndUrlAndDelete:
@@ -262,3 +316,35 @@ class TestRetentionSweep:
 
         acessos = scoped.table("cliente_documento_acessos").select("*").eq("documento_id", expired["id"]).execute().data
         assert any(a["acao"] == "delete" for a in acessos)
+
+
+class TestUploadMaxBodySizePathOverride:
+    """`app.main`'s `max_body_path_overrides={"/api/clientes/*/documentos":
+    30 MB}` must actually reach `noctusai_seed.create_product_app` and get
+    wired into `MaxBodySizeMiddleware` as a single-segment-wildcard
+    PATTERN (not a plain prefix — `{cliente_id}` is a dynamic UUID
+    segment before `documentos`). A >1 MB request to this exact route
+    must reach the router/service, not get 413'd by the seed's app-wide
+    1 MB default (`settings.max_body_bytes`, unchanged by this product).
+    Unit coverage for the wildcard-pattern mechanism itself lives in the
+    seed's `test_max_body_size_middleware.py`; this is the integration
+    proof that THIS product's wiring actually applies it to a route
+    shaped with a path parameter."""
+
+    def test_upload_over_1mb_reaches_route_not_413(self, client, scoped, fake_storage):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        scoped.set_table_data("cliente_documento_tipos", [documento_tipo_row("contrato")])
+
+        # 2 MB: over the platform's 1 MB default, under BOTH the
+        # per-route middleware override (30 MB) and the service's own
+        # MAX_UPLOAD_BYTES policy (25 MB) — a full 201 roundtrip is the
+        # least ambiguous proof the middleware let it through.
+        big_file = ("grande.jpg", b"\xff\xd8\xff" + b"x" * (2 * 1024 * 1024), "image/jpeg")
+        resp = client.post(
+            f"/api/clientes/{cid}/documentos",
+            files={"file": big_file},
+            data={"tipo_documento": "contrato"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 201, resp.text

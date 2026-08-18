@@ -133,6 +133,27 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             raise
 
 
+def _split_path_segments(path: str) -> tuple[str, ...]:
+    """Split a URL path into its non-empty segments.
+
+    `"/api/clientes/*/documentos"` -> `("api", "clientes", "*", "documentos")`.
+    Leading/trailing slashes and any accidental double-slash collapse to
+    nothing, matching how `request.url.path` and a hand-written override
+    key are both naturally written with a leading `/`.
+    """
+    return tuple(s for s in path.split("/") if s)
+
+
+def _pattern_matches(pattern_segments: tuple[str, ...], path_segments: tuple[str, ...]) -> bool:
+    """Exact-shape match: same segment COUNT, every non-`*` segment
+    equal literally, `*` matches any single segment (never zero, never
+    more than one — so a pattern never accidentally swallows a deeper or
+    shallower route)."""
+    if len(pattern_segments) != len(path_segments):
+        return False
+    return all(p == "*" or p == s for p, s in zip(pattern_segments, path_segments))
+
+
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     """Reject requests whose body exceeds a per-route cap with 413 before
     any handler runs.
@@ -155,11 +176,31 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     full buffering before HMAC verification). A route that legitimately
     receives larger payloads (file/photo uploads) needs a bigger cap
     *without* weakening the default everywhere else. Pass
-    `path_overrides={"<path-prefix>": <max-bytes>, ...}`; the LONGEST
-    matching prefix of `request.url.path` wins, and a path matching no
-    prefix falls back to `max_bytes`. Both checks above honor the
-    resolved per-path limit — an override that only patched one of them
-    would depend on whether the client happened to send a Content-Length,
+    `path_overrides={"<key>": <max-bytes>, ...}` with two key shapes:
+
+    - **Plain prefix** (no `*`) — e.g. `"/api/videos/upload"`. The
+      LONGEST matching prefix of `request.url.path` wins among all plain
+      entries.
+    - **Single-segment-wildcard pattern** — e.g.
+      `"/api/clientes/*/documentos"`, where each `*` matches exactly ONE
+      path segment (never a partial segment, never zero-or-more). Needed
+      when the route you're overriding has a path parameter (a UUID
+      resource id, etc.) BEFORE the segment you actually care about — a
+      plain prefix can't express that without either stopping short (too
+      broad — e.g. `"/api/clientes"` would also raise the cap on every
+      JSON clientes route) or being unwritable (the id is dynamic, you
+      can't enumerate it). A pattern match requires an EXACT segment
+      count AND exact literal match on every non-`*` segment, so it
+      can't accidentally widen to unrelated routes the way a truncated
+      prefix would.
+
+    Pattern entries are checked FIRST (an exact-shape match is, by
+    construction, always at least as specific as any prefix); if none
+    match, the longest-matching plain prefix is used; if neither
+    matches, the path falls back to `max_bytes`. All three lookup paths
+    (pattern / prefix / default) feed the SAME resolved limit into both
+    checks below — an override that only patched one of them would
+    depend on whether the client happened to send a Content-Length,
     which is worse than no override at all.
 
     Override the cap per product via `settings.max_body_bytes` /
@@ -179,16 +220,32 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
         if max_bytes <= 0:
             raise ValueError("max_bytes must be positive")
         self.max_bytes = max_bytes
+        # Plain-prefix overrides (unchanged, backward-compatible shape).
         self.path_overrides: dict[str, int] = {}
-        for prefix, limit in (path_overrides or {}).items():
+        # Single-segment-wildcard pattern overrides — parsed once at
+        # construction into (segments, limit, original_key) tuples so
+        # `_limit_for` never re-splits on every request.
+        self._path_patterns: list[tuple[tuple[str, ...], int, str]] = []
+        for key, limit in (path_overrides or {}).items():
             if limit <= 0:
                 raise ValueError(
-                    f"path_overrides[{prefix!r}] must be positive, got {limit}"
+                    f"path_overrides[{key!r}] must be positive, got {limit}"
                 )
-            self.path_overrides[prefix] = limit
+            if "*" in key:
+                self._path_patterns.append((_split_path_segments(key), limit, key))
+            else:
+                self.path_overrides[key] = limit
 
     def _limit_for(self, path: str) -> int:
-        """Longest-matching-prefix override, else the app-wide default."""
+        """Resolve the effective cap for `path`: exact wildcard-pattern
+        match first (most specific by construction), else the
+        longest-matching plain prefix, else the app-wide default."""
+        if self._path_patterns:
+            segments = _split_path_segments(path)
+            for pattern_segments, limit, _key in self._path_patterns:
+                if _pattern_matches(pattern_segments, segments):
+                    return limit
+
         best_len = -1
         best_limit = self.max_bytes
         for prefix, limit in self.path_overrides.items():

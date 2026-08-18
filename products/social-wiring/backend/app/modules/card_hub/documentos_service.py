@@ -49,23 +49,38 @@ logger = logging.getLogger(__name__)
 # `ALLOWED_TYPES` shape rather than a new `Settings` field, since this is
 # a fixed platform policy, not per-deployment configuration.
 #
-# 🔴 CAPPED BY A PLATFORM CONSTRAINT THIS SLICE DID NOT RAISE: every
-# request in this product passes through `MaxBodySizeMiddleware`, whose
-# cap is `settings.max_body_bytes` — 1 MB by default, and NOT overridden
-# by `SocialWiringSettings` today (confirmed empirically: a 15 MB upload
-# 413'd at the middleware, before this endpoint's own check ever ran).
-# 800 KB is set here to sit safely under that 1 MB ceiling with headroom
-# for multipart boundary/header overhead. A real scanned contract or a
-# multi-page planta commonly exceeds 800 KB, so this is a REAL product
-# limitation, not a formality — raising it requires bumping
-# `settings.max_body_bytes` for the whole product (the middleware has no
-# per-route override), which is a broader decision than this slice's
-# scope. Surfaced in the delivery note rather than silently widening a
-# platform-wide DoS guard as a side effect of one feature.
-MAX_UPLOAD_BYTES = 800 * 1024  # 800 KB — see the note above
+# This is now the REAL business-policy limit, not a value squeezed under
+# the platform's flat body-size guard. Every request in this product
+# passes through `MaxBodySizeMiddleware`, but `app/main.py` declares a
+# per-route override for this exact endpoint (`/api/clientes/*/documentos`,
+# 30 MB — see that file's `_MAX_BODY_PATH_OVERRIDES` comment), so 25 MB
+# sits comfortably under the platform's own ceiling with headroom for
+# multipart boundary/header overhead. Covers a phone photo (3-8 MB) and a
+# larger HDR/RAW-derived export (25 MB+) — see `_format_bytes_human` for
+# why the rejection message stays truthful at both this size AND the
+# legacy 800 KB one (which used to integer-divide to a misleading "0MB").
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB — see the note above
 ALLOWED_MIME_TYPES = frozenset(
     {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 )
+
+
+def _format_bytes_human(n: int) -> str:
+    """Human-readable byte count for user-facing limit messages.
+
+    Never integer-divides to a misleading "0MB": the legacy 800 KB cap's
+    `MAX_UPLOAD_BYTES // (1024 * 1024)` formatting evaluated to exactly 0,
+    so a user who exceeded the (sub-megabyte) limit was told "excede o
+    limite de 0MB" — worse than no number at all, since it reads as a
+    broken feature rather than a real limit. MB with one decimal at/above
+    1 MB (truthful for any fractional-MB value, not just whole ones);
+    whole KB below 1 MB.
+    """
+    mb = n / (1024 * 1024)
+    if mb >= 1:
+        return f"{mb:.1f}MB"
+    return f"{n / 1024:.0f}KB"
+
 
 _SIGNED_URL_TTL_SECONDS = 300  # short TTL, minted per request (contract §2)
 
@@ -173,9 +188,9 @@ async def upload_documento(
             field="mime_type",
         )
     if len(data) > MAX_UPLOAD_BYTES:
-        max_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
         raise ValidationError_(
-            f"Arquivo excede o limite de {max_mb}MB ({len(data) // (1024 * 1024)}MB enviado)",
+            f"Arquivo excede o limite de {_format_bytes_human(MAX_UPLOAD_BYTES)} "
+            f"({_format_bytes_human(len(data))} enviado)",
             field="tamanho_bytes",
         )
 
