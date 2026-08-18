@@ -237,6 +237,46 @@ describe("card → origin resolution", () => {
     const orphan = { id: "p2" } as unknown as ProcessoVenda;
     expect(origemDoProcesso(orphan)).toEqual({ leadId: null, campanha: null });
   });
+
+  // ── migration 054: one card per person ───────────────────────────────────
+  // A survivor spawned from a CAMPAIGN has `lead_id === null` while carrying a
+  // `lead` merged from the row collapsed into it. Reading the FK alone returns
+  // `leadId: null` and the lead detail never opens — on exactly the cards the
+  // collapse exists to create. The object wins over the FK.
+
+  const negColapsadaComLeadMesclado = {
+    id: "n3",
+    lead_id: null,
+    meta_ads_lead_id: "m1",
+    campanha: CAMPANHA,
+    lead: { id: "l9", cliente_nome: "Ana Silva", contato: "11999998888" },
+  } as unknown as NegociacaoVenda;
+
+  it("a collapsed card opens the lead merged from its sibling, despite a null FK", () => {
+    expect(origemDaNegociacao(negColapsadaComLeadMesclado)).toEqual({
+      leadId: "l9",
+      campanha: CAMPANHA,
+    });
+  });
+
+  it("a collapsed card still carries BOTH origins — that is the whole point", () => {
+    const origem = origemDaNegociacao(negColapsadaComLeadMesclado);
+    expect(origem.leadId).not.toBeNull();
+    expect(origem.campanha).not.toBeNull();
+  });
+
+  it("a processo behind a collapsed negociação reaches the merged lead too", () => {
+    const processo = {
+      id: "p3",
+      negociacao: {
+        id: "n3",
+        lead_id: null,
+        campanha: CAMPANHA,
+        lead: { id: "l9", cliente_nome: "Ana Silva" },
+      },
+    } as unknown as ProcessoVenda;
+    expect(origemDoProcesso(processo).leadId).toBe("l9");
+  });
 });
 
 describe("nomeDoProcesso", () => {
