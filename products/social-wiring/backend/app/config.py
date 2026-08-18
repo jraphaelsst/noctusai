@@ -122,6 +122,19 @@ class SocialWiringSettings(ProductSettings):
     # one-shot-per-chat backfill, not true incremental catch-up.
     whatsapp_backfill_interval_hours: int = 6
 
+    # ─── clientes steady-state pass (lead-card-hub Phase 1) ────────────
+    # `clientes_service.run_backfill` is idempotent and re-runnable by
+    # design, but for its first five days in prod nothing re-ran it: new
+    # intake accumulated with no `cliente_touches` row and the board
+    # silently stopped showing arrivals. This job closes that (see
+    # `app/services/clientes_backfill_job.py` for the measurements).
+    clientes_backfill_enabled: bool = True
+    # 6h matches the sibling whatsapp_backfill sweep. Drift accrues at
+    # roughly nine leads/day, so a 6h interval bounds the board's lag at a
+    # couple of cards; a shorter interval would re-scan ~13k source rows
+    # for no practical gain.
+    clientes_backfill_interval_hours: int = 6
+
     # ─── Redis (upload-job tracking, Phase 2+) ─────────────────────────
     redis_url: str = "redis://localhost:6379/0"
 
