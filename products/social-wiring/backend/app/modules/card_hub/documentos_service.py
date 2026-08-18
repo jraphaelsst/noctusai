@@ -1,4 +1,4 @@
-"""Documents, LGPD-complete (contract §2 `055`, ruling S2 / D5).
+"""Documents, LGPD-complete (contract §2 `057`, ruling S2 / D5).
 
 Every read of a document's CONTENT (a minted signed URL) and every delete
 appends to `cliente_documento_acessos` — the access log. Listing document
@@ -6,7 +6,7 @@ METADATA (`GET .../documentos`) or listing the access log itself
 (`GET .../acessos`) does NOT append — neither one accesses the file's
 bytes.
 
-Retention is table-driven (`cliente_documento_tipos`, migration `055`),
+Retention is table-driven (`cliente_documento_tipos`, migration `057`),
 never a hardcoded `if`: `retencao_ate` is computed once, at upload time,
 from that type's `retencao_dias`. The allow-list check the upload route
 enforces is `ativo = true` on that same row — enabling a withheld type
@@ -15,7 +15,7 @@ enforces is `ativo = true` on that same row — enabling a withheld type
 Storage: `noctusai_lib.integrations.storage.StorageBackend` (Protocol +
 Fake + Real + factory), resolved via
 `app.modules.card_hub.deps.get_storage_backend`. Object path
-`{org_id}/clientes/{cliente_id}/{document_id}` — see migration `055`'s
+`{org_id}/clientes/{cliente_id}/{document_id}` — see migration `057`'s
 object-RLS policies for why the first path segment must always be the
 literal `org_id`.
 """

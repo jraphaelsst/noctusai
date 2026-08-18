@@ -1,12 +1,12 @@
 -- ============================================================================
--- Migration 053 -- social_wiring: the card's core data surface (lead-card-hub
+-- Migration 056 -- social_wiring: the card's core data surface (lead-card-hub
 -- Phase 2, contract `products/social-wiring/projects/lead-card-hub-p2-PROJECT.md`
--- §2 "053 -- core card surface").
+-- §2 "056 -- core card surface").
 --
 -- Adds the tables the card's detail dialog needs beyond what Phase 1 (048,
 -- 049, 050) already shipped: annotations, one tag system (D6), assignment,
 -- Trello-style dates + a reminder mechanism that exists nowhere in the
--- product today, and both checklist kinds (D11). Documents (055) are a
+-- product today, and both checklist kinds (D11). Documents (057) are a
 -- separate file -- LGPD-complete storage is its own migration per ruling S2.
 --
 -- Every table: `org_id uuid not null`, RLS enabled with the SAME
@@ -35,7 +35,7 @@ SET search_path = social_wiring, public;
 -- route on every edit -- NULL means "never edited", not "edited at
 -- creation time".
 --
--- 🔴 CONTRACT CORRECTION (post-053-authoring, surfaced by the frontend
+-- 🔴 CONTRACT CORRECTION (post-056-authoring, surfaced by the frontend
 -- engineer building against the same document): the contract originally
 -- gave `cliente_notas` a single undifferentiated `corpo`, but the
 -- screenshots show Descrição (one per card, editable in place, top of the

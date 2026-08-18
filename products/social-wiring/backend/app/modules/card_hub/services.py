@@ -188,7 +188,7 @@ def create_nota(
     ensure_cliente(client, org_id, cliente_id)
     if tipo == "descricao":
         # Application-level check ahead of the DB's partial unique index
-        # (migration 053) — a second `descricao` must return a typed
+        # (migration 056) — a second `descricao` must return a typed
         # 409, never a raw 500 from the constraint (contract correction).
         existing_descricao = (
             _t(client, "cliente_notas")
@@ -367,7 +367,7 @@ def set_cliente_tags(client: Any, org_id: UUID, cliente_id: UUID, *, tag_ids: li
 
 def get_cliente_tags(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     # `cliente_tag_links` has NO `id` column — its PK is the composite
-    # `(cliente_id, tag_id)` (migration 053). `tag_id` is the pager's
+    # `(cliente_id, tag_id)` (migration 056). `tag_id` is the pager's
     # dedup/order key here since `cliente_id` is already pinned by the
     # `eq_filters` below, making `tag_id` unique within this result set.
     links = _paged_rows(

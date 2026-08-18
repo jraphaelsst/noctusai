@@ -1,4 +1,4 @@
-"""Documents, LGPD-complete (contract §2 `055`, ruling S2 / D5).
+"""Documents, LGPD-complete (contract §2 `057`, ruling S2 / D5).
 
 Storage is ALWAYS the `fake_storage` fixture — never
 `MockSupabaseClient.storage` (a bare `MagicMock()` that would silently
@@ -43,7 +43,7 @@ class TestUpload:
 
         stored = scoped.table("cliente_documentos").select("*").execute().data
         assert len(stored) == 1
-        # Object path is org_id-first (contract §2, migration 055's
+        # Object path is org_id-first (contract §2, migration 057's
         # object-RLS policies key on the first path segment).
         assert stored[0]["storage_path"].startswith(f"{ORG_ID}/clientes/{cid}/")
 

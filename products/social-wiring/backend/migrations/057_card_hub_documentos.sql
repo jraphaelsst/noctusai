@@ -1,6 +1,6 @@
 -- ============================================================================
--- Migration 055 -- social_wiring: card documents, LGPD-complete (lead-card-hub
--- Phase 2, contract §2 "055 -- documents, LGPD-complete", ruling S2 / D5).
+-- Migration 057 -- social_wiring: card documents, LGPD-complete (lead-card-hub
+-- Phase 2, contract §2 "057 -- documents, LGPD-complete", ruling S2 / D5).
 --
 -- Object RLS + per-type retention + delete-on-request + access log land in
 -- THIS migration, not a follow-up -- ruling S2 is explicit: "no attachments
