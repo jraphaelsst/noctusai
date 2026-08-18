@@ -383,6 +383,51 @@ class SocialWiringSettings(ProductSettings):
     olx_api_key: str = ""
     olx_agent_name: str = ""
 
+    # ─── ImovelWeb / OpenNavent portal leads (Navent · Grupo QuintoAndar) ─
+    # A DIFFERENT vendor from Grupo OLX above, on its own pipe. Same
+    # dev/local-fallback shape; prod resolves through
+    # `app/services/app_config_store.resolve_imovelweb_config`.
+    #
+    #   • imovelweb_webhook_secret — WE choose this one; the vendor never
+    #                    issues it. Registered with them as
+    #                    `Basic base64("noctusai-imovelweb:<key>")`. Empty ⇒
+    #                    the receiver 401s everything, same reasoning as OLX.
+    #   • imovelweb_client_id / _secret — OAuth2 client credentials for the
+    #                    OpenNavent API (reconciliation, callback config,
+    #                    enrichment). Unrelated to the inbound secret.
+    #   • imovelweb_leads_org_id — single-tenant fallback for org resolution,
+    #                    the LAST rung of the chain. Unset ⇒ a lead whose
+    #                    agency code and listing code both miss parks as
+    #                    `unresolved` rather than landing in a guessed org.
+    #   • imovelweb_region / _sandbox — which host. `sandbox` also gates the
+    #                    event simulator, which refuses a production host.
+    #   • imovelweb_callback_language — the registered `lenguajeCallbackBody`.
+    #                    It decides the vendor's FIELD NAMES, not just its
+    #                    prose. EN2 carries `leadOrigin` (portal attribution)
+    #                    but no agency code; PT carries the agency code but no
+    #                    `leadOrigin`. No variant carries both — Gate 1.7
+    #                    settles which trade we take, and the parser
+    #                    auto-detects regardless, so this is a default rather
+    #                    than an assumption.
+    #   • imovelweb_public_base_url — the URL we register as the receiver.
+    #                    A localhost/tunnel value is REFUSED at registration:
+    #                    the callback config is integrator-wide, so an
+    #                    unreachable one blackholes every agency's leads with
+    #                    no error anywhere.
+    #   • imovelweb_verify_by_refetch — re-fetch each lead by messageId to
+    #                    verify it. Default OFF: it is an upstream round-trip,
+    #                    and the vendor allows 1.5s for the whole response.
+    #                    Only ever a BACKGROUND step, never in the request.
+    imovelweb_webhook_secret: str = ""
+    imovelweb_client_id: str = ""
+    imovelweb_client_secret: str = ""
+    imovelweb_leads_org_id: str = ""
+    imovelweb_region: str = "br"
+    imovelweb_sandbox: bool = False
+    imovelweb_callback_language: str = "EN2"
+    imovelweb_public_base_url: str = ""
+    imovelweb_verify_by_refetch: bool = False
+
     # ─── Instagram Business Login (Instagram-Login model) ──────────────
     # A SEPARATE app credential pair from meta_app_id/meta_app_secret
     # above — Instagram Business Login authenticates against its OWN
