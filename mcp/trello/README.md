@@ -43,6 +43,33 @@ Every write refuses without `confirm=true` and returns a typed `412`
 **before any side effect**. Every tool description says up front whether it
 costs a network call.
 
+## Where Trello's own spec will mislead you
+
+These are properties of the **vendor's** document, not bugs in this connector.
+Each one has already cost someone time, so they are written down rather than
+re-discovered.
+
+- **`describe_model('Checklist')` looks broken. It is not.** Trello's spec
+  documents that schema as essentially `{id}` — no `name`, no `pos`, no items.
+  The real shape only appears in the nested response bodies (`GET
+  /checklists/{id}`, and the `checklists` array inside a card fetched with the
+  right `include`). **Do not design a checklist model off the named schema**,
+  and do not go debugging the `describe_model` handler when it returns almost
+  nothing — ask `describe_operation` for the operation instead.
+- **`Action` has no flat comment text.** The comments/activity model carries
+  `data`, `date`, `display`, `memberCreator`, `type` — and the actual comment
+  body lives *inside* the free-form `data` blob, whose shape varies by `type`.
+  Any unified timeline built against this needs a **per-`type` parser**, not one
+  flat comment model. (This is the finding that confirmed the discriminated-union
+  timeline in the card-hub contract was the right shape.)
+- **`Card.badges` is richer than the obvious counts** — beyond `checkItems` /
+  `checkItemsChecked` / `comments` / `attachments` / `description` / `due` /
+  `dueComplete` it also carries `attachmentsByType`, `viewingMemberVoted`,
+  `location` and `fogbugz`.
+- **`Member` carries more than an id and a name** — `bio`, `avatarUrl`,
+  `initials`, `status` are all there, which matters if you are modelling an
+  assignee UI rather than just a foreign key.
+
 ## Architecture
 
 **No `noctusai_lib.integrations.trello` seed adapter, deliberately.** No
