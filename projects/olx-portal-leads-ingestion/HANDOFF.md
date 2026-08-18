@@ -199,6 +199,32 @@ and every `OLX_ENDPOINT_BASELINE` row carries `expected_http_status: null`
 with `probe_status: "unverified"`. Nothing was guessed into a green-looking
 number. `PROJECT.md § Gate 1` has the checklist and the four open questions.
 
+## What the FULL mcp/noctusai suite caught (and the fast suites could not)
+
+Running it takes ~70 minutes, so it is easy to skip. It came back `rc=1`
+with three defects that were **mine**, none visible to the per-module runs:
+
+1. **`cli.py --help` was broken outright.** argparse `%`-expands help strings,
+   and the new `--render-kb-counts` help contained a literal `%A` (describing
+   git's merge result) → `ValueError: unsupported format character 'A'`. `%%A`
+   renders correctly. Caught by `test_cli_worktree_path`, which asserts
+   `--help` runs at all — a test worth knowing exists before touching argparse.
+2. **Two NEW high-severity compliance regressions vs the committed baseline**,
+   both *monkeypatching our own code in tests*
+   (`patch(...resolve_olx_config)`, `monkeypatch(resolve_portal_source_slug)`).
+   Fixed with real seams — `app/modules/portal_leads/deps.py` (module-level
+   config provider) and an `ingest_olx_lead(..., portal_rules=…)` parameter —
+   **not** by adding fingerprints to the baseline.
+
+> ⚠️ **The task notification for that background run said "exit code 0".**
+> That is the shell wrapper's status; pytest itself returned `rc=1`
+> (5 failed / 3596 passed). Same trap as `cmd | tail`, one layer out — read
+> the summary line, not the wrapper.
+
+Pre-existing and **not** from this branch (verified by reproducing on
+unmodified `dev` in the primary checkout):
+`test_graph_extractor_correctness.py::TestEdgeFloors::test_cache_edge_floor[semantic_neighbor-100]`.
+
 ## Findings worth keeping
 
 1. **`iter_paged_rows` is new seed surface on a hot path.** Three social-wiring
