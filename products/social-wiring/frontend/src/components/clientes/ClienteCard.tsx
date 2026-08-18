@@ -8,6 +8,15 @@
  * ad-hoc, pre-extraction version Phase 1's checkpoint only needs ("the
  * board shows one card per human"). Built local per the
  * `noc-organ-consume-check` skill's Step-4 guidance for a no-match intent.
+ *
+ * Phase 2 (`lead-card-hub-p2-PROJECT.md` §4) wires this card's click target
+ * — it had none — and layers the Trello-grade badge row on top via the new
+ * `ClienteCardFace` (`components/card/**`, presentational). The colour
+ * strip / due pill / description glyph / anexos / checklist badges render
+ * only when `cliente.badges`/`cliente.tags` are present on the row this
+ * page's list endpoint returns; see the ASSUMPTION note on `Cliente` in
+ * `useClientes.ts` for the open question of whether P1's list endpoint
+ * carries them yet.
  */
 import { Mail, Phone, RotateCcw, ShieldAlert } from "lucide-react";
 
@@ -16,20 +25,39 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDate } from "@noctusai/lib";
 import { formatCountOrDash, type Cliente } from "@/hooks/useClientes";
+import { ClienteCardFace } from "@/components/card/ClienteCardFace";
 
 export interface ClienteCardProps {
   cliente: Cliente;
   onRestore: (cliente: Cliente) => void;
   restoring: boolean;
+  /** Opens the Phase-2 detail dialog (`ClienteDetailModal`). Optional so
+   *  existing P1 callers/tests that don't pass it keep working unchanged. */
+  onOpen?: (cliente: Cliente) => void;
 }
 
-export function ClienteCard({ cliente, onRestore, restoring }: ClienteCardProps) {
+export function ClienteCard({ cliente, onRestore, restoring, onOpen }: ClienteCardProps) {
   return (
     <Card
       data-testid="cliente-card"
-      className={`h-full ${!cliente.ativo ? "opacity-80" : ""}`}
+      className={`h-full ${!cliente.ativo ? "opacity-80" : ""} ${onOpen ? "cursor-pointer" : ""}`}
+      onClick={onOpen ? () => onOpen(cliente) : undefined}
     >
       <CardContent className="space-y-3 p-4">
+        {(cliente.badges || cliente.tags?.length) && (
+          <ClienteCardFace
+            nome={cliente.nome}
+            corFaixa={cliente.tags?.[0]?.cor}
+            datas={{
+              data_entrega: cliente.data_entrega ?? null,
+              entrega_concluida: cliente.entrega_concluida ?? false,
+            }}
+            badges={cliente.badges ?? null}
+            className="border-none p-0"
+            testId="cliente-card-face"
+          />
+        )}
+
         <div className="flex items-start justify-between gap-2">
           <p className="line-clamp-2 text-sm font-semibold leading-snug">{cliente.nome}</p>
           {!cliente.ativo && (
@@ -80,7 +108,13 @@ export function ClienteCard({ cliente, onRestore, restoring }: ClienteCardProps)
             size="sm"
             className="w-full"
             disabled={restoring}
-            onClick={() => onRestore(cliente)}
+            onClick={(e) => {
+              // Never let the click bubble to the Card's onOpen — restoring
+              // and opening the detail dialog are two different actions
+              // living on the same click surface.
+              e.stopPropagation();
+              onRestore(cliente);
+            }}
             data-testid="cliente-restaurar-btn"
           >
             <RotateCcw className="mr-2 h-3.5 w-3.5" />

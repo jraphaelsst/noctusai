@@ -56,6 +56,21 @@ vi.mock("@/hooks/useLeadsCorretores", () => ({
   useLeadCorretores: () => ({ data: [{ id: "cor1", nome: "João" }] }),
 }));
 
+// lead-card-hub Phase 2: `ClienteDetailModal` pulls in the full `useCardHub`
+// query surface (real `@tanstack/react-query` hooks) — this file has no
+// `QueryClientProvider` (every OTHER data hook here is mocked at the hook
+// level instead, never exercising react-query for real). Stubbed to a
+// marker so this file stays focused on the BOARD's own wiring: which
+// cliente id got opened, not the dialog's internals (covered by
+// `ClienteCardDialog.test.tsx` + `useCardHub.test.ts`).
+vi.mock("@/components/ClienteDetailModal", async () => {
+  const React = await import("react");
+  return {
+    ClienteDetailModal: ({ clienteId, open }: { clienteId: string | null; open: boolean }) =>
+      open ? React.createElement("div", { "data-testid": "cliente-detail-modal", "data-cliente-id": clienteId }) : null,
+  };
+});
+
 function cliente(overrides: Partial<any> = {}) {
   return {
     id: "cl1",
@@ -202,5 +217,58 @@ describe("ClientesBoard — inactive tab + restore (D4)", () => {
     fireEvent.click(getByTestId("cliente-restaurar-btn"));
 
     expect(mockUpdate.mutate).toHaveBeenCalledWith({ id: "cl3", body: { ativo: true } });
+  });
+});
+
+describe("ClientesBoard — click opens the card detail dialog (lead-card-hub Phase 2)", () => {
+  beforeEach(() => {
+    mockUseClientesBoard.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: {
+        items: [cliente({ id: "cl1", nome: "Maria Silva" })],
+        total: 1,
+        page: 1,
+        pages: 1,
+      },
+      refetch: vi.fn(),
+    });
+  });
+
+  it("mounts no dialog until a card is clicked", async () => {
+    const { queryByTestId } = await renderPage();
+    expect(queryByTestId("cliente-detail-modal")).toBeNull();
+  });
+
+  it("clicking the card mounts the detail dialog for that cliente id", async () => {
+    const { getByTestId } = await renderPage();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("cliente-card"));
+
+    const modal = getByTestId("cliente-detail-modal");
+    expect(modal.getAttribute("data-cliente-id")).toBe("cl1");
+  });
+
+  it("clicking Restaurar does not also open the dialog", async () => {
+    mockUseClientesBoard.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: {
+        items: [cliente({ id: "cl3", nome: "Pessoa Inativa", ativo: false })],
+        total: 1,
+        page: 1,
+        pages: 1,
+      },
+      refetch: vi.fn(),
+    });
+    const { getByTestId, queryByTestId } = await renderPage();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("cliente-restaurar-btn"));
+
+    expect(queryByTestId("cliente-detail-modal")).toBeNull();
   });
 });

@@ -37,6 +37,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { ClienteCard } from "@/components/clientes/ClienteCard";
+import { ClienteDetailModal } from "@/components/ClienteDetailModal";
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import {
   useClienteMutations,
@@ -54,6 +55,10 @@ export default function ClientesBoard() {
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState<string | undefined>(undefined);
   const [corretorId, setCorretorId] = useState<string | undefined>(undefined);
+  // lead-card-hub Phase 2 (PROJECT.md §4): the board had no click target at
+  // all. Opening a cliente mounts the ONE card detail dialog — the same
+  // component the funil board will mount once slice `054` lands.
+  const [openClienteId, setOpenClienteId] = useState<string | null>(null);
 
   const filtros: ClientesFiltros = {
     page,
@@ -186,6 +191,7 @@ export default function ClientesBoard() {
                 cliente={cliente}
                 onRestore={restore}
                 restoring={update.isPending && update.variables?.id === cliente.id}
+                onOpen={(c) => setOpenClienteId(c.id)}
               />
             ))}
           </div>
@@ -215,6 +221,12 @@ export default function ClientesBoard() {
           )}
         </>
       )}
+
+      <ClienteDetailModal
+        clienteId={openClienteId}
+        open={!!openClienteId}
+        onClose={() => setOpenClienteId(null)}
+      />
     </div>
   );
 }

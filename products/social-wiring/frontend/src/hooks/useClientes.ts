@@ -37,6 +37,30 @@ export interface Cliente {
   /** ASSUMPTION — see file header. `undefined`/`null` renders "—", never "0". */
   touch_count?: number | null;
   negociacoes_abertas?: number | null;
+  /**
+   * lead-card-hub-p2-PROJECT.md §3: "the board list endpoint must return
+   * these counts inline for every card [so it can render card faces
+   * without N+1 calls]". That requirement is stated against the BOARD
+   * list, but this file's route (`GET /api/clientes`) is P1's contract —
+   * whether P2's backend slice enriches THIS SAME response, or only the
+   * single-record `GET /clientes/{id}/card`, is left unresolved by both
+   * contracts (surfaced, not silently assumed either way). Optional here:
+   * `ClienteCardFace` already renders nothing when badges/tags are absent,
+   * so the board face degrades gracefully — no badges, no colour strip —
+   * until/unless the list route is confirmed to carry them.
+   */
+  tags?: { id: string; nome: string; cor: string }[];
+  badges?: {
+    notas: number;
+    documentos: number;
+    touches: number;
+    checklist_total: number;
+    checklist_concluidos: number;
+    tem_descricao: boolean;
+    temperatura: { valor: number; rotulo: string; provisoria: true } | null;
+  };
+  data_entrega?: string | null;
+  entrega_concluida?: boolean;
 }
 
 export interface ClientesFiltros {
