@@ -9,6 +9,9 @@
  *   - Seed lib + framework alias resolution (mirrors `vite.config.factory.ts`).
  *   - `@noctusai/seed/infra` subpath alias so `vi.mock(...)` can stub the
  *     api at the seed boundary in product hook tests.
+ *   - Test-env stand-ins for the required `VITE_SUPABASE_*` build vars, so a
+ *     test that merely reaches the infra module transitively does not die at
+ *     import (see `test.env` below).
  *   - **React single-instance guard** (see below) so a product test can RENDER
  *     a seed organ, not just call its hooks.
  *
@@ -86,6 +89,22 @@ function resolveFromProductDir(productDir: string) {
   return { repoRoot, seedLib, seedFramework, seedInfra };
 }
 
+/**
+ * Stand-in values for the BUILD-time vars the seed refuses to start without.
+ * Applied to `process.env` at config-load time so Vite's `loadEnv` folds them
+ * into `import.meta.env` for every transformed module. See the `test.env`
+ * comment inside the factory for why the config key alone does not suffice.
+ */
+const TEST_VITE_ENV: Record<string, string> = {
+  VITE_SUPABASE_URL: "http://localhost:54321",
+  VITE_SUPABASE_PUBLISHABLE_KEY: "test-anon-key-not-a-secret",
+};
+
+for (const [key, value] of Object.entries(TEST_VITE_ENV)) {
+  // Never clobber a real value — a product or CI job may set its own.
+  if (!process.env[key]) process.env[key] = value;
+}
+
 export function createProductVitestConfig(
   options: ProductVitestConfigOptions = {}
 ): UserConfig {
@@ -119,6 +138,36 @@ export function createProductVitestConfig(
     test: {
       globals: true,
       environment,
+      // Deterministic stand-ins for the two BUILD-time vars the seed's
+      // `supabase.ts` refuses to start without. Vite inlines `VITE_*` at
+      // `vite build`; under vitest nothing inlines them, so ANY test whose
+      // import chain reaches `@noctusai/seed/infra` — even transitively,
+      // even when the test never touches Supabase — dies at module scope
+      // with the build-args help text.
+      //
+      // Products had been routing around this by mocking the infra module in
+      // each affected test file (30 files across the fleet). That works until
+      // a component quietly gains an import that reaches infra: the test file
+      // that never needed the mock starts failing for a reason unrelated to
+      // what it asserts. Exactly that happened on 2026-08-18 — adding a
+      // webhook card to social-wiring's Configuracao page took 14 unrelated,
+      // long-passing tests red in CI.
+      //
+      // Values are obvious non-secrets and are never dialled: the client is
+      // constructed but every test either mocks the api boundary or renders
+      // against fixtures. A product needing different values passes them via
+      // `extend`. This does NOT weaken the production guard — the real check
+      // runs in `main.tsx` before render, at build time, where it belongs.
+      //
+      // Declared BOTH here and on `process.env` at config-load time (see
+      // `TEST_VITE_ENV` above the factory). `test.env` alone is not enough:
+      // in Vitest 4 it populates `process.env` but NOT `import.meta.env`
+      // (measured 2026-08-18), and the seed reads through a DYNAMIC key
+      // (`import.meta.env?.[viteKey]`), which vite's `define` cannot rewrite
+      // either. Vite's `loadEnv` DOES fold prefix-matching `process.env`
+      // keys into `import.meta.env`, so setting them before the config is
+      // returned is what actually reaches the seed.
+      env: { ...TEST_VITE_ENV },
       // Seed setup provisions localStorage/sessionStorage that vitest's jsdom
       // env omits — runs before any test module imports (so module-scope
       // persist stores are constructed against real storage).

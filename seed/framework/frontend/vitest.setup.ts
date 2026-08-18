@@ -51,3 +51,4 @@ function ensureStorage(name: "localStorage" | "sessionStorage"): void {
 
 ensureStorage("localStorage");
 ensureStorage("sessionStorage");
+
