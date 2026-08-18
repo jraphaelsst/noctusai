@@ -98,3 +98,12 @@ python-docx>=1.1.0              # knowledge-extractor (docx_export service)
 pytest>=8.0.0
 pytest-asyncio>=0.21.0
 pytest-timeout>=2.3.0           # social-wiring test suite
+# pglast — the PostgreSQL grammar the migration tests parse real DDL with
+# (social-wiring test_migration_040/047/048). Absent here, all three
+# `pytest.importorskip("pglast")` guards fire and the tests SKIP — including
+# 048, the largest and only non-additive migration this program has shipped.
+# A green CI run was reporting on three suites that never executed. Same
+# class as the runtime-dep block above, one section down: a TEST-only import
+# missing from the superset is just as invisible, and skips are quieter than
+# errors. Found by the wrap-up survey 2026-08-18.
+pglast>=6.0                     # social-wiring (migration DDL parse tests)

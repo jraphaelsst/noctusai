@@ -128,7 +128,7 @@ def _register_media_wiring() -> ModuleRegistration:
         router as clientes_router,
     )
     from app.services.meta import scheduler as meta_insights_scheduler
-    from app.services import whatsapp_backfill
+    from app.services import clientes_backfill_job, whatsapp_backfill
 
     # Register the daily IG-snapshot job on the seed scheduler now (import
     # time) so it lands before `start_scheduler()` fires in app/lifespan.py
@@ -139,6 +139,10 @@ def _register_media_wiring() -> ModuleRegistration:
     # whatsapp-realtime-inbox) — must be registered before
     # `start_scheduler()` fires or the job never runs.
     whatsapp_backfill.configure()
+    # lead-card-hub Phase 1 steady state — attaches intake that landed after
+    # the one-shot backfill to its cliente. Same import-time registration
+    # rule as the two jobs above: before `start_scheduler()` in lifespan.
+    clientes_backfill_job.configure()
 
     # ONE combined router (`/api/auth` + `/api/settings/api-tokens`) —
     # see the module docstring above for why this calls the factory

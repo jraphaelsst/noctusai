@@ -3,7 +3,8 @@
 > **Parent roadmap:** `project-history/roadmaps/lead-card-hub-2026-08.md` (D1–D17 ratified
 > 2026-08-07). Phase 0 shipped 2026-08-08 (`clients` → `marcas`, 73 files, AST-first).
 > **Trigger T1 fired 2026-08-13** — `clientes` is free, user said continue.
-> **Status:** ⏳ contract authored → dispatched.
+> **Status:** ⏳ slices A/B/C shipped + `048` applied; checkpoint NOT met —
+> see §7a (the backfill had no steady state; 88 rows unattached as of 2026-08-18).
 
 Phase 1 is the foundation. Phases 2, 2b, 3, 4 and 5 all attach to `clientes`, so a
 shape mistake here is paid for five times.
@@ -177,6 +178,41 @@ Therefore:
 - Concurrency: intake writes to `leads` during the backfill. A lead arriving mid-run must
   not be silently skipped. Either handle it, or make the backfill re-runnable such that a
   second pass picks up stragglers — and say which.
+
+## 7a · 🔴 Found 2026-08-18 — the backfill had no steady state
+
+§7 above closed the MID-run race (a lead arriving while the backfill works).
+It did not close the POST-run one, and that is where the loss happened.
+
+`run_backfill` was applied once, by hand, on **2026-08-13 16:42**. Nothing in
+the codebase ever called it again — no router, no scheduler job, no trigger on
+`leads` / `meta_ads_leads` (verified: `social_wiring` has no triggers on those
+tables). Intake never stopped. Measured against the live project on
+**2026-08-18 11:31**:
+
+| Checkpoint invariant | Expected | Live | Gap |
+|---|---:|---:|---:|
+| `cliente_touches` == leads + meta_ads_leads | 14 571 | 14 483 | **−88** |
+| `leads` with no touch | 0 | **44** | |
+| `meta_ads_leads` with no touch | 0 | **44** | |
+| `negociacoes_venda.cliente_id IS NULL` | 0 | **88** | |
+
+Every one of the 88 was created AFTER the backfill ran (oldest
+`2026-08-13 23:21`, ~7 h later; newest today). **None are keyless** — all 44
+leads carry a valid `contato_norm`, so all were fully resolvable. This is not
+a predicate problem; the rows were simply never processed. The board silently
+stopped showing new arrivals at roughly **nine leads a day**.
+
+**A one-shot backfill against a table that keeps growing is a snapshot, not a
+projection.** The re-runnability §7 demanded was built and correct — what was
+missing was anything that re-ran it.
+
+Closed by `app/services/clientes_backfill_job.py` (branch
+`feat/lch-p1-clientes-backfill-steady-state`): a 6-hourly seed-scheduler sweep
+shaped exactly like the sibling `whatsapp_backfill` job, per-org isolated,
+registered from `app/main.py` at import time. **Written and tested, NOT
+applied** — per §7 the first prod run is the user's decision, and that run is
+what attaches the 88.
 
 ## 8 · Checkpoint
 
