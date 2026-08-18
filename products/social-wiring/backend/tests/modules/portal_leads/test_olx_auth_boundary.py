@@ -20,6 +20,12 @@ from tests.modules.portal_leads.conftest import ORG_A  # noqa: F401 — fixture 
 PUBLIC_ROUTES = {
     ("POST", "/api/portals/olx/leads"):
         "Grupo OLX posts here with HTTP Basic and no JWT; the secret IS the auth.",
+    ("POST", "/api/portals/olx/leads/{receiver_token}"):
+        "Same delivery, multi-tenant form. The path token names the "
+        "advertiser; it is NOT the authentication — the same Basic secret "
+        "gates it, and an unresolvable token still gets a 200 with the "
+        "event parked as unresolved. Public for the same reason as its "
+        "tokenless sibling: the vendor has no JWT to send.",
 }
 
 #: Routes that MUST require a session.

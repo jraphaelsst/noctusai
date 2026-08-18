@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
@@ -46,6 +47,9 @@ from app.modules.portal_leads.services.olx_webhook_service import (
     OlxWebhookService,
 )
 from app.modules.portal_leads.services import olx_ingest_service
+from app.modules.portal_leads.services.receiver_token_service import (
+    resolve_receiver_token,
+)
 from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
@@ -81,6 +85,25 @@ def get_olx_service(client: Any = Depends(get_leads_client)) -> OlxWebhookServic
     return OlxWebhookService(client=client, default_org_id=default_org)
 
 
+def get_olx_service_for_org(client: Any, org_id: UUID) -> OlxWebhookService:
+    """A service pinned to one advertiser, for the tokenized route.
+
+    The token **outranks** `clientListingId`, which is why `org_resolver`
+    is overridden rather than only `default_org_id` being set. Rung 2
+    resolves `clientListingId` → `imoveis.codigo` → `org_id`, and
+    `imoveis.codigo` is not unique across orgs — two advertisers may
+    legitimately both use the code `A-101`. The token was registered by
+    this advertiser, in their own Canal Pro, so it is the stronger
+    statement; letting a listing-code collision override it would deliver
+    one client's customer to another client's CRM.
+    """
+    return OlxWebhookService(
+        client=client,
+        default_org_id=org_id,
+        org_resolver=lambda _client, _lead: org_id,
+    )
+
+
 @router.post("/leads")
 @limiter.limit(settings.webhook_rate_limit)
 async def receive_olx_lead(
@@ -93,12 +116,84 @@ async def receive_olx_lead(
     ),
     svc: OlxWebhookService = Depends(get_olx_service),
 ) -> JSONResponse:
-    """Receive one authenticated Grupo OLX lead.
+    """Receive one authenticated Grupo OLX lead — single-tenant form.
+
+    Kept alongside the tokenized route below, not superseded by it: this
+    is org-resolution rung 3 (`OLX_LEADS_ORG_ID`), and it is the URL any
+    homologation already in flight would have been given. Removing it
+    would break a registration we cannot re-do unilaterally.
 
     `bypass_when_unset=False` is not a default worth inheriting quietly:
     with no secret configured this route answers 401 rather than
     accepting anything. The alternative — an open endpoint that writes
     leads — is worse than a receiver that is temporarily down.
+    """
+    return _handle_delivery(verified, svc)
+
+
+@router.post("/leads/{receiver_token}")
+@limiter.limit(settings.webhook_rate_limit)
+async def receive_olx_lead_for_advertiser(
+    request: Request,
+    receiver_token: str,
+    verified: VerifiedWebhook = webhook_endpoint(
+        secret_resolver=_resolve_olx_secret,
+        scheme="basic_shared_secret",
+        bypass_when_unset=False,
+        log_prefix="olx-lead-webhook",
+    ),
+    client: Any = Depends(get_leads_client),
+) -> JSONResponse:
+    """Receive one Grupo OLX lead for the advertiser named by the path.
+
+    This is the multi-tenant form, and the one a homologated CRM hands
+    to each advertiser to paste into Canal Pro → Integrações → Leads →
+    "Receber leads no CRM". The vendor's `SECRET_KEY` is per CRM, not per
+    advertiser, so the path segment is the only thing that says whose
+    lead this is.
+
+    **An unknown token is not refused.** Authentication has already
+    passed at this point — the caller holds our CRM secret, so this is
+    Grupo OLX — which makes a revoked-or-rotated token overwhelmingly
+    more likely than an attack. Falling through to the default resolver
+    parks the delivery as `unresolved` behind a 200: the body is stored,
+    a human can place it, and the vendor does not retry three times and
+    then discard a real customer. Refusing would be the one irreversible
+    choice available here.
+    """
+    org_id = resolve_receiver_token(client, provider="olx", token=receiver_token)
+    if org_id is None:
+        logger.warning(
+            "olx-webhook: receiver token %r did not resolve — parking the "
+            "delivery as unresolved rather than refusing it or guessing an org",
+            receiver_token[:12],
+        )
+        # 🔴 Deliberately NOT `get_olx_service(...)`. That dependency falls
+        # back to `OLX_LEADS_ORG_ID`, which on a multi-tenant deployment is
+        # some *other* advertiser's org — a stale token would then deliver
+        # this client's customer into that client's CRM, silently and
+        # irreversibly. A caller that addressed us by token gets resolved by
+        # token or not at all; `None` parks the event as `unresolved`, which
+        # a human can place. Same refusal-to-guess as `_resolve_org`'s
+        # step-4, one layer out.
+        svc = OlxWebhookService(
+            client=client,
+            default_org_id=None,
+            org_resolver=lambda _client, _lead: None,
+        )
+    else:
+        svc = get_olx_service_for_org(client, org_id)
+    return _handle_delivery(verified, svc)
+
+
+def _handle_delivery(
+    verified: VerifiedWebhook, svc: OlxWebhookService
+) -> JSONResponse:
+    """Everything after authentication, shared by both routes.
+
+    Extracted rather than duplicated: the status codes below ARE the
+    protocol, and two copies would eventually disagree about which one
+    condition earns a 4xx.
     """
     try:
         payload = json.loads(verified.body or b"{}")
