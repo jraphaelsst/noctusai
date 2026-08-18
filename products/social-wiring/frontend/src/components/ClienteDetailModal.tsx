@@ -11,20 +11,22 @@
  * `054` lands, the funil card — just render `<ClienteDetailModal
  * clienteId={id} open onClose={...} />` from either surface.
  *
- * CONTRACT GAP, surfaced rather than silently resolved (PROJECT.md §5's
- * "do not invent a field" anti-goal): `cliente_notas` (§2) covers BOTH
- * Trello's *Descrição* (one field, editable) and *Comentários* (a growing
- * thread) with NO discriminator column. This build treats the OLDEST
- * loaded `nota` timeline entry as "the description" and every other nota
- * as a comment; the composer always POSTs a new note, never touching the
- * description note. This only see the descrição correctly once the
- * timeline has paged back far enough to include the very first note — an
- * accepted, disclosed limitation for now (`drift-found:` below), not
- * silently patched over. The clean fix is a backend discriminator (e.g. a
- * dedicated `clientes.descricao` column, or a `tipo` flag on
- * `cliente_notas`).
+ * DESCRIÇÃO vs. COMENTÁRIOS (backend correction, landed on `origin/dev`
+ * after this slice's first pass surfaced the gap): `cliente_notas` now
+ * carries a `tipo: "descricao" | "comentario"` discriminator
+ * (`card_hub/schemas.py::NotaCreateBody`). `CardResumo.descricao` is the
+ * single description note (or `null`) — the timeline never contains it
+ * (`card_hub/timeline_service.py::_gather_notas` filters `tipo=
+ * "comentario"` explicitly). The description editor below edits-by-id
+ * when `card.data.descricao` exists, or creates with `tipo: "descricao"`
+ * when it doesn't; the composer always creates with the default
+ * `tipo: "comentario"`. The backend enforces at most one non-deleted
+ * description per cliente (a partial unique index) and returns a typed
+ * 409 on a second create — surfaced here via a toast with the server's
+ * own message, not left to read as a network failure.
  */
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import { toast } from "sonner";
 
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import {
@@ -45,12 +47,19 @@ import {
 } from "@/hooks/useCardHub";
 
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
-import type { TimelineNotaEntry } from "@/types/cardHub";
 
 export interface ClienteDetailModalProps {
   clienteId: string | null;
   open: boolean;
   onClose: () => void;
+}
+
+/** The server's own message when a mutation fails — never a silently
+ *  swallowed rejection (e.g. the 409 on a second `descricao`, or the
+ *  400 naming exactly which upload limit was hit). */
+function toastServerError(err: unknown, fallback: string) {
+  const message = err instanceof Error && err.message ? err.message : fallback;
+  toast.error(message);
 }
 
 export function ClienteDetailModal({ clienteId, open, onClose }: ClienteDetailModalProps) {
@@ -80,35 +89,43 @@ export function ClienteDetailModal({ clienteId, open, onClose }: ClienteDetailMo
 
   const timelineEntries = flattenTimeline(timeline.data?.pages);
 
-  // See docblock — the oldest LOADED `nota` entry stands in for "the
-  // description" until the backend carries a real discriminator.
-  const descricaoNota = useMemo(() => {
-    const notas = timelineEntries.filter(
-      (e): e is TimelineNotaEntry => e.kind === "nota" && !e.deleted_at,
-    );
-    if (notas.length === 0) return null;
-    return notas.reduce((oldest, cur) =>
-      new Date(cur.ocorrido_em) < new Date(oldest.ocorrido_em) ? cur : oldest,
-    );
-  }, [timelineEntries]);
-
   const loading = card.isPending || card.isFetching;
   const isError = card.isError;
   const notFound = !loading && !isError && shouldFetch && card.data === undefined;
 
   function handleSaveDescricao(corpo: string) {
-    if (descricaoNota) {
-      notaMutations.update.mutate({ notaId: descricaoNota.id, corpo });
+    const descricao = card.data?.descricao;
+    if (descricao) {
+      notaMutations.update.mutate(
+        { notaId: descricao.id, corpo },
+        { onError: (err) => toastServerError(err, "Não foi possível salvar a descrição.") },
+      );
     } else {
-      notaMutations.create.mutate(corpo);
+      notaMutations.create.mutate(
+        { corpo, tipo: "descricao" },
+        {
+          // The backend's 409 on a duplicate description lands here —
+          // shown with its own message, never a generic failure.
+          onError: (err) => toastServerError(err, "Não foi possível criar a descrição."),
+        },
+      );
     }
+  }
+
+  function handlePostComentario(corpo: string) {
+    notaMutations.create.mutate(
+      { corpo, tipo: "comentario" },
+      { onError: (err) => toastServerError(err, "Não foi possível enviar o comentário.") },
+    );
   }
 
   function handleToggleTag(tagId: string) {
     if (!card.data) return;
     const current = card.data.tags.map((t) => t.id);
     const next = current.includes(tagId) ? current.filter((t) => t !== tagId) : [...current, tagId];
-    setTagsMutation.mutate(next);
+    setTagsMutation.mutate(next, {
+      onError: (err) => toastServerError(err, "Não foi possível atualizar as etiquetas."),
+    });
   }
 
   function handleToggleMembro(membroId: string) {
@@ -117,7 +134,9 @@ export function ClienteDetailModal({ clienteId, open, onClose }: ClienteDetailMo
     const next = current.includes(membroId)
       ? current.filter((m) => m !== membroId)
       : [...current, membroId];
-    setMembrosMutation.mutate(next);
+    setMembrosMutation.mutate(next, {
+      onError: (err) => toastServerError(err, "Não foi possível atualizar os membros."),
+    });
   }
 
   function handleEditTag(tagId: string) {
@@ -125,7 +144,10 @@ export function ClienteDetailModal({ clienteId, open, onClose }: ClienteDetailMo
     if (!tag) return;
     const novoNome = window.prompt("Renomear etiqueta", tag.nome);
     if (novoNome && novoNome.trim() && novoNome.trim() !== tag.nome) {
-      tagCatalogMutations.update.mutate({ tagId, body: { nome: novoNome.trim() } });
+      tagCatalogMutations.update.mutate(
+        { tagId, body: { nome: novoNome.trim() } },
+        { onError: (err) => toastServerError(err, "Não foi possível renomear a etiqueta.") },
+      );
     }
   }
 
@@ -134,6 +156,7 @@ export function ClienteDetailModal({ clienteId, open, onClose }: ClienteDetailMo
       onSuccess: (res) => {
         window.open(res.url, "_blank", "noopener,noreferrer");
       },
+      onError: (err) => toastServerError(err, "Não foi possível abrir o anexo."),
     });
   }
 
@@ -150,37 +173,64 @@ export function ClienteDetailModal({ clienteId, open, onClose }: ClienteDetailMo
       allTags={tags.data ?? []}
       selectedTags={card.data?.tags ?? []}
       onToggleTag={handleToggleTag}
-      onCreateTag={(nome, cor) => tagCatalogMutations.create.mutate({ nome, cor })}
+      onCreateTag={(nome, cor) =>
+        tagCatalogMutations.create.mutate(
+          { nome, cor },
+          { onError: (err) => toastServerError(err, "Não foi possível criar a etiqueta.") },
+        )
+      }
       onEditTag={handleEditTag}
       colorBlindMode={colorBlindMode}
       onToggleColorBlindMode={setColorBlindMode}
       tagsSaving={setTagsMutation.isPending}
       datas={card.data?.datas ?? null}
-      onSaveDatas={(body) => datasMutation.mutate(body)}
-      onRemoveDatas={() =>
-        datasMutation.mutate({
-          data_inicio: null,
-          data_entrega: null,
-          entrega_concluida: false,
-          lembrete_minutos_antes: null,
-          recorrencia: null,
+      onSaveDatas={(body) =>
+        datasMutation.mutate(body, {
+          onError: (err) => toastServerError(err, "Não foi possível salvar as datas."),
         })
+      }
+      onRemoveDatas={() =>
+        datasMutation.mutate(
+          {
+            data_inicio: null,
+            data_entrega: null,
+            entrega_concluida: false,
+            lembrete_minutos_antes: null,
+            recorrencia: null,
+          },
+          { onError: (err) => toastServerError(err, "Não foi possível remover as datas.") },
+        )
       }
       datasSaving={datasMutation.isPending}
       allMembros={corretores.data ?? []}
       selectedMembros={card.data?.membros ?? []}
       onToggleMembro={handleToggleMembro}
       membrosSaving={setMembrosMutation.isPending}
-      descricaoCorpo={descricaoNota?.corpo ?? ""}
+      descricaoCorpo={card.data?.descricao?.corpo ?? ""}
       onSaveDescricao={handleSaveDescricao}
       descricaoSaving={notaMutations.create.isPending || notaMutations.update.isPending}
       documentos={documentos.data ?? []}
       documentosLoading={documentos.isPending || documentos.isFetching}
       tiposDocumento={tiposDocumento.data ?? []}
-      onUploadDocumento={(file, tipoDocumento) => documentoMutations.upload.mutate({ file, tipoDocumento })}
+      onUploadDocumento={(file, tipoDocumento) =>
+        documentoMutations.upload.mutate(
+          { file, tipoDocumento },
+          {
+            // The 400 naming the exact limit/type it hit (contract §3) —
+            // never a client-side guess at the ceiling, which is a
+            // platform constant subject to change out from under this UI.
+            onError: (err) => toastServerError(err, "Não foi possível enviar o anexo."),
+          },
+        )
+      }
       uploadingDocumento={documentoMutations.upload.isPending}
       onOpenDocumento={handleOpenDocumento}
-      onDeleteDocumento={(documentoId, motivo) => documentoMutations.remove.mutate({ documentoId, motivo })}
+      onDeleteDocumento={(documentoId, motivo) =>
+        documentoMutations.remove.mutate(
+          { documentoId, motivo },
+          { onError: (err) => toastServerError(err, "Não foi possível remover o anexo.") },
+        )
+      }
       checklists={checklists.data ?? []}
       checklistsLoading={checklists.isPending || checklists.isFetching}
       onCreateChecklist={(titulo) => checklistMutations.createChecklist.mutate(titulo)}
@@ -196,7 +246,7 @@ export function ClienteDetailModal({ clienteId, open, onClose }: ClienteDetailMo
       timelineHasMore={!!timeline.hasNextPage}
       timelineLoadingMore={timeline.isFetchingNextPage}
       onTimelineLoadMore={() => timeline.fetchNextPage()}
-      onPostComentario={(corpo) => notaMutations.create.mutate(corpo)}
+      onPostComentario={handlePostComentario}
       postingComentario={notaMutations.create.isPending}
     />
   );

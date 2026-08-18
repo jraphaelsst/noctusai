@@ -34,24 +34,44 @@ export interface Tag {
 export interface Membro {
   id: string;
   nome: string;
+  /** `lead_corretores.cor`, when set — optional avatar accent. */
+  cor?: string | null;
 }
 
 // ─── Notas ───────────────────────────────────────────────────────────────
 
+export type NotaTipo = "descricao" | "comentario";
+
 export interface Nota {
   id: string;
+  /**
+   * Backend correction (`card_hub/schemas.py::NotaCreateBody`, landed on
+   * `origin/dev`): Descrição (one per card) and Comentários (many,
+   * chronological) are distinct Trello concepts `cliente_notas` was
+   * originally going to conflate — `tipo` is the real discriminator.
+   * Defaults to `"comentario"` server-side when omitted on create.
+   */
+  tipo: NotaTipo;
   corpo: string;
-  autor: AtorRef;
+  /** `null` when the author id didn't resolve to a known user (`_actor()`). */
+  autor: AtorRef | null;
   /** `null` ⇒ never edited. */
   editado_em: string | null;
   /** Soft-delete tombstone — a deleted note still occupies its timeline slot. */
   deleted_at: string | null;
-  /**
-   * ASSUMPTION — §3 pins the timeline payload's fields but not the bare
-   * POST/PATCH response's. Renders as "agora" when absent (the note was
-   * just created) rather than a lying past timestamp.
-   */
-  criado_em?: string;
+}
+
+/**
+ * The card's single `tipo='descricao'` note (`GET /clientes/{id}/card`'s
+ * `descricao` field) — a NARROWER shape than `Nota`: no `autor`/`tipo`/
+ * `deleted_at`, per `card_hub/services.py::get_descricao`'s own docstring
+ * ("never the autor/deleted_at shape `_nota_out` returns for comentários").
+ * `null` when the card has no description yet.
+ */
+export interface Descricao {
+  id: string;
+  corpo: string;
+  editado_em: string | null;
 }
 
 // ─── Datas + lembretes (screenshot 06) ─────────────────────────────────────
@@ -129,15 +149,18 @@ export interface Documento {
 }
 
 /**
- * ASSUMPTION — §3 lists the route (`GET /clientes/documentos/tipos`) but not
- * `TipoDocumento`'s fields. Modelled as a code+label pair (enough to drive a
- * `<Select>`), following the enrichment pattern (`{id,nome}`) every other
- * reference type in this contract uses.
+ * `card_hub/documentos_service.py::list_tipos_documento` — the real shape
+ * (corrects this file's earlier ASSUMPTION, which guessed `{codigo, nome}`).
+ * `tipo_documento` IS the code (also the multipart form field's value on
+ * upload); there is no separate display label, only `descricao`. The
+ * upload SIZE LIMIT is NOT exposed here (confirmed against the live
+ * route) — never hardcode a client-side ceiling; show the server's typed
+ * 400 verbatim when an upload is rejected instead.
  */
 export interface TipoDocumento {
-  codigo: string;
-  nome: string;
+  tipo_documento: string;
   categoria_lgpd: string;
+  descricao: string | null;
 }
 
 export type DocumentoAcao = "view" | "download" | "delete";
@@ -190,6 +213,12 @@ export interface CardResumo {
   cliente: Cliente;
   tags: Tag[];
   membros: Membro[];
+  /**
+   * Backend correction, landed on `origin/dev`: the card's single
+   * Descrição is card STATE, served here — NEVER in the timeline (see
+   * `TimelineNotaEntry`'s docblock). `null` when no description exists yet.
+   */
+  descricao: Descricao | null;
   datas: CardDatas;
   badges: CardBadges;
   negociacoes: unknown[];
@@ -211,10 +240,16 @@ interface TimelineEntryBase {
   ator: AtorRef | null;
 }
 
+/**
+ * Only `tipo='comentario'` notes ever appear here — `card_hub/
+ * timeline_service.py::_gather_notas` filters `tipo='comentario'`
+ * explicitly. The card's `tipo='descricao'` note is card state
+ * (`CardResumo.descricao`), never a timeline event.
+ */
 export interface TimelineNotaEntry extends TimelineEntryBase {
   kind: "nota";
   corpo: string;
-  autor: AtorRef;
+  autor: AtorRef | null;
   editado_em: string | null;
   deleted_at: string | null;
 }

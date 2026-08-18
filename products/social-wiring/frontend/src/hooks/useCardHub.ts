@@ -35,6 +35,7 @@ import type {
   DatasPatchResponse,
   Membro,
   Nota,
+  NotaTipo,
   Tag,
   TimelineEntry,
   TimelineKind,
@@ -109,9 +110,15 @@ export function useNotaMutations(clienteId: string) {
   const qc = useQueryClient();
   const invalidate = () => invalidateCliente(qc, clienteId);
 
+  // `tipo` mirrors `card_hub/schemas.py::NotaCreateBody` — defaults to
+  // "comentario" (the composer's case); the description editor passes
+  // `tipo: "descricao"` explicitly. The backend enforces at most one
+  // non-deleted "descricao" per cliente and returns a typed 409
+  // (`ConflictError`) on a second — callers MUST surface `err.message`
+  // rather than let a rejected create read as a network failure.
   const create = useMutation({
-    mutationFn: (corpo: string) =>
-      api.post<Nota>(`${clienteBase(clienteId)}/notas`, { corpo }),
+    mutationFn: ({ corpo, tipo = "comentario" }: { corpo: string; tipo?: NotaTipo }) =>
+      api.post<Nota>(`${clienteBase(clienteId)}/notas`, { corpo, tipo }),
     onSuccess: invalidate,
   });
 
@@ -449,25 +456,16 @@ export function useDocumentoMutations(clienteId: string) {
     onSuccess: invalidate,
   });
 
-  // The seed `ApiClient.delete()` is body-less (`delete<T>(path: string)`),
-  // but §3 spells this route as `DELETE .../documentos/{did} {motivo}` — a
-  // JSON body on DELETE. Raw `fetch` supports that fine; the wrapper just
-  // doesn't expose it (flagged in this slice's `drift-found:` footer as a
-  // seed-`api`-client gap, not silently worked around with a query param).
+  // Backend correction, landed on `origin/dev`
+  // (`card_hub/router.py::delete_documento_route`): `motivo` travels as a
+  // REQUIRED query param, not a JSON body — the seed `ApiClient.delete()`
+  // gap this file originally routed around no longer applies to THIS
+  // route (it may still bite elsewhere; the gap itself is real).
   const remove = useMutation({
-    mutationFn: async ({ documentoId, motivo }: { documentoId: string; motivo: string }) => {
-      const headers = { "Content-Type": "application/json", ...(await getAuthHeader()) };
-      const response = await fetch(apiUrl(`${base}/documentos/${encodeURIComponent(documentoId)}`), {
-        method: "DELETE",
-        headers,
-        body: JSON.stringify({ motivo }),
-      });
-      if (!response.ok && response.status !== 204) {
-        const detail = await response.json().catch(() => null);
-        const message = detail?.error?.message ?? `Erro HTTP ${response.status}`;
-        throw new Error(message);
-      }
-    },
+    mutationFn: ({ documentoId, motivo }: { documentoId: string; motivo: string }) =>
+      api.delete(
+        `${base}/documentos/${encodeURIComponent(documentoId)}?motivo=${encodeURIComponent(motivo)}`,
+      ),
     onSuccess: invalidate,
   });
 

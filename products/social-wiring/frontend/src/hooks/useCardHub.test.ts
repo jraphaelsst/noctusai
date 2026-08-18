@@ -103,6 +103,7 @@ import {
   useChecklistMutations,
   useDatasMutation,
   useDocumentoMutations,
+  useNotaMutations,
   useSetClienteTagsMutation,
   useTags,
   useTimeline,
@@ -264,15 +265,42 @@ describe("useDocumentoMutations", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it("remove() sends a DELETE with a JSON {motivo} body via raw fetch — the seed api.delete() cannot carry a body", async () => {
-    (globalThis.fetch as any).mockResolvedValue({ ok: true, status: 204, json: async () => null });
+  it("remove() sends motivo as a REQUIRED query param via the normal api.delete() — the backend route takes it that way, not a body", async () => {
+    mockDelete.mockResolvedValue(undefined);
     const { remove } = useDocumentoMutations("cl1");
     await (remove as any).mutateAsync({ documentoId: "doc1", motivo: "Removido pelo usuário" });
 
-    const [url, init] = (globalThis.fetch as any).mock.calls[0];
-    expect(url).toContain("/api/clientes/cl1/documentos/doc1");
-    expect(init.method).toBe("DELETE");
-    expect(JSON.parse(init.body)).toEqual({ motivo: "Removido pelo usuário" });
-    expect(mockDelete).not.toHaveBeenCalled();
+    expect(mockDelete).toHaveBeenCalledWith(
+      "/api/clientes/cl1/documentos/doc1?motivo=Removido%20pelo%20usu%C3%A1rio",
+    );
+    // No raw-fetch DELETE for this route anymore — the seed api client's
+    // delete() has no body parameter, but this route no longer needs one.
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("useNotaMutations — tipo discriminator (descricao vs. comentario)", () => {
+  it("create() defaults tipo to comentario when omitted", async () => {
+    mockPost.mockResolvedValue({ id: "n1", tipo: "comentario", corpo: "oi", autor: null, editado_em: null, deleted_at: null });
+    const { create } = useNotaMutations("cl1");
+    await (create as any).mutateAsync({ corpo: "oi" });
+    expect(mockPost).toHaveBeenCalledWith("/api/clientes/cl1/notas", { corpo: "oi", tipo: "comentario" });
+  });
+
+  it("create() sends tipo: descricao when creating the description", async () => {
+    mockPost.mockResolvedValue({ id: "n2", tipo: "descricao", corpo: "desc", autor: null, editado_em: null, deleted_at: null });
+    const { create } = useNotaMutations("cl1");
+    await (create as any).mutateAsync({ corpo: "desc", tipo: "descricao" });
+    expect(mockPost).toHaveBeenCalledWith("/api/clientes/cl1/notas", { corpo: "desc", tipo: "descricao" });
+  });
+
+  it("create() propagates a 409 (duplicate descricao) as a rejected promise carrying the server message, never swallowed", async () => {
+    mockPost.mockRejectedValue(
+      new Error("[409] Este cliente já possui uma descrição — edite a existente em vez de criar outra."),
+    );
+    const { create } = useNotaMutations("cl1");
+    await expect((create as any).mutateAsync({ corpo: "desc", tipo: "descricao" })).rejects.toThrow(
+      "já possui uma descrição",
+    );
   });
 });

@@ -237,7 +237,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
-                    if (file) props.onUploadDocumento(file, props.tiposDocumento[0]?.codigo ?? "outro");
+                    if (file) props.onUploadDocumento(file, props.tiposDocumento[0]?.tipo_documento ?? "outro");
                     e.target.value = "";
                   }}
                 />
