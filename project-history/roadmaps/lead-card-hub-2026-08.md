@@ -6,12 +6,27 @@
 > sets of information. I need both"* — and asked for the card to become the place
 > that **centralizes everything about a Lead/Cliente**: documentation, annotations,
 > tags, classifications, temperature, contracts. Explicit reference model: **Trello**
-> (11 screenshots supplied 2026-08-07).
+> (11 screenshots supplied 2026-08-07 — **recovered and committed 2026-08-18** to
+> `assets/lead-card-hub-2026-08/trello-reference/`; read that folder's README, it maps
+> each shot to what it fixes about the design).
 >
-> **Status: design record + Phase 0 shipped. Phases 1–5 are still design-only.**
-> All **17 decisions** below are user-ratified in the 2026-08-07 session, and **§7 is
-> closed**. **Phase 0 shipped 2026-08-08** (migration 046 + 73 files, all suites
-> green); Phases 1–5 remain design-only, gated on **T1**.
+> **Status (re-audited against the tree 2026-08-18): Phase 0 shipped · Phase 1 ~80 %
+> shipped with three named gaps · Phase 2 not started.** All **17 decisions** below are
+> user-ratified in the 2026-08-07 session, and **§7 is closed**.
+>
+> 🔴 **The three Phase-1 gaps — read these before claiming Phase 1 is done:**
+> 1. **P1.4's card collapse never happened.** The schema half landed (`cliente_id` on
+>    `negociacoes_venda`, `exactly_one_origin` retired, rows repointed) but nothing
+>    collapses the 125 duplicate pairs, and `app/modules/pipeline/` + `pages/funil/`
+>    contain **zero** references to `cliente_id`. **`/funil` still shows two cards per
+>    human** — the exact defect that started this roadmap. The requirement was quietly
+>    reduced to "add column + backfill" in `lead-card-hub-p1-PROJECT.md`, so it was
+>    dropped from the contract, not just from the code.
+> 2. **P1.5's 180-day rule does not exist.** Manual archive/restore works; no sweep sets
+>    `inativo_em` and no configurable threshold is stored anywhere.
+> 3. **The cliente timeline is served but never rendered.** `GET /clientes/{id}` and
+>    `GET /clientes/{id}/touches` have no frontend consumer; `ClienteCard` has no click
+>    target at all.
 >
 > **Scope ruling (user-ratified): the card hub is a SHARED ORGAN**, built in
 > `noctusai_lib` + `@noctusai/lib` and consumed by **social-wiring** *and*
@@ -265,6 +280,12 @@ nothing in this roadmap changes.
 | Checklist | stage requirements + ad-hoc (D11) | build new |
 | Card-face badges | due date, description, attachment count, checklist progress, comment count, temperature | build new |
 
+> **The screenshots are now in the repo** —
+> `project-history/roadmaps/assets/lead-card-hub-2026-08/trello-reference/` (11 files,
+> recovered 2026-08-18 from the 2026-08-07 session transcript, where they had been the
+> only copy). Its README maps each shot to the requirement it fixes. Build against the
+> images, not against this table's prose.
+
 The screenshots also fix concrete UI behaviour to reproduce: colour strip + badge
 row on the card face; two-pane detail (content left, activity right); the
 `+ Adicionar` popover; label search with a colour-blind mode; start/due/reminder/
@@ -452,8 +473,8 @@ right person is asked.
 | ID | Trigger | Fires |
 |---|---|---|
 | **T0** | ✅ **FIRED 2026-08-08** — user said continue. | Phase 0 ✅ **SHIPPED** |
-| **T1** | 🟡 **PENDING** — Phase 0 checkpoint accepted by the user; `clientes` is now free | Phase 1 |
-| **T2** | Phase 1 checkpoint accepted — board shows one card per human | Phase 2 |
+| **T1** | ✅ **FIRED** — Phase 0 accepted; `clientes` freed | Phase 1 — **slices A/B/C shipped 2026-08-08…18**, three gaps open (see header) |
+| **T2** | Phase 1 checkpoint accepted — board shows one card per human. 🔴 **NOT met:** `/clientes` shows one card per human, `/funil` still does not (P1.4 gap 1). | Phase 2 |
 | **T3** | Phase 2 checkpoint accepted — **erp-imobiliario consuming the organ** | Phase 3 |
 | **T3b** | Phase 2 shipped; runs independently of Phase 3 | Phase 2b |
 | **T4** | Phase 3 checkpoint accepted **and** the LGPD data-category intake is filed | Phase 4 |
@@ -495,3 +516,5 @@ than guessed. All four were answered before any code was designed against them.
 | 2026-08-08 | **Phase 0 SHIPPED.** Migration `046_clients_to_marcas.sql` + 73 files (44 backend, 29 frontend). `pytest` 1708 passed · `tsc` clean · `vitest` 498 passed. Zero files touched outside `products/social-wiring/`. |
 | 2026-08-08 | **The estimate that drove a scoping decision was wrong.** "38 backend refs / 17 frontend files" counted prose and OAuth fields as this entity: the table rename was really 6 references, the column rename 438. The user initially chose "table-only" partly on those numbers, then reversed to the full rename. Corrected in §3 rather than quietly overwritten, because the wrong number is what makes the reversal legible. |
 | 2026-08-08 | **AST-first earned its keep.** Nine distinct `client_id`/`Client` meanings had to be preserved (OAuth kwargs, Meta `app_id`, Supabase `get_client`, TanStack `useQueryClient`, Mailchimp `_require_client`, "Token de Cliente", e-mail-subscriber copy). Two node kinds were missed by the first pass and caught by the SUITES, not by review: f-strings (`FormattedString`) and regex literals. One over-reach edited `seed/lib/` via the `@noctusai/lib` symlink and was reverted. Full table in §5 Phase 0. |
+| 2026-08-18 | **The 11 reference screenshots were recovered and committed.** §4 described them in prose but the images themselves had never been saved — they existed only inside the 2026-08-07 session transcript. A durable design record that argues from evidence it does not hold is unverifiable the moment the session is cleared, and the next agent has to ask the user to re-send. Now at `assets/lead-card-hub-2026-08/`, with a README mapping each shot to the requirement it fixes. The general lesson: **if a decision was made against an image, the image is part of the record.** |
+| 2026-08-18 | **Phase 1 re-audited against the tree; the header status was stale in both directions.** It claimed "Phases 1–5 design-only" while slices A/B/C had shipped — and the shipped work is itself ~80 %, not done. Three gaps named in the header. The one that matters: **P1.4's collapse of the 125 duplicate pairs was never built**, and `app/modules/pipeline/` has zero references to `cliente_id`, so `/funil` still renders two cards per human. The requirement was reduced to "add column + backfill + assert zero NULLs" in `products/social-wiring/projects/lead-card-hub-p1-PROJECT.md` — i.e. **the contract was narrowed, not just the implementation**, which is why every green checkpoint downstream of it was honest and still wrong. Recorded rather than silently re-scoped: the origin defect in §1 is not fixed. |
