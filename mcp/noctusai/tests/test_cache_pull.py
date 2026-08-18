@@ -423,3 +423,64 @@ class TestFailedPullIsAtomic:
         ).fetchall()
         assert [r[0] for r in joined] == ["keep.md"]
         db.close()
+
+
+class TestRealDriverTypes:
+    """Regression: the fixtures above are too kind to the pull path.
+
+    `TestRoundTrip` feeds plain Python lists, so it passed while the REAL
+    driver path failed twice in prod on 2026-08-18:
+
+      1. pgvector returns numpy `float32` elements once its adapter is
+         registered — `json.dumps` refuses them outright.
+      2. `init_prod_cache_schema` splits `_PG_INIT_DDL` on the statement
+         separator, so a semicolon or apostrophe inside a COMMENT truncates
+         the statement mid-comment.
+
+    Both are shape mismatches between the fixture and the driver, which is
+    exactly the class this file exists to catch.
+    """
+
+    def test_numpy_float32_embeddings_serialize(self, tmp_path):
+        np = pytest.importorskip("numpy")
+        spec = _EMBEDDING_CACHE_SPEC["kb-embeddings"]
+        dest = _ec.connect_cache(tmp_path / "kb.sqlite")
+        _init_local_schema(dest, "kb-embeddings")
+        vec = np.array(_vec(1.5), dtype=np.float32)
+        detail = _pull_chunks_with_embedding(
+            dest, _StubPgConn([("a.md", 0, "text", vec, "sha", "t0")]), spec=spec,
+        )
+        assert detail["rows_pulled"] == 1 and detail["json_rows"] == 1
+        stored = json.loads(
+            dest.execute("SELECT embedding FROM kb_embeddings_json").fetchone()[0]
+        )
+        assert stored[0] == pytest.approx(1.5)
+        assert all(isinstance(x, float) for x in stored[:8])
+        dest.close()
+
+    def test_pg_ddl_comments_carry_no_statement_separator(self):
+        """No semicolon inside a `--` comment in `_PG_INIT_DDL`.
+
+        `init_prod_cache_schema` splits the script on the statement
+        separator. Postgres ignores `--` comments, so an apostrophe in one is
+        harmless ON ITS OWN — the failure needs two stages, and both fired in
+        prod on 2026-08-18:
+
+          1. a `;` inside a comment splits the script mid-comment, so the
+             NEXT fragment begins in the middle of prose with no `--` prefix;
+          2. an apostrophe in that orphaned prose is then parsed as a live
+             quote, and the statement dies on "unterminated quoted string".
+
+        Only step 1 is preventable by construction, so that is what this
+        asserts — banning apostrophes outright would flag harmless comments
+        like "mirrors SQLite's cache_meta" and train people to ignore it.
+        """
+        from tools.noctus.dev.cache_deploy_mirror import _PG_INIT_DDL
+        offenders = [
+            line.strip() for line in _PG_INIT_DDL.splitlines()
+            if line.strip().startswith("--") and ";" in line
+        ]
+        assert not offenders, (
+            "comment lines in _PG_INIT_DDL must not contain a semicolon — "
+            f"the splitter truncates the statement there: {offenders}"
+        )

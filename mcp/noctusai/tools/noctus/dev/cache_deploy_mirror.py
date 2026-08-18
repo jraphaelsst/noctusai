@@ -301,7 +301,10 @@ CREATE TABLE IF NOT EXISTS noctus_cache.cache_code_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_pg_code_path ON noctus_cache.cache_code_embeddings(path);
 -- Migration leg for an ALREADY-provisioned prod (the CREATE above is a no-op
--- there, so it can never add the column). Idempotent; PG 9.6+.
+-- there, so it can never add the column). Idempotent, needs PG 9.6+.
+-- NOTE: keep semicolons and apostrophes OUT of comments in this DDL block.
+-- init_prod_cache_schema splits the script on the statement separator, so a
+-- comment-internal one truncates the statement mid-comment (2026-08-18).
 ALTER TABLE noctus_cache.cache_code_embeddings ADD COLUMN IF NOT EXISTS kind TEXT;
 
 -- memory-embeddings: out-of-repo agent memory dir (feedback_*.md +
@@ -1099,8 +1102,14 @@ def _pull_chunks_inner(
                 "path": values[path_pos] if path_pos is not None else None,
             })
             continue
-        # pgvector hands back either "[1.0, 2.0]" or a sequence. Normalize.
-        emb_list = json.loads(embedding) if isinstance(embedding, str) else list(embedding)
+        # pgvector hands back either "[1.0, 2.0]" or a sequence. Normalize —
+        # and coerce every element to a PYTHON float: with the pgvector
+        # adapter registered the sequence holds numpy float32, which
+        # `json.dumps` refuses ("Object of type float32 is not JSON
+        # serializable"). The round-trip test fed plain Python lists, so it
+        # passed while the real driver path failed (2026-08-18).
+        raw = json.loads(embedding) if isinstance(embedding, str) else list(embedding)
+        emb_list = [float(x) for x in raw]
         local.execute(
             f"INSERT INTO {json_table}(chunk_rowid, embedding) VALUES (?, ?)",
             (rowid, json.dumps(emb_list)),
