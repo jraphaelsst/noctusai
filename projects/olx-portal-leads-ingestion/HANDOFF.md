@@ -17,12 +17,18 @@ Mineira, which share one webhook. Plan: `PROJECT.md` beside this file.
 | `47ca53a6` | `feat(seed)` — `basic_shared_secret` webhook scheme |
 | `ee8e0c79` | `feat(seed)` — `noctusai_lib.integrations.olx` |
 | `a4af62ff` | `feat(mcp)` — `mcp/olx` + KB docs + agent `owns_kb` |
-| `d117a9b7` | `chore(branch-pointer)` |
 | `f20ed2c8` | `feat(social-wiring)` — receiver, migration 051, module, config |
 | `aff17af2` | `feat(social-wiring)` — OLX health card on the Leads config tab |
-| `0a956dc9` | `docs(olx)` — this file (earlier revision) |
-| `e48bdc98` | `chore(branch-pointer)` |
 | `7d8b71be` | `feat(seed)` — `iter_paged_rows`, the one offset pager |
+| `30092cb9` | `docs(olx)` — MCP registered (pre-merge form), repoint at merge |
+| `37ae8fc0` | `docs(olx)` — the FE flake, recorded instead of a clean-596 claim |
+| `0d95a725` | `fix(kb-sync)` — the kb-counts merge driver, made side-effect-free |
+| `128b6c72` | `feat(seed)` — the portal splitter seam (rules empty until Gate 1) |
+| `56cc392a` | `fix(social-wiring)` — OLX config DI seam; stop patching our own module |
+| `3365a7ef` | `docs(olx)` — what the full toolkit suite caught, and the rc=0 trap |
+
+(plus five `chore(branch-pointer)` commits — `d117a9b7`, `e48bdc98`, `bd8c5e0d`,
+`c50f2044`, `ed85f033` — which carry no code.)
 
 **Already rebased onto `origin/dev`.** It was 28 commits behind, and that
 mattered — see "What the rebase changed" below. Re-fetch and re-check before
@@ -32,11 +38,15 @@ integrating; more may have landed since.
 
 | Suite | Result |
 |---|---|
-| `seed/lib/backend` full | **2955 passed**, 1 skipped, **rc=0** |
-| `products/social-wiring/backend` full | **1946 passed**, 3 skipped, **rc=0** |
+| `seed/lib/backend` full | **2968 passed**, 1 skipped, **rc=0** |
+| `products/social-wiring/backend` full | **1948 passed**, 3 skipped, **rc=0** |
 | `mcp/olx/tests` + `mcp/_kit/tests` | **64 passed**, rc=0 |
-| `products/social-wiring/frontend` vitest | 596 tests / 56 files — **see the flake note below** |
+| `mcp/noctusai` cli + kb_sync + task_branch | **112 passed**, rc=0 |
+| `mcp/noctusai` the two compliance detectors | **2 passed** (98s), rc=0 |
+| `mcp/noctusai` FULL suite | ran (70 min) — **see "what the full suite caught"** |
+| `products/social-wiring/frontend` vitest | 596 tests / 56 files — **see the flake note** |
 | `tsc --noEmit` (social-wiring FE) | **rc=0**, zero errors |
+| `cli.py --help` | **rc=0** (it was broken mid-branch — see below) |
 | `mcp/olx/server.py` over stdio | initialize → 9 tools → live call → 412 gate |
 | pre-commit gates | green on every commit |
 
