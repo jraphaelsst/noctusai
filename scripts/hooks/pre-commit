@@ -290,6 +290,27 @@ if [[ -n "$STAGED_ALL" ]] && have_py; then
     fi
 fi
 
+# ─── 6b-quater. conftest env ownership (blocking, only when a conftest is ──
+# staged) ─────────────────────────────────────────────────────────────────
+# Keeper `check_conftest_env_setdefault`. `os.environ.setdefault` in a conftest
+# reads as "provide a default" and means "whatever the developer exported
+# wins". p-studio 2026-08-19: the platform `.env` carries
+# `ASAAS_WEBHOOK_TOKEN=` (present, EMPTY), so the setdefault no-opped and 15 of
+# 20 webhook tests went red under a loaded `.env` while all 20 passed in a
+# plain shell — the suite was reporting on the shell, not the code. Worse, the
+# same file deferred `SUPABASE_SERVICE_ROLE_KEY` and `PROVEDOR_COBRANCA`: with
+# the real values exported, the suite builds a real service-role client and a
+# real payment adapter. Only credential/endpoint keys are flagged; a
+# locally-generated Fernet session key stays exempt.
+STAGED_CONFTEST=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/backend/tests/conftest\.py$' || true)
+if [[ -n "$STAGED_CONFTEST" ]] && have_py; then
+    if ! "$PY" "$CLI" --check-conftest-env-setdefault --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] conftest-env check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Use noctusai_lib.testing.conftest_helpers.own_test_env({...}, clear=(...)) — it ASSIGNS." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6b-bis. Migration-number collision (blocking, only when a migration ──
 # is staged) ──────────────────────────────────────────────────────────────
 # Keeper `check_migration_number_collision`. Two migrations sharing a numeric

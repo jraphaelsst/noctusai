@@ -197,3 +197,67 @@ def purge_shadowing_editable_finders(
             if name == pkg or name.startswith(f"{pkg}."):
                 del sys.modules[name]
                 break
+
+
+def own_test_env(
+    values: "dict[str, str]",
+    clear: "tuple[str, ...] | list[str]" = (),
+    environ: "dict[str, str] | None" = None,
+) -> "dict[str, str]":
+    """Force the suite's environment to exactly what the suite declares.
+
+    **Use this instead of ``os.environ.setdefault`` in a conftest.** Every
+    product conftest reached for ``setdefault`` — it reads as a safe "provide a
+    default" — but its actual meaning is *"whatever the developer happens to
+    have exported wins"*, and that is never what a test wants.
+
+    THE INCIDENT (p-studio, 2026-08-19)
+    -----------------------------------
+    ``os.environ.setdefault("ASAAS_WEBHOOK_TOKEN", "token-de-webhook-de-teste")``.
+    The repo's own ``.env`` carries ``ASAAS_WEBHOOK_TOKEN=`` — present, empty.
+    Any process that loads it (the MCP server, hence ``predeploy_check``)
+    exports the key, ``setdefault`` sees it as already-set and does nothing, and
+    the suite runs with an EMPTY expected token: 15 of 20 webhook tests fail on
+    a 503 that has nothing to do with what they assert. Run from a plain shell
+    they all pass. The suite was reporting on the developer's shell, not on the
+    code.
+
+    THE SHARPER EDGE
+    ----------------
+    Flakiness was the least of it. The same file did
+    ``setdefault("SUPABASE_SERVICE_ROLE_KEY", "")`` and
+    ``setdefault("PROVEDOR_COBRANCA", "fake")``. Export the real values — which
+    the platform ``.env`` holds — and the suite builds a **real service-role
+    Supabase client** and a **real payment-provider adapter**. A test run in the
+    wrong shell could reach production. "Defaults" that yield to ambient
+    credentials are not a convenience; they are an open door.
+
+    So this helper ASSIGNS, and additionally ``clear``s the keys whose mere
+    presence changes behaviour (``ENCRYPTION_KEY``: set ⇒ the credential path
+    runs; unset ⇒ it does not).
+
+    Args:
+        values: keys assigned unconditionally — the suite's declared world.
+        clear: keys REMOVED if present. For vars where "set at all" is the
+            switch, an empty string is not the same as absent.
+        environ: the mapping to mutate (defaults to ``os.environ``). Injected
+            so this is testable without mutating the real process env.
+
+    Returns:
+        The ``{key: previous_value}`` map of everything changed — enough to
+        restore, and enough for a test to assert on.
+    """
+    import os
+
+    env = os.environ if environ is None else environ
+    before: "dict[str, str]" = {}
+
+    for key in clear:
+        if key in env:
+            before[key] = env[key]
+            del env[key]
+    for key, value in values.items():
+        if env.get(key) != value:
+            before.setdefault(key, env.get(key, ""))
+        env[key] = value
+    return before

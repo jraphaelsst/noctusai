@@ -21,15 +21,6 @@ Key difference from ERP/PF: no org_id. Instead, users have roles
 # `_make_client_context`. Tests asserting real network IO live under
 # `tests/realdb/` and use their own env probe.
 import os as _os
-_os.environ.setdefault("SUPABASE_URL", "http://test.local")
-# Supabase client validates the key as a JWT regex: header.body.signature
-# (`^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$`). Plain "test"
-# fails with "Invalid API key" at module-import. Use a minimal valid-shape
-# placeholder. NO real secrets — this never reaches a real Supabase.
-_FAKE_JWT = "aaa.bbb.ccc"
-_os.environ.setdefault("SUPABASE_ANON_KEY", _FAKE_JWT)
-_os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", _FAKE_JWT)
-
 import sys as _sys
 from pathlib import Path as _Path
 
@@ -54,6 +45,28 @@ _spec = _ilu.spec_from_file_location(
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 _mod.purge_shadowing_editable_finders(_LIB)
+_own_test_env = _mod.own_test_env
+
+# Supabase client validates the key as a JWT regex: header.body.signature
+# (`^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$`). Plain "test"
+# fails with "Invalid API key" at module-import. Use a minimal valid-shape
+# placeholder. NO real secrets — this never reaches a real Supabase.
+#
+# 🔴 ATRIBUI, nunca `setdefault`. O comentário acima ("nunca alcança um
+# Supabase real") só é VERDADE se estes valores vencerem. Com `setdefault`,
+# um shell que carregou o `.env` da plataforma exporta `SUPABASE_URL` +
+# `SUPABASE_SERVICE_ROLE_KEY` reais, o padrão daqui não se aplica, e a suíte
+# monta um client service-role contra o projeto VIVO. Foi exatamente essa a
+# falha do p-studio em 2026-08-19 (ver `own_test_env`).
+_FAKE_JWT = "aaa.bbb.ccc"
+_own_test_env(
+    {
+        "SUPABASE_URL": "http://test.local",
+        "SUPABASE_ANON_KEY": _FAKE_JWT,
+        "SUPABASE_SERVICE_ROLE_KEY": _FAKE_JWT,
+    }
+)
+
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient

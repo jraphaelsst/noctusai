@@ -9549,6 +9549,111 @@ def check_primary_checkout_commit(
     return findings
 
 
+#: Env keys whose value decides WHAT THE SUITE TALKS TO — a credential, an
+#: endpoint, or a behaviour switch. A conftest must ASSIGN these; deferring to
+#: whatever the developer exported is how a test run reaches production.
+#: Matched by exact name or by suffix, so `FOO_API_KEY` is covered without
+#: enumerating every product's prefix.
+_OWNED_ENV_EXACT = frozenset({
+    "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_PUBLISHABLE_KEY", "DATABASE_URL", "REDIS_URL",
+    "ENCRYPTION_KEY", "CORE_URL", "CORE_API_URL",
+})
+_OWNED_ENV_SUFFIXES = (
+    "_API_KEY", "_WEBHOOK_TOKEN", "_ACCESS_TOKEN", "_SERVICE_ROLE_KEY",
+    "_ORG_ID", "_BASE_URL", "_DSN",
+)
+#: Deliberately NOT owned: a key the conftest GENERATES locally (a Fernet
+#: session key). Any valid key works, so a real one already exported is
+#: harmless and honouring it is a documented choice in two products.
+_OWNED_ENV_PREFIX_EXEMPT = ("SESSION_ENCRYPTION_KEY", "REDIS_SESSION_ENCRYPTION_KEY")
+
+
+def _env_key_must_be_owned(key: str) -> bool:
+    if key in _OWNED_ENV_PREFIX_EXEMPT:
+        return False
+    if key in _OWNED_ENV_EXACT:
+        return True
+    return any(key.endswith(sfx) for sfx in _OWNED_ENV_SUFFIXES)
+
+
+def check_conftest_env_setdefault(
+    repo_root: Path | None = None,
+    conftests: dict[str, str] | None = None,
+) -> list[dict]:
+    """Refuse `os.environ.setdefault` on a credential/endpoint key in a conftest.
+
+    **The incident (p-studio, 2026-08-19).** `conftest.py` carried
+    `os.environ.setdefault("ASAAS_WEBHOOK_TOKEN", "token-de-webhook-de-teste")`.
+    The platform `.env` holds `ASAAS_WEBHOOK_TOKEN=` — present, EMPTY. Any
+    process that loads it (the MCP server, therefore `predeploy_check`) exports
+    the key; `setdefault` sees it as already-set and does nothing; the suite
+    runs with an empty expected token and 15 of 20 webhook tests fail on a 503
+    unrelated to what they assert. From a plain shell, all 20 pass. The suite
+    was reporting on the developer's shell rather than on the code, in both
+    directions.
+
+    **Why the flakiness is the small half.** The same file did
+    `setdefault("SUPABASE_SERVICE_ROLE_KEY", "")` and
+    `setdefault("PROVEDOR_COBRANCA", "fake")`; therapy-platform did the same for
+    `SUPABASE_URL` + both keys, directly under a comment promising "this never
+    reaches a real Supabase". Export the real values and the suite builds a real
+    service-role client and a real payment adapter. `setdefault` reads as
+    "provide a default" and means "ambient wins" — for a credential that is an
+    open door, not a convenience.
+
+    **The remedy the message names:** `noctusai_lib.testing.conftest_helpers.
+    own_test_env({...}, clear=(...))`, which assigns and additionally removes
+    the keys where mere presence is the switch.
+
+    **Scope.** Only keys that decide what the suite TALKS TO
+    (`_env_key_must_be_owned`). A conftest that generates a Fernet session key
+    locally and lets a real one win is a documented, harmless choice and stays
+    exempt — a keeper that flags it would be red forever and get ignored.
+
+    `conftests` is injectable ({path: source}) so the detector is testable
+    without a tree.
+    """
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+
+    if conftests is None:
+        conftests = {}
+        for path in sorted((root / "products").glob("*/backend/tests/conftest.py")):
+            try:
+                conftests[str(path.relative_to(root))] = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+
+    rx = re.compile(
+        r"""environ\.setdefault\(\s*["']([A-Z0-9_]+)["']""",
+        re.VERBOSE,
+    )
+    for rel, text in sorted(conftests.items()):
+        for match in rx.finditer(text):
+            key = match.group(1)
+            if not _env_key_must_be_owned(key):
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            findings.append({
+                "product": rel.split("/")[1] if "/" in rel else "<repo>",
+                "file": f"{rel}:{line}",
+                "issue": (
+                    f"conftest defers `{key}` to the ambient environment via "
+                    f"`os.environ.setdefault`. That key decides what the suite "
+                    f"TALKS TO, so an exported value silently retargets the run "
+                    f"— including at real credentials — and an exported EMPTY "
+                    f"value disables the test default entirely (p-studio, "
+                    f"2026-08-19: 15 webhook tests red under a loaded .env, all "
+                    f"green in a plain shell). Assign it instead: "
+                    f"`noctusai_lib.testing.conftest_helpers.own_test_env({{...}}, "
+                    f"clear=(...))`."
+                ),
+                "severity": "high",
+            })
+    return findings
+
+
 def check_conflict_markers(
     repo_root: Path | None = None, paths: list[str] | None = None
 ) -> list[dict]:

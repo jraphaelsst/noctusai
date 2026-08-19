@@ -56,14 +56,35 @@ import uuid
 from datetime import date, timedelta
 from types import SimpleNamespace
 
-os.environ.setdefault("SUPABASE_URL", "https://fake.supabase.co")
-os.environ.setdefault("SUPABASE_ANON_KEY", "chave-fake-de-teste")
-os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "")
-os.environ.setdefault("P_STUDIO_ORG_ID", "00000000-0000-0000-0000-0000000000ff")
-# Provedor de cobrança: `fake` para nada tentar rede, e um token de webhook
-# conhecido para os testes de autenticação da rota pública.
-os.environ.setdefault("PROVEDOR_COBRANCA", "fake")
-os.environ.setdefault("ASAAS_WEBHOOK_TOKEN", "token-de-webhook-de-teste")
+# 🔴 ATRIBUI, nunca `setdefault`. `setdefault` lê como "forneça um padrão",
+# mas o que ele faz é "o que o shell do dev exportou vence" — e o `.env` da
+# plataforma carrega `ASAAS_WEBHOOK_TOKEN=` (presente, VAZIO). Qualquer
+# processo que o carregue (o servidor MCP, logo o `predeploy_check`) exporta a
+# chave, o `setdefault` a vê como já definida e não faz nada; a suíte roda com
+# token esperado VAZIO e 15 dos 20 testes de webhook quebram num 503 que não
+# tem relação com o que afirmam. Num shell limpo, todos passam.
+#
+# Pior que a flakiness: `SUPABASE_SERVICE_ROLE_KEY` e `PROVEDOR_COBRANCA`
+# tinham o mesmo tratamento. Exporte os valores reais — que o `.env` tem — e a
+# suíte monta um client service-role DE VERDADE e o adapter REAL do provedor de
+# cobrança. Um `pytest` no shell errado alcançaria produção.
+#
+# `ENCRYPTION_KEY` entra em `clear` porque nela o que importa é ESTAR definida:
+# definida ⇒ o caminho de credencial cifrada roda; ausente ⇒ não roda. String
+# vazia não é o mesmo que ausente.
+_mod.own_test_env(
+    {
+        "SUPABASE_URL": "https://fake.supabase.co",
+        "SUPABASE_ANON_KEY": "chave-fake-de-teste",
+        "SUPABASE_SERVICE_ROLE_KEY": "",
+        "P_STUDIO_ORG_ID": "00000000-0000-0000-0000-0000000000ff",
+        # Provedor de cobrança: `fake` para nada tentar rede, e um token de
+        # webhook conhecido para os testes de autenticação da rota pública.
+        "PROVEDOR_COBRANCA": "fake",
+        "ASAAS_WEBHOOK_TOKEN": "token-de-webhook-de-teste",
+    },
+    clear=("ENCRYPTION_KEY", "ASAAS_API_KEY", "ASAAS_BASE_URL"),
+)
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
