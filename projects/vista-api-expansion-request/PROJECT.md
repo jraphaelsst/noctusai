@@ -11,8 +11,8 @@
 > Every number below was measured live — none is inferred.
 
 - **Created:** 2026-08-05
-- **Last updated:** 2026-08-05
-- **Status:** 📋 **AWAITING SEND** — email drafted (§6), not yet sent by the user. Flip to 🔒 BLOCKED-EXTERNAL once sent.
+- **Last updated:** 2026-08-19
+- **Status:** 🔒 **BLOCKED-EXTERNAL — sent; Vista replied "granted"; the grant is NOT in effect.** Re-probed live 2026-08-19: all three Tier-1 methods still return 401. The blocker is no longer "does Vista agree?" but "which key did they apply it to?" — ours (`…644c`) is demonstrably not it. See § 10.
 - **Owner / stakeholders:** USER (joaoraphaelsst) sends + owns the vendor relationship · tech-lead evaluates the reply
 - **Related docs:**
   - `KB § INTEGRATIONS/vista.md` — the authoritative Vista reference. § 3 (credential echo), § 4.2/4.5/4.6 (re-probed endpoint tables), § 5.3 (seed-canonical probe baseline), § 9 (the tiered ask + rationale)
@@ -325,4 +325,56 @@ measured counter-example resolves it fastest.
 
 | Date | Change | Author |
 |---|---|---|
+| 2026-08-19 | **Re-probe: the grant has NOT landed.** Verified twice (MCP probe + raw HTTP, fresh process, well-formed payloads) — `clientes/listar`, `clientes/detalhes`, `corretores/listar` all still 401. Full § 2.3 404 surface re-swept: nothing moved. Two new endpoint facts: `/corretores/detalhes` + `/corretores/listarConteudo` are 404; `/clientes/listarConteudo` exists ungated but crashes (raw PHP `in_array()` error) — not a partial grant. Separately, refined the gated MCP surface to parity with the working one (silent pagination drop, dead candidate-field constant, **401 poisoning the calibration cache**, missing `vista.clientes.get`, unenforced Fake↔Real parity) so a grant lands on working code instead of stubs. `vista.md` § 4.2/4.5/5.3/8/9 updated. Status → BLOCKED-EXTERNAL, awaiting the key question in § 10. | Claude Opus 5 |
 | 2026-08-05 | Project filed. Live audit of 24 Vista routes established the § 2 baseline; the 401-vs-404 split and the read-only 405/404 write-probe technique were the two enabling findings. Email drafted (§ 6). Related same-day fix `d3cb3c26` shipped the credential redaction, corrected the endpoint tables in `vista.md`, and lifted `PROBE_ENDPOINTS` to a seed-canonical baseline after finding it forked at N=2. **Status: awaiting user send.** | Claude Opus 5 |
+
+
+---
+
+## 10. 🔴 The open question — which key did Vista grant?
+
+> **Added 2026-08-19.** This is the whole remaining blocker. It is a
+> question for the USER and Vista; no code change can resolve it.
+
+**What we know, measured not inferred.** Vista was asked to enable three
+methods (§ 6 item 1) and reportedly answered that access was granted. On
+2026-08-19 all three still return `401 Permissão Negada` naming the method:
+
+```
+401  /clientes/listar      Permissão Negada: "<KEY>"  Método: clientes/listar
+401  /clientes/detalhes    Permissão Negada: "<KEY>"  Método: clientes/detalhes
+401  /corretores/listar    Permissão Negada: "<KEY>"  Método: corretores/listar
+```
+
+**The two false negatives that could have caused this were both excluded:**
+
+1. *MCP module cache* (§ 7.0's warning, which cost real time on 2026-08-05) —
+   the second probe ran as raw HTTP in a **fresh process**, bypassing the MCP
+   entirely.
+2. *Malformed request* — the probe was repeated with well-formed `pesquisa`
+   payloads (`fields` + `paginacao`), not just a bare GET. Same 401.
+
+The key under test is `VISTA_API_KEY` ending `…644c`, identical in the root
+`.env` and `mcp/vista/.env` (compared programmatically, not by eye).
+
+**Therefore exactly one of these is true:**
+
+| Possibility | How to confirm | Who |
+|---|---|---|
+| **Vista issued a NEW key** carrying the grant, and we are still on the old one | Ask Vista / check the reply for an attached credential | USER |
+| The grant was applied to a **different tenant or account** | Ask Vista to confirm it was applied to tenant `oneconsu` | USER |
+| It was acknowledged but **never actually applied** | Re-ask, quoting the three method names verbatim + the live 401 (**redact our key** — never paste the credential back) | USER → Vista |
+
+**If a new key comes back — do not just paste it in.** Rotation touches the
+root `.env` **and** the prod environment together; an uncoordinated rotation
+breaks production (§ 7.4). Route it through the user as a deliberate step.
+A rotation is desirable anyway: § 4's credential echo means the current key
+has been exposed in error bodies.
+
+**When the grant does land, the code is ready and self-arming.** The gated
+tools are no longer stubs (see the 2026-08-19 change-log row): calibration
+deliberately does **not** cache a 401, so the first successful call runs a
+real per-tenant field calibration with no restart, and
+`vista.diagnostics.probe` now carries `/clientes/detalhes` so the flip is
+*detected* rather than stumbled upon. **The LGPD gate in § 5 still applies —
+a granted permission is not authorization to start ingesting.**

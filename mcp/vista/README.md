@@ -18,14 +18,31 @@ The full Vista API contract lives at `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.
   adapter uses hardcoded constants; this MCP discovers each tenant's
   safe field set by candidate-then-drop probing on first real call,
   cached per process.
-- **8 tools across 6 services** following the dotted naming convention
-  per `KB § PATTERNS/mcp-tool-conventions.md`:
-  - `vista.imoveis.list` / `.get` / `.list_filters`
-  - `vista.usuarios.list`
-  - `vista.agencias.list`
-  - `vista.clientes.list` (permission-gated → typed_error)
-  - `vista.corretores.list` (permission-gated → typed_error)
-  - `vista.diagnostics.probe` / `.list_known_endpoints` / `.show_calibrated_fields`
+- **11 tools across 6 services** following the dotted naming convention
+  per `KB § PATTERNS/mcp-tool-conventions.md`. The `access` column is the
+  one to read before wiring a consumer — ✅ returns data today, 🔒 returns a
+  typed 401 until Vista grants the per-method permission:
+
+  | Tool | Vista route | Access | Notes |
+  |---|---|---|---|
+  | `vista.imoveis.list` | `/imoveis/listar` | ✅ | Paginated (≤50). 1,928 rows on `oneconsu`. |
+  | `vista.imoveis.get` | `/imoveis/detalhes` | ✅ | `?imovel=` top-level. |
+  | `vista.imoveis.list_filters` | `/imoveis/listarConteudo` | ✅ | Live enum values per field. |
+  | `vista.usuarios.list` | `/usuarios/listar` | ✅ | 10 rows. **The ungated broker roster.** |
+  | `vista.agencias.list` | `/agencias/listar` | ✅ | 1 row. |
+  | `vista.clientes.list` | `/clientes/listar` | 🔒 401 | Paginated (≤50). LGPD: CPF/address/phone. |
+  | `vista.clientes.get` | `/clientes/detalhes` | 🔒 401 | `?cliente=` top-level. LGPD as above. |
+  | `vista.corretores.list` | `/corretores/listar` | 🔒 401 | Substitute: `vista.usuarios.list`. |
+  | `vista.diagnostics.probe` | — | ✅ | 8-row baseline; read `unexpected`, not `status`. |
+  | `vista.diagnostics.list_known_endpoints` | — | ✅ | Static catalog + `probe_status`. |
+  | `vista.diagnostics.show_calibrated_fields` | — | ✅ | Per-tenant safe field set. |
+
+- **🔒 and ❌ are different answers, and the tools say which.** A gated tool
+  returns `probe_status: "permission_gated"` with a typed 401 — meaning *ask
+  Vista for the grant*, not *retry*, and not *this does not exist*. Routes
+  that answer 404 (`/clientes/lead`, `/negociacoes/*`, and the ten other
+  families in `vista.md § 4.6`) get **no tool at all**: a tool that can only
+  ever report "no route" misrepresents the surface. See `vista.md § 4.2`.
 - **Pydantic In/Out per tool** with `Field(description=...)` so MCP
   introspection surfaces help text automatically.
 - **Hierarchical registration** — each leaf module exports `HANDLERS` +
@@ -84,6 +101,15 @@ host's MCP config at `python /absolute/path/mcp/vista/server.py`.
   even these would 400 with a sub-field name (e.g. `"Campo Creci"`),
   which `_drop_field` handles by pruning the relation's sub-list. Phase 2
   should add a proactive nested-sub-field discovery pass.
+- **The gated families calibrate lazily and stay un-armed until granted.**
+  `get_cliente_fields` / `get_corretor_fields` return the floor `["Codigo"]`
+  and — deliberately — do **not** cache a 401. So the first call after Vista
+  grants the permission runs a real calibration pass instead of inheriting a
+  guess, with no server restart needed. `show_calibrated_fields` reporting an
+  empty `clientes`/`corretores` list therefore means "still gated", never
+  "calibrated to nothing". The candidate sets for these two families are the
+  public-doc superset and have **never been confirmed against a 200** — do
+  not copy them into a consumer as known-good.
 - **Calibration cache scope is per-process, not per-tenant-key.** If you
   rotate the tenant key without restarting the server, the cached
   field set may be stale. Restart the MCP server after rotation, or

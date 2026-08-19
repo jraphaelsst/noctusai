@@ -75,6 +75,7 @@ VISTA_ENDPOINT_BASELINE: tuple[tuple[str, int, str, str], ...] = (
     ("/usuarios/listar", 200, ENDPOINT_LIVE, "reachable"),
     ("/agencias/listar", 200, ENDPOINT_LIVE, "reachable"),
     ("/clientes/listar", 401, ENDPOINT_PERMISSION_GATED, "permission-gated (vista.md § 4.2)"),
+    ("/clientes/detalhes", 401, ENDPOINT_PERMISSION_GATED, "permission-gated (vista.md § 4.2); 401 precedes the missing-`cliente` 400"),
     ("/corretores/listar", 401, ENDPOINT_PERMISSION_GATED, "permission-gated (vista.md § 4.5)"),
     ("/imoveis/fotos", 405, ENDPOINT_WRITE_ONLY, "write-only route; GET not allowed"),
 )
@@ -326,18 +327,79 @@ class VistaClient:
     async def listar_agencias(self, *, fields: list[str]) -> VistaCallResult:
         return await self._request("/agencias/listar", pesquisa={"fields": fields})
 
-    async def listar_clientes(self, *, fields: list[str]) -> VistaCallResult:
+    async def listar_clientes(
+        self,
+        *,
+        fields: list[str],
+        filter_: Optional[dict] = None,
+        order: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> VistaCallResult:
         """Permission-gated on most tenants (returns 401 → VistaPermissionDenied).
 
         Kept here so the MCP server can register `vista.clientes.list` as
         a real tool; the typed error becomes the response when the tenant
         key lacks permission (vista.md § 4.2).
-        """
-        return await self._request("/clientes/listar", pesquisa={"fields": fields})
 
-    async def listar_corretores(self, *, fields: list[str]) -> VistaCallResult:
-        """Permission-gated on most tenants (vista.md § 4.5)."""
-        return await self._request("/corretores/listar", pesquisa={"fields": fields})
+        **Paginated like `listar_imoveis`, deliberately.** Until 2026-08-19
+        this helper took no `page`/`page_size` at all while the MCP tool
+        above it *declared* both — so a host asking for page 2 silently got
+        page 1. A parameter a caller can set and the wire never sees is a
+        silent error (CLAUDE.md §1); the two signatures are now the same
+        shape, so the gated surface cannot drift from the working one again.
+        """
+        pesquisa: dict[str, Any] = {
+            "fields": fields,
+            "paginacao": {"pagina": page, "quantidade": min(page_size, DEFAULT_PAGE_SIZE)},
+        }
+        if filter_:
+            pesquisa["filter"] = filter_
+        if order:
+            pesquisa["order"] = order
+        return await self._request("/clientes/listar", pesquisa=pesquisa, showtotal=True)
+
+    async def detalhes_cliente(self, codigo: str, *, fields: list[str]) -> VistaCallResult:
+        """Per-client detail — `/clientes/detalhes?cliente=<codigo>`.
+
+        🔒 Permission-gated exactly like `listar_clientes` (vista.md § 4.2),
+        and gated *before* parameter validation: a bare GET with no
+        `cliente=` still answers 401, not the 400 you would expect. That
+        ordering is why the endpoint sits in the probe baseline with an
+        expected 401 rather than a 400.
+
+        ⚠️ **LGPD.** A 200 here returns third-party personal data (CPF,
+        address, phones). The data-category intake gates the first
+        successful call — see `KB § PATTERNS/security/lgpd.md`.
+        """
+        return await self._request(
+            "/clientes/detalhes",
+            pesquisa={"fields": fields},
+            extra_params={"cliente": codigo},
+        )
+
+    async def listar_corretores(
+        self,
+        *,
+        fields: list[str],
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> VistaCallResult:
+        """Permission-gated on most tenants (vista.md § 4.5).
+
+        Paginated for the same reason as `listar_clientes` above.
+        """
+        return await self._request(
+            "/corretores/listar",
+            pesquisa={
+                "fields": fields,
+                "paginacao": {
+                    "pagina": page,
+                    "quantidade": min(page_size, DEFAULT_PAGE_SIZE),
+                },
+            },
+            showtotal=True,
+        )
 
     # ─── Diagnostics ────────────────────────────────────────────────────
 

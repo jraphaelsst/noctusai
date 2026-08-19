@@ -132,11 +132,33 @@ class FakeVistaClient:
     async def listar_agencias(self, *, fields: list[str]) -> VistaCallResult:
         return self._resolve("/agencias/listar", ["key", "pesquisa"])
 
-    async def listar_clientes(self, *, fields: list[str]) -> VistaCallResult:
-        return self._resolve("/clientes/listar", ["key", "pesquisa"])
+    async def listar_clientes(
+        self,
+        *,
+        fields: list[str],
+        filter_: Optional[dict] = None,
+        order: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> VistaCallResult:
+        # `showtotal` is in the params list because the Real client now sends
+        # it — the Fake records the same param_keys the Real would, or the
+        # recorded-call assertions stop meaning anything.
+        return self._resolve("/clientes/listar", ["key", "pesquisa", "showtotal"])
 
-    async def listar_corretores(self, *, fields: list[str]) -> VistaCallResult:
-        return self._resolve("/corretores/listar", ["key", "pesquisa"])
+    async def detalhes_cliente(
+        self, codigo: str, *, fields: list[str]
+    ) -> VistaCallResult:
+        return self._resolve("/clientes/detalhes", ["cliente", "key", "pesquisa"])
+
+    async def listar_corretores(
+        self,
+        *,
+        fields: list[str],
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> VistaCallResult:
+        return self._resolve("/corretores/listar", ["key", "pesquisa", "showtotal"])
 
     async def probe(self, endpoint: str) -> dict:
         """Structured status row — never raises (mirrors VistaClient.probe)."""

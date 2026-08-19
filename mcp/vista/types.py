@@ -60,18 +60,50 @@ class ListAgenciasOutput(BaseModel):
     probe_status: str = Field("live_probed", description="One of live_probed | doc_only | referenced.")
 
 
+# ─── 🔒 Gated families (vista.md § 4.2 / § 4.5) ──────────────────────────
+#
+# Same I/O shape as the ungated tools above — deliberately. These were stubs
+# until 2026-08-19: the input model declared `page`/`page_size` that the
+# handler never forwarded, and the outputs carried no field descriptions and
+# no pagination envelope. Keeping the two halves the same shape is what stops
+# the gated half from quietly rotting while it waits for a grant.
+
+
+class ListClientesInput(BaseModel):
+    page: int = Field(1, ge=1, description="Page number (Vista paginates at quantidade=50 max).")
+    page_size: int = Field(50, ge=1, le=50, description="Page size (Vista server-side cap is 50).")
+
+
+class GetClienteInput(BaseModel):
+    codigo: str = Field(..., description="Vista client id, sent as the top-level `cliente=` param (NOT inside `pesquisa`).")
+
+
+class ListCorretoresInput(BaseModel):
+    page: int = Field(1, ge=1, description="Page number (Vista paginates at quantidade=50 max).")
+    page_size: int = Field(50, ge=1, le=50, description="Page size (Vista server-side cap is 50).")
+
+
 class ListClientesOutput(BaseModel):
     """Permission-gated. Returns empty items + a typed_error when the tenant lacks permission."""
-    items: list[dict] = Field(default_factory=list)
-    typed_error: Optional[dict] = Field(None, description="{class, message, status} when 401/403 hits.")
-    probe_status: str = Field("live_probed", description="One of live_probed | doc_only | referenced.")
+    items: list[dict] = Field(default_factory=list, description="Raw Vista cliente rows. NOT normalized to a Showcase DTO — no 200 has ever been observed on this tenant, so there is no live payload to write a normalizer against (vista.md § 4.2).")
+    pagination: dict = Field(default_factory=dict, description="{total, paginas, pagina, quantidade} — empty while the family is 401-gated.")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} when the tenant key lacks the grant. `message` is key-redacted at the client boundary (vista.md § 3).")
+    probe_status: str = Field("permission_gated", description="One of live_probed | permission_gated | write_only | absent. Flips to live_probed on the first 200.")
+
+
+class GetClienteOutput(BaseModel):
+    """Permission-gated per-client detail. LGPD: carries CPF / address / phones on a 200."""
+    item: Optional[dict] = Field(None, description="Raw Vista cliente detail row, or null when gated/not found.")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} when the tenant key lacks the grant.")
+    probe_status: str = Field("permission_gated", description="One of live_probed | permission_gated | write_only | absent.")
 
 
 class ListCorretoresOutput(BaseModel):
     """Same gating as ListClientesOutput."""
-    items: list[dict] = Field(default_factory=list)
-    typed_error: Optional[dict] = Field(None)
-    probe_status: str = Field("live_probed", description="One of live_probed | doc_only | referenced.")
+    items: list[dict] = Field(default_factory=list, description="Raw Vista corretor rows. See vista.md § 4.5 — /usuarios/listar already returns the broker roster ungated, so this family is largely substitutable.")
+    pagination: dict = Field(default_factory=dict, description="{total, paginas, pagina, quantidade} — empty while the family is 401-gated.")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status} when the tenant key lacks the grant.")
+    probe_status: str = Field("permission_gated", description="One of live_probed | permission_gated | write_only | absent.")
 
 
 class ProbeOutput(BaseModel):
@@ -93,6 +125,8 @@ class CalibratedFieldsOutput(BaseModel):
     imoveis_conteudo: list[str] = Field(default_factory=list)
     usuarios: list[str] = Field(default_factory=list)
     agencias: list[str] = Field(default_factory=list)
+    clientes: list[str] = Field(default_factory=list, description="🔒 Gated — stays empty while the tenant answers 401 (a permission denial is deliberately not cached).")
+    corretores: list[str] = Field(default_factory=list, description="🔒 Gated — stays empty while the tenant answers 401.")
     rejected: dict[str, list[str]] = Field(default_factory=dict, description="Per-endpoint list of fields probed and rejected during calibration.")
     calibrated_at: Optional[str] = Field(None, description="ISO timestamp of last calibration run; null if no probe has run.")
 
@@ -109,7 +143,11 @@ __all__ = [
     "ListImoveisFiltersOutput",
     "ListUsuariosOutput",
     "ListAgenciasOutput",
+    "ListClientesInput",
     "ListClientesOutput",
+    "GetClienteInput",
+    "GetClienteOutput",
+    "ListCorretoresInput",
     "ListCorretoresOutput",
     "ProbeOutput",
     "CalibratedFieldsOutput",

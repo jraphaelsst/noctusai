@@ -23,6 +23,7 @@ _TOOL_BY_PATH = {
     "/usuarios/listar": "vista.usuarios.list",
     "/agencias/listar": "vista.agencias.list",
     "/clientes/listar": "vista.clientes.list",
+    "/clientes/detalhes": "vista.clientes.get",
     "/corretores/listar": "vista.corretores.list",
 }
 
@@ -32,7 +33,6 @@ _TOOL_BY_PATH = {
 # `absent` ≠ `permission_gated`: a support request will NOT unlock these.
 _UNPROBED_KNOWN: list[dict] = [
     {"path": "/imoveis/detalhes", "probe_status": "live_probed", "tool": "vista.imoveis.get"},
-    {"path": "/clientes/detalhes", "probe_status": "permission_gated", "tool": None},
     {"path": "/clientes/pesquisar", "probe_status": "absent", "tool": None},
     {"path": "/clientes/historicos", "probe_status": "absent", "tool": None},
     {"path": "/clientes/lead", "probe_status": "absent", "tool": None},
@@ -123,6 +123,15 @@ async def show_calibrated_fields(args: dict) -> dict:
     if "agencias" in snap:
         out.agencias = [f for f in snap["agencias"].safe_fields if isinstance(f, str)]
         out.rejected["agencias"] = snap["agencias"].rejected
+    # 🔒 Gated families. These stay empty on a 401 BY DESIGN — `_calibrate`
+    # returns the floor without caching a permission denial, so an empty list
+    # here means "still gated", never "calibrated to nothing".
+    if "clientes" in snap:
+        out.clientes = [f for f in snap["clientes"].safe_fields if isinstance(f, str)]
+        out.rejected["clientes"] = snap["clientes"].rejected
+    if "corretores" in snap:
+        out.corretores = [f for f in snap["corretores"].safe_fields if isinstance(f, str)]
+        out.rejected["corretores"] = snap["corretores"].rejected
     return out.model_dump()
 
 

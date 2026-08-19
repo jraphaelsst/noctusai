@@ -18,6 +18,8 @@ Network-free: the Fake never touches httpx or the filesystem.
 """
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -256,3 +258,165 @@ def test_baseline_distinguishes_gated_from_absent() -> None:
     assert status["/clientes/listar"] == "permission_gated"
     assert status["/imoveis/fotos"] == "write_only"
     assert status["/imoveis/listar"] == "live_probed"
+
+
+# ============================================================================
+# 🔒 Gated families — parity with the ungated surface (vista.md § 4.2 / § 4.5)
+#
+# Added 2026-08-19 alongside the gated-surface refinement. Every test below
+# fails against the pre-refinement code; they exist because the gated half had
+# silently drifted from the working half while waiting for a Vista grant.
+# ============================================================================
+
+
+def _capture() -> tuple[list[httpx.Request], httpx.MockTransport]:
+    """A transport that records every request and answers 200 with an empty body."""
+    seen: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    return seen, httpx.MockTransport(_handler)
+
+
+@pytest.mark.asyncio
+async def test_listar_clientes_forwards_pagination_to_the_wire() -> None:
+    """The silent-drop regression: page/page_size must REACH Vista.
+
+    `vista.clientes.list` declared both parameters while `listar_clientes`
+    accepted neither, so a host asking for page 2 silently received page 1 —
+    a wrong answer delivered with full confidence.
+    """
+    seen, transport = _capture()
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        await client.listar_clientes(fields=["Codigo"], page=3, page_size=25)
+
+    pesquisa = json.loads(seen[0].url.params["pesquisa"])
+    assert pesquisa["paginacao"] == {"pagina": 3, "quantidade": 25}
+    assert seen[0].url.params["showtotal"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_listar_clientes_respects_the_server_side_50_cap() -> None:
+    """Vista caps `quantidade` at 50 server-side; the client clamps to match."""
+    seen, transport = _capture()
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        await client.listar_clientes(fields=["Codigo"], page=1, page_size=500)
+
+    pesquisa = json.loads(seen[0].url.params["pesquisa"])
+    assert pesquisa["paginacao"]["quantidade"] == 50
+
+
+@pytest.mark.asyncio
+async def test_listar_corretores_forwards_pagination_to_the_wire() -> None:
+    seen, transport = _capture()
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        await client.listar_corretores(fields=["Codigo"], page=2, page_size=10)
+
+    pesquisa = json.loads(seen[0].url.params["pesquisa"])
+    assert pesquisa["paginacao"] == {"pagina": 2, "quantidade": 10}
+
+
+@pytest.mark.asyncio
+async def test_detalhes_cliente_sends_cliente_at_the_TOP_level() -> None:
+    """`cliente=` is a top-level param, NOT a key inside `pesquisa`.
+
+    Same shape as `/imoveis/detalhes?imovel=` (vista.md § 2). Putting the id
+    inside `pesquisa` yields a 400 that reads like a field error, which is a
+    genuinely confusing way to fail.
+    """
+    seen, transport = _capture()
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        await client.detalhes_cliente("C123", fields=["Codigo", "Nome"])
+
+    params = seen[0].url.params
+    assert params["cliente"] == "C123"
+    assert "cliente" not in json.loads(params["pesquisa"])
+
+
+@pytest.mark.asyncio
+async def test_calibration_does_NOT_cache_a_permission_denial() -> None:
+    """A 401 must leave the calibrator un-armed, not cache the full candidate set.
+
+    `VistaPermissionDenied` subclasses `VistaUpstreamError`, so the generic
+    handler used to swallow it and cache every candidate field as "safe" for
+    the process lifetime. The day Vista granted the permission, the first
+    live call would then ship that un-narrowed superset and 400 on the first
+    field the tenant does not expose — with no way back short of a restart.
+    """
+    from noctusai_lib.integrations.vista.calibration import (
+        FLOOR_FIELDS,
+        Calibrator,
+    )
+
+    calib = Calibrator()
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            401, json={"status": 401, "message": "Permissão Negada"}
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        fields = await calib.get_cliente_fields(client)
+
+    assert fields == FLOOR_FIELDS
+    assert "clientes" not in calib.snapshot(), (
+        "a permission denial was cached — the grant would land on a stale, "
+        "un-narrowed field set"
+    )
+
+
+@pytest.mark.asyncio
+async def test_calibration_re_arms_once_the_grant_lands() -> None:
+    """The other half of the contract: after a 401, a later 200 calibrates."""
+    from noctusai_lib.integrations.vista.calibration import Calibrator
+
+    calib = Calibrator()
+    denied = httpx.MockTransport(lambda r: httpx.Response(401, json={"status": 401}))
+    granted = httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+
+    async with httpx.AsyncClient(transport=denied) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        await calib.get_cliente_fields(client)
+
+    async with httpx.AsyncClient(transport=granted) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        fields = await calib.get_cliente_fields(client)
+
+    assert "clientes" in calib.snapshot(), "grant landed but calibration stayed un-armed"
+    assert len(fields) > 1, "expected the candidate set, not the floor"
+
+
+def test_fake_client_and_real_client_signatures_agree() -> None:
+    """Mechanical Fake↔Real parity for the CLIENT (the adapter already has one).
+
+    `FakeVistaClient`'s docstring claimed signature parity with `VistaClient`
+    and nothing enforced it — so when `listar_clientes` gained pagination on
+    the Real side, the Fake kept the old signature and any consumer that
+    passed `page=` would work in production and TypeError in tests. A claim
+    in a docstring is not a guarantee; this is.
+    """
+    import inspect
+
+    for name in (
+        "listar_imoveis",
+        "detalhes_imovel",
+        "listar_conteudo_imoveis",
+        "listar_usuarios",
+        "listar_agencias",
+        "listar_clientes",
+        "detalhes_cliente",
+        "listar_corretores",
+    ):
+        real = getattr(VistaClient, name, None)
+        fake = getattr(FakeVistaClient, name, None)
+        assert real is not None, f"VistaClient is missing {name}"
+        assert fake is not None, f"FakeVistaClient is missing {name} — Fake/Real drift"
+        assert inspect.signature(fake) == inspect.signature(real), (
+            f"{name}: Fake and Real signatures diverged"
+        )

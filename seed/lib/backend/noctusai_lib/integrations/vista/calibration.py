@@ -46,6 +46,7 @@ from noctusai_lib.integrations.vista.client import (
     VistaClient,
     VistaConfigError,
     VistaFieldNotAvailable,
+    VistaPermissionDenied,
     VistaUpstreamError,
 )
 
@@ -101,6 +102,25 @@ CANDIDATE_AGENCIA_FIELDS: list[str] = [
 ]
 
 CANDIDATE_CONTEUDO_FIELDS: list[str] = ["Status", "Categoria", "Cidade", "Bairro"]
+
+# 🔒 Gated families (vista.md § 4.2 / § 4.5). These candidate sets are
+# UNPROVEN against a 200 — `oneconsu-rest` answers 401 on both endpoints, so
+# no field here has been confirmed live. They are the public-doc superset,
+# and they exist so the calibration loop has something to narrow the moment
+# the grant lands: `_calibrate` treats a 401 as "do not cache", so the first
+# successful call after a grant runs a real calibration pass instead of
+# inheriting a guess. Do NOT copy these into a consumer as a known-good set.
+CANDIDATE_CLIENTE_FIELDS: list[str] = [
+    "Codigo", "Nome", "Email", "Fone", "FoneCelular", "Celular",
+    "Bairro", "Cidade", "Estado", "UF", "CEP",
+    "Endereco", "Numero", "Complemento",
+    "DataCadastro", "DataAtualizacao",
+]
+
+CANDIDATE_CORRETOR_FIELDS: list[str] = [
+    "Codigo", "Nome", "Email", "Fone", "Celular", "Creci",
+    "Setor", "Foto", "Status", "DataCadastro",
+]
 
 # Floor — if calibration drops everything except the primary id, this is
 # what survives. Used as a sentinel to abort the probe loop.
@@ -233,6 +253,32 @@ class Calibrator:
         )
         return [f for f in result if isinstance(f, str)]
 
+    async def get_cliente_fields(self, client: VistaClient) -> list[str]:
+        """🔒 Gated — returns the floor (uncached) while the tenant answers 401."""
+        result = await self._calibrate(
+            client,
+            cache_key="clientes",
+            endpoint="/clientes/listar",
+            candidates=CANDIDATE_CLIENTE_FIELDS,
+            requester=lambda fields: client.listar_clientes(
+                fields=fields, page=1, page_size=1
+            ),
+        )
+        return [f for f in result if isinstance(f, str)]
+
+    async def get_corretor_fields(self, client: VistaClient) -> list[str]:
+        """🔒 Gated — returns the floor (uncached) while the tenant answers 401."""
+        result = await self._calibrate(
+            client,
+            cache_key="corretores",
+            endpoint="/corretores/listar",
+            candidates=CANDIDATE_CORRETOR_FIELDS,
+            requester=lambda fields: client.listar_corretores(
+                fields=fields, page=1, page_size=1
+            ),
+        )
+        return [f for f in result if isinstance(f, str)]
+
     # ─── Core probe loop ────────────────────────────────────────────────
 
     async def _calibrate(
@@ -285,6 +331,28 @@ class Calibrator:
                     if not current or current == FLOOR_FIELDS:
                         break
                     continue
+                except VistaPermissionDenied:
+                    # 🔴 Return the floor WITHOUT caching, and do not treat the
+                    # candidate set as calibrated.
+                    #
+                    # `VistaPermissionDenied` subclasses `VistaUpstreamError`,
+                    # so before 2026-08-19 a 401 fell into the branch below,
+                    # `break`-ing straight to the cache write — which stored
+                    # the FULL un-narrowed candidate list as this tenant's
+                    # "safe fields" for the whole process lifetime. Two
+                    # failures compounded: the gated families never got a real
+                    # calibration pass, and the moment Vista granted the
+                    # permission the first live call would ship a superset of
+                    # fields and 400 on the first one the tenant does not
+                    # expose. Not caching keeps the probe armed, so the grant
+                    # self-heals on the next call instead of needing a
+                    # restart.
+                    logger.info(
+                        "calibration[%s]: 401 permission-gated — returning floor, "
+                        "NOT caching (re-arms automatically if the grant lands)",
+                        cache_key,
+                    )
+                    return list(FLOOR_FIELDS)
                 except (VistaConfigError, VistaUpstreamError) as e:
                     logger.warning(
                         "calibration[%s]: probe failed with non-field error %s; using current set",
@@ -366,4 +434,6 @@ __all__ = [
     "CalibrationResult",
     "calibrator",
     "FLOOR_FIELDS",
+    "CANDIDATE_CLIENTE_FIELDS",
+    "CANDIDATE_CORRETOR_FIELDS",
 ]

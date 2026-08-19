@@ -526,23 +526,64 @@ explicitly at the API boundary so the next drift surfaces clearly.
 
 ### 4.2 `/clientes` — Clients
 
-🔒 not authorized on the probed tenant; documented in public docs.
+**🔒 401 and ❌ 404 are different answers — the single most useful thing in
+this section.** Only 🔒 means "the route exists and permission is the
+blocker", i.e. a support request can unlock it. ❌ means no such route on
+this tenant's deployment, where a permission request is a category error.
+Vista's 401 body names the method (`Método: clientes/listar`), which is why
+a request should name methods individually rather than ask for "access to
+clients".
+
+Re-probed live **2026-08-19** (every row below measured, not inferred):
 
 | Op | Method | Path | ID param | This tenant | Public docs |
 |---|---|---|---|---|---|
-| Search | GET | `/clientes/pesquisar` | — | 🔒 | 📖 |
-| List | GET | `/clientes/listar` | — | 🔒 | ❓ |
-| By broker | GET | `/clientes/porcorretor` | — | ❓ | 📖 |
-| By agency | GET | `/clientes/poragencia` | — | ❓ | 📖 |
-| Detail | GET | `/clientes/detalhes` | `?cliente=` | 🔒 | 📖 |
-| History | GET | `/clientes/historicos` | `?cliente=` | ❓ | 📖 |
-| Favorites | GET | `/clientes/favoritos` | `?cliente=` | ❓ | 📖 |
-| Available fields | GET | `/clientes/campos` | — | ❓ | 📖 |
-| Create | POST | `/clientes/cadastrar` | — | ❓ | 📖 |
-| Update | PUT | `/clientes/alterar` | `?cliente=` | ❓ | 📖 |
-| Add history | POST | `/clientes/cadhis` | `?cliente=` | ❓ | 📖 |
-| Assign broker | POST | `/clientes/cadcor` | `?cliente=` | ❓ | 📖 |
-| Submit lead | POST | `/clientes/lead` | — | ❓ | 📖 |
+| List | GET | `/clientes/listar` | — | 🔒 401 | ❓ |
+| Detail | GET | `/clientes/detalhes` | `?cliente=` | 🔒 401 | 📖 |
+| Content | GET | `/clientes/listarConteudo` | — | 🐛 see below | ❓ |
+| Search | GET | `/clientes/pesquisar` | — | ❌ 404 | 📖 |
+| By broker | GET | `/clientes/porcorretor` | — | ❌ 404 | 📖 |
+| By agency | GET | `/clientes/poragencia` | — | ❌ 404 | 📖 |
+| History | GET | `/clientes/historicos` | `?cliente=` | ❌ 404 | 📖 |
+| Favorites | GET | `/clientes/favoritos` | `?cliente=` | ❌ 404 | 📖 |
+| Available fields | GET | `/clientes/campos` | — | ❌ 404 | 📖 |
+| Create | POST | `/clientes/cadastrar` | — | ❌ 404 | 📖 |
+| Update | PUT | `/clientes/alterar` | `?cliente=` | ❌ 404 | 📖 |
+| Add history | POST | `/clientes/cadhis` | `?cliente=` | ❌ 404 | 📖 |
+| Assign broker | POST | `/clientes/cadcor` | `?cliente=` | ❌ 404 | 📖 |
+| Submit lead | POST | `/clientes/lead` | — | ❌ 404 | 📖 |
+
+> **Corrections vs the 2026-05-03 snapshot this table used to carry.**
+> `pesquisar` was recorded 🔒 and is actually ❌; all eight ❓ rows are now
+> confirmed ❌. Nothing regressed — the ❓ rows had simply never been probed,
+> and `pesquisar` was mis-recorded from a sibling's 401. **This is the
+> hazard the section header warns about:** a 🔒/❓ guess that is never
+> re-probed reads as fact forever, and here it produced a support request
+> for routes that do not exist.
+
+**How the write rows were probed without issuing a write.** Vista returns
+**405** for a route that exists but rejects the method, and **404** when no
+route exists — verified by `/imoveis/fotos`, which answers GET with
+`405 (Allow: POST, PUT, DELETE)`. So a read-only GET separates "exists,
+needs POST" from "absent" at zero risk. Every write row above answered 404,
+so they are genuinely absent, not merely method-mismatched.
+**⚠️ Never POST to a live CRM to discover a route.**
+
+**🐛 `/clientes/listarConteudo` — exists, ungated, and broken.** It alone
+neither 401s nor 404s on a bare GET, returning the ordinary
+`400 "É necessário informar um JSON String"` — so the route exists and the
+key passes the permission check. Do not read that as a partial grant: sent
+a well-formed `pesquisa`, it answers **404 with a raw PHP error**
+(`in_array(): Argument #2 ($haystack) must be of type array, null given`),
+an unhandled server-side crash rather than a contract. Do not build on it.
+
+**Implication for an MCP author.** Wrap 🔒 routes as real tools that surface
+a typed 401 (the host needs to know *permission* is the blocker, not to
+retry). Give ❌ routes **no tool at all** — a tool that can only ever report
+"no route" misrepresents the surface. And if the gated family is the only
+path to something, check for an ungated substitute first: here
+`/usuarios/listar` returns the broker roster that `/corretores/listar`
+(🔒) would, which changes whether the grant is worth waiting on.
 
 Documented `/clientes` fields per public docs (subset — verify live):
 `Codigo`, `Nome`, `Email`, `Fone`, `FoneCelular`, `Bairro`, `Cidade`,
@@ -602,10 +643,25 @@ Site     string
 `Estado`, `UF`, `CEP`, `Telefone`, `Email`, `Foto`, `Logo`, `Status`,
 `DataCadastro`. Avoid unless your tenant exposes them.
 
-### 4.5 `/corretores` — brokers (🔒)
+### 4.5 `/corretores` — brokers (🔒 one route, ❌ two)
 
-Endpoint exists; the probed tenant's key has no permission.
-Documented per public docs but no live confirmation here.
+Re-probed live **2026-08-19**:
+
+| Op | Method | Path | This tenant |
+|---|---|---|---|
+| List | GET | `/corretores/listar` | 🔒 401 — route exists, key lacks the grant |
+| Detail | GET | `/corretores/detalhes` | ❌ 404 |
+| Content | GET | `/corretores/listarConteudo` | ❌ 404 |
+
+So even a granted `corretores/listar` buys the roster alone — there is no
+per-broker detail route behind it. Scope any support request accordingly.
+
+**✅ Check the ungated substitute before waiting on this grant.**
+`/usuarios/listar` (§ 4.3) already returns the broker roster with
+`Setor: "Corretores"`, and `/imoveis/listar` embeds the listing broker's
+name + email per property. An MCP author should route a caller that hits
+this 401 to `usuarios` rather than report the capability as unavailable —
+the practical gap is much smaller than the 401 suggests.
 
 ### 4.6 Endpoint families NOT exposed on the probed tenant (❌)
 
