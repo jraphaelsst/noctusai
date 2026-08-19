@@ -15,6 +15,7 @@ handler path with fakes, and nothing about this module is patched.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -162,8 +163,19 @@ class OlxWebhookService:
 
     # ── processing ───────────────────────────────────────────────────
 
-    def process_lead(self, lead: OlxLead) -> ProcessResult:
-        """Resolve + ingest one recorded delivery, updating its row."""
+    def process_lead(
+        self, lead: OlxLead, *, raw_body: Optional[str] = None
+    ) -> ProcessResult:
+        """Resolve + ingest one recorded delivery, updating its row.
+
+        `raw_body` is the vendor's request body as it arrived, handed down
+        by the receiver so a forward carries the original bytes rather
+        than our re-serialisation of them. It is absent on the scheduler
+        drain path (which starts from the stored payload), where the
+        forward falls back to re-serialising — semantically identical
+        JSON, not byte-identical, and said plainly here rather than
+        claimed otherwise.
+        """
         event = self._get_event(lead.origin_lead_id)
         attempts = int((event or {}).get("attempts") or 0) + 1
 
@@ -185,6 +197,14 @@ class OlxWebhookService:
             )
             return ProcessResult(lead.origin_lead_id, STATUS_UNRESOLVED,
                                  detail="org-unresolved")
+
+        # Queue the downstream forward BEFORE our own ingest, and outside
+        # its try/except. The two are independent obligations: a mapping
+        # bug on our side must not stop a lead reaching the CRM that was
+        # receiving it before we took over the Canal Pro URL. Enqueue is
+        # idempotent on (target_id, origin_lead_id), so the drain
+        # re-processing this event later adds nothing.
+        self._enqueue_forwards(org_id, lead, raw_body)
 
         try:
             result = self._ingest(self._client, org_id, lead)
@@ -213,6 +233,41 @@ class OlxWebhookService:
             created=bool(result.get("created")),
             lead_id=str((result.get("lead") or {}).get("id") or "") or None,
         )
+
+    def _enqueue_forwards(
+        self, org_id: UUID, lead: OlxLead, raw_body: Optional[str]
+    ) -> None:
+        """Queue this lead for the org's downstream CRMs, if any.
+
+        Never raises. By the time this runs the vendor already holds our
+        200 and the lead is durably in `olx_lead_events`; letting a
+        forwarding problem escape would put the lead we already have at
+        risk to protect a copy of it.
+
+        NOTE: an org we could not resolve gets no forward, because targets
+        are per-org and there is nothing to look them up by. That is the
+        honest outcome — the alternative is guessing a destination — and
+        it is only reachable on the tokenless route, since a receiver
+        token resolves the org before this is called.
+        """
+        try:
+            from app.modules.portal_leads.services import forward_service
+
+            body = raw_body
+            if body is None:
+                body = json.dumps(lead.raw, ensure_ascii=False, default=str)
+            forward_service.enqueue_forwards(
+                self._client,
+                org_id=org_id,
+                provider="olx",
+                origin_lead_id=lead.origin_lead_id,
+                body=body,
+            )
+        except Exception as exc:  # noqa: BLE001 — surfaced, never propagated
+            logger.warning(
+                "olx-webhook: could not queue downstream forwards for %s: %s",
+                lead.origin_lead_id, exc, exc_info=True,
+            )
 
     def record_unparseable(self, payload: Any, reason: str) -> None:
         """A body we cannot key on is still evidence.

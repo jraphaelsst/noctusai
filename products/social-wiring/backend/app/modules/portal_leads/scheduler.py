@@ -80,15 +80,79 @@ async def olx_leads_retry_job() -> None:
         logger.error("olx drain: job wrapper error: %s", exc, exc_info=True)
 
 
+async def portal_lead_forward_drain_job() -> None:
+    """Deliver due entries from the downstream-forward outbox.
+
+    Separate from the inbox drain, and on a tighter schedule, because the
+    two protect different things. The inbox retries OUR ingest, where the
+    lead is already safely stored. This one is the only path by which a
+    downstream CRM — one that was being fed directly by Grupo OLX until
+    we took over the Canal Pro URL — ever sees the lead at all. The
+    vendor will not resend it.
+
+    Five minutes is the compromise: fast enough that a downstream blip
+    costs minutes rather than a quarter-hour of a broker's response time,
+    cheap enough to ignore because the query is a partial index whose
+    steady state is empty.
+    """
+    try:
+        await _drain_forwards_async()
+    except Exception as exc:  # noqa: BLE001 — one bad run must not kill the schedule
+        logger.error("portal-forward drain: job wrapper error: %s", exc, exc_info=True)
+
+
+async def _drain_forwards_async(
+    *,
+    admin_client_factory: Optional[Callable[[], Any]] = None,
+    drain_fn: Optional[Callable[..., Any]] = None,
+) -> None:
+    """Async body of the forward drain. Collaborators are DI seams so a
+    test drives the real job without a scheduler or a database."""
+    admin = (admin_client_factory or get_admin_client)()
+    if admin is None:
+        logger.warning("portal-forward drain: no admin client — skipping run")
+        return
+
+    if drain_fn is None:
+        from app.modules.portal_leads.services.forward_service import drain_forwards
+
+        drain_fn = drain_forwards
+
+    secret = None
+    try:
+        from app.modules.portal_leads.deps import get_olx_config
+
+        secret = get_olx_config().webhook_secret
+    except Exception as exc:  # noqa: BLE001 — config gap must not kill the drain
+        # Without the secret, `passthrough` targets fail loudly per row
+        # and land as `failed` with a readable reason — which is the
+        # honest outcome, and better than sending unauthenticated.
+        logger.warning("portal-forward drain: could not resolve the OLX config (%s)", exc)
+
+    await drain_fn(admin.schema(_SCHEMA), webhook_secret=secret)
+
+
 def configure() -> None:
-    """Register the drain on the seed-side scheduler. Idempotent; called
+    """Register both drains on the seed-side scheduler. Idempotent; called
     from `portal_leads/__init__.py::register()` at import time."""
     seed_scheduler.register(
         "olx_leads_retry",
         olx_leads_retry_job,
         cron="*/15 * * * *",
     )
-    logger.info("portal_leads scheduler configured: olx inbox retry '*/15 * * * *'")
+    seed_scheduler.register(
+        "portal_lead_forward_drain",
+        portal_lead_forward_drain_job,
+        cron="*/5 * * * *",
+    )
+    logger.info(
+        "portal_leads scheduler configured: olx inbox retry '*/15 * * * *', "
+        "forward drain '*/5 * * * *'"
+    )
 
 
-__all__ = ["configure", "olx_leads_retry_job"]
+__all__ = [
+    "configure",
+    "olx_leads_retry_job",
+    "portal_lead_forward_drain_job",
+]

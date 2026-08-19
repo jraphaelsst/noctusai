@@ -244,8 +244,17 @@ def _handle_delivery(
     # the parameter form raises `PydanticUndefinedAnnotation` at import
     # and takes the whole app down. Documented at
     # `meta_ads/routers/leadgen_router.py`, hit once already.
+    # The raw body travels with the lead so a downstream forward carries
+    # the bytes Grupo OLX actually sent, rather than our re-serialisation
+    # of a parse of them — the downstream CRM is entitled to any field we
+    # do not model yet.
+    try:
+        raw_body = (verified.body or b"").decode("utf-8")
+    except UnicodeDecodeError:
+        raw_body = None
+
     background = StarletteBackgroundTasks()
-    background.add_task(svc.process_lead, lead)
+    background.add_task(svc.process_lead, lead, raw_body=raw_body)
     return JSONResponse(
         {"status": "accepted", "originLeadId": lead.origin_lead_id},
         background=background,

@@ -199,6 +199,82 @@ class TestTenantAttribution:
         assert ORG_A not in _lead_org_ids(leads_client)
 
 
+class TestDownstreamForwarding:
+    """The wiring, not the service. `test_forward_service.py` proves the
+    outbox behaves; this proves a real delivery actually reaches it."""
+
+    def test_a_delivery_enqueues_a_forward_for_the_token_org(
+        self, http_client, configured, token_for_org_b, leads_client
+    ):
+        leads_client.table("portal_lead_forward_targets").insert(
+            {
+                "id": "tgt-1",
+                "org_id": ORG_B,
+                "provider": "olx",
+                "label": "Lais",
+                "url": "https://crm.test/hook",
+                "auth_mode": "passthrough",
+                "is_active": True,
+            }
+        ).execute()
+
+        resp = http_client.post(
+            f"{BASE}/{token_for_org_b.plaintext}",
+            json=_body(),
+            headers=_basic(WEBHOOK_SECRET),
+        )
+
+        assert resp.status_code == 200
+        queued = (
+            leads_client.table("portal_lead_forwards").select("*").execute().data or []
+        )
+        assert len(queued) == 1
+        assert queued[0]["org_id"] == ORG_B
+
+    def test_the_queued_body_is_the_bytes_the_vendor_sent(
+        self, http_client, configured, token_for_org_b, leads_client
+    ):
+        """Not our re-serialisation of a parse.
+
+        The downstream CRM is entitled to any field we do not model yet,
+        so the router carries the raw body down rather than letting the
+        forward rebuild it from `OlxLead`.
+        """
+        leads_client.table("portal_lead_forward_targets").insert(
+            {
+                "id": "tgt-1", "org_id": ORG_B, "provider": "olx", "label": "Lais",
+                "url": "https://crm.test/hook", "auth_mode": "passthrough",
+                "is_active": True,
+            }
+        ).execute()
+
+        body = _body()
+        body["campoQueNaoModelamos"] = "preserve me"
+        http_client.post(
+            f"{BASE}/{token_for_org_b.plaintext}",
+            json=body,
+            headers=_basic(WEBHOOK_SECRET),
+        )
+
+        queued = leads_client.table("portal_lead_forwards").select("*").execute().data
+        assert "campoQueNaoModelamos" in (queued[0]["body"] or "")
+
+    def test_an_org_with_no_target_queues_nothing(
+        self, http_client, configured, token_for_org_b, leads_client
+    ):
+        """Most advertisers forward nowhere; that must cost nothing."""
+        http_client.post(
+            f"{BASE}/{token_for_org_b.plaintext}",
+            json=_body(),
+            headers=_basic(WEBHOOK_SECRET),
+        )
+
+        queued = (
+            leads_client.table("portal_lead_forwards").select("*").execute().data or []
+        )
+        assert queued == []
+
+
 class TestCoexistenceWithTheTokenlessRoute:
     def test_tokenless_route_still_uses_the_configured_org(
         self, http_client, configured, leads_client
