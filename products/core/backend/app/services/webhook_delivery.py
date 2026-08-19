@@ -17,10 +17,12 @@ import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Callable, Optional
 
-import httpx
-
+from noctusai_lib.integrations.outbound_webhook import (
+    OutboundWebhookSender,
+    make_outbound_webhook_sender,
+)
 from noctusai_lib.security.webhook_signatures import compute_hmac_sha256_hex
 
 from app.database import get_admin_client
@@ -34,6 +36,44 @@ logger = logging.getLogger(__name__)
 # Timeout for webhook HTTP requests (seconds)
 WEBHOOK_TIMEOUT = 10.0
 MAX_RETRIES = 2
+
+# ─── The delivery attempt now comes from the seed ──────────────────────
+#
+# `noctusai_lib.integrations.outbound_webhook` owns issuing the POST and
+# classifying the result. This module keeps everything that is genuinely
+# core's: the HMAC envelope, the `webhook_deliveries` row, the LGPD
+# payload classification and the retention window.
+#
+# Retry scheduling stays here too, and stays in-process — core's
+# subscribers are external customer endpoints where a few seconds of
+# backoff inside the dispatch call is the whole story. A durable outbox
+# would be the right shape for a delivery that must survive a restart;
+# core's has never claimed to.
+_sender_provider: Optional[Callable[[], OutboundWebhookSender]] = None
+
+
+def configure_webhook_sender(
+    *, sender_provider: Optional[Callable[[], OutboundWebhookSender]] = None
+) -> None:
+    """DI seam — install (or with `None`, clear) the sender provider.
+
+    The seam a test uses instead of patching this module. Always pair it
+    with `reset_webhook_sender()`; a leaked provider silently re-configures
+    every later test in the session.
+    """
+    global _sender_provider
+    _sender_provider = sender_provider
+
+
+def reset_webhook_sender() -> None:
+    """Drop any injected provider. Fixture teardown calls this."""
+    configure_webhook_sender(sender_provider=None)
+
+
+def _get_sender() -> OutboundWebhookSender:
+    if _sender_provider is not None:
+        return _sender_provider()
+    return make_outbound_webhook_sender(timeout_seconds=WEBHOOK_TIMEOUT)
 
 # compliance-audit-reconciliation Phase 6 (finding 8): delivery payloads may
 # contain PII (team-invite emails, etc.). LGPD minimization enforced by two
@@ -144,30 +184,45 @@ async def _send_webhook(endpoint: dict, event_type: str, payload: dict) -> dict:
     response_body: Optional[str] = None
     status = "failed"
 
+    sender = _get_sender()
+
     for attempt in range(1, MAX_RETRIES + 2):
-        try:
-            async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as client:
-                response = await client.post(url, content=payload_json, headers=headers)
-                response_status = response.status_code
-                response_body = response.text[:2000]  # Truncate response body
+        result = await sender.send(
+            url=url,
+            body=payload_json,
+            headers=headers,
+            timeout_seconds=WEBHOOK_TIMEOUT,
+        )
+        response_status = result.status_code
+        response_body = result.response_body or result.error
 
-                if 200 <= response.status_code < 300:
-                    status = "success"
-                    break
+        if result.succeeded:
+            status = "success"
+            break
 
-                logger.warning(
-                    f"Webhook delivery failed: endpoint={endpoint_id} "
-                    f"status={response.status_code} attempt={attempt}"
-                )
-        except httpx.TimeoutException:
-            response_body = "Timeout"
-            logger.warning(f"Webhook timeout: endpoint={endpoint_id} attempt={attempt}")
-        except httpx.RequestError as exc:
-            response_body = str(exc)[:2000]
-            logger.warning(f"Webhook request error: endpoint={endpoint_id} error={exc} attempt={attempt}")
+        logger.warning(
+            f"Webhook delivery failed: endpoint={endpoint_id} "
+            f"status={result.status_code} kind={result.failure_kind} attempt={attempt}"
+        )
+
+        # 🔴 BEHAVIOUR CHANGE (2026-08-19), and the reason to make it:
+        # this loop used to retry every failure, including a 4xx. A 4xx
+        # means the subscriber understood the request and refused it —
+        # re-sending an identical body gets refused identically, three
+        # times, while the retry budget a genuinely transient failure
+        # needed is already spent. `is_retryable` is the seed's single
+        # judgement of that (5xx / timeout / transport / 408 / 429 yes,
+        # other 4xx no), shared with the portal-lead forwarder so the two
+        # cannot drift apart on, say, 429.
+        if not result.is_retryable:
+            logger.info(
+                f"Webhook not retried: endpoint={endpoint_id} "
+                f"status={result.status_code} — subscriber refused, not a transient failure"
+            )
+            break
 
         # Exponential backoff before next retry (skip after last attempt)
-        if status != "success" and attempt < MAX_RETRIES + 1:
+        if attempt < MAX_RETRIES + 1:
             await asyncio.sleep(2 ** attempt)
 
     # Update delivery record with result

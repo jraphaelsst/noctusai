@@ -5,8 +5,16 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from noctusai_lib.integrations.outbound_webhook import (
+    DeliveryFailureKind,
+    FakeOutboundWebhookSender,
+    failure,
+)
+
 from app.services.webhook_delivery import (
+    configure_webhook_sender,
     dispatch,
+    reset_webhook_sender,
     retry_delivery,
     _send_webhook,
     MAX_RETRIES,
@@ -218,6 +226,60 @@ async def test_send_webhook_retries_with_backoff():
     assert mock_sleep.call_count == MAX_RETRIES
     mock_sleep.assert_any_call(2)
     mock_sleep.assert_any_call(4)
+
+
+@pytest.mark.asyncio
+async def test_send_webhook_does_not_retry_a_4xx():
+    """A subscriber that refused us is not asked again.
+
+    BEHAVIOUR CHANGE, 2026-08-19. This loop used to retry every failure,
+    including a 4xx. Re-sending an identical body to an endpoint that
+    understood it and said no gets refused identically, three times, and
+    spends the retry budget a genuinely transient failure would have
+    needed. The judgement lives on the seed's `DeliveryAttempt`
+    (`is_retryable`) so this product and the portal-lead forwarder cannot
+    drift apart on which statuses mean "try again".
+
+    Driven through the module's DI seam rather than by patching
+    `httpx` — the seam is what the refactor added, so exercising it is
+    the point.
+    """
+    db = _mock_db()
+    fake = FakeOutboundWebhookSender(default_outcome=failure(status_code=422))
+
+    configure_webhook_sender(sender_provider=lambda: fake)
+    try:
+        with (
+            patch("app.services.webhook_delivery.get_admin_client", return_value=db),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            await _send_webhook(SAMPLE_ENDPOINT, "test.event", SAMPLE_PAYLOAD)
+    finally:
+        reset_webhook_sender()
+
+    assert fake.call_count == 1, "a 4xx must be attempted exactly once"
+    assert mock_sleep.call_count == 0, "no backoff should be spent on a refusal"
+
+
+@pytest.mark.asyncio
+async def test_send_webhook_still_retries_a_timeout():
+    """The complement: a transport-level failure keeps its full budget."""
+    db = _mock_db()
+    fake = FakeOutboundWebhookSender(
+        default_outcome=failure(kind=DeliveryFailureKind.TIMEOUT)
+    )
+
+    configure_webhook_sender(sender_provider=lambda: fake)
+    try:
+        with (
+            patch("app.services.webhook_delivery.get_admin_client", return_value=db),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await _send_webhook(SAMPLE_ENDPOINT, "test.event", SAMPLE_PAYLOAD)
+    finally:
+        reset_webhook_sender()
+
+    assert fake.call_count == MAX_RETRIES + 1
 
 
 # ---------------------------------------------------------------------------
