@@ -35,7 +35,8 @@ import {
   useCardResumo,
   useChecklistMutations,
   useChecklists,
-  useDatasMutation,
+  useAgendamentoMutations,
+  useAgendamentos,
   useDocumentoMutations,
   useDocumentos,
   useNotaMutations,
@@ -86,7 +87,8 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const tagCatalogMutations = useTagCatalogMutations();
   const setTagsMutation = useSetClienteTagsMutation(id ?? "__none__");
   const setMembrosMutation = useSetCardMembrosMutation(id ?? "__none__");
-  const datasMutation = useDatasMutation(id ?? "__none__");
+  const agendamentos = useAgendamentos(id);
+  const agendamentoMutations = useAgendamentoMutations(id ?? "__none__");
   const checklistMutations = useChecklistMutations(id ?? "__none__");
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
 
@@ -202,25 +204,22 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       colorBlindMode={colorBlindMode}
       onToggleColorBlindMode={setColorBlindMode}
       tagsSaving={setTagsMutation.isPending}
-      datas={card.data?.datas ?? null}
-      onSaveDatas={(body) =>
-        datasMutation.mutate(body, {
-          onError: (err) => toastServerError(err, "Não foi possível salvar as datas."),
+      agendamentos={agendamentos.data ?? []}
+      agendamentosLoading={agendamentos.isPending}
+      onCreateAgendamento={(body) =>
+        agendamentoMutations.create.mutate(body, {
+          // The 409 when a person has several open atendimentos arrives with
+          // the candidate ids; surfaced with the server's own message rather
+          // than a generic failure, because only it can say what to pick.
+          onError: (err) => toastServerError(err, "Não foi possível criar o agendamento."),
         })
       }
-      onRemoveDatas={() =>
-        datasMutation.mutate(
-          {
-            data_inicio: null,
-            data_entrega: null,
-            entrega_concluida: false,
-            lembrete_minutos_antes: null,
-            recorrencia: null,
-          },
-          { onError: (err) => toastServerError(err, "Não foi possível remover as datas.") },
-        )
+      onRemoveAgendamento={(id) =>
+        agendamentoMutations.remove.mutate(id, {
+          onError: (err) => toastServerError(err, "Não foi possível remover o agendamento."),
+        })
       }
-      datasSaving={datasMutation.isPending}
+      agendamentoSaving={agendamentoMutations.create.isPending}
       allMembros={corretores.data ?? []}
       selectedMembros={card.data?.membros ?? []}
       onToggleMembro={handleToggleMembro}

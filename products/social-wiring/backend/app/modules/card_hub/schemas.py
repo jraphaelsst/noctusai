@@ -99,6 +99,53 @@ class DatasPatchBody(StrictHttpModel):
         return v
 
 
+# ─── Agendamentos (many per atendimento — migration 061) ────────────────
+
+#: Mirrors the DB CHECK in `061`. Both exist on purpose: the schema protects
+#: the API surface, the CHECK protects every other writer (a migration, a
+#: script, a future job). Neither is redundant with the other.
+_TIPO_AGENDAMENTO_VALUES = {"visita", "ligacao", "reuniao", "outro"}
+
+
+class AgendamentoCreateBody(StrictHttpModel):
+    quando: str
+    tipo: str = "outro"
+    nota: Optional[str] = None
+    #: `None` = no reminder wanted; `0` = "at the time". Kept distinct — a
+    #: default of 0 would schedule a notification for every appointment ever
+    #: created, which is how a reminder feature becomes a thing people mute.
+    lembrete_minutos_antes: Optional[int] = Field(default=None, ge=0)
+    #: Optional: with one open atendimento the server resolves it. Sent
+    #: explicitly when the person has several, which the server REFUSES to
+    #: guess at (409) rather than filing the appointment against the wrong deal.
+    atendimento_id: Optional[UUID] = None
+
+    @field_validator("tipo")
+    @classmethod
+    def _validate_tipo(cls, v: str) -> str:
+        if v not in _TIPO_AGENDAMENTO_VALUES:
+            raise ValueError(
+                f"tipo must be one of {sorted(_TIPO_AGENDAMENTO_VALUES)}, got {v!r}"
+            )
+        return v
+
+
+class AgendamentoPatchBody(StrictHttpModel):
+    quando: Optional[str] = None
+    tipo: Optional[str] = None
+    nota: Optional[str] = None
+    lembrete_minutos_antes: Optional[int] = Field(default=None, ge=0)
+
+    @field_validator("tipo")
+    @classmethod
+    def _validate_tipo(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _TIPO_AGENDAMENTO_VALUES:
+            raise ValueError(
+                f"tipo must be one of {sorted(_TIPO_AGENDAMENTO_VALUES)}, got {v!r}"
+            )
+        return v
+
+
 # ─── Checklists ─────────────────────────────────────────────────────────
 
 

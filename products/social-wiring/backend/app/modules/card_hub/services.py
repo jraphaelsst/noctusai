@@ -451,125 +451,6 @@ def set_membros(client: Any, org_id: UUID, cliente_id: UUID, *, lead_corretor_id
 # ─── Datas + lembretes ──────────────────────────────────────────────────
 
 
-def _compute_dispara_em(data_entrega: Optional[str], lembrete_minutos_antes: Optional[int]) -> Optional[str]:
-    if not data_entrega or lembrete_minutos_antes is None:
-        return None
-    dt = datetime.fromisoformat(data_entrega.replace("Z", "+00:00"))
-    from datetime import timedelta
-
-    dispara = dt - timedelta(minutes=lembrete_minutos_antes)
-    return dispara.isoformat()
-
-
-def patch_datas(
-    client: Any,
-    org_id: UUID,
-    cliente_id: UUID,
-    *,
-    data_inicio: Optional[str] = ...,
-    data_entrega: Optional[str] = ...,
-    entrega_concluida: Optional[bool] = ...,
-    lembrete_minutos_antes: Optional[int] = ...,
-    recorrencia: Optional[str] = ...,
-) -> dict:
-    """`...` (Ellipsis) sentinels an unset field (only the fields the PATCH
-    body actually carried are written — `exclude_unset` upstream in the
-    router). Setting `data_entrega` + `lembrete_minutos_antes` materialises
-    a `cliente_lembretes` row; clearing either cancels the pending one —
-    see the module's reminder-honesty note below `proximo_lembrete`."""
-    cliente = ensure_cliente(client, org_id, cliente_id)
-
-    updates: dict = {}
-    if data_inicio is not ...:
-        updates["data_inicio"] = data_inicio
-    if data_entrega is not ...:
-        updates["data_entrega"] = data_entrega
-    if entrega_concluida is not ...:
-        updates["entrega_concluida"] = entrega_concluida
-    if lembrete_minutos_antes is not ...:
-        updates["lembrete_minutos_antes"] = lembrete_minutos_antes
-    if recorrencia is not ...:
-        updates["recorrencia"] = recorrencia
-
-    merged = {**cliente, **updates}
-    if updates:
-        _t(client, "clientes").update(updates).eq("id", str(cliente_id)).execute()
-
-    # Reminder materialisation — only re-evaluated when a relevant field
-    # was actually touched by this PATCH.
-    proximo_lembrete = None
-    if "data_entrega" in updates or "lembrete_minutos_antes" in updates:
-        # Cancel any pending (un-fired, un-cancelled) reminder first —
-        # the old target time is stale the moment either input changes.
-        pending = (
-            _t(client, "cliente_lembretes")
-            .select("id")
-            .eq("org_id", str(org_id))
-            .eq("cliente_id", str(cliente_id))
-            .is_("enviado_em", "null")
-            .is_("cancelado_em", "null")
-            .execute()
-        ).data or []
-        for row in pending:
-            _t(client, "cliente_lembretes").update({"cancelado_em": _now()}).eq("id", row["id"]).execute()
-
-        dispara_em = _compute_dispara_em(merged.get("data_entrega"), merged.get("lembrete_minutos_antes"))
-        if dispara_em:
-            lembrete_id = str(uuid4())
-            _t(client, "cliente_lembretes").insert(
-                {
-                    "id": lembrete_id,
-                    "org_id": str(org_id),
-                    "cliente_id": str(cliente_id),
-                    "dispara_em": dispara_em,
-                    "enviado_em": None,
-                    "cancelado_em": None,
-                    "destinatarios": [],
-                    "created_at": _now(),
-                }
-            ).execute()
-            proximo_lembrete = {"id": lembrete_id, "dispara_em": dispara_em}
-    else:
-        proximo_lembrete = _get_proximo_lembrete(client, org_id, cliente_id)
-
-    return {
-        "data_inicio": merged.get("data_inicio"),
-        "data_entrega": merged.get("data_entrega"),
-        "entrega_concluida": merged.get("entrega_concluida", False),
-        "lembrete_minutos_antes": merged.get("lembrete_minutos_antes"),
-        "recorrencia": merged.get("recorrencia"),
-        # 🔴 NOC-REMEDIATE[reminder-delivery]: `cliente_lembretes` rows are
-        # materialised (correctly, per the pending/cancel logic above) but
-        # NOTHING in this slice delivers them — no scheduler job drains
-        # `idx_sw_cliente_lembretes_pending`. A UI that showed a reminder
-        # as "set" with no delivery path would be a lying UI (contract
-        # §3); `proximo_lembrete` is reported honestly here (the row DOES
-        # exist and WILL be found by a future sweep), and this marker
-        # names the still-missing delivery leg for a dedicated follow-up
-        # rather than silently accepting the gap. 2026-08-18.
-        "proximo_lembrete": proximo_lembrete,
-    }
-
-
-def _get_proximo_lembrete(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[dict]:
-    rows = (
-        _t(client, "cliente_lembretes")
-        .select("id,dispara_em")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .is_("enviado_em", "null")
-        .is_("cancelado_em", "null")
-        .order("dispara_em")
-        .execute()
-    ).data or []
-    if not rows:
-        return None
-    return {"id": rows[0]["id"], "dispara_em": rows[0]["dispara_em"]}
-
-
-# ─── Checklists ─────────────────────────────────────────────────────────
-
-
 def _checklist_out(row: dict, itens: list[dict]) -> dict:
     total = len(itens)
     concluidos = sum(1 for i in itens if i.get("concluido"))
@@ -774,7 +655,6 @@ __all__ = [
     "get_membros",
     "list_checklists",
     "list_tags",
-    "patch_datas",
     "set_cliente_tags",
     "set_membros",
     "update_checklist",

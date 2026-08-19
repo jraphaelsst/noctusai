@@ -29,17 +29,19 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 
+from app.modules.card_hub import agendamentos_service as agenda_svc
 from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import services as svc
 from app.modules.card_hub import timeline_service
 from app.modules.card_hub.deps import get_card_hub_client, get_storage_backend
 from app.modules.card_hub.schemas import (
+    AgendamentoCreateBody,
+    AgendamentoPatchBody,
     ChecklistCreateBody,
     ChecklistItemCreateBody,
     ChecklistItemUpdateBody,
     ChecklistUpdateBody,
     ClienteTagsSetBody,
-    DatasPatchBody,
     MembrosSetBody,
     NotaCreateBody,
     NotaUpdateBody,
@@ -209,25 +211,80 @@ async def set_membros_route(
 # ─── Datas + lembretes ──────────────────────────────────────────────────
 
 
-@router.patch("/{cliente_id}/datas")
-async def patch_datas_route(
+# ─── Agendamentos (migration 061 — many per atendimento) ────────────────
+#
+# Mounted under `/api/clientes/{cliente_id}` even though an agendamento belongs
+# to an ATENDIMENTO, because the card is the person and reads across all of
+# their atendimentos. Every route proves the row belongs to this cliente before
+# touching it — an id alone must never be enough to edit someone else's.
+
+
+@router.get("/{cliente_id}/agendamentos")
+async def list_agendamentos_route(
     cliente_id: UUID,
-    body: DatasPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return agenda_svc.listar(client, org_id, cliente_id)
+
+
+@router.post("/{cliente_id}/agendamentos", status_code=201)
+async def create_agendamento_route(
+    cliente_id: UUID,
+    body: AgendamentoCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    # `AmbiguousAtendimento` is an AppException and carries its own 409 +
+    # structured details, so there is nothing to translate here.
+    return agenda_svc.criar(
+        client,
+        org_id,
+        cliente_id,
+        quando=body.quando,
+        tipo=body.tipo,
+        nota=body.nota,
+        lembrete_minutos_antes=body.lembrete_minutos_antes,
+        atendimento_id=body.atendimento_id,
+    )
+
+
+@router.patch("/{cliente_id}/agendamentos/{agendamento_id}")
+async def patch_agendamento_route(
+    cliente_id: UUID,
+    agendamento_id: UUID,
+    body: AgendamentoPatchBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
     _user, org_id = _auth_parts(auth)
     updates = body.model_dump(exclude_unset=True)
-    return svc.patch_datas(
+    return agenda_svc.atualizar(
         client,
         org_id,
         cliente_id,
-        data_inicio=updates.get("data_inicio", ...),
-        data_entrega=updates.get("data_entrega", ...),
-        entrega_concluida=updates.get("entrega_concluida", ...),
+        agendamento_id,
+        quando=updates.get("quando", ...),
+        tipo=updates.get("tipo", ...),
+        nota=updates.get("nota", ...),
         lembrete_minutos_antes=updates.get("lembrete_minutos_antes", ...),
-        recorrencia=updates.get("recorrencia", ...),
     )
+
+
+@router.delete("/{cliente_id}/agendamentos/{agendamento_id}", status_code=204)
+async def delete_agendamento_route(
+    cliente_id: UUID,
+    agendamento_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    # No `-> None` annotation: FastAPI turns a return annotation into a
+    # response model, and a 204 must not declare a body. Same shape as every
+    # other 204 in this router.
+    _user, org_id = _auth_parts(auth)
+    agenda_svc.remover(client, org_id, cliente_id, agendamento_id)
 
 
 # ─── Checklists ─────────────────────────────────────────────────────────

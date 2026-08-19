@@ -27,9 +27,9 @@ function baseProps(overrides: Partial<ClienteCardDialogProps> = {}): ClienteCard
     onEditTag: vi.fn(),
     colorBlindMode: false,
     onToggleColorBlindMode: vi.fn(),
-    datas: null,
-    onSaveDatas: vi.fn(),
-    onRemoveDatas: vi.fn(),
+    agendamentos: [],
+    onCreateAgendamento: vi.fn(),
+    onRemoveAgendamento: vi.fn(),
     allMembros: [],
     selectedMembros: [],
     onToggleMembro: vi.fn(),
@@ -243,13 +243,17 @@ describe("ordem das seções", () => {
       <ClienteCardDialog
         {...baseProps({
           descricaoCorpo: "Lead interessado em imóvel",
-          datas: {
-            data_inicio: null,
-            data_entrega: "2026-08-20T12:00:00Z",
-            entrega_concluida: false,
-            lembrete_minutos_antes: 60,
-            recorrencia: null,
-          },
+          agendamentos: [
+            {
+              id: "ag1",
+              atendimento_id: "a1",
+              quando: "2099-08-20T12:00:00Z",
+              tipo: "visita",
+              nota: null,
+              lembrete_minutos_antes: 60,
+              created_at: null,
+            },
+          ],
           checklists: [
             { id: "c1", titulo: "Checklist", posicao: 0, itens: [] } as never,
           ],
@@ -282,25 +286,54 @@ describe("ordem das seções", () => {
   });
 });
 
-describe("agendamento", () => {
-  const DATAS = {
-    data_inicio: null,
-    data_entrega: "2026-08-20T12:00:00Z",
-    entrega_concluida: false,
+describe("agendamentos", () => {
+  const AG = (over: Record<string, unknown> = {}) => ({
+    id: "ag1",
+    atendimento_id: "a1",
+    quando: "2099-08-20T12:00:00Z",
+    tipo: "visita" as const,
+    nota: null,
     lembrete_minutos_antes: 60,
-    recorrencia: null,
-  };
+    created_at: null,
+    ...over,
+  });
 
   it("🔴 shows the reminder — it was stored and scheduled but never displayed", async () => {
     const { render, screen } = await import("@testing-library/react");
-    render(<ClienteCardDialog {...baseProps({ datas: DATAS })} />);
+    render(<ClienteCardDialog {...baseProps({ agendamentos: [AG()] })} />);
     expect(screen.getByTestId("agendamento-lembrete").textContent).toContain("1 hora antes");
   });
 
-  it("is absent when no date is set, rather than an empty heading", async () => {
+  it("🔴 lists MANY — the old model could hold exactly one", async () => {
     const { render, screen } = await import("@testing-library/react");
-    render(<ClienteCardDialog {...baseProps({ datas: null })} />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          agendamentos: [
+            AG({ id: "ag1", quando: "2099-08-20T12:00:00Z" }),
+            AG({ id: "ag2", quando: "2099-08-25T15:00:00Z", tipo: "ligacao" }),
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByTestId("agendamento-ag1")).toBeTruthy();
+    expect(screen.getByTestId("agendamento-ag2")).toBeTruthy();
+  });
+
+  it("is absent when none are booked, rather than an empty heading", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ agendamentos: [] })} />);
     expect(screen.queryByTestId("agendamentos-section")).toBeNull();
+  });
+
+  it("removing one calls back with its id", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    const onRemoveAgendamento = vi.fn();
+    render(
+      <ClienteCardDialog {...baseProps({ agendamentos: [AG()], onRemoveAgendamento })} />,
+    );
+    fireEvent.click(screen.getByTestId("agendamento-remover-ag1"));
+    expect(onRemoveAgendamento).toHaveBeenCalledWith("ag1");
   });
 });
 
@@ -310,7 +343,9 @@ describe("o botão Adicionar", () => {
     render(<ClienteCardDialog {...baseProps()} />);
     expect(screen.queryByTestId("adicionar-trigger")).toBeNull();
     // the specific ones must all still be there
-    for (const id of ["etiquetas-trigger", "datas-trigger", "membros-trigger"]) {
+    // `datas-trigger` became `agendamento-trigger` when the single-slot Datas
+    // popover was replaced by one that ADDS appointments (migration 061).
+    for (const id of ["etiquetas-trigger", "agendamento-trigger", "membros-trigger"]) {
       expect(screen.getByTestId(id)).toBeTruthy();
     }
   });

@@ -252,6 +252,41 @@ export interface CardAtendimento {
   campanha: AtendimentoCampanha | null;
 }
 
+// ─── Agendamentos (migration 061 — many per atendimento) ──────────────────
+
+export type TipoAgendamento = "visita" | "ligacao" | "reuniao" | "outro";
+
+/**
+ * One appointment. Belongs to an ATENDIMENTO, not to the person — D17 keeps
+ * closed deals as history, so a visit booked for a 2024 purchase and one
+ * booked for a live negotiation must not share a list. The card is the person
+ * and reads across all of their atendimentos; each row still knows its deal.
+ *
+ * Replaces the single `CardDatas` slot, which physically could not hold two
+ * ("it doesnt add multiple schedules, it replaces the last one").
+ */
+export interface Agendamento {
+  id: string;
+  atendimento_id: string;
+  quando: string;
+  tipo: TipoAgendamento;
+  nota: string | null;
+  /** `null` = no reminder wanted. `0` = at the time. Not the same thing. */
+  lembrete_minutos_antes: number | null;
+  created_at: string | null;
+}
+
+export interface AgendamentoCreateBody {
+  quando: string;
+  tipo: TipoAgendamento;
+  nota?: string | null;
+  lembrete_minutos_antes?: number | null;
+  /** Only needed when the person has more than one open atendimento. */
+  atendimento_id?: string;
+}
+
+export type AgendamentoPatchBody = Partial<Omit<AgendamentoCreateBody, "atendimento_id">>;
+
 // ─── Timeline (D9 — one thread) ────────────────────────────────────────────
 
 export type TimelineKind =

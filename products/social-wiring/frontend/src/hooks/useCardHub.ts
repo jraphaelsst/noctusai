@@ -23,6 +23,9 @@ import { api, supabase } from "@noctusai/seed/infra";
 
 import { apiUrl } from "@/lib/apiBase";
 import type {
+  Agendamento,
+  AgendamentoCreateBody,
+  AgendamentoPatchBody,
   Acesso,
   Checklist,
   ChecklistOrigem,
@@ -31,8 +34,6 @@ import type {
   ItemsEnvelope,
   CardDatas,
   CardResumo,
-  DatasPatchBody,
-  DatasPatchResponse,
   Membro,
   Nota,
   NotaTipo,
@@ -52,6 +53,8 @@ const TIMELINE_KEY = (clienteId: string, kinds?: TimelineKind[]) =>
   [...FAMILY_KEY(clienteId), "timeline", kinds ?? "all"] as const;
 const MEMBROS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "membros"] as const;
 const CHECKLISTS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "checklists"] as const;
+const AGENDAMENTOS_KEY = (clienteId: string) =>
+  [...FAMILY_KEY(clienteId), "agendamentos"] as const;
 const DOCUMENTOS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "documentos"] as const;
 const ACESSOS_KEY = (clienteId: string, documentoId: string) =>
   [...FAMILY_KEY(clienteId), "documentos", documentoId, "acessos"] as const;
@@ -255,30 +258,6 @@ export function useSetCardMembrosMutation(clienteId: string) {
 
 // ─── Datas + lembretes (screenshot 06) ─────────────────────────────────────
 
-export function useDatasMutation(clienteId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: DatasPatchBody) =>
-      api.patch<DatasPatchResponse>(`${clienteBase(clienteId)}/datas`, body),
-    onSuccess: (resolved) => {
-      const previous = qc.getQueryData<CardResumo>(CARD_KEY(clienteId));
-      if (previous) {
-        const datas: CardDatas = {
-          data_inicio: resolved.data_inicio,
-          data_entrega: resolved.data_entrega,
-          entrega_concluida: resolved.entrega_concluida,
-          lembrete_minutos_antes: resolved.lembrete_minutos_antes,
-          recorrencia: resolved.recorrencia,
-        };
-        qc.setQueryData<CardResumo>(CARD_KEY(clienteId), { ...previous, datas });
-      }
-      invalidateCliente(qc, clienteId);
-    },
-  });
-}
-
-// ─── Checklists (D11 — both halves) ────────────────────────────────────────
-
 export function useChecklists(clienteId: string | null) {
   return useQuery({
     queryKey: CHECKLISTS_KEY(clienteId ?? "__none__"),
@@ -456,6 +435,70 @@ export function useChecklistMutations(clienteId: string) {
 }
 
 export type { ChecklistOrigem };
+
+
+// ─── Agendamentos (migration 061 — many per atendimento) ──────────────────
+
+export function useAgendamentos(clienteId: string | null) {
+  return useQuery({
+    queryKey: AGENDAMENTOS_KEY(clienteId ?? "__none__"),
+    queryFn: () =>
+      api
+        .get<ItemsEnvelope<Agendamento>>(`${clienteBase(clienteId as string)}/agendamentos`)
+        .then((r) => r.items),
+    enabled: !!clienteId,
+  });
+}
+
+/**
+ * Create / edit / delete. Every one invalidates the agendamentos list AND the
+ * card (its badges) — and nothing else, for the same reason the checklist
+ * mutations were narrowed: an appointment cannot change a document.
+ */
+export function useAgendamentoMutations(clienteId: string) {
+  const qc = useQueryClient();
+  const base = clienteBase(clienteId);
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: AGENDAMENTOS_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+    ]);
+
+  const create = useMutation({
+    mutationFn: (body: AgendamentoCreateBody) =>
+      api.post<Agendamento>(`${base}/agendamentos`, body),
+    onSuccess: invalidate,
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: AgendamentoPatchBody }) =>
+      api.patch<Agendamento>(`${base}/agendamentos/${encodeURIComponent(id)}`, body),
+    onSuccess: invalidate,
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete(`${base}/agendamentos/${encodeURIComponent(id)}`),
+    // Optimistic: a cancelled appointment lingering while the round-trip
+    // completes reads as "the delete failed", and invites a second click.
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: AGENDAMENTOS_KEY(clienteId) });
+      const previous = qc.getQueryData<Agendamento[]>(AGENDAMENTOS_KEY(clienteId));
+      if (previous) {
+        qc.setQueryData<Agendamento[]>(
+          AGENDAMENTOS_KEY(clienteId),
+          previous.filter((a) => a.id !== id),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _id, context) => {
+      if (context?.previous) qc.setQueryData(AGENDAMENTOS_KEY(clienteId), context.previous);
+    },
+    onSettled: invalidate,
+  });
+
+  return { create, update, remove };
+}
 
 // ─── Documentos (LGPD, D5) ──────────────────────────────────────────────────
 

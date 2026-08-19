@@ -53,7 +53,8 @@ def test_register_yields_the_expected_surfaces():
         "/api/clientes/{cliente_id}/notas",
         "/api/clientes/{cliente_id}/tags",
         "/api/clientes/{cliente_id}/membros",
-        "/api/clientes/{cliente_id}/datas",
+        # `/datas` retired 2026-08-19 — see the note above.
+        "/api/clientes/{cliente_id}/agendamentos",
         "/api/clientes/{cliente_id}/checklists",
         "/api/clientes/{cliente_id}/documentos",
         "/api/clientes/{cliente_id}/documentos/{documento_id}/url",

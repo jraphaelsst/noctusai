@@ -54,7 +54,12 @@ vi.mock("@/hooks/useCardHub", () => ({
   }),
   useSetClienteTagsMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useSetCardMembrosMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useDatasMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useAgendamentos: () => ({ data: [], isPending: false, isFetching: false }),
+  useAgendamentoMutations: () => ({
+    create: { mutate: vi.fn(), isPending: false },
+    update: { mutate: vi.fn(), isPending: false },
+    remove: { mutate: vi.fn(), isPending: false },
+  }),
   useChecklistMutations: () => ({
     createChecklist: { mutate: vi.fn() },
     removeChecklist: { mutate: vi.fn() },

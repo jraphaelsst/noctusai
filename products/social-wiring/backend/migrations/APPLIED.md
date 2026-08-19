@@ -127,3 +127,34 @@ ORDER BY span DESC;
 **Keep this file updated in the same commit that applies a migration.** If that ever feels
 like a chore worth automating, it is — a `noctus.dev.*` tool that diffs `migrations/` against
 the live `information_schema` would remove the guesswork permanently.
+
+## 061_atendimento_agendamentos.sql — APPLIED 2026-08-19
+
+Verified against the live database before and after.
+
+**Before:** table absent, `cliente_lembretes.agendamento_id` absent, 1 cliente
+with a `data_entrega`.
+**After:** table + 2 partial indexes + RLS (org-scoped SELECT for
+`authenticated`, ALL for `service_role`); `cliente_lembretes.agendamento_id`
+added; backfill produced exactly 1 agendamento
+(`4d4abc19…`, 2026-08-20 15:00Z, lembrete 60min) with its pending reminder
+re-pointed at it (`dispara_em` 14:00Z). Confirmed by query, not inferred.
+
+**`clientes.data_inicio` / `data_entrega` / `lembrete_minutos_antes` /
+`entrega_concluida` / `recorrencia` are now DEPRECATED as inputs.** Nothing
+reads them to decide anything: `PATCH /api/clientes/{id}/datas` and
+`services.patch_datas` were removed in the same commit, so the ONLY writer is
+`agendamentos_service._sync_mirror`, which keeps `data_entrega` +
+`lembrete_minutos_antes` as a derived cache of the soonest UPCOMING appointment.
+That cache exists solely so the Clientes board's due pill (drawn from the
+clientes LIST endpoint, not the card) stays correct without repointing that
+query at a join across atendimentos → agendamentos for a thousand-row board.
+
+Not dropped, deliberately: a dropped column is the one migration that cannot be
+undone by re-running anything, and these still hold real values.
+
+**Follow-up, still open:** repoint the clientes list query at
+`atendimento_agendamentos` and retire the mirror. And
+`NOC-REMEDIATE[reminder-delivery]` — reminders are scheduled correctly and
+NOTHING DELIVERS THEM; the marker moved from `patch_datas` into
+`agendamentos_service._sync_lembrete` when the former was removed.

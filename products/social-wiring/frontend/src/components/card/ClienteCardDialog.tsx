@@ -55,9 +55,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import type {
+  Agendamento,
+  AgendamentoCreateBody,
   CardAtendimento,
   Checklist,
-  DatasPatchBody,
   Documento,
   CardDatas,
   Membro,
@@ -69,11 +70,11 @@ import type {
 import { resolveDueState } from "./ClienteCardFace";
 import { Timeline } from "./Timeline";
 import { ChecklistDialog } from "./popovers/ChecklistDialog";
-import { DatasPopover } from "./popovers/DatasPopover";
+import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
 import { EtiquetasPopover } from "./popovers/EtiquetasPopover";
 import { MembrosPopover } from "./popovers/MembrosPopover";
 
-type PopoverKey = "etiquetas" | "datas" | "checklist" | "membros" | null;
+type PopoverKey = "etiquetas" | "agendamento" | "checklist" | "membros" | null;
 
 const DUE_LABEL: Record<string, string> = {
   overdue: "Atrasado",
@@ -113,10 +114,15 @@ export interface ClienteCardDialogProps {
   tagsSaving?: boolean;
 
   // Datas
-  datas: CardDatas | null;
-  onSaveDatas: (body: DatasPatchBody) => void;
-  onRemoveDatas: () => void;
-  datasSaving?: boolean;
+  /**
+   * Many appointments per card (migration 061), replacing the single
+   * `CardDatas` slot that physically could not hold two.
+   */
+  agendamentos?: Agendamento[];
+  agendamentosLoading?: boolean;
+  onCreateAgendamento: (body: AgendamentoCreateBody) => void;
+  onRemoveAgendamento: (id: string) => void;
+  agendamentoSaving?: boolean;
 
   // Membros
   allMembros: Membro[];
@@ -216,13 +222,11 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   onToggleColorBlindMode={props.onToggleColorBlindMode}
                   saving={props.tagsSaving}
                 />
-                <DatasPopover
-                  open={activePopover === "datas"}
-                  onOpenChange={(o) => setActivePopover(o ? "datas" : null)}
-                  datas={props.datas}
-                  onSave={props.onSaveDatas}
-                  onRemove={props.onRemoveDatas}
-                  saving={props.datasSaving}
+                <AgendamentoPopover
+                  open={activePopover === "agendamento"}
+                  onOpenChange={(o) => setActivePopover(o ? "agendamento" : null)}
+                  onCreate={props.onCreateAgendamento}
+                  saving={props.agendamentoSaving}
                 />
                 <ChecklistDialog
                   open={activePopover === "checklist"}
@@ -290,7 +294,11 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 saving={props.descricaoSaving}
               />
 
-              <AgendamentosSection datas={props.datas} />
+              <AgendamentosSection
+                agendamentos={props.agendamentos ?? []}
+                loading={props.agendamentosLoading}
+                onRemove={props.onRemoveAgendamento}
+              />
 
               <ChecklistsSection
                 checklists={props.checklists}
@@ -668,42 +676,84 @@ function lembreteLabel(minutos: number): string {
   return LEMBRETE_LABEL[minutos] ?? `${minutos} minutos antes`;
 }
 
-function AgendamentosSection({ datas }: { datas: CardDatas | null }) {
+const TIPO_LABEL: Record<string, string> = {
+  visita: "Visita",
+  ligacao: "Ligação",
+  reuniao: "Reunião",
+  outro: "Compromisso",
+};
+
+function AgendamentosSection({
+  agendamentos,
+  loading,
+  onRemove,
+}: {
+  agendamentos: Agendamento[];
+  loading?: boolean;
+  onRemove: (id: string) => void;
+}) {
   // Sits between Descrição and Checklist deliberately: an agendamento is the
   // next thing that needs DOING, so it outranks the work list below it.
-  const inicio = datas?.data_inicio ?? null;
-  const entrega = datas?.data_entrega ?? null;
-  const lembrete = datas?.lembrete_minutos_antes ?? null;
+  //
+  // A LIST, not a slot. The card used to show one appointment because it could
+  // only hold one; booking a second silently replaced the first.
+  if (loading) {
+    return (
+      <div className="mb-5" data-testid="agendamentos-loading">
+        <div className="h-4 w-40 animate-pulse rounded bg-muted" />
+      </div>
+    );
+  }
+  if (agendamentos.length === 0) return null;
 
-  if (!inicio && !entrega) return null;
+  const agora = Date.now();
 
   return (
     <div className="mb-5" data-testid="agendamentos-section">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Agendamento
+        Agendamentos
       </p>
-      <div className="space-y-1.5">
-        {inicio && (
-          <p className="text-sm" data-testid="agendamento-inicio">
-            <span className="text-muted-foreground">Início: </span>
-            {formatDate(inicio, true)}
-          </p>
-        )}
-        {entrega && (
-          <div className="flex flex-wrap items-center gap-2" data-testid="agendamento-entrega">
-            <span className="text-sm text-muted-foreground">Entrega:</span>
-            {datas && <DataEntregaPill datas={datas} />}
-          </div>
-        )}
-        {/* The reminder was stored and scheduled but never shown, so the card
-            could not answer "did my notification actually get set?" — the one
-            question a reminder surface exists to answer. */}
-        {lembrete !== null && (
-          <p className="text-sm text-muted-foreground" data-testid="agendamento-lembrete">
-            <Bell className="mr-1 inline h-3.5 w-3.5 align-[-2px]" />
-            Lembrete {lembreteLabel(lembrete)}
-          </p>
-        )}
+      <div className="space-y-2">
+        {agendamentos.map((a) => {
+          const passou = new Date(a.quando).getTime() < agora;
+          return (
+            <div
+              key={a.id}
+              className={cn(
+                "rounded border px-3 py-2",
+                // Past appointments stay visible — they are history, and D17
+                // keeps history — but must not read as "coming up".
+                passou && "opacity-60",
+              )}
+              data-testid={`agendamento-${a.id}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    {TIPO_LABEL[a.tipo] ?? a.tipo} · {formatDate(a.quando, true)}
+                  </p>
+                  {a.lembrete_minutos_antes !== null && (
+                    <p className="mt-0.5 text-xs text-muted-foreground" data-testid="agendamento-lembrete">
+                      <Bell className="mr-1 inline h-3 w-3 align-[-1px]" />
+                      Lembrete {lembreteLabel(a.lembrete_minutos_antes)}
+                    </p>
+                  )}
+                  {a.nota && <p className="mt-1 text-sm text-muted-foreground">{a.nota}</p>}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
+                  onClick={() => onRemove(a.id)}
+                  aria-label="Remover agendamento"
+                  data-testid={`agendamento-remover-${a.id}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

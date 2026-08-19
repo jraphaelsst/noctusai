@@ -101,7 +101,6 @@ import {
   flattenTimeline,
   useCardResumo,
   useChecklistMutations,
-  useDatasMutation,
   useDocumentoMutations,
   useNotaMutations,
   useSetClienteTagsMutation,
@@ -225,25 +224,6 @@ describe("useChecklistMutations.toggleItem — optimistic checkbox", () => {
       (call) => Array.isArray(call[1]) && call[1][0]?.itens?.[0]?.concluido === true,
     );
     expect(optimisticCall).toBeTruthy();
-  });
-});
-
-describe("useDatasMutation", () => {
-  it("PATCHes /api/clientes/{id}/datas with the given body", async () => {
-    mockPatch.mockResolvedValue({
-      data_inicio: null,
-      data_entrega: "2026-08-20T00:00:00Z",
-      entrega_concluida: false,
-      lembrete_minutos_antes: 1440,
-      recorrencia: null,
-      proximo_lembrete: { id: "r1", dispara_em: "2026-08-19T00:00:00Z" },
-    });
-    const mutation = useDatasMutation("cl1") as any;
-    await mutation.mutateAsync({ data_entrega: "2026-08-20T00:00:00Z", lembrete_minutos_antes: 1440 });
-    expect(mockPatch).toHaveBeenCalledWith("/api/clientes/cl1/datas", {
-      data_entrega: "2026-08-20T00:00:00Z",
-      lembrete_minutos_antes: 1440,
-    });
   });
 });
 
