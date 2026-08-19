@@ -276,3 +276,102 @@ produces no immediate signal is advice, not a rule.** When a documented
 constraint is found to have been violated repeatedly, the correct response is
 not a stronger restatement — it is to ask *what would have failed at the moment
 of the mistake*, and build that.
+
+---
+
+## §11 · The gate, again (2026-08-19) — the commit keeper fires too late
+
+§10 built the gate and closed with the right question: *what would have failed
+at the moment of the mistake?* It answered "the commit", and that answer was
+**one step too late**.
+
+**The 2026-08-18 recurrence.** An agent slipped twice in one session with
+`check_primary_checkout_commit` installed and working. The keeper caught
+neither, because neither slip ever reached `git commit` — the edits were spotted
+by eye first. Nothing was lost, but the remedy was still a hand migration: diff
+the primary, re-apply in the worktree, revert the primary, re-verify. The gate
+prevented the *divergence*; it did nothing about the *waste*, because the
+mistake is made when the file is written, not when it is committed.
+
+**The mechanism the slip actually uses.** Both times it was the same shape:
+
+```bash
+cd /path/to/primary && sed -i '' 's/…/…/' products/…/app.py
+```
+
+A `cd` inside one Bash call silently re-points the write. The harness reports
+the **session** cwd, which still says the worktree, so nothing in the tool call
+looks wrong — and a guard that only reads the reported cwd sees nothing either.
+This is why the guard parses `cd` out of the command itself.
+
+### The gate
+
+`primary_write_guard.decide()` (`mcp/noctusai/tools/noctus/dev/primary_write_guard.py`),
+wired as a **`PreToolUse` hook** over `Edit`/`Write`/`MultiEdit`/`NotebookEdit`/
+`Bash` in the checked-in `.claude/settings.json` →
+`scripts/hooks/claude-guard-primary-write.py`. It **denies the tool call**, so
+the wrong-tree edit never happens at all.
+
+Refuses when all three hold:
+
+1. the target resolves **inside the primary checkout** — and *not* inside a
+   linked worktree. Linked worktrees live at `<primary>/.claude/worktrees/<slug>/`,
+   i.e. physically under the primary root, so containment alone would refuse the
+   one place work belongs. Worktree roots come from `git worktree list
+   --porcelain`, never from the path convention; **and**
+2. the primary checkout's `HEAD` is a **shared** branch (`dev`/`main`/`prod`);
+   **and**
+3. the tool call is a **write**. Reads are never blocked — `cat`, `grep`,
+   `sed -n`, `git status`, `git log` in the primary checkout stay free.
+
+### What is deliberately NOT guarded
+
+**The orchestrator's own git duties**, exempt *by name*: `git pull`, `fetch`,
+`merge`, `push`, `worktree`, `tag`, `branch`. Syncing and integrating the
+primary checkout on `dev` **is** the job. A guard that fought it would be
+switched off within a session, and a gate that gets switched off protects
+nothing. Designing the legitimate case out of the guard beats teaching anyone
+to bypass it (`KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`).
+
+`project-history/` is exempt for the same reason it is exempt at commit time —
+one definition, imported: `compliance.py` now takes `SHARED_BRANCHES` and the
+ledger allowlist **from** `primary_write_guard`, so the two gates cannot drift
+into disagreeing about what "shared" or "ledger" means.
+
+### Two gates, deliberately
+
+The Bash leg can only ever be a good *parser* of an arbitrary shell command,
+never a proof. So the commit keeper stays as the backstop for whatever the
+parser misses, and the two are independent:
+
+| | fires at | catches | can be fooled by |
+|---|---|---|---|
+| `primary_write_guard` | the write | the mistake itself | exotic shell quoting, an interpreter one-liner |
+| `check_primary_checkout_commit` | the commit | the divergence | nothing — it reads the real staged set |
+
+When the parser cannot resolve a target but sees write intent (a `python -c`
+that opens a file for writing), it refuses against the effective cwd and **says
+so in the message**. The permissive answer is the one that lets the slip
+through; an over-refusal costs one absolute path.
+
+### Performance is a correctness property here
+
+The hook runs before *every* Bash/Edit/Write call. `compliance.py` costs ~0.27 s
+to import — a quarter-second tax on every command in every session is how a gate
+becomes the thing someone deletes. So the decision lives in a **stdlib-only**
+module the hook loads **by path** (not as a package), and the whole hook runs in
+~60 ms.
+
+### Escape hatch
+
+`NOCTUS_ALLOW_PRIMARY_WRITE=1`, mirroring `NOCTUS_ALLOW_PRIMARY_COMMIT=1`. An
+env var, never a flag, and never `--no-verify`.
+
+### The general lesson, sharpened
+
+§10 said: build what would have failed at the moment of the mistake. §11 adds
+the follow-up — **ask when the mistake is actually made, not when it becomes
+expensive.** A gate placed at the first *expensive* consequence still lets the
+work be done in the wrong place; a gate placed at the *act* prevents it. When a
+gate fires but the same class of incident keeps costing rework, the gate is at
+the wrong point in the pipeline, not too weak.

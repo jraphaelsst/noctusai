@@ -9425,14 +9425,14 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
 
 #: Branches that are shared integration/release lines. A commit landing on one
 #: of these in the PRIMARY checkout is the slip this keeper exists to stop.
-SHARED_BRANCHES = frozenset({"dev", "main", "prod"})
-
-#: The ONE legitimate reason to commit on the primary checkout: the MCP tools'
-#: append-only ledgers, which are pushed to `dev` by design (branch_pointer,
-#: worktree-salvage, auto-improvement, vector-costs). Anything outside this set
-#: is source, docs or config — i.e. work, which belongs on a branch.
-_PRIMARY_COMMIT_ALLOWLIST = (
-    "project-history/",
+#: Both halves of the self-branching gate — the WRITE guard (PreToolUse) and
+#: this COMMIT keeper — answer "is this branch shared?" and "is this path a
+#: ledger?" identically, so the answer has exactly one definition. It lives in
+#: `primary_write_guard` rather than here because that module is stdlib-only:
+#: the hook pays its import cost on every tool call and cannot afford this one.
+from tools.noctus.dev.primary_write_guard import (  # noqa: E402
+    LEDGER_PREFIXES as _PRIMARY_COMMIT_ALLOWLIST,
+    SHARED_BRANCHES,
 )
 
 

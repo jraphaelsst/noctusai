@@ -1,0 +1,17 @@
+{
+  "$comment": "Checked-in project settings. `settings.local.json` (gitignored) is for per-machine preferences; anything the METHODOLOGY depends on belongs here, so every agent in every clone gets it without a setup step.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-guard-primary-write.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
