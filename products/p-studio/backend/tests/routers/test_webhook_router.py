@@ -33,10 +33,45 @@ def provedor():
 
 @pytest.fixture
 def admin_db(fake_db):
-    """O webhook usa o client service-role — aqui ele aponta para o FakeDB."""
+    """O webhook usa o client service-role — aqui ele aponta para o FakeDB.
+
+    O service de credenciais entra pelo SEAM (`Depends`), não por
+    monkey-patch: `get_credenciais_service` resolve `get_admin_client` no
+    namespace de `app.dependencies`, então trocar o nome no módulo do router
+    nunca o alcançava — e as 17 rotas de webhook morriam num 400
+    ("SUPABASE_SERVICE_ROLE_KEY não configurada") que nada tinha a ver com o
+    que os testes afirmam. Injetar é o que este repositório manda fazer
+    (`KB § PATTERNS/compliance/testing.md`); remendar o nosso próprio módulo
+    é justamente o que ele proíbe.
+
+    `get_admin_client` continua trocado no módulo porque `webhook_asaas` o
+    chama direto para montar o `IntegracaoService` — um seam separado, ainda
+    por fazer, anotado abaixo.
+    """
+    from app.dependencies import get_credenciais_service_opcional
+    from app.services.credenciais import EncryptionNotConfigured
+    from app.services.credenciais_service import CredenciaisService
+
+    def _servico_sobre_o_fake():
+        """Mirrors the real factory's tolerance over the FakeDB.
+
+        Built lazily and per-request: `CredenciaisService.__init__` raises
+        `EncryptionNotConfigured` when the suite runs without an
+        `ENCRYPTION_KEY` (it usually does), and constructing it eagerly in the
+        fixture would blow up every test at override time instead of
+        exercising the None path production actually takes.
+        """
+        try:
+            return CredenciaisService(fake_db, settings.org_id)
+        except EncryptionNotConfigured:
+            return None
+
     app.dependency_overrides[get_admin_client] = lambda: fake_db
-    # `get_admin_client` é chamado direto no router, não via Depends, então
-    # o override do FastAPI não basta: troca-se a função no módulo.
+    app.dependency_overrides[get_credenciais_service_opcional] = _servico_sobre_o_fake
+
+    # NOC-REMEDIATE[di-seam]: `webhook_asaas` ainda chama `get_admin_client()`
+    # inline, então este patch de módulo continua necessário. Trocar por
+    # `Depends` remove o último monkey-patch deste arquivo.
     import app.routers.integracoes_router as mod
 
     original = mod.get_admin_client
@@ -44,6 +79,7 @@ def admin_db(fake_db):
     yield fake_db
     mod.get_admin_client = original
     app.dependency_overrides.pop(get_admin_client, None)
+    app.dependency_overrides.pop(get_credenciais_service_opcional, None)
 
 
 def _evento(lancamento_id: str, tipo: str = "liquidada", **cobranca) -> dict:

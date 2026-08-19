@@ -84,6 +84,49 @@ def get_credenciais_service():
     return CredenciaisService(get_admin_client(), settings.org_id)
 
 
+def get_credenciais_service_opcional():
+    """`get_credenciais_service`, or None when the service-role client is not
+    available — the shape the PUBLIC webhook needs.
+
+    Two reasons this exists rather than the router calling the factory inline:
+
+    1. **It is a real DI seam.** The webhook route used to call
+       `get_credenciais_service()` inline, so `app.dependency_overrides` could
+       not reach it and a test had to monkey-patch `get_admin_client` on the
+       ROUTER module — which never applied here, because this factory resolves
+       that name from `app.dependencies`' own namespace. Seventeen webhook
+       tests failed on a 400 that had nothing to do with what they asserted.
+       Injecting it means the override works and nobody patches our modules
+       (`KB § PATTERNS/compliance/testing.md`).
+    2. **A missing key must not veto the legacy token path.** The webhook also
+       accepts `ASAAS_WEBHOOK_TOKEN` from `.env`. Resolving a hard dependency
+       would 503 a deploy that is perfectly able to authenticate that way. None
+       here means "no stored credentials to compare against" — the caller still
+       checks the env token, and still 503s if there is no candidate at all.
+    """
+    from fastapi import HTTPException
+
+    from app.services.credenciais import EncryptionNotConfigured
+
+    try:
+        return get_credenciais_service()
+    except EncryptionNotConfigured:
+        # No ENCRYPTION_KEY ⇒ there are no stored credentials to compare
+        # against, by construction. The caller's own `if settings.encryption_key`
+        # guard used to cover this because it ran BEFORE the factory; as a
+        # `Depends` the factory resolves FIRST, so without this branch a deploy
+        # that never configured encryption would 500 on a public webhook that
+        # its `.env` token could have authenticated perfectly well.
+        return None
+    except HTTPException as exc:
+        # Only "not configured" degrades to None. Anything else is a real fault
+        # and must keep propagating — swallowing it would be the silent
+        # fallback this codebase forbids.
+        if exc.status_code == 503:
+            return None
+        raise
+
+
 def resolver_provedor(ambiente: Optional[str] = None):
     """Monta o adapter de cobrança. Banco primeiro, `.env` depois, alto no fim.
 

@@ -25,6 +25,7 @@ from app.database import get_admin_client
 from app.dependencies import (
     CurrentUser,
     get_credenciais_service,
+    get_credenciais_service_opcional,
     get_current_user,
     get_provedor_cobranca,
     resolver_provedor,
@@ -54,6 +55,7 @@ class AmbienteIn(BaseModel):
 
 def autenticar_webhook(
     token: Optional[str] = Header(default=None, alias="asaas-access-token"),
+    servico: Optional[CredenciaisService] = Depends(get_credenciais_service_opcional),
 ) -> str:
     """Autentica o webhook pelo segredo compartilhado e devolve o AMBIENTE.
 
@@ -84,8 +86,11 @@ def autenticar_webhook(
     esperado_env = settings.asaas_webhook_token
 
     candidatos: list[tuple[str, str]] = []
-    if settings.encryption_key:
-        servico = get_credenciais_service()
+    # `servico` is None when the service-role client is not configured — see
+    # `get_credenciais_service_opcional`. That is not fatal here: the legacy
+    # `.env` token below may still authenticate the caller, and if nothing can,
+    # the no-candidates branch already answers 503.
+    if settings.encryption_key and servico is not None:
         for ambiente in servico.ambientes_configurados():
             guardado = servico.webhook_token(ambiente)
             if guardado:

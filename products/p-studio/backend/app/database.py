@@ -35,8 +35,19 @@ def get_user_client(token: str, schema: str = SCHEMA) -> Client:
 
 def get_admin_client(schema: str = SCHEMA) -> Client:
     if not settings.supabase_service_role_key:
+        # 503, NOT 400. A missing server-side key is OUR misconfiguration, and
+        # 4xx tells the caller their request was wrong. That distinction is not
+        # cosmetic here: this factory sits behind the PUBLIC Asaas webhook, and
+        # the provider reads status codes to decide whether to keep delivering.
+        # A 400 says "malformed, do not retry" about a request that was
+        # perfectly well-formed — so a key we forgot to set would look like the
+        # provider's fault and silently poison the delivery queue.
+        #
+        # Same class as the seed's auth path reporting an unreachable Supabase
+        # as 401 (fixed 2026-08-18): an infrastructure failure must never be
+        # dressed up as a client error.
         raise HTTPException(
-            status_code=400,
+            status_code=503,
             detail="SUPABASE_SERVICE_ROLE_KEY não configurada no backend/.env — "
             "necessária para operações administrativas.",
         )

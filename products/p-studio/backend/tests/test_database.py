@@ -55,9 +55,19 @@ def test_erro_desconhecido_vira_400_com_a_mensagem_do_banco():
     assert "coluna inexistente" in exc.value.detail
 
 
-def test_get_admin_client_sem_service_key_da_400_com_instrucao(monkeypatch):
+def test_get_admin_client_sem_service_key_da_503_com_instrucao(monkeypatch):
+    """503, não 400 — a chave que falta é NOSSA, não do chamador.
+
+    Este factory fica atrás do webhook PÚBLICO do Asaas, e o provedor lê o
+    status para decidir se continua entregando: 400 diz "requisição malformada,
+    não repita" sobre uma chamada perfeitamente válida, então uma chave que
+    esquecemos de configurar pareceria culpa do provedor e envenenaria a fila
+    de entrega em silêncio. Mesma classe do 401 que o seed devolvia quando não
+    conseguia FALAR com o Supabase (corrigido em 2026-08-18): falha de
+    infraestrutura nunca se disfarça de erro do cliente.
+    """
     monkeypatch.setattr(settings, "supabase_service_role_key", "")
     with pytest.raises(HTTPException) as exc:
         get_admin_client()
-    assert exc.value.status_code == 400
+    assert exc.value.status_code == 503
     assert "SUPABASE_SERVICE_ROLE_KEY" in exc.value.detail
