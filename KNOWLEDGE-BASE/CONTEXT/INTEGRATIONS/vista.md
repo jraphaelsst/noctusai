@@ -473,10 +473,12 @@ category error.
 
 > **⚠️ 2026-08-19 — the grant has NOT landed.** Vista was asked (§ 9 Tier 1)
 > and reportedly answered that access was granted. It is not in effect on our
-> key: all three Tier-1 methods still return 401, verified twice — once via
-> `vista.diagnostics.probe` and once via raw HTTP in a fresh process with
-> **well-formed** `pesquisa` payloads, to rule out both the MCP's in-memory
-> module cache and a malformed-request false negative. Do not record this ask
+> key: all three Tier-1 methods still return 401, verified **three times** —
+> via `vista.diagnostics.probe`, via raw HTTP in a fresh process with
+> **well-formed** `pesquisa` payloads, and again in a **restarted MCP session**
+> the same day. The three legs retire the three available excuses in turn: the
+> MCP's in-memory module cache, a malformed-request false negative, and a stale
+> long-lived MCP process. Do not record this ask
 > as satisfied on a vendor's word; §7.0 of the project doc says verify by
 > probe, and the probe disagrees. Most likely explanations, in order: the
 > grant was applied to a **different key** than the one in `VISTA_API_KEY`
@@ -837,7 +839,13 @@ labels were corrected 2026-08-05:
 row plus a top-level `unexpected: [...]` — **read `unexpected`, not
 `status`**, to decide whether a tenant has actually drifted.
 
-Probes run **sequentially** (~1.4s wall-clock for seven endpoints).
+Probes run **sequentially** (~1.4s wall-clock for the eight baseline rows).
+The MCP tool descriptor states this count too — **derived** via
+`len(VISTA_ENDPOINT_BASELINE)`, never typed, since the hand-written "7" went
+stale the day `/clientes/detalhes` joined the baseline and told a host LLM to
+expect one fewer row than the probe returns, on precisely the row that detects
+the Tier-1 grant landing. Guarded by
+`test_probe_descriptor_endpoint_count_matches_the_baseline`.
 Acceptable for an admin-only debug tool;
 `vista_showcase_service.py:357-359` flags parallelization via
 `asyncio.gather` as a future perf knob if the probe count grows.
@@ -1105,6 +1113,27 @@ ships):
 
 ## 8. Change log
 
+### 2026-08-19 (later) — Third re-probe from a restarted session; probe count derived
+
+The earlier entry's verdict was re-tested under the one condition it had not
+yet been: a **restarted MCP session**, so nothing about the answer could be
+blamed on a long-lived process holding old state. Same answer —
+`clientes/listar`, `clientes/detalhes`, `corretores/listar` all 401 on key
+`…644c`, and `imoveis/listar` + `usuarios/listar` still 200 in the same pass
+(so the key itself is live; it is the per-method grant that is missing). The
+401 body still echoes the API key verbatim, confirming the § 9 Tier-4 upstream
+defect is unfixed on their side. **Tier 1 remains open.**
+
+One drift found and fixed on contact: `vista.diagnostics.probe`'s tool
+**description** still advertised "7 endpoints" while the seed-canonical
+baseline had grown to 8. A hand-typed count against a derived source — the
+same failure shape as `PROBE_ENDPOINTS` forking at N=2 (2026-08-05 entry), one
+layer up. It mattered specifically because the 8th row **is** the grant
+detector: a host LLM was told to expect a probe that does not include the row
+it most needs. The count is now `len(VISTA_ENDPOINT_BASELINE)`, guarded by
+`test_probe_descriptor_endpoint_count_matches_the_baseline` (verified red
+against the pre-fix string).
+
 ### 2026-08-19 — Grant NOT landed (re-verified) + gated-surface refined to parity
 
 **The status answer first.** Vista reportedly granted the § 9 Tier-1 ask. It
@@ -1223,8 +1252,10 @@ These three are the **only** routes a permission grant can unlock; every
 other gap below is a 404, where permission is not the blocker.
 
 > **Status 2026-08-19 — asked, answered "granted", NOT in effect.** The ask
-> was sent and Vista reportedly approved it. A live re-probe says otherwise:
-> all three still 401 (§ 4.2). Per § 7.0 the probe is the authority, so this
+> was sent and Vista reportedly approved it. Three independent live re-probes
+> say otherwise — including one from a restarted MCP session, which is what
+> settles the "your client is caching it" hypothesis: all three methods still
+> 401 (§ 4.2). Per § 7.0 the probe is the authority, so this
 > tier stays **open**. The next move is not a code change — it is confirming
 > with Vista *which key* the grant was applied to, since ours (`…644c`) is
 > demonstrably not it. If they issued a **new** key, it must be rotated into

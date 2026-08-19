@@ -150,11 +150,17 @@ def tool_descriptors() -> list[Tool]:
     return [
         Tool(
             name="vista.diagnostics.probe",
+            # Endpoint count is DERIVED from the seed-canonical baseline, never
+            # typed. It was hand-written as "7" and silently went stale the day
+            # `/clientes/detalhes` joined the baseline (2026-08-19) — leaving the
+            # host LLM told to expect one fewer row than the probe returns, on
+            # precisely the row that detects the Tier-1 grant landing.
             description=(
                 "Sequential health probe of every endpoint family this MCP "
                 "knows about. Each row reports {endpoint, status, http_status, "
-                "latency_ms, expected_http_status, as_expected, note}. ~1.4s "
-                "wall-clock for 7 endpoints. Read the `unexpected` list to see "
+                "latency_ms, expected_http_status, as_expected, note}. Probes "
+                f"{len(VISTA_ENDPOINT_BASELINE)} endpoints sequentially (~1.4s "
+                "wall-clock). Read the `unexpected` list to see "
                 "genuine deviations: several endpoints answer a bare GET with "
                 "400/401/405 BY DESIGN, so a non-200 row is not itself a fault."
             ),

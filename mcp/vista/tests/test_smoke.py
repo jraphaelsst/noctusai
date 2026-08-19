@@ -192,5 +192,30 @@ def test_calibrator_returns_floor_when_unconfigured():
     assert calibrator.snapshot() == {}
 
 
+def test_probe_descriptor_endpoint_count_matches_the_baseline():
+    """The probe's advertised endpoint count must be DERIVED, not typed.
+
+    Regression guard for the 2026-08-19 drift: the descriptor said "7 endpoints"
+    while `VISTA_ENDPOINT_BASELINE` had grown to 8 (`/clientes/detalhes` joined it
+    as the Tier-1 grant detector). A host LLM reading the descriptor was told to
+    expect one fewer row than the probe returns — on precisely the row that
+    signals the permission grant landing. Any future baseline row must not be
+    able to re-open that gap silently.
+    """
+    from noctusai_lib.integrations.vista import VISTA_ENDPOINT_BASELINE
+    from vista.tools.diagnostics import tool_descriptors
+
+    probe = next(d for d in tool_descriptors() if d.name == "vista.diagnostics.probe")
+    expected = len(VISTA_ENDPOINT_BASELINE)
+    assert f"{expected} endpoints" in probe.description, (
+        f"probe descriptor must advertise the live baseline size ({expected}); "
+        f"got: {probe.description!r}"
+    )
+    # And no OTHER count may appear — a stale literal left beside the derived
+    # one reads as authoritative to whichever the host LLM sees first.
+    stale = [n for n in range(1, 40) if n != expected and f"{n} endpoints" in probe.description]
+    assert not stale, f"stale hand-typed endpoint counts in probe descriptor: {stale}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
