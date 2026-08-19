@@ -14,6 +14,7 @@ make the test brittle to fleet changes).
 from __future__ import annotations
 
 import textwrap
+import os
 from pathlib import Path
 
 import pytest
@@ -273,14 +274,24 @@ def test_derive_pattern_adds_prod_origin_per_product(
 def test_derive_per_product_override_beats_pattern(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """PRODUCT_URL_<SLUG> wins over PRODUCT_URL_PATTERN for that product."""
+    """PRODUCT_URL_<SLUG> is the CANONICAL url — but the allowlist keeps both.
+
+    Amended 2026-08-19. This test used to assert the pattern origin was
+    *suppressed* when an override existed, mirroring `resolve_product_url`,
+    whose job is to name the ONE url to link to. For an allowlist that is the
+    wrong contract: `deploy/tunnel/ingress.yml` routes BOTH `erp.` and
+    `erp-imobiliario.` to the same container, so both are origins a browser can
+    genuinely send, and allowing only one left the other answering 400 with no
+    allow-origin — measured against live core the same day.
+    """
     monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://{slug}.noctusai.com")
     monkeypatch.setenv("PRODUCT_URL_ERP_IMOBILIARIO", "https://erp.noctusai.com")
     start_sh = _write_start_sh(tmp_path, CANONICAL_REGISTRY)
     out = derive_cors_origins(start_sh=start_sh, include_all_frontends=True)
-    assert "https://erp.noctusai.com" in out  # the override
-    assert "https://erp-imobiliario.noctusai.com" not in out  # pattern suppressed
-    assert "https://core.noctusai.com" in out  # others still take the pattern
+    assert "https://erp.noctusai.com" in out           # the override
+    assert "https://erp-imobiliario.noctusai.com" in out  # AND the pattern
+    assert "https://core.noctusai.com" in out          # others take the pattern
+    assert out.count("https://erp.noctusai.com") == 1  # still deduped
 
 
 def test_derive_own_slug_adds_only_its_prod_origin(
@@ -455,3 +466,49 @@ def test_settings_registry_all_includes_prod_origins_when_configured(
     assert "https://noctusai.com" in origins  # apex (PRODUCT_URL_CORE override)
     assert "https://erp-imobiliario.noctusai.com" in origins  # {slug} pattern
     assert "http://localhost:5173" in origins  # localhost set still present
+
+
+# ── both live hostnames, not just the canonical one ──────────────────────
+#
+# Measured against live core on 2026-08-19, minutes after shipping the registry
+# into the image. `p-studio.` and `igig.` — pattern-only products — came back
+# 200 with an allow-origin. `social-wiring.` and `erp-imobiliario.` still came
+# back 400 with none, because each has an explicit `PRODUCT_URL_<SLUG>` naming
+# its SHORT hostname, and `resolve_product_url` short-circuits on the override.
+#
+# `deploy/tunnel/ingress.yml` routes BOTH names to the same container, so both
+# are real origins a browser can send. An allowlist is a set of what we serve,
+# not a preference order — the override is the canonical link, not the only door.
+
+def _prod_env(monkeypatch):
+    monkeypatch.setenv("PRODUCT_URL_PATTERN", "https://{slug}.noctusai.com")
+    monkeypatch.setenv("PRODUCT_URL_SOCIAL_WIRING", "https://social.noctusai.com")
+    monkeypatch.setenv("PRODUCT_URL_ERP_IMOBILIARIO", "https://erp.noctusai.com")
+    monkeypatch.setenv("PRODUCT_URL_CORE", "https://noctusai.com")
+
+
+def test_an_override_does_not_hide_the_pattern_derived_origin(monkeypatch):
+    """🔴 THE gap. Both hostnames serve social-wiring; both must be allowed."""
+    _prod_env(monkeypatch)
+    origins = derive_cors_origins()
+    assert "https://social.noctusai.com" in origins          # the override
+    assert "https://social-wiring.noctusai.com" in origins   # the pattern
+    assert "https://erp.noctusai.com" in origins
+    assert "https://erp-imobiliario.noctusai.com" in origins
+
+
+def test_a_pattern_only_product_still_resolves_exactly_once(monkeypatch):
+    _prod_env(monkeypatch)
+    origins = derive_cors_origins()
+    assert origins.count("https://p-studio.noctusai.com") == 1
+    assert origins.count("https://igig.noctusai.com") == 1
+
+
+def test_no_pattern_configured_is_a_no_op_not_a_crash(monkeypatch):
+    """Plain dev: no PRODUCT_URL_* at all ⇒ the historical localhost-only list."""
+    for key in list(os.environ):
+        if key.startswith("PRODUCT_URL_"):
+            monkeypatch.delenv(key, raising=False)
+    origins = derive_cors_origins()
+    assert origins
+    assert not [o for o in origins if o.startswith("https://")]

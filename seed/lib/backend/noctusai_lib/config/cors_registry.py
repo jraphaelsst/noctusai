@@ -148,6 +148,26 @@ def _localhost_origins(ports: Iterable[int]) -> List[str]:
     return [f"http://localhost:{port}" for port in ports]
 
 
+def _pattern_origin(slug: str) -> str:
+    """`PRODUCT_URL_PATTERN` applied to `slug`, ignoring any per-product override.
+
+    Deliberately NOT `resolve_product_url`: that one short-circuits on
+    `PRODUCT_URL_<SLUG>` because its job is to name the ONE canonical URL. An
+    allowlist has the opposite job — see the call site.
+
+    Returns `""` when no pattern is configured (plain dev), so the caller's
+    dedupe drops it.
+    """
+    pattern = os.environ.get("PRODUCT_URL_PATTERN")
+    if not pattern:
+        return ""
+    return (
+        pattern.replace("{slug}", slug)
+        .replace("{slug_underscored}", slug.replace("-", "_"))
+        .rstrip("/")
+    )
+
+
 def derive_cors_origins(
     start_sh: Optional[Path] = None,
     include_localhost_alts: bool = True,
@@ -205,7 +225,11 @@ def derive_cors_origins(
     seen: set[str] = set()
 
     def _add(origin: str) -> None:
-        if origin not in seen:
+        # The empty guard is load-bearing, not defensive noise: `_pattern_origin`
+        # returns "" when no pattern is configured, and an empty string in a CORS
+        # allowlist is not inert — it is a list entry that matches nothing and
+        # shows up in every assertion about this function's output.
+        if origin and origin not in seen:
             seen.add(origin)
             out.append(origin)
 
@@ -260,6 +284,23 @@ def derive_cors_origins(
                         "skipping (dev or unconfigured)",
                         slug,
                     )
+                # (a2) ALSO the pattern-derived origin, even when an explicit
+                # `PRODUCT_URL_<SLUG>` already answered above.
+                #
+                # `resolve_product_url` short-circuits on the override, which is
+                # correct for "the ONE canonical URL to link to" and wrong here:
+                # this is an ALLOWLIST, and several products are served at BOTH
+                # names by `deploy/tunnel/ingress.yml` (`social.` AND
+                # `social-wiring.`, `erp.` AND `erp-imobiliario.`). Emitting only
+                # the override leaves the other live hostname blocked — measured
+                # 2026-08-19, right after the registry fix: `p-studio.` and
+                # `igig.` came back 200 while `social-wiring.` and
+                # `erp-imobiliario.` still answered 400 with no allow-origin.
+                #
+                # A user who reaches the product by its long name would hit the
+                # same opaque "Failed to fetch" the registry gap caused. An
+                # allowlist is a SET of origins we serve, not a preference order.
+                _add(_pattern_origin(slug))
             # (b) explicit PRODUCT_URL_<SLUG> env overrides — registry-free, so
             # this is what makes the SSO-bridge allowlist work in the container.
             for env_key, env_val in os.environ.items():
