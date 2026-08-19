@@ -45,7 +45,14 @@ export function MembrosPopover({
   const visible = allMembros.filter((m) => m.nome.toLowerCase().includes(search.toLowerCase()));
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover open={open} onOpenChange={onOpenChange} modal>
+      {/* `modal` is load-bearing, not decoration. This popover is portaled OUT
+          of the card dialog, and the dialog's scroll lock (`react-remove-scroll`
+          via @radix-ui/react-dialog) then treats it as "outside" and swallows
+          every wheel event aimed at it — so the list could only be moved by
+          dragging its scrollbar, which is exactly what the user hit on
+          2026-08-19. `modal` makes THIS popover the scroll-lock container while
+          it is open, so wheel events inside it are allowed again. */}
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm" data-testid="membros-trigger">
           <Users className="mr-2 h-4 w-4" />

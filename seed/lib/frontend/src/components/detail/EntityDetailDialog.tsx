@@ -143,6 +143,59 @@ function FieldRow({ field }: { field: DetailField }) {
   );
 }
 
+/**
+ * The label/value grid, on its own — the SAME renderer the dialog uses.
+ *
+ * Extracted 2026-08-19 so a surface that is not a dialog can show a record's
+ * fields without re-implementing them. social-wiring's lead card needed the
+ * lead's own data inline; copying the grid would have meant the card and the
+ * detail dialog drifting apart field by field, which is precisely what
+ * `leadDetailSections` exists to prevent one level up
+ * (`KB § PATTERNS/architect/products-consume-canonical-organs.md`).
+ *
+ * Sections whose every field is `hidden` are dropped rather than rendered as a
+ * bare heading over nothing — a heading with no rows reads as "this data failed
+ * to load", which is a different and alarming claim.
+ */
+export function DetailSections({
+  sections,
+  className,
+  testId = 'detail-sections',
+}: {
+  sections?: DetailSection[];
+  className?: string;
+  testId?: string;
+}) {
+  const visible = React.useMemo(
+    () =>
+      (sections ?? [])
+        .map((s) => ({ ...s, fields: s.fields.filter((f) => !f.hidden) }))
+        .filter((s) => s.fields.length > 0),
+    [sections],
+  );
+
+  if (visible.length === 0) return null;
+
+  return (
+    <div className={className} data-testid={testId}>
+      {visible.map((section, i) => (
+        <div key={section.title ?? `section-${i}`} className={i > 0 ? 'mt-5' : undefined}>
+          {section.title && (
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {section.title}
+            </h3>
+          )}
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+            {section.fields.map((field) => (
+              <FieldRow key={field.label} field={field} />
+            ))}
+          </dl>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function SkeletonGrid() {
   return (
     <div className="grid grid-cols-2 gap-x-4 gap-y-4" data-testid="entity-detail-loading">
@@ -172,16 +225,6 @@ export function EntityDetailDialog({
   className,
   testId = 'entity-detail-dialog',
 }: EntityDetailDialogProps) {
-  // Sections whose every field is hidden would otherwise render as a bare
-  // heading over nothing — which reads as "this data failed to load".
-  const visibleSections = React.useMemo(
-    () =>
-      (sections ?? [])
-        .map((s) => ({ ...s, fields: s.fields.filter((f) => !f.hidden) }))
-        .filter((s) => s.fields.length > 0),
-    [sections],
-  );
-
   const startActions = (actions ?? []).filter((a) => a.align === 'start');
   const endActions = (actions ?? []).filter((a) => a.align !== 'start');
 
@@ -225,20 +268,7 @@ export function EntityDetailDialog({
             </p>
           ) : (
             <>
-              {visibleSections.map((section, i) => (
-                <div key={section.title ?? `section-${i}`} className={i > 0 ? 'mt-5' : undefined}>
-                  {section.title && (
-                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      {section.title}
-                    </h3>
-                  )}
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
-                    {section.fields.map((field) => (
-                      <FieldRow key={field.label} field={field} />
-                    ))}
-                  </dl>
-                </div>
-              ))}
+              <DetailSections sections={sections} testId={`${testId}-sections`} />
               {children}
             </>
           )}

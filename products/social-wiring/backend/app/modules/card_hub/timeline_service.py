@@ -415,6 +415,11 @@ def _compute_temperatura(cliente: dict) -> Optional[dict]:
 
 
 def get_card_resumo(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+    # Local import: `pipeline.configs` imports nothing from card_hub, but
+    # keeping this at call scope makes the one-way direction obvious and
+    # avoids a module-level cycle if that ever changes.
+    from app.modules.pipeline.configs import CARD_ORIGIN_SELECT
+
     cliente = ensure_cliente(client, org_id, cliente_id)
 
     # Reuses `services.py`'s own paginated tag/membro reads rather than a
@@ -422,7 +427,20 @@ def get_card_resumo(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     tags_out = card_hub_services.get_cliente_tags(client, org_id, cliente_id)["items"]
     membros_out = card_hub_services.get_membros(client, org_id, cliente_id)["items"]
 
-    atendimentos = _paged_rows(client, "atendimentos", org_id, eq_filters={"cliente_id": str(cliente_id)})
+    # The card shows the person's OWN data, and for a lead that data lives on
+    # the ORIGIN record (`leads` / `meta_ads_leads`) — `clientes` deliberately
+    # holds identity + card state, never contact fields. So each atendimento
+    # arrives with its origin embedded, under the SAME projection the boards
+    # use (`pipeline.configs.CARD_ORIGIN_SELECT`): one definition of "what a
+    # lead card projects", so the card and the board cannot end up showing
+    # different subsets of the same record.
+    atendimentos = _paged_rows(
+        client,
+        "atendimentos",
+        org_id,
+        eq_filters={"cliente_id": str(cliente_id)},
+        select=CARD_ORIGIN_SELECT,
+    )
 
     return {
         "cliente": cliente,

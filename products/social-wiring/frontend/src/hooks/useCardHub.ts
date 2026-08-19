@@ -66,6 +66,24 @@ function invalidateEverything(qc: QueryClient) {
   return qc.invalidateQueries({ queryKey: ROOT_KEY });
 }
 
+/**
+ * The checklist family ONLY — plus the two things a checklist edit genuinely
+ * changes elsewhere: the card's badges (item counts) and the timeline (the
+ * activity entry the edit produces).
+ *
+ * `invalidateCliente` refetches the WHOLE family, so ticking one checkbox also
+ * re-fetched documentos and membros, neither of which a checklist edit can
+ * affect. Combined with the section skeletons that used to key off
+ * `isFetching`, that is what made the card feel like it reloaded on every move.
+ */
+function invalidateChecklistFamily(qc: QueryClient, clienteId: string) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: CHECKLISTS_KEY(clienteId) }),
+    qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+    qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
+  ]);
+}
+
 const clienteBase = (clienteId: string) => `/api/clientes/${encodeURIComponent(clienteId)}`;
 
 // ─── Card summary (the badge row source — §3 "Card summary") ──────────────
@@ -274,7 +292,7 @@ export function useChecklists(clienteId: string | null) {
 
 export function useChecklistMutations(clienteId: string) {
   const qc = useQueryClient();
-  const invalidate = () => invalidateCliente(qc, clienteId);
+  const invalidate = () => invalidateChecklistFamily(qc, clienteId);
   const base = clienteBase(clienteId);
 
   const createChecklist = useMutation({
@@ -294,10 +312,47 @@ export function useChecklistMutations(clienteId: string) {
     onSuccess: invalidate,
   });
 
+  /**
+   * Optimistic, for the same reason `toggleItem` is: typing an item and waiting
+   * for a round-trip before it appears reads as a stutter. The temporary id is
+   * namespaced so a render between mutate and settle cannot collide with a real
+   * one, and the whole list rolls back on failure.
+   */
   const addItem = useMutation({
     mutationFn: ({ checklistId, texto }: { checklistId: string; texto: string }) =>
       api.post(`${base}/checklists/${encodeURIComponent(checklistId)}/itens`, { texto }),
-    onSuccess: invalidate,
+    onMutate: async ({ checklistId, texto }) => {
+      await qc.cancelQueries({ queryKey: CHECKLISTS_KEY(clienteId) });
+      const previous = qc.getQueryData<Checklist[]>(CHECKLISTS_KEY(clienteId));
+      if (previous) {
+        qc.setQueryData<Checklist[]>(
+          CHECKLISTS_KEY(clienteId),
+          previous.map((c) =>
+            c.id === checklistId
+              ? {
+                  ...c,
+                  itens: [
+                    ...c.itens,
+                    {
+                      id: `optimistic:${checklistId}:${c.itens.length}`,
+                      texto,
+                      concluido: false,
+                      concluido_em: null,
+                      concluido_por: null,
+                      posicao: c.itens.length,
+                    },
+                  ],
+                }
+              : c,
+          ),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) qc.setQueryData(CHECKLISTS_KEY(clienteId), context.previous);
+    },
+    onSettled: invalidate,
   });
 
   /**
@@ -370,7 +425,23 @@ export function useChecklistMutations(clienteId: string) {
       api.delete(
         `${base}/checklists/${encodeURIComponent(checklistId)}/itens/${encodeURIComponent(itemId)}`,
       ),
-    onSuccess: invalidate,
+    onMutate: async ({ checklistId, itemId }) => {
+      await qc.cancelQueries({ queryKey: CHECKLISTS_KEY(clienteId) });
+      const previous = qc.getQueryData<Checklist[]>(CHECKLISTS_KEY(clienteId));
+      if (previous) {
+        qc.setQueryData<Checklist[]>(
+          CHECKLISTS_KEY(clienteId),
+          previous.map((c) =>
+            c.id === checklistId ? { ...c, itens: c.itens.filter((i) => i.id !== itemId) } : c,
+          ),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) qc.setQueryData(CHECKLISTS_KEY(clienteId), context.previous);
+    },
+    onSettled: invalidate,
   });
 
   return {

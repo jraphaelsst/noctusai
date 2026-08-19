@@ -12,6 +12,7 @@
  * import these types freely — they carry no fetching logic.
  */
 import type { Cliente } from "@/hooks/useClientes";
+import type { AtendimentoCampanha, AtendimentoLead } from "@/types/pipeline";
 
 // ─── Ator / person references ──────────────────────────────────────────────
 
@@ -221,7 +222,34 @@ export interface CardResumo {
   descricao: Descricao | null;
   datas: CardDatas;
   badges: CardBadges;
-  atendimentos: unknown[];
+  /**
+   * D17's active-plus-closed history, each row carrying its ORIGIN record.
+   *
+   * Typed as of 2026-08-19, when the card started rendering the lead's own
+   * data. It was `unknown[]` before, with a docblock saying inventing a shape
+   * would be building past the contract — correct then, obsolete now: the
+   * shape is no longer invented, it is `CARD_ORIGIN_SELECT`'s, and the same
+   * `AtendimentoLead` / `AtendimentoCampanha` types the boards already use.
+   *
+   * `clientes` holds identity + card state and NO contact fields, so this is
+   * the only place the card can learn a lead's phone, email or form answers.
+   */
+  atendimentos: CardAtendimento[];
+}
+
+/** One atendimento on the card, with the origin record embedded. */
+export interface CardAtendimento {
+  id: string;
+  titulo: string | null;
+  status: string | null;
+  closed_at: string | null;
+  created_at: string | null;
+  lead_id: string | null;
+  meta_ads_lead_id: string | null;
+  /** Present when the card was spawned from a `social_wiring.leads` row. */
+  lead: AtendimentoLead | null;
+  /** Present when it was spawned from a `meta_ads_leads` row. Never both. */
+  campanha: AtendimentoCampanha | null;
 }
 
 // ─── Timeline (D9 — one thread) ────────────────────────────────────────────

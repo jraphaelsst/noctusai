@@ -37,7 +37,9 @@ export function ChecklistDialog({ open, onOpenChange, onCreate, saving }: Checkl
   }
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover open={open} onOpenChange={onOpenChange} modal>
+      {/* `modal` — see MembrosPopover: portaled out of the card dialog, whose
+          scroll lock otherwise swallows wheel events aimed in here. */}
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm" data-testid="checklist-trigger">
           <CheckSquare className="mr-2 h-4 w-4" />

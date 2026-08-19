@@ -92,7 +92,21 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
 
   const timelineEntries = flattenTimeline(timeline.data?.pages);
 
-  const loading = card.isPending || card.isFetching;
+  // `isPending` ONLY — deliberately not `|| isFetching`.
+  //
+  // Every mutation invalidates the card, so `isFetching` goes true on each one
+  // and the whole dialog flashed a skeleton after every checklist tick, tag
+  // toggle and comment. The user's words: "It's reloading the card on every
+  // move i make inside of it."
+  //
+  // This does NOT reintroduce the lying-loading-state class (`CLAUDE.md` §1).
+  // That rule exists so an `isEmpty` branch cannot render "no data" OVER data
+  // that is merely refetching. Here `isPending` is true exactly when there is
+  // no data yet, and `notFound` below is gated on `card.data === undefined` —
+  // which cannot hold during a background refetch, because a refetch by
+  // definition has previous data. The skeleton is now first-load only; updates
+  // land in place, optimistically (see `useCardHub`).
+  const loading = card.isPending;
   const isError = card.isError;
   const notFound = !loading && !isError && shouldFetch && card.data === undefined;
 
@@ -174,6 +188,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       error={isError ? "Não foi possível carregar este cartão." : null}
       notFound={notFound}
       nome={card.data?.cliente.nome ?? ""}
+      atendimentos={card.data?.atendimentos}
       allTags={tags.data ?? []}
       selectedTags={card.data?.tags ?? []}
       onToggleTag={handleToggleTag}
@@ -214,7 +229,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       onSaveDescricao={handleSaveDescricao}
       descricaoSaving={notaMutations.create.isPending || notaMutations.update.isPending}
       documentos={documentos.data ?? []}
-      documentosLoading={documentos.isPending || documentos.isFetching}
+      documentosLoading={documentos.isPending}
       tiposDocumento={tiposDocumento.data ?? []}
       onUploadDocumento={(file, tipoDocumento) =>
         documentoMutations.upload.mutate(
@@ -236,7 +251,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         )
       }
       checklists={checklists.data ?? []}
-      checklistsLoading={checklists.isPending || checklists.isFetching}
+      checklistsLoading={checklists.isPending}
       onCreateChecklist={(titulo) => checklistMutations.createChecklist.mutate(titulo)}
       onRemoveChecklist={(checklistId) => checklistMutations.removeChecklist.mutate(checklistId)}
       onAddItem={(checklistId, texto) => checklistMutations.addItem.mutate({ checklistId, texto })}
@@ -245,7 +260,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       }
       onRemoveItem={(checklistId, itemId) => checklistMutations.removeItem.mutate({ checklistId, itemId })}
       timelineEntries={timelineEntries}
-      timelineLoading={timeline.isPending || timeline.isFetching}
+      timelineLoading={timeline.isPending}
       timelineError={timeline.isError ? "boom" : null}
       timelineHasMore={!!timeline.hasNextPage}
       timelineLoadingMore={timeline.isFetchingNextPage}

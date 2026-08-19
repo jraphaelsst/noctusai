@@ -24,9 +24,10 @@
  * `notFound`, handled like an error).
  */
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertCircle,
+  Bell,
   ChevronDown,
   ChevronUp,
   ExternalLink,
@@ -35,6 +36,12 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { DetailSections } from "@noctusai/lib/components";
+import type { DetailSection } from "@noctusai/lib/components";
+import {
+  campanhaDetailSections,
+  leadDetailSections,
+} from "@/pages/leads/leadDetailSections";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -48,6 +55,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import type {
+  CardAtendimento,
   Checklist,
   DatasPatchBody,
   Documento,
@@ -60,13 +68,12 @@ import type {
 
 import { resolveDueState } from "./ClienteCardFace";
 import { Timeline } from "./Timeline";
-import { AdicionarPopover, type AdicionarOption } from "./popovers/AdicionarPopover";
 import { ChecklistDialog } from "./popovers/ChecklistDialog";
 import { DatasPopover } from "./popovers/DatasPopover";
 import { EtiquetasPopover } from "./popovers/EtiquetasPopover";
 import { MembrosPopover } from "./popovers/MembrosPopover";
 
-type PopoverKey = "adicionar" | "etiquetas" | "datas" | "checklist" | "membros" | null;
+type PopoverKey = "etiquetas" | "datas" | "checklist" | "membros" | null;
 
 const DUE_LABEL: Record<string, string> = {
   overdue: "Atrasado",
@@ -87,6 +94,13 @@ export interface ClienteCardDialogProps {
    *  board's "arquivar". The card itself owns nothing board-specific, so the
    *  board passes what only it can mean. */
   acoes?: ReactNode;
+  /**
+   * The person's atendimentos, each with its ORIGIN record embedded. The card
+   * renders the lead's own data from these — `clientes` holds identity and card
+   * state and no contact fields, so this is the only source for a phone, an
+   * email or the answers someone typed into a campaign form.
+   */
+  atendimentos?: CardAtendimento[];
 
   // Etiquetas
   allTags: Tag[];
@@ -150,14 +164,6 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   const { open, onClose, isLoading, error, notFound, nome, acoes } = props;
   const [activePopover, setActivePopover] = useState<PopoverKey>(null);
 
-  function handleAdicionarSelect(option: AdicionarOption) {
-    if (option === "anexo") {
-      document.getElementById("card-anexo-file-input")?.click();
-      return;
-    }
-    setActivePopover(option);
-  }
-
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
@@ -198,11 +204,6 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               </div>
 
               <div className="mb-4 flex flex-wrap gap-2">
-                <AdicionarPopover
-                  open={activePopover === "adicionar"}
-                  onOpenChange={(o) => setActivePopover(o ? "adicionar" : null)}
-                  onSelect={handleAdicionarSelect}
-                />
                 <EtiquetasPopover
                   open={activePopover === "etiquetas"}
                   onOpenChange={(o) => setActivePopover(o ? "etiquetas" : null)}
@@ -239,6 +240,11 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   onToggleMembro={props.onToggleMembro}
                   saving={props.membrosSaving}
                 />
+                {/* The anexo picker. `Adicionar` used to open it; that button was a
+                    second, generic route to every action the specific buttons
+                    already offer, so it is gone and the Anexos section owns its
+                    own trigger. The input stays here (hidden) because it must
+                    outlive the section's re-renders. */}
                 <input
                   id="card-anexo-file-input"
                   type="file"
@@ -250,6 +256,8 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   }}
                 />
               </div>
+
+              <DadosDoLeadSection atendimentos={props.atendimentos} />
 
               {props.selectedTags.length > 0 && (
                 <div className="mb-4" data-testid="etiquetas-chips">
@@ -271,27 +279,18 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 </div>
               )}
 
-              {props.datas?.data_entrega && (
-                <div className="mb-4" data-testid="data-entrega-section">
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Data Entrega
-                  </p>
-                  <DataEntregaPill datas={props.datas} />
-                </div>
-              )}
-
+              {/* Order is the user's (2026-08-19), and it is priority order, not
+                  taste: descrição sets context, an agendamento is the thing you
+                  must act on next, the checklist is the work itself, and anexos
+                  are reference material you consult rather than act on — so it
+                  goes last. */}
               <DescricaoSection
                 corpo={props.descricaoCorpo}
                 onSave={props.onSaveDescricao}
                 saving={props.descricaoSaving}
               />
 
-              <AnexosSection
-                documentos={props.documentos}
-                loading={props.documentosLoading}
-                onOpenDocumento={props.onOpenDocumento}
-                onDeleteDocumento={props.onDeleteDocumento}
-              />
+              <AgendamentosSection datas={props.datas} />
 
               <ChecklistsSection
                 checklists={props.checklists}
@@ -300,6 +299,13 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 onAddItem={props.onAddItem}
                 onToggleItem={props.onToggleItem}
                 onRemoveItem={props.onRemoveItem}
+              />
+
+              <AnexosSection
+                documentos={props.documentos}
+                loading={props.documentosLoading}
+                onOpenDocumento={props.onOpenDocumento}
+                onDeleteDocumento={props.onDeleteDocumento}
               />
             </ScrollArea>
 
@@ -617,6 +623,87 @@ function ChecklistBlock({
         >
           Adicionar
         </Button>
+      </div>
+    </div>
+  );
+}
+
+function DadosDoLeadSection({ atendimentos }: { atendimentos?: CardAtendimento[] }) {
+  // Built from the SAME descriptors the Leads table and the detail dialog use,
+  // and rendered by the SAME grid organ (`DetailSections` in @noctusai/lib).
+  // A hand-written field list here would drift from those two the first time a
+  // field is added — which is the exact reason `leadDetailSections` exists.
+  const sections = useMemo(() => {
+    const out: DetailSection[] = [];
+    for (const atendimento of atendimentos ?? []) {
+      if (atendimento.lead) out.push(...leadDetailSections(atendimento.lead as never));
+      else if (atendimento.campanha) out.push(...campanhaDetailSections(atendimento.campanha));
+    }
+    return out;
+  }, [atendimentos]);
+
+  if (sections.length === 0) return null;
+
+  return (
+    <div className="mb-5" data-testid="dados-do-lead-section">
+      <DetailSections sections={sections} testId="dados-do-lead-fields" />
+    </div>
+  );
+}
+
+const LEMBRETE_LABEL: Record<number, string> = {
+  0: "na hora",
+  5: "5 minutos antes",
+  10: "10 minutos antes",
+  15: "15 minutos antes",
+  30: "30 minutos antes",
+  60: "1 hora antes",
+  120: "2 horas antes",
+  1440: "1 dia antes",
+  2880: "2 dias antes",
+  10080: "1 semana antes",
+};
+
+function lembreteLabel(minutos: number): string {
+  return LEMBRETE_LABEL[minutos] ?? `${minutos} minutos antes`;
+}
+
+function AgendamentosSection({ datas }: { datas: CardDatas | null }) {
+  // Sits between Descrição and Checklist deliberately: an agendamento is the
+  // next thing that needs DOING, so it outranks the work list below it.
+  const inicio = datas?.data_inicio ?? null;
+  const entrega = datas?.data_entrega ?? null;
+  const lembrete = datas?.lembrete_minutos_antes ?? null;
+
+  if (!inicio && !entrega) return null;
+
+  return (
+    <div className="mb-5" data-testid="agendamentos-section">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Agendamento
+      </p>
+      <div className="space-y-1.5">
+        {inicio && (
+          <p className="text-sm" data-testid="agendamento-inicio">
+            <span className="text-muted-foreground">Início: </span>
+            {formatDate(inicio, true)}
+          </p>
+        )}
+        {entrega && (
+          <div className="flex flex-wrap items-center gap-2" data-testid="agendamento-entrega">
+            <span className="text-sm text-muted-foreground">Entrega:</span>
+            {datas && <DataEntregaPill datas={datas} />}
+          </div>
+        )}
+        {/* The reminder was stored and scheduled but never shown, so the card
+            could not answer "did my notification actually get set?" — the one
+            question a reminder surface exists to answer. */}
+        {lembrete !== null && (
+          <p className="text-sm text-muted-foreground" data-testid="agendamento-lembrete">
+            <Bell className="mr-1 inline h-3.5 w-3.5 align-[-2px]" />
+            Lembrete {lembreteLabel(lembrete)}
+          </p>
+        )}
       </div>
     </div>
   );

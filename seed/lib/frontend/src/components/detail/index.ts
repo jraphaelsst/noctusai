@@ -1,4 +1,4 @@
-export { EntityDetailDialog } from './EntityDetailDialog';
+export { DetailSections, EntityDetailDialog } from './EntityDetailDialog';
 export type {
   DetailAction,
   DetailField,

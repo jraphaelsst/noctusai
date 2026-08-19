@@ -75,6 +75,9 @@ export function EtiquetasPopover({
         onOpenChange(next);
         if (!next) setCreating(false);
       }}
+      // `modal` — see MembrosPopover: portaled out of the card dialog, whose
+      // scroll lock otherwise swallows wheel events aimed in here.
+      modal
     >
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm" data-testid="etiquetas-trigger">

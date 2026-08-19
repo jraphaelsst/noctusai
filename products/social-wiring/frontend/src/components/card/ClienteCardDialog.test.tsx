@@ -179,3 +179,139 @@ describe("ClienteCardDialog — Comentários composer", () => {
     expect(queryByTestId("comentario-enviar-btn")).toBeNull();
   });
 });
+
+// ── 2026-08-19 — the user's refinement pass ────────────────────────────────
+//
+// Each of these pins one thing that was reported as wrong against the LIVE
+// card, so a regression here is a regression the user already caught once.
+
+describe("dados do lead", () => {
+  const CAMPANHA = {
+    id: "2121601435435308",
+    full_name: "Luciano Mauricio",
+    email: "lumtluciano@hotmail.com",
+    phone: "+5511985295496",
+    campaign_id: "c1",
+    campaign_name: "[🏠 Até R$1 Milhão] [SENSEYS]",
+    form_id: "f1",
+    form_name: "[Senseys] ONE10503",
+    ad_id: "52533897478137",
+    adset_id: "6882263048933",
+    platform: "ig",
+    is_organic: false,
+    created_time: "2026-07-28T13:55:26Z",
+    answers: { ref: "ONE10503" },
+  };
+
+  it("🔴 renders the person's OWN data — the card showed only a name before", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          nome: "Luciano Mauricio",
+          atendimentos: [
+            {
+              id: "a1",
+              titulo: "Luciano Mauricio",
+              status: "aberta",
+              closed_at: null,
+              created_at: null,
+              lead_id: null,
+              meta_ads_lead_id: CAMPANHA.id,
+              lead: null,
+              campanha: CAMPANHA as never,
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByTestId("dados-do-lead-section")).toBeTruthy();
+    expect(screen.getByText("lumtluciano@hotmail.com")).toBeTruthy();
+  });
+
+  it("renders nothing at all when the card has no origin record", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ atendimentos: [] })} />);
+    expect(screen.queryByTestId("dados-do-lead-section")).toBeNull();
+  });
+});
+
+describe("ordem das seções", () => {
+  it("🔴 descrição → agendamento → checklist → anexos, in that order", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    const { container } = render(
+      <ClienteCardDialog
+        {...baseProps({
+          descricaoCorpo: "Lead interessado em imóvel",
+          datas: {
+            data_inicio: null,
+            data_entrega: "2026-08-20T12:00:00Z",
+            entrega_concluida: false,
+            lembrete_minutos_antes: 60,
+            recorrencia: null,
+          },
+          checklists: [
+            { id: "c1", titulo: "Checklist", posicao: 0, itens: [] } as never,
+          ],
+          documentos: [
+            {
+              id: "d1",
+              nome_arquivo: "anuncios.pdf",
+              tamanho_bytes: 3072,
+              created_at: "2026-08-19T19:20:00Z",
+              tipo_documento: "outro",
+            } as never,
+          ],
+        })}
+      />,
+    );
+    // By testid, not by text: "Checklist" is BOTH the toolbar button and the
+    // section heading, so getByText was ambiguous — the assertion has to name
+    // the sections themselves.
+    const all = Array.from(container.querySelectorAll("*"));
+    const at = (testId: string) => all.indexOf(screen.getByTestId(testId));
+    const order = [
+      at("descricao-section"),
+      at("agendamentos-section"),
+      at("checklists-section"),
+      at("anexos-section"),
+    ];
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    // anexos LAST, explicitly — the whole point of the reorder
+    expect(order[3]).toBe(Math.max(...order));
+  });
+});
+
+describe("agendamento", () => {
+  const DATAS = {
+    data_inicio: null,
+    data_entrega: "2026-08-20T12:00:00Z",
+    entrega_concluida: false,
+    lembrete_minutos_antes: 60,
+    recorrencia: null,
+  };
+
+  it("🔴 shows the reminder — it was stored and scheduled but never displayed", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ datas: DATAS })} />);
+    expect(screen.getByTestId("agendamento-lembrete").textContent).toContain("1 hora antes");
+  });
+
+  it("is absent when no date is set, rather than an empty heading", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ datas: null })} />);
+    expect(screen.queryByTestId("agendamentos-section")).toBeNull();
+  });
+});
+
+describe("o botão Adicionar", () => {
+  it("🔴 is gone — it was a second, generic route to the specific buttons", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+    expect(screen.queryByTestId("adicionar-trigger")).toBeNull();
+    // the specific ones must all still be there
+    for (const id of ["etiquetas-trigger", "datas-trigger", "membros-trigger"]) {
+      expect(screen.getByTestId(id)).toBeTruthy();
+    }
+  });
+});

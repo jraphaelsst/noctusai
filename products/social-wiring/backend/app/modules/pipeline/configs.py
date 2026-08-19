@@ -86,6 +86,24 @@ ATENDIMENTO_SELECT = (
     f"etapa_rel:pipeline_stages!atendimentos_etapa_id_fkey({_STAGE_FIELDS})"
 )
 
+#: The atendimento + its ORIGIN record, with no board-only joins.
+#:
+#: `ATENDIMENTO_SELECT` above also drags in `etapa_rel`, which the card has no
+#: use for — it is not a board and does not render a stage chip. Splitting the
+#: origin half out means the card hub and the boards share ONE definition of
+#: "which columns describe a lead" (the `_LEAD_CARD_FIELDS` /
+#: `_CAMPANHA_CARD_FIELDS` constants) while each asks only for what it renders.
+#:
+#: Consumed by `card_hub.timeline_service.get_card_resumo`, so the card can show
+#: the person's own data — name, contact, campaign, form answers. `clientes`
+#: holds identity + card state and deliberately no contact fields, so without
+#: this join the card can only ever show a name.
+CARD_ORIGIN_SELECT = (
+    "*,"
+    f"lead:leads!atendimentos_lead_id_fkey({_LEAD_CARD_FIELDS}),"
+    f"campanha:meta_ads_leads!atendimentos_meta_ads_lead_id_fkey({_CAMPANHA_CARD_FIELDS})"
+)
+
 # A processo card must open the SAME modal as the funil card it came from, so
 # it needs the same origin joins — one hop further out, through the negociação.
 # Without them the processo board could only offer a title, and "click the card

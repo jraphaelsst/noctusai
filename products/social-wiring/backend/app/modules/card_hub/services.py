@@ -61,12 +61,17 @@ def _paged_rows(
     order_col: str = "id",
     id_key: str = "id",
     refine: Optional[Any] = None,
+    select: str = "*",
 ) -> list[dict]:
     """Every row of `table` for `org_id` (+ `eq_filters`), paged past
     PostgREST's row cap via the seed's shared pager. `refine`, when given,
     is `fn(query) -> query` applied AFTER the eq filters and BEFORE
     `.order()` — for filter shapes `eq_filters` can't express (e.g.
     `.is_("deleted_at", "null")`).
+
+    `select` overrides the default `"*"` for a read that needs embedded
+    resources (a PostgREST join). The card summary uses it to bring each
+    atendimento's ORIGIN record along — see `get_card_resumo`.
 
     Named `refine`, NOT `extra`: bandit's B610 flags any call to something
     named `extra(...)` as Django's `QuerySet.extra()`, a genuine SQL
@@ -79,7 +84,7 @@ def _paged_rows(
     eq_filters = eq_filters or {}
 
     def fetch_page(start: int, end: int):
-        query = _t(client, table).select("*").eq("org_id", str(org_id))
+        query = _t(client, table).select(select).eq("org_id", str(org_id))
         for key, value in eq_filters.items():
             query = query.eq(key, value)
         if refine is not None:

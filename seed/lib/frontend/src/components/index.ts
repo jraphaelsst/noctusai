@@ -23,7 +23,10 @@ export type {
 // is a descriptor the consumer builds once per entity, so a table row, a
 // kanban card and a search result all open the SAME modal and a new field
 // is one edit rather than N.
-export { EntityDetailDialog } from './detail';
+// `DetailSections` is the field grid ALONE — for a surface that must show a
+// record's fields without being a dialog (social-wiring's lead card renders it
+// inline). Same renderer, so the two cannot drift.
+export { DetailSections, EntityDetailDialog } from './detail';
 export type {
   DetailAction,
   DetailField,
