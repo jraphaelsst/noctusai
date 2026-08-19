@@ -38,6 +38,7 @@ Every `scripts/**/*.sh` / `scripts/**/*.py` file MUST have a row here, **matched
 | `pre-commit` | [carve:hook] | `hooks/pre-commit`; thin dispatcher → `cli.py --<flag>` per step (logic in `noctus.dev.*`) |
 | `install-hooks.sh` | [carve:bootstrap] | `hooks/install-hooks.sh` (+ root shim); symlink installer, clone time |
 | `merge-kb-counts.sh` | [carve:hook] | `hooks/merge-kb-counts.sh`; git merge driver (invoked by git via `.gitattributes merge=kb-counts`), regenerates auto-derived kb-counts blocks on rebase/merge — git plumbing, not an agent capability. See `KB § PATTERNS/common/auto-generated-merge-drivers.md` |
+| `claude-guard-primary-write.py` | [carve:hook] | `hooks/claude-guard-primary-write.py`; PreToolUse adapter for the self-branching write gate. CANNOT be a `noctus.dev.*` tool: it runs in the harness's pre-tool path on EVERY Bash/Edit/Write call, where the MCP server is not reachable and a round-trip would be unaffordable (~60 ms budget; importing `compliance.py` alone costs 0.27 s). The logic it calls IS library code — `tools/noctus/dev/primary_write_guard.py`, stdlib-only, imported BY PATH — so the decision lives in the toolkit and only the protocol adapter is a script. See `KB § PATTERNS/common/self-branching-mode.md` §11 |
 | `setup.sh` | [carve:bootstrap] | `bootstrap/setup.sh` (+ root shim); creates the venv the MCP runs in |
 | `first-time-setup.sh` | [carve:bootstrap] | `bootstrap/first-time-setup.sh`; pre-venv repo setup |
 | `bootstrap-worktree.sh` | [carve:bootstrap] | `bootstrap/bootstrap-worktree.sh`; pre-venv worktree hydrate |

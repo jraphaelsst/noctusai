@@ -636,6 +636,15 @@ state change, not a removal.
 - **Revisit trigger:** (a) a hook runner that can invoke MCP directly (flips `[carve:hook]`→formalize); (b) `build-base-images.sh` grows real logic beyond `docker build` plumbing (flips `[carve:docker]`→absorb); (c) the bootstrap sequence gains a pre-existing Python runtime it can rely on (flips `[carve:bootstrap]`). Any *new* `scripts/*.{sh,py}` without a manifest row trips `check_new_script_lacks_mcp_analog` (warning) — the keeper enforces the rule going forward.
 - **Recorded by:** `scripts-mcp-absorption` Phase 5 (2026-05-18, architect + 5 parallel engineers MOLE/ANALYSIS/LEDGER/KBSYNC/CODEGEN).
 
+### 9a `claude-guard-primary-write.py` retains shell (`[carve:hook]`, 2026-08-19)
+
+- **Subject:** the self-branching WRITE gate needs a `PreToolUse` hook entry point (`KB § PATTERNS/common/self-branching-mode.md` §11). Under the MCP-first rule a new `scripts/**/*.py` defaults to a `noctus.dev.*` tool.
+- **Decision `[A]`:** `scripts/hooks/claude-guard-primary-write.py` stays a script — same `[carve:hook]` bucket as `pre-commit`, and for the same structural reason one step further out.
+- **Reason:** the harness invokes the hook as a subprocess before EVERY `Bash`/`Edit`/`Write` call. The MCP server is not reachable from that path, and even if it were, the round-trip is unaffordable: the whole gate has to fit in tens of milliseconds or it becomes the thing someone removes. Importing `compliance.py` alone costs ~0.27 s — a quarter-second tax on every command in every session. So the script is a **protocol adapter only**: it reads the hook's JSON, calls one function, prints one decision. Every bit of judgement lives in `mcp/noctusai/tools/noctus/dev/primary_write_guard.py` — inside the toolkit, stdlib-only, imported BY PATH rather than as a package precisely to keep that cost near zero — and `compliance.py` imports `SHARED_BRANCHES` + the ledger allowlist FROM it, so the two gates cannot drift apart. This is `pre-commit`'s shape exactly: the logic is formalized, only the unavoidable entry point is accepted.
+- **Scope:** the one file, carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** a hook runner that can invoke MCP directly and cheaply (the same trigger as entry 9's `[carve:hook]` — it would flip both at once).
+- **Recorded by:** `guard-primary-checkout-writes` (2026-08-19), after the primary-checkout slip recurred twice in one session with only the commit-time keeper installed.
+
 ## Entries from `schedule-recurrence-window-gap` Phase 0 (filed 2026-05-18)
 
 ### Recurrence-expansion stays product-local across daily-life/erp/PF — domain-divergent, no `N≥3` unifiable contract
