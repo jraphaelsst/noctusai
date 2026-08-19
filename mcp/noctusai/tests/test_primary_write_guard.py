@@ -232,3 +232,33 @@ def test_a_shell_variable_write_target_falls_back_to_the_known_cwd():
 
 def test_a_glob_target_is_not_resolved_literally():
     assert _decide("Bash", {"command": f"rm -f {WT}/dist/*.js"}) is None
+
+
+# ── ledger parity with the commit keeper ──────────────────────────────────
+#
+# `check_primary_checkout_commit` allows a commit whose ENTIRE staged set lives
+# under `project-history/` — that is how parallel agents publish branch
+# pointers, and blocking it breaks coordination. This guard refused exactly
+# that on 2026-08-19, one commit after a docstring claiming the two gates
+# "cannot drift into disagreeing". They had.
+
+def test_git_add_of_a_ledger_path_is_allowed():
+    assert _decide("Bash", {"command": f"cd {PRIMARY} && git add project-history/"}) is None
+
+
+def test_git_add_of_a_source_path_is_still_refused():
+    assert _decide("Bash", {"command": f"cd {PRIMARY} && git add products/x/app.py"}) is not None
+
+
+def test_git_add_mixing_ledger_and_source_is_refused():
+    """The mixed case is how the exemption would be laundered — same reasoning
+    as the commit keeper's `test_work_MIXED_INTO_a_ledger_commit_is_still_blocked`."""
+    assert _decide(
+        "Bash", {"command": f"cd {PRIMARY} && git add project-history/x.ndjson products/x/app.py"}
+    ) is not None
+
+
+def test_bare_git_add_with_no_pathspec_is_refused():
+    """`git add -A` stages whatever happens to be dirty — unknowable here, and
+    an unanswerable probe must fall through to the refusal, not past it."""
+    assert _decide("Bash", {"command": f"cd {PRIMARY} && git add -A"}) is not None

@@ -269,6 +269,50 @@ def _looks_like_path(token: str) -> bool:
     return bool(token) and not token.startswith("-") and "=" not in token.split("/")[0]
 
 
+def _is_ledger_only_git(sub: str, args: Sequence[str], cwd: str) -> bool:
+    """Is this `git add`/`commit` confined to the append-only ledgers?
+
+    Mirrors `check_primary_checkout_commit`'s one sanctioned exception: a change
+    whose ENTIRE content lives under `LEDGER_PREFIXES` is bookkeeping, not work,
+    and parallel agents publish their branch pointers that way.
+
+    - `git add <paths>` — judged on the pathspecs.
+    - `git commit` — judged on the real STAGED SET, read the same way the commit
+      keeper reads it. Guessing from the command line would be wrong: `git
+      commit -am …` names no paths at all.
+
+    Anything unreadable returns False — an unanswerable probe must fall through
+    to the refusal, never past it.
+    """
+    if sub == "add":
+        paths = [a for a in args[args.index(sub) + 1:] if not a.startswith("-")]
+        if not paths:
+            return False
+        return all(_under_ledger(p, cwd) for p in paths)
+
+    if sub == "commit":
+        staged = _run_git(["-C", cwd, "diff", "--cached", "--name-only"], None)
+        names = [n for n in staged.splitlines() if n.strip()]
+        if not names:
+            return False
+        return all(any(n.startswith(prefix) for prefix in LEDGER_PREFIXES) for n in names)
+
+    return False
+
+
+def _under_ledger(path: str, cwd: str) -> bool:
+    if _is_unresolvable(path):
+        return False
+    resolved = _resolve(path, cwd)
+    if not resolved:
+        return False
+    try:
+        rel = os.path.relpath(resolved, cwd)
+    except ValueError:
+        return False
+    return any(rel.startswith(prefix.rstrip("/")) for prefix in LEDGER_PREFIXES)
+
+
 def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
     """Paths `command` would write, plus whether the parse is UNCERTAIN.
 
@@ -319,8 +363,18 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
                     rest = rest[:idx] + rest[idx + 2:]
             sub = next((a for a in rest if not a.startswith("-")), "")
             if sub in _GIT_WRITE_SUBCOMMANDS:
-                # A git write is scoped to its checkout, not to the pathspecs:
-                # `git checkout .` and `git reset --hard` name no path at all.
+                if _is_ledger_only_git(sub, rest, sub_cwd):
+                    # The ledger exemption, honoured identically to
+                    # `check_primary_checkout_commit`. Without this the two
+                    # gates DISAGREE: the commit keeper lets a
+                    # `project-history/`-only commit through by design (that is
+                    # how parallel agents publish branch pointers), and this one
+                    # refused it — which happened for real on 2026-08-19, one
+                    # commit after the docstring claiming they could not drift.
+                    continue
+                # Otherwise a git write is scoped to its CHECKOUT, not to the
+                # pathspecs: `git checkout .` and `git reset --hard` name no
+                # path at all.
                 targets.append(sub_cwd)
             continue
 
