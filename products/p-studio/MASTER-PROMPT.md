@@ -4,7 +4,10 @@
 > qualquer coisa. Onde este documento e o código divergirem, o código venceu —
 > corrija este documento.
 
-- Backend: **8020** · Frontend: **5176**
+- Portas: backend **8014** · frontend dev **8180** — do registry `PRODUCTS`
+  em `start.sh` (`p-studio:P Studio:8014:8180`), a fonte única. As antigas
+  **8020**/**5176** são do produto PRÉ-absorção e não existem mais em lugar
+  nenhum desde a migration `004_url_base_porta_da_casa.sql`.
 - Schema: `p_studio` · Org slug: `p-studio`
 - Idioma: **pt-BR** em domínio, UI, comentários e docs. Inglês só em
   identificador de framework (`useState`, `APIRouter`, `queryKey`).
@@ -51,7 +54,9 @@ p-studio/
 │   │   ├── config.py        pydantic-settings
 │   │   ├── database.py      clientes Supabase (usuário / admin) + execute()
 │   │   ├── dependencies.py  guardas de auth → CurrentUser
-│   │   ├── routers/         um por domínio, finos
+│   │   ├── routers/         um por domínio, finos — `cadastros` ·
+│   │   │                    `captacoes` · `dashboard` · `financeiro` ·
+│   │   │                    `integracoes` · `me` · `negocios` · `producoes`
 │   │   ├── services/        regra de negócio + IO
 │   │   └── schemas/         Pydantic Create / Update / Out por domínio
 │   ├── migrations/          001_p_studio_schema.sql, 002_plataforma_e_seeds.sql

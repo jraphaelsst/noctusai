@@ -197,6 +197,158 @@ def sso_smoke(
     }
 
 
+# ── the CORS preflight leg ────────────────────────────────────────────────
+#
+# WHY THIS EXISTS, SEPARATE FROM `sso_smoke` ABOVE
+# ------------------------------------------------
+# On 2026-08-19 p-studio's login failed in the browser with the opaque
+# "Erro no login SSO / Failed to fetch". The service was healthy, the bundle
+# was correct, every endpoint answered 200 — and `sso_smoke` would have PASSED,
+# because a server-to-server request sends no `Origin` header and CORS is never
+# enforced on it. The failure lived exclusively in the browser's preflight:
+# core answered `OPTIONS` from `https://p-studio.noctusai.com` with a 400 and no
+# `access-control-allow-origin`, so the SSO token exchange was blocked before it
+# was ever sent.
+#
+# Root cause (fixed in the same commit): core's allowlist is DERIVED from the
+# `PRODUCTS` registry in `start.sh`, and the slim prod image did not ship that
+# file. The registry parsed to empty, so only products with an explicit
+# `PRODUCT_URL_<SLUG>` env var got an origin. social-wiring happened to have
+# one; p-studio did not, and nothing anywhere failed loudly about it.
+#
+# That is the silent-error shape this codebase forbids: the only signal was a
+# browser message that names neither the product nor the cause. So the probe
+# below asserts the ONE thing the browser actually checks, for EVERY live
+# product, needs NO credentials (unlike the chain above), and is catalog-driven
+# so a product added tomorrow is covered without editing a list here.
+
+_SSO_PREFLIGHT_PATH = "/api/auth/sso/exchange"
+
+
+def _default_preflight(url: str, origin: str) -> tuple[int, dict[str, str]]:
+    """`OPTIONS url` with a browser-shaped preflight; returns (status, headers)."""
+    req = urllib.request.Request(
+        url,
+        method="OPTIONS",
+        headers={
+            "User-Agent": _UA,
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.status, {k.lower(): v for k, v in resp.headers.items()}
+    except urllib.error.HTTPError as exc:
+        return exc.code, {k.lower(): v for k, v in (exc.headers or {}).items()}
+    except Exception as exc:
+        return 0, {"_error": str(exc)}
+
+
+def sso_cors_smoke(
+    core_url: str = "https://core.noctusai.com",
+    products: list[str] | None = None,
+    origins: dict[str, str] | None = None,
+    preflight: Callable[[str, str], "tuple[int, dict[str, str]]"] | None = None,
+) -> dict[str, Any]:
+    """Can each live product's browser origin actually reach core's SSO bridge?
+
+    Catalog-driven (ativo=true ∧ deploy_scope='live'), credential-free, and it
+    checks the exact thing the browser checks: an `OPTIONS` preflight must come
+    back 2xx **with** an `access-control-allow-origin` naming that origin. A 200
+    without the header is still a block — browsers require the header, not the
+    status, which is why both are asserted.
+
+    status: 'pass' | 'fail' (≥1 product blocked) | 'not_configured' (no
+    resolvable origins — honest, never a faked pass).
+    """
+    core = core_url.rstrip("/")
+    url = f"{core}{_SSO_PREFLIGHT_PATH}"
+    probe = preflight or _default_preflight
+
+    if origins is None:
+        origins = _live_product_origins(products)
+    if not origins:
+        return {
+            "ok": False,
+            "status": "not_configured",
+            "exit_code": 1,
+            "detail": (
+                "No product origins resolved — needs PRODUCT_URL_PATTERN or "
+                "PRODUCT_URL_<SLUG> in the environment, or explicit origins=."
+            ),
+        }
+
+    results: list[dict[str, Any]] = []
+    for slug in sorted(origins):
+        origin = origins[slug].rstrip("/")
+        status, headers = probe(url, origin)
+        allowed = (headers.get("access-control-allow-origin") or "").rstrip("/")
+        ok = 200 <= status < 300 and allowed in (origin, "*")
+        results.append({
+            "product": slug,
+            "origin": origin,
+            "status_code": status,
+            "allow_origin": allowed or None,
+            "ok": ok,
+            **({} if ok else {"detail": (
+                f"core does NOT allow {origin} on {_SSO_PREFLIGHT_PATH} "
+                f"(OPTIONS {status}, allow-origin={allowed or 'ABSENT'}). The "
+                f"browser blocks the SSO token exchange and the product shows "
+                f"'Failed to fetch'. Core derives this list from the PRODUCTS "
+                f"registry in start.sh — check that the image ships it, or that "
+                f"PRODUCT_URL_PATTERN / PRODUCT_URL_{slug.upper().replace('-', '_')} "
+                f"is set on core's deploy."
+            )}),
+        })
+
+    blocked = [r for r in results if not r["ok"]]
+    return {
+        "ok": not blocked,
+        "status": "fail" if blocked else "pass",
+        "exit_code": 1 if blocked else 0,
+        "core_url": core,
+        "endpoint": _SSO_PREFLIGHT_PATH,
+        "checked": len(results),
+        "blocked": [r["product"] for r in blocked],
+        "results": results,
+    }
+
+
+def _live_product_origins(products: list[str] | None = None) -> dict[str, str]:
+    """`{slug: prod origin}` for the products that can actually be logged into.
+
+    Catalog-driven for the same reason `deploy_verify` is: a compose- or
+    registry-only roster reports drift forever for products nobody deploys, and
+    a permanently-red gate gets ignored.
+    """
+    from noctusai_lib.config.product_urls import resolve_product_url
+
+    slugs = products
+    if slugs is None:
+        # The SAME roster resolver `deploy_verify` uses — live catalog first,
+        # the derived build-scope snapshot as fallback. Reusing it is the point:
+        # a second definition of "which products are live" is exactly the
+        # hand-maintained list this codebase keeps getting bitten by.
+        from tools.noctus.dev.deploy_verify import _resolve_live_products
+
+        live, _source, _warning = _resolve_live_products()
+        if live is None:
+            return {}
+        slugs = sorted(live)
+
+    out: dict[str, str] = {}
+    for slug in slugs:
+        try:
+            out[slug] = resolve_product_url(slug)
+        except ValueError:
+            # No override for this slug — dev, or a product with no public
+            # origin. Skipped, not failed: absence here is not a block.
+            continue
+    return out
+
+
 def register(server) -> None:
     @server.tool(
         name="noctus.dev.sso_smoke",
@@ -221,5 +373,26 @@ def register(server) -> None:
     ) -> dict:
         return sso_smoke(core_url=core_url, email=email, product=product, env_file=env_file)
 
+    @server.tool(
+        name="noctus.dev.sso_cors_smoke",
+        description=(
+            "Can each LIVE product's browser origin actually reach core's SSO "
+            "bridge? Sends the exact OPTIONS preflight a browser sends and "
+            "requires 2xx WITH a matching access-control-allow-origin — a 200 "
+            "without the header is still a block. Catalog-driven (ativo=true AND "
+            "deploy_scope='live', the same roster deploy_verify uses) and "
+            "CREDENTIAL-FREE, unlike noctus.dev.sso_smoke: that one is "
+            "server-to-server, sends no Origin, and therefore PASSES while the "
+            "browser is blocked — which is how p-studio + igig shipped with a "
+            "dead login and an opaque 'Failed to fetch' (2026-08-19). "
+            "status='pass'|'fail'|'not_configured'. See KB § PATTERNS/core-url-routing.md."
+        ),
+    )
+    def _sso_cors_smoke(
+        core_url: str = "https://core.noctusai.com",
+        products: list[str] | None = None,
+    ) -> dict:
+        return sso_cors_smoke(core_url=core_url, products=products)
 
-__all__ = ["sso_smoke", "register", "HttpFn"]
+
+__all__ = ["sso_smoke", "sso_cors_smoke", "register", "HttpFn"]

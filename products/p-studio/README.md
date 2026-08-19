@@ -20,40 +20,48 @@ organização, migrations SQL numeradas e convenções pt-BR. Mesmo precedente d
 
 ## Como rodar
 
-Dois processos (ou use `./dev.sh`, que sobe os dois):
+Um container, um comando — o modelo da casa. Da raiz do monorepo:
 
 ```bash
-# Backend (porta 8020)
-cd backend
-python3 -m venv venv && ./venv/bin/pip install -r requirements.txt   # 1ª vez
-cp .env.example .env    # preencha SUPABASE_URL / SUPABASE_ANON_KEY / ORG_ID
-./venv/bin/uvicorn app.main:app --reload --port 8020
-
-# Frontend (porta 5176)
-cd frontend
-npm install    # 1ª vez
-cp .env.example .env
-npm run dev
+./start.sh p-studio
 ```
 
-Acesse **http://localhost:5176**.
+As portas vêm do registry `PRODUCTS` em `start.sh`
+(`p-studio:P Studio:8014:8180`), que é a **fonte única** de porta por produto:
+backend **8014**, frontend dev **8180**. `frontend/vite.config.ts` não repete a
+porta do backend — o factory a deriva do registry, justamente para as duas não
+poderem divergir.
+
+Antes da primeira subida, copie os dois `.env.example`:
+
+```bash
+cp products/p-studio/backend/.env.example  products/p-studio/backend/.env
+cp products/p-studio/frontend/.env.example products/p-studio/frontend/.env
+```
+
+O `.env` do backend precisa de `SUPABASE_URL` / `SUPABASE_ANON_KEY` /
+`P_STUDIO_ORG_ID` (namespaced desde `1868357f` — `ORG_ID` puro era um footgun
+no `.env` compartilhado da frota). O do frontend precisa de `VITE_CORE_URL` e
+`VITE_CORE_API_URL` além do par do Supabase: sem elas o `SSOCallback` do seed
+cai no default `http://localhost:8000` e o login SSO falha com um
+"Failed to fetch" que não nomeia a causa.
 
 ## Portas
 
-| Processo | Porta |
-|---|---|
-| Backend FastAPI | **8020** |
-| Frontend Vite | **5176** |
+| Processo | Porta | Fonte |
+|---|---|---|
+| Backend FastAPI | **8014** | registry `PRODUCTS` em `start.sh` |
+| Frontend Vite (dev) | **8180** | registry `PRODUCTS` em `start.sh` |
 
-O backend só aceita CORS de `http://localhost:5176` por padrão
-(`backend/app/config.py` → `cors_origins`). Se mudar a porta do frontend, mude
-`CORS_ORIGINS` no `.env` do backend junto.
+As portas **8020** (backend) e **5176** (frontend) eram do produto PRÉ-absorção
+e não existem mais em lugar nenhum — a migration
+`004_url_base_porta_da_casa.sql` moveu `url_base` para a porta da casa e diz
+isso explicitamente. Se você as encontrar em algum lugar, é drift; corrija.
 
-Nenhuma das duas colide com o registro de portas da plataforma
-(`noctusai/start.sh`, que hoje usa 8000–8012 nos backends e 5173/8080–8160 nos
-frontends) nem com o `dilidu` (8010/5175). Vale registrar, porém, uma colisão
-**pré-existente e alheia a este produto**: `dilidu` roda o backend na 8010, que
-é a mesma porta do `orbity` dentro do monorepo — os dois não sobem juntos.
+CORS de desenvolvimento sai do mesmo registry
+(`noctusai_lib.config.cors_registry.derive_cors_origins`), não de uma lista
+mantida à mão — o mesmo mecanismo que, em produção, deriva a allowlist do
+bridge de SSO no core.
 
 ## Credenciais de desenvolvimento
 

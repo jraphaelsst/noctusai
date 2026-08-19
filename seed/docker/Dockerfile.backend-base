@@ -40,6 +40,17 @@ WORKDIR /app
 # product image (FROM this base) so this layer caches across all products.
 COPY seed/lib/backend ./seed/lib/backend
 COPY seed/framework/backend ./seed/framework/backend
+# start.sh ships as DATA, never as an entrypoint: it carries the `PRODUCTS`
+# registry (slug:name:backend_port:frontend_port), which
+# `noctusai_lib.config.cors_registry` reads to derive the SSO-bridge CORS
+# allowlist. Without it in the image the registry parses to EMPTY, and a
+# product whose prod origin comes from `PRODUCT_URL_PATTERN` gets no origin
+# at all — the browser then blocks core's SSO token exchange with an opaque
+# "Failed to fetch". That is exactly how p-studio's login broke (2026-08-19);
+# social-wiring only worked because it happened to have an explicit
+# `PRODUCT_URL_SOCIAL_WIRING`. Deriving beats a hand-maintained per-product
+# env var (`CLAUDE.md` §1 — hand-maintained lists drift and break the fleet).
+COPY start.sh ./start.sh
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -e ./seed/lib/backend -e ./seed/framework/backend
 
@@ -66,6 +77,10 @@ WORKDIR /app
 # Editable installs egg-link to /app/seed — keep the source tree present.
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /app/seed /app/seed
+# The product registry — see the builder-stage note above. `cors_registry`
+# resolves it as `<seed/lib/backend/noctusai_lib/config>/../../../../../start.sh`
+# = /app/start.sh, so the path here is load-bearing.
+COPY --from=builder /app/start.sh /app/start.sh
 # NOTE: no USER here — product images add their deps (pip), product code,
 # then create the non-root user + chown as their LAST layers (so the venv
 # stays writable for the product's `pip install`).

@@ -114,3 +114,90 @@ def test_identity_mismatch_fails():
     assert r["status"] == "fail"
     assert r["steps"][-1]["step"] == "core_auth_me"
     assert r["steps"][-1]["ok"] is False
+
+
+# ── sso_cors_smoke — the leg the chain test structurally cannot cover ─────
+#
+# `sso_smoke` above is server-to-server: it sends no `Origin` header, so CORS is
+# never evaluated and it returns 'pass' while a browser is blocked. That is not
+# a bug in it — it is why this second probe exists. On 2026-08-19 p-studio and
+# igig were both live, healthy, correctly built, answering 200 on every
+# endpoint, and completely unloggable: core's OPTIONS preflight came back 400
+# with no allow-origin, so the token exchange never left the browser.
+
+ORIGINS = {"p-studio": "https://p-studio.noctusai.com", "igig": "https://igig.noctusai.com"}
+
+
+def _preflight(table):
+    """Fake preflight: {origin: (status, headers)}."""
+    def probe(url, origin):
+        return table.get(origin, (0, {"_error": "unreachable"}))
+    return probe
+
+
+def test_allowed_origin_passes():
+    r = S.sso_cors_smoke(
+        origins=ORIGINS,
+        preflight=_preflight({
+            o: (200, {"access-control-allow-origin": o}) for o in ORIGINS.values()
+        }),
+    )
+    assert r["status"] == "pass"
+    assert r["exit_code"] == 0
+    assert r["blocked"] == []
+
+
+def test_the_actual_incident_a_400_with_no_allow_origin_header():
+    """🔴 THE incident, verbatim: core answered 400 and named no origin."""
+    r = S.sso_cors_smoke(
+        origins=ORIGINS,
+        preflight=_preflight({
+            "https://p-studio.noctusai.com": (400, {}),
+            "https://igig.noctusai.com": (200, {"access-control-allow-origin": "https://igig.noctusai.com"}),
+        }),
+    )
+    assert r["status"] == "fail"
+    assert r["blocked"] == ["p-studio"]
+    bad = next(x for x in r["results"] if x["product"] == "p-studio")
+    # The finding must name the cause and the remedy — "CORS failed" sends the
+    # reader back to the browser console they already could not read.
+    assert "start.sh" in bad["detail"]
+    assert "PRODUCT_URL_P_STUDIO" in bad["detail"]
+
+
+def test_a_200_without_the_header_is_still_a_block():
+    """The trap: browsers require the HEADER, not the status. A probe that
+    asserted only `status == 200` would have called the broken state healthy."""
+    r = S.sso_cors_smoke(
+        origins={"p-studio": ORIGINS["p-studio"]},
+        preflight=_preflight({ORIGINS["p-studio"]: (200, {})}),
+    )
+    assert r["status"] == "fail"
+
+
+def test_a_wildcard_allow_origin_counts_as_allowed():
+    r = S.sso_cors_smoke(
+        origins={"p-studio": ORIGINS["p-studio"]},
+        preflight=_preflight({ORIGINS["p-studio"]: (204, {"access-control-allow-origin": "*"})}),
+    )
+    assert r["status"] == "pass"
+
+
+def test_a_trailing_slash_is_not_a_mismatch():
+    r = S.sso_cors_smoke(
+        origins={"p-studio": ORIGINS["p-studio"] + "/"},
+        preflight=_preflight({ORIGINS["p-studio"]: (200, {"access-control-allow-origin": ORIGINS["p-studio"]})}),
+    )
+    assert r["status"] == "pass"
+
+
+def test_an_unreachable_core_is_a_block_not_a_pass():
+    r = S.sso_cors_smoke(origins=ORIGINS, preflight=_preflight({}))
+    assert r["status"] == "fail"
+    assert sorted(r["blocked"]) == ["igig", "p-studio"]
+
+
+def test_no_resolvable_origins_is_not_configured_never_a_faked_pass():
+    r = S.sso_cors_smoke(origins={})
+    assert r["status"] == "not_configured"
+    assert r["exit_code"] == 1
