@@ -176,3 +176,59 @@ def test_bash_write_targets_resolves_relative_paths_against_the_cd():
     targets, uncertain = bash_write_targets(f"cd {PRIMARY} && touch a/b.txt", WT)
     assert f"{PRIMARY}/a/b.txt" in targets
     assert uncertain is False
+
+
+# ── the OVER-refusals, which are their own failure mode ───────────────────
+#
+# Both of these fired within minutes of the guard going live, on work that was
+# already correctly aimed at a worktree. An over-refusing gate is not the safe
+# direction — it is the direction where someone switches the gate off, and a
+# gate that is off protects nothing.
+
+def test_a_heredoc_body_is_data_not_shell():
+    """The house style pipes Markdown and Python through `python - <<'PY'`.
+    Prose contains `|` (Markdown tables) and `>` (blockquotes), so an unstripped
+    body split into segments and `> **Fix:**` parsed as a redirect into a file
+    named `**Fix:**` — resolved under the primary root, and refused."""
+    command = (
+        f"python - '{WT}/x.py' <<'PYEOF'\n"
+        "| Origin | Result |\n"
+        "> **Fix:** ship start.sh\n"
+        "rm -rf /etc\n"
+        "PYEOF"
+    )
+    assert _decide("Bash", {"command": command}) is None
+
+
+def test_a_write_AFTER_a_heredoc_is_still_caught():
+    """Stripping the body must not blind the guard to the rest of the line."""
+    command = (
+        f"python - <<'PY'\nprint('hi')\nPY\n"
+        f"touch {PRIMARY}/leaked.txt"
+    )
+    assert _decide("Bash", {"command": command}) is not None
+
+
+def test_two_heredocs_in_one_command_both_get_stripped():
+    command = (
+        f"cat <<'A' > {WT}/a.txt\n| x |\nA\n"
+        f"cat <<'B' > {WT}/b.txt\n> y\nB"
+    )
+    assert _decide("Bash", {"command": command}) is None
+
+
+def test_a_shell_variable_cd_is_not_read_as_a_relative_path():
+    """`cd "$W" && …` — the variable could point anywhere. Treating it as a
+    relative path under the primary root refused a correct worktree edit."""
+    assert _decide("Bash", {"command": 'cd "$W" && python cli.py --verify'}) is None
+
+
+def test_a_shell_variable_write_target_falls_back_to_the_known_cwd():
+    """Unresolvable target ⇒ judge the cwd we DO know. From a worktree that is
+    a pass; from the primary it still blocks."""
+    assert _decide("Bash", {"command": 'touch "$W/out.txt"'}, cwd=WT) is None
+    assert _decide("Bash", {"command": 'touch "$W/out.txt"'}, cwd=PRIMARY) is not None
+
+
+def test_a_glob_target_is_not_resolved_literally():
+    assert _decide("Bash", {"command": f"rm -f {WT}/dist/*.js"}) is None

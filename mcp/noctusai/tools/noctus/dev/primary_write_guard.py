@@ -99,6 +99,42 @@ _SINKS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
 _REDIRECT_RE = re.compile(r"(?<![0-9<>&])>>?\s*(?![&>])([^\s;|&<>()'\"]+)")
 _CD_RE = re.compile(r"(?:^|[;&|]|&&)\s*cd\s+(?P<path>'[^']*'|\"[^\"]*\"|[^\s;|&]+)")
 _PY_WRITE_RE = re.compile(r"open\s*\([^)]*['\"][arw]b?\+?['\"]|Path\([^)]*\)\.write_")
+#: `cmd <<'TAG'` / `<<TAG` / `<<-TAG` — the body up to the terminator is DATA.
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def _strip_heredocs(command: str) -> str:
+    """Drop every heredoc BODY, keeping the command lines around it.
+
+    Without this the guard reads prose as shell, and it is not a rare edge: the
+    house style pipes Markdown and Python into `python - <<'PY'` constantly, and
+    a Markdown table's `|` splits into segments while `> **Fix:**` parses as a
+    redirect into a file literally named `**Fix:**`. That resolved under the
+    primary root and refused the call — an over-refusal on 2026-08-19, minutes
+    after the guard went live, on a docs edit that was already correctly aimed
+    at a worktree.
+
+    An over-refusing gate is not the safe direction. It is the direction where
+    someone switches the gate off, and then it protects nothing
+    (`KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`).
+    """
+    lines = command.split("\n")
+    out: list[str] = []
+    pending: list[str] = []
+    skipping_until: str | None = None
+
+    for line in lines:
+        if skipping_until is not None:
+            if line.strip() == skipping_until:
+                skipping_until = None
+            continue
+        out.append(line)
+        tags = [m.group(2) for m in _HEREDOC_RE.finditer(line)]
+        if tags:
+            pending = tags
+        if pending:
+            skipping_until = pending.pop(0)
+    return "\n".join(out)
 
 
 @dataclass
@@ -178,9 +214,21 @@ def is_guarded_path(path: str, ctx: GuardContext) -> bool:
     return not any(rel.startswith(prefix) for prefix in LEDGER_PREFIXES)
 
 
+def _is_unresolvable(token: str) -> bool:
+    """A token whose real value only exists at shell-expansion time.
+
+    `cd "$W" && …` must NOT be read as a relative path called `$W` under the
+    primary root: the variable could point anywhere, and guessing "inside"
+    refuses correct work (it did, on 2026-08-19). Unresolvable tokens make the
+    parse UNCERTAIN instead, which falls back to judging the effective cwd —
+    conservative where it matters, silent where it does not.
+    """
+    return any(ch in token for ch in ("$", "`", "*", "?"))
+
+
 def _resolve(token: str, cwd: str) -> str:
     token = token.strip().strip("'\"")
-    if not token:
+    if not token or _is_unresolvable(token):
         return ""
     token = os.path.expanduser(token)
     return os.path.normpath(token if os.path.isabs(token) else os.path.join(cwd, token))
@@ -194,10 +242,15 @@ def _effective_cwd(command: str, cwd: str) -> str:
     re-points the write is invisible to anything that only reads that field.
     """
     current = cwd
-    for match in _CD_RE.finditer(command):
+    for match in _CD_RE.finditer(_strip_heredocs(command)):
         target = match.group("path").strip().strip("'\"")
-        if target and not target.startswith("-"):
-            current = _resolve(target, current)
+        if not target or target.startswith("-"):
+            continue
+        if _is_unresolvable(target):
+            # `cd "$W"` — we cannot know where it lands. Keep the last cwd we
+            # DO know rather than inventing one under the primary root.
+            continue
+        current = _resolve(target, current)
     return current
 
 
@@ -225,6 +278,7 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
     permissive direction is what this module exists to stop.
     """
     cwd = _effective_cwd(command, cwd)
+    command = _strip_heredocs(command)
     targets: list[str] = []
     uncertain = False
 
@@ -271,10 +325,13 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
             continue
 
         if name in _ALWAYS_WRITE:
-            positional = [_resolve(a, cwd) for a in args if _looks_like_path(a)]
-            if positional:
-                targets += positional
-            else:
+            candidates = [a for a in args if _looks_like_path(a)]
+            positional = [t for t in (_resolve(a, cwd) for a in candidates) if t]
+            targets += positional
+            if len(positional) < len(candidates) or not candidates:
+                # Either no target at all, or one we could not expand (`$VAR`,
+                # a glob). Both mean "a write is happening somewhere we cannot
+                # name" — decided against the effective cwd, and said so.
                 uncertain = True
             continue
 
