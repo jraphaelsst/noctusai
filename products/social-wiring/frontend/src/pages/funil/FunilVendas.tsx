@@ -20,6 +20,7 @@ import { PipelineBoard } from "@noctusai/lib/components";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LeadDetailModal } from "@/components/LeadDetailModal";
+import { ClienteDetailModal } from "@/components/ClienteDetailModal";
 import { formatValor } from "./formatValor";
 import { funilPipeline } from "@/lib/pipelines";
 import { useAceitarProposta } from "@/hooks/usePipelineSeam";
@@ -31,7 +32,16 @@ export default function FunilVendas() {
   // The card that is open in the detail modal. Holds the ORIGIN rather than
   // the card, because that is all the modal needs and it keeps a stale card
   // object from outliving a refetch behind an open modal.
+  //
+  // Used ONLY as the fallback now: an atendimento whose person layer has not
+  // resolved yet (`cliente_id === null`) has no card to open, and showing the
+  // old field list beats showing nothing. Everything else opens the real card.
   const [detalhe, setDetalhe] = useState<CardOrigem | null>(null);
+  // The atendimento IS the person's card (D1) — clicking it opens the same
+  // dialog the Clientes board opens, keyed by `cliente_id`. Before this the
+  // funil opened a read-only field list, so the card existed on one board and
+  // was unreachable from the one people actually work in.
+  const [clienteAberto, setClienteAberto] = useState<string | null>(null);
   const { mutate: aceitarProposta, isPending: aceitando, variables } =
     useAceitarProposta();
 
@@ -68,7 +78,15 @@ export default function FunilVendas() {
             ))}
           </div>
         }
-        onCardClick={(atendimento) => setDetalhe(origemDoAtendimento(atendimento))}
+        onCardClick={(atendimento) => {
+          if (atendimento.cliente_id) {
+            setClienteAberto(atendimento.cliente_id);
+          } else {
+            // No person resolved yet — the backfill runs every 6h and new
+            // leads land unattached in between. Never a dead click.
+            setDetalhe(origemDoAtendimento(atendimento));
+          }
+        }}
         renderCard={(atendimento, { isDragging }) => (
           <AtendimentoCard
             atendimento={atendimento}
@@ -81,7 +99,14 @@ export default function FunilVendas() {
         )}
       />
 
-      {/* The same modal the Leads table and the Processos board open. */}
+      {/* The card — the atendimento's person. */}
+      <ClienteDetailModal
+        clienteId={clienteAberto}
+        open={!!clienteAberto}
+        onClose={() => setClienteAberto(null)}
+      />
+
+      {/* Fallback for an atendimento with no cliente yet (see onCardClick). */}
       <LeadDetailModal
         open={!!detalhe}
         onClose={() => setDetalhe(null)}

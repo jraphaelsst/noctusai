@@ -23,6 +23,7 @@
  * meaningful "empty" state for a single record — a missing record is
  * `notFound`, handled like an error).
  */
+import type { ReactNode } from "react";
 import { useState } from "react";
 import {
   AlertCircle,
@@ -82,6 +83,10 @@ export interface ClienteCardDialogProps {
   notFound?: boolean;
 
   nome: string;
+  /** Surface-specific actions rendered beside the title — e.g. the Processos
+   *  board's "arquivar". The card itself owns nothing board-specific, so the
+   *  board passes what only it can mean. */
+  acoes?: ReactNode;
 
   // Etiquetas
   allTags: Tag[];
@@ -142,7 +147,7 @@ export interface ClienteCardDialogProps {
 }
 
 export function ClienteCardDialog(props: ClienteCardDialogProps) {
-  const { open, onClose, isLoading, error, notFound, nome } = props;
+  const { open, onClose, isLoading, error, notFound, nome, acoes } = props;
   const [activePopover, setActivePopover] = useState<PopoverKey>(null);
 
   function handleAdicionarSelect(option: AdicionarOption) {
@@ -187,7 +192,10 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
 
             {/* ── Left pane — content ─────────────────────────────── */}
             <ScrollArea className="border-r p-6">
-              <h2 className="mb-4 text-xl font-semibold">{nome}</h2>
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <h2 className="text-xl font-semibold">{nome}</h2>
+                {acoes ? <div className="flex shrink-0 gap-2">{acoes}</div> : null}
+              </div>
 
               <div className="mb-4 flex flex-wrap gap-2">
                 <AdicionarPopover

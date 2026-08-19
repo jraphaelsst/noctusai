@@ -92,8 +92,12 @@ ATENDIMENTO_SELECT = (
 # to see the lead" would be true on one board and false on the other.
 PROCESSO_SELECT = (
     "*,"
+    # `cliente_id` is projected so the Processos board can open the SAME card
+    # dialog the Clientes board does — the card is keyed by the person, and
+    # without this the processo card could only ever open the old read-only
+    # field list.
     "atendimento:atendimentos!processos_venda_atendimento_id_fkey"
-    "(id, titulo, valor_estimado, closed_at, lead_id, meta_ads_lead_id,"
+    "(id, titulo, valor_estimado, closed_at, lead_id, meta_ads_lead_id, cliente_id,"
     f"lead:leads!atendimentos_lead_id_fkey({_LEAD_CARD_FIELDS}),"
     f"campanha:meta_ads_leads!atendimentos_meta_ads_lead_id_fkey({_CAMPANHA_CARD_FIELDS})),"
     f"etapa_rel:pipeline_stages!processos_venda_etapa_id_fkey({_STAGE_FIELDS})"
@@ -101,7 +105,7 @@ PROCESSO_SELECT = (
 
 # Whitelists mirror the frontend types. Anything not listed is stripped, so a
 # schema addition cannot silently start leaking through the API.
-_NEGOCIACAO_FIELDS = (
+_ATENDIMENTO_FIELDS = (
     "id", "org_id", "lead_id", "meta_ads_lead_id", "etapa_id", "status",
     "titulo", "valor_estimado", "kanban_pos", "arquivado", "closed_at",
     "created_at", "updated_at", "lead", "campanha", "etapa_rel",
@@ -130,7 +134,7 @@ _IN_FILTER_BATCH = 200
 def atendimento_to_dto(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if not row:
         return row
-    return {k: row.get(k) for k in _NEGOCIACAO_FIELDS if k in row}
+    return {k: row.get(k) for k in _ATENDIMENTO_FIELDS if k in row}
 
 
 def processo_to_dto(row: dict[str, Any] | None) -> dict[str, Any] | None:

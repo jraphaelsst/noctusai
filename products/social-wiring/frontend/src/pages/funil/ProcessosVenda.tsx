@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LeadDetailModal } from "@/components/LeadDetailModal";
+import { ClienteDetailModal } from "@/components/ClienteDetailModal";
 import { useArquivarProcesso } from "@/hooks/useProcessosVenda";
 import { formatValor } from "./formatValor";
 import { processosPipeline } from "@/lib/pipelines";
@@ -36,6 +37,37 @@ export default function ProcessosVenda() {
   const { mutate: arquivarProcesso } = useArquivarProcesso();
 
   const origem = detalhe ? origemDoProcesso(detalhe) : null;
+  // An accepted proposal moves the ATENDIMENTO to this board — it is still the
+  // same person's card (D1), so a processo opens the same dialog the Funil and
+  // Clientes boards open. `cliente_id` rides in on the embedded atendimento
+  // (`PROCESSO_SELECT`). Null only while the backfill has not attached a
+  // person yet, in which case the old field list is the honest fallback.
+  const clienteId = detalhe?.atendimento?.cliente_id ?? null;
+
+  // "Arquivar" belongs to the PROCESSO, not to the person, so it rides in the
+  // card's action slot rather than becoming part of the card itself.
+  const acoesDoProcesso = detalhe ? (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        arquivarProcesso(detalhe.id);
+        setDetalhe(null);
+      }}
+    >
+      {detalhe.arquivado ? (
+        <>
+          <ArchiveRestore className="mr-1 h-4 w-4" />
+          Restaurar processo
+        </>
+      ) : (
+        <>
+          <Archive className="mr-1 h-4 w-4" />
+          Arquivar processo
+        </>
+      )}
+    </Button>
+  ) : null;
 
   return (
     <div className="container mx-auto p-4 sm:p-6">
@@ -90,8 +122,15 @@ export default function ProcessosVenda() {
         The same modal the Leads table and the Funil board open — plus the
         archive action, which moved off the card face to here.
       */}
+      <ClienteDetailModal
+        clienteId={clienteId}
+        open={!!detalhe && !!clienteId}
+        onClose={() => setDetalhe(null)}
+        acoes={acoesDoProcesso}
+      />
+
       <LeadDetailModal
-        open={!!detalhe}
+        open={!!detalhe && !clienteId}
         onClose={() => setDetalhe(null)}
         leadId={origem?.leadId ?? null}
         campanha={origem?.campanha ?? null}

@@ -123,6 +123,9 @@ export interface ProcessoVenda {
     closed_at: string | null;
     lead_id: string | null;
     meta_ads_lead_id: string | null;
+    /** The person this atendimento is about — projected by `PROCESSO_SELECT`
+     *  so the Processos board can open the same card as the Funil. */
+    cliente_id?: string | null;
     lead?: AtendimentoLead | null;
     campanha?: AtendimentoCampanha | null;
   } | null;

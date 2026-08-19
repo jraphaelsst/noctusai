@@ -25,6 +25,7 @@
  * 409 on a second create — surfaced here via a toast with the server's
  * own message, not left to read as a network failure.
  */
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -52,6 +53,8 @@ export interface ClienteDetailModalProps {
   clienteId: string | null;
   open: boolean;
   onClose: () => void;
+  /** Board-specific actions for the card header (see `ClienteCardDialogProps.acoes`). */
+  acoes?: ReactNode;
 }
 
 /** The server's own message when a mutation fails — never a silently
@@ -62,7 +65,7 @@ function toastServerError(err: unknown, fallback: string) {
   toast.error(message);
 }
 
-export function ClienteDetailModal({ clienteId, open, onClose }: ClienteDetailModalProps) {
+export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteDetailModalProps) {
   // Colour-blind mode has no persistence surface in this contract (a Trello
   // account-level preference; nothing in §2/§3 models one) — kept as
   // session-local UI state rather than inventing a field.
@@ -166,6 +169,7 @@ export function ClienteDetailModal({ clienteId, open, onClose }: ClienteDetailMo
     <ClienteCardDialog
       open={open}
       onClose={onClose}
+      acoes={acoes}
       isLoading={loading}
       error={isError ? "Não foi possível carregar este cartão." : null}
       notFound={notFound}
