@@ -141,3 +141,103 @@ class TestResetForTesting:
         old = sched.scheduler
         sched.reset_for_testing()
         assert sched.scheduler is not old
+
+
+class TestRegisterIdempotency:
+    """Pins the 2026-08-20 fix.
+
+    `replace_existing=True` is consulted by the JOBSTORE, and a stopped
+    scheduler has none — `add_job` parks into `_pending_jobs` and flushes
+    at `start()`. Every adopting product registers at import time, before
+    `start_scheduler()`, so the stopped path is the only one they exercise.
+    Before the fix two `configure()` calls scheduled the job twice, with no
+    error anywhere.
+    """
+
+    def test_double_register_on_stopped_scheduler_keeps_one_job(self):
+        async def _job():
+            return None
+
+        sched.register("nightly", _job, cron="5 0 * * *")
+        sched.register("nightly", _job, cron="5 0 * * *")
+
+        assert len(sched.scheduler.get_jobs()) == 1
+
+    def test_many_registers_still_keep_one_job(self):
+        async def _job():
+            return None
+
+        for _ in range(5):
+            sched.register("nightly", _job, cron="5 0 * * *")
+
+        assert len(sched.scheduler.get_jobs()) == 1
+
+    def test_re_register_applies_the_NEW_trigger(self):
+        """Replacement must mean replacement, not first-write-wins."""
+        async def _job():
+            return None
+
+        sched.register("shifty", _job, cron="0 6 * * *")
+        sched.register("shifty", _job, cron="5 0 * * *")
+
+        job = sched.scheduler.get_job("shifty")
+        fields = {f.name: str(f) for f in job.trigger.fields}
+        assert (fields["hour"], fields["minute"]) == ("0", "5")
+
+    def test_re_register_swaps_the_callable(self):
+        async def _first():
+            return None
+
+        async def _second():
+            return None
+
+        sched.register("swap", _first, hours=1)
+        sched.register("swap", _second, hours=1)
+
+        assert sched.scheduler.get_job("swap").func is _second
+
+    def test_registering_a_second_name_does_not_disturb_the_first(self):
+        async def _job():
+            return None
+
+        sched.register("alpha", _job, hours=1)
+        sched.register("beta", _job, hours=2)
+
+        assert {j.id for j in sched.scheduler.get_jobs()} == {"alpha", "beta"}
+
+    def test_invalid_register_does_not_unregister_the_incumbent(self):
+        """The drop happens AFTER validation.
+
+        Dropping first would let a malformed call silently leave the
+        scheduler with no job at all — strictly worse than the duplicate
+        bug it replaces.
+        """
+        async def _job():
+            return None
+
+        sched.register("keeper", _job, hours=1)
+
+        with pytest.raises(ValueError):
+            sched.register("keeper", _job, hours=1, minutes=30)
+
+        assert sched.scheduler.get_job("keeper") is not None
+
+    def test_drain_clears_pre_existing_duplicates(self):
+        """A process that ran before this fix already holds duplicates.
+
+        `remove_job` deletes only the FIRST match, so a single removal
+        would leave the rest live. Simulated by adding duplicates through
+        the raw APScheduler API, exactly as the old `register` did.
+        """
+        async def _job():
+            return None
+
+        for _ in range(3):
+            sched.scheduler.add_job(
+                _job, "interval", hours=1, id="dupes", replace_existing=True,
+            )
+        assert len(sched.scheduler.get_jobs()) == 3
+
+        sched.register("dupes", _job, cron="5 0 * * *")
+
+        assert len(sched.scheduler.get_jobs()) == 1
