@@ -262,3 +262,99 @@ def test_bare_git_add_with_no_pathspec_is_refused():
     """`git add -A` stages whatever happens to be dirty — unknowable here, and
     an unanswerable probe must fall through to the refusal, not past it."""
     assert _decide("Bash", {"command": f"cd {PRIMARY} && git add -A"}) is not None
+
+
+# ── `>` that is not a redirect ────────────────────────────────────────────
+#
+# Fourth over-refusal of the same family (2026-08-19/20). The guard read the
+# `>` inside `${ao:-<BLOCKED>}` as a redirect into a file named `}`, resolved
+# it under the primary root, and refused a correct call. Bash performs no
+# redirection inside `${…}`, `$((…))`, `((…))` or `[[…]]` — those spans are
+# masked before the command grammar is applied, exactly as heredoc bodies are.
+
+def test_a_default_value_containing_an_angle_bracket_is_not_a_redirect():
+    """`${x:-<Y>}` — the over-refusal the user hit, worked around, and reported."""
+    assert _decide("Bash", {"command": 'echo "ao=${ao:-<BLOCKED>}"'}, cwd=PRIMARY) is None
+    assert bash_write_targets('printf "%s" "${x:-<Y>}"', PRIMARY) == ([], False)
+
+
+def test_arithmetic_comparison_is_not_a_redirect():
+    """`(( a > b ))` and `$(( x > 1 ))` compare; they do not open a file."""
+    assert bash_write_targets("if (( a > b )); then echo hi; fi", PRIMARY) == ([], False)
+    assert bash_write_targets('echo "$(( x > 1 ))"', PRIMARY) == ([], False)
+
+
+def test_a_string_test_is_not_a_redirect():
+    assert bash_write_targets('[[ "$a" > "$b" ]] && echo hi', PRIMARY) == ([], False)
+
+
+def test_nested_parameter_expansion_is_masked_whole():
+    assert bash_write_targets('echo "${a:-${b:-<Z>}}"', PRIMARY) == ([], False)
+
+
+def test_masking_does_not_swallow_a_redirect_that_follows_it():
+    """The mask must end at the closing brace, not run to end-of-command."""
+    targets, _ = bash_write_targets(f'echo "${{x:-<Y>}}" > {PRIMARY}/out.txt', PRIMARY)
+    assert targets == [f"{PRIMARY}/out.txt"]
+
+
+def test_a_command_substitution_redirect_is_still_a_write():
+    """`$( … )` runs real commands — masking it would trade a false refusal for
+    a false PASS, which is the wrong direction to be wrong in."""
+    assert _decide("Bash", {"command": f"echo $(ls > {PRIMARY}/sub.txt)"}, cwd=WT) is not None
+
+
+def test_a_variable_cd_written_with_braces_stays_unresolvable():
+    """`cd "${W}"` must behave exactly like `cd "$W"` — the masked span keeps
+    its `$`, so it is opaque rather than quietly knowable."""
+    assert _decide("Bash", {"command": 'cd "${W}" && python cli.py --verify'}) is None
+
+
+# ── redirect targets the old char class could not see ─────────────────────
+
+def test_a_quoted_redirect_target_is_still_a_write():
+    """The original char class excluded `"`, so this matched NOTHING and the
+    guard waved a primary-checkout write through. A quoting style is not a
+    capability boundary."""
+    assert _decide("Bash", {"command": f'echo hi > "{PRIMARY}/quoted.txt"'}, cwd=WT) is not None
+    assert _decide("Bash", {"command": f"echo hi > '{PRIMARY}/quoted.txt'"}, cwd=WT) is not None
+
+
+def test_a_quoted_sink_is_still_a_sink():
+    assert _decide("Bash", {"command": 'echo hi > "/dev/null"'}, cwd=PRIMARY) is None
+
+
+def test_an_fd_numbered_redirect_is_a_write():
+    """`2> file` redirects stderr to a real file; the digit lookbehind hid it."""
+    assert _decide("Bash", {"command": f"cmd 2> {PRIMARY}/err.log"}, cwd=WT) is not None
+
+
+def test_stderr_to_stdout_is_not_a_file():
+    assert bash_write_targets("cmd 2>&1", PRIMARY) == ([], False)
+
+
+def test_an_unresolvable_redirect_target_falls_back_to_the_known_cwd():
+    """Same rule the `_ALWAYS_WRITE` branch already applied to `cp $X`."""
+    assert _decide("Bash", {"command": "echo hi > $TARGET"}, cwd=WT) is None
+    assert _decide("Bash", {"command": "echo hi > $TARGET"}, cwd=PRIMARY) is not None
+
+
+def test_an_unterminated_expansion_terminates():
+    """A stray `${` must not spin the masker.
+
+    This is not a parse-quality test. `decide()` runs in a PreToolUse hook on
+    every Bash call, so a non-terminating parse is a frozen session, not a
+    wrong answer — the first cut of the masker did exactly that on `echo ${foo`.
+    """
+    for command in ("echo ${foo", "echo $((1+2", "echo [[ a", "echo (( a"):
+        assert bash_write_targets(command, PRIMARY) == ([], False)
+
+
+def test_masking_survives_a_realistic_house_one_liner():
+    """The shape that triggered the report: a status line built from a default
+    value, inside a worktree, next to a real command."""
+    assert _decide(
+        "Bash",
+        {"command": 'ao="$(git rev-parse HEAD)"; echo "ao=${ao:-<BLOCKED>}" && git status --short'},
+        cwd=WT,
+    ) is None

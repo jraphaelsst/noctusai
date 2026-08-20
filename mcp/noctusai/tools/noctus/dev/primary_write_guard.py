@@ -96,7 +96,17 @@ _GIT_WRITE_SUBCOMMANDS = {
 #: Redirection targets that are sinks, not files.
 _SINKS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
 
-_REDIRECT_RE = re.compile(r"(?<![0-9<>&])>>?\s*(?![&>])([^\s;|&<>()'\"]+)")
+#: A redirect and its target. The target alternation carries BOTH quoted forms
+#: on purpose: the original char class excluded `"` and `'`, so `echo x >
+#: "/primary/f"` matched nothing at all and the guard waved a primary-checkout
+#: write straight through (measured 2026-08-20). A quoting style is not a
+#: capability boundary.
+#: The leading lookbehind no longer excludes digits, so `2> file` — a real
+#: write — is seen; `2>&1` is still excluded by the `(?![&>])` ahead of it.
+_REDIRECT_RE = re.compile(
+    r"(?<![<>&])>>?\s*(?![&>])"
+    r"(\"[^\"]*\"|'[^']*'|[^\s;|&<>()'\"]+)"
+)
 _CD_RE = re.compile(r"(?:^|[;&|]|&&)\s*cd\s+(?P<path>'[^']*'|\"[^\"]*\"|[^\s;|&]+)")
 _PY_WRITE_RE = re.compile(r"open\s*\([^)]*['\"][arw]b?\+?['\"]|Path\([^)]*\)\.write_")
 #: `cmd <<'TAG'` / `<<TAG` / `<<-TAG` — the body up to the terminator is DATA.
@@ -135,6 +145,88 @@ def _strip_heredocs(command: str) -> str:
         if pending:
             skipping_until = pending.pop(0)
     return "\n".join(out)
+
+
+#: Regions where `<` and `>` are NOT redirects. Bash performs no redirection
+#: inside any of them, so a `>` there is a default-value literal, an arithmetic
+#: comparison, or a string test — never a file to write.
+#:
+#: `$( … )` is deliberately ABSENT: command substitution runs real commands, and
+#: `echo $(ls > /primary/f)` really does write. Masking it would trade a false
+#: refusal for a false pass, which is the wrong direction to be wrong in.
+_MASKABLE = (
+    ("${", "}", "$_NOCEXP"),    # parameter expansion — `${x:-<Y>}`
+    ("$((", "))", "$_NOCEXP"),  # arithmetic expansion — `$(( x > 1 ))`
+    ("((", "))", "_NOCTEST"),   # arithmetic command  — `(( a > b ))`
+    ("[[", "]]", "_NOCTEST"),   # conditional expr    — `[[ a > b ]]`
+)
+
+
+def _mask_expansions(command: str) -> str:
+    """Blank out expansion/test regions so their `>` is not read as a redirect.
+
+    Same move as :func:`_strip_heredocs`, one level down: remove the spans that
+    are not command grammar BEFORE applying command grammar to what is left.
+    Without it `echo "${ao:-<BLOCKED>}"` parses as a redirect into a file named
+    `}`, resolves it under the primary root, and refuses the call — an
+    over-refusal on 2026-08-19, and the fourth of its family.
+
+    The `$`-bearing placeholder is load-bearing: it keeps the masked span
+    UNRESOLVABLE (:func:`_is_unresolvable`), so `cd "${W}"` still means "we
+    cannot know where this lands" exactly as `cd "$W"` already did, rather than
+    quietly becoming a knowable path.
+    """
+    out: list[str] = []
+    i, n = 0, len(command)
+    while i < n:
+        span = _masked_span(command, i)
+        if span is None:
+            out.append(command[i])
+            i += 1
+            continue
+        placeholder, end = span
+        out.append(placeholder)
+        i = end
+    return "".join(out)
+
+
+def _masked_span(command: str, i: int) -> tuple[str, int] | None:
+    """`(placeholder, end_index)` if a maskable region opens at `i`, else None.
+
+    Returning None for an UNTERMINATED opener is what keeps the caller advancing.
+    An earlier cut folded this into the caller's loop and left `i` unchanged on
+    that path — `echo ${foo` spun forever, which in a PreToolUse hook is not a
+    parse bug but a frozen session.
+    """
+    for opener, closer, placeholder in _MASKABLE:
+        if not command.startswith(opener, i):
+            continue
+        depth, j, n = 1, i + len(opener), len(command)
+        while j < n:
+            if command.startswith(closer, j):
+                depth -= 1
+                j += len(closer)
+                if not depth:
+                    return placeholder, j
+            elif command.startswith(opener, j):
+                depth += 1
+                j += len(opener)
+            else:
+                j += 1
+        # Unterminated: leave the text verbatim rather than swallowing a real
+        # redirect that follows a stray brace.
+        return None
+    return None
+
+
+def _normalize(command: str) -> str:
+    """The ONE pre-parse normalization, shared by every reader of a command.
+
+    Both `_effective_cwd` and `bash_write_targets` must see the same string. The
+    2026-08-19 ledger-parity bug was two gates applying the same rule through
+    two code paths; this keeps that from recurring one layer down.
+    """
+    return _mask_expansions(_strip_heredocs(command))
 
 
 @dataclass
@@ -242,7 +334,7 @@ def _effective_cwd(command: str, cwd: str) -> str:
     re-points the write is invisible to anything that only reads that field.
     """
     current = cwd
-    for match in _CD_RE.finditer(_strip_heredocs(command)):
+    for match in _CD_RE.finditer(_normalize(command)):
         target = match.group("path").strip().strip("'\"")
         if not target or target.startswith("-"):
             continue
@@ -322,15 +414,24 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
     permissive direction is what this module exists to stop.
     """
     cwd = _effective_cwd(command, cwd)
-    command = _strip_heredocs(command)
+    command = _normalize(command)
     targets: list[str] = []
     uncertain = False
 
     for segment in _segments(command):
         for match in _REDIRECT_RE.finditer(segment):
             raw = match.group(1)
-            if raw not in _SINKS:
-                targets.append(_resolve(raw, cwd))
+            if raw.strip("'\"") in _SINKS:
+                continue
+            resolved = _resolve(raw, cwd)
+            if resolved:
+                targets.append(resolved)
+            else:
+                # `> $TARGET` — a write is happening somewhere we cannot name.
+                # That is the same condition the `_ALWAYS_WRITE` branch below
+                # already marks uncertain; a redirect staying silent about it
+                # was an inconsistency, not a decision.
+                uncertain = True
 
         tokens = _tokens(segment)
         while tokens and "=" in tokens[0] and "/" not in tokens[0].split("=")[0]:
