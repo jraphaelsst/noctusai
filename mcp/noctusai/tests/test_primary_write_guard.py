@@ -405,3 +405,18 @@ def test_a_redirect_inside_a_quoted_span_does_not_leak_across_a_pipe():
     """Redirects are scanned over the whole command, because `_segments` splits
     on `|` without regard for quotes and would cut a quoted span in half."""
     assert bash_write_targets('echo "a | b > c" | cat', PRIMARY) == ([], False)
+
+
+def test_a_cd_on_a_later_line_is_seen():
+    """Multi-line Bash calls are the house style, and the `cd` is rarely on line
+    one. A bare `^` anchors to the start of the COMMAND, so this was judged
+    against the session cwd and refused a correct worktree-aimed write."""
+    command = f'pkill -f pytest 2>/dev/null\ncd {WT}\ntouch out.txt'
+    assert _decide("Bash", {"command": command}, cwd=PRIMARY) is None
+
+
+def test_a_cd_on_a_later_line_into_the_primary_is_still_caught():
+    """The same fix must not become a hole: seeing the `cd` has to work in both
+    directions or it is just a different guess."""
+    command = f'echo starting\ncd {PRIMARY}\ntouch out.txt'
+    assert _decide("Bash", {"command": command}, cwd=WT) is not None

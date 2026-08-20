@@ -96,7 +96,16 @@ _GIT_WRITE_SUBCOMMANDS = {
 #: Redirection targets that are sinks, not files.
 _SINKS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
 
-_CD_RE = re.compile(r"(?:^|[;&|]|&&)\s*cd\s+(?P<path>'[^']*'|\"[^\"]*\"|[^\s;|&]+)")
+#: `cd <dir>` in command position. MULTILINE is load-bearing: a bare `^` anchors
+#: to the START OF THE COMMAND only, so a `cd` on the second or later LINE of a
+#: multi-line Bash call was invisible — the guard then judged the write against
+#: the session cwd (the primary) and refused a call that was correctly aimed at a
+#: worktree. Measured 2026-08-20, on a command whose only sin was putting a
+#: `pkill` on the line above the `cd`.
+_CD_RE = re.compile(
+    r"(?:^|[;&|]|&&)\s*cd\s+(?P<path>'[^']*'|\"[^\"]*\"|[^\s;|&]+)",
+    re.MULTILINE,
+)
 _PY_WRITE_RE = re.compile(r"open\s*\([^)]*['\"][arw]b?\+?['\"]|Path\([^)]*\)\.write_")
 #: `cmd <<'TAG'` / `<<TAG` / `<<-TAG` — the body up to the terminator is DATA.
 _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
