@@ -76,14 +76,26 @@ def parse_codigo(raw: Optional[str]) -> tuple[Optional[str], Optional[str], Opti
     Returns ``(None, None, None)`` when the cell doesn't start with a
     recognizable code token (e.g. a stray note leaked into the CODIGO
     column) — ``codigo_raw`` on the caller's row keeps the full verbatim
-    string regardless."""
+    string regardless.
+
+    The código is UPPER-CASED. ``_CODIGO_RE`` matches ``[A-Za-z]`` and this
+    used to return the match verbatim, so ``One10107`` was stored as typed
+    and never joined ``imoveis.codigo`` (``ONE10107``) — 6057 rows carried a
+    lowercase character and 2406 leads silently failed to resolve.
+
+    This mirrors ``social_wiring.canonicalize_lead_codigo_imovel()``
+    (migration 062) exactly. It has to: that trigger is BEFORE INSERT, so if
+    the two disagreed the API would echo one value and the DB would hold
+    another — the same contract ``parse_contato`` documents against
+    ``canonicalize_lead_contato()``.
+    """
     if not raw:
         return None, None, None
     without_prefix = _CODIGO_PREFIX_RE.sub("", raw, count=1)
     m = _CODIGO_RE.match(without_prefix)
     if not m:
         return None, None, None
-    codigo = m.group(1)
+    codigo = m.group(1).upper()
     rest = _LEADING_DASH_RE.sub("", m.group(2)).strip()
     if not rest:
         return codigo, None, None

@@ -71,8 +71,9 @@ class TestParseCodigo:
         assert parse_codigo("ONE10180 Jardim Ester ") == ("ONE10180", "Jardim Ester", None)
 
     def test_dash_separated_with_regiao(self):
+        # Upper-cased since migration 062 — see TestParseCodigoIsCanonical.
         assert parse_codigo("One9922 - Nativo Clube - Km 29") == (
-            "One9922",
+            "ONE9922",
             "Nativo Clube",
             "Km 29",
         )
@@ -97,8 +98,9 @@ class TestParseCodigo:
         assert emp == "Some Place"
 
     def test_lowercase_a_prefix(self):
+        # A one-letter prefix is still matched, and now canonicalised.
         codigo, _, _ = parse_codigo("a3282 Pousada dos Bandeirantes - Km 23")
-        assert codigo == "a3282"
+        assert codigo == "A3282"
 
     def test_ca_prefix(self):
         codigo, emp, _ = parse_codigo("CA4350 - SÃO PAULOII")
@@ -118,7 +120,7 @@ class TestParseCodigo:
         codigo, emp, reg = parse_codigo(
             "One7326 - Rolleboise - Km 22 - Ca1003 - Miolo Granja Viana - Km 23"
         )
-        assert codigo == "One7326"
+        assert codigo == "ONE7326"
         assert emp == "Rolleboise"
         assert reg  # non-empty best-effort remainder, never silently dropped
 
@@ -198,3 +200,52 @@ class TestStripRetornoPrefix:
         name, is_retorno = strip_retorno_prefix("Retorno: Marisa Bregues")
         assert name == "Marisa Bregues"
         assert is_retorno is True
+
+
+class TestParseCodigoIsCanonical:
+    """Pins the migration-062 contract: the parser upper-cases.
+
+    `_CODIGO_RE` matches `[A-Za-z]`, and `parse_codigo` used to return the
+    match verbatim. `One10107` was therefore stored as typed and never
+    joined `imoveis.codigo` (`ONE10107`) — 6057 rows on the live tenant
+    carried a lowercase character and 2406 leads silently failed to
+    resolve.
+
+    The Python side and `social_wiring.canonicalize_lead_codigo_imovel()`
+    MUST agree: the trigger is BEFORE INSERT, so a disagreement means the
+    API echoes one value while the DB holds another. That is the same
+    contract `parse_contato` keeps with `canonicalize_lead_contato()`.
+    """
+
+    def test_lowercase_prefix_is_upper_cased(self):
+        codigo, _, _ = parse_codigo("one10107")
+        assert codigo == "ONE10107"
+
+    def test_mixed_case_prefix_is_upper_cased(self):
+        codigo, _, _ = parse_codigo("One10107")
+        assert codigo == "ONE10107"
+
+    def test_already_upper_is_unchanged(self):
+        codigo, _, _ = parse_codigo("ONE10107")
+        assert codigo == "ONE10107"
+
+    def test_case_variants_converge_on_one_value(self):
+        """The whole point: every spelling collapses to one join key."""
+        variants = ["ONE10107", "One10107", "one10107", "oNe10107"]
+        assert {parse_codigo(v)[0] for v in variants} == {"ONE10107"}
+
+    def test_two_letter_prefix_converges(self):
+        assert {parse_codigo(v)[0] for v in ["CA0190", "Ca0190", "ca0190"]} == {"CA0190"}
+
+    def test_canonicalisation_does_not_disturb_the_remainder(self):
+        """Only the código is folded — the free text keeps its own case."""
+        codigo, emp, reg = parse_codigo("one9922 - Nativo Clube - Km 29")
+        assert codigo == "ONE9922"
+        assert emp == "Nativo Clube"
+        assert reg == "Km 29"
+
+    def test_matches_what_the_sql_trigger_would_produce(self):
+        """`upper(btrim(...))` is the trigger body; mirror it exactly."""
+        for raw in ["one10107", "One10107", "ONE10107", "cA4350"]:
+            codigo, _, _ = parse_codigo(raw)
+            assert codigo == raw.strip().upper()

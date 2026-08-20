@@ -47,7 +47,11 @@ __all__ = [
 
 # Row columns that are persistence-only (added by `_imovel_to_row`, not part
 # of the `Imovel` model) — stripped before reconstituting `Imovel(**row)`.
-_ROW_ONLY_COLUMNS = frozenset({"org_id", "sincronizado_em"})
+# `codigo_norm` is a STORED generated column (migration 062) and exists only
+# so the case-insensitive join is indexed — it is derived from `codigo`,
+# which the model already carries, so passing it through would add a second
+# spelling of the same fact to the domain object.
+_ROW_ONLY_COLUMNS = frozenset({"org_id", "sincronizado_em", "codigo_norm"})
 
 
 class ImoveisLookupError(Exception):
@@ -265,11 +269,20 @@ class ImoveisService:
         return {"items": rows, "total": total, "page": page, "pages": pages}
 
     def get(self, org_id: UUID, codigo: str) -> Optional[dict]:
+        """Resolve one imóvel by código, case-insensitively.
+
+        Matches `codigo_norm` (migration 062), NOT `codigo`. The codes
+        reaching this method come from human-typed and portal-supplied
+        sources — WhatsApp messages, XLSX cells, webhook payloads — and an
+        exact match silently missed every one whose case differed: 2406
+        leads on the live tenant. `codigo_norm` is a STORED generated
+        column, so this is an indexed equality, not a scan.
+        """
         result = (
             self._table()
             .select("*")
             .eq("org_id", str(org_id))
-            .eq("codigo", codigo)
+            .eq("codigo_norm", codigo.strip().upper())
             .limit(1)
             .execute()
         )

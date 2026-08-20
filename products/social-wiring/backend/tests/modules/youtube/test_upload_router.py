@@ -17,9 +17,8 @@ from uuid import uuid4
 
 import pytest
 
-from noctusai_lib.domain.real_estate import Imovel
 
-from app.services.imoveis_service import _imovel_to_row
+from tests.imoveis_rows import imovel_row
 
 _VALID_ENC_KEY = "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg="
 _COMPLETE_CREDS = dict(
@@ -346,8 +345,12 @@ class TestResolveMetadataFromProductCode:
 
     @staticmethod
     def _row(codigo: str, **kw) -> dict:
-        imovel = Imovel(codigo=codigo, **kw)
-        return _imovel_to_row(imovel, TestResolveMetadataFromProductCode.ORG, "2026-08-03T23:50:31Z")
+        return imovel_row(
+            codigo,
+            TestResolveMetadataFromProductCode.ORG,
+            "2026-08-03T23:50:31Z",
+            **kw,
+        )
 
     def test_hit_builds_metadata_from_the_local_row(self, monkeypatch):
         from app.modules.youtube.routers import upload as upload_mod

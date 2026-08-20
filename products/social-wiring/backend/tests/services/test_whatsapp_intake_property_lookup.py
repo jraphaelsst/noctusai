@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from noctusai_lib.domain.real_estate import Imovel
 
-from app.services.imoveis_service import _imovel_to_row
+from tests.imoveis_rows import imovel_row
 from app.services.whatsapp_intake_service import WhatsAppIntakeService
 
 ORG = uuid4()
@@ -87,8 +87,8 @@ class _RaisingClient:
 
 
 def _row(codigo: str, **kw) -> dict:
-    imovel = Imovel(codigo=codigo, **kw)
-    return _imovel_to_row(imovel, ORG, _SYNCED_AT)
+    """Row as `SELECT *` returns it — see tests/imoveis_rows.py."""
+    return imovel_row(codigo, ORG, _SYNCED_AT, **kw)
 
 
 def _make_intake(admin_supabase, org_id=ORG) -> WhatsAppIntakeService:

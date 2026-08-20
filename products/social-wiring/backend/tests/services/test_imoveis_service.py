@@ -23,13 +23,14 @@ from uuid import uuid4
 
 import pytest
 
-from noctusai_lib.domain.real_estate import Imovel, PropertyData
+from noctusai_lib.domain.real_estate import PropertyData
 
 from app.services.imoveis_service import (
     ImoveisLookupError,
     ImoveisService,
-    _imovel_to_row,
 )
+
+from tests.imoveis_rows import imovel_row
 
 ORG = uuid4()
 _SYNCED_AT = "2026-08-03T23:50:31Z"
@@ -103,8 +104,8 @@ class _RaisingClient:
 
 
 def _row(codigo: str, **kw) -> dict:
-    imovel = Imovel(codigo=codigo, **kw)
-    return _imovel_to_row(imovel, ORG, _SYNCED_AT)
+    """Row as `SELECT *` returns it — see tests/imoveis_rows.py."""
+    return imovel_row(codigo, ORG, _SYNCED_AT, **kw)
 
 
 class TestGetPropertyDataHit:
@@ -196,3 +197,40 @@ class TestGetPropertyDataLookupFailure:
 
         message = str(exc_info.value)
         assert "ONE10640" in message
+
+
+class TestGetIsCaseInsensitive:
+    """Pins the migration-062 recovery.
+
+    Codes reaching `get` come from human-typed and portal-supplied sources
+    — WhatsApp bodies, XLSX cells, webhook payloads. Matching `codigo`
+    exactly missed every one whose case differed: 2406 leads on the live
+    tenant resolved only case-insensitively.
+    """
+
+    def test_lowercase_query_finds_the_imovel(self):
+        client = _FakeReadClient([_row("ONE10640", titulo="Apartamento")])
+        assert ImoveisService(client).get(ORG, "one10640") is not None
+
+    def test_mixed_case_query_finds_the_imovel(self):
+        client = _FakeReadClient([_row("ONE10640", titulo="Apartamento")])
+        assert ImoveisService(client).get(ORG, "One10640") is not None
+
+    def test_surrounding_whitespace_is_tolerated(self):
+        client = _FakeReadClient([_row("CA0190", titulo="Casa")])
+        assert ImoveisService(client).get(ORG, "  ca0190 ") is not None
+
+    def test_a_genuine_miss_is_still_a_miss(self):
+        """Case-folding must not turn "not in the catalog" into a hit."""
+        client = _FakeReadClient([_row("ONE10640", titulo="Apartamento")])
+        assert ImoveisService(client).get(ORG, "ONE99999") is None
+
+    def test_property_data_resolves_from_a_lowercase_code(self):
+        client = _FakeReadClient([_row("ONE10640", titulo="Apartamento")])
+        result = ImoveisService(client).get_property_data(ORG, "one10640")
+        assert result is not None
+
+    def test_org_scoping_survives_case_folding(self):
+        """The org filter is not weakened by the new match column."""
+        client = _FakeReadClient([_row("ONE10640", titulo="Apartamento")])
+        assert ImoveisService(client).get(uuid4(), "one10640") is None
