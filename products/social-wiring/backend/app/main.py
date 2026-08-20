@@ -131,6 +131,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.services import (
         clientes_backfill_job,
         clientes_inactivity_service,
+        imoveis_sync_scheduler,
         whatsapp_backfill,
     )
 
@@ -152,6 +153,11 @@ def _register_media_wiring() -> ModuleRegistration:
     # `app/services/clientes_inactivity_service.py`'s module docstring for
     # why `048` shipping the columns did NOT mean this was already wired.
     clientes_inactivity_service.configure()
+    # Daily 00:05 America/Sao_Paulo refresh of the Vista catalog mirror.
+    # Same import-time registration rule as the four jobs above. Until this
+    # landed the mirror only moved when a human pressed the sync button —
+    # it had gone 17 days stale.
+    imoveis_sync_scheduler.configure()
 
     # ONE combined router (`/api/auth` + `/api/settings/api-tokens`) —
     # see the module docstring above for why this calls the factory
