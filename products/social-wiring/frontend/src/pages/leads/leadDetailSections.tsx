@@ -25,7 +25,7 @@
  * genuinely differ, and pretending otherwise would render a campaign lead
  * as a lead with fourteen empty fields.
  */
-import type { DetailSection } from '@noctusai/lib/components';
+import type { DetailField, DetailSection } from '@noctusai/lib/components';
 import { formatPhone } from '@noctusai/lib/phone';
 
 import type { Lead, LeadSource } from '@/pages/leads/types';
@@ -98,49 +98,84 @@ export function explainNeedsReview(lead: Lead, sources: LeadSource[] | undefined
 }
 
 /** Everything we hold about a lead from the base (`social_wiring.leads`). */
+/**
+ * Every lead field, defined EXACTLY once, keyed so a surface can pick.
+ *
+ * The whole-record view (`leadDetailSections`, used by the Leads table and
+ * both boards) and the card's per-subpage split (`leadCardSubpages`) are two
+ * COMPOSITIONS of this one map — never two field lists. Re-typing the labels
+ * for the split is how the drift this module exists to prevent would walk
+ * straight back in through the card.
+ */
+function leadFields(lead: Lead): Record<string, DetailField> {
+  return {
+    dataEntrada: { label: 'Data de entrada', value: lead.data_entrada },
+    tipo: { label: 'Tipo', value: TIPO_LABEL[lead.tipo_lead] },
+    contato: { label: 'Contato', value: contatoValue(lead) },
+    origem: {
+      label: 'Origem',
+      value: lead.origem ? (
+        <OrigemChip cor={lead.origem.cor} label={lead.origem.label} />
+      ) : (
+        lead.origem_raw
+      ),
+    },
+    corretor: { label: 'Corretor', value: lead.corretor?.nome ?? lead.corretor_raw },
+    tier: {
+      label: 'Tier do anúncio',
+      value: lead.anuncio_tier ? TIER_LABEL[lead.anuncio_tier] : null,
+    },
+    empreendimento: { label: 'Empreendimento', value: lead.empreendimento },
+    regiao: { label: 'Região', value: lead.regiao },
+    codigo: { label: 'Código do imóvel', value: lead.codigo_imovel ?? lead.codigo_raw },
+    status: { label: 'Status', value: lead.status },
+  };
+}
+
+function leadFollowUpSection(lead: Lead): DetailSection {
+  return {
+    title: 'Follow-up',
+    fields: [
+      { label: 'Data', value: lead.follow_up_data },
+      { label: 'Nota', value: lead.follow_up_nota },
+      { label: 'Observações', value: lead.observacoes, wide: true },
+    ],
+  };
+}
+
+function leadProcedenciaSection(lead: Lead): DetailSection {
+  return {
+    title: 'Procedência',
+    fields: [
+      { label: 'Planilha de origem', value: lead.source_sheet },
+      { label: 'Linha', value: lead.source_row },
+      { label: 'Criado em', value: dateTimeBR(lead.created_at) },
+      { label: 'Atualizado em', value: dateTimeBR(lead.updated_at) },
+    ],
+  };
+}
+
 export function leadDetailSections(lead: Lead): DetailSection[] {
+  const f = leadFields(lead);
+  // Field ORDER here is the Leads table's existing order and is load-bearing:
+  // three shipped surfaces render this list, and none of them asked to change.
   return [
     {
       fields: [
-        { label: 'Data de entrada', value: lead.data_entrada },
-        { label: 'Tipo', value: TIPO_LABEL[lead.tipo_lead] },
-        { label: 'Contato', value: contatoValue(lead) },
-        {
-          label: 'Origem',
-          value: lead.origem ? (
-            <OrigemChip cor={lead.origem.cor} label={lead.origem.label} />
-          ) : (
-            lead.origem_raw
-          ),
-        },
-        { label: 'Corretor', value: lead.corretor?.nome ?? lead.corretor_raw },
-        {
-          label: 'Tier do anúncio',
-          value: lead.anuncio_tier ? TIER_LABEL[lead.anuncio_tier] : null,
-        },
-        { label: 'Empreendimento', value: lead.empreendimento },
-        { label: 'Região', value: lead.regiao },
-        { label: 'Código do imóvel', value: lead.codigo_imovel ?? lead.codigo_raw },
-        { label: 'Status', value: lead.status },
+        f.dataEntrada,
+        f.tipo,
+        f.contato,
+        f.origem,
+        f.corretor,
+        f.tier,
+        f.empreendimento,
+        f.regiao,
+        f.codigo,
+        f.status,
       ],
     },
-    {
-      title: 'Follow-up',
-      fields: [
-        { label: 'Data', value: lead.follow_up_data },
-        { label: 'Nota', value: lead.follow_up_nota },
-        { label: 'Observações', value: lead.observacoes, wide: true },
-      ],
-    },
-    {
-      title: 'Procedência',
-      fields: [
-        { label: 'Planilha de origem', value: lead.source_sheet },
-        { label: 'Linha', value: lead.source_row },
-        { label: 'Criado em', value: dateTimeBR(lead.created_at) },
-        { label: 'Atualizado em', value: dateTimeBR(lead.updated_at) },
-      ],
-    },
+    leadFollowUpSection(lead),
+    leadProcedenciaSection(lead),
   ];
 }
 
@@ -186,4 +221,51 @@ export function campanhaDetailSections(campanha: AtendimentoCampanha): DetailSec
     // formulário" heading over nothing reads as data that failed to load.
     { title: 'Respostas do formulário', fields: answerFields },
   ];
+}
+
+// ─── The card's subpage split ───────────────────────────────────────────────
+//
+// `ClienteCardDialog` files the same record under two sidebar subpages: who the
+// person IS, and where they CAME FROM (the campaign that produced them and the
+// property they asked about). Both are composed from the field definitions
+// above — a second hand-written list here would drift from the Leads table the
+// first time a field is added, which is the whole reason this module exists.
+
+/** One record, split the way the card's sidebar files it. */
+export interface CardSubpageSections {
+  /** Who the person is: identity, contact, follow-up, provenance. */
+  cliente: DetailSection[];
+  /** Where they came from: the campaign, and the property they asked about. */
+  campanha: DetailSection[];
+}
+
+/** A base lead (`social_wiring.leads`), split for the card sidebar. */
+export function leadCardSubpages(lead: Lead): CardSubpageSections {
+  const f = leadFields(lead);
+  return {
+    cliente: [
+      { fields: [f.dataEntrada, f.tipo, f.contato, f.corretor, f.status] },
+      leadFollowUpSection(lead),
+      leadProcedenciaSection(lead),
+    ],
+    // A base lead has no Meta campaign — what it has is the ANÚNCIO it came
+    // from and the property that ad was for. That is the same question the
+    // campaign subpage answers, so it belongs on the same page rather than in
+    // a third one that would be empty for every campaign lead.
+    campanha: [
+      { title: 'Anúncio', fields: [f.origem, f.tier] },
+      { title: 'Imóvel', fields: [f.empreendimento, f.regiao, f.codigo] },
+    ],
+  };
+}
+
+/** A Meta campaign lead (`meta_ads_leads`), split for the card sidebar. */
+export function campanhaCardSubpages(campanha: AtendimentoCampanha): CardSubpageSections {
+  const [contato, campanhaSection, respostas] = campanhaDetailSections(campanha);
+  return {
+    cliente: [contato],
+    // The form answers ride with the campaign: they are what the person told
+    // THAT ad, and they routinely name the property they were asking about.
+    campanha: [campanhaSection, respostas],
+  };
 }

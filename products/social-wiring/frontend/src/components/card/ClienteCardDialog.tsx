@@ -38,10 +38,8 @@ import {
 
 import { DetailSections } from "@noctusai/lib/components";
 import type { DetailSection } from "@noctusai/lib/components";
-import {
-  campanhaDetailSections,
-  leadDetailSections,
-} from "@/pages/leads/leadDetailSections";
+import { campanhaCardSubpages, leadCardSubpages } from "@/pages/leads/leadDetailSections";
+import type { CardSubpageSections } from "@/pages/leads/leadDetailSections";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -71,6 +69,8 @@ import { resolveDueState } from "./ClienteCardFace";
 import { Timeline } from "./Timeline";
 import { ChecklistDialog } from "./popovers/ChecklistDialog";
 import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
+import { CardSidebarNav } from "./CardSidebarNav";
+import type { CardSubpageKey } from "./CardSidebarNav";
 import { EtiquetasPopover } from "./popovers/EtiquetasPopover";
 import { MembrosPopover } from "./popovers/MembrosPopover";
 
@@ -169,11 +169,23 @@ export interface ClienteCardDialogProps {
 export function ClienteCardDialog(props: ClienteCardDialogProps) {
   const { open, onClose, isLoading, error, notFound, nome, acoes } = props;
   const [activePopover, setActivePopover] = useState<PopoverKey>(null);
+  // `atividade` is the open-on-mount subpage: the card is opened to DO
+  // something far more often than to read the record behind it.
+  const [subpage, setSubpage] = useState<CardSubpageKey>("atividade");
+  const record = useRecordSections(props.atendimentos);
+  const emptyKeys = useMemo(
+    () =>
+      [
+        record.cliente.length ? null : "cliente",
+        record.campanha.length ? null : "campanha",
+      ].filter(Boolean) as CardSubpageKey[],
+    [record],
+  );
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
-        className="grid h-[85vh] max-w-5xl grid-cols-1 gap-0 overflow-hidden p-0 md:grid-cols-[1fr_360px]"
+        className="grid h-[85vh] max-w-6xl grid-cols-1 gap-0 overflow-hidden p-0 md:grid-cols-[184px_1fr_360px]"
         data-testid="cliente-card-dialog"
       >
         {error ? (
@@ -202,7 +214,10 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               Detalhes do cartão de {nome}
             </DialogDescription>
 
-            {/* ── Left pane — content ─────────────────────────────── */}
+            {/* ── Left rail — subpage navigation ──────────────────── */}
+            <CardSidebarNav active={subpage} onSelect={setSubpage} emptyKeys={emptyKeys} />
+
+            {/* ── Middle pane — the active subpage ────────────────── */}
             <ScrollArea className="border-r p-6">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <h2 className="text-xl font-semibold">{nome}</h2>
@@ -261,60 +276,65 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 />
               </div>
 
-              <DadosDoLeadSection atendimentos={props.atendimentos} />
+              {/* The sidebar picks WHICH of these the middle pane shows. Order
+                  inside `atividade` is the user's (2026-08-19), and it is priority
+                  order, not taste: descrição sets context, an agendamento is the
+                  thing you must act on next, the checklist is the work itself, and
+                  anexos are reference material you consult rather than act on — so
+                  it goes last. */}
+              {subpage !== "atividade" ? (
+                <RecordSubpage sections={record[subpage]} subpage={subpage} />
+              ) : (
+                <>
+                  {props.selectedTags.length > 0 && (
+                    <div className="mb-4" data-testid="etiquetas-chips">
+                      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Etiquetas
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {props.selectedTags.map((tag) => (
+                          <span
+                            key={tag.id}
+                            className="rounded px-2.5 py-1 text-xs font-medium text-white"
+                            style={{ backgroundColor: tag.cor }}
+                            data-testid={`etiqueta-chip-${tag.id}`}
+                          >
+                            {tag.nome}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-              {props.selectedTags.length > 0 && (
-                <div className="mb-4" data-testid="etiquetas-chips">
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Etiquetas
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {props.selectedTags.map((tag) => (
-                      <span
-                        key={tag.id}
-                        className="rounded px-2.5 py-1 text-xs font-medium text-white"
-                        style={{ backgroundColor: tag.cor }}
-                        data-testid={`etiqueta-chip-${tag.id}`}
-                      >
-                        {tag.nome}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                  <DescricaoSection
+                    corpo={props.descricaoCorpo}
+                    onSave={props.onSaveDescricao}
+                    saving={props.descricaoSaving}
+                  />
+
+                  <AgendamentosSection
+                    agendamentos={props.agendamentos ?? []}
+                    loading={props.agendamentosLoading}
+                    onRemove={props.onRemoveAgendamento}
+                  />
+
+                  <ChecklistsSection
+                    checklists={props.checklists}
+                    loading={props.checklistsLoading}
+                    onRemoveChecklist={props.onRemoveChecklist}
+                    onAddItem={props.onAddItem}
+                    onToggleItem={props.onToggleItem}
+                    onRemoveItem={props.onRemoveItem}
+                  />
+
+                  <AnexosSection
+                    documentos={props.documentos}
+                    loading={props.documentosLoading}
+                    onOpenDocumento={props.onOpenDocumento}
+                    onDeleteDocumento={props.onDeleteDocumento}
+                  />
+                </>
               )}
-
-              {/* Order is the user's (2026-08-19), and it is priority order, not
-                  taste: descrição sets context, an agendamento is the thing you
-                  must act on next, the checklist is the work itself, and anexos
-                  are reference material you consult rather than act on — so it
-                  goes last. */}
-              <DescricaoSection
-                corpo={props.descricaoCorpo}
-                onSave={props.onSaveDescricao}
-                saving={props.descricaoSaving}
-              />
-
-              <AgendamentosSection
-                agendamentos={props.agendamentos ?? []}
-                loading={props.agendamentosLoading}
-                onRemove={props.onRemoveAgendamento}
-              />
-
-              <ChecklistsSection
-                checklists={props.checklists}
-                loading={props.checklistsLoading}
-                onRemoveChecklist={props.onRemoveChecklist}
-                onAddItem={props.onAddItem}
-                onToggleItem={props.onToggleItem}
-                onRemoveItem={props.onRemoveItem}
-              />
-
-              <AnexosSection
-                documentos={props.documentos}
-                loading={props.documentosLoading}
-                onOpenDocumento={props.onOpenDocumento}
-                onDeleteDocumento={props.onDeleteDocumento}
-              />
             </ScrollArea>
 
             {/* ── Right pane — Comentários e atividade ────────────── */}
@@ -636,25 +656,67 @@ function ChecklistBlock({
   );
 }
 
-function DadosDoLeadSection({ atendimentos }: { atendimentos?: CardAtendimento[] }) {
-  // Built from the SAME descriptors the Leads table and the detail dialog use,
-  // and rendered by the SAME grid organ (`DetailSections` in @noctusai/lib).
-  // A hand-written field list here would drift from those two the first time a
-  // field is added — which is the exact reason `leadDetailSections` exists.
-  const sections = useMemo(() => {
-    const out: DetailSection[] = [];
+/**
+ * The record behind the card, split into the two read-only subpages.
+ *
+ * Built from the SAME descriptors the Leads table and the detail dialog use
+ * (`leadCardSubpages` / `campanhaCardSubpages`), and rendered by the SAME grid
+ * organ (`DetailSections` in @noctusai/lib). A hand-written field list here
+ * would drift from those two the first time a field is added — which is the
+ * exact reason `leadDetailSections` exists.
+ *
+ * A card can carry SEVERAL atendimentos (D17 keeps closed deals as history), so
+ * both lists are concatenated across them rather than showing only the first.
+ */
+function useRecordSections(atendimentos?: CardAtendimento[]): CardSubpageSections {
+  return useMemo(() => {
+    const out: CardSubpageSections = { cliente: [], campanha: [] };
     for (const atendimento of atendimentos ?? []) {
-      if (atendimento.lead) out.push(...leadDetailSections(atendimento.lead as never));
-      else if (atendimento.campanha) out.push(...campanhaDetailSections(atendimento.campanha));
+      const split = atendimento.lead
+        ? leadCardSubpages(atendimento.lead as never)
+        : atendimento.campanha
+          ? campanhaCardSubpages(atendimento.campanha)
+          : null;
+      if (!split) continue;
+      out.cliente.push(...split.cliente);
+      out.campanha.push(...split.campanha);
     }
-    return out;
+    // `DetailSections` drops a section whose every field is empty/hidden, but it
+    // cannot drop the PAGE — so an all-empty split must read as empty here, or
+    // the rail would offer a subpage that renders nothing.
+    return {
+      cliente: hasAnyField(out.cliente) ? out.cliente : [],
+      campanha: hasAnyField(out.campanha) ? out.campanha : [],
+    };
   }, [atendimentos]);
+}
 
-  if (sections.length === 0) return null;
+function hasAnyField(sections: DetailSection[]): boolean {
+  return sections.some((section) => section.fields.some((field) => !field.hidden));
+}
 
+const SUBPAGE_HEADING: Record<Exclude<CardSubpageKey, "atividade">, string> = {
+  cliente: "Dados do cliente",
+  campanha: "Campanha e imóvel",
+};
+
+function RecordSubpage({
+  sections,
+  subpage,
+}: {
+  sections: DetailSection[];
+  subpage: Exclude<CardSubpageKey, "atividade">;
+}) {
   return (
-    <div className="mb-5" data-testid="dados-do-lead-section">
-      <DetailSections sections={sections} testId="dados-do-lead-fields" />
+    <div data-testid={`card-subpage-${subpage}`}>
+      <h3 className="mb-3 text-sm font-semibold">{SUBPAGE_HEADING[subpage]}</h3>
+      {sections.length === 0 ? (
+        <p className="text-sm text-muted-foreground" data-testid={`card-subpage-${subpage}-empty`}>
+          Nada registrado para este cartão.
+        </p>
+      ) : (
+        <DetailSections sections={sections} testId={`card-subpage-${subpage}-fields`} />
+      )}
     </div>
   );
 }

@@ -203,36 +203,117 @@ describe("dados do lead", () => {
     answers: { ref: "ONE10503" },
   };
 
+  const COM_CAMPANHA = baseProps({
+    nome: "Luciano Mauricio",
+    atendimentos: [
+      {
+        id: "a1",
+        titulo: "Luciano Mauricio",
+        status: "aberta",
+        closed_at: null,
+        created_at: null,
+        lead_id: null,
+        meta_ads_lead_id: CAMPANHA.id,
+        lead: null,
+        campanha: CAMPANHA as never,
+      },
+    ],
+  });
+
   it("🔴 renders the person's OWN data — the card showed only a name before", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...COM_CAMPANHA} />);
+
+    fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+    expect(screen.getByTestId("card-subpage-cliente")).toBeTruthy();
+    expect(screen.getByText("lumtluciano@hotmail.com")).toBeTruthy();
+  });
+
+  it("files the campaign and the property under their own subpage", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...COM_CAMPANHA} />);
+
+    fireEvent.click(screen.getByTestId("card-subpage-tab-campanha"));
+    expect(screen.getByText("[🏠 Até R$1 Milhão] [SENSEYS]")).toBeTruthy();
+    // The form answers ride with the campaign, not with the person.
+    expect(screen.getByText("ONE10503")).toBeTruthy();
+  });
+
+  it("keeps the record data OFF the default subpage", async () => {
     const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...COM_CAMPANHA} />);
+    expect(screen.queryByTestId("card-subpage-cliente")).toBeNull();
+    expect(screen.queryByTestId("card-subpage-campanha")).toBeNull();
+  });
+
+  it("disables both record subpages when the card has no origin record", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ atendimentos: [] })} />);
+    // Disabled, not dropped: a rail whose items come and go per record teaches
+    // the user nothing about where a thing lives.
+    expect(screen.getByTestId("card-subpage-tab-cliente").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByTestId("card-subpage-tab-campanha").hasAttribute("disabled")).toBe(true);
+  });
+});
+
+describe("navegação por subpáginas (barra lateral)", () => {
+  it("🔴 opens on Atividade — the card is opened to DO something, not to read", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ descricaoCorpo: "Interessado" })} />);
+
+    expect(screen.getByTestId("card-sidebar-nav")).toBeTruthy();
+    expect(screen.getByTestId("card-subpage-tab-atividade").getAttribute("data-active")).toBe("true");
+    expect(screen.getByTestId("descricao-section")).toBeTruthy();
+  });
+
+  it("swaps the middle pane without closing the card", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const onClose = vi.fn();
     render(
       <ClienteCardDialog
         {...baseProps({
-          nome: "Luciano Mauricio",
+          onClose,
+          descricaoCorpo: "Interessado",
           atendimentos: [
             {
               id: "a1",
-              titulo: "Luciano Mauricio",
+              titulo: "x",
               status: "aberta",
               closed_at: null,
               created_at: null,
               lead_id: null,
-              meta_ads_lead_id: CAMPANHA.id,
+              meta_ads_lead_id: "m1",
               lead: null,
-              campanha: CAMPANHA as never,
+              campanha: {
+                id: "m1",
+                full_name: "Ana",
+                email: "ana@example.com",
+                phone: null,
+                campaign_id: "c1",
+                campaign_name: "Campanha A",
+                form_id: "f1",
+                form_name: "Form A",
+                ad_id: null,
+                adset_id: null,
+                platform: "fb",
+                is_organic: false,
+                created_time: null,
+                answers: {},
+              } as never,
             },
           ],
         })}
       />,
     );
-    expect(screen.getByTestId("dados-do-lead-section")).toBeTruthy();
-    expect(screen.getByText("lumtluciano@hotmail.com")).toBeTruthy();
-  });
 
-  it("renders nothing at all when the card has no origin record", async () => {
-    const { render, screen } = await import("@testing-library/react");
-    render(<ClienteCardDialog {...baseProps({ atendimentos: [] })} />);
-    expect(screen.queryByTestId("dados-do-lead-section")).toBeNull();
+    fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+    expect(screen.getByTestId("card-subpage-cliente")).toBeTruthy();
+    // The working sections are hidden, not unmounted-and-remounted-elsewhere.
+    expect(screen.queryByTestId("descricao-section")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("card-subpage-tab-atividade"));
+    expect(screen.getByTestId("descricao-section")).toBeTruthy();
   });
 });
 
