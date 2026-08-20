@@ -49,28 +49,47 @@ class TestProdCacheReachable:
         assert compliance.check_prod_cache_reachable() == []
 
     def test_surfaces_import_failure(self, monkeypatch):
+        """Both mutations go through `monkeypatch` so pytest restores them.
+
+        The hand-rolled version leaked in two ways, and the second one reddened
+        CI at random (measured 2026-08-20): it evicted
+        `tools.noctus.dev.cache_backend_postgres` from `sys.modules` and never
+        put it back, so any LATER test that patched
+        `cache_backend_postgres.PostgresCacheBackend` patched a module object
+        nobody would import again — `test_cache_deploy_mirror` then reached a
+        REAL `psycopg2.connect("host=localhost")` instead of its fake backend.
+        Under `pytest-randomly` that pairing only happens on some seeds, which
+        is why it read as flakiness rather than as the ordering bug it is.
+
+        It also did `meta_path.pop(0)`, which removes whatever sits at index 0
+        rather than the finder this test inserted.
+        """
         monkeypatch.setenv("NOCTUS_CACHE_BACKEND", "postgres")
-        # Force import to fail by intercepting the module.
         import sys as _sys
+
         # Stub the module to raise on import.
         class _FailingFinder:
             def find_module(self, name, path=None):
                 if "cache_backend_postgres" in name:
                     return self
                 return None
+
             def load_module(self, name):
                 raise ImportError("simulated missing pgvector dep")
-        _sys.meta_path.insert(0, _FailingFinder())
-        # Also evict any cached.
-        _sys.modules.pop("tools.noctus.dev.cache_backend_postgres", None)
-        try:
-            issues = compliance.check_prod_cache_reachable()
-            # Either it surfaces import failure OR (if module exists) connection-unreachable.
-            # Both are valid HIGH-severity surfaces.
-            assert len(issues) >= 1
-            assert all(i["severity"] == "high" for i in issues)
-        finally:
-            _sys.meta_path.pop(0)
+
+        monkeypatch.setattr(_sys, "meta_path", [_FailingFinder(), *_sys.meta_path])
+        # Evict the cached module so the failing finder is consulted. `delitem`
+        # (not `.pop`) is the whole point — monkeypatch re-inserts the original
+        # module object at teardown.
+        monkeypatch.delitem(
+            _sys.modules, "tools.noctus.dev.cache_backend_postgres", raising=False
+        )
+
+        issues = compliance.check_prod_cache_reachable()
+        # Either it surfaces import failure OR (if module exists) connection-unreachable.
+        # Both are valid HIGH-severity surfaces.
+        assert len(issues) >= 1
+        assert all(i["severity"] == "high" for i in issues)
 
 
 class TestCacheBackendEnvMatch:

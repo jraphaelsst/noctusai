@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from noctusai_lib.testing.conftest_helpers import restore_real_llm_providers
+
 _LIB = Path(__file__).resolve().parents[3] / "seed" / "lib" / "backend"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
@@ -40,19 +42,10 @@ def _install_with_sink(sink, *, chat=None, embeddings=None):
     return fake
 
 
-def _restore_real_providers():
-    import importlib
-
-    from noctusai_lib.integrations.llm.registry import _reset_for_testing as _reset_reg
-
-    _reset_reg()
-    for mod in (
-        "noctusai_lib.integrations.llm.providers.openai_provider",
-        "noctusai_lib.integrations.llm.providers.anthropic_provider",
-        "noctusai_lib.integrations.llm.providers.gemini_provider",
-    ):
-        importlib.import_module(mod)
-        importlib.reload(sys.modules[mod])
+#: The one definition lives in the seed test-support module; this alias keeps
+#: the call sites in this file reading as they did. Four copies of the same
+#: re-import loop is exactly the N>=3 the recurrence rule forbids.
+_restore_real_providers = restore_real_llm_providers
 
 
 # ── UsageEvent + InMemoryUsageSink ──────────────────────────────

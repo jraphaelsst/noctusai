@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from noctusai_lib.testing.conftest_helpers import restore_real_llm_providers
+
 _LIB = Path(__file__).resolve().parents[3] / "seed" / "lib" / "backend"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
@@ -501,6 +503,10 @@ def counting_batch_provider():
     )
     yield _CountingBatchProvider
     _provider_cache.clear()
+    # Clearing the CACHE is not clearing the REGISTRY: `countingbatch` stayed
+    # registered process-wide and broke `test_llm_endpoints` on the seeds where
+    # pytest-randomly ordered it later. See `restore_real_llm_providers`.
+    restore_real_llm_providers()
 
 
 @pytest.fixture
@@ -519,6 +525,7 @@ def no_batch_provider():
     )
     yield _NoBatchProvider
     _provider_cache.clear()
+    restore_real_llm_providers()
 
 
 class TestGenerateEmbeddingsBatchDispatcher:

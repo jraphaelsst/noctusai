@@ -53,7 +53,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Iterable
 
-__all__ = ["purge_shadowing_editable_finders"]
+__all__ = [
+    "own_test_env",
+    "purge_shadowing_editable_finders",
+    "restore_real_llm_providers",
+]
 
 _DEFAULT_PACKAGE_NAMES: tuple[str, ...] = ("noctusai_lib", "noctusai_seed")
 
@@ -261,3 +265,50 @@ def own_test_env(
             before.setdefault(key, env.get(key, ""))
         env[key] = value
     return before
+
+
+#: The provider modules whose import side-effect IS the real registration.
+_REAL_LLM_PROVIDER_MODULES = (
+    "noctusai_lib.integrations.llm.providers.openai_provider",
+    "noctusai_lib.integrations.llm.providers.anthropic_provider",
+    "noctusai_lib.integrations.llm.providers.gemini_provider",
+)
+
+
+def restore_real_llm_providers() -> None:
+    """Re-register the REAL LLM providers, discarding every test double.
+
+    **Call this in teardown of any test that registers a provider.** The
+    registry (``noctusai_lib.integrations.llm.registry._PROVIDERS``) is a
+    module-global dict and ``register()`` overwrites silently, by design, so a
+    fake installed for one test stays installed for the whole process. pytest
+    cannot undo it: nothing was patched, a plain dict was mutated.
+
+    THE INCIDENT (2026-08-20)
+    ------------------------
+    Two fixtures in ``test_llm_providers.py`` registered ``"nobatch"`` and
+    ``"countingbatch"`` and cleared only the provider CACHE on teardown, never
+    the registry. ``test_llm_endpoints.py`` asserts every registered provider
+    has catalog entries — true of the three real ones, false of a fake — so it
+    failed with *"Provider 'nobatch' is registered but has zero catalog
+    entries"* whenever ``pytest-randomly`` happened to order it after them. On
+    other seeds it passed. That is not flakiness; it is an ordering bug wearing
+    flakiness as a costume, and it reddened CI at random.
+
+    The worse shape is a fake registered under a REAL name (``register("openai",
+    _FakeClass)``): nothing looks wrong afterwards, and every later test that
+    thinks it is exercising the OpenAI provider is exercising a stub.
+
+    Restoring by RE-IMPORT rather than by saving/restoring the dict is
+    deliberate — the registration lives in each provider module's import
+    side-effect, so re-running that is what makes the registry authoritative
+    again rather than merely non-empty.
+    """
+    import importlib
+
+    from noctusai_lib.integrations.llm.registry import _reset_for_testing
+
+    _reset_for_testing()
+    for module_name in _REAL_LLM_PROVIDER_MODULES:
+        module = importlib.import_module(module_name)
+        importlib.reload(module)
