@@ -98,11 +98,19 @@ export default function OlxWebhookCard() {
         </Button>
       </div>
 
-      {/* Homologation URL — the thing an operator actually needs to hand over. */}
+      {/* The single-tenant receiver. NOT the URL to hand a client — that
+          one is per-advertiser and lives in ReceiverTokensCard above.
+          Pasting this into a client's Canal Pro sends every advertiser's
+          leads to whichever org OLX_LEADS_ORG_ID names, which is silent
+          and, once the leads have landed, not undoable. */}
       <div className="space-y-1.5">
         <span className="text-xs font-medium text-muted-foreground">
-          URL do receptor (informe ao Grupo OLX)
+          URL única (sem cliente) — use apenas em teste de homologação
         </span>
+        <p className="text-xs text-muted-foreground">
+          Para um cliente real, use a URL por cliente no cartão acima. Esta aqui
+          atribui todo lead a um único cliente configurado no servidor.
+        </p>
         <div className="flex items-center gap-2">
           <code
             className="flex-1 truncate rounded-md bg-muted px-2 py-1.5 text-xs"

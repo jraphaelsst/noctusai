@@ -47,6 +47,7 @@ import {
   useLeadSources,
 } from "@/hooks/useLeadsSources";
 import OlxWebhookCard from "./components/OlxWebhookCard";
+import ReceiverTokensCard from "./components/ReceiverTokensCard";
 import {
   useLeadCorretorAliasMutations,
   useLeadCorretorAliases,
@@ -964,6 +965,7 @@ export default function Configuracao() {
         <CorretoresConfig />
       ) : (
         <div className="space-y-4" data-testid="portais-config">
+          <ReceiverTokensCard />
           <OlxWebhookCard />
         </div>
       )}
