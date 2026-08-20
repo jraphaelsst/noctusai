@@ -107,6 +107,19 @@ async def on_startup() -> None:
     # (HOLDING.md W2.3 decision).
     start_scheduler()
 
+    # Vista catalog catch-up. APScheduler keeps its schedule in memory, so
+    # a container that was down at 00:05 does not queue that run — the slot
+    # simply passes. This asks the DATA whether the slot was missed and
+    # re-runs it if so, which is what makes the nightly refresh guaranteed
+    # rather than best-effort.
+    #
+    # Scheduled, NOT awaited: a full pull takes 4-6 minutes and awaiting it
+    # here would stall startup past the container health check. It no-ops
+    # in the normal case where nothing is overdue.
+    from app.services.imoveis_sync_scheduler import schedule_catch_up
+
+    schedule_catch_up()
+
     logger.info(
         "Social Wiring lifespan startup: ConversationModule ready (org_id=%s).",
         org_id,

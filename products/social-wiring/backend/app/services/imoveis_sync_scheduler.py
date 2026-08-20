@@ -1,44 +1,47 @@
-"""Daily Vista catalog refresh — seed scheduler job.
+"""Daily Vista catalog refresh — seed scheduler job + startup catch-up.
 
-Registers ONE daily job (``imoveis_vista_sync_daily``) that re-pulls the
-Vista catalog into ``social_wiring.imoveis`` at **00:05 America/Sao_Paulo**.
+Keeps ``social_wiring.imoveis`` current at **00:05 America/Sao_Paulo**.
 Before this existed the mirror only moved when a human pressed
-"Sincronizar com o Vista" on the Imóveis page — it had been stale since
-2026-08-03 when the job was written.
+"Sincronizar com o Vista" on the Imóveis page, and it had been stale since
+2026-08-03.
 
-Registration mirrors ``app.services.meta.scheduler`` (the seed-side
-``noctusai_lib.api.scheduler`` primitive): jobs register at import time via
-:func:`configure`; ``start_scheduler`` / ``stop_scheduler`` are already
-wired into ``app/lifespan.py``.
+── The guarantee: three layers, because one is not enough ──────────────
+APScheduler holds its schedule in memory. A container that is down at
+00:05 does not "queue" the run — the slot passes and the next one is
+tomorrow. Three layers close that, each covering what the one above
+cannot:
 
-── Which orgs does it sync? ────────────────────────────────────────────
-Orgs that **already have imóveis rows**, discovered from the table itself.
+  1. **The cron slot** — ``5 0 * * *``, the normal path.
+  2. **Misfire grace, 1 hour** (``_MISFIRE_GRACE``). A deploy or crash-loop
+     that resolves within the hour still fires the missed run on startup,
+     because APScheduler compares the slot against the grace window.
+  3. **Startup catch-up** (:func:`catch_up_if_overdue`, called from
+     ``app/lifespan.py``). Covers everything longer: a night-long outage, a
+     paused container, a VPS reboot at 00:00 that finishes at 03:00. It
+     asks the DATA, not the scheduler — "is any org's newest
+     ``sincronizado_em`` older than the last 00:05 that should have run?"
+     — and if so runs the sync immediately.
 
-That is deliberate and it is not the same rule the Meta job uses. Meta
-discovers orgs from per-org ``credentials`` rows; Vista has no such row —
-``crm_base_url`` / ``crm_api_key`` are process-global env config
-(``app/config.py:232-238``), so "orgs with Vista configured" is either
-every org or none, and there is nothing per-org to enumerate.
+Layer 3 is what makes the refresh guaranteed rather than best-effort:
+it is stateless across restarts because the answer lives in the table, so
+it cannot itself be lost to a restart.
 
-Syncing orgs that already have a catalog makes this a **refresh** job, not
-an import job. The first import for a new org stays the manual button — a
-deliberate user action, because it is the one that decides an org's
-catalog should exist at all. An empty-table org is therefore skipped
-rather than silently seeded with another tenant's catalog.
+── Why no run-ledger table ─────────────────────────────────────────────
+``max(sincronizado_em)`` per org already answers "when did data last
+land", and it is the honest question. A separate ledger would record that
+a run was *attempted*; only the rows record that it *worked*. A failed or
+half-finished pull leaves ``sincronizado_em`` behind and correctly reads
+as still-overdue on the next boot.
 
-── Why a full pull, nightly ────────────────────────────────────────────
-The sync is idempotent by ``(org_id, codigo)`` and takes 4-6 minutes for
-the ~1919-imóvel catalog at concurrency 4-8 (measured, roadmap P2.3).
-Vista's ``listar`` exposes ``DataAtualizacao`` but *not* a reliable
-"changed since" filter, so an incremental pull would have to fetch every
-listing row anyway to discover what moved — the saving would be only the
-``detalhes`` leg, at the cost of missing any imóvel whose detalhes changed
-without its date advancing. 00:05 is outside business hours; the full pull
-is the honest option.
-
-``with_detalhes=True`` is not optional here: ``caracteristicas`` and
-``finalidades`` are detalhes-only on the wire, so a listar-only nightly
-run would blank the amenity set on every row it touched.
+── Concurrency ─────────────────────────────────────────────────────────
+``_sync_lock`` serialises the cron path and the catch-up path in-process,
+so a boot at 00:04 cannot run both at once. Across REPLICAS there is no
+lock: two containers would both catch up. That is bounded, not corrupting
+— the sync upserts on ``(org_id, codigo)`` and is idempotent — but it
+would double the Vista call volume, so it is called out here rather than
+left to be discovered. social-wiring runs single-replica today; a second
+replica needs an advisory lock in the database, and this docstring is the
+pointer to that decision.
 
 Roadmap: ``project-history/roadmaps/social-wiring-imoveis-vista-2026-08.md``.
 """
@@ -46,8 +49,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from datetime import datetime, time, timedelta
+from typing import Any, Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from noctusai_lib.api import scheduler as seed_scheduler
 
@@ -59,19 +64,68 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA = "social_wiring"
 _JOB_NAME = "imoveis_vista_sync_daily"
-# 00:05 America/Sao_Paulo — the seed scheduler is constructed with that
-# timezone (`noctusai_lib/api/scheduler.py:87`), so this is local time, not
-# UTC. Five past midnight rather than midnight itself: it keeps this job
-# off the same tick as any other `0 0 * * *` work.
+# 00:05 America/Sao_Paulo. The seed scheduler is constructed with that
+# timezone (`noctusai_lib/api/scheduler.py`), so this is local, not UTC.
 _JOB_CRON = "5 0 * * *"
+_TZ = ZoneInfo("America/Sao_Paulo")
+_SLOT = time(0, 5)
+# One hour, against the seed default of 30 seconds. For a nightly full
+# pull the slot matters more than punctuality: running 40 minutes late is
+# entirely fine, skipping a night is not.
+_MISFIRE_GRACE = 3600
+
+# Serialises the cron path against the startup catch-up. Module-level is
+# safe on 3.11+ — asyncio.Lock no longer binds a loop at construction.
+_sync_lock = asyncio.Lock()
+
+
+# ─── Overdue arithmetic ─────────────────────────────────────────────────
+
+
+def _last_expected_slot(now: datetime) -> datetime:
+    """The most recent 00:05 America/Sao_Paulo at or before ``now``.
+
+    Deliberately computed in local time then compared as an instant: DST
+    would make a fixed 24h subtraction drift, and Brazil has suspended but
+    not abolished it.
+    """
+    local = now.astimezone(_TZ)
+    today_slot = local.replace(
+        hour=_SLOT.hour, minute=_SLOT.minute, second=0, microsecond=0,
+    )
+    if local < today_slot:
+        return today_slot - timedelta(days=1)
+    return today_slot
+
+
+def _last_sync_at(admin: Any, org_id: str) -> Optional[datetime]:
+    """Newest ``sincronizado_em`` for one org, or None if never synced.
+
+    One indexed row read (`idx_sw_imoveis_org_sincronizado_em`) rather than
+    a group-by, which PostgREST does not express directly.
+    """
+    resp = (
+        admin
+        .schema(_SCHEMA)
+        .table("imoveis")
+        .select("sincronizado_em")
+        .eq("org_id", org_id)
+        .order("sincronizado_em", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows or not rows[0].get("sincronizado_em"):
+        return None
+    return datetime.fromisoformat(rows[0]["sincronizado_em"])
 
 
 def _orgs_with_catalog(admin: Any) -> list[str]:
     """Distinct ``org_id`` already holding imóveis rows.
 
-    Paginated explicitly: PostgREST caps an unbounded select at 1000 rows,
-    and this table holds ~1919 per org — an uncapped read would silently
-    see only the first page and, with one org, still look correct. The same
+    Paginated explicitly: PostgREST caps an unbounded select at 1000 rows
+    and this table holds ~1919 per org — an uncapped read would see only
+    the first page and, with a single org, still look correct. The same
     trap `imoveis_service._select_all` documents.
     """
     orgs: set[str] = set()
@@ -94,13 +148,40 @@ def _orgs_with_catalog(admin: Any) -> list[str]:
     return sorted(orgs)
 
 
-def _build_adapter() -> Any:
-    """Construct the Vista adapter, or return None if Vista is unwired.
+def _overdue_orgs(admin: Any, org_ids: list[str], now: datetime) -> list[str]:
+    """Orgs whose newest row predates the last slot that should have run.
 
-    Imported inside the function, not at module scope: the adapter raises
-    when Vista is unconfigured, and an import-time raise would take the
-    whole app down on a deploy where Vista simply isn't wired yet. Same
-    reasoning as `imoveis_router.sync_imoveis`.
+    A lookup failure counts the org as overdue: re-running an idempotent
+    sync costs 4-6 minutes, while wrongly skipping it costs a day of
+    staleness. Erring toward the recoverable side.
+    """
+    slot = _last_expected_slot(now)
+    overdue: list[str] = []
+    for org_id in org_ids:
+        try:
+            last = _last_sync_at(admin, org_id)
+        except Exception as exc:
+            logger.warning(
+                "%s: could not read last sync for org=%s (%s) — treating as "
+                "overdue", _JOB_NAME, org_id, exc,
+            )
+            overdue.append(org_id)
+            continue
+        if last is None or last < slot:
+            overdue.append(org_id)
+    return overdue
+
+
+# ─── Adapter ────────────────────────────────────────────────────────────
+
+
+def _build_adapter() -> Any:
+    """Construct the Vista adapter, or None when Vista is unwired.
+
+    Imported inside the function: the adapter raises when unconfigured, and
+    an import-time raise would take the whole app down on a deploy where
+    Vista simply isn't wired yet. Same reasoning as
+    `imoveis_router.sync_imoveis`.
     """
     from noctusai_lib.integrations.vista import (
         VistaNotConfigured,
@@ -114,24 +195,54 @@ def _build_adapter() -> Any:
         )
     except VistaNotConfigured as exc:
         logger.warning(
-            "%s: Vista not configured (%s) — skipping this run. "
-            "The manual sync button reports the same condition as a 503.",
-            _JOB_NAME, exc,
+            "%s: Vista not configured (%s) — skipping. The manual sync "
+            "button reports the same condition as a 503.", _JOB_NAME, exc,
         )
         return None
 
 
-async def daily_imoveis_sync_job() -> None:
-    """Refresh every org's Vista catalog.
+# ─── The shared runner ──────────────────────────────────────────────────
 
-    One org failing must not cost the others their refresh, so each org is
-    isolated. Nothing re-raises: an escaping exception would be swallowed
-    by APScheduler into a bare traceback with no org context, which is the
-    silent-error shape this logs its way out of.
+
+async def _sync_orgs(admin: Any, adapter: Any, org_ids: list[str], *, motivo: str) -> None:
+    """Refresh each org, isolating failures.
+
+    One org failing must not cost the others their refresh, so each is
+    wrapped. Nothing re-raises: an escaping exception would reach
+    APScheduler as a bare traceback with no org context — the silent-error
+    shape this logs its way out of.
     """
+    for org_id in org_ids:
+        try:
+            report = await build_sync_service(admin, adapter).sync(
+                UUID(org_id), with_detalhes=True
+            )
+        except Exception as exc:
+            logger.error(
+                "%s [%s]: org=%s failed: %s",
+                _JOB_NAME, motivo, org_id, exc, exc_info=True,
+            )
+            continue
+
+        # `complete=False` means the pull finished but dropped pages or
+        # detalhes. A degraded success, not a failure — and it must not
+        # look like a clean run in the log.
+        log = logger.info if report.complete else logger.warning
+        log(
+            "%s [%s]: org=%s upserted=%d detalhes=%d page_failures=%d "
+            "detalhes_failed=%d complete=%s duration=%.1fs",
+            _JOB_NAME, motivo, org_id, report.upserted,
+            report.detalhes_fetched, len(report.page_failures),
+            len(report.detalhes_failed), report.complete,
+            report.duration_seconds,
+        )
+
+
+async def _run(*, motivo: str, only_overdue: bool) -> None:
+    """Discover, filter, sync — under the lock."""
     admin = get_admin_client()
     if admin is None:
-        logger.error("%s: no admin client — skipping this run.", _JOB_NAME)
+        logger.error("%s [%s]: no admin client — skipping.", _JOB_NAME, motivo)
         return
 
     adapter = _build_adapter()
@@ -142,54 +253,105 @@ async def daily_imoveis_sync_job() -> None:
         org_ids = await asyncio.to_thread(_orgs_with_catalog, admin)
     except Exception as exc:
         logger.error(
-            "%s: org discovery failed: %s", _JOB_NAME, exc, exc_info=True,
+            "%s [%s]: org discovery failed: %s",
+            _JOB_NAME, motivo, exc, exc_info=True,
         )
         return
 
     if not org_ids:
         logger.info(
-            "%s: no org has an imóveis catalog yet — nothing to refresh. "
-            "The first import is the manual sync button, by design.",
-            _JOB_NAME,
+            "%s [%s]: no org has an imóveis catalog yet — nothing to "
+            "refresh. The first import is the manual sync button, by "
+            "design.", _JOB_NAME, motivo,
         )
         return
 
-    for org_id in org_ids:
-        try:
-            report = await build_sync_service(admin, adapter).sync(
-                UUID(org_id), with_detalhes=True
+    if only_overdue:
+        now = datetime.now(tz=_TZ)
+        org_ids = await asyncio.to_thread(_overdue_orgs, admin, org_ids, now)
+        if not org_ids:
+            logger.info(
+                "%s [%s]: every org synced since %s — nothing overdue.",
+                _JOB_NAME, motivo, _last_expected_slot(now).isoformat(),
             )
-        except Exception as exc:
-            logger.error(
-                "%s: org=%s failed: %s", _JOB_NAME, org_id, exc, exc_info=True,
-            )
-            continue
-
-        # `complete=False` means the pull finished but dropped pages or
-        # detalhes. That is a degraded success, not a failure, and it must
-        # not look like a clean run in the log.
-        log = logger.info if report.complete else logger.warning
-        log(
-            "%s: org=%s upserted=%d detalhes=%d page_failures=%d "
-            "detalhes_failed=%d complete=%s duration=%.1fs",
-            _JOB_NAME, org_id, report.upserted, report.detalhes_fetched,
-            len(report.page_failures), len(report.detalhes_failed),
-            report.complete, report.duration_seconds,
+            return
+        logger.warning(
+            "%s [%s]: %d org(s) missed the %s slot — catching up now.",
+            _JOB_NAME, motivo, len(org_ids),
+            _last_expected_slot(now).isoformat(),
         )
+
+    async with _sync_lock:
+        await _sync_orgs(admin, adapter, org_ids, motivo=motivo)
+
+
+# ─── Entry points ───────────────────────────────────────────────────────
+
+
+async def daily_imoveis_sync_job() -> None:
+    """The 00:05 cron path — refreshes every org unconditionally."""
+    await _run(motivo="cron", only_overdue=False)
+
+
+async def catch_up_if_overdue() -> None:
+    """Startup path — refreshes only orgs that missed their slot.
+
+    Called from ``app/lifespan.py``. Awaiting a 4-6 minute full pull inside
+    lifespan startup would stall the container past its health check, so
+    the caller schedules this as a background task rather than awaiting it;
+    see :func:`schedule_catch_up`.
+    """
+    await _run(motivo="catch-up", only_overdue=True)
+
+
+def schedule_catch_up() -> Optional[asyncio.Task]:
+    """Fire the catch-up as a background task and return immediately.
+
+    Returns the task so a caller (and the tests) can await it; production
+    intentionally does not. A reference is returned rather than discarded
+    because a bare `create_task` result can be garbage-collected mid-flight.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.error(
+            "%s: schedule_catch_up called outside an event loop — the "
+            "catch-up did NOT start.", _JOB_NAME,
+        )
+        return None
+
+    task = loop.create_task(catch_up_if_overdue())
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
+
+# Strong references to in-flight tasks. Without this the event loop only
+# holds a weak reference and a long sync can be collected mid-run.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 def configure() -> None:
-    """Register the daily catalog refresh on the seed scheduler.
+    """Register the daily refresh on the seed scheduler.
 
-    Idempotent (``register`` replaces-existing); called from
-    ``app.main._register_media_wiring`` at import time, before any
-    ``start_scheduler()`` fires.
+    Idempotent; called from ``app.main._register_media_wiring`` at import
+    time, before any ``start_scheduler()`` fires.
     """
-    seed_scheduler.register(_JOB_NAME, daily_imoveis_sync_job, cron=_JOB_CRON)
+    seed_scheduler.register(
+        _JOB_NAME,
+        daily_imoveis_sync_job,
+        cron=_JOB_CRON,
+        misfire_grace_time=_MISFIRE_GRACE,
+    )
     logger.info(
         "imoveis vista sync scheduler configured: daily at 00:05 "
-        "America/Sao_Paulo"
+        "America/Sao_Paulo (misfire grace %ds)", _MISFIRE_GRACE,
     )
 
 
-__all__ = ["configure", "daily_imoveis_sync_job"]
+__all__ = [
+    "catch_up_if_overdue",
+    "configure",
+    "daily_imoveis_sync_job",
+    "schedule_catch_up",
+]

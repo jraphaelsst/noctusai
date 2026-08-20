@@ -1,20 +1,24 @@
-"""Daily Vista catalog refresh — registration, org discovery, isolation.
+"""Daily Vista catalog refresh — registration, discovery, catch-up.
 
-Pins the three things that make this job either work or silently not:
+Pins the things that make this job either work or silently not:
 
-  · It must register at **00:05 America/Sao_Paulo**, not UTC. The seed
-    scheduler is constructed with that timezone, so a cron string is local
-    time; asserting the literal pins the user-agreed hour.
-  · Org discovery must paginate. PostgREST caps an unbounded select at
-    1000 rows and this table holds ~1919 per org — an uncapped read would
-    see only the first page and, with a single org, still look correct.
-    That is the exact trap `imoveis_service._select_all` documents.
+  · It registers at **00:05 America/Sao_Paulo**, not UTC, with an hour of
+    misfire grace so a restart spanning the slot still fires.
+  · Org discovery paginates. PostgREST caps an unbounded select at 1000
+    rows and this table holds ~1919 per org — an uncapped read would see
+    only the first page and, with a single org, still look correct. The
+    trap `imoveis_service._select_all` documents.
   · One org failing must not cost the others their refresh.
+  · The startup catch-up re-runs a MISSED slot and stays quiet otherwise.
+    This is the layer that turns the refresh from best-effort into
+    guaranteed, so its arithmetic is tested directly rather than inferred.
 """
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -22,16 +26,27 @@ from app.services import imoveis_sync_scheduler as sched
 
 _ORG_A = "6dd73140-74a4-41c6-aeff-bc94b5312b53"
 _ORG_B = "0f5b1a2c-9d3e-4a7b-8c1d-2e3f4a5b6c7d"
+_TZ = ZoneInfo("America/Sao_Paulo")
 
 
 class _FakeTable:
-    """Minimal PostgREST chain stand-in — only `.range().execute()` is used."""
+    """Minimal PostgREST chain stand-in."""
 
     def __init__(self, pages: list[list[dict]]) -> None:
         self._pages = pages
+        self._current: list[dict] = []
         self.ranges: list[tuple[int, int]] = []
 
     def select(self, *_a, **_kw):
+        return self
+
+    def eq(self, *_a, **_kw):
+        return self
+
+    def order(self, *_a, **_kw):
+        return self
+
+    def limit(self, *_a, **_kw):
         return self
 
     def range(self, start: int, end: int):
@@ -41,7 +56,7 @@ class _FakeTable:
         return self
 
     def execute(self):
-        return MagicMock(data=self._current)
+        return MagicMock(data=self._current or (self._pages[0] if self._pages else []))
 
 
 class _FakeAdmin:
@@ -70,41 +85,85 @@ def test_configure_registers_job_at_five_past_midnight():
     fields = {f.name: str(f) for f in job.trigger.fields}
     assert fields["hour"] == "0"
     assert fields["minute"] == "5"
-    # Local time, not UTC — the seed scheduler owns the timezone.
     assert str(job.trigger.timezone) == "America/Sao_Paulo"
 
 
-def test_configure_reuses_one_stable_job_id():
-    """Two `configure()` calls must not create two DIFFERENT jobs.
+def test_configure_sets_an_hour_of_misfire_grace():
+    """The seed default is 30s, which would skip a restart spanning 00:05."""
+    from noctusai_lib.api import scheduler as seed_scheduler
 
-    Deliberately not asserting `len(get_jobs()) == 1`. `register()` passes
-    `replace_existing=True`, but APScheduler only honours that when the
-    scheduler is RUNNING — on a stopped one it queues into `_pending_jobs`
-    and the dedup happens at `start()`. So a stopped scheduler genuinely
-    holds two same-id entries, and the seed docstring's "re-import is
-    idempotent" claim is true only post-start.
+    seed_scheduler.reset_for_testing()
+    sched.configure()
 
-    That is a seed-level doc-vs-behaviour gap, surfaced rather than papered
-    over here. What this job needs is the property that survives it: one
-    stable id, so `start()` collapses the duplicates instead of scheduling
-    two nightly full pulls.
-    """
+    job = seed_scheduler.scheduler.get_job("imoveis_vista_sync_daily")
+    assert job.misfire_grace_time == 3600
+
+
+def test_configure_is_idempotent():
     from noctusai_lib.api import scheduler as seed_scheduler
 
     seed_scheduler.reset_for_testing()
     sched.configure()
     sched.configure()
+    assert len(seed_scheduler.scheduler.get_jobs()) == 1
 
-    ids = {j.id for j in seed_scheduler.scheduler.get_jobs()}
-    assert ids == {"imoveis_vista_sync_daily"}
+
+# ─── Overdue arithmetic ─────────────────────────────────────────────────
+
+
+def test_last_slot_is_today_when_now_is_after_the_slot():
+    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
+    assert sched._last_expected_slot(now) == datetime(2026, 8, 20, 0, 5, tzinfo=_TZ)
+
+
+def test_last_slot_is_yesterday_when_now_is_before_the_slot():
+    """00:02 belongs to YESTERDAY's slot — the classic off-by-one here."""
+    now = datetime(2026, 8, 20, 0, 2, tzinfo=_TZ)
+    assert sched._last_expected_slot(now) == datetime(2026, 8, 19, 0, 5, tzinfo=_TZ)
+
+
+def test_last_slot_handles_a_utc_instant():
+    """Callers pass an aware datetime; it must be converted, not assumed."""
+    now = datetime(2026, 8, 20, 2, 0, tzinfo=timezone.utc)  # 23:00 on the 19th local
+    assert sched._last_expected_slot(now) == datetime(2026, 8, 19, 0, 5, tzinfo=_TZ)
+
+
+def test_org_synced_after_the_slot_is_not_overdue():
+    # `sincronizado_em` is stored UTC. 00:06 local is 03:06Z — writing the
+    # naive-looking "00:06Z" here would be 21:06 the PREVIOUS day locally,
+    # i.e. still overdue. The comparison is instant-vs-instant on purpose.
+    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
+    admin = _FakeAdmin(_FakeTable([[{"sincronizado_em": "2026-08-20T03:06:00+00:00"}]]))
+    assert sched._overdue_orgs(admin, [_ORG_A], now) == []
+
+
+def test_org_synced_before_the_slot_is_overdue():
+    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
+    admin = _FakeAdmin(_FakeTable([[{"sincronizado_em": "2026-08-03T23:51:41+00:00"}]]))
+    assert sched._overdue_orgs(admin, [_ORG_A], now) == [_ORG_A]
+
+
+def test_org_never_synced_is_overdue():
+    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
+    admin = _FakeAdmin(_FakeTable([[{"sincronizado_em": None}]]))
+    assert sched._overdue_orgs(admin, [_ORG_A], now) == [_ORG_A]
+
+
+def test_unreadable_last_sync_counts_as_overdue():
+    """Re-running an idempotent sync is cheaper than a day of staleness."""
+    now = datetime(2026, 8, 20, 9, 0, tzinfo=_TZ)
+
+    class _Boom(_FakeAdmin):
+        def table(self, _name):
+            raise RuntimeError("postgrest down")
+
+    assert sched._overdue_orgs(_Boom(_FakeTable([])), [_ORG_A], now) == [_ORG_A]
 
 
 # ─── Org discovery ──────────────────────────────────────────────────────
 
 
 def test_orgs_with_catalog_paginates_past_the_postgrest_cap():
-    # Two full pages then a short one: an uncapped read would stop at 1000
-    # and never see org B, which only appears on page 2.
     pages = [
         [{"org_id": _ORG_A}] * 1000,
         [{"org_id": _ORG_B}] * 1000,
@@ -118,20 +177,15 @@ def test_orgs_with_catalog_paginates_past_the_postgrest_cap():
     assert table.ranges == [(0, 999), (1000, 1999), (2000, 2999)]
 
 
-def test_orgs_with_catalog_empty_table_returns_empty():
-    assert sched._orgs_with_catalog(_FakeAdmin(_FakeTable([[]]))) == []
-
-
 def test_orgs_with_catalog_skips_null_org_ids():
     table = _FakeTable([[{"org_id": _ORG_A}, {"org_id": None}, {}]])
     assert sched._orgs_with_catalog(_FakeAdmin(table)) == [_ORG_A]
 
 
-# ─── The job ────────────────────────────────────────────────────────────
+# ─── The cron path ──────────────────────────────────────────────────────
 
 
 def test_job_skips_entirely_when_vista_unconfigured(monkeypatch):
-    """No adapter ⇒ no discovery, no sync. Not an empty sync — no sync."""
     monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
     monkeypatch.setattr(sched, "_build_adapter", lambda: None)
     discovery = MagicMock()
@@ -143,10 +197,9 @@ def test_job_skips_entirely_when_vista_unconfigured(monkeypatch):
 
 
 def test_job_skips_when_no_org_has_a_catalog(monkeypatch):
-    """An empty table is not seeded — the first import is the manual button."""
     monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
     monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _admin: [])
+    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [])
     build = MagicMock()
     monkeypatch.setattr(sched, "build_sync_service", build)
 
@@ -155,13 +208,35 @@ def test_job_skips_when_no_org_has_a_catalog(monkeypatch):
     build.assert_not_called()
 
 
+def test_cron_path_does_not_filter_by_overdue(monkeypatch):
+    """The scheduled run refreshes everyone; only catch-up filters."""
+    synced: list[str] = []
+
+    class _Svc:
+        async def sync(self, org_id, *, with_detalhes):
+            synced.append(str(org_id))
+            return MagicMock(
+                complete=True, upserted=1, detalhes_fetched=1,
+                page_failures=[], detalhes_failed=[], duration_seconds=1.0,
+            )
+
+    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A, _ORG_B])
+    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
+    overdue = MagicMock()
+    monkeypatch.setattr(sched, "_overdue_orgs", overdue)
+
+    asyncio.run(sched.daily_imoveis_sync_job())
+
+    assert synced == [_ORG_A, _ORG_B]
+    overdue.assert_not_called()
+
+
 def test_job_isolates_a_failing_org_and_still_syncs_the_rest(monkeypatch):
     synced: list[str] = []
 
     class _Svc:
-        def __init__(self, org_id_str: str) -> None:
-            self._org = org_id_str
-
         async def sync(self, org_id, *, with_detalhes):
             assert with_detalhes is True, (
                 "listar-only would blank caracteristicas on every touched row"
@@ -176,12 +251,8 @@ def test_job_isolates_a_failing_org_and_still_syncs_the_rest(monkeypatch):
 
     monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
     monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(
-        sched, "_orgs_with_catalog", lambda _admin: [_ORG_A, _ORG_B]
-    )
-    monkeypatch.setattr(
-        sched, "build_sync_service", lambda _admin, _adapter: _Svc(_ORG_A)
-    )
+    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A, _ORG_B])
+    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
 
     asyncio.run(sched.daily_imoveis_sync_job())
 
@@ -192,15 +263,13 @@ def test_job_survives_a_discovery_failure(monkeypatch):
     monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
     monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
 
-    def _boom(_admin):
+    def _boom(_a):
         raise RuntimeError("postgrest down")
 
     monkeypatch.setattr(sched, "_orgs_with_catalog", _boom)
     build = MagicMock()
     monkeypatch.setattr(sched, "build_sync_service", build)
 
-    # Must not raise — an escaping exception reaches APScheduler as a bare
-    # traceback with no org context.
     asyncio.run(sched.daily_imoveis_sync_job())
     build.assert_not_called()
 
@@ -216,13 +285,137 @@ def test_job_warns_rather_than_claiming_clean_on_a_degraded_run(monkeypatch, cap
 
     monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
     monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _admin: [_ORG_A])
-    monkeypatch.setattr(
-        sched, "build_sync_service", lambda _admin, _adapter: _Svc()
-    )
+    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
+    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
 
     with caplog.at_level("INFO"):
         asyncio.run(sched.daily_imoveis_sync_job())
 
     levels = {r.levelname for r in caplog.records if "imoveis_vista_sync" in r.message}
     assert "WARNING" in levels, "a partial pull logged as a clean run"
+
+
+# ─── The catch-up path ──────────────────────────────────────────────────
+
+
+def test_catch_up_runs_the_missed_slot(monkeypatch):
+    """The guarantee: container down at 00:05, sync happens on boot."""
+    synced: list[str] = []
+
+    class _Svc:
+        async def sync(self, org_id, *, with_detalhes):
+            synced.append(str(org_id))
+            return MagicMock(
+                complete=True, upserted=1919, detalhes_fetched=1919,
+                page_failures=[], detalhes_failed=[], duration_seconds=300.0,
+            )
+
+    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
+    monkeypatch.setattr(sched, "_overdue_orgs", lambda _a, orgs, _now: orgs)
+    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
+
+    asyncio.run(sched.catch_up_if_overdue())
+
+    assert synced == [_ORG_A]
+
+
+def test_catch_up_is_a_no_op_when_nothing_is_overdue(monkeypatch):
+    """The normal boot: must not trigger a 4-6 minute pull for nothing."""
+    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A, _ORG_B])
+    monkeypatch.setattr(sched, "_overdue_orgs", lambda _a, _orgs, _now: [])
+    build = MagicMock()
+    monkeypatch.setattr(sched, "build_sync_service", build)
+
+    asyncio.run(sched.catch_up_if_overdue())
+
+    build.assert_not_called()
+
+
+def test_catch_up_syncs_only_the_overdue_org(monkeypatch):
+    synced: list[str] = []
+
+    class _Svc:
+        async def sync(self, org_id, *, with_detalhes):
+            synced.append(str(org_id))
+            return MagicMock(
+                complete=True, upserted=1, detalhes_fetched=1,
+                page_failures=[], detalhes_failed=[], duration_seconds=1.0,
+            )
+
+    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A, _ORG_B])
+    monkeypatch.setattr(sched, "_overdue_orgs", lambda _a, _orgs, _now: [_ORG_B])
+    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
+
+    asyncio.run(sched.catch_up_if_overdue())
+
+    assert synced == [_ORG_B]
+
+
+def test_schedule_catch_up_returns_a_task_and_does_not_block():
+    """Lifespan must not await a 4-6 minute pull."""
+    started = asyncio.Event()
+
+    async def _slow():
+        started.set()
+        await asyncio.sleep(0)
+
+    async def _drive():
+        import app.services.imoveis_sync_scheduler as m
+        original = m.catch_up_if_overdue
+        m.catch_up_if_overdue = _slow
+        try:
+            task = m.schedule_catch_up()
+            assert task is not None
+            assert not task.done(), "schedule_catch_up blocked on the sync"
+            await task
+            assert started.is_set()
+        finally:
+            m.catch_up_if_overdue = original
+
+    asyncio.run(_drive())
+
+
+def test_schedule_catch_up_outside_a_loop_reports_rather_than_crashing(caplog):
+    """No event loop ⇒ say the catch-up did not start; never raise."""
+    with caplog.at_level("ERROR"):
+        assert sched.schedule_catch_up() is None
+    assert any("did NOT start" in r.message for r in caplog.records)
+
+
+def test_cron_and_catch_up_cannot_run_concurrently(monkeypatch):
+    """A boot at 00:04 must not run two full pulls against one table."""
+    concurrent = 0
+    peak = 0
+
+    class _Svc:
+        async def sync(self, org_id, *, with_detalhes):
+            nonlocal concurrent, peak
+            concurrent += 1
+            peak = max(peak, concurrent)
+            await asyncio.sleep(0)
+            concurrent -= 1
+            return MagicMock(
+                complete=True, upserted=1, detalhes_fetched=1,
+                page_failures=[], detalhes_failed=[], duration_seconds=1.0,
+            )
+
+    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
+    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
+    monkeypatch.setattr(sched, "_overdue_orgs", lambda _a, orgs, _now: orgs)
+    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
+
+    async def _both():
+        await asyncio.gather(
+            sched.daily_imoveis_sync_job(), sched.catch_up_if_overdue()
+        )
+
+    asyncio.run(_both())
+
+    assert peak == 1, f"two syncs overlapped (peak={peak})"

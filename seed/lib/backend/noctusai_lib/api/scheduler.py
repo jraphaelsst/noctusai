@@ -124,12 +124,22 @@ def register(
     minutes: Optional[int] = None,
     seconds: Optional[int] = None,
     cron: Optional[str] = None,
+    misfire_grace_time: int = 30,
 ) -> None:
     """Register an async job on the module-level scheduler.
 
     Exactly one of `hours` / `minutes` / `seconds` / `cron` must be set.
     `cron` accepts a 5-field cron expression (`"min hour day month weekday"`)
     parsed by `apscheduler.triggers.cron.CronTrigger.from_crontab`.
+
+    `misfire_grace_time` is how late a run may still fire, in seconds. The
+    30s default suits the frequent jobs it was written for; a job whose
+    slot matters more than its punctuality (a nightly full pull) should
+    raise it, so a process restart spanning the slot still runs rather than
+    silently skipping to tomorrow. Grace alone is not a durability
+    guarantee — APScheduler holds the schedule in memory, so an outage
+    longer than the grace still loses the slot and the caller needs its own
+    catch-up on startup.
 
     Re-registering with the same `name` replaces the prior job, so
     hot-reload / re-import is idempotent — on a RUNNING scheduler and on a
@@ -177,7 +187,7 @@ def register(
         trigger=trigger,
         id=name,
         replace_existing=True,
-        misfire_grace_time=30,
+        misfire_grace_time=misfire_grace_time,
         coalesce=True,
         max_instances=1,
     )
