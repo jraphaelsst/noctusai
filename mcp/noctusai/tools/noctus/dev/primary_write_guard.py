@@ -96,17 +96,6 @@ _GIT_WRITE_SUBCOMMANDS = {
 #: Redirection targets that are sinks, not files.
 _SINKS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
 
-#: A redirect and its target. The target alternation carries BOTH quoted forms
-#: on purpose: the original char class excluded `"` and `'`, so `echo x >
-#: "/primary/f"` matched nothing at all and the guard waved a primary-checkout
-#: write straight through (measured 2026-08-20). A quoting style is not a
-#: capability boundary.
-#: The leading lookbehind no longer excludes digits, so `2> file` — a real
-#: write — is seen; `2>&1` is still excluded by the `(?![&>])` ahead of it.
-_REDIRECT_RE = re.compile(
-    r"(?<![<>&])>>?\s*(?![&>])"
-    r"(\"[^\"]*\"|'[^']*'|[^\s;|&<>()'\"]+)"
-)
 _CD_RE = re.compile(r"(?:^|[;&|]|&&)\s*cd\s+(?P<path>'[^']*'|\"[^\"]*\"|[^\s;|&]+)")
 _PY_WRITE_RE = re.compile(r"open\s*\([^)]*['\"][arw]b?\+?['\"]|Path\([^)]*\)\.write_")
 #: `cmd <<'TAG'` / `<<TAG` / `<<-TAG` — the body up to the terminator is DATA.
@@ -217,6 +206,101 @@ def _masked_span(command: str, i: int) -> tuple[str, int] | None:
         # redirect that follows a stray brace.
         return None
     return None
+
+
+#: Characters that end an unquoted word.
+_WORD_BREAK = set(" \t\n;|&<>()")
+
+
+def _redirect_targets(command: str) -> list[str]:
+    """Every file a redirect in `command` would write, as written.
+
+    A SCANNER, not a regex, because the two things a regex cannot tell apart
+    here are exactly the two that matter:
+
+      echo hi > "/primary/f"      ← a quoted TARGET. The original char class
+                                    excluded quotes, so this matched nothing at
+                                    all and the guard waved a primary-checkout
+                                    write straight through.
+      python3 -c "print('->')"    ← a `>` INSIDE a quoted argument. Widening the
+                                    char class to accept quotes made this parse
+                                    as a redirect and refused the call — traded
+                                    one defect for its mirror image.
+
+    Tracking quote state answers both: a `>` seen inside quotes is never a
+    redirect, and a quoted word following an unquoted `>` always is. Both
+    measured against the live hook on 2026-08-20.
+
+    `2>&1` and `>&2` duplicate a descriptor rather than naming a file, so a
+    target starting with `&` is skipped. `2> file` and `&> file` are real writes
+    and are returned — a digit-blind lookbehind used to hide the first.
+    """
+    out: list[str] = []
+    i, n = 0, len(command)
+    quote: str | None = None
+
+    while i < n:
+        ch = command[i]
+        if quote is not None:
+            # Inside a quoted span nothing is shell grammar. `\` escapes only
+            # within double quotes; a single-quoted span is fully literal.
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            continue
+        if ch != ">":
+            i += 1
+            continue
+
+        i += 1
+        if i < n and command[i] == ">":  # `>>` append
+            i += 1
+        while i < n and command[i] in " \t":
+            i += 1
+        if i < n and command[i] == "&":  # `2>&1` — a dup, not a file
+            i += 1
+            continue
+
+        word, i = _read_word(command, i)
+        if word:
+            out.append(word)
+
+    return out
+
+
+def _read_word(command: str, i: int) -> tuple[str, int]:
+    """Read one shell word from `i`, honouring quotes. Returns (word, next_i)."""
+    n = len(command)
+    parts: list[str] = []
+    quote: str | None = None
+    while i < n:
+        ch = command[i]
+        if quote is not None:
+            if ch == quote:
+                quote = None
+            else:
+                parts.append(ch)
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            continue
+        if ch in _WORD_BREAK:
+            break
+        parts.append(ch)
+        i += 1
+    return "".join(parts), i
 
 
 def _normalize(command: str) -> str:
@@ -418,21 +502,23 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
     targets: list[str] = []
     uncertain = False
 
-    for segment in _segments(command):
-        for match in _REDIRECT_RE.finditer(segment):
-            raw = match.group(1)
-            if raw.strip("'\"") in _SINKS:
-                continue
-            resolved = _resolve(raw, cwd)
-            if resolved:
-                targets.append(resolved)
-            else:
-                # `> $TARGET` — a write is happening somewhere we cannot name.
-                # That is the same condition the `_ALWAYS_WRITE` branch below
-                # already marks uncertain; a redirect staying silent about it
-                # was an inconsistency, not a decision.
-                uncertain = True
+    # Redirects are scanned over the WHOLE command, not per segment: `_segments`
+    # splits on `|` and `;` without regard for quotes, which would cut a quoted
+    # span in half and leave the scanner reading an unbalanced quote.
+    for raw in _redirect_targets(command):
+        if raw in _SINKS:
+            continue
+        resolved = _resolve(raw, cwd)
+        if resolved:
+            targets.append(resolved)
+        else:
+            # `> $TARGET` — a write is happening somewhere we cannot name. That
+            # is the same condition the `_ALWAYS_WRITE` branch below already
+            # marks uncertain; a redirect staying silent about it was an
+            # inconsistency, not a decision.
+            uncertain = True
 
+    for segment in _segments(command):
         tokens = _tokens(segment)
         while tokens and "=" in tokens[0] and "/" not in tokens[0].split("=")[0]:
             tokens = tokens[1:]  # leading VAR=value assignments

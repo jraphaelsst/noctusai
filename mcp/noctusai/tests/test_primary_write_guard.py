@@ -358,3 +358,50 @@ def test_masking_survives_a_realistic_house_one_liner():
         {"command": 'ao="$(git rev-parse HEAD)"; echo "ao=${ao:-<BLOCKED>}" && git status --short'},
         cwd=WT,
     ) is None
+
+
+# ── quotes: the two defects a regex cannot separate ───────────────────────
+#
+# Widening the target char class to accept quotes fixed the invisible quoted
+# redirect and immediately broke its mirror image: a `>` INSIDE a quoted
+# argument started parsing as a redirect. Both were measured against the live
+# hook on 2026-08-20 — the second one refused the very command written to
+# verify the first. Tracking quote state is what tells them apart.
+
+def test_an_arrow_inside_a_quoted_argument_is_not_a_redirect():
+    """`python3 -c "print('->', x)"` — program text, not shell grammar."""
+    assert _decide(
+        "Bash",
+        {"command": """python3 -c "print(repr(c), '->', targets(c, '/tmp'))\""""},
+        cwd=PRIMARY,
+    ) is None
+
+
+def test_an_angle_bracket_inside_a_plain_quoted_string_is_not_a_redirect():
+    assert bash_write_targets('echo "a > b"', PRIMARY) == ([], False)
+    assert bash_write_targets("echo 'a > b'", PRIMARY) == ([], False)
+
+
+def test_a_quoted_redirect_target_is_a_write_in_both_quote_styles():
+    assert _decide("Bash", {"command": f'echo hi > "{PRIMARY}/q.txt"'}, cwd=WT) is not None
+    assert _decide("Bash", {"command": f"echo hi > '{PRIMARY}/q.txt'"}, cwd=WT) is not None
+
+
+def test_append_and_fd_and_ampersand_redirects_are_all_writes():
+    for command in (
+        f"echo hi >> {PRIMARY}/a.txt",
+        f"cmd 2> {PRIMARY}/err.log",
+        f"cmd &> {PRIMARY}/both.log",
+    ):
+        assert _decide("Bash", {"command": command}, cwd=WT) is not None, command
+
+
+def test_descriptor_duplication_names_no_file():
+    assert bash_write_targets("cmd 2>&1", PRIMARY) == ([], False)
+    assert bash_write_targets("cmd > /dev/null 2>&1", PRIMARY) == ([], False)
+
+
+def test_a_redirect_inside_a_quoted_span_does_not_leak_across_a_pipe():
+    """Redirects are scanned over the whole command, because `_segments` splits
+    on `|` without regard for quotes and would cut a quoted span in half."""
+    assert bash_write_targets('echo "a | b > c" | cat', PRIMARY) == ([], False)
