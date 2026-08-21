@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.config import settings
+from app.modules.portal_leads.routers.receiver_tokens import (
+    configure_receiver_urls,
+    reset_receiver_urls,
+)
 from app.modules.portal_leads.services.receiver_token_service import (
     resolve_receiver_token,
 )
@@ -22,14 +25,22 @@ PUBLIC_HOST = "https://social-wiring.noctusai.com"
 
 
 @pytest.fixture
-def public_base(monkeypatch):
-    """Set the deployment's public origin.
+def public_base():
+    """Set the deployment's public origin, through the module's DI seam.
 
-    Setting a settings VALUE, not patching our own behaviour: the code
-    path under test still runs in full. `tunnel_hostname` is what the
-    tunnel actually routes, which is why `_public_base_url` prefers it.
+    NOT `monkeypatch.setattr(settings, "tunnel_hostname", ...)`. That is
+    monkeypatching our own code, which this codebase forbids in tests as
+    well as in production — and it is not a style rule: a patched
+    attribute proves the stub works, not that the wiring does, and it
+    keeps passing after the call site stops reading that setting.
+    `check_all_products` flagged exactly this at high severity on
+    2026-08-21 and turned `dev` red; the seam is the fix.
     """
-    monkeypatch.setattr(settings, "tunnel_hostname", PUBLIC_HOST)
+    configure_receiver_urls(base_url_provider=lambda: PUBLIC_HOST)
+    try:
+        yield PUBLIC_HOST
+    finally:
+        reset_receiver_urls()
 
 
 @pytest.fixture
@@ -130,21 +141,28 @@ class TestMint:
         assert rows in ([], None)
 
     def test_missing_public_base_is_refused_not_guessed(
-        self, http_client, monkeypatch, leads_client
+        self, http_client, leads_client
     ):
         """With no configured origin we cannot build a reachable URL.
 
         Returning a relative path would look like success and never
         receive anything, so this is a 503 instead.
-        """
-        monkeypatch.setattr(settings, "tunnel_hostname", "")
-        monkeypatch.setattr(settings, "oauth_redirect_base_url", "")
 
-        resp = http_client.post(
-            BASE,
-            json={"provider": "olx", "label": "x"},
-            headers={"Authorization": "Bearer any"},
-        )
+        Injected through the seam, not by blanking `settings` — same
+        reason as the `public_base` fixture above.
+        """
+        configure_receiver_urls(base_url_provider=lambda: "")
+        try:
+            resp = http_client.post(
+                BASE,
+                json={"provider": "olx", "label": "x"},
+                headers={"Authorization": "Bearer any"},
+            )
+        finally:
+            # A leaked provider silently re-configures every later test in
+            # the session — the exact failure mode the seam's docstring
+            # warns about.
+            reset_receiver_urls()
 
         assert resp.status_code == 503
         # postgrest-unbounded-ok: asserting the table is EMPTY; a cap

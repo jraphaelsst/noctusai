@@ -15,7 +15,7 @@ in Canal Pro fails silently as "no leads are arriving".
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -80,6 +80,36 @@ class ReceiverTokenOut(BaseModel):
     revoked_at: Optional[str] = None
 
 
+#: Injected public-origin provider. `None` ⇒ resolve from settings for
+#: real. Module-level rather than a FastAPI dependency because
+#: `_receiver_url` is called from two places that are not both deps.
+#:
+#: This seam exists because the alternative is a test doing
+#: `monkeypatch.setattr(settings, "tunnel_hostname", ...)`, which is
+#: monkeypatching our own code — forbidden here in tests as well as in
+#: production (`KB § PATTERNS/backend/di-test-seam.md`), and flagged
+#: high-severity by `check_all_products`. It earned exactly that finding
+#: on 2026-08-21 before this seam existed.
+_base_url_provider: Optional[Callable[[], str]] = None
+
+
+def configure_receiver_urls(
+    *, base_url_provider: Optional[Callable[[], str]] = None
+) -> None:
+    """Install (or with `None`, clear) the public-origin provider.
+
+    Always pair it with `reset_receiver_urls()` — a leaked provider
+    silently re-configures every later test in the session.
+    """
+    global _base_url_provider
+    _base_url_provider = base_url_provider
+
+
+def reset_receiver_urls() -> None:
+    """Drop any injected provider. Fixture teardown calls this."""
+    configure_receiver_urls(base_url_provider=None)
+
+
 def _public_base_url() -> str:
     """The externally reachable origin for this backend.
 
@@ -88,7 +118,12 @@ def _public_base_url() -> str:
     tunnel hostname (which is what is publicly routed) outranks anything
     inferred. Empty means we do not know, and the caller is told so
     instead of being handed a relative path that looks like a URL.
+
+    Read fresh on every call, never captured at import, so an operator
+    changing the deployment's origin does not need a restart.
     """
+    if _base_url_provider is not None:
+        return (_base_url_provider() or "").rstrip("/")
     for candidate in (settings.tunnel_hostname, settings.oauth_redirect_base_url):
         if candidate:
             return candidate.rstrip("/")
@@ -226,4 +261,4 @@ def revoke_token(
     return {"status": "revoked", "id": token_id}
 
 
-__all__ = ["router"]
+__all__ = ["configure_receiver_urls", "reset_receiver_urls", "router"]
