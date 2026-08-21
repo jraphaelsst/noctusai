@@ -204,8 +204,19 @@ def _build_adapter() -> Any:
 # ─── The shared runner ──────────────────────────────────────────────────
 
 
-async def _sync_orgs(admin: Any, adapter: Any, org_ids: list[str], *, motivo: str) -> None:
+async def _sync_orgs(
+    admin: Any,
+    adapter: Any,
+    org_ids: list[str],
+    *,
+    motivo: str,
+    sync_service_factory: Any = None,
+) -> None:
     """Refresh each org, isolating failures.
+
+    `sync_service_factory` is a Class-B kwarg seam (default `None` → the real
+    `build_sync_service`), so a test substitutes the collaborator by PASSING it
+    rather than by reassigning it on this module.
 
     One org failing must not cost the others their refresh, so each is
     wrapped. Nothing re-raises: an escaping exception would reach
@@ -214,7 +225,8 @@ async def _sync_orgs(admin: Any, adapter: Any, org_ids: list[str], *, motivo: st
     """
     for org_id in org_ids:
         try:
-            report = await build_sync_service(admin, adapter).sync(
+            build = sync_service_factory or build_sync_service
+            report = await build(admin, adapter).sync(
                 UUID(org_id), with_detalhes=True
             )
         except Exception as exc:
@@ -238,19 +250,37 @@ async def _sync_orgs(admin: Any, adapter: Any, org_ids: list[str], *, motivo: st
         )
 
 
-async def _run(*, motivo: str, only_overdue: bool) -> None:
-    """Discover, filter, sync — under the lock."""
-    admin = get_admin_client()
+async def _run(
+    *,
+    motivo: str,
+    only_overdue: bool,
+    admin_factory: Any = None,
+    adapter_factory: Any = None,
+    discover_fn: Any = None,
+    overdue_fn: Any = None,
+    sync_service_factory: Any = None,
+) -> None:
+    """Discover, filter, sync — under the lock.
+
+    Every collaborator arrives through a Class-B kwarg seam defaulting to
+    `None`, resolved to the real thing here. The tests previously substituted
+    all five by `monkeypatch.setattr(sched, ...)` — patching our own module,
+    which `check_seed_compliance` flags high-severity for a reason: it takes
+    the real wiring out of the code path, so the test proves the fake works and
+    says nothing about whether `_run` calls the right things. Same seam shape
+    as the clientes backfill job (72bb2c97), for the same finding.
+    """
+    admin = (admin_factory or get_admin_client)()
     if admin is None:
         logger.error("%s [%s]: no admin client — skipping.", _JOB_NAME, motivo)
         return
 
-    adapter = _build_adapter()
+    adapter = (adapter_factory or _build_adapter)()
     if adapter is None:
         return
 
     try:
-        org_ids = await asyncio.to_thread(_orgs_with_catalog, admin)
+        org_ids = await asyncio.to_thread(discover_fn or _orgs_with_catalog, admin)
     except Exception as exc:
         logger.error(
             "%s [%s]: org discovery failed: %s",
@@ -268,7 +298,9 @@ async def _run(*, motivo: str, only_overdue: bool) -> None:
 
     if only_overdue:
         now = datetime.now(tz=_TZ)
-        org_ids = await asyncio.to_thread(_overdue_orgs, admin, org_ids, now)
+        org_ids = await asyncio.to_thread(
+            overdue_fn or _overdue_orgs, admin, org_ids, now
+        )
         if not org_ids:
             logger.info(
                 "%s [%s]: every org synced since %s — nothing overdue.",
@@ -282,18 +314,26 @@ async def _run(*, motivo: str, only_overdue: bool) -> None:
         )
 
     async with _sync_lock:
-        await _sync_orgs(admin, adapter, org_ids, motivo=motivo)
+        await _sync_orgs(
+            admin, adapter, org_ids,
+            motivo=motivo,
+            sync_service_factory=sync_service_factory,
+        )
 
 
 # ─── Entry points ───────────────────────────────────────────────────────
 
 
-async def daily_imoveis_sync_job() -> None:
-    """The 00:05 cron path — refreshes every org unconditionally."""
-    await _run(motivo="cron", only_overdue=False)
+async def daily_imoveis_sync_job(**seams: Any) -> None:
+    """The 00:05 cron path — refreshes every org unconditionally.
+
+    `**seams` forwards the `_run` kwarg seams so a test can drive this REAL
+    entry point with fake collaborators instead of patching the module.
+    """
+    await _run(motivo="cron", only_overdue=False, **seams)
 
 
-async def catch_up_if_overdue() -> None:
+async def catch_up_if_overdue(**seams: Any) -> None:
     """Startup path — refreshes only orgs that missed their slot.
 
     Called from ``app/lifespan.py``. Awaiting a 4-6 minute full pull inside
@@ -301,7 +341,7 @@ async def catch_up_if_overdue() -> None:
     the caller schedules this as a background task rather than awaiting it;
     see :func:`schedule_catch_up`.
     """
-    await _run(motivo="catch-up", only_overdue=True)
+    await _run(motivo="catch-up", only_overdue=True, **seams)
 
 
 def schedule_catch_up() -> Optional[asyncio.Task]:

@@ -185,30 +185,23 @@ def test_orgs_with_catalog_skips_null_org_ids():
 # ─── The cron path ──────────────────────────────────────────────────────
 
 
-def test_job_skips_entirely_when_vista_unconfigured(monkeypatch):
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: None)
+def test_job_skips_entirely_when_vista_unconfigured():
     discovery = MagicMock()
-    monkeypatch.setattr(sched, "_orgs_with_catalog", discovery)
 
-    asyncio.run(sched.daily_imoveis_sync_job())
+    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: None, discover_fn=discovery))
 
     discovery.assert_not_called()
 
 
-def test_job_skips_when_no_org_has_a_catalog(monkeypatch):
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [])
+def test_job_skips_when_no_org_has_a_catalog():
     build = MagicMock()
-    monkeypatch.setattr(sched, "build_sync_service", build)
 
-    asyncio.run(sched.daily_imoveis_sync_job())
+    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [], sync_service_factory=build))
 
     build.assert_not_called()
 
 
-def test_cron_path_does_not_filter_by_overdue(monkeypatch):
+def test_cron_path_does_not_filter_by_overdue():
     """The scheduled run refreshes everyone; only catch-up filters."""
     synced: list[str] = []
 
@@ -220,20 +213,15 @@ def test_cron_path_does_not_filter_by_overdue(monkeypatch):
                 page_failures=[], detalhes_failed=[], duration_seconds=1.0,
             )
 
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A, _ORG_B])
-    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
     overdue = MagicMock()
-    monkeypatch.setattr(sched, "_overdue_orgs", overdue)
 
-    asyncio.run(sched.daily_imoveis_sync_job())
+    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], sync_service_factory=lambda _a, _b: _Svc(), overdue_fn=overdue))
 
     assert synced == [_ORG_A, _ORG_B]
     overdue.assert_not_called()
 
 
-def test_job_isolates_a_failing_org_and_still_syncs_the_rest(monkeypatch):
+def test_job_isolates_a_failing_org_and_still_syncs_the_rest():
     synced: list[str] = []
 
     class _Svc:
@@ -249,32 +237,24 @@ def test_job_isolates_a_failing_org_and_still_syncs_the_rest(monkeypatch):
                 page_failures=[], detalhes_failed=[], duration_seconds=300.0,
             )
 
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A, _ORG_B])
-    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
 
-    asyncio.run(sched.daily_imoveis_sync_job())
+    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], sync_service_factory=lambda _a, _b: _Svc()))
 
     assert synced == [_ORG_B], "org A's failure swallowed org B's refresh"
 
 
-def test_job_survives_a_discovery_failure(monkeypatch):
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
+def test_job_survives_a_discovery_failure():
 
     def _boom(_a):
         raise RuntimeError("postgrest down")
 
-    monkeypatch.setattr(sched, "_orgs_with_catalog", _boom)
     build = MagicMock()
-    monkeypatch.setattr(sched, "build_sync_service", build)
 
-    asyncio.run(sched.daily_imoveis_sync_job())
+    asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=_boom, sync_service_factory=build))
     build.assert_not_called()
 
 
-def test_job_warns_rather_than_claiming_clean_on_a_degraded_run(monkeypatch, caplog):
+def test_job_warns_rather_than_claiming_clean_on_a_degraded_run(caplog):
     class _Svc:
         async def sync(self, org_id, *, with_detalhes):
             return MagicMock(
@@ -283,13 +263,9 @@ def test_job_warns_rather_than_claiming_clean_on_a_degraded_run(monkeypatch, cap
                 duration_seconds=310.0,
             )
 
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
-    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
 
     with caplog.at_level("INFO"):
-        asyncio.run(sched.daily_imoveis_sync_job())
+        asyncio.run(sched.daily_imoveis_sync_job(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A], sync_service_factory=lambda _a, _b: _Svc()))
 
     levels = {r.levelname for r in caplog.records if "imoveis_vista_sync" in r.message}
     assert "WARNING" in levels, "a partial pull logged as a clean run"
@@ -298,7 +274,7 @@ def test_job_warns_rather_than_claiming_clean_on_a_degraded_run(monkeypatch, cap
 # ─── The catch-up path ──────────────────────────────────────────────────
 
 
-def test_catch_up_runs_the_missed_slot(monkeypatch):
+def test_catch_up_runs_the_missed_slot():
     """The guarantee: container down at 00:05, sync happens on boot."""
     synced: list[str] = []
 
@@ -310,32 +286,22 @@ def test_catch_up_runs_the_missed_slot(monkeypatch):
                 page_failures=[], detalhes_failed=[], duration_seconds=300.0,
             )
 
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
-    monkeypatch.setattr(sched, "_overdue_orgs", lambda _a, orgs, _now: orgs)
-    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
 
-    asyncio.run(sched.catch_up_if_overdue())
+    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A], overdue_fn=lambda _a, orgs, _now: orgs, sync_service_factory=lambda _a, _b: _Svc()))
 
     assert synced == [_ORG_A]
 
 
-def test_catch_up_is_a_no_op_when_nothing_is_overdue(monkeypatch):
+def test_catch_up_is_a_no_op_when_nothing_is_overdue():
     """The normal boot: must not trigger a 4-6 minute pull for nothing."""
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A, _ORG_B])
-    monkeypatch.setattr(sched, "_overdue_orgs", lambda _a, _orgs, _now: [])
     build = MagicMock()
-    monkeypatch.setattr(sched, "build_sync_service", build)
 
-    asyncio.run(sched.catch_up_if_overdue())
+    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], overdue_fn=lambda _a, _orgs, _now: [], sync_service_factory=build))
 
     build.assert_not_called()
 
 
-def test_catch_up_syncs_only_the_overdue_org(monkeypatch):
+def test_catch_up_syncs_only_the_overdue_org():
     synced: list[str] = []
 
     class _Svc:
@@ -346,13 +312,8 @@ def test_catch_up_syncs_only_the_overdue_org(monkeypatch):
                 page_failures=[], detalhes_failed=[], duration_seconds=1.0,
             )
 
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A, _ORG_B])
-    monkeypatch.setattr(sched, "_overdue_orgs", lambda _a, _orgs, _now: [_ORG_B])
-    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
 
-    asyncio.run(sched.catch_up_if_overdue())
+    asyncio.run(sched.catch_up_if_overdue(admin_factory=lambda: MagicMock(), adapter_factory=lambda: MagicMock(), discover_fn=lambda _a: [_ORG_A, _ORG_B], overdue_fn=lambda _a, _orgs, _now: [_ORG_B], sync_service_factory=lambda _a, _b: _Svc()))
 
     assert synced == [_ORG_B]
 
@@ -388,7 +349,7 @@ def test_schedule_catch_up_outside_a_loop_reports_rather_than_crashing(caplog):
     assert any("did NOT start" in r.message for r in caplog.records)
 
 
-def test_cron_and_catch_up_cannot_run_concurrently(monkeypatch):
+def test_cron_and_catch_up_cannot_run_concurrently():
     """A boot at 00:04 must not run two full pulls against one table."""
     concurrent = 0
     peak = 0
@@ -405,15 +366,18 @@ def test_cron_and_catch_up_cannot_run_concurrently(monkeypatch):
                 page_failures=[], detalhes_failed=[], duration_seconds=1.0,
             )
 
-    monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-    monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
-    monkeypatch.setattr(sched, "_overdue_orgs", lambda _a, orgs, _now: orgs)
-    monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
+    seams = dict(
+        admin_factory=lambda: MagicMock(),
+        adapter_factory=lambda: MagicMock(),
+        discover_fn=lambda _a: [_ORG_A],
+        overdue_fn=lambda _a, orgs, _now: orgs,
+        sync_service_factory=lambda _a, _b: _Svc(),
+    )
 
     async def _both():
         await asyncio.gather(
-            sched.daily_imoveis_sync_job(), sched.catch_up_if_overdue()
+            sched.daily_imoveis_sync_job(**seams),
+            sched.catch_up_if_overdue(**seams),
         )
 
     asyncio.run(_both())
