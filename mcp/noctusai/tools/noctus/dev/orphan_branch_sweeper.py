@@ -13,6 +13,10 @@ What it does
       - Find any `.claude/worktrees/<slug>/` matching the branch.
       - Find any `project-history/roadmaps/<slug>*.md` matching.
       - Classify:
+        - **protected**: `main` / `dev` / `prod` / `prod-backup` — NEVER
+          deletable. A release branch is 0-ahead of dev by definition, so
+          the `integrated` rule below would otherwise mark production as
+          the most disposable branch in the repo.
         - **integrated**: 0 commits ahead of origin/dev → safe to delete.
         - **active-worktree**: has a live worktree on disk → DON'T delete.
         - **stale-no-artifacts**: ahead of dev, no worktree, no roadmap →
@@ -36,6 +40,37 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from typing import Any
+
+
+#: Branches that must NEVER be suggested for deletion, whatever their
+#: relationship to `origin/dev`.
+#:
+#: 🔴 `prod` is the entry this exists for. The classifier's rule is
+#: "0 commits ahead of origin/dev ⇒ integrated ⇒ safe to delete", and a
+#: release branch is 0-ahead **by definition** — it trails dev, it never
+#: leads it. So the production branch scored as the most disposable thing
+#: in the repo, and `git branch -d prod` would have SUCCEEDED: `-d`
+#: refuses only unmerged branches, and prod is fully merged into dev.
+#: Observed on 2026-08-21, when a sweep reported
+#: "prod — safe to delete (0 commits ahead of origin/dev; 569 behind)".
+#:
+#: `main` and `dev` were already skipped, which is precisely why nobody
+#: noticed `prod` was missing: they were dropped SILENTLY, so the output
+#: never showed which branches the guard covered. They are now classified
+#: and RETURNED as `protected` instead — a visible row is auditable, a
+#: silent `continue` is not.
+PROTECTED_BRANCHES: frozenset[str] = frozenset(
+    {"main", "dev", "prod", "prod-backup"}
+)
+
+
+def is_protected(branch: str) -> bool:
+    """True if `branch` must never be auto-deleted.
+
+    Exposed so callers guard on the same predicate the classifier uses,
+    rather than re-deriving a list that drifts out of sync with this one.
+    """
+    return branch in PROTECTED_BRANCHES
 
 
 def _run_git(args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
@@ -115,9 +150,9 @@ def scan(repo_root: Path | None = None) -> dict[str, Any]:
             behind: int,            # commits behind origin/dev
             has_worktree: bool,
             roadmap_path: str|None,
-            classification: 'current' | 'integrated' | 'active-worktree' |
-                            'stale-no-artifacts' | 'stale-with-roadmap' |
-                            'unknown',
+            classification: 'protected' | 'current' | 'integrated' |
+                            'active-worktree' | 'stale-no-artifacts' |
+                            'stale-with-roadmap' | 'unknown',
             suggestion: str,        # human-readable action
           },
         ],
@@ -133,8 +168,25 @@ def scan(repo_root: Path | None = None) -> dict[str, Any]:
 
     branches: list[dict[str, Any]] = []
     for name in _list_local_branches(repo_root):
-        # Skip the special branches we never want to suggest deleting.
-        if name in ("main", "dev"):
+        # Protected branches are CLASSIFIED, not skipped. The previous
+        # `continue` hid them from the output entirely, which is how the
+        # missing `prod` entry went unnoticed — you cannot audit a list
+        # for a gap it never shows you.
+        if is_protected(name):
+            ab_p = _ahead_behind(repo_root, name)
+            branches.append({
+                "name": name,
+                "ahead": ab_p[0] if ab_p else None,
+                "behind": ab_p[1] if ab_p else None,
+                "has_worktree": _has_worktree(repo_root, name),
+                "roadmap_path": _has_roadmap(repo_root, name),
+                "classification": "protected",
+                "suggestion": (
+                    "NEVER delete — protected branch. A release branch is "
+                    "0-ahead of dev by definition, so the integrated "
+                    "heuristic does not apply to it."
+                ),
+            })
             continue
         ab = _ahead_behind(repo_root, name)
         if ab is None:
@@ -181,6 +233,9 @@ def scan(repo_root: Path | None = None) -> dict[str, Any]:
 def delete_integrated(repo_root: Path | None = None, dry_run: bool = True) -> dict[str, Any]:
     """Delete branches classified as `integrated` (0 ahead of origin/dev).
 
+    Protected branches (`PROTECTED_BRANCHES`) are refused here as well as
+    excluded by `scan`, so a classifier regression cannot reach them.
+
     Args:
       dry_run: when True (default) just LIST what would be deleted.
 
@@ -196,6 +251,18 @@ def delete_integrated(repo_root: Path | None = None, dry_run: bool = True) -> di
     skipped: list[dict] = []
     errors: list[dict] = []
     for b in result.get("branches", []):
+        # 🔴 Belt AND braces. `scan` already classifies protected branches
+        # as `protected`, so this can only fire if the classifier
+        # regresses — which is exactly the failure that shipped once
+        # already. The guard lives at the point of consequence too,
+        # because a classification bug must not be one step away from
+        # `git branch -d prod`.
+        if is_protected(b["name"]):
+            skipped.append({
+                "name": b["name"],
+                "reason": "protected branch — never auto-deleted",
+            })
+            continue
         if b["classification"] != "integrated":
             continue
         if dry_run:
@@ -221,6 +288,7 @@ def register(server) -> None:
         name="noctus.dev.orphan_branch_sweep",
         description=(
             "Classify every local branch by integration state vs. origin/dev: "
+            "protected (main/dev/prod/prod-backup — NEVER deletable), "
             "integrated (0 ahead — safe to delete), active-worktree, "
             "stale-with-roadmap, stale-no-artifacts. Sibling of "
             "check_branch_orphan with more detailed classification + "
@@ -237,11 +305,18 @@ def register(server) -> None:
             "Delete branches classified as `integrated` (0 commits ahead "
             "of origin/dev). Defaults to dry-run; pass `dry_run=False` "
             "to actually delete. Never touches active-worktree / "
-            "stale-with-roadmap branches."
+            "stale-with-roadmap branches, and REFUSES the protected set "
+            "(main/dev/prod/prod-backup) independently of classification."
         ),
     )
     def _delete(dry_run: bool = True) -> dict:
         return delete_integrated(dry_run=dry_run)
 
 
-__all__ = ["scan", "delete_integrated", "register"]
+__all__ = [
+    "PROTECTED_BRANCHES",
+    "delete_integrated",
+    "is_protected",
+    "register",
+    "scan",
+]
