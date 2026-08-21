@@ -158,3 +158,38 @@ undone by re-running anything, and these still hold real values.
 `NOC-REMEDIATE[reminder-delivery]` — reminders are scheduled correctly and
 NOTHING DELIVERS THEM; the marker moved from `patch_datas` into
 `agendamentos_service._sync_lembrete` when the former was removed.
+
+---
+
+## 067_documento_checklist.sql — applied 2026-08-21
+
+> Applied to the live DB as `065_documento_checklist` before a parallel
+> session's `065_campanhas.sql` reached `dev`. The FILE was renumbered to
+> 067 (`check_migration_number_collision` caught the clash at integrate);
+> the recorded Supabase migration keeps its original name, which is
+> harmless — the DDL is `IF NOT EXISTS` and the table already exists.
+
+`social_wiring.cliente_documento_checklist` created on the live database; RLS
+enabled with both policies (org-scoped SELECT for `authenticated`, full access
+for `service_role`), plus the unique `(cliente_id, item_key)` the upsert relies
+on. Verified by querying `pg_class`/`pg_policies`, not assumed from a clean exit.
+
+**The table stores TICKS, not the checklist.** The six required fields (Nome
+Completo, Email, Data de Nascimento, Gênero, RG, CPF) are identical for every
+client by definition, so the list lives in
+`card_hub/documento_checklist_service.ITENS` and every card renders the same
+one. Only "has this client provided it yet" is per-client data.
+
+Materialising the six as rows per client was the obvious alternative and was
+rejected: it turns the DEFINITION into data, so adding a seventh field would
+need a backfill across every existing client, and until it finished, cards
+created before and after would show different checklists.
+
+Consequences worth knowing:
+
+* `item_key` is identity, the label is presentation — renaming an item is a
+  one-word code edit that every card picks up with ticks intact.
+* No backfill was needed or run; a client with zero rows correctly reads as six
+  unticked items.
+* Retiring a key leaves its rows inert rather than deleting them, so an
+  accidental retirement is reversible.

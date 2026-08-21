@@ -58,6 +58,7 @@ import type {
   CardAtendimento,
   Checklist,
   Documento,
+  DocumentoChecklistItem,
   CardDatas,
   Membro,
   Tag,
@@ -137,6 +138,12 @@ export interface ClienteCardDialogProps {
   onSaveDescricao: (corpo: string) => void;
   descricaoSaving?: boolean;
 
+  // Documento checklist — the six identity fields every new client owes us.
+  // The LIST is canonical server-side, so there is no create/remove here.
+  documentoChecklist?: DocumentoChecklistItem[];
+  documentoChecklistLoading?: boolean;
+  onToggleDocumentoChecklist: (key: string, concluido: boolean) => void;
+
   // Anexos
   documentos: Documento[];
   documentosLoading: boolean;
@@ -169,9 +176,9 @@ export interface ClienteCardDialogProps {
 export function ClienteCardDialog(props: ClienteCardDialogProps) {
   const { open, onClose, isLoading, error, notFound, nome, acoes } = props;
   const [activePopover, setActivePopover] = useState<PopoverKey>(null);
-  // `atividade` is the open-on-mount subpage: the card is opened to DO
-  // something far more often than to read the record behind it.
-  const [subpage, setSubpage] = useState<CardSubpageKey>("atividade");
+  // `geral` is the open-on-mount subpage: the card is opened to DO something
+  // far more often than to read the record behind it.
+  const [subpage, setSubpage] = useState<CardSubpageKey>("geral");
   const record = useRecordSections(props.atendimentos);
   const emptyKeys = useMemo(
     () =>
@@ -224,6 +231,13 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 {acoes ? <div className="flex shrink-0 gap-2">{acoes}</div> : null}
               </div>
 
+              {/* The action row belongs to Geral. It was card-level chrome while
+                  Geral held everything; now that agendamentos and anexos have
+                  their own tabs, a row of quick-actions floating above an
+                  unrelated tab is just noise. Each of those tabs carries its own
+                  trigger instead — the specific button next to the thing it
+                  acts on, which is the same rule that retired `Adicionar`. */}
+              {subpage === "geral" && (
               <div className="mb-4 flex flex-wrap gap-2">
                 <EtiquetasPopover
                   open={activePopover === "etiquetas"}
@@ -259,32 +273,36 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   onToggleMembro={props.onToggleMembro}
                   saving={props.membrosSaving}
                 />
-                {/* The anexo picker. `Adicionar` used to open it; that button was a
-                    second, generic route to every action the specific buttons
-                    already offer, so it is gone and the Anexos section owns its
-                    own trigger. The input stays here (hidden) because it must
-                    outlive the section's re-renders. */}
-                <input
-                  id="card-anexo-file-input"
-                  type="file"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) props.onUploadDocumento(file, props.tiposDocumento[0]?.tipo_documento ?? "outro");
-                    e.target.value = "";
-                  }}
-                />
               </div>
+              )}
 
-              {/* The sidebar picks WHICH of these the middle pane shows. Order
-                  inside `atividade` is the user's (2026-08-19), and it is priority
-                  order, not taste: descrição sets context, an agendamento is the
-                  thing you must act on next, the checklist is the work itself, and
-                  anexos are reference material you consult rather than act on — so
-                  it goes last. */}
-              {subpage !== "atividade" ? (
-                <RecordSubpage sections={record[subpage]} subpage={subpage} />
-              ) : (
+              {/* The anexo picker lives OUTSIDE the tab switch on purpose: its
+                  trigger is on Documentos, and an input unmounted with the Geral
+                  row could not be opened from there.
+
+                  It had no trigger at all between 2026-08-19 and now — removing
+                  the generic `Adicionar` button took the only thing that opened
+                  it, and the comment that replaced it claimed the Anexos section
+                  owned a trigger that was never written. Uploading was
+                  unreachable in the UI for two days. `AnexosSection` now really
+                  does own it. */}
+              <input
+                id="card-anexo-file-input"
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) props.onUploadDocumento(file, props.tiposDocumento[0]?.tipo_documento ?? "outro");
+                  e.target.value = "";
+                }}
+              />
+
+              {/* The sidebar picks WHICH of these the middle pane shows.
+                  Geral keeps what you act on continuously — etiquetas, the
+                  description, the working checklists. Agendamentos and
+                  Documentos each own a tab because each is a workflow of its
+                  own, not a section you scroll past. */}
+              {subpage === "geral" && (
                 <>
                   {props.selectedTags.length > 0 && (
                     <div className="mb-4" data-testid="etiquetas-chips">
@@ -312,12 +330,6 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     saving={props.descricaoSaving}
                   />
 
-                  <AgendamentosSection
-                    agendamentos={props.agendamentos ?? []}
-                    loading={props.agendamentosLoading}
-                    onRemove={props.onRemoveAgendamento}
-                  />
-
                   <ChecklistsSection
                     checklists={props.checklists}
                     loading={props.checklistsLoading}
@@ -327,13 +339,47 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     onRemoveItem={props.onRemoveItem}
                   />
 
+                </>
+              )}
+
+              {subpage === "agendamentos" && (
+                <AgendamentosSection
+                  agendamentos={props.agendamentos ?? []}
+                  loading={props.agendamentosLoading}
+                  onRemove={props.onRemoveAgendamento}
+                  acao={
+                    <AgendamentoPopover
+                      open={activePopover === "agendamento"}
+                      onOpenChange={(o) => setActivePopover(o ? "agendamento" : null)}
+                      onCreate={props.onCreateAgendamento}
+                      saving={props.agendamentoSaving}
+                    />
+                  }
+                />
+              )}
+
+              {subpage === "documentos" && (
+                <>
+                  {/* The permanent checklist sits ABOVE anexos: it is the list of
+                      what must be COLLECTED, and the anexos below are what has
+                      arrived. Reading order follows the work. */}
+                  <DocumentoChecklistSection
+                    items={props.documentoChecklist ?? []}
+                    loading={props.documentoChecklistLoading}
+                    onToggle={props.onToggleDocumentoChecklist}
+                  />
                   <AnexosSection
                     documentos={props.documentos}
                     loading={props.documentosLoading}
+                    uploading={props.uploadingDocumento}
                     onOpenDocumento={props.onOpenDocumento}
                     onDeleteDocumento={props.onDeleteDocumento}
                   />
                 </>
+              )}
+
+              {(subpage === "cliente" || subpage === "campanha") && (
+                <RecordSubpage sections={record[subpage]} subpage={subpage} />
               )}
             </ScrollArea>
 
@@ -481,17 +527,33 @@ function formatBytes(bytes: number): string {
 function AnexosSection({
   documentos,
   loading,
+  uploading,
   onOpenDocumento,
   onDeleteDocumento,
 }: {
   documentos: Documento[];
   loading: boolean;
+  uploading?: boolean;
   onOpenDocumento: (id: string) => void;
   onDeleteDocumento: (id: string, motivo: string) => void;
 }) {
   return (
     <div className="mb-4" data-testid="anexos-section">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Anexos</p>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Anexos</p>
+        {/* The section owns its trigger — the claim the old comment made and
+            never delivered. It opens the hidden input the dialog keeps mounted
+            outside the tab switch. */}
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={uploading}
+          onClick={() => document.getElementById("card-anexo-file-input")?.click()}
+          data-testid="anexo-enviar-btn"
+        >
+          {uploading ? "Enviando…" : "Enviar anexo"}
+        </Button>
+      </div>
       {loading ? (
         <div className="h-10 animate-pulse rounded bg-muted" />
       ) : documentos.length === 0 ? (
@@ -695,7 +757,11 @@ function hasAnyField(sections: DetailSection[]): boolean {
   return sections.some((section) => section.fields.some((field) => !field.hidden));
 }
 
-const SUBPAGE_HEADING: Record<Exclude<CardSubpageKey, "atividade">, string> = {
+/** The two READ-ONLY record subpages. `geral`, `agendamentos` and `documentos`
+ *  are workflows with their own components, not field grids. */
+type RecordSubpageKey = Extract<CardSubpageKey, "cliente" | "campanha">;
+
+const SUBPAGE_HEADING: Record<RecordSubpageKey, string> = {
   cliente: "Dados do cliente",
   campanha: "Campanha e imóvel",
 };
@@ -705,7 +771,7 @@ function RecordSubpage({
   subpage,
 }: {
   sections: DetailSection[];
-  subpage: Exclude<CardSubpageKey, "atividade">;
+  subpage: RecordSubpageKey;
 }) {
   return (
     <div data-testid={`card-subpage-${subpage}`}>
@@ -749,16 +815,23 @@ function AgendamentosSection({
   agendamentos,
   loading,
   onRemove,
+  acao,
 }: {
   agendamentos: Agendamento[];
   loading?: boolean;
   onRemove: (id: string) => void;
+  /** The section's own trigger, rendered beside its heading. On its own tab
+   *  the card-level action row is gone, so without this there is no way to
+   *  book an appointment from the page that lists them. */
+  acao?: ReactNode;
 }) {
-  // Sits between Descrição and Checklist deliberately: an agendamento is the
-  // next thing that needs DOING, so it outranks the work list below it.
-  //
   // A LIST, not a slot. The card used to show one appointment because it could
   // only hold one; booking a second silently replaced the first.
+  //
+  // This owns a TAB now, so an empty list renders the heading and its trigger
+  // rather than nothing. Returning null was right while this was one section
+  // among several on Geral; on its own tab it would render a blank page with no
+  // way to book the first appointment.
   if (loading) {
     return (
       <div className="mb-5" data-testid="agendamentos-loading">
@@ -766,15 +839,22 @@ function AgendamentosSection({
       </div>
     );
   }
-  if (agendamentos.length === 0) return null;
 
   const agora = Date.now();
 
   return (
     <div className="mb-5" data-testid="agendamentos-section">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Agendamentos
-      </p>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Agendamentos
+        </p>
+        {acao}
+      </div>
+      {agendamentos.length === 0 ? (
+        <p className="text-sm italic text-muted-foreground" data-testid="agendamentos-empty">
+          Nenhum agendamento marcado.
+        </p>
+      ) : (
       <div className="space-y-2">
         {agendamentos.map((a) => {
           const passou = new Date(a.quando).getTime() < agora;
@@ -817,9 +897,72 @@ function AgendamentosSection({
           );
         })}
       </div>
+      )}
     </div>
   );
 }
+
+/**
+ * The permanent document checklist — the six identity fields every lead owes us
+ * once they become a client.
+ *
+ * There is no add/remove: the list is the SAME for every client by definition,
+ * so it is defined server-side once (`documento_checklist_service.ITENS`) and
+ * only the ticks are per-client. That is why this looks nothing like
+ * `ChecklistBlock` above, which exists precisely to be edited per card.
+ */
+function DocumentoChecklistSection({
+  items,
+  loading,
+  onToggle,
+}: {
+  items: DocumentoChecklistItem[];
+  loading?: boolean;
+  onToggle: (key: string, concluido: boolean) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="mb-5" data-testid="documento-checklist-loading">
+        <div className="h-4 w-48 animate-pulse rounded bg-muted" />
+      </div>
+    );
+  }
+
+  const done = items.filter((i) => i.concluido).length;
+  const pct = items.length ? Math.round((done / items.length) * 100) : 0;
+
+  return (
+    <div className="mb-5" data-testid="documento-checklist-section">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Dados obrigatórios
+        </p>
+        <span className="text-xs text-muted-foreground" data-testid="documento-checklist-progresso">
+          {done}/{items.length}
+        </span>
+      </div>
+      <Progress value={pct} className="mb-2 h-1.5" />
+      <ul className="space-y-1">
+        {items.map((item) => (
+          <li key={item.key} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="h-4 w-4 shrink-0 rounded border-muted-foreground/40"
+              checked={item.concluido}
+              onChange={(e) => onToggle(item.key, e.target.checked)}
+              data-testid={`documento-checklist-${item.key}`}
+              aria-label={item.label}
+            />
+            <span className={cn(item.concluido && "text-muted-foreground line-through")}>
+              {item.label}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 
 function ComentarioComposer({ onPost, posting }: { onPost: (corpo: string) => void; posting?: boolean }) {
   const [corpo, setCorpo] = useState("");

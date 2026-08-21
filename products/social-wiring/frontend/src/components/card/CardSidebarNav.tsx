@@ -18,12 +18,17 @@
  * product needs a rail like this, THIS is the extraction target.
  */
 import type { LucideIcon } from "lucide-react";
-import { ClipboardList, Megaphone, User } from "lucide-react";
+import { CalendarClock, ClipboardList, FolderOpen, Megaphone, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-/** Which subpage the card is showing. `atividade` is the default on open. */
-export type CardSubpageKey = "atividade" | "cliente" | "campanha";
+/** Which subpage the card is showing. `geral` is the default on open. */
+export type CardSubpageKey =
+  | "geral"
+  | "cliente"
+  | "agendamentos"
+  | "documentos"
+  | "campanha";
 
 interface SubpageDef {
   key: CardSubpageKey;
@@ -32,12 +37,15 @@ interface SubpageDef {
 }
 
 /**
- * Order is the reading order of the card: what you DO with this person first,
- * then who they are, then where they came from.
+ * Order is the reading order of the card: what you DO with this person, then
+ * who they are, then what is booked with them, then what you must collect from
+ * them, then where they came from.
  */
 export const CARD_SUBPAGES: readonly SubpageDef[] = [
-  { key: "atividade", label: "Atividade", icon: ClipboardList },
+  { key: "geral", label: "Geral", icon: ClipboardList },
   { key: "cliente", label: "Dados do cliente", icon: User },
+  { key: "agendamentos", label: "Agendamentos", icon: CalendarClock },
+  { key: "documentos", label: "Documentos", icon: FolderOpen },
   { key: "campanha", label: "Campanha e imóvel", icon: Megaphone },
 ] as const;
 
@@ -48,6 +56,10 @@ export interface CardSidebarNavProps {
    * Keys with nothing to show. Rendered disabled rather than dropped: a rail
    * whose items come and go per record teaches the user nothing about where a
    * thing lives, and "this card has no campaign" is itself information.
+   *
+   * Only the two RECORD subpages can be empty. `agendamentos` and `documentos`
+   * are always reachable even with nothing in them — you go there to ADD, and
+   * a disabled tab would be a dead end on an empty card.
    */
   emptyKeys?: readonly CardSubpageKey[];
 }

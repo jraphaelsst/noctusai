@@ -189,3 +189,19 @@ __all__ = [
     "TagCreateBody",
     "TagUpdateBody",
 ]
+
+
+# ─── Documento checklist (migration 067 — canonical items, per-client ticks) ──
+
+
+class DocumentoChecklistPatchBody(StrictHttpModel):
+    """Tick or untick one canonical item.
+
+    No `key` field: the item is the path parameter, because it identifies the
+    resource rather than describing a change to it. The valid-key check lives
+    in the service (against `ITENS`, the one definition) rather than being
+    re-listed here — a second copy of the six keys is a second thing to forget
+    to update.
+    """
+
+    concluido: bool

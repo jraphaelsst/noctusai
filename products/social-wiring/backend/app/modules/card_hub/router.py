@@ -25,11 +25,12 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 
 from app.modules.card_hub import agendamentos_service as agenda_svc
+from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
 from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import services as svc
 from app.modules.card_hub import timeline_service
@@ -42,6 +43,7 @@ from app.modules.card_hub.schemas import (
     ChecklistItemUpdateBody,
     ChecklistUpdateBody,
     ClienteTagsSetBody,
+    DocumentoChecklistPatchBody,
     MembrosSetBody,
     NotaCreateBody,
     NotaUpdateBody,
@@ -209,6 +211,54 @@ async def set_membros_route(
 
 
 # ─── Datas + lembretes ──────────────────────────────────────────────────
+
+
+# ─── Documento checklist (migration 067) ────────────────────────────────
+#
+# The item LIST is canonical and lives in `documento_checklist_service.ITENS`;
+# only the ticks are per-client. So there is no create/delete here — you cannot
+# add an item to a checklist that is the same for everyone by definition. Two
+# routes is the whole surface: read the six, toggle one.
+
+
+@router.get("/{cliente_id}/documento-checklist")
+async def list_documento_checklist_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return doc_checklist_svc.listar(client, org_id, cliente_id)
+
+
+@router.patch("/{cliente_id}/documento-checklist/{item_key}")
+async def patch_documento_checklist_route(
+    cliente_id: UUID,
+    item_key: str,
+    body: DocumentoChecklistPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    try:
+        return doc_checklist_svc.marcar(
+            client,
+            org_id,
+            cliente_id,
+            item_key,
+            concluido=body.concluido,
+            user_id=getattr(user, "id", None),
+        )
+    except KeyError:
+        # An unknown key is a client bug, not a missing resource: the six are
+        # a closed set the caller can read from the GET above.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"item_key must be one of {list(doc_checklist_svc.ITEM_KEYS)}, "
+                f"got {item_key!r}"
+            ),
+        )
 
 
 # ─── Agendamentos (migration 061 — many per atendimento) ────────────────

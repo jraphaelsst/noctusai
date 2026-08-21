@@ -395,3 +395,26 @@ export interface ItemsEnvelope<T> {
   items: T[];
   total: number;
 }
+
+// ─── Documento checklist (migration 067 — canonical items, per-client ticks) ──
+
+/**
+ * One line of the permanent document checklist.
+ *
+ * The item LIST is defined server-side and is identical for every client
+ * (`documento_checklist_service.ITENS`), so there is no create/delete here —
+ * only `concluido` moves. `key` is the stable identity; `label` is display.
+ */
+export interface DocumentoChecklistItem {
+  key: string;
+  label: string;
+  concluido: boolean;
+  concluido_em: string | null;
+  concluido_por: string | null;
+}
+
+export interface DocumentoChecklist {
+  items: DocumentoChecklistItem[];
+  total: number;
+  concluidos: number;
+}

@@ -39,6 +39,8 @@ function baseProps(overrides: Partial<ClienteCardDialogProps> = {}): ClienteCard
     documentosLoading: false,
     tiposDocumento: [],
     onUploadDocumento: vi.fn(),
+    documentoChecklist: [],
+    onToggleDocumentoChecklist: vi.fn(),
     onOpenDocumento: vi.fn(),
     onDeleteDocumento: vi.fn(),
     checklists: [],
@@ -117,8 +119,20 @@ describe("ClienteCardDialog — Descrição", () => {
 
 describe("ClienteCardDialog — Anexos empty state", () => {
   it("shows the empty-anexos copy when there are no documentos", async () => {
-    const { getByTestId } = await render(baseProps({ documentos: [] }));
-    expect(getByTestId("anexos-empty")).toBeTruthy();
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ documentos: [] })} />);
+    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
+    expect(screen.getByTestId("anexos-empty")).toBeTruthy();
+  });
+
+  it("🔴 offers a way to upload — the trigger was missing entirely", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ documentos: [] })} />);
+    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
+    // Removing the generic `Adicionar` button took the ONLY thing that opened
+    // the file input, and nothing replaced it — uploading was unreachable.
+    expect(screen.getByTestId("anexo-enviar-btn")).toBeTruthy();
+    expect(document.getElementById("card-anexo-file-input")).toBeTruthy();
   });
 });
 
@@ -262,7 +276,7 @@ describe("navegação por subpáginas (barra lateral)", () => {
     render(<ClienteCardDialog {...baseProps({ descricaoCorpo: "Interessado" })} />);
 
     expect(screen.getByTestId("card-sidebar-nav")).toBeTruthy();
-    expect(screen.getByTestId("card-subpage-tab-atividade").getAttribute("data-active")).toBe("true");
+    expect(screen.getByTestId("card-subpage-tab-geral").getAttribute("data-active")).toBe("true");
     expect(screen.getByTestId("descricao-section")).toBeTruthy();
   });
 
@@ -312,58 +326,113 @@ describe("navegação por subpáginas (barra lateral)", () => {
     expect(screen.queryByTestId("descricao-section")).toBeNull();
     expect(onClose).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByTestId("card-subpage-tab-atividade"));
+    fireEvent.click(screen.getByTestId("card-subpage-tab-geral"));
     expect(screen.getByTestId("descricao-section")).toBeTruthy();
   });
 });
 
 describe("ordem das seções", () => {
-  it("🔴 descrição → agendamento → checklist → anexos, in that order", async () => {
-    const { render, screen } = await import("@testing-library/react");
-    const { container } = render(
-      <ClienteCardDialog
-        {...baseProps({
-          descricaoCorpo: "Lead interessado em imóvel",
-          agendamentos: [
-            {
-              id: "ag1",
-              atendimento_id: "a1",
-              quando: "2099-08-20T12:00:00Z",
-              tipo: "visita",
-              nota: null,
-              lembrete_minutos_antes: 60,
-              created_at: null,
-            },
-          ],
-          checklists: [
-            { id: "c1", titulo: "Checklist", posicao: 0, itens: [] } as never,
-          ],
-          documentos: [
-            {
-              id: "d1",
-              nome_arquivo: "anuncios.pdf",
-              tamanho_bytes: 3072,
-              created_at: "2026-08-19T19:20:00Z",
-              tipo_documento: "outro",
-            } as never,
-          ],
-        })}
-      />,
-    );
-    // By testid, not by text: "Checklist" is BOTH the toolbar button and the
-    // section heading, so getByText was ambiguous — the assertion has to name
-    // the sections themselves.
+  const AG = {
+    id: "ag1",
+    atendimento_id: "a1",
+    quando: "2099-08-20T12:00:00Z",
+    tipo: "visita",
+    nota: null,
+    lembrete_minutos_antes: 60,
+    created_at: null,
+  };
+  const DOC = {
+    id: "d1",
+    nome_arquivo: "anuncios.pdf",
+    tamanho_bytes: 3072,
+    created_at: "2026-08-19T19:20:00Z",
+    tipo_documento: "outro",
+  };
+
+  function full() {
+    return baseProps({
+      descricaoCorpo: "Lead interessado em imóvel",
+      agendamentos: [AG as never],
+      checklists: [{ id: "c1", titulo: "Checklist", posicao: 0, itens: [] } as never],
+      documentos: [DOC as never],
+      documentoChecklist: [
+        { key: "nome_completo", label: "Nome Completo", concluido: false, concluido_em: null, concluido_por: null },
+      ],
+    });
+  }
+
+  function orderOf(container: HTMLElement, screen: any, ids: string[]) {
     const all = Array.from(container.querySelectorAll("*"));
-    const at = (testId: string) => all.indexOf(screen.getByTestId(testId));
-    const order = [
-      at("descricao-section"),
-      at("agendamentos-section"),
-      at("checklists-section"),
-      at("anexos-section"),
-    ];
+    return ids.map((id) => all.indexOf(screen.getByTestId(id)));
+  }
+
+  it("Geral keeps descrição → checklist; agendamentos and anexos moved out", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    const { container } = render(<ClienteCardDialog {...full()} />);
+
+    const order = orderOf(container, screen, ["descricao-section", "checklists-section"]);
     expect(order).toEqual([...order].sort((a, b) => a - b));
-    // anexos LAST, explicitly — the whole point of the reorder
-    expect(order[3]).toBe(Math.max(...order));
+    // They are not merely reordered — they are on other tabs now.
+    expect(screen.queryByTestId("agendamentos-section")).toBeNull();
+    expect(screen.queryByTestId("anexos-section")).toBeNull();
+  });
+
+  it("🔴 Documentos puts the required-data checklist ABOVE anexos", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const { container } = render(<ClienteCardDialog {...full()} />);
+    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
+
+    const order = orderOf(container, screen, [
+      "documento-checklist-section",
+      "anexos-section",
+    ]);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+});
+
+describe("dados obrigatórios (checklist permanente)", () => {
+  const ITENS = [
+    { key: "nome_completo", label: "Nome Completo" },
+    { key: "email", label: "Email" },
+    { key: "data_nascimento", label: "Data de Nascimento" },
+    { key: "genero", label: "Gênero" },
+    { key: "rg", label: "RG" },
+    { key: "cpf", label: "CPF" },
+  ].map((i) => ({ ...i, concluido: false, concluido_em: null, concluido_por: null }));
+
+  async function openDocumentos(overrides = {}) {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ documentoChecklist: ITENS, ...overrides })} />);
+    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
+    return { fireEvent, screen };
+  }
+
+  it("🔴 renders the six the user asked for, in order", async () => {
+    const { screen } = await openDocumentos();
+    const labels = ITENS.map((i) => i.label);
+    for (const label of labels) expect(screen.getByLabelText(label)).toBeTruthy();
+    expect(screen.getByTestId("documento-checklist-progresso").textContent).toBe("0/6");
+  });
+
+  it("ticking one calls back with its key", async () => {
+    const onToggleDocumentoChecklist = vi.fn();
+    const { fireEvent, screen } = await openDocumentos({ onToggleDocumentoChecklist });
+    fireEvent.click(screen.getByTestId("documento-checklist-cpf"));
+    expect(onToggleDocumentoChecklist).toHaveBeenCalledWith("cpf", true);
+  });
+
+  it("shows progress from what is already ticked", async () => {
+    const ticked = ITENS.map((i) =>
+      i.key === "rg" || i.key === "cpf" ? { ...i, concluido: true } : i,
+    );
+    const { screen } = await openDocumentos({ documentoChecklist: ticked });
+    expect(screen.getByTestId("documento-checklist-progresso").textContent).toBe("2/6");
+  });
+
+  it("is NOT on Geral — it belongs to Documentos", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ documentoChecklist: ITENS })} />);
+    expect(screen.queryByTestId("documento-checklist-section")).toBeNull();
   });
 });
 
@@ -379,40 +448,45 @@ describe("agendamentos", () => {
     ...over,
   });
 
+  /** Agendamentos own a TAB now — every assertion below has to go there first. */
+  async function openAgendamentos(overrides: Record<string, unknown> = {}) {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps(overrides as never)} />);
+    fireEvent.click(screen.getByTestId("card-subpage-tab-agendamentos"));
+    return { fireEvent, screen };
+  }
+
   it("🔴 shows the reminder — it was stored and scheduled but never displayed", async () => {
-    const { render, screen } = await import("@testing-library/react");
-    render(<ClienteCardDialog {...baseProps({ agendamentos: [AG()] })} />);
+    const { screen } = await openAgendamentos({ agendamentos: [AG()] });
     expect(screen.getByTestId("agendamento-lembrete").textContent).toContain("1 hora antes");
   });
 
   it("🔴 lists MANY — the old model could hold exactly one", async () => {
-    const { render, screen } = await import("@testing-library/react");
-    render(
-      <ClienteCardDialog
-        {...baseProps({
-          agendamentos: [
-            AG({ id: "ag1", quando: "2099-08-20T12:00:00Z" }),
-            AG({ id: "ag2", quando: "2099-08-25T15:00:00Z", tipo: "ligacao" }),
-          ],
-        })}
-      />,
-    );
+    const { screen } = await openAgendamentos({
+      agendamentos: [
+        AG({ id: "ag1", quando: "2099-08-20T12:00:00Z" }),
+        AG({ id: "ag2", quando: "2099-08-25T15:00:00Z", tipo: "ligacao" }),
+      ],
+    });
     expect(screen.getByTestId("agendamento-ag1")).toBeTruthy();
     expect(screen.getByTestId("agendamento-ag2")).toBeTruthy();
   });
 
-  it("is absent when none are booked, rather than an empty heading", async () => {
-    const { render, screen } = await import("@testing-library/react");
-    render(<ClienteCardDialog {...baseProps({ agendamentos: [] })} />);
-    expect(screen.queryByTestId("agendamentos-section")).toBeNull();
+  it("🔴 an empty tab still offers a way to book — it is not a dead end", async () => {
+    const { screen } = await openAgendamentos({ agendamentos: [] });
+    // This USED to render nothing, which was right while it was one section
+    // among several on Geral. On its own tab that is a blank page with no
+    // trigger, so the heading + empty copy now stay.
+    expect(screen.getByTestId("agendamentos-section")).toBeTruthy();
+    expect(screen.getByTestId("agendamentos-empty")).toBeTruthy();
   });
 
   it("removing one calls back with its id", async () => {
-    const { render, screen, fireEvent } = await import("@testing-library/react");
     const onRemoveAgendamento = vi.fn();
-    render(
-      <ClienteCardDialog {...baseProps({ agendamentos: [AG()], onRemoveAgendamento })} />,
-    );
+    const { fireEvent, screen } = await openAgendamentos({
+      agendamentos: [AG()],
+      onRemoveAgendamento,
+    });
     fireEvent.click(screen.getByTestId("agendamento-remover-ag1"));
     expect(onRemoveAgendamento).toHaveBeenCalledWith("ag1");
   });
@@ -429,5 +503,74 @@ describe("o botão Adicionar", () => {
     for (const id of ["etiquetas-trigger", "agendamento-trigger", "membros-trigger"]) {
       expect(screen.getByTestId(id)).toBeTruthy();
     }
+  });
+});
+
+
+describe("a barra de ações pertence ao Geral", () => {
+  async function open(tab: string) {
+    const { cleanup, fireEvent, render, screen } = await import("@testing-library/react");
+    // Cleanup FIRST: this helper is called in a loop, and a previous render
+    // left on the document makes `queryByTestId` find the Geral row that the
+    // assertion is trying to prove absent.
+    cleanup();
+    // A record is required, not decoration: with no atendimentos the cliente
+    // and campanha tabs render DISABLED, the click is a no-op, and the test
+    // would assert against Geral while believing it had navigated away.
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          atendimentos: [
+            {
+              id: "a1",
+              titulo: "x",
+              status: "aberta",
+              closed_at: null,
+              created_at: null,
+              lead_id: null,
+              meta_ads_lead_id: "m1",
+              lead: null,
+              campanha: {
+                id: "m1",
+                full_name: "Ana",
+                email: "ana@example.com",
+                phone: null,
+                campaign_id: "c1",
+                campaign_name: "Campanha A",
+                form_id: "f1",
+                form_name: "Form A",
+                ad_id: null,
+                adset_id: null,
+                platform: "fb",
+                is_organic: false,
+                created_time: null,
+                answers: {},
+              } as never,
+            },
+          ],
+        })}
+      />,
+    );
+    if (tab !== "geral") fireEvent.click(screen.getByTestId(`card-subpage-tab-${tab}`));
+    return screen;
+  }
+
+  it("🔴 Etiquetas and Agendar show on Geral", async () => {
+    const screen = await open("geral");
+    expect(screen.getByTestId("etiquetas-trigger")).toBeTruthy();
+    expect(screen.getByTestId("agendamento-trigger")).toBeTruthy();
+  });
+
+  it("🔴 and nowhere else — a quick-action row over an unrelated tab is noise", async () => {
+    for (const tab of ["cliente", "agendamentos", "documentos", "campanha"]) {
+      const screen = await open(tab);
+      expect(screen.queryByTestId("etiquetas-trigger")).toBeNull();
+    }
+  });
+
+  it("the Agendamentos tab carries its OWN trigger, so booking stays reachable", async () => {
+    const screen = await open("agendamentos");
+    // Same popover component, rendered by the section instead of the row.
+    expect(screen.getByTestId("agendamento-trigger")).toBeTruthy();
   });
 });

@@ -42,6 +42,8 @@ import type {
   TimelineKind,
   TimelinePage,
   TipoDocumento,
+  DocumentoChecklist,
+  DocumentoChecklistItem,
 } from "@/types/cardHub";
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
@@ -53,6 +55,8 @@ const TIMELINE_KEY = (clienteId: string, kinds?: TimelineKind[]) =>
   [...FAMILY_KEY(clienteId), "timeline", kinds ?? "all"] as const;
 const MEMBROS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "membros"] as const;
 const CHECKLISTS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "checklists"] as const;
+const DOC_CHECKLIST_KEY = (clienteId: string) =>
+  [...FAMILY_KEY(clienteId), "documento-checklist"] as const;
 const AGENDAMENTOS_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "agendamentos"] as const;
 const DOCUMENTOS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "documentos"] as const;
@@ -589,4 +593,66 @@ export function useDocumentoMutations(clienteId: string) {
   });
 
   return { upload, remove, getUrl };
+}
+
+// ─── Documento checklist (migration 067) ──────────────────────────────────
+
+/**
+ * The permanent document checklist. Always six items, defined server-side —
+ * there is no create/delete, only ticking.
+ */
+export function useDocumentoChecklist(clienteId: string | null) {
+  return useQuery({
+    queryKey: DOC_CHECKLIST_KEY(clienteId ?? "__none__"),
+    queryFn: () =>
+      api.get<DocumentoChecklist>(
+        `${clienteBase(clienteId as string)}/documento-checklist`,
+      ),
+    enabled: !!clienteId,
+  });
+}
+
+/**
+ * Tick / untick one item.
+ *
+ * Optimistic by design: a checkbox that waits for a round-trip before moving
+ * feels broken, and this one is ticked six times in a row while reading a
+ * document off a screen. `onError` restores the snapshot, so a rejected write
+ * un-ticks itself rather than leaving a lie on screen.
+ *
+ * Invalidates ONLY this list — a collected RG does not change a note, a tag or
+ * an appointment, and a wider invalidation is what made the card flash.
+ */
+export function useDocumentoChecklistMutation(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, concluido }: { key: string; concluido: boolean }) =>
+      api.patch<DocumentoChecklistItem>(
+        `${clienteBase(clienteId)}/documento-checklist/${encodeURIComponent(key)}`,
+        { concluido },
+      ),
+    onMutate: async ({ key, concluido }) => {
+      await qc.cancelQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });
+      const previous = qc.getQueryData<DocumentoChecklist>(DOC_CHECKLIST_KEY(clienteId));
+      if (previous) {
+        const items = previous.items.map((i) =>
+          i.key === key ? { ...i, concluido } : i,
+        );
+        qc.setQueryData<DocumentoChecklist>(DOC_CHECKLIST_KEY(clienteId), {
+          ...previous,
+          items,
+          concluidos: items.filter((i) => i.concluido).length,
+        });
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(DOC_CHECKLIST_KEY(clienteId), ctx.previous);
+      }
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });
+    },
+  });
 }

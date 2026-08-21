@@ -37,6 +37,8 @@ import {
   useChecklists,
   useAgendamentoMutations,
   useAgendamentos,
+  useDocumentoChecklist,
+  useDocumentoChecklistMutation,
   useDocumentoMutations,
   useDocumentos,
   useNotaMutations,
@@ -81,6 +83,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const corretores = useLeadCorretores();
   const checklists = useChecklists(id);
   const documentos = useDocumentos(id);
+  const documentoChecklist = useDocumentoChecklist(id);
   const tiposDocumento = useTiposDocumento();
 
   const notaMutations = useNotaMutations(id ?? "__none__");
@@ -91,6 +94,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const agendamentoMutations = useAgendamentoMutations(id ?? "__none__");
   const checklistMutations = useChecklistMutations(id ?? "__none__");
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
+  const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
 
   const timelineEntries = flattenTimeline(timeline.data?.pages);
 
@@ -227,6 +231,20 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       descricaoCorpo={card.data?.descricao?.corpo ?? ""}
       onSaveDescricao={handleSaveDescricao}
       descricaoSaving={notaMutations.create.isPending || notaMutations.update.isPending}
+      documentoChecklist={documentoChecklist.data?.items ?? []}
+      documentoChecklistLoading={documentoChecklist.isPending}
+      onToggleDocumentoChecklist={(key, concluido) =>
+        documentoChecklistMutation.mutate(
+          { key, concluido },
+          {
+            // The optimistic tick has already rolled back by the time this
+            // runs; the toast says WHY it snapped back rather than leaving the
+            // checkbox to look flaky.
+            onError: (err) =>
+              toastServerError(err, "Não foi possível atualizar a lista de dados."),
+          },
+        )
+      }
       documentos={documentos.data ?? []}
       documentosLoading={documentos.isPending}
       tiposDocumento={tiposDocumento.data ?? []}

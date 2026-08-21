@@ -45,6 +45,12 @@ vi.mock("@/hooks/useCardHub", () => ({
   useTags: () => ({ data: [] }),
   useChecklists: () => ({ data: [], isPending: false, isFetching: false }),
   useDocumentos: () => ({ data: [], isPending: false, isFetching: false }),
+  useDocumentoChecklist: () => ({
+    data: { items: [], total: 0, concluidos: 0 },
+    isPending: false,
+    isFetching: false,
+  }),
+  useDocumentoChecklistMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useTiposDocumento: () => ({ data: [] }),
   useNotaMutations: () => ({ create: mockCreate, update: mockUpdate, remove: { mutate: vi.fn() } }),
   useTagCatalogMutations: () => ({
