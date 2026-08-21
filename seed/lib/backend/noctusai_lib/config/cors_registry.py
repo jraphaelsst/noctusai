@@ -321,6 +321,23 @@ def derive_cors_origins(
                     "skipping (dev or unconfigured)",
                     own_slug,
                 )
+            # ALSO the pattern-derived origin — the same reason as the
+            # `include_all_frontends` branch above, which is where this was
+            # first fixed and where the fix wrongly STOPPED (2026-08-19).
+            #
+            # `resolve_product_url` short-circuits on `PRODUCT_URL_<SLUG>`, and
+            # for two products that override is the SHORT hostname: social-wiring
+            # is served at `social.` AND `social-wiring.`, erp-imobiliario at
+            # `erp.` AND `erp-imobiliario.` (`deploy/tunnel/ingress.yml`). Adding
+            # only the override left the slug-named alias returning 400 with no
+            # allow-origin — measured in prod 2026-08-21, right after a deploy
+            # that was believed to have fixed exactly this.
+            #
+            # It only ever showed on those two: `igig` and `p-studio` have
+            # slug == subdomain, so the override and the pattern agree and the
+            # missing line was invisible. An allowlist is a SET of the origins we
+            # serve, not a preference order.
+            _add(_pattern_origin(own_slug))
 
     return out
 

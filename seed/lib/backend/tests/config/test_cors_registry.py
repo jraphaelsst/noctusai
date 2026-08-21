@@ -512,3 +512,44 @@ def test_no_pattern_configured_is_a_no_op_not_a_crash(monkeypatch):
     origins = derive_cors_origins()
     assert origins
     assert not [o for o in origins if o.startswith("https://")]
+
+
+# ── the SAME gap, one branch over ─────────────────────────────────────────
+#
+# `test_an_override_does_not_hide_the_pattern_derived_origin` above calls
+# `derive_cors_origins()` with no arguments — the `@registry:all` shape, which
+# only core uses. EVERY product ships `@registry:own:<slug>`, and that branch
+# never got the fix. So the gap was "closed", asserted, shipped, and
+# social-wiring.noctusai.com plus erp-imobiliario.noctusai.com went on
+# answering 400 with no allow-origin until they were measured in prod.
+#
+# A test that covers the branch nobody runs is not coverage.
+
+def test_own_slug_also_emits_the_pattern_derived_origin(monkeypatch):
+    """🔴 THE gap, in the branch every product actually takes."""
+    _prod_env(monkeypatch)
+    origins = derive_cors_origins(include_all_frontends=False, own_slug="social-wiring")
+    assert "https://social.noctusai.com" in origins          # the override
+    assert "https://social-wiring.noctusai.com" in origins   # the alias
+
+    origins = derive_cors_origins(include_all_frontends=False, own_slug="erp-imobiliario")
+    assert "https://erp.noctusai.com" in origins
+    assert "https://erp-imobiliario.noctusai.com" in origins
+
+
+def test_own_slug_pattern_only_product_resolves_exactly_once(monkeypatch):
+    """slug == subdomain ⇒ override and pattern agree. This is why the bug was
+    invisible on igig and p-studio while it was live on the other two."""
+    _prod_env(monkeypatch)
+    for slug in ("igig", "p-studio"):
+        origins = derive_cors_origins(include_all_frontends=False, own_slug=slug)
+        assert origins.count(f"https://{slug}.noctusai.com") == 1
+
+
+def test_own_slug_with_no_pattern_configured_stays_localhost_only(monkeypatch):
+    """Plain dev must not gain an https origin from this."""
+    for key in list(os.environ):
+        if key.startswith("PRODUCT_URL_"):
+            monkeypatch.delenv(key, raising=False)
+    origins = derive_cors_origins(include_all_frontends=False, own_slug="social-wiring")
+    assert not [o for o in origins if o.startswith("https://")]
