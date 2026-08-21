@@ -28,31 +28,9 @@ from tests.conftest import (  # type: ignore[attr-defined]
 )
 
 
-@pytest.fixture
-def anon_client():
-    """A TestClient that sends NO Authorization header.
-
-    The shared `client` fixture wraps the app in `AuthClient`, which attaches
-    a bearer token to every request — correct for behaviour tests, useless
-    for an auth boundary, because it can never produce a 401. This builds the
-    same app with the same DB patches and then simply does not authenticate,
-    so the guard is what decides the status code.
-    """
-    mock_sb = MockSupabaseClient()
-    mock_sb.auth.get_user = MagicMock(
-        return_value=MockUserResponse(MockUser(org_id="test-org-123"))
-    )
-    with (
-        patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
-        patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb),
-        patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
-    ):
-        from app.main import app
-
-        bind_consent_module_to_mock(mock_sb)
-        tc = TestClient(app)
-        yield tc
-        app.dependency_overrides.clear()
+# `anon_client` now lives in tests/conftest.py — it was needed by a
+# second auth-boundary suite (campanhas) and a per-suite copy is how one
+# of them quietly drifts into passing.
 
 
 UNAUTHENTICATED_ROUTES = [

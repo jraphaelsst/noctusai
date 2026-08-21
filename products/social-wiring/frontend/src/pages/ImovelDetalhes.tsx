@@ -13,10 +13,12 @@
  *   · ALL corretores are listed; 13.1% of imóveis have 2-3.
  *   · `area_construida` is omitted when null, which is 99.9% of this tenant.
  */
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   AlertCircle,
   ArrowLeft,
+  Megaphone,
   Bath,
   BedDouble,
   Building2,
@@ -34,6 +36,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import {
+  useSolicitacaoDoImovel,
+  useSolicitarCampanha,
+} from "@/hooks/useCampanhas";
+import {
   caracteristicaLabel,
   formatArea,
   formatCount,
@@ -44,6 +50,9 @@ import {
 export default function ImovelDetalhes() {
   const { codigo } = useParams<{ codigo: string }>();
   const query = useImovel(codigo ?? null);
+  const solicitacao = useSolicitacaoDoImovel(codigo ?? null);
+  const solicitar = useSolicitarCampanha(codigo ?? null);
+  const [erroSolicitacao, setErroSolicitacao] = useState<string | null>(null);
 
   const loading = query.isPending || query.isFetching;
   const imovel = query.data;
@@ -85,6 +94,9 @@ export default function ImovelDetalhes() {
     .filter(Boolean)
     .join(", ");
   const temGeo = imovel.latitude !== null && imovel.longitude !== null;
+  const jaSolicitado = Boolean(solicitacao.data?.id);
+  const carregandoSolicitacao =
+    solicitacao.isPending || solicitacao.isFetching;
 
   return (
     <div className="space-y-6 p-6">
@@ -128,6 +140,44 @@ export default function ImovelDetalhes() {
           {imovel.valor_venda === null && imovel.valor_locacao === null && (
             <p className="text-lg text-muted-foreground">Sob consulta</p>
           )}
+
+          {/*
+            Solicitar campanha — the signal, not a campaign. Pressing it
+            says "this imóvel deserves paid traffic"; budget, channel and
+            dates belong to whoever decides them.
+
+            Disabled while the pending-state is still loading, so the page
+            never offers an action that would immediately 409. Gated on
+            `isPending || isFetching`, never `isLoading` — v5's isLoading
+            is false during a background refetch, which would flash the
+            button back to "solicitar" over a request that already exists.
+          */}
+          <div className="mt-4 flex flex-col items-end gap-1">
+            <Button
+              variant={jaSolicitado ? "secondary" : "default"}
+              size="sm"
+              disabled={jaSolicitado || carregandoSolicitacao || solicitar.isPending}
+              onClick={() => {
+                setErroSolicitacao(null);
+                solicitar.mutate(undefined, {
+                  onError: (err) =>
+                    setErroSolicitacao(
+                      err instanceof Error
+                        ? err.message
+                        : "Não foi possível registrar a solicitação.",
+                    ),
+                });
+              }}
+            >
+              <Megaphone className="mr-2 h-4 w-4" />
+              {jaSolicitado ? "Campanha solicitada" : "Solicitar campanha"}
+            </Button>
+            {erroSolicitacao && (
+              <p className="max-w-xs text-right text-xs text-destructive">
+                {erroSolicitacao}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 

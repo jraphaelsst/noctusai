@@ -233,3 +233,40 @@ def isolate_meta_config_db(monkeypatch):
         monkeypatch.setattr(  # self-patch-ok: neutralises ambient .env, not our logic
             _default_settings, _field, "", raising=False
         )
+
+
+@pytest.fixture
+def anon_client():
+    """A TestClient that sends NO Authorization header.
+
+    The shared `client` fixture wraps the app in `AuthClient`, which attaches
+    a bearer token to every request — correct for behaviour tests, useless
+    for an auth boundary, because it can never produce a 401. This builds the
+    same app with the same DB patches and then simply does not authenticate,
+    so the guard is what decides the status code.
+
+    Lives here rather than in one test module: it was written for
+    `test_imoveis_router.py`, and `test_campanhas_router.py` needed the
+    identical thing (N=2). Every auth-boundary suite needs it, and a copy
+    per suite is how one of them quietly drifts into passing.
+    → KB § PATTERNS/compliance/auth-boundary-false-green.md
+    """
+    from unittest.mock import MagicMock, patch
+
+    from fastapi.testclient import TestClient
+
+    mock_sb = MockSupabaseClient()
+    mock_sb.auth.get_user = MagicMock(
+        return_value=MockUserResponse(MockUser(org_id="test-org-123"))
+    )
+    with (
+        patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+        patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb),
+        patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+    ):
+        from app.main import app
+
+        bind_consent_module_to_mock(mock_sb)
+        tc = TestClient(app)
+        yield tc
+        app.dependency_overrides.clear()
