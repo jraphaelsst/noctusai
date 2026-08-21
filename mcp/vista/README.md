@@ -25,13 +25,13 @@ The full Vista API contract lives at `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.
 
   | Tool | Vista route | Access | Notes |
   |---|---|---|---|
-  | `vista.imoveis.list` | `/imoveis/listar` | ✅ | Paginated (≤50). 1,928 rows on `oneconsu`. |
+  | `vista.imoveis.list` | `/imoveis/listar` | ✅ | Paginated (≤50). 1,943 rows on `oneconsu`. Delta-syncable: `filter` on `DataAtualizacao`. |
   | `vista.imoveis.get` | `/imoveis/detalhes` | ✅ | `?imovel=` top-level. |
   | `vista.imoveis.list_filters` | `/imoveis/listarConteudo` | ✅ | Live enum values per field. |
   | `vista.usuarios.list` | `/usuarios/listar` | ✅ | 10 rows. **The ungated broker roster.** |
   | `vista.agencias.list` | `/agencias/listar` | ✅ | 1 row. |
-  | `vista.clientes.list` | `/clientes/listar` | 🔒 401 | Paginated (≤50). LGPD: CPF/address/phone. |
-  | `vista.clientes.get` | `/clientes/detalhes` | 🔒 401 | `?cliente=` top-level. LGPD as above. |
+  | `vista.clientes.list` | `/clientes/listar` | ✅ *(granted 2026-08-21)* | Paginated (≤50). **42,960 rows**, no `DataAtualizacao` ⇒ no delta sync. LGPD: Celular/DataNascimento/Sexo/EstadoCivil/Profissao (no CPF or address on this tenant). |
+  | `vista.clientes.get` | `/clientes/detalhes` | ✅ *(granted 2026-08-21)* | `?cliente=` top-level. LGPD as above. |
   | `vista.corretores.list` | `/corretores/listar` | 🔒 401 | Substitute: `vista.usuarios.list`. |
   | `vista.diagnostics.probe` | — | ✅ | 8-row baseline; read `unexpected`, not `status`. |
   | `vista.diagnostics.list_known_endpoints` | — | ✅ | Static catalog + `probe_status`. |
@@ -106,10 +106,14 @@ host's MCP config at `python /absolute/path/mcp/vista/server.py`.
   and — deliberately — do **not** cache a 401. So the first call after Vista
   grants the permission runs a real calibration pass instead of inheriting a
   guess, with no server restart needed. `show_calibrated_fields` reporting an
-  empty `clientes`/`corretores` list therefore means "still gated", never
-  "calibrated to nothing". The candidate sets for these two families are the
-  public-doc superset and have **never been confirmed against a 200** — do
-  not copy them into a consumer as known-good.
+  empty `corretores` list therefore means "still gated", never "calibrated to
+  nothing". **`clientes` was granted 2026-08-21** and its candidate set is now
+  confirmed against a 200 (11 of 32 accepted — `vista.md § 4.2`); `corretores`
+  remains 401 and its candidate set is still the unconfirmed public-doc
+  superset, so do not copy that one into a consumer as known-good.
+  🔴 Candidate sets must stay generous **supersets**: calibration only ever
+  narrows, so a field absent from a CANDIDATE_* list can never be discovered
+  no matter what the tenant exposes.
 - **Calibration cache scope is per-process, not per-tenant-key.** If you
   rotate the tenant key without restarting the server, the cached
   field set may be stale. Restart the MCP server after rotation, or
@@ -126,7 +130,10 @@ public-doc field set is the wrong move. This MCP implements the
 
 1. Start from a CANDIDATE set (public-doc superset + showcase-known fields).
 2. Send to the endpoint. On 200 → cache, return.
-3. On `VistaFieldNotAvailable(field=X)` → drop X, retry.
+3. On `VistaFieldNotAvailable(fields=[X, Y, …])` → drop them ALL, retry.
+   Vista names every rejected field in one 400, so this converges in two
+   round-trips no matter how many fields the tenant refuses (measured
+   2026-08-21 on `/clientes/listar`: 13 round-trips before, 2 after).
 4. Loop until 200 or the field count hits the floor `["Codigo"]`.
 
 Inspect what the calibrator discovered for the active tenant via:

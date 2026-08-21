@@ -1,15 +1,21 @@
-"""vista.clientes.* tools — 🔒 permission-gated on this tenant.
+"""vista.clientes.* tools — ✅ GRANTED on this tenant since 2026-08-21.
 
 Per `KB § INTEGRATIONS/vista.md § 4.2`, `/clientes/listar` and
-`/clientes/detalhes` both answer **401** on `oneconsu-rest` — the routes
-exist, our key lacks the per-method grant. Every other `/clientes/*`
-sub-route answers 404 and is genuinely absent, so it gets no tool here: a
-tool that can only ever return "no route" is a lie about the surface.
+`/clientes/detalhes` answered **401** on `oneconsu-rest` until Vista applied
+the per-method grant on key `…644c` (2026-08-21, verified by live re-probe
+in a fresh process — not on the vendor's word). Both now return 200:
+**42,960 clients** on this tenant.
 
-The tools are registered anyway, for two reasons: a different tenant key
-may carry the grant, and the typed 401 is itself the answer a host LLM
-needs ("ask Vista", not "retry"). `probe_status` carries that distinction
-to the caller.
+Every other `/clientes/*` sub-route still answers 404 and is genuinely
+absent, so it gets no tool here: a tool that can only ever return "no route"
+is a lie about the surface. In particular there is still **no
+`/clientes/lead`**, so there remains no API path to write a captured lead
+back into Vista.
+
+The typed-401 path is KEPT, not deleted — a different tenant key may lack
+the grant, and this one's can be rolled back. `probe_status` carries that
+distinction to the caller: `permission_gated` means "ask Vista", not
+"retry".
 
 **Parity with the ungated families is deliberate** (imoveis/usuarios/
 agencias). Until 2026-08-19 this module was a stub that diverged in four
@@ -22,10 +28,16 @@ ways, each a small lie to the caller:
   * `/clientes/detalhes` had no tool at all despite being 401 (unlockable),
     not 404 (absent).
 
-⚠️ **LGPD.** `clientes` carries CPF, addresses and phones. A grant is not
-authorization to ingest: the data-category intake
-(`KB § PATTERNS/security/lgpd.md`) gates the first successful call. The MCP
-server itself does not persist responses.
+⚠️ **LGPD — the live field set is not the one we assumed.** Discovered
+2026-08-21 by reading which field names the tenant's 400 rejects (zero client
+records were read to establish this). This tenant does **not** expose `CPF`,
+`Email`, `Endereco`/`CEP`/`Cidade`, or `Fone`/`FoneCelular`. It **does**
+expose `Celular`, `DataNascimento`, `Sexo`, `EstadoCivil` and `Profissao` —
+no CPF or address, but more sensitive demographic categories than the old
+note claimed. The data-category intake (`KB § PATTERNS/security/lgpd.md`)
+must be done against the real list and **still gates bulk ingestion**: a
+grant is permission, not authorization. The MCP server itself does not
+persist responses.
 """
 from __future__ import annotations
 
@@ -150,23 +162,28 @@ def tool_descriptors() -> list[Tool]:
         Tool(
             name="vista.clientes.list",
             description=(
-                "List Vista clients (customers/leads). 🔒 PERMISSION-GATED: this "
-                "tenant returns 401, in which case the response carries a "
-                "typed_error, an empty items list and probe_status="
-                "'permission_gated' — that means ask Vista for the grant, NOT "
-                "retry. Paginated (max page_size=50). LGPD: clientes carry CPF / "
-                "addresses / phones — handle as personal data."
+                "List Vista clients (customers/leads). ✅ GRANTED on this tenant "
+                "2026-08-21 — returns 200 over ~42,960 clients. If a response "
+                "ever carries probe_status='permission_gated', the grant was "
+                "rolled back: ask Vista, do NOT retry. Paginated (max "
+                "page_size=50) and there is NO DataAtualizacao field on this "
+                "tenant, so clientes cannot be delta-synced — a full crawl is "
+                "~860 requests. LGPD: no CPF/address/email on this tenant, but "
+                "Celular / DataNascimento / Sexo / EstadoCivil / Profissao ARE "
+                "returned — handle as personal data."
             ),
             inputSchema=ListClientesInput.model_json_schema(),
         ),
         Tool(
             name="vista.clientes.get",
             description=(
-                "Fetch one Vista client by code (`/clientes/detalhes`). 🔒 "
-                "PERMISSION-GATED exactly like vista.clientes.list — and gated "
-                "before parameter validation, so a bad code still reads as 401 "
-                "while the grant is missing. LGPD: returns CPF / address / "
-                "phones on success."
+                "Fetch one Vista client by code (`/clientes/detalhes`). ✅ "
+                "GRANTED on this tenant 2026-08-21, exactly like "
+                "vista.clientes.list. Note the permission check precedes "
+                "parameter validation, so if the grant is ever rolled back a "
+                "bad code still reads as 401 rather than 400. LGPD: returns "
+                "Celular / DataNascimento / Sexo / EstadoCivil / Profissao on "
+                "this tenant (no CPF or address) — personal data."
             ),
             inputSchema=GetClienteInput.model_json_schema(),
         ),

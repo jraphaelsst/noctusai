@@ -47,7 +47,17 @@ class ShowcaseTabStatus(BaseModel):
 
     tab: str
     label: str
-    status: str  # "live" | "permission_denied" | "not_found" | "not_configured" | "doc_only"
+    # "live" | "permission_denied" | "pending_intake" | "not_found"
+    #   | "not_configured" | "doc_only"
+    #
+    # `pending_intake` exists because "we cannot show this" has two very
+    # different causes and conflating them makes the UI lie. `permission_denied`
+    # = Vista blocks us (401 — ask the vendor). `pending_intake` = Vista ALLOWS
+    # us and the block is on our side (LGPD data-category intake + wiring).
+    # Added 2026-08-21 when the `clientes` grant landed and the hardcoded
+    # `permission_denied` started telling users to chase a vendor request that
+    # had already been granted. See KB § INTEGRATIONS/vista.md § 4.2.
+    status: str
     endpoint: str
     note: Optional[str] = None
 

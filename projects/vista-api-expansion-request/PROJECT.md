@@ -11,8 +11,8 @@
 > Every number below was measured live — none is inferred.
 
 - **Created:** 2026-08-05
-- **Last updated:** 2026-08-19
-- **Status:** 🔒 **BLOCKED-EXTERNAL — sent; Vista replied "granted"; the grant is NOT in effect.** Re-probed live 2026-08-19: all three Tier-1 methods still return 401. The blocker is no longer "does Vista agree?" but "which key did they apply it to?" — ours (`…644c`) is demonstrably not it. See § 10.
+- **Last updated:** 2026-08-21
+- **Status:** 🟡 **PARTIALLY SATISFIED — Tier 1 is 2-of-3 granted and probe-verified.** Vista re-applied the permissions on key `…644c` and cleared their cache; re-probed live 2026-08-21 in a fresh process: `clientes/listar` → **200** (42,960 clients) and `clientes/detalhes` → **200**. `corretores/listar` is **still 401** and is the one open Tier-1 item. § 10's "which key did they grant?" question is **closed** — the same `…644c` key works, no rotation needed. Remaining: the corretores re-ask (§ 10a, drafted), the Tier-2 version question (now much better evidenced), and **the LGPD intake, which is what actually gates consuming any of this**.
 - **Owner / stakeholders:** USER (joaoraphaelsst) sends + owns the vendor relationship · tech-lead evaluates the reply
 - **Related docs:**
   - `KB § INTEGRATIONS/vista.md` — the authoritative Vista reference. § 3 (credential echo), § 4.2/4.5/4.6 (re-probed endpoint tables), § 5.3 (seed-canonical probe baseline), § 9 (the tiered ask + rationale)
@@ -49,6 +49,20 @@ evaluates what comes back.
 **This is the evidence the whole request rests on.** If Vista's reply
 contradicts something here, re-probe before conceding — but do not discard
 these numbers casually; they were measured, not assumed.
+
+> **⚠️ HISTORICAL as of 2026-08-21 — kept because it is what the request was
+> built on.** Three things below have since changed; § 10 and § 11 hold
+> current state:
+> 1. **§ 2.2 is obsolete** — `clientes/listar` + `clientes/detalhes` were
+>    granted and now return 200. Only `corretores/listar` still 401s.
+> 2. **§ 2.3 contains two of OUR OWN typos.** `pesquisar` is not a documented
+>    Vista method at all, and history is published singular (`historico`, not
+>    `historicos`). Both were re-probed under the correct published names on
+>    2026-08-21 and are still 404 — so the conclusion holds, but the evidence
+>    for two rows did not, and "404 on a name the vendor never published"
+>    proves nothing. `alterar` is likewise published as `update`.
+> 3. **Counts moved** — 1,943 imóveis (not 1,928), and `clientes` turns out
+>    to hold **42,960** rows.
 
 ### 2.1 What works today ✅
 
@@ -325,56 +339,125 @@ measured counter-example resolves it fastest.
 
 | Date | Change | Author |
 |---|---|---|
+| 2026-08-21 | **✅ The grant LANDED — Tier 1 is 2-of-3.** Vista replied that they had re-adjusted the endpoint permissions on `…644c` and cleared their system cache. Verified per § 7.0 (probe, not their word), twice: `vista.diagnostics.probe` and raw HTTP in a fresh process. `clientes/listar` 401 → **200** (42,960 clients); `clientes/detalhes` 401 → **200**; `corretores/listar` **still 401** → § 10a re-ask drafted. § 10's key question is closed: same key, no rotation. Also landed, all live-measured: the `clientes` field set mapped **without reading any client record** (11 of 32 candidates accepted — and the old guess omitted 7 fields the tenant does expose, which matters because calibration narrows and never widens); LGPD categories corrected (no CPF/address/email, but DataNascimento/Sexo/EstadoCivil/Profissao/Celular); `/imoveis` **delta sync solved** via `filter` on `DataAtualizacao`, closing a Tier-4 ask with no vendor involvement, while `/clientes` has no such field (860-request full crawl); `/clientes/listarConteudo`'s PHP crash fixed upstream; two § 2.3 route names exposed as **our own typos** (`pesquisar` is not a Vista method; history is `historico`, not `historicos`). Code: endpoint baseline re-graded so a future 401 reads as a ROLLBACK, and calibration now drops every rejected field per pass — **13 round-trips → 2**, measured live. `vista.md` § 2/4.2/4.5/8/9 updated. | Claude Opus 5 |
 | 2026-08-19 | **Re-probe: the grant has NOT landed.** Verified twice (MCP probe + raw HTTP, fresh process, well-formed payloads) — `clientes/listar`, `clientes/detalhes`, `corretores/listar` all still 401. Full § 2.3 404 surface re-swept: nothing moved. Two new endpoint facts: `/corretores/detalhes` + `/corretores/listarConteudo` are 404; `/clientes/listarConteudo` exists ungated but crashes (raw PHP `in_array()` error) — not a partial grant. Separately, refined the gated MCP surface to parity with the working one (silent pagination drop, dead candidate-field constant, **401 poisoning the calibration cache**, missing `vista.clientes.get`, unenforced Fake↔Real parity) so a grant lands on working code instead of stubs. `vista.md` § 4.2/4.5/5.3/8/9 updated. Status → BLOCKED-EXTERNAL, awaiting the key question in § 10. | Claude Opus 5 |
 | 2026-08-05 | Project filed. Live audit of 24 Vista routes established the § 2 baseline; the 401-vs-404 split and the read-only 405/404 write-probe technique were the two enabling findings. Email drafted (§ 6). Related same-day fix `d3cb3c26` shipped the credential redaction, corrected the endpoint tables in `vista.md`, and lifted `PROBE_ENDPOINTS` to a seed-canonical baseline after finding it forked at N=2. **Status: awaiting user send.** | Claude Opus 5 |
 
 
 ---
 
-## 10. 🔴 The open question — which key did Vista grant?
+## 10. ✅ RESOLVED — the grant landed on our existing key
 
-> **Added 2026-08-19.** This is the whole remaining blocker. It is a
-> question for the USER and Vista; no code change can resolve it.
+> **Closed 2026-08-21.** This section asked which key Vista had granted,
+> because the ask was reportedly approved on 2026-08-05 yet all three methods
+> still 401'd on 2026-08-19. The answer turned out to be the least dramatic
+> of the three possibilities the table listed: **it was acknowledged but not
+> actually applied.** Vista then re-applied it and cleared their system
+> cache, and it took effect on the *same* key, `…644c`.
+>
+> **No key rotation is needed to use the grant** — which decouples the
+> § 4 credential-echo rotation from this project. That rotation is still
+> worth doing on its own merits, and is still the user's call (§ 7.4).
 
-**What we know, measured not inferred.** Vista was asked to enable three
-methods (§ 6 item 1) and reportedly answered that access was granted. On
-2026-08-19 all three still return `401 Permissão Negada` naming the method:
+**What the 2026-08-19 investigation got right, and why it still mattered.**
+It refused to record the ask as satisfied on the vendor's word, and it
+excluded both false negatives (MCP module cache, malformed request) before
+concluding. That was correct: the grant genuinely was not in effect. Had we
+recorded "granted" from the reply, the 2026-08-21 flip would have looked like
+a regression instead of the fix it was. **Keep verifying vendor claims by
+probe** (§ 7.0) — this cycle is the argument for it, not against it.
 
-```
-401  /clientes/listar      Permissão Negada: "<KEY>"  Método: clientes/listar
-401  /clientes/detalhes    Permissão Negada: "<KEY>"  Método: clientes/detalhes
-401  /corretores/listar    Permissão Negada: "<KEY>"  Método: corretores/listar
-```
+**Live state after the grant** (all measured 2026-08-21, fresh process):
 
-**The two false negatives that could have caused this were both excluded:**
-
-1. *MCP module cache* (§ 7.0's warning, which cost real time on 2026-08-05) —
-   the second probe ran as raw HTTP in a **fresh process**, bypassing the MCP
-   entirely.
-2. *Malformed request* — the probe was repeated with well-formed `pesquisa`
-   payloads (`fields` + `paginacao`), not just a bare GET. Same 401.
-
-The key under test is `VISTA_API_KEY` ending `…644c`, identical in the root
-`.env` and `mcp/vista/.env` (compared programmatically, not by eye).
-
-**Therefore exactly one of these is true:**
-
-| Possibility | How to confirm | Who |
+| Method | Before | After |
 |---|---|---|
-| **Vista issued a NEW key** carrying the grant, and we are still on the old one | Ask Vista / check the reply for an attached credential | USER |
-| The grant was applied to a **different tenant or account** | Ask Vista to confirm it was applied to tenant `oneconsu` | USER |
-| It was acknowledged but **never actually applied** | Re-ask, quoting the three method names verbatim + the live 401 (**redact our key** — never paste the credential back) | USER → Vista |
+| `/clientes/listar` | 401 | ✅ **200** — 42,960 clients |
+| `/clientes/detalhes` | 401 | ✅ **200** — with `?cliente=<id>` |
+| `/corretores/listar` | 401 | 🔒 **401 — unchanged** |
 
-**If a new key comes back — do not just paste it in.** Rotation touches the
-root `.env` **and** the prod environment together; an uncoordinated rotation
-breaks production (§ 7.4). Route it through the user as a deliberate step.
-A rotation is desirable anyway: § 4's credential echo means the current key
-has been exposed in error bodies.
+---
 
-**When the grant does land, the code is ready and self-arming.** The gated
-tools are no longer stubs (see the 2026-08-19 change-log row): calibration
-deliberately does **not** cache a 401, so the first successful call runs a
-real per-tenant field calibration with no restart, and
-`vista.diagnostics.probe` now carries `/clientes/detalhes` so the flip is
-*detected* rather than stumbled upon. **The LGPD gate in § 5 still applies —
-a granted permission is not authorization to start ingesting.**
+## 10a. The one open Tier-1 item — `corretores/listar`
+
+Vista's reply asked us to send the request details if the error persisted:
+*"nos encaminhem a requisição realizada (preferencialmente com a URL, método
+e retorno recebido)"*. It does persist, for exactly one method. Send this.
+
+**🔴 Redaction rule: the `key=` value below MUST stay redacted.** Vista
+echoes our key in 401 bodies (§ 4) — pasting the real one back into a
+support ticket re-exposes the credential we already had to defend against.
+
+---
+
+**Assunto:** Re: liberação de métodos — `corretores/listar` ainda retorna 401 (tenant `oneconsu`)
+
+Prezada equipe Vista,
+
+Obrigado pelo retorno e pelo ajuste. Confirmamos que **dois dos três métodos
+foram liberados com sucesso** na chave terminada em `644c`:
+
+- `clientes/listar` → **200 OK**
+- `clientes/detalhes` → **200 OK**
+
+Resta **um** método ainda retornando `401`. Segue a requisição conforme
+solicitado:
+
+- **Método HTTP:** `GET`
+- **URL:** `https://oneconsu-rest.vistahost.com.br/corretores/listar?key=<CHAVE_644c>&pesquisa={"fields":["Codigo","Nome"],"paginacao":{"pagina":1,"quantidade":1}}`
+- **Header:** `Accept: application/json`
+- **Retorno (HTTP 401):**
+  ```json
+  {"status":401,"message":"Permissão Negada: \"<CHAVE_644c>\" Método: corretores/listar"}
+  ```
+
+Observação que talvez ajude no diagnóstico: os três métodos foram
+solicitados no mesmo chamado e para a mesma chave, e dois deles foram
+liberados — portanto não parece ser propagação pendente, e sim que
+`corretores/listar` não entrou no ajuste.
+
+Aproveitamos para duas questões técnicas:
+
+1. **Versão da API deste tenant.** Vários métodos da documentação pública
+   retornam `404 No route found` aqui (`imoveis/campos`, `imoveis/listas`,
+   `imoveis/historico`, `imoveis/docs`, `imoveis/porcorretor`,
+   `clientes/campos`, `clientes/historico`, entre outros), enquanto métodos
+   que **não constam na documentação** funcionam normalmente
+   (`imoveis/listarConteudo`, `clientes/listarConteudo`, `usuarios/listar`,
+   `agencias/listar`). Qual versão da API REST o tenant `oneconsu` utiliza,
+   existe URL base mais recente, e onde encontramos a documentação
+   correspondente a essa versão?
+
+2. **`DataAtualizacao` em `clientes`.** Em `imoveis/listar` conseguimos
+   sincronização incremental via `filter` sobre `DataAtualizacao`, o que
+   funciona muito bem. Em `clientes/listar` esse campo não está disponível —
+   com 42.960 registros e o limite de 50 por página, qualquer atualização
+   exige 860 requisições. É possível expor `DataAtualizacao` em `clientes`
+   (ou elevar o limite de `quantidade`)?
+
+Ficamos à disposição.
+
+Atenciosamente,
+*[assinatura]*
+
+---
+
+## 11. What is NOT unblocked by this grant
+
+Recorded so the next agent does not over-read the win.
+
+- **🔴 LGPD gates consumption, and the grant does not touch it.** Permission
+  from Vista is not authorization to ingest third-party personal data. The
+  data-category intake (`KB § PATTERNS/security/lgpd.md`) must land before
+  any bulk `clientes` pull — and it must be written against the **real**
+  field set (§ 4.2 of `vista.md`), not the old "CPF, addresses and phones"
+  assumption, which was wrong. Actual: no CPF, no address, no email; but
+  `Celular`, `DataNascimento`, `Sexo`, `EstadoCivil`, `Profissao`.
+- **Lead write-back is still impossible.** `/clientes/lead` is 404, not 401 —
+  no permission unlocks it. A lead-capture flow still terminates in our own
+  database and the agency still has two systems to check. This remains a
+  **product decision to surface to the user** (§ 7.3), unchanged.
+- **The deal pipeline is still invisible.** `negociacoes` / `propostas` /
+  `vendas` are 404 — pending the Tier-2 version answer.
+- **`clientes` cannot be delta-synced.** No `DataAtualizacao` on that family;
+  860 requests per full refresh. Design no sync loop over it until § 10a's
+  question is answered.

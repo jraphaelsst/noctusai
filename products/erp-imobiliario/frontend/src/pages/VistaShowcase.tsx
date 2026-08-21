@@ -79,6 +79,10 @@ const formatArea = (value: number | null | undefined) =>
 const STATUS_PILL: Record<string, { label: string; tone: string }> = {
   live: { label: 'Conectado', tone: 'bg-emerald-100 text-emerald-800' },
   permission_denied: { label: '401 — Permissão pendente', tone: 'bg-amber-100 text-amber-800' },
+  // Vista ALLOWS this one — the block is on our side (LGPD intake + wiring).
+  // Distinct from permission_denied so the UI stops sending users to chase a
+  // vendor grant that already landed (2026-08-21). See vista.md § 4.2.
+  pending_intake: { label: 'Liberado — pendente LGPD', tone: 'bg-sky-100 text-sky-800' },
   not_found: { label: '404 — Indisponível', tone: 'bg-slate-200 text-slate-700' },
   not_configured: { label: 'Sem credenciais', tone: 'bg-rose-100 text-rose-800' },
   doc_only: { label: 'Apenas documentação', tone: 'bg-slate-100 text-slate-600' },
@@ -181,7 +185,11 @@ function SubTabsBar() {
   const tabByKey: Record<string, VistaTabStatus> = Object.fromEntries(tabs.map(t => [t.tab, t]));
   const renderTrigger = (key: string, label: string) => {
     const t = tabByKey[key];
-    const isLocked = t?.status === 'permission_denied' || t?.status === 'not_found' || t?.status === 'not_configured';
+    const isLocked =
+      t?.status === 'permission_denied' ||
+      t?.status === 'pending_intake' ||
+      t?.status === 'not_found' ||
+      t?.status === 'not_configured';
     return (
       <TabsTrigger key={key} value={key} className="gap-2">
         {isLocked && <Lock className="h-3.5 w-3.5" />}
@@ -529,15 +537,15 @@ function AgenciaTab() {
 function PermissionPlaceholderTab({ tab }: { tab: 'clientes' | 'corretores' | 'fotos' }) {
   const messages: Record<string, { title: string; body: string; closing: string; status: string }> = {
     clientes: {
-      title: 'Clientes — permissão pendente',
-      body: 'Os endpoints /clientes/listar e /clientes/detalhes existem na API Vista, mas a chave deste tenant retorna 401 (Permissão Negada). Para liberar, solicite à Vista a expansão da chave atual.',
-      closing: 'Quando a permissão for concedida, este tab passa a operar normalmente sem alterações de código.',
-      status: 'permission_denied',
+      title: 'Clientes — liberado pela Vista, pendente do nosso lado',
+      body: 'A Vista concedeu a permissão em 21/08/2026: /clientes/listar e /clientes/detalhes retornam 200 (42.960 clientes). O que falta agora é nosso: o enquadramento LGPD das categorias efetivamente retornadas por este tenant — Celular, DataNascimento, Sexo, EstadoCivil e Profissao (não há CPF, endereço nem e-mail) — e a wiring deste tab ao endpoint.',
+      closing: 'Não abra chamado na Vista por este tab: a pendência não é mais deles.',
+      status: 'pending_intake',
     },
     corretores: {
       title: 'Corretores — permissão pendente',
-      body: 'O endpoint /corretores/listar existe mas retorna 401 nesta chave. Mesmo procedimento do tab Clientes.',
-      closing: 'Quando a permissão for concedida, este tab passa a operar normalmente sem alterações de código.',
+      body: 'O endpoint /corretores/listar existe mas retorna 401 nesta chave. Foi solicitado no mesmo chamado que Clientes (liberado em 21/08/2026) e não foi liberado junto — ou seja, é decisão por método, não propagação pendente.',
+      closing: 'Enquanto isso, o roster de corretores já está disponível via /usuarios/listar (Setor: Corretores), no tab Usuários.',
       status: 'permission_denied',
     },
     fotos: {

@@ -24,8 +24,14 @@ mistake, so it belongs beside the client it calibrates.
    fields (the constants from the showcase adapter — known to work for at
    least one tenant).
 2. Send the bundle to the endpoint. On 200 → done, cache.
-3. On `VistaFieldNotAvailable(field=X)` → drop `X`, retry.
+3. On `VistaFieldNotAvailable(fields=[X, Y, …])` → drop them ALL, retry.
+   Vista names every rejected field in one 400, so this converges in two
+   round-trips regardless of how many fields the tenant refuses.
 4. Loop until 200 or until field count hits the floor `["Codigo"]`.
+
+**Calibration narrows; it never widens.** A field missing from a CANDIDATE_*
+list can never be discovered, so those lists must stay supersets of anything
+any tenant might expose — see the `CANDIDATE_CLIENTE_FIELDS` note.
 
 **Caching.** Results live in-process for the process lifetime (no TTL).
 Tenant key rotation is rare; on rotation, restart the MCP server (or
@@ -103,18 +109,32 @@ CANDIDATE_AGENCIA_FIELDS: list[str] = [
 
 CANDIDATE_CONTEUDO_FIELDS: list[str] = ["Status", "Categoria", "Cidade", "Bairro"]
 
-# 🔒 Gated families (vista.md § 4.2 / § 4.5). These candidate sets are
-# UNPROVEN against a 200 — `oneconsu-rest` answers 401 on both endpoints, so
-# no field here has been confirmed live. They are the public-doc superset,
-# and they exist so the calibration loop has something to narrow the moment
-# the grant lands: `_calibrate` treats a 401 as "do not cache", so the first
-# successful call after a grant runs a real calibration pass instead of
-# inheriting a guess. Do NOT copy these into a consumer as a known-good set.
+# /clientes/listar — ✅ PROVEN against a 200 as of 2026-08-21, when Vista
+# applied the § 9 Tier-1 grant. The eleven fields marked ✅ below were
+# confirmed live on `oneconsu-rest`; the rest are the public-doc superset,
+# kept because **calibration can only narrow, never widen** — a field absent
+# from this list is invisible to every consumer forever, no matter what the
+# tenant exposes. That is exactly what went wrong here: the pre-grant list was
+# a guess that happened to omit seven fields this tenant does offer
+# (DataNascimento, Corretor, Status, Profissao, EstadoCivil, Sexo, Interesse),
+# so the first post-grant calibration would have silently under-fetched.
+#
+# ⚠️ LGPD — the live set is NOT the one vista.md assumed. `CPF`, `Email`,
+# `Endereco`/`CEP`/`Cidade` and `Fone`/`FoneCelular` are all REJECTED by this
+# tenant, but `Celular`, `DataNascimento`, `Sexo`, `EstadoCivil` and
+# `Profissao` are available — i.e. no CPF or address, yet more sensitive
+# demographic categories than the doc claimed. Re-do the data-category intake
+# against THIS list, not the old assumption (vista.md § 4.2).
 CANDIDATE_CLIENTE_FIELDS: list[str] = [
-    "Codigo", "Nome", "Email", "Fone", "FoneCelular", "Celular",
+    # ── confirmed live 2026-08-21 (✅ accepted by `oneconsu-rest`) ──
+    "Codigo", "Nome", "Celular", "DataCadastro", "DataNascimento",
+    "Corretor", "Status", "Profissao", "EstadoCivil", "Sexo", "Interesse",
+    # ── public-doc superset; rejected by THIS tenant, kept for others ──
+    "Email", "Fone", "FoneCelular", "Telefone", "CPF",
     "Bairro", "Cidade", "Estado", "UF", "CEP",
-    "Endereco", "Numero", "Complemento",
-    "DataCadastro", "DataAtualizacao",
+    "Endereco", "Numero", "Complemento", "Observacao",
+    "Tipo", "Origem", "Categoria", "Finalidade",
+    "ValorMaximo", "ValorMinimo", "DataAtualizacao",
 ]
 
 CANDIDATE_CORRETOR_FIELDS: list[str] = [
@@ -254,7 +274,11 @@ class Calibrator:
         return [f for f in result if isinstance(f, str)]
 
     async def get_cliente_fields(self, client: VistaClient) -> list[str]:
-        """🔒 Gated — returns the floor (uncached) while the tenant answers 401."""
+        """✅ Granted on `oneconsu-rest` 2026-08-21 — calibrates for real now.
+
+        Still returns the floor *uncached* on a 401, so a grant rollback (or a
+        tenant that never had the grant) re-arms instead of freezing.
+        """
         result = await self._calibrate(
             client,
             cache_key="clientes",
@@ -317,8 +341,12 @@ class Calibrator:
                 try:
                     await requester(current)
                 except VistaFieldNotAvailable as e:
-                    field_name = e.field
-                    if field_name == "<unknown>":
+                    # Vista names EVERY rejected field in one 400, so drop them
+                    # all in this pass. Dropping only the first cost one HTTP
+                    # round-trip per rejected field — 13 for `/clientes/listar`
+                    # on `oneconsu` (measured 2026-08-21), against 2 now.
+                    names = [f for f in e.fields if f != "<unknown>"]
+                    if not names:
                         # Can't recover — bail to floor and record what we had.
                         logger.warning(
                             "calibration[%s]: 400 with unparseable field; falling back to floor",
@@ -326,8 +354,9 @@ class Calibrator:
                         )
                         current = list(FLOOR_FIELDS)
                         break
-                    rejected.append(field_name)
-                    current = _drop_field(current, field_name)
+                    for field_name in names:
+                        rejected.append(field_name)
+                        current = _drop_field(current, field_name)
                     if not current or current == FLOOR_FIELDS:
                         break
                     continue

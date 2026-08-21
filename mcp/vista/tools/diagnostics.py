@@ -31,12 +31,34 @@ _TOOL_BY_PATH = {
 # tool that takes a required arg (`/imoveis/detalhes`), or confirmed 404 on
 # this tenant. Listed so a caller stops re-deriving their reachability.
 # `absent` ≠ `permission_gated`: a support request will NOT unlock these.
+#
+# Re-swept against the PUBLISHED method names 2026-08-21 (vistasoft.com.br/api).
+# The previous list carried two names Vista never documented — `pesquisar` and
+# `historicos` (the real one is singular, `historico`) — so two of its four
+# "confirmed absent" rows were confirming our own typos. Every row below was
+# GET-probed: 404 = no route, 405 = exists but rejects GET.
 _UNPROBED_KNOWN: list[dict] = [
     {"path": "/imoveis/detalhes", "probe_status": "live_probed", "tool": "vista.imoveis.get"},
-    {"path": "/clientes/pesquisar", "probe_status": "absent", "tool": None},
-    {"path": "/clientes/historicos", "probe_status": "absent", "tool": None},
+    # ── /clientes sub-routes: documented by Vista, absent on this tenant ──
+    {"path": "/clientes/historico", "probe_status": "absent", "tool": None},
+    {"path": "/clientes/porcorretor", "probe_status": "absent", "tool": None},
+    {"path": "/clientes/poragencia", "probe_status": "absent", "tool": None},
+    {"path": "/clientes/favoritos", "probe_status": "absent", "tool": None},
+    {"path": "/clientes/campos", "probe_status": "absent", "tool": None},
     {"path": "/clientes/lead", "probe_status": "absent", "tool": None},
     {"path": "/clientes/cadastrar", "probe_status": "absent", "tool": None},
+    {"path": "/clientes/update", "probe_status": "absent", "tool": None},
+    {"path": "/clientes/cadhis", "probe_status": "absent", "tool": None},
+    {"path": "/clientes/cadcor", "probe_status": "absent", "tool": None},
+    # ── /imoveis sub-routes: documented by Vista, absent on this tenant ──
+    {"path": "/imoveis/listas", "probe_status": "absent", "tool": None},
+    {"path": "/imoveis/campos", "probe_status": "absent", "tool": None},
+    {"path": "/imoveis/historico", "probe_status": "absent", "tool": None},
+    {"path": "/imoveis/docs", "probe_status": "absent", "tool": None},
+    {"path": "/imoveis/porcorretor", "probe_status": "absent", "tool": None},
+    {"path": "/imoveis/poragencia", "probe_status": "absent", "tool": None},
+    {"path": "/imoveis/cadastrar", "probe_status": "absent", "tool": None},
+    {"path": "/imoveis/update", "probe_status": "absent", "tool": None},
 ]
 
 
@@ -78,7 +100,7 @@ async def probe(args: dict) -> dict:
 async def list_known_endpoints(args: dict) -> dict:
     """Static catalog of endpoints this MCP knows about + their probe_status.
 
-    Statuses (all re-probed live 2026-08-05 — vista.md § 4, § 8):
+    Statuses (all re-probed live 2026-08-21 — vista.md § 4, § 8):
       live_probed       — reachable, wrapped by a tool.
       permission_gated  — route EXISTS, this tenant's key lacks the
                           per-method grant. One Vista-side flag away.

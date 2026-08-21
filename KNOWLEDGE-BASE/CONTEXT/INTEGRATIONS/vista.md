@@ -118,6 +118,27 @@ relations:
 | comparison | `{"ValorVenda": [">", 250000]}` | `>`, `<`, `>=`, `<=`, `like`, `!=` |
 | list | `{"Status": ["ATIVO", "DISPONIVEL"]}` | IN — semantics confirmed empirically; tested against `/imoveis/listar` |
 
+#### ✅ Delta sync — SOLVED, and it needs nothing from Vista
+
+Long carried as an open Tier-4 ask ("existe filtro de alterados desde
+`DataAtualizacao`?"). It exists and it works — `filter` already does it, in
+both shapes, **confirmed live 2026-08-21** against `/imoveis/listar`:
+
+```jsonc
+{"filter": {"DataAtualizacao": [">=", "2026-08-01"]}}   // 826 of 1,943
+{"filter": {"DataAtualizacao": ["2026-08-01", "2026-08-31"]}}  // 826 — range form
+{"order":  {"DataAtualizacao": "desc"}}                  // newest-first cursor
+```
+
+So a `/imoveis` refresh does **not** need the 39-request full crawl the
+support request assumed; it needs one filtered page-walk over what actually
+changed. The adapter still full-crawls — an open improvement, not a
+blocker.
+
+**This does NOT extend to `/clientes`**, which exposes no `DataAtualizacao`
+at all (§ 4.2) — 42,960 rows, full crawl only. Check for the field before
+assuming delta sync on any family.
+
 ### `paginacao`
 
 ```json
@@ -463,51 +484,56 @@ and `Embu Das Artes` — Vista does NOT canonicalize. A filter using
 exactly one form will miss properties listed under the other. Surface
 this to the user / model when populating dropdowns.
 
-### 4.2 `/clientes` (Clients) — 🔒 two routes gated, the rest ❌ absent
+### 4.2 `/clientes` (Clients) — ✅ two routes GRANTED 2026-08-21, the rest ❌ absent
 
-**Re-probed live 2026-08-19 — no change from the 2026-08-05 baseline.**
-The critical distinction this table carries: **🔒 401 ≠ ❌ 404**. Only 🔒 is
-unlocked by a Vista support request — a 404 route does not exist on this
-tenant's REST deployment, so asking them to "grant permission" on it is a
-category error.
+**Re-probed live 2026-08-21 — the § 9 Tier-1 grant LANDED.** The critical
+distinction this table carries: **🔒 401 ≠ ❌ 404**. Only 🔒 is unlocked by a
+Vista support request — a 404 route does not exist on this tenant's REST
+deployment, so asking them to "grant permission" on it is a category error.
+That split is exactly what played out: the two 🔒 rows opened, and every ❌
+row is still 404 after the same grant.
 
-> **⚠️ 2026-08-19 — the grant has NOT landed.** Vista was asked (§ 9 Tier 1)
-> and reportedly answered that access was granted. It is not in effect on our
-> key: all three Tier-1 methods still return 401, verified **three times** —
-> via `vista.diagnostics.probe`, via raw HTTP in a fresh process with
-> **well-formed** `pesquisa` payloads, and again in a **restarted MCP session**
-> the same day. The three legs retire the three available excuses in turn: the
-> MCP's in-memory module cache, a malformed-request false negative, and a stale
-> long-lived MCP process. Do not record this ask
-> as satisfied on a vendor's word; §7.0 of the project doc says verify by
-> probe, and the probe disagrees. Most likely explanations, in order: the
-> grant was applied to a **different key** than the one in `VISTA_API_KEY`
-> (ending `…644c`), or to a different tenant/account, or it was acknowledged
-> but never applied. Resolving which is a question for the user + Vista, not
-> something the codebase can answer.
+> **✅ 2026-08-21 — the grant is in effect on key `…644c`.** Vista replied
+> that they had re-applied the permissions and cleared their system cache.
+> Verified — not taken on their word (§ 7.0): `vista.diagnostics.probe`
+> **and** raw HTTP in a fresh process both show `/clientes/listar` → **200**
+> (42,960 clients) and `/clientes/detalhes?cliente=<id>` → **200**. The
+> 2026-08-19 "grant not landed" finding was accurate when written; what
+> changed was on Vista's side, and their cache flush is the most likely
+> reason the first attempt appeared to do nothing.
+>
+> **`/corretores/listar` was in the SAME request and did NOT open** — it
+> still returns 401 (§ 4.5). Record this ask as *partially* satisfied; two of
+> three methods.
 
-| Op | Method | Path | ID param | This tenant (2026-08-19) | Public docs | MCP tool |
+| Op | Method | Path | ID param | This tenant (2026-08-21) | Public docs | MCP tool |
 |---|---|---|---|---|---|---|
-| List | GET | `/clientes/listar` | — | 🔒 401 | ❓ | `vista.clientes.list` |
-| Detail | GET | `/clientes/detalhes` | `?cliente=` | 🔒 401 | 📖 | `vista.clientes.get` |
-| Search | GET | `/clientes/pesquisar` | — | ❌ 404 | 📖 |
+| List | GET | `/clientes/listar` | — | ✅ 200 | 📖 | `vista.clientes.list` |
+| Detail | GET | `/clientes/detalhes` | `?cliente=` | ✅ 200 | 📖 | `vista.clientes.get` |
 | By broker | GET | `/clientes/porcorretor` | — | ❌ 404 | 📖 |
 | By agency | GET | `/clientes/poragencia` | — | ❌ 404 | 📖 |
-| History | GET | `/clientes/historicos` | `?cliente=` | ❌ 404 | 📖 |
+| History | GET | `/clientes/historico` | `?cliente=` | ❌ 404 | 📖 |
 | Favorites | GET | `/clientes/favoritos` | `?cliente=` | ❌ 404 | 📖 |
 | Available fields | GET | `/clientes/campos` | — | ❌ 404 | 📖 |
 | Create | POST | `/clientes/cadastrar` | — | ❌ 404 | 📖 |
-| Update | PUT | `/clientes/alterar` | `?cliente=` | ❌ 404 | 📖 |
+| Update | PUT | `/clientes/update` | `?cliente=` | ❌ 404 | 📖 |
 | Add history | POST | `/clientes/cadhis` | `?cliente=` | ❌ 404 | 📖 |
 | Assign broker | POST | `/clientes/cadcor` | `?cliente=` | ❌ 404 | 📖 |
 | Submit lead | POST | `/clientes/lead` | — | ❌ 404 | 📖 |
 
-> **Corrections vs the 2026-05-03 snapshot** (always-doc-the-trim):
-> `pesquisar` was recorded 🔒 and is now ❌; the six ❓ rows
-> (`porcorretor`, `poragencia`, `historicos`, `favoritos`, `campos`, and
-> the four write ops) are now confirmed ❌. Nothing regressed on our side —
-> the ❓ rows had simply never been probed, and `pesquisar` was likely
-> mis-recorded from a sibling's 401.
+> **🔴 Two route names in the pre-2026-08-21 table were OUR typos, not
+> Vista's routes.** `/clientes/pesquisar` is not a documented Vista method at
+> all (it was invented here and then "confirmed absent" — a 404 for a route
+> nobody publishes proves nothing), and history is documented singular,
+> `/clientes/historico`, where we had probed `historicos`. Both are corrected
+> above and both were re-probed under the published name: still 404. The
+> lesson generalises — **probe the vendor's published method names, and treat
+> a 404 on a name you cannot cite in their docs as untested, not absent.**
+>
+> **Earlier corrections vs the 2026-05-03 snapshot** (always-doc-the-trim):
+> the ❓ rows (`porcorretor`, `poragencia`, `historico`, `favoritos`,
+> `campos`, and the four write ops) are confirmed ❌ — they had simply never
+> been probed.
 
 **How the write rows were probed without issuing a write.** Vista's router
 returns **405** for a route that exists but rejects the method, and **404**
@@ -524,48 +550,66 @@ submission (`lead`) — those routes are absent regardless of permission.
 Notably there is therefore **no API path to write a captured lead back into
 Vista** on this tenant; an inbound-lead flow terminates in our own database.
 
-#### Candidate field set — ⚠️ UNPROVEN (no 200 has ever been observed)
+#### Field set — ✅ CONFIRMED live 2026-08-21 (11 of 32 candidates)
 
-`§ 4.3` and `§ 4.4` publish *confirmed* field sets because those endpoints
-return 200. This one cannot: every request 401s before a field is ever
-evaluated, so the list below is the **public-doc superset**, not a
-calibrated set. It lives in `calibration.CANDIDATE_CLIENTE_FIELDS` purely
-so the probe loop has something to narrow the moment a grant lands.
+Established **without reading a single client record**: Vista's 400 names
+every field it rejects, so `accepted = requested − rejected` is derivable
+from error messages alone. Use that technique whenever a field set must be
+mapped ahead of an LGPD intake.
 
 ```
-Codigo  Nome  Email  Fone  FoneCelular  Celular
-Bairro  Cidade  Estado  UF  CEP
-Endereco  Numero  Complemento
-DataCadastro  DataAtualizacao
+✅ ACCEPTED   Codigo  Nome  Celular  DataCadastro  DataNascimento
+              Corretor  Status  Profissao  EstadoCivil  Sexo  Interesse
+
+❌ REJECTED   Email  Fone  FoneCelular  Telefone  CPF  Observacao
+              Bairro  Cidade  Estado  UF  CEP  Endereco  Numero  Complemento
+              Tipo  Origem  Categoria  Finalidade  ValorMaximo  ValorMinimo
+              DataAtualizacao
 ```
 
-**Do not copy this into a consumer as a known-good set.** Expect Vista to
-reject several with `400 "Campo X não está disponível"` on first real
-contact — that is precisely what the calibrator is for, and why a 401 is
-deliberately **not cached** (a cached denial would freeze this un-narrowed
-superset in place for the process lifetime and 400 on the first live call
-after the grant).
+**🔴 The old guess was wrong in BOTH directions, and each direction bites
+differently.** It listed `Email`/`Fone`/`Endereco`/`CEP`/`Cidade` — all
+rejected here — and it *omitted* seven fields this tenant does expose
+(`DataNascimento`, `Corretor`, `Status`, `Profissao`, `EstadoCivil`, `Sexo`,
+`Interesse`). The false positives are harmless: calibration drops them. The
+omissions are not — **calibration narrows and can never widen**, so a field
+missing from `calibration.CANDIDATE_CLIENTE_FIELDS` is invisible to every
+consumer forever, regardless of what the tenant offers. Keep those lists as
+generous supersets. Guarded by
+`test_candidate_cliente_fields_cover_the_live_tenant_set`.
 
-#### `/clientes/listarConteudo` — exists, ungated, and broken 🐛
+**⚠️ LGPD — re-do the intake against this list.** The pre-grant note claimed
+"CPF, addresses and phones". The truth is *neither* worse nor milder, but
+different: **no CPF, no address, no email**, yet `DataNascimento`, `Sexo`,
+`EstadoCivil`, `Profissao` and `Celular` are all returned. That is a
+demographic profile, and a data-category intake written against the old
+assumption would classify the wrong categories.
 
-Newly probed 2026-08-19. Unlike every other `/clientes/*` sub-route it does
-**not** 401 and does **not** 404 on a bare GET — it returns the ordinary
-`400 "É necessário informar um JSON String"`, i.e. the route exists and our
-key passes the permission check. That briefly looks like a partial grant.
-It is not: sent a well-formed `pesquisa`, it answers **404 with a raw PHP
-error** — `in_array(): Argument #2 ($haystack) must be of type array, null
-given`. That is an unhandled server-side crash, not a contract. No tool
-wraps it; do not build on it, and do not read its 400 as evidence that
-`clientes` is partially open.
+**🔴 No `DataAtualizacao` ⇒ `clientes` cannot be delta-synced.** Unlike
+`/imoveis` (§ 2 `filter`), there is no modification timestamp to filter on,
+so the only way to refresh 42,960 clients is a full crawl — **860 requests**
+at the 50-row cap. Ask Vista for the field before designing any sync loop
+over this family (§ 9 Tier 4).
 
-**LGPD.** `clientes` carries CPF, addresses and phones. A grant means
-ingesting third-party personal data — do the data-category intake
-(`KB § PATTERNS/security/lgpd.md`) *before* the first call, not after.
+#### `/clientes/listarConteudo` — the PHP crash is FIXED, still unwrapped
 
-UI behavior on this tenant: render a "Permissão pendente — solicite expansão
-junto à Vista" placeholder and surface the 401 status code. The MCP tool
-surfaces the same as a typed `VistaPermissionDenied` (with the key redacted
-per § 3).
+Probed 2026-08-19 it returned **404 with a raw PHP error** on a well-formed
+`pesquisa` (`in_array(): Argument #2 ($haystack) must be of type array, null
+given`) — an unhandled server-side crash. **Re-probed 2026-08-21 it answers
+a normal `400 "Campo X não está disponível"`**, i.e. it now behaves like
+every other endpoint and validates fields properly. Most likely repaired by
+the same maintenance that applied the grant.
+
+It is still **not wrapped by a tool** and its useful field set is unmapped
+(`Cidade` — the obvious analogue of `/imoveis/listarConteudo` — is rejected).
+If a `clientes` filter-enum UI is ever needed, map it then; do not assume
+parity with the `/imoveis` version.
+
+**UI behavior now that the grant landed:** render real client data. Keep the
+"Permissão pendente — solicite expansão junto à Vista" placeholder wired to
+the typed `VistaPermissionDenied` path — it is the correct rendering if the
+grant is ever rolled back, and for any tenant that lacks it. The MCP tool
+still surfaces 401 as a typed error with the key redacted (§ 3).
 
 ### 4.3 `/usuarios` (internal Vista users) — ✅
 
@@ -609,11 +653,15 @@ Fields that returned 400 on this tenant: `Estado`, `UF`, `CEP`, `Telefone`,
 
 ### 4.5 `/corretores` (brokers) — 🔒 one route gated, two ❌ absent
 
-**Re-probed live 2026-08-19 — unchanged.** Route exists; this tenant's key
-lacks the per-method grant. Unlockable by a support request (unlike the ❌
-families in § 4.6), but see the substitute below before spending one.
+**Re-probed live 2026-08-21 — still gated, and now notably so.** Vista
+granted `clientes/listar` + `clientes/detalhes` on the same key the same
+day (§ 4.2) and `corretores/listar` did **not** open — the three were asked
+for together in one request (§ 9 Tier 1). So this is not "the grant hasn't
+propagated": it is a per-method decision that came back partial. When
+re-asking, quote this method name alone, plus the live 401, and note that
+the sibling methods in the same ticket did land.
 
-| Op | Method | Path | This tenant (2026-08-19) | MCP tool |
+| Op | Method | Path | This tenant (2026-08-21) | MCP tool |
 |---|---|---|---|---|
 | List | GET | `/corretores/listar` | 🔒 401 | `vista.corretores.list` |
 | Detail | GET | `/corretores/detalhes` | ❌ 404 | — |
@@ -1113,6 +1161,41 @@ ships):
 
 ## 8. Change log
 
+### 2026-08-21 — ✅ The Tier-1 grant LANDED (2 of 3) + live field map + delta sync solved
+
+Vista replied that they had re-applied the endpoint permissions on key
+`…644c` and cleared their system cache. Verified by probe, not by their word
+(§ 7.0 of the project doc), in a fresh process as well as through the MCP:
+
+- **`/clientes/listar` 401 → 200** (42,960 clients) and
+  **`/clientes/detalhes` 401 → 200**. The § 4.2 gate is open.
+- **`/corretores/listar` is still 401** — same key, same ticket, did not
+  open. The ask is *partially* satisfied; § 4.5 carries the re-ask.
+- **`/clientes/listarConteudo`'s raw-PHP crash is fixed** — it now returns a
+  normal field-validation 400 (§ 4.2).
+- **Live `clientes` field set mapped** — 11 of 32 candidates accepted,
+  established from 400 error messages **without reading any client record**.
+  The old guess was wrong in both directions; the seven omissions were the
+  dangerous half, because calibration narrows and never widens (§ 4.2).
+- **LGPD categories corrected** — no CPF/address/email on this tenant, but
+  `DataNascimento`/`Sexo`/`EstadoCivil`/`Profissao`/`Celular` are returned.
+  The intake must be re-done against the real list.
+- **Delta sync solved for `/imoveis`** (§ 2) — `filter` on `DataAtualizacao`
+  works in both operator and range form; no Vista request needed. It does
+  **not** work for `/clientes`, which has no such field.
+- **Two route names in § 4.2 were our own typos** — `/clientes/pesquisar`
+  (never a documented Vista method) and `historicos` (published singular,
+  `historico`). Re-probed under the published names: still 404. Generalised
+  rule now in § 4.2: a 404 on a name you cannot cite in the vendor's docs is
+  *untested*, not absent.
+- **Code:** the endpoint baseline re-graded (`/clientes/*` → `live_probed`,
+  so a future 401 reads as a ROLLBACK); `VistaFieldNotAvailable` now carries
+  `.fields` and calibration drops the whole rejected set per pass —
+  **13 HTTP round-trips → 2**, measured live, since Vista names every
+  rejected field in one 400 and we only ever read the first; `.field` kept
+  for the ERP router. Public-doc surface re-swept into
+  `diagnostics._UNPROBED_KNOWN`.
+
 ### 2026-08-19 (later) — Third re-probe from a restarted session; probe count derived
 
 The earlier entry's verdict was re-tested under the one condition it had not
@@ -1244,24 +1327,30 @@ Follow-up filed: refactor `VistaRESTAdapter` to compose `VistaClient.detalhes_im
 
 | Method | Today | Why we need it |
 |---|---|---|
-| `clientes/listar` | 401 | Client roster — the base for any CRM-side view |
-| `clientes/detalhes` | 401 | Per-client record |
-| `corretores/listar` | 401 | Broker roster (partially substitutable — see § 4.5) |
+| `clientes/listar` | ✅ **200** (granted 2026-08-21) | Client roster — the base for any CRM-side view |
+| `clientes/detalhes` | ✅ **200** (granted 2026-08-21) | Per-client record |
+| `corretores/listar` | 🔒 **401 — still open** | Broker roster (partially substitutable — see § 4.5) |
 
 These three are the **only** routes a permission grant can unlock; every
 other gap below is a 404, where permission is not the blocker.
 
-> **Status 2026-08-19 — asked, answered "granted", NOT in effect.** The ask
-> was sent and Vista reportedly approved it. Three independent live re-probes
-> say otherwise — including one from a restarted MCP session, which is what
-> settles the "your client is caching it" hypothesis: all three methods still
-> 401 (§ 4.2). Per § 7.0 the probe is the authority, so this
-> tier stays **open**. The next move is not a code change — it is confirming
-> with Vista *which key* the grant was applied to, since ours (`…644c`) is
-> demonstrably not it. If they issued a **new** key, it must be rotated into
-> the root `.env` **and** the prod env together, or production breaks
-> (§ 7.4). Note the § 4 credential-echo exposure makes a rotation desirable
-> on its own merits.
+> **Status 2026-08-21 — ✅ 2 of 3 granted; the tier stays open on one.**
+> Vista re-applied the permissions on key `…644c` and cleared their system
+> cache; `clientes/listar` and `clientes/detalhes` now return 200, verified
+> by live probe in a fresh process (§ 4.2). No key rotation was involved —
+> the same `…644c` key works, which retires the whole "which key did they
+> grant?" question that blocked this from 2026-08-05 to 2026-08-19.
+>
+> **`corretores/listar` did not open.** Asked in the same ticket, on the same
+> key, granted the same day — so this is a per-method decision, not
+> propagation lag. Re-ask naming *only* this method, quoting the live 401
+> (**with our key redacted**) and noting that its two siblings did land. Weigh
+> § 4.5 first: `/usuarios/listar` already returns the broker roster ungated,
+> so this is a completeness ask, not a blocker.
+>
+> **The credential-echo rotation (§ 4) is still outstanding** and still
+> desirable on its own merits — it is now decoupled from this tier, since no
+> new key is needed to use the grant.
 
 ### Tier 2 — questions that decide whether Tier 3 exists
 
@@ -1269,15 +1358,33 @@ For each of the following, ask: **(a)** a separately-contracted module,
 **(b)** available in a newer API version we are not pointed at, or
 **(c)** not offered at all?
 
-- `clientes/historicos` — client interaction timeline
+- `clientes/historico` — client interaction timeline
 - `clientes/porcorretor` / `clientes/cadcor` — broker↔client assignment
 - `clientes/lead` — inbound lead submission
+- `imoveis/campos` + `clientes/campos` — the "available fields" introspection
+  routes. Both 404 here, which is why field discovery has to be done by
+  reading 400 error messages (§ 4.2). Cheap for them, high value for us.
 - `negociacoes/*`, `propostas/*`, `vendas/*` — the deal pipeline
 
-Also worth asking outright: **is there a newer REST base URL or version
-header for this tenant?** Thirteen documented families returning 404 is
-more consistent with a version/contract gap than with thirteen features
-that do not exist.
+**The version question is now much stronger — lead with it.** Re-sweeping
+the *published* method names on 2026-08-21 showed the mismatch runs both
+ways, which a "these features don't exist" explanation cannot account for:
+
+- Documented by Vista, **404 here**: `imoveis/listas`, `imoveis/campos`,
+  `imoveis/historico`, `imoveis/docs`, `imoveis/porcorretor`,
+  `imoveis/poragencia`, and every `/imoveis` write route
+  (`cadastrar`, `update`, `cadfoto`, `caddoc`, `cadhis`, `cadprop`, `cadcor`).
+- **Live here, documented nowhere**: `/imoveis/listarConteudo`,
+  `/clientes/listarConteudo`, `/usuarios/listar`, `/agencias/listar`,
+  `/corretores/listar`.
+
+A tenant that is missing half the published surface *and* serving five
+methods that appear in no public doc is running a **different API version**,
+not a reduced feature set. So ask outright: **which REST version is
+`oneconsu` on, is there a newer base URL, and where is the documentation for
+the version we are actually served?** If they name a newer base URL, treat
+it as a new integration surface — re-probe all of § 4 and expect response
+shapes to move (§ 7.2 of the project doc).
 
 ### Tier 3 — the write path (only if Tier 2 says it is available)
 
@@ -1290,12 +1397,16 @@ technical detail.
 
 ### Tier 4 — ask regardless (operational)
 
-1. **Page-size cap.** `quantidade` is capped server-side at 50. At 1,928
-   properties that is 39 requests for a full sync — tolerable now, but ask
-   whether the cap is raisable.
-2. **Delta sync.** Is there a documented "changed since `DataAtualizacao`"
-   filter? Without it, every sync is a full crawl. `advFilter` may cover
-   this — ask for its spec, which the public docs do not provide.
+1. **Page-size cap.** `quantidade` is capped server-side at 50, enforced with
+   an explicit `400 "O limite de resultados por página deve ser 50"`
+   (confirmed live 2026-08-21 by requesting 200). At 1,943 properties that is
+   39 requests; at **42,960 clients it is 860**. The clientes number is the
+   one that makes this worth asking — ask whether the cap is raisable.
+2. ~~**Delta sync.**~~ ✅ **ANSWERED — no longer an ask for `/imoveis`.**
+   `filter` on `DataAtualizacao` already does it, in both operator and range
+   form, confirmed live 2026-08-21 (§ 2). **Still an ask for `/clientes`**,
+   which exposes no `DataAtualizacao` field — so a 42,960-row family can only
+   be full-crawled. Ask them to expose it there.
 3. **🔴 Credential echo.** Report it as a security defect on their side:
    *the 401 response body contains the caller's API key in plaintext.* Any
    customer logging error bodies is persisting a credential. We redact on
@@ -1308,5 +1419,12 @@ technical detail.
 - **No write probes.** The write surface was mapped read-only via the
   405-vs-404 distinction (§ 4.2). Never POST to a live CRM to discover a
   route.
-- **No `/clientes` data pulled.** Blocked by 401 — and blocked by LGPD
-  intake regardless, which must land before the first successful call.
+- **No `/clientes` data pulled — still true after the grant (2026-08-21).**
+  The 401 is gone, so LGPD is now the *only* thing holding this line, and it
+  holds it just as firmly: **a permission grant is not authorization to
+  ingest.** The field set in § 4.2 was mapped by reading which names Vista's
+  400 *rejects*, so the whole family was characterised without reading a
+  client record. Prefer that technique — it answers "what is in here?"
+  before the intake, rather than requiring the intake to answer it.
+  Bulk ingestion stays blocked on the data-category intake
+  (`KB § PATTERNS/security/lgpd.md`) and the user's go-ahead.

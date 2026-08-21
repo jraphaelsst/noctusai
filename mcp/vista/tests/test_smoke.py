@@ -143,38 +143,74 @@ def test_dotted_naming_convention():
         assert parts[0] == "vista", f"tool {name!r} not under vista.* umbrella"
 
 
-def test_detect_unavailable_field_handles_json_escaped_body():
+def test_detect_unavailable_fields_handles_json_escaped_body():
     """Regression: Vista's wire body uses unicode escapes for non-ASCII
     chars (`n\\u00e3o est\\u00e1 dispon\\u00edvel`). A naive substring
     match against the raw body misses every real 400 — must JSON-parse
     first. See vista.md § 3.3 + the 2026-05-03 live-check finding."""
-    from noctusai_lib.integrations.vista.client import _detect_unavailable_field
+    from noctusai_lib.integrations.vista.client import _detect_unavailable_fields
 
     # Real Vista 400 body, array-shaped message, JSON-escaped:
     body = (
         '{"status":400,"message":["Campo Estado n\\u00e3o est\\u00e1 '
         'dispon\\u00edvel. Consulte a documenta\\u00e7\\u00e3o..."]}'
     )
-    matched, field = _detect_unavailable_field(body)
+    matched, fields = _detect_unavailable_fields(body)
     assert matched is True
-    assert field == "Estado"
+    assert fields == ["Estado"]
 
     # String-shaped message (other Vista endpoints):
     body2 = '{"status":400,"message":"Campo Slug n\\u00e3o est\\u00e1 dispon\\u00edvel"}'
-    matched2, field2 = _detect_unavailable_field(body2)
+    matched2, fields2 = _detect_unavailable_fields(body2)
     assert matched2 is True
-    assert field2 == "Slug"
+    assert fields2 == ["Slug"]
 
     # Plain-text body (defensive fallback):
     body3 = "Campo Foto não está disponível para este tenant"
-    matched3, field3 = _detect_unavailable_field(body3)
+    matched3, fields3 = _detect_unavailable_fields(body3)
     assert matched3 is True
-    assert field3 == "Foto"
+    assert fields3 == ["Foto"]
 
     # Negative — different 400, e.g. listarConteudo "filter by code" error:
     body4 = '{"status":400,"message":"N\\u00e3o \\u00e9 poss\\u00edvel filtrar por c\\u00f3digo nesse endpoint."}'
-    matched4, _ = _detect_unavailable_field(body4)
+    matched4, _ = _detect_unavailable_fields(body4)
     assert matched4 is False
+
+
+def test_detect_unavailable_fields_drains_every_rejected_field():
+    """🔴 The whole point of the plural form: Vista names EVERY rejected field
+    in ONE 400, and reading only the first cost one HTTP round-trip per
+    rejected field (13 for /clientes/listar on `oneconsu`, measured
+    2026-08-21). Body below is that live response, trimmed.
+
+    Also covers Vista's two phrasings — it emits BOTH "Campo X…" and
+    "O campo X…" for the same field in the same response, so the result must
+    be de-duplicated and order-preserving."""
+    from noctusai_lib.integrations.vista.client import _detect_unavailable_fields
+
+    body = (
+        '{"status":400,"message":['
+        '"Campo Email n\\u00e3o est\\u00e1 dispon\\u00edvel. Consulte a documenta\\u00e7\\u00e3o.",'
+        '"Campo Fone n\\u00e3o est\\u00e1 dispon\\u00edvel. Consulte a documenta\\u00e7\\u00e3o.",'
+        '"Campo CPF n\\u00e3o est\\u00e1 dispon\\u00edvel. Consulte a documenta\\u00e7\\u00e3o.",'
+        '"O campo Email n\\u00e3o est\\u00e1 dispon\\u00edvel. Consulte a documenta\\u00e7\\u00e3o."'
+        ']}'
+    )
+    matched, fields = _detect_unavailable_fields(body)
+    assert matched is True
+    assert fields == ["Email", "Fone", "CPF"], "must drain all, de-dupe, keep order"
+
+
+def test_field_not_available_keeps_singular_field_for_back_compat():
+    """`VistaFieldNotAvailable.field` is read by the ERP showcase router
+    (`products/erp-imobiliario/.../vista_showcase.py`) to build its 422
+    message. Adding `.fields` must not break that caller."""
+    from noctusai_lib.integrations.vista import VistaFieldNotAvailable
+
+    exc = VistaFieldNotAvailable(["Email", "Fone"], "{}", "/clientes/listar")
+    assert exc.fields == ["Email", "Fone"]
+    assert exc.field == "Email"
+    assert VistaFieldNotAvailable([], "{}", "/x").field == "<unknown>"
 
 
 def test_calibrator_returns_floor_when_unconfigured():

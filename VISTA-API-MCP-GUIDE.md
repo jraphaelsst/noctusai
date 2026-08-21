@@ -383,12 +383,12 @@ a lower bound — your tenant may have more enabled.
 
 | Op | Method | Path | ID param | This tenant | Public docs | Notes |
 |---|---|---|---|---|---|---|
-| List | GET | `/imoveis/listar` | — | ✅ | 📖 | ~1,783 properties live 2026-05-03 (count fluctuates as listings come and go). |
+| List | GET | `/imoveis/listar` | — | ✅ | 📖 | 1,943 properties live 2026-08-21 (count fluctuates). **Delta-syncable** — `filter` on `DataAtualizacao` works in both operator and range form. |
 | Detail | GET | `/imoveis/detalhes` | `?imovel=` | ✅ | 📖 | `Foto` field NOT available here — use `Foto` from `listar`. |
 | List enum content | GET | `/imoveis/listarConteudo` | — | ✅ | ❓ | Returns enum values for filters. Drives dropdowns. |
-| Photos | GET | `/imoveis/fotos` | `?imovel=` | ❌ | 📖 | Returns 404 (not 401) on this tenant — different tier. Workaround: use `Foto` field on `listar`. |
+| Photos | GET | `/imoveis/fotos` | `?imovel=` | ✍️ write-only | 📖 | Answers GET with **405 `Allow: POST, PUT, DELETE`** — the route EXISTS, it just rejects reads (an earlier "404, different tier" note was wrong). Workaround for reading: `Foto` field on `listar`. |
 | Documents | GET | `/imoveis/anexos` | `?imovel=` | ❓ | 📖 | Not probed. |
-| History | GET | `/imoveis/historicos` | `?imovel=` | ❓ | 📖 | Public-doc spelling is `historicos`; `historico` (singular) returned 404. |
+| History | GET | `/imoveis/historico` | `?imovel=` | ❌ 404 | 📖 | Published spelling is singular `historico` (re-checked 2026-08-21 against vistasoft.com.br/api); 404 here. |
 | Available fields | GET | `/imoveis/campos` | — | ❓ | 📖 | Returns field-name reference for this endpoint. Useful for MCP's field-validator at boot. |
 | Create | POST | `/imoveis/cadastrar` | — | ❓ | 📖 | Write operation; out of scope for read-only MCPs. |
 | Update | PUT | `/imoveis/alterar` | `?imovel=` | ❓ | 📖 | Write. |
@@ -534,32 +534,50 @@ Vista's 401 body names the method (`Método: clientes/listar`), which is why
 a request should name methods individually rather than ask for "access to
 clients".
 
-Re-probed live **2026-08-19** (every row below measured, not inferred):
+Re-probed live **2026-08-21** (every row below measured, not inferred):
 
 | Op | Method | Path | ID param | This tenant | Public docs |
 |---|---|---|---|---|---|
-| List | GET | `/clientes/listar` | — | 🔒 401 | ❓ |
-| Detail | GET | `/clientes/detalhes` | `?cliente=` | 🔒 401 | 📖 |
-| Content | GET | `/clientes/listarConteudo` | — | 🐛 see below | ❓ |
-| Search | GET | `/clientes/pesquisar` | — | ❌ 404 | 📖 |
+| List | GET | `/clientes/listar` | — | ✅ 200 *(granted 2026-08-21)* | 📖 |
+| Detail | GET | `/clientes/detalhes` | `?cliente=` | ✅ 200 *(granted 2026-08-21)* | 📖 |
+| Content | GET | `/clientes/listarConteudo` | — | ⚠️ see below | ❓ |
 | By broker | GET | `/clientes/porcorretor` | — | ❌ 404 | 📖 |
 | By agency | GET | `/clientes/poragencia` | — | ❌ 404 | 📖 |
-| History | GET | `/clientes/historicos` | `?cliente=` | ❌ 404 | 📖 |
+| History | GET | `/clientes/historico` | `?cliente=` | ❌ 404 | 📖 |
 | Favorites | GET | `/clientes/favoritos` | `?cliente=` | ❌ 404 | 📖 |
 | Available fields | GET | `/clientes/campos` | — | ❌ 404 | 📖 |
 | Create | POST | `/clientes/cadastrar` | — | ❌ 404 | 📖 |
-| Update | PUT | `/clientes/alterar` | `?cliente=` | ❌ 404 | 📖 |
+| Update | PUT | `/clientes/update` | `?cliente=` | ❌ 404 | 📖 |
 | Add history | POST | `/clientes/cadhis` | `?cliente=` | ❌ 404 | 📖 |
 | Assign broker | POST | `/clientes/cadcor` | `?cliente=` | ❌ 404 | 📖 |
 | Submit lead | POST | `/clientes/lead` | — | ❌ 404 | 📖 |
 
-> **Corrections vs the 2026-05-03 snapshot this table used to carry.**
-> `pesquisar` was recorded 🔒 and is actually ❌; all eight ❓ rows are now
-> confirmed ❌. Nothing regressed — the ❓ rows had simply never been probed,
-> and `pesquisar` was mis-recorded from a sibling's 401. **This is the
-> hazard the section header warns about:** a 🔒/❓ guess that is never
-> re-probed reads as fact forever, and here it produced a support request
-> for routes that do not exist.
+> **✅ The grant landed 2026-08-21.** Vista re-applied the per-method
+> permissions on key `…644c` and cleared their system cache; the two 🔒 rows
+> opened, verified by live probe in a fresh process rather than on their
+> word. **42,960 clients** on this tenant. `/corretores/listar` was in the
+> same request and did NOT open — see § 4.5.
+>
+> **Live field set (11 of 32 candidates), mapped WITHOUT reading a client
+> record** — Vista's 400 names every field it rejects, so
+> `accepted = requested − rejected`:
+> `Codigo · Nome · Celular · DataCadastro · DataNascimento · Corretor ·
+> Status · Profissao · EstadoCivil · Sexo · Interesse`.
+> **⚠️ LGPD:** no CPF, no address, no email on this tenant — but
+> `DataNascimento`/`Sexo`/`EstadoCivil`/`Profissao`/`Celular` are returned.
+> Do the intake against THIS list. **No `DataAtualizacao` ⇒ no delta sync**:
+> a full refresh is 860 requests at the 50-row cap.
+
+> **🔴 Two rows in the previous table were OUR typos, not Vista's routes.**
+> `/clientes/pesquisar` is not a documented Vista method at all — it was
+> invented here, then "confirmed absent", which proves nothing; it has been
+> dropped. History is published singular (`historico`) and update is
+> published as `update`, not `alterar`; both re-probed under the published
+> names and still 404. **The generalised rule: probe the vendor's PUBLISHED
+> method names, and treat a 404 on a name you cannot cite in their docs as
+> untested, not absent.** This compounds the hazard the section header warns
+> about — a guess that is never re-probed reads as fact forever, and here it
+> put two non-existent routes into a support request.
 
 **How the write rows were probed without issuing a write.** Vista returns
 **405** for a route that exists but rejects the method, and **404** when no
@@ -569,13 +587,15 @@ needs POST" from "absent" at zero risk. Every write row above answered 404,
 so they are genuinely absent, not merely method-mismatched.
 **⚠️ Never POST to a live CRM to discover a route.**
 
-**🐛 `/clientes/listarConteudo` — exists, ungated, and broken.** It alone
-neither 401s nor 404s on a bare GET, returning the ordinary
-`400 "É necessário informar um JSON String"` — so the route exists and the
-key passes the permission check. Do not read that as a partial grant: sent
-a well-formed `pesquisa`, it answers **404 with a raw PHP error**
-(`in_array(): Argument #2 ($haystack) must be of type array, null given`),
-an unhandled server-side crash rather than a contract. Do not build on it.
+**⚠️ `/clientes/listarConteudo` — the PHP crash is FIXED, but it is still
+unmapped.** On 2026-08-19 a well-formed `pesquisa` made it answer **404 with
+a raw PHP error** (`in_array(): Argument #2 ($haystack) must be of type
+array, null given`) — an unhandled server-side crash. Re-probed 2026-08-21 it
+returns a normal `400 "Campo X não está disponível"`, i.e. it validates
+fields like every other endpoint now. Most likely repaired by the same
+maintenance that applied the grant. Its useful field set is still unmapped
+(`Cidade`, the obvious `/imoveis/listarConteudo` analogue, is rejected) — map
+it before building on it; do not assume parity with the `/imoveis` version.
 
 **Implication for an MCP author.** Wrap 🔒 routes as real tools that surface
 a typed 401 (the host needs to know *permission* is the blocker, not to
@@ -585,11 +605,23 @@ path to something, check for an ungated substitute first: here
 `/usuarios/listar` returns the broker roster that `/corretores/listar`
 (🔒) would, which changes whether the grant is worth waiting on.
 
-Documented `/clientes` fields per public docs (subset — verify live):
-`Codigo`, `Nome`, `Email`, `Fone`, `FoneCelular`, `Bairro`, `Cidade`,
-`Estado`, `UF`, `CEP`, `Endereco`, `Numero`, `Complemento`, `CPF`,
-`RG`, `DataNascimento`, `EstadoCivil`, `Profissao`, `Empresa`,
-`DataCadastro`, `Corretor`, `Imovel`.
+`/clientes` fields — **the public-doc list and the live tenant list differ
+sharply, so verify, never assume.** Public docs advertise `Codigo`, `Nome`,
+`Email`, `Fone`, `FoneCelular`, `Bairro`, `Cidade`, `Estado`, `UF`, `CEP`,
+`Endereco`, `Numero`, `Complemento`, `CPF`, `RG`, `DataNascimento`,
+`EstadoCivil`, `Profissao`, `Empresa`, `DataCadastro`, `Corretor`, `Imovel`.
+
+**Live on `oneconsu` (2026-08-21) only these eleven are accepted:** `Codigo`,
+`Nome`, `Celular`, `DataCadastro`, `DataNascimento`, `Corretor`, `Status`,
+`Profissao`, `EstadoCivil`, `Sexo`, `Interesse`. Everything else — including
+`Email`, `Fone`, `CPF` and the whole address block — returns
+`400 "Campo X não está disponível"`.
+
+**Technique worth stealing:** because that 400 names every rejected field,
+`accepted = requested − rejected` maps a family's entire field set **without
+reading one record** — which is how this list was built before any LGPD
+intake. Note it also means calibration can only *narrow*: a field absent from
+your candidate list is undiscoverable, so keep candidate lists generous.
 
 **LGPD note for MCP authors.** The `/clientes` family carries personal
 data including potentially CPF/RG. An MCP exposing this surface should:
@@ -645,7 +677,7 @@ Site     string
 
 ### 4.5 `/corretores` — brokers (🔒 one route, ❌ two)
 
-Re-probed live **2026-08-19**:
+Re-probed live **2026-08-21**:
 
 | Op | Method | Path | This tenant |
 |---|---|---|---|
@@ -655,6 +687,14 @@ Re-probed live **2026-08-19**:
 
 So even a granted `corretores/listar` buys the roster alone — there is no
 per-broker detail route behind it. Scope any support request accordingly.
+
+**🔴 Still 401 after the 2026-08-21 grant — and that is informative.** This
+method was requested in the *same* ticket, on the *same* key, as
+`clientes/listar` + `clientes/detalhes`, which both opened that day (§ 4.2).
+So a lingering 401 here is not propagation lag: it is a per-method decision
+that came back partial. When re-asking, name this method alone, quote the
+live 401 (**with your key redacted** — Vista echoes it back), and mention
+that its two siblings in the same request did land.
 
 **✅ Check the ungated substitute before waiting on this grant.**
 `/usuarios/listar` (§ 4.3) already returns the broker roster with

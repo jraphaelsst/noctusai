@@ -96,9 +96,15 @@ KNOWN_TABS: list[ShowcaseTabStatus] = [
     ShowcaseTabStatus(tab="usuarios", label="Usuários", status="live", endpoint="/usuarios/listar"),
     ShowcaseTabStatus(tab="agencias", label="Agência", status="live", endpoint="/agencias/listar"),
     ShowcaseTabStatus(
-        tab="clientes", label="Clientes", status="permission_denied",
+        tab="clientes", label="Clientes", status="pending_intake",
         endpoint="/clientes/listar",
-        note="Permissão pendente — solicite expansão de chave junto à Vista (código 401).",
+        note=(
+            "Permissão CONCEDIDA pela Vista em 21/08/2026 — /clientes/listar e "
+            "/clientes/detalhes retornam 200 (42.960 clientes). Este tab ainda "
+            "não consome os dados: falta o enquadramento LGPD das categorias "
+            "retornadas (Celular, DataNascimento, Sexo, EstadoCivil, Profissao) "
+            "e a wiring do endpoint. NÃO é mais uma pendência junto à Vista."
+        ),
     ),
     ShowcaseTabStatus(
         tab="corretores", label="Corretores", status="permission_denied",

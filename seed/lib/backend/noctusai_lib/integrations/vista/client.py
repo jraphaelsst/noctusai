@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any, Optional
 
@@ -68,15 +69,21 @@ ENDPOINT_ABSENT = "absent"               # no such route on this tenant (404)
 #
 # `expected_http_status` is what a HEALTHY tenant returns for a BARE GET.
 # Several of these are non-200 by design, so a non-200 is not itself a fault;
-# only a deviation from this baseline is. Re-probed live 2026-08-05.
+# only a deviation from this baseline is.
+#
+# Re-probed live 2026-08-21, after Vista applied the § 9 Tier-1 grant to key
+# `…644c` and cleared their cache. `/clientes/listar` and `/clientes/detalhes`
+# flipped 401 → open and are now graded as LIVE; a 401 on either from here on
+# is a REGRESSION (the grant was rolled back), not the standing state.
+# `/corretores/listar` was NOT included in that grant and stays gated.
 VISTA_ENDPOINT_BASELINE: tuple[tuple[str, int, str, str], ...] = (
     ("/imoveis/listar", 200, ENDPOINT_LIVE, "reachable"),
     ("/imoveis/listarConteudo", 400, ENDPOINT_LIVE, "reachable; bare GET needs `pesquisa`"),
     ("/usuarios/listar", 200, ENDPOINT_LIVE, "reachable"),
     ("/agencias/listar", 200, ENDPOINT_LIVE, "reachable"),
-    ("/clientes/listar", 401, ENDPOINT_PERMISSION_GATED, "permission-gated (vista.md § 4.2)"),
-    ("/clientes/detalhes", 401, ENDPOINT_PERMISSION_GATED, "permission-gated (vista.md § 4.2); 401 precedes the missing-`cliente` 400"),
-    ("/corretores/listar", 401, ENDPOINT_PERMISSION_GATED, "permission-gated (vista.md § 4.5)"),
+    ("/clientes/listar", 200, ENDPOINT_LIVE, "granted 2026-08-21 (vista.md § 4.2); a 401 here is a grant ROLLBACK"),
+    ("/clientes/detalhes", 400, ENDPOINT_LIVE, "granted 2026-08-21 (vista.md § 4.2); bare GET now reaches the missing-`cliente` 400 that the 401 used to precede"),
+    ("/corretores/listar", 401, ENDPOINT_PERMISSION_GATED, "permission-gated (vista.md § 4.5) — NOT included in the 2026-08-21 grant"),
     ("/imoveis/fotos", 405, ENDPOINT_WRITE_ONLY, "write-only route; GET not allowed"),
 )
 
@@ -113,11 +120,18 @@ class VistaNotFound(VistaUpstreamError):
 
 
 class VistaFieldNotAvailable(VistaUpstreamError):
-    """Vista refused a field — `400 "Campo X não está disponível"`."""
+    """Vista refused one or more fields — `400 "Campo X não está disponível"`.
 
-    def __init__(self, field: str, body: str, endpoint: str):
+    Vista reports **every** rejected field in a single 400 (`message` is an
+    array, one entry per field), so `fields` carries the whole set and the
+    calibration loop can drop them in one pass. `field` remains the first
+    rejected name for back-compat with callers that predate `fields`.
+    """
+
+    def __init__(self, fields: list[str], body: str, endpoint: str):
         super().__init__(400, body, endpoint)
-        self.field = field
+        self.fields = list(fields)
+        self.field = fields[0] if fields else "<unknown>"
 
 
 class VistaTimeout(VistaError):
@@ -279,10 +293,10 @@ class VistaClient:
             raise VistaNotFound(404, body_text, endpoint)
 
         if resp.status_code == 400:
-            matched, field = _detect_unavailable_field(body_text)
+            matched, fields = _detect_unavailable_fields(body_text)
             if matched:
-                logger.info("Vista %s rejected field %r", endpoint, field)
-                raise VistaFieldNotAvailable(field, body_text, endpoint)
+                logger.info("Vista %s rejected fields %r", endpoint, fields)
+                raise VistaFieldNotAvailable(fields, body_text, endpoint)
 
         logger.warning("Vista %s returned %d: %s", endpoint, resp.status_code, body_text[:200])
         raise VistaUpstreamError(resp.status_code, body_text, endpoint)
@@ -433,7 +447,7 @@ class VistaClient:
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
 
-def _detect_unavailable_field(body: str) -> tuple[bool, str]:
+def _detect_unavailable_fields(body: str) -> tuple[bool, list[str]]:
     """Detect the "Campo X não está disponível" pattern in a Vista 400 body.
 
     Vista's server JSON-escapes non-ASCII characters in the wire body
@@ -447,8 +461,14 @@ def _detect_unavailable_field(body: str) -> tuple[bool, str]:
     § 3.3). Falls back to raw-body search for endpoints that may emit
     plain-text bodies.
 
-    Returns (matched, field_name); `field_name` is `<unknown>` if the
-    pattern matched but the field couldn't be parsed.
+    **Every** rejected field is returned, not just the first. Vista emits one
+    `message` entry per rejected field, so a single 400 already names the
+    whole set — reading only the first turned calibration into one HTTP
+    round-trip per rejected field (13 for `/clientes/listar` on `oneconsu`,
+    measured 2026-08-21). Draining the array collapses that to two.
+
+    Returns (matched, field_names); the list is `["<unknown>"]` if the
+    pattern matched but no field name could be parsed.
     """
     candidates: list[str] = [body]
     try:
@@ -462,21 +482,34 @@ def _detect_unavailable_field(body: str) -> tuple[bool, str]:
     except (json.JSONDecodeError, ValueError):
         pass
 
+    # Preserve first-seen order and de-duplicate: Vista repeats the same field
+    # across both of its two message phrasings ("Campo X…" / "O campo X…").
+    found: list[str] = []
+    matched = False
     for text in candidates:
-        if "não está disponível" in text:
-            return True, _extract_field_name(text)
-    return False, "<unknown>"
+        if "não está disponível" not in text:
+            continue
+        matched = True
+        # The raw body is in `candidates` too and holds every occurrence at
+        # once; skip it only if a parsed message already yielded names.
+        for name in _extract_field_names(text):
+            if name not in found:
+                found.append(name)
+    if not matched:
+        return False, []
+    return True, found or ["<unknown>"]
 
 
-def _extract_field_name(text: str) -> str:
-    """Pull `<X>` out of `"Campo <X> não está disponível"`."""
-    marker = "Campo "
-    idx = text.find(marker)
-    if idx < 0:
-        return "<unknown>"
-    tail = text[idx + len(marker):]
-    end = tail.find(" ")
-    return tail[:end] if end > 0 else tail[:32]
+#: Vista phrases the same rejection two ways in the SAME response — "Campo X
+#: não está disponível." and "O campo X não está disponível." — so the match is
+#: case-insensitive on `campo` and finds every occurrence in the text, not just
+#: the first. Applied to a decoded upstream *message*, never to source.
+_FIELD_REJECTION_RE = re.compile(r"campo\s+(\w+)\s+não\s+está\s+disponível", re.IGNORECASE)
+
+
+def _extract_field_names(text: str) -> list[str]:
+    """Pull every `<X>` out of `"Campo <X> não está disponível"` in `text`."""
+    return _FIELD_REJECTION_RE.findall(text)
 
 
 def extract_items(payload: dict) -> tuple[list[dict], dict]:

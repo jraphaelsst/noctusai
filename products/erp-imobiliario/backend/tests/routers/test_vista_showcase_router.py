@@ -166,7 +166,15 @@ class TestTabs:
         body = resp.json()
         tabs = {t["tab"]: t for t in body["tabs"]}
         assert tabs["imoveis"]["status"] == "live"
-        assert tabs["clientes"]["status"] == "permission_denied"
+        # Vista GRANTED /clientes/* on 2026-08-21 (KB § INTEGRATIONS/vista.md
+        # § 4.2), so "permission_denied" would now send users to chase a vendor
+        # request that already landed. The tab still isn't consumable — but the
+        # blocker moved to OUR side (LGPD data-category intake + wiring), and
+        # the status has to say which, or the UI lies about who is blocking.
+        assert tabs["clientes"]["status"] == "pending_intake"
+        # corretores was asked for in the SAME ticket and did NOT open — so it
+        # stays a genuine vendor-side 401. The two must not collapse together.
+        assert tabs["corretores"]["status"] == "permission_denied"
         # Phase 4 live re-probe (2026-05-02) confirmed /imoveis/fotos returns
         # 404 on this tenant, not 401 — adjusted from Phase 1's misclassification.
         assert tabs["fotos"]["status"] == "not_found"

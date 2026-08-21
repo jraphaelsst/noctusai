@@ -246,8 +246,14 @@ def test_baseline_records_non_200_expectations() -> None:
     expected = {row[0]: row[1] for row in VISTA_ENDPOINT_BASELINE}
     # Needs a `pesquisa` param — a bare GET is 400, not a fault.
     assert expected["/imoveis/listarConteudo"] == 400
-    # Route exists; this tenant's key lacks the per-method grant.
-    assert expected["/clientes/listar"] == 401
+    # Granted 2026-08-21; a 401 here now means the grant was ROLLED BACK.
+    assert expected["/clientes/listar"] == 200
+    # Same grant. The permission check used to answer before parameter
+    # validation, so this was 401; a bare GET now reaches the real
+    # missing-`cliente` 400 underneath it.
+    assert expected["/clientes/detalhes"] == 400
+    # NOT included in the 2026-08-21 grant — still the one open Tier-1 ask.
+    assert expected["/corretores/listar"] == 401
     # Write-only upload route — GET is 405, NOT the 404 we used to claim.
     assert expected["/imoveis/fotos"] == 405
 
@@ -255,7 +261,12 @@ def test_baseline_records_non_200_expectations() -> None:
 def test_baseline_distinguishes_gated_from_absent() -> None:
     """The actionable split: only permission_gated is unlocked by a request."""
     status = {row[0]: row[2] for row in VISTA_ENDPOINT_BASELINE}
-    assert status["/clientes/listar"] == "permission_gated"
+    # Vista granted clientes/* on key …644c 2026-08-21 (verified by live
+    # re-probe in a fresh process, per project § 7.0 — never on their word).
+    assert status["/clientes/listar"] == "live_probed"
+    assert status["/clientes/detalhes"] == "live_probed"
+    # corretores was asked for in the SAME request and did NOT come back.
+    assert status["/corretores/listar"] == "permission_gated"
     assert status["/imoveis/fotos"] == "write_only"
     assert status["/imoveis/listar"] == "live_probed"
 
@@ -420,3 +431,72 @@ def test_fake_client_and_real_client_signatures_agree() -> None:
         assert inspect.signature(fake) == inspect.signature(real), (
             f"{name}: Fake and Real signatures diverged"
         )
+
+
+# ============================================================================
+# Calibration convergence (added 2026-08-21, with the clientes grant)
+#
+# Vista names EVERY rejected field in ONE 400. Reading only the first turned
+# calibration into one HTTP round-trip per rejected field — 13 against the
+# live `/clientes/listar` on `oneconsu`. These tests pin the collapse to 2.
+# ============================================================================
+
+
+def _rejecting_transport(
+    unavailable: set[str],
+) -> tuple[list[httpx.Request], httpx.MockTransport]:
+    """Mimic Vista: 400 listing every requested field that is unavailable.
+
+    Reproduces the real quirk that both phrasings ("Campo X…" and "O campo
+    X…") appear for the same field in the same response body.
+    """
+    seen: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        requested = json.loads(request.url.params["pesquisa"]).get("fields", [])
+        names = [f for f in requested if isinstance(f, str) and f in unavailable]
+        if names:
+            messages = [f"Campo {n} não está disponível. Consulte a documentação." for n in names]
+            messages += [f"O campo {n} não está disponível." for n in names]
+            return httpx.Response(400, json={"status": 400, "message": messages})
+        return httpx.Response(200, json={"1": {"Codigo": "1"}, "total": 1})
+
+    return seen, httpx.MockTransport(_handler)
+
+
+@pytest.mark.asyncio
+async def test_calibration_drops_every_rejected_field_in_one_round_trip() -> None:
+    """N rejected fields must cost 2 requests, not N+1."""
+    from noctusai_lib.integrations.vista import Calibrator
+
+    unavailable = {"Email", "Fone", "FoneCelular", "CPF", "Endereco", "CEP", "Cidade"}
+    seen, transport = _rejecting_transport(unavailable)
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        fields = await Calibrator().get_cliente_fields(client)
+
+    assert len(seen) == 2, f"expected 2 round-trips, got {len(seen)}"
+    assert not (set(fields) & unavailable), "rejected fields must not survive"
+    assert "Codigo" in fields and "Nome" in fields
+
+
+@pytest.mark.asyncio
+async def test_candidate_cliente_fields_cover_the_live_tenant_set() -> None:
+    """🔴 Calibration NARROWS — it can never widen.
+
+    A field missing from CANDIDATE_CLIENTE_FIELDS is invisible to every
+    consumer no matter what the tenant exposes. The pre-grant list omitted
+    seven fields `oneconsu-rest` actually offers, so the first post-grant
+    calibration would have silently under-fetched. These eleven were
+    confirmed live on 2026-08-21 by reading which names the 400 rejects —
+    no client record was read to establish it.
+    """
+    from noctusai_lib.integrations.vista.calibration import CANDIDATE_CLIENTE_FIELDS
+
+    confirmed_live = {
+        "Codigo", "Nome", "Celular", "DataCadastro", "DataNascimento",
+        "Corretor", "Status", "Profissao", "EstadoCivil", "Sexo", "Interesse",
+    }
+    missing = confirmed_live - set(CANDIDATE_CLIENTE_FIELDS)
+    assert not missing, f"tenant exposes these but calibration can never find them: {missing}"
