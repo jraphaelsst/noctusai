@@ -33,15 +33,22 @@ ORG = uuid4()
 class _FakeTable:
     """Captures upserts so a test can assert idempotency and row shape."""
 
-    def __init__(self, store: dict):
+    def __init__(self, store: dict, key: str):
         self._store = store
+        self._key = key
 
-    def upsert(self, rows, on_conflict=None):
+    def upsert(self, rows, on_conflict=None, ignore_duplicates=False):
         self._on_conflict = on_conflict
         for row in rows:
-            # Emulate the real (org_id, codigo) PK — this is what makes a
+            # Emulate the real (org_id, <key>) PK — this is what makes a
             # second sync an UPDATE rather than a duplicate INSERT.
-            self._store[(row["org_id"], row["codigo"])] = row
+            k = (row["org_id"], row[self._key])
+            if ignore_duplicates and k in self._store:
+                # `ON CONFLICT DO NOTHING`: the incumbent row wins, which is
+                # what preserves a registry row's original
+                # `primeiro_visto_em` / `origem_descoberta`.
+                continue
+            self._store[k] = row
         return self
 
     def execute(self):
@@ -49,14 +56,41 @@ class _FakeTable:
 
 
 class _FakeClient:
+    """Models the two tables the sync writes AND the sweep RPC.
+
+    `rpc` is not decoration. `ImovelSyncService._sweep_registry` calls
+    `client.rpc("sweep_imovel_registry", ...)`, and a fake without it raises
+    AttributeError into the method's own except-branch — the sync still
+    "succeeds", the test still passes, and the sweep is never exercised.
+    That false green is exactly what this models away.
+    """
+
     def __init__(self):
         self.store: dict = {}
+        self.registry: dict = {}
+        self.rpc_calls: list[tuple[str, dict]] = []
+        self.sweep_result = {"marcados_ativos": 0, "marcados_delistados": 0}
 
     def schema(self, _name):
         return self
 
-    def table(self, _name):
-        return _FakeTable(self.store)
+    def table(self, name):
+        if name == "imovel_registry":
+            return _FakeTable(self.registry, "codigo_canonical")
+        return _FakeTable(self.store, "codigo")
+
+    def rpc(self, name, params):
+        self.rpc_calls.append((name, params))
+        client = self
+
+        class _Resp:
+            data = [client.sweep_result]
+
+        class _Call:
+            def execute(self):
+                return _Resp()
+
+        return _Call()
 
 
 def _imovel(codigo: str, **kw) -> Imovel:
@@ -327,3 +361,151 @@ def test_caracteristica_counts_counts_every_row_not_just_the_first_page():
     rows = [{"caracteristicas": ["piscina"]} for _ in range(1500)]
     counts = ImoveisService(_CappedClient(rows)).caracteristica_counts(ORG)
     assert counts["piscina"] == 1500, f"counted {counts['piscina']} of 1500"
+
+
+class TestRegistryMaintenance:
+    """Migration 063 — the sync maintains `imovel_registry`.
+
+    The registry is our PERMANENT imóvel identity. `imoveis` mirrors only
+    the ACTIVE catalog, so 63.1% of leads on the live tenant point at
+    imóveis that have left it. Everything of ours joins the registry, and
+    the sync is what keeps it current.
+    """
+
+    @pytest.mark.asyncio
+    async def test_sync_creates_a_registry_row_per_imovel(self):
+        client = _FakeClient()
+        svc = ImovelSyncService(client, _adapter_with(3))
+
+        await svc.sync(ORG, with_detalhes=False)
+
+        assert len(client.registry) == 3
+
+    @pytest.mark.asyncio
+    async def test_registry_key_is_the_canonical_code(self):
+        client = _FakeClient()
+        adapter = FakeVistaAdapter()
+        adapter.add_imovel(_imovel("one1000", categoria="Casa"))
+        svc = ImovelSyncService(client, adapter)
+
+        await svc.sync(ORG, with_detalhes=False)
+
+        assert (str(ORG), "ONE1000") in client.registry
+        row = client.registry[(str(ORG), "ONE1000")]
+        # Display keeps what Vista actually sent.
+        assert row["codigo_display"] == "one1000"
+        assert row["ativo_no_vista"] is True
+        assert row["origem_descoberta"] == "vista_sync"
+
+    @pytest.mark.asyncio
+    async def test_resync_does_not_overwrite_an_existing_registry_row(self):
+        """`ON CONFLICT DO NOTHING`.
+
+        A row first discovered via a LEAD carries
+        `origem_descoberta='lead'` and its own `primeiro_visto_em`. The
+        catalog later showing us that imóvel must not rewrite either — the
+        sweep owns the lifecycle columns, not this upsert.
+        """
+        client = _FakeClient()
+        client.registry[(str(ORG), "ONE1000")] = {
+            "org_id": str(ORG),
+            "codigo_canonical": "ONE1000",
+            "origem_descoberta": "lead",
+            "primeiro_visto_em": "2024-01-01T00:00:00Z",
+        }
+        svc = ImovelSyncService(client, _adapter_with(1))
+
+        await svc.sync(ORG, with_detalhes=False)
+
+        row = client.registry[(str(ORG), "ONE1000")]
+        assert row["origem_descoberta"] == "lead"
+        assert row["primeiro_visto_em"] == "2024-01-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_complete_run_calls_the_sweep_with_the_run_timestamp(self):
+        client = _FakeClient()
+        svc = ImovelSyncService(client, _adapter_with(2))
+
+        report = await svc.sync(ORG, with_detalhes=False)
+
+        assert report.complete
+        assert len(client.rpc_calls) == 1
+        name, params = client.rpc_calls[0]
+        assert name == "sweep_imovel_registry"
+        assert params["p_org_id"] == str(ORG)
+        # The sync's own stamp, not now() — the SQL compares against it.
+        assert params["p_run_at"] == report.started_at
+
+    @pytest.mark.asyncio
+    async def test_sweep_counts_land_on_the_report(self):
+        client = _FakeClient()
+        client.sweep_result = {"marcados_ativos": 1984, "marcados_delistados": 65}
+        svc = ImovelSyncService(client, _adapter_with(1))
+
+        report = await svc.sync(ORG, with_detalhes=False)
+
+        assert report.registry_ativos == 1984
+        assert report.registry_delistados == 65
+        assert report.as_dict()["registry_delistados"] == 65
+
+    @pytest.mark.asyncio
+    async def test_incomplete_run_does_NOT_sweep(self, monkeypatch):
+        """The load-bearing guard.
+
+        The sweep infers "left the catalog" from "not touched this run". On
+        a run that dropped pages, thousands of imóveis are untouched because
+        the FETCH failed — sweeping then would delist the catalog wholesale
+        and stamp snapshots over live listings.
+        """
+        client = _FakeClient()
+        svc = ImovelSyncService(client, _adapter_with(2))
+
+        original = svc._fetch_page
+
+        async def _flaky(page_no, page_size, report):
+            page = await original(page_no, page_size, report)
+            report.page_failures.append("page 99: simulated")
+            return page
+
+        monkeypatch.setattr(svc, "_fetch_page", _flaky)
+
+        report = await svc.sync(ORG, with_detalhes=False)
+
+        assert not report.complete
+        assert client.rpc_calls == [], "swept on an incomplete run"
+
+    @pytest.mark.asyncio
+    async def test_a_failing_sweep_is_recorded_not_swallowed(self):
+        client = _FakeClient()
+
+        def _boom(_name, _params):
+            raise RuntimeError("rpc exploded")
+
+        client.rpc = _boom
+        svc = ImovelSyncService(client, _adapter_with(1))
+
+        report = await svc.sync(ORG, with_detalhes=False)
+
+        assert report.registry_failures, "sweep failure vanished"
+        assert "rpc exploded" in report.registry_failures[0]
+
+    @pytest.mark.asyncio
+    async def test_registry_failure_does_not_mark_the_catalog_pull_incomplete(self):
+        """`complete` gates the sweep, so it must not depend on the sweep.
+
+        Folding registry errors into `complete` would mean a failed sweep
+        marks the run incomplete, which on the NEXT run skips the sweep that
+        was trying to repair it — a latch that never clears.
+        """
+        client = _FakeClient()
+
+        def _boom(_name, _params):
+            raise RuntimeError("rpc exploded")
+
+        client.rpc = _boom
+        svc = ImovelSyncService(client, _adapter_with(1))
+
+        report = await svc.sync(ORG, with_detalhes=False)
+
+        assert report.complete is True
+        assert report.upserted == 1

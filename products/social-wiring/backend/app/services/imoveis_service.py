@@ -62,6 +62,10 @@ class ImoveisLookupError(Exception):
 
 _SCHEMA = "social_wiring"
 _TABLE = "imoveis"
+# Our permanent imóvel identity (migration 063). `imoveis` is a disposable
+# mirror of the ACTIVE Vista catalog; this survives an imóvel leaving it, and
+# is what leads/vendas/campanhas actually reference.
+_REGISTRY_TABLE = "imovel_registry"
 
 # Vista tolerated concurrency 8 with no throttling in the 2026-08-03
 # measurement (24-call batches: 20.1s serial → 4.3s at 4 → 3.1s at 8, zero
@@ -102,10 +106,23 @@ class SyncReport:
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     duration_seconds: float = 0.0
+    # Registry maintenance (migration 063). Kept OUT of `complete` on
+    # purpose — see the property below.
+    registry_ativos: int = 0
+    registry_delistados: int = 0
+    registry_failures: list[str] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
-        """True only when nothing was skipped anywhere."""
+        """True only when the CATALOG PULL skipped nothing.
+
+        `registry_failures` is deliberately excluded. `complete` gates the
+        registry sweep itself — folding registry errors into it would mean a
+        failed sweep marks the run incomplete, which on the next run would
+        skip the sweep that was trying to repair it. The registry is
+        reported separately by `as_dict` and logged loudly; it is never
+        hidden, just not self-referential.
+        """
         return not self.page_failures and not self.detalhes_failed
 
     def as_dict(self) -> dict:
@@ -121,6 +138,10 @@ class SyncReport:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "duration_seconds": round(self.duration_seconds, 1),
+            "registry_ativos": self.registry_ativos,
+            "registry_delistados": self.registry_delistados,
+            "registry_failures": self.registry_failures,
+            "registry_failures_count": len(self.registry_failures),
         }
 
 
@@ -461,6 +482,24 @@ class ImovelSyncService:
 
         _log_place_name_merges(org_id, place_name_variants)
 
+        # Registry sweep — AFTER the upserts, and only on a complete run.
+        #
+        # Gated on `report.complete` deliberately. The sweep infers "this
+        # imóvel left the catalog" from "the sync did not touch it this
+        # run". On a run that dropped pages, thousands of untouched imóveis
+        # are untouched because the FETCH failed, not because they were
+        # sold — sweeping then would delist the catalog wholesale and stamp
+        # snapshots over live listings. A skipped sweep costs one night of
+        # lag; a wrong sweep costs the truth.
+        if report.complete:
+            self._sweep_registry(org_id, synced_at, report)
+        else:
+            logger.warning(
+                "imoveis sync: skipping registry sweep for org=%s — the run "
+                "was incomplete, so 'not seen' does not mean 'delisted'.",
+                org_id,
+            )
+
         if not report.complete:
             # Loud, not silent. A partially-complete sync that reports success
             # is how an amenity filter quietly stops matching.
@@ -510,6 +549,86 @@ class ImovelSyncService:
             return
         self._table().upsert(rows, on_conflict="org_id,codigo").execute()
         report.upserted += len(rows)
+
+        # Registry rows for anything we have not seen before. `DO NOTHING` on
+        # conflict, so an imóvel that already has an identity keeps its
+        # original `primeiro_visto_em` and `origem_descoberta` — a row first
+        # discovered via a LEAD must not be rewritten as `vista_sync` just
+        # because the catalog later showed it to us. The sweep, not this,
+        # maintains the lifecycle columns.
+        self._upsert_registry(imoveis, org_id, synced_at, report)
+
+    def _registry_table(self):
+        return self._client.schema(_SCHEMA).table(_REGISTRY_TABLE)
+
+    def _upsert_registry(
+        self, imoveis: list[Imovel], org_id: UUID, synced_at: str, report: SyncReport
+    ) -> None:
+        rows = [
+            {
+                "org_id": str(org_id),
+                "codigo_canonical": i.codigo.strip().upper(),
+                "codigo_display": i.codigo,
+                "ultimo_visto_no_vista_em": synced_at,
+                "ativo_no_vista": True,
+                "origem_descoberta": "vista_sync",
+            }
+            for i in imoveis
+            if i.codigo and i.codigo.strip()
+        ]
+        if not rows:
+            return
+        try:
+            (
+                self._registry_table()
+                .upsert(
+                    rows,
+                    on_conflict="org_id,codigo_canonical",
+                    ignore_duplicates=True,
+                )
+                .execute()
+            )
+        except Exception as exc:
+            # Recorded, not swallowed, and NOT fatal: the catalog upsert above
+            # already succeeded, and a registry that lags by one page is
+            # repaired by the next run. Losing the whole sync over it would be
+            # the worse trade.
+            report.registry_failures.append(f"{type(exc).__name__}: {exc}")
+            logger.warning(
+                "imoveis sync: registry upsert failed for org=%s: %s", org_id, exc,
+            )
+
+    def _sweep_registry(self, org_id: UUID, synced_at: str, report: SyncReport) -> None:
+        """Mark what this run saw as active; delist + snapshot what it did not.
+
+        Delegates to `social_wiring.sweep_imovel_registry` (migration 063)
+        rather than reproducing the logic here: the snapshot copy is a
+        correlated UPDATE across two tables, which is one statement in SQL
+        and a read-modify-write race in Python.
+        """
+        try:
+            resp = self._client.rpc(
+                "sweep_imovel_registry",
+                {"p_org_id": str(org_id), "p_run_at": synced_at},
+            ).execute()
+        except Exception as exc:
+            report.registry_failures.append(f"sweep: {type(exc).__name__}: {exc}")
+            logger.error(
+                "imoveis sync: registry sweep FAILED for org=%s: %s — imóveis "
+                "that left the catalog keep a stale ativo_no_vista until the "
+                "next successful run.", org_id, exc, exc_info=True,
+            )
+            return
+
+        data = resp.data if isinstance(resp.data, list) else [resp.data or {}]
+        first = data[0] if data else {}
+        report.registry_ativos = int(first.get("marcados_ativos") or 0)
+        report.registry_delistados = int(first.get("marcados_delistados") or 0)
+        log = logger.warning if report.registry_delistados else logger.info
+        log(
+            "imoveis registry sweep org=%s: %d ativo(s), %d delistado(s)",
+            org_id, report.registry_ativos, report.registry_delistados,
+        )
 
     async def _enrich(self, imoveis: list[Imovel], report: SyncReport) -> list[Imovel]:
         """Re-fetch each imóvel with detalhes, in place.
