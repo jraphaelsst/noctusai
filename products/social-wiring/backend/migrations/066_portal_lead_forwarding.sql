@@ -1,4 +1,4 @@
--- 054_portal_lead_forwarding.sql
+-- 066_portal_lead_forwarding.sql
 --
 -- Store-and-forward outbox for inbound portal leads.
 --
@@ -36,6 +36,13 @@
 --   CHECK listing modes we have not been told are correct would be a guess
 --   wearing a constraint's clothing. Adding one when the answer arrives is a
 --   one-line migration.
+--
+-- MIGRATION NUMBER: authored as 054, renumbered to 066 at integration.
+--   `dev` shipped its own `054_negociacoes_venda_collapse.sql` while this
+--   branch was in flight, and `check_migration_number_collision` refused
+--   the integrate — correctly: two files claiming one number leaves
+--   apply-order undefined. Renumbered to the next free slot rather than
+--   reordering anything already merged.
 --
 -- Additive: two new tables. No existing object is altered.
 --

@@ -125,7 +125,7 @@ class TestBuildHeaders:
 
     def test_an_unsupported_mode_refuses(self):
         """`basic`/`bearer` are deliberately absent until the downstream
-        vendor answers what it accepts — see migration 054."""
+        vendor answers what it accepts — see migration 066."""
         with pytest.raises(fs.ForwardTargetMisconfigured):
             fs.build_headers("bearer", webhook_secret=WEBHOOK_SECRET)
 

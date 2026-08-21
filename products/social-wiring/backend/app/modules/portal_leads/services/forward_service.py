@@ -154,7 +154,7 @@ def build_headers(auth_mode: str, *, webhook_secret: Optional[str]) -> dict[str,
     `passthrough` rebuilds the vendor's own `Authorization: Basic` from
     the secret the receiver already validates against. It is by
     construction the identical value Grupo OLX sent us, which is why the
-    outbox stores no credential of its own — see migration 054.
+    outbox stores no credential of its own — see migration 066.
 
     An unknown mode raises rather than sending an unauthenticated
     request: silently dropping the header would look like a downstream
