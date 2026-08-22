@@ -1,13 +1,39 @@
-"""Scheduled job for the `portal_leads` module — the OLX inbox drain.
+"""Scheduled jobs for the `portal_leads` module — the two OLX drains.
 
-One job, every 15 minutes. It exists because the receiver answers 200 and
-processes afterwards: a lead whose ingest failed (unresolvable org, a
-mapping error, a DB blip) sits in `olx_lead_events` as `error` or
-`unresolved` and nothing else would ever pick it up.
+The inbox drain runs every 15 minutes. It exists because the receiver
+answers 200 and processes afterwards: a lead whose ingest failed
+(unresolvable org, a mapping error, a DB blip) sits in `olx_lead_events`
+as `error` or `unresolved` and nothing else would ever pick it up.
 
 Fifteen minutes rather than daily because the drain is cheap — one
 indexed DB read of a partial index that is almost always empty — and
 because the cost of waiting is a real customer not being called back.
+
+── The empty-queue pre-flight ─────────────────────────────────────────
+Both jobs check whether there is ANY work before resolving config.
+
+That ordering is the whole point. `get_olx_config()` is deliberately
+never cached (see `deps.py`: an operator rotating the secret must not
+need a redeploy), so every call costs four `app_integration_config`
+reads. Both jobs used to pay that BEFORE discovering the queue was
+empty, which on a tenant where OLX is not configured at all — no
+webhook secret, no API key, no org mapping, zero rows ever received —
+meant four wasted reads every five minutes, forever.
+
+Measured on 2026-08-22: 2090 requests in 24h, 15.5% of ALL database
+traffic for this project, to do nothing. The queue check itself was
+never the cost; the config resolution in front of it was.
+
+So the order is now: cheap indexed `LIMIT 1` first, and config only
+when a row actually exists. Nothing is cached, so a rotated secret is
+still picked up on the very next run that has work — the property
+`deps.py` protects is untouched.
+
+Deliberately NOT "disable the jobs when OLX is unconfigured": a retry
+queue that silently stops existing is the failure shape this module was
+built to avoid, and it would have to be remembered and re-enabled the
+day OLX goes live. This costs one indexed read per run and needs no
+one to remember anything.
 """
 from __future__ import annotations
 
@@ -24,10 +50,65 @@ logger = logging.getLogger(__name__)
 _SCHEMA = "social_wiring"
 
 
+def _has_pending_events(client: Any) -> bool:
+    """Is there at least one event awaiting re-processing?
+
+    `LIMIT 1` on the same status filter `drain_pending` uses — the point
+    is to answer "any work?" for one indexed row read, not to fetch the
+    batch. `drain_pending` re-queries with the real limit when this says
+    yes; that second query happens only on the rare non-empty run.
+
+    A failure here returns True, not False: "I could not tell" must fall
+    through to the real drain, which has its own error handling. Guessing
+    "no work" on a transport blip would silently skip a real lead, which
+    is the exact outcome this module exists to prevent.
+    """
+    from app.modules.portal_leads.services.olx_webhook_service import (
+        PENDING_STATUSES,
+    )
+
+    try:
+        resp = (
+            client.table("olx_lead_events")
+            .select("id")
+            .in_("status", list(PENDING_STATUSES))
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:  # noqa: BLE001 — see docstring: fail OPEN
+        logger.warning(
+            "olx drain: pre-flight check failed (%s) — running the drain anyway",
+            exc,
+        )
+        return True
+    return bool(resp.data)
+
+
+def _has_due_forwards(client: Any) -> bool:
+    """Is there at least one forward due for delivery?
+
+    Same shape and same fail-open rule as `_has_pending_events`, reusing
+    `due_forwards` so the definition of "due" lives in exactly one place
+    — a hand-rolled copy of that predicate here would drift the moment
+    the backoff schedule changes.
+    """
+    from app.modules.portal_leads.services.forward_service import due_forwards
+
+    try:
+        return bool(due_forwards(client, limit=1))
+    except Exception as exc:  # noqa: BLE001 — fail OPEN
+        logger.warning(
+            "portal-forward drain: pre-flight check failed (%s) — running "
+            "the drain anyway", exc,
+        )
+        return True
+
+
 def _drain_sync(
     *,
     admin_client_factory: Optional[Callable[[], Any]] = None,
     service_factory: Optional[Callable[..., Any]] = None,
+    has_work_fn: Optional[Callable[[Any], bool]] = None,
 ) -> None:
     """Sync body of the drain. Collaborators are DI seams (Class-A,
     `KB § PATTERNS/backend/di-test-seam.md`) so a test drives the real job
@@ -45,6 +126,13 @@ def _drain_sync(
         service_factory = OlxWebhookService
 
     client = admin.schema(_SCHEMA)
+
+    # Pre-flight BEFORE config: see the module docstring. Returning here
+    # skips four uncached `app_integration_config` reads on every run of a
+    # queue that is empty ~always.
+    if not (has_work_fn or _has_pending_events)(client):
+        return
+
     default_org = None
     try:
         from app.dependencies import coerce_org_uuid
@@ -105,12 +193,17 @@ async def _drain_forwards_async(
     *,
     admin_client_factory: Optional[Callable[[], Any]] = None,
     drain_fn: Optional[Callable[..., Any]] = None,
+    has_work_fn: Optional[Callable[[Any], bool]] = None,
 ) -> None:
     """Async body of the forward drain. Collaborators are DI seams so a
     test drives the real job without a scheduler or a database."""
     admin = (admin_client_factory or get_admin_client)()
     if admin is None:
         logger.warning("portal-forward drain: no admin client — skipping run")
+        return
+
+    # Pre-flight BEFORE config — same reasoning as the inbox drain.
+    if not (has_work_fn or _has_due_forwards)(admin.schema(_SCHEMA)):
         return
 
     if drain_fn is None:
