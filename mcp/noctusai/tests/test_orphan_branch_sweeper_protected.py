@@ -171,3 +171,124 @@ class TestGuardPredicate:
         """A substring match would protect `feat/prod-roi` by accident and
         quietly stop the sweeper from ever cleaning it up."""
         assert obs.is_protected(name) is False
+
+
+@pytest.fixture
+def repo_with_worktrees(repo: Path) -> Path:
+    """The same repo, plus the two worktree shapes the classifier must tell apart.
+
+    * `feat/already-merged` — integrated (0 ahead) AND checked out in a live
+      worktree. This is the ORDINARY end state of a dispatch: the work is on
+      dev, the worktree has not been reaped yet. It is the case the old
+      precedence got wrong.
+    * `feat/in-flight` — ahead of dev and checked out. Already classified
+      correctly before the fix; here so the fix is shown not to have
+      collapsed the two into one answer.
+
+    Real `git worktree add`, not a mkdir, because `delete_integrated` runs a
+    real `git branch -d` and the whole point is what git does when a branch
+    is held by a worktree.
+    """
+    (repo / ".claude" / "worktrees").mkdir(parents=True, exist_ok=True)
+    _git(repo, "worktree", "add",
+         str(repo / ".claude" / "worktrees" / "already-merged"),
+         "feat/already-merged")
+
+    _git(repo, "branch", "feat/in-flight")
+    _git(repo, "worktree", "add",
+         str(repo / ".claude" / "worktrees" / "in-flight"), "feat/in-flight")
+    inflight = repo / ".claude" / "worktrees" / "in-flight"
+    (inflight / "g.txt").write_text("ahead\n")
+    _git(inflight, "add", "g.txt")
+    _git(inflight, "commit", "-m", "ahead of dev")
+    return repo
+
+
+class TestWorktreePrecedence:
+    """A live worktree outranks the integrated heuristic.
+
+    Second finding in the same classifier, 2026-08-22. `ahead == 0` was
+    tested BEFORE `has_worktree`, so a branch whose work had integrated but
+    whose worktree was still on disk — again, the normal end state — came
+    back as "safe to delete (0 commits ahead of origin/dev)" on a row whose
+    own `has_worktree` field said `true`. The report contradicted itself.
+
+    Nothing was ever lost to it: git refuses `branch -d` for a branch held by
+    a worktree ("cannot delete branch 'x' used by worktree at …"). The damage
+    was to the advice — and advice is all this tool produces — plus a sweep
+    that reported `ok: False` because of errors it had caused itself.
+    """
+
+    def test_a_merged_branch_with_a_live_worktree_is_not_integrated(
+        self, repo_with_worktrees: Path
+    ):
+        rows = _by_name(obs.scan(repo_root=repo_with_worktrees))
+
+        assert rows["feat/already-merged"]["ahead"] == 0, "precondition"
+        assert rows["feat/already-merged"]["has_worktree"] is True
+        assert rows["feat/already-merged"]["classification"] == "active-worktree"
+
+    def test_no_row_contradicts_its_own_has_worktree_flag(
+        self, repo_with_worktrees: Path
+    ):
+        """The invariant, stated once for every branch rather than per-case.
+
+        A row that carries `has_worktree: true` must never also read "safe to
+        delete" — that pairing is the bug in its most general form, and it
+        would come back the moment a new classification arm is added above
+        the worktree check.
+        """
+        rows = obs.scan(repo_root=repo_with_worktrees)["branches"]
+
+        offenders = [
+            r["name"] for r in rows
+            if r["has_worktree"] and "safe to delete" in r["suggestion"]
+        ]
+        assert offenders == []
+
+    def test_an_ahead_branch_with_a_worktree_is_still_active(
+        self, repo_with_worktrees: Path
+    ):
+        """The arm that was already right must stay right."""
+        rows = _by_name(obs.scan(repo_root=repo_with_worktrees))
+
+        assert rows["feat/in-flight"]["ahead"] > 0
+        assert rows["feat/in-flight"]["classification"] == "active-worktree"
+
+    def test_the_suggestion_names_the_reaper_that_checks_for_dirt(
+        self, repo_with_worktrees: Path
+    ):
+        """`git branch -d` never looks at the working tree; the two cleanup
+        tools do. Pointing at the wrong one is how uncommitted work gets
+        thrown away by someone following the advice literally."""
+        rows = _by_name(obs.scan(repo_root=repo_with_worktrees))
+
+        sugg = rows["feat/already-merged"]["suggestion"]
+        assert "task_branch cleanup" in sugg
+        assert "dirty" in sugg
+
+    def test_dry_run_does_not_offer_a_worktree_backed_branch(
+        self, repo_with_worktrees: Path
+    ):
+        result = obs.delete_integrated(repo_root=repo_with_worktrees, dry_run=True)
+
+        assert "feat/already-merged" not in result["deleted"]
+
+    def test_a_real_delete_neither_touches_it_nor_errors_on_it(
+        self, repo_with_worktrees: Path
+    ):
+        """The load-bearing one.
+
+        Before the fix this produced `errors: [{name: feat/already-merged,
+        error: "cannot delete branch … used by worktree at …"}]` and an
+        overall `ok: False` — the sweep failed on a branch it should never
+        have tried. Asserting only "the branch survives" would have passed
+        against the broken code, because git was doing the surviving.
+        """
+        result = obs.delete_integrated(repo_root=repo_with_worktrees, dry_run=False)
+
+        branches = _git(repo_with_worktrees, "branch",
+                        "--format=%(refname:short)").split()
+        assert "feat/already-merged" in branches
+        assert result["errors"] == []
+        assert result["ok"] is True

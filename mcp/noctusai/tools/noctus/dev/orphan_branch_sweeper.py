@@ -17,8 +17,13 @@ What it does
           deletable. A release branch is 0-ahead of dev by definition, so
           the `integrated` rule below would otherwise mark production as
           the most disposable branch in the repo.
-        - **integrated**: 0 commits ahead of origin/dev → safe to delete.
         - **active-worktree**: has a live worktree on disk → DON'T delete.
+          Checked BEFORE `integrated`, and deliberately: the ordinary end
+          state of a dispatch is "integrated to dev, worktree still on
+          disk", so the integrated rule would otherwise claim every live
+          worktree's branch was safe to delete.
+        - **integrated**: 0 commits ahead of origin/dev, no worktree →
+          safe to delete.
         - **stale-no-artifacts**: ahead of dev, no worktree, no roadmap →
           probably abandoned; needs review.
         - **stale-with-roadmap**: ahead of dev, no worktree, but a
@@ -204,12 +209,37 @@ def scan(repo_root: Path | None = None) -> dict[str, Any]:
         if name == current:
             cls = "current"
             sugg = "checked out — don't delete from this session"
+        elif has_wt:
+            # 🔴 A live worktree outranks the integrated heuristic, and the
+            # order of these two arms is the whole rule. `ahead == 0` used to
+            # win, so the NORMAL end-state of a dispatch — work integrated to
+            # dev, worktree still on disk — was reported "safe to delete"
+            # while the row's own `has_worktree: true` said otherwise. The
+            # tool contradicted itself, and `delete_integrated` then ran
+            # `git branch -d` on it, which git REFUSES for a branch held by a
+            # worktree ("cannot delete branch 'x' used by worktree at …",
+            # verified 2026-08-22) — so every such branch became an entry in
+            # `errors` and flipped the whole sweep's `ok` to False.
+            #
+            # Nothing was ever destroyed; git's own guard saw to that. What
+            # was wrong is the advice, and advice is this tool's entire
+            # product. Reaping a worktree-backed branch is `task_branch
+            # cleanup` / `cleanup_stale_worktrees` — both refuse a DIRTY
+            # tree, which a bare `git branch -d` never checks.
+            cls = "active-worktree"
+            sugg = (
+                "live worktree exists — finish work or use task_branch cleanup"
+                if ahead
+                else (
+                    f"live worktree exists and the branch is integrated "
+                    f"({behind} behind) — reap it via task_branch cleanup / "
+                    f"cleanup_stale_worktrees, which refuse a dirty tree; a "
+                    f"bare `git branch -d` does not, and git refuses it anyway"
+                )
+            )
         elif ahead == 0:
             cls = "integrated"
             sugg = f"safe to delete (0 commits ahead of origin/dev; {behind} behind)"
-        elif has_wt:
-            cls = "active-worktree"
-            sugg = "live worktree exists — finish work or use task_branch cleanup"
         elif roadmap:
             cls = "stale-with-roadmap"
             sugg = f"matching roadmap {roadmap} — resume or close it before deleting"
