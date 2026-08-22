@@ -408,7 +408,23 @@ export interface ItemsEnvelope<T> {
 export interface DocumentoChecklistItem {
   key: string;
   label: string;
+  /** The effective tick — the override when there is one, else `derivado`. */
   concluido: boolean;
+  /**
+   * WHY this item is ticked (migration 068).
+   *
+   * `derivado` — computed from the client record + uploaded documents. This is
+   *   the normal case, and it is why nothing has to notify the checklist when a
+   *   lead arrives from Meta / OLX / ImovelWeb / Vista / an import / by hand.
+   * `manual`  — a person forced it, and their decision outranks the derivation
+   *   in both directions.
+   */
+  origem: "derivado" | "manual";
+  /**
+   * What the data alone says, reported even when an override disagrees — so
+   * the UI can show that an item is only ticked because someone said so.
+   */
+  derivado: boolean;
   concluido_em: string | null;
   concluido_por: string | null;
 }

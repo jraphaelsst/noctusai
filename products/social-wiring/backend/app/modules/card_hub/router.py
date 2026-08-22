@@ -25,16 +25,30 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 
 from app.modules.card_hub import agendamentos_service as agenda_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
 from app.modules.card_hub import documentos_service as docs_svc
+from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub import services as svc
 from app.modules.card_hub import timeline_service
-from app.modules.card_hub.deps import get_card_hub_client, get_storage_backend
+from app.modules.card_hub.deps import (
+    get_card_hub_client,
+    get_identity_extractor_factory,
+    get_storage_backend,
+)
 from app.modules.card_hub.schemas import (
     AgendamentoCreateBody,
     AgendamentoPatchBody,
@@ -447,15 +461,17 @@ async def list_documentos_route(
 @router.post("/{cliente_id}/documentos", status_code=201)
 async def upload_documento_route(
     cliente_id: UUID,
+    background: BackgroundTasks,
     file: UploadFile = File(...),
     tipo_documento: str = Form(...),
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
     storage=Depends(get_storage_backend),
+    extractor_factory=Depends(get_identity_extractor_factory),
 ) -> dict:
     user, org_id = _auth_parts(auth)
     data = await file.read()
-    return await docs_svc.upload_documento(
+    documento = await docs_svc.upload_documento(
         client,
         storage,
         org_id,
@@ -466,6 +482,23 @@ async def upload_documento_route(
         tipo_documento=tipo_documento,
         enviado_por=getattr(user, "id", None),
     )
+
+    # An identity document gets its birthdate read AFTER the response. The
+    # ladder's vision rung takes seconds to tens of seconds, so doing it inline
+    # would make a successful upload feel broken and would couple it to an LLM
+    # provider being reachable. The upload is already committed and stamped
+    # `extracao_status='pendente'`; the job only ever moves that forward.
+    if identidade_svc.deve_extrair(tipo_documento):
+        background.add_task(
+            identidade_svc.extrair_identidade,
+            client,
+            storage,
+            org_id,
+            cliente_id,
+            UUID(documento["id"]),
+            extractor=extractor_factory(str(org_id)),
+        )
+    return documento
 
 
 @router.get("/{cliente_id}/documentos/{documento_id}/url")

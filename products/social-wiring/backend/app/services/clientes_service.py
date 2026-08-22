@@ -972,14 +972,38 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
     `reativado_em` / `inativo_threshold_dias` are server-derived-only (see
     `clientes_router.py::update_cliente_route`, which is the only caller
     that ever passes them) — never accepted from the request body itself;
-    `ClientePatchBody` doesn't even declare them as fields."""
+    `ClientePatchBody` doesn't even declare them as fields.
+
+    The identity fields (migration 068) are editable here because editing them
+    is how five of the six document-checklist items get satisfied — the
+    checklist derives from these columns, so a PATCH that fills one ticks it on
+    the next read with nothing to notify.
+
+    `data_nascimento_origem` is stamped `'manual'` alongside any hand-edited
+    birthdate rather than being accepted from the body: origin describes HOW a
+    value arrived, so letting a caller assert it would let a client claim a
+    machine read was typed by a person, or the reverse. A manual value also
+    outranks every later automatic extraction, which is only safe if the
+    server is the one that decided it was manual."""
     allowed = {
         "nome", "ativo", "arquivado_em", "inativo_em",
         "reativado_em", "inativo_threshold_dias",
+        # Identity substrate (068) — what the document checklist derives from.
+        "nome_completo", "email", "data_nascimento", "genero",
     }
     payload = {k: v for k, v in updates.items() if k in allowed}
     if not payload:
         return _require_cliente(client, org_id, cliente_id)
+
+    # A hand-edited birthdate is authoritative and must never be silently
+    # replaced by a later OCR read (`identidade_extracao_service` checks this
+    # origin before writing). Clearing it back to NULL clears the origin too —
+    # an origin left pointing at a value that no longer exists is a lie the
+    # extractor would then honour.
+    if "data_nascimento" in payload:
+        payload["data_nascimento_origem"] = "manual" if payload["data_nascimento"] else None
+        payload["data_nascimento_documento_id"] = None
+        payload["data_nascimento_em"] = _now() if payload["data_nascimento"] else None
 
     payload["updated_at"] = _now()
     resp = (

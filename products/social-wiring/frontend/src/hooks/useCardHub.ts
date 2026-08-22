@@ -613,7 +613,12 @@ export function useDocumentoChecklist(clienteId: string | null) {
 }
 
 /**
- * Tick / untick one item.
+ * Set or CLEAR the human override on one item.
+ *
+ * `concluido: null` clears it and hands the item back to the server-side
+ * derivation. Without that, the first person to touch an item would pin it
+ * forever — including pinning a `false` onto a client who later supplies the
+ * very data the item asks for.
  *
  * Optimistic by design: a checkbox that waits for a round-trip before moving
  * feels broken, and this one is ticked six times in a row while reading a
@@ -626,7 +631,7 @@ export function useDocumentoChecklist(clienteId: string | null) {
 export function useDocumentoChecklistMutation(clienteId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ key, concluido }: { key: string; concluido: boolean }) =>
+    mutationFn: ({ key, concluido }: { key: string; concluido: boolean | null }) =>
       api.patch<DocumentoChecklistItem>(
         `${clienteBase(clienteId)}/documento-checklist/${encodeURIComponent(key)}`,
         { concluido },
@@ -635,8 +640,16 @@ export function useDocumentoChecklistMutation(clienteId: string) {
       await qc.cancelQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });
       const previous = qc.getQueryData<DocumentoChecklist>(DOC_CHECKLIST_KEY(clienteId));
       if (previous) {
+        // Clearing the override optimistically shows `derivado` — the value
+        // the server is about to fall back to — rather than blanking the row.
         const items = previous.items.map((i) =>
-          i.key === key ? { ...i, concluido } : i,
+          i.key === key
+            ? {
+                ...i,
+                concluido: concluido === null ? i.derivado : concluido,
+                origem: concluido === null ? ("derivado" as const) : ("manual" as const),
+              }
+            : i,
         );
         qc.setQueryData<DocumentoChecklist>(DOC_CHECKLIST_KEY(clienteId), {
           ...previous,

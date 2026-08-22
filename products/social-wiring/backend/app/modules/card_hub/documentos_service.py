@@ -31,6 +31,7 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
+from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.deps import BUCKET, get_card_hub_client
 from app.modules.card_hub.services import (
     _actor,
@@ -227,6 +228,13 @@ async def upload_documento(
         "delete_motivo": None,
         "delete_solicitado_por": None,
         "created_at": _now(),
+        # An identity document is queued for a birthdate read the moment it
+        # lands (migration 068). `pendente` is set HERE rather than by the
+        # background job so a job that never starts — worker died, process
+        # recycled mid-request — is visibly waiting instead of invisibly lost.
+        "extracao_status": (
+            "pendente" if identidade_svc.deve_extrair(tipo_documento) else None
+        ),
     }
     _t(client, "cliente_documentos").insert(row).execute()
     resolved = _resolve_actors({row["enviado_por"]} if row["enviado_por"] else set())

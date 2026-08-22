@@ -214,6 +214,29 @@ The `email_templates.py` flat module became a sub-package on 2026-04-25 (ai-expa
 | `send_digest(digest, *, recipient, org_id=None, log_prefix="DIGEST")` | Resend POST + dry-run-on-no-key fallback + Resend-failure swallow. |
 | `render(*, html_template, text_template, context, search_paths)` | Jinja-backed `(html, text)` renderer. Auto-escape on by default; `keep_trailing_newline=True`; products extend the lib's `_digest_base.{html,txt}.j2` and override blocks. |
 
+### `integrations/documents/` — Identity documents → typed fields (Protocol+Fake+Real+factory)
+
+Answers "document → fields a column can store", which `integrations.media` deliberately does not: `ResolvedMedia.text` is a narrative rendering built for a chatbot to read, so every consumer needing a typed value out of it would re-parse that prose itself, differently, at each call site.
+
+Landed 2026-08-22 with the social-wiring card checklist, as **the canonical RG/CPF extraction procedure**. The counter-example it replaces is `products/erp-imobiliario/backend/app/services/matricula_service.py` — a product-local PDF extractor that predates `integrations.media` and now duplicates it OCR-only, paying for a vision call per page even when the PDF carries a text layer. Retiring matrícula onto this seam is a follow-up.
+
+Composes `integrations.media` for "bytes → text" rather than re-doing it; owns only rung selection and the text→fields parse.
+
+| Symbol | Purpose |
+|---|---|
+| `IdentityFields(kind, data_nascimento, confidence, source, matched_label, error, error_message)` | Extraction result. `.persistable` is the ONE write gate — true only for `ALTA` with a value. |
+| `ExtractionConfidence` | `ALTA` (label-anchored + plausible; safe unattended) / `BAIXA` (a guess; needs human confirmation) / `NENHUMA`. |
+| `TextSource` | `TEXT_LAYER` (exact) / `OCR` (approximate) — the best predictor of transcription error, and what an auditor needs. |
+| `IdentityExtractor` Protocol | `await extract(content, *, mimetype, filename)`. MUST NOT raise — failures come back on `error`. |
+| `find_birthdate(text, *, today=None)` | Pure, label-anchored Brazilian birthdate parser. Usable standalone. |
+| `FakeIdentityExtractor(result=None)` | Deterministic; the dev/test default. |
+| `LadderIdentityExtractor` | PDF text layer → rasterize→vision. Lazily imported (no PyMuPDF/LLM at package import). |
+| `make_identity_extractor(*, real=False, org_id=None, document_prompt=None)` | Factory. |
+
+🔴 **Why it is label-anchored.** A Brazilian RG carries up to four dates and prints **expedição above nascimento**; a CNH adds "primeira habilitação". Positional extraction ("take the first date") is wrong more often than right, and fails silently — it yields a real, plausible date. The parser anchors on birth labels, actively excludes decoy labels, and gates every candidate on a plausibility window (past, age 16–120).
+
+🔴 **Residual risk, stated.** The gate catches gross OCR damage (a year of 1830, a date in 2027) but NOT a confusion between two plausible years (1980→1930). That is inherent to reading a photographed document, and it is why the consumer contract requires persisting `source` + `matched_label` as provenance — an unattributed value cannot be audited or corrected.
+
 ### `domain/sql_templates.py` — Authoring-time helpers for canonical SQL DDL
 
 Pure string-emission helpers for the conventions every product schema reuses. Adopted 2026-05-01 by `projects/sql-templates-absorption/` after the migration scanner flagged 88 `SET search_path` + 21 `updated_at trigger` + 14 `auth.uid()` subquery occurrences as recurrence-rule trips. Existing migration files stay verbatim (replay-log rule); the helpers are for fresh migrations + the scaffold tool.

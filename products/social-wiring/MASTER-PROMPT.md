@@ -87,6 +87,7 @@ scheduling appointments. RLS scoped to the product.
 - Multimodal media (audio/vision/PDF/keyframe) — `noctusai_lib.integrations.{media,llm}`
 - YouTube upload + Vista CRM client — `noctusai_lib.integrations.{youtube,vista}`
 - Fernet credential vault — `noctusai_lib.security.token_store`
+- Identity-document → typed fields (RG/CPF birthdate) — `noctusai_lib.integrations.documents` (canonical; composes `integrations.media`, never a product-local PDF reader)
 - Frontend WhatsApp hooks — `createWhatsAppConnectionHooks` / `createWhatsAppIntakeHooks` from `@noctusai/lib`
 - `assertSupabaseBuildEnv` — `@noctusai/lib` (boot-critical VITE_SUPABASE_* build-arg contract)
 

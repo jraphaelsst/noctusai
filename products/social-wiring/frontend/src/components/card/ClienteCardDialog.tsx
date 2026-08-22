@@ -142,7 +142,7 @@ export interface ClienteCardDialogProps {
   // The LIST is canonical server-side, so there is no create/remove here.
   documentoChecklist?: DocumentoChecklistItem[];
   documentoChecklistLoading?: boolean;
-  onToggleDocumentoChecklist: (key: string, concluido: boolean) => void;
+  onToggleDocumentoChecklist: (key: string, concluido: boolean | null) => void;
 
   // Anexos
   documentos: Documento[];
@@ -907,9 +907,18 @@ function AgendamentosSection({
  * once they become a client.
  *
  * There is no add/remove: the list is the SAME for every client by definition,
- * so it is defined server-side once (`documento_checklist_service.ITENS`) and
- * only the ticks are per-client. That is why this looks nothing like
- * `ChecklistBlock` above, which exists precisely to be edited per card.
+ * so it is defined server-side once (`documento_checklist_service.ITENS`).
+ *
+ * Ticks are DERIVED (migration 068): an item is done when the client record
+ * carries the field or the document has been uploaded. Nothing here posts a
+ * tick when data arrives — the next read simply reflects it, which is what
+ * makes every ingestion channel (Meta, OLX, ImovelWeb, Vista, import, manual)
+ * covered without any of them knowing this list exists.
+ *
+ * So a checkbox here is an OVERRIDE control, not the state itself. Clicking it
+ * asserts a human opinion; the ↩ button beside an overridden item withdraws
+ * that opinion and hands the item back to the data. Without that affordance
+ * the first click on an item would pin it forever.
  */
 function DocumentoChecklistSection({
   items,
@@ -918,7 +927,7 @@ function DocumentoChecklistSection({
 }: {
   items: DocumentoChecklistItem[];
   loading?: boolean;
-  onToggle: (key: string, concluido: boolean) => void;
+  onToggle: (key: string, concluido: boolean | null) => void;
 }) {
   if (loading) {
     return (
@@ -956,6 +965,36 @@ function DocumentoChecklistSection({
             <span className={cn(item.concluido && "text-muted-foreground line-through")}>
               {item.label}
             </span>
+            {item.origem === "manual" && (
+              <>
+                {/* An overridden item says so. A tick that disagrees with the
+                    record is exactly the one a reader must not mistake for
+                    evidence that the data is there. */}
+                <span
+                  className="rounded bg-muted px-1 text-[10px] uppercase tracking-wide text-muted-foreground"
+                  title={
+                    item.derivado === item.concluido
+                      ? "Marcado manualmente"
+                      : `Marcado manualmente — os dados indicam "${
+                          item.derivado ? "preenchido" : "pendente"
+                        }"`
+                  }
+                  data-testid={`documento-checklist-${item.key}-manual`}
+                >
+                  manual
+                </span>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => onToggle(item.key, null)}
+                  title="Voltar a seguir os dados"
+                  aria-label={`Voltar ${item.label} a seguir os dados`}
+                  data-testid={`documento-checklist-${item.key}-limpar`}
+                >
+                  ↩
+                </button>
+              </>
+            )}
           </li>
         ))}
       </ul>

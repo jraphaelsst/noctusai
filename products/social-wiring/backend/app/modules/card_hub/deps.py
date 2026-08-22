@@ -12,8 +12,12 @@ a cross-module import into a router file this slice must not touch.
 from __future__ import annotations
 
 import weakref
-from typing import Any
+from typing import Any, Callable, Optional
 
+from noctusai_lib.integrations.documents import (
+    IdentityExtractor,
+    make_identity_extractor,
+)
 from noctusai_lib.integrations.storage import (
     FakeStorageBackend,
     StorageBackend,
@@ -77,4 +81,31 @@ def get_storage_backend() -> StorageBackend:
     return backend
 
 
-__all__ = ["BUCKET", "get_card_hub_client", "get_storage_backend"]
+ExtractorFactory = Callable[[Optional[str]], IdentityExtractor]
+
+
+def get_identity_extractor_factory() -> ExtractorFactory:
+    """FastAPI dependency — builds the identity extractor for one org.
+
+    A FACTORY rather than an instance because the extractor is org-bound
+    (per-org LLM key resolution + budget accounting) while the dependency is
+    resolved once per request, and because the extraction itself runs as a
+    detached background task after the response is sent.
+
+    Tests MUST override this seam
+    (`app.dependency_overrides[get_identity_extractor_factory] = ...`)
+    with a `FakeIdentityExtractor`
+    (`KB § PATTERNS/backend/di-test-seam.md` Class-B). The real one calls a
+    vision model: an un-overridden test would either hit a provider or fail
+    on a missing key, and neither is the behaviour under test.
+    """
+    return lambda org_id: make_identity_extractor(real=True, org_id=org_id)
+
+
+__all__ = [
+    "BUCKET",
+    "ExtractorFactory",
+    "get_card_hub_client",
+    "get_identity_extractor_factory",
+    "get_storage_backend",
+]

@@ -356,7 +356,15 @@ describe("ordem das seções", () => {
       checklists: [{ id: "c1", titulo: "Checklist", posicao: 0, itens: [] } as never],
       documentos: [DOC as never],
       documentoChecklist: [
-        { key: "nome_completo", label: "Nome Completo", concluido: false, concluido_em: null, concluido_por: null },
+        {
+          key: "nome_completo",
+          label: "Nome Completo",
+          concluido: false,
+          origem: "derivado" as const,
+          derivado: false,
+          concluido_em: null,
+          concluido_por: null,
+        },
       ],
     });
   }
@@ -398,7 +406,16 @@ describe("dados obrigatórios (checklist permanente)", () => {
     { key: "genero", label: "Gênero" },
     { key: "rg", label: "RG" },
     { key: "cpf", label: "CPF" },
-  ].map((i) => ({ ...i, concluido: false, concluido_em: null, concluido_por: null }));
+  ].map((i) => ({
+    ...i,
+    concluido: false,
+    // Ticks are DERIVED (migration 068); `manual` only appears once a human
+    // has forced one, which is what the override tests below exercise.
+    origem: "derivado" as const,
+    derivado: false,
+    concluido_em: null,
+    concluido_por: null,
+  }));
 
   async function openDocumentos(overrides = {}) {
     const { fireEvent, render, screen } = await import("@testing-library/react");
@@ -423,10 +440,46 @@ describe("dados obrigatórios (checklist permanente)", () => {
 
   it("shows progress from what is already ticked", async () => {
     const ticked = ITENS.map((i) =>
-      i.key === "rg" || i.key === "cpf" ? { ...i, concluido: true } : i,
+      i.key === "rg" || i.key === "cpf"
+        ? { ...i, concluido: true, derivado: true }
+        : i,
     );
     const { screen } = await openDocumentos({ documentoChecklist: ticked });
     expect(screen.getByTestId("documento-checklist-progresso").textContent).toBe("2/6");
+  });
+
+  it("a derived tick carries no manual badge and no withdraw button", async () => {
+    const ticked = ITENS.map((i) =>
+      i.key === "rg" ? { ...i, concluido: true, derivado: true } : i,
+    );
+    const { screen } = await openDocumentos({ documentoChecklist: ticked });
+    expect(screen.queryByTestId("documento-checklist-rg-manual")).toBeNull();
+    expect(screen.queryByTestId("documento-checklist-rg-limpar")).toBeNull();
+  });
+
+  it("🔴 an override that disagrees with the data is labelled, not silent", async () => {
+    // A tick the record does not support must never read as evidence that the
+    // data is there — that is the whole failure the derivation removes, and
+    // the one case where a human can still reintroduce it deliberately.
+    const forced = ITENS.map((i) =>
+      i.key === "genero" ? { ...i, concluido: true, origem: "manual" as const } : i,
+    );
+    const { screen } = await openDocumentos({ documentoChecklist: forced });
+    const badge = screen.getByTestId("documento-checklist-genero-manual");
+    expect(badge.getAttribute("title")).toContain("pendente");
+  });
+
+  it("withdrawing an override hands the item back to the data", async () => {
+    const onToggleDocumentoChecklist = vi.fn();
+    const forced = ITENS.map((i) =>
+      i.key === "email" ? { ...i, concluido: true, origem: "manual" as const } : i,
+    );
+    const { fireEvent, screen } = await openDocumentos({
+      documentoChecklist: forced,
+      onToggleDocumentoChecklist,
+    });
+    fireEvent.click(screen.getByTestId("documento-checklist-email-limpar"));
+    expect(onToggleDocumentoChecklist).toHaveBeenCalledWith("email", null);
   });
 
   it("is NOT on Geral — it belongs to Documentos", async () => {

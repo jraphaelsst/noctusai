@@ -37,7 +37,7 @@ FastAPI would try to parse the literal "revisao" as a UUID `cliente_id` and
 from __future__ import annotations
 
 import weakref
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -241,6 +241,25 @@ class ClientePatchBody(StrictHttpModel):
 
     nome: Optional[str] = None
     ativo: Optional[bool] = None
+
+    # Identity substrate (migration 068) — the columns the Documentos-tab
+    # checklist DERIVES from. There is no separate "tick the checklist" call:
+    # filling a field here IS how its item gets ticked.
+    #
+    # `nome_completo` is deliberately distinct from `nome`. `nome` is whatever
+    # the originating channel supplied (a WhatsApp push name, a Meta leadgen
+    # `full_name`, an OLX display name) and is often a first name or a handle;
+    # the checklist item asserts that someone collected the person's legal full
+    # name. Folding them would auto-tick that item for every lead that ever
+    # arrived with any name at all.
+    #
+    # `data_nascimento_origem` is NOT accepted — the server stamps it
+    # (`clientes_service.update_cliente`), because provenance describes how a
+    # value arrived and a caller must not be able to assert it.
+    nome_completo: Optional[str] = None
+    email: Optional[str] = None
+    data_nascimento: Optional[date] = None
+    genero: Optional[str] = None
 
 
 class MergeGrupoBody(StrictHttpModel):

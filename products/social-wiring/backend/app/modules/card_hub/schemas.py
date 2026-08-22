@@ -195,13 +195,18 @@ __all__ = [
 
 
 class DocumentoChecklistPatchBody(StrictHttpModel):
-    """Tick or untick one canonical item.
+    """Set or clear the human override on one canonical item.
 
     No `key` field: the item is the path parameter, because it identifies the
     resource rather than describing a change to it. The valid-key check lives
     in the service (against `ITENS`, the one definition) rather than being
     re-listed here — a second copy of the six keys is a second thing to forget
     to update.
+
+    `concluido` is nullable, and null is not "unset" — it CLEARS the override
+    and hands the item back to the derivation (migration 068). It stays
+    REQUIRED precisely so clearing must be asked for, never inferred from an
+    omitted field.
     """
 
-    concluido: bool
+    concluido: Optional[bool]
