@@ -9,7 +9,9 @@ consent-gated hops sit between everyday `dev` work and the live VPS:
                       (KB § PATTERNS/architect/git-branch-model.md); passing it
                       is REFUSED loudly (2026-07-20 — it used to be a SILENT
                       no-op that still blessed the dev tip while the caller
-                      believed their pin had taken effect).
+                      believed their pin had taken effect). It also REFUSES
+                      unless `Tests & Build` is GREEN on the exact dev tip
+                      (2026-08-22 — see below).
   • Gate 2 — PROMOTE: fast-forward `prod` to a blessed `main` sha — and FIRST
                       snapshot the *current* prod onto `prod-backup` (instant
                       rollback pointer). The VPS pulls `origin/prod` afterwards
@@ -33,7 +35,18 @@ Safety model (mirrors deploy_pull / the §2a stack):
   • BY CONSTRUCTION it only runs a safe git allowlist (fetch / rev-parse /
     merge-base / rev-list / log / push) and never carries reset/checkout/clean/
     --force/--force-with-lease (a colocated test asserts this across a confirmed
-    bless AND a confirmed promote).
+    bless AND a confirmed promote). The one non-git call is a read-only
+    `gh run list` (the CI probe below); a colocated test pins the subcommand.
+  • CI-GREEN is a bless PRECONDITION, not a checklist line (2026-08-22).
+    `noc-ship` step 0b called it MANDATORY for months while NOTHING checked it,
+    so `1c83232f` was blessed AND promoted to prod carrying a red
+    `Tests & Build`, and `dev` then stayed red for 12 commits with the gate
+    reading as satisfied. Bless now probes the exact dev tip and refuses on
+    red / pending / missing / unreachable alike — REFUSE-NOT-NULL, because "I
+    could not find out" is not "it passed". The sole exception is the one the
+    skill already names: a diff that touches nothing executable (docs +
+    project-history only). There is deliberately NO override flag; a red dev
+    is fixed on dev. → KB § PATTERNS/devops/dev-main-ci-gates.md.
 
 IO is injectable (`run`, `now`) so the colocated test drives every path with
 zero real git and asserts both the allowlist and the NOCTUS_ALLOW_MAIN_PUSH
@@ -41,6 +54,7 @@ discipline (set on main/prod pushes, NEVER on the prod-backup snapshot push).
 """
 from __future__ import annotations
 
+import json
 import shlex
 import subprocess
 from typing import Any, Callable
@@ -49,6 +63,9 @@ from typing import Any, Callable
 # never checks out / resets / forces — keeping those off the list makes a
 # destructive or history-rewriting release structurally impossible.
 _ALLOWED_GIT = frozenset({"fetch", "rev-parse", "merge-base", "rev-list", "log", "diff", "push"})
+
+# The CI workflow whose green is a bless PRECONDITION (skill `noc-ship` step 0b).
+_CI_WORKFLOW = "Tests & Build"
 _BANNED_TOKENS = (
     "reset", "checkout", "restore", "clean", "--hard", "--force",
     "--force-with-lease", "-D", "branch",
@@ -109,6 +126,59 @@ def _commits(git, a: str, b: str) -> list[str]:
     return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else []
 
 
+def _changed_paths(git, a: str, b: str) -> list[str]:
+    rc, out, _e = git("diff", "--name-only", f"{a}..{b}")
+    return [ln.strip() for ln in out.splitlines() if ln.strip()] if rc == 0 else []
+
+
+def _is_docs_only(paths: list[str]) -> bool:
+    """The ONE sanctioned CI exception (skill `noc-ship` step 0b): a diff that
+    ships no executable change. Empty is NOT docs-only — an unreadable diff
+    must not buy a pass."""
+    return bool(paths) and all(
+        p.endswith(".md") or p.startswith(("project-history/", "docs/"))
+        for p in paths
+    )
+
+
+def _ci_verdict(runner, sha: str, workflow: str = _CI_WORKFLOW) -> dict[str, Any]:
+    """The CI conclusion for `workflow` on EXACTLY `sha`.
+
+    verdict ∈ {green, red, pending, missing, unavailable}. Everything that is
+    not `green` refuses the bless — REFUSE-NOT-NULL: "I could not find out" is
+    not "it passed" (2026-08-22: `1c83232f` was blessed AND promoted to prod
+    while this workflow was red, because nothing but agent discipline checked).
+    """
+    rc, out, err = runner([
+        "gh", "run", "list", "--workflow", workflow, "--commit", sha,
+        "--limit", "20", "--json", "status,conclusion,url",
+    ])
+    if rc != 0:
+        return {"verdict": "unavailable", "workflow": workflow,
+                "detail": (err.strip() or out.strip())[:300]}
+    try:
+        runs = json.loads(out or "[]")
+    except json.JSONDecodeError as exc:
+        return {"verdict": "unavailable", "workflow": workflow,
+                "detail": f"unparseable `gh run list` output: {exc}"}
+    if not runs:
+        return {"verdict": "missing", "workflow": workflow,
+                "detail": f"no '{workflow}' run exists for {sha[:9]}"}
+    # Newest first. `cancelled`/`skipped` carry no verdict — a superseded run
+    # must not decide, and must not be mistaken for a pass either.
+    for run in runs:
+        if run.get("status") != "completed":
+            return {"verdict": "pending", "workflow": workflow, "url": run.get("url"),
+                    "detail": f"run is {run.get('status')} — wait for it"}
+        concl = run.get("conclusion")
+        if concl in (None, "cancelled", "skipped"):
+            continue
+        return {"verdict": "green" if concl == "success" else "red",
+                "workflow": workflow, "conclusion": concl, "url": run.get("url")}
+    return {"verdict": "missing", "workflow": workflow,
+            "detail": f"every '{workflow}' run on {sha[:9]} was cancelled/skipped"}
+
+
 def release(
     stage: str = "status",
     confirm: bool = False,
@@ -151,12 +221,15 @@ def release(
     # ── STATUS ── full chain overview, no writes ever
     if stage == "status":
         bless_ff = _is_ancestor(git, main, dev)
+        dev_ci = _ci_verdict(runner, dev)
         promote_ff = bool(prod) and _is_ancestor(git, prod, main)
         return {
             **base, "status": "status", "exit_code": 0,
             "bless": {  # dev → main
                 "ff": bless_ff, "ahead": len(_commits(git, main, dev)),
                 "commits": _commits(git, main, dev)[:20],
+                # not-green here BLOCKS bless (unless the diff is docs-only)
+                "ci": dev_ci,
             },
             "promote": {  # main → prod (ships EVERYTHING main is ahead of prod)
                 "ff": promote_ff,
@@ -194,7 +267,33 @@ def release(
                     "reason": f"{main_branch} has commits not in {dev_branch} — not a clean "
                               f"fast-forward. Reconcile on {dev_branch} first (never force main)."}
         incoming = _commits(git, main, dev)
-        plan = {**base, "would_advance": f"{main_branch} → {dev[:9]}", "incoming_commits": incoming}
+        # 🔴 CI-GREEN PRECONDITION (2026-08-22). noc-ship step 0b has always
+        # called this MANDATORY, but nothing enforced it — so `1c83232f` was
+        # blessed AND promoted to prod carrying a red `Tests & Build`, and dev
+        # then stayed red for 12 commits with the gate reading as satisfied.
+        # A doctrine-only gate is not a gate (CLAUDE.md §1, gate↔methodology
+        # sync): the mechanism now ships with the rule.
+        ci = _ci_verdict(runner, dev)
+        docs_only = _is_docs_only(_changed_paths(git, main, dev))
+        if ci["verdict"] != "green" and not docs_only:
+            return {**base, "status": "blocked", "exit_code": 1, "ci": ci,
+                    "incoming_commits": incoming,
+                    "reason": (
+                        f"CI is not green on the exact {dev_branch} tip {dev[:9]} "
+                        f"(verdict={ci['verdict']}"
+                        + (f", conclusion={ci['conclusion']}" if ci.get("conclusion") else "")
+                        + f"): {ci.get('detail') or ci.get('url') or ''}. "
+                        f"Bless requires a GREEN '{ci['workflow']}' "
+                        f"on that sha — with the dev fleet dormant, CI is the only "
+                        f"pre-prod functional evidence there is. Fix {dev_branch} and "
+                        "re-run; the sole exception is a diff that is entirely docs/"
+                        "project-history, which this diff is not."
+                    )}
+        plan = {**base, "would_advance": f"{main_branch} → {dev[:9]}", "incoming_commits": incoming,
+                "ci": ci}
+        if docs_only and ci["verdict"] != "green":
+            plan["ci_exception"] = ("docs-only diff (no executable path changed) — "
+                                    "noc-ship step 0b's sole sanctioned CI exception")
         if not confirm:
             return {**plan, "status": "planned", "exit_code": 0,
                     "message": f"clean FF available: bless {len(incoming)} commit(s) "
