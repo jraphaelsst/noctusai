@@ -127,12 +127,18 @@ class TestTicking:
 
 
 class TestDefinitionIsCode:
-    def test_a_relabel_does_not_orphan_a_tick(self, client, scoped, monkeypatch):
+    def test_a_relabel_does_not_orphan_a_tick(self, client, scoped):
         """`item_key` is identity, `label` is presentation.
 
-        Renaming an item must be a one-word edit that every card picks up, with
-        existing ticks intact. Six materialised rows per client could not do
-        this without a backfill.
+        Renaming an item must be a one-word edit every card picks up, with the
+        existing ticks intact. That holds BY CONSTRUCTION, so this pins the
+        construction instead of simulating a rename: the tick is stored under
+        `item_key` with no label anywhere in the row, and every served label is
+        read back out of :data:`svc.ITENS`. A relabel therefore cannot reach a
+        stored tick — there is nothing in the row for it to invalidate.
+
+        Six materialised rows per client would fail this: the label would be
+        IN the row, and the rename would need a backfill.
         """
         cid = _seed(scoped)
         client.patch(
@@ -140,13 +146,19 @@ class TestDefinitionIsCode:
             json={"concluido": True},
             headers=_auth(),
         )
-        renamed = tuple(
-            {**i, "label": "Gênero / Identidade"} if i["key"] == "genero" else i
-            for i in svc.ITENS
-        )
-        monkeypatch.setattr(svc, "ITENS", renamed)
+
+        rows = scoped.table("cliente_documento_checklist").select("*").execute().data
+        assert [r["item_key"] for r in rows] == ["genero"], "the tick is keyed by key"
+        labels = {i["label"] for i in svc.ITENS}
+        assert not [
+            (col, val)
+            for row in rows
+            for col, val in row.items()
+            if isinstance(val, str) and val in labels
+        ], "no label is persisted — that is exactly what makes a relabel free"
 
         body = client.get(f"/api/clientes/{cid}/documento-checklist", headers=_auth()).json()
-        item = next(i for i in body["items"] if i["key"] == "genero")
-        assert item["label"] == "Gênero / Identidade"
-        assert item["concluido"] is True, "the tick followed the key, not the label"
+        assert {i["key"]: i["label"] for i in body["items"]} == {
+            i["key"]: i["label"] for i in svc.ITENS
+        }, "every label served is read from the definition, never from the row"
+        assert next(i for i in body["items"] if i["key"] == "genero")["concluido"] is True
