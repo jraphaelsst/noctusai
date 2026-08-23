@@ -383,3 +383,61 @@ def test_cron_and_catch_up_cannot_run_concurrently():
     asyncio.run(_both())
 
     assert peak == 1, f"two syncs overlapped (peak={peak})"
+
+
+class TestCrossProcessLease:
+    """Migration 069 — a second PROCESS cannot run the sync concurrently.
+
+    `_sync_lock` covers coroutines inside one process. This covers two
+    containers, which is the case the scheduler guard
+    (`NOCTUS_SCHEDULERS_ENABLED`) deliberately says nothing about: both are
+    legitimately authorised.
+    """
+
+    def test_losing_the_lease_skips_the_sync_entirely(self, monkeypatch):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _denied(_admin, _name, **_kw):
+            yield False
+
+        build = MagicMock()
+        monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
+        monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
+        monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
+        monkeypatch.setattr(sched, "build_sync_service", build)
+
+        asyncio.run(sched._run(motivo="cron", only_overdue=False, lease_fn=_denied))
+
+        build.assert_not_called()
+
+    def test_holding_the_lease_runs_the_sync(self, monkeypatch):
+        import contextlib
+
+        synced: list[str] = []
+
+        @contextlib.contextmanager
+        def _granted(_admin, _name, **_kw):
+            yield True
+
+        class _Svc:
+            async def sync(self, org_id, *, with_detalhes):
+                synced.append(str(org_id))
+                return MagicMock(
+                    complete=True, upserted=1, detalhes_fetched=1,
+                    page_failures=[], detalhes_failed=[], duration_seconds=1.0,
+                )
+
+        monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
+        monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
+        monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
+        monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
+
+        asyncio.run(sched._run(motivo="cron", only_overdue=False, lease_fn=_granted))
+
+        assert synced == [_ORG_A]
+
+    def test_the_lease_name_is_stable(self):
+        """Every process must contend on the SAME row — a per-process or
+        per-run name would be a lock that never locks."""
+        assert sched._LEASE_NAME == "imoveis_vista_sync"

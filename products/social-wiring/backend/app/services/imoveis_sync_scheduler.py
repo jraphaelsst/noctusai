@@ -33,15 +33,26 @@ a run was *attempted*; only the rows record that it *worked*. A failed or
 half-finished pull leaves ``sincronizado_em`` behind and correctly reads
 as still-overdue on the next boot.
 
-── Concurrency ─────────────────────────────────────────────────────────
-``_sync_lock`` serialises the cron path and the catch-up path in-process,
-so a boot at 00:04 cannot run both at once. Across REPLICAS there is no
-lock: two containers would both catch up. That is bounded, not corrupting
-— the sync upserts on ``(org_id, codigo)`` and is idempotent — but it
-would double the Vista call volume, so it is called out here rather than
-left to be discovered. social-wiring runs single-replica today; a second
-replica needs an advisory lock in the database, and this docstring is the
-pointer to that decision.
+── Concurrency: two locks, two different failures ──────────────────────
+``_sync_lock`` is an in-process ``asyncio.Lock``. It stops the cron path
+and the startup catch-up overlapping inside THIS process — a boot at
+00:04 would otherwise run both. It cannot see another process.
+
+``sync_lease`` (migration 069) is a database lease keyed on
+``imoveis_vista_sync``. It stops a SECOND PROCESS running the same job.
+Two containers after a replica bump are both legitimately authorised, and
+nothing in the scheduler layer would keep them apart.
+
+Both are needed. Dropping the asyncio lock would mean two coroutines in
+one process racing for the same lease and one silently skipping its run;
+dropping the lease would mean two containers each doing a full Vista pull
+against the same catalog.
+
+Related but NOT a substitute: ``start_scheduler`` refuses to run outside
+a deployed container (``NOCTUS_SCHEDULERS_ENABLED``), which closes the
+2026-08-22 laptop case at the source. That guard answers "may this
+process run jobs at all"; the lease answers "may it run THIS job right
+now" — the multi-replica question the guard says nothing about.
 
 Roadmap: ``project-history/roadmaps/social-wiring-imoveis-vista-2026-08.md``.
 """
@@ -58,6 +69,7 @@ from noctusai_lib.api import scheduler as seed_scheduler
 
 from app.config import settings
 from app.dependencies import get_admin_client
+from app.services import sync_lease
 from app.services.imoveis_service import build_sync_service
 
 logger = logging.getLogger(__name__)
@@ -73,6 +85,10 @@ _SLOT = time(0, 5)
 # pull the slot matters more than punctuality: running 40 minutes late is
 # entirely fine, skipping a night is not.
 _MISFIRE_GRACE = 3600
+#: Lease key for the cross-process run lock (migration 069). One name for
+#: this job, fleet-wide — the point is that every process contends on the
+#: same row.
+_LEASE_NAME = "imoveis_vista_sync"
 
 # Serialises the cron path against the startup catch-up. Module-level is
 # safe on 3.11+ — asyncio.Lock no longer binds a loop at construction.
@@ -259,6 +275,7 @@ async def _run(
     discover_fn: Any = None,
     overdue_fn: Any = None,
     sync_service_factory: Any = None,
+    lease_fn: Any = None,
 ) -> None:
     """Discover, filter, sync — under the lock.
 
@@ -313,12 +330,31 @@ async def _run(
             _last_expected_slot(now).isoformat(),
         )
 
+    # Two locks, deliberately, because they cover different failures.
+    #
+    # `_sync_lock` is an in-process asyncio lock: it stops the cron path and
+    # the startup catch-up overlapping inside THIS process (a boot at 00:04).
+    # It cannot see another process.
+    #
+    # `sync_lease` is a database lease: it stops a SECOND process running the
+    # same job. `start_scheduler` now refuses to run outside a deployed
+    # container, which closes the laptop case at the source — but two
+    # legitimately-authorised containers after a replica bump would still
+    # collide, and that is what this holds against.
     async with _sync_lock:
-        await _sync_orgs(
-            admin, adapter, org_ids,
-            motivo=motivo,
-            sync_service_factory=sync_service_factory,
-        )
+        with (lease_fn or sync_lease.lease)(admin, _LEASE_NAME) as acquired:
+            if not acquired:
+                logger.info(
+                    "%s [%s]: another process holds the sync lease — "
+                    "skipping. Not an error: exactly one run is the point.",
+                    _JOB_NAME, motivo,
+                )
+                return
+            await _sync_orgs(
+                admin, adapter, org_ids,
+                motivo=motivo,
+                sync_service_factory=sync_service_factory,
+            )
 
 
 # ─── Entry points ───────────────────────────────────────────────────────
