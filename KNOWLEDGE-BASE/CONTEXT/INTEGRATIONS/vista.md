@@ -550,7 +550,13 @@ submission (`lead`) — those routes are absent regardless of permission.
 Notably there is therefore **no API path to write a captured lead back into
 Vista** on this tenant; an inbound-lead flow terminates in our own database.
 
-#### Field set — ✅ CONFIRMED live 2026-08-21 (11 of 32 candidates)
+#### Field set — ✅ CONFIRMED live 2026-08-21 (11 of 32 candidates), on BOTH routes
+
+The eleven below were confirmed on `/clientes/listar` on 2026-08-21 and on
+`/clientes/detalhes` on 2026-08-23 (bogus-code probe, below). The second check
+was not ceremony: `CLIENTE_DETAIL_FIELDS` had been shipped on the assumption
+that both routes share an accepted set, and a single rejection there would
+have turned every detail-dialog open into a 422 in production.
 
 Established **without reading a single client record**: Vista's 400 names
 every field it rejects, so `accepted = requested − rejected` is derivable
@@ -584,6 +590,37 @@ but different: **no CPF, no address, no email**, yet `DataNascimento`, `Sexo`,
 `EstadoCivil`, `Profissao` and `Celular` are all returned. That is a
 demographic profile, and a data-category intake written against the old
 assumption would have classified the wrong categories entirely.
+
+#### The bogus-code probe — verify a DETAIL field set with zero data exposure
+
+`/clientes/detalhes` validates `fields` **before** it resolves the record. That
+ordering is the whole trick, and it was established on 2026-08-23 rather than
+assumed:
+
+```
+cliente=__NOC_FIELD_PROBE__  fields=[…the 11…]  → 400 "O cliente solicitado não foi encontrado."
+cliente=__NOC_FIELD_PROBE__  fields=[Codigo, CPF]       → 400 "Campo CPF não está disponível."
+cliente=__NOC_FIELD_PROBE__  fields=[Codigo, Endereco]  → 400 "Campo Endereco não está disponível."
+cliente=__NOC_FIELD_PROBE__  fields=[Codigo, NoctusNaoExiste] → 400 "Campo NoctusNaoExiste não está disponível."
+```
+
+The three known-bad runs are the discriminator: they prove field validation
+wins the race, so the clean run's *record*-not-found means the eleven fields
+were all accepted. **Send a code that cannot exist and neither branch returns
+anyone's data** — a rejection names the field, a pass names nothing.
+
+Do this before wiring any detail endpoint over a personal-data family. It is
+the same lever as the `accepted = requested − rejected` derivation on
+`/clientes/listar` (above), applied to the one endpoint shape where you cannot
+simply ask for one row without getting one person.
+
+> ⚠️ **Still unverified, deliberately:** the *shape* of a populated
+> `/clientes/detalhes` response. Only a real record reveals whether it is the
+> flat dict `/imoveis/detalhes` returns, and reading one to find out is the
+> thing this whole section avoids. `vista_cliente_detalhes_to_showcase` reads
+> a flat dict and the ERP service degrades a non-dict to `{}`, so the failure
+> mode is a detail dialog of em-dashes, not a crash. First real open by an
+> admin settles it.
 
 **✅ Consumed since 2026-08-22 — under a two-tier minimisation split.** The ERP
 Clientes tab reads this family live. Seven fields in the list, the four

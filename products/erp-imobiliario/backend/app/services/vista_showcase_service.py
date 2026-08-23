@@ -109,6 +109,12 @@ CLIENTE_LIST_FIELDS = [
     "Codigo", "Nome", "Celular", "Status", "DataCadastro", "Corretor", "Interesse",
 ]
 
+# ✅ Probe-verified against `/clientes/detalhes` on 2026-08-23 — all eleven
+# accepted. Not assumed from the `listar` calibration: that route's accepted
+# set is a different check, and one rejection here would 422 every detail-
+# dialog open. Verified with a `cliente=` code that cannot exist, since Vista
+# validates `fields` before resolving the record — so neither branch of the
+# probe returns anyone's data (vista.md § 4.2, "the bogus-code probe").
 CLIENTE_DETAIL_FIELDS = [
     *CLIENTE_LIST_FIELDS,
     "DataNascimento", "Sexo", "EstadoCivil", "Profissao",
