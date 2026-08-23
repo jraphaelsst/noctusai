@@ -362,6 +362,7 @@ describe("ordem das seções", () => {
           concluido: false,
           origem: "derivado" as const,
           derivado: false,
+          sugestao: null,
           concluido_em: null,
           concluido_por: null,
         },
@@ -413,6 +414,7 @@ describe("dados obrigatórios (checklist permanente)", () => {
     // has forced one, which is what the override tests below exercise.
     origem: "derivado" as const,
     derivado: false,
+    sugestao: null,
     concluido_em: null,
     concluido_por: null,
   }));
@@ -480,6 +482,85 @@ describe("dados obrigatórios (checklist permanente)", () => {
     });
     fireEvent.click(screen.getByTestId("documento-checklist-email-limpar"));
     expect(onToggleDocumentoChecklist).toHaveBeenCalledWith("email", null);
+  });
+
+  const SUGESTAO = {
+    valor: "1980-05-12",
+    documento_id: "doc-1",
+    documento_nome: "rg.pdf",
+    tipo_documento: "rg",
+    confianca: "baixa",
+    fonte: "ocr",
+    rotulo: "DATA DE NASCIMENTO",
+  };
+
+  function withSugestao() {
+    return ITENS.map((i) =>
+      i.key === "data_nascimento" ? { ...i, sugestao: SUGESTAO } : i,
+    );
+  }
+
+  it("🔴 a low-confidence read renders as a question, not as a filled field", async () => {
+    // The item must still read as NOT done: anything that looks already-applied
+    // gets confirmed by reflex, which is the failure this whole path prevents.
+    const { screen } = await openDocumentos({
+      documentoChecklist: withSugestao(),
+      onResolverSugestao: vi.fn(),
+    });
+    expect(
+      (screen.getByTestId("documento-checklist-data_nascimento") as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+    expect(screen.getByTestId("documento-checklist-progresso").textContent).toBe("0/6");
+    expect(screen.getByTestId("documento-checklist-data_nascimento-sugestao")).toBeTruthy();
+  });
+
+  it("names the document and the source so the operator knows what to doubt", async () => {
+    const { screen } = await openDocumentos({
+      documentoChecklist: withSugestao(),
+      onResolverSugestao: vi.fn(),
+    });
+    const box = screen.getByTestId("documento-checklist-data_nascimento-sugestao");
+    expect(box.textContent).toContain("rg.pdf");
+    expect(box.textContent).toContain("OCR");
+    expect(box.textContent).toContain("DATA DE NASCIMENTO");
+  });
+
+  it("🔴 renders the date as DD/MM/YYYY without a timezone shift", async () => {
+    // `new Date("1980-05-12")` is UTC midnight rendered locally, which shows
+    // as the 11th anywhere west of UTC — a birthday off by one on the exact
+    // screen where someone is checking it against a document.
+    const { screen } = await openDocumentos({
+      documentoChecklist: withSugestao(),
+      onResolverSugestao: vi.fn(),
+    });
+    expect(
+      screen.getByTestId("documento-checklist-data_nascimento-sugestao-valor").textContent,
+    ).toContain("12/05/1980");
+  });
+
+  it("confirming and discarding each call back with the document id", async () => {
+    const onResolverSugestao = vi.fn();
+    const { fireEvent, screen } = await openDocumentos({
+      documentoChecklist: withSugestao(),
+      onResolverSugestao,
+    });
+    fireEvent.click(
+      screen.getByTestId("documento-checklist-data_nascimento-sugestao-confirmar"),
+    );
+    expect(onResolverSugestao).toHaveBeenCalledWith("doc-1", "confirmar");
+
+    fireEvent.click(
+      screen.getByTestId("documento-checklist-data_nascimento-sugestao-descartar"),
+    );
+    expect(onResolverSugestao).toHaveBeenCalledWith("doc-1", "descartar");
+  });
+
+  it("no prompt renders when there is no suggestion", async () => {
+    const { screen } = await openDocumentos({ onResolverSugestao: vi.fn() });
+    expect(
+      screen.queryByTestId("documento-checklist-data_nascimento-sugestao"),
+    ).toBeNull();
   });
 
   it("is NOT on Geral — it belongs to Documentos", async () => {

@@ -535,6 +535,52 @@ async def delete_documento_route(
     )
 
 
+# ─── Extraction suggestions (migration 069) ─────────────────────────────
+#
+# A low-confidence read is a QUESTION, not a fact, so both answers are explicit
+# routes. There is deliberately no "apply all suggestions" convenience: the
+# whole reason these values are not already on the record is that a person has
+# to look at each one.
+
+
+@router.post("/{cliente_id}/documentos/{documento_id}/extracao/confirmar")
+async def confirmar_extracao_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Accept a machine-read value onto the client record.
+
+    422 when the field is already filled — two operators on the same card
+    otherwise race and the loser silently overwrites the winner.
+    """
+    user, org_id = _auth_parts(auth)
+    return identidade_svc.confirmar_sugestao(
+        client, org_id, cliente_id, documento_id,
+        user_id=getattr(user, "id", None),
+    )
+
+
+@router.post("/{cliente_id}/documentos/{documento_id}/extracao/descartar")
+async def descartar_extracao_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Turn a suggestion down so the card stops offering it.
+
+    The extracted value is kept — this records a judgement about the read, it
+    does not erase what was read.
+    """
+    user, org_id = _auth_parts(auth)
+    return identidade_svc.descartar_sugestao(
+        client, org_id, cliente_id, documento_id,
+        user_id=getattr(user, "id", None),
+    )
+
+
 @router.get("/{cliente_id}/documentos/{documento_id}/acessos")
 async def list_acessos_route(
     cliente_id: UUID,

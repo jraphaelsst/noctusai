@@ -38,6 +38,7 @@ from __future__ import annotations
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.services import _now, _t, ensure_cliente
 
 TABLE = "cliente_documento_checklist"
@@ -104,7 +105,12 @@ def derivar(
     return out
 
 
-def _out(item: dict[str, str], derivado: bool, override: Optional[dict]) -> dict:
+def _out(
+    item: dict[str, str],
+    derivado: bool,
+    override: Optional[dict],
+    sugestao: Optional[dict] = None,
+) -> dict:
     """One checklist line: the canonical definition + derivation + override.
 
     `concluido` stays the single boolean the UI reads, so the response shape is
@@ -120,6 +126,12 @@ def _out(item: dict[str, str], derivado: bool, override: Optional[dict]) -> dict
         "concluido": concluido,
         "origem": "derivado" if manual is None else "manual",
         "derivado": derivado,
+        # A value an extractor read but was NOT confident enough to store
+        # (migration 069). It rides on the checklist item because the checklist
+        # is already the "what is still missing" surface — an answer to a
+        # missing item belongs next to the item, not on a separate screen the
+        # operator has to think to visit.
+        "sugestao": sugestao,
         "concluido_em": override.get("concluido_em") if override else None,
         "concluido_por": override.get("concluido_por") if override else None,
     }
@@ -179,7 +191,16 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     )
     by_key = {r["item_key"]: r for r in (res.data or [])}
 
-    itens = [_out(item, derivado[item["key"]], by_key.get(item["key"])) for item in ITENS]
+    sugestoes = identidade_svc.sugestoes_pendentes(client, org_id, cliente_id)
+    itens = [
+        _out(
+            item,
+            derivado[item["key"]],
+            by_key.get(item["key"]),
+            sugestoes.get(item["key"]),
+        )
+        for item in ITENS
+    ]
     return {
         "items": itens,
         "total": len(itens),

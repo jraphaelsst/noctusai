@@ -628,6 +628,38 @@ export function useDocumentoChecklist(clienteId: string | null) {
  * Invalidates ONLY this list — a collected RG does not change a note, a tag or
  * an appointment, and a wider invalidation is what made the card flash.
  */
+/**
+ * Accept or turn down a low-confidence extracted value (migration 069).
+ *
+ * NOT optimistic, unlike the checklist tick beside it. The tick is a local
+ * assertion that can be rolled back invisibly; this one writes a birthdate to
+ * a person's record off a machine reading, and showing it as applied before
+ * the server agreed would be the one moment a wrong value looks confirmed.
+ *
+ * Invalidates the checklist (the tick and the prompt both change) AND the
+ * documents list (the discard flag lives on a document row).
+ */
+export function useExtracaoSugestaoMutation(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      documentoId,
+      acao,
+    }: {
+      documentoId: string;
+      acao: "confirmar" | "descartar";
+    }) =>
+      api.post<{ documento_id: string }>(
+        `${clienteBase(clienteId)}/documentos/${documentoId}/extracao/${acao}`,
+        {},
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });
+      void qc.invalidateQueries({ queryKey: DOCUMENTOS_KEY(clienteId) });
+    },
+  });
+}
+
 export function useDocumentoChecklistMutation(clienteId: string) {
   const qc = useQueryClient();
   return useMutation({

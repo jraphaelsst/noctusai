@@ -143,6 +143,8 @@ export interface ClienteCardDialogProps {
   documentoChecklist?: DocumentoChecklistItem[];
   documentoChecklistLoading?: boolean;
   onToggleDocumentoChecklist: (key: string, concluido: boolean | null) => void;
+  onResolverSugestao?: (documentoId: string, acao: "confirmar" | "descartar") => void;
+  sugestaoSaving?: boolean;
 
   // Anexos
   documentos: Documento[];
@@ -367,6 +369,8 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     items={props.documentoChecklist ?? []}
                     loading={props.documentoChecklistLoading}
                     onToggle={props.onToggleDocumentoChecklist}
+                    onResolverSugestao={props.onResolverSugestao}
+                    sugestaoSaving={props.sugestaoSaving}
                   />
                   <AnexosSection
                     documentos={props.documentos}
@@ -924,10 +928,14 @@ function DocumentoChecklistSection({
   items,
   loading,
   onToggle,
+  onResolverSugestao,
+  sugestaoSaving,
 }: {
   items: DocumentoChecklistItem[];
   loading?: boolean;
   onToggle: (key: string, concluido: boolean | null) => void;
+  onResolverSugestao?: (documentoId: string, acao: "confirmar" | "descartar") => void;
+  sugestaoSaving?: boolean;
 }) {
   if (loading) {
     return (
@@ -997,9 +1005,106 @@ function DocumentoChecklistSection({
             )}
           </li>
         ))}
+        {items.map((item) =>
+          item.sugestao && onResolverSugestao ? (
+            <li key={`${item.key}-sugestao`}>
+              <SugestaoExtraida
+                item={item}
+                onResolver={onResolverSugestao}
+                saving={sugestaoSaving}
+              />
+            </li>
+          ) : null,
+        )}
       </ul>
     </div>
   );
+}
+
+
+/**
+ * A value read off a document that the extractor would not vouch for.
+ *
+ * 🔴 This is deliberately NOT styled as a filled-in field with an undo. A
+ * birthdate on a photographed RG can be misread between two plausible years
+ * (1980→1930) in a way no plausibility check catches, so the value must read
+ * as a QUESTION until a person answers it. Anything that looks already-applied
+ * gets confirmed by reflex, which is exactly the failure the low-confidence
+ * path exists to prevent.
+ *
+ * The document name and the source are shown because they are what the
+ * operator actually checks against — "we read this off rg.pdf, by OCR" tells
+ * them where to look and how much to doubt it.
+ */
+function SugestaoExtraida({
+  item,
+  onResolver,
+  saving,
+}: {
+  item: DocumentoChecklistItem;
+  onResolver: (documentoId: string, acao: "confirmar" | "descartar") => void;
+  saving?: boolean;
+}) {
+  const s = item.sugestao;
+  if (!s) return null;
+
+  // OCR is the approximate rung; a PDF text layer is exact. Saying which one
+  // produced the value is the difference between "check this" and "glance".
+  const fonteLabel = s.fonte === "ocr" ? "leitura de imagem (OCR)" : "texto do PDF";
+
+  return (
+    <div
+      className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-sm"
+      data-testid={`documento-checklist-${item.key}-sugestao`}
+    >
+      <p className="text-xs text-muted-foreground">
+        Encontramos em{" "}
+        <span className="font-medium text-foreground">
+          {s.documento_nome ?? "um documento"}
+        </span>
+        , por {fonteLabel} — confirme antes de salvar:
+      </p>
+      <p className="my-1 font-medium" data-testid={`documento-checklist-${item.key}-sugestao-valor`}>
+        {item.label}: {formatarDataSugerida(s.valor)}
+      </p>
+      {s.rotulo && (
+        <p className="text-xs text-muted-foreground">Campo lido: “{s.rotulo}”</p>
+      )}
+      <div className="mt-2 flex gap-2">
+        <Button
+          size="sm"
+          variant="default"
+          disabled={saving}
+          onClick={() => onResolver(s.documento_id, "confirmar")}
+          data-testid={`documento-checklist-${item.key}-sugestao-confirmar`}
+        >
+          Confirmar
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={saving}
+          onClick={() => onResolver(s.documento_id, "descartar")}
+          data-testid={`documento-checklist-${item.key}-sugestao-descartar`}
+        >
+          Descartar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * `YYYY-MM-DD` → `DD/MM/YYYY`, parsed by hand rather than through `new Date()`.
+ *
+ * `new Date("1980-05-12")` is parsed as UTC midnight and then rendered in the
+ * viewer's local zone, so anywhere west of UTC it displays as the 11th — a
+ * birthday off by one day, on the exact screen where the operator is checking
+ * a date against a document.
+ */
+function formatarDataSugerida(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 }
 
 

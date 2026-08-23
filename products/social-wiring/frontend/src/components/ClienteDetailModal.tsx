@@ -39,6 +39,7 @@ import {
   useAgendamentos,
   useDocumentoChecklist,
   useDocumentoChecklistMutation,
+  useExtracaoSugestaoMutation,
   useDocumentoMutations,
   useDocumentos,
   useNotaMutations,
@@ -95,6 +96,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const checklistMutations = useChecklistMutations(id ?? "__none__");
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
   const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
+  const sugestaoMutation = useExtracaoSugestaoMutation(id ?? "__none__");
 
   const timelineEntries = flattenTimeline(timeline.data?.pages);
 
@@ -231,6 +233,21 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       descricaoCorpo={card.data?.descricao?.corpo ?? ""}
       onSaveDescricao={handleSaveDescricao}
       descricaoSaving={notaMutations.create.isPending || notaMutations.update.isPending}
+      onResolverSugestao={(documentoId, acao) =>
+        sugestaoMutation.mutate(
+          { documentoId, acao },
+          {
+            onError: (err) =>
+              toastServerError(
+                err,
+                acao === "confirmar"
+                  ? "Não foi possível confirmar o dado extraído."
+                  : "Não foi possível descartar a sugestão.",
+              ),
+          },
+        )
+      }
+      sugestaoSaving={sugestaoMutation.isPending}
       documentoChecklist={documentoChecklist.data?.items ?? []}
       documentoChecklistLoading={documentoChecklist.isPending}
       onToggleDocumentoChecklist={(key, concluido) =>

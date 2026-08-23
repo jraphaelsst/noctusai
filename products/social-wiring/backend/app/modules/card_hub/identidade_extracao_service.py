@@ -50,6 +50,7 @@ from noctusai_lib.integrations.documents import (
     make_identity_extractor,
 )
 from noctusai_lib.integrations.storage import StorageBackend
+from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.services import _now, _t
@@ -257,8 +258,202 @@ async def extrair_identidade(
     }
 
 
+# ─── Suggestions: what a low-confidence read is FOR (migration 069) ──────
+#
+# A high-confidence read writes itself and disappears into the record. A
+# low-confidence one has nowhere to go — 068 deliberately keeps it off
+# `clientes` — so without this it would be correct, possibly useful, and
+# invisible. These three functions are the decision surface that makes it
+# actionable without ever letting it become a fact by default.
+
+#: Checklist item each extracted field would satisfy. One entry today; the
+#: shape is a mapping so a second extracted field is a line here rather than a
+#: new code path through the checklist.
+CAMPO_POR_ITEM = {"data_nascimento": "extracao_data_nascimento"}
+
+
+def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+    """Per checklist-item, the newest extracted value still awaiting a decision.
+
+    A suggestion is offered ONLY while the client field is still empty. Once
+    the field is filled — by a human, by a high-confidence read, or by
+    confirming one of these — there is nothing left to decide, so continuing to
+    show it would be asking a question that has already been answered.
+
+    Newest-first when several documents disagree: the operator resolves one at
+    a time, and discarding reveals the next rather than a pile to triage. A
+    disagreement between two reads is exactly the case where showing both at
+    once invites picking the wrong one quickly.
+    """
+    cliente_rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(",".join(["id", *CAMPO_POR_ITEM]))
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not cliente_rows:
+        return {}
+    cliente = cliente_rows[0]
+
+    docs = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .execute()
+    ).data or []
+
+    candidatos = [
+        d for d in docs
+        if not d.get("deleted_at") and not d.get("extracao_descartada_em")
+    ]
+    candidatos.sort(key=lambda d: d.get("extracao_em") or "", reverse=True)
+
+    out: dict = {}
+    for item_key, coluna in CAMPO_POR_ITEM.items():
+        if cliente.get(item_key):
+            continue  # already answered
+        for doc in candidatos:
+            valor = doc.get(coluna)
+            if not valor:
+                continue
+            out[item_key] = {
+                "valor": valor,
+                "documento_id": doc["id"],
+                "documento_nome": doc.get("nome_original"),
+                "tipo_documento": doc.get("tipo_documento"),
+                "confianca": doc.get("extracao_confianca"),
+                "fonte": doc.get("extracao_fonte"),
+                "rotulo": doc.get("extracao_rotulo"),
+            }
+            break
+    return out
+
+
+def confirmar_sugestao(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    documento_id: UUID,
+    *,
+    user_id: Optional[UUID] = None,
+) -> dict:
+    """A human vouches for a machine read: apply it to the client record.
+
+    `data_nascimento_origem` is stamped with the DOCUMENT TYPE, not `'manual'`.
+    The value genuinely came off the RG; what the human added is
+    accountability, and that is `data_nascimento_confirmado_por`. Recording it
+    as `'manual'` would erase the fact that a scan produced it — and would then
+    outrank a later, better read for the wrong reason.
+
+    Refuses when the field is already set. Two operators on the same card
+    otherwise race, and the loser silently overwrites the winner.
+    """
+    rows = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .eq("id", str(documento_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows or rows[0].get("deleted_at"):
+        raise NotFoundError("cliente_documentos", str(documento_id))
+    doc = rows[0]
+
+    valor = doc.get("extracao_data_nascimento")
+    if not valor:
+        raise ValidationError_(
+            "Este documento não tem uma data de nascimento extraída para confirmar.",
+            field="extracao_data_nascimento",
+        )
+    if doc.get("extracao_descartada_em"):
+        raise ValidationError_(
+            "Esta sugestão já foi descartada.", field="extracao_descartada_em"
+        )
+
+    cliente_rows = (
+        _t(client, CLIENTES_TABLE)
+        .select("data_nascimento")
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not cliente_rows:
+        raise NotFoundError("clientes", str(cliente_id))
+    if cliente_rows[0].get("data_nascimento"):
+        raise ValidationError_(
+            "Este cliente já tem uma data de nascimento registrada.",
+            field="data_nascimento",
+        )
+
+    now = _now()
+    _t(client, CLIENTES_TABLE).update(
+        {
+            "data_nascimento": valor,
+            "data_nascimento_origem": doc["tipo_documento"],
+            "data_nascimento_documento_id": str(documento_id),
+            "data_nascimento_em": now,
+            "data_nascimento_confirmado_por": str(user_id) if user_id else None,
+            "data_nascimento_confirmado_em": now,
+            "updated_at": now,
+        }
+    ).eq("id", str(cliente_id)).execute()
+
+    return {
+        "confirmado": True,
+        "item_key": "data_nascimento",
+        "valor": valor,
+        "documento_id": str(documento_id),
+    }
+
+
+def descartar_sugestao(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    documento_id: UUID,
+    *,
+    user_id: Optional[UUID] = None,
+) -> dict:
+    """Turn down a suggestion so the card stops offering it.
+
+    The extracted value is KEPT. Clearing it would destroy the evidence of what
+    the extractor actually read, which is the only way to later distinguish a
+    bad OCR pass from a bad decision about a good one.
+    """
+    rows = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .eq("id", str(documento_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows or rows[0].get("deleted_at"):
+        raise NotFoundError("cliente_documentos", str(documento_id))
+
+    now = _now()
+    _t(client, DOCUMENTOS_TABLE).update(
+        {
+            "extracao_descartada_em": now,
+            "extracao_descartada_por": str(user_id) if user_id else None,
+        }
+    ).eq("id", str(documento_id)).execute()
+    return {"descartado": True, "documento_id": str(documento_id)}
+
+
 __all__ = [
+    "CAMPO_POR_ITEM",
     "TIPOS_EXTRAIVEIS",
+    "confirmar_sugestao",
+    "descartar_sugestao",
     "deve_extrair",
     "extrair_identidade",
+    "sugestoes_pendentes",
 ]

@@ -405,6 +405,28 @@ export interface ItemsEnvelope<T> {
  * (`documento_checklist_service.ITENS`), so there is no create/delete here —
  * only `concluido` moves. `key` is the stable identity; `label` is display.
  */
+/**
+ * A value an extractor read off an uploaded document but was NOT confident
+ * enough to store (migration 069).
+ *
+ * It is a QUESTION, not a fact. The birthdate on a photographed RG can be
+ * misread between two plausible years (1980→1930) in a way no plausibility
+ * check catches, so a low-confidence read is never written to the client
+ * record — it waits here for a person to accept or turn it down.
+ */
+export interface ExtracaoSugestao {
+  valor: string;
+  documento_id: string;
+  documento_nome: string | null;
+  tipo_documento: string | null;
+  /** `"baixa"` in practice — a `"alta"` read has already been applied. */
+  confianca: string | null;
+  /** `"texto"` (PDF text layer, exact) or `"ocr"` (vision, approximate). */
+  fonte: string | null;
+  /** The label the value sat next to, verbatim — the extractor's reasoning. */
+  rotulo: string | null;
+}
+
 export interface DocumentoChecklistItem {
   key: string;
   label: string;
@@ -425,6 +447,11 @@ export interface DocumentoChecklistItem {
    * the UI can show that an item is only ticked because someone said so.
    */
   derivado: boolean;
+  /**
+   * Offered only while this item is still unanswered — once the field is
+   * filled, continuing to ask would be asking a question already answered.
+   */
+  sugestao: ExtracaoSugestao | null;
   concluido_em: string | null;
   concluido_por: string | null;
 }
