@@ -392,9 +392,16 @@ class TestCrossProcessLease:
     containers, which is the case the scheduler guard
     (`NOCTUS_SCHEDULERS_ENABLED`) deliberately says nothing about: both are
     legitimately authorised.
+
+    Driven through `_run`'s Class-B kwarg seams, NOT by
+    `monkeypatch.setattr(sched, ...)`. Patching our own module takes the
+    real wiring out of the code path — the test then proves the fake works
+    and says nothing about whether `_run` calls the right collaborator in
+    the right order. `check_seed_compliance` flags it high-severity, and an
+    earlier draft of these very tests tripped it (CI red on f267409c).
     """
 
-    def test_losing_the_lease_skips_the_sync_entirely(self, monkeypatch):
+    def test_losing_the_lease_skips_the_sync_entirely(self):
         import contextlib
 
         @contextlib.contextmanager
@@ -402,16 +409,22 @@ class TestCrossProcessLease:
             yield False
 
         build = MagicMock()
-        monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-        monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-        monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
-        monkeypatch.setattr(sched, "build_sync_service", build)
 
-        asyncio.run(sched._run(motivo="cron", only_overdue=False, lease_fn=_denied))
+        asyncio.run(
+            sched._run(
+                motivo="cron",
+                only_overdue=False,
+                admin_factory=lambda: MagicMock(),
+                adapter_factory=lambda: MagicMock(),
+                discover_fn=lambda _a: [_ORG_A],
+                sync_service_factory=build,
+                lease_fn=_denied,
+            )
+        )
 
         build.assert_not_called()
 
-    def test_holding_the_lease_runs_the_sync(self, monkeypatch):
+    def test_holding_the_lease_runs_the_sync(self):
         import contextlib
 
         synced: list[str] = []
@@ -428,12 +441,17 @@ class TestCrossProcessLease:
                     page_failures=[], detalhes_failed=[], duration_seconds=1.0,
                 )
 
-        monkeypatch.setattr(sched, "get_admin_client", lambda: MagicMock())
-        monkeypatch.setattr(sched, "_build_adapter", lambda: MagicMock())
-        monkeypatch.setattr(sched, "_orgs_with_catalog", lambda _a: [_ORG_A])
-        monkeypatch.setattr(sched, "build_sync_service", lambda _a, _b: _Svc())
-
-        asyncio.run(sched._run(motivo="cron", only_overdue=False, lease_fn=_granted))
+        asyncio.run(
+            sched._run(
+                motivo="cron",
+                only_overdue=False,
+                admin_factory=lambda: MagicMock(),
+                adapter_factory=lambda: MagicMock(),
+                discover_fn=lambda _a: [_ORG_A],
+                sync_service_factory=lambda _a, _b: _Svc(),
+                lease_fn=_granted,
+            )
+        )
 
         assert synced == [_ORG_A]
 
