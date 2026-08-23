@@ -153,6 +153,70 @@ async def imoveis_conteudo(user=Depends(require_admin)):
 
 
 # ---------------------------------------------------------------------------
+# Clientes tab
+# ---------------------------------------------------------------------------
+#
+# LGPD: two endpoints, not one, and the split is the mitigation. `/clientes`
+# serves the minimised list projection; `/clientes/{codigo}` is the only route
+# that returns DataNascimento / Sexo / EstadoCivil / Profissao, for one named
+# record, with its own audit row. Merging them would silently widen bulk
+# exposure by four categories — see the field-set comment in the service.
+
+
+@router.get("/clientes")
+async def clientes(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=50),
+    nome: Optional[str] = None,
+    status: Optional[str] = None,
+    user=Depends(require_admin),
+):
+    try:
+        env = await svc.fetch_clientes(
+            _client(),
+            user_id=str(user.id),
+            page=page,
+            page_size=page_size,
+            nome=nome,
+            status=status,
+        )
+        return env.model_dump()
+    except VistaConfigError:
+        raise HTTPException(503, "Vista não configurada (VISTA_BASE_URL / VISTA_API_KEY ausentes).")
+    except VistaPermissionDenied:
+        # Reachable again only if the 2026-08-21 grant is rolled back, or on a
+        # tenant that never had it. Kept, not deleted — see vista.md § 4.2.
+        raise HTTPException(403, "Permissão pendente — solicite expansão de chave junto à Vista.")
+    except VistaNotFound:
+        raise HTTPException(404, "Endpoint /clientes/listar não disponível neste tenant.")
+    except VistaFieldNotAvailable as e:
+        raise HTTPException(422, f"Campo Vista '{e.field}' indisponível para este tenant — atualize CLIENTE_LIST_FIELDS.")
+    except VistaTimeout:
+        raise HTTPException(504, "Vista demorou mais que 15s para responder.")
+    except VistaUpstreamError as e:
+        raise HTTPException(502, f"Vista respondeu erro {e.status}.")
+
+
+@router.get("/clientes/{codigo}")
+async def cliente_detalhes(codigo: str, user=Depends(require_admin)):
+    try:
+        env = await svc.fetch_cliente_detalhes(_client(), user_id=str(user.id), codigo=codigo)
+        return env.model_dump()
+    except VistaConfigError:
+        raise HTTPException(503, "Vista não configurada.")
+    except VistaPermissionDenied:
+        raise HTTPException(403, "Permissão pendente para acessar detalhes deste cliente.")
+    except VistaNotFound:
+        raise HTTPException(404, "Cliente não encontrado em Vista.")
+    except VistaFieldNotAvailable as e:
+        raise HTTPException(422, f"Campo '{e.field}' não disponível para este tenant — atualize CLIENTE_DETAIL_FIELDS.")
+    except VistaTimeout:
+        raise HTTPException(504, "Vista demorou mais que 15s para responder.")
+    except VistaUpstreamError as e:
+        raise HTTPException(502, f"Vista respondeu erro {e.status}.")
+
+
+# ---------------------------------------------------------------------------
 # Usuários + Agência tabs
 # ---------------------------------------------------------------------------
 

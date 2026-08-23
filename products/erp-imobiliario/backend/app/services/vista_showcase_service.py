@@ -29,6 +29,8 @@ from noctusai_lib.integrations.vista import (
     VistaUpstreamError,
     extract_items,
     vista_agencia_to_showcase,
+    vista_cliente_detalhes_to_showcase,
+    vista_cliente_to_showcase,
     vista_imovel_detalhes_to_showcase,
     vista_imovel_to_showcase,
     vista_usuario_to_showcase,
@@ -87,6 +89,31 @@ IMOVEL_DETAIL_FIELDS: list[Any] = [
     {"Corretor": ["Nome", "Email", "Fone"]},
 ]
 
+# ── /clientes — the minimisation split (2026-08-21 grant) ────────────────
+#
+# Vista accepts ELEVEN fields for this tenant and we deliberately ask for
+# seven in the list. The four withheld ones — DataNascimento, Sexo,
+# EstadoCivil, Profissao — are a demographic profile, and a 42,960-row list
+# is the worst possible place to carry one: every page view would pull 50
+# profiles to render a name and a phone number.
+#
+# So the list asks for what the list renders, and the detail view asks for
+# the rest, once, for one named `codigo`, with its own audit row. The DTOs
+# enforce it rather than trusting these constants — `ShowcaseCliente` has no
+# field to put a birth date in (see its docstring).
+#
+# ⚠️ Do NOT "simplify" these into one list. The two-tier split IS the LGPD
+# posture; collapsing it silently widens bulk exposure by four categories.
+# Confirmed-live inventory + the corrected category note: vista.md § 4.2.
+CLIENTE_LIST_FIELDS = [
+    "Codigo", "Nome", "Celular", "Status", "DataCadastro", "Corretor", "Interesse",
+]
+
+CLIENTE_DETAIL_FIELDS = [
+    *CLIENTE_LIST_FIELDS,
+    "DataNascimento", "Sexo", "EstadoCivil", "Profissao",
+]
+
 USUARIO_FIELDS = ["Codigo", "Nome", "Email", "Foto", "Setor"]
 AGENCIA_FIELDS = ["Codigo", "Nome", "Endereco", "Cidade", "Bairro", "Site"]
 CONTEUDO_FIELDS = ["Status", "Categoria", "Cidade", "Bairro"]
@@ -96,14 +123,14 @@ KNOWN_TABS: list[ShowcaseTabStatus] = [
     ShowcaseTabStatus(tab="usuarios", label="Usuários", status="live", endpoint="/usuarios/listar"),
     ShowcaseTabStatus(tab="agencias", label="Agência", status="live", endpoint="/agencias/listar"),
     ShowcaseTabStatus(
-        tab="clientes", label="Clientes", status="pending_intake",
+        tab="clientes", label="Clientes", status="live",
         endpoint="/clientes/listar",
         note=(
-            "Permissão CONCEDIDA pela Vista em 21/08/2026 — /clientes/listar e "
-            "/clientes/detalhes retornam 200 (42.960 clientes). Este tab ainda "
-            "não consome os dados: falta o enquadramento LGPD das categorias "
-            "retornadas (Celular, DataNascimento, Sexo, EstadoCivil, Profissao) "
-            "e a wiring do endpoint. NÃO é mais uma pendência junto à Vista."
+            "Leitura ao vivo — 42.960 clientes. A lista traz apenas nome, "
+            "celular, status, cadastro, corretor e interesse; data de "
+            "nascimento, sexo, estado civil e profissão só são consultadas ao "
+            "abrir um cliente específico, e cada abertura gera seu próprio "
+            "registro de auditoria. Nada é gravado no ERP."
         ),
     ),
     ShowcaseTabStatus(
@@ -114,7 +141,7 @@ KNOWN_TABS: list[ShowcaseTabStatus] = [
     ShowcaseTabStatus(
         tab="fotos", label="Fotos", status="not_found",
         endpoint="/imoveis/fotos",
-        note="Endpoint /imoveis/fotos não está habilitado neste tenant (404). As fotos primárias aparecem direto em /imoveis/listar e estão visíveis no tab Imóveis.",
+        note="Endpoint /imoveis/fotos responde 405 a GET — existe, mas é somente-escrita nesta assinatura, e não há leitura de galeria. As fotos primárias aparecem direto em /imoveis/listar e estão visíveis no tab Imóveis.",
     ),
     ShowcaseTabStatus(tab="diagnostico", label="Diagnóstico", status="live", endpoint="(adapter)"),
 ]
@@ -302,6 +329,101 @@ async def fetch_imoveis_conteudo(
         tab="imoveis-conteudo",
         fetched_at=_now_iso(),
         items=[content],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Clientes tab
+# ---------------------------------------------------------------------------
+
+
+async def fetch_clientes(
+    client: VistaClient,
+    *,
+    user_id: str,
+    page: int = 1,
+    page_size: int = 50,
+    nome: Optional[str] = None,
+    status: Optional[str] = None,
+) -> ShowcaseEnvelope:
+    """One page of the client list, minimised projection.
+
+    `raw_available=False`: unlike imóveis, the envelope carries no untouched
+    Vista payload for this family, so the UI has nothing to offer a "show raw"
+    button. That is the DTO's doing (`ShowcaseCliente` has no `raw`) and this
+    flag just tells the frontend the truth about it.
+
+    No `order` is passed. `/clientes/listar` has no `DataAtualizacao` to sort
+    by (vista.md § 4.2), and ordering on a personal-data field to get stable
+    pagination would be a poor trade; Vista's own order is used as-is.
+    """
+    filter_: dict[str, Any] = {}
+    if nome:
+        filter_["Nome"] = nome
+    if status:
+        filter_["Status"] = status
+
+    try:
+        result = await client.listar_clientes(
+            fields=CLIENTE_LIST_FIELDS,
+            filter_=filter_ or None,
+            page=page,
+            page_size=page_size,
+        )
+    except (VistaPermissionDenied, VistaNotFound, VistaTimeout, VistaConfigError, VistaUpstreamError) as e:
+        _audit(user_id=user_id, error=e, endpoint="/clientes/listar")
+        raise
+
+    _audit(
+        user_id=user_id, result=result, endpoint="/clientes/listar",
+        extra={"projection": "list", "fields_requested": len(CLIENTE_LIST_FIELDS)},
+    )
+
+    raw_items, pagination = extract_items(result.data)
+    items = [vista_cliente_to_showcase(p).model_dump() for p in raw_items]
+    return ShowcaseEnvelope(
+        tab="clientes",
+        fetched_at=_now_iso(),
+        raw_available=False,
+        pagination=ShowcasePagination(
+            pagina=int(pagination.get("pagina") or page),
+            quantidade=int(pagination.get("quantidade") or len(items)),
+            total=int(pagination["total"]) if pagination.get("total") not in (None, "") else None,
+            paginas=int(pagination["paginas"]) if pagination.get("paginas") not in (None, "") else None,
+        ),
+        items=items,
+    )
+
+
+async def fetch_cliente_detalhes(
+    client: VistaClient, *, user_id: str, codigo: str
+) -> ShowcaseEnvelope:
+    """One named client, INCLUDING the four demographic fields.
+
+    This is the only call in the ERP that reaches `DataNascimento` / `Sexo` /
+    `EstadoCivil` / `Profissao`. It is one deliberate act on one record, and
+    the audit row records `projection=detail` so the log distinguishes "listed
+    50 names" from "opened one person's profile" — a distinction a single
+    undifferentiated `GET /clientes` audit line would have destroyed.
+    """
+    try:
+        result = await client.detalhes_cliente(codigo, fields=CLIENTE_DETAIL_FIELDS)
+    except (VistaPermissionDenied, VistaNotFound, VistaTimeout, VistaConfigError, VistaFieldNotAvailable, VistaUpstreamError) as e:
+        _audit(user_id=user_id, error=e, endpoint="/clientes/detalhes", entidade_id=codigo)
+        raise
+
+    _audit(
+        user_id=user_id, result=result, endpoint="/clientes/detalhes",
+        entidade_id=codigo, extra={"projection": "detail"},
+    )
+
+    payload = result.data if isinstance(result.data, dict) else {}
+    dto = vista_cliente_detalhes_to_showcase(payload)
+    return ShowcaseEnvelope(
+        tab="clientes-detalhes",
+        fetched_at=_now_iso(),
+        raw_available=False,
+        items=[dto.model_dump()],
     )
 
 

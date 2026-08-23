@@ -53,6 +53,54 @@ class ShowcaseImovelDetalhes(BaseModel):
     raw: dict = Field(default_factory=dict)
 
 
+class ShowcaseCliente(BaseModel):
+    """One CRM client, LIST view — deliberately the minimised projection.
+
+    🔴 The demographic categories this tenant also exposes (`DataNascimento`,
+    `Sexo`, `EstadoCivil`, `Profissao`) are NOT on this model, and that is the
+    point: a 42,960-row list is the worst place to carry a demographic profile,
+    and the ERP renders one page of it per admin click. They live on
+    :class:`ShowcaseClienteDetalhes` instead, reachable only by opening a
+    single named record — one deliberate act, one audit row.
+
+    Minimisation by CONSTRUCTION, not by convention: the list endpoint cannot
+    leak a birth date because there is nowhere on this type to put one. A
+    future edit that wants those fields in the list has to change the type,
+    which is exactly the moment the decision should be re-made.
+
+    No `raw` passthrough either, unlike the imóvel/usuário/agência DTOs. Those
+    carry the untouched Vista payload "for debug + future migration"; there is
+    no clientes migration, and an unstructured copy of personal data is the
+    thing minimisation argues against most. The envelope reports
+    `raw_available=False` so the UI never offers a payload dump for this tab.
+
+    Field set confirmed live 2026-08-21 — KB § INTEGRATIONS/vista.md § 4.2.
+    """
+
+    codigo: str = Field(..., description="Vista primary id for the client")
+    nome: Optional[str] = None
+    celular: Optional[str] = None
+    status: Optional[str] = None
+    data_cadastro: Optional[str] = None
+    corretor_nome: Optional[str] = None
+    interesse: Optional[str] = None
+
+
+class ShowcaseClienteDetalhes(BaseModel):
+    """One CRM client, DETAIL view — the list projection PLUS the demographics.
+
+    Everything special-category-adjacent this tenant returns lands here and
+    nowhere else. Reached only via `/clientes/detalhes` for one named `codigo`.
+    """
+
+    codigo: str
+    base: ShowcaseCliente
+    data_nascimento: Optional[str] = None
+    sexo: Optional[str] = None
+    estado_civil: Optional[str] = None
+    profissao: Optional[str] = None
+
+
 class ShowcaseUsuario(BaseModel):
     codigo: str
     nome: Optional[str] = None
@@ -75,6 +123,8 @@ class ShowcaseAgencia(BaseModel):
 __all__ = [
     "ShowcaseImovel",
     "ShowcaseImovelDetalhes",
+    "ShowcaseCliente",
+    "ShowcaseClienteDetalhes",
     "ShowcaseUsuario",
     "ShowcaseAgencia",
 ]

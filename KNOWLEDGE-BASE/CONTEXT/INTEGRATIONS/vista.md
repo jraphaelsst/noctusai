@@ -578,12 +578,20 @@ consumer forever, regardless of what the tenant offers. Keep those lists as
 generous supersets. Guarded by
 `test_candidate_cliente_fields_cover_the_live_tenant_set`.
 
-**⚠️ LGPD — re-do the intake against this list.** The pre-grant note claimed
-"CPF, addresses and phones". The truth is *neither* worse nor milder, but
-different: **no CPF, no address, no email**, yet `DataNascimento`, `Sexo`,
+**⚠️ LGPD — the intake was re-done against this list.** The pre-grant note
+claimed "CPF, addresses and phones". The truth is *neither* worse nor milder,
+but different: **no CPF, no address, no email**, yet `DataNascimento`, `Sexo`,
 `EstadoCivil`, `Profissao` and `Celular` are all returned. That is a
 demographic profile, and a data-category intake written against the old
-assumption would classify the wrong categories.
+assumption would have classified the wrong categories entirely.
+
+**✅ Consumed since 2026-08-22 — under a two-tier minimisation split.** The ERP
+Clientes tab reads this family live. Seven fields in the list, the four
+demographic ones only on opening one named client, nothing persisted, admin
+only, every call audited. The design and its enforcement points are in § 5.1;
+the residual controller decisions (legal basis, the Vista DPA, audit-log
+retention) are recorded in `LGPD-WARNINGS.md` — they are the user's to make and
+do not block a read-only, non-persisting surface.
 
 **🔴 No `DataAtualizacao` ⇒ `clientes` cannot be delta-synced.** Unlike
 `/imoveis` (§ 2 `filter`), there is no modification timestamp to filter on,
@@ -777,27 +785,59 @@ ERP frontend
 
 ### 5.1 Field-set constants
 
-The adapter sends five distinct field sets, all hardcoded in
-`app/services/vista_showcase_service.py:58-85`:
+The adapter sends seven distinct field sets, all hardcoded in
+`app/services/vista_showcase_service.py`:
 
 | Constant | Endpoint | Field count | Notes |
 |---|---|---|---|
 | `IMOVEL_LIST_FIELDS` | `/imoveis/listar` | 24 | Includes `FotoDestaque`, `BanheiroSocial`, `UF`, nested `{Corretor: [Nome, Email]}` |
 | `IMOVEL_DETAIL_FIELDS` | `/imoveis/detalhes` | 27 | Adds `Numero`, `Complemento`, `Caracteristicas`, `Empreendimento`, `Construtora`, `DataCadastro`; nested Corretor adds `Fone`; **no photo field works** |
 | `CONTEUDO_FIELDS` | `/imoveis/listarConteudo` | 4 | `Status`, `Categoria`, `Cidade`, `Bairro` — populates filter dropdowns |
+| `CLIENTE_LIST_FIELDS` | `/clientes/listar` | 7 | 🔴 **Deliberately 7 of the 11 the tenant accepts** — see the minimisation note below |
+| `CLIENTE_DETAIL_FIELDS` | `/clientes/detalhes` | 11 | The list set + `DataNascimento`, `Sexo`, `EstadoCivil`, `Profissao` |
 | `USUARIO_FIELDS` | `/usuarios/listar` | 5 | `Codigo`, `Nome`, `Email`, `Foto`, `Setor` |
 | `AGENCIA_FIELDS` | `/agencias/listar` | 6 | `Codigo`, `Nome`, `Endereco`, `Cidade`, `Bairro`, `Site` |
 
 > **All sets are calibrated for `oneconsu-rest.vistahost.com.br` on 2026-05-02
-> and re-verified 2026-05-03.** A different tenant key may need a different
-> split — see §6 ("Per-tenant calibration — current state vs design intent")
-> for the gap.
+> and re-verified 2026-05-03** (the two `CLIENTE_*` sets: 2026-08-21). A
+> different tenant key may need a different split — see §6 ("Per-tenant
+> calibration — current state vs design intent") for the gap.
+
+#### 🔴 The clientes split is a privacy decision, not a performance one
+
+`CLIENTE_LIST_FIELDS` withholds four fields the tenant *would* return —
+`DataNascimento`, `Sexo`, `EstadoCivil`, `Profissao`. A 42,960-row family
+rendered 50 at a time is the worst place to carry a demographic profile: every
+page view would pull fifty of them to display a name and a phone number. The
+detail endpoint asks for them instead — once, for one named `codigo`, with its
+own audit row carrying `projection: "detail"`, so the log can distinguish
+"listed fifty names" from "opened one person's profile".
+
+The constants are the *policy*; the enforcement is structural. `ShowcaseCliente`
+has no field to hold a birth date and no `raw` passthrough, so the list
+endpoint cannot leak one even if a tenant over-answers. Widening the list
+therefore takes a type change — which is exactly the moment the decision
+should be re-made rather than drifted into. Guarded by
+`test_cliente_list_projection_cannot_carry_a_demographic_field` (seed) and
+`test_the_list_never_ASKS_vista_for_a_demographic_field` (ERP router — the
+wire-level half, since a projection that requests fields and then drops them
+has already transmitted them).
 
 ### 5.2 Normalizer field-mapping contract
 
-`noctusai_lib/integrations/vista/normalizers.py` exposes four payload mappers plus
+`noctusai_lib/integrations/vista/normalizers.py` exposes six payload mappers plus
 helpers. Every mapper preserves the original Vista payload in the DTO's
-`raw` field for debug + future-migration use.
+`raw` field for debug + future-migration use — **except the two cliente
+mappers**, which do not, because `ShowcaseCliente` has no `raw` field. There is
+no clientes migration to hold a payload for, and an unstructured copy of
+personal data would re-admit through the back door precisely what the field
+selection excludes through the front. The ERP envelope reports
+`raw_available: false` for that family, and the Clientes tab consequently
+offers no "mostrar payload bruto" button.
+
+`vista_cliente_to_showcase` reuses `_first_corretor_nome`: Vista returns
+`Corretor` dict-keyed-by-id on clientes exactly as on imóveis, so the quirk has
+one reader and cannot be re-solved differently twice.
 
 **Type-coercion helpers** (defensive against Vista's everything-is-a-string
 payload):

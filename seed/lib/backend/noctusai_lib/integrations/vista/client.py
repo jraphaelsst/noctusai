@@ -350,11 +350,23 @@ class VistaClient:
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> VistaCallResult:
-        """Permission-gated on most tenants (returns 401 → VistaPermissionDenied).
+        """✅ GRANTED on `oneconsu-rest` since 2026-08-21 — 42,960 clients.
 
-        Kept here so the MCP server can register `vista.clientes.list` as
-        a real tool; the typed error becomes the response when the tenant
-        key lacks permission (vista.md § 4.2).
+        Still permission-gated on tenants that have not been granted, where
+        it returns 401 → `VistaPermissionDenied`; that path is kept, not
+        deleted, because it is the correct answer for an ungranted key
+        (vista.md § 4.2).
+
+        ⚠️ **LGPD — a 200 here is third-party personal data.** The eleven
+        fields this tenant accepts include `Celular`, and asking for more
+        reaches `DataNascimento` / `Sexo` / `EstadoCivil` / `Profissao`.
+        Callers should request the MINIMUM projection they render; the ERP
+        showcase splits list-vs-detail for exactly this reason
+        (`ShowcaseCliente` vs `ShowcaseClienteDetalhes`).
+
+        🔴 No `DataAtualizacao` on this family ⇒ no delta sync. A full
+        refresh is 860 requests at the 50-row cap; do not design a polling
+        loop over it without asking Vista for the field first.
 
         **Paginated like `listar_imoveis`, deliberately.** Until 2026-08-19
         this helper took no `page`/`page_size` at all while the MCP tool
@@ -376,15 +388,17 @@ class VistaClient:
     async def detalhes_cliente(self, codigo: str, *, fields: list[str]) -> VistaCallResult:
         """Per-client detail — `/clientes/detalhes?cliente=<codigo>`.
 
-        🔒 Permission-gated exactly like `listar_clientes` (vista.md § 4.2),
-        and gated *before* parameter validation: a bare GET with no
-        `cliente=` still answers 401, not the 400 you would expect. That
-        ordering is why the endpoint sits in the probe baseline with an
-        expected 401 rather than a 400.
+        ✅ GRANTED alongside `listar_clientes` on 2026-08-21. The 401 that
+        used to precede parameter validation is gone: a bare GET now reaches
+        the missing-`cliente` 400, which is why the probe baseline expects
+        400 here and a 401 would read as a grant ROLLBACK.
 
-        ⚠️ **LGPD.** A 200 here returns third-party personal data (CPF,
-        address, phones). The data-category intake gates the first
-        successful call — see `KB § PATTERNS/security/lgpd.md`.
+        ⚠️ **LGPD — this is the widest personal-data surface in the tenant.**
+        Correcting the record: it does NOT return CPF, address or e-mail —
+        all four are rejected fields here. It DOES return `DataNascimento`,
+        `Sexo`, `EstadoCivil` and `Profissao`, i.e. a demographic profile
+        rather than the identity-document set the pre-grant note assumed
+        (vista.md § 4.2). Scope requests to what the caller renders.
         """
         return await self._request(
             "/clientes/detalhes",

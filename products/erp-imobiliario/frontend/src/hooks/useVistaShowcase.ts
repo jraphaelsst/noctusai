@@ -14,7 +14,18 @@ import { api } from '@noctusai/seed/infra';
 export interface VistaTabStatus {
   tab: string;
   label: string;
-  status: 'live' | 'permission_denied' | 'not_found' | 'not_configured' | 'doc_only';
+  // `pending_intake` was added backend-side on 2026-08-21 and this union was
+  // not updated with it — so a status the API can genuinely return was absent
+  // from the type for a day. Vista blocks us (`permission_denied`) and we
+  // haven't wired it yet (`pending_intake`) are different answers to "why is
+  // this empty?" and the UI must be able to tell them apart.
+  status:
+    | 'live'
+    | 'permission_denied'
+    | 'pending_intake'
+    | 'not_found'
+    | 'not_configured'
+    | 'doc_only';
   endpoint: string;
   note?: string | null;
 }
@@ -59,6 +70,46 @@ export interface VistaShowcaseImovelDetalhes {
   base: VistaShowcaseImovel;
   caracteristicas: Record<string, unknown>;
   raw: Record<string, unknown>;
+}
+
+/**
+ * One client, LIST projection. Mirrors backend `ShowcaseCliente`.
+ *
+ * 🔴 There is no birth date / sex / marital status / profession here, and
+ * that is deliberate — see `VistaShowcaseClienteDetalhes`. If you find
+ * yourself wanting to add one to render a list column, that is the moment to
+ * re-open the minimisation decision, not to widen the type.
+ *
+ * Also no `raw`: unlike imóveis/usuários/agências the backend sends no
+ * untouched Vista payload for this family, and reports `raw_available: false`.
+ */
+export interface VistaShowcaseCliente {
+  codigo: string;
+  nome?: string | null;
+  celular?: string | null;
+  status?: string | null;
+  data_cadastro?: string | null;
+  corretor_nome?: string | null;
+  interesse?: string | null;
+}
+
+/**
+ * One client, DETAIL projection. Mirrors backend `ShowcaseClienteDetalhes`.
+ * The only shape in the frontend that carries the demographic fields, and it
+ * is only ever populated by opening one named client.
+ */
+export interface VistaShowcaseClienteDetalhes {
+  codigo: string;
+  base: VistaShowcaseCliente;
+  data_nascimento?: string | null;
+  sexo?: string | null;
+  estado_civil?: string | null;
+  profissao?: string | null;
+}
+
+export interface VistaClientesFilters {
+  nome?: string;
+  status?: string;
 }
 
 export interface VistaShowcaseUsuario {
@@ -180,6 +231,67 @@ export function useVistaImoveisConteudo(enabled: boolean) {
     },
     enabled,
     staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * One page of the client list.
+ *
+ * `enabled` is threaded from the tab so the query cannot fire from anywhere
+ * that has not deliberately opened Clientes — merely rendering the showcase
+ * page must not read personal data.
+ *
+ * `placeholderData` is NOT used here on purpose. Keeping the previous page
+ * visible while the next loads is nice for a property grid; for a personal
+ * data table it means one admin's screen keeps showing rows the current query
+ * no longer authorises. Page changes show a skeleton instead.
+ */
+export function useVistaClientes(
+  enabled: boolean,
+  page: number,
+  pageSize: number,
+  filters: VistaClientesFilters,
+) {
+  return useQuery({
+    queryKey: ['vista-showcase', 'clientes', page, pageSize, filters],
+    queryFn: async () => {
+      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+      Object.entries(filters).forEach(([k, v]) => {
+        if (v) params.set(k, v);
+      });
+      const result = await api.get<VistaEnvelope<VistaShowcaseCliente>>(
+        `/api/vista-showcase/clientes?${params.toString()}`,
+      );
+      return result ?? null;
+    },
+    enabled,
+    // Deliberately short. Personal data read live and not cached is the whole
+    // LGPD posture of this page; a long staleTime would quietly turn the
+    // browser into the cache the backend refuses to be.
+    staleTime: 15_000,
+    gcTime: 60_000,
+  });
+}
+
+/**
+ * One named client, including the four demographic fields.
+ *
+ * Fires ONLY when a `codigo` is set, i.e. when an admin opened that specific
+ * record — which is also what makes the backend's `projection: "detail"`
+ * audit row meaningful.
+ */
+export function useVistaClienteDetalhes(codigo: string | null) {
+  return useQuery({
+    queryKey: ['vista-showcase', 'cliente-detalhes', codigo],
+    queryFn: async () => {
+      const result = await api.get<VistaEnvelope<VistaShowcaseClienteDetalhes>>(
+        `/api/vista-showcase/clientes/${encodeURIComponent(codigo!)}`,
+      );
+      return result?.items?.[0] ?? null;
+    },
+    enabled: !!codigo,
+    staleTime: 15_000,
+    gcTime: 60_000,
   });
 }
 

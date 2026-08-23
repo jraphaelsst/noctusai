@@ -12,7 +12,7 @@
 
 - **Created:** 2026-08-05
 - **Last updated:** 2026-08-21
-- **Status:** 🟡 **PARTIALLY SATISFIED — Tier 1 is 2-of-3 granted and probe-verified.** Vista re-applied the permissions on key `…644c` and cleared their cache; re-probed live 2026-08-21 in a fresh process: `clientes/listar` → **200** (42,960 clients) and `clientes/detalhes` → **200**. `corretores/listar` is **still 401** and is the one open Tier-1 item. § 10's "which key did they grant?" question is **closed** — the same `…644c` key works, no rotation needed. Remaining: the corretores re-ask (§ 10a, drafted), the Tier-2 version question (now much better evidenced), and **the LGPD intake, which is what actually gates consuming any of this**.
+- **Status:** 🟡 **PARTIALLY SATISFIED — Tier 1 is 2-of-3 granted and probe-verified.** Vista re-applied the permissions on key `…644c` and cleared their cache; re-probed live 2026-08-21 in a fresh process: `clientes/listar` → **200** (42,960 clients) and `clientes/detalhes` → **200**. `corretores/listar` is **still 401** and is the one open Tier-1 item. § 10's "which key did they grant?" question is **closed** — the same `…644c` key works, no rotation needed. Remaining: the corretores re-ask (§ 10a, drafted) and the Tier-2 version question (now much better evidenced). The LGPD intake that gated consumption is **done** — the ERP Clientes tab has read the family live since 2026-08-22 under a two-tier minimisation split (`vista.md` § 5.1); three controller-level questions remain in `LGPD-WARNINGS.md`.
 - **Owner / stakeholders:** USER (joaoraphaelsst) sends + owns the vendor relationship · tech-lead evaluates the reply
 - **Related docs:**
   - `KB § INTEGRATIONS/vista.md` — the authoritative Vista reference. § 3 (credential echo), § 4.2/4.5/4.6 (re-probed endpoint tables), § 5.3 (seed-canonical probe baseline), § 9 (the tiered ask + rationale)
@@ -180,11 +180,19 @@ logs, not end-user responses.
 
 ## 5. Constraints a future agent must respect
 
-- **LGPD gate before the first `clientes` call.** `clientes` carries CPF,
-  addresses and phones — third-party personal data. The data-category intake
-  (`KB § PATTERNS/security/lgpd.md`) must land **before** the first
-  successful call, not after. A granted permission is NOT authorization to
-  start ingesting.
+- **LGPD gate before the first `clientes` call — ✅ SATISFIED 2026-08-22.**
+  The categories were re-derived from the live 400s (identification, contact,
+  relationship, and four demographic fields — **not** the "CPF, addresses and
+  phones" this bullet used to claim, which was wrong in both directions), and
+  the ERP consumes the family under a two-tier minimisation split: 7 fields in
+  the list, the demographics only on opening one named client, nothing
+  persisted, admin-only, every call audited with a `projection` marker.
+  Enforced by the DTO shapes rather than by convention — `vista.md` § 5.1.
+  Three controller decisions stay open in `LGPD-WARNINGS.md` (legal basis,
+  the Vista DPA, audit-log retention); they are the user's and do not block a
+  read-only non-persisting surface. **A granted permission is still NOT
+  authorization to ingest** — that principle is what produced the split, and
+  it applies again to any future bulk pull or write-back.
 - **No write probes against the live CRM** (§ 2.3).
 - **The key is never `VITE_`-prefixed** and never reaches the browser.
 - **Re-probing is cheap and safe** — `vista.diagnostics.probe` +
@@ -268,7 +276,7 @@ anything — this exact trap cost real time on 2026-08-05.
 
 | Vista says | Verdict | Next action |
 |---|---|---|
-| Granted | ✅ Verify by probe, not by their word | **STOP — do not start ingesting.** LGPD intake gates the first `clientes` call (§ 5). Surface to the user, then plan the consume slice. |
+| Granted | ✅ Verify by probe, not by their word | **STOP — do not start ingesting.** LGPD intake gates the first `clientes` call (§ 5). Surface to the user, then plan the consume slice. *(Done for `clientes` on 2026-08-22 — the pattern to copy for the next family: derive categories from the 400s, minimise the list projection, enforce it in the DTO, audit list-vs-detail separately.)* |
 | Refused / needs paid module | ⚠️ Legitimate commercial answer | Surface the cost to the user. Do not re-ask. |
 | Silence / deflection | ⚠️ | Re-ask naming ONLY the three methods verbatim. Ambiguity is the usual cause. |
 | "Use `/clientes/pesquisar` instead" | ❌ **Push back with evidence** | That route is 404 on our tenant (§ 2.3). Ask them to confirm it is live for `oneconsu` — likely they are reading generic docs. |
@@ -445,13 +453,14 @@ Atenciosamente,
 
 Recorded so the next agent does not over-read the win.
 
-- **🔴 LGPD gates consumption, and the grant does not touch it.** Permission
-  from Vista is not authorization to ingest third-party personal data. The
-  data-category intake (`KB § PATTERNS/security/lgpd.md`) must land before
-  any bulk `clientes` pull — and it must be written against the **real**
-  field set (§ 4.2 of `vista.md`), not the old "CPF, addresses and phones"
-  assumption, which was wrong. Actual: no CPF, no address, no email; but
-  `Celular`, `DataNascimento`, `Sexo`, `EstadoCivil`, `Profissao`.
+- **LGPD gated consumption, and the grant never touched it — ✅ resolved
+  2026-08-22, for READ.** The intake was re-done against the real field set
+  (§ 4.2 of `vista.md`) rather than the wrong "CPF, addresses and phones"
+  assumption, and the ERP now reads the family under the minimisation split
+  described in `vista.md` § 5.1. What that authorises is narrow: an admin
+  reading live, nothing stored. It does **not** authorise a bulk pull, a local
+  copy, or a sync loop — each of those is a new processing purpose and a fresh
+  question, and the 860-request full-crawl shape makes the first one tempting.
 - **Lead write-back is still impossible.** `/clientes/lead` is 404, not 401 —
   no permission unlocks it. A lead-capture flow still terminates in our own
   database and the agency still has two systems to check. This remains a

@@ -77,6 +77,8 @@ from .fake import FakeVistaClient
 from .fake_adapter import FakeVistaAdapter
 from .normalizers import (
     vista_agencia_to_showcase,
+    vista_cliente_detalhes_to_showcase,
+    vista_cliente_to_showcase,
     vista_imovel_detalhes_to_showcase,
     vista_imovel_to_showcase,
     vista_usuario_to_showcase,
@@ -85,6 +87,8 @@ from .protocol import VistaCRMAdapter
 from .real import VistaNotConfigured, VistaRESTAdapter
 from .types import (
     ShowcaseAgencia,
+    ShowcaseCliente,
+    ShowcaseClienteDetalhes,
     ShowcaseImovel,
     ShowcaseImovelDetalhes,
     ShowcaseUsuario,
@@ -135,12 +139,16 @@ __all__ = [
     "VistaTimeout",
     # Normalizers
     "vista_imovel_to_showcase",
+    "vista_cliente_to_showcase",
+    "vista_cliente_detalhes_to_showcase",
     "vista_imovel_detalhes_to_showcase",
     "vista_usuario_to_showcase",
     "vista_agencia_to_showcase",
     # Showcase DTOs
     "ShowcaseImovel",
     "ShowcaseImovelDetalhes",
+    "ShowcaseCliente",
+    "ShowcaseClienteDetalhes",
     "ShowcaseUsuario",
     "ShowcaseAgencia",
     # High-level CRM adapter layer (social-wiring-vista-seed-lift 2026-05-20).

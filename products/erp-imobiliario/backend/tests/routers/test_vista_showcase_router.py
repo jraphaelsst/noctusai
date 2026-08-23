@@ -167,11 +167,11 @@ class TestTabs:
         tabs = {t["tab"]: t for t in body["tabs"]}
         assert tabs["imoveis"]["status"] == "live"
         # Vista GRANTED /clientes/* on 2026-08-21 (KB § INTEGRATIONS/vista.md
-        # § 4.2), so "permission_denied" would now send users to chase a vendor
-        # request that already landed. The tab still isn't consumable — but the
-        # blocker moved to OUR side (LGPD data-category intake + wiring), and
-        # the status has to say which, or the UI lies about who is blocking.
-        assert tabs["clientes"]["status"] == "pending_intake"
+        # § 4.2) and the tab is now wired and consuming, so it is plain `live`.
+        # It passed through `pending_intake` in between — that status still
+        # exists and still matters, because "Vista blocks us" and "we haven't
+        # wired it" must never collapse into one pill.
+        assert tabs["clientes"]["status"] == "live"
         # corretores was asked for in the SAME ticket and did NOT open — so it
         # stays a genuine vendor-side 401. The two must not collapse together.
         assert tabs["corretores"]["status"] == "permission_denied"
@@ -367,3 +367,164 @@ class TestDiagnostico:
         body = resp.json()
         assert body["configured"] is False
         assert body["probes"] == []
+
+
+# ---------------------------------------------------------------------------
+# Clientes — the minimisation split is the LGPD posture, so it is TESTED,
+# not just commented. Every assertion below fails loudly if someone widens
+# the list projection.
+# ---------------------------------------------------------------------------
+
+_DEMOGRAPHIC_FIELDS = ("DataNascimento", "Sexo", "EstadoCivil", "Profissao")
+
+
+def _clientes_page() -> dict:
+    return {
+        "C0001": {
+            "Codigo": "C0001",
+            "Nome": "Fulana de Tal",
+            "Celular": "(11) 90000-0000",
+            "Status": "Ativo",
+            "DataCadastro": "2024-01-05",
+            "Corretor": {"103": {"Nome": "Elisa"}},
+            "Interesse": "Compra",
+        },
+        "C0002": {"Codigo": "C0002", "Nome": "Beltrano"},
+        "total": 42960,
+        "paginas": 860,
+        "pagina": 1,
+        "quantidade": 2,
+    }
+
+
+class TestClientes:
+    def test_listar_happy_path(self, admin_client, monkeypatch):
+        _set_vista_settings(monkeypatch)
+        with _patch_vista(return_value=_vista_response(200, _clientes_page())):
+            resp = admin_client.get("/api/vista-showcase/clientes?page=1&page_size=2")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tab"] == "clientes"
+        assert body["pagination"]["total"] == 42960
+        assert {it["codigo"] for it in body["items"]} == {"C0001", "C0002"}
+        first = next(it for it in body["items"] if it["codigo"] == "C0001")
+        assert first["nome"] == "Fulana de Tal"
+        assert first["celular"] == "(11) 90000-0000"
+        # Corretor arrives dict-keyed-by-id here exactly as on imóveis.
+        assert first["corretor_nome"] == "Elisa"
+
+    def test_the_list_never_ASKS_vista_for_a_demographic_field(self, admin_client, monkeypatch):
+        """The strongest leg: minimisation on the WIRE, not just in the mapper.
+
+        A projection that requests the fields and then drops them has already
+        transmitted them. This asserts the request itself is narrow.
+        """
+        _set_vista_settings(monkeypatch)
+        with _patch_vista(return_value=_vista_response(200, _clientes_page())) as m:
+            assert admin_client.get("/api/vista-showcase/clientes").status_code == 200
+        pesquisa = json.loads(m.call_args.kwargs["params"]["pesquisa"])
+        requested = set(pesquisa["fields"])
+        assert requested == {
+            "Codigo", "Nome", "Celular", "Status", "DataCadastro", "Corretor", "Interesse",
+        }
+        for f in _DEMOGRAPHIC_FIELDS:
+            assert f not in requested, f"list projection asked Vista for {f}"
+
+    def test_a_demographic_field_cannot_appear_in_a_list_row(self, admin_client, monkeypatch):
+        """Belt to the wire-level braces: even if Vista volunteers the fields,
+        `ShowcaseCliente` has nowhere to put them, so they cannot be served."""
+        _set_vista_settings(monkeypatch)
+        chatty = _clientes_page()
+        chatty["C0001"].update({
+            "DataNascimento": "1990-04-02", "Sexo": "F",
+            "EstadoCivil": "Solteira", "Profissao": "Arquiteta",
+        })
+        with _patch_vista(return_value=_vista_response(200, chatty)):
+            body = admin_client.get("/api/vista-showcase/clientes").json()
+        serialized = json.dumps(body)
+        for leaked in ("1990-04-02", "Solteira", "Arquiteta", "data_nascimento"):
+            assert leaked not in serialized, f"{leaked!r} reached a list response"
+
+    def test_the_list_envelope_offers_no_raw_payload(self, admin_client, monkeypatch):
+        _set_vista_settings(monkeypatch)
+        with _patch_vista(return_value=_vista_response(200, _clientes_page())):
+            body = admin_client.get("/api/vista-showcase/clientes").json()
+        assert body["raw_available"] is False
+        assert all("raw" not in it for it in body["items"])
+
+    def test_filter_passthrough(self, admin_client, monkeypatch):
+        _set_vista_settings(monkeypatch)
+        empty = {"total": 0, "paginas": 0, "pagina": 1, "quantidade": 0}
+        with _patch_vista(return_value=_vista_response(200, empty)) as m:
+            resp = admin_client.get("/api/vista-showcase/clientes?nome=Fulana&status=Ativo")
+        assert resp.status_code == 200
+        pesquisa = json.loads(m.call_args.kwargs["params"]["pesquisa"])
+        assert pesquisa["filter"] == {"Nome": "Fulana", "Status": "Ativo"}
+
+    def test_detalhes_is_the_only_route_that_returns_demographics(self, admin_client, monkeypatch):
+        _set_vista_settings(monkeypatch)
+        detalhes = {
+            "Codigo": "C0001", "Nome": "Fulana de Tal", "Celular": "(11) 90000-0000",
+            "Status": "Ativo", "DataCadastro": "2024-01-05", "Interesse": "Compra",
+            "DataNascimento": "1990-04-02", "Sexo": "F",
+            "EstadoCivil": "Solteira", "Profissao": "Arquiteta",
+        }
+        with _patch_vista(return_value=_vista_response(200, detalhes)) as m:
+            resp = admin_client.get("/api/vista-showcase/clientes/C0001")
+        assert resp.status_code == 200
+        item = resp.json()["items"][0]
+        assert item["data_nascimento"] == "1990-04-02"
+        assert item["sexo"] == "F"
+        assert item["estado_civil"] == "Solteira"
+        assert item["profissao"] == "Arquiteta"
+        assert item["base"]["nome"] == "Fulana de Tal"
+        # Pinned to ONE named record — `cliente=` is a top-level param, not
+        # part of `pesquisa` (vista.md § 2).
+        assert m.call_args.kwargs["params"]["cliente"] == "C0001"
+
+    def test_the_audit_row_distinguishes_listing_from_opening_a_person(
+        self, admin_client, monkeypatch
+    ):
+        """A single undifferentiated `GET /clientes` audit line would make
+        "listed 50 names" and "opened one profile" indistinguishable after the
+        fact — which is precisely the question an LGPD audit asks."""
+        _set_vista_settings(monkeypatch)
+        with _patch_vista(return_value=_vista_response(200, _clientes_page())):
+            admin_client.get("/api/vista-showcase/clientes")
+        list_row = admin_client._mock_log.call_args.kwargs["detalhes"]
+        assert list_row["endpoint"] == "/clientes/listar"
+        assert list_row["projection"] == "list"
+
+        with _patch_vista(return_value=_vista_response(200, {"Codigo": "C0001"})):
+            admin_client.get("/api/vista-showcase/clientes/C0001")
+        detail_call = admin_client._mock_log.call_args.kwargs
+        assert detail_call["detalhes"]["endpoint"] == "/clientes/detalhes"
+        assert detail_call["detalhes"]["projection"] == "detail"
+        assert detail_call["entidade_id"] == "C0001"
+
+    def test_a_grant_rollback_surfaces_as_403_not_a_crash(self, admin_client, monkeypatch):
+        """The 401 path is kept, not deleted — it is still the right answer for
+        an ungranted tenant, and the only signal if the grant is revoked."""
+        _set_vista_settings(monkeypatch)
+        denied = _vista_response(
+            401, {"status": 401, "message": 'Permissão Negada: "k" Método: clientes/listar'}
+        )
+        with _patch_vista(return_value=denied):
+            resp = admin_client.get("/api/vista-showcase/clientes")
+        assert resp.status_code == 403
+        # Seed envelope: {"error": {"code", "message"}} — not FastAPI's bare
+        # {"detail"} (noctusai_lib.primitives.exceptions.format_error_response).
+        assert resp.json()["error"]["code"] == "FORBIDDEN"
+        assert "Permissão pendente" in resp.json()["error"]["message"]
+
+    def test_an_unavailable_field_names_the_constant_to_fix(self, admin_client, monkeypatch):
+        _set_vista_settings(monkeypatch)
+        rejected = _vista_response(
+            400, {"status": 400, "message": ["O campo Interesse não está disponível"]}
+        )
+        with _patch_vista(return_value=rejected):
+            resp = admin_client.get("/api/vista-showcase/clientes")
+        assert resp.status_code == 422
+        message = resp.json()["error"]["message"]
+        assert "Interesse" in message, "the rejected field must be named, not swallowed"
+        assert "CLIENTE_LIST_FIELDS" in message, "and the message must say WHICH constant to fix"

@@ -18,6 +18,8 @@ from typing import Any, Optional
 
 from .types import (
     ShowcaseAgencia,
+    ShowcaseCliente,
+    ShowcaseClienteDetalhes,
     ShowcaseImovel,
     ShowcaseImovelDetalhes,
     ShowcaseUsuario,
@@ -138,6 +140,49 @@ def vista_imovel_detalhes_to_showcase(
     )
 
 
+def vista_cliente_to_showcase(payload: dict) -> ShowcaseCliente:
+    """LIST projection of one client.
+
+    Reads only the seven keys the list view renders. Anything else the payload
+    happens to carry — including the demographic fields this tenant exposes —
+    is DROPPED here rather than passed through, because there is no `raw` on
+    :class:`ShowcaseCliente`. See its docstring for why that asymmetry with the
+    imóvel/usuário/agência DTOs is deliberate.
+
+    `Corretor` reuses :func:`_first_corretor_nome`: Vista returns it
+    dict-keyed-by-id on clientes exactly as it does on imóveis, and one flat
+    shape on single-corretor payloads. Same quirk, same reader — no second
+    implementation to drift.
+    """
+    return ShowcaseCliente(
+        codigo=str(payload.get("Codigo") or ""),
+        nome=_str_or_none(payload.get("Nome")),
+        celular=_str_or_none(payload.get("Celular")),
+        status=_str_or_none(payload.get("Status")),
+        data_cadastro=_str_or_none(payload.get("DataCadastro")),
+        corretor_nome=_first_corretor_nome(payload)
+        or _str_or_none(payload.get("Corretor") if isinstance(payload.get("Corretor"), str) else None),
+        interesse=_str_or_none(payload.get("Interesse")),
+    )
+
+
+def vista_cliente_detalhes_to_showcase(payload: dict) -> ShowcaseClienteDetalhes:
+    """DETAIL projection: the list fields plus the four demographic ones.
+
+    This is the ONLY mapper that reads `DataNascimento` / `Sexo` /
+    `EstadoCivil` / `Profissao`, so grepping those names finds every place
+    they can enter the platform.
+    """
+    return ShowcaseClienteDetalhes(
+        codigo=str(payload.get("Codigo") or ""),
+        base=vista_cliente_to_showcase(payload),
+        data_nascimento=_str_or_none(payload.get("DataNascimento")),
+        sexo=_str_or_none(payload.get("Sexo")),
+        estado_civil=_str_or_none(payload.get("EstadoCivil")),
+        profissao=_str_or_none(payload.get("Profissao")),
+    )
+
+
 def vista_usuario_to_showcase(payload: dict) -> ShowcaseUsuario:
     return ShowcaseUsuario(
         codigo=str(payload.get("Codigo") or ""),
@@ -164,6 +209,8 @@ def vista_agencia_to_showcase(payload: dict) -> ShowcaseAgencia:
 __all__ = [
     "vista_imovel_to_showcase",
     "vista_imovel_detalhes_to_showcase",
+    "vista_cliente_to_showcase",
+    "vista_cliente_detalhes_to_showcase",
     "vista_usuario_to_showcase",
     "vista_agencia_to_showcase",
 ]

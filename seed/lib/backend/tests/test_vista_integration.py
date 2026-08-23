@@ -500,3 +500,89 @@ async def test_candidate_cliente_fields_cover_the_live_tenant_set() -> None:
     }
     missing = confirmed_live - set(CANDIDATE_CLIENTE_FIELDS)
     assert not missing, f"tenant exposes these but calibration can never find them: {missing}"
+
+
+# ─── Cliente normalizers — the two-tier minimisation split ────────────────
+#
+# The split is a privacy decision expressed in the type system, so it gets
+# tested like a contract, not like a mapper. The ERP router tests cover the
+# wire-level half (what the list ASKS Vista for); these cover the shape half
+# (what the list COULD carry even if Vista over-answered).
+
+
+_CHATTY_CLIENTE = {
+    "Codigo": "C0001",
+    "Nome": "Fulana de Tal",
+    "Celular": "(11) 90000-0000",
+    "Status": "Ativo",
+    "DataCadastro": "2024-01-05",
+    "Corretor": {"103": {"Nome": "Elisa"}},
+    "Interesse": "Compra",
+    # Vista would only send these if asked, but the mapper must not depend
+    # on that — an over-answering tenant is not a leak vector.
+    "DataNascimento": "1990-04-02",
+    "Sexo": "F",
+    "EstadoCivil": "Solteira",
+    "Profissao": "Arquiteta",
+}
+
+
+def test_cliente_list_projection_cannot_carry_a_demographic_field() -> None:
+    from noctusai_lib.integrations.vista import vista_cliente_to_showcase
+
+    dto = vista_cliente_to_showcase(_CHATTY_CLIENTE)
+    dumped = dto.model_dump()
+    assert set(dumped) == {
+        "codigo", "nome", "celular", "status", "data_cadastro",
+        "corretor_nome", "interesse",
+    }
+    # Substring scan on the VALUES only, and only on values distinctive enough
+    # to mean something — `Sexo: "F"` is covered by the key-set assertion
+    # above, since a one-letter needle matches "Fulana" and would make this
+    # test fail for the wrong reason (it did, first run).
+    for leaked in ("1990-04-02", "Solteira", "Arquiteta"):
+        assert leaked not in str(dumped), f"{leaked!r} survived the list projection"
+
+
+def test_cliente_list_projection_carries_no_raw_passthrough() -> None:
+    """Unlike imóvel/usuário/agência, `ShowcaseCliente` has no `raw`.
+
+    A raw copy would re-admit through the back door exactly what the field
+    selection excludes through the front."""
+    from noctusai_lib.integrations.vista import ShowcaseCliente
+
+    assert "raw" not in ShowcaseCliente.model_fields
+
+
+def test_cliente_detalhes_is_the_only_shape_with_demographics() -> None:
+    from noctusai_lib.integrations.vista import vista_cliente_detalhes_to_showcase
+
+    dto = vista_cliente_detalhes_to_showcase(_CHATTY_CLIENTE)
+    assert dto.data_nascimento == "1990-04-02"
+    assert dto.sexo == "F"
+    assert dto.estado_civil == "Solteira"
+    assert dto.profissao == "Arquiteta"
+    # …and it still nests the same minimised list projection, rather than
+    # re-flattening everything into one bag.
+    assert dto.base.nome == "Fulana de Tal"
+    assert not hasattr(dto.base, "data_nascimento")
+
+
+def test_cliente_reuses_the_imovel_corretor_reader() -> None:
+    """Vista returns `Corretor` dict-keyed-by-id on clientes exactly as on
+    imóveis. One reader, so the quirk cannot be re-solved differently twice."""
+    from noctusai_lib.integrations.vista import vista_cliente_to_showcase
+
+    assert vista_cliente_to_showcase(_CHATTY_CLIENTE).corretor_nome == "Elisa"
+    flat = {**_CHATTY_CLIENTE, "Corretor": {"Nome": "Solo"}}
+    assert vista_cliente_to_showcase(flat).corretor_nome == "Solo"
+    missing = {k: v for k, v in _CHATTY_CLIENTE.items() if k != "Corretor"}
+    assert vista_cliente_to_showcase(missing).corretor_nome is None
+
+
+def test_cliente_empty_strings_become_none_not_empty_strings() -> None:
+    from noctusai_lib.integrations.vista import vista_cliente_to_showcase
+
+    dto = vista_cliente_to_showcase({"Codigo": "C9", "Nome": "", "Celular": ""})
+    assert dto.codigo == "C9"
+    assert dto.nome is None and dto.celular is None
