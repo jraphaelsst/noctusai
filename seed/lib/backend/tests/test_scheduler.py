@@ -6,6 +6,7 @@ and the per-product wrappers' conftests.
 """
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -101,12 +102,18 @@ class TestStartStop:
             sched.start_scheduler()
         fake.start.assert_not_called()
 
-    def test_start_logs_registered_jobs(self):
+    def test_start_logs_registered_jobs(self, monkeypatch):
         """When the scheduler starts, it logs the job names so operators
-        can confirm what's wired."""
+        can confirm what's wired.
+
+        Needs `NOCTUS_SCHEDULERS_ENABLED` since 2026-08-22: `start_scheduler`
+        refuses to start an unauthorised process, and this test exercises the
+        STARTED path.
+        """
         async def _job():
             return None
 
+        monkeypatch.setenv(sched.SCHEDULERS_ENABLED_ENV, "1")
         sched.register("logged_job", _job, hours=1)
         with patch.object(sched.scheduler, "start"), \
              patch.object(sched, "logger") as mock_logger:
@@ -241,3 +248,123 @@ class TestRegisterIdempotency:
         sched.register("dupes", _job, cron="5 0 * * *")
 
         assert len(sched.scheduler.get_jobs()) == 1
+
+
+class TestSchedulersEnabledGate:
+    """Pins the 2026-08-22 incident fix.
+
+    A social-wiring backend left running on a developer laptop against the
+    production `.env` woke during a macOS DarkWake, fired the nightly Vista
+    sync, and wrote 50 rows to the live catalog. All fourteen registered
+    jobs were live on that process — Meta ads, OLX drains, e-mail sends,
+    YouTube snapshots — every one writing to production.
+
+    The gate is an env marker set ONLY by the prod compose, never by
+    `.env`, because `.env` is the file that gets copied to laptops.
+    """
+
+    def test_start_is_refused_without_the_marker(self, monkeypatch):
+        async def _job():
+            return None
+
+        monkeypatch.delenv(sched.SCHEDULERS_ENABLED_ENV, raising=False)
+        sched.register("nightly", _job, cron="5 0 * * *")
+
+        sched.start_scheduler()
+
+        assert not sched.scheduler.running
+
+    def test_jobs_still_REGISTER_when_refused(self, monkeypatch):
+        """Registration is untouched — only firing is gated.
+
+        A local run must still get the real app and the real wiring; the
+        difference is that nothing writes.
+        """
+        async def _job():
+            return None
+
+        monkeypatch.delenv(sched.SCHEDULERS_ENABLED_ENV, raising=False)
+        sched.register("nightly", _job, cron="5 0 * * *")
+
+        sched.start_scheduler()
+
+        assert len(sched.scheduler.get_jobs()) == 1
+
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+    def test_marker_accepts_the_usual_truthy_spellings(self, monkeypatch, value):
+        monkeypatch.setenv(sched.SCHEDULERS_ENABLED_ENV, value)
+        assert sched.schedulers_enabled() is True
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "no", "off", " "])
+    def test_marker_rejects_everything_else(self, monkeypatch, value):
+        monkeypatch.setenv(sched.SCHEDULERS_ENABLED_ENV, value)
+        assert sched.schedulers_enabled() is False
+
+    def test_prod_env_markers_alone_do_NOT_authorise(self, monkeypatch):
+        """The load-bearing case: a laptop holding the production `.env`.
+
+        `is_deploy_context()` is True here — APP_ENV and PRODUCT_URL_* are
+        exactly what a copied prod `.env` carries. If the gate keyed off
+        that, the incident would repeat verbatim.
+        """
+        monkeypatch.delenv(sched.SCHEDULERS_ENABLED_ENV, raising=False)
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.setenv("PRODUCT_URL_SOCIAL_WIRING", "https://x.example.com")
+
+        from noctusai_lib.config.deploy_config import is_deploy_context
+
+        assert is_deploy_context() is True, "fixture no longer models a prod env"
+        assert sched.schedulers_enabled() is False
+
+        async def _job():
+            return None
+
+        sched.register("nightly", _job, cron="5 0 * * *")
+        sched.start_scheduler()
+        assert not sched.scheduler.running
+
+    def test_marker_present_starts_normally(self, monkeypatch):
+        async def _job():
+            return None
+
+        monkeypatch.setenv(sched.SCHEDULERS_ENABLED_ENV, "1")
+        sched.register("nightly", _job, cron="5 0 * * *")
+
+        # `AsyncIOScheduler.start()` binds the running loop, and there is
+        # none in a sync test — patch it, exactly as the pre-existing
+        # start-path test does. What is under test is that the gate LETS
+        # the call through, not APScheduler's own startup.
+        with patch.object(sched.scheduler, "start") as real_start:
+            sched.start_scheduler()
+
+        real_start.assert_called_once()
+
+    def test_missing_marker_IN_A_DEPLOY_logs_at_ERROR(self, monkeypatch, caplog):
+        """Prod silently running zero jobs is worse than the original bug.
+
+        A laptop gets INFO; a deploy context missing the marker gets ERROR,
+        because that means the compose lost the line.
+        """
+        monkeypatch.delenv(sched.SCHEDULERS_ENABLED_ENV, raising=False)
+        monkeypatch.setenv("APP_ENV", "production")
+
+        with caplog.at_level("INFO"):
+            sched.start_scheduler()
+
+        assert any(r.levelname == "ERROR" for r in caplog.records), (
+            "a deployed container with no scheduler marker must be loud"
+        )
+
+    def test_missing_marker_OUTSIDE_a_deploy_is_only_INFO(self, monkeypatch, caplog):
+        """A developer laptop behaving correctly must not look broken."""
+        monkeypatch.delenv(sched.SCHEDULERS_ENABLED_ENV, raising=False)
+        monkeypatch.delenv("APP_ENV", raising=False)
+        for key in list(os.environ):
+            if key.startswith("PRODUCT_URL_"):
+                monkeypatch.delenv(key, raising=False)
+
+        with caplog.at_level("INFO"):
+            sched.start_scheduler()
+
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+        assert any(r.levelname == "INFO" for r in caplog.records)

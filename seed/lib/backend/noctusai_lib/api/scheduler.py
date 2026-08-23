@@ -69,6 +69,7 @@ logs.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Awaitable, Callable, Optional
 
 from apscheduler.jobstores.base import JobLookupError
@@ -193,11 +194,92 @@ def register(
     )
 
 
+#: Env marker that authorises this process to RUN scheduled jobs.
+#: Set by the prod compose `x-prod-defaults` anchor, so every deployed
+#: container inherits it and nothing else does.
+SCHEDULERS_ENABLED_ENV = "NOCTUS_SCHEDULERS_ENABLED"
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def schedulers_enabled() -> bool:
+    """Is this process authorised to run scheduled jobs?
+
+    Deliberately NOT `is_deploy_context()`. That returns True for any
+    process whose environment carries prod markers — including a laptop
+    that loaded the production `.env`, which is exactly the case this
+    guard exists to stop. The marker has to be something only the
+    deployed container has, so it lives in the compose `environment:`
+    block and NEVER in `.env`.
+
+    🔴 Do not move this key into `.env`. The whole guarantee is that the
+    file a developer copies locally does not carry it.
+    """
+    return os.environ.get(SCHEDULERS_ENABLED_ENV, "").strip().lower() in _TRUTHY
+
+
 def start_scheduler() -> None:
     """Start the module-level scheduler. Idempotent — re-calling on a
-    running scheduler is a no-op."""
+    running scheduler is a no-op.
+
+    Refuses to start unless `schedulers_enabled()`. Registration is
+    unaffected: jobs still register at import time, they simply never
+    fire. So a local run gets the real app, the real routes and zero
+    background writes.
+
+    ── Why this exists (incident, 2026-08-22) ──────────────────────────
+    A social-wiring backend left running on a developer laptop against
+    the production `.env` woke during a macOS DarkWake, fired the
+    nightly Vista sync, wrote 50 rows to the production catalog, and
+    stopped mid-run when the machine went back to sleep. Nobody
+    intended it and nothing recorded it: the container logs showed only
+    health checks, and the write was traced only through Supabase's
+    edge logs correlated against the laptop's power log.
+
+    The blast radius was not one job. That process was running all
+    fourteen registered jobs — Meta ads sync, OLX drains, e-mail sends,
+    YouTube snapshots — every one of them writing to production on a
+    machine nobody was watching.
+
+    The three log levels below are the whole contract:
+
+      · enabled                    → INFO, business as usual.
+      · not enabled, not a deploy  → INFO. This is a developer laptop
+                                     behaving correctly; it must not
+                                     look like a problem.
+      · not enabled, IS a deploy   → ERROR. A deployed container with no
+                                     marker means the compose lost it,
+                                     and prod silently running zero jobs
+                                     is worse than the bug this fixes.
+                                     That case must be impossible to
+                                     miss in the logs.
+    """
     if scheduler.running:
         return
+
+    if not schedulers_enabled():
+        # Imported here, not at module scope: `deploy_config` is a config
+        # module and `api/` must not bind config at import time.
+        from noctusai_lib.config.deploy_config import is_deploy_context
+
+        if is_deploy_context():
+            logger.error(
+                "Scheduler NOT started: %s is unset in what looks like a "
+                "DEPLOY context (%d job(s) registered and idle). If this is "
+                "production, the compose `x-prod-defaults` environment block "
+                "has lost the marker and NOTHING scheduled is running.",
+                SCHEDULERS_ENABLED_ENV, len(scheduler.get_jobs()),
+            )
+        else:
+            logger.info(
+                "Scheduler not started: %s unset (%d job(s) registered, "
+                "none will fire). Expected outside a deployed container — "
+                "set it only in compose if you genuinely want background "
+                "jobs writing from this process.",
+                SCHEDULERS_ENABLED_ENV, len(scheduler.get_jobs()),
+            )
+        return
+
     scheduler.start()
     job_names = [j.id for j in scheduler.get_jobs()]
     logger.info(

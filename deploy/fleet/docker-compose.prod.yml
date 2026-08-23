@@ -64,6 +64,21 @@ x-prod-defaults: &prod-defaults
     - ../../.env
   environment:
     <<: *cache-env
+    # Authorises this container to RUN scheduled jobs. Without it,
+    # `noctusai_lib.api.scheduler.start_scheduler()` registers every job and
+    # starts none.
+    #
+    # 🔴 This MUST stay here and NEVER move into `.env`. The entire guarantee
+    # is that the file a developer copies to a laptop does not carry it — a
+    # backend left running locally against the production `.env` fired the
+    # nightly Vista sync and wrote to the live catalog on 2026-08-22. `.env`
+    # is shared with laptops; this compose block is not.
+    #
+    # Losing this line does NOT fail loudly at deploy — the container starts
+    # healthy and silently runs zero jobs. `start_scheduler` logs at ERROR
+    # when it finds a deploy context without the marker; that log is the
+    # detection.
+    NOCTUS_SCHEDULERS_ENABLED: "1"
   restart: unless-stopped
   networks:
     - noctus-net
