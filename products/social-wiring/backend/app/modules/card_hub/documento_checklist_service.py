@@ -38,6 +38,8 @@ from __future__ import annotations
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from noctusai_lib.integrations.documents import looks_like_a_name
+
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.services import _now, _t, ensure_cliente
 
@@ -52,14 +54,45 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 #: property of the definition rather than a parallel lookup table someone has
 #: to keep in step:
 #:
-#: - ``campo``     — done when that `clientes` column is non-empty.
+#: - ``campos``    — done when ANY of those `clientes` columns is non-empty,
+#:                   listed most-canonical first.
 #: - ``documento`` — done when a non-deleted `cliente_documentos` row of that
 #:                   `tipo_documento` exists.
-ITENS: tuple[dict[str, str], ...] = (
-    {"key": "nome_completo", "label": "Nome Completo", "campo": "nome_completo"},
-    {"key": "email", "label": "Email", "campo": "email"},
-    {"key": "data_nascimento", "label": "Data de Nascimento", "campo": "data_nascimento"},
-    {"key": "genero", "label": "Gênero", "campo": "genero"},
+#:
+#: - ``exige``     — an extra predicate the value must satisfy to count.
+#:
+#: 🔴 WHY ``nome_completo`` READS TWO COLUMNS THROUGH A PREDICATE
+#: --------------------------------------------------------------
+#: This item shipped reading `clientes.nome_completo` alone. That column
+#: arrived with migration 068 and is written by nothing except an operator
+#: filling it in, so it was empty for **all 10.255 clients** while 10.150 of
+#: them had a `nome` from their registration. The item could therefore never
+#: tick for anyone — a permanently-red gate, and those get ignored, which makes
+#: the whole checklist untrustworthy.
+#:
+#: The obvious fix — also read `nome` — is WRONG on its own, and there is a
+#: test asserting so: `nome` is a WhatsApp push name, a Meta `full_name`, or an
+#: OLX handle. It is "Ana" for 4.417 of the 10.255 rows. Accepting it would
+#: auto-tick "Nome Completo" for essentially every lead, which is the same
+#: untrustworthy checklist arrived at from the other direction.
+#:
+#: So the item asks what it actually means: do we hold something that IS a full
+#: name? `documents.looks_like_a_name` is that question, already written and
+#: already tested — two substantive words, no digits, not an institutional
+#: phrase. On today's data it ticks the 5.733 rows that carry a real name and
+#: leaves the 4.417 push names alone.
+#:
+#: Note `nome_oficial` is deliberately absent. It is the name read off an
+#: identity document, held for COMPARISON against the registration (migration
+#: 071); letting it satisfy "do we know their name?" would collapse the two
+#: facts the comparison exists to keep apart.
+ITENS: tuple[dict[str, Any], ...] = (
+    {"key": "nome_completo", "label": "Nome Completo",
+     "campos": ("nome_completo", "nome"), "exige": "nome_completo"},
+    {"key": "email", "label": "Email", "campos": ("email",)},
+    {"key": "data_nascimento", "label": "Data de Nascimento",
+     "campos": ("data_nascimento",)},
+    {"key": "genero", "label": "Gênero", "campos": ("genero",)},
     {"key": "rg", "label": "RG", "documento": "rg"},
     {"key": "cpf", "label": "CPF", "documento": "cpf"},
 )
@@ -68,7 +101,26 @@ ITEM_KEYS = tuple(item["key"] for item in ITENS)
 
 #: Columns the derivation reads. Selected explicitly rather than `*` so adding
 #: a column to `clientes` cannot silently widen what this module pulls.
-_CLIENTE_COLUNAS = tuple(i["campo"] for i in ITENS if "campo" in i)
+#: Columns read for DISPLAY beside the checklist but never used to derive a
+#: tick. `nome_oficial` is here and not in any item's `campos` on purpose —
+#: see the ITENS docstring.
+_CLIENTE_COLUNAS_EXIBICAO = ("nome_oficial",)
+
+_CLIENTE_COLUNAS = tuple(
+    dict.fromkeys(
+        [col for i in ITENS for col in i.get("campos", ())]
+        + list(_CLIENTE_COLUNAS_EXIBICAO)
+    )
+)
+
+
+#: Extra predicates an item may require of a column value, by name. Keyed
+#: rather than inlined as callables so `ITENS` stays plain data — it is
+#: compared, iterated and asserted against in tests, and a function object in
+#: there makes every one of those noisier.
+_VALIDADORES: dict[str, Any] = {
+    "nome_completo": looks_like_a_name,
+}
 
 
 def _preenchido(value: Any) -> bool:
@@ -98,8 +150,12 @@ def derivar(
     cliente = cliente or {}
     out: dict[str, bool] = {}
     for item in ITENS:
-        if "campo" in item:
-            out[item["key"]] = _preenchido(cliente.get(item["campo"]))
+        if "campos" in item:
+            exige = _VALIDADORES.get(item.get("exige", ""))
+            out[item["key"]] = any(
+                _preenchido(valor) and (exige is None or exige(str(valor)))
+                for valor in (cliente.get(col) for col in item["campos"])
+            )
         else:
             out[item["key"]] = item["documento"] in tipos_documento_presentes
     return out
@@ -201,11 +257,44 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         )
         for item in ITENS
     ]
+    # Extracted fields that are NOT checklist items — today just
+    # `nome_oficial`. They ride on this response rather than getting an
+    # endpoint of their own because the card already fetches this once and the
+    # decision surface is the same one; giving them a separate call would mean
+    # a second round-trip and a second loading state for the same panel.
+    #
+    # Kept OUT of `items` deliberately: anything in `items` is a requirement
+    # whose absence makes a client incomplete, and the official name is not
+    # that — whether we hold the document is already asked by `rg` / `cpf`.
+    extras = {
+        key: valor for key, valor in sugestoes.items()
+        if key not in {i["key"] for i in ITENS}
+    }
+
     return {
         "items": itens,
         "total": len(itens),
         "concluidos": sum(1 for i in itens if i["concluido"]),
+        "sugestoes_extras": extras,
+        "nome_oficial": (cliente or {}).get("nome_oficial"),
+        "nome_registro": _nome_registro(cliente),
     }
+
+
+def _nome_registro(cliente: Optional[dict]) -> Optional[str]:
+    """The best registration name we hold, for display beside `nome_oficial`.
+
+    Same precedence as `vw_nome_conferencia` (migration 071): the explicit
+    `nome_completo` when an operator filled it, else the `nome` every intake
+    path writes. Kept in step with the view by having exactly one rule, stated
+    in both places, rather than two that drift.
+    """
+    cliente = cliente or {}
+    for col in ("nome_completo", "nome"):
+        valor = cliente.get(col)
+        if isinstance(valor, str) and valor.strip():
+            return valor.strip()
+    return None
 
 
 def marcar(

@@ -426,6 +426,104 @@ describe("dados obrigatórios (checklist permanente)", () => {
     return { fireEvent, screen };
   }
 
+  describe("nome no documento (migration 071)", () => {
+    const SUGESTAO_NOME = {
+      valor: "JOAO PEREIRA DA SILVA",
+      documento_id: "doc-rg",
+      documento_nome: "rg.pdf",
+      tipo_documento: "rg",
+      confianca: "baixa",
+      fonte: "ocr",
+      rotulo: "NOME",
+      valor_atual: null,
+      substitui: false,
+    };
+
+    it("shows nothing at all when no document has been read", async () => {
+      const { screen } = await openDocumentos();
+      expect(screen.queryByTestId("nome-oficial-bloco")).toBeNull();
+    });
+
+    it("shows the document name once one has been read", async () => {
+      const { screen } = await openDocumentos({
+        nomeOficial: "JOAO PEREIRA DA SILVA",
+        nomeRegistro: "Joao Pereira da Silva",
+      });
+      expect(screen.getByTestId("nome-oficial-valor").textContent).toContain(
+        "JOAO PEREIRA DA SILVA",
+      );
+    });
+
+    it("🔴 does not flag a divergence when the two agree apart from case and accents", async () => {
+      const { screen } = await openDocumentos({
+        nomeOficial: "JOAO PEREIRA DA SILVA",
+        nomeRegistro: "João Pereira da Silva",
+      });
+      expect(screen.queryByTestId("nome-oficial-divergencia")).toBeNull();
+    });
+
+    it("reports a real divergence as information, not as an error to fix", async () => {
+      const { screen } = await openDocumentos({
+        nomeOficial: "JOAO PEREIRA DA SILVA",
+        nomeRegistro: "Joao P",
+      });
+      const el = screen.getByTestId("nome-oficial-divergencia");
+      expect(el.textContent).toContain("Joao P");
+      // No action offered: both values are true, there is nothing to correct.
+      expect(screen.queryByTestId("nome-oficial-corrigir")).toBeNull();
+    });
+
+    it("🔴 never displays the registration name as if it were the document's", async () => {
+      const { screen } = await openDocumentos({
+        nomeOficial: null,
+        nomeRegistro: "Joao Pereira da Silva",
+      });
+      expect(screen.queryByTestId("nome-oficial-bloco")).toBeNull();
+    });
+
+    it("offers a low-confidence read for confirmation, keyed to nome_oficial", async () => {
+      const onResolverSugestao = vi.fn();
+      const { fireEvent, screen } = await openDocumentos({
+        sugestoesExtras: { nome_oficial: SUGESTAO_NOME },
+        onResolverSugestao,
+      });
+      fireEvent.click(
+        screen.getByTestId("documento-checklist-nome_oficial-sugestao-confirmar"),
+      );
+      expect(onResolverSugestao).toHaveBeenCalledWith(
+        "doc-rg",
+        "confirmar",
+        "nome_oficial",
+      );
+    });
+
+    it("says what a suggestion would replace, before it is accepted", async () => {
+      const { screen } = await openDocumentos({
+        sugestoesExtras: {
+          nome_oficial: {
+            ...SUGESTAO_NOME,
+            valor_atual: "JOAO P SILVA",
+            substitui: true,
+          },
+        },
+        onResolverSugestao: vi.fn(),
+      });
+      expect(
+        screen.getByTestId("documento-checklist-nome_oficial-sugestao").textContent,
+      ).toContain("JOAO P SILVA");
+    });
+
+    it("renders the name value verbatim rather than through the date formatter", async () => {
+      const { screen } = await openDocumentos({
+        sugestoesExtras: { nome_oficial: SUGESTAO_NOME },
+        onResolverSugestao: vi.fn(),
+      });
+      expect(
+        screen.getByTestId("documento-checklist-nome_oficial-sugestao-valor").textContent,
+      ).toContain("JOAO PEREIRA DA SILVA");
+    });
+  });
+
   it("🔴 renders the six the user asked for, in order", async () => {
     const { screen } = await openDocumentos();
     const labels = ITENS.map((i) => i.label);
@@ -548,12 +646,12 @@ describe("dados obrigatórios (checklist permanente)", () => {
     fireEvent.click(
       screen.getByTestId("documento-checklist-data_nascimento-sugestao-confirmar"),
     );
-    expect(onResolverSugestao).toHaveBeenCalledWith("doc-1", "confirmar");
+    expect(onResolverSugestao).toHaveBeenCalledWith("doc-1", "confirmar", "data_nascimento");
 
     fireEvent.click(
       screen.getByTestId("documento-checklist-data_nascimento-sugestao-descartar"),
     );
-    expect(onResolverSugestao).toHaveBeenCalledWith("doc-1", "descartar");
+    expect(onResolverSugestao).toHaveBeenCalledWith("doc-1", "descartar", "data_nascimento");
   });
 
   it("no prompt renders when there is no suggestion", async () => {

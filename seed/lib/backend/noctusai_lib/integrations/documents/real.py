@@ -40,6 +40,7 @@ from typing import Optional
 
 from noctusai_lib.integrations.documents.birthdate import find_birthdate
 from noctusai_lib.integrations.documents.fake import classify_kind
+from noctusai_lib.integrations.documents.name import find_name
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
     IdentityFields,
@@ -105,14 +106,46 @@ class LadderIdentityExtractor:
             # because retrying it is pointless.
             return IdentityFields(kind=kind, source=source)
 
-        value, confidence, label = find_birthdate(text)
+        data, data_conf, data_label = find_birthdate(text)
+        nome, nome_conf, nome_label = find_name(text)
+        nome_conf = self._temper_name_confidence(nome_conf, source)
+
         return IdentityFields(
             kind=kind,
-            data_nascimento=value,
-            confidence=ExtractionConfidence(confidence),
+            data_nascimento=data,
+            data_nascimento_confianca=ExtractionConfidence(data_conf),
+            data_nascimento_rotulo=data_label,
+            nome=nome,
+            nome_confianca=ExtractionConfidence(nome_conf),
+            nome_rotulo=nome_label,
             source=source,
-            matched_label=label,
         )
+
+    @staticmethod
+    def _temper_name_confidence(confidence: str, source: TextSource) -> str:
+        """A name read off a vision pass is a suggestion, never a fact.
+
+        🔴 THIS IS THE GATE ON AN OVERWRITE, WHICH IS WHY IT IS STRICTER
+        THAN THE BIRTHDATE'S.
+
+        The birthdate is only ever written into an empty column, so its
+        worst case is a wrong value where there was none. The name
+        deliberately REPLACES whatever is already on the record — the
+        official document is meant to win — so its worst case is
+        destroying a correct, human-entered name.
+
+        A PDF text layer is an exact transcription: those characters ARE
+        the document's characters, and `alta` survives. A vision pass over
+        a photographed card is a transcription by a model, and a
+        transcription error produces a name that is well-formed, plausible
+        and wrong — invisible to every structural check `name` can make.
+        So it degrades to `baixa`, which routes it into the existing
+        confirm/discard surface. The document still wins; a human just
+        spends one click agreeing that the model read it correctly.
+        """
+        if confidence == "alta" and source is not TextSource.TEXT_LAYER:
+            return "baixa"
+        return confidence
 
     async def _to_text(
         self, content: bytes, mimetype: Optional[str], filename: Optional[str]

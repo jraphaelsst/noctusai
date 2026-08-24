@@ -59,6 +59,7 @@ import type {
   Checklist,
   Documento,
   DocumentoChecklistItem,
+  ExtracaoSugestao,
   CardDatas,
   Membro,
   Tag,
@@ -141,9 +142,17 @@ export interface ClienteCardDialogProps {
   // Documento checklist — the six identity fields every new client owes us.
   // The LIST is canonical server-side, so there is no create/remove here.
   documentoChecklist?: DocumentoChecklistItem[];
+  /** Extracted fields that are not checklist items — today `nome_oficial`. */
+  sugestoesExtras?: Record<string, ExtracaoSugestao>;
+  nomeOficial?: string | null;
+  nomeRegistro?: string | null;
   documentoChecklistLoading?: boolean;
   onToggleDocumentoChecklist: (key: string, concluido: boolean | null) => void;
-  onResolverSugestao?: (documentoId: string, acao: "confirmar" | "descartar") => void;
+  onResolverSugestao?: (
+    documentoId: string,
+    acao: "confirmar" | "descartar",
+    itemKey: string,
+  ) => void;
   sugestaoSaving?: boolean;
 
   // Anexos
@@ -371,6 +380,9 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     onToggle={props.onToggleDocumentoChecklist}
                     onResolverSugestao={props.onResolverSugestao}
                     sugestaoSaving={props.sugestaoSaving}
+                    sugestoesExtras={props.sugestoesExtras}
+                    nomeOficial={props.nomeOficial}
+                    nomeRegistro={props.nomeRegistro}
                   />
                   <AnexosSection
                     documentos={props.documentos}
@@ -930,12 +942,22 @@ function DocumentoChecklistSection({
   onToggle,
   onResolverSugestao,
   sugestaoSaving,
+  sugestoesExtras,
+  nomeOficial,
+  nomeRegistro,
 }: {
   items: DocumentoChecklistItem[];
   loading?: boolean;
   onToggle: (key: string, concluido: boolean | null) => void;
-  onResolverSugestao?: (documentoId: string, acao: "confirmar" | "descartar") => void;
+  onResolverSugestao?: (
+    documentoId: string,
+    acao: "confirmar" | "descartar",
+    itemKey: string,
+  ) => void;
   sugestaoSaving?: boolean;
+  sugestoesExtras?: Record<string, ExtracaoSugestao>;
+  nomeOficial?: string | null;
+  nomeRegistro?: string | null;
 }) {
   if (loading) {
     return (
@@ -1009,14 +1031,100 @@ function DocumentoChecklistSection({
           item.sugestao && onResolverSugestao ? (
             <li key={`${item.key}-sugestao`}>
               <SugestaoExtraida
-                item={item}
+                itemKey={item.key}
+                label={item.label}
+                sugestao={item.sugestao}
                 onResolver={onResolverSugestao}
                 saving={sugestaoSaving}
+                formatarValor={formatarDataSugerida}
               />
             </li>
           ) : null,
         )}
       </ul>
+      <NomeOficial
+        oficial={nomeOficial}
+        registro={nomeRegistro}
+        sugestao={sugestoesExtras?.nome_oficial}
+        onResolver={onResolverSugestao}
+        saving={sugestaoSaving}
+      />
+    </div>
+  );
+}
+
+
+/**
+ * The name on the document, shown BESIDE the name from the registration.
+ *
+ * 🔴 The two are never merged, and this component is where that decision
+ * becomes visible. The registration name is what the business knows the
+ * person as; the document name is the legal one. Holding both is what makes
+ * "how accurate is our registration data?" answerable — reconciling them
+ * would answer it once, destructively, per row.
+ *
+ * So a divergence is rendered as INFORMATION, not as an error with a fix
+ * button. There is nothing to correct here: both values are true.
+ */
+function NomeOficial({
+  oficial,
+  registro,
+  sugestao,
+  onResolver,
+  saving,
+}: {
+  oficial?: string | null;
+  registro?: string | null;
+  sugestao?: ExtracaoSugestao;
+  onResolver?: (
+    documentoId: string,
+    acao: "confirmar" | "descartar",
+    itemKey: string,
+  ) => void;
+  saving?: boolean;
+}) {
+  if (!oficial && !sugestao) return null;
+
+  const normalizar = (v: string) =>
+    v
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/[^A-Z ]/g, " ")
+      .replace(/ +/g, " ")
+      .trim();
+  const diverge =
+    !!oficial && !!registro && normalizar(oficial) !== normalizar(registro);
+
+  return (
+    <div className="mt-3" data-testid="nome-oficial-bloco">
+      {oficial && (
+        <div className="rounded-md border border-border/60 bg-muted/30 p-2.5 text-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Nome no documento
+          </p>
+          <p className="mt-0.5 font-medium" data-testid="nome-oficial-valor">
+            {oficial}
+          </p>
+          {diverge && (
+            <p
+              className="mt-1 text-xs text-muted-foreground"
+              data-testid="nome-oficial-divergencia"
+            >
+              Cadastro: “{registro}” — diferente do documento.
+            </p>
+          )}
+        </div>
+      )}
+      {sugestao && onResolver && (
+        <SugestaoExtraida
+          itemKey="nome_oficial"
+          label="Nome no documento"
+          sugestao={sugestao}
+          onResolver={onResolver}
+          saving={saving}
+        />
+      )}
     </div>
   );
 }
@@ -1036,16 +1144,36 @@ function DocumentoChecklistSection({
  * operator actually checks against — "we read this off rg.pdf, by OCR" tells
  * them where to look and how much to doubt it.
  */
+/**
+ * One machine-read value, offered for a human decision.
+ *
+ * Takes the label and a formatter rather than a `DocumentoChecklistItem`,
+ * because it now serves two callers whose values are not the same shape: a
+ * birthdate (`YYYY-MM-DD`, needs reformatting) and the official name (already
+ * display-ready). Threading a checklist item through it would have forced
+ * `nome_oficial` to pretend to be a checklist item, which is exactly the
+ * conflation the backend keeps apart.
+ */
 function SugestaoExtraida({
-  item,
+  itemKey,
+  label,
+  sugestao,
   onResolver,
   saving,
+  formatarValor = (v: string) => v,
 }: {
-  item: DocumentoChecklistItem;
-  onResolver: (documentoId: string, acao: "confirmar" | "descartar") => void;
+  itemKey: string;
+  label: string;
+  sugestao: ExtracaoSugestao | null | undefined;
+  onResolver: (
+    documentoId: string,
+    acao: "confirmar" | "descartar",
+    itemKey: string,
+  ) => void;
   saving?: boolean;
+  formatarValor?: (valor: string) => string;
 }) {
-  const s = item.sugestao;
+  const s = sugestao;
   if (!s) return null;
 
   // OCR is the approximate rung; a PDF text layer is exact. Saying which one
@@ -1055,7 +1183,7 @@ function SugestaoExtraida({
   return (
     <div
       className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-sm"
-      data-testid={`documento-checklist-${item.key}-sugestao`}
+      data-testid={`documento-checklist-${itemKey}-sugestao`}
     >
       <p className="text-xs text-muted-foreground">
         Encontramos em{" "}
@@ -1064,9 +1192,18 @@ function SugestaoExtraida({
         </span>
         , por {fonteLabel} — confirme antes de salvar:
       </p>
-      <p className="my-1 font-medium" data-testid={`documento-checklist-${item.key}-sugestao-valor`}>
-        {item.label}: {formatarDataSugerida(s.valor)}
+      <p className="my-1 font-medium" data-testid={`documento-checklist-${itemKey}-sugestao-valor`}>
+        {label}: {formatarValor(s.valor)}
       </p>
+      {s.substitui && s.valor_atual && (
+        /* Accepting this replaces something rather than filling a blank. Say
+           what it replaces, on the same screen as the decision — otherwise the
+           operator finds out afterwards, by noticing a value they did not
+           expect. */
+        <p className="text-xs text-muted-foreground">
+          Substitui o valor atual: “{s.valor_atual}”
+        </p>
+      )}
       {s.rotulo && (
         <p className="text-xs text-muted-foreground">Campo lido: “{s.rotulo}”</p>
       )}
@@ -1075,8 +1212,8 @@ function SugestaoExtraida({
           size="sm"
           variant="default"
           disabled={saving}
-          onClick={() => onResolver(s.documento_id, "confirmar")}
-          data-testid={`documento-checklist-${item.key}-sugestao-confirmar`}
+          onClick={() => onResolver(s.documento_id, "confirmar", itemKey)}
+          data-testid={`documento-checklist-${itemKey}-sugestao-confirmar`}
         >
           Confirmar
         </Button>
@@ -1084,8 +1221,8 @@ function SugestaoExtraida({
           size="sm"
           variant="ghost"
           disabled={saving}
-          onClick={() => onResolver(s.documento_id, "descartar")}
-          data-testid={`documento-checklist-${item.key}-sugestao-descartar`}
+          onClick={() => onResolver(s.documento_id, "descartar", itemKey)}
+          data-testid={`documento-checklist-${itemKey}-sugestao-descartar`}
         >
           Descartar
         </Button>

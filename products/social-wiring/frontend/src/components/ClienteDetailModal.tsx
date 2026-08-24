@@ -233,9 +233,9 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       descricaoCorpo={card.data?.descricao?.corpo ?? ""}
       onSaveDescricao={handleSaveDescricao}
       descricaoSaving={notaMutations.create.isPending || notaMutations.update.isPending}
-      onResolverSugestao={(documentoId, acao) =>
+      onResolverSugestao={(documentoId, acao, itemKey) =>
         sugestaoMutation.mutate(
-          { documentoId, acao },
+          { documentoId, acao, itemKey },
           {
             onError: (err) =>
               toastServerError(
@@ -250,6 +250,9 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       sugestaoSaving={sugestaoMutation.isPending}
       documentoChecklist={documentoChecklist.data?.items ?? []}
       documentoChecklistLoading={documentoChecklist.isPending}
+      sugestoesExtras={documentoChecklist.data?.sugestoes_extras}
+      nomeOficial={documentoChecklist.data?.nome_oficial}
+      nomeRegistro={documentoChecklist.data?.nome_registro}
       onToggleDocumentoChecklist={(key, concluido) =>
         documentoChecklistMutation.mutate(
           { key, concluido },

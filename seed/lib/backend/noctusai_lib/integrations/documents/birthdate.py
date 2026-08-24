@@ -37,9 +37,10 @@ TWO DELIBERATE OMISSIONS
 from __future__ import annotations
 
 import re
-import unicodedata
 from datetime import date
 from typing import Optional
+
+from noctusai_lib.integrations.documents.text import strip_accents_upper
 
 #: Plausible human age range for someone in a CRM as a lead/client.
 #: The lower bound is deliberately not 0 — a birthdate implying a
@@ -111,9 +112,7 @@ def normalize(text: str) -> str:
     label from its value across a line break, and the `_LABEL_WINDOW`
     proximity rule is what keeps that from over-reaching.
     """
-    decomposed = unicodedata.normalize("NFKD", text)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", stripped.upper()).strip()
+    return re.sub(r"\s+", " ", strip_accents_upper(text)).strip()
 
 
 def _label_before(haystack: str, at: int) -> tuple[Optional[str], bool]:

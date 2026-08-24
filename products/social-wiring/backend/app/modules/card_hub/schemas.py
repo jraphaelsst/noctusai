@@ -194,6 +194,23 @@ __all__ = [
 # ─── Documento checklist (migration 067 — canonical items, per-client ticks) ──
 
 
+class ExtracaoSugestaoBody(StrictHttpModel):
+    """Which extracted field this confirm/discard decision is about.
+
+    Optional, and omitting it means `data_nascimento`. That default exists
+    because the birthdate was the only extracted field when these two routes
+    shipped; a client that predates `nome_oficial` keeps working unchanged
+    rather than starting to fail on a field it has never heard of.
+
+    The valid keys are NOT re-listed here. They live in
+    `identidade_extracao_service.CAMPO_POR_CHAVE`, which is the definition;
+    a second copy would be a second thing to forget to update, and the
+    service raises a typed 422 for an unknown key either way.
+    """
+
+    item_key: Optional[str] = None
+
+
 class DocumentoChecklistPatchBody(StrictHttpModel):
     """Set or clear the human override on one canonical item.
 

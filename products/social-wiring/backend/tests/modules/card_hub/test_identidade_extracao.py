@@ -41,16 +41,16 @@ ORG_UUID = UUID(ORG_ID)
 def _alta(value=date(1980, 5, 12)) -> IdentityFields:
     return IdentityFields(
         data_nascimento=value,
-        confidence=ExtractionConfidence.ALTA,
+        data_nascimento_confianca=ExtractionConfidence.ALTA,
         source=TextSource.TEXT_LAYER,
-        matched_label="DATA DE NASCIMENTO",
+        data_nascimento_rotulo="DATA DE NASCIMENTO",
     )
 
 
 def _baixa(value=date(1980, 5, 12)) -> IdentityFields:
     return IdentityFields(
         data_nascimento=value,
-        confidence=ExtractionConfidence.BAIXA,
+        data_nascimento_confianca=ExtractionConfidence.BAIXA,
         source=TextSource.OCR,
     )
 
@@ -113,7 +113,7 @@ class TestOnlyHighConfidenceIsWritten:
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(_alta()),
         )
-        assert out["aplicado_ao_cliente"] is True
+        assert out["aplicado_ao_cliente"]["data_nascimento"] is True
 
         c = _cliente(scoped, cid)
         assert c["data_nascimento"] == "1980-05-12"
@@ -130,7 +130,7 @@ class TestOnlyHighConfidenceIsWritten:
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(_baixa()),
         )
-        assert out["aplicado_ao_cliente"] is False
+        assert out["aplicado_ao_cliente"]["data_nascimento"] is False
         assert _cliente(scoped, cid).get("data_nascimento") is None
 
         doc = _documento(scoped, did)
@@ -166,7 +166,7 @@ class TestFirstWriterWins:
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(_alta(date(1980, 5, 12))),
         )
-        assert out["aplicado_ao_cliente"] is False
+        assert out["aplicado_ao_cliente"]["data_nascimento"] is False
         c = _cliente(scoped, cid)
         assert c["data_nascimento"] == "1975-11-03"
         assert c["data_nascimento_origem"] == "rg"

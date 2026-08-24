@@ -4,8 +4,8 @@
 
 - `IdentityFields` / `IdentityDocumentKind` / `ExtractionConfidence` /
   `TextSource` value objects, and the `IdentityExtractor` Protocol.
-- `find_birthdate(text)` — the pure, label-anchored Brazilian birthdate
-  parser. Usable on its own wherever text is already in hand.
+- `find_birthdate(text)` / `find_name(text)` — the pure, label-anchored
+  Brazilian parsers. Usable on their own wherever text is already in hand.
 - `FakeIdentityExtractor` — deterministic; the dev/test default.
 - `LadderIdentityExtractor` — PDF text layer → rasterize→vision, composing
   `integrations.media`. Imported lazily.
@@ -26,17 +26,34 @@ They are different questions: `ResolvedMedia.text` is deliberately
 narrative, and every consumer that needed a typed value out of it would
 otherwise re-parse that prose itself, differently, at each call site.
 
-🔴 **Consumer contract.** Only `IdentityFields.persistable` results may be
-written unattended (`confidence == ALTA`). Anything else is a suggestion
-for a human to confirm. Persist `source` and `matched_label` alongside any
+🔴 **Consumer contract.** Confidence is PER FIELD. Only a value whose
+`persistable_<field>` property is true may be written unattended
+(`<field>_confianca == ALTA`); anything else is a suggestion for a human
+to confirm. Persist `source` and the field's `_rotulo` alongside any
 stored value — reading an identity document is a logged, LGPD-relevant
 access, and an unattributed value cannot be audited or corrected later.
+
+**The two fields have deliberately different write semantics**, and a
+consumer must honour both:
+
+- `data_nascimento` — FIRST WRITER WINS. Only ever written into an empty
+  column; a value already present, from any source, is left alone.
+- `nome` — THE OFFICIAL DOCUMENT WINS. Written even over an existing
+  value, because a name typed into a lead form is a convenience spelling
+  and the one on the RG/CPF is the legal one. This is why its confidence
+  is tempered by text source (`real._temper_name_confidence`): an
+  overwrite must not be driven by a vision-pass guess.
 """
 from noctusai_lib.integrations.documents.birthdate import find_birthdate, normalize
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
+from noctusai_lib.integrations.documents.name import find_name, looks_like_a_name
 from noctusai_lib.integrations.documents.fake import (
     FakeIdentityExtractor,
     classify_kind,
+)
+from noctusai_lib.integrations.documents.text import (
+    normalize_lines,
+    strip_accents_upper,
 )
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
@@ -67,6 +84,10 @@ __all__ = [
     "TextSource",
     "classify_kind",
     "find_birthdate",
+    "find_name",
+    "looks_like_a_name",
     "make_identity_extractor",
     "normalize",
+    "normalize_lines",
+    "strip_accents_upper",
 ]

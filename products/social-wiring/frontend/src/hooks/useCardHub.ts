@@ -645,13 +645,20 @@ export function useExtracaoSugestaoMutation(clienteId: string) {
     mutationFn: ({
       documentoId,
       acao,
+      itemKey,
     }: {
       documentoId: string;
       acao: "confirmar" | "descartar";
+      /**
+       * Which extracted field this decision is about. Omitted means
+       * `data_nascimento` — the only field these routes knew about when
+       * they shipped, so an older caller keeps working.
+       */
+      itemKey?: string;
     }) =>
       api.post<{ documento_id: string }>(
         `${clienteBase(clienteId)}/documentos/${documentoId}/extracao/${acao}`,
-        {},
+        itemKey ? { item_key: itemKey } : {},
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });

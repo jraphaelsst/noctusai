@@ -40,10 +40,10 @@ def classify_kind(
 class FakeIdentityExtractor:
     """Returns a canned result, honouring the Protocol exactly.
 
-    Defaults to a high-confidence 1980-05-12 so the happy path needs no
-    setup. Pass `result=` to script a specific outcome (a low-confidence
-    read, a field-absent document, a failure) — the three cases a consumer
-    must branch on.
+    Defaults to a high-confidence 1980-05-12 birthdate and a
+    high-confidence name so the happy path needs no setup. Pass `result=`
+    to script a specific outcome (a low-confidence read, a field-absent
+    document, a failure) — the three cases a consumer must branch on.
     """
 
     def __init__(self, result: Optional[IdentityFields] = None) -> None:
@@ -69,9 +69,12 @@ class FakeIdentityExtractor:
         return IdentityFields(
             kind=classify_kind(mimetype, filename),
             data_nascimento=date(1980, 5, 12),
-            confidence=ExtractionConfidence.ALTA,
+            data_nascimento_confianca=ExtractionConfidence.ALTA,
+            data_nascimento_rotulo="DATA DE NASCIMENTO",
+            nome="FULANO DE TAL SILVA",
+            nome_confianca=ExtractionConfidence.ALTA,
+            nome_rotulo="NOME",
             source=TextSource.TEXT_LAYER,
-            matched_label="DATA DE NASCIMENTO",
         )
 
 

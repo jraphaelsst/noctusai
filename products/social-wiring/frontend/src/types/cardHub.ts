@@ -425,6 +425,10 @@ export interface ExtracaoSugestao {
   fonte: string | null;
   /** The label the value sat next to, verbatim — the extractor's reasoning. */
   rotulo: string | null;
+  /** What the client record currently holds for this field, if anything. */
+  valor_atual?: string | null;
+  /** True when accepting this would replace `valor_atual` rather than fill a blank. */
+  substitui?: boolean;
 }
 
 export interface DocumentoChecklistItem {
@@ -460,4 +464,22 @@ export interface DocumentoChecklist {
   items: DocumentoChecklistItem[];
   total: number;
   concluidos: number;
+  /**
+   * Pending suggestions for extracted fields that are NOT checklist items —
+   * today only `nome_oficial`. Keyed by field.
+   *
+   * They are outside `items` because everything in `items` is a requirement
+   * whose absence makes a client incomplete, and the official name is not
+   * one: whether we hold the document is already asked by the `rg` / `cpf`
+   * items.
+   */
+  sugestoes_extras?: Record<string, ExtracaoSugestao>;
+  /** Full name as printed on an identity document, once one has been read. */
+  nome_oficial?: string | null;
+  /**
+   * The best name the REGISTRATION supplied (`nome_completo`, else `nome`).
+   * Held beside `nome_oficial` rather than reconciled with it: the gap
+   * between the two is the measurement (migration 071).
+   */
+  nome_registro?: string | null;
 }

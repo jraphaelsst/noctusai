@@ -161,6 +161,14 @@ def _register_media_wiring() -> ModuleRegistration:
     # landed the mirror only moved when a human pressed the sync button —
     # it had gone 17 days stale.
     imoveis_sync_scheduler.configure()
+    # Recovers identity extractions stranded in `pendente`/`processando` by a
+    # process that died mid-read (a deploy, an OOM kill). Same import-time
+    # registration rule as the five jobs above — see the module docstring for
+    # why an unregistered sweep is a silent error rather than a missing
+    # nicety.
+    from app.modules.card_hub import extracao_scheduler as card_hub_extracao_scheduler
+
+    card_hub_extracao_scheduler.configure()
 
     # ONE combined router (`/api/auth` + `/api/settings/api-tokens`) —
     # see the module docstring above for why this calls the factory

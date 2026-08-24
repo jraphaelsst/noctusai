@@ -193,3 +193,78 @@ Consequences worth knowing:
   unticked items.
 * Retiring a key leaves its rows inert rather than deleting them, so an
   accidental retirement is reversible.
+
+---
+
+## 068 + 069 — found ALREADY APPLIED on 2026-08-24
+
+> 🔴 **This file said nothing about them, and they were live.** They were
+> authored on 2026-08-22 and reported as "file only, not applied". A direct
+> query of the live database on 2026-08-24 found every object present. This
+> is precisely the drift the header at the top warns about, caught by doing
+> what the header says: verify against the database, never against a note.
+
+They also do **not** appear in `supabase_migrations.schema_migrations`, so
+they were applied as raw SQL rather than through `migration.apply` — the same
+thing that happened to `067` (recorded there under its old name `065`). The
+recorded history is therefore not a reliable index of what has run; the
+catalog queries below are.
+
+Verified present by querying `information_schema.columns`, `pg_constraint`
+and `pg_indexes` — not inferred from a clean exit:
+
+* `clientes`: `nome_completo`, `email`, `data_nascimento`, `genero`, plus
+  `data_nascimento_origem` / `_documento_id` / `_em` / `_confirmado_por` /
+  `_confirmado_em`.
+* `cliente_documento_checklist.concluido` renamed to `concluido_manual`,
+  nullable, no default — the derived-checklist shape.
+* `cliente_documentos`: all seven `extracao_*` columns from 068 plus
+  `extracao_descartada_em` / `_por` from 069.
+* `cliente_documentos_extracao_status_check` covering
+  `pendente|processando|ok|sem_dados|erro`.
+* `cliente_documento_acessos_acao_check` widened to include `extract`.
+* `idx_sw_cliente_documentos_sugestao_pendente`.
+
+`cliente_documento_tipos` confirms `rg` and `cpf` at
+`categoria_lgpd='identidade'`, `retencao_dias=1825`, `identidade=true`.
+
+**Data shape at the time (10.255 clientes):** `nome` populated on 10.150 rows;
+`nome_completo`, `email`, `data_nascimento` and `genero` populated on **zero**.
+The four columns 068 added were empty across the board — which is why the
+"Nome Completo" checklist item could never tick for anybody, and why 071
+changed the derivation to read a name-shaped `nome` as well.
+
+## 071 + 072 — applied 2026-08-24
+
+`071_cliente_nome_oficial.sql`
+
+* `clientes.nome_oficial` + `_origem` / `_documento_id` / `_em` /
+  `_confirmado_por` / `_confirmado_em`.
+* `cliente_documentos.extracao_nome` / `_confianca` / `_rotulo`, and COMMENTs
+  on 068's unprefixed `extracao_confianca` / `extracao_rotulo` recording that
+  they describe the BIRTHDATE (they cannot be renamed — 068 is applied).
+* `idx_sw_cliente_documentos_sugestao_nome_pendente`.
+* `social_wiring.normalizar_nome(text)` — IMMUTABLE, so it can be indexed;
+  `unaccent` is not marked immutable and would have foreclosed that.
+* `social_wiring.vw_nome_conferencia` with `security_invoker = true`, so the
+  caller's RLS applies. Without it the view runs as its owner and hands every
+  org's names to any authenticated reader.
+
+🔴 **The document's name is held BESIDE the registration's, never merged into
+it.** An earlier draft overwrote `nome_completo` and kept the displaced value
+in a `_anterior` column. Rejected: overwriting answers "how accurate is our
+registration data?" exactly once, destructively, per row. Two columns keep the
+question answerable across the whole base at any time, and
+`vw_nome_conferencia` is that surface.
+
+`072_extracao_retry.sql`
+
+* `cliente_documentos.extracao_tentativas` (NOT NULL DEFAULT 0), backfilled to
+  1 for rows already in a terminal state so the sweep does not read them as
+  never-attempted. Rows stranded in `pendente`/`processando` stay at 0 on
+  purpose — they get their full retry budget, which is the recovery this is
+  for.
+* `idx_sw_cliente_documentos_extracao_pendente`, partial on the two
+  non-terminal states.
+
+Backfill touched 0 rows: only 1 document existed and it had no extraction.

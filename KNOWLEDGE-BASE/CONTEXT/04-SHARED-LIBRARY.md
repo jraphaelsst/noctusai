@@ -218,24 +218,35 @@ The `email_templates.py` flat module became a sub-package on 2026-04-25 (ai-expa
 
 Answers "document → fields a column can store", which `integrations.media` deliberately does not: `ResolvedMedia.text` is a narrative rendering built for a chatbot to read, so every consumer needing a typed value out of it would re-parse that prose itself, differently, at each call site.
 
-Landed 2026-08-22 with the social-wiring card checklist, as **the canonical RG/CPF extraction procedure**. The counter-example it replaces is `products/erp-imobiliario/backend/app/services/matricula_service.py` — a product-local PDF extractor that predates `integrations.media` and now duplicates it OCR-only, paying for a vision call per page even when the PDF carries a text layer. Retiring matrícula onto this seam is a follow-up.
+Landed 2026-08-22 with the social-wiring card checklist, as **the canonical RG/CPF extraction procedure**. Extended 2026-08-24 with full-name extraction.
+
+`matricula_service.py` (erp-imobiliario) was the counter-example: a product-local PDF extractor that rasterized every page and paid for a vision call on each, including for PDFs carrying a perfectly good text layer. **Closed 2026-08-24** — it now composes `integrations.media.extract_pdf_text` as rung 1 and only falls through to its per-page vision loop for genuine scans. It keeps its own prose-aggregating pipeline rather than adopting `IdentityFields`: matrícula wants narrative text for an LLM to read, which is `media`'s job, not this module's.
 
 Composes `integrations.media` for "bytes → text" rather than re-doing it; owns only rung selection and the text→fields parse.
 
 | Symbol | Purpose |
 |---|---|
-| `IdentityFields(kind, data_nascimento, confidence, source, matched_label, error, error_message)` | Extraction result. `.persistable` is the ONE write gate — true only for `ALTA` with a value. |
+| `IdentityFields(kind, data_nascimento*, nome*, source, error, error_message)` | Extraction result. Confidence is **per field**: `data_nascimento_confianca` / `nome_confianca` and `_rotulo` each. `.persistable_<field>` is the ONE write gate — true only for `ALTA` with a value; `.sugestao_<field>` marks a `BAIXA` read worth offering a human. There is deliberately no bare `.confidence`, so "which field is this about?" cannot be spelled wrong. |
 | `ExtractionConfidence` | `ALTA` (label-anchored + plausible; safe unattended) / `BAIXA` (a guess; needs human confirmation) / `NENHUMA`. |
 | `TextSource` | `TEXT_LAYER` (exact) / `OCR` (approximate) — the best predictor of transcription error, and what an auditor needs. |
 | `IdentityExtractor` Protocol | `await extract(content, *, mimetype, filename)`. MUST NOT raise — failures come back on `error`. |
 | `find_birthdate(text, *, today=None)` | Pure, label-anchored Brazilian birthdate parser. Usable standalone. |
+| `find_name(text)` | Pure, label-anchored full-name parser. Returns `alta` or `nenhuma` only — never guesses from an unlabelled line. |
+| `looks_like_a_name(candidate)` | Structural full-name predicate (≥2 substantive words, no digits, not an institutional phrase). Normalises its own input, so it is safe on raw registration data. |
+| `strip_accents_upper(text)` / `normalize_lines(text)` | Shared text primitives. The date parser collapses newlines; the name parser must NOT, because a line break is the only thing that says where a name ends. |
 | `FakeIdentityExtractor(result=None)` | Deterministic; the dev/test default. |
 | `LadderIdentityExtractor` | PDF text layer → rasterize→vision. Lazily imported (no PyMuPDF/LLM at package import). |
 | `make_identity_extractor(*, real=False, org_id=None, document_prompt=None)` | Factory. |
 
 🔴 **Why it is label-anchored.** A Brazilian RG carries up to four dates and prints **expedição above nascimento**; a CNH adds "primeira habilitação". Positional extraction ("take the first date") is wrong more often than right, and fails silently — it yields a real, plausible date. The parser anchors on birth labels, actively excludes decoy labels, and gates every candidate on a plausibility window (past, age 16–120).
 
-🔴 **Residual risk, stated.** The gate catches gross OCR damage (a year of 1830, a date in 2027) but NOT a confusion between two plausible years (1980→1930). That is inherent to reading a photographed document, and it is why the consumer contract requires persisting `source` + `matched_label` as provenance — an unattributed value cannot be audited or corrected.
+🔴 **Why the name parser refuses more than it answers.** A name has no self-delimiting shape, so a label is the ONLY evidence — an unlabelled line is never read as a name at any confidence. The decoy that matters is `FILIAÇÃO`: every RG prints both parents' names directly beneath the holder's, and they are real, well-formed Brazilian names. Two guards cover it — relative labels (`NOME DO PAI`) are matched longest-first so they register as decoys rather than as `NOME` + a value, and a `FILIAÇÃO` header poisons the two lines after it. An institutional blocklist (`REPUBLICA FEDERATIVA DO BRASIL`, `CADASTRO DE PESSOAS FISICAS`, …) covers the phrases that pass every structural test.
+
+🔴 **The name's confidence is tempered by text source; the birthdate's is not.** `real._temper_name_confidence` downgrades a label-anchored name from `ALTA` to `BAIXA` whenever the text came off a vision pass rather than a PDF text layer. The asymmetry is deliberate: a misread name is well-formed and plausible, so nothing downstream can catch it, and the source is the only real evidence available.
+
+🔴 **Residual risk, stated.** The birthdate gate catches gross OCR damage (a year of 1830, a date in 2027) but NOT a confusion between two plausible years (1980→1930). That is inherent to reading a photographed document, and it is why the consumer contract requires persisting `source` + the field's `_rotulo` as provenance — an unattributed value cannot be audited or corrected.
+
+🔴 **Consumer contract: compare, do not reconcile.** social-wiring writes the document's name to `clientes.nome_oficial` and never touches the registration's `nome` / `nome_completo`. Merging them would answer "how accurate is our registration data against official documents?" exactly once, destructively, per row. `social_wiring.vw_nome_conferencia` (migration 071) is the surface that keeps the question answerable.
 
 ### `domain/sql_templates.py` — Authoring-time helpers for canonical SQL DDL
 

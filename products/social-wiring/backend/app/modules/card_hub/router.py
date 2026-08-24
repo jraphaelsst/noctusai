@@ -58,6 +58,7 @@ from app.modules.card_hub.schemas import (
     ChecklistUpdateBody,
     ClienteTagsSetBody,
     DocumentoChecklistPatchBody,
+    ExtracaoSugestaoBody,
     MembrosSetBody,
     NotaCreateBody,
     NotaUpdateBody,
@@ -547,17 +548,22 @@ async def delete_documento_route(
 async def confirmar_extracao_route(
     cliente_id: UUID,
     documento_id: UUID,
+    body: Optional[ExtracaoSugestaoBody] = None,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
     """Accept a machine-read value onto the client record.
 
-    422 when the field is already filled — two operators on the same card
-    otherwise race and the loser silently overwrites the winner.
+    422 when a first-writer-wins field is already filled — two operators on
+    the same card otherwise race and the loser silently overwrites the winner.
+    A document-owned field (`nome_oficial`) has no such conflict: the newer
+    reading is meant to win, and the one it replaces is still on its own
+    document row.
     """
     user, org_id = _auth_parts(auth)
     return identidade_svc.confirmar_sugestao(
         client, org_id, cliente_id, documento_id,
+        item_key=body.item_key if body else None,
         user_id=getattr(user, "id", None),
     )
 
@@ -566,6 +572,7 @@ async def confirmar_extracao_route(
 async def descartar_extracao_route(
     cliente_id: UUID,
     documento_id: UUID,
+    body: Optional[ExtracaoSugestaoBody] = None,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
@@ -573,10 +580,15 @@ async def descartar_extracao_route(
 
     The extracted value is kept — this records a judgement about the read, it
     does not erase what was read.
+
+    Discarding is per DOCUMENT: it stops every field this document suggested,
+    not just the one named. See `descartar_sugestao` for why that is the
+    correct scope rather than an oversight.
     """
     user, org_id = _auth_parts(auth)
     return identidade_svc.descartar_sugestao(
         client, org_id, cliente_id, documento_id,
+        item_key=body.item_key if body else None,
         user_id=getattr(user, "id", None),
     )
 

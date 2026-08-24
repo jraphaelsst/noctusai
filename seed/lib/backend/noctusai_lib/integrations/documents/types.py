@@ -70,36 +70,90 @@ class TextSource(str, Enum):
 class IdentityFields:
     """Typed fields lifted from one identity document.
 
-    Every field is Optional: a document that is legible but simply does
+    Every value is Optional: a document that is legible but simply does
     not carry a birthdate is a successful extraction with
     `data_nascimento=None`, not a failure. Failures are carried in
     `error`, so a caller can distinguish "read it, wasn't there" from
     "couldn't read it" — a distinction that decides whether retrying is
     worth anything.
+
+    🔴 CONFIDENCE IS PER FIELD, AND THE NAMES SAY SO
+    ------------------------------------------------
+    This started with a single `confidence` + `matched_label` pair, which
+    was unambiguous only while exactly one field was extracted. With a
+    second field the pair becomes a trap: `fields.confidence` reads as if
+    it describes the whole result, and every call site that used it for
+    the name would silently be asserting the BIRTHDATE's trust level.
+
+    So each extracted value carries its own confidence and its own matched
+    label, and the attribute names are prefixed with the field they belong
+    to. There is no bare `confidence` — not for tidiness, but so that the
+    mistake cannot be spelled.
+
+    **Triage note (DRY, N=2).** Two fields × three attributes is a visible
+    repetition. It is left flat deliberately: the database columns are
+    flat, the consumers are flat, and a generic `ExtractedField[T]` value
+    object would buy indirection and no safety today. A THIRD extracted
+    field (RG number and CPF number are the obvious next ones) is the
+    trigger to formalize it — at N=3 the recurrence rule says must.
     """
 
     kind: IdentityDocumentKind = IdentityDocumentKind.UNKNOWN
+
+    # ─── Birthdate ────────────────────────────────────────────────────
     data_nascimento: Optional[date] = None
-    confidence: ExtractionConfidence = ExtractionConfidence.NENHUMA
-    source: TextSource = TextSource.NENHUMA
+    data_nascimento_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
     #: The label the date was found next to, verbatim. Kept for audit —
     #: it is what lets a human check the extractor's reasoning later
     #: without re-reading the document (which would be another LGPD
     #: content access).
-    matched_label: Optional[str] = None
+    data_nascimento_rotulo: Optional[str] = None
+
+    # ─── Full name ────────────────────────────────────────────────────
+    nome: Optional[str] = None
+    nome_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    nome_rotulo: Optional[str] = None
+
+    # ─── Provenance, shared by every field on this result ─────────────
+    source: TextSource = TextSource.NENHUMA
     error: Optional[str] = None
     error_message: Optional[str] = None
 
     @property
-    def persistable(self) -> bool:
-        """True iff this result may be written to a record unattended.
-
-        The one place the ALTA-only rule is expressed, so no call site has
-        to re-derive it (and none can quietly get it wrong)."""
+    def persistable_data_nascimento(self) -> bool:
+        """True iff the birthdate may be written to a record unattended."""
         return (
             self.data_nascimento is not None
-            and self.confidence is ExtractionConfidence.ALTA
+            and self.data_nascimento_confianca is ExtractionConfidence.ALTA
         )
+
+    @property
+    def persistable_nome(self) -> bool:
+        """True iff the name may be written to a record unattended.
+
+        Same ALTA-only rule. The name's confidence is set more
+        conservatively upstream — see `real.LadderIdentityExtractor` — and
+        that asymmetry is deliberate: the birthdate is only ever written
+        into an EMPTY column, while the name deliberately OVERWRITES what
+        is already there, so it must clear a higher bar to do so
+        unattended.
+        """
+        return (
+            bool(self.nome)
+            and self.nome_confianca is ExtractionConfidence.ALTA
+        )
+
+    @property
+    def sugestao_data_nascimento(self) -> bool:
+        """Found, but not trusted enough to write without a human."""
+        return (
+            self.data_nascimento is not None
+            and self.data_nascimento_confianca is ExtractionConfidence.BAIXA
+        )
+
+    @property
+    def sugestao_nome(self) -> bool:
+        return bool(self.nome) and self.nome_confianca is ExtractionConfidence.BAIXA
 
 
 @runtime_checkable

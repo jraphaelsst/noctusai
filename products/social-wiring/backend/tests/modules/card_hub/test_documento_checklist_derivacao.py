@@ -76,7 +76,7 @@ class TestDerivarIsPure:
         """No item may be silently underivable — that would be a checkbox
         nothing can ever tick except by hand."""
         for item in svc.ITENS:
-            assert ("campo" in item) ^ ("documento" in item), item["key"]
+            assert ("campos" in item) ^ ("documento" in item), item["key"]
 
 
 class TestFieldsTickThemselves:
@@ -134,9 +134,47 @@ class TestFieldsTickThemselves:
     ):
         """🔴 `nome` is a WhatsApp push name / Meta `full_name` / OLX handle.
         Treating it as the legal full name would auto-tick this item for
-        essentially every lead in the product."""
+        essentially every lead in the product.
+
+        A single-word `nome` is 4.417 of the product's 10.255 clients, so
+        this is the common case, not an edge one."""
         cid = _seed(scoped, nome="Ana")
         assert _items(client, cid)["nome_completo"]["concluido"] is False
+
+    def test_a_registration_nome_that_IS_a_full_name_does_satisfy_it(
+        self, client, scoped
+    ):
+        """The other half of the same rule.
+
+        Reading only `clientes.nome_completo` — written by nothing but an
+        operator filling this very item — left it unticked for ALL 10.255
+        clients. A gate that can never go green gets ignored, which costs
+        exactly as much trust as one that is always green.
+
+        `looks_like_a_name` is the line between the two: two substantive
+        words, no digits, not an institutional phrase.
+        """
+        cid = _seed(scoped, nome="Ana Carolina de Oliveira")
+        assert _items(client, cid)["nome_completo"]["concluido"] is True
+
+    def test_an_explicit_nome_completo_still_wins_regardless_of_nome(
+        self, client, scoped
+    ):
+        from app.routers.clientes_router import get_clientes_client
+
+        cid = _seed(scoped, nome="Ana")
+        clientes_scoped = get_clientes_client()
+        clientes_scoped.set_table_data("clientes", [cliente_row(cid)])
+        r = client.patch(
+            f"/api/clientes/{cid}",
+            json={"nome_completo": "Ana Carolina de Oliveira"},
+            headers=_auth(),
+        )
+        assert r.status_code == 200, r.text
+        scoped.set_table_data(
+            "clientes", clientes_scoped.table("clientes").select("*").execute().data
+        )
+        assert _items(client, cid)["nome_completo"]["concluido"] is True
 
 
 class TestDocumentsTickThemselves:
