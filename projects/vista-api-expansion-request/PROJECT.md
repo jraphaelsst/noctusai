@@ -12,7 +12,7 @@
 
 - **Created:** 2026-08-05
 - **Last updated:** 2026-08-21
-- **Status:** 🟡 **PARTIALLY SATISFIED — Tier 1 is 2-of-3 granted and probe-verified.** Vista re-applied the permissions on key `…644c` and cleared their cache; re-probed live 2026-08-21 in a fresh process: `clientes/listar` → **200** (42,960 clients) and `clientes/detalhes` → **200**. `corretores/listar` is **still 401** and is the one open Tier-1 item. § 10's "which key did they grant?" question is **closed** — the same `…644c` key works, no rotation needed. Remaining: the corretores re-ask (§ 10a, drafted) and the Tier-2 version question (now much better evidenced). The LGPD intake that gated consumption is **done** — the ERP Clientes tab has read the family live since 2026-08-22 under a two-tier minimisation split (`vista.md` § 5.1); three controller-level questions remain in `LGPD-WARNINGS.md`.
+- **Status:** 🟡 **PARTIALLY SATISFIED — Tier 1 is 2-of-3 granted and probe-verified.** Vista re-applied the permissions on key `…644c` and cleared their cache; re-probed live 2026-08-21 in a fresh process: `clientes/listar` → **200** (42,960 clients) and `clientes/detalhes` → **200**. `corretores/listar` is **still 401** and is the one open Tier-1 item. § 10's "which key did they grant?" question is **closed** — the same `…644c` key works, no rotation needed. Remaining: the Tier-2 version question (now much better evidenced). The § 10a corretores re-ask is **CLOSED — NOT SENT, by the owner's decision on 2026-08-24**; the draft stays for reference, do not re-raise it. The LGPD intake that gated consumption is **done** — the ERP Clientes tab has read the family live since 2026-08-22 under a two-tier minimisation split (`vista.md` § 5.1); three controller-level questions remain in `LGPD-WARNINGS.md`.
 - **Owner / stakeholders:** USER (joaoraphaelsst) sends + owns the vendor relationship · tech-lead evaluates the reply
 - **Related docs:**
   - `KB § INTEGRATIONS/vista.md` — the authoritative Vista reference. § 3 (credential echo), § 4.2/4.5/4.6 (re-probed endpoint tables), § 5.3 (seed-canonical probe baseline), § 9 (the tiered ask + rationale)
@@ -385,7 +385,20 @@ probe** (§ 7.0) — this cycle is the argument for it, not against it.
 
 ---
 
-## 10a. The one open Tier-1 item — `corretores/listar`
+## 10a. `corretores/listar` — 🔴 CLOSED, NOT SENT (owner's decision, 2026-08-24)
+
+> **Do not send this, and do not re-raise it.** The owner decided on
+> 2026-08-24 not to pursue the corretores re-ask. Nothing below is wrong — the
+> evidence is exactly what Vista asked for and the draft is send-ready — it is
+> simply not being sent. Recorded rather than deleted so a future agent can
+> see the ask was *considered and declined*, not forgotten.
+>
+> The practical cost is nil: `/corretores/listar` stays 401, and the broker
+> roster is already available ungated via `/usuarios/listar` (Setor:
+> Corretores), which the ERP Usuários tab renders today (§ 4.5). Reopen only
+> if a corretor-only field that `/usuarios` does not expose is actually needed.
+
+### The draft, kept for reference
 
 Vista's reply asked us to send the request details if the error persisted:
 *"nos encaminhem a requisição realizada (preferencialmente com a URL, método
