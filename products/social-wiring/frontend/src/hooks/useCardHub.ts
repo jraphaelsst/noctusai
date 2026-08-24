@@ -44,6 +44,8 @@ import type {
   TipoDocumento,
   DocumentoChecklist,
   DocumentoChecklistItem,
+  Comprador,
+  CompradoresResponse,
 } from "@/types/cardHub";
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
@@ -62,6 +64,8 @@ const AGENDAMENTOS_KEY = (clienteId: string) =>
 const DOCUMENTOS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "documentos"] as const;
 const ACESSOS_KEY = (clienteId: string, documentoId: string) =>
   [...FAMILY_KEY(clienteId), "documentos", documentoId, "acessos"] as const;
+const COMPRADORES_KEY = (clienteId: string) =>
+  [...FAMILY_KEY(clienteId), "compradores"] as const;
 const TAGS_KEY = [...ROOT_KEY, "tags"] as const;
 const TIPOS_DOC_KEY = [...ROOT_KEY, "tiposDocumento"] as const;
 
@@ -707,4 +711,68 @@ export function useDocumentoChecklistMutation(clienteId: string) {
       qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });
     },
   });
+}
+
+
+// ─── Compradores / partes do atendimento (migration 073) ──────────────────
+
+/**
+ * The other people party to this card's atendimento.
+ *
+ * Returns an empty list rather than erroring when the person has no single
+ * open atendimento — the Geral tab hides the section entirely in that case,
+ * and an error state for "nothing to show" would be noise on every card that
+ * has one buyer, which is most of them.
+ */
+export function useCompradores(clienteId: string | null) {
+  return useQuery({
+    queryKey: COMPRADORES_KEY(clienteId ?? "__none__"),
+    queryFn: () =>
+      api.get<CompradoresResponse>(`${clienteBase(clienteId as string)}/compradores`),
+    enabled: !!clienteId,
+  });
+}
+
+/**
+ * Add or detach a party.
+ *
+ * NOT optimistic, unlike the checklist tick. Adding a comprador CREATES a
+ * person record (or links an existing one) and the server assigns their id —
+ * there is no correct row to render before it answers, and inventing one would
+ * mean the Documentos tab briefly renders a checklist for a `cliente_id` that
+ * does not exist yet, whose own queries would 404.
+ *
+ * Invalidates the party list AND the card summary: the Geral tab's Compradores
+ * section appears the moment the first one is added, so the card's own shape
+ * changed.
+ */
+export function useCompradorMutations(clienteId: string) {
+  const qc = useQueryClient();
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: COMPRADORES_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+    ]);
+
+  const adicionar = useMutation({
+    mutationFn: (body: {
+      nome?: string;
+      celular?: string;
+      cliente_id?: string;
+      papel?: string;
+      observacao?: string;
+      atendimento_id?: string;
+    }) => api.post<Comprador>(`${clienteBase(clienteId)}/compradores`, body),
+    onSuccess: invalidate,
+  });
+
+  const remover = useMutation({
+    mutationFn: (parteId: string) =>
+      api.delete(
+        `${clienteBase(clienteId)}/compradores/${encodeURIComponent(parteId)}`,
+      ),
+    onSuccess: invalidate,
+  });
+
+  return { adicionar, remover };
 }

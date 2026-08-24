@@ -483,3 +483,47 @@ export interface DocumentoChecklist {
    */
   nome_registro?: string | null;
 }
+
+// ─── Compradores / partes do atendimento (migration 073) ──────────────────
+
+/**
+ * The person behind a party row, as much of them as the list needs.
+ *
+ * A deliberately thin projection of `clientes`: the panel shows who they are
+ * and how to reach them, and everything else about them is reached by opening
+ * their own card. Widening this widens what a party list leaks.
+ */
+export interface CompradorPessoa {
+  id: string;
+  nome: string | null;
+  nome_completo: string | null;
+  celular: string | null;
+  email: string | null;
+}
+
+/**
+ * One additional person party to an atendimento.
+ *
+ * 🔴 `cliente_id` is a REAL `clientes` row — the same kind of record as the
+ * card's titular, which is what lets the document checklist, the uploads and
+ * the identity extraction cover them with no per-party code at all. The
+ * titular is NOT in this list: `atendimentos.cliente_id` already names them,
+ * and a second row asserting it would be a second truth.
+ */
+export interface Comprador {
+  id: string;
+  atendimento_id: string;
+  cliente_id: string;
+  papel: string;
+  ordem: number;
+  observacao: string | null;
+  created_at: string | null;
+  cliente: CompradorPessoa | null;
+}
+
+export interface CompradoresResponse {
+  items: Comprador[];
+  total: number;
+  /** Null when the person has no single open atendimento to attach to. */
+  atendimento_id: string | null;
+}

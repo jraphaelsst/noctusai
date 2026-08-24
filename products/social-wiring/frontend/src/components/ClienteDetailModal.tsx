@@ -35,6 +35,8 @@ import {
   useCardResumo,
   useChecklistMutations,
   useChecklists,
+  useCompradorMutations,
+  useCompradores,
   useAgendamentoMutations,
   useAgendamentos,
   useDocumentoChecklist,
@@ -52,6 +54,8 @@ import {
 } from "@/hooks/useCardHub";
 
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
+import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
+import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
 
 export interface ClienteDetailModalProps {
   clienteId: string | null;
@@ -74,6 +78,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   // account-level preference; nothing in §2/§3 models one) — kept as
   // session-local UI state rather than inventing a field.
   const [colorBlindMode, setColorBlindMode] = useState(false);
+  const [compradorDialogOpen, setCompradorDialogOpen] = useState(false);
 
   const shouldFetch = open && !!clienteId;
   const id = shouldFetch ? (clienteId as string) : null;
@@ -97,6 +102,8 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
   const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
   const sugestaoMutation = useExtracaoSugestaoMutation(id ?? "__none__");
+  const compradores = useCompradores(id);
+  const compradorMutations = useCompradorMutations(id ?? "__none__");
 
   const timelineEntries = flattenTimeline(timeline.data?.pages);
 
@@ -176,6 +183,18 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
     }
   }
 
+  function handleAdicionarComprador(values: { nome: string; celular?: string }) {
+    compradorMutations.adicionar.mutate(values, {
+      onSuccess: () => setCompradorDialogOpen(false),
+      // The server's own message is surfaced verbatim rather than replaced by
+      // a generic one: its 409 says "esta pessoa já é parte deste atendimento"
+      // and its 400 explains an ambiguous atendimento, and both are things the
+      // operator can act on. A blanket "erro ao adicionar" would throw that
+      // away and read as a network failure.
+      onError: (err) => toastServerError(err, "Não foi possível adicionar."),
+    });
+  }
+
   function handleOpenDocumento(documentoId: string) {
     documentoMutations.getUrl.mutate(documentoId, {
       onSuccess: (res) => {
@@ -188,6 +207,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   if (!clienteId) return null;
 
   return (
+    <>
     <ClienteCardDialog
       open={open}
       onClose={onClose}
@@ -280,6 +300,21 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         )
       }
       uploadingDocumento={documentoMutations.upload.isPending}
+      compradores={compradores.data?.items ?? []}
+      compradoresLoading={compradores.isPending || compradores.isFetching}
+      onAdicionarComprador={() => setCompradorDialogOpen(true)}
+      onRemoverComprador={(parteId) =>
+        compradorMutations.remover.mutate(parteId, {
+          onError: (err) =>
+            toastServerError(err, "Não foi possível remover o comprador."),
+        })
+      }
+      // Each party's panel fetches its OWN checklist and documents, keyed by
+      // THEIR cliente_id. Passed as a render prop because `ClienteCardDialog`
+      // is presentational and must stay renderable without a query client.
+      renderDocumentosDePessoa={(pessoaId) => (
+        <PessoaDocumentosPanel clienteId={pessoaId} />
+      )}
       onOpenDocumento={handleOpenDocumento}
       onDeleteDocumento={(documentoId, motivo) =>
         documentoMutations.remove.mutate(
@@ -305,5 +340,17 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       onPostComentario={handlePostComentario}
       postingComentario={notaMutations.create.isPending}
     />
+
+    {/* Sibling of the card rather than a child of it: nesting a Dialog inside
+        another Dialog's content fights the outer one's focus trap and scroll
+        lock, which is the bug the popovers on this card already had to set
+        `modal` to work around. */}
+    <AdicionarCompradorDialog
+      open={compradorDialogOpen}
+      onOpenChange={setCompradorDialogOpen}
+      onCreate={handleAdicionarComprador}
+      saving={compradorMutations.adicionar.isPending}
+    />
+    </>
   );
 }
