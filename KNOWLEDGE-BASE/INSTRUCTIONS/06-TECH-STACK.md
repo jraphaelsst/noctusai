@@ -205,6 +205,12 @@ project-root/
 
 All sensitive data via environment variables. Never hardcode. Single root `.env` file shared by all backends.
 
+🔴 **This is the DEV template.** The same `.env` is copied to laptops, so it must
+never be the place a production-shape decision is made. Prod-shape keys are pinned
+in `deploy/fleet/docker-compose.prod.yml` under `x-prod-env: &prod-env`, where
+`environment:` beats `env_file:` and the invariant lives in the repo instead of on
+the host. → `KB § PATTERNS/devops/prod-deploy-safety-gates.md`.
+
 ```bash
 # Supabase
 SUPABASE_URL=https://project.supabase.co
@@ -214,6 +220,12 @@ JWT_SECRET=your-jwt-secret
 
 # App
 CORS_ORIGINS=http://localhost:5173,http://localhost:8080
+# 🔴 DEV ONLY — NEVER true in production. `settings.debug` gates three unrelated
+# things at once: `/docs` + `/openapi.json` exposure, the log LEVEL, and
+# `settings.is_production`. A stale `DEBUG=true` in the prod `.env` published all
+# seven products' OpenAPI schemas on the public internet and wrote customer
+# message payloads into `docker logs` (found 2026-08-24). Want readable prod logs?
+# Set `NOCTUSAI_JSON_LOGS=0` — it changes format ONLY.
 DEBUG=true
 CORE_API_URL=http://localhost:8000
 
