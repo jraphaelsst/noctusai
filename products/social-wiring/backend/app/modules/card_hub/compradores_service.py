@@ -183,8 +183,14 @@ def adicionar(
             raise ValidationError_(
                 "O titular já é parte deste atendimento — adicione outra pessoa."
             )
+        # A linked person gets the relationship recorded too, not just a
+        # created one — "any link to another cliente" is the ask, and a spouse
+        # who happened to already be a lead is no less related for it.
+        _vincular(client, org_id, novo_cliente_id, cliente_id)
     else:
-        novo_cliente_id = _criar_cliente(client, org_id, nome=nome, celular=celular)
+        novo_cliente_id = _criar_cliente(
+            client, org_id, nome=nome, celular=celular, vinculado_a=cliente_id
+        )
 
     ja = (
         _t(client, TABLE)
@@ -227,8 +233,40 @@ def adicionar(
     return _out(row, clientes.get(novo_cliente_id))
 
 
+def _vincular(client: Any, org_id: UUID, cliente_id: str, titular_id: UUID) -> None:
+    """Record who introduced this person — FIRST-WRITER-WINS (migration 074).
+
+    Only written when the column is empty, so someone who was already a lead in
+    their own right, or who is a party to an earlier deal, keeps their original
+    introducer. Overwriting would make the field mean "the most recent deal
+    they appeared in", which is what `atendimento_partes` already says and says
+    better.
+    """
+    if str(cliente_id) == str(titular_id):
+        return
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select("id,vinculado_a_cliente_id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .execute()
+    ).data or []
+    if not rows or rows[0].get("vinculado_a_cliente_id"):
+        return
+    _t(client, CLIENTES_TABLE).update({
+        "vinculado_a_cliente_id": str(titular_id),
+        "vinculo_origem": "comprador_atendimento",
+        "vinculado_em": _now(),
+    }).eq("id", str(cliente_id)).eq("org_id", str(org_id)).execute()
+
+
 def _criar_cliente(
-    client: Any, org_id: UUID, *, nome: Optional[str], celular: Optional[str]
+    client: Any,
+    org_id: UUID,
+    *,
+    nome: Optional[str],
+    celular: Optional[str],
+    vinculado_a: Optional[UUID] = None,
 ) -> str:
     """A minimal cliente for a party who is not yet in the system.
 
@@ -241,6 +279,12 @@ def _criar_cliente(
     No `chave_canonica`: this person has not contacted us through any channel,
     so they have no canonical key, and inventing one from the phone would enter
     them into the dedup space as if they had.
+
+    🔴 `vinculado_a_cliente_id` is set at CREATION (migration 074), not left
+    for a later pass. Without it this row is indistinguishable from a lead who
+    walked in off the street — no channel, no key, no touches, no campaign — and
+    `atendimento_partes` only explains her for as long as the atendimento
+    exists, because it cascades on its delete.
     """
     row = {
         "id": str(uuid4()),
@@ -252,6 +296,9 @@ def _criar_cliente(
         "chave_tipo": None,
         "identidade_incerta": False,
         "ativo": True,
+        "vinculado_a_cliente_id": str(vinculado_a) if vinculado_a else None,
+        "vinculo_origem": "comprador_atendimento" if vinculado_a else None,
+        "vinculado_em": _now() if vinculado_a else None,
         "created_at": _now(),
     }
     _t(client, CLIENTES_TABLE).insert(row).execute()

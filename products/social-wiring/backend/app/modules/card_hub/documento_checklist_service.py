@@ -86,10 +86,30 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 #: phrase. On today's data it ticks the 5.733 rows that carry a real name and
 #: leaves the 4.417 push names alone.
 #:
-#: Note `nome_oficial` is deliberately absent. It is the name read off an
-#: identity document, held for COMPARISON against the registration (migration
-#: 071); letting it satisfy "do we know their name?" would collapse the two
-#: facts the comparison exists to keep apart.
+#: 🔴 DECISION CHANGED 2026-08-24 — `nome_oficial` NOW SATISFIES THIS ITEM.
+#:
+#: It used to be excluded, on the argument that the document name is held for
+#: COMPARISON against the registration (migration 071) and that letting it
+#: satisfy "do we know their name?" would collapse the two facts the comparison
+#: exists to keep apart.
+#:
+#: The product owner has ruled otherwise, and the ruling is about what the
+#: WORKFLOW is: the WhatsApp push name is what the lead arrives with and is all
+#: the funil gate requires; the person's legal full name is expected to arrive
+#: LATER, off their uploaded RG. Under that workflow the old rule made this item
+#: permanently red for exactly the clients who had done everything asked of
+#: them — they sent the document, the name was read off it, and the checklist
+#: still said "Nome Completo: pending".
+#:
+#: Nothing is collapsed by this. Both columns still exist, still hold different
+#: values, and `vw_nome_conferencia` (071) still measures the gap between them;
+#: the card still renders them side by side via `NomeOficial`. What changed is
+#: only whether holding a document-read name COUNTS as knowing the person's
+#: name. It does.
+#:
+#: Precedence is explicit-first: an operator-typed `nome_completo`, then the
+#: document read, then the channel-supplied `nome` — which still has to pass
+#: `looks_like_a_name`, so "Ana" continues not to satisfy it.
 #: 🔴 WHY `celular` AND `email` NEED A ``fontes`` AND NOT JUST A ``campos``
 #: ------------------------------------------------------------------------
 #: Both facts can live in one of two places, and which one is authoritative
@@ -110,7 +130,8 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 #: outranks the registration key, exactly as `nome_completo` outranks `nome`.
 ITENS: tuple[dict[str, Any], ...] = (
     {"key": "nome_completo", "label": "Nome Completo",
-     "campos": ("nome_completo", "nome"), "exige": "nome_completo"},
+     "campos": ("nome_completo", "nome_oficial", "nome"),
+     "exige": "nome_completo"},
     # Comes from the registration act and is REQUIRED — `stage_gate.py` refuses
     # to move an atendimento whose titular has no phone. It ticks itself for
     # every phone-keyed cliente, which is most of them.
@@ -152,9 +173,13 @@ _FONTES: dict[str, dict[str, Any]] = {
 }
 
 #: Columns read for DISPLAY beside the checklist but never used to derive a
-#: tick. `nome_oficial` is here and not in any item's `campos` on purpose —
-#: see the ITENS docstring.
-_CLIENTE_COLUNAS_EXIBICAO = ("nome_oficial",)
+#: tick.
+#:
+#: Empty since 2026-08-24: `nome_oficial` was its only member and is now a real
+#: derivation input for `nome_completo` (see the ITENS docstring). Kept rather
+#: than deleted because the DISTINCTION is still meaningful — the next
+#: extracted-but-not-required field belongs here, not in an item.
+_CLIENTE_COLUNAS_EXIBICAO: tuple[str, ...] = ()
 
 #: Columns the derivation reads. Selected explicitly rather than `*` so adding
 #: a column to `clientes` cannot silently widen what this module pulls.
@@ -308,6 +333,20 @@ def _cliente_row(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[dict]:
     )
     rows = res.data or []
     return rows[0] if rows else None
+
+
+def cliente_para_derivacao(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> Optional[dict]:
+    """The cliente row this module derives from, for a second reader.
+
+    Public so `pipeline.stage_gate` can ask its `nome` question against the
+    SAME projection the checklist reads — not so it can re-derive a tick. The
+    gate's `nome` requirement is deliberately weaker than the checklist's
+    "Nome Completo" item, so it needs the row rather than the verdict; sharing
+    the row keeps the column list in one place even when the questions differ.
+    """
+    return _cliente_row(client, org_id, cliente_id)
 
 
 def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
@@ -482,6 +521,7 @@ __all__ = [
     "derivar",
     "listar",
     "marcar",
+    "cliente_para_derivacao",
     "valor_de",
     "valores_editaveis",
 ]

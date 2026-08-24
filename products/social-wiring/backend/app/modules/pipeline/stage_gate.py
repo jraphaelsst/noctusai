@@ -43,22 +43,66 @@ from uuid import UUID
 
 from app.modules.card_hub import documento_checklist_service as checklist_svc
 
-#: The checklist items an atendimento's titular must satisfy before the card
-#: may leave its current stage.
+#: What an atendimento's titular must have before the card may leave its stage.
 #:
-#: Deliberately a subset of `ITENS` and deliberately SMALL. The user's words:
-#: "for now the only required fields are going to be name and celular […] I'll
-#: refine that later, there will be more required fields." Growing this tuple
-#: is the whole change — the gate, its error message and the frontend's
-#: explanation all read from it.
+#: 🔴 `nome`, NOT `nome_completo` — corrected 2026-08-24 after the first cut of
+#: this gate was too strict.
 #:
-#: 🔴 `nome_completo`, not `nome`. The item requires something that LOOKS like
-#: a full name (`looks_like_a_name` — two substantive words, no digits), so a
-#: WhatsApp push name of "Ana" does NOT open the gate. That is the intended
-#: strictness: the point of the requirement is that someone has actually
-#: collected this person's details, and a channel-supplied first name is
-#: evidence of the opposite.
-CAMPOS_OBRIGATORIOS: tuple[str, ...] = ("nome_completo", "celular")
+#: The first version required the checklist's "Nome Completo" item, which
+#: demands something that LOOKS like a full name. That refused to move a lead
+#: called "Ana" — and "Ana" is precisely what a WhatsApp push name looks like,
+#: i.e. what almost every lead arrives as. The product owner's rule is the
+#: workflow one: whatever name the channel supplied is accepted and is
+#: REQUIRED, and the legal full name arrives later off the uploaded RG. A gate
+#: that blocks the normal first move of a normal lead is not a quality gate,
+#: it is an outage.
+#:
+#: So the two requirements are not both checklist items, and that asymmetry is
+#: why this is a list of RULES rather than a tuple of item keys:
+#:
+#: - ``item``  — delegate to the checklist, which already answers it. `celular`
+#:               is genuinely subtle (the number lives in `celular` for some
+#:               clientes and in `chave_canonica` for others, gated by
+#:               `chave_tipo`), so it MUST NOT be re-derived here; a second
+#:               implementation would drift from the checkbox the operator
+#:               sees, and then a ticked box would sit next to a card that
+#:               refuses to move with no way to tell which is lying.
+#: - ``campos`` — any of these `clientes` columns being non-empty satisfies it.
+#:               Used for `nome`, which is deliberately NOT a checklist item:
+#:               the checklist asks the stricter "do we hold a real full name?"
+#:               question, and this gate asks the weaker "do we know what to
+#:               call them?" one. Two different questions, honestly named.
+EXIGENCIAS: tuple[dict, ...] = (
+    {
+        "key": "nome",
+        "label": "Nome",
+        "campos": ("nome", "nome_completo", "nome_oficial"),
+    },
+    {"key": "celular", "label": "Celular", "item": "celular"},
+)
+
+#: Kept as the flat key tuple earlier readers referenced. Derived, so it can
+#: never disagree with the rules above.
+CAMPOS_OBRIGATORIOS: tuple[str, ...] = tuple(e["key"] for e in EXIGENCIAS)
+
+
+def _tem_algum_campo(cliente: Optional[dict], colunas: tuple[str, ...]) -> bool:
+    """Is any of these columns non-empty?
+
+    Whitespace-only is empty, matching `documento_checklist_service._preenchido`
+    — a name of "   " satisfies a NOT NULL check and satisfies nobody else, and
+    letting it open the gate would be the same false-completeness the checklist
+    exists to prevent.
+    """
+    cliente = cliente or {}
+    for col in colunas:
+        valor = cliente.get(col)
+        if valor is None:
+            continue
+        if isinstance(valor, str) and not valor.strip():
+            continue
+        return True
+    return False
 
 
 def pendencias(
@@ -66,7 +110,7 @@ def pendencias(
     org_id: str | UUID,
     cliente_id: Optional[str],
 ) -> list[dict[str, str]]:
-    """Required items this cliente does not satisfy, as `{key, label}`.
+    """Requirements this cliente does not satisfy, as `{key, label}`.
 
     Empty list = the gate is open.
 
@@ -76,25 +120,25 @@ def pendencias(
     silent-fallback shape — a gate that passes hardest exactly where the data
     is most absent.
     """
-    itens_por_key = {i["key"]: i for i in checklist_svc.ITENS}
+    faltando = [{"key": e["key"], "label": e["label"]} for e in EXIGENCIAS]
     if cliente_id is None:
-        return [
-            {"key": key, "label": itens_por_key[key]["label"]}
-            for key in CAMPOS_OBRIGATORIOS
-        ]
+        return faltando
 
+    cliente = checklist_svc.cliente_para_derivacao(client, org_id, cliente_id)
     estado = {
         item["key"]: item["concluido"]
-        # Passed through as-is: `listar` stringifies its own arguments, so a
-        # `UUID()` coercion here would add nothing except a crash path for an
-        # id that is malformed rather than merely unknown.
         for item in checklist_svc.listar(client, org_id, cliente_id)["items"]
     }
-    return [
-        {"key": key, "label": itens_por_key[key]["label"]}
-        for key in CAMPOS_OBRIGATORIOS
-        if not estado.get(key, False)
-    ]
+
+    pendentes: list[dict[str, str]] = []
+    for regra in EXIGENCIAS:
+        if "item" in regra:
+            ok = estado.get(regra["item"], False)
+        else:
+            ok = _tem_algum_campo(cliente, regra["campos"])
+        if not ok:
+            pendentes.append({"key": regra["key"], "label": regra["label"]})
+    return pendentes
 
 
 def mensagem(pendentes: list[dict[str, str]]) -> str:

@@ -222,20 +222,22 @@ class TestMoverEtapa:
 class TestMoveRequiresNomeECelular:
     """🔴 A card cannot advance while nobody knows who this is (migration 073).
 
-    The funil's stages describe real work. A card in "Contato" whose person has
-    no name and no phone claims work that literally cannot be done, and the
-    discovery lands on whoever tries to call.
+    The requirement is a NAME — whatever the channel supplied — and a phone.
+    NOT a full legal name: the first cut of this gate demanded the checklist's
+    "Nome Completo" item and therefore refused to move a lead called "Ana",
+    which is exactly what a WhatsApp push name looks like. A gate that blocks
+    the normal first move of a normal lead is an outage, not a quality gate.
+    The legal name arrives later, off the uploaded RG.
 
-    These pin the RULE, not its current membership: `CAMPOS_OBRIGATORIOS` is
-    expected to grow ("I'll refine that later, there will be more required
-    fields"), so the tests name the two fields explicitly rather than looping
-    the tuple — a test that derives its expectation from the code under test
+    These pin the RULE, not its current membership: `EXIGENCIAS` is expected to
+    grow, so the tests name the two requirements explicitly rather than looping
+    the tuple — a test that derived its expectation from the code under test
     would keep passing if someone emptied it.
     """
 
     def test_a_lead_with_neither_field_cannot_move(self, http_client):
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
-        seed_titular(http_client.scoped, "neg-1", apto=False)
+        seed_titular(http_client.scoped, "neg-1", apto=False, nome=None)
         r = http_client.post(
             "/api/atendimentos-venda/neg-1/mover-etapa",
             json={"para_etapa_id": STAGE_ID["contato"]},
@@ -249,20 +251,47 @@ class TestMoveRequiresNomeECelular:
     ):
         """Otherwise a two-field gap costs two failed attempts to discover."""
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
-        seed_titular(http_client.scoped, "neg-1", apto=False)
+        seed_titular(http_client.scoped, "neg-1", apto=False, nome=None)
         r = http_client.post(
             "/api/atendimentos-venda/neg-1/mover-etapa",
             json={"para_etapa_id": STAGE_ID["contato"]},
             headers=auth_headers(),
         )
         detalhe = r.json()["error"]["message"]
-        assert "Nome Completo" in detalhe
+        assert "Nome" in detalhe
         assert "Celular" in detalhe
+
+    def test_a_whatsapp_push_name_plus_a_phone_is_enough(self, http_client):
+        """🔴 The correction. "Ana" is what almost every lead arrives as, and
+        the gate must let her move."""
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(
+            http_client.scoped, "neg-1", apto=False,
+            nome="Ana", celular="+5511999998888",
+        )
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["contato"]},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 200
+
+    def test_a_name_alone_is_not_enough(self, http_client):
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(http_client.scoped, "neg-1", apto=False, nome="Ana")
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["contato"]},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 400
+        assert "Celular" in r.json()["error"]["message"]
 
     def test_a_celular_alone_is_not_enough(self, http_client):
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
         seed_titular(
-            http_client.scoped, "neg-1", apto=False, celular="+5511999998888"
+            http_client.scoped, "neg-1", apto=False,
+            nome=None, celular="+5511999998888",
         )
         r = http_client.post(
             "/api/atendimentos-venda/neg-1/mover-etapa",
@@ -270,15 +299,15 @@ class TestMoveRequiresNomeECelular:
             headers=auth_headers(),
         )
         assert r.status_code == 400
-        assert "Nome Completo" in r.json()["error"]["message"]
+        assert "Nome" in r.json()["error"]["message"]
 
-    def test_a_push_name_does_not_satisfy_nome_completo(self, http_client):
-        """"Ana" is what the channel supplied, not evidence anyone collected
-        this person's details — the same rule the checklist item applies."""
+    def test_a_whitespace_only_name_does_not_open_the_gate(self, http_client):
+        """A name of "   " satisfies a NOT NULL check and satisfies nobody
+        else."""
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
         seed_titular(
             http_client.scoped, "neg-1", apto=False,
-            nome="Ana", celular="+5511999998888",
+            nome="   ", celular="+5511999998888",
         )
         r = http_client.post(
             "/api/atendimentos-venda/neg-1/mover-etapa",
@@ -291,8 +320,7 @@ class TestMoveRequiresNomeECelular:
         """The number came from the registration act — that IS the celular."""
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
         seed_titular(
-            http_client.scoped, "neg-1", apto=False,
-            nome_completo="Luciano Mauricio",
+            http_client.scoped, "neg-1", apto=False, nome="Ana",
             chave_canonica="+5511999998888", chave_tipo="telefone",
         )
         r = http_client.post(
@@ -304,11 +332,10 @@ class TestMoveRequiresNomeECelular:
 
     def test_an_email_keyed_cliente_still_needs_a_phone(self, http_client):
         """🔴 The bug a naive `chave_canonica` read would ship: an email
-        address ticking "Celular"."""
+        address satisfying "Celular"."""
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
         seed_titular(
-            http_client.scoped, "neg-1", apto=False,
-            nome_completo="Luciano Mauricio",
+            http_client.scoped, "neg-1", apto=False, nome="Ana",
             chave_canonica="luciano@example.com", chave_tipo="email",
         )
         r = http_client.post(
@@ -324,12 +351,11 @@ class TestMoveRequiresNomeECelular:
         on the card but not on the move would just teach people to type a
         placeholder into the column instead."""
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
-        seed_titular(http_client.scoped, "neg-1", apto=False)
+        seed_titular(http_client.scoped, "neg-1", apto=False, nome="Ana")
         http_client.scoped.set_table_data("cliente_documento_checklist", [
             {"id": "ovr-1", "org_id": ORG_A, "cliente_id": "cli-neg-1",
-             "item_key": k, "concluido_manual": True,
-             "concluido_em": "2026-08-24T00:00:00+00:00", "concluido_por": None}
-            for k in ("nome_completo", "celular")
+             "item_key": "celular", "concluido_manual": True,
+             "concluido_em": "2026-08-24T00:00:00+00:00", "concluido_por": None},
         ])
         r = http_client.post(
             "/api/atendimentos-venda/neg-1/mover-etapa",
@@ -343,7 +369,7 @@ class TestMoveRequiresNomeECelular:
         about our client data — that reports on OUR record for a request that
         never named a valid destination."""
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
-        seed_titular(http_client.scoped, "neg-1", apto=False)
+        seed_titular(http_client.scoped, "neg-1", apto=False, nome=None)
         r = http_client.post(
             "/api/atendimentos-venda/neg-1/mover-etapa",
             json={"para_etapa_id": OTHER_ORG_STAGE["id"]},

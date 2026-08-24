@@ -203,6 +203,97 @@ class TestAddingAComprador:
         assert r.status_code == 400
 
 
+class TestNobodyIsCreatedDangling:
+    """🔴 Migration 074. A created comprador must not be a person the database
+    cannot explain.
+
+    She has no channel, no canonical key, no touches and no campaign — every
+    other row in `clientes` got there through an ingestion path that left a
+    trail. Without an explicit link she is indistinguishable from a lead who
+    walked in off the street, and `atendimento_partes` only explains her while
+    the atendimento lives, because it cascades on its delete.
+    """
+
+    def _pessoa(self, scoped, cliente_id):
+        return [r for r in scoped.table("clientes").select("*").execute().data
+                if r["id"] == cliente_id][0]
+
+    def test_a_created_comprador_points_back_at_the_titular(self, client, scoped):
+        cid, _ = _titular(scoped)
+        nova = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Maria Mauricio"},
+            headers=_auth(),
+        ).json()["cliente_id"]
+        row = self._pessoa(scoped, nova)
+        assert row["vinculado_a_cliente_id"] == cid
+        assert row["vinculo_origem"] == "comprador_atendimento"
+        assert row["vinculado_em"] is not None
+
+    def test_a_linked_existing_person_is_recorded_too(self, client, scoped):
+        """"any link to another cliente" — a spouse who happened to already be
+        a lead is no less related for it."""
+        cid, aid = str(uuid4()), str(uuid4())
+        esposa = str(uuid4())
+        _seed(
+            scoped,
+            clientes=[
+                cliente_row(cid, nome="Luciano", nome_completo="Luciano Mauricio"),
+                cliente_row(esposa, nome="Maria", nome_completo="Maria Mauricio"),
+            ],
+            atendimentos=[_atendimento(aid, cid)],
+        )
+        client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"cliente_id": esposa},
+            headers=_auth(),
+        )
+        assert self._pessoa(scoped, esposa)["vinculado_a_cliente_id"] == cid
+
+    def test_an_existing_link_is_never_overwritten(self, client, scoped):
+        """First-writer-wins: a person keeps their ORIGINAL introducer.
+
+        Overwriting would make the column mean "the most recent deal they
+        appeared in", which `atendimento_partes` already says, and says better.
+        """
+        cid, aid = str(uuid4()), str(uuid4())
+        esposa, antigo = str(uuid4()), str(uuid4())
+        _seed(
+            scoped,
+            clientes=[
+                cliente_row(cid, nome="Luciano", nome_completo="Luciano Mauricio"),
+                cliente_row(antigo, nome="Alguem", nome_completo="Alguem Antigo"),
+                cliente_row(
+                    esposa, nome="Maria", nome_completo="Maria Mauricio",
+                    vinculado_a_cliente_id=antigo,
+                    vinculo_origem="comprador_atendimento",
+                ),
+            ],
+            atendimentos=[_atendimento(aid, cid)],
+        )
+        client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"cliente_id": esposa},
+            headers=_auth(),
+        )
+        assert self._pessoa(scoped, esposa)["vinculado_a_cliente_id"] == antigo
+
+    def test_removing_the_party_leaves_the_link_intact(self, client, scoped):
+        """The relationship is a fact about the PERSON and outlives the deal —
+        which is the entire reason it is not stored only on the join table."""
+        cid, _ = _titular(scoped)
+        parte = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Maria Mauricio"},
+            headers=_auth(),
+        ).json()
+        client.delete(
+            f"/api/clientes/{cid}/compradores/{parte['id']}", headers=_auth()
+        )
+        row = self._pessoa(scoped, parte["cliente_id"])
+        assert row["vinculado_a_cliente_id"] == cid
+
+
 class TestEachCompradorGetsTheSameChecklist:
     def test_the_added_person_gets_the_identical_eight_item_list(
         self, client, scoped
