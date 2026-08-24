@@ -39,6 +39,7 @@ import logging
 from typing import Optional
 
 from noctusai_lib.integrations.documents.birthdate import find_birthdate
+from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.name import find_name
 from noctusai_lib.integrations.documents.types import (
@@ -109,6 +110,12 @@ class LadderIdentityExtractor:
         data, data_conf, data_label = find_birthdate(text)
         nome, nome_conf, nome_label = find_name(text)
         nome_conf = self._temper_name_confidence(nome_conf, source)
+        # Gender is NOT tempered by source, unlike the name. Its alphabet has
+        # two elements and its parser refuses every unlabelled single letter,
+        # so an OCR pass cannot turn "Masculino" into a different VALID value —
+        # it can only turn it into nothing. The name's risk is a plausible
+        # misreading; this field has no plausible misreadings to make.
+        genero, genero_conf, genero_label = find_gender(text)
 
         return IdentityFields(
             kind=kind,
@@ -118,6 +125,9 @@ class LadderIdentityExtractor:
             nome=nome,
             nome_confianca=ExtractionConfidence(nome_conf),
             nome_rotulo=nome_label,
+            genero=genero,
+            genero_confianca=ExtractionConfidence(genero_conf),
+            genero_rotulo=genero_label,
             source=source,
         )
 

@@ -276,3 +276,94 @@ class TestDerivedTickFollowsForFree:
         by_key = {i["key"]: i for i in after["items"]}
         assert by_key["data_nascimento"]["concluido"] is True
         assert by_key["rg"]["concluido"] is True, "the upload itself satisfies RG"
+
+
+class TestGeneroIsTheThirdExtractedField:
+    """🔴 Migration 073. The point of these is that almost nothing was written
+    to support them.
+
+    `CAMPOS` is table-driven, so `genero` is ONE entry there plus one mapping
+    in `_valores_lidos` — the apply, suggest, confirm, provenance and
+    access-log paths are the same code the birthdate and the name already ran
+    through. These tests exist to prove that claim rather than to assume it.
+    """
+
+    @staticmethod
+    def _com_genero(confianca=ExtractionConfidence.ALTA) -> IdentityFields:
+        return IdentityFields(
+            genero="Masculino",
+            genero_confianca=confianca,
+            genero_rotulo="SEXO",
+            source=TextSource.TEXT_LAYER,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_confident_read_fills_the_column_and_stamps_provenance(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped)
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_genero()),
+        )
+        row = _cliente(scoped, cid)
+        assert row["genero"] == "Masculino"
+        # Attributable and correctable, never an anonymous fact in a column.
+        assert row["genero_origem"] == "rg"
+        assert row["genero_documento_id"] == did
+
+    @pytest.mark.asyncio
+    async def test_a_low_confidence_read_never_reaches_the_record(
+        self, client, scoped
+    ):
+        """It stays on the DOCUMENT row as a suggestion for a human. A guess
+        written unattended is how an OCR misread becomes someone's record."""
+        cid, did, storage = await _setup(scoped)
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(
+                self._com_genero(ExtractionConfidence.BAIXA)
+            ),
+        )
+        assert _cliente(scoped, cid).get("genero") is None
+        assert _documento(scoped, did)["extracao_genero"] == "Masculino"
+
+    @pytest.mark.asyncio
+    async def test_a_typed_genero_is_not_overwritten_by_a_later_document(
+        self, client, scoped
+    ):
+        """First-writer-wins, like the birthdate and unlike `nome_oficial`.
+
+        `genero` is a REGISTRATION field an operator fills in on the card, so a
+        later RG must not silently replace what a person entered. The name may
+        overwrite only because it is held BESIDE the registration name rather
+        than being it — there is no such second column here.
+        """
+        cid, did, storage = await _setup(
+            scoped, cliente={"genero": "Feminino", "genero_origem": "manual"}
+        )
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_genero()),
+        )
+        assert _cliente(scoped, cid)["genero"] == "Feminino"
+
+    @pytest.mark.asyncio
+    async def test_the_checklist_item_ticks_itself_off_the_document(
+        self, client, scoped
+    ):
+        """No checklist call anywhere — the tick is derived from the column the
+        extraction just filled."""
+        from app.modules.card_hub import documento_checklist_service as checklist_svc
+
+        cid, did, storage = await _setup(scoped)
+        scoped.set_table_data("cliente_documento_checklist", [])
+        antes = checklist_svc.listar(scoped, ORG_UUID, UUID(cid))
+        assert {i["key"]: i["concluido"] for i in antes["items"]}["genero"] is False
+
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_genero()),
+        )
+        depois = checklist_svc.listar(scoped, ORG_UUID, UUID(cid))
+        assert {i["key"]: i["concluido"] for i in depois["items"]}["genero"] is True

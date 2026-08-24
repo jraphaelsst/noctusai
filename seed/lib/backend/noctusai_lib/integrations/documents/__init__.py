@@ -4,8 +4,9 @@
 
 - `IdentityFields` / `IdentityDocumentKind` / `ExtractionConfidence` /
   `TextSource` value objects, and the `IdentityExtractor` Protocol.
-- `find_birthdate(text)` / `find_name(text)` — the pure, label-anchored
-  Brazilian parsers. Usable on their own wherever text is already in hand.
+- `find_birthdate(text)` / `find_name(text)` / `find_gender(text)` — the pure,
+  label-anchored Brazilian parsers. Usable on their own wherever text is
+  already in hand.
 - `FakeIdentityExtractor` — deterministic; the dev/test default.
 - `LadderIdentityExtractor` — PDF text layer → rasterize→vision, composing
   `integrations.media`. Imported lazily.
@@ -46,6 +47,7 @@ consumer must honour both:
 """
 from noctusai_lib.integrations.documents.birthdate import find_birthdate, normalize
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
+from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.name import find_name, looks_like_a_name
 from noctusai_lib.integrations.documents.fake import (
     FakeIdentityExtractor,
@@ -85,6 +87,7 @@ __all__ = [
     "classify_kind",
     "find_birthdate",
     "find_name",
+    "find_gender",
     "looks_like_a_name",
     "make_identity_extractor",
     "normalize",

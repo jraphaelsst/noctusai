@@ -66,6 +66,15 @@ class TextSource(str, Enum):
     NENHUMA = "nenhuma"         # no text could be obtained at all
 
 
+#: Every field the extractor can lift, by attribute name.
+#:
+#: THE single declaration. `persistable` / `sugestao` derive from it, the
+#: product's `CampoExtraido` table mirrors it, and adding a field means adding
+#: one entry here plus its three attributes below. Hand-written per-field
+#: predicates were what this replaced — see the class docstring's N=3 note.
+CAMPOS: tuple[str, ...] = ("data_nascimento", "nome", "genero")
+
+
 @dataclass(frozen=True)
 class IdentityFields:
     """Typed fields lifted from one identity document.
@@ -90,12 +99,27 @@ class IdentityFields:
     to. There is no bare `confidence` — not for tidiness, but so that the
     mistake cannot be spelled.
 
-    **Triage note (DRY, N=2).** Two fields × three attributes is a visible
-    repetition. It is left flat deliberately: the database columns are
-    flat, the consumers are flat, and a generic `ExtractedField[T]` value
-    object would buy indirection and no safety today. A THIRD extracted
-    field (RG number and CPF number are the obvious next ones) is the
-    trigger to formalize it — at N=3 the recurrence rule says must.
+    **N=3 REACHED, AND FORMALIZED — read this before adding a fourth.**
+    `genero` arrived with social-wiring's migration 073 and tripped the
+    trigger the N=2 note here left behind. What got formalized is
+    deliberately NOT the whole shape:
+
+    - The ATTRIBUTES stay flat (`genero`, `genero_confianca`,
+      `genero_rotulo`). The original reason still holds at three and would
+      hold at six — the database columns are flat, every consumer is flat,
+      and wrapping them in `ExtractedField[T]` would buy indirection at
+      every call site in exchange for no safety.
+    - The PREDICATES no longer are. `persistable_x` / `sugestao_x` were
+      hand-written per field, which is the half that actually multiplies
+      and the half that actually goes wrong: adding a field and forgetting
+      its `persistable_` property yields a value that is never written and
+      never suggested, silently. They now derive from :data:`CAMPOS`,
+      declared once, so a new field is a single tuple entry.
+
+    The named properties survive as thin aliases over the generic ones so
+    no consumer had to change. Adding a fourth field (RG number and CPF
+    number remain the obvious next ones) means: one `CAMPOS` entry, one
+    triple of attributes, and nothing else.
     """
 
     kind: IdentityDocumentKind = IdentityDocumentKind.UNKNOWN
@@ -114,46 +138,89 @@ class IdentityFields:
     nome_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
     nome_rotulo: Optional[str] = None
 
+    # ─── Gender ───────────────────────────────────────────────────────
+    #: Normalised to the document's own vocabulary — "Masculino" /
+    #: "Feminino" — rather than to a code, because the consuming column
+    #: (`social_wiring.clientes.genero`) is unconstrained TEXT holding
+    #: exactly those words, and a code would need decoding at every reader.
+    genero: Optional[str] = None
+    genero_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    genero_rotulo: Optional[str] = None
+
     # ─── Provenance, shared by every field on this result ─────────────
     source: TextSource = TextSource.NENHUMA
     error: Optional[str] = None
     error_message: Optional[str] = None
 
+    def _valor(self, campo: str) -> object:
+        return getattr(self, campo)
+
+    def _confianca(self, campo: str) -> ExtractionConfidence:
+        return getattr(self, f"{campo}_confianca")
+
+    def presente(self, campo: str) -> bool:
+        """Did the extractor find anything at all for this field?
+
+        `bool(value)` rather than `is not None`, so an empty-string name
+        counts as absent — a name of `""` is a failed read wearing a
+        success, and every downstream check would have to repeat that
+        thought.
+        """
+        if campo not in CAMPOS:
+            raise KeyError(campo)
+        return bool(self._valor(campo))
+
+    def persistable(self, campo: str) -> bool:
+        """May this field be written to a record UNATTENDED?
+
+        ALTA only, for every field. The bar is uniform on purpose: what
+        varies between fields is how conservatively their confidence is
+        SET upstream (see `real.LadderIdentityExtractor`, which tempers a
+        vision-read name), not what confidence means once set. Encoding
+        per-field leniency here would hide that asymmetry in two places.
+        """
+        return (
+            self.presente(campo)
+            and self._confianca(campo) is ExtractionConfidence.ALTA
+        )
+
+    def sugestao(self, campo: str) -> bool:
+        """Found, but not trusted enough to write without a human."""
+        return (
+            self.presente(campo)
+            and self._confianca(campo) is ExtractionConfidence.BAIXA
+        )
+
+    # ─── Named aliases ────────────────────────────────────────────────
+    #
+    # Kept so existing callers read the same as they always did, and so a
+    # typo like `persistable_nomee` is an AttributeError at import rather
+    # than a string that quietly misses at runtime — which is the one real
+    # cost of the generic form.
+
     @property
     def persistable_data_nascimento(self) -> bool:
-        """True iff the birthdate may be written to a record unattended."""
-        return (
-            self.data_nascimento is not None
-            and self.data_nascimento_confianca is ExtractionConfidence.ALTA
-        )
+        return self.persistable("data_nascimento")
 
     @property
     def persistable_nome(self) -> bool:
-        """True iff the name may be written to a record unattended.
+        return self.persistable("nome")
 
-        Same ALTA-only rule. The name's confidence is set more
-        conservatively upstream — see `real.LadderIdentityExtractor` — and
-        that asymmetry is deliberate: the birthdate is only ever written
-        into an EMPTY column, while the name deliberately OVERWRITES what
-        is already there, so it must clear a higher bar to do so
-        unattended.
-        """
-        return (
-            bool(self.nome)
-            and self.nome_confianca is ExtractionConfidence.ALTA
-        )
+    @property
+    def persistable_genero(self) -> bool:
+        return self.persistable("genero")
 
     @property
     def sugestao_data_nascimento(self) -> bool:
-        """Found, but not trusted enough to write without a human."""
-        return (
-            self.data_nascimento is not None
-            and self.data_nascimento_confianca is ExtractionConfidence.BAIXA
-        )
+        return self.sugestao("data_nascimento")
 
     @property
     def sugestao_nome(self) -> bool:
-        return bool(self.nome) and self.nome_confianca is ExtractionConfidence.BAIXA
+        return self.sugestao("nome")
+
+    @property
+    def sugestao_genero(self) -> bool:
+        return self.sugestao("genero")
 
 
 @runtime_checkable
