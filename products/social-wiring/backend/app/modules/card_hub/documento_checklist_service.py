@@ -362,6 +362,32 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         "sugestoes_extras": extras,
         "nome_oficial": (cliente or {}).get("nome_oficial"),
         "nome_registro": _nome_registro(cliente),
+        # The VALUES behind the ticks, so the card can offer a form to fill
+        # them in. It rides on this response rather than getting an endpoint of
+        # its own for the same reason `sugestoes_extras` does: the checklist is
+        # already the "what is still missing" surface and the card already
+        # fetches it once — a second call would mean a second loading state for
+        # the same panel.
+        #
+        # Derived from `ITENS` rather than hand-listed, so an item added later
+        # becomes editable without anyone remembering to widen this dict.
+        "valores": valores_editaveis(cliente),
+    }
+
+
+#: Items whose value is TYPED rather than satisfied by uploading a document.
+#: `rg`/`cpf` are excluded by construction — they have no `campos`.
+def valores_editaveis(cliente: Optional[dict]) -> dict:
+    """`item_key -> current value` for every item a human fills in by hand.
+
+    Reads through `valor_de`, so the value shown in the form is the same one
+    the tick was decided from — a form seeded by a second, subtly different
+    rule would show an empty "Celular" box beside a ticked "Celular" item.
+    """
+    return {
+        item["key"]: valor_de(cliente, item["key"])
+        for item in ITENS
+        if "documento" not in item
     }
 
 
@@ -457,4 +483,5 @@ __all__ = [
     "listar",
     "marcar",
     "valor_de",
+    "valores_editaveis",
 ]

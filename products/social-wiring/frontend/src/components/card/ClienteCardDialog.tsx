@@ -51,6 +51,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
+import {
+  DadosPessoaisForm,
+  type DadosPessoais,
+} from "@/components/card/DadosPessoaisForm";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
@@ -122,6 +126,11 @@ export interface ClienteCardDialogProps {
    * order people appear in.
    */
   renderDocumentosDePessoa?: (clienteId: string) => ReactNode;
+
+  /** Current values behind the typed checklist items, for the edit form. */
+  dadosPessoais?: DadosPessoais;
+  onSaveDadosPessoais?: (valores: DadosPessoais) => void;
+  dadosPessoaisSaving?: boolean;
   /**
    * The person's atendimentos, each with its ORIGIN record embedded. The card
    * renders the lead's own data from these — `clientes` holds identity and card
@@ -415,6 +424,16 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   >
                     {() => (
                       <>
+                    {/* The form sits directly under the list of what is
+                        missing. Splitting them would mean reading the gap on
+                        one screen and filling it on another. */}
+                    {props.onSaveDadosPessoais && (
+                      <DadosPessoaisForm
+                        valores={props.dadosPessoais ?? {}}
+                        onSave={props.onSaveDadosPessoais}
+                        saving={props.dadosPessoaisSaving}
+                      />
+                    )}
                     {/* The permanent checklist sits ABOVE anexos: it is the
                         list of what must be COLLECTED, and the anexos below
                         are what has arrived. Reading order follows the work. */}

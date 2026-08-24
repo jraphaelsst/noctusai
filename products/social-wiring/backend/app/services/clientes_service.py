@@ -974,8 +974,8 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
     that ever passes them) — never accepted from the request body itself;
     `ClientePatchBody` doesn't even declare them as fields.
 
-    The identity fields (migration 068) are editable here because editing them
-    is how five of the six document-checklist items get satisfied — the
+    The identity fields (migrations 068 + 073) are editable here because
+    editing them is how most of the document-checklist items get satisfied — the
     checklist derives from these columns, so a PATCH that fills one ticks it on
     the next read with nothing to notify.
 
@@ -990,6 +990,8 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
         "reativado_em", "inativo_threshold_dias",
         # Identity substrate (068) — what the document checklist derives from.
         "nome_completo", "email", "data_nascimento", "genero",
+        # 073 — the two the checklist grew, same rule.
+        "celular", "profissao",
     }
     payload = {k: v for k, v in updates.items() if k in allowed}
     if not payload:
@@ -1004,6 +1006,15 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
         payload["data_nascimento_origem"] = "manual" if payload["data_nascimento"] else None
         payload["data_nascimento_documento_id"] = None
         payload["data_nascimento_em"] = _now() if payload["data_nascimento"] else None
+
+    # Identical treatment for `genero`, because migration 073 made it the third
+    # field an identity document can supply. A typed value must outrank every
+    # later extraction, and that is only safe while the SERVER is the one
+    # deciding a value was typed.
+    if "genero" in payload:
+        payload["genero_origem"] = "manual" if payload["genero"] else None
+        payload["genero_documento_id"] = None
+        payload["genero_em"] = _now() if payload["genero"] else None
 
     payload["updated_at"] = _now()
     resp = (

@@ -31,6 +31,7 @@ import {
   useDocumentoChecklist,
   useDocumentoChecklistMutation,
   useDocumentoMutations,
+  useDadosPessoaisMutation,
   useDocumentos,
   useExtracaoSugestaoMutation,
   useTiposDocumento,
@@ -40,6 +41,7 @@ import {
   AnexosSection,
   DocumentoChecklistSection,
 } from "@/components/card/ClienteCardDialog";
+import { DadosPessoaisForm } from "@/components/card/DadosPessoaisForm";
 
 export interface PessoaDocumentosPanelProps {
   clienteId: string;
@@ -57,9 +59,25 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
   const toggle = useDocumentoChecklistMutation(clienteId);
   const sugestao = useExtracaoSugestaoMutation(clienteId);
   const docs = useDocumentoMutations(clienteId);
+  const dados = useDadosPessoaisMutation(clienteId);
 
   return (
     <>
+      {/* Same form the titular gets, for the same reason the checklist is the
+          same: a comprador's paperwork is collected exactly like anyone
+          else's. Without it her items would be unfillable and her checklist
+          permanently red. */}
+      <DadosPessoaisForm
+        testId={`dados-pessoais-${clienteId}`}
+        valores={checklist.data?.valores ?? {}}
+        saving={dados.isPending}
+        onSave={(valores) =>
+          dados.mutate(valores, {
+            onError: (e) =>
+              toast.error(erro(e, "Não foi possível salvar os dados.")),
+          })
+        }
+      />
       <DocumentoChecklistSection
         items={checklist.data?.items ?? []}
         // 🔴 `isPending || isFetching`, never `isLoading`. TanStack v5's

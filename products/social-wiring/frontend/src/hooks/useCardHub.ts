@@ -47,6 +47,7 @@ import type {
   Comprador,
   CompradoresResponse,
 } from "@/types/cardHub";
+import type { DadosPessoais } from "@/components/card/DadosPessoaisForm";
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
@@ -775,4 +776,39 @@ export function useCompradorMutations(clienteId: string) {
   });
 
   return { adicionar, remover };
+}
+
+
+/**
+ * Save the typed identity fields — the ones the checklist derives its ticks
+ * from.
+ *
+ * Hits the ordinary `PATCH /api/clientes/{id}`; there is deliberately no
+ * "checklist write" endpoint, because a tick is derived and the way to satisfy
+ * an item IS to supply the data.
+ *
+ * 🔴 Invalidates BOTH families. The write goes through the clientes API but the
+ * thing that visibly changes is the card's checklist, and this hook is the
+ * card's. Invalidating only one leaves whichever surface the operator is
+ * looking at showing the value they just replaced.
+ *
+ * Not optimistic: this writes to a person's record, and a checklist item
+ * flipping green before the server agreed is the one moment a rejected save
+ * looks like a successful one.
+ */
+export function useDadosPessoaisMutation(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    // Typed as the form's own shape rather than a loose record: these are the
+    // exact columns `clientes_router.ClientePatchBody` accepts, and a
+    // stray key would be refused by StrictHttpModel at runtime rather than
+    // caught here.
+    mutationFn: (body: DadosPessoais) =>
+      api.patch(`${clienteBase(clienteId)}`, body),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: FAMILY_KEY(clienteId) }),
+        qc.invalidateQueries({ queryKey: ["sw", "clientes"] }),
+      ]),
+  });
 }

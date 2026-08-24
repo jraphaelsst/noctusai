@@ -261,6 +261,18 @@ class ClientePatchBody(StrictHttpModel):
     data_nascimento: Optional[date] = None
     genero: Optional[str] = None
 
+    # Migration 073. `celular` is here for the same reason `email` is: the
+    # canonical key holds one or the other, so a cliente keyed by email has
+    # nowhere else to put a phone — and celular is now REQUIRED to move an
+    # atendimento between stages.
+    #
+    # `genero_origem` is NOT accepted, exactly like `data_nascimento_origem`:
+    # gender is now also read off an identity document, so its provenance is
+    # the server's to stamp. A caller able to assert `origem='rg'` could make a
+    # typed value look like a document reading, or the reverse.
+    celular: Optional[str] = None
+    profissao: Optional[str] = None
+
 
 class MergeGrupoBody(StrictHttpModel):
     cliente_id_sobrevivente: UUID

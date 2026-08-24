@@ -62,6 +62,7 @@ vi.mock("@/hooks/useCardHub", () => ({
     adicionar: { mutate: vi.fn(), isPending: false },
     remover: { mutate: vi.fn(), isPending: false },
   }),
+  useDadosPessoaisMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useNotaMutations: () => ({ create: mockCreate, update: mockUpdate, remove: { mutate: vi.fn() } }),
   useTagCatalogMutations: () => ({
     create: { mutate: vi.fn() },

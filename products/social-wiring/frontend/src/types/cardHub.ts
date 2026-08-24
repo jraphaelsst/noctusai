@@ -482,6 +482,15 @@ export interface DocumentoChecklist {
    * between the two is the measurement (migration 071).
    */
   nome_registro?: string | null;
+  /**
+   * The current value behind each TYPED item (`rg`/`cpf` are absent — they are
+   * satisfied by uploading, not typing).
+   *
+   * Rides on the checklist response rather than a second endpoint: the card
+   * already fetches this once, and the form that edits these values sits
+   * directly under the list of which are missing.
+   */
+  valores?: Record<string, string | null>;
 }
 
 // ─── Compradores / partes do atendimento (migration 073) ──────────────────

@@ -37,6 +37,7 @@ import {
   useChecklists,
   useCompradorMutations,
   useCompradores,
+  useDadosPessoaisMutation,
   useAgendamentoMutations,
   useAgendamentos,
   useDocumentoChecklist,
@@ -104,6 +105,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const sugestaoMutation = useExtracaoSugestaoMutation(id ?? "__none__");
   const compradores = useCompradores(id);
   const compradorMutations = useCompradorMutations(id ?? "__none__");
+  const dadosPessoaisMutation = useDadosPessoaisMutation(id ?? "__none__");
 
   const timelineEntries = flattenTimeline(timeline.data?.pages);
 
@@ -300,6 +302,14 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         )
       }
       uploadingDocumento={documentoMutations.upload.isPending}
+      dadosPessoais={documentoChecklist.data?.valores ?? {}}
+      dadosPessoaisSaving={dadosPessoaisMutation.isPending}
+      onSaveDadosPessoais={(valores) =>
+        dadosPessoaisMutation.mutate(valores, {
+          onError: (err) =>
+            toastServerError(err, "Não foi possível salvar os dados."),
+        })
+      }
       compradores={compradores.data?.items ?? []}
       compradoresLoading={compradores.isPending || compradores.isFetching}
       onAdicionarComprador={() => setCompradorDialogOpen(true)}

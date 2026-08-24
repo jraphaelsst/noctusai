@@ -225,6 +225,88 @@ class TestFieldsTickThemselves:
         )
         assert _items(client, cid)["data_nascimento"]["concluido"] is True
 
+    def test_patching_celular_and_profissao_ticks_them(self, client, scoped):
+        """The two items migration 073 added, through the same PATCH — no
+        checklist call, no hook, nothing to remember to wire."""
+        from app.routers.clientes_router import get_clientes_client
+
+        cid = _seed(scoped)
+        clientes_scoped = get_clientes_client()
+        clientes_scoped.set_table_data("clientes", [cliente_row(cid)])
+        antes = _items(client, cid)
+        assert antes["celular"]["concluido"] is False
+        assert antes["profissao"]["concluido"] is False
+
+        r = client.patch(
+            f"/api/clientes/{cid}",
+            json={"celular": "+5511977776666", "profissao": "Engenheiro"},
+            headers=_auth(),
+        )
+        assert r.status_code == 200, r.text
+
+        scoped.set_table_data(
+            "clientes", clientes_scoped.table("clientes").select("*").execute().data
+        )
+        depois = _items(client, cid)
+        assert depois["celular"]["concluido"] is True
+        assert depois["profissao"]["concluido"] is True
+
+    def test_patching_genero_stamps_manual_provenance(self, client, scoped):
+        """🔴 The server decides a value was typed — the caller may not say so.
+
+        `genero` became extractable from an RG in migration 073, and a manual
+        value outranks every later automatic read. That is only safe while the
+        client cannot assert `genero_origem` itself: a caller that could would
+        be able to disguise a machine guess as a human's entry, or the reverse.
+        Same rule `data_nascimento` has had since 068.
+        """
+        from app.routers.clientes_router import get_clientes_client
+
+        cid = _seed(scoped)
+        clientes_scoped = get_clientes_client()
+        clientes_scoped.set_table_data("clientes", [cliente_row(cid)])
+
+        r = client.patch(
+            f"/api/clientes/{cid}",
+            json={"genero": "Masculino"},
+            headers=_auth(),
+        )
+        assert r.status_code == 200, r.text
+        row = clientes_scoped.table("clientes").select("*").execute().data[0]
+        assert row["genero"] == "Masculino"
+        assert row["genero_origem"] == "manual"
+
+    def test_clearing_genero_clears_its_provenance(self, client, scoped):
+        """An origin pointing at a value that no longer exists is a lie the
+        extractor would then honour."""
+        from app.routers.clientes_router import get_clientes_client
+
+        cid = _seed(scoped)
+        clientes_scoped = get_clientes_client()
+        clientes_scoped.set_table_data(
+            "clientes",
+            [cliente_row(cid, genero="Masculino", genero_origem="manual")],
+        )
+        r = client.patch(
+            f"/api/clientes/{cid}", json={"genero": None}, headers=_auth()
+        )
+        assert r.status_code == 200, r.text
+        row = clientes_scoped.table("clientes").select("*").execute().data[0]
+        assert row["genero_origem"] is None
+
+    def test_genero_origem_is_not_accepted_from_the_body(self, client, scoped):
+        """StrictHttpModel refuses the unknown field outright."""
+        from app.routers.clientes_router import get_clientes_client
+
+        cid = _seed(scoped)
+        get_clientes_client().set_table_data("clientes", [cliente_row(cid)])
+        r = client.patch(
+            f"/api/clientes/{cid}",
+            json={"genero": "Masculino", "genero_origem": "rg"},
+            headers=_auth(),
+        )
+        assert r.status_code == 422
+
     def test_nome_completo_is_not_satisfied_by_the_channel_supplied_nome(
         self, client, scoped
     ):
