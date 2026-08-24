@@ -626,9 +626,19 @@ simply ask for one row without getting one person.
 Clientes tab reads this family live. Seven fields in the list, the four
 demographic ones only on opening one named client, nothing persisted, admin
 only, every call audited. The design and its enforcement points are in § 5.1;
-the residual controller decisions (legal basis, the Vista DPA, audit-log
-retention) are recorded in `LGPD-WARNINGS.md` — they are the user's to make and
-do not block a read-only, non-persisting surface.
+the three residual controller decisions were **answered by the owner on
+2026-08-24** and are recorded in `LGPD-WARNINGS.md`: NoctusAI acts as
+**operador** on the agency's basis (art. 39) rather than declaring its own; the
+agency's existing Vista contract covers the read-through, so no separate DPA is
+sought; and the `erp.user_actions_log` rows are **retained indefinitely** — an
+explicitly accepted risk, since those rows are themselves personal data about
+both the admin and the titular and are now the one place this feature retains
+personal data without limit.
+
+⚠️ The operador answer is **conditional on the surface staying read-only**.
+Storing, deriving from, or re-purposing this data is controlador behaviour and
+reopens the basis question. The minimisation split and the no-persistence rule
+are what hold that line — treat them as compliance controls, not as style.
 
 **🔴 No `DataAtualizacao` ⇒ `clientes` cannot be delta-synced.** Unlike
 `/imoveis` (§ 2 `filter`), there is no modification timestamp to filter on,
