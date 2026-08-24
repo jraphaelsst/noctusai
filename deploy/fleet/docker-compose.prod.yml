@@ -55,30 +55,62 @@ x-cache-env: &cache-env
   NOCTUS_CACHE_BACKEND: postgres
   NOCTUS_CACHE_POSTGRES_DSN: postgresql://noctus_cache:${NOCTUS_CACHE_PG_PASSWORD}@noctus-cache-pg:5432/noctus_cache
 
-# Shared per-service prod defaults (YAML anchor — DRY across 9 services).
+# The ONE prod environment block, anchored on its own so a service needing
+# an EXTRA key merges this instead of re-declaring `environment:`.
+#
+# Re-declaring shadows the whole inherited mapping rather than adding to it,
+# and the failure is silent. `dev-team` did exactly that: it re-declared
+# `environment:` for one API key, merged `*cache-env` back to repair the
+# cache wiring someone had already noticed going missing — and then silently
+# lost `NOCTUS_SCHEDULERS_ENABLED` when that line was added to the anchor
+# later, because nothing re-checks a hand-copied subset. Merging THIS anchor
+# cannot drift: a key added here reaches every service that merges it.
+x-prod-env: &prod-env
+  <<: *cache-env
+  # Authorises this container to RUN scheduled jobs. Without it,
+  # `noctusai_lib.api.scheduler.start_scheduler()` registers every job and
+  # starts none.
+  #
+  # 🔴 This MUST stay here and NEVER move into `.env`. The entire guarantee
+  # is that the file a developer copies to a laptop does not carry it — a
+  # backend left running locally against the production `.env` fired the
+  # nightly Vista sync and wrote to the live catalog on 2026-08-22. `.env`
+  # is shared with laptops; this compose block is not.
+  #
+  # Losing this line does NOT fail loudly at deploy — the container starts
+  # healthy and silently runs zero jobs. `start_scheduler` logs at ERROR
+  # when it finds a deploy context without the marker; that log is the
+  # detection.
+  NOCTUS_SCHEDULERS_ENABLED: "1"
+
+  # Prod shape, pinned here for the SAME reason as the line above: `.env` is
+  # the file a developer copies to a laptop, this compose block is not.
+  #
+  # `.env` on the VPS carried `DEBUG=true`, and `settings.debug` gates three
+  # unrelated things at once in the seed:
+  #   • `docs_url` / `redoc_url` — `/docs` and `/openapi.json` were answering
+  #     200 on the PUBLIC internet for all seven products (verified through
+  #     the CF edge, 2026-08-24). The whole API surface, published.
+  #   • log LEVEL — DEBUG wrote full OpenAI request payloads, customer
+  #     WhatsApp message content included, into `docker logs`.
+  #   • `settings.is_production` — reported False in production, so Sentry
+  #     tagged every event `environment=development` and sampled at 100%.
+  #
+  # `environment:` wins over `env_file:` in compose, so this holds regardless
+  # of what `.env` says — the invariant lives in the repo, not on the host.
+  #
+  # Readable (non-JSON) logs no longer require this flag: set
+  # `NOCTUSAI_JSON_LOGS=0` instead, which changes format ONLY.
+  DEBUG: "false"
+
+# Shared per-service prod defaults (YAML anchor — DRY across the fleet).
 # env_file the root .env (one source of runtime config + secrets);
-# environment carries cache-backend wiring (in-fleet alias);
-# restart unless-stopped; join the external noctus-net.
+# environment is the *prod-env block above; restart unless-stopped;
+# join the external noctus-net.
 x-prod-defaults: &prod-defaults
   env_file:
     - ../../.env
-  environment:
-    <<: *cache-env
-    # Authorises this container to RUN scheduled jobs. Without it,
-    # `noctusai_lib.api.scheduler.start_scheduler()` registers every job and
-    # starts none.
-    #
-    # 🔴 This MUST stay here and NEVER move into `.env`. The entire guarantee
-    # is that the file a developer copies to a laptop does not carry it — a
-    # backend left running locally against the production `.env` fired the
-    # nightly Vista sync and wrote to the live catalog on 2026-08-22. `.env`
-    # is shared with laptops; this compose block is not.
-    #
-    # Losing this line does NOT fail loudly at deploy — the container starts
-    # healthy and silently runs zero jobs. `start_scheduler` logs at ERROR
-    # when it finds a deploy context without the marker; that log is the
-    # detection.
-    NOCTUS_SCHEDULERS_ENABLED: "1"
+  environment: *prod-env
   restart: unless-stopped
   networks:
     - noctus-net
@@ -200,11 +232,11 @@ services:
     <<: *prod-defaults
     image: ghcr.io/jraphaelsst/noctus-dev-team:${NOCTUS_IMAGE_TAG:-latest}
     container_name: noctus-dev-team
-    # YAML map-merge: cache-env first, then ANTHROPIC_API_KEY. Without the
-    # `<<:` merge, defining `environment:` here would shadow the *prod-defaults
-    # anchor's environment block entirely (dev-team would lose the cache wiring).
+    # Merge the FULL prod env, then add this service's extra key. Merging the
+    # `*cache-env` subset here (as this did until 2026-08-24) silently dropped
+    # every other prod-defaults key — `NOCTUS_SCHEDULERS_ENABLED` among them.
     environment:
-      <<: *cache-env
+      <<: *prod-env
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     expose:
       - "8009"
