@@ -16,6 +16,7 @@ _NOTA_ID = str(uuid4())
 _CHECKLIST_ID = str(uuid4())
 _ITEM_ID = str(uuid4())
 _DOCUMENTO_ID = str(uuid4())
+_PARTE_ID = str(uuid4())
 
 
 def test_every_card_hub_route_requires_auth(anon_client):
@@ -40,6 +41,7 @@ def test_every_card_hub_route_requires_auth(anon_client):
             .replace("{checklist_id}", _CHECKLIST_ID)
             .replace("{item_id}", _ITEM_ID)
             .replace("{documento_id}", _DOCUMENTO_ID)
+            .replace("{parte_id}", _PARTE_ID)
         )
         kwargs = {}
         if method in ("post", "patch", "put") and "documentos" not in concrete.split("/")[-2:]:

@@ -39,6 +39,7 @@ from fastapi import (
 from app.dependencies import coerce_org_uuid, get_current_user_org
 
 from app.modules.card_hub import agendamentos_service as agenda_svc
+from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
 from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
@@ -50,6 +51,7 @@ from app.modules.card_hub.deps import (
     get_storage_backend,
 )
 from app.modules.card_hub.schemas import (
+    CompradorCreateBody,
     AgendamentoCreateBody,
     AgendamentoPatchBody,
     ChecklistCreateBody,
@@ -615,6 +617,63 @@ async def get_card_route(
 ) -> dict:
     _user, org_id = _auth_parts(auth)
     return timeline_service.get_card_resumo(client, org_id, cliente_id)
+
+
+# ─── Compradores / partes do atendimento (migration 073) ─────────────────────
+#
+# Mounted under `/api/clientes/{cliente_id}` rather than under the atendimento,
+# following `agendamentos`: the CARD is the surface these are managed from, the
+# card is a person, and making the frontend resolve an atendimento id before it
+# can render a panel would push a decision the service already knows how to
+# make out into every caller.
+
+
+@router.get("/{cliente_id}/compradores")
+async def list_compradores_route(
+    cliente_id: UUID,
+    atendimento_id: Optional[UUID] = None,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return compradores_svc.listar(
+        client, org_id, cliente_id, atendimento_id=atendimento_id
+    )
+
+
+@router.post("/{cliente_id}/compradores", status_code=201)
+async def create_comprador_route(
+    cliente_id: UUID,
+    body: CompradorCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    # `AmbiguousAtendimento` is an AppException carrying its own 409 + the
+    # candidate ids, so it needs no translation here — same as agendamentos.
+    return compradores_svc.adicionar(
+        client,
+        org_id,
+        cliente_id,
+        parte_cliente_id=body.cliente_id,
+        nome=body.nome,
+        celular=body.celular,
+        papel=body.papel or compradores_svc.PAPEL_PADRAO,
+        observacao=body.observacao,
+        atendimento_id=body.atendimento_id,
+        user_id=getattr(user, "id", None),
+    )
+
+
+@router.delete("/{cliente_id}/compradores/{parte_id}", status_code=204)
+async def delete_comprador_route(
+    cliente_id: UUID,
+    parte_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    _user, org_id = _auth_parts(auth)
+    compradores_svc.remover(client, org_id, cliente_id, parte_id)
 
 
 __all__ = ["router"]

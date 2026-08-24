@@ -227,3 +227,34 @@ class DocumentoChecklistPatchBody(StrictHttpModel):
     """
 
     concluido: Optional[bool]
+
+
+# ─── Compradores / partes do atendimento (migration 073) ─────────────────────
+
+
+class CompradorCreateBody(StrictHttpModel):
+    """Add another person to this card's atendimento.
+
+    EITHER `cliente_id` (link someone already in this org — the spouse who is
+    herself a lead) OR `nome` (create her). Never both: when the two disagree
+    the caller's intent is unknowable, and picking one silently is how a
+    contract ends up naming the wrong person. The exclusivity is checked in the
+    service, which is also where the 422 is raised, so there is one rule rather
+    than a validator here and a check there.
+
+    `papel` is validated against `compradores_service.PAPEIS` — the definition
+    — rather than re-listed as a Literal here, for the same reason the
+    checklist keys are not re-listed in `DocumentoChecklistPatchBody`.
+
+    `atendimento_id` is optional and normally omitted: the service resolves the
+    person's single open atendimento. It is accepted for the case that
+    resolution refuses — someone with two open deals — where only the user can
+    say which one this comprador belongs to.
+    """
+
+    cliente_id: Optional[UUID] = None
+    nome: Optional[str] = Field(default=None, max_length=255)
+    celular: Optional[str] = Field(default=None, max_length=32)
+    papel: Optional[str] = None
+    observacao: Optional[str] = Field(default=None, max_length=2000)
+    atendimento_id: Optional[UUID] = None
