@@ -42,17 +42,62 @@ def _discover_migration_files(repo_root: Path) -> list[Path]:
     return files
 
 
-def _find_repo_root(start: Path | None = None) -> Path:
-    """Walk up from start (default: this file) looking for a `products/` dir sibling
-    to a `CLAUDE.md` — our repo-root shape."""
-    candidate = (start or Path(__file__)).resolve()
+def _walk_up_for_root(start: Path) -> Path | None:
+    """Nearest ancestor of `start` (inclusive) with our repo-root shape."""
+    candidate = start.resolve()
     for parent in [candidate] + list(candidate.parents):
         if (parent / "CLAUDE.md").is_file() and (parent / "products").is_dir():
             return parent
-    # Fallback: env override for non-standard layouts / test harnesses.
-    env_root = os.environ.get("NOCTUSAI_REPO_ROOT")
-    if env_root:
-        return Path(env_root).resolve()
+    return None
+
+
+def _find_repo_root(start: Path | None = None) -> Path:
+    """Locate the repo whose migrations describe the schema under test.
+
+    🔴 THE ORDER HERE IS THE WHOLE POINT — it was wrong, and the failure
+    was SILENT.
+
+    This used to walk up from `__file__` and treat `NOCTUSAI_REPO_ROOT` as
+    a last-resort fallback. Two consequences, both bad:
+
+    1. **The "override" did not override.** The walk from `__file__`
+       succeeds in any normal layout, so the env var was only ever read
+       when it could not possibly help. Setting it deliberately did
+       nothing.
+
+    2. **A worktree validated the PRIMARY checkout's schema.** Running a
+       product's tests from `.claude/worktrees/<slug>/` while
+       `noctusai_lib` resolved to the primary tree (the default, unless
+       PYTHONPATH is pointed at the worktree) made `__file__` land in the
+       PRIMARY — so `get_schema_map()` parsed the PRIMARY's migrations. A
+       column introduced by a migration that exists ONLY in the worktree
+       was therefore unknown to the validator, which quietly skipped the
+       assertion instead of failing. Tests went green **for the wrong
+       reason** (2026-08-23; ledger `bb371551`).
+
+    So resolution is now, in order:
+
+    1. `NOCTUSAI_REPO_ROOT` — an explicit answer wins over any guess.
+    2. The **current working directory's** enclosing repo. This is the
+       tree whose migrations the runner meant, because pytest is invoked
+       from it; it is right in a worktree and identical to (3) elsewhere.
+    3. This file's own enclosing repo — the historical behaviour, kept as
+       the fallback for callers with an unrelated cwd.
+    """
+    explicit = os.environ.get("NOCTUSAI_REPO_ROOT")
+    if explicit:
+        return Path(explicit).resolve()
+
+    if start is not None:
+        found = _walk_up_for_root(start)
+        if found is not None:
+            return found
+
+    for origin in (Path.cwd(), Path(__file__)):
+        found = _walk_up_for_root(origin)
+        if found is not None:
+            return found
+
     raise RuntimeError(
         "mock-schema: could not locate repo root (no parent with CLAUDE.md + products/). "
         "Set NOCTUSAI_REPO_ROOT to override."
