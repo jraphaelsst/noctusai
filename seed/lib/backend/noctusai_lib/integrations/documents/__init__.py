@@ -48,6 +48,7 @@ consumer must honour both:
 from noctusai_lib.integrations.documents.birthdate import find_birthdate, normalize
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
 from noctusai_lib.integrations.documents.gender import find_gender
+from noctusai_lib.integrations.documents.matricula import find_matricula
 from noctusai_lib.integrations.documents.name import find_name, looks_like_a_name
 from noctusai_lib.integrations.documents.fake import (
     FakeIdentityExtractor,
@@ -88,6 +89,7 @@ __all__ = [
     "find_birthdate",
     "find_name",
     "find_gender",
+    "find_matricula",
     "looks_like_a_name",
     "make_identity_extractor",
     "normalize",
