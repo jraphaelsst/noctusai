@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 069 -- social_wiring: sync_leases, a cross-process run lock
+-- Migration 070 -- social_wiring: sync_leases, a cross-process run lock
 --
 -- WHY NOT `pg_advisory_lock`
 -- --------------------------
