@@ -364,8 +364,15 @@ def create_product_app(
         title=f"NoctusAI {name} API",
         description=f"Backend API for {name}",
         version=version,
+        # All THREE, not two. `docs_url=None` only removes the Swagger *page*;
+        # FastAPI keeps serving `openapi_url` regardless, and that is the half
+        # that matters — the browsable page is a convenience, the JSON schema is
+        # the machine-readable map of every route, parameter, and response model.
+        # Prod had all three open (2026-08-24); gating only the first two would
+        # have closed the door and left the blueprint on the step.
         docs_url="/docs" if settings.debug else None,
         redoc_url="/redoc" if settings.debug else None,
+        openapi_url="/openapi.json" if settings.debug else None,
         lifespan=lifespan if has_lifespan else None,
     )
 
