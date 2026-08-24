@@ -15,7 +15,11 @@ from unittest.mock import patch
 
 import pytest
 
-from noctusai_lib.logging_config import auto_configure_for_cli, configure_logging
+from noctusai_lib.logging_config import (
+    auto_configure_for_cli,
+    configure_logging,
+    resolve_json_logs,
+)
 
 
 _THIRD_PARTY_LOGGERS = ("uvicorn.access", "httpx", "httpcore", "hpack")
@@ -156,3 +160,45 @@ class TestAutoConfigureForCli:
             with patch.dict(os.environ, {"NOCTUSAI_DEBUG": val}, clear=False):
                 auto_configure_for_cli("test")
             assert logging.getLogger().level == logging.INFO, f"failed for {val!r}"
+
+
+class TestResolveJsonLogs:
+    """Log FORMAT resolved independently of log LEVEL.
+
+    These were one knob until 2026-08-24: the seed passed
+    `json_logs=not settings.debug`, so wanting readable logs in production
+    meant setting `DEBUG=true` — which also dropped the level to DEBUG and
+    published `/docs` and `/openapi.json` to the public internet. Production
+    ran that way. The `default` parameter is the whole point: UNSET must mean
+    "caller decides", not "false".
+    """
+
+    def _clear(self):
+        os.environ.pop("NOCTUSAI_JSON_LOGS", None)
+
+    def test_unset_returns_the_callers_default_either_way(self):
+        with patch.dict(os.environ, {}, clear=False):
+            self._clear()
+            assert resolve_json_logs(default=True) is True
+            assert resolve_json_logs(default=False) is False
+
+    def test_explicit_true_overrides_a_false_default(self):
+        for val in ("1", "true", "TRUE", "yes", "on", " On "):
+            with patch.dict(os.environ, {"NOCTUSAI_JSON_LOGS": val}, clear=False):
+                assert resolve_json_logs(default=False) is True, f"failed for {val!r}"
+
+    def test_explicit_false_overrides_a_true_default(self):
+        """The case that matters in prod: readable logs WITHOUT setting DEBUG."""
+        for val in ("0", "false", "no", "off", " OFF "):
+            with patch.dict(os.environ, {"NOCTUSAI_JSON_LOGS": val}, clear=False):
+                assert resolve_json_logs(default=True) is False, f"failed for {val!r}"
+
+    def test_an_unrecognised_value_falls_back_to_the_default(self):
+        """Not silently false — an unparseable value must not flip the shape."""
+        with patch.dict(os.environ, {"NOCTUSAI_JSON_LOGS": "maybe"}, clear=False):
+            assert resolve_json_logs(default=True) is True
+            assert resolve_json_logs(default=False) is False
+
+    def test_empty_string_is_treated_as_unset(self):
+        with patch.dict(os.environ, {"NOCTUSAI_JSON_LOGS": ""}, clear=False):
+            assert resolve_json_logs(default=True) is True

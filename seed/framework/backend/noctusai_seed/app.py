@@ -32,7 +32,7 @@ from typing import Callable, Mapping, Optional, Sequence
 from fastapi import FastAPI
 
 from noctusai_lib.domain.ai.consent import configure_consent_module
-from noctusai_lib.logging_config import configure_logging
+from noctusai_lib.logging_config import configure_logging, resolve_json_logs
 from noctusai_lib.api.app_factory import configure_app
 from noctusai_lib.config.credentials import configure_credentials
 from noctusai_lib.config.deploy_config import (
@@ -179,7 +179,16 @@ def create_product_app(
     """
     # 1. Configure logging
     app_name = schema.replace("_", "-").replace(" ", "-").lower()
-    configure_logging(debug=settings.debug, json_logs=not settings.debug, app_name=app_name)
+    # Format is resolved SEPARATELY from level. `not settings.debug` stays the
+    # default (JSON in prod, readable in dev), but `NOCTUSAI_JSON_LOGS` can
+    # override it without touching `DEBUG` — which also gates the log level and
+    # `/docs` exposure. Wanting readable prod logs must never cost an exposed
+    # OpenAPI schema, which is precisely what it cost until 2026-08-24.
+    configure_logging(
+        debug=settings.debug,
+        json_logs=resolve_json_logs(default=not settings.debug),
+        app_name=app_name,
+    )
 
     # 1a. Deploy-config guard — fail loud at boot if a required-in-prod config
     #     key is unset in a deploy context (no-op in dev). The seam every product

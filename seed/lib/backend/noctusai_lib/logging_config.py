@@ -179,6 +179,39 @@ def configure_logging(
     logging.getLogger("hpack").setLevel(logging.WARNING)
 
 
+#: Accepted spellings for an explicit boolean env var. Module constants
+#: because two callers now parse the SAME variable, and a divergence
+#: between them would be invisible: the CLI would honour
+#: `NOCTUSAI_JSON_LOGS=on` while a backend silently ignored it.
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off"})
+
+
+def resolve_json_logs(default: bool) -> bool:
+    """Tri-state resolution of ``NOCTUSAI_JSON_LOGS``: set-true / set-false / unset.
+
+    Log FORMAT and log LEVEL are different questions, and the backend used to
+    conflate them — ``noctusai_seed.app`` passed ``json_logs=not settings.debug``,
+    so the only way to get human-readable logs out of a product was to turn
+    ``DEBUG`` on. That also drops the level to DEBUG *and* publishes ``/docs``.
+    Production ran exactly that way until 2026-08-24: the full OpenAPI schema of
+    all seven products was reachable on the public internet, and customer
+    message payloads were being written to container logs, because the readable
+    log format had no switch of its own.
+
+    An UNSET variable must mean "caller decides", not "false" — hence the
+    ``default`` parameter. The CLI passes ``False`` (humans read ``--validate``
+    output directly); a backend passes ``not settings.debug`` (JSON in prod,
+    readable in dev). Either can now be overridden without touching ``DEBUG``.
+    """
+    raw = os.environ.get("NOCTUSAI_JSON_LOGS", "").strip().lower()
+    if raw in _TRUTHY:
+        return True
+    if raw in _FALSY:
+        return False
+    return default
+
+
 def auto_configure_for_cli(
     app_name: str = "noctusai-cli",
     *,
@@ -208,15 +241,9 @@ def auto_configure_for_cli(
     Idempotent: safe to call multiple times.
     """
     debug_env = os.environ.get("NOCTUSAI_DEBUG", "").strip().lower()
-    debug = debug_env in {"1", "true", "yes", "on"}
-    json_env = os.environ.get("NOCTUSAI_JSON_LOGS", "").strip().lower()
-    if json_env in {"1", "true", "yes", "on"}:
-        json_logs = True
-    elif json_env in {"0", "false", "no", "off"}:
-        json_logs = False
-    else:
-        # CLI default: human-readable. Backend prod default (JSON) doesn't
-        # apply because CLI output is read directly by humans.
-        json_logs = False
+    debug = debug_env in _TRUTHY
+    # CLI default: human-readable. The backend prod default (JSON) does not
+    # apply because CLI output is read directly by humans.
+    json_logs = resolve_json_logs(default=False)
     stream = sys.stderr if use_stderr else None
     configure_logging(debug=debug, json_logs=json_logs, app_name=app_name, stream=stream)
