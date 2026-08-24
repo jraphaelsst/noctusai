@@ -139,3 +139,119 @@ class TestProcessarExtracao:
              patch("app.services.matricula_service._pdf_to_images", return_value=mock_images), \
              patch("app.services.matricula_service._ocr_page", side_effect=mock_ocr):
             await processar_extracao("ext-003", b"fake-pdf", "org-001", mock_db)
+
+
+
+# ---------------------------------------------------------------------------
+# Rung 1 — the PDF's own text layer
+# ---------------------------------------------------------------------------
+
+from app.services import matricula_service  # noqa: E402
+
+
+class _RecordingDB:
+    """Records what the service wrote, which MockSupabaseClient swallows.
+
+    These tests are about the OUTCOME written to the row, so the double has
+    to keep it.
+    """
+
+    def __init__(self):
+        self.updates: list[dict] = []
+
+    def table(self, _name):
+        return self
+
+    def update(self, payload):
+        self.updates.append(payload)
+        return self
+
+    def eq(self, _col, _val):
+        return self
+
+    def execute(self):
+        return MagicMock(data=[])
+
+    @property
+    def last(self) -> dict:
+        return self.updates[-1]
+
+
+class TestTextLayerRung:
+    """🔴 The rung that was missing until 2026-08-24.
+
+    Every one of these is about NOT calling vision. A digitally-issued
+    matrícula carries exact, machine-readable text; rasterizing it and asking
+    a model to read the picture costs money to produce a worse answer.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_pdf_with_a_text_layer_never_reaches_vision(self):
+        db = _RecordingDB()
+        rendered: list[int] = []
+
+        with patch.object(matricula_service, "_contar_paginas", return_value=2), \
+             patch.object(
+                 matricula_service, "_pdf_to_images",
+                 side_effect=lambda _b: (rendered.append(1), [b"png"])[1],
+             ), \
+             patch("noctusai_lib.integrations.media.extract_pdf_text",
+                   return_value="X" * 500):
+            await matricula_service.processar_extracao("e1", b"%PDF", None, db)
+
+        assert rendered == [], "rasterized a PDF that already had a text layer"
+        assert db.last["status"] == "concluida"
+        assert db.last["texto_extraido"] == "X" * 500
+        assert db.last["num_paginas"] == 2
+
+    @pytest.mark.asyncio
+    async def test_it_works_with_no_openai_key_configured(self):
+        """The reason rung 1 runs BEFORE the credential check.
+
+        An org that has never configured OpenAI can still extract a
+        digitally-issued matrícula. Checking the key first would refuse work
+        we are entirely able to do.
+        """
+        db = _RecordingDB()
+        with patch.object(matricula_service, "_contar_paginas", return_value=1), \
+             patch.object(matricula_service, "resolve_credential", return_value=None), \
+             patch("noctusai_lib.integrations.media.extract_pdf_text",
+                   return_value="Y" * 400):
+            await matricula_service.processar_extracao("e2", b"%PDF", None, db)
+
+        assert db.last["status"] == "concluida"
+
+    def test_a_scan_with_a_smudge_of_text_still_goes_to_vision(self):
+        """A stamp or a signature footer is not a text layer.
+
+        Accepting it would return a few dozen characters of junk as the whole
+        matrícula — a silent, total data loss that looks like success.
+        """
+        with patch("noctusai_lib.integrations.media.extract_pdf_text",
+                   return_value="Assinado digitalmente"):
+            assert matricula_service._texto_da_camada(b"%PDF", 3) is None
+
+    def test_a_real_text_layer_clears_the_bar(self):
+        with patch("noctusai_lib.integrations.media.extract_pdf_text",
+                   return_value="A" * 4000):
+            assert matricula_service._texto_da_camada(b"%PDF", 3) == "A" * 4000
+
+    def test_a_text_layer_failure_falls_through_rather_than_erroring(self):
+        """Rung 1 is an optimisation. It must never fail an extraction that
+        rung 2 could have completed."""
+        with patch("noctusai_lib.integrations.media.extract_pdf_text",
+                   side_effect=RuntimeError("mupdf exploded")):
+            assert matricula_service._texto_da_camada(b"%PDF", 1) is None
+
+    def test_zero_pages_is_not_a_text_layer(self):
+        assert matricula_service._texto_da_camada(b"%PDF", 0) is None
+
+    def test_corrupt_bytes_count_as_zero_pages_rather_than_raising(self):
+        assert matricula_service._contar_paginas(b"not a pdf at all") == 0
+
+    @pytest.mark.asyncio
+    async def test_a_corrupt_upload_gets_the_actionable_message(self):
+        db = _RecordingDB()
+        await matricula_service.processar_extracao("e3", b"not a pdf", None, db)
+        assert db.last["status"] == "erro"
+        assert "sem páginas" in db.last["erro_mensagem"]

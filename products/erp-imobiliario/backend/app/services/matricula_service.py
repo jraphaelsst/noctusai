@@ -1,8 +1,30 @@
 """
-Matrícula Text Extractor Service — Converts property registration PDFs to text
-using PyMuPDF for page rendering and the seed vision wrapper for OCR.
+Matrícula Text Extractor Service — property registration PDFs to text.
 
-Pipeline: PDF bytes → PNG per page (PyMuPDF) → seed `analyze_image` OCR → aggregated text.
+THE LADDER
+----------
+1. **The PDF's own text layer** (`noctusai_lib.integrations.media.
+   extract_pdf_text`) — free, exact, no API key required. Cartórios issue
+   digitally-generated matrículas, and those carry a perfectly good text
+   layer.
+2. **Rasterize → vision**, one page at a time (PyMuPDF → seed
+   `analyze_image`) — for scans and photographs, where there is no text
+   layer to read.
+
+🔴 RUNG 1 WAS MISSING UNTIL 2026-08-24, AND THAT WAS THE WHOLE COST PROBLEM.
+This service used to rasterize every page of every PDF and pay for a vision
+call on each one, including for documents whose text was already sitting
+there in machine-readable form. Vision transcription is also *approximate*
+where a text layer is exact, so the old path was paying money to make the
+output worse.
+
+Note what rung 1 does NOT change: the vision rung stays PAGE-BY-PAGE. That
+is not the inefficiency. Vision models consume images, so a PDF must be
+rasterized either way, and the image tokens dominate the bill whether they
+arrive in one request or several. Page-scoped requests also drift and
+truncate less than one long multi-page transcription. The waste was never
+the batching; it was calling vision at all on a document that did not need
+it.
 
 Refactored 2026-05-11 (LLM-ERP rollout, Step A): replaced raw
 `httpx.post("https://api.openai.com/v1/chat/completions", ...)` with
@@ -29,11 +51,62 @@ RENDER_DPI = 200
 # gpt-4.1-mini balances cost + page-throughput; tune here, not at the call site.
 _OCR_MODEL = "gpt-4.1-mini"
 
+#: A scanned page often carries a few dozen characters of junk text (a header
+#: stamp, a digital-signature footer) without being machine-readable at all.
+#: Requiring a real average per page is what separates "this PDF has a text
+#: layer" from "this PDF has a smudge of text on it". A genuine matrícula page
+#: runs to thousands of characters, so the bar is deliberately low and still
+#: unambiguous.
+MIN_CHARS_POR_PAGINA = 100
+
 _OCR_PROMPT = (
     "Extract the exact text from the provided image. "
     "Return only the text content exactly as it appears in the document, "
     "without corrections, formatting changes, or any modifications."
 )
+
+
+def _contar_paginas(pdf_bytes: bytes) -> int:
+    """Page count without rendering anything.
+
+    Returns 0 for bytes PyMuPDF cannot open at all, so a corrupt upload
+    reaches the "PDF sem páginas" message the user can act on rather than
+    the generic "Erro inesperado" from the outer handler.
+    """
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        logger.debug("matricula: could not open PDF", exc_info=True)
+        return 0
+    try:
+        return doc.page_count
+    finally:
+        doc.close()
+
+
+def _texto_da_camada(pdf_bytes: bytes, num_paginas: int) -> Optional[str]:
+    """Rung 1: the PDF's own text layer, or None if it does not really have one.
+
+    Never raises — a failure here must fall through to the vision rung rather
+    than failing an extraction that rung 2 could have completed.
+    """
+    if num_paginas <= 0:
+        return None
+    try:
+        from noctusai_lib.integrations.media import extract_pdf_text
+
+        texto = extract_pdf_text(pdf_bytes) or ""
+    except ImportError:
+        logger.debug("matricula: extract_pdf_text unavailable — using vision")
+        return None
+    except Exception:
+        logger.debug("matricula: text-layer extraction failed", exc_info=True)
+        return None
+
+    limpo = texto.strip()
+    if len(limpo) < MIN_CHARS_POR_PAGINA * num_paginas:
+        return None
+    return limpo
 
 
 def _pdf_to_images(pdf_bytes: bytes) -> list[bytes]:
@@ -81,8 +154,8 @@ async def processar_extracao(extracao_id: str, pdf_bytes: bytes, org_id: Optiona
     """Full extraction pipeline — runs as a background task.
 
     1. Update status to processando
-    2. Convert PDF to images
-    3. OCR each page with OpenAI Vision
+    2. Try the PDF's own text layer — free, exact, no API key
+    3. Failing that: convert to images and OCR each page with vision
     4. Aggregate and store extracted text
     """
     try:
@@ -90,6 +163,34 @@ async def processar_extracao(extracao_id: str, pdf_bytes: bytes, org_id: Optiona
             "status": "processando",
         }).eq("id", extracao_id).execute()
 
+        # ── Rung 1: the PDF's own text layer ─────────────────────────
+        #
+        # Deliberately BEFORE the API-key check: a digitally-issued matrícula
+        # needs no key, no vision call and no rasterization, so an org that
+        # has not configured OpenAI at all can still extract one. Checking the
+        # key first would refuse work we are perfectly able to do.
+        num_paginas = _contar_paginas(pdf_bytes)
+        if num_paginas == 0:
+            db.table("matricula_extracoes").update({
+                "status": "erro",
+                "erro_mensagem": "PDF sem páginas — verifique se o arquivo não está corrompido.",
+            }).eq("id", extracao_id).execute()
+            return
+
+        texto_camada = _texto_da_camada(pdf_bytes, num_paginas)
+        if texto_camada:
+            logger.info(
+                "Matrícula %s: text layer used — %d pages, %d chars, 0 vision calls",
+                extracao_id, num_paginas, len(texto_camada),
+            )
+            db.table("matricula_extracoes").update({
+                "status": "concluida",
+                "texto_extraido": texto_camada,
+                "num_paginas": num_paginas,
+            }).eq("id", extracao_id).execute()
+            return
+
+        # ── Rung 2: rasterize → vision, one page at a time ────────────
         # Validate OpenAI key
         api_key = resolve_credential("openai_api_key", org_id)
         if not api_key:
@@ -110,13 +211,6 @@ async def processar_extracao(extracao_id: str, pdf_bytes: bytes, org_id: Optiona
         db.table("matricula_extracoes").update({
             "num_paginas": num_paginas,
         }).eq("id", extracao_id).execute()
-
-        if num_paginas == 0:
-            db.table("matricula_extracoes").update({
-                "status": "erro",
-                "erro_mensagem": "PDF sem páginas — verifique se o arquivo não está corrompido.",
-            }).eq("id", extracao_id).execute()
-            return
 
         # OCR each page (sequential to respect rate limits).
         # Seed `analyze_image` owns its own httpx client + provider routing;
@@ -146,10 +240,17 @@ async def processar_extracao(extracao_id: str, pdf_bytes: bytes, org_id: Optiona
 
 
 def check_required_credentials(org_id: Optional[str] = None) -> list[str]:
-    """Check which required credentials are missing for matrícula extraction."""
+    """Check which required credentials are missing for matrícula extraction.
+
+    Still reports the key as required: it is needed for any SCANNED matrícula,
+    and the caller cannot know in advance which kind will be uploaded. Since
+    rung 1 landed, a digitally-issued PDF will extract without it — so this is
+    a warning about what may fail, not a hard precondition for every document.
+    """
     missing = []
     if not resolve_credential("openai_api_key", org_id):
         missing.append(
-            "OpenAI API Key não configurada — necessária para extração de texto via IA."
+            "OpenAI API Key não configurada — necessária para extração de "
+            "matrículas digitalizadas (PDFs com camada de texto não precisam)."
         )
     return missing
