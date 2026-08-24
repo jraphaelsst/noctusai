@@ -76,7 +76,103 @@ class TestDerivarIsPure:
         """No item may be silently underivable — that would be a checkbox
         nothing can ever tick except by hand."""
         for item in svc.ITENS:
-            assert ("campos" in item) ^ ("documento" in item), item["key"]
+            de_cliente = ("campos" in item) or ("fontes" in item)
+            assert de_cliente ^ ("documento" in item), item["key"]
+
+
+class TestCelularEEmailReadTheRegistrationKey:
+    """🔴 `chave_canonica` holds a phone OR an email, and `chave_tipo` decides.
+
+    These are the tests that stop the obvious wrong build: reading
+    `chave_canonica` for both items. That version ticks "Celular" with an email
+    address for every email-keyed cliente — a green checkbox over a fact that is
+    not there, which is the exact failure the derived checklist exists to make
+    impossible.
+    """
+
+    def test_a_phone_keyed_cliente_has_their_celular_already(self):
+        out = svc.derivar(
+            {"chave_canonica": "+5511999998888", "chave_tipo": "telefone"},
+            frozenset(),
+        )
+        assert out["celular"] is True
+        assert out["email"] is False
+
+    def test_an_email_keyed_cliente_has_their_email_already(self):
+        out = svc.derivar(
+            {"chave_canonica": "ana@example.com", "chave_tipo": "email"},
+            frozenset(),
+        )
+        assert out["email"] is True
+        assert out["celular"] is False
+
+    def test_an_email_key_never_satisfies_celular(self):
+        """The whole reason `fontes` exists rather than a second `campos`."""
+        out = svc.derivar(
+            {"chave_canonica": "ana@example.com", "chave_tipo": "email"},
+            frozenset(),
+        )
+        assert out["celular"] is False
+
+    def test_a_keyless_cliente_satisfies_neither(self):
+        out = svc.derivar({"chave_canonica": None, "chave_tipo": None}, frozenset())
+        assert out["celular"] is False
+        assert out["email"] is False
+
+    def test_an_explicit_celular_column_ticks_it_without_any_key(self):
+        """The email-keyed cliente's only way to hold a phone (migration 073)."""
+        out = svc.derivar(
+            {"celular": "+5511977776666", "chave_canonica": "ana@example.com",
+             "chave_tipo": "email"},
+            frozenset(),
+        )
+        assert out["celular"] is True
+
+    def test_valor_de_answers_with_the_same_precedence_as_the_tick(self):
+        """One definition, two readers — the stage gate must not re-implement
+        "does this person have a phone?" and drift from the checkbox."""
+        explicito = {"celular": "+5511977776666",
+                     "chave_canonica": "+5511999998888", "chave_tipo": "telefone"}
+        assert svc.valor_de(explicito, "celular") == "+5511977776666"
+        so_chave = {"chave_canonica": "+5511999998888", "chave_tipo": "telefone"}
+        assert svc.valor_de(so_chave, "celular") == "+5511999998888"
+        assert svc.valor_de({"chave_tipo": "email",
+                             "chave_canonica": "a@b.com"}, "celular") is None
+
+    def test_valor_de_refuses_an_unknown_key(self):
+        import pytest
+        with pytest.raises(KeyError):
+            svc.valor_de({}, "nao_existe")
+
+
+class TestProfissao:
+    def test_profissao_ticks_from_its_own_column(self):
+        assert svc.derivar({"profissao": "Engenheiro"}, frozenset())["profissao"] is True
+
+    def test_profissao_is_not_derived_from_any_document(self):
+        """An RG does not carry a profession, so no upload may tick it."""
+        out = svc.derivar({}, frozenset({"rg", "cpf", "cnh"}))
+        assert out["profissao"] is False
+
+
+class TestGeneroIsNotTickedByADefault:
+    """🔴 The UI pre-selects "Masculino" in the dropdown. That is a convenience
+    for the operator, NOT a value — the column stays NULL until someone saves.
+
+    If an unsaved default counted, this item would read green for every one of
+    the 10.255 existing clientes on the day it shipped, and could never again
+    answer "who still needs checking" — the permanently-green twin of the
+    permanently-red `nome_completo` bug migration 068 had to fix.
+    """
+
+    def test_an_unset_genero_does_not_tick(self):
+        assert svc.derivar({"genero": None}, frozenset())["genero"] is False
+
+    def test_an_empty_genero_does_not_tick(self):
+        assert svc.derivar({"genero": "   "}, frozenset())["genero"] is False
+
+    def test_a_saved_genero_ticks(self):
+        assert svc.derivar({"genero": "Masculino"}, frozenset())["genero"] is True
 
 
 class TestFieldsTickThemselves:

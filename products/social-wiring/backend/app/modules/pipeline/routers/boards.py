@@ -34,6 +34,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import get_current_user_org_unified
+from app.modules.pipeline import stage_gate
 from app.modules.pipeline.configs import (
     ATENDIMENTO_SELECT,
     PIPELINE_FUNIL,
@@ -211,7 +212,7 @@ def mover_atendimento(
 
     current = (
         ctx.db.table("atendimentos")
-        .select("id, status")
+        .select("id, status, cliente_id")
         .eq("id", atendimento_id)
         .eq("org_id", ctx.org_id)
         .execute()
@@ -226,6 +227,24 @@ def mover_atendimento(
         raise ValidationError_(
             f"Atendimento não está aberta (status: {current[0]['status']})."
         )
+
+    # 🔴 ORDER MATTERS: the target stage is validated BEFORE the data gate.
+    #
+    # `move_card` validates the stage itself, so this look-up is redundant for
+    # the happy path — but without it the completeness gate below runs first
+    # and answers a bad/foreign `para_etapa_id` with a 400 about missing client
+    # data instead of the 404 the stage deserves. That trades a precise error
+    # for a misleading one, and tells the caller about OUR record when their
+    # request never named a valid destination. Same reason `mover_processo`
+    # resolves its stage up front.
+    get_stage(ctx.db, PIPELINE_FUNIL, body.para_etapa_id, org_id=ctx.org_id)
+
+    # The card cannot advance while nobody knows who this is or how to reach
+    # them — see `stage_gate` for why the rule is asked of the checklist rather
+    # than re-derived from columns here.
+    pendentes = stage_gate.pendencias(ctx.db, ctx.org_id, current[0].get("cliente_id"))
+    if pendentes:
+        raise ValidationError_(stage_gate.mensagem(pendentes))
 
     row = move_card(
         ctx.db,

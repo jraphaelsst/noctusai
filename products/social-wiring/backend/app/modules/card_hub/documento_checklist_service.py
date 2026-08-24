@@ -14,7 +14,7 @@ something the record cannot show.
 
 🔴 WHY DERIVED RATHER THAN RECOMPUTED ON WRITE
 ----------------------------------------------
-The alternative is a hook that recomputes and stores the six ticks whenever a
+The alternative is a hook that recomputes and stores every tick whenever a
 cliente or a document changes. It loses for a structural reason: leads enter
 this product from Meta leadgen, OLX, ImovelWeb, Vista, the XLSX importer, the
 manual lead form, and the merge/undo path in `clientes_service`. Every one of
@@ -47,8 +47,10 @@ TABLE = "cliente_documento_checklist"
 CLIENTES_TABLE = "clientes"
 DOCUMENTOS_TABLE = "cliente_documentos"
 
-#: The six the user named, in the order they asked for them — the sequence you
-#: actually ask a person for their details in, not alphabetical.
+#: The fields the user named, in the order they asked for them — the sequence
+#: you actually ask a person for their details in, not alphabetical. The order
+#: is presentation AND meaning: it is the order the operator collects them in,
+#: so a card read top-to-bottom shows the next thing to ask for.
 #:
 #: Each item declares HOW it is satisfied, which is what makes the derivation a
 #: property of the definition rather than a parallel lookup table someone has
@@ -56,6 +58,8 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 #:
 #: - ``campos``    — done when ANY of those `clientes` columns is non-empty,
 #:                   listed most-canonical first.
+#: - ``fontes``    — named readers in `_FONTES`, for facts whose location
+#:                   depends on another column. Consulted AFTER `campos`.
 #: - ``documento`` — done when a non-deleted `cliente_documentos` row of that
 #:                   `tipo_documento` exists.
 #:
@@ -86,12 +90,39 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 #: identity document, held for COMPARISON against the registration (migration
 #: 071); letting it satisfy "do we know their name?" would collapse the two
 #: facts the comparison exists to keep apart.
+#: 🔴 WHY `celular` AND `email` NEED A ``fontes`` AND NOT JUST A ``campos``
+#: ------------------------------------------------------------------------
+#: Both facts can live in one of two places, and which one is authoritative
+#: depends on a THIRD column. `clientes.chave_canonica` holds either a phone or
+#: an email, and `chave_tipo` says which — so "the client's phone number" is
+#: `chave_canonica` for a phone-keyed cliente and is emphatically NOT
+#: `chave_canonica` for an email-keyed one, where reading it would tick
+#: "Celular" with an email address.
+#:
+#: A plain `campos` entry cannot express that: it asks only whether a column is
+#: non-empty. So a source is a NAMED READER (`_FONTES`) that gets the whole
+#: row and returns a value or None, and an item may list several. `campos` is
+#: kept for the ordinary case rather than folded into `fontes`, because most
+#: items really are just "is this column filled in?" and spelling that as a
+#: lambda would make the common case the hard one to read.
+#:
+#: Precedence is list order, most-explicit first: an operator-typed `celular`
+#: outranks the registration key, exactly as `nome_completo` outranks `nome`.
 ITENS: tuple[dict[str, Any], ...] = (
     {"key": "nome_completo", "label": "Nome Completo",
      "campos": ("nome_completo", "nome"), "exige": "nome_completo"},
-    {"key": "email", "label": "Email", "campos": ("email",)},
+    # Comes from the registration act and is REQUIRED — `stage_gate.py` refuses
+    # to move an atendimento whose titular has no phone. It ticks itself for
+    # every phone-keyed cliente, which is most of them.
+    {"key": "celular", "label": "Celular",
+     "campos": ("celular",), "fontes": ("chave_telefone",)},
+    # Registration or later input, same shape as celular in the other
+    # direction: an email-keyed cliente already has it.
+    {"key": "email", "label": "Email",
+     "campos": ("email",), "fontes": ("chave_email",)},
     {"key": "data_nascimento", "label": "Data de Nascimento",
      "campos": ("data_nascimento",)},
+    {"key": "profissao", "label": "Profissão", "campos": ("profissao",)},
     {"key": "genero", "label": "Gênero", "campos": ("genero",)},
     {"key": "rg", "label": "RG", "documento": "rg"},
     {"key": "cpf", "label": "CPF", "documento": "cpf"},
@@ -99,16 +130,43 @@ ITENS: tuple[dict[str, Any], ...] = (
 
 ITEM_KEYS = tuple(item["key"] for item in ITENS)
 
-#: Columns the derivation reads. Selected explicitly rather than `*` so adding
-#: a column to `clientes` cannot silently widen what this module pulls.
+#: Named readers for facts that are not simply "is this column filled in?".
+#:
+#: Each declares the columns it reads, so `_CLIENTE_COLUNAS` below stays
+#: DERIVED from the definition. A hand-maintained select list beside a
+#: definition that can grow is the drift shape this codebase gates against
+#: elsewhere; there is no reason to hand-roll one here.
+_FONTES: dict[str, dict[str, Any]] = {
+    "chave_telefone": {
+        "colunas": ("chave_canonica", "chave_tipo"),
+        "ler": lambda c: (
+            c.get("chave_canonica") if c.get("chave_tipo") == "telefone" else None
+        ),
+    },
+    "chave_email": {
+        "colunas": ("chave_canonica", "chave_tipo"),
+        "ler": lambda c: (
+            c.get("chave_canonica") if c.get("chave_tipo") == "email" else None
+        ),
+    },
+}
+
 #: Columns read for DISPLAY beside the checklist but never used to derive a
 #: tick. `nome_oficial` is here and not in any item's `campos` on purpose —
 #: see the ITENS docstring.
 _CLIENTE_COLUNAS_EXIBICAO = ("nome_oficial",)
 
+#: Columns the derivation reads. Selected explicitly rather than `*` so adding
+#: a column to `clientes` cannot silently widen what this module pulls.
 _CLIENTE_COLUNAS = tuple(
     dict.fromkeys(
         [col for i in ITENS for col in i.get("campos", ())]
+        + [
+            col
+            for i in ITENS
+            for fonte in i.get("fontes", ())
+            for col in _FONTES[fonte]["colunas"]
+        ]
         + list(_CLIENTE_COLUNAS_EXIBICAO)
     )
 )
@@ -150,15 +208,41 @@ def derivar(
     cliente = cliente or {}
     out: dict[str, bool] = {}
     for item in ITENS:
-        if "campos" in item:
-            exige = _VALIDADORES.get(item.get("exige", ""))
-            out[item["key"]] = any(
-                _preenchido(valor) and (exige is None or exige(str(valor)))
-                for valor in (cliente.get(col) for col in item["campos"])
-            )
-        else:
+        if "documento" in item:
             out[item["key"]] = item["documento"] in tipos_documento_presentes
+            continue
+        exige = _VALIDADORES.get(item.get("exige", ""))
+        # Plain columns first, then the named readers — list order IS
+        # precedence, and any one satisfying value ticks the item.
+        valores = [cliente.get(col) for col in item.get("campos", ())]
+        valores += [
+            _FONTES[fonte]["ler"](cliente) for fonte in item.get("fontes", ())
+        ]
+        out[item["key"]] = any(
+            _preenchido(valor) and (exige is None or exige(str(valor)))
+            for valor in valores
+        )
     return out
+
+
+def valor_de(cliente: Optional[dict], item_key: str) -> Any:
+    """The value backing one item, by the same precedence the tick uses.
+
+    Exists so a caller that needs the VALUE — the stage gate asking "does this
+    person actually have a phone?" — cannot answer it with a second, subtly
+    different rule. One definition, two readers.
+    """
+    cliente = cliente or {}
+    item = next((i for i in ITENS if i["key"] == item_key), None)
+    if item is None:
+        raise KeyError(item_key)
+    exige = _VALIDADORES.get(item.get("exige", ""))
+    valores = [cliente.get(col) for col in item.get("campos", ())]
+    valores += [_FONTES[fonte]["ler"](cliente) for fonte in item.get("fontes", ())]
+    for valor in valores:
+        if _preenchido(valor) and (exige is None or exige(str(valor))):
+            return valor
+    return None
 
 
 def _out(
@@ -229,7 +313,7 @@ def _cliente_row(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[dict]:
 def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     """Every canonical item, derived, with any human override applied.
 
-    Always returns all six, in `ITENS` order, whether or not any override row
+    Always returns every item, in `ITENS` order, whether or not an override row
     exists — the list is the contract, the rows are just opinions about it.
     """
     ensure_cliente(client, org_id, cliente_id)
@@ -372,4 +456,5 @@ __all__ = [
     "derivar",
     "listar",
     "marcar",
+    "valor_de",
 ]

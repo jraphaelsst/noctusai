@@ -18,12 +18,14 @@ from __future__ import annotations
 import pytest
 
 from .conftest import (
+    ORG_A,
     OTHER_ORG_STAGE,
     PROC_STAGE_ID,
     STAGE_ID,
     auth_headers,
     atendimento,
     processo,
+    seed_titular,
 )
 
 
@@ -181,6 +183,7 @@ class TestNoCreateEndpoint:
 class TestMoverEtapa:
     def test_move_writes_history(self, http_client):
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(http_client.scoped, "neg-1")
         r = http_client.post(
             "/api/atendimentos-venda/neg-1/mover-etapa",
             json={"para_etapa_id": STAGE_ID["contato"]},
@@ -198,6 +201,7 @@ class TestMoverEtapa:
 
     def test_same_stage_move_writes_no_history(self, http_client):
         http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(http_client.scoped, "neg-1")
         r = http_client.post(
             "/api/atendimentos-venda/neg-1/mover-etapa",
             json={"para_etapa_id": STAGE_ID["novo"], "novo_indice": 2},
@@ -215,6 +219,140 @@ class TestMoverEtapa:
         )
         assert r.status_code == 404
 
+class TestMoveRequiresNomeECelular:
+    """🔴 A card cannot advance while nobody knows who this is (migration 073).
+
+    The funil's stages describe real work. A card in "Contato" whose person has
+    no name and no phone claims work that literally cannot be done, and the
+    discovery lands on whoever tries to call.
+
+    These pin the RULE, not its current membership: `CAMPOS_OBRIGATORIOS` is
+    expected to grow ("I'll refine that later, there will be more required
+    fields"), so the tests name the two fields explicitly rather than looping
+    the tuple — a test that derives its expectation from the code under test
+    would keep passing if someone emptied it.
+    """
+
+    def test_a_lead_with_neither_field_cannot_move(self, http_client):
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(http_client.scoped, "neg-1", apto=False)
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["contato"]},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 400
+        assert http_client.scoped.table("pipeline_movimentos").inserted_payloads == []
+
+    def test_the_refusal_names_every_missing_field_not_just_the_first(
+        self, http_client
+    ):
+        """Otherwise a two-field gap costs two failed attempts to discover."""
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(http_client.scoped, "neg-1", apto=False)
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["contato"]},
+            headers=auth_headers(),
+        )
+        detalhe = r.json()["error"]["message"]
+        assert "Nome Completo" in detalhe
+        assert "Celular" in detalhe
+
+    def test_a_celular_alone_is_not_enough(self, http_client):
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(
+            http_client.scoped, "neg-1", apto=False, celular="+5511999998888"
+        )
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["contato"]},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 400
+        assert "Nome Completo" in r.json()["error"]["message"]
+
+    def test_a_push_name_does_not_satisfy_nome_completo(self, http_client):
+        """"Ana" is what the channel supplied, not evidence anyone collected
+        this person's details — the same rule the checklist item applies."""
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(
+            http_client.scoped, "neg-1", apto=False,
+            nome="Ana", celular="+5511999998888",
+        )
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["contato"]},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 400
+
+    def test_a_phone_keyed_cliente_needs_no_explicit_celular(self, http_client):
+        """The number came from the registration act — that IS the celular."""
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(
+            http_client.scoped, "neg-1", apto=False,
+            nome_completo="Luciano Mauricio",
+            chave_canonica="+5511999998888", chave_tipo="telefone",
+        )
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["contato"]},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 200
+
+    def test_an_email_keyed_cliente_still_needs_a_phone(self, http_client):
+        """🔴 The bug a naive `chave_canonica` read would ship: an email
+        address ticking "Celular"."""
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(
+            http_client.scoped, "neg-1", apto=False,
+            nome_completo="Luciano Mauricio",
+            chave_canonica="luciano@example.com", chave_tipo="email",
+        )
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["contato"]},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 400
+        assert "Celular" in r.json()["error"]["message"]
+
+    def test_a_human_override_opens_the_gate(self, http_client):
+        """The override means "I confirmed this by other means". Honouring it
+        on the card but not on the move would just teach people to type a
+        placeholder into the column instead."""
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(http_client.scoped, "neg-1", apto=False)
+        http_client.scoped.set_table_data("cliente_documento_checklist", [
+            {"id": "ovr-1", "org_id": ORG_A, "cliente_id": "cli-neg-1",
+             "item_key": k, "concluido_manual": True,
+             "concluido_em": "2026-08-24T00:00:00+00:00", "concluido_por": None}
+            for k in ("nome_completo", "celular")
+        ])
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["contato"]},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 200
+
+    def test_a_bad_stage_is_still_a_404_not_a_gate_complaint(self, http_client):
+        """🔴 Ordering. The gate must not answer a foreign stage id with a 400
+        about our client data — that reports on OUR record for a request that
+        never named a valid destination."""
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        seed_titular(http_client.scoped, "neg-1", apto=False)
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": OTHER_ORG_STAGE["id"]},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 404
+
+
+class TestMoverEtapaGuards:
     def test_move_refuses_a_closed_deal(self, http_client):
         http_client.scoped.set_table_data("atendimentos", [
             atendimento("neg-1", "fechado", status="aceita", closed_at="2026-07-28T00:00:00Z"),
