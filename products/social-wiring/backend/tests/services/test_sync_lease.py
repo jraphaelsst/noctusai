@@ -109,3 +109,59 @@ class TestLeaseContextManager:
         except ValueError:
             pass
         assert "release_sync_lease" in [c[0] for c in admin.calls]
+
+
+class TestObservabilityOfTheSuccessPath:
+    """A safety mechanism has to be able to prove it ran.
+
+    Until 2026-08-24 only contention and transport failure logged anything, so
+    a lease that worked was indistinguishable from one that was never called —
+    verifying the nightly sync in production meant reasoning backwards from
+    "a fail-closed acquire would have skipped it, and it didn't skip". These
+    assertions are what makes that a log line instead of an inference.
+    """
+
+    def test_a_granted_lease_says_so_with_holder_and_ttl(self, caplog):
+        admin = _Rpc(True)
+        with caplog.at_level("INFO"):
+            sync_lease.try_acquire(admin, "job", ttl_seconds=1800, holder="box:7")
+        acquired = [r for r in caplog.records if "acquired" in r.getMessage()]
+        assert len(acquired) == 1
+        msg = acquired[0].getMessage()
+        # Holder and TTL are the two facts a stuck lease is diagnosed with.
+        assert "box:7" in msg and "1800" in msg and "job" in msg
+
+    def test_a_release_says_so_and_pairs_with_the_acquire(self, caplog):
+        admin = _Rpc(True)
+        with caplog.at_level("INFO"):
+            with sync_lease.lease(admin, "job"):
+                pass
+        msgs = [r.getMessage() for r in caplog.records]
+        assert sum("acquired" in m for m in msgs) == 1
+        assert sum("released" in m for m in msgs) == 1
+
+    def test_a_DENIED_lease_never_claims_to_have_acquired_one(self, caplog):
+        admin = _Rpc(False)
+        with caplog.at_level("INFO"):
+            with sync_lease.lease(admin, "job") as got:
+                assert got is False
+        msgs = [r.getMessage() for r in caplog.records]
+        assert not any("acquired" in m for m in msgs)
+        assert not any("released" in m for m in msgs)
+
+    def test_a_crashed_holder_leaves_an_acquire_with_no_release(self, caplog):
+        """The asymmetry IS the diagnosis: it explains the later TTL takeover."""
+        admin = _Rpc(True, boom=False)
+
+        class _HalfDead(_Rpc):
+            def rpc(self, name, params):
+                if name == "release_sync_lease":
+                    raise RuntimeError("gone")
+                return super().rpc(name, params)
+
+        admin = _HalfDead(True)
+        with caplog.at_level("INFO"):
+            sync_lease.release(admin, "job", sync_lease.try_acquire(admin, "job"))
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any("acquired" in m for m in msgs)
+        assert not any("released" in m for m in msgs)

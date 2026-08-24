@@ -77,6 +77,16 @@ def try_acquire(
         return None
 
     if bool(resp.data):
+        # Logged at INFO on the SUCCESS path deliberately. Until 2026-08-24
+        # only contention and transport failure said anything, so a lease that
+        # was working looked exactly like a lease that was never called: the
+        # nightly run left no trace of having taken it, and the only way to
+        # tell the two apart was to reason backwards from the fact that a
+        # fail-closed acquire would have skipped the sync. A safety mechanism
+        # has to be able to prove it ran. One line per job per day.
+        logger.info(
+            "sync lease %r: acquired by %s (ttl=%ds)", name, who, ttl_seconds,
+        )
         return who
 
     logger.info(
@@ -96,6 +106,10 @@ def release(admin: Any, name: str, holder: str) -> None:
         admin.schema(_SCHEMA).rpc(
             "release_sync_lease", {"p_name": name, "p_holder": holder}
         ).execute()
+        # Pairs with the acquire line: an acquire with no matching release is
+        # how a crashed holder shows up in the log, and the TTL expiry that
+        # follows is then explained rather than mysterious.
+        logger.info("sync lease %r: released by %s", name, holder)
     except Exception as exc:
         logger.warning(
             "sync lease %r: release failed (%s) — the lease will expire on "
