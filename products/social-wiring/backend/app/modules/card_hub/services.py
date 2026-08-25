@@ -14,10 +14,15 @@ Pagination: every unbounded read composes
 module's docstring for the two hazards it closes (PostgREST's 1 000-row
 cap, and a pager that never terminates if the backend disregards
 `range()`). `.in_()` filters over `_IN_FILTER_BATCH` are chunked first —
-PostgREST rides `in_()` values in the URL query string, and an
-unbatched ~1 000-item list is a bare 400 (see
-`clientes_service.py::_batched`'s identical rationale; this module keeps
-its own copy rather than importing that module's private helper).
+PostgREST rides `in_()` values in the URL query string, and an unbatched
+~1 000-item list is a bare 400.
+
+Those read helpers no longer live here. This module used to keep its own
+copy of `_batched` (a fork of `clientes_service`'s, and it said so); a
+third consumer arrived and they moved to `app.services.table_reads`. The
+`_t` / `_batched` / `_paged_rows` / `_resolve_actors` / `_actor` names
+below are aliases over the canonical definitions, so every call site in
+this file reads unchanged.
 """
 from __future__ import annotations
 
@@ -34,9 +39,10 @@ from noctusai_lib.primitives.exceptions import (
 
 from app.dependencies import get_core_client
 from app.services import clientes_service as clientes_svc
+from app.services import table_reads
 
-_PAGE_SIZE = 1000
-_IN_FILTER_BATCH = 200
+_PAGE_SIZE = table_reads.PAGE_SIZE
+_IN_FILTER_BATCH = table_reads.IN_FILTER_BATCH
 
 
 # ─── shared helpers ─────────────────────────────────────────────────────
@@ -46,131 +52,23 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _t(client: Any, name: str):
-    return client.table(name)
+# ─── PostgREST read helpers — canonical definitions in `table_reads` ────
+#
+# These were defined here, and `_batched` was already a copy of
+# `clientes_service`'s. `imovel_hub` made a third consumer, so they moved to
+# `app.services.table_reads` (see that module's header for why THESE
+# helpers in particular are worth one home: each one's real body is a
+# defence against a limit that is invisible at the call site).
+#
+# The private names survive as aliases so every existing call site in this
+# module reads exactly as it did.
 
-
-def _batched(items: list, size: int = _IN_FILTER_BATCH):
-    """Yield `items` in chunks of `size` — see module docstring."""
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
-
-
-def _paged_rows(
-    client: Any,
-    table: str,
-    org_id: UUID,
-    *,
-    eq_filters: Optional[dict] = None,
-    order_col: str = "id",
-    id_key: str = "id",
-    refine: Optional[Any] = None,
-    select: str = "*",
-) -> list[dict]:
-    """Every row of `table` for `org_id` (+ `eq_filters`), paged past
-    PostgREST's row cap via the seed's shared pager. `refine`, when given,
-    is `fn(query) -> query` applied AFTER the eq filters and BEFORE
-    `.order()` — for filter shapes `eq_filters` can't express (e.g.
-    `.is_("deleted_at", "null")`).
-
-    `select` overrides the default `"*"` for a read that needs embedded
-    resources (a PostgREST join). The card summary uses it to bring each
-    atendimento's ORIGIN record along — see `get_card_resumo`.
-
-    Named `refine`, NOT `extra`: bandit's B610 flags any call to something
-    named `extra(...)` as Django's `QuerySet.extra()`, a genuine SQL
-    -injection vector. This is a plain Python callable over a PostgREST
-    query builder — no SQL string exists here — but the check matches on
-    the NAME, so the old name failed the SAST gate on every run. Renaming
-    is the honest fix; a `# nosec` would have silenced a scanner that was
-    doing its job badly rather than removing the collision, and teaches
-    the next person to reach for suppression first."""
-    eq_filters = eq_filters or {}
-
-    def fetch_page(start: int, end: int):
-        query = _t(client, table).select(select).eq("org_id", str(org_id))
-        for key, value in eq_filters.items():
-            query = query.eq(key, value)
-        if refine is not None:
-            query = refine(query)
-        return query.order(order_col).range(start, end).execute().data
-
-    return list(
-        iter_paged_rows(
-            fetch_page,
-            page_size=_PAGE_SIZE,
-            id_key=id_key,
-            label=f"{table} for org_id={org_id}",
-        )
-    )
-
-
-def _in_batched_rows(
-    client: Any, table: str, org_id: UUID, in_col: str, ids: list[str]
-) -> list[dict]:
-    """Every row of `table` matching `in_col IN ids`, batched (URL-length
-    safety) AND paged (row-cap safety) — composes both hazards from the
-    module docstring."""
-    if not ids:
-        return []
-    out: list[dict] = []
-    for batch in _batched(sorted(set(ids))):
-
-        def fetch_page(start: int, end: int, _batch=batch):
-            return (
-                _t(client, table)
-                .select("*")
-                .eq("org_id", str(org_id))
-                .in_(in_col, _batch)
-                .order("id")
-                .range(start, end)
-                .execute()
-                .data
-            )
-
-        out.extend(
-            iter_paged_rows(
-                fetch_page,
-                page_size=_PAGE_SIZE,
-                label=f"{table}.{in_col} batch for org_id={org_id}",
-            )
-        )
-    return out
-
-
-def _resolve_actors(ids: set) -> dict[str, dict]:
-    """`{id, nome}` for every id in `ids`, resolved against
-    `public.noctus_users` (the trusted user table — see
-    `app.dependencies.get_core_client`'s docstring for why this is the
-    `public`-schema client, not `social_wiring`). Missing users fall back
-    to `{"id": id, "nome": None}` — a stale/foreign id is not an error
-    here, just an unresolved name."""
-    clean_ids = {str(i) for i in ids if i}
-    if not clean_ids:
-        return {}
-    core = get_core_client()
-    out: dict[str, dict] = {}
-    for batch in _batched(sorted(clean_ids)):
-        rows = (
-            core.table("noctus_users")
-            .select("id,nome,email")
-            .in_("id", batch)
-            .execute()
-            .data
-            or []
-        )
-        for row in rows:
-            out[str(row["id"])] = {
-                "id": row["id"],
-                "nome": row.get("nome") or row.get("email"),
-            }
-    return out
-
-
-def _actor(resolved: dict[str, dict], raw_id: Optional[str]) -> Optional[dict]:
-    if not raw_id:
-        return None
-    return resolved.get(str(raw_id)) or {"id": raw_id, "nome": None}
+_t = table_reads.table
+_batched = table_reads.batched
+_paged_rows = table_reads.paged_rows
+_in_batched_rows = table_reads.in_batched_rows
+_resolve_actors = table_reads.resolve_actors
+_actor = table_reads.actor
 
 
 def ensure_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:

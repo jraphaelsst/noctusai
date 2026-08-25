@@ -85,6 +85,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from app.services import identidade_service as ident
+from app.services import table_reads
 from app.services.identidade_service import SourceRow
 
 logger = logging.getLogger(__name__)
@@ -214,15 +215,13 @@ def _t(client: Any, name: str):
     return client.table(name)
 
 
-_IN_FILTER_BATCH = 200
+_IN_FILTER_BATCH = table_reads.IN_FILTER_BATCH
 
 
-def _batched(items: list, size: int):
-    """Yield `items` in chunks of `size`. PostgREST `in_` values ride in the
-    URL query string, so an unbounded id list becomes an over-long request
-    line and a bare 400 — see `list_review_groups`."""
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
+# Canonical definition in `app.services.table_reads` — this was the first
+# copy, `card_hub` was the second, `imovel_hub` the third. Kept as an alias
+# so `list_review_groups`' call site reads unchanged.
+_batched = table_reads.batched
 
 
 def _paginate_query(run) -> list[dict]:

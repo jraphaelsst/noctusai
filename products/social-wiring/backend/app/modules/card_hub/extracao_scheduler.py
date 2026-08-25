@@ -37,9 +37,7 @@ from __future__ import annotations
 
 import logging
 
-from noctusai_lib.api import scheduler as seed_scheduler
-
-from app.dependencies import get_admin_client
+from app.services.extraction_sweep import configure_sweep, make_sweep_job
 
 logger = logging.getLogger(__name__)
 
@@ -50,46 +48,35 @@ JOB_ID = "card_hub_extracao_sweep"
 CRON = "17 * * * *"
 
 
-async def extracao_sweep_job() -> None:
-    """Sweep once. Never raises — a scheduler job that throws is a job that
-    silently stops being scheduled in some runtimes, which would remove the
-    very safety net this is."""
-    try:
-        from noctusai_lib.integrations.storage import make_storage_backend
+async def _sweep(admin, storage) -> dict:
+    from app.modules.card_hub import identidade_extracao_service as identidade_svc
+    from app.modules.card_hub.deps import get_identity_extractor_factory
 
-        from app.modules.card_hub import identidade_extracao_service as identidade_svc
-        from app.modules.card_hub.deps import get_identity_extractor_factory
+    return await identidade_svc.varrer_extracoes_pendentes(
+        admin, storage, extractor_factory=get_identity_extractor_factory()
+    )
 
-        admin = get_admin_client()
-        if admin is None:
-            logger.warning("extracao sweep: no admin client — skipping run")
-            return
-        if not hasattr(admin, "storage"):
-            # Mock/sqlite fallback in a non-prod environment. Say so rather
-            # than sweeping against a backend that cannot read blobs.
-            logger.info("extracao sweep: client has no storage — skipping run")
-            return
 
-        result = await identidade_svc.varrer_extracoes_pendentes(
-            admin,
-            make_storage_backend(kind="supabase", client=admin),
-            extractor_factory=get_identity_extractor_factory(),
-        )
-        if result["encontrados"]:
-            logger.info("extracao sweep: %s", result)
-    except Exception as exc:  # noqa: BLE001 - scheduler job must not die
-        logger.error("extracao sweep: run failed: %s", exc, exc_info=True)
+#: The never-raise wrapper and the no-storage skip live in
+#: `app.services.extraction_sweep` — see that module for why those two guards
+#: in particular must have one definition.
+extracao_sweep_job = make_sweep_job(label="card_hub", sweep=_sweep)
 
 
 def configure() -> None:
-    """Register the sweep on the seed-side scheduler.
+    """Register the sweep on the seed-side scheduler. Idempotent.
 
     Must be called at IMPORT time, before ``start_scheduler()`` fires in
     ``app/lifespan.py``, or the job is never registered and the safety net
-    silently does not exist. Idempotent.
+    silently does not exist.
     """
-    seed_scheduler.register(JOB_ID, extracao_sweep_job, cron=CRON)
-    logger.info("card_hub extracao sweep configured (cron %r)", CRON)
+    configure_sweep(
+        job_id=JOB_ID,
+        cron=CRON,
+        label="card_hub",
+        sweep=_sweep,
+        job=extracao_sweep_job,
+    )
 
 
 __all__ = ["CRON", "JOB_ID", "configure", "extracao_sweep_job"]

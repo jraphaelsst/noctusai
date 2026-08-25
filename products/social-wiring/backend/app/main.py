@@ -221,6 +221,7 @@ def _register_media_wiring() -> ModuleRegistration:
 
 from app.modules.card_hub import register as _card_hub
 from app.modules.email_marketing import register as _register_email_marketing
+from app.modules.imovel_hub import register as _imovel_hub
 from app.modules.leads import register as _leads
 from app.modules.mailchimp import register as _mailchimp
 from app.modules.media_creation import register as _register_media_creation
@@ -254,6 +255,7 @@ from app.modules.youtube import register as _youtube
 MODULES = [
     _card_hub,
     _register_media_wiring,
+    _imovel_hub,
     _youtube,
     _register_email_marketing,
     _scheduling,
@@ -325,6 +327,19 @@ _MAX_BODY_PATH_OVERRIDES = {
     # real business-policy limit and stays comfortably under this outer
     # bound — the middleware is the platform-wide safety net, not the policy.
     "/api/clientes/*/documentos": 30 * 1024 * 1024,  # 30 MB
+    # Imóvel document upload (POST /api/imoveis/{codigo}/documentos —
+    # imovel_hub, migration 075). Same `*` wildcard reasoning as the clientes
+    # path above: `{codigo}` is a dynamic segment BEFORE the one that needs
+    # the bigger cap, so a plain `/api/imoveis` prefix would also raise the
+    # ceiling on every JSON imoveis route (list/filtros/caracteristicas/sync),
+    # weakening the guard where it is doing real work.
+    #
+    # 50 MB rather than the clientes path's 30: a certidão de matrícula with
+    # decades of averbações is routinely 20-40 pages of scan, where an RG is
+    # one photo. `imovel_hub.documentos_service.MAX_UPLOAD_BYTES` (40 MB) is
+    # the business-policy limit and stays under this outer bound — the
+    # middleware is the platform-wide safety net, not the policy.
+    "/api/imoveis/*/documentos": 50 * 1024 * 1024,  # 50 MB
 }
 
 app = create_product_app(
