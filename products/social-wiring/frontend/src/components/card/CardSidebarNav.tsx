@@ -18,7 +18,15 @@
  * product needs a rail like this, THIS is the extraction target.
  */
 import type { LucideIcon } from "lucide-react";
-import { CalendarClock, ClipboardList, FolderOpen, Megaphone, User } from "lucide-react";
+import {
+  CalendarClock,
+  ClipboardList,
+  FolderOpen,
+  Handshake,
+  Landmark,
+  Megaphone,
+  User,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -28,6 +36,8 @@ export type CardSubpageKey =
   | "cliente"
   | "agendamentos"
   | "documentos"
+  | "financiamento"
+  | "negociacao"
   | "campanha";
 
 interface SubpageDef {
@@ -39,13 +49,20 @@ interface SubpageDef {
 /**
  * Order is the reading order of the card: what you DO with this person, then
  * who they are, then what is booked with them, then what you must collect from
- * them, then where they came from.
+ * them, then how the deal closes, then where they came from.
+ *
+ * `financiamento` sits IMMEDIATELY under `documentos` because the user placed
+ * it there ("Add this new subtab to the sidebar on the funnel Card, under
+ * Documentos") — and it earns the spot: it is another pile of paperwork to
+ * collect, just one belonging to the bank rather than to the person.
  */
 export const CARD_SUBPAGES: readonly SubpageDef[] = [
   { key: "geral", label: "Geral", icon: ClipboardList },
   { key: "cliente", label: "Dados do cliente", icon: User },
   { key: "agendamentos", label: "Agendamentos", icon: CalendarClock },
   { key: "documentos", label: "Documentos", icon: FolderOpen },
+  { key: "financiamento", label: "Financiamento/Escritura", icon: Landmark },
+  { key: "negociacao", label: "Negociação", icon: Handshake },
   { key: "campanha", label: "Campanha e imóvel", icon: Megaphone },
 ] as const;
 

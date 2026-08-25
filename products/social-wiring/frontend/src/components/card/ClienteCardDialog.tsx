@@ -127,6 +127,17 @@ export interface ClienteCardDialogProps {
    */
   renderDocumentosDePessoa?: (clienteId: string) => ReactNode;
 
+  /**
+   * The Negociação and Financiamento/Escritura subpages.
+   *
+   * Render props for the same reason `renderDocumentosDePessoa` is one: both
+   * need their own queries and mutations, and this component is presentational
+   * — it is rendered in tests with plain objects and no query client. Thunks,
+   * not elements, so a subpage nobody has opened costs nothing.
+   */
+  renderNegociacao?: () => ReactNode;
+  renderFinanciamento?: () => ReactNode;
+
   /** Current values behind the typed checklist items, for the edit form. */
   dadosPessoais?: DadosPessoais;
   onSaveDadosPessoais?: (valores: DadosPessoais) => void;
@@ -487,6 +498,26 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   compradores={props.compradores ?? []}
                   onRemover={props.onRemoverComprador}
                 />
+              )}
+
+              {subpage === "financiamento" && (
+                <div data-testid="card-subpage-financiamento">
+                  {props.renderFinanciamento?.() ?? (
+                    <p className="text-sm text-muted-foreground">
+                      Financiamento indisponível.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {subpage === "negociacao" && (
+                <div data-testid="card-subpage-negociacao">
+                  {props.renderNegociacao?.() ?? (
+                    <p className="text-sm text-muted-foreground">
+                      Negociação indisponível.
+                    </p>
+                  )}
+                </div>
               )}
 
               {(subpage === "cliente" || subpage === "campanha") && (

@@ -57,6 +57,8 @@ import {
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
 import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
 import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
+import { NegociacaoContainer } from "@/components/NegociacaoContainer";
+import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
 
 export interface ClienteDetailModalProps {
   clienteId: string | null;
@@ -325,6 +327,9 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       renderDocumentosDePessoa={(pessoaId) => (
         <PessoaDocumentosPanel clienteId={pessoaId} />
       )}
+      // Thunks, not elements: a subpage nobody has opened costs no query.
+      renderNegociacao={() => <NegociacaoContainer clienteId={id} />}
+      renderFinanciamento={() => <FinanciamentoContainer clienteId={id} />}
       onOpenDocumento={handleOpenDocumento}
       onDeleteDocumento={(documentoId, motivo) =>
         documentoMutations.remove.mutate(
