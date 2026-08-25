@@ -127,7 +127,11 @@ def fake_extractor(client):
 
 
 def imovel_row(codigo=CODIGO, **extra) -> dict:
-    """A row of the Vista sync MIRROR. Only the key matters to this module."""
+    """A row of the Vista sync MIRROR.
+
+    Kept so a test can assert this module NEVER writes it. This module does
+    not read it either — see `registry_row`.
+    """
     row = {
         "org_id": ORG_ID,
         "codigo": codigo,
@@ -137,6 +141,30 @@ def imovel_row(codigo=CODIGO, **extra) -> dict:
         "cidade": "Sao Paulo",
         "bairro": "Pinheiros",
         "sincronizado_em": "2026-01-01T00:00:00+00:00",
+    }
+    row.update(extra)
+    return row
+
+
+def registry_row(codigo=CODIGO, *, ativo_no_vista=True, **extra) -> dict:
+    """A row of `imovel_registry` — our PERMANENT imóvel identity.
+
+    This is what `ensure_imovel` checks (migration 076). `ativo_no_vista=False`
+    is a property that has left the Vista catalog, i.e. one that was sold —
+    and it must still accept cartório data.
+    """
+    row = {
+        "id": str(uuid4()),
+        "org_id": ORG_ID,
+        "codigo_canonical": codigo,
+        "codigo_display": codigo,
+        "primeiro_visto_em": "2026-01-01T00:00:00+00:00",
+        "ultimo_visto_no_vista_em": "2026-01-01T00:00:00+00:00",
+        "ativo_no_vista": ativo_no_vista,
+        "delistado_em": None if ativo_no_vista else "2026-02-01T00:00:00+00:00",
+        "origem_descoberta": "sync",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
     }
     row.update(extra)
     return row
@@ -189,7 +217,12 @@ def documento_row(id_=None, codigo=CODIGO, *, tipo_documento="matricula", **extr
     return row
 
 
-def seed(scoped, *, imoveis=None, dados=None, documentos=None) -> None:
+def seed(scoped, *, registry=None, imoveis=None, dados=None, documentos=None) -> None:
+    # The REGISTRY is what this module reads. The mirror is seeded too, so a
+    # test can assert it is never written.
+    scoped.set_table_data(
+        "imovel_registry", registry if registry is not None else [registry_row()]
+    )
     scoped.set_table_data("imoveis", imoveis if imoveis is not None else [imovel_row()])
     scoped.set_table_data("imovel_dados", dados or [])
     scoped.set_table_data("imovel_documentos", documentos or [])

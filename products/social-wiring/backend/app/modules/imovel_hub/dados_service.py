@@ -6,6 +6,13 @@ registro de imóveis, prefeitura do cadastro imobiliário, and the captador
 who brought the property in. See migration 075's header for why authored
 data does not live inside a mirror of somebody else's system.
 
+🔴 AND WHY IT KEYS TO `imovel_registry`, NOT TO THE MIRROR (migration 076).
+075 made that argument and then FK'd to the mirror anyway. The mirror holds
+only what Vista lists TODAY; the registry holds every código we have ever
+seen and is append-only. A property leaves the Vista catalog when it is
+SOLD — so keying to the mirror would have made this feature 404 exactly the
+imóveis whose paperwork is being handled.
+
 WRITE SEMANTICS FOR `numero_matricula`
 --------------------------------------
 The column has a provenance quintuple, mirroring `clientes.data_nascimento`
@@ -31,7 +38,17 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from app.services import table_reads
 
 TABLE = "imovel_dados"
-IMOVEIS_TABLE = "imoveis"
+
+#: 🔴 The REGISTRY, never the `imoveis` mirror — see migration 076.
+#:
+#: `imoveis` holds what Vista says TODAY and shrinks when a property leaves
+#: the catalog. `imovel_registry` is append-only: one row per código we have
+#: ever seen. Measured on prod 2026-08-25, 1062 of 3017 registered imóveis
+#: (35%) were already absent from the mirror — and an imóvel leaves the
+#: catalog because it was SOLD, i.e. exactly when its matrícula is in play.
+#: Checking the mirror would 404 the properties this feature exists for.
+REGISTRY_TABLE = "imovel_registry"
+REGISTRY_CODIGO = "codigo_canonical"
 
 #: The fields a human may set through the API. `numero_matricula` is here —
 #: a human typing it is the FIRST writer and the most trusted one — but its
@@ -65,22 +82,27 @@ def _t(client: Any, name: str):
 
 
 def ensure_imovel(client: Any, org_id: UUID, codigo: str) -> dict:
-    """The imóvel must exist in the catalog before we can author data for it.
+    """The imóvel must be KNOWN before we can author data for it.
+
+    "Known" means present in `imovel_registry` — every código we have ever
+    seen, from any source — NOT present in the Vista catalog today. See the
+    `REGISTRY_TABLE` note above for why the distinction decides whether this
+    feature works for a sold property.
 
     Checked explicitly rather than left to the FK: a foreign-key violation
     surfaces as a 500 from the driver, and "imóvel não encontrado" is a 404
     the caller can act on.
     """
     rows = (
-        _t(client, IMOVEIS_TABLE)
-        .select("codigo")
+        _t(client, REGISTRY_TABLE)
+        .select(REGISTRY_CODIGO)
         .eq("org_id", str(org_id))
-        .eq("codigo", codigo)
+        .eq(REGISTRY_CODIGO, codigo)
         .limit(1)
         .execute()
     ).data or []
     if not rows:
-        raise NotFoundError(IMOVEIS_TABLE, codigo)
+        raise NotFoundError(REGISTRY_TABLE, codigo)
     return rows[0]
 
 

@@ -23,6 +23,7 @@ from tests.modules.imovel_hub.conftest import (
     auth,
     dados_row,
     imovel_row,
+    registry_row,
     seed,
 )
 
@@ -51,9 +52,38 @@ class TestReading:
         assert r.status_code == 404
 
     def test_an_imovel_from_another_org_is_not_visible(self, client, scoped):
-        seed(scoped, imoveis=[imovel_row(org_id=str(uuid4()))])
+        seed(scoped, registry=[registry_row(org_id=str(uuid4()))])
         r = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth())
         assert r.status_code == 404
+
+    def test_a_sold_imovel_that_left_the_vista_catalog_still_works(
+        self, client, scoped
+    ):
+        """🔴 THE CASE MIGRATION 076 EXISTS FOR.
+
+        An imóvel leaves the Vista catalog when it is SOLD, so the mirror no
+        longer holds it — measured on prod 2026-08-25, that was already true
+        of 1062 of 3017 known imóveis (35%).
+
+        Those are precisely the properties whose matrícula, guia de IPTU and
+        registry number are being handled. Keying this feature to the mirror
+        (migration 075's original FK) made it 404 exactly them.
+        """
+        seed(
+            scoped,
+            registry=[registry_row(ativo_no_vista=False)],
+            imoveis=[],  # gone from the Vista catalog
+        )
+        r = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth())
+        assert r.status_code == 200
+
+        w = client.patch(
+            f"/api/imoveis/{CODIGO}/dados",
+            json={"numero_matricula": "12345"},
+            headers=auth(),
+        )
+        assert w.status_code == 200
+        assert w.json()["numero_matricula"] == "12345"
 
     def test_stored_values_come_back(self, client, scoped):
         seed(
