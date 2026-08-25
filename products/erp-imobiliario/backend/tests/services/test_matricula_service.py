@@ -40,13 +40,19 @@ MINIMAL_PDF = (
 class TestPdfToImages:
     def test_converte_pdf_minimo(self):
         images = _pdf_to_images(MINIMAL_PDF)
-        assert len(images) == 1
+        assert set(images) == {1}, "keyed by 1-based page number, not list index"
         # PNG magic bytes
-        assert images[0][:4] == b"\x89PNG"
+        assert images[1][:4] == b"\x89PNG"
 
     def test_pdf_invalido_levanta_excecao(self):
         with pytest.raises(Exception):
             _pdf_to_images(b"not a pdf")
+
+    def test_renders_only_the_requested_pages(self):
+        """Rasterizing a page we already read for free is wasted CPU, and
+        once it reaches `_ocr_page` it is wasted money."""
+        assert _pdf_to_images(MINIMAL_PDF, []) == {}
+        assert set(_pdf_to_images(MINIMAL_PDF, [1])) == {1}
 
 
 # ---------------------------------------------------------------------------
@@ -177,12 +183,28 @@ class _RecordingDB:
         return self.updates[-1]
 
 
+def _camada(*paginas):
+    """Build a `PdfTextLayer` from (text, is_substantive) pairs."""
+    from noctusai_lib.integrations.media import PdfPage, PdfTextLayer
+
+    return PdfTextLayer(
+        pages=tuple(
+            PdfPage(number=i, text=t, is_substantive=sub, reason="test")
+            for i, (t, sub) in enumerate(paginas, 1)
+        ),
+        tooling_available=True,
+    )
+
+
 class TestTextLayerRung:
     """🔴 The rung that was missing until 2026-08-24.
 
     Every one of these is about NOT calling vision. A digitally-issued
     matrícula carries exact, machine-readable text; rasterizing it and asking
     a model to read the picture costs money to produce a worse answer.
+
+    The mirror-image failure — trusting a text layer that is only a
+    signature stamp — is `TestScannedDocumentsReachVision` below.
     """
 
     @pytest.mark.asyncio
@@ -193,15 +215,17 @@ class TestTextLayerRung:
         with patch.object(matricula_service, "_contar_paginas", return_value=2), \
              patch.object(
                  matricula_service, "_pdf_to_images",
-                 side_effect=lambda _b: (rendered.append(1), [b"png"])[1],
+                 side_effect=lambda *a, **k: (rendered.append(1), {1: b"png"})[1],
              ), \
-             patch("noctusai_lib.integrations.media.extract_pdf_text",
-                   return_value="X" * 500):
+             patch.object(
+                 matricula_service, "classify_pdf_text_layer",
+                 return_value=_camada(("X" * 250, True), ("X" * 249, True)),
+             ):
             await matricula_service.processar_extracao("e1", b"%PDF", None, db)
 
         assert rendered == [], "rasterized a PDF that already had a text layer"
         assert db.last["status"] == "concluida"
-        assert db.last["texto_extraido"] == "X" * 500
+        assert db.last["texto_extraido"] == "X" * 250 + "\n" + "X" * 249
         assert db.last["num_paginas"] == 2
 
     @pytest.mark.asyncio
@@ -215,40 +239,159 @@ class TestTextLayerRung:
         db = _RecordingDB()
         with patch.object(matricula_service, "_contar_paginas", return_value=1), \
              patch.object(matricula_service, "resolve_credential", return_value=None), \
-             patch("noctusai_lib.integrations.media.extract_pdf_text",
-                   return_value="Y" * 400):
+             patch.object(
+                 matricula_service, "classify_pdf_text_layer",
+                 return_value=_camada(("Y" * 400, True)),
+             ):
             await matricula_service.processar_extracao("e2", b"%PDF", None, db)
 
         assert db.last["status"] == "concluida"
 
-    def test_a_scan_with_a_smudge_of_text_still_goes_to_vision(self):
-        """A stamp or a signature footer is not a text layer.
-
-        Accepting it would return a few dozen characters of junk as the whole
-        matrícula — a silent, total data loss that looks like success.
-        """
-        with patch("noctusai_lib.integrations.media.extract_pdf_text",
-                   return_value="Assinado digitalmente"):
-            assert matricula_service._texto_da_camada(b"%PDF", 3) is None
-
-    def test_a_real_text_layer_clears_the_bar(self):
-        with patch("noctusai_lib.integrations.media.extract_pdf_text",
-                   return_value="A" * 4000):
-            assert matricula_service._texto_da_camada(b"%PDF", 3) == "A" * 4000
-
-    def test_a_text_layer_failure_falls_through_rather_than_erroring(self):
-        """Rung 1 is an optimisation. It must never fail an extraction that
-        rung 2 could have completed."""
-        with patch("noctusai_lib.integrations.media.extract_pdf_text",
-                   side_effect=RuntimeError("mupdf exploded")):
-            assert matricula_service._texto_da_camada(b"%PDF", 1) is None
-
     def test_zero_pages_is_not_a_text_layer(self):
-        assert matricula_service._texto_da_camada(b"%PDF", 0) is None
+        assert matricula_service._contar_paginas(b"") == 0
 
     def test_corrupt_bytes_count_as_zero_pages_rather_than_raising(self):
         assert matricula_service._contar_paginas(b"not a pdf at all") == 0
 
+
+class TestScannedDocumentsReachVision:
+    """The 2026-08-25 defect: a CERTIDÃO DE MATRÍCULA transcribed as nothing
+    but its own validation stamp.
+
+    A cartório scan is a page-sized JPEG with an ONR digital-signature stamp
+    overlaid as REAL, selectable text — 137 characters per page, which
+    cleared the old `>= 100 chars/page` bar. The extraction reported
+    "concluida" and returned three copies of "Valide este documento clicando
+    no link a seguir: ..." while the matrícula itself never left the JPEG.
+    Total data loss wearing a success badge.
+    """
+
+    ONR_STAMP = (
+        "Valide este documento clicando no link a seguir: "
+        "https://assinador-web.onr.org.br/docs/7JX9U-HLZEA-9LJWT-PM2QS\n"
+        "Valide aqui\neste documento"
+    )
+
+    @pytest.mark.asyncio
+    async def test_a_signature_stamp_is_not_a_transcription(self):
+        db = _RecordingDB()
+        with patch.object(matricula_service, "_contar_paginas", return_value=3), \
+             patch.object(matricula_service, "resolve_credential", return_value="sk-x"), \
+             patch.object(
+                 matricula_service, "classify_pdf_text_layer",
+                 return_value=_camada(*[(self.ONR_STAMP, False)] * 3),
+             ), \
+             patch.object(
+                 matricula_service, "_pdf_to_images",
+                 side_effect=lambda _b, paginas=None: {n: b"png" for n in paginas},
+             ), \
+             patch.object(
+                 matricula_service, "_ocr_page",
+                 new=AsyncMock(side_effect=lambda _i, n, *a: f"CONTEUDO PAGINA {n}"),
+             ):
+            await matricula_service.processar_extracao("e4", b"%PDF", None, db)
+
+        assert db.last["status"] == "concluida"
+        texto = db.last["texto_extraido"]
+        assert "assinador-web.onr.org.br" not in texto, (
+            "returned the validation stamp instead of the matrícula"
+        )
+        assert texto == (
+            "CONTEUDO PAGINA 1\n\nCONTEUDO PAGINA 2\n\nCONTEUDO PAGINA 3"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_mixed_document_pays_for_vision_only_where_needed(self):
+        """A typeset body with a scanned averbação stapled on is ordinary in
+        Brazil. Whole-document routing has to pick one rung for both halves."""
+        db = _RecordingDB()
+        ocr_calls: list[int] = []
+
+        with patch.object(matricula_service, "_contar_paginas", return_value=3), \
+             patch.object(matricula_service, "resolve_credential", return_value="sk-x"), \
+             patch.object(
+                 matricula_service, "classify_pdf_text_layer",
+                 return_value=_camada(
+                     ("CORPO TIPOGRAFADO", True),
+                     (self.ONR_STAMP, False),
+                     ("FECHAMENTO TIPOGRAFADO", True),
+                 ),
+             ), \
+             patch.object(
+                 matricula_service, "_pdf_to_images",
+                 side_effect=lambda _b, paginas=None: {n: b"png" for n in paginas},
+             ), \
+             patch.object(
+                 matricula_service, "_ocr_page",
+                 new=AsyncMock(
+                     side_effect=lambda _i, n, *a: (
+                         ocr_calls.append(n), "AVERBACAO ESCANEADA"
+                     )[1]
+                 ),
+             ):
+            await matricula_service.processar_extracao("e5", b"%PDF", None, db)
+
+        assert ocr_calls == [2], "paid for vision on pages it could read for free"
+        assert db.last["texto_extraido"] == (
+            "CORPO TIPOGRAFADO\n\nAVERBACAO ESCANEADA\n\nFECHAMENTO TIPOGRAFADO"
+        ), "pages must reassemble in document order"
+
+    @pytest.mark.asyncio
+    async def test_a_dropped_page_fails_loudly_rather_than_shipping_short(self):
+        """A matrícula missing a page must never reach status 'concluida'."""
+        db = _RecordingDB()
+        with patch.object(matricula_service, "_contar_paginas", return_value=2), \
+             patch.object(matricula_service, "resolve_credential", return_value="sk-x"), \
+             patch.object(
+                 matricula_service, "classify_pdf_text_layer",
+                 return_value=_camada((self.ONR_STAMP, False), (self.ONR_STAMP, False)),
+             ), \
+             patch.object(
+                 matricula_service, "_pdf_to_images", return_value={1: b"png"}
+             ), \
+             patch.object(
+                 matricula_service, "_ocr_page", new=AsyncMock(return_value="pagina 1")
+             ):
+            await matricula_service.processar_extracao("e6", b"%PDF", None, db)
+
+        assert db.last["status"] == "erro"
+        assert "rasterizar a página 2" in db.last["erro_mensagem"]
+
+    @pytest.mark.asyncio
+    async def test_degraded_classification_sends_every_page_to_vision(self):
+        """Without PyMuPDF the seed cannot classify per page and returns one
+        synthetic page. Mixing that with page-scoped OCR would attribute the
+        whole document's text to page 1, so we take nothing for free."""
+        from noctusai_lib.integrations.media import PdfPage, PdfTextLayer
+
+        db = _RecordingDB()
+        ocr_calls: list[int] = []
+        degraded = PdfTextLayer(
+            pages=(PdfPage(number=1, text="stamp", is_substantive=False, reason="x"),),
+            tooling_available=True,
+        )
+
+        with patch.object(matricula_service, "_contar_paginas", return_value=4), \
+             patch.object(matricula_service, "resolve_credential", return_value="sk-x"), \
+             patch.object(
+                 matricula_service, "classify_pdf_text_layer", return_value=degraded
+             ), \
+             patch.object(
+                 matricula_service, "_pdf_to_images",
+                 side_effect=lambda _b, paginas=None: {n: b"png" for n in paginas},
+             ), \
+             patch.object(
+                 matricula_service, "_ocr_page",
+                 new=AsyncMock(
+                     side_effect=lambda _i, n, *a: (ocr_calls.append(n), "p")[1]
+                 ),
+             ):
+            await matricula_service.processar_extracao("e7", b"%PDF", None, db)
+
+        assert ocr_calls == [1, 2, 3, 4]
+
+
+class TestCorruptUpload:
     @pytest.mark.asyncio
     async def test_a_corrupt_upload_gets_the_actionable_message(self):
         db = _RecordingDB()

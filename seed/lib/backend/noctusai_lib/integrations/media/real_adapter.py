@@ -305,12 +305,13 @@ class OpenAIMediaResolver:
     async def _resolve_pdf(
         self, media: InboundMedia, kind: MediaKind
     ) -> ResolvedMedia:
-        text, fitz_ok = await asyncio.to_thread(
-            self._pdf_text_layer, media.content
-        )
-        text = (text or "").strip()
-        if text:
-            return ResolvedMedia(kind=kind, text=f"[documento PDF]\n{text}")
+        camada = await asyncio.to_thread(self._pdf_text_layer, media.content)
+        fitz_ok = camada.tooling_available
+        # `is_substantive`, not "is non-empty": a scanned document carries a
+        # digital-signature stamp in its text layer, and forwarding that to
+        # the chatbot as the document's contents is worse than saying nothing.
+        if camada.is_substantive:
+            return ResolvedMedia(kind=kind, text=f"[documento PDF]\n{camada.text}")
 
         # No text layer — scanned doc. Rasterize pages 1-3 → vision.
         if not fitz_ok:
@@ -342,18 +343,20 @@ class OpenAIMediaResolver:
         )
 
     @staticmethod
-    def _pdf_text_layer(content: bytes) -> tuple[str, bool]:
-        """Return (extracted_text, tooling_available).
+    def _pdf_text_layer(content: bytes):
+        """Return the per-page `PdfTextLayer` classification.
 
         Single-sourced 2026-05-19 to the public
         `noctusai_lib.integrations.media.pdf_text` module — same PyMuPDF-first
         / pdfminer-fallback logic, now also consumed by
-        `DriveFileContent.text` for `application/pdf` (Phase 6a-drive)."""
+        `DriveFileContent.text` for `application/pdf` (Phase 6a-drive).
+        Upgraded to the classifier so the caller can tell a real text layer
+        from a signature stamp printed over a scan."""
         from noctusai_lib.integrations.media.pdf_text import (
-            _extract_pdf_text_with_signal,
+            classify_pdf_text_layer,
         )
 
-        return _extract_pdf_text_with_signal(content)
+        return classify_pdf_text_layer(content)
 
     @staticmethod
     def _pdf_rasterize(content: bytes) -> list[bytes]:

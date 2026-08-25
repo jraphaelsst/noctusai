@@ -889,25 +889,26 @@ async def process_manual_upload(
 def _extract_pdf_text(pdf_bytes: bytes, nome_display: str) -> Optional[str]:
     """Extract text content from a PDF for AI analysis.
 
-    Uses pymupdf (fitz) which is already available in the environment.
-    Returns None if text extraction fails or yields no content.
+    Uses the seed classifier rather than a bare `get_text()` sweep: a
+    scanned certidão carries a digital-signature stamp as real text, so
+    "the page returned something" is not evidence the certidão is
+    readable. Feeding that stamp to `_analyze_with_ai` spends a model call
+    to analyse a validation URL. Returns None when nothing trustworthy is
+    there, which the caller already treats as "no analysis".
     """
     try:
-        import fitz
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        parts = []
-        for page in doc:
-            text = page.get_text().strip()
-            if text:
-                parts.append(text)
-        doc.close()
-        if parts:
-            # Prefix with certificate type for context (mirrors how the
-            # automated flow sends structured API response data)
-            extracted = "\n".join(parts)
-            # Truncate to avoid exceeding token limits
-            return f"Certidão: {nome_display}\n\n{extracted[:4000]}"
-        return None
+        from noctusai_lib.integrations.media import classify_pdf_text_layer
+
+        camada = classify_pdf_text_layer(pdf_bytes)
+        # Per-page: a certidão whose first pages are typeset and whose
+        # annexes are scanned still yields its readable half.
+        extracted = camada.text
+        if not extracted:
+            return None
+        # Prefix with certificate type for context (mirrors how the
+        # automated flow sends structured API response data)
+        # Truncate to avoid exceeding token limits
+        return f"Certidão: {nome_display}\n\n{extracted[:4000]}"
     except Exception as e:
         logger.warning("PDF text extraction failed: %s", e)
         return None

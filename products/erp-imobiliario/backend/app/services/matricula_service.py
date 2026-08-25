@@ -1,30 +1,41 @@
 """
 Matrícula Text Extractor Service — property registration PDFs to text.
 
-THE LADDER
-----------
-1. **The PDF's own text layer** (`noctusai_lib.integrations.media.
-   extract_pdf_text`) — free, exact, no API key required. Cartórios issue
-   digitally-generated matrículas, and those carry a perfectly good text
-   layer.
-2. **Rasterize → vision**, one page at a time (PyMuPDF → seed
-   `analyze_image`) — for scans and photographs, where there is no text
-   layer to read.
+THE LADDER, PAGE BY PAGE
+------------------------
+1. **The PDF's own text layer** — free, exact, no API key required.
+   Cartórios issue digitally-generated matrículas, and those carry a
+   perfectly good text layer.
+2. **Rasterize → vision** for the pages that rung 1 cannot read.
 
-🔴 RUNG 1 WAS MISSING UNTIL 2026-08-24, AND THAT WAS THE WHOLE COST PROBLEM.
-This service used to rasterize every page of every PDF and pay for a vision
-call on each one, including for documents whose text was already sitting
-there in machine-readable form. Vision transcription is also *approximate*
-where a text layer is exact, so the old path was paying money to make the
-output worse.
+The rungs are decided PER PAGE, not per document, because Brazilian
+matrículas are genuinely mixed: a digitally-issued body with a scanned
+averbação stapled on the end is ordinary. Whole-document routing has to
+pick one rung for both halves and pays for vision on pages it could have
+read for free.
 
-Note what rung 1 does NOT change: the vision rung stays PAGE-BY-PAGE. That
-is not the inefficiency. Vision models consume images, so a PDF must be
-rasterized either way, and the image tokens dominate the bill whether they
-arrive in one request or several. Page-scoped requests also drift and
-truncate less than one long multi-page transcription. The waste was never
-the batching; it was calling vision at all on a document that did not need
-it.
+🔴 WHAT COUNTS AS "HAS A TEXT LAYER" IS THE WHOLE PROBLEM.
+A cartório scan is a page-sized JPEG with a digital-signature stamp
+overlaid as real, selectable text. So `extract_pdf_text` returns
+something non-empty and completely worthless. This service used to accept
+any page averaging 100+ characters, and a 3-page CERTIDÃO DE MATRÍCULA
+(137 chars/page of ONR validation stamp) cleared that bar — the user got
+"Valide este documento clicando no link a seguir: ..." three times over
+and none of the actual matrícula, because the content never left the JPEG.
+
+The verdict now comes from `noctusai_lib.integrations.media.
+classify_pdf_text_layer`, which leads with a STRUCTURAL signal — a page
+whose raster images cover the page area is a rendered scan, however chatty
+its stamp — rather than a character count that any longer boilerplate
+defeats. That predicate lives in the seed because four call sites across
+the fleet were each answering this same question with their own wrong
+threshold.
+
+Note what none of this changes: the vision rung stays PAGE-BY-PAGE. Vision
+models consume images, so a page must be rasterized either way, and image
+tokens dominate the bill whether they arrive in one request or several.
+Page-scoped requests also drift and truncate less than one long multi-page
+transcription.
 
 Refactored 2026-05-11 (LLM-ERP rollout, Step A): replaced raw
 `httpx.post("https://api.openai.com/v1/chat/completions", ...)` with
@@ -41,6 +52,7 @@ import fitz  # PyMuPDF
 
 from noctusai_lib.config.credentials import resolve_credential
 from noctusai_lib.integrations.llm import analyze_image
+from noctusai_lib.integrations.media import classify_pdf_text_layer
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +62,6 @@ RENDER_DPI = 200
 # Pinned model for OCR (separate from the chat-MODEL pin in ai_service.py).
 # gpt-4.1-mini balances cost + page-throughput; tune here, not at the call site.
 _OCR_MODEL = "gpt-4.1-mini"
-
-#: A scanned page often carries a few dozen characters of junk text (a header
-#: stamp, a digital-signature footer) without being machine-readable at all.
-#: Requiring a real average per page is what separates "this PDF has a text
-#: layer" from "this PDF has a smudge of text on it". A genuine matrícula page
-#: runs to thousands of characters, so the bar is deliberately low and still
-#: unambiguous.
-MIN_CHARS_POR_PAGINA = 100
 
 _OCR_PROMPT = (
     "Extract the exact text from the provided image. "
@@ -84,47 +88,47 @@ def _contar_paginas(pdf_bytes: bytes) -> int:
         doc.close()
 
 
-def _texto_da_camada(pdf_bytes: bytes, num_paginas: int) -> Optional[str]:
-    """Rung 1: the PDF's own text layer, or None if it does not really have one.
+def _pdf_to_images(
+    pdf_bytes: bytes, paginas: Optional[list[int]] = None
+) -> dict[int, bytes]:
+    """Rasterize pages to PNG, keyed by 1-based page number.
 
-    Never raises — a failure here must fall through to the vision rung rather
-    than failing an extraction that rung 2 could have completed.
+    `paginas` restricts the render to the pages that actually need vision.
+    Rasterizing a page whose text we already read for free is wasted CPU,
+    and once that image reaches `_ocr_page` it is wasted money too. Keying
+    by page number (rather than returning a list) is what lets the caller
+    interleave OCR'd pages with text-layer pages back in document order.
     """
-    if num_paginas <= 0:
-        return None
-    try:
-        from noctusai_lib.integrations.media import extract_pdf_text
-
-        texto = extract_pdf_text(pdf_bytes) or ""
-    except ImportError:
-        logger.debug("matricula: extract_pdf_text unavailable — using vision")
-        return None
-    except Exception:
-        logger.debug("matricula: text-layer extraction failed", exc_info=True)
-        return None
-
-    limpo = texto.strip()
-    if len(limpo) < MIN_CHARS_POR_PAGINA * num_paginas:
-        return None
-    return limpo
-
-
-def _pdf_to_images(pdf_bytes: bytes) -> list[bytes]:
-    """Convert each PDF page to a PNG image using PyMuPDF.
-
-    Returns a list of PNG byte arrays, one per page.
-    """
-    images: list[bytes] = []
+    images: dict[int, bytes] = {}
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         zoom = RENDER_DPI / 72  # 72 is the default PDF DPI
         matrix = fitz.Matrix(zoom, zoom)
-        for page in doc:
-            pix = page.get_pixmap(matrix=matrix)
-            images.append(pix.tobytes("png"))
+        alvo = set(paginas) if paginas is not None else None
+        for index in range(doc.page_count):
+            numero = index + 1
+            if alvo is not None and numero not in alvo:
+                continue
+            pix = doc[index].get_pixmap(matrix=matrix)
+            images[numero] = pix.tobytes("png")
     finally:
         doc.close()
     return images
+
+
+def _texto_confiavel_por_pagina(camada, num_paginas: int) -> dict[int, str]:
+    """Page number → text we can trust without a vision call.
+
+    Per-page routing only works when the classifier actually saw every
+    page. Without PyMuPDF the seed degrades to one synthetic page covering
+    the whole document (documented on `classify_pdf_text_layer`), and
+    mixing that with page-scoped OCR would attribute the entire document's
+    text to page 1. So when the counts disagree we take nothing for free
+    and send every page to vision — costlier, but never wrong.
+    """
+    if len(camada.pages) != num_paginas:
+        return {}
+    return {p.number: p.text for p in camada.pages if p.is_substantive}
 
 
 async def _ocr_page(
@@ -154,21 +158,15 @@ async def processar_extracao(extracao_id: str, pdf_bytes: bytes, org_id: Optiona
     """Full extraction pipeline — runs as a background task.
 
     1. Update status to processando
-    2. Try the PDF's own text layer — free, exact, no API key
-    3. Failing that: convert to images and OCR each page with vision
-    4. Aggregate and store extracted text
+    2. Classify each page's text layer (free, exact where it is real)
+    3. Rasterize + OCR only the pages the text layer cannot cover
+    4. Reassemble in document order and store
     """
     try:
         db.table("matricula_extracoes").update({
             "status": "processando",
         }).eq("id", extracao_id).execute()
 
-        # ── Rung 1: the PDF's own text layer ─────────────────────────
-        #
-        # Deliberately BEFORE the API-key check: a digitally-issued matrícula
-        # needs no key, no vision call and no rasterization, so an org that
-        # has not configured OpenAI at all can still extract one. Checking the
-        # key first would refuse work we are perfectly able to do.
         num_paginas = _contar_paginas(pdf_bytes)
         if num_paginas == 0:
             db.table("matricula_extracoes").update({
@@ -177,20 +175,33 @@ async def processar_extracao(extracao_id: str, pdf_bytes: bytes, org_id: Optiona
             }).eq("id", extracao_id).execute()
             return
 
-        texto_camada = _texto_da_camada(pdf_bytes, num_paginas)
-        if texto_camada:
+        # ── Rung 1: the PDF's own text layer ─────────────────────────
+        #
+        # Deliberately BEFORE the API-key check: a digitally-issued matrícula
+        # needs no key, no vision call and no rasterization, so an org that
+        # has not configured OpenAI at all can still extract one. Checking the
+        # key first would refuse work we are perfectly able to do.
+        camada = classify_pdf_text_layer(pdf_bytes)
+
+        if camada.is_substantive:
+            texto = camada.text
             logger.info(
                 "Matrícula %s: text layer used — %d pages, %d chars, 0 vision calls",
-                extracao_id, num_paginas, len(texto_camada),
+                extracao_id, num_paginas, len(texto),
             )
             db.table("matricula_extracoes").update({
                 "status": "concluida",
-                "texto_extraido": texto_camada,
+                "texto_extraido": texto,
                 "num_paginas": num_paginas,
             }).eq("id", extracao_id).execute()
             return
 
-        # ── Rung 2: rasterize → vision, one page at a time ────────────
+        # ── Rung 2: rasterize → vision, for the pages rung 1 missed ───
+        textos: dict[int, str] = _texto_confiavel_por_pagina(camada, num_paginas)
+        paginas_para_vision = [
+            numero for numero in range(1, num_paginas + 1) if numero not in textos
+        ]
+
         # Validate OpenAI key
         api_key = resolve_credential("openai_api_key", org_id)
         if not api_key:
@@ -203,25 +214,33 @@ async def processar_extracao(extracao_id: str, pdf_bytes: bytes, org_id: Optiona
             }).eq("id", extracao_id).execute()
             return
 
-        # PDF → images
-        images = _pdf_to_images(pdf_bytes)
-        num_paginas = len(images)
-        logger.info("Matrícula %s: %d pages to OCR", extracao_id, num_paginas)
+        logger.info(
+            "Matrícula %s: %d pages — %d from text layer, %d to OCR",
+            extracao_id, num_paginas, len(textos), len(paginas_para_vision),
+        )
 
         db.table("matricula_extracoes").update({
             "num_paginas": num_paginas,
         }).eq("id", extracao_id).execute()
 
-        # OCR each page (sequential to respect rate limits).
+        # OCR each remaining page (sequential to respect rate limits).
         # Seed `analyze_image` owns its own httpx client + provider routing;
         # no per-call AsyncClient context needed here.
-        page_texts: list[str] = []
-        for i, img in enumerate(images, 1):
-            text = await _ocr_page(img, i, num_paginas, org_id)
-            page_texts.append(text)
+        images = _pdf_to_images(pdf_bytes, paginas_para_vision)
+        for numero in paginas_para_vision:
+            img = images.get(numero)
+            if img is None:
+                # Rasterization silently dropping a page would ship a
+                # matrícula missing a page with status "concluida".
+                raise RuntimeError(
+                    f"não foi possível rasterizar a página {numero} de {num_paginas}"
+                )
+            textos[numero] = await _ocr_page(img, numero, num_paginas, org_id)
 
-        # Aggregate
-        full_text = "\n\n".join(page_texts)
+        # Reassemble in document order — text-layer and OCR'd pages interleaved
+        full_text = "\n\n".join(
+            textos[numero] for numero in sorted(textos) if textos[numero]
+        )
 
         db.table("matricula_extracoes").update({
             "status": "concluida",
