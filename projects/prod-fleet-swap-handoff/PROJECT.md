@@ -176,15 +176,18 @@ From the original field report — verify against production after the swap:
 
 ## 7. Related drift left open (not blocking)
 
-- ~~**Primary checkout `dev` is diverged**~~ → **RESOLVED 2026-08-25 ~21:30 UTC.** The ledger entries
-  are landed on `origin/dev` as `1f0ae93b`, so the primary checkout can now be fast-forwarded with
-  **zero loss**: `git reset --hard origin/dev`. Nine pointers were recovered, not six — the 6 from the
-  preservation branch `chore/salvage-ledger-20260825`, plus 3 more that the session's own
-  `task_branch action=cleanup` runs appended afterwards. Landed as a UNION over dev's committed
-  ledger + the preservation branch + the primary's live working copy, because these are append-only
-  NDJSON ledgers of independent facts: a union cannot drop one, whereas rebasing six successive
-  appends onto a moved base invites a conflict resolution that silently can. Only
-  `mcp/noctusai/catalog.md` (a generated scan) remains uncommitted there, and it regenerates.
+- **Primary checkout `dev` is diverged** → the part that mattered is RESOLVED (2026-08-25 ~21:30 UTC):
+  the original 6 stranded ledger commits are landed on `origin/dev` as `1f0ae93b`, together with 3
+  more the session's own cleanups had appended. Landed as a UNION over dev's committed ledger + the
+  preservation branch `chore/salvage-ledger-20260825` + the primary's live working copy — append-only
+  NDJSON ledgers of independent facts, so a union cannot drop one, whereas rebasing six successive
+  appends onto a moved base invites a conflict resolution that silently can.
+  **Not "lossless", precisely:** later teardowns keep appending pointers to the primary's local `dev`,
+  so `git reset --hard origin/dev` will discard whatever has accrued since. That is safe **when every
+  pointer names a branch already merged to `dev`** — which is the normal case, because a pointer
+  exists to find work that is NOT in `dev`. Verify with `git branch --no-merged origin/dev` before
+  resetting. See the housekeeping section of
+  `project-history/roadmaps/product-slug-rename-2026-08.md` for the full statement.
 - 🔴 **`task_branch action=cleanup` grows this drift by construction.** It writes its recovery pointer
   into the PRIMARY checkout's working tree and returns `salvage_pushed: false`, because the
   primary-write guard correctly forbids it from committing there. So every teardown adds an

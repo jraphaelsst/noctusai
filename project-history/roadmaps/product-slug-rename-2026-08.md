@@ -108,34 +108,41 @@ Shipped and live:
   so a background scheduler on a per-org timer does not start billing vision calls.
   Raising it is a cost decision, not a technical one.
 
-## Housekeeping only the owner can do — now LOSSLESS
+## Housekeeping only the owner can do
 
 The PRIMARY checkout (`/Users/rapha/Documents/repository/NoctusAI/noctusai`) is on a
 diverged local `dev` and cannot fast-forward. `primary_write_guard` correctly refuses
-to let an agent resolve this, so it needs the owner — but the hard part is already
-done: **every stranded ledger entry is now on `origin/dev`** (commit `1f0ae93b`), so
-the reset below loses nothing.
+to let an agent resolve it, so it needs the owner:
 
 ```
 git -C <repo> reset --hard origin/dev
 ```
 
-What was recovered first, so you know nothing is being discarded:
+**What that discards, stated exactly** (verified, not assumed — an earlier draft of
+this note claimed the reset was "lossless" and that was too strong):
 
-- The **6 unpushed `chore(salvage)` commits** that caused the divergence — their
-  content (6 recovery pointers) is on `origin/dev`.
-- **3 more pointers** appended by that session's own `task_branch action=cleanup`
-  runs — same file, same fate, also landed.
-- `project-history/vector-costs.ndjson` — the one extra ledger line, landed too.
+- The **original 6 `chore(salvage)` commits** that caused the divergence: their content
+  is on `origin/dev` (commit `1f0ae93b`). **Nothing lost.**
+- A handful of **later recovery pointers** committed onto local `dev` by that session's
+  own `task_branch action=cleanup` runs. These are **redundant by construction**: a
+  recovery pointer exists to find work that is NOT in `dev`, and every branch they name
+  was already merged to `dev` before its worktree was torn down. At the time of writing
+  the residual four named `feat/handoff-final-touchup` (`432f68dd`),
+  `feat/predeploy-verify-erp` (`3f5c2d69`), `feat/salvage-ledger-land` (`1f0ae93b`) and
+  `feat/slug-rename-handoff-notes` (`fd7a0389`) — every SHA already in `origin/dev`'s
+  history. Discarding them loses bookkeeping, not work.
+- `mcp/noctusai/catalog.md`, a generated catalog scan. Regenerates on demand.
 
-Landed as a UNION over the three sources (dev's committed ledger, the preservation
-branch `chore/salvage-ledger-20260825`, the primary's live working copy) rather than
-a cherry-pick: these are append-only NDJSON ledgers of independent facts, so a union
-cannot drop one, while rebasing six successive appends onto a moved base invites a
-conflict resolution that silently can.
+The general rule, so this stays true however many teardowns happen after this note is
+written: **a residual pointer to a merged branch is safe to discard; a pointer to an
+unmerged branch is not.** Check with
+`git branch --no-merged origin/dev` before resetting if you want to confirm.
 
-Still uncommitted and genuinely disposable in that tree: `mcp/noctusai/catalog.md`
-(a generated catalog scan — regenerates on demand).
+The 6 original commits were landed as a UNION over three sources (dev's committed
+ledger, the preservation branch `chore/salvage-ledger-20260825`, the primary's live
+working copy) rather than a cherry-pick: these are append-only NDJSON ledgers of
+independent facts, so a union cannot drop one, while rebasing six successive appends
+onto a moved base invites a conflict resolution that silently can.
 
 ### 🔴 Tooling defect worth fixing
 
