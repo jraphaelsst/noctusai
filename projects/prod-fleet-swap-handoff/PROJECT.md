@@ -176,15 +176,24 @@ From the original field report — verify against production after the swap:
 
 ## 7. Related drift left open (not blocking)
 
-- **Primary checkout `dev` is diverged:** 26 behind `origin/dev`, 6 ahead. The 6 local-only commits are
-  append-only salvage-ledger records (`project-history/worktree-salvage.ndjson`,
-  `vector-costs.ndjson`) — 6 `worktree-sweep` entries dated 2026-08-25. They are **preserved on branch
-  `chore/salvage-ledger-20260825` (`a8de8628`)**, created 2026-08-25 so they survive any reset.
-  `project-history/vector-costs.ndjson` also has uncommitted changes in the primary tree.
-  Resolving means landing those 6 ledger commits and FF-ing the primary checkout to `origin/dev`
-  (`noc-ship` wants the primary tree at the shipped tip so hooks + tooling read it).
-- **`126086ca` cohort drift predates this release** — worth asking why a prior deploy swapped only one
-  product, so it doesn't recur.
+- ~~**Primary checkout `dev` is diverged**~~ → **RESOLVED 2026-08-25 ~21:30 UTC.** The ledger entries
+  are landed on `origin/dev` as `1f0ae93b`, so the primary checkout can now be fast-forwarded with
+  **zero loss**: `git reset --hard origin/dev`. Nine pointers were recovered, not six — the 6 from the
+  preservation branch `chore/salvage-ledger-20260825`, plus 3 more that the session's own
+  `task_branch action=cleanup` runs appended afterwards. Landed as a UNION over dev's committed
+  ledger + the preservation branch + the primary's live working copy, because these are append-only
+  NDJSON ledgers of independent facts: a union cannot drop one, whereas rebasing six successive
+  appends onto a moved base invites a conflict resolution that silently can. Only
+  `mcp/noctusai/catalog.md` (a generated scan) remains uncommitted there, and it regenerates.
+- 🔴 **`task_branch action=cleanup` grows this drift by construction.** It writes its recovery pointer
+  into the PRIMARY checkout's working tree and returns `salvage_pushed: false`, because the
+  primary-write guard correctly forbids it from committing there. So every teardown adds an
+  uncommitted ledger line, and the `false` is easy to miss in a large result payload — which is how
+  9 pointers accumulated unlanded. Fix candidates: write the pointer from a short-lived worktree it
+  can commit from, or surface the drift as a first-class warning rather than one field.
+- ~~**`126086ca` cohort drift predates this release**~~ → **CLOSED** (all six swapped; see the banner).
+  The underlying question is still worth answering: why did a prior deploy swap one product and leave
+  the rest behind, and what stops that recurring?
 
 ## 8. Done when
 

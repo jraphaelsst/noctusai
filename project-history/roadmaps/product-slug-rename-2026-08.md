@@ -108,22 +108,44 @@ Shipped and live:
   so a background scheduler on a per-org timer does not start billing vision calls.
   Raising it is a cost decision, not a technical one.
 
-## Housekeeping only the owner can do
+## Housekeeping only the owner can do — now LOSSLESS
 
-The PRIMARY checkout (`/Users/rapha/Documents/repository/NoctusAI/noctusai`) has
-**6 unpushed `chore(salvage)` commits** on local `dev` and has diverged from
-`origin/dev`. `primary_write_guard` correctly refuses to let an agent resolve this,
-so it needs the owner:
+The PRIMARY checkout (`/Users/rapha/Documents/repository/NoctusAI/noctusai`) is on a
+diverged local `dev` and cannot fast-forward. `primary_write_guard` correctly refuses
+to let an agent resolve this, so it needs the owner — but the hard part is already
+done: **every stranded ledger entry is now on `origin/dev`** (commit `1f0ae93b`), so
+the reset below loses nothing.
 
 ```
-git -C <repo> log --oneline origin/dev..HEAD     # review the 6 commits
-git -C <repo> stash -u                            # catalog.md regen + cost ledger
-git -C <repo> reset --hard origin/dev             # or rebase them if they should be kept
+git -C <repo> reset --hard origin/dev
 ```
 
-Their content is `project-history/worktree-salvage.ndjson` recovery pointers.
-There are also two uncommitted generated artifacts in that tree
-(`mcp/noctusai/catalog.md` regen, `project-history/vector-costs.ndjson` churn).
+What was recovered first, so you know nothing is being discarded:
+
+- The **6 unpushed `chore(salvage)` commits** that caused the divergence — their
+  content (6 recovery pointers) is on `origin/dev`.
+- **3 more pointers** appended by that session's own `task_branch action=cleanup`
+  runs — same file, same fate, also landed.
+- `project-history/vector-costs.ndjson` — the one extra ledger line, landed too.
+
+Landed as a UNION over the three sources (dev's committed ledger, the preservation
+branch `chore/salvage-ledger-20260825`, the primary's live working copy) rather than
+a cherry-pick: these are append-only NDJSON ledgers of independent facts, so a union
+cannot drop one, while rebasing six successive appends onto a moved base invites a
+conflict resolution that silently can.
+
+Still uncommitted and genuinely disposable in that tree: `mcp/noctusai/catalog.md`
+(a generated catalog scan — regenerates on demand).
+
+### 🔴 Tooling defect worth fixing
+
+`task_branch action=cleanup` records its recovery pointer into the PRIMARY checkout's
+working tree and returns `salvage_pushed: false` — it cannot commit there, because the
+primary-write guard (correctly) forbids it. So **every teardown grows uncommitted
+ledger drift by construction**, and the `false` is easy to read past in a large result
+payload. That is how 9 pointers accumulated unlanded. Options: have cleanup write the
+pointer via a short-lived worktree it can commit from, or make the ledger drift a
+first-class surfaced warning rather than one field.
 
 ## Retrospective (fill on close)
 
