@@ -608,6 +608,18 @@ describe("Settings — document retention policy", () => {
     });
   }
 
+  it("names the document in Portuguese, with the slug kept as a subtitle", async () => {
+    // The slug is what the API and the storage path call it, so it stays
+    // visible — but a settings screen that shows ONLY `extratos_fgts` is the
+    // same defect as the imóvel filters showing `Cozinhaplanejada`.
+    setUser("owner");
+    const { getByTestId } = await renderSettingsOnKeysTab();
+
+    const linha = getByTestId("retencao-row-atendimento-extratos_fgts");
+    expect(linha.textContent).toContain("Extratos do FGTS");
+    expect(linha.textContent).toContain("extratos_fgts");
+  });
+
   it("always shows what the countdown starts from, not just a duration", async () => {
     // 🔴 The point of the tab. "730 dias" alone is ambiguous — counted from
     // the upload and from the deal's close it is years apart, and only the
@@ -660,7 +672,7 @@ describe("Settings — document retention policy", () => {
       await renderSettingsOnKeysTab();
 
     fireEvent.click(getByTestId("retencao-alterar-extratos_fgts"));
-    fireEvent.change(getByLabelText(/Retenção em dias para extratos_fgts/), {
+    fireEvent.change(getByLabelText(/Retenção em dias para Extratos do FGTS/), {
       target: { value: "365" },
     });
     fireEvent.click(getByTestId("retencao-salvar-extratos_fgts"));
@@ -681,7 +693,7 @@ describe("Settings — document retention policy", () => {
       await renderSettingsOnKeysTab();
 
     fireEvent.click(getByTestId("retencao-alterar-extratos_fgts"));
-    fireEvent.change(getByLabelText(/Retenção em dias para extratos_fgts/), {
+    fireEvent.change(getByLabelText(/Retenção em dias para Extratos do FGTS/), {
       target: { value: "0" },
     });
     fireEvent.click(getByTestId("retencao-salvar-extratos_fgts"));
@@ -694,7 +706,7 @@ describe("Settings — document retention policy", () => {
     stubRetencao([{ ...RETENCAO_FGTS, retencao_dias: 365, personalizado: true }]);
     const { getByLabelText, fireEvent } = await renderSettingsOnKeysTab();
 
-    fireEvent.click(getByLabelText("Restaurar o padrão de extratos_fgts"));
+    fireEvent.click(getByLabelText("Restaurar o padrão de Extratos do FGTS"));
 
     expect(mockResetRetencao).toHaveBeenCalledWith({
       superficie: "atendimento",

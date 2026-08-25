@@ -64,17 +64,12 @@ export interface Acesso {
   created_at: string;
 }
 
-/** Human labels for the document types. The KEYS are the server's contract. */
-export const TIPO_LABEL: Record<string, string> = {
-  certidao_casamento: "Certidão de casamento",
-  escritura_pacto: "Escritura do pacto",
-  registro_pacto: "Registro do pacto",
-  comprovante_residencia: "Comprovante de residência",
-  imposto_renda_com_recibo: "Imposto de renda (com recibo de entrega)",
-  carteira_trabalho: "Carteira de trabalho",
-  extratos_fgts: "Extratos do FGTS",
-  comprovante_residencia_1ano: "Comprovante de residência (há 1 ano)",
-};
+/** Human labels for the document types. The KEYS are the server's contract.
+ *  Defined in `@/lib/documentoTipos` and re-exported here so this hook's
+ *  existing consumers keep their import — one definition, two surfaces, no
+ *  second copy to drift out of step (the retention screen reads the same map).
+ */
+export { TIPO_LABEL } from "@/lib/documentoTipos";
 
 export const SITUACAO_LABEL: Record<SituacaoFinanciamento, string> = {
   pendente: "Pendente",

@@ -56,6 +56,7 @@ import {
   type RecipientCreate,
 } from "@/hooks/useSettings";
 import { useMarcas, type Marca } from "@/hooks/useMarcas";
+import { rotuloTipo } from "@/lib/documentoTipos";
 
 // ─── Reusable bits ──────────────────────────────────────────────────────
 function HealthBadge({ entry }: { entry: KeyStatusEntry }) {
@@ -935,8 +936,16 @@ function RetencaoLinha({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="font-mono text-sm">{politica.tipo_documento}</p>
+          {/* The human label leads; the slug stays visible underneath because
+              it is what the API, the storage path and any support question
+              actually name. Showing only the slug — as this screen first did —
+              is the same defect the imóvel filters have. */}
+          <p className="text-sm font-medium">
+            {rotuloTipo(politica.superficie, politica.tipo_documento)}
+          </p>
           <p className="text-xs text-muted-foreground">
+            <span className="font-mono">{politica.tipo_documento}</span>
+            {" · "}
             {politica.ancora_rotulo}
           </p>
         </div>
@@ -966,7 +975,7 @@ function RetencaoLinha({
                 title={`Restaurar o padrão da plataforma (${formatRetencao(
                   politica.padrao_dias
                 )})`}
-                aria-label={`Restaurar o padrão de ${politica.tipo_documento}`}
+                aria-label={`Restaurar o padrão de ${rotuloTipo(politica.superficie, politica.tipo_documento)}`}
                 onClick={() =>
                   reset({
                     superficie: politica.superficie,
@@ -1001,7 +1010,7 @@ function RetencaoLinha({
             value={draft === INDEFINIDO ? "" : draft}
             placeholder="dias"
             onChange={(e) => setDraft(e.target.value)}
-            aria-label={`Retenção em dias para ${politica.tipo_documento}`}
+            aria-label={`Retenção em dias para ${rotuloTipo(politica.superficie, politica.tipo_documento)}`}
           />
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <Switch
