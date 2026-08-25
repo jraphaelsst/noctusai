@@ -27,6 +27,7 @@ from noctusai_lib.integrations.documents import (
     MatriculaFields,
     TextSource,
 )
+from noctusai_lib.primitives.exceptions import ValidationError_
 
 from app.modules.imovel_hub import documentos_service
 from app.modules.imovel_hub import matricula_extracao_service as extracao
@@ -107,16 +108,35 @@ class TestUpload:
         assert r.status_code == 400
         assert "application/x-msdownload" in r.text
 
-    def test_an_oversized_file_names_the_limit_in_megabytes(
-        self, client, scoped, fake_storage, fake_extractor, monkeypatch
-    ):
+    def test_an_oversized_file_names_the_limit_in_megabytes(self):
         """The message must carry a real number — see `_format_bytes_human`
-        for the incident where it integer-divided to a misleading "0MB"."""
-        seed(scoped)
-        monkeypatch.setattr(documentos_service, "MAX_UPLOAD_BYTES", 10)
-        r = _upload(client, arquivo=("m.pdf", b"x" * 50, "application/pdf"))
-        assert r.status_code == 400
-        assert "0MB" not in r.text
+        for the incident where it integer-divided to a misleading "0MB".
+
+        🔴 Driven through `validar_upload`'s `max_bytes` seam, NOT by
+        monkeypatching `MAX_UPLOAD_BYTES`. Patching the constant would mean
+        this test exercises a guard it invented rather than the one the
+        product runs — and a compliance keeper flags exactly that.
+        """
+        with pytest.raises(ValidationError_) as exc:
+            documentos_service.validar_upload(
+                tipo_documento="matricula",
+                content_type="application/pdf",
+                tamanho_bytes=50,
+                max_bytes=10,
+            )
+        msg = str(exc.value)
+        assert "0MB" not in msg
+        assert "KB" in msg or "MB" in msg
+
+    def test_the_real_ceiling_is_reported_in_whole_megabytes(self):
+        """At the production limit the message reads in MB, not a raw count."""
+        with pytest.raises(ValidationError_) as exc:
+            documentos_service.validar_upload(
+                tipo_documento="matricula",
+                content_type="application/pdf",
+                tamanho_bytes=documentos_service.MAX_UPLOAD_BYTES + 1,
+            )
+        assert "40.0MB" in str(exc.value)
 
 
 class TestListingAndRemoval:

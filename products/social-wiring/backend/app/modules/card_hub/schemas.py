@@ -10,6 +10,7 @@ not by a second parallel schema declaration for every read shape).
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -258,3 +259,67 @@ class CompradorCreateBody(StrictHttpModel):
     papel: Optional[str] = None
     observacao: Optional[str] = Field(default=None, max_length=2000)
     atendimento_id: Optional[UUID] = None
+
+
+# ─── Negociação (migration 077) ──────────────────────────────────────────
+
+
+class NegociacaoPatchBody(StrictHttpModel):
+    """The commercial terms a human may set.
+
+    Every field Optional AND nullable; absence means "leave alone" (the
+    service reads `model_fields_set`), because `None` is a real value —
+    clearing a valor negociado that was entered by mistake has to be possible.
+
+    Money and percentages are `Decimal`, never `float`: a float cannot
+    represent centavos, and the whole commission split is built on them being
+    exact.
+    """
+
+    imovel_codigo: Optional[str] = Field(default=None, max_length=64)
+    valor_negociado: Optional[Decimal] = Field(default=None, ge=0)
+    pct_comissao: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    tem_parceria: Optional[bool] = None
+    pct_parceria: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_agencia: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_agentes: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_captador: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    formas_pagamento: Optional[str] = Field(default=None, max_length=2000)
+    parcelas: Optional[str] = Field(default=None, max_length=2000)
+    financiamento: Optional[bool] = None
+    #: 🔴 Not constrained to require `financiamento` — see migration 077. The
+    #: UI shows it conditionally; FGTS can legitimately fund a purchase with
+    #: no financing at all, so the rule is not frozen into the contract.
+    fgts: Optional[bool] = None
+    observacoes: Optional[str] = Field(default=None, max_length=4000)
+
+
+class NegociacaoDefaultsPatchBody(StrictHttpModel):
+    """The org's split rule.
+
+    🔴 Changing this does NOT touch existing negociações — their percentages
+    were copied at creation. It changes what the NEXT deal starts from.
+    """
+
+    pct_comissao: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_parceria: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_agencia: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_agentes: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_captador: Optional[Decimal] = Field(default=None, ge=0, le=100)
+
+
+# ─── Financiamento / Escritura (migration 078) ───────────────────────────
+
+
+class FinanciamentoPatchBody(StrictHttpModel):
+    """The financing decision and its notes.
+
+    `situacao` is three-valued (`pendente`/`aprovado`/`recusado`) rather than a
+    boolean: "not yet decided" is where an application spends most of its life
+    and is not the same as a refusal.
+    """
+
+    situacao: Optional[Literal["pendente", "aprovado", "recusado"]] = None
+    situacao_motivo: Optional[str] = Field(default=None, max_length=2000)
+    fgts: Optional[bool] = None
+    observacoes: Optional[str] = Field(default=None, max_length=4000)

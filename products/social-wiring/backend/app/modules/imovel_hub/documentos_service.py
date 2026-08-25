@@ -32,16 +32,15 @@ to diverge without one silently dragging the other.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from noctusai_lib.integrations.storage import StorageBackend
-from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub.deps import BUCKET
 from app.services import table_reads
+from app.services.documento_store import DocumentoStore
 
 logger = logging.getLogger(__name__)
 
@@ -65,28 +64,24 @@ ALLOWED_MIME_TYPES = frozenset(
     {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 )
 
-_SIGNED_URL_TTL_SECONDS = 300
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+#: 🔴 `acessos_table=None` is an EXPLICIT claim, not a default this fell into:
+#: a matrícula is a public registry document about a PROPERTY, so there is no
+#: personal-data access to log. `atendimento_documentos` sets it, because an
+#: imposto de renda is a very different thing. See the module docstring.
+STORE = DocumentoStore(
+    table=TABLE,
+    owner_col="codigo",
+    prefixo="imoveis",
+    bucket=BUCKET,
+    tipos=TIPOS_DOCUMENTO,
+    max_bytes=MAX_UPLOAD_BYTES,
+    mimes=ALLOWED_MIME_TYPES,
+    acessos_table=None,
+)
 
 
 def _t(client: Any, name: str):
     return table_reads.table(client, name)
-
-
-def _format_bytes_human(n: int) -> str:
-    """Human-readable byte count for a user-facing limit message.
-
-    Never integer-divides to a misleading "0MB" — see
-    `card_hub.documentos_service._format_bytes_human` for the incident that
-    rule came from.
-    """
-    mb = n / (1024 * 1024)
-    if mb >= 1:
-        return f"{mb:.1f}MB"
-    return f"{n / 1024:.0f}KB"
 
 
 def _documento_out(row: dict, resolved: dict) -> dict:
@@ -111,19 +106,37 @@ def _documento_out(row: dict, resolved: dict) -> dict:
 
 def listar(client: Any, org_id: UUID, codigo: str) -> dict:
     dados_service.ensure_imovel(client, org_id, codigo)
-    rows = table_reads.paged_rows(
-        client,
-        TABLE,
-        org_id,
-        eq_filters={"codigo": codigo},
-        refine=lambda q: q.is_("deleted_at", "null"),
-    )
+    rows = STORE.listar_linhas(client, org_id, codigo)
     resolved = table_reads.resolve_actors(
         {r["enviado_por"] for r in rows if r.get("enviado_por")}
     )
     items = [_documento_out(r, resolved) for r in rows]
-    items.sort(key=lambda d: d["created_at"], reverse=True)
     return {"items": items, "total": len(items)}
+
+
+def validar_upload(
+    *,
+    tipo_documento: str,
+    content_type: str,
+    tamanho_bytes: int,
+    max_bytes: int = MAX_UPLOAD_BYTES,
+) -> None:
+    """Refuse an upload we will not store, naming the limit it hit.
+
+    Thin alias over the store's own validator, kept so this module's tests and
+    callers read in its own vocabulary. `max_bytes` is a parameter so no test
+    has to monkeypatch the constant — see `DocumentoStore.validar`.
+    """
+    STORE.validar(
+        tipo_documento=tipo_documento,
+        content_type=content_type,
+        tamanho_bytes=tamanho_bytes,
+        max_bytes=max_bytes,
+    )
+
+
+def deve_extrair(tipo_documento: str) -> bool:
+    return tipo_documento in TIPOS_EXTRAIVEIS
 
 
 async def upload(
@@ -139,81 +152,29 @@ async def upload(
     enviado_por: Optional[UUID],
 ) -> dict:
     dados_service.ensure_imovel(client, org_id, codigo)
-
-    if tipo_documento not in TIPOS_DOCUMENTO:
-        raise ValidationError_(
-            f"tipo_documento desconhecido: {tipo_documento!r}. "
-            f"Permitidos: {', '.join(TIPOS_DOCUMENTO)}",
-            field="tipo_documento",
-        )
-    if content_type not in ALLOWED_MIME_TYPES:
-        raise ValidationError_(
-            f"Tipo de arquivo não permitido: {content_type}. "
-            f"Permitidos: {', '.join(sorted(ALLOWED_MIME_TYPES))}",
-            field="mime_type",
-        )
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise ValidationError_(
-            f"Arquivo excede o limite de {_format_bytes_human(MAX_UPLOAD_BYTES)} "
-            f"({_format_bytes_human(len(data))} enviado)",
-            field="tamanho_bytes",
-        )
-
-    documento_id = uuid4()
-    storage_path = f"{org_id}/imoveis/{codigo}/{documento_id}"
-    await storage.put(
-        bucket=BUCKET,
-        key=storage_path,
-        data=data,
+    row = await STORE.guardar(
+        client,
+        storage,
+        org_id,
+        codigo,
+        filename=filename,
         content_type=content_type,
-        metadata={"nome_original": filename},
+        data=data,
+        tipo_documento=tipo_documento,
+        enviado_por=enviado_por,
+        extra={
+            # Queued the moment it lands. `pendente` is set HERE rather than
+            # by the background job so a job that never starts — worker died,
+            # process recycled mid-request — is visibly waiting instead of
+            # invisibly lost, and the sweeper can find it.
+            "extracao_status": "pendente" if deve_extrair(tipo_documento) else None,
+            "extracao_tentativas": 0,
+        },
     )
-
-    row = {
-        "id": str(documento_id),
-        "org_id": str(org_id),
-        "codigo": codigo,
-        "storage_path": storage_path,
-        "nome_original": filename,
-        "mime_type": content_type,
-        "tamanho_bytes": len(data),
-        "tipo_documento": tipo_documento,
-        "enviado_por": str(enviado_por) if enviado_por else None,
-        "deleted_at": None,
-        "delete_motivo": None,
-        "created_at": _now(),
-        # Queued the moment it lands. `pendente` is set HERE rather than by
-        # the background job so a job that never starts — worker died,
-        # process recycled mid-request — is visibly waiting instead of
-        # invisibly lost, and the sweeper can find it.
-        "extracao_status": "pendente" if deve_extrair(tipo_documento) else None,
-        "extracao_tentativas": 0,
-    }
-    _t(client, TABLE).insert(row).execute()
     resolved = table_reads.resolve_actors(
         {row["enviado_por"]} if row["enviado_por"] else set()
     )
     return _documento_out(row, resolved)
-
-
-def deve_extrair(tipo_documento: str) -> bool:
-    return tipo_documento in TIPOS_EXTRAIVEIS
-
-
-def _require_documento(
-    client: Any, org_id: UUID, codigo: str, documento_id: UUID
-) -> dict:
-    rows = (
-        _t(client, TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("codigo", codigo)
-        .eq("id", str(documento_id))
-        .execute()
-    ).data or []
-    if not rows or rows[0].get("deleted_at"):
-        raise NotFoundError(TABLE, str(documento_id))
-    return rows[0]
 
 
 async def url_do_documento(
@@ -225,19 +186,11 @@ async def url_do_documento(
 ) -> dict:
     """A short-TTL signed URL. Minted per request, never stored.
 
-    No access-log append — see the module docstring for why a property's
-    registry document is not on the same footing as a person's RG.
+    No access-log append — the store is constructed with `acessos_table=None`
+    because a property's registry document is not personal data. See the
+    module docstring.
     """
-    documento = _require_documento(client, org_id, codigo, documento_id)
-    url = await storage.signed_url(
-        bucket=BUCKET,
-        key=documento["storage_path"],
-        expires_in_seconds=_SIGNED_URL_TTL_SECONDS,
-    )
-    expires_at = (
-        datetime.now(timezone.utc) + timedelta(seconds=_SIGNED_URL_TTL_SECONDS)
-    ).isoformat()
-    return {"url": url, "expires_at": expires_at}
+    return await STORE.url(client, storage, org_id, codigo, documento_id)
 
 
 def remover(
@@ -252,19 +205,15 @@ def remover(
 
     🔴 The imóvel's `numero_matricula` is deliberately NOT cleared, even when
     the deleted document is the one it was read off. The number is a fact
-    about the property that happens to have been sourced here; the document
-    is evidence. Removing the evidence does not un-know the fact, and
-    silently blanking a field the user did not ask to blank is the kind of
-    cascade that loses data nobody agreed to lose.
+    about the property that happens to have been sourced here; the document is
+    evidence. Removing the evidence does not un-know the fact, and silently
+    blanking a field the user did not ask to blank is the kind of cascade that
+    loses data nobody agreed to lose.
 
-    `numero_matricula_documento_id` keeps pointing at the soft-deleted row,
-    so the provenance stays readable. (Migration 075's FK is ON DELETE SET
-    NULL, which only fires on a HARD delete.)
+    `numero_matricula_documento_id` keeps pointing at the soft-deleted row, so
+    the provenance stays readable.
     """
-    _require_documento(client, org_id, codigo, documento_id)
-    _t(client, TABLE).update(
-        {"deleted_at": _now(), "delete_motivo": motivo}
-    ).eq("id", str(documento_id)).execute()
+    STORE.remover(client, org_id, codigo, documento_id, motivo=motivo)
 
 
 __all__ = [
@@ -274,6 +223,7 @@ __all__ = [
     "TIPOS_DOCUMENTO",
     "TIPOS_EXTRAIVEIS",
     "deve_extrair",
+    "validar_upload",
     "listar",
     "remover",
     "upload",

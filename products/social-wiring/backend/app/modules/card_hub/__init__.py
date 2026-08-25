@@ -60,14 +60,16 @@ def register() -> Any:
     `app.modules.n8n.register`)."""
     from app.main import ModuleRegistration
     from app.modules.card_hub import documentos_service
-    from app.modules.card_hub.router import router
+    from app.modules.card_hub.router import defaults_router, router
 
     # Configured at import time — before `start_scheduler()` fires in
     # `app/lifespan.py` (see `clientes_backfill_job.configure()`'s
     # identical rationale).
     documentos_service.configure()
 
-    return ModuleRegistration(routers=[router], standard_routers=())
+    return ModuleRegistration(
+        routers=[router, defaults_router], standard_routers=()
+    )
 
 
 __all__ = ["register"]

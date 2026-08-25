@@ -340,6 +340,18 @@ _MAX_BODY_PATH_OVERRIDES = {
     # the business-policy limit and stays under this outer bound — the
     # middleware is the platform-wide safety net, not the policy.
     "/api/imoveis/*/documentos": 50 * 1024 * 1024,  # 50 MB
+    # Financiamento/escritura upload (POST
+    # /api/clientes/{cliente_id}/financiamento/documentos — migration 078).
+    # A SEPARATE entry from the `/api/clientes/*/documentos` one above even
+    # though both sit under `/api/clientes/{id}`: the wildcard matches exactly
+    # one dynamic segment, so `/api/clientes/*/documentos` does not cover
+    # `/api/clientes/*/financiamento/documentos`. Without this line the
+    # financing uploads would silently fall back to the platform default and
+    # reject an ordinary imposto de renda PDF.
+    #
+    # 30 MB, same as the clientes path: `financiamento_service`'s own
+    # MAX_UPLOAD_BYTES (25 MB) is the business-policy limit and stays under it.
+    "/api/clientes/*/financiamento/documentos": 30 * 1024 * 1024,  # 30 MB
 }
 
 app = create_product_app(

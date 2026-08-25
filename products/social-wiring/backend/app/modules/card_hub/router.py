@@ -42,7 +42,9 @@ from app.modules.card_hub import agendamentos_service as agenda_svc
 from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
 from app.modules.card_hub import documentos_service as docs_svc
+from app.modules.card_hub import financiamento_service as financiamento_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
+from app.modules.card_hub import negociacao_service as negociacao_svc
 from app.modules.card_hub import services as svc
 from app.modules.card_hub import timeline_service
 from app.modules.card_hub.deps import (
@@ -52,6 +54,9 @@ from app.modules.card_hub.deps import (
 )
 from app.modules.card_hub.schemas import (
     CompradorCreateBody,
+    FinanciamentoPatchBody,
+    NegociacaoDefaultsPatchBody,
+    NegociacaoPatchBody,
     AgendamentoCreateBody,
     AgendamentoPatchBody,
     ChecklistCreateBody,
@@ -676,4 +681,169 @@ async def delete_comprador_route(
     compradores_svc.remover(client, org_id, cliente_id, parte_id)
 
 
-__all__ = ["router"]
+# ─── Negociação (migration 077) ─────────────────────────────────────────
+
+
+@router.get("/{cliente_id}/negociacao")
+async def get_negociacao_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return negociacao_svc.obter(client, org_id, cliente_id)
+
+
+@router.patch("/{cliente_id}/negociacao")
+async def patch_negociacao_route(
+    cliente_id: UUID,
+    body: NegociacaoPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    # `model_fields_set`, NOT `exclude_none`: `None` is a real value here
+    # (clearing a valor entered by mistake), so absence is the only thing
+    # that can mean "leave alone".
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return negociacao_svc.atualizar(
+        client, org_id, cliente_id, valores=valores,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+# ─── Financiamento / Escritura (migration 078) ──────────────────────────
+
+
+@router.get("/{cliente_id}/financiamento")
+async def get_financiamento_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return financiamento_svc.obter(client, org_id, cliente_id)
+
+
+@router.patch("/{cliente_id}/financiamento")
+async def patch_financiamento_route(
+    cliente_id: UUID,
+    body: FinanciamentoPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return financiamento_svc.atualizar(
+        client, org_id, cliente_id, valores=valores,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.post("/{cliente_id}/financiamento/documentos")
+async def upload_financiamento_documento_route(
+    cliente_id: UUID,
+    file: UploadFile = File(...),
+    tipo_documento: str = Form(...),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    data = await file.read()
+    return await financiamento_svc.upload(
+        client,
+        storage,
+        org_id,
+        cliente_id,
+        filename=file.filename or "arquivo",
+        content_type=file.content_type or "application/octet-stream",
+        data=data,
+        tipo_documento=tipo_documento,
+        enviado_por=getattr(user, "id", None),
+    )
+
+
+@router.get("/{cliente_id}/financiamento/documentos/{documento_id}/url")
+async def get_financiamento_documento_url_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    intent: str = Query("view"),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    return await financiamento_svc.url_do_documento(
+        client, storage, org_id, cliente_id, documento_id,
+        usuario_id=getattr(user, "id", None), intent=intent,
+    )
+
+
+@router.get("/{cliente_id}/financiamento/documentos/{documento_id}/acessos")
+async def list_financiamento_acessos_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return financiamento_svc.listar_acessos(client, org_id, cliente_id, documento_id)
+
+
+@router.delete(
+    "/{cliente_id}/financiamento/documentos/{documento_id}", status_code=204
+)
+async def delete_financiamento_documento_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    # A required query param, not a body — the seed `ApiClient.delete()` has
+    # no body parameter. An LGPD delete without a recorded reason is not one.
+    motivo: str = Query(..., min_length=1, max_length=500),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    user, org_id = _auth_parts(auth)
+    financiamento_svc.remover(
+        client, org_id, cliente_id, documento_id, motivo=motivo,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+# ─── The org's split rule ────────────────────────────────────────────────
+#
+# 🔴 A SEPARATE ROUTER, on `/api/negociacao`, deliberately.
+#
+# These are ORG settings, not a cliente resource, and hanging them off
+# `/api/clientes` would need a literal 1-segment path — which is exactly the
+# shape that structurally collides with `clientes_router`'s bare
+# `/{cliente_id}` (see this module's header for the `/tags` incident). A
+# distinct prefix has no such shape to collide with, so no mount-order
+# constraint applies to it at all.
+
+defaults_router = APIRouter(prefix="/api/negociacao", tags=["negociacao"])
+
+
+@defaults_router.get("/defaults")
+async def get_negociacao_defaults_route(
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return negociacao_svc.obter_defaults(client, org_id)
+
+
+@defaults_router.patch("/defaults")
+async def patch_negociacao_defaults_route(
+    body: NegociacaoDefaultsPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return negociacao_svc.atualizar_defaults(
+        client, org_id, valores=valores, usuario_id=getattr(user, "id", None)
+    )
+
+
+__all__ = ["defaults_router", "router"]
