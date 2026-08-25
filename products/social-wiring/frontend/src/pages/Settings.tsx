@@ -123,7 +123,7 @@ function NotificationsTab() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Canais de notificacao</CardTitle>
+          <CardTitle>Canais de notificação</CardTitle>
           <CardDescription>
             Configurados via .env. Para alterar, edite os valores e reinicie o backend.
           </CardDescription>
@@ -154,10 +154,10 @@ function NotificationsTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Destinatarios</CardTitle>
+          <CardTitle>Destinatários</CardTitle>
           <CardDescription>
-            Lista fixa que recebe a notificacao em cada upload publicado.
-            No momento do upload da para desmarcar individualmente.
+            Lista fixa que recebe a notificação em cada upload publicado.
+            No momento do upload dá para desmarcar individualmente.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -722,7 +722,7 @@ function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
       <Card>
         <CardContent className="flex flex-col items-center gap-3 p-12 text-center">
           <p className="text-sm text-muted-foreground">
-            Nao foi possivel carregar o limite de inatividade de clientes.
+            Não foi possível carregar o limite de inatividade de clientes.
           </p>
           <Button
             variant="outline"
@@ -745,7 +745,7 @@ function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValid) {
-      toast.error("Informe um numero inteiro maior ou igual a 0.");
+      toast.error("Informe um número inteiro maior ou igual a 0.");
       return;
     }
     save(parsedDraft, { onSuccess: () => setDirty(false) });
@@ -759,7 +759,7 @@ function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
           <div>
             <CardTitle>Inatividade de clientes</CardTitle>
             <CardDescription>
-              Clientes sem contato ha mais de N dias sao marcados como
+              Clientes sem contato há mais de N dias são marcados como
               inativos e saem do quadro; podem ser restaurados a qualquer
               momento.
             </CardDescription>
@@ -1059,7 +1059,7 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
       <Card>
         <CardContent className="flex flex-col items-center gap-3 p-12 text-center">
           <p className="text-sm text-muted-foreground">
-            Nao foi possivel carregar a politica de retencao de documentos.
+            Não foi possível carregar a política de retenção de documentos.
           </p>
           <Button
             variant="outline"
@@ -1085,10 +1085,10 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
           <div className="flex items-center gap-3">
             <ShieldCheck className="h-5 w-5 text-muted-foreground" />
             <div>
-              <CardTitle>Retencao de documentos</CardTitle>
+              <CardTitle>Retenção de documentos</CardTitle>
               <CardDescription>
-                Por quanto tempo cada tipo de documento e mantido antes de ser
-                removido automaticamente. A contagem so comeca a partir do
+                Por quanto tempo cada tipo de documento é mantido antes de ser
+                removido automaticamente. A contagem só começa a partir do
                 marco indicado em cada linha.
               </CardDescription>
             </div>
@@ -1144,9 +1144,9 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
   return (
     <div className="container mx-auto max-w-5xl px-4 py-8">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Configuracoes</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Configurações</h1>
         <p className="text-sm text-muted-foreground">
-          Gerencie destinatarios de notificacao e status das chaves de integracao.
+          Gerencie destinatários de notificação e status das chaves de integração.
         </p>
       </header>
 
@@ -1156,10 +1156,10 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
             isAdminOrDev ? "grid-cols-5 sm:max-w-2xl" : "grid-cols-4 sm:max-w-lg"
           }`}
         >
-          <TabsTrigger value="notifications">Notificacoes</TabsTrigger>
+          <TabsTrigger value="notifications">Notificações</TabsTrigger>
           <TabsTrigger value="keys">Chaves API</TabsTrigger>
           <TabsTrigger value="clientes">Clientes</TabsTrigger>
-          <TabsTrigger value="retencao">Retencao</TabsTrigger>
+          <TabsTrigger value="retencao">Retenção</TabsTrigger>
           {isAdminOrDev && (
             <TabsTrigger value="visibilidade">Visibilidade</TabsTrigger>
           )}

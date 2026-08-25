@@ -116,7 +116,12 @@ export function CardSidebarNav({ active, onSelect, emptyKeys = [] }: CardSidebar
             )}
           >
             <Icon className="h-4 w-4 shrink-0" />
-            <span className="truncate">{label}</span>
+            {/* 🔴 Wraps, never truncates. At 184px "Financiamento/Escritura"
+                and "Campanha e imóvel" both rendered as "Financiamento/…" and
+                "Campanha e im…" — a nav whose own labels do not fit is a nav
+                you have to click to read. Two short lines cost nothing here;
+                an unreadable label costs a click every time. */}
+            <span className="leading-tight">{label}</span>
           </button>
         );
       })}

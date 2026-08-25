@@ -227,6 +227,17 @@ export interface ClienteCardDialogProps {
   onTimelineLoadMore?: () => void;
   onPostComentario: (corpo: string) => void;
   postingComentario?: boolean;
+
+  /**
+   * The tab the user just opened.
+   *
+   * 🔴 Exists so the owner can fetch that tab's data ON DEMAND. Opening a card
+   * fired eight parallel reads — resumo, timeline, checklists, documentos,
+   * documento-checklist, agendamentos, compradores, negociação, financiamento
+   * — several taking 1,4–2,4 s in production, for panels the person may never
+   * open. Only this component knows which tab is active, so only it can say.
+   */
+  onSubpageChange?: (key: CardSubpageKey) => void;
 }
 
 export function ClienteCardDialog(props: ClienteCardDialogProps) {
@@ -235,6 +246,16 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   // `geral` is the open-on-mount subpage: the card is opened to DO something
   // far more often than to read the record behind it.
   const [subpage, setSubpage] = useState<CardSubpageKey>("geral");
+
+  // 🔴 Reported upward so the owner can fetch a tab's data WHEN IT IS OPENED.
+  // Opening a card fired eight parallel reads — resumo, timeline, checklists,
+  // documentos, documento-checklist, agendamentos, compradores, negociação,
+  // financiamento — several taking 1,4–2,4 s, for tabs the person may never
+  // look at. The dialog owns which tab is active; only it can say.
+  function selecionar(key: CardSubpageKey) {
+    setSubpage(key);
+    props.onSubpageChange?.(key);
+  }
   const record = useRecordSections(props.atendimentos);
   const emptyKeys = useMemo(
     () =>
@@ -248,7 +269,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
-        className="grid h-[85vh] max-w-6xl grid-cols-1 gap-0 overflow-hidden p-0 md:grid-cols-[184px_1fr_360px]"
+        className="grid h-[85vh] max-w-6xl grid-cols-1 gap-0 overflow-hidden p-0 md:grid-cols-[200px_1fr_360px]"
         data-testid="cliente-card-dialog"
       >
         {error ? (
@@ -278,7 +299,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
             </DialogDescription>
 
             {/* ── Left rail — subpage navigation ──────────────────── */}
-            <CardSidebarNav active={subpage} onSelect={setSubpage} emptyKeys={emptyKeys} />
+            <CardSidebarNav active={subpage} onSelect={selecionar} emptyKeys={emptyKeys} />
 
             {/* ── Middle pane — the active subpage ────────────────── */}
             <ScrollArea className="border-r p-6">

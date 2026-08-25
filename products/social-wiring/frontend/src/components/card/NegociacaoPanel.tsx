@@ -19,6 +19,8 @@
  * Hiding them would make the columns add up on screen while being wrong.
  */
 import { useEffect, useState } from "react";
+
+import { preverCalculo } from "@/lib/negociacaoPreview";
 import { AlertCircle, Handshake, Loader2, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -73,15 +75,56 @@ function text(value: unknown, fallback = ""): string {
   return String(value);
 }
 
+/**
+ * Drop the zeros a `numeric` column carries back but a person never typed.
+ *
+ * 🔴 `NUMERIC(14,2)` returns `850000.00` and `NUMERIC(6,3)` returns `6.000`,
+ * so after every save the fields redisplayed as `850000.0`, `6.0`, `50.0`.
+ * On a percentage that is merely ugly; in a field that reads
+ * "Valor negociado (R$)" it is genuinely ambiguous — `850000.0` can be read as
+ * eight hundred and fifty thousand reais and zero centavos, or as something
+ * else entirely, and this is the screen where that guess is expensive.
+ */
+function semZerosSobrando(v: unknown): string {
+  const t = text(v).trim();
+  if (t === "" || !/^-?\d*\.?\d+$/.test(t)) return t;
+  return t.includes(".") ? t.replace(/0+$/, "").replace(/\.$/, "") : t;
+}
+
+/** `850000` → `850.000,00`, for display while the field is not being typed in. */
+function exibirMoeda(v: string): string {
+  const n = Number(v);
+  if (v.trim() === "" || !Number.isFinite(n)) return v;
+  return n.toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/**
+ * Read what a Brazilian actually types: `850.000,00`, `850000,00`, `850000`.
+ *
+ * A money field that only accepts a dot as the decimal separator is a field
+ * this audience will type wrong — `850.000` means eight hundred and fifty
+ * THOUSAND here, not eight hundred and fifty.
+ */
+function lerMoeda(entrada: string): string {
+  const limpo = entrada.replace(/[^\d.,-]/g, "");
+  if (limpo.includes(",")) return limpo.replace(/\./g, "").replace(",", ".");
+  // No comma: dots are thousands separators only when they group three digits.
+  if (/^-?\d{1,3}(\.\d{3})+$/.test(limpo)) return limpo.replace(/\./g, "");
+  return limpo;
+}
+
 function toDraft(n: Negociacao | undefined): Draft {
   return {
-    valor_negociado: text(n?.valor_negociado),
-    pct_comissao: text(n?.pct_comissao),
+    valor_negociado: semZerosSobrando(n?.valor_negociado),
+    pct_comissao: semZerosSobrando(n?.pct_comissao),
     tem_parceria: n?.tem_parceria ?? false,
-    pct_parceria: text(n?.pct_parceria, "50"),
-    pct_agencia: text(n?.pct_agencia, "50"),
-    pct_agentes: text(n?.pct_agentes, "45"),
-    pct_captador: text(n?.pct_captador, "5"),
+    pct_parceria: semZerosSobrando(n?.pct_parceria) || "50",
+    pct_agencia: semZerosSobrando(n?.pct_agencia) || "50",
+    pct_agentes: semZerosSobrando(n?.pct_agentes) || "45",
+    pct_captador: semZerosSobrando(n?.pct_captador) || "5",
     formas_pagamento: text(n?.formas_pagamento),
     parcelas: text(n?.parcelas),
     financiamento: n?.financiamento ?? false,
@@ -98,6 +141,10 @@ export default function NegociacaoPanel({
   onSave,
 }: Props) {
   const [draft, setDraft] = useState<Draft>(() => toDraft(negociacao));
+  // The money field shows `850.000,00` at rest and the raw digits while it has
+  // focus. Reformatting mid-keystroke fights the cursor; leaving it raw at
+  // rest is what made `850000.0` reach the screen in the first place.
+  const [editandoValor, setEditandoValor] = useState(false);
 
   useEffect(() => {
     setDraft(toDraft(negociacao));
@@ -139,7 +186,28 @@ export default function NegociacaoPanel({
     });
   }
 
-  const calc = negociacao?.calculo;
+  // 🔴 THE SPLIT IS LIVE NOW.
+  //
+  // It used to come only from `negociacao.calculo`, i.e. only after saving —
+  // so the panel whose entire purpose is "how much goes to whom" stayed blank
+  // while the person was deciding, which is the moment the number matters.
+  //
+  // The SERVER's figures are still what is shown once the draft matches what
+  // was saved; `preverCalculo` fills the gap in between and is labelled a
+  // preview on screen. The stored value is never computed here.
+  const previa = preverCalculo({
+    valor_negociado: draft.valor_negociado,
+    pct_comissao: draft.pct_comissao,
+    tem_parceria: draft.tem_parceria,
+    pct_parceria: draft.pct_parceria,
+    pct_agencia: draft.pct_agencia,
+    pct_agentes: draft.pct_agentes,
+    pct_captador: draft.pct_captador,
+  });
+  const salvo = toDraft(negociacao);
+  const alterado =
+    JSON.stringify(draft) !== JSON.stringify(salvo);
+  const calc = alterado || !negociacao?.calculo ? previa : negociacao.calculo;
 
   return (
     <div className="grid gap-4 lg:grid-cols-2" data-testid="negociacao-panel">
@@ -158,10 +226,15 @@ export default function NegociacaoPanel({
               <Input
                 id="valor-negociado"
                 inputMode="decimal"
-                value={draft.valor_negociado}
-                onChange={(e) => set("valor_negociado")(e.target.value)}
-                placeholder="500000.00"
+                value={
+                  editandoValor ? draft.valor_negociado : exibirMoeda(draft.valor_negociado)
+                }
+                onFocus={() => setEditandoValor(true)}
+                onBlur={() => setEditandoValor(false)}
+                onChange={(e) => set("valor_negociado")(lerMoeda(e.target.value))}
+                placeholder="850.000,00"
                 disabled={loading}
+                data-testid="negociacao-valor"
               />
             </div>
             <div className="space-y-1.5">
@@ -169,6 +242,7 @@ export default function NegociacaoPanel({
               <Input
                 id="pct-comissao"
                 inputMode="decimal"
+                data-testid="negociacao-pct-comissao"
                 value={draft.pct_comissao}
                 onChange={(e) => set("pct_comissao")(e.target.value)}
                 placeholder="6"
@@ -321,7 +395,17 @@ export default function NegociacaoPanel({
       {/* ── The split ── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Divisão da comissão</CardTitle>
+          <CardTitle className="text-base">
+            Divisão da comissão
+            {alterado && (
+              <span
+                className="ml-2 align-middle text-xs font-normal text-muted-foreground"
+                data-testid="negociacao-previa"
+              >
+                prévia — salve para confirmar
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {!calc || !calc.calculavel ? (
@@ -342,16 +426,22 @@ export default function NegociacaoPanel({
               <Linha label="Nossa parte" valor={calc.nossa_parte} destaque />
               <div className="h-px bg-border" />
               <Linha
-                label={`Agência (${formatPct(negociacao?.pct_agencia)})`}
+                label={`Agência (${formatPct(draft.pct_agencia)})`}
                 valor={calc.agencia}
               />
               <Linha
-                label={`Agentes (${formatPct(negociacao?.pct_agentes)})`}
+                label={`Agentes (${formatPct(draft.pct_agentes)})`}
                 valor={calc.agentes_total}
               />
-              {calc.agentes.length > 0 ? (
+              {/* 🔴 The per-member and captador rows are IDENTITY, not
+                  arithmetic — they need the card's membros and the imóvel's
+                  captador, which only the server has. While the draft is
+                  unsaved the amounts above are a local preview, so naming who
+                  gets what would be inventing an allocation. The aggregate
+                  lines stay live; these two wait for the save. */}
+              {alterado ? null : (negociacao?.calculo?.agentes.length ?? 0) > 0 ? (
                 <ul className="space-y-1 pl-4">
-                  {calc.agentes.map((a) => (
+                  {negociacao!.calculo!.agentes.map((a) => (
                     <li
                       key={a.id}
                       className="flex justify-between text-xs text-muted-foreground"
@@ -375,12 +465,13 @@ export default function NegociacaoPanel({
                 </p>
               )}
               <Linha
-                label={`Captador (${formatPct(negociacao?.pct_captador)})`}
+                label={`Captador (${formatPct(draft.pct_captador)})`}
                 valor={calc.captador_total}
               />
-              {calc.captador ? (
+              {alterado ? null : negociacao?.calculo?.captador ? (
                 <p className="pl-4 text-xs text-muted-foreground">
-                  {calc.captador.nome ?? calc.captador.id}
+                  {negociacao!.calculo!.captador!.nome ??
+                    negociacao!.calculo!.captador!.id}
                 </p>
               ) : (
                 <p

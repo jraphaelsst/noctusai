@@ -22,7 +22,7 @@
  * every component remount.
  */
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@noctusai/seed/infra';
+import { coreApi } from '@noctusai/seed/infra';
 import { env } from '../../env';
 
 export interface ConsentItem {
@@ -70,7 +70,7 @@ export function useConsents() {
     queryKey: CONSENTS_QUERY_KEY,
     queryFn: async () => {
       try {
-        return await api.get<ConsentCatalogResponse>('/api/me/consents');
+        return await coreApi.get<ConsentCatalogResponse>('/api/me/consents');
       } catch (err) {
         // The shared api client throws `Error("[404] ...")`. Treat a
         // 404 as "no consent catalog here" (structurally absent on

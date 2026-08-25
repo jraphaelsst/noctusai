@@ -258,6 +258,11 @@ class ChatDTO(BaseModel):
 
     chat_id: str
     title: str
+    #: The cliente this conversation belongs to, when the phone matches one.
+    #: Null when nobody in the CRM carries that number — an unknown number is
+    #: an honest answer, and inventing a name for it would be worse than the
+    #: digits it replaces.
+    cliente_id: Optional[str] = None
     last_message_at: Optional[str] = None
     last_message_preview: str
     last_direction: Optional[str] = Field(default=None, pattern="^(inbound|outbound)$")

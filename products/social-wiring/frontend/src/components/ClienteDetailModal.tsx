@@ -55,6 +55,7 @@ import {
 } from "@/hooks/useCardHub";
 
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
+import type { CardSubpageKey } from "@/components/card/CardSidebarNav";
 import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
 import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
 import { NegociacaoContainer } from "@/components/NegociacaoContainer";
@@ -86,20 +87,41 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const shouldFetch = open && !!clienteId;
   const id = shouldFetch ? (clienteId as string) : null;
 
+  // 🔴 TAB-SCOPED FETCHING.
+  //
+  // Opening a card fired seven parallel reads — resumo, timeline, checklists,
+  // documentos, documento-checklist, agendamentos, compradores — several
+  // taking 1,4–2,4 s in production, so the card took ~2 s to become usable
+  // even for someone who only wanted to read a comment. Opening a card is the
+  // most repeated interaction of the day.
+  //
+  // A tab is fetched when it is first OPENED and stays loaded afterwards, so
+  // switching back is instant and never re-flashes a skeleton.
+  //
+  // `card`, `timeline`, `tags`, `corretores`, `checklists` and `compradores`
+  // are NOT gated: their data drives the header controls (Checklist, Etiquetas,
+  // Membros, Adicionar Comprador) and the sidebar's empty-state dots, all of
+  // which are visible from every tab. Gating those would trade a fast open for
+  // a header that populates late, which is worse.
+  const [abasVisitadas, setAbasVisitadas] = useState<Set<CardSubpageKey>>(
+    () => new Set<CardSubpageKey>(["geral"]),
+  );
+  const idSeAbriu = (aba: CardSubpageKey) => (abasVisitadas.has(aba) ? id : null);
+
   const card = useCardResumo(id);
   const timeline = useTimeline(id);
   const tags = useTags();
   const corretores = useLeadCorretores();
   const checklists = useChecklists(id);
-  const documentos = useDocumentos(id);
-  const documentoChecklist = useDocumentoChecklist(id);
+  const documentos = useDocumentos(idSeAbriu("documentos"));
+  const documentoChecklist = useDocumentoChecklist(idSeAbriu("documentos"));
   const tiposDocumento = useTiposDocumento();
 
   const notaMutations = useNotaMutations(id ?? "__none__");
   const tagCatalogMutations = useTagCatalogMutations();
   const setTagsMutation = useSetClienteTagsMutation(id ?? "__none__");
   const setMembrosMutation = useSetCardMembrosMutation(id ?? "__none__");
-  const agendamentos = useAgendamentos(id);
+  const agendamentos = useAgendamentos(idSeAbriu("agendamentos"));
   const agendamentoMutations = useAgendamentoMutations(id ?? "__none__");
   const checklistMutations = useChecklistMutations(id ?? "__none__");
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
@@ -328,6 +350,11 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         <PessoaDocumentosPanel clienteId={pessoaId} />
       )}
       // Thunks, not elements: a subpage nobody has opened costs no query.
+      onSubpageChange={(aba) =>
+        setAbasVisitadas((prev) =>
+          prev.has(aba) ? prev : new Set(prev).add(aba),
+        )
+      }
       renderNegociacao={() => <NegociacaoContainer clienteId={id} />}
       renderFinanciamento={() => <FinanciamentoContainer clienteId={id} />}
       onOpenDocumento={handleOpenDocumento}

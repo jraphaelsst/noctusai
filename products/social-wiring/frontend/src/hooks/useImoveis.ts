@@ -219,6 +219,87 @@ export function formatArea(value: number | null): string {
 }
 
 /** Turn an amenity slug back into something readable. */
+/**
+ * Human labels for the imóvel characteristic slugs.
+ *
+ * 🔴 THE FULL LIVE SET, NOT A GUESS. Every key below is one of the 55 distinct
+ * values actually present in `imoveis.caracteristicas` on 2026-08-25, read
+ * from the database. A partial map would leave the same defect in the tail.
+ *
+ * They arrive from Vista as lowercase concatenations with no separator —
+ * `salajantar`, `aguaquente`, `dormitoriocomarmario` — so there is nothing in
+ * the string to split on. The previous implementation only broke camelCase,
+ * which these have none of, so it capitalised the first letter and shipped
+ * `Cozinhaplanejada` to the filter chips on the two most-used property
+ * screens.
+ */
+const CARACTERISTICA_LABEL: Record<string, string> = {
+  adega: "Adega",
+  aguaquente: "Água quente",
+  arcentral: "Ar central",
+  arcondicionado: "Ar-condicionado",
+  areaservico: "Área de serviço",
+  armarioembutido: "Armário embutido",
+  banheirosocial: "Banheiro social",
+  bar: "Bar",
+  canaletasnorodape: "Canaletas no rodapé",
+  churrasqueira: "Churrasqueira",
+  copa: "Copa",
+  copacozinha: "Copa e cozinha",
+  cozinha: "Cozinha",
+  cozinhaamericana: "Cozinha americana",
+  cozinhaplanejada: "Cozinha planejada",
+  deck: "Deck",
+  dependenciadeempregada: "Dependência de empregada",
+  despensa: "Despensa",
+  dormitoriocomarmario: "Dormitório com armário",
+  edicula: "Edícula",
+  escritorio: "Escritório",
+  esperasplit: "Espera para split",
+  forro: "Forro",
+  gradeado: "Gradeado",
+  hidromassagem: "Hidromassagem",
+  hometheater: "Home theater",
+  jardiminverno: "Jardim de inverno",
+  lareira: "Lareira",
+  lavabo: "Lavabo",
+  livinghall: "Living hall",
+  mezanino: "Mezanino",
+  mobiliado: "Mobiliado",
+  monitoramento: "Monitoramento",
+  pisoelevado: "Piso elevado",
+  piscina: "Piscina",
+  quintal: "Quintal",
+  reformado: "Reformado",
+  sacada: "Sacada",
+  sacadacomchurrasqueira: "Sacada com churrasqueira",
+  salaarmarios: "Sala com armários",
+  salajantar: "Sala de jantar",
+  salatv: "Sala de TV",
+  sauna: "Sauna",
+  semimobiliado: "Semimobiliado",
+  split: "Split",
+  suitemaster: "Suíte master",
+  terraco: "Terraço",
+  tvcabo: "TV a cabo",
+  vigiaexterno: "Vigia externo",
+  vigiainterno: "Vigia interno",
+  vistamar: "Vista para o mar",
+  vistapanoramica: "Vista panorâmica",
+  vitrine: "Vitrine",
+  wcempregada: "WC de empregada",
+};
+
+/**
+ * The label for a characteristic slug.
+ *
+ * An unknown slug falls back to the old camelCase-and-capitalise behaviour
+ * rather than rendering blank: Vista can add a value at any time, and a
+ * slightly ugly label is a far better failure than an empty chip that looks
+ * like a rendering bug.
+ */
 export function caracteristicaLabel(slug: string): string {
+  const conhecido = CARACTERISTICA_LABEL[slug.toLowerCase()];
+  if (conhecido) return conhecido;
   return slug.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
 }

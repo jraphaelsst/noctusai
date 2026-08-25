@@ -122,6 +122,32 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
     onUnauthenticated: () => handleDeadSession(supabase, useAuthStore),
   });
 
+  /**
+   * A client pointed at CORE, for the handful of surfaces Core owns.
+   *
+   * 🔴 WHY THIS EXISTS. `/api/me/consents` and `/api/admin/llm-spend/{org}`
+   * live on Core, but the seed hooks called them through `api` — which points
+   * at the PRODUCT. Both returned 404 on every page load of every product,
+   * and the hooks' own 404-swallow (written for standalone deploys where the
+   * surface really is absent) turned that into silence. The consent catalogue
+   * and the AI-spend badge were therefore permanently empty everywhere, and
+   * nothing said so. A graceful degradation hiding a wrong address is worse
+   * than the error it replaced.
+   *
+   * Same token, same refresh, same dead-session handling — only the base URL
+   * differs.
+   */
+  const coreApi = createApiClient({
+    getBaseUrl: () =>
+      import.meta.env.VITE_CORE_API_URL ?? import.meta.env.VITE_CORE_URL ?? "",
+    getAuthToken,
+    onTokenExpired: async () => {
+      const { data: { session } } = await supabase.auth.refreshSession();
+      return session?.access_token ?? null;
+    },
+    onUnauthenticated: () => handleDeadSession(supabase, useAuthStore),
+  });
+
   // Auth provider
   const AuthProvider = createAuthProvider(supabase, useAuthStore);
 
@@ -143,6 +169,7 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
     supabase,
     useAuthStore,
     api,
+    coreApi,
     getAuthToken,
     AuthProvider,
     NotificationBell,
@@ -174,7 +201,7 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
  */
 const infra = createProductInfra();
 
-export const { supabase, useAuthStore, api, getAuthToken, AuthProvider, NotificationBell } = infra;
+export const { supabase, useAuthStore, api, coreApi, getAuthToken, AuthProvider, NotificationBell } = infra;
 export const { useNotificacoes, useContagemNaoLidas, useMarcarComoLida, useMarcarTodasComoLidas } = infra;
 export const { appConfig } = infra;
 export default infra;

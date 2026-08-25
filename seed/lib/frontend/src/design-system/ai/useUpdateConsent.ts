@@ -21,7 +21,7 @@
  * via the toast.
  */
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@noctusai/seed/infra';
+import { coreApi } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 
 import { env } from '../../env';
@@ -45,7 +45,7 @@ export function useUpdateConsent() {
       // topology-aware degradation. The UI is hidden in this topology
       // anyway, but a misbehaving caller still must not error.
       if (!env.CORE_ATTACHED) return;
-      await api.put(`/api/me/consents/${encodeURIComponent(key)}`, { granted });
+      await coreApi.put(`/api/me/consents/${encodeURIComponent(key)}`, { granted });
     },
     onMutate: async ({ key, granted }): Promise<OptimisticContext> => {
       await qc.cancelQueries({ queryKey: CONSENTS_QUERY_KEY });

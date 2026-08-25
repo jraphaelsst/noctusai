@@ -63,6 +63,21 @@ function isKnownEntry(entry: TimelineEntry): entry is Exclude<TimelineEntry, Tim
   return (KNOWN_TIMELINE_KINDS as readonly string[]).includes(entry.kind);
 }
 
+/**
+ * "Novo contato via Meta Ads" — and the name only when it differs from the
+ * label, so a row carries information rather than restating the card.
+ */
+function touchSummary(origem: string | null, nome: string | null): string {
+  const via = (origem ?? "").trim();
+  const quem = (nome ?? "").trim();
+  if (via && quem && quem.toLowerCase() !== via.toLowerCase()) {
+    return `Novo contato via ${via} — ${quem}`;
+  }
+  if (via) return `Novo contato via ${via}`;
+  if (quem) return `Novo contato — ${quem}`;
+  return "Novo contato";
+}
+
 function entrySummary(entry: TimelineEntry): string {
   if (!isKnownEntry(entry)) {
     // Unknown kind (Phase 2b conversation kinds, or anything future) —
@@ -74,7 +89,18 @@ function entrySummary(entry: TimelineEntry): string {
     case "nota":
       return entry.deleted_at ? "Nota removida" : entry.corpo;
     case "touch":
-      return entry.resumo;
+      // 🔴 A VERB, NOT JUST A NAME.
+      //
+      // This returned `entry.resumo` — the lead's name — so the timeline read
+      // as the same name repeated down the page with a date under each one and
+      // no indication of what had happened. Four identical-looking rows for
+      // four separate contacts.
+      //
+      // `origem_rotulo` is where the contact came in from (Meta Ads, OLX, a
+      // portal). The name is kept alongside it only when it adds something:
+      // repeating the card's own title on every row is what made the list
+      // unreadable in the first place.
+      return touchSummary(entry.origem_rotulo, entry.resumo);
     case "movimento":
       return entry.de_etapa
         ? `Moveu de "${entry.de_etapa}" para "${entry.para_etapa}"`

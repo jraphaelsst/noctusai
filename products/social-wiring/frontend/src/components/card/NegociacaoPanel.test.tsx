@@ -185,3 +185,72 @@ describe("NegociacaoPanel", () => {
     expect(screen.getByText(/percentuais padrão da agência/i)).toBeTruthy();
   });
 });
+
+// ─── Dinheiro legível e divisão ao vivo (2026-08-25) ────────────────────────
+describe("NegociacaoPanel — o dinheiro na tela", () => {
+  it("mostra o valor formatado em vez do que o banco devolve", async () => {
+    // 🔴 `NUMERIC(14,2)` devolve `850000.00`, que a tela exibia como
+    // `850000.0` — ambíguo justamente no campo onde o erro custa mais caro.
+    const { getByTestId } = await render({ valor_negociado: "850000.00" });
+
+    expect((getByTestId("negociacao-valor") as HTMLInputElement).value).toBe(
+      "850.000,00",
+    );
+  });
+
+  it("percentuais não voltam como 50.0", async () => {
+    const { container } = await render({
+      valor_negociado: "850000.00",
+      pct_comissao: "6.000",
+      pct_agencia: "50.0",
+    });
+
+    expect(container.textContent).not.toContain("50.0");
+    expect(container.textContent).not.toContain("6.000");
+  });
+
+  it("aceita o separador decimal brasileiro", async () => {
+    const { getByTestId, fireEvent } = await render();
+    const campo = getByTestId("negociacao-valor") as HTMLInputElement;
+
+    fireEvent.focus(campo);
+    fireEvent.change(campo, { target: { value: "850.000,50" } });
+    fireEvent.blur(campo);
+
+    expect(campo.value).toBe("850.000,50");
+  });
+
+  it("calcula a divisão enquanto a pessoa digita, antes de salvar", async () => {
+    // Esta era a tela cuja única razão de existir ficava muda até salvar.
+    const { getByTestId, container, fireEvent } = await render({
+      valor_negociado: null,
+      pct_comissao: null,
+    });
+
+    fireEvent.focus(getByTestId("negociacao-valor"));
+    fireEvent.change(getByTestId("negociacao-valor"), {
+      target: { value: "850000" },
+    });
+    fireEvent.change(getByTestId("negociacao-pct-comissao"), {
+      target: { value: "6" },
+    });
+
+    expect(container.textContent).toContain("51.000,00");
+    expect(getByTestId("negociacao-previa")).toBeTruthy();
+  });
+
+  it("diz que é prévia até salvar", async () => {
+    const { getByTestId, queryByTestId, fireEvent } = await render({
+      valor_negociado: "500000.00",
+      pct_comissao: "6",
+    });
+
+    expect(queryByTestId("negociacao-previa")).toBeNull();
+
+    fireEvent.change(getByTestId("negociacao-pct-comissao"), {
+      target: { value: "7" },
+    });
+
+    expect(getByTestId("negociacao-previa")).toBeTruthy();
+  });
+});

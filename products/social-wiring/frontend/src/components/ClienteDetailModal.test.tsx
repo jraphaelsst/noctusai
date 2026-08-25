@@ -30,6 +30,9 @@ const { mockCreate, mockUpdate, mockCardResumo } = vi.hoisted(() => ({
   mockCardResumo: vi.fn(),
 }));
 
+const documentosIds: (string | null)[] = [];
+const agendamentosIds: (string | null)[] = [];
+
 vi.mock("@/hooks/useCardHub", () => ({
   useCardResumo: (id: string | null) => mockCardResumo(id),
   useTimeline: () => ({
@@ -44,7 +47,10 @@ vi.mock("@/hooks/useCardHub", () => ({
   flattenTimeline: () => [],
   useTags: () => ({ data: [] }),
   useChecklists: () => ({ data: [], isPending: false, isFetching: false }),
-  useDocumentos: () => ({ data: [], isPending: false, isFetching: false }),
+  useDocumentos: (id: string | null) => {
+    documentosIds.push(id);
+    return { data: [], isPending: false, isFetching: false };
+  },
   useDocumentoChecklist: () => ({
     data: { items: [], total: 0, concluidos: 0 },
     isPending: false,
@@ -71,7 +77,10 @@ vi.mock("@/hooks/useCardHub", () => ({
   }),
   useSetClienteTagsMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useSetCardMembrosMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useAgendamentos: () => ({ data: [], isPending: false, isFetching: false }),
+  useAgendamentos: (id: string | null) => {
+    agendamentosIds.push(id);
+    return { data: [], isPending: false, isFetching: false };
+  },
   useAgendamentoMutations: () => ({
     create: { mutate: vi.fn(), isPending: false },
     update: { mutate: vi.fn(), isPending: false },
@@ -283,5 +292,21 @@ describe("ClienteDetailModal — a rejected mutation surfaces the server's own m
     onError({});
 
     expect(toastError).toHaveBeenCalledWith("Não foi possível criar a descrição.");
+  });
+});
+
+// ─── Carregamento por aba (2026-08-25) ──────────────────────────────────────
+describe("ClienteDetailModal — só busca a aba que foi aberta", () => {
+  it("não busca documentos nem agendamentos ao abrir o cartão", async () => {
+    // 🔴 Abrir um cartão disparava sete leituras paralelas, várias de 1,4–2,4 s,
+    // para abas que a pessoa talvez nunca abra. Abrir cartão é a interação mais
+    // repetida do dia.
+    documentosIds.length = 0;
+    agendamentosIds.length = 0;
+
+    await render();
+
+    expect(documentosIds.every((id) => id === null)).toBe(true);
+    expect(agendamentosIds.every((id) => id === null)).toBe(true);
   });
 });
