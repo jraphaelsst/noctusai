@@ -94,6 +94,49 @@ def _live_slugs() -> list[str]:
     })
 
 
+def public_hostname(slug: str, domain: str = "noctusai.com") -> str:
+    """The hostname this product is ACTUALLY served at.
+
+    `f"{slug}.{domain}"` was a guess that happened to be true, and it stopped
+    being true on 2026-08-25 when `erp-imobiliario.noctusai.com` and
+    `social-wiring.noctusai.com` were retired in favour of the short
+    `erp.` / `social.` hosts the owner had set. This gate then reported
+    `GET / -> 404` for two perfectly healthy SPAs.
+
+    A gate that is red for a reason unrelated to what it measures is worse
+    than no gate: people learn to skip it, and the next real failure reads
+    as the same familiar noise. So the hostname comes from
+    `deploy/tunnel/ingress.yml`, the declared single source of truth for
+    hostname → service routing, by matching the route whose service names
+    this slug. Falls back to the old guess when the file is unreadable or
+    the slug has no route, so this can never be the thing that breaks the
+    smoke.
+    """
+    try:
+        import re
+
+        import yaml
+
+        text = (Path(REPO_ROOT) / "deploy" / "tunnel" / "ingress.yml").read_text(
+            encoding="utf-8"
+        )
+        routes = (yaml.safe_load(text) or {}).get("routes") or []
+        matches = [
+            str(r.get("hostname", "")).strip()
+            for r in routes
+            if isinstance(r, dict)
+            and re.match(rf"^https?://{re.escape(slug)}:\d+$", str(r.get("service", "")).strip())
+        ]
+        if matches:
+            # Shortest wins: when several hostnames point at one container the
+            # short one is the canonical public name (that is the whole reason
+            # the long ones were retired).
+            return min(matches, key=len)
+    except Exception:
+        pass
+    return f"{slug}.{domain}"
+
+
 def smoke_product(
     slug: str,
     *,
@@ -103,7 +146,7 @@ def smoke_product(
     expect_present: list[str] | None = None,
 ) -> dict:
     """Smoke ONE product's public SPA. Returns `{ok, slug, url, checks, failures}`."""
-    base = f"https://{slug}.{domain}"
+    base = f"https://{public_hostname(slug, domain)}"
     checks: list[dict] = []
     failures: list[str] = []
 
