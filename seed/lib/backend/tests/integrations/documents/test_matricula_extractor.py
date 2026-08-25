@@ -26,6 +26,28 @@ from noctusai_lib.integrations.documents.matricula_extractor import (
     LadderMatriculaExtractor,
 )
 
+
+def _camada(text: str):
+    """A `PdfTextLayer` the ladder will accept as a real text layer.
+
+    The ladder now asks `classify_pdf_text_layer` whether a text layer is
+    CONTENT or a signature stamp printed over a scan, so a stub that just
+    returns a string no longer says anything. These fixtures are short by
+    design (a whole RG in three lines), so `is_substantive` is stated
+    outright rather than left to the character floor — whether the
+    classifier reaches the right verdict on real bytes is
+    `tests/integrations/media/test_pdf_text.py`'s job, not this file's.
+    """
+    from noctusai_lib.integrations.media import PdfPage, PdfTextLayer
+
+    if not text:
+        return PdfTextLayer(pages=(), tooling_available=True)
+    return PdfTextLayer(
+        pages=(PdfPage(number=1, text=text, is_substantive=True, reason="stub"),),
+        tooling_available=True,
+    )
+
+
 #: A heading whose matrícula number is label-anchored and unambiguous.
 CERTIDAO_TEXT = (
     "REGISTRO DE IMOVEIS DA COMARCA DE SAO PAULO\n"
@@ -76,8 +98,8 @@ class TestTheLadderShortCircuits:
         """The whole cost argument in one assertion."""
         resolver = _StubResolver()
         monkeypatch.setattr(
-            "noctusai_lib.integrations.media.extract_pdf_text",
-            lambda content: CERTIDAO_TEXT,
+            "noctusai_lib.integrations.media.classify_pdf_text_layer",
+            lambda content: _camada(CERTIDAO_TEXT),
         )
         got = await _extractor(resolver).extract(
             b"%PDF-1.7", mimetype="application/pdf"
@@ -92,8 +114,8 @@ class TestTheLadderShortCircuits:
     ):
         resolver = _StubResolver()
         monkeypatch.setattr(
-            "noctusai_lib.integrations.media.extract_pdf_text",
-            lambda content: "",
+            "noctusai_lib.integrations.media.classify_pdf_text_layer",
+            lambda content: _camada(""),
         )
         got = await _extractor(resolver).extract(
             b"%PDF-1.7", mimetype="application/pdf"
@@ -115,8 +137,8 @@ class TestVisionCanNeverBeTrustedUnattended:
     @pytest.mark.asyncio
     async def test_a_text_layer_read_is_alta_and_persistable(self, monkeypatch):
         monkeypatch.setattr(
-            "noctusai_lib.integrations.media.extract_pdf_text",
-            lambda content: CERTIDAO_TEXT,
+            "noctusai_lib.integrations.media.classify_pdf_text_layer",
+            lambda content: _camada(CERTIDAO_TEXT),
         )
         got = await _extractor().extract(b"%PDF-1.7", mimetype="application/pdf")
         assert got.numero_matricula_confianca is ExtractionConfidence.ALTA
@@ -148,13 +170,60 @@ class TestVisionCanNeverBeTrustedUnattended:
         """
         corpo = "AV.1 ORIGINADA DA MATRICULA N 9.876 DESTE REGISTRO"
         monkeypatch.setattr(
-            "noctusai_lib.integrations.media.extract_pdf_text",
-            lambda content: corpo,
+            "noctusai_lib.integrations.media.classify_pdf_text_layer",
+            lambda content: _camada(corpo),
         )
         got = await _extractor().extract(b"%PDF-1.7", mimetype="application/pdf")
         assert got.numero_matricula == "9876"
         assert got.numero_matricula_confianca is ExtractionConfidence.BAIXA
         assert got.persistable is False
+
+
+class TestAScanIsNotATextLayer:
+    """🔴 The 2026-08-25 defect, at the point where it would cost the most.
+
+    A cartório scan carries an ONR digital-signature stamp as real,
+    selectable text. The ladder used to accept any non-empty text layer, so
+    a scanned certidão was labelled `TextSource.TEXT_LAYER` — and
+    TEXT_LAYER is the SOLE route to `alta`, i.e. persistable unattended.
+    The one provenance claim built to exclude vision-grade reads was being
+    handed to a document nobody had actually read.
+    """
+
+    ONR_STAMP = (
+        "Valide este documento clicando no link a seguir: "
+        "https://assinador-web.onr.org.br/docs/7JX9U-HLZEA-9LJWT-PM2QS\n"
+        "Valide aqui\neste documento"
+    )
+
+    def _camada_de_scan(self):
+        from noctusai_lib.integrations.media import PdfPage, PdfTextLayer
+
+        return PdfTextLayer(
+            pages=tuple(
+                PdfPage(number=n, text=self.ONR_STAMP, is_substantive=False, reason="rendered scan")
+                for n in (1, 2, 3)
+            ),
+            tooling_available=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_signature_stamp_never_earns_alta(self, monkeypatch):
+        resolver = _StubResolver()
+        monkeypatch.setattr(
+            "noctusai_lib.integrations.media.classify_pdf_text_layer",
+            lambda content: self._camada_de_scan(),
+        )
+        got = await _extractor(resolver).extract(
+            b"%PDF-1.7", mimetype="application/pdf"
+        )
+
+        assert resolver.calls == 1, "a scan must reach vision, not stop at rung 1"
+        assert got.source is TextSource.OCR
+        assert got.numero_matricula_confianca is not ExtractionConfidence.ALTA
+        assert got.persistable is False, (
+            "a stamp-derived read was persistable unattended"
+        )
 
 
 class TestFailuresAreReturnedNotRaised:

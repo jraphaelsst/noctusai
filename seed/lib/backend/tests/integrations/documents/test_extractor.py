@@ -20,6 +20,28 @@ from noctusai_lib.integrations.documents import (
 )
 from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 
+
+def _camada(text: str):
+    """A `PdfTextLayer` the ladder will accept as a real text layer.
+
+    The ladder now asks `classify_pdf_text_layer` whether a text layer is
+    CONTENT or a signature stamp printed over a scan, so a stub that just
+    returns a string no longer says anything. These fixtures are short by
+    design (a whole RG in three lines), so `is_substantive` is stated
+    outright rather than left to the character floor — whether the
+    classifier reaches the right verdict on real bytes is
+    `tests/integrations/media/test_pdf_text.py`'s job, not this file's.
+    """
+    from noctusai_lib.integrations.media import PdfPage, PdfTextLayer
+
+    if not text:
+        return PdfTextLayer(pages=(), tooling_available=True)
+    return PdfTextLayer(
+        pages=(PdfPage(number=1, text=text, is_substantive=True, reason="stub"),),
+        tooling_available=True,
+    )
+
+
 RG_TEXT = "REPUBLICA FEDERATIVA DO BRASIL\nDATA DE EXPEDICAO 10/03/1995\nDATA DE NASCIMENTO 12/05/1980"
 
 
@@ -62,7 +84,7 @@ class TestLadder:
         """🔴 The cost + accuracy argument for the whole module."""
         resolver = _StubResolver()
         with patch(
-            "noctusai_lib.integrations.media.extract_pdf_text", return_value=RG_TEXT
+            "noctusai_lib.integrations.media.classify_pdf_text_layer", return_value=_camada(RG_TEXT)
         ):
             out = await _extractor(resolver).extract(
                 b"%PDF-1.4", mimetype="application/pdf", filename="rg.pdf"
@@ -75,7 +97,7 @@ class TestLadder:
     @pytest.mark.asyncio
     async def test_scanned_pdf_falls_through_to_vision(self):
         resolver = _StubResolver()
-        with patch("noctusai_lib.integrations.media.extract_pdf_text", return_value=""):
+        with patch("noctusai_lib.integrations.media.classify_pdf_text_layer", return_value=_camada("")):
             out = await _extractor(resolver).extract(
                 b"%PDF-1.4", mimetype="application/pdf", filename="rg.pdf"
             )
@@ -188,8 +210,8 @@ class TestNameConfidenceIsTemperedByTextSource:
     @pytest.mark.asyncio
     async def test_text_layer_keeps_alta_and_is_persistable(self):
         with patch(
-            "noctusai_lib.integrations.media.extract_pdf_text",
-            return_value=RG_TEXT_COM_NOME,
+            "noctusai_lib.integrations.media.classify_pdf_text_layer",
+            return_value=_camada(RG_TEXT_COM_NOME),
         ):
             out = await _extractor().extract(
                 b"%PDF-1.4", mimetype="application/pdf", filename="rg.pdf"
@@ -231,8 +253,8 @@ class TestNameConfidenceIsTemperedByTextSource:
     async def test_filiacao_is_not_read_through_the_ladder_either(self):
         """The parser's guard, verified end-to-end through the adapter."""
         with patch(
-            "noctusai_lib.integrations.media.extract_pdf_text",
-            return_value=RG_TEXT_COM_NOME,
+            "noctusai_lib.integrations.media.classify_pdf_text_layer",
+            return_value=_camada(RG_TEXT_COM_NOME),
         ):
             out = await _extractor().extract(
                 b"%PDF-1.4", mimetype="application/pdf", filename="rg.pdf"
@@ -243,7 +265,7 @@ class TestNameConfidenceIsTemperedByTextSource:
     @pytest.mark.asyncio
     async def test_a_document_with_no_name_label_yields_no_name(self):
         with patch(
-            "noctusai_lib.integrations.media.extract_pdf_text", return_value=RG_TEXT
+            "noctusai_lib.integrations.media.classify_pdf_text_layer", return_value=_camada(RG_TEXT)
         ):
             out = await _extractor().extract(
                 b"%PDF-1.4", mimetype="application/pdf", filename="rg.pdf"

@@ -12,8 +12,10 @@ which rung answered.
 That is N=2 on a decision with real money attached. Copying it would have
 produced the exact failure `integrations.documents` was created to stop —
 `erp-imobiliario/app/services/matricula_service.py` is a product-local PDF
-reader that pays for a vision call on every page of PDFs that carry a
-perfectly good text layer, because it never learned rung 1 existed.
+reader that grew its own copy of this ladder rather than consuming it. It
+has since learned rung 1 (2026-08-24) and per-page routing (2026-08-25),
+which is precisely the point: every lesson this module learns has to be
+re-learned there, one incident at a time. Folding it in is open debt.
 
 So the rung-choosing half lives here, once, and the extractors above it own
 only the part that actually differs: which parsers to run on the text and
@@ -55,10 +57,12 @@ def looks_like_pdf(mimetype: Optional[str], filename: Optional[str]) -> bool:
 class DocumentTextLadder:
     """Cheapest-rung text extraction, shared by every document extractor.
 
-    1. **PDF text layer** (`extract_pdf_text`) — free, exact, no LLM call.
-       A digitally-generated document stops here.
+    1. **PDF text layer** (`classify_pdf_text_layer`) — free, exact, no LLM
+       call. A digitally-generated document stops here. Note the classifier
+       rather than a bare `extract_pdf_text`: a scan's text layer is not
+       empty, it is a signature stamp, and rung 1 must not claim it.
     2. **Rasterize → vision** — for images, and for PDFs whose text layer
-       came back empty (a scan, or a photo of one).
+       is a stamp rather than content (a scan, or a photo of one).
     """
 
     def __init__(
@@ -99,10 +103,25 @@ class DocumentTextLadder:
         value instead.
         """
         if looks_like_pdf(mimetype, filename):
+            # `classify_pdf_text_layer`, NOT `extract_pdf_text`: a cartório
+            # scan carries a digital-signature stamp as real, selectable
+            # text, so "the text layer is non-empty" is not evidence that
+            # the document is readable.
+            #
+            # Getting this wrong is worst here of anywhere in the fleet.
+            # `TextSource.TEXT_LAYER` is a provenance claim that
+            # `matricula_extractor` treats as the sole route to `alta` —
+            # i.e. persistable unattended — precisely because a text layer
+            # is supposed to be exact where vision is not. Labelling a
+            # signature stamp TEXT_LAYER hands that guarantee to the one
+            # input it was built to exclude.
+            text = ""
             try:
-                from noctusai_lib.integrations.media import extract_pdf_text
+                from noctusai_lib.integrations.media import classify_pdf_text_layer
 
-                text = extract_pdf_text(content)
+                camada = classify_pdf_text_layer(content)
+                if camada.is_substantive:
+                    text = camada.text
             except ImportError:
                 # Slim environment: fall through to the resolver, which
                 # reports its own tooling gap truthfully.
