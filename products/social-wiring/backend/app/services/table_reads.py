@@ -121,10 +121,21 @@ def paged_rows(
 
 
 def in_batched_rows(
-    client: Any, table_name: str, org_id: UUID, in_col: str, ids: list[str]
+    client: Any,
+    table_name: str,
+    org_id: UUID,
+    in_col: str,
+    ids: list[str],
+    *,
+    select: str = "*",
 ) -> list[dict]:
     """Every row of `table_name` matching `in_col IN ids`, batched (URL-length
-    safety) AND paged (row-cap safety) — composes both hazards above."""
+    safety) AND paged (row-cap safety) — composes both hazards above.
+
+    `select` narrows the projection, same knob `paged_rows` carries. Worth
+    reaching for when the caller needs two columns off a wide table: the
+    default `*` drags every column of every matched row across the wire.
+    """
     if not ids:
         return []
     out: list[dict] = []
@@ -133,7 +144,7 @@ def in_batched_rows(
         def fetch_page(start: int, end: int, _batch=batch):
             return (
                 table(client, table_name)
-                .select("*")
+                .select(select)
                 .eq("org_id", str(org_id))
                 .in_(in_col, _batch)
                 .order("id")

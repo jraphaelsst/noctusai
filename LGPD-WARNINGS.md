@@ -15,6 +15,42 @@
 - [ ] **New processing purpose: the product now ingests and stores a buyer's income tax return with delivery receipt (imposto de renda com recibo de entrega), carteira de trabalho, extratos do FGTS, certidão de casamento and comprovante de residência, as `atendimento_documentos` (migration 078). These are financial and employment records about natural persons — a materially wider intake than the identity documents (RG/CPF/CNH) and the property registry documents already covered. Retention period is NOT set (`retencao_ate` left NULL): the correct span is the transaction's own record-keeping obligation, which has not been stated.** at `products/social-wiring/backend/app/modules/card_hub/financiamento_service.py` — Migration 078 opens a financing/escritura document surface on the atendimento. Reading a buyer's declared income and employment history is a purpose this product has never had, and it needs an explicit legal basis + a stated retention period before real data is collected.
   - *Mitigation*: Access-logged by construction: `DocumentoStore` is configured with `acessos_table='atendimento_documento_acessos'`, so every CONTENT read (signed URL) and every delete appends an entry naming the user; listing metadata deliberately does not. Soft delete records a required `motivo` and `delete_solicitado_por`, and the access log survives the delete. RLS restricts SELECT to the owning org. Storage keys begin with the literal org_id so migration 057's object-RLS policies apply. OPEN: `retencao_ate` is null pending a stated retention period from the user — flagged rather than guessed, because a wrong clock deletes evidence mid-transaction.
   - *Flagged*: 2026-08-25
+  - ✅ *RETENTION RESOLVED 2026-08-25 — the owner asked for a recommendation
+    and for the number to stay changeable; both shipped (migration 079).*
+    The period is no longer one number: it is per-type policy in
+    `social_wiring.documento_retencao_politicas`, editable by an org
+    owner/admin at Configurações → Retenção, with the platform defaults below
+    as the shipped recommendation and each carrying its `motivo` on the row.
+      * **certidão de casamento · escritura do pacto · registro do pacto —
+        10 anos (3650d).** These evidence the marital property regime, which
+        is what a later challenge to the sale attacks; contractual claims
+        prescribe in 10 years (CC art. 205). The cartório holds the
+        originals, so our copy expiring is not loss of evidence.
+      * **comprovante de residência — 5 anos (1825d).** A KYC record.
+        Lei 9.613/98 art. 10, III binds real-estate brokers to keep client
+        identification for a minimum of five years from the conclusion of the
+        transaction; five is that minimum, not a margin over it.
+      * **imposto de renda com recibo · carteira de trabalho · extratos do
+        FGTS · comprovante de residência datado — 2 anos (730d).** 🔴 The
+        shortest on purpose, and the group where a long default would have
+        been the actual failure. The purpose these were collected for ENDS
+        when the bank approves or refuses, and the bank keeps its own copies
+        under its own obligation — we are not the archive of record for any
+        of them. Two years past the close covers a re-application, a fallen-
+        through financing and the closing itself; keeping a buyer's tax
+        return for a decade because it was convenient is the shape art. 15/16
+        argues against.
+    🔴 **The clock is anchored at `atendimentos.closed_at`, not at upload.**
+    Lei 9.613/98 counts "da conclusão da transação" and a deal runs for
+    months, so an upload anchor would have expired a month-1 document a full
+    deal-length before the legal minimum — silently. An OPEN deal's documents
+    carry no expiry at all. `card_hub.financiamento_service.varrer_retencao`
+    re-derives the date every run rather than stamping once, so changing the
+    policy or reopening a deal actually moves it.
+    STILL OPEN (unchanged by this): the LEGAL BASIS for the intake itself.
+    Retention was the question the owner answered; the basis under art. 7 for
+    processing a buyer's income and employment records has not been stated,
+    and it is the controller's to state.
 - [ ] **Migration 073 adds a FOURTH processing purpose to the identity-document intake resolved on 2026-08-24: the same read that lifts `data_nascimento` (068) and `nome_oficial` (071) off an RG/CPF now also derives the holder's SEX/GENDER into `clientes.genero`. Gender is a distinct personal-data category from a birthdate or a name, and deriving it from a sensitive identity document is its own processing activity needing its own lawful basis and retention justification — the resolved intake names three purposes and this is not among them. Also new in the same migration: `clientes.profissao` (a demographics category) and `clientes.celular`. Neither is derived from a document — both are operator-entered — so they widen what is STORED rather than what is read off a sensitive document, but the intake's data-category list should name them.** at `products/social-wiring/backend/app/modules/card_hub/identidade_extracao_service.py` — The 2026-08-24 resolution enumerated its purposes explicitly ("(1) storing the identity document; (2) reading data_nascimento off it; (3) reading nome_oficial off it"), and the two prior widenings (068, 071) were each recorded against this same flag rather than folded in silently. Recording the fourth the same way keeps the intake an accurate description of what the product actually does with an RG — an intake that under-describes its own processing is worse than none, because it reads as considered.
   - *Mitigation*: The controls the resolution already names carry over unchanged and were verified for this field: extraction stays limited to TIPOS_EXTRAIVEIS = {rg, cpf, cnh}; the automated read appends to `cliente_documento_acessos` with `acao='extract'` and `usuario_id=NULL`, so a machine read stays distinguishable from a human `view`; provenance is mandatory (`genero_origem`/`_documento_id`/`_em`), so every derived value is attributable and correctable; only an ALTA-confidence, label-anchored read is written unattended, and a BAIXA read stays on the document row as a suggestion a human must confirm; `sobrescreve=False`, so a value an operator typed is never replaced by a later document. Two field-specific controls beyond the existing set: `find_gender` REFUSES every unlabelled single letter (an `M`/`F` on an RG is far more likely a state code, a middle initial, or a parent's initial in the FILIACAO block), and two disagreeing readings are reported as ABSENCE rather than resolved — so the failure mode is a missing value, never a coin-flip written onto a person's record. Not a code gate: the outstanding decision is whether the controller's lawful basis and retention statement cover gender + profession, which is the user's call, not an agent's.
   - *Flagged*: 2026-08-24

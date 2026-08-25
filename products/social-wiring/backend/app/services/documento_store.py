@@ -274,6 +274,45 @@ class DocumentoStore:
         ).execute()
         self.log_acesso(client, org_id, documento_id, usuario_id, "delete")
 
+    # ─── retention ────────────────────────────────────────────────────
+
+    def varrer_expirados(self, client: Any, org_id: UUID) -> int:
+        """Soft-delete every live row whose `retencao_ate` has passed.
+
+        The GENERIC half of a retention sweep — "the clock has run out, remove
+        the file and record that the system did it". Deciding WHEN the clock
+        runs out is per-surface and stays with the surface: `cliente` stamps
+        `retencao_ate` at upload, `atendimento` recomputes it from the deal's
+        `closed_at` before calling this.
+
+        The delete is attributed to no user (`usuario_id=None`) on purpose — a
+        scheduled sweep is a system action, and attributing it to a person
+        would put a deletion in someone's audit trail that they did not make.
+        """
+        rows = (
+            table_reads.table(client, self.table)
+            .select("id")
+            .eq("org_id", str(org_id))
+            .is_("deleted_at", "null")
+            .lte("retencao_ate", today().isoformat())
+            .execute()
+        ).data or []
+        for row in rows:
+            documento_id = UUID(row["id"])
+            patch: dict[str, Any] = {
+                "deleted_at": now_iso(),
+                "delete_motivo": "retenção expirada (sweep automático)",
+            }
+            # Same condition `remover` uses — a surface without an access log
+            # has no `delete_solicitado_por` column to write to.
+            if self.acessos_table:
+                patch["delete_solicitado_por"] = None
+            table_reads.table(client, self.table).update(patch).eq(
+                "id", row["id"]
+            ).execute()
+            self.log_acesso(client, org_id, documento_id, None, "delete")
+        return len(rows)
+
     # ─── the LGPD switch ──────────────────────────────────────────────
 
     def log_acesso(

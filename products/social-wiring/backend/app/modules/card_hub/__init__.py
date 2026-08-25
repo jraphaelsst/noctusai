@@ -59,13 +59,17 @@ def register() -> Any:
     `ModuleRegistration` here is not circular (same pattern as
     `app.modules.n8n.register`)."""
     from app.main import ModuleRegistration
-    from app.modules.card_hub import documentos_service
+    from app.modules.card_hub import documentos_service, financiamento_service
     from app.modules.card_hub.router import defaults_router, router
 
     # Configured at import time — before `start_scheduler()` fires in
     # `app/lifespan.py` (see `clientes_backfill_job.configure()`'s
     # identical rationale).
     documentos_service.configure()
+    # Two sweeps, not one: the cliente clock is stamped at upload and only
+    # needs collecting, while the atendimento clock is DERIVED from the deal's
+    # `closed_at` and has to be re-derived each run (migration 079).
+    financiamento_service.configure()
 
     return ModuleRegistration(
         routers=[router, defaults_router], standard_routers=()

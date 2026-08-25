@@ -44,6 +44,9 @@ from app.dependencies import (
 )
 from app.schemas.settings import (
     ClientesInactivityConfigStatus,
+    DocumentoRetencaoLista,
+    DocumentoRetencaoPolitica,
+    DocumentoRetencaoUpdate,
     ClientesInactivityConfigUpdate,
     EmailTestRequest,
     EmailTestResult,
@@ -72,7 +75,7 @@ from app.services.app_config_store import (
     resolve_instagram_app_creds,
     resolve_meta_app_creds,
 )
-from app.services import clientes_inactivity_service
+from app.services import clientes_inactivity_service, documento_retencao
 from app.services.chatbot_service import append_memory as _append_chat_memory
 from noctusai_lib.integrations.vista import (
     VistaError as CRMServiceError,
@@ -855,6 +858,88 @@ def update_clientes_inactivity_config(
         configured=True,
         default_threshold_days=cfg.clientes_inactivity_threshold_days_default,
     )
+
+
+# ─── document retention policy tab (migration 079)
+#
+# Same read-open / write-admin-gated split every other org-scoped config on
+# this router uses. The read is open because a corretor should be able to see
+# how long the agency keeps a buyer's income tax return — that is the kind of
+# fact LGPD art. 9 says a data subject can ask about, and an answer nobody in
+# the office can look up is not an answer.
+#
+# 🔴 The write is admin-gated AND the table has no authenticated write policy
+# (079). Two independent gates on purpose: shortening a retention period
+# DELETES FILES on the next sweep, so a leaked non-admin token must not be one
+# missing decorator away from erasing a deal's paperwork.
+
+
+@router.get("/documento-retencao", response_model=DocumentoRetencaoLista)
+def get_documento_retencao(
+    auth: tuple = Depends(get_current_user_org),
+) -> DocumentoRetencaoLista:
+    """Every document type's effective retention for this org."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    client = get_scoped_admin_client("social_wiring")
+    items = [
+        DocumentoRetencaoPolitica(**p)
+        for p in documento_retencao.politicas(client, org_id)
+    ]
+    return DocumentoRetencaoLista(items=items, total=len(items))
+
+
+@router.put("/documento-retencao", response_model=DocumentoRetencaoLista)
+def update_documento_retencao(
+    payload: DocumentoRetencaoUpdate,
+    auth: tuple = Depends(get_current_user_org),
+) -> DocumentoRetencaoLista:
+    """Admin-gated override for one document type.
+
+    Returns the WHOLE list rather than the single changed row: the screen
+    renders every type together and a partial response would leave it
+    reconciling by hand — which is where an optimistic-update bug lives.
+    """
+    user, _token, raw_org = auth
+    _require_admin(user, "Retenção de documentos")
+    org_id = coerce_org_uuid(raw_org)
+    client = get_scoped_admin_client("social_wiring")
+    documento_retencao.definir(
+        client,
+        org_id,
+        payload.superficie,
+        payload.tipo_documento,
+        payload.retencao_dias,
+        # Same accessor the card's document routes use — the seed's user
+        # object exposes `id`, and attributing the change matters here: a
+        # shortened retention is a deletion decision.
+        usuario_id=getattr(user, "id", None),
+        motivo=payload.motivo,
+    )
+    items = [
+        DocumentoRetencaoPolitica(**p)
+        for p in documento_retencao.politicas(client, org_id)
+    ]
+    return DocumentoRetencaoLista(items=items, total=len(items))
+
+
+@router.delete("/documento-retencao", response_model=DocumentoRetencaoLista)
+def reset_documento_retencao(
+    superficie: str = Query(...),
+    tipo_documento: str = Query(...),
+    auth: tuple = Depends(get_current_user_org),
+) -> DocumentoRetencaoLista:
+    """Admin-gated restore of the platform default for one type."""
+    user, _token, raw_org = auth
+    _require_admin(user, "Retenção de documentos")
+    org_id = coerce_org_uuid(raw_org)
+    client = get_scoped_admin_client("social_wiring")
+    documento_retencao.restaurar(client, org_id, superficie, tipo_documento)
+    items = [
+        DocumentoRetencaoPolitica(**p)
+        for p in documento_retencao.politicas(client, org_id)
+    ]
+    return DocumentoRetencaoLista(items=items, total=len(items))
 
 
 # Re-export both routers — main.py registers them via routers=[...].

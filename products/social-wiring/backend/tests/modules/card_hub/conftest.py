@@ -204,6 +204,30 @@ def documento_tipo_row(tipo="contrato", *, categoria="contratual", retencao_dias
     }
 
 
+def retencao_politica_row(tipo_documento="contrato", *, superficie="cliente", dias=1825, org_id=None) -> dict:
+    """A `documento_retencao_politicas` row (migration 079).
+
+    🔴 Seed this alongside `documento_tipo_row` whenever a test asserts on
+    `retencao_ate`. Since 079 the upload path reads the retention from the
+    POLICY table, not from `cliente_documento_tipos.retencao_dias` — a test
+    that seeds only the catalogue gets a null clock and fails at its own
+    fixture rather than at a defect.
+    """
+    from uuid import uuid4 as _uuid4
+
+    return {
+        "id": str(_uuid4()),
+        "org_id": org_id,
+        "superficie": superficie,
+        "tipo_documento": tipo_documento,
+        "retencao_dias": dias,
+        "motivo": None,
+        "atualizado_em": None,
+        "atualizado_por": None,
+        "created_at": "2026-01-01T00:00:00+00:00",
+    }
+
+
 def documento_row(id_, cliente_id, *, tipo_documento="contrato", categoria_lgpd="contratual", storage_path=None, deleted_at=None, retencao_ate=None, enviado_por=None, created_at="2026-01-01T00:00:00+00:00") -> dict:
     return {
         "id": id_,

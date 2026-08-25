@@ -14,6 +14,7 @@ from tests.modules.card_hub.conftest import (
     cliente_row,
     documento_row,
     documento_tipo_row,
+    retencao_politica_row,
 )
 
 
@@ -26,6 +27,9 @@ class TestUpload:
         cid = str(uuid4())
         scoped.set_table_data("clientes", [cliente_row(cid)])
         scoped.set_table_data("cliente_documento_tipos", [documento_tipo_row("contrato")])
+        scoped.set_table_data(
+            "documento_retencao_politicas", [retencao_politica_row("contrato")]
+        )
 
         resp = client.post(
             f"/api/clientes/{cid}/documentos",
@@ -46,6 +50,37 @@ class TestUpload:
         # Object path is org_id-first (contract §2, migration 057's
         # object-RLS policies key on the first path segment).
         assert stored[0]["storage_path"].startswith(f"{ORG_ID}/clientes/{cid}/")
+
+    def test_retencao_comes_from_the_policy_not_the_catalogue(
+        self, client, scoped, fake_storage
+    ):
+        """🔴 Migration 079 moved retention off `cliente_documento_tipos` onto
+        `documento_retencao_politicas`, so the Settings screen can change it
+        without a migration. This pins WHICH table wins: the catalogue still
+        carries a (superseded) 1825, the policy says 30, and the stamped date
+        must be 30 days out. Reading the catalogue again would silently ignore
+        whatever the controller set on screen."""
+        from datetime import date, timedelta
+
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        scoped.set_table_data(
+            "cliente_documento_tipos", [documento_tipo_row("contrato", retencao_dias=1825)]
+        )
+        scoped.set_table_data(
+            "documento_retencao_politicas", [retencao_politica_row("contrato", dias=30)]
+        )
+
+        resp = client.post(
+            f"/api/clientes/{cid}/documentos",
+            files={"file": ("contrato.pdf", b"%PDF-1.4 fake bytes", "application/pdf")},
+            data={"tipo_documento": "contrato"},
+            headers=_auth(),
+        )
+
+        assert resp.status_code == 201, resp.text
+        esperado = (date.today() + timedelta(days=30)).isoformat()
+        assert resp.json()["retencao_ate"] == esperado
 
     def test_upload_rejects_disallowed_mime_type(self, client, scoped, fake_storage):
         cid = str(uuid4())

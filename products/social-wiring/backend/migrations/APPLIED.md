@@ -268,3 +268,58 @@ question answerable across the whole base at any time, and
   non-terminal states.
 
 Backfill touched 0 rows: only 1 document existed and it had no extraction.
+
+---
+
+## 073–078 — backfilled 2026-08-25
+
+These landed on the live database between 2026-08-24 and 2026-08-25 and were
+recorded in `social_wiring.schema_migrations` (the machine ledger) but not
+here. Backfilled on contact rather than left silent; row counts below were
+read from the live database at backfill time, not reconstructed.
+
+`073_atendimento_compradores_e_checklist.sql` · `074_cliente_vinculo.sql`
+— a second buyer on a deal, modelled as an edge table onto `clientes` rather
+than a person table of its own, plus the checklist fields that gate the move.
+
+`075_imovel_dados_cartorio.sql` — `imovel_dados` (matrícula number, registry
+number, prefeitura) + `imovel_documentos` (matrícula, guia IPTU). Deliberately
+NO access log and no retention clock: a matrícula is a public registry
+document about a property, not personal data. 0 rows at backfill.
+
+`076_imovel_dados_para_registry.sql` — corrective. 075 FK'd `imovel_dados` to
+`imoveis`, the disposable Vista mirror, so a delisted property would have
+taken its authored cartório data with it. Measured before the fix: 1062 of
+3017 registry imóveis (35%) were already absent from the mirror, and they were
+the SOLD ones. Repointed to `imovel_registry`, which is permanent.
+
+`077_atendimento_negociacao.sql` — `negociacao_defaults` (org-level split) +
+`atendimento_negociacao` (PK = atendimento_id, CHECK that the internal split
+sums to 100). Named `atendimento_negociacao`, not `negociacoes`: migration 060
+records the owner's own decision to rename away from that word after it
+collided with a funnel stage name. 0 rows at backfill.
+
+`078_atendimento_financiamento.sql` — `atendimento_financiamento` (three-valued
+`situacao`) + `atendimento_documentos` + `atendimento_documento_acessos`.
+Unlike 075, LGPD-complete: an imposto de renda is a person's declared income,
+so every content read appends to the access log. `retencao_ate` shipped NULL
+pending the owner's decision — answered by 079. 0 rows at backfill.
+
+## 079 — `079_documento_retencao_politicas.sql`
+
+* `documento_retencao_politicas`: the controller-owned retention policy,
+  two-tier (`org_id IS NULL` = platform default, an org row overrides it).
+  Moves retention off `cliente_documento_tipos.retencao_dias`, where only a
+  migration could change it, onto a table the Settings screen edits.
+* Seeded 17 platform rows: 9 for the `cliente` surface, **copied by SELECT
+  from the live `cliente_documento_tipos`** rather than retyped, and 8 for the
+  `atendimento` surface (the recommendation — 10y for the pacto/certidão set,
+  5y for the comprovante de residência, 2y for the FGTS set; rationale on each
+  row's `motivo` and in `LGPD-WARNINGS.md`).
+* Verified against the live database after apply: all 9 cliente values are
+  `IS NOT DISTINCT FROM` their catalogue counterparts, so this migration
+  changed no effective retention for any existing document.
+* `cliente_documento_tipos.retencao_dias` kept as a one-release rollback path
+  and COMMENTed as superseded. No data changed on that table.
+
+Touched 0 existing rows.
