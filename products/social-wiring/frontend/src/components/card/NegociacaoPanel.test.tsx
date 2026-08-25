@@ -161,6 +161,25 @@ describe("NegociacaoPanel", () => {
     );
   });
 
+  it("🔴 survives numerics arriving as NUMBERS, not strings", async () => {
+    // The live bug: PostgREST returns `numeric` as a JSON number, the type
+    // said `string`, and `submit()`'s `.trim()` threw
+    // `TypeError: e.trim is not a function` — losing whatever was typed.
+    // Fixtures written against the declared type could never have caught it.
+    const { screen, fireEvent, onSave } = await render({
+      valor_negociado: 500000 as unknown as string,
+      pct_comissao: 6 as unknown as string,
+      pct_agencia: 50 as unknown as string,
+      pct_agentes: 45 as unknown as string,
+      pct_captador: 5 as unknown as string,
+      pct_parceria: 50 as unknown as string,
+    });
+    fireEvent.click(screen.getByTestId("negociacao-salvar"));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ valor_negociado: "500000", pct_comissao: "6" }),
+    );
+  });
+
   it("marks the defaults as the agency's, not as agreed terms", async () => {
     const { screen } = await render({ existe: false });
     expect(screen.getByText(/percentuais padrão da agência/i)).toBeTruthy();

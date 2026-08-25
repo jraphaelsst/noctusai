@@ -286,6 +286,79 @@ class TestRefusals:
         assert r.status_code == 422
 
 
+class TestTheWireShape:
+    """🔴 Numerics leave as STRINGS — the bug live-testing found.
+
+    PostgREST returns `numeric` as a JSON number. The contract says string,
+    the frontend calls `.trim()` on it, and re-opening a saved negociação
+    threw `TypeError: e.trim is not a function`. Nothing caught it because
+    every fixture was hand-written as strings, i.e. written against the
+    declared type instead of the wire.
+    """
+
+    def test_stored_numerics_come_back_as_strings(self, client, scoped):
+        cid, aid = _seed(scoped)
+        client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"valor_negociado": "500000.00", "pct_comissao": "6"},
+            headers=_auth(),
+        )
+        body = client.get(f"/api/clientes/{cid}/negociacao", headers=_auth()).json()
+        for campo in (
+            "valor_negociado",
+            "pct_comissao",
+            "pct_parceria",
+            "pct_agencia",
+            "pct_agentes",
+            "pct_captador",
+        ):
+            assert isinstance(body[campo], str), f"{campo} = {body[campo]!r}"
+
+    def test_a_numeric_that_arrives_as_a_float_is_still_returned_as_a_string(
+        self, client, scoped
+    ):
+        """The real PostgREST shape, seeded directly as floats."""
+        cid, aid = _seed(scoped)
+        scoped.set_table_data(
+            "atendimento_negociacao",
+            [
+                {
+                    "atendimento_id": aid,
+                    "org_id": ORG_ID,
+                    "imovel_codigo": None,
+                    "valor_negociado": 500000.0,
+                    "pct_comissao": 6.0,
+                    "tem_parceria": False,
+                    "pct_parceria": 50.0,
+                    "pct_agencia": 50.0,
+                    "pct_agentes": 45.0,
+                    "pct_captador": 5.0,
+                    "formas_pagamento": None,
+                    "parcelas": None,
+                    "financiamento": False,
+                    "fgts": False,
+                    "observacoes": None,
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": None,
+                }
+            ],
+        )
+        body = client.get(f"/api/clientes/{cid}/negociacao", headers=_auth()).json()
+        assert isinstance(body["valor_negociado"], str)
+        assert isinstance(body["pct_agencia"], str)
+        # And the split is still exact off those floats.
+        assert body["calculo"]["comissao_total"] == "30000.00"
+
+    def test_absent_numerics_stay_null_rather_than_the_string_None(
+        self, client, scoped
+    ):
+        """`str(None)` would ship the literal text "None" into a form field."""
+        cid, aid = _seed(scoped)
+        body = client.get(f"/api/clientes/{cid}/negociacao", headers=_auth()).json()
+        assert body["valor_negociado"] is None
+        assert body["pct_comissao"] is None
+
+
 class TestTheEmptyState:
     def test_a_card_with_no_terms_reads_as_the_org_defaults(self, client, scoped):
         """Not a 404 and not `{}` — no terms recorded is the normal state of a

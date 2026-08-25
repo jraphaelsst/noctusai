@@ -55,20 +55,38 @@ interface Draft {
   observacoes: string;
 }
 
+/**
+ * 🔴 Coerce, do not trust the declared type.
+ *
+ * These fields are `numeric` columns. The backend now stringifies them, but
+ * PostgREST's native shape for `numeric` is a JSON NUMBER — and when this
+ * panel first shipped it received exactly that and threw
+ * `TypeError: e.trim is not a function` on save, because the type said
+ * `string` and `.trim()` believed it.
+ *
+ * The backend is the fix; this is the seatbelt. A form that crashes on a
+ * value shape it did not expect loses whatever the user had typed, and the
+ * cost of `String()` here is nothing.
+ */
+function text(value: unknown, fallback = ""): string {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+}
+
 function toDraft(n: Negociacao | undefined): Draft {
   return {
-    valor_negociado: n?.valor_negociado ?? "",
-    pct_comissao: n?.pct_comissao ?? "",
+    valor_negociado: text(n?.valor_negociado),
+    pct_comissao: text(n?.pct_comissao),
     tem_parceria: n?.tem_parceria ?? false,
-    pct_parceria: n?.pct_parceria ?? "50",
-    pct_agencia: n?.pct_agencia ?? "50",
-    pct_agentes: n?.pct_agentes ?? "45",
-    pct_captador: n?.pct_captador ?? "5",
-    formas_pagamento: n?.formas_pagamento ?? "",
-    parcelas: n?.parcelas ?? "",
+    pct_parceria: text(n?.pct_parceria, "50"),
+    pct_agencia: text(n?.pct_agencia, "50"),
+    pct_agentes: text(n?.pct_agentes, "45"),
+    pct_captador: text(n?.pct_captador, "5"),
+    formas_pagamento: text(n?.formas_pagamento),
+    parcelas: text(n?.parcelas),
     financiamento: n?.financiamento ?? false,
     fgts: n?.fgts ?? false,
-    observacoes: n?.observacoes ?? "",
+    observacoes: text(n?.observacoes),
   };
 }
 
@@ -97,7 +115,10 @@ export default function NegociacaoPanel({
   const splitInvalido = Math.abs(somaInterna - 100) > 0.0001;
 
   function submit() {
-    const blank = (s: string) => (s.trim() === "" ? null : s.trim());
+    const blank = (v: unknown) => {
+      const t = text(v).trim();
+      return t === "" ? null : t;
+    };
     onSave({
       valor_negociado: blank(draft.valor_negociado),
       pct_comissao: blank(draft.pct_comissao),

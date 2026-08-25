@@ -79,6 +79,15 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
 
 _PERCENTUAIS_INTERNOS = ("pct_agencia", "pct_agentes", "pct_captador")
 
+#: Columns whose DB type is `numeric`. PostgREST hands these back as JSON
+#: numbers, so they are stringified on the way out — see `_saida`.
+_CAMPOS_NUMERICOS = (
+    "valor_negociado",
+    "pct_comissao",
+    "pct_parceria",
+    *_PERCENTUAIS_INTERNOS,
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -314,13 +323,7 @@ def _saida(
         for k in (
             "atendimento_id",
             "imovel_codigo",
-            "valor_negociado",
-            "pct_comissao",
             "tem_parceria",
-            "pct_parceria",
-            "pct_agencia",
-            "pct_agentes",
-            "pct_captador",
             "formas_pagamento",
             "parcelas",
             "financiamento",
@@ -331,6 +334,25 @@ def _saida(
             "existe",
         )
     }
+
+    # 🔴 EVERY NUMERIC LEAVES AS A STRING, INCLUDING THE STORED INPUTS.
+    #
+    # `calcular` already stringified the DERIVED amounts, but these — the
+    # values the user typed — were passed through raw, and PostgREST returns
+    # `numeric` as a JSON NUMBER. So the contract said `string` while the wire
+    # sent `500000.0`, and the frontend's `.trim()` on a "string" threw
+    # `TypeError: e.trim is not a function` the moment a saved negociação was
+    # re-opened. Every test fixture had been hand-written as strings, matching
+    # the declared type rather than the wire, so nothing caught it — only a
+    # live round-trip did.
+    #
+    # Strings, not floats, for the same reason the split is computed in
+    # `Decimal`: `JSON.parse` turns 0.1 into a value that is not 0.1, and this
+    # is money.
+    for campo in _CAMPOS_NUMERICOS:
+        valor = row.get(campo)
+        out[campo] = None if valor is None else str(valor)
+
     out["calculo"] = calcular(row, membros=membros, captador=captador)
     return out
 
