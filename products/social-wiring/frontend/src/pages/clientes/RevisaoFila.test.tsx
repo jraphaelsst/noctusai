@@ -30,6 +30,9 @@ const mockMerge = { mutate: vi.fn(), isPending: false, variables: undefined as a
 const mockManterSeparados = { mutate: vi.fn(), isPending: false, variables: undefined as any };
 const mockDesfazer = { mutate: vi.fn(), isPending: false, variables: undefined as any };
 
+const mockUseSegurosCount = vi.fn(() => ({ data: undefined, loading: false }));
+const mockMergeSeguros = { mutate: vi.fn(), isPending: false };
+
 vi.mock("@/hooks/useClientesRevisao", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useClientesRevisao")>(
     "@/hooks/useClientesRevisao",
@@ -42,6 +45,11 @@ vi.mock("@/hooks/useClientesRevisao", async () => {
       manterSeparados: mockManterSeparados,
       desfazer: mockDesfazer,
     }),
+    // The bulk-drain pair (2026-08-25). Mocked rather than left as the real
+    // hooks: they call TanStack directly and would need a QueryClientProvider
+    // this suite deliberately does not mount.
+    useRevisaoSegurosCount: mockUseSegurosCount,
+    useMergeSeguros: () => mockMergeSeguros,
   };
 });
 
@@ -54,6 +62,17 @@ function grupo(overrides: Partial<any> = {}) {
       { id: "cand2", nome: "João Souza", chave_canonica: "+5511974781330", touch_count: 2 },
     ],
     ...overrides,
+  };
+}
+
+/** A resolved queue page carrying `itens`. */
+function pagina(itens: any[]) {
+  return {
+    isPending: false,
+    isFetching: false,
+    isError: false,
+    data: { items: itens, total: itens.length, page: 1, pages: 1 },
+    refetch: vi.fn(),
   };
 }
 
@@ -222,5 +241,91 @@ describe("RevisaoFila — groups to review", () => {
     const call = (toast.success as any).mock.calls[0];
     call[1].action.onClick();
     expect(mockDesfazer.mutate).toHaveBeenCalledWith("m-abc", expect.any(Object));
+  });
+});
+
+// ─── Bulk drain + keyboard (2026-08-25) ─────────────────────────────────────
+describe("RevisaoFila — esvaziando a fila", () => {
+  it("hides the bulk banner when nothing is unambiguous", async () => {
+    mockUseSegurosCount.mockReturnValue({
+      data: { grupos_mesclados: 0, clientes_absorvidos: 0, grupos_restantes: 12 },
+      loading: false,
+    });
+    mockUseRevisaoFila.mockReturnValue(pagina([grupo()]));
+
+    const { queryByTestId } = await renderPage();
+
+    expect(queryByTestId("revisao-seguros-banner")).toBeNull();
+  });
+
+  it("names its own size before the operator presses it", async () => {
+    // A bulk action that will not say how much it changes is one people are
+    // right not to press — and this queue's problem is that nobody pressed.
+    mockUseSegurosCount.mockReturnValue({
+      data: { grupos_mesclados: 81, clientes_absorvidos: 92, grupos_restantes: 270 },
+      loading: false,
+    });
+    mockUseRevisaoFila.mockReturnValue(pagina([grupo()]));
+
+    const { getByTestId } = await renderPage();
+
+    expect(getByTestId("revisao-merge-seguros-btn").textContent).toContain("81");
+  });
+
+  it("J moves the cursor and M merges the card it is on", async () => {
+    mockUseSegurosCount.mockReturnValue({
+      data: { grupos_mesclados: 0, clientes_absorvidos: 0, grupos_restantes: 2 },
+      loading: false,
+    });
+    const a = grupo({ chave_canonica: "+5511900000001" });
+    const b = grupo({ chave_canonica: "+5511900000002" });
+    mockUseRevisaoFila.mockReturnValue(pagina([a, b]));
+
+    await renderPage();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "m" });
+
+    expect(mockMerge.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ grupoId: "+5511900000002" }),
+      expect.anything(),
+    );
+  });
+
+  it("S keeps the focused group separate", async () => {
+    mockUseSegurosCount.mockReturnValue({
+      data: { grupos_mesclados: 0, clientes_absorvidos: 0, grupos_restantes: 1 },
+      loading: false,
+    });
+    mockUseRevisaoFila.mockReturnValue(pagina([grupo({ chave_canonica: "+5511900000009" })]));
+
+    await renderPage();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.keyDown(window, { key: "s" });
+
+    expect(mockManterSeparados.mutate).toHaveBeenCalledWith(
+      "+5511900000009",
+      expect.anything(),
+    );
+  });
+
+  it("ignores the shortcuts while the operator is typing", async () => {
+    // 🔴 Otherwise typing "mesclar" into a search box merges four groups.
+    mockUseSegurosCount.mockReturnValue({
+      data: { grupos_mesclados: 0, clientes_absorvidos: 0, grupos_restantes: 1 },
+      loading: false,
+    });
+    mockUseRevisaoFila.mockReturnValue(pagina([grupo()]));
+
+    await renderPage();
+    const { fireEvent } = await import("@testing-library/react");
+
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    fireEvent.keyDown(input, { key: "m" });
+
+    expect(mockMerge.mutate).not.toHaveBeenCalled();
   });
 });

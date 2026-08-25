@@ -33,7 +33,10 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.primitives.responses import success_response
 
-from app.dependencies import get_current_user_org_unified
+import logging
+
+from app.dependencies import coerce_org_uuid, get_current_user_org_unified
+from app.services import table_reads
 from app.modules.pipeline import stage_gate
 from app.modules.pipeline.configs import (
     ATENDIMENTO_SELECT,
@@ -106,11 +109,77 @@ class PerderRequest(StrictHttpModel):
 
 # ─────────────────────────────── Funil board ────────────────────────────────
 
+logger = logging.getLogger(__name__)
+
+
+def _valores_negociados(client, org_id: str, rows: list[dict]) -> dict[str, float]:
+    """`atendimento_id → valor_negociado`, for the cards on this board.
+
+    One batched read for the whole board, not one per card. Returns only the
+    atendimentos that HAVE a negociação with a value — a missing key is the
+    caller's cue to fall back, and is the normal case for a card nobody has
+    priced yet.
+    """
+    ids = [str(r["id"]) for r in rows if r.get("id")]
+    if not ids:
+        return {}
+    linhas = table_reads.in_batched_rows(
+        client, "atendimento_negociacao", coerce_org_uuid(org_id), "atendimento_id", ids,
+        select="atendimento_id,valor_negociado",
+        # This table is keyed on `atendimento_id` — it has no `id` column.
+        order_col="atendimento_id",
+    )
+    out: dict[str, float] = {}
+    for linha in linhas:
+        bruto = linha.get("valor_negociado")
+        if bruto is None:
+            continue
+        try:
+            out[str(linha["atendimento_id"])] = float(bruto)
+        except (TypeError, ValueError):
+            # PostgREST hands `numeric` back as a JSON number, but a string is
+            # what the API layer serialises. Neither should ever be garbage —
+            # if it is, this card is worth 0 rather than taking the board down.
+            logger.warning(
+                "funil: valor_negociado ilegível para atendimento %s: %r",
+                linha.get("atendimento_id"), bruto,
+            )
+    return out
+
+
+def _valor_do_card(card: dict, valores: dict[str, float]) -> float:
+    """What a funil card is worth.
+
+    🔴 The negotiated value WINS over `valor_estimado`, and the order is the
+    point. `valor_estimado` is a field the board has always offered and nobody
+    has ever filled — every column read R$ 0,00 in production while holding a
+    thousand leads. `valor_negociado` is typed by the person closing the deal,
+    on the screen where the number matters. An estimate is what you have
+    before you have the real figure; once the real figure exists it is not a
+    tie-break, it is the answer.
+    """
+    negociado = valores.get(str(card.get("id")))
+    if negociado is not None:
+        return negociado
+    return float(card.get("valor_estimado") or 0)
+
+
+#: Cards returned per column by default. The counts and the column total are
+#: always computed over EVERY card — this only bounds what crosses the wire.
+#:
+#: 🔴 Measured, not guessed: in production on 2026-08-25 the "Qualificação"
+#: column held 1.070 cards, `/api/funil` took 3.248 ms, and a column that long
+#: is not a board anyone triages — it is a list you scroll past. 50 is roughly
+#: two screens, which is as far as a person reads before filtering instead.
+LIMITE_CARDS_PADRAO = 50
+
+
 @funil_router.get("")
 def obter_funil(
     busca: Optional[str] = Query(None),
     etapa_id: Optional[str] = Query(None),
     incluir_arquivados: bool = Query(False),
+    limite_por_etapa: int = Query(LIMITE_CARDS_PADRAO, ge=1, le=1000),
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
     """Kanban columns of OPEN negociações, grouped by the org's configured
@@ -118,6 +187,10 @@ def obter_funil(
     (`substituida_por IS NOT NULL`) is excluded here, and the survivor's
     DTO carries the union of every folded row's origin data — see
     `configs.attach_colapsadas`.
+
+    Each column carries `total` (every open card in that stage) and
+    `exibidos` (how many this response actually contains). The board asks for
+    one stage with a bigger `limite_por_etapa` when the user wants more.
     """
     ctx = pipeline_context(auth)
     stages = list_stages(ctx.db, PIPELINE_FUNIL, org_id=ctx.org_id)
@@ -137,13 +210,44 @@ def obter_funil(
         return query
 
     rows = _fetch_all(build_query, label="funil negociações")
-    rows = attach_colapsadas(ctx.db, ctx.org_id, rows)
-    if busca:
-        rows = search_atendimentos(rows, busca)
 
-    return success_response(
-        group_into_colunas(PIPELINE_FUNIL, stages, rows, row_to_dto=atendimento_to_dto)
+    # 🔴 ORDER MATTERS, AND SEARCH IS WHY IT DIFFERS.
+    #
+    # `attach_colapsadas` fires a batched follow-up read per survivor and is
+    # the expensive half of this endpoint. When nothing is being searched we
+    # can bucket and truncate FIRST and enrich only the cards that will
+    # actually be sent — 1.070 rows became ~300 in production.
+    #
+    # A search cannot do that: `search_atendimentos` matches on `lead` /
+    # `campanha`, which only exist AFTER the merge. Truncating first would
+    # hide matches that live past the cut, which is worse than being slow.
+    if busca:
+        rows = attach_colapsadas(ctx.db, ctx.org_id, rows)
+        rows = search_atendimentos(rows, busca)
+        enriquecer = None
+    else:
+        enriquecer = lambda visiveis: attach_colapsadas(ctx.db, ctx.org_id, visiveis)
+
+    valores = _valores_negociados(ctx.db, ctx.org_id, rows)
+
+    colunas = group_into_colunas(
+        PIPELINE_FUNIL,
+        stages,
+        rows,
+        # DTO conversion is deferred so the enrichment above can run on the
+        # truncated set of raw rows first.
+        row_to_dto=None,
+        value_of=lambda card: _valor_do_card(card, valores),
+        limite_cards=limite_por_etapa,
     )
+
+    for coluna in colunas:
+        visiveis = coluna["cards"]
+        if enriquecer is not None and visiveis:
+            visiveis = enriquecer(visiveis)
+        coluna["cards"] = [atendimento_to_dto(c) for c in visiveis]
+
+    return success_response(colunas)
 
 
 @atendimentos_router.get("")

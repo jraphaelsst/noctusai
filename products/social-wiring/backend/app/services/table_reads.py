@@ -128,6 +128,7 @@ def in_batched_rows(
     ids: list[str],
     *,
     select: str = "*",
+    order_col: str = "id",
 ) -> list[dict]:
     """Every row of `table_name` matching `in_col IN ids`, batched (URL-length
     safety) AND paged (row-cap safety) — composes both hazards above.
@@ -135,6 +136,13 @@ def in_batched_rows(
     `select` narrows the projection, same knob `paged_rows` carries. Worth
     reaching for when the caller needs two columns off a wide table: the
     default `*` drags every column of every matched row across the wire.
+
+    `order_col` exists because the pager needs a STABLE sort and `id` is only
+    the usual name for it, not a universal one — `atendimento_negociacao` is
+    keyed on `atendimento_id` and has no `id` column at all. Paging without a
+    deterministic order silently repeats and skips rows across pages, so this
+    has to be right rather than merely present; the schema-aware test mock
+    refuses an unknown column, which is what caught it.
     """
     if not ids:
         return []
@@ -147,7 +155,7 @@ def in_batched_rows(
                 .select(select)
                 .eq("org_id", str(org_id))
                 .in_(in_col, _batch)
-                .order("id")
+                .order(order_col)
                 .range(start, end)
                 .execute()
                 .data
@@ -157,6 +165,10 @@ def in_batched_rows(
             iter_paged_rows(
                 fetch_page,
                 page_size=PAGE_SIZE,
+                # The sort column IS the dedupe key — the pager's
+                # progress guard needs a per-row identity, and the only
+                # column guaranteed present is the one we ordered by.
+                id_key=order_col,
                 label=f"{table_name}.{in_col} batch for org_id={org_id}",
             )
         )

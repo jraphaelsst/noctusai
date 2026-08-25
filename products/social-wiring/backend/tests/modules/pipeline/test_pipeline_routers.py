@@ -587,6 +587,99 @@ class TestBoardSearchFindsTheNumberTheCardShows:
         assert search_processos([processo], "+5511981912534")
 
 
+class TestValorDaColuna:
+    """What a funil column is worth.
+
+    🔴 In production on 2026-08-25 every column read R$ 0,00 while the board
+    held 1.070 open deals. The total was summing `atendimentos.valor_estimado`,
+    a field the UI has always offered and nobody has ever filled. The number
+    people DO type lives on `atendimento_negociacao.valor_negociado`, on the
+    screen where the deal is priced.
+    """
+
+    def _negociacao(self, atendimento_id, valor):
+        return {
+            "atendimento_id": atendimento_id,
+            "org_id": ORG_A,
+            "valor_negociado": valor,
+            "pct_comissao": None,
+            "tem_parceria": False,
+            "pct_parceria": 50,
+            "pct_agencia": 50,
+            "pct_agentes": 45,
+            "pct_captador": 5,
+            "formas_pagamento": None,
+            "parcelas": None,
+            "financiamento": False,
+            "fgts": False,
+            "imovel_codigo": None,
+            "observacoes": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "created_por": None,
+            "updated_at": None,
+            "updated_por": None,
+        }
+
+    def test_column_total_uses_the_negotiated_value(self, http_client):
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        http_client.scoped.set_table_data(
+            "atendimento_negociacao", [self._negociacao("neg-1", 850000)]
+        )
+
+        r = http_client.get("/api/funil", headers=auth_headers())
+
+        coluna = next(c for c in r.json()["data"] if c["total"] > 0)
+        assert coluna["valorTotal"] == 850000, (
+            "the column summed the never-filled estimate instead of the "
+            "negotiated value"
+        )
+
+    def test_estimate_is_the_fallback_not_the_answer(self, http_client):
+        """A card nobody has priced yet still contributes its estimate — the
+        negotiated value wins where it EXISTS, it does not blank the rest."""
+        http_client.scoped.set_table_data(
+            "atendimentos",
+            [atendimento("neg-1", "novo"), atendimento("neg-2", "novo")],
+        )
+        http_client.scoped.set_table_data(
+            "atendimento_negociacao", [self._negociacao("neg-1", 850000)]
+        )
+
+        r = http_client.get("/api/funil", headers=auth_headers())
+
+        coluna = next(c for c in r.json()["data"] if c["total"] > 0)
+        # 850.000 negotiated + 1.000 estimated (the builder's default).
+        assert coluna["valorTotal"] == 851000
+
+    def test_a_negociacao_without_a_value_does_not_zero_the_card(self, http_client):
+        """A negociação row exists the moment the panel is opened; its value
+        is null until someone types one. That must read as "no price yet",
+        not as "this deal is worth nothing"."""
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        http_client.scoped.set_table_data(
+            "atendimento_negociacao", [self._negociacao("neg-1", None)]
+        )
+
+        r = http_client.get("/api/funil", headers=auth_headers())
+
+        coluna = next(c for c in r.json()["data"] if c["total"] > 0)
+        assert coluna["valorTotal"] == 1000
+
+    def test_the_total_covers_cards_past_the_display_cap(self, http_client):
+        """The money is summed over the whole column, not over what was sent —
+        otherwise capping the cards would silently shrink the pipeline."""
+        rows = [atendimento(f"neg-{i:03d}", "novo") for i in range(60)]
+        http_client.scoped.set_table_data("atendimentos", rows)
+        http_client.scoped.set_table_data("atendimento_negociacao", [])
+
+        r = http_client.get("/api/funil", headers=auth_headers())
+
+        coluna = next(c for c in r.json()["data"] if c["total"] > 0)
+        assert coluna["exibidos"] == 50
+        assert coluna["total"] == 60
+        assert coluna["valorTotal"] == 60 * 1000
+
+
 class TestBoardReadsPagePastTheRowCap:
     """PostgREST caps any single response at `db-max-rows` (1000 on Supabase)
     with no error and no truncation signal, so a bare `.select().execute()`
@@ -602,19 +695,66 @@ class TestBoardReadsPagePastTheRowCap:
 
     _OVER_CAP = 1200
 
-    def test_funil_returns_every_card_past_the_cap(self, http_client):
+    def test_funil_counts_every_card_past_the_cap(self, http_client):
+        """🔴 The guard is `total`, not `len(cards)` — and the difference is
+        deliberate, not a weakening.
+
+        Migration-era this asserted that the response CARRIED all 1 200 cards,
+        which proved the read paged past PostgREST's cap only as a side effect
+        of nothing truncating the response either. Since the board caps cards
+        per column (`limite_por_etapa`, default 50), `len(cards)` no longer
+        distinguishes "the read was truncated at 1 000" from "the display was
+        capped at 50" — the two look identical from the card list.
+
+        `total` still does: it is computed over EVERY row the read returned,
+        before any truncation. A read that stopped at PostgREST's 1 000-row cap
+        reports 1 000 here and fails, which is exactly the bug this class
+        exists for.
+        """
         rows = [atendimento(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]
         http_client.scoped.set_table_data("atendimentos", rows)
 
         r = http_client.get("/api/funil", headers=auth_headers())
 
         assert r.status_code == 200
-        cards = [c for col in r.json()["data"] for c in col["cards"]]
-        assert len(cards) == self._OVER_CAP, (
-            f"board returned {len(cards)} of {self._OVER_CAP} — the read was "
+        colunas = r.json()["data"]
+        total = sum(col["total"] for col in colunas)
+        assert total == self._OVER_CAP, (
+            f"board counted {total} of {self._OVER_CAP} — the read was "
             "truncated at PostgREST's row cap instead of paging past it"
         )
-        assert len({c["id"] for c in cards}) == self._OVER_CAP, "a page was served twice"
+
+    def test_funil_caps_cards_per_column_without_lying_about_the_count(
+        self, http_client
+    ):
+        """A capped column must still say how many it really has, and how many
+        it sent. Reporting the truncated length as the total would turn a
+        display limit into a silent under-report of the pipeline."""
+        rows = [atendimento(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]
+        http_client.scoped.set_table_data("atendimentos", rows)
+
+        r = http_client.get("/api/funil", headers=auth_headers())
+
+        coluna = next(c for c in r.json()["data"] if c["total"] > 0)
+        assert coluna["total"] == self._OVER_CAP
+        assert coluna["exibidos"] == 50
+        assert len(coluna["cards"]) == 50
+        assert len({c["id"] for c in coluna["cards"]}) == 50, "a card was sent twice"
+
+    def test_funil_honours_a_larger_explicit_limit(self, http_client):
+        """The cap is a display choice the caller can raise — which is what
+        makes it a cap rather than a read truncation."""
+        rows = [atendimento(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]
+        http_client.scoped.set_table_data("atendimentos", rows)
+
+        r = http_client.get(
+            "/api/funil?limite_por_etapa=1000", headers=auth_headers()
+        )
+
+        coluna = next(c for c in r.json()["data"] if c["total"] > 0)
+        assert coluna["total"] == self._OVER_CAP
+        assert coluna["exibidos"] == 1000
+        assert len({c["id"] for c in coluna["cards"]}) == 1000
 
     def test_atendimentos_list_returns_every_row_past_the_cap(self, http_client):
         rows = [atendimento(f"neg-{i:05d}", "novo") for i in range(self._OVER_CAP)]

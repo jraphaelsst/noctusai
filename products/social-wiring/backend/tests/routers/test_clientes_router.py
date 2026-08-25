@@ -175,6 +175,7 @@ UNAUTHENTICATED_ROUTES = [
     ("get", "/api/clientes/revisao"),
     ("post", f"/api/clientes/revisao/{_GRUPO}/merge"),
     ("post", f"/api/clientes/revisao/{_GRUPO}/manter-separados"),
+    ("post", "/api/clientes/revisao/merge-seguros"),
     ("post", f"/api/clientes/merges/{_MERGE_ID}/desfazer"),
 ]
 
@@ -593,6 +594,115 @@ def _seed_n_review_groups(scoped, n: int) -> list[str]:
     scoped.set_table_data("cliente_merges", [])
     scoped.set_table_data("cliente_revisao_rejeitadas", [])
     return keys
+
+
+class TestMergeSeguros:
+    """Draining the unambiguous part of the queue in one press.
+
+    351 groups at two clicks each is an afternoon nobody spends, so the queue
+    was never drained. This endpoint applies exactly the groups the classifier
+    calls unambiguous and touches nothing else.
+    """
+
+    def _seed(self, scoped, pares: list[tuple[str, str]]) -> None:
+        clientes_rows: list[dict] = []
+        touch_rows: list[dict] = []
+        for i, (a_nome, b_nome) in enumerate(pares):
+            key = f"+551190009{i:02d}"
+            a, b = str(uuid4()), str(uuid4())
+            clientes_rows += [
+                _cliente(a, a_nome, incerta=True),
+                _cliente(b, b_nome, incerta=True),
+            ]
+            touch_rows += [
+                _touch(str(uuid4()), a, origem_id=f"S{i}A",
+                       ocorreu_em="2026-01-01T00:00:00+00:00", chave=key),
+                _touch(str(uuid4()), b, origem_id=f"S{i}B",
+                       ocorreu_em="2026-01-01T00:00:00+00:00", chave=key),
+            ]
+        scoped.set_table_data("clientes", clientes_rows)
+        scoped.set_table_data("cliente_touches", touch_rows)
+        scoped.set_table_data("cliente_merges", [])
+        scoped.set_table_data("cliente_revisao_rejeitadas", [])
+
+    def test_merges_the_unambiguous_groups(self, client, scoped):
+        self._seed(scoped, [("Alex Sandro", "Alex Sandro*"), ("HP Luiza", "Luiza")])
+
+        resp = client.post("/api/clientes/revisao/merge-seguros", headers=_auth())
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["grupos_mesclados"] == 2
+        assert body["clientes_absorvidos"] == 2
+        assert body["grupos_restantes"] == 0
+
+    def test_leaves_everything_the_classifier_is_unsure_about(self, client, scoped):
+        """🔴 The assertion that matters. `Fernanda`/`Lucilene Ferreira Alves`
+        are two people sharing a phone; folding their records together is not
+        undoable from the operator's side."""
+        self._seed(
+            scoped,
+            [
+                ("Alex Sandro", "Alex Sandro*"),          # unambiguous
+                ("Fernanda", "Lucilene Ferreira Alves"),  # two people
+                ("Erick", "Erik"),                        # a human decides
+            ],
+        )
+
+        resp = client.post("/api/clientes/revisao/merge-seguros", headers=_auth())
+
+        body = resp.json()
+        assert body["grupos_mesclados"] == 1
+        assert body["grupos_restantes"] == 2
+
+        restantes = client.get("/api/clientes/revisao", headers=_auth()).json()
+        assert restantes["total"] == 2
+
+    def test_the_fuller_name_survives(self, client, scoped):
+        """The contract's own C3 rule — the longer spelling is the one worth
+        keeping, so a merge never trades a full name for an abbreviation."""
+        self._seed(scoped, [("Luiza", "HP Luiza Fernandes")])
+
+        client.post("/api/clientes/revisao/merge-seguros", headers=_auth())
+
+        vivos = [
+            c for c in scoped.table("clientes").select("*").execute().data
+            if not c.get("merged_into") and not c.get("deleted_at")
+        ]
+        nomes = {c["nome"] for c in vivos}
+        assert "HP Luiza Fernandes" in nomes
+
+    def test_simular_counts_without_touching_anything(self, client, scoped):
+        """A bulk action that will not tell you its size before you press it is
+        one people are right not to press."""
+        self._seed(
+            scoped,
+            [("Alex Sandro", "Alex Sandro*"), ("Fernanda", "Lucilene Ferreira Alves")],
+        )
+        antes = len(scoped.table("clientes").select("*").execute().data)
+
+        resp = client.post(
+            "/api/clientes/revisao/merge-seguros?simular=true", headers=_auth()
+        )
+
+        assert resp.json()["grupos_mesclados"] == 1
+        assert resp.json()["grupos_restantes"] == 1
+        assert len(scoped.table("clientes").select("*").execute().data) == antes
+        assert scoped.table("cliente_merges").select("*").execute().data == []
+        # And the queue is untouched.
+        assert client.get("/api/clientes/revisao", headers=_auth()).json()["total"] == 2
+
+    def test_an_empty_queue_is_not_an_error(self, client, scoped):
+        self._seed(scoped, [])
+
+        resp = client.post("/api/clientes/revisao/merge-seguros", headers=_auth())
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "grupos_mesclados": 0,
+            "clientes_absorvidos": 0,
+            "grupos_restantes": 0,
+        }
 
 
 class TestRevisao:

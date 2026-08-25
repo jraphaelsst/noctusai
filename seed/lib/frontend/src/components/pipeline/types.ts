@@ -39,6 +39,15 @@ export type StageRole = 'proposta_aceite' | 'final';
 
 /** One column as the board endpoint returns it. */
 export interface PipelineColumn<TCard> {
+  /**
+   * How many of `total` this response actually carries.
+   *
+   * A board may cap the cards it sends per column (social-wiring's funil holds
+   * 1.070 in one stage). `total` stays the true count and `valorTotal` still
+   * covers all of it — this is the only field that says the card LIST is
+   * short. Absent means "everything was sent".
+   */
+  exibidos?: number;
   /** The stage ID. Kept named `etapa` for wire-compatibility with the ERP. */
   etapa: string;
   stage: PipelineStage;

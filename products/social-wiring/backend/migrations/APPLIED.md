@@ -339,3 +339,27 @@ Touched 0 existing rows.
   between the old per-broker COUNT and the view, 12.087 leads attributed.
 
 A view — no table created, 0 rows touched.
+
+## 081 — `081_portal_roi_vendas_da_negociacao.sql`
+
+* `vw_portal_roi` now counts won deals from the funnel, not only the
+  manually-typed `lead_vendas` rows. Attribution runs
+  `atendimento_negociacao → atendimentos.lead_id → leads.origem_id`; a sale is
+  `status='aceita' AND closed_at IS NOT NULL`, which is the pair
+  `pipeline/routers/boards.py` sets on accepting a proposal and the only
+  definition of "won" the codebase has.
+* Why it was empty: `lead_vendas` and `lead_campanhas` both held **0 rows**.
+  The ROI screen showed 13.379 leads and 0 vendas because the sale had to be
+  typed a second time, in a place nobody goes.
+* Verified against the live database after apply: the attribution path
+  resolves for **1.282 of the 1.284** atendimentos that carry a lead
+  (all currently attributed to "Meta Ads (Leads)"). The 7 already-won deals
+  are NOT attributable — 5 carry no `lead_id` at all and 2 have leads that
+  predate `origem_id` — so the screen fills as deals close from here, not
+  retroactively. Stated rather than implied: this wiring is correct and its
+  history is empty.
+* The two vendas sources are summed and must stay disjoint; there is no shared
+  key that could detect a deal entered in both. Safe today (`lead_vendas` is
+  empty) — see the migration header before building a manual-entry UI for it.
+
+A view — no table created, 0 rows touched.
