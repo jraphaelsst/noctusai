@@ -152,8 +152,22 @@ def http_client(mock_db):
         yield tc
 
 
+@pytest.fixture
+def leads_client(http_client):
+    """The `social_wiring`-scoped mock that `deps.get_leads_client()` caches.
+
+    Seeding through THIS instance is what makes rows visible to a request —
+    `mock_db.schema(...)` hands back a fresh, empty wrapper on every call (see
+    `app/dependencies.py::get_scoped_admin_client`'s docstring). Depends on
+    `http_client` so the app — and therefore the cache entry — already exists.
+    """
+    from app.modules.leads.deps import get_leads_client
+
+    return get_leads_client()
+
+
 def auth_headers() -> dict:
     return {"Authorization": "Bearer test-token"}
 
 
-__all__ = ["ORG_A", "ORG_B", "auth_headers"]
+__all__ = ["ORG_A", "ORG_B", "auth_headers", "leads_client"]

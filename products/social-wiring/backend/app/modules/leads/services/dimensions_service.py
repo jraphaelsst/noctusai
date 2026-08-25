@@ -439,14 +439,44 @@ def delete_corretor(
     return True
 
 
+#: The grouped view migration 080 added. Read once, not once per broker.
+_CONTAGEM_VIEW = "vw_lead_corretor_contagem"
+
+
 def list_corretores_with_lead_count(client: Any, org_id: UUID) -> list[dict]:
-    """§5.2: ``GET /api/leads/corretores`` → each row carries
-    ``lead_count`` — one extra query per broker (bounded: brokers are a
-    small dimension, unlike leads)."""
+    """§5.2: ``GET /api/leads/corretores`` → each row carries ``lead_count``.
+
+    🔴 TWO QUERIES, FIXED — NOT ONE PER BROKER.
+
+    This used to loop `count_leads_for_corretor` over the brokers, on the
+    stated reasoning that "brokers are a small dimension". Both halves of that
+    were true and the conclusion was still wrong: 29 brokers meant 30
+    SEQUENTIAL PostgREST round trips, and in production on 2026-08-25 this was
+    the single slowest endpoint the container served — 3343ms against a p50 of
+    6.4ms, on an endpoint the app shell fetches for EVERY page.
+
+    The counting was never the problem (`idx_sw_leads_org_corretor` covers it);
+    the thirty HTTP round trips were. N+1 over a small N is still N+1.
+
+    A broker missing from the view is reported as 0 rather than skipped —
+    `vw_lead_corretor_contagem` LEFT JOINs so that should not happen, and if it
+    ever does, a broker with a wrong count is a far smaller failure than a
+    broker that vanishes from the list.
+    """
     rows = list_corretores(client, org_id)
-    return [
-        {**r, "lead_count": count_leads_for_corretor(client, org_id, r["id"])} for r in rows
-    ]
+    if not rows:
+        return []
+    contagens = {
+        str(r["corretor_id"]): r["lead_count"]
+        for r in (
+            _table(client, _CONTAGEM_VIEW)
+            .select("corretor_id,lead_count")
+            .eq("org_id", str(org_id))
+            .execute()
+        ).data
+        or []
+    }
+    return [{**r, "lead_count": contagens.get(str(r["id"]), 0)} for r in rows]
 
 
 def list_corretor_aliases(client: Any, org_id: UUID) -> list[dict]:

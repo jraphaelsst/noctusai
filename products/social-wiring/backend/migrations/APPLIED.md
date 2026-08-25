@@ -323,3 +323,19 @@ pending the owner's decision — answered by 079. 0 rows at backfill.
   and COMMENTed as superseded. No data changed on that table.
 
 Touched 0 existing rows.
+
+## 080 — `080_vw_lead_corretor_contagem.sql`
+
+* `vw_lead_corretor_contagem` — lead count per broker, grouped in the
+  database, `security_invoker = true` (same posture as `vw_nome_conferencia`).
+* Replaces an N+1 in `dimensions_service.list_corretores_with_lead_count`:
+  29 brokers meant 30 sequential PostgREST round trips. Measured in prod on
+  2026-08-25, `GET /api/leads/corretores` was the slowest endpoint the
+  container served — 3343ms / 2083ms / 1828ms in one 25-minute window, against
+  a p50 of 6.4ms — and the app shell fetches it on every page.
+* The counting was never the bottleneck: `idx_sw_leads_org_corretor` already
+  covers every one of those counts. The round trips were.
+* Verified against the live database after apply: 29 brokers, **0 divergences**
+  between the old per-broker COUNT and the view, 12.087 leads attributed.
+
+A view — no table created, 0 rows touched.
