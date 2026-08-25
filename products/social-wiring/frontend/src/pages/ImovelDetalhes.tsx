@@ -35,10 +35,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
+import ImovelCartorioCard from "@/components/imovel/ImovelCartorioCard";
+import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
 import {
   useSolicitacaoDoImovel,
   useSolicitarCampanha,
 } from "@/hooks/useCampanhas";
+import {
+  useImovelDados,
+  useImovelDadosMutation,
+  useImovelDocumentoMutations,
+  useImovelDocumentos,
+} from "@/hooks/useImovelDados";
+import { useTeamMembers } from "@/hooks/useTeam";
 import {
   caracteristicaLabel,
   formatArea,
@@ -53,6 +62,16 @@ export default function ImovelDetalhes() {
   const solicitacao = useSolicitacaoDoImovel(codigo ?? null);
   const solicitar = useSolicitarCampanha(codigo ?? null);
   const [erroSolicitacao, setErroSolicitacao] = useState<string | null>(null);
+
+  // Cartório data + documents (migration 075). Hooks are unconditional and
+  // gated on `codigo` internally — an early `return` for the loading/error
+  // branches below sits BETWEEN these and the render, so calling them
+  // conditionally would break the rules-of-hooks ordering.
+  const dadosQuery = useImovelDados(codigo ?? null);
+  const documentosQuery = useImovelDocumentos(codigo ?? null);
+  const dadosMutation = useImovelDadosMutation(codigo ?? "");
+  const documentoMutations = useImovelDocumentoMutations(codigo ?? "");
+  const teamQuery = useTeamMembers();
 
   const loading = query.isPending || query.isFetching;
   const imovel = query.data;
@@ -249,6 +268,40 @@ export default function ImovelDetalhes() {
 
         {/* ── Sidebar ── */}
         <div className="space-y-6">
+          {/* What WE author about this property — never the Vista mirror.
+              See migration 075 for why the two are separate. */}
+          <ImovelCartorioCard
+            dados={dadosQuery.data}
+            membros={teamQuery.data ?? []}
+            loading={dadosQuery.isPending || dadosQuery.isFetching}
+            saving={dadosMutation.isPending}
+            error={dadosMutation.error?.message ?? null}
+            onSave={(patch) => dadosMutation.mutate(patch)}
+          />
+
+          <ImovelDocumentosCard
+            documentos={documentosQuery.data ?? []}
+            loading={documentosQuery.isPending || documentosQuery.isFetching}
+            uploading={documentoMutations.upload.isPending}
+            error={
+              documentoMutations.upload.error?.message ??
+              documentoMutations.remove.error?.message ??
+              null
+            }
+            onUpload={(file, tipoDocumento) =>
+              documentoMutations.upload.mutate({ file, tipoDocumento })
+            }
+            onRemove={(documentoId, motivo) =>
+              documentoMutations.remove.mutate({ documentoId, motivo })
+            }
+            onOpen={async (documentoId) => {
+              const res = await documentoMutations.getUrl.mutateAsync(documentoId);
+              // `noopener` — a signed URL opened into a tab that keeps a
+              // handle on this one is a needless cross-window reference.
+              if (res?.url) window.open(res.url, "_blank", "noopener,noreferrer");
+            }}
+          />
+
           {/* ALL corretores — 13.1% of imóveis have more than one. */}
           {imovel.corretores.length > 0 && (
             <Card>
