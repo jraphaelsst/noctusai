@@ -20,7 +20,7 @@
  */
 import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@noctusai/seed/infra";
+import { api, getAuthToken } from "@noctusai/seed/infra";
 import { useRealtimeStream } from "@noctusai/lib";
 
 import type { LeadRecord, LeadRecords } from "./useMetaAds";
@@ -317,5 +317,8 @@ export function useLiveLeads(enabled = true) {
   return useRealtimeStream(enabled ? "/api/meta/leadgen/stream" : null, {
     onEvent,
     events: LEADGEN_EVENTS,
+    // Without this the stream 401s silently and no lead ever arrives live —
+    // see `@noctusai/lib`'s realtime header for the production incident.
+    getAuthToken,
   });
 }

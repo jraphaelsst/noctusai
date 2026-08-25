@@ -21,6 +21,10 @@ const { setQueriesDataMock, invalidateQueriesMock, realtimeMock } = vi.hoisted((
 
 vi.mock("@noctusai/seed/infra", () => ({
   api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+  // The stream authenticates with the session's bearer token — an
+  // `EventSource` could not send one, which is why every /stream request 401'd
+  // in production until 2026-08-25. Asserted below, not just mocked away.
+  getAuthToken: vi.fn(async () => "test-token"),
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -80,6 +84,18 @@ describe("useLiveLeads", () => {
     // 🔴 EventSource only delivers a named event to a listener registered for
     // that exact name — omitting this makes the stream silently dead.
     expect(lastOptions().events).toEqual(LEADGEN_EVENTS);
+  });
+
+  it("hands the transport a token getter, so the stream can authenticate", async () => {
+    // 🔴 Regression pin. `useRealtimeStream` used to open an `EventSource`,
+    // which cannot send an `Authorization` header at all — so this feed 401'd
+    // on every attempt in production and no lead ever arrived live. The hook
+    // must forward a token getter, and it must actually resolve a token.
+    useLiveLeads(true);
+
+    const { getAuthToken } = lastOptions();
+    expect(typeof getAuthToken).toBe("function");
+    await expect(getAuthToken()).resolves.toBe("test-token");
   });
 
   it("passes a null url when disabled, so no connection is held open", () => {
