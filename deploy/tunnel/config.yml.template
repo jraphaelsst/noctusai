@@ -38,8 +38,6 @@ ingress:
     service: http://core:8000
   - hostname: core.noctusai.com
     service: http://core:8000
-  - hostname: erp-imobiliario.noctusai.com
-    service: http://erp-imobiliario:8001
   - hostname: seed.noctusai.com
     service: http://seed:8004
   # UN-EXPOSED 2026-08-17 (owner's decision): personal-finance:8002 ·
@@ -48,8 +46,6 @@ ingress:
   # stale. Rationale + the reversal recipe live in ingress.yml — this file is
   # the second derived artifact of the same route table, so the two must move
   # together (check_tunnel_ingress_snapshot_sync).
-  - hostname: social-wiring.noctusai.com
-    service: http://social-wiring:8011
   - hostname: orbity.noctusai.com
     service: http://orbity:8010
   - hostname: igig.noctusai.com

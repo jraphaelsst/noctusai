@@ -100,6 +100,31 @@ def parse_ingress(text: str) -> list[dict]:
     return out
 
 
+def parse_retired(text: str) -> set[str]:
+    """`ingress.yml` → the set of hostnames RETIRED on purpose.
+
+    Removing a public hostname is an outage by construction, so `_apply`
+    refuses to drop a live route that the canonical file does not declare.
+    That guard could not tell "deliberately deleted" from "accidentally
+    missing" — deletion leaves no trace, so both look identical, and the
+    only way past it was to bypass the tool.
+
+    `retired:` is that trace. A hostname listed here is one the owner has
+    decided should stop being served; `_apply` may then drop it, and only
+    it. Keeping the list in the canonical file (rather than passing a
+    force flag) means the decision is reviewable in the diff and still
+    readable a year later, which a flag consumed at the command line is
+    not.
+    """
+    import yaml
+
+    data = yaml.safe_load(text) or {}
+    retired = data.get("retired") or []
+    if not isinstance(retired, list):
+        raise ValueError("ingress.yml `retired:` must be a list of hostnames")
+    return {str(h).strip() for h in retired if str(h).strip()}
+
+
 def render_ingress_block(routes: list[dict]) -> str:
     """The `ingress:` block, catch-all last BY CONSTRUCTION."""
     lines = ["ingress:"]
@@ -163,6 +188,10 @@ def _render(repo_root, worktree_path) -> dict:
     }
 
 
+def _read_retired(root) -> set[str]:
+    return parse_retired((root / INGRESS_REL).read_text(encoding="utf-8"))
+
+
 def _check(ssh_host: str, live_path: str, repo_root, worktree_path) -> dict:
     root = _resolve_root(repo_root, worktree_path)
     routes = _read_ingress(root)
@@ -170,8 +199,13 @@ def _check(ssh_host: str, live_path: str, repo_root, worktree_path) -> dict:
     live_text = _fetch_live(ssh_host, live_path)
     live = parse_config_hostmap(live_text)
 
+    retired = _read_retired(root)
     missing = sorted(set(declared) - set(live))          # in repo, not live
     extra = sorted(set(live) - set(declared))            # live, not in repo
+    # A retired hostname still being served is drift the owner has already
+    # decided about — surfaced separately so "2 unexplained extra routes"
+    # never hides behind "2 routes pending retirement".
+    pending_retirement = sorted(h for h in extra if h in retired)
     changed = sorted(h for h in set(declared) & set(live) if declared[h] != live[h])
     in_sync = not (missing or extra or changed)
     return {
@@ -183,6 +217,7 @@ def _check(ssh_host: str, live_path: str, repo_root, worktree_path) -> dict:
         "live_count": len(live),
         "missing_from_live": missing,
         "extra_in_live": extra,
+        "pending_retirement": pending_retirement,
         "service_changed": {h: {"declared": declared[h], "live": live[h]} for h in changed},
         "live_path": live_path,
         "detail": (
@@ -204,18 +239,22 @@ def _apply(ssh_host: str, live_path: str, repo_root, worktree_path, confirm: boo
     # dropping a route is an outage, and must never be a silent side effect.
     live_hosts = set(parse_config_hostmap(live_text))
     declared_hosts = {r["hostname"] for r in routes}
+    retired = _read_retired(root)
     dropped = sorted(live_hosts - declared_hosts)
-    if dropped:
+    undeclared = sorted(h for h in dropped if h not in retired)
+    if undeclared:
         return {
             "ok": False,
             "action": "apply",
             "status": "blocked",
             "error": (
-                f"REFUSED — applying would remove {len(dropped)} live hostname(s) "
-                f"not declared in {INGRESS_REL}: {dropped}. Add them to the "
-                "canonical file first (or remove them deliberately there)."
+                f"REFUSED — applying would remove {len(undeclared)} live hostname(s) "
+                f"neither declared in `routes:` nor listed in `retired:` in "
+                f"{INGRESS_REL}: {undeclared}. Add them back to `routes:`, or — if "
+                "the removal is deliberate — list them under `retired:` so the "
+                "decision is recorded where the next reader will find it."
             ),
-            "would_drop": dropped,
+            "would_drop": undeclared,
         }
 
     if not confirm:

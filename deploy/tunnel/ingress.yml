@@ -24,6 +24,21 @@
 # Derived from start.sh BEGIN/END_PRODUCTS_REGISTRY + products/*/docker-compose.yml
 # (snapshot 2026-05-21). When the registry changes, regenerate this map.
 
+# ── RETIRED — hostnames deliberately taken off the public internet ────
+# Listed so `noctus.dev.tunnel_config action=apply` may drop them. Removing
+# a public hostname is an outage by construction, so apply refuses to drop
+# any live route that this file does not account for — and a deleted line
+# leaves no trace, which is why the decision is recorded HERE rather than
+# passed as a force flag nobody can read back later.
+#
+# 2026-08-25, owner's decision: these two products are reachable at their
+# SHORT hostnames only (`erp.` / `social.`). The long-slug hosts had been
+# added as aliases "kept alongside, not replacing" the short ones, which
+# inverted what the owner had set.
+retired:
+  - erp-imobiliario.noctusai.com
+  - social-wiring.noctusai.com
+
 routes:
   # ── Apex → core ──────────────────────────────────────────────────────
   - hostname: noctusai.com
@@ -34,9 +49,6 @@ routes:
   # core is also reachable at its subdomain for symmetry / direct access.
   - hostname: core.noctusai.com
     service:  http://core:8000
-
-  - hostname: erp-imobiliario.noctusai.com
-    service:  http://erp-imobiliario:8001
 
   # seed is a FIRST-CLASS deployed product + canary (migration 038).
   - hostname: seed.noctusai.com
@@ -67,9 +79,6 @@ routes:
   # → KB § PATTERNS/architect/product-working-scope.md
   # → KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md
 
-  - hostname: social-wiring.noctusai.com
-    service:  http://social-wiring:8011
-
   - hostname: orbity.noctusai.com
     service:  http://orbity:8010
 
@@ -79,9 +88,17 @@ routes:
   - hostname: p-studio.noctusai.com
     service:  http://p-studio:8014
 
-  # ── Short-name aliases (live edge convenience hosts) ─────────────────
-  # Shorter public hostnames pointing at the SAME containers as the
-  # full-slug subdomains above — kept alongside, not replacing, them.
+  # ── Short public hostnames — the ONLY ones for these two products ────
+  # 2026-08-25, owner's decision: `erp-imobiliario.noctusai.com` and
+  # `social-wiring.noctusai.com` are REMOVED, not kept alongside. They had
+  # been added as aliases "kept alongside, not replacing" the full-slug
+  # hosts; the owner had set the short names and wants only those public.
+  #
+  # Two public hostnames for one product is not a convenience — it is two
+  # surfaces to keep in DNS, two to appear in a user's history and in an
+  # OAuth redirect allowlist, and two that can disagree about which is
+  # canonical. The service target still names the internal slug, which is
+  # a container name, not a public one.
   - hostname: erp.noctusai.com
     service:  http://erp-imobiliario:8001
   - hostname: social.noctusai.com
