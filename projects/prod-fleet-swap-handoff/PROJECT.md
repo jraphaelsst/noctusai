@@ -1,11 +1,34 @@
 # Prod fleet container swap — handoff to the final merge+deploy agent
 
-> **Filed 2026-08-25 ~20:50 UTC.** `main`/`prod` are already promoted to `eb648b2b` and the GHCR
-> images are built, but **6 of 7 live containers were never swapped**. The owner deliberately paused
-> the container swap: another agent still has work to merge, and the owner wants **one** deploy that
-> ships everything together rather than swapping the fleet twice.
+> 🔴 **SUPERSEDED 2026-08-25 ~21:15 UTC — THE SWAP IS DONE. DO NOT RE-RUN IT.**
+>
+> Everything below the banner was accurate when filed (~20:50 UTC) and is kept verbatim
+> because its procedure, gotchas and live-test checklist are still worth reading. But its
+> headline finding — "6 of 7 live containers were never swapped" — **is no longer true.**
+>
+> A second agent was running the release concurrently with the agent that filed this note.
+> That is also the answer to this file's open question of who moved `main`/`prod`: it was
+> that agent, via `noctus.dev.release stage='bless'` then `stage='promote'` (which is why
+> `prod-backup` exists and is valid). It then completed `deploy_image` for **all seven**
+> live products.
+>
+> **Verified end state (`noctus.dev.deploy_verify`, catalog-driven):**
+> `status: verified`, exit 0 — **7 actionable products checked, 0 missing, 0 drifted,
+> 0 degraded, 0 unverifiable.** Every one reports *"running revision exactly matches the
+> prod tip"* at `eb648b2b`. `noctus.vps.health` = 11 healthy / 0 unhealthy. All 7 SPAs pass
+> `spa_smoke` on their real hostnames.
+>
+> The `126086ca` cohort drift this file flagged is **closed**, not deferred.
+>
+> **What the merge agent should actually do:** nothing from §5 of this file. Prod is current
+> and green. Merge whatever is new on `dev` beyond `eb648b2b`, then run the ship chain fresh
+> for that delta. Re-running `deploy_image` against the already-current fleet is harmless
+> (it reports `up_to_date`) but §5's premise no longer applies.
+>
+> Still open and NOT superseded: §6 (the social-wiring live-test checklist) and §7 (related
+> drift), plus the uncommitted salvage-ledger entries in the primary checkout.
 
-- **Status:** ⏸️ PAUSED BY OWNER — refs promoted, images built, **containers NOT swapped**
+- **Status:** ✅ SWAP COMPLETE + VERIFIED — refs promoted, images built, **all 7 containers swapped**
 - **Owner:** Rapha · orchestrating agent
 - **Slug:** `prod-fleet-swap-handoff` (root `projects/`)
 - **Authority for the procedure:** skill `noc-ship` steps 4–6a + `KB § GUIDES/production-deploy.md § 2a`.
@@ -37,21 +60,29 @@ swap completed and was verified. The swap itself did not run for most of the fle
 - **`predeploy_check`:** `ready` (exit 0, all 7 legs) for **all 7 live products** — verified against a
   clean worktree at `eb648b2b`, not the stale primary checkout.
 
-### Running revisions — this is the actual gap
+### Running revisions — RESOLVED, table kept for the record
 
-| Product | Running revision | Needs swap? |
-|---|---|---|
-| `erp-imobiliario` | `eb648b2b` | ✅ no — already at prod tip |
-| `social-wiring` | `149fdbf4` | ⚠️ yes (64 files behind) |
-| `core` | `126086ca` | ⚠️ yes (159 files behind) |
-| `igig` | `126086ca` | ⚠️ yes |
-| `orbity` | `126086ca` | ⚠️ yes |
-| `p-studio` | `126086ca` | ⚠️ yes |
-| `seed` | `126086ca` | ⚠️ yes |
+As filed at ~20:50 UTC (the gap this note was written about):
 
-Only `erp-imobiliario` was swapped (it was the urgent 502 fix). The `126086ca` cohort is drift that
-**predates** this release — a prior deploy swapped one product and left the rest behind. Everything is
-healthy on those older images, so there is no outage and no time pressure.
+| Product | Running revision @ 20:50 | Needed swap? | Running revision @ 21:15 |
+|---|---|---|---|
+| `erp-imobiliario` | `eb648b2b` | ✅ no — already at prod tip | `eb648b2b` ✅ |
+| `social-wiring` | `149fdbf4` | ⚠️ yes (64 files behind) | `eb648b2b` ✅ swapped |
+| `core` | `126086ca` | ⚠️ yes (159 files behind) | `eb648b2b` ✅ swapped |
+| `igig` | `126086ca` | ⚠️ yes | `eb648b2b` ✅ swapped |
+| `orbity` | `126086ca` | ⚠️ yes | `eb648b2b` ✅ swapped |
+| `p-studio` | `126086ca` | ⚠️ yes | `eb648b2b` ✅ swapped |
+| `seed` | `126086ca` | ⚠️ yes | `eb648b2b` ✅ swapped |
+
+The `126086ca` cohort was drift that **predated** this release — a prior deploy swapped one product
+and left the rest behind. All six were swapped at ~21:00–21:10 UTC, each reporting `status: deployed`
++ `health: healthy` + a matching `landed_revision`, and `deploy_verify` then returned `verified` with
+zero drift. Nothing on this table is outstanding.
+
+**Why it mattered beyond tidiness:** the `eb648b2b` release contains a fleet-wide pure-ASGI middleware
+rewrite. The five `126086ca` products carried the latent 502 bug (see §3) — harmless only because none
+of them ships a service worker to trigger it. Leaving them behind would have kept a known-bad
+`BaseHTTPMiddleware` in prod on five services.
 
 ## 3. What is in the 8 commits (blast radius)
 
@@ -82,6 +113,11 @@ Two things make this **fleet-wide**, not a social-wiring release:
 list so `tunnel_config action=apply` permits exactly those drops. **Do not "restore" them.**
 
 ## 4. Remaining procedure
+
+> ⚠️ **DONE — see the banner at the top of this file.** All 7 containers were swapped and
+> `deploy_verify` returned `verified` (0 drifted). This section is retained as the procedure
+> to follow for the NEXT delta on `dev`, not as outstanding work. Re-running it now against
+> the current fleet is a no-op (`up_to_date`), not a fix.
 
 Per `noc-ship` steps 4–6a. Everything before step 4 is done.
 
