@@ -860,7 +860,7 @@ async def process_manual_upload(
 
     # 2. Extract text from PDF for AI analysis (replaces the API response
     #    data that the automated flow uses as input for _analyze_with_ai)
-    text_for_analysis = _extract_pdf_text(pdf_bytes, nome_display)
+    text_for_analysis = await _extract_pdf_text(pdf_bytes, nome_display, org_id)
 
     # 3. AI analysis — same function as automated flow
     analise = None
@@ -886,28 +886,54 @@ async def process_manual_upload(
     return update_data
 
 
-def _extract_pdf_text(pdf_bytes: bytes, nome_display: str) -> Optional[str]:
-    """Extract text content from a PDF for AI analysis.
+async def _extract_pdf_text(
+    pdf_bytes: bytes, nome_display: str, org_id: Optional[str] = None
+) -> Optional[str]:
+    """Extract text content from a certidão PDF for AI analysis.
 
-    Uses the seed classifier rather than a bare `get_text()` sweep: a
-    scanned certidão carries a digital-signature stamp as real text, so
-    "the page returned something" is not evidence the certidão is
-    readable. Feeding that stamp to `_analyze_with_ai` spends a model call
-    to analyse a validation URL. Returns None when nothing trustworthy is
-    there, which the caller already treats as "no analysis".
+    Goes through the seed transcriber (`documents.make_document_transcriber`)
+    rather than a bare `get_text()` sweep, so a scanned certidão — whose text
+    layer is a digital-signature stamp, not content — is not handed to
+    `_analyze_with_ai` as if it were the document.
+
+    `max_vision_pages=0` keeps this path on the free, exact half of the
+    ladder. Certidões arrive here from a background scheduler that runs per
+    org on a timer, so switching rung 2 on would start billing vision calls
+    on a loop nobody is watching. Raise it (or drop the argument for the
+    seed default of 40) to transcribe scanned certidões too — that is a cost
+    decision, not a technical blocker.
+
+    Returns None when nothing trustworthy is there, which the caller already
+    treats as "no analysis". The `vision_disabled` case is logged rather than
+    silently dropped: a scanned certidão getting no AI analysis is a real gap
+    and should be visible in the logs, not inferred from an empty column.
     """
     try:
-        from noctusai_lib.integrations.media import classify_pdf_text_layer
+        from noctusai_lib.integrations.documents import make_document_transcriber
 
-        camada = classify_pdf_text_layer(pdf_bytes)
-        # Per-page: a certidão whose first pages are typeset and whose
-        # annexes are scanned still yields its readable half.
-        extracted = camada.text
+        transcriber = make_document_transcriber(
+            real=True, org_id=org_id, max_vision_pages=0
+        )
+        resultado = await transcriber.transcribe(
+            pdf_bytes, mimetype="application/pdf"
+        )
+        if resultado.error == "vision_disabled":
+            logger.info(
+                "Certidão %s: %s — analysing the %d page(s) with a real text layer",
+                nome_display, resultado.error_message, len(resultado.pages),
+            )
+        elif not resultado.ok:
+            logger.warning(
+                "Certidão %s: transcription failed (%s) %s",
+                nome_display, resultado.error, resultado.error_message or "",
+            )
+
+        extracted = resultado.text
         if not extracted:
             return None
         # Prefix with certificate type for context (mirrors how the
-        # automated flow sends structured API response data)
-        # Truncate to avoid exceeding token limits
+        # automated flow sends structured API response data).
+        # Truncate to avoid exceeding token limits.
         return f"Certidão: {nome_display}\n\n{extracted[:4000]}"
     except Exception as e:
         logger.warning("PDF text extraction failed: %s", e)

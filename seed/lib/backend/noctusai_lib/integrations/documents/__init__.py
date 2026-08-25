@@ -70,6 +70,13 @@ from noctusai_lib.integrations.documents.fake import (
     FakeIdentityExtractor,
     classify_kind,
 )
+from noctusai_lib.integrations.documents.transcription import (
+    DocumentTranscriber,
+    FakeDocumentTranscriber,
+    TranscribedPage,
+    Transcription,
+    make_document_transcriber,
+)
 from noctusai_lib.integrations.documents.text import (
     normalize_lines,
     strip_accents_upper,
@@ -92,6 +99,9 @@ _LAZY: dict[str, str] = {
     "LadderMatriculaExtractor": (
         "noctusai_lib.integrations.documents.matricula_extractor"
     ),
+    "LadderDocumentTranscriber": (
+        "noctusai_lib.integrations.documents.transcription"
+    ),
 }
 
 
@@ -108,24 +118,30 @@ def __getattr__(name: str):  # pragma: no cover - lazy proxy
 
 __all__ = [
     "DocumentTextLadder",
+    "DocumentTranscriber",
     "ExtractionConfidence",
+    "FakeDocumentTranscriber",
     "FakeIdentityExtractor",
     "FakeMatriculaExtractor",
     "IdentityDocumentKind",
     "IdentityExtractor",
     "IdentityFields",
+    "LadderDocumentTranscriber",
     "LadderIdentityExtractor",
     "LadderMatriculaExtractor",
     "MatriculaExtractor",
     "MatriculaFields",
     "TextSource",
+    "TranscribedPage",
+    "Transcription",
     "classify_kind",
     "find_birthdate",
-    "find_name",
     "find_gender",
     "find_matricula",
+    "find_name",
     "looks_like_a_name",
     "looks_like_pdf",
+    "make_document_transcriber",
     "make_identity_extractor",
     "make_matricula_extractor",
     "normalize",
