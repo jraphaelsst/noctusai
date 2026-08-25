@@ -33,6 +33,7 @@ from app.dependencies import coerce_org_uuid
 
 ORG_RAW = "test-org-123"
 ORG_ID = str(coerce_org_uuid(ORG_RAW))
+ORG_ID_UUID = coerce_org_uuid(ORG_RAW)
 URL = "/api/painel"
 
 
@@ -263,15 +264,30 @@ class TestEmNegociacao:
 
 
 class TestResiliencia:
-    def test_a_broken_tile_does_not_take_the_panel_down(self, client):
+    def test_a_broken_tile_reports_zero_instead_of_raising(self):
         """🔴 A panel is a summary. If one tile can 500 the first screen after
         login, people route around the screen — which is how it became
-        decoration the first time."""
-        with patch(
-            "app.services.clientes_service.list_review_groups",
-            side_effect=RuntimeError("boom"),
-        ):
-            painel = _painel(client)
+        decoration the first time.
 
-        assert painel["revisao"] == 0
-        assert "novos" in painel
+        Exercised by handing `_grupos_em_revisao` a client that FAILS, not by
+        patching `list_review_groups`. Patching our own code would mean the
+        test no longer exercises the guard it is named after — it would prove
+        that `patch` works. A hostile client is a real input; the real function
+        and its real `except` run.
+        """
+        from app.routers import painel_router
+
+        class ClienteQueFalha:
+            def table(self, *_a, **_k):
+                raise RuntimeError("postgrest indisponível")
+
+            def __getattr__(self, _nome):
+                raise RuntimeError("postgrest indisponível")
+
+        assert painel_router._grupos_em_revisao(ClienteQueFalha(), ORG_ID_UUID) == 0
+
+    def test_a_working_queue_is_counted(self, client):
+        """The counterpart: the tile is not hard-coded to zero."""
+        from app.routers import painel_router
+
+        assert painel_router._grupos_em_revisao(client.scoped, ORG_ID_UUID) == 0
