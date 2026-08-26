@@ -31,13 +31,27 @@
 #   B101 assert_used — tests use `assert` everywhere; even production code
 #         uses it for invariant checks the right way. Skipped repo-wide.
 #
-# Note on B104 (hardcoded_bind_all_interfaces): bandit 1.7.10 does NOT
-# register B104 as a built-in test (verified: `bandit.plugins_by_id` has
-# no B104 entry). If a future bandit version reintroduces it, add it to
-# `skips` below — `0.0.0.0` is correct in container contexts.
+# Note on B104 (hardcoded_bind_all_interfaces): this note used to say bandit
+# 1.7.10 did not register B104 and that a future version reintroducing it
+# should be added to `skips`. That future arrived — CI pins bandit 1.9.4,
+# which DOES register it, and it fired on 2026-08-26 against
+# `noctusai_lib/integrations/imovelweb/types.py`:
+#
+#     _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", ...})
+#
+# That is a DENYLIST used to REJECT a loopback receiver URL — the exact
+# opposite of binding to one. B104 pattern-matches the literal and cannot see
+# the direction, and the literal has to stay: a denylist that omits the string
+# it is meant to catch does not catch it. Skipped as this file predicted,
+# rather than silenced at the call site with a `# nosec`, so the decision
+# stays visible in config instead of buried in code.
+#
+# `0.0.0.0` is also correct in container contexts (uvicorn binds it by
+# design), which is the other half of why this is repo-wide and not local.
 
 skips:
   - B101  # assert_used
+  - B104  # hardcoded_bind_all_interfaces — see the note above
 
 # Directories scanned by `bandit -r <path>` are passed at the CLI; the
 # `exclude_dirs` config below is bandit's path-substring filter applied to

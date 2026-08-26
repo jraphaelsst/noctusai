@@ -15,7 +15,12 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, Optional
-from xml.etree import ElementTree
+# defusedxml, NOT xml.etree — this parses the VENDOR's error body, which is
+# remote input we do not control: a hostile or compromised endpoint can answer
+# a billion-laughs / XXE payload and take the worker down while it expands.
+# Same call shape (`fromstring`, `ParseError`), same house answer adconnect
+# already uses for untrusted NF-e XML. Bandit B314.
+from defusedxml import ElementTree
 
 from noctusai_lib.integrations.rate_limit import acquire_async
 
