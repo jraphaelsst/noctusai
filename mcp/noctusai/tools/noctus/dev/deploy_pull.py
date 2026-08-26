@@ -67,6 +67,18 @@ _RUNTIME_FLEET = re.compile(
 # `_version_static.py` (the git-sha version string) on every commit, so without
 # this every deploy_pull would false-flag a fleet rebuild.
 _COSMETIC_NONRUNTIME = re.compile(r"_version_static\.py$")
+# Paths that LOOK like fleet build inputs but belong to a NON-fleet app.
+# `deploy/legacy/` is the standalone one-permutas Django app (legacy.noctusai.com):
+# its own Dockerfile header states it "is NOT a noctus-fleet product — it has its
+# OWN container shape (it does NOT inherit the noctus-seed-* base images)". It is
+# built on the VPS from a separate repo, never from a fleet image.
+#
+# Without this exclusion `_RUNTIME_FLEET` matches `Dockerfile` ANYWHERE, so
+# promoting `deploy/legacy/` on 2026-08-26 made `deploy_verify` report drift for
+# EVERY live product against a Dockerfile that is in none of their images
+# (verified: `noctus-core` contains only `products/core`). A permanently-red
+# fleet gate gets ignored, which is how a real drift later goes unnoticed.
+_NON_FLEET_DEPLOY = re.compile(r"^deploy/legacy/")
 
 
 def _rebuild_decision(files: list[str]) -> dict[str, Any]:
@@ -78,6 +90,7 @@ def _rebuild_decision(files: list[str]) -> dict[str, Any]:
     rebuild for a no-op version string."""
     products: set[str] = set()
     reasons: list[str] = []
+    non_fleet_reasons: list[str] = []
     fleet = False
     for f in files:
         if _COSMETIC_NONRUNTIME.search(f):
@@ -87,6 +100,12 @@ def _rebuild_decision(files: list[str]) -> dict[str, Any]:
             products.add(m.group(1))
             reasons.append(f)
             continue
+        if _NON_FLEET_DEPLOY.match(f):
+            # Surfaced, never silently dropped: the legacy app DOES need a
+            # rebuild when this changes — but via its own VPS build flow
+            # (deploy/legacy/README.md), not a fleet image.
+            non_fleet_reasons.append(f)
+            continue
         if _RUNTIME_FLEET.search(f):
             fleet = True
             reasons.append(f)
@@ -95,6 +114,7 @@ def _rebuild_decision(files: list[str]) -> dict[str, Any]:
         "products": sorted(products),
         "fleet_wide": fleet,
         "reasons": reasons[:20],
+        "non_fleet_reasons": non_fleet_reasons[:20],
     }
 
 

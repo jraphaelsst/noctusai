@@ -276,3 +276,52 @@ def test_fetch_cache_dsn_rejects_non_postgres_output():
     assert DP._fetch_cache_dsn("h", lambda cmd: (0, "", "")) is None
     assert DP._fetch_cache_dsn("h", lambda cmd: (1, _RAW_DSN, "")) is None  # rc!=0
     assert DP._fetch_cache_dsn("h", lambda cmd: (0, _RAW_DSN + "\n", "")) == _RAW_DSN
+
+
+class TestLegacyDeployPathIsNotFleetWide:
+    """`deploy/legacy/` is the standalone one-permutas app, NOT a fleet product.
+
+    Regression guard for 2026-08-26: promoting `deploy/legacy/` into the live
+    tree made `_RUNTIME_FLEET` (which matches `Dockerfile` at ANY depth) flag a
+    fleet-wide rebuild, so `deploy_verify` reported drift for every live product
+    against a Dockerfile present in none of their images. The predicate is shared
+    verbatim by deploy_pull, deploy_verify and release, so this one guard covers
+    all three.
+    """
+
+    def test_legacy_dockerfile_does_not_trigger_fleet_rebuild(self):
+        d = DP._rebuild_decision(["deploy/legacy/Dockerfile"])
+        assert d["fleet_wide"] is False
+        assert d["products"] == []
+        assert d["needed"] is False
+
+    def test_legacy_compose_does_not_trigger_fleet_rebuild(self):
+        d = DP._rebuild_decision(["deploy/legacy/compose.legacy.yml"])
+        assert d["fleet_wide"] is False
+        assert d["needed"] is False
+
+    def test_legacy_change_is_surfaced_not_silently_dropped(self):
+        """No-silent-errors: the legacy app still needs its own rebuild."""
+        d = DP._rebuild_decision(["deploy/legacy/Dockerfile"])
+        assert "deploy/legacy/Dockerfile" in d["non_fleet_reasons"]
+
+    def test_real_fleet_dockerfile_still_triggers(self):
+        """The exclusion must be surgical — fleet paths keep working."""
+        assert DP._rebuild_decision(["deploy/fleet/docker-compose.prod.yml"])["fleet_wide"] is True
+        assert DP._rebuild_decision(["products/seed/Dockerfile"])["fleet_wide"] is True
+        assert DP._rebuild_decision(["seed/lib/backend/x.py"])["fleet_wide"] is True
+
+    def test_product_paths_still_resolve(self):
+        d = DP._rebuild_decision(["products/social-wiring/backend/app/routers/painel_router.py"])
+        assert d["products"] == ["social-wiring"]
+        assert d["fleet_wide"] is False
+
+    def test_mixed_diff_legacy_plus_product(self):
+        """The real 2026-08-26 diff: legacy + social-wiring must rebuild ONLY
+        social-wiring, never the whole fleet."""
+        d = DP._rebuild_decision([
+            "deploy/legacy/Dockerfile",
+            "products/social-wiring/backend/app/routers/painel_router.py",
+        ])
+        assert d["products"] == ["social-wiring"]
+        assert d["fleet_wide"] is False
