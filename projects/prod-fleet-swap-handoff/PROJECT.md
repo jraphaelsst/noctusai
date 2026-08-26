@@ -1,32 +1,33 @@
 # Prod fleet container swap — handoff to the final merge+deploy agent
 
-> 🔴 **SUPERSEDED 2026-08-25 ~21:15 UTC — THE SWAP IS DONE. DO NOT RE-RUN IT.**
+> 🔴 **CLOSED 2026-08-26 — the final merge+deploy agent ran, and everything this
+> file was waiting on is done. Kept for its procedure and its gotchas, which are
+> still the right reading; nothing in it is outstanding work any more.**
 >
-> Everything below the banner was accurate when filed (~20:50 UTC) and is kept verbatim
-> because its procedure, gotchas and live-test checklist are still worth reading. But its
-> headline finding — "6 of 7 live containers were never swapped" — **is no longer true.**
+> What the closing session actually did, beyond this file's scope:
+> - Merged the three branches that were still unmerged on 2026-08-25:
+>   `feat/imovelweb-portal-leads` (15 commits, rebased across 178 commits of
+>   drift, 4 conflicts resolved by union), `feat/kb-env-template-debug-not-prod`,
+>   and `feat/sw-roteiros-visitas` (roteiros + visitas). The fourth,
+>   `chore/salvage-ledger-20260825`, was DELETED rather than merged: its ledger
+>   content was already a subset of `dev`, verified line by line.
+> - Fixed two gates that were red for reasons unrelated to what they measure —
+>   a fleet-scope smoke test that asserted the opposite of its own name after
+>   `3f5c2d69`, and a retention test comparing a UTC-derived value against a
+>   local `date.today()`, which turned CI red for three hours every night.
+> - Applied migrations **082** (roteiros/visitas) and **052** (imovelweb) to
+>   prod, each verified against the live schema afterwards.
+> - Landed the 7 stranded `worktree-salvage` pointers (§7), so the primary
+>   checkout can be reset without discarding anything.
 >
-> A second agent was running the release concurrently with the agent that filed this note.
-> That is also the answer to this file's open question of who moved `main`/`prod`: it was
-> that agent, via `noctus.dev.release stage='bless'` then `stage='promote'` (which is why
-> `prod-backup` exists and is valid). It then completed `deploy_image` for **all seven**
-> live products.
+> **§7's structural finding still stands and is NOT fixed:** `task_branch
+> action=cleanup` writes its recovery pointer into the primary checkout and
+> returns `salvage_pushed: false`, so the drift regrows on every teardown. It
+> was drained again today; it will accumulate again. The fix candidates in §7
+> are still the fix candidates.
 >
-> **Verified end state (`noctus.dev.deploy_verify`, catalog-driven):**
-> `status: verified`, exit 0 — **7 actionable products checked, 0 missing, 0 drifted,
-> 0 degraded, 0 unverifiable.** Every one reports *"running revision exactly matches the
-> prod tip"* at `eb648b2b`. `noctus.vps.health` = 11 healthy / 0 unhealthy. All 7 SPAs pass
-> `spa_smoke` on their real hostnames.
->
-> The `126086ca` cohort drift this file flagged is **closed**, not deferred.
->
-> **What the merge agent should actually do:** nothing from §5 of this file. Prod is current
-> and green. Merge whatever is new on `dev` beyond `eb648b2b`, then run the ship chain fresh
-> for that delta. Re-running `deploy_image` against the already-current fleet is harmless
-> (it reports `up_to_date`) but §5's premise no longer applies.
->
-> Still open and NOT superseded: §6 (the social-wiring live-test checklist) and §7 (related
-> drift), plus the uncommitted salvage-ledger entries in the primary checkout.
+> **§5's live-test checklist is still the owner's to run** — it is the one
+> thing here no agent can close.
 
 - **Status:** ✅ SWAP COMPLETE + VERIFIED — refs promoted, images built, **all 7 containers swapped**
 - **Owner:** Rapha · orchestrating agent

@@ -366,8 +366,11 @@ A view — no table created, 0 rows touched.
 
 ## 082 — `082_roteiros_visitas.sql`
 
-🔴 **NOT APPLIED.** File only — awaiting the row counts + an explicit user
-go-ahead, per the standard gate.
+✅ **APPLIED + VERIFIED 2026-08-26** (user go-ahead given after the row counts
+were stated). Verified live immediately after: `roteiros` 6 columns, `visitas`
+10, `visitas_registry_fk` → `imovel_registry` ON DELETE CASCADE, RLS enabled on
+both with 4 policies, 4 indexes, and `vw_imovel_visita_contagem` queryable.
+Zero existing rows touched — every statement was a CREATE.
 
 * `roteiros` + `visitas` — the qualificação → visita funnel gets a real object.
   A visit used to be an agendamento with `tipo='visita'`: one property, no
@@ -393,3 +396,39 @@ go-ahead, per the standard gate.
 * No `proprietario_*` column: Vista exposes no owner data (D1, user-ratified
   2026-08-25), and a column nothing can write is a placeholder side. Its
   destination when a source exists is `imovel_dados` (075).
+
+## 052 — `052_imovelweb_portal_leads.sql`
+
+✅ **APPLIED + VERIFIED 2026-08-26.** Landed out of numeric order: the file was
+authored 2026-08-18 on `feat/imovelweb-portal-leads` and merged today, long
+after 053–082 had shipped. The slot was reserved and still free, so it kept its
+number rather than being renumbered — renumbering would have broken every
+reference in the project's own docs and tests.
+
+* `imovelweb_lead_events` (the durable delivery inbox, PK = vendor eventId),
+  `imovelweb_leads` (the lossless ledger) and `imovelweb_agencies` (the
+  tenant-resolution key). All three created EMPTY; RLS on, 6 policies,
+  8 indexes.
+* Checked against prod BEFORE applying, because this migration is **not**
+  purely additive — unlike 082 it touches two live tables:
+  - `ALTER TABLE leads ADD COLUMN IF NOT EXISTS external_source/external_lead_id`
+    — already present (051 added them), so a no-op.
+  - `CREATE UNIQUE INDEX IF NOT EXISTS uq_sw_leads_org_external_lead` — already
+    existed (051), so a no-op. Had it NOT existed, a unique index over 13.478
+    live leads could have failed on a duplicate; verified first rather than
+    attempted.
+  - `integration_accounts_provider_check` is DROPPED by dynamic lookup and
+    re-ADDed one value wider (`+ imovelweb`). Verified beforehand that the
+    providers actually in use are `gmail, meta, n8n, youtube` and that
+    **0 rows** would violate the new list. Confirmed after: `leads` still
+    13.478 rows, `integration_accounts` still 5.
+* 🔴 **Applying it does NOT make the integration live**, and that separation is
+  the point. The receiver 401s every delivery while no secret is configured
+  (`bypass_when_unset=False`), and the MCP connector is not registered in
+  `.mcp.json`. What applying it DOES buy: the two new scheduled jobs
+  (`imovelweb_leads_retry` */15, `imovelweb_reconcile` hourly) find an empty
+  queue and no-op cleanly. Without the tables they would have queried a missing
+  relation every fifteen minutes forever — swallowed by the jobs' own
+  `except`, so not fatal, but permanent error noise in prod.
+* Gate 2 (live traffic) still needs vendor credentials — see
+  `projects/imovelweb-portal-leads-ingestion/HANDOFF.md` §1.

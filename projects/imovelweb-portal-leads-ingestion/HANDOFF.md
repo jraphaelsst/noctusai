@@ -1,5 +1,24 @@
 # ImovelWeb portal leads — handoff
 
+> ✅ **MERGED + MIGRATED 2026-08-26.** The branch is on `dev`, blessed to `main`
+> and promoted to `prod`; migration 052 is applied and verified. The rebase
+> across 178 commits of drift resolved four conflicts, all unions — the
+> `portal_leads` router list and scheduler (dev had meanwhile added
+> `receiver_tokens` and a forward drain; this branch adds the ImovelWeb drain
+> and the reconcile pull, so all four jobs now register), the Leads config-tab
+> imports, and `LGPD-WARNINGS.md`.
+>
+> 🔴 **STILL NOT LIVE, exactly as §1 says, and applying the migration did not
+> change that.** The receiver 401s every delivery while no secret is configured
+> (`bypass_when_unset=False`), and the connector is still absent from
+> `.mcp.json`. The tables exist so the two new scheduled jobs find an empty
+> queue and no-op instead of querying a missing relation every 15 minutes.
+>
+> **The one blocked thing is unchanged: send the credential request (§1), which
+> carries the ReadOnly-vs-Read-and-Write decision that is the owner's.**
+> Everything in §2 stays queued behind it.
+
+
 > **Everything buildable without credentials is built.** Seed package, MCP
 > connector, product slice and frontend are all on
 > `feat/imovelweb-portal-leads`, rebased onto `origin/dev` (the OLX branch had
