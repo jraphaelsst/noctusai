@@ -134,9 +134,17 @@ def client():
 
 
 def _painel(client) -> dict:
+    """The panel payload, read the way `usePainel.ts` reads it — BARE.
+
+    This helper used to `return resp.json()["data"]`, which is why the whole
+    file stayed green while the landing screen crashed in production: it
+    asserted the shape the BACKEND happened to produce instead of the shape the
+    FRONTEND consumes, so each half agreed with itself and with nothing else.
+    Reading it bare is what makes every assertion below a statement about the
+    contract rather than about the router's internals."""
     resp = client.get(URL, headers=_auth())
     assert resp.status_code == 200, resp.text
-    return resp.json()["data"]
+    return resp.json()
 
 
 class TestAuth:
@@ -291,3 +299,43 @@ class TestResiliencia:
         from app.routers import painel_router
 
         assert painel_router._grupos_em_revisao(client.scoped, ORG_ID_UUID) == 0
+
+
+class TestEnvelope:
+    """🔴 The wire shape itself, pinned.
+
+    `usePainel.ts` types the response as `Painel` and reads `data.novos`
+    directly; the seed api client does not unwrap. So the payload must be the
+    object, never `{"data": {...}}`. Shipping the wrapped form made every field
+    `undefined` and crashed the first screen every user lands on, and no
+    backend test could see it — this class is the one that would have.
+    """
+
+    def test_the_payload_is_bare_not_wrapped(self, client):
+        client.scoped.set_table_data("atendimentos", [atendimento(criado=-1)])
+
+        body = client.get(URL, headers=_auth()).json()
+
+        assert "data" not in body, (
+            "the panel must return the payload itself — a `{'data': ...}` "
+            "envelope makes every field undefined in usePainel"
+        )
+        assert set(body) == {
+            "novos",
+            "parados",
+            "agendamentos",
+            "revisao",
+            "em_negociacao",
+            "proximos_agendamentos",
+            "atendimentos_parados",
+        }
+
+    def test_every_headline_number_is_present_and_numeric(self, client):
+        """The crash was `novos.toLocaleString()` on undefined. A missing key is
+        indistinguishable from a zero on the wire until it reaches the browser,
+        so presence is asserted separately from value."""
+        body = client.get(URL, headers=_auth()).json()
+
+        for campo in ("novos", "parados", "agendamentos", "revisao"):
+            assert isinstance(body[campo], int), campo
+        assert isinstance(body["em_negociacao"], (int, float))

@@ -39,7 +39,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_scoped_admin_client
 from app.services import table_reads
@@ -88,11 +87,34 @@ def _agora() -> datetime:
     return datetime.now(timezone.utc)
 
 
-@router.get("")
+@router.get("", response_model=PainelOut)
 def obter_painel(
     auth: tuple = Depends(get_current_user_org),
-) -> dict:
-    """The agency panel. One request, five numbers, two short lists."""
+) -> PainelOut:
+    """The agency panel. One request, five numbers, two short lists.
+
+    🔴 RETURNS THE BARE PAYLOAD, and `response_model` is declared so the
+    contract is ENFORCED rather than merely written down.
+
+    This route used to `return success_response(...)`, i.e. `{"data": {...}}`,
+    while `usePainel.ts` does `api.get<Painel>("/api/painel")` and reads
+    `data.novos` straight off the response. The seed client does not unwrap, so
+    every field came back undefined and the landing screen crashed for every
+    user on `novos.toLocaleString()` — caught only by opening the app in a
+    browser on 2026-08-26.
+
+    It was the ONLY route in this product using `success_response`; every other
+    one returns bare (`{"items": [...], "total": n}` for lists, per the
+    `card_hub` router's envelope note). The outlier was the bug.
+
+    The backend suite stayed green throughout because its helper did
+    `resp.json()["data"]` — it asserted the shape the BACKEND produced instead
+    of the shape the FRONTEND consumes, so both halves agreed with themselves
+    and with nothing else. `TestEnvelope` below now pins the wire shape.
+
+    The old annotation was `-> dict`, which meant `PainelOut` was declared and
+    never applied: FastAPI serialised whatever dict came back. Returning the
+    model with `response_model` set is what makes the contract real."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     client = get_scoped_admin_client("social_wiring")
@@ -148,8 +170,7 @@ def obter_painel(
 
     por_atendimento = {str(a["id"]): a for a in abertos}
 
-    return success_response(
-        PainelOut(
+    return PainelOut(
             novos=len(novos),
             parados=len(parados),
             agendamentos=len(agenda),
@@ -181,8 +202,7 @@ def obter_painel(
                 )
                 for a in parados[:PREVIEW]
             ],
-        ).model_dump()
-    )
+        )
 
 
 def _valor_em_negociacao(
