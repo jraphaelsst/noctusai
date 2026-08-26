@@ -4,6 +4,16 @@ name: Tests & Build
 # already proven green by bless-time (dev→main is then a clean FF of validated
 # code). `main` stays gated too. KB § PATTERNS/branching-and-merging.md § 0.
 on:
+  # Manual re-trigger. Added 2026-08-26, during a GitHub Actions `major_outage`
+  # that left a queued run wedged for over an hour with zero jobs — GitHub
+  # reported the SAME run as queued, completed AND "already running" — while
+  # `release stage='bless'` correctly refuses a tip with no green CI. With only
+  # `push`/`pull_request` there was no way to ask for a fresh run once the
+  # outage cleared: the only lever was an empty commit, i.e. dirtying history to
+  # work around an upstream incident. `build-and-push.yml` and
+  # `embedding-cache-gate.yml` already carried this; the two heaviest gates did
+  # not.
+  workflow_dispatch:
   push:
     branches: [main, dev]
   pull_request:
