@@ -420,3 +420,62 @@ def test_a_cd_on_a_later_line_into_the_primary_is_still_caught():
     directions or it is just a different guess."""
     command = f'echo starting\ncd {PRIMARY}\ntouch out.txt'
     assert _decide("Bash", {"command": command}, cwd=WT) is not None
+
+
+# ── re-syncing the primary to its remote ───────────────────────────────────
+#
+# The guard's own `_GIT_WRITE_SUBCOMMANDS` note says syncing the primary is the
+# orchestrator's job and "a guard that fought it would be switched off". It
+# fought it anyway: once the primary DIVERGES — which `task_branch cleanup`
+# causes by design — no fast-forward can re-sync it, and `reset --hard
+# origin/<branch>` is the only repair. These tests pin the narrow exemption and,
+# more importantly, everything it must still refuse.
+
+def test_reset_hard_to_a_remote_tracking_ref_is_allowed():
+    """The repair itself. Run against the REAL repo, because the exemption asks
+    git what the ref resolves to rather than trusting how it is spelled — a
+    fake path could only ever exercise the refusal side."""
+    import subprocess
+
+    repo = str(Path(__file__).resolve().parents[3])
+    probe = subprocess.run(
+        ["git", "-C", repo, "rev-parse", "--symbolic-full-name", "origin/dev"],
+        capture_output=True, text=True,
+    )
+    if probe.returncode != 0 or not probe.stdout.startswith("refs/remotes/"):
+        import pytest
+
+        pytest.skip("origin/dev is not a remote-tracking ref in this checkout")
+
+    ctx = GuardContext(primary_root=repo, branch="dev", worktrees=())
+    verdict = decide(
+        "Bash", {"command": "git reset --hard origin/dev"}, repo,
+        ctx=ctx, allow_override=False,
+    )
+    assert verdict is None, verdict
+
+
+def test_a_rewind_is_still_refused():
+    """`HEAD~3` is the shape that CAN destroy unpushed history. It is not a
+    sync, and widening the exemption to cover it would trade the whole point."""
+    for ref in ("HEAD~3", "HEAD", "a83b04186da1b07fdbe13c615dca614e15cff20c", "dev"):
+        assert _decide(
+            "Bash", {"command": f"git reset --hard {ref}"}, cwd=PRIMARY
+        ) is not None, ref
+
+
+def test_a_soft_or_mixed_reset_is_still_refused():
+    """Those move the index, not the tree — not how a checkout is re-synced."""
+    assert _decide("Bash", {"command": "git reset --soft origin/dev"}, cwd=PRIMARY) is not None
+    assert _decide("Bash", {"command": "git reset origin/dev"}, cwd=PRIMARY) is not None
+
+
+def test_a_bare_hard_reset_with_no_ref_is_still_refused():
+    """`git reset --hard` discards the working tree and syncs nothing."""
+    assert _decide("Bash", {"command": "git reset --hard"}, cwd=PRIMARY) is not None
+
+
+def test_the_other_destructive_verbs_are_untouched():
+    """The exemption is for `reset` alone; nothing else in the write set moves."""
+    for cmd in ("git checkout .", "git clean -fd", "git stash", "git restore ."):
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None, cmd
