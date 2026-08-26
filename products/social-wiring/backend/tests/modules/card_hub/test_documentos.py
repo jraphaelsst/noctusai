@@ -60,7 +60,7 @@ class TestUpload:
         carries a (superseded) 1825, the policy says 30, and the stamped date
         must be 30 days out. Reading the catalogue again would silently ignore
         whatever the controller set on screen."""
-        from datetime import date, timedelta
+        from datetime import datetime, timedelta, timezone
 
         cid = str(uuid4())
         scoped.set_table_data("clientes", [cliente_row(cid)])
@@ -79,7 +79,23 @@ class TestUpload:
         )
 
         assert resp.status_code == 201, resp.text
-        esperado = (date.today() + timedelta(days=30)).isoformat()
+        # 🔴 UTC, not `date.today()`. The service stamps `retencao_ate` from
+        # `documentos_service._today()` = `datetime.now(timezone.utc).date()`,
+        # deliberately — the retention SWEEP compares against the same clock,
+        # so both halves of the feature must agree on what "today" is.
+        #
+        # A bare `date.today()` is the RUNNER's local date, and this is an
+        # exact-equality assertion. In São Paulo (UTC−3) the two dates differ
+        # every night between 21:00 and 00:00 local (00:00–03:00 UTC), so this
+        # test was a time bomb that turned CI and `predeploy_check` red for
+        # three hours a day and green again by morning. It fired at 01:36 UTC
+        # on 2026-08-26 and blocked a production release.
+        #
+        # The other `date.today()` uses in this file are safe by slack — they
+        # place a fixture a whole day into the past or 30 into the future, so a
+        # one-day skew cannot flip them. This one had none.
+        hoje_utc = datetime.now(timezone.utc).date()
+        esperado = (hoje_utc + timedelta(days=30)).isoformat()
         assert resp.json()["retencao_ate"] == esperado
 
     def test_upload_rejects_disallowed_mime_type(self, client, scoped, fake_storage):
