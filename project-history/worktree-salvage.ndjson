@@ -537,3 +537,4 @@
 {"ts": "2026-08-25", "event": "worktree-sweep", "path": ".claude/worktrees/salvage-ledger-land", "branch": "feat/salvage-ledger-land", "sha": "1f0ae93bca060453170a3daa8fd1f0becefe9783", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-25", "event": "worktree-sweep", "path": ".claude/worktrees/handoff-final-touchup", "branch": "feat/handoff-final-touchup", "sha": "432f68ddb8082c2b30ae50afe05b1f1036983457", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-08-25", "event": "worktree-sweep", "path": ".claude/worktrees/ledger-note-accuracy", "branch": "feat/ledger-note-accuracy", "sha": "843b52de0593459f0b49dd53b691b0843089879f", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-08-26", "event": "worktree-sweep", "path": ".claude/worktrees/imovelweb-portal-leads", "branch": "feat/imovelweb-portal-leads", "sha": "eba64330f08181d8f2fd75745ca2d6d331ba5e92", "reason": "task_branch cleanup (learn-before-delete)"}
