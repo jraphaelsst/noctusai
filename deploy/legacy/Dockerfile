@@ -30,21 +30,23 @@ WORKDIR /app/frontend
 # Install deps from the lockfile first (cache layer). The frontend ships its
 # own package-lock.json, so `npm ci` is reproducible.
 COPY frontend/package.json frontend/package-lock.json ./
-# @supabase/supabase-js lives in the MONOREPO ROOT package.json (Replit dep
-# hoisting), NOT frontend/package.json — but frontend/src/lib/supabase.ts imports
-# it. Install it explicitly so the CRA/TS build resolves it. It is the ONLY
-# root-hoisted dep the frontend uses (verified against frontend/src imports;
-# pin matches the root package.json `^2.90.1`).
-RUN npm ci && npm install --no-save @supabase/supabase-js@^2.90.1
+# NOTE: this used to also `npm install --no-save @supabase/supabase-js` for
+# frontend/src/lib/supabase.ts, a root-hoisted (Replit) dep. That module was an
+# UNUSED Supabase client whose only effect was inlining the anon key into the
+# public CRA bundle; it was deleted upstream (one-permutas PR #1, `da8cf2d`), so
+# nothing in frontend/src imports supabase any more and the extra install is dead.
+RUN npm ci
 
 # Build-time React config — CRA inlines these into the static bundle.
 # Empty defaults keep the build green; pass real values via --build-arg.
-ARG REACT_APP_SUPABASE_URL=""
-ARG REACT_APP_SUPABASE_ANON_KEY=""
+#
+# REACT_APP_SUPABASE_URL / _ANON_KEY are deliberately NOT passed any more. CRA
+# inlines only env vars the source actually references, and the sole referrer
+# (frontend/src/lib/supabase.ts) was deleted as dead code that published the anon
+# key in the public bundle. Re-adding them here would put a credential back into
+# a browser-served asset. Only REACT_APP_API_URL is real (services/api.ts).
 ARG REACT_APP_API_URL=""
-ENV REACT_APP_SUPABASE_URL=$REACT_APP_SUPABASE_URL \
-    REACT_APP_SUPABASE_ANON_KEY=$REACT_APP_SUPABASE_ANON_KEY \
-    REACT_APP_API_URL=$REACT_APP_API_URL
+ENV REACT_APP_API_URL=$REACT_APP_API_URL
 
 # Copy the rest of the frontend source and build.
 # CI=false: CRA treats warnings as non-fatal (matches run.sh / root build script).
