@@ -250,8 +250,9 @@ Permissions, App Review, Live mode and OAuth callbacks are **already done**. Rem
 
 - [ ] Products → Webhooks → **Page** object
 - [ ] Callback URL `https://social.noctusai.com/api/meta/leadgen/webhook`
-- [ ] Verify Token = `zGjmbt-Rk2q_DHOmug8_i-R8Ic5HToYWgpc-4b_ShZY`
-      *(generated + stored Fernet-encrypted in `social_wiring.app_integration_config`
+- [ ] Verify Token = **(not written here — read it from the vault)**
+      *(REDACTED 2026-08-26: the literal token used to sit on the line above, in a PUBLIC repo.
+      It is generated + stored Fernet-encrypted in `social_wiring.app_integration_config`
       under `meta_webhook_verify_token`; prod resolves Meta config from the vault, NOT
       `.env` — the VPS `.env` carries no `META_*` keys at all. Verified live above.)*
 - [ ] **Verify and Save** (Meta GETs the endpoint synchronously — it must be live first)

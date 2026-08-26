@@ -127,6 +127,38 @@ regexes = [
   # OAuth flow placeholders, not real bearer tokens.
   '''tok_[a-z]+_[a-z0-9_]{1,20}''',
 
+  # ── Verified false positives, triaged 2026-08-26 ──────────────────────────
+  # Surfaced when a `workflow_dispatch` run made gitleaks scan FULL history
+  # (`gitleaks detect`) instead of only the pushed commits, which is all a
+  # `push` event scans. 65 findings; each was checked individually. These four
+  # are allowlisted BY VALUE (never by path — a blanket path exclusion is what
+  # hid the pdf.co + Infosimples leaks for ~35 days, see the note further down).
+
+  # Grupo OLX / GrupoZap webhook Basic-auth SECRET_KEY.
+  # NOT ours: this exact literal is the sample value published on
+  # developers.grupozap.com/webhooks/security.html (fetched + confirmed
+  # 2026-08-26). Used in seed webhook-signature tests to assert we accept the
+  # documented credential shape.
+  '''594F803B380A41396ED63DCA39503542''',
+
+  # social-wiring test Fernet key (`_ENC_KEY` / `_VALID_ENC_KEY`).
+  # A generated test-only key, injected via monkeypatch.setattr(settings,
+  # "encryption_key", ...). Verified 2026-08-26 against every configured value
+  # in 43 local .env files: NO MATCH — it is not the production encryption key.
+  '''QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg=''',
+
+  # seed deploy-config test fixture. The rule fires on the CONSTRUCT
+  # `resolve_config("SOME_KEY", canonical_default="canonical")` — "SOME_KEY"
+  # is a deliberately generic placeholder name and the "secret" it captures is
+  # the word "canonical". Scoped to that exact construct so it cannot mask a
+  # real value assigned to a differently-named key.
+  '''SOME_KEY"\s*,\s*canonical_default''',
+
+  # Omie connector docs/tests placeholders — literally `abcdef…` counting
+  # sequences and the string "supersecret".
+  '''abcdef[0-9]{6,}''',
+  '''supersecret''',
+
   # n8n env-pointer form in workflow JSON — the CORRECT safe replacement.
   # Pattern: ={{ $env.VAR_NAME }} — resolves at runtime from container env.
   # This allowlist entry covers the global scan (both custom rules above
