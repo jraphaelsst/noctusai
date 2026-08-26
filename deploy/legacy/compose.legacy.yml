@@ -28,8 +28,13 @@
 services:
   legacy:
     build:
-      context: ../../reference/one-permutas
-      dockerfile: ../../deploy/legacy/Dockerfile
+      # Source root of the legacy app (the read-only reference clone). These were
+      # relative to the OLD archived location; the assets now live in the live
+      # tree (deploy/legacy/), so the paths are env-driven instead of positional
+      # and no longer break when this file moves. Defaults match the VPS layout
+      # documented in README.md.
+      context: ${LEGACY_SRC:-/opt/noctus/legacy-src}
+      dockerfile: ${LEGACY_DOCKERFILE:-/opt/noctus/noctusai/deploy/legacy/Dockerfile}
       args:
         # CRA inlines these at build time — empty ⇒ blank Supabase client.
         REACT_APP_SUPABASE_URL: ${REACT_APP_SUPABASE_URL:-}
