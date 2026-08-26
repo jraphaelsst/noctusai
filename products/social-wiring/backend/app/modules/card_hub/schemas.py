@@ -147,6 +147,56 @@ class AgendamentoPatchBody(StrictHttpModel):
         return v
 
 
+# ─── Roteiros e visitas (migration 082) ─────────────────────────────────
+
+#: Mirrors the DB CHECK in `082` and `roteiros_service.STATUS_VALIDOS`. Three
+#: values, not a boolean: "hasn't happened yet" and "didn't happen" are
+#: different facts, and merging them would file every future visit under
+#: "did not" in the count this feature exists to produce.
+_STATUS_VISITA_VALUES = {"pendente", "realizada", "nao_realizada"}
+
+
+class RoteiroCreateBody(StrictHttpModel):
+    #: The códigos, IN VISITING ORDER — the array index becomes `visitas.ordem`.
+    #: The order is the payload, so a client that reorders and re-POSTs is
+    #: doing the right thing.
+    imoveis: list[str] = Field(min_length=1)
+    titulo: Optional[str] = None
+    #: Optional: with one open atendimento the server resolves it. Sent
+    #: explicitly when the person has several, which the server REFUSES to
+    #: guess at (409) rather than filing the roteiro against the wrong deal.
+    atendimento_id: Optional[UUID] = None
+
+
+class RoteiroPatchBody(StrictHttpModel):
+    titulo: Optional[str] = None
+
+
+class RoteiroOrdemBody(StrictHttpModel):
+    #: The COMPLETE ordered set, not a delta. A partial reorder that silently
+    #: succeeded would leave two visitas sharing a position and the route in an
+    #: order nobody chose — the service refuses a mismatch with a 400.
+    visita_ids: list[UUID] = Field(min_length=1)
+
+
+class VisitaCreateBody(StrictHttpModel):
+    codigo: str = Field(min_length=1)
+
+
+class VisitaPatchBody(StrictHttpModel):
+    status: Optional[str] = None
+    observacao: Optional[str] = None
+
+    @field_validator("status")
+    @classmethod
+    def _validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _STATUS_VISITA_VALUES:
+            raise ValueError(
+                f"status must be one of {sorted(_STATUS_VISITA_VALUES)}, got {v!r}"
+            )
+        return v
+
+
 # ─── Checklists ─────────────────────────────────────────────────────────
 
 

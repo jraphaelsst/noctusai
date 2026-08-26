@@ -25,6 +25,7 @@ import {
   Handshake,
   Landmark,
   Megaphone,
+  Route,
   User,
 } from "lucide-react";
 
@@ -35,6 +36,7 @@ export type CardSubpageKey =
   | "geral"
   | "cliente"
   | "agendamentos"
+  | "roteiros"
   | "documentos"
   | "financiamento"
   | "negociacao"
@@ -51,6 +53,11 @@ interface SubpageDef {
  * who they are, then what is booked with them, then what you must collect from
  * them, then how the deal closes, then where they came from.
  *
+ * `roteiros` sits IMMEDIATELY under `agendamentos` because that is the funnel
+ * order the user named — qualificação leads to a VISIT, and a roteiro is the
+ * planned visit. It is also the tab you reach for right after failing to find
+ * "Visita" in the Agendar button, which no longer offers it (migration 082).
+ *
  * `financiamento` sits IMMEDIATELY under `documentos` because the user placed
  * it there ("Add this new subtab to the sidebar on the funnel Card, under
  * Documentos") — and it earns the spot: it is another pile of paperwork to
@@ -60,6 +67,7 @@ export const CARD_SUBPAGES: readonly SubpageDef[] = [
   { key: "geral", label: "Geral", icon: ClipboardList },
   { key: "cliente", label: "Dados do cliente", icon: User },
   { key: "agendamentos", label: "Agendamentos", icon: CalendarClock },
+  { key: "roteiros", label: "Roteiros", icon: Route },
   { key: "documentos", label: "Documentos", icon: FolderOpen },
   { key: "financiamento", label: "Financiamento/Escritura", icon: Landmark },
   { key: "negociacao", label: "Negociação", icon: Handshake },

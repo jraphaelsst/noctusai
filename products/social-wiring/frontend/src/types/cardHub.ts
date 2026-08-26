@@ -287,6 +287,117 @@ export interface AgendamentoCreateBody {
 
 export type AgendamentoPatchBody = Partial<Omit<AgendamentoCreateBody, "atendimento_id">>;
 
+// ─── Roteiros e visitas (migration 082) ────────────────────────────────────
+
+/**
+ * The contabilização. THREE states, never a boolean — "hasn't happened yet"
+ * and "didn't happen" are different facts, and merging them files every future
+ * visit under "did not" in the count this feature exists to produce.
+ */
+export type StatusVisita = "pendente" | "realizada" | "nao_realizada";
+
+/** Which side answered the enrichment. `registry` means the imóvel has left
+ *  the Vista catalog and is rendering from its delist-time snapshot. */
+export type FonteImovel = "imoveis" | "registry";
+
+export interface CorretorImovel {
+  nome: string;
+  email: string | null;
+}
+
+/**
+ * The property behind a visita. NEVER null: `visitas` FKs to `imovel_registry`
+ * (append-only), so every visita has an imóvel row even when the listing sold
+ * years ago — which is the whole point of the FK.
+ *
+ * A `registry`-sourced imóvel legitimately carries no street and no
+ * corretores: 063's snapshot is narrower than the mirror on purpose. Render
+ * the nulls, do not treat them as a loading state.
+ */
+export interface ImovelVisita {
+  codigo: string;
+  titulo: string | null;
+  /** Vista's `Empreendimento` — this is what the UI calls "condomínio". */
+  empreendimento: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  cep: string | null;
+  foto_destaque: string | null;
+  /** `imovel_dados.captador_user_id` (migration 075), resolved to a name.
+   *  A USER, not free text — the commission slice is attributed to it. */
+  captacao: { id: string; nome: string | null } | null;
+  corretores: CorretorImovel[];
+  /** `false` = gone from the Vista catalog. Real information for a corretor
+   *  about to drive there, not bookkeeping. */
+  ativo_no_vista: boolean;
+  fonte: FonteImovel;
+}
+
+export interface Visita {
+  id: string;
+  roteiro_id: string;
+  codigo: string;
+  /** 0-based visiting order — the drag order IS this field. */
+  ordem: number;
+  status: StatusVisita;
+  observacao: string | null;
+  /** Stamped when `status` first leaves `pendente`, never re-stamped. */
+  feedback_em: string | null;
+  created_at: string | null;
+  imovel: ImovelVisita | null;
+}
+
+export interface ContagemVisitas {
+  total: number;
+  realizadas: number;
+  nao_realizadas: number;
+  pendentes: number;
+}
+
+/**
+ * A planned visiting route. Belongs to an ATENDIMENTO for the same reason an
+ * `Agendamento` does — 2024's route must not pile onto a live negotiation.
+ */
+export interface Roteiro {
+  id: string;
+  atendimento_id: string;
+  titulo: string | null;
+  created_at: string | null;
+  visitas: Visita[];
+  contagem: ContagemVisitas;
+}
+
+export interface RoteiroCreateBody {
+  /** Códigos IN VISITING ORDER — the array index becomes `ordem`. */
+  imoveis: string[];
+  titulo?: string | null;
+  /** Only needed when the person has more than one open atendimento. */
+  atendimento_id?: string;
+}
+
+export interface RoteiroPatchBody {
+  titulo?: string | null;
+}
+
+export interface VisitaPatchBody {
+  status?: StatusVisita;
+  observacao?: string | null;
+}
+
+/** One row of the live property search — a slice of `GET /api/imoveis`. */
+export interface ImovelBusca {
+  codigo: string;
+  titulo: string | null;
+  empreendimento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  foto_destaque: string | null;
+}
+
 // ─── Timeline (D9 — one thread) ────────────────────────────────────────────
 
 export type TimelineKind =
@@ -295,7 +406,11 @@ export type TimelineKind =
   | "movimento"
   | "documento"
   | "checklist"
-  | "sistema";
+  | "sistema"
+  /** Roteiro created + each visita outcome (migration 082). DERIVED from the
+   *  `visitas` rows — there is no event log — so a `pendente` visita produces
+   *  no entry: it has no honest timestamp yet. */
+  | "visita";
 
 interface TimelineEntryBase {
   id: string;

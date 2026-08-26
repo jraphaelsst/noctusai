@@ -37,6 +37,12 @@ Routes
     PUT                     /api/clientes/{id}/tags
     GET/PUT                 /api/clientes/{id}/membros
     PATCH                   /api/clientes/{id}/datas
+    GET/POST                /api/clientes/{id}/roteiros
+    PATCH/DELETE            /api/clientes/{id}/roteiros/{rid}
+    PUT                     /api/clientes/{id}/roteiros/{rid}/ordem
+    GET                     /api/clientes/{id}/roteiros/{rid}/pdf
+    POST                    /api/clientes/{id}/roteiros/{rid}/visitas
+    PATCH/DELETE            /api/clientes/{id}/roteiros/{rid}/visitas/{vid}
     GET/POST                /api/clientes/{id}/checklists
     PATCH/DELETE            /api/clientes/{id}/checklists/{cid}
     POST/PATCH/DELETE       /api/clientes/{id}/checklists/{cid}/itens[/{iid}]

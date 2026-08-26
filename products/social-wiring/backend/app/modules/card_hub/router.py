@@ -33,6 +33,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Response,
     UploadFile,
 )
 
@@ -45,6 +46,8 @@ from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import financiamento_service as financiamento_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub import negociacao_service as negociacao_svc
+from app.modules.card_hub import roteiro_pdf_service as roteiro_pdf_svc
+from app.modules.card_hub import roteiros_service as roteiros_svc
 from app.modules.card_hub import services as svc
 from app.modules.card_hub import timeline_service
 from app.modules.card_hub.deps import (
@@ -69,8 +72,13 @@ from app.modules.card_hub.schemas import (
     MembrosSetBody,
     NotaCreateBody,
     NotaUpdateBody,
+    RoteiroCreateBody,
+    RoteiroOrdemBody,
+    RoteiroPatchBody,
     TagCreateBody,
     TagUpdateBody,
+    VisitaCreateBody,
+    VisitaPatchBody,
 )
 
 router = APIRouter(prefix="/api/clientes", tags=["card_hub"])
@@ -357,6 +365,166 @@ async def delete_agendamento_route(
     # other 204 in this router.
     _user, org_id = _auth_parts(auth)
     agenda_svc.remover(client, org_id, cliente_id, agendamento_id)
+
+
+# ─── Roteiros e visitas (migration 082) ─────────────────────────────────
+#
+# Mounted under `/api/clientes/{cliente_id}` for the same reason agendamentos
+# are: a roteiro belongs to an ATENDIMENTO, but the card is the person and
+# reads across all of their atendimentos. Every route proves the row belongs to
+# this cliente before touching it — and a visita route proves BOTH legs, so
+# reaching a visita through someone else's roteiro id fails exactly as reaching
+# the roteiro itself would.
+
+
+@router.get("/{cliente_id}/roteiros")
+async def list_roteiros_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return roteiros_svc.listar(client, org_id, cliente_id)
+
+
+@router.post("/{cliente_id}/roteiros", status_code=201)
+async def create_roteiro_route(
+    cliente_id: UUID,
+    body: RoteiroCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    # `AmbiguousAtendimento` is an AppException carrying its own 409, and an
+    # unknown código raises `NotFoundError` from `ensure_imovel` — both already
+    # structured, so there is nothing to translate here.
+    return roteiros_svc.criar(
+        client,
+        org_id,
+        cliente_id,
+        imoveis=body.imoveis,
+        titulo=body.titulo,
+        atendimento_id=body.atendimento_id,
+    )
+
+
+@router.patch("/{cliente_id}/roteiros/{roteiro_id}")
+async def patch_roteiro_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    body: RoteiroPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    updates = body.model_dump(exclude_unset=True)
+    return roteiros_svc.atualizar(
+        client, org_id, cliente_id, roteiro_id, titulo=updates.get("titulo", ...)
+    )
+
+
+@router.delete("/{cliente_id}/roteiros/{roteiro_id}", status_code=204)
+async def delete_roteiro_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    _user, org_id = _auth_parts(auth)
+    roteiros_svc.remover(client, org_id, cliente_id, roteiro_id)
+
+
+@router.put("/{cliente_id}/roteiros/{roteiro_id}/ordem")
+async def reorder_roteiro_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    body: RoteiroOrdemBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return roteiros_svc.reordenar(client, org_id, cliente_id, roteiro_id, body.visita_ids)
+
+
+@router.get("/{cliente_id}/roteiros/{roteiro_id}/pdf")
+async def roteiro_pdf_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> Response:
+    """The cronograma, one imóvel per page, in visiting order.
+
+    `Response` with explicit bytes rather than `StreamingResponse`: the whole
+    document is built in memory anyway (it is a handful of text pages), so
+    streaming would add a generator and remove the Content-Length.
+    """
+    _user, org_id = _auth_parts(auth)
+    cliente = svc.ensure_cliente(client, org_id, cliente_id)
+    roteiro = roteiros_svc.obter(client, org_id, cliente_id, roteiro_id)
+    pdf = roteiro_pdf_svc.gerar(
+        roteiro,
+        cliente_nome=cliente.get("nome_oficial") or cliente.get("nome"),
+    )
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{roteiro_pdf_svc.nome_arquivo(roteiro)}"'
+            )
+        },
+    )
+
+
+@router.post("/{cliente_id}/roteiros/{roteiro_id}/visitas", status_code=201)
+async def create_visita_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    body: VisitaCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return roteiros_svc.adicionar_visita(
+        client, org_id, cliente_id, roteiro_id, body.codigo
+    )
+
+
+@router.patch("/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}")
+async def patch_visita_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    visita_id: UUID,
+    body: VisitaPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    updates = body.model_dump(exclude_unset=True)
+    return roteiros_svc.atualizar_visita(
+        client,
+        org_id,
+        cliente_id,
+        roteiro_id,
+        visita_id,
+        status=updates.get("status", ...),
+        observacao=updates.get("observacao", ...),
+    )
+
+
+@router.delete(
+    "/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}", status_code=204
+)
+async def delete_visita_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    visita_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    _user, org_id = _auth_parts(auth)
+    roteiros_svc.remover_visita(client, org_id, cliente_id, roteiro_id, visita_id)
 
 
 # ─── Checklists ─────────────────────────────────────────────────────────

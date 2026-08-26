@@ -52,11 +52,15 @@ import {
   useTags,
   useTimeline,
   useTiposDocumento,
+  useRoteiros,
+  useRoteiroMutations,
+  baixarRoteiroPdf,
 } from "@/hooks/useCardHub";
 
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
 import type { CardSubpageKey } from "@/components/card/CardSidebarNav";
 import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
+import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
 import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
 import { NegociacaoContainer } from "@/components/NegociacaoContainer";
 import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
@@ -83,6 +87,11 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   // session-local UI state rather than inventing a field.
   const [colorBlindMode, setColorBlindMode] = useState(false);
   const [compradorDialogOpen, setCompradorDialogOpen] = useState(false);
+  const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
+  // Which roteiro's PDF is being generated. Per-id, not a boolean: with two
+  // roteiros on screen a shared flag spins BOTH buttons and tells the user the
+  // wrong one is working.
+  const [roteiroPdfPendingId, setRoteiroPdfPendingId] = useState<string | null>(null);
 
   const shouldFetch = open && !!clienteId;
   const id = shouldFetch ? (clienteId as string) : null;
@@ -123,6 +132,8 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const setMembrosMutation = useSetCardMembrosMutation(id ?? "__none__");
   const agendamentos = useAgendamentos(idSeAbriu("agendamentos"));
   const agendamentoMutations = useAgendamentoMutations(id ?? "__none__");
+  const roteiros = useRoteiros(idSeAbriu("roteiros"));
+  const roteiroMutations = useRoteiroMutations(id ?? "__none__");
   const checklistMutations = useChecklistMutations(id ?? "__none__");
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
   const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
@@ -272,6 +283,41 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         })
       }
       agendamentoSaving={agendamentoMutations.create.isPending}
+      roteiros={roteiros.data ?? []}
+      // 🔴 `isPending || isFetching`, never `isLoading`: v5's `isLoading` is
+      // false during a background refetch, so the empty branch would render
+      // "nenhum roteiro criado" over roteiros that exist. Unlike the card
+      // itself (whose skeleton is `isPending`-only so mutations don't reflash
+      // it), this list is invalidated ONLY by its own mutations, so gating on
+      // `isFetching` costs no spurious skeletons.
+      roteirosLoading={roteiros.isPending || roteiros.isFetching}
+      roteirosError={roteiros.isError ? "Não foi possível carregar os roteiros." : null}
+      onCriarRoteiro={() => setRoteiroDialogOpen(true)}
+      onRemoverRoteiro={(roteiroId) =>
+        roteiroMutations.remove.mutate(roteiroId, {
+          onError: (err) => toastServerError(err, "Não foi possível remover o roteiro."),
+        })
+      }
+      onGerarRoteiroPdf={async (roteiroId) => {
+        if (!id) return;
+        setRoteiroPdfPendingId(roteiroId);
+        try {
+          await baixarRoteiroPdf(id, roteiroId);
+        } catch (err) {
+          toastServerError(err, "Não foi possível gerar o roteiro.");
+        } finally {
+          setRoteiroPdfPendingId(null);
+        }
+      }}
+      onPatchVisita={(roteiroId, visitaId, body) =>
+        roteiroMutations.patchVisita.mutate(
+          { roteiroId, visitaId, body },
+          {
+            onError: (err) => toastServerError(err, "Não foi possível salvar a visita."),
+          },
+        )
+      }
+      roteiroPdfPendingId={roteiroPdfPendingId}
       allMembros={corretores.data ?? []}
       selectedMembros={card.data?.membros ?? []}
       onToggleMembro={handleToggleMembro}
@@ -392,6 +438,25 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       onOpenChange={setCompradorDialogOpen}
       onCreate={handleAdicionarComprador}
       saving={compradorMutations.adicionar.isPending}
+    />
+
+    {/* Sibling of the card for the same reason `AdicionarCompradorDialog` is:
+        a Dialog nested inside another Dialog's content fights the outer focus
+        trap and scroll lock. */}
+    <CriarRoteiroDialog
+      open={roteiroDialogOpen}
+      onOpenChange={setRoteiroDialogOpen}
+      onCriar={(body) =>
+        roteiroMutations.create.mutate(body, {
+          onSuccess: () => setRoteiroDialogOpen(false),
+          // The 409 when a person has several open atendimentos arrives with
+          // the candidate ids, and a 404 names the codigo we do not know —
+          // both surfaced with the server own message, because only it can say
+          // which imovel or which deal was the problem.
+          onError: (err) => toastServerError(err, "Não foi possível criar o roteiro."),
+        })
+      }
+      saving={roteiroMutations.create.isPending}
     />
     </>
   );

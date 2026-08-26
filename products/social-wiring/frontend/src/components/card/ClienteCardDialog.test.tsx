@@ -30,6 +30,11 @@ function baseProps(overrides: Partial<ClienteCardDialogProps> = {}): ClienteCard
     agendamentos: [],
     onCreateAgendamento: vi.fn(),
     onRemoveAgendamento: vi.fn(),
+    roteiros: [],
+    onCriarRoteiro: vi.fn(),
+    onRemoverRoteiro: vi.fn(),
+    onGerarRoteiroPdf: vi.fn(),
+    onPatchVisita: vi.fn(),
     allMembros: [],
     selectedMembros: [],
     onToggleMembro: vi.fn(),
@@ -945,5 +950,69 @@ describe("ClienteCardDialog — icon actions", () => {
     expect(btn.getAttribute("aria-label")).toBe("Editar descrição");
     fireEvent.click(btn);
     expect(screen.getByTestId("descricao-textarea")).toBeTruthy();
+  });
+});
+
+describe("ClienteCardDialog — Roteiros (migration 082)", () => {
+  it("offers the Roteiros tab right after Agendamentos", async () => {
+    // The rail's order is the reading order of the card, and the funnel the
+    // user named is qualificação → visita.
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+
+    const rail = screen.getByTestId("card-sidebar-nav");
+    const chaves = Array.from(rail.querySelectorAll("[data-testid^='card-subpage-tab-']")).map(
+      (el) => el.getAttribute("data-testid"),
+    );
+    expect(chaves).toContain("card-subpage-tab-roteiros");
+    expect(chaves.indexOf("card-subpage-tab-roteiros")).toBe(
+      chaves.indexOf("card-subpage-tab-agendamentos") + 1,
+    );
+  });
+
+  it("is never disabled — you go there to ADD", async () => {
+    // Same rule `agendamentos` and `documentos` follow: a tab disabled on an
+    // empty card is a dead end, not a hint.
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ roteiros: [] })} />);
+    expect((screen.getByTestId("card-subpage-tab-roteiros") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("shows the Roteiros section when the tab is opened", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+
+    fireEvent.click(screen.getByTestId("card-subpage-tab-roteiros"));
+    expect(screen.getByTestId("roteiros-section")).toBeTruthy();
+    expect(screen.getByTestId("roteiro-criar-trigger")).toBeTruthy();
+  });
+
+  it("🔴 still renders a historical tipo='visita' agendamento as 'Visita'", async () => {
+    // The Agendar button stopped OFFERING it; live rows still carry it, and
+    // history must read as "Visita", never as the raw slug. This is the paired
+    // half of `AgendamentoPopover.test.tsx`.
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          agendamentos: [
+            {
+              id: "ag-antigo",
+              atendimento_id: "a1",
+              quando: "2024-03-11T14:00:00Z",
+              tipo: "visita" as const,
+              nota: null,
+              lembrete_minutos_antes: null,
+              created_at: null,
+            },
+          ],
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("card-subpage-tab-agendamentos"));
+    expect(screen.getByTestId("agendamento-ag-antigo").textContent).toContain("Visita");
   });
 });

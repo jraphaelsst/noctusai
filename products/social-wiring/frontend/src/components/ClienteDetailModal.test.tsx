@@ -32,6 +32,7 @@ const { mockCreate, mockUpdate, mockCardResumo } = vi.hoisted(() => ({
 
 const documentosIds: (string | null)[] = [];
 const agendamentosIds: (string | null)[] = [];
+const roteirosIds: (string | null)[] = [];
 
 vi.mock("@/hooks/useCardHub", () => ({
   useCardResumo: (id: string | null) => mockCardResumo(id),
@@ -85,6 +86,30 @@ vi.mock("@/hooks/useCardHub", () => ({
     create: { mutate: vi.fn(), isPending: false },
     update: { mutate: vi.fn(), isPending: false },
     remove: { mutate: vi.fn(), isPending: false },
+  }),
+  // Roteiros (migration 082). `useRoteiros` records its id for the same
+  // tab-scoped-fetching assertion `useAgendamentos`/`useDocumentos` carry:
+  // the tab must be `null` until it has been opened.
+  useRoteiros: (id: string | null) => {
+    roteirosIds.push(id);
+    return { data: [], isPending: false, isFetching: false, isError: false };
+  },
+  useRoteiroMutations: () => ({
+    create: { mutate: vi.fn(), isPending: false },
+    update: { mutate: vi.fn(), isPending: false },
+    remove: { mutate: vi.fn(), isPending: false },
+    reorder: { mutate: vi.fn(), isPending: false },
+    patchVisita: { mutate: vi.fn(), isPending: false },
+  }),
+  baixarRoteiroPdf: vi.fn(),
+  // Consumed by `CriarRoteiroDialog`, which this container renders as a
+  // sibling of the card — so it is reached even though the card itself is
+  // stubbed below.
+  useImoveisBusca: () => ({
+    data: { items: [] },
+    isPending: false,
+    isFetching: false,
+    isError: false,
   }),
   useChecklistMutations: () => ({
     createChecklist: { mutate: vi.fn() },
@@ -303,10 +328,12 @@ describe("ClienteDetailModal — só busca a aba que foi aberta", () => {
     // repetida do dia.
     documentosIds.length = 0;
     agendamentosIds.length = 0;
+    roteirosIds.length = 0;
 
     await render();
 
     expect(documentosIds.every((id) => id === null)).toBe(true);
     expect(agendamentosIds.every((id) => id === null)).toBe(true);
+    expect(roteirosIds.every((id) => id === null)).toBe(true);
   });
 });

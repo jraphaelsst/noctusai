@@ -46,6 +46,12 @@ import type {
   DocumentoChecklistItem,
   Comprador,
   CompradoresResponse,
+  ImovelBusca,
+  Roteiro,
+  RoteiroCreateBody,
+  RoteiroPatchBody,
+  Visita,
+  VisitaPatchBody,
 } from "@/types/cardHub";
 import type { DadosPessoais } from "@/components/card/DadosPessoaisForm";
 
@@ -62,6 +68,8 @@ const DOC_CHECKLIST_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "documento-checklist"] as const;
 const AGENDAMENTOS_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "agendamentos"] as const;
+const ROTEIROS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "roteiros"] as const;
+const IMOVEIS_BUSCA_KEY = (termo: string) => [...ROOT_KEY, "imoveisBusca", termo] as const;
 const DOCUMENTOS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "documentos"] as const;
 const ACESSOS_KEY = (clienteId: string, documentoId: string) =>
   [...FAMILY_KEY(clienteId), "documentos", documentoId, "acessos"] as const;
@@ -507,6 +515,154 @@ export function useAgendamentoMutations(clienteId: string) {
   });
 
   return { create, update, remove };
+}
+
+// ─── Roteiros e visitas (migration 082) ─────────────────────────────────────
+
+export function useRoteiros(clienteId: string | null) {
+  return useQuery({
+    queryKey: ROTEIROS_KEY(clienteId ?? "__none__"),
+    queryFn: () =>
+      api
+        .get<ItemsEnvelope<Roteiro>>(`${clienteBase(clienteId as string)}/roteiros`)
+        .then((r) => r.items),
+    enabled: !!clienteId,
+  });
+}
+
+/**
+ * The live property search behind "Criar Roteiro".
+ *
+ * Reuses `GET /api/imoveis?search=` — that endpoint ALREADY `ilike`s `codigo`
+ * (see `imoveis_service.list`), so typing `ONE9` returns every `ONE9xxxx` we
+ * hold with no new route. Building a second search endpoint for this would
+ * have been a fork of a solved problem.
+ *
+ * `enabled` gates on two characters: a one-character term matches most of the
+ * catalog, and paying a round trip to render a list nobody can use is worse
+ * than showing the hint.
+ */
+export function useImoveisBusca(termo: string) {
+  const limpo = termo.trim();
+  return useQuery({
+    queryKey: IMOVEIS_BUSCA_KEY(limpo),
+    queryFn: () =>
+      api.get<{ items: ImovelBusca[] }>(
+        `/api/imoveis?search=${encodeURIComponent(limpo)}&page_size=10`,
+      ),
+    enabled: limpo.length >= 2,
+    // The result for a given term cannot change while someone is typing, and
+    // backspacing to a previous term is the common move.
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Create / rename / delete a roteiro, reorder it, and record each visita's
+ * outcome.
+ *
+ * Every one invalidates the roteiros list AND the timeline: a visita outcome
+ * IS a timeline entry (derived from `feedback_em`), so leaving the timeline
+ * stale would show the card contradicting itself in two panes.
+ */
+export function useRoteiroMutations(clienteId: string) {
+  const qc = useQueryClient();
+  const base = clienteBase(clienteId);
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ROTEIROS_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
+    ]);
+
+  const create = useMutation({
+    mutationFn: (body: RoteiroCreateBody) => api.post<Roteiro>(`${base}/roteiros`, body),
+    onSuccess: invalidate,
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: RoteiroPatchBody }) =>
+      api.patch<Roteiro>(`${base}/roteiros/${encodeURIComponent(id)}`, body),
+    onSuccess: invalidate,
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete(`${base}/roteiros/${encodeURIComponent(id)}`),
+    // Optimistic, same reasoning as the agendamento delete: a removed route
+    // lingering through the round trip reads as a failed delete and invites a
+    // second click.
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ROTEIROS_KEY(clienteId) });
+      const previous = qc.getQueryData<Roteiro[]>(ROTEIROS_KEY(clienteId));
+      if (previous) {
+        qc.setQueryData<Roteiro[]>(
+          ROTEIROS_KEY(clienteId),
+          previous.filter((r) => r.id !== id),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _id, context) => {
+      if (context?.previous) qc.setQueryData(ROTEIROS_KEY(clienteId), context.previous);
+    },
+    onSettled: invalidate,
+  });
+
+  const reorder = useMutation({
+    mutationFn: ({ id, visitaIds }: { id: string; visitaIds: string[] }) =>
+      api.put<Roteiro>(`${base}/roteiros/${encodeURIComponent(id)}/ordem`, {
+        visita_ids: visitaIds,
+      }),
+    onSuccess: invalidate,
+  });
+
+  const patchVisita = useMutation({
+    mutationFn: ({
+      roteiroId,
+      visitaId,
+      body,
+    }: {
+      roteiroId: string;
+      visitaId: string;
+      body: VisitaPatchBody;
+    }) =>
+      api.patch<Visita>(
+        `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`,
+        body,
+      ),
+    onSuccess: invalidate,
+  });
+
+  return { create, update, remove, reorder, patchVisita };
+}
+
+/**
+ * The "Gerar Roteiro" download.
+ *
+ * NOT `api.get` — the seed client parses JSON, and this endpoint answers with
+ * `application/pdf`. Fetched with the session token and handed to the browser
+ * as a blob, so a failure surfaces as a thrown error the caller can toast
+ * rather than a downloaded file containing an error page.
+ */
+export async function baixarRoteiroPdf(clienteId: string, roteiroId: string): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  const resp = await fetch(
+    apiUrl(`${clienteBase(clienteId)}/roteiros/${encodeURIComponent(roteiroId)}/pdf`),
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+  );
+  if (!resp.ok) {
+    throw new Error(`Falha ao gerar o roteiro (HTTP ${resp.status})`);
+  }
+
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `roteiro-${roteiroId.slice(0, 8)}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ─── Documentos (LGPD, D5) ──────────────────────────────────────────────────

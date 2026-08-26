@@ -70,6 +70,8 @@ import type {
   ExtracaoSugestao,
   CardDatas,
   Membro,
+  Roteiro,
+  StatusVisita,
   Tag,
   TimelineEntry,
   TipoDocumento,
@@ -80,6 +82,7 @@ import { Timeline } from "./Timeline";
 import { ChecklistDialog } from "./popovers/ChecklistDialog";
 import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
 import { CardSidebarNav } from "./CardSidebarNav";
+import { RoteirosSection } from "./RoteirosSection";
 import type { CardSubpageKey } from "./CardSidebarNav";
 import { EtiquetasPopover } from "./popovers/EtiquetasPopover";
 import { MembrosPopover } from "./popovers/MembrosPopover";
@@ -170,6 +173,22 @@ export interface ClienteCardDialogProps {
   onCreateAgendamento: (body: AgendamentoCreateBody) => void;
   onRemoveAgendamento: (id: string) => void;
   agendamentoSaving?: boolean;
+
+  // Roteiros (migration 082) — the qualificação → visita funnel. The Agendar
+  // button no longer offers "Visita"; a visit is a roteiro entry now, because
+  // only that can hold several properties, an order, and an outcome.
+  roteiros?: Roteiro[];
+  roteirosLoading?: boolean;
+  roteirosError?: string | null;
+  onCriarRoteiro: () => void;
+  onRemoverRoteiro: (roteiroId: string) => void;
+  onGerarRoteiroPdf: (roteiroId: string) => void;
+  onPatchVisita: (
+    roteiroId: string,
+    visitaId: string,
+    body: { status?: StatusVisita; observacao?: string | null },
+  ) => void;
+  roteiroPdfPendingId?: string | null;
 
   // Membros
   allMembros: Membro[];
@@ -429,6 +448,19 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                       saving={props.agendamentoSaving}
                     />
                   }
+                />
+              )}
+
+              {subpage === "roteiros" && (
+                <RoteirosSection
+                  roteiros={props.roteiros ?? []}
+                  loading={props.roteirosLoading}
+                  error={props.roteirosError}
+                  onCriar={props.onCriarRoteiro}
+                  onRemover={props.onRemoverRoteiro}
+                  onGerarPdf={props.onGerarRoteiroPdf}
+                  onPatchVisita={props.onPatchVisita}
+                  pdfPendingId={props.roteiroPdfPendingId}
                 />
               )}
 

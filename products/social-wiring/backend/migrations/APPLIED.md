@@ -363,3 +363,33 @@ A view — no table created, 0 rows touched.
   empty) — see the migration header before building a manual-entry UI for it.
 
 A view — no table created, 0 rows touched.
+
+## 082 — `082_roteiros_visitas.sql`
+
+🔴 **NOT APPLIED.** File only — awaiting the row counts + an explicit user
+go-ahead, per the standard gate.
+
+* `roteiros` + `visitas` — the qualificação → visita funnel gets a real object.
+  A visit used to be an agendamento with `tipo='visita'`: one property, no
+  order, not printable, and — the reason this exists — not countable.
+* `visitas.status` is three-valued (`pendente` / `realizada` / `nao_realizada`),
+  never a boolean. "Hasn't happened yet" and "didn't happen" are different
+  facts; merging them files every future visit under "did not".
+* 🔴 **`visitas (org_id, codigo)` FKs to `imovel_registry (org_id,
+  codigo_canonical)`, NOT to the `imoveis` mirror** — the same ruling 063 made
+  and 076 had to re-make after 075 got it wrong. The mirror holds only ACTIVE
+  Vista listings and 1062 of 3017 registered imóveis (35%, prod 2026-08-25)
+  have already left it. A mirror FK would reject a third of the catalog at
+  INSERT and delete visit history on delist — i.e. destroy exactly the
+  2024→2028 record the FK was asked for. `test_migration_082_roteiros_visitas
+  .py::TestFKTargetsTheRegistry` holds it shut.
+* `vw_imovel_visita_contagem` — per-imóvel visit counts, `security_invoker =
+  true` (071/080 posture), grouped on the registry código so a sold imóvel
+  keeps its history. Written WITH the tables rather than after an N+1 is
+  discovered (080's lesson, applied early).
+* The CHECK on `atendimento_agendamentos.tipo` is deliberately NOT narrowed:
+  live rows carry `'visita'`, and a migration that rejects data which already
+  exists is a break, not a cutover. The Agendar button stops OFFERING it.
+* No `proprietario_*` column: Vista exposes no owner data (D1, user-ratified
+  2026-08-25), and a column nothing can write is a placeholder side. Its
+  destination when a source exists is `imovel_dados` (075).
