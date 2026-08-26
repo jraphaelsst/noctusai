@@ -27,8 +27,18 @@ import { useAceitarProposta } from "@/hooks/usePipelineSeam";
 import { AtendimentoCard } from "./components/AtendimentoCard";
 import { origemDoAtendimento, type CardOrigem } from "@/types/pipeline";
 
+//: Cards per column the board asks for, and the step each "Carregar mais"
+//: adds. Mirrors the backend default (`boards.LIMITE_CARDS_PADRAO`); the
+//: server caps the request at 1000 either way.
+const CARDS_POR_ETAPA = 50;
+
 export default function FunilVendas() {
   const [busca, setBusca] = useState("");
+  // How many cards to request per column. Raised by "Carregar mais" — one
+  // control for the whole board rather than one per column, because the
+  // columns that overflow are the early ones and a user working the board
+  // wants depth everywhere, not in one stage at a time.
+  const [limite, setLimite] = useState(CARDS_POR_ETAPA);
   // The card that is open in the detail modal. Holds the ORIGIN rather than
   // the card, because that is all the modal needs and it keeps a stale card
   // object from outliving a refetch behind an open modal.
@@ -57,9 +67,11 @@ export default function FunilVendas() {
 
       <PipelineBoard
         hooks={funilPipeline}
-        filtros={{ busca: busca || undefined }}
+        filtros={{ busca: busca || undefined, limite_por_etapa: limite }}
         formatValue={formatValor}
         emptyColumnLabel="Nenhum lead nesta etapa"
+        onLoadMore={() => setLimite((n) => n + CARDS_POR_ETAPA)}
+        loadMoreLabel={`Carregar mais ${CARDS_POR_ETAPA} por etapa`}
         toolbar={
           <div className="relative min-w-[240px] flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

@@ -9,6 +9,10 @@ nameless-in-review, mixed leads/meta_ads_leads sources).
 """
 from __future__ import annotations
 
+import pytest
+
+from app.services import identidade_service as ident
+
 from app.services.identidade_service import (
     GroupClassification,
     SourceRow,
@@ -302,3 +306,94 @@ class TestSpan:
 
         with pytest.raises(ValueError):
             span([])
+
+
+class TestNormalizacaoAmpliada:
+    """Punctuation and origin-marker folding — widened 2026-08-25.
+
+    Every input here is a REAL pair taken from the live review queue, not an
+    invented one. They were 351 groups of manual work; these are the ones that
+    were never a disagreement about who the person is.
+    """
+
+    @pytest.mark.parametrize(
+        "a,b",
+        [
+            ("alex sandro", "alex sandro*"),
+            ("alessandro biasi", "alessandro biasi*"),
+            ("julia eloy", "julia eloy*"),
+            ("simone solla", "simone solla*"),
+            ("nei nunes", "nei_nunes"),
+            ("ricardo santos", "ricardo.santos"),
+            ("hp luiza", "luiza"),
+            ("morgana", "retono morgana"),
+            ("adilaine pavan", "v4 adilaine pavan"),
+            ("geanny bezerra", "prof geanny bezerra"),
+        ],
+    )
+    def test_these_normalize_to_the_same_person(self, a, b):
+        assert ident.normalize_name(a) == ident.normalize_name(b)
+        motivo, auto = ident.classify_names([a, b])
+        assert auto is True, f"{a!r}/{b!r} still lands in the review queue ({motivo})"
+
+    @pytest.mark.parametrize(
+        "a,b",
+        [
+            # Spelling variants — probably the same person, and NOTHING in the
+            # letters proves it. A human decides.
+            ("elisabeth", "elizabeth"),
+            ("erick", "erik"),
+            ("william", "willian"),
+            ("jennifer", "jenniffer"),
+            # Two people sharing a phone. Merging these destroys records.
+            ("fernanda", "lucilene ferreira alves"),
+            ("jardel", "rodney cassemiro"),
+            ("amanda", "wemerson silva"),
+        ],
+    )
+    def test_these_still_need_a_human(self, a, b):
+        _motivo, auto = ident.classify_names([a, b])
+        assert auto is False, (
+            f"{a!r}/{b!r} was auto-merged — the normalization got greedy and "
+            "is now folding together names that only a person can judge"
+        )
+
+    def test_a_handle_tagline_is_not_part_of_the_name(self):
+        """Instagram display names carry a profession after a bar. Two rows in
+        the live queue were the same person split by exactly that."""
+        assert ident.normalize_name(
+            "Rose Oliveira | Nutricionista Oncológica"
+        ) == ident.normalize_name("Rose Oliveira")
+        assert ident.normalize_name(
+            "Ataiana Kempner | Advogada"
+        ) == ident.normalize_name("Ataiana Kempner")
+
+    def test_a_leading_bar_does_not_erase_the_name(self):
+        """🔴 `|Maria Veiga` has nothing BEFORE the bar. Truncating there would
+        turn a named row into a nameless one, which then rides along with
+        whatever else shares the phone — a far stronger claim than any of this
+        is entitled to make."""
+        assert ident.normalize_name("|MAria Veiga") == "maria veiga"
+
+    def test_a_marker_alone_is_not_stripped_to_nothing(self):
+        """"Lead" as the whole name stays a name. Emptying it would silently
+        promote the row to nameless, which rides along with whatever else is
+        in the group — a much bigger claim than "this has a prefix"."""
+        assert ident.normalize_name("Lead") == "lead"
+        assert ident.normalize_name("HP") == "hp"
+
+    def test_a_marker_in_the_middle_of_a_name_survives(self):
+        """"de" is a marker at the edge and a name particle in the middle."""
+        assert ident.normalize_name("Ana de Souza") == "ana de souza"
+        assert ident.normalize_name("de lead Ana de Souza") == "ana de souza"
+
+    def test_punctuation_becomes_a_separator_not_a_deletion(self):
+        """`nei_nunes` must become two tokens matching `nei nunes`, not one
+        glued `neinunes` that matches nothing."""
+        assert ident.normalize_name("nei_nunes") == "nei nunes"
+        assert ident.normalize_name("ju cantowitz +") == "ju cantowitz"
+
+    def test_accent_form_does_not_split_a_person(self):
+        """One row carried a combining acute, the other a precomposed í."""
+        combinado = "Thai" + "\u0301" + "s Lima"
+        assert ident.normalize_name(combinado) == ident.normalize_name("Thaís Lima")

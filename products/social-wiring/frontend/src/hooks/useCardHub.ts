@@ -44,7 +44,16 @@ import type {
   TipoDocumento,
   DocumentoChecklist,
   DocumentoChecklistItem,
+  Comprador,
+  CompradoresResponse,
+  ImovelBusca,
+  Roteiro,
+  RoteiroCreateBody,
+  RoteiroPatchBody,
+  Visita,
+  VisitaPatchBody,
 } from "@/types/cardHub";
+import type { DadosPessoais } from "@/components/card/DadosPessoaisForm";
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
@@ -59,9 +68,13 @@ const DOC_CHECKLIST_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "documento-checklist"] as const;
 const AGENDAMENTOS_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "agendamentos"] as const;
+const ROTEIROS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "roteiros"] as const;
+const IMOVEIS_BUSCA_KEY = (termo: string) => [...ROOT_KEY, "imoveisBusca", termo] as const;
 const DOCUMENTOS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "documentos"] as const;
 const ACESSOS_KEY = (clienteId: string, documentoId: string) =>
   [...FAMILY_KEY(clienteId), "documentos", documentoId, "acessos"] as const;
+const COMPRADORES_KEY = (clienteId: string) =>
+  [...FAMILY_KEY(clienteId), "compradores"] as const;
 const TAGS_KEY = [...ROOT_KEY, "tags"] as const;
 const TIPOS_DOC_KEY = [...ROOT_KEY, "tiposDocumento"] as const;
 
@@ -504,6 +517,154 @@ export function useAgendamentoMutations(clienteId: string) {
   return { create, update, remove };
 }
 
+// ─── Roteiros e visitas (migration 082) ─────────────────────────────────────
+
+export function useRoteiros(clienteId: string | null) {
+  return useQuery({
+    queryKey: ROTEIROS_KEY(clienteId ?? "__none__"),
+    queryFn: () =>
+      api
+        .get<ItemsEnvelope<Roteiro>>(`${clienteBase(clienteId as string)}/roteiros`)
+        .then((r) => r.items),
+    enabled: !!clienteId,
+  });
+}
+
+/**
+ * The live property search behind "Criar Roteiro".
+ *
+ * Reuses `GET /api/imoveis?search=` — that endpoint ALREADY `ilike`s `codigo`
+ * (see `imoveis_service.list`), so typing `ONE9` returns every `ONE9xxxx` we
+ * hold with no new route. Building a second search endpoint for this would
+ * have been a fork of a solved problem.
+ *
+ * `enabled` gates on two characters: a one-character term matches most of the
+ * catalog, and paying a round trip to render a list nobody can use is worse
+ * than showing the hint.
+ */
+export function useImoveisBusca(termo: string) {
+  const limpo = termo.trim();
+  return useQuery({
+    queryKey: IMOVEIS_BUSCA_KEY(limpo),
+    queryFn: () =>
+      api.get<{ items: ImovelBusca[] }>(
+        `/api/imoveis?search=${encodeURIComponent(limpo)}&page_size=10`,
+      ),
+    enabled: limpo.length >= 2,
+    // The result for a given term cannot change while someone is typing, and
+    // backspacing to a previous term is the common move.
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Create / rename / delete a roteiro, reorder it, and record each visita's
+ * outcome.
+ *
+ * Every one invalidates the roteiros list AND the timeline: a visita outcome
+ * IS a timeline entry (derived from `feedback_em`), so leaving the timeline
+ * stale would show the card contradicting itself in two panes.
+ */
+export function useRoteiroMutations(clienteId: string) {
+  const qc = useQueryClient();
+  const base = clienteBase(clienteId);
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ROTEIROS_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
+    ]);
+
+  const create = useMutation({
+    mutationFn: (body: RoteiroCreateBody) => api.post<Roteiro>(`${base}/roteiros`, body),
+    onSuccess: invalidate,
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: RoteiroPatchBody }) =>
+      api.patch<Roteiro>(`${base}/roteiros/${encodeURIComponent(id)}`, body),
+    onSuccess: invalidate,
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete(`${base}/roteiros/${encodeURIComponent(id)}`),
+    // Optimistic, same reasoning as the agendamento delete: a removed route
+    // lingering through the round trip reads as a failed delete and invites a
+    // second click.
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ROTEIROS_KEY(clienteId) });
+      const previous = qc.getQueryData<Roteiro[]>(ROTEIROS_KEY(clienteId));
+      if (previous) {
+        qc.setQueryData<Roteiro[]>(
+          ROTEIROS_KEY(clienteId),
+          previous.filter((r) => r.id !== id),
+        );
+      }
+      return { previous };
+    },
+    onError: (_err, _id, context) => {
+      if (context?.previous) qc.setQueryData(ROTEIROS_KEY(clienteId), context.previous);
+    },
+    onSettled: invalidate,
+  });
+
+  const reorder = useMutation({
+    mutationFn: ({ id, visitaIds }: { id: string; visitaIds: string[] }) =>
+      api.put<Roteiro>(`${base}/roteiros/${encodeURIComponent(id)}/ordem`, {
+        visita_ids: visitaIds,
+      }),
+    onSuccess: invalidate,
+  });
+
+  const patchVisita = useMutation({
+    mutationFn: ({
+      roteiroId,
+      visitaId,
+      body,
+    }: {
+      roteiroId: string;
+      visitaId: string;
+      body: VisitaPatchBody;
+    }) =>
+      api.patch<Visita>(
+        `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`,
+        body,
+      ),
+    onSuccess: invalidate,
+  });
+
+  return { create, update, remove, reorder, patchVisita };
+}
+
+/**
+ * The "Gerar Roteiro" download.
+ *
+ * NOT `api.get` — the seed client parses JSON, and this endpoint answers with
+ * `application/pdf`. Fetched with the session token and handed to the browser
+ * as a blob, so a failure surfaces as a thrown error the caller can toast
+ * rather than a downloaded file containing an error page.
+ */
+export async function baixarRoteiroPdf(clienteId: string, roteiroId: string): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  const resp = await fetch(
+    apiUrl(`${clienteBase(clienteId)}/roteiros/${encodeURIComponent(roteiroId)}/pdf`),
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+  );
+  if (!resp.ok) {
+    throw new Error(`Falha ao gerar o roteiro (HTTP ${resp.status})`);
+  }
+
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `roteiro-${roteiroId.slice(0, 8)}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // ─── Documentos (LGPD, D5) ──────────────────────────────────────────────────
 
 export function useDocumentos(clienteId: string | null) {
@@ -706,5 +867,104 @@ export function useDocumentoChecklistMutation(clienteId: string) {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });
     },
+  });
+}
+
+
+// ─── Compradores / partes do atendimento (migration 073) ──────────────────
+
+/**
+ * The other people party to this card's atendimento.
+ *
+ * Returns an empty list rather than erroring when the person has no single
+ * open atendimento — the Geral tab hides the section entirely in that case,
+ * and an error state for "nothing to show" would be noise on every card that
+ * has one buyer, which is most of them.
+ */
+export function useCompradores(clienteId: string | null) {
+  return useQuery({
+    queryKey: COMPRADORES_KEY(clienteId ?? "__none__"),
+    queryFn: () =>
+      api.get<CompradoresResponse>(`${clienteBase(clienteId as string)}/compradores`),
+    enabled: !!clienteId,
+  });
+}
+
+/**
+ * Add or detach a party.
+ *
+ * NOT optimistic, unlike the checklist tick. Adding a comprador CREATES a
+ * person record (or links an existing one) and the server assigns their id —
+ * there is no correct row to render before it answers, and inventing one would
+ * mean the Documentos tab briefly renders a checklist for a `cliente_id` that
+ * does not exist yet, whose own queries would 404.
+ *
+ * Invalidates the party list AND the card summary: the Geral tab's Compradores
+ * section appears the moment the first one is added, so the card's own shape
+ * changed.
+ */
+export function useCompradorMutations(clienteId: string) {
+  const qc = useQueryClient();
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: COMPRADORES_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+    ]);
+
+  const adicionar = useMutation({
+    mutationFn: (body: {
+      nome?: string;
+      celular?: string;
+      cliente_id?: string;
+      papel?: string;
+      observacao?: string;
+      atendimento_id?: string;
+    }) => api.post<Comprador>(`${clienteBase(clienteId)}/compradores`, body),
+    onSuccess: invalidate,
+  });
+
+  const remover = useMutation({
+    mutationFn: (parteId: string) =>
+      api.delete(
+        `${clienteBase(clienteId)}/compradores/${encodeURIComponent(parteId)}`,
+      ),
+    onSuccess: invalidate,
+  });
+
+  return { adicionar, remover };
+}
+
+
+/**
+ * Save the typed identity fields — the ones the checklist derives its ticks
+ * from.
+ *
+ * Hits the ordinary `PATCH /api/clientes/{id}`; there is deliberately no
+ * "checklist write" endpoint, because a tick is derived and the way to satisfy
+ * an item IS to supply the data.
+ *
+ * 🔴 Invalidates BOTH families. The write goes through the clientes API but the
+ * thing that visibly changes is the card's checklist, and this hook is the
+ * card's. Invalidating only one leaves whichever surface the operator is
+ * looking at showing the value they just replaced.
+ *
+ * Not optimistic: this writes to a person's record, and a checklist item
+ * flipping green before the server agreed is the one moment a rejected save
+ * looks like a successful one.
+ */
+export function useDadosPessoaisMutation(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    // Typed as the form's own shape rather than a loose record: these are the
+    // exact columns `clientes_router.ClientePatchBody` accepts, and a
+    // stray key would be refused by StrictHttpModel at runtime rather than
+    // caught here.
+    mutationFn: (body: DadosPessoais) =>
+      api.patch(`${clienteBase(clienteId)}`, body),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: FAMILY_KEY(clienteId) }),
+        qc.invalidateQueries({ queryKey: ["sw", "clientes"] }),
+      ]),
   });
 }

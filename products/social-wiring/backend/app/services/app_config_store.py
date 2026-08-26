@@ -40,6 +40,14 @@ from app.services.credential_vault import EncryptionNotConfigured, require_ferne
 
 __all__ = [
     "INSTAGRAM_APP_ID_KEY",
+    "IMOVELWEB_CALLBACK_CONFIG_KEY",
+    "IMOVELWEB_CALLBACK_CONFIG_PREVIOUS_KEY",
+    "IMOVELWEB_CLIENT_ID_KEY",
+    "IMOVELWEB_CLIENT_SECRET_KEY",
+    "IMOVELWEB_LEADS_ORG_ID_KEY",
+    "IMOVELWEB_WEBHOOK_SECRET_KEY",
+    "ImovelWebConfig",
+    "resolve_imovelweb_config",
     "OLX_AGENT_NAME_KEY",
     "OLX_API_KEY_KEY",
     "OLX_LEADS_ORG_ID_KEY",
@@ -73,6 +81,25 @@ OLX_WEBHOOK_SECRET_KEY = "olx_webhook_secret"
 OLX_LEADS_ORG_ID_KEY = "olx_leads_org_id"
 OLX_API_KEY_KEY = "olx_api_key"
 OLX_AGENT_NAME_KEY = "olx_agent_name"
+
+# ImovelWeb / OpenNavent keys — app-wide for the same reason as OLX's, with
+# one addition. The inbound secret is one WE choose per integration (not per
+# advertiser), and the OAuth credentials are issued to the INTEGRATOR with the
+# agency as a path parameter — so `integration_accounts`, keyed
+# (org_id, provider, account_label), would invite one copy per client of a
+# value they all share.
+#
+# The two `..._callback_config` keys are not credentials: they hold the
+# registration we last applied and the one before it. The "previous" copy
+# exists because after a bad PUT the VENDOR cannot tell you what you had, and
+# the registration is integrator-wide — so losing it means losing every
+# agency's delivery config at once.
+IMOVELWEB_WEBHOOK_SECRET_KEY = "imovelweb_webhook_secret"
+IMOVELWEB_CLIENT_ID_KEY = "imovelweb_client_id"
+IMOVELWEB_CLIENT_SECRET_KEY = "imovelweb_client_secret"
+IMOVELWEB_LEADS_ORG_ID_KEY = "imovelweb_leads_org_id"
+IMOVELWEB_CALLBACK_CONFIG_KEY = "imovelweb_callback_config_json"
+IMOVELWEB_CALLBACK_CONFIG_PREVIOUS_KEY = "imovelweb_callback_config_previous_json"
 
 INSTAGRAM_APP_ID_KEY = "instagram_app_id"
 INSTAGRAM_APP_SECRET_KEY = "instagram_app_secret"
@@ -291,3 +318,91 @@ def resolve_olx_config(
         api_key=store.get(OLX_API_KEY_KEY) or env_api_key,
         agent_name=store.get(OLX_AGENT_NAME_KEY) or env_agent,
     )
+
+
+@dataclass(frozen=True)
+class ImovelWebConfig:
+    """Resolved ImovelWeb / OpenNavent config.
+
+    A carrier rather than a tuple, and for a sharper reason than OlxConfig's:
+    this one holds THREE secrets whose jobs are easy to confuse — the inbound
+    `webhook_secret` (ours, verifies deliveries), and the OAuth
+    `client_id`/`client_secret` pair (theirs, authenticates our outbound
+    calls). Positional unpacking at a call site is exactly how the wrong one
+    ends up in the wrong header, and the symptom would be a 401 that looks
+    like the vendor's fault.
+    """
+
+    webhook_secret: Optional[str] = None
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    leads_org_id: Optional[str] = None
+    region: str = "br"
+    sandbox: bool = False
+    callback_language: str = "EN2"
+    public_base_url: Optional[str] = None
+    verify_by_refetch: bool = False
+
+    @property
+    def receiver_configured(self) -> bool:
+        """The inbound half. Without it the receiver 401s every delivery."""
+        return bool(self.webhook_secret)
+
+    @property
+    def api_configured(self) -> bool:
+        """The outbound half — reconciliation, callback registration,
+        enrichment. Independent of the inbound half and usually configured
+        at a different time, so they are reported separately rather than
+        collapsed into one flag that would read as "nothing works"."""
+        return bool(self.client_id) and bool(self.client_secret)
+
+
+def resolve_imovelweb_config(
+    *,
+    settings=None,
+    store: Optional[AppConfigStore] = None,
+) -> ImovelWebConfig:
+    """Resolve the ImovelWeb config — DB-first per key, env fallback, same
+    graceful degrade-to-env-only as :func:`resolve_olx_config`.
+
+    `webhook_secret` returning ``None`` when unset anywhere is load-bearing:
+    the receiver runs ``bypass_when_unset=False``, so "unset" must mean 401
+    and never "accept anything". An open endpoint that writes leads into a
+    CRM is worse than a receiver that is temporarily down.
+
+    The non-secret settings (region, sandbox, language, refetch flag) come
+    from env only. They are deployment shape rather than tenant config, and
+    routing them through the encrypting store would add a decryption
+    dependency to answering "which host do we call?".
+    """
+    settings = settings or default_settings
+    env_secret = getattr(settings, "imovelweb_webhook_secret", "") or None
+    env_client_id = getattr(settings, "imovelweb_client_id", "") or None
+    env_client_secret = getattr(settings, "imovelweb_client_secret", "") or None
+    env_org = getattr(settings, "imovelweb_leads_org_id", "") or None
+    shape = {
+        "region": getattr(settings, "imovelweb_region", "") or "br",
+        "sandbox": bool(getattr(settings, "imovelweb_sandbox", False)),
+        "callback_language": getattr(settings, "imovelweb_callback_language", "") or "EN2",
+        "public_base_url": getattr(settings, "imovelweb_public_base_url", "") or None,
+        "verify_by_refetch": bool(getattr(settings, "imovelweb_verify_by_refetch", False)),
+    }
+    if store is None:
+        try:
+            store = build_app_config_store()
+        except EncryptionNotConfigured:
+            return ImovelWebConfig(
+                webhook_secret=env_secret,
+                client_id=env_client_id,
+                client_secret=env_client_secret,
+                leads_org_id=env_org,
+                **shape,
+            )
+    return ImovelWebConfig(
+        webhook_secret=store.get(IMOVELWEB_WEBHOOK_SECRET_KEY) or env_secret,
+        client_id=store.get(IMOVELWEB_CLIENT_ID_KEY) or env_client_id,
+        client_secret=store.get(IMOVELWEB_CLIENT_SECRET_KEY) or env_client_secret,
+        leads_org_id=store.get(IMOVELWEB_LEADS_ORG_ID_KEY) or env_org,
+        **shape,
+    )
+

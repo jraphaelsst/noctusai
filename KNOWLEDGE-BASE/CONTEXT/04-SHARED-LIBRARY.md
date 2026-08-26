@@ -214,13 +214,17 @@ The `email_templates.py` flat module became a sub-package on 2026-04-25 (ai-expa
 | `send_digest(digest, *, recipient, org_id=None, log_prefix="DIGEST")` | Resend POST + dry-run-on-no-key fallback + Resend-failure swallow. |
 | `render(*, html_template, text_template, context, search_paths)` | Jinja-backed `(html, text)` renderer. Auto-escape on by default; `keep_trailing_newline=True`; products extend the lib's `_digest_base.{html,txt}.j2` and override blocks. |
 
-### `integrations/documents/` — Identity documents → typed fields (Protocol+Fake+Real+factory)
+### `integrations/documents/` — Documents → typed fields, or the whole text (Protocol+Fake+Real+factory)
 
 Answers "document → fields a column can store", which `integrations.media` deliberately does not: `ResolvedMedia.text` is a narrative rendering built for a chatbot to read, so every consumer needing a typed value out of it would re-parse that prose itself, differently, at each call site.
 
-Landed 2026-08-22 with the social-wiring card checklist, as **the canonical RG/CPF extraction procedure**. Extended 2026-08-24 with full-name extraction.
+Landed 2026-08-22 with the social-wiring card checklist, as **the canonical RG/CPF extraction procedure**. Extended 2026-08-24 with full-name extraction, and 2026-08-25 with whole-document transcription (`transcription.py`) absorbed from erp-imobiliario.
 
-`matricula_service.py` (erp-imobiliario) was the counter-example: a product-local PDF extractor that rasterized every page and paid for a vision call on each, including for PDFs carrying a perfectly good text layer. **Closed 2026-08-24** — it now composes `integrations.media.extract_pdf_text` as rung 1 and only falls through to its per-page vision loop for genuine scans. It keeps its own prose-aggregating pipeline rather than adopting `IdentityFields`: matrícula wants narrative text for an LLM to read, which is `media`'s job, not this module's.
+`matricula_service.py` (erp-imobiliario) was the counter-example, and it is worth keeping the shape of it on record because closing it took three passes. It began as a product-local PDF extractor that rasterized every page and paid for a vision call on each, including for PDFs carrying a perfectly good text layer. Rung 1 landed 2026-08-24. On 2026-08-25 a CERTIDÃO DE MATRÍCULA came back transcribed as three copies of its own ONR validation stamp — a scanned page's text layer is a signature overlay, and the product's own `>= 100 chars/page` predicate accepted it. **Absorbed 2026-08-25** into `transcription.py`, with the product keeping only its `matricula_extracoes` row and its error-code→Portuguese mapping.
+
+🔴 **The lesson the fork taught.** Every rung the seed's document family learned had to be re-learned in the product, one incident at a time, because the ladder had been copied rather than consumed. Transcription is now a seed capability with three known consumers (`matricula_service`, `certidoes_service`, social-wiring's inbound-document path), which is what a capability at N=3 is supposed to look like.
+
+**Transcription is NOT the ladder.** `DocumentTextLadder` serves extractors — something that wants one field and stops once it can read it, whose vision rung rasterizes at most 3 pages and describes only the first. Transcription is page-complete by definition, interleaves rungs per page (a typeset body with a scanned averbação stapled on is ordinary in Brazilian registries), and returns the document rather than a description of one.
 
 Composes `integrations.media` for "bytes → text" rather than re-doing it; owns only rung selection and the text→fields parse.
 
@@ -237,6 +241,12 @@ Composes `integrations.media` for "bytes → text" rather than re-doing it; owns
 | `FakeIdentityExtractor(result=None)` | Deterministic; the dev/test default. |
 | `LadderIdentityExtractor` | PDF text layer → rasterize→vision. Lazily imported (no PyMuPDF/LLM at package import). |
 | `make_identity_extractor(*, real=False, org_id=None, document_prompt=None)` | Factory. |
+| `Transcription(pages, num_paginas, error, error_message)` | Whole-document transcription result. `.text` joins pages in order; `.paginas_por_visao` / `.paginas_por_camada` say which pages cost money and which were exact; `.ok` is the one success gate. `num_paginas` is the PDF's count, not `len(pages)` — they differ exactly when transcription failed partway. |
+| `TranscribedPage(number, text, source)` | One page and the rung that produced it. |
+| `DocumentTranscriber` Protocol | `await transcribe(content, *, mimetype, filename)`. MUST NOT raise — failures come back as `error` codes, because a chatbot and a settings screen need different words for the same failure. |
+| `FakeDocumentTranscriber` | Deterministic, obviously-synthetic text; the dev/test default. |
+| `LadderDocumentTranscriber` | Text-layer-first, vision-second, decided PER PAGE. Lazily imported. |
+| `make_document_transcriber(*, real=False, org_id=None, ocr_model=…, ocr_prompt=…, render_dpi=200, max_vision_pages=40)` | Factory. `max_vision_pages=0` means "text layer only" — the free, exact half of the ladder for consumers on a timer who have not opted into per-page billing (`certidoes_service`); a document needing rung 2 then returns what rung 1 read plus `error="vision_disabled"`, never a quiet empty string. |
 
 🔴 **Why it is label-anchored.** A Brazilian RG carries up to four dates and prints **expedição above nascimento**; a CNH adds "primeira habilitação". Positional extraction ("take the first date") is wrong more often than right, and fails silently — it yields a real, plausible date. The parser anchors on birth labels, actively excludes decoy labels, and gates every candidate on a plausibility window (past, age 16–120).
 

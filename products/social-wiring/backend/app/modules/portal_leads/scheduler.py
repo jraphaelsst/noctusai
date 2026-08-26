@@ -1,16 +1,31 @@
-"""Scheduled jobs for the `portal_leads` module — the two OLX drains.
+"""Scheduled jobs for the `portal_leads` module — the inbox drains, the
+forward drain, and the ImovelWeb reconciliation pull.
 
-The inbox drain runs every 15 minutes. It exists because the receiver
-answers 200 and processes afterwards: a lead whose ingest failed
-(unresolvable org, a mapping error, a DB blip) sits in `olx_lead_events`
-as `error` or `unresolved` and nothing else would ever pick it up.
+Four jobs, one per failure mode:
 
-Fifteen minutes rather than daily because the drain is cheap — one
-indexed DB read of a partial index that is almost always empty — and
-because the cost of waiting is a real customer not being called back.
+* **`olx_leads_retry`** (*/15) and **`imovelweb_leads_retry`** (*/15) drain
+  their vendor's inbox. Both receivers answer first and process afterwards,
+  so a lead whose ingest failed (unresolvable org, a mapping error, a DB
+  blip) sits in the events table as `error` or `unresolved` and nothing
+  else would ever pick it up. Fifteen minutes rather than daily because the
+  drain is cheap — one indexed read of a partial index that is almost always
+  empty — and because the cost of waiting is a real customer not being
+  called back.
+
+* **`portal_lead_forward_drain`** (*/5) drains the forward queue.
+
+* **`imovelweb_reconcile`** (hourly) is a different thing entirely, and only
+  ImovelWeb can have it: that vendor exposes a PULL API, so a delivery we
+  never received is still recoverable. The drain re-tries what we HOLD; the
+  reconcile fetches what we never got. It runs at :17 rather than :00 to
+  stay out of the herd every other hourly job lands in.
+
+All of them swallow per-run exceptions with a WARNING — one bad run must not
+kill the schedule — and take DI seams so a test drives the real job without
+a scheduler or a database (`KB § PATTERNS/backend/di-test-seam.md`).
 
 ── The empty-queue pre-flight ─────────────────────────────────────────
-Both jobs check whether there is ANY work before resolving config.
+The jobs check whether there is ANY work before resolving config.
 
 That ordering is the whole point. `get_olx_config()` is deliberately
 never cached (see `deps.py`: an operator rotating the secret must not
@@ -160,6 +175,110 @@ def _drain_sync(
         logger.warning("olx drain: run failed: %s", exc, exc_info=True)
 
 
+def _imovelweb_drain_sync(
+    *,
+    admin_client_factory: Optional[Callable[[], Any]] = None,
+    service_factory: Optional[Callable[..., Any]] = None,
+) -> None:
+    """Sync body of the ImovelWeb drain. Same DI-seam shape as the OLX one."""
+    admin = (admin_client_factory or get_admin_client)()
+    if admin is None:
+        logger.warning("imovelweb drain: no admin client — skipping run")
+        return
+
+    if service_factory is None:
+        from app.modules.portal_leads.services.imovelweb_webhook_service import (
+            ImovelWebWebhookService,
+        )
+
+        service_factory = ImovelWebWebhookService
+
+    client = admin.schema(_SCHEMA)
+    default_org = None
+    try:
+        from app.dependencies import coerce_org_uuid
+        from app.services.app_config_store import resolve_imovelweb_config
+
+        configured = resolve_imovelweb_config().leads_org_id
+        if configured:
+            default_org = coerce_org_uuid(configured)
+    except Exception as exc:  # noqa: BLE001 — config gap must not kill the drain
+        # Without a default org the drain still retries every row; those that
+        # need the fallback stay `unresolved`, which is the honest outcome
+        # rather than a guessed tenant.
+        logger.warning("imovelweb drain: could not resolve the default org (%s)", exc)
+
+    svc = service_factory(client=client, default_org_id=default_org)
+    try:
+        result = svc.drain_pending()
+        if result.get("examined"):
+            logger.info(
+                "imovelweb drain: examined=%d processed=%d pending=%d exhausted=%d",
+                result.get("examined", 0), result.get("processed", 0),
+                result.get("still_pending", 0), result.get("exhausted", 0),
+            )
+    except Exception as exc:  # noqa: BLE001 — one bad run must not kill the schedule
+        logger.warning("imovelweb drain: run failed: %s", exc, exc_info=True)
+
+
+async def _imovelweb_reconcile_async(
+    *,
+    admin_client_factory: Optional[Callable[[], Any]] = None,
+    adapter_factory: Optional[Callable[[], Any]] = None,
+) -> None:
+    """Body of the reconciliation pull.
+
+    Async all the way down rather than thread-offloaded like the drains: the
+    OpenNavent client is async, and wrapping an async client in
+    `asyncio.to_thread` would need a nested event loop.
+    """
+    admin = (admin_client_factory or get_admin_client)()
+    if admin is None:
+        logger.warning("imovelweb reconcile: no admin client — skipping run")
+        return
+
+    if adapter_factory is None:
+        from app.modules.portal_leads.routers.imovelweb_webhook import (
+            get_imovelweb_adapter,
+        )
+
+        adapter_factory = get_imovelweb_adapter
+
+    from app.modules.portal_leads.services import imovelweb_reconcile_service
+
+    client = admin.schema(_SCHEMA)
+    try:
+        adapter = adapter_factory()
+        result = await imovelweb_reconcile_service.reconcile_all_agencies(
+            client, adapter
+        )
+        if result.get("recovered"):
+            # Worth an INFO every time it is non-zero: a recovered lead is a
+            # lead the callback path LOST, and a rising count is the signal
+            # that the 1.5-second budget is not being met.
+            logger.info(
+                "imovelweb reconcile: agencies=%d recovered=%d",
+                result.get("agencies", 0), result.get("recovered", 0),
+            )
+    except Exception as exc:  # noqa: BLE001 — one bad run must not kill the schedule
+        logger.warning("imovelweb reconcile: run failed: %s", exc, exc_info=True)
+
+
+async def imovelweb_leads_retry_job() -> None:
+    """Async wrapper — same thread-offload convention as the OLX drain."""
+    try:
+        await asyncio.to_thread(_imovelweb_drain_sync)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("imovelweb drain: job wrapper error: %s", exc, exc_info=True)
+
+
+async def imovelweb_reconcile_job() -> None:
+    try:
+        await _imovelweb_reconcile_async()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("imovelweb reconcile: job wrapper error: %s", exc, exc_info=True)
+
+
 async def olx_leads_retry_job() -> None:
     """Async wrapper — same thread-offload convention as `meta_ads`."""
     try:
@@ -238,14 +357,29 @@ def configure() -> None:
         portal_lead_forward_drain_job,
         cron="*/5 * * * *",
     )
+    seed_scheduler.register(
+        "imovelweb_leads_retry",
+        imovelweb_leads_retry_job,
+        cron="*/15 * * * *",
+    )
+    # :17 rather than :00 — every other hourly job in the fleet fires on the
+    # hour, and this one makes an upstream call per authorized agency.
+    seed_scheduler.register(
+        "imovelweb_reconcile",
+        imovelweb_reconcile_job,
+        cron="17 * * * *",
+    )
     logger.info(
         "portal_leads scheduler configured: olx inbox retry '*/15 * * * *', "
-        "forward drain '*/5 * * * *'"
+        "forward drain '*/5 * * * *', imovelweb inbox retry '*/15 * * * *', "
+        "imovelweb reconcile '17 * * * *'"
     )
 
 
 __all__ = [
     "configure",
+    "imovelweb_leads_retry_job",
+    "imovelweb_reconcile_job",
     "olx_leads_retry_job",
     "portal_lead_forward_drain_job",
 ]

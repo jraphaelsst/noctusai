@@ -35,14 +35,19 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from noctusai_lib.primitives.exceptions import AppException, NotFoundError
+from noctusai_lib.primitives.exceptions import NotFoundError
 
 from app.modules.card_hub.services import (
+    # Re-exported below: the resolver moved to `services` when compradores
+    # became its second caller, and this module's importers keep working.
+    AmbiguousAtendimento,
+    _atendimentos_do_cliente,
     _batched,
     _now,
     _paged_rows,
     _t,
     ensure_cliente,
+    resolve_atendimento_id,
 )
 
 TABLE = "atendimento_agendamentos"
@@ -58,69 +63,8 @@ _FIELDS = (
 )
 
 
-class AmbiguousAtendimento(AppException):
-    """The person has more than one open atendimento, so "the" one is a guess.
-
-    Raised rather than picking the newest: an appointment filed against the
-    wrong deal renders identically on the card and is wrong in the one place
-    D17 says matters — the history.
-
-    An `AppException`, NOT a bare exception the router converts: the seed's
-    handler renders `details` into the error envelope, so the candidate ids
-    survive to the client. A `raise HTTPException(detail={...})` does NOT —
-    the seed's HTTPException handler stringifies the detail into `message`,
-    which is how the first version of this shipped a 409 the UI could not read.
-    """
-
-    def __init__(self, candidates: list[str]):
-        self.candidates = candidates
-        super().__init__(
-            code="AMBIGUOUS_ATENDIMENTO",
-            message=(
-                "Este cliente tem mais de um atendimento aberto — escolha a qual "
-                "o agendamento pertence."
-                if candidates
-                else "Este cliente não tem atendimento aberto — informe atendimento_id."
-            ),
-            status_code=409,
-            details={"atendimentos": candidates},
-        )
-
-
 def _out(row: dict) -> dict:
     return {k: row.get(k) for k in _FIELDS}
-
-
-def _atendimentos_do_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
-    return _paged_rows(client, "atendimentos", org_id, eq_filters={"cliente_id": str(cliente_id)})
-
-
-def resolve_atendimento_id(
-    client: Any, org_id: UUID, cliente_id: UUID, explicit: Optional[UUID] = None
-) -> str:
-    """Which atendimento a new appointment belongs to.
-
-    `explicit` wins and is validated against this cliente — accepting an
-    unvalidated id would let a caller file an appointment onto someone else's
-    deal. Otherwise: the single open atendimento, or `AmbiguousAtendimento`.
-    """
-    rows = _atendimentos_do_cliente(client, org_id, cliente_id)
-    if explicit is not None:
-        if not any(str(r["id"]) == str(explicit) for r in rows):
-            raise NotFoundError("atendimentos", str(explicit))
-        return str(explicit)
-
-    abertos = [
-        r for r in rows
-        if r.get("substituida_por") is None and not r.get("arquivado", False)
-    ]
-    if len(abertos) == 1:
-        return str(abertos[0]["id"])
-    if not abertos:
-        # Every atendimento is closed/archived. Refuse rather than resurrect
-        # one — "which closed deal is this visit for?" is the user's call.
-        raise AmbiguousAtendimento([])
-    raise AmbiguousAtendimento([str(r["id"]) for r in abertos])
 
 
 def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:

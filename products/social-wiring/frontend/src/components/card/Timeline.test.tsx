@@ -101,3 +101,45 @@ describe("Timeline — pagination", () => {
     expect(onLoadMore).toHaveBeenCalledOnce();
   });
 });
+
+describe("Timeline — um contato diz o que aconteceu", () => {
+  it("nomeia a ação e a origem, não só a pessoa", async () => {
+    // 🔴 Antes: quatro linhas idênticas com o nome do lead e uma data,
+    // sem verbo — impossível saber o que cada uma registrava.
+    const { getAllByTestId } = await render({ loading: false, error: null, entries: [
+      {
+        id: "t1",
+        kind: "touch",
+        ocorrido_em: "2026-07-29T13:15:00+00:00",
+        ator: null,
+        origem_tabela: "leads",
+        origem_id: "L1",
+        origem_rotulo: "Meta Ads",
+        resumo: "Ana Lima",
+        dados: {},
+      }] as any });
+
+    const linha = getAllByTestId("timeline-entry")[0];
+    expect(linha.textContent).toContain("Novo contato via Meta Ads");
+    expect(linha.textContent).toContain("Ana Lima");
+  });
+
+  it("não repete o mesmo texto duas vezes quando nome e origem coincidem", async () => {
+    const { getAllByTestId } = await render({ loading: false, error: null, entries: [
+      {
+        id: "t2",
+        kind: "touch",
+        ocorrido_em: "2026-07-29T13:15:00+00:00",
+        ator: null,
+        origem_tabela: "leads",
+        origem_id: "L2",
+        origem_rotulo: "OLX",
+        resumo: "olx",
+        dados: {},
+      }] as any });
+
+    expect(getAllByTestId("timeline-entry")[0].textContent).toContain(
+      "Novo contato via OLX",
+    );
+  });
+});

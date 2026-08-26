@@ -5,13 +5,13 @@ WHAT THESE TESTS PIN
 The design claim is that the ITEM LIST is canonical code and only the TICKS are
 data. Every assertion here is a consequence of that:
 
-- a client with no rows still gets all six items (definition drives output);
+- a client with no rows still gets every item (definition drives output);
 - an unknown key is a 422, not a silently-written row nothing reads;
 - the label can change without orphaning a tick, because `item_key` is the
   identity and the label is presentation.
 
-If someone later "simplifies" this into six rows per client, the first and
-third break — which is the point.
+If someone later "simplifies" this into one row per item per client, the first
+and third break — which is the point.
 """
 from __future__ import annotations
 
@@ -33,28 +33,35 @@ def _seed(scoped) -> str:
 
 
 class TestCanonicalList:
-    def test_the_six_the_user_asked_for_in_order(self, client, scoped):
-        """🔴 The list, verbatim. It is a contract, not a default."""
+    def test_the_fields_the_user_asked_for_in_order(self, client, scoped):
+        """🔴 The list, verbatim. It is a contract, not a default.
+
+        The ORDER is part of it: this is the sequence an operator actually
+        collects the details in, so the card read top-to-bottom shows the next
+        thing to ask for. Alphabetising it would be a regression, not a tidy-up.
+        """
         cid = _seed(scoped)
         body = client.get(f"/api/clientes/{cid}/documento-checklist", headers=_auth()).json()
         assert [i["label"] for i in body["items"]] == [
             "Nome Completo",
+            "Celular",
             "Email",
             "Data de Nascimento",
+            "Profissão",
             "Gênero",
             "RG",
             "CPF",
         ]
 
-    def test_a_client_with_no_rows_still_gets_all_six_unticked(self, client, scoped):
+    def test_a_client_with_no_rows_still_gets_every_item_unticked(self, client, scoped):
         """The checklist is PERMANENT — it exists before anyone touches it.
 
         Nothing is created on read: a GET that writes would mean the first
-        person to open a card silently authors six rows on it.
+        person to open a card silently authors a row per item on it.
         """
         cid = _seed(scoped)
         body = client.get(f"/api/clientes/{cid}/documento-checklist", headers=_auth()).json()
-        assert body["total"] == 6
+        assert body["total"] == len(svc.ITENS)
         assert body["concluidos"] == 0
         assert all(i["concluido"] is False for i in body["items"])
         assert scoped.table("cliente_documento_checklist").select("*").execute().data == []

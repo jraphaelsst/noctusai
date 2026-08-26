@@ -146,6 +146,14 @@ class TestProviders:
             # webhook. Manual-entry only: OLX issues a static per-CRM
             # secret at homologation and has no OAuth flow.
             "olx",
+            # ImovelWeb / Wimoveis / Casa Mineira via OpenNavent — Navent
+            # (Grupo QuintoAndar). A SEPARATE row from `olx` despite the
+            # overlapping portal names, because it is a different vendor
+            # with its own API, its own credentials and its own callback
+            # system. Grupo OLX does bridge ImovelWeb into its own Gestor
+            # de Leads, so an advertiser can be live on both at once — and
+            # the direct pipe is the one that names the portal honestly.
+            "imovelweb",
         } == ids
 
     def test_youtube_provider_has_oauth_supported(self, client):

@@ -31,6 +31,8 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
+from app.services import documento_retencao
+
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.deps import BUCKET, get_card_hub_client
 from app.modules.card_hub.services import (
@@ -207,7 +209,15 @@ async def upload_documento(
         metadata={"nome_original": filename},
     )
 
-    retencao_dias = tipo_row.get("retencao_dias")
+    # 🔴 The POLICY, not the catalogue. Migration 079 moved `retencao_dias`
+    # off `cliente_documento_tipos` (which only a migration could change) into
+    # `documento_retencao_politicas` (which the Settings screen can). The
+    # catalogue column still exists as a one-release rollback path and is
+    # marked superseded in the database itself — reading it here again would
+    # silently ignore whatever the controller set on the screen.
+    retencao_dias = documento_retencao.dias_para(
+        client, org_id, "cliente", tipo_documento
+    )
     retencao_ate = (
         (_today() + timedelta(days=retencao_dias)).isoformat() if retencao_dias else None
     )

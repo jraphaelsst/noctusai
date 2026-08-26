@@ -76,7 +76,103 @@ class TestDerivarIsPure:
         """No item may be silently underivable — that would be a checkbox
         nothing can ever tick except by hand."""
         for item in svc.ITENS:
-            assert ("campos" in item) ^ ("documento" in item), item["key"]
+            de_cliente = ("campos" in item) or ("fontes" in item)
+            assert de_cliente ^ ("documento" in item), item["key"]
+
+
+class TestCelularEEmailReadTheRegistrationKey:
+    """🔴 `chave_canonica` holds a phone OR an email, and `chave_tipo` decides.
+
+    These are the tests that stop the obvious wrong build: reading
+    `chave_canonica` for both items. That version ticks "Celular" with an email
+    address for every email-keyed cliente — a green checkbox over a fact that is
+    not there, which is the exact failure the derived checklist exists to make
+    impossible.
+    """
+
+    def test_a_phone_keyed_cliente_has_their_celular_already(self):
+        out = svc.derivar(
+            {"chave_canonica": "+5511999998888", "chave_tipo": "telefone"},
+            frozenset(),
+        )
+        assert out["celular"] is True
+        assert out["email"] is False
+
+    def test_an_email_keyed_cliente_has_their_email_already(self):
+        out = svc.derivar(
+            {"chave_canonica": "ana@example.com", "chave_tipo": "email"},
+            frozenset(),
+        )
+        assert out["email"] is True
+        assert out["celular"] is False
+
+    def test_an_email_key_never_satisfies_celular(self):
+        """The whole reason `fontes` exists rather than a second `campos`."""
+        out = svc.derivar(
+            {"chave_canonica": "ana@example.com", "chave_tipo": "email"},
+            frozenset(),
+        )
+        assert out["celular"] is False
+
+    def test_a_keyless_cliente_satisfies_neither(self):
+        out = svc.derivar({"chave_canonica": None, "chave_tipo": None}, frozenset())
+        assert out["celular"] is False
+        assert out["email"] is False
+
+    def test_an_explicit_celular_column_ticks_it_without_any_key(self):
+        """The email-keyed cliente's only way to hold a phone (migration 073)."""
+        out = svc.derivar(
+            {"celular": "+5511977776666", "chave_canonica": "ana@example.com",
+             "chave_tipo": "email"},
+            frozenset(),
+        )
+        assert out["celular"] is True
+
+    def test_valor_de_answers_with_the_same_precedence_as_the_tick(self):
+        """One definition, two readers — the stage gate must not re-implement
+        "does this person have a phone?" and drift from the checkbox."""
+        explicito = {"celular": "+5511977776666",
+                     "chave_canonica": "+5511999998888", "chave_tipo": "telefone"}
+        assert svc.valor_de(explicito, "celular") == "+5511977776666"
+        so_chave = {"chave_canonica": "+5511999998888", "chave_tipo": "telefone"}
+        assert svc.valor_de(so_chave, "celular") == "+5511999998888"
+        assert svc.valor_de({"chave_tipo": "email",
+                             "chave_canonica": "a@b.com"}, "celular") is None
+
+    def test_valor_de_refuses_an_unknown_key(self):
+        import pytest
+        with pytest.raises(KeyError):
+            svc.valor_de({}, "nao_existe")
+
+
+class TestProfissao:
+    def test_profissao_ticks_from_its_own_column(self):
+        assert svc.derivar({"profissao": "Engenheiro"}, frozenset())["profissao"] is True
+
+    def test_profissao_is_not_derived_from_any_document(self):
+        """An RG does not carry a profession, so no upload may tick it."""
+        out = svc.derivar({}, frozenset({"rg", "cpf", "cnh"}))
+        assert out["profissao"] is False
+
+
+class TestGeneroIsNotTickedByADefault:
+    """🔴 The UI pre-selects "Masculino" in the dropdown. That is a convenience
+    for the operator, NOT a value — the column stays NULL until someone saves.
+
+    If an unsaved default counted, this item would read green for every one of
+    the 10.255 existing clientes on the day it shipped, and could never again
+    answer "who still needs checking" — the permanently-green twin of the
+    permanently-red `nome_completo` bug migration 068 had to fix.
+    """
+
+    def test_an_unset_genero_does_not_tick(self):
+        assert svc.derivar({"genero": None}, frozenset())["genero"] is False
+
+    def test_an_empty_genero_does_not_tick(self):
+        assert svc.derivar({"genero": "   "}, frozenset())["genero"] is False
+
+    def test_a_saved_genero_ticks(self):
+        assert svc.derivar({"genero": "Masculino"}, frozenset())["genero"] is True
 
 
 class TestFieldsTickThemselves:
@@ -128,6 +224,88 @@ class TestFieldsTickThemselves:
             "clientes", clientes_scoped.table("clientes").select("*").execute().data
         )
         assert _items(client, cid)["data_nascimento"]["concluido"] is True
+
+    def test_patching_celular_and_profissao_ticks_them(self, client, scoped):
+        """The two items migration 073 added, through the same PATCH — no
+        checklist call, no hook, nothing to remember to wire."""
+        from app.routers.clientes_router import get_clientes_client
+
+        cid = _seed(scoped)
+        clientes_scoped = get_clientes_client()
+        clientes_scoped.set_table_data("clientes", [cliente_row(cid)])
+        antes = _items(client, cid)
+        assert antes["celular"]["concluido"] is False
+        assert antes["profissao"]["concluido"] is False
+
+        r = client.patch(
+            f"/api/clientes/{cid}",
+            json={"celular": "+5511977776666", "profissao": "Engenheiro"},
+            headers=_auth(),
+        )
+        assert r.status_code == 200, r.text
+
+        scoped.set_table_data(
+            "clientes", clientes_scoped.table("clientes").select("*").execute().data
+        )
+        depois = _items(client, cid)
+        assert depois["celular"]["concluido"] is True
+        assert depois["profissao"]["concluido"] is True
+
+    def test_patching_genero_stamps_manual_provenance(self, client, scoped):
+        """🔴 The server decides a value was typed — the caller may not say so.
+
+        `genero` became extractable from an RG in migration 073, and a manual
+        value outranks every later automatic read. That is only safe while the
+        client cannot assert `genero_origem` itself: a caller that could would
+        be able to disguise a machine guess as a human's entry, or the reverse.
+        Same rule `data_nascimento` has had since 068.
+        """
+        from app.routers.clientes_router import get_clientes_client
+
+        cid = _seed(scoped)
+        clientes_scoped = get_clientes_client()
+        clientes_scoped.set_table_data("clientes", [cliente_row(cid)])
+
+        r = client.patch(
+            f"/api/clientes/{cid}",
+            json={"genero": "Masculino"},
+            headers=_auth(),
+        )
+        assert r.status_code == 200, r.text
+        row = clientes_scoped.table("clientes").select("*").execute().data[0]
+        assert row["genero"] == "Masculino"
+        assert row["genero_origem"] == "manual"
+
+    def test_clearing_genero_clears_its_provenance(self, client, scoped):
+        """An origin pointing at a value that no longer exists is a lie the
+        extractor would then honour."""
+        from app.routers.clientes_router import get_clientes_client
+
+        cid = _seed(scoped)
+        clientes_scoped = get_clientes_client()
+        clientes_scoped.set_table_data(
+            "clientes",
+            [cliente_row(cid, genero="Masculino", genero_origem="manual")],
+        )
+        r = client.patch(
+            f"/api/clientes/{cid}", json={"genero": None}, headers=_auth()
+        )
+        assert r.status_code == 200, r.text
+        row = clientes_scoped.table("clientes").select("*").execute().data[0]
+        assert row["genero_origem"] is None
+
+    def test_genero_origem_is_not_accepted_from_the_body(self, client, scoped):
+        """StrictHttpModel refuses the unknown field outright."""
+        from app.routers.clientes_router import get_clientes_client
+
+        cid = _seed(scoped)
+        get_clientes_client().set_table_data("clientes", [cliente_row(cid)])
+        r = client.patch(
+            f"/api/clientes/{cid}",
+            json={"genero": "Masculino", "genero_origem": "rg"},
+            headers=_auth(),
+        )
+        assert r.status_code == 422
 
     def test_nome_completo_is_not_satisfied_by_the_channel_supplied_nome(
         self, client, scoped

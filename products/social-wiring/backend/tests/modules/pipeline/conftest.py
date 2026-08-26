@@ -63,6 +63,9 @@ def atendimento(nid="neg-1", etapa="novo", status="aberta", **over):
         "id": nid,
         "org_id": ORG_A,
         "lead_id": f"lead-{nid}",
+        # Every real atendimento has one — the stage gate reads it to ask
+        # whether we know who this is (`pipeline.stage_gate`).
+        "cliente_id": f"cli-{nid}",
         "meta_ads_lead_id": None,
         "etapa_id": STAGE_ID[etapa],
         "status": status,
@@ -130,6 +133,41 @@ def http_client(mock_db):
         yield tc
 
 
+def seed_titular(scoped, nid="neg-1", *, apto=True, **over):
+    """Seed the cliente behind an atendimento, ready (or not) to move stages.
+
+    `apto=True` gives them a real full name and a phone, which is exactly what
+    `pipeline.stage_gate.CAMPOS_OBRIGATORIOS` requires — so a test about
+    MOVING a card is not accidentally a test about the gate.
+
+    `apto=False` seeds the same person with neither, which is what an
+    untouched Meta/OLX lead actually looks like: a push name and nothing else.
+
+    The two empty sibling tables are not optional. `documento_checklist_service
+    .listar` reads them on every call, and a MockSupabaseClient table that was
+    never `set_table_data` is absent rather than empty.
+    """
+    row = {
+        "id": f"cli-{nid}",
+        "org_id": ORG_A,
+        "nome": "Luciano" if apto else "Ana",
+        "nome_completo": "Luciano Mauricio" if apto else None,
+        "nome_oficial": None,
+        "celular": "+5511999998888" if apto else None,
+        "chave_canonica": None,
+        "chave_tipo": None,
+        "email": None,
+        "data_nascimento": None,
+        "profissao": None,
+        "genero": None,
+    }
+    row.update(over)
+    scoped.set_table_data("clientes", [row])
+    scoped.set_table_data("cliente_documentos", [])
+    scoped.set_table_data("cliente_documento_checklist", [])
+    return row
+
+
 def auth_headers() -> dict:
     return {"Authorization": "Bearer test-token"}
 
@@ -137,4 +175,5 @@ def auth_headers() -> dict:
 __all__ = [
     "ORG_A", "ORG_B", "FUNIL_STAGES", "PROC_STAGES", "OTHER_ORG_STAGE",
     "STAGE_ID", "PROC_STAGE_ID", "atendimento", "processo", "auth_headers",
+    "seed_titular",
 ]

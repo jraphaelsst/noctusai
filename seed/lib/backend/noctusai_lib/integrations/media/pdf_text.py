@@ -33,6 +33,7 @@ False when both libs are absent so a consumer can distinguish
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from io import BytesIO
 
 logger = logging.getLogger(__name__)
@@ -116,4 +117,223 @@ def _extract_pdf_text_with_signal(pdf_bytes: bytes) -> tuple[str, bool]:
         return ("", True)
 
 
-__all__ = ["extract_pdf_text", "pdf_text_tooling_available"]
+# ---------------------------------------------------------------------------
+# Is this text layer CONTENT, or a stamp printed on top of a scan?
+# ---------------------------------------------------------------------------
+#
+# `extract_pdf_text` answers "what text is in this PDF". It does NOT answer
+# the question every caller actually has: *should I trust it, or rasterize
+# and pay for vision?* Four call sites used to answer that themselves, each
+# with its own predicate, and all four got it wrong in the same direction —
+# they treated ANY text as content:
+#
+#   - `matricula_service._texto_da_camada`  -> `>= 100 chars/page`
+#   - `documents.real.LadderIdentityExtractor._to_text` -> `if text.strip()`
+#   - `media.real_adapter._resolve_pdf`     -> `if text`
+#   - ERP `certidoes_service._extract_pdf_text` -> `if parts`
+#
+# A Brazilian cartório scan is a page-sized JPEG with a digital-signature
+# stamp overlaid as real text. So the text layer is non-empty and utterly
+# worthless: a 3-page "CERTIDÃO DE MATRÍCULA" transcribed as nothing but
+# "Valide este documento clicando no link a seguir: https://assinador-web.
+# onr.org.br/docs/..." repeated once per page (137 chars/page — enough to
+# clear every one of those four predicates). The document's actual content
+# never left the JPEG.
+#
+# A character count alone cannot separate the two cases: boilerplate is
+# unbounded (a longer disclaimer defeats any threshold you pick), so the
+# primary signal here is STRUCTURAL — a page whose raster images cover the
+# page area *is* a rendered scan, however chatty its stamp.
+
+
+#: A page whose images cover at least this fraction of the page area is a
+#: rendered scan. Coverage routinely exceeds 1.0 (cartórios stack the scan,
+#: a letterhead and signature glyphs), so this is a floor, not a ratio to
+#: normalize. Measured: 1.01 on the ONR certidão, 2.39 on the Quebec
+#: visualização — while a digitally-typeset PDF carries a logo at most.
+SCAN_IMAGE_COVERAGE_RATIO = 0.80
+
+#: Characters on a single page that make it unmistakably real content,
+#: regardless of coverage. This is the escape hatch for a digitally-typeset
+#: document that happens to sit on a full-page background image or
+#: watermark — its text is genuine and must not be thrown away for vision.
+#: A real matrícula page runs to thousands of characters; a signature stamp
+#: runs to ~140, so the gap is an order of magnitude wide.
+TEXT_RICH_CHARS_PER_PAGE = 800
+
+#: Floor for a page that is neither text-rich nor a rendered scan — catches
+#: a near-blank page whose handful of characters is not worth trusting.
+MIN_CHARS_PER_PAGE = 100
+
+
+@dataclass(frozen=True)
+class PdfPage:
+    """One page's text layer plus the verdict on whether to trust it."""
+
+    number: int  # 1-based, matches what a human sees in a PDF reader
+    text: str
+    is_substantive: bool
+    reason: str  # why — carried so callers can log a decision, not a guess
+
+
+@dataclass(frozen=True)
+class PdfTextLayer:
+    """Per-page classification of a PDF's text layer.
+
+    `tooling_available` distinguishes "this PDF has no usable text" from
+    "we have no extractor installed" — the same signal
+    `_extract_pdf_text_with_signal` carries, preserved here so degraded
+    environments still report truthfully instead of silently claiming the
+    document was scanned.
+    """
+
+    pages: tuple[PdfPage, ...]
+    tooling_available: bool
+
+    @property
+    def text(self) -> str:
+        """The substantive text only, page order, blank pages dropped.
+
+        Deliberately excludes non-substantive pages: concatenating a scan's
+        signature stamp into the output is the exact defect this module
+        exists to prevent.
+        """
+        return "\n".join(p.text for p in self.pages if p.is_substantive and p.text)
+
+    @property
+    def is_substantive(self) -> bool:
+        """True iff EVERY page can be read from the text layer.
+
+        All-or-nothing on purpose: a caller that gets True can skip vision
+        entirely. A caller that gets False should consult `pages` and
+        rasterize only the pages that need it, rather than paying for the
+        whole document.
+        """
+        return bool(self.pages) and all(p.is_substantive for p in self.pages)
+
+    @property
+    def scanned_page_numbers(self) -> tuple[int, ...]:
+        """Pages that need rasterize→vision, in order."""
+        return tuple(p.number for p in self.pages if not p.is_substantive)
+
+
+def _classify_page(chars: int, image_coverage: float) -> tuple[bool, str]:
+    """Decide one page. Order matters — text-rich wins over coverage."""
+    if chars >= TEXT_RICH_CHARS_PER_PAGE:
+        return (True, "text-rich")
+    if image_coverage >= SCAN_IMAGE_COVERAGE_RATIO:
+        return (False, "rendered scan")
+    if chars >= MIN_CHARS_PER_PAGE:
+        return (True, "above char floor")
+    return (False, "below char floor")
+
+
+def _page_image_coverage(page) -> float:  # type: ignore[no-untyped-def]
+    """Fraction of the page area covered by raster images.
+
+    Never raises: a page whose images cannot be measured reports 0.0, which
+    routes the decision back to the character count rather than guessing
+    "scan" and spending money on vision.
+    """
+    try:
+        area = abs(page.rect.width * page.rect.height)
+    except Exception:
+        return 0.0
+    if area <= 0:
+        return 0.0
+
+    try:
+        images = page.get_images(full=True)
+    except Exception:
+        logger.debug("PyMuPDF: get_images failed", exc_info=True)
+        return 0.0
+
+    covered = 0.0
+    for img in images:
+        try:
+            for rect in page.get_image_rects(img[0]):
+                covered += abs(rect.width * rect.height)
+        except Exception:
+            logger.debug("PyMuPDF: get_image_rects failed", exc_info=True)
+            continue
+    return covered / area
+
+
+def classify_pdf_text_layer(pdf_bytes: bytes) -> PdfTextLayer:
+    """Classify each page's text layer as content or scan-stamp noise.
+
+    This is the canonical answer to "can I read this PDF for free, or do I
+    need vision?" — prefer it over calling `extract_pdf_text` and testing
+    the result for emptiness, which cannot tell a matrícula from the
+    signature stamp printed over one.
+
+    Never raises. Returns no pages when the PDF cannot be opened at all,
+    which callers already treat as an unusable upload.
+
+    Degraded mode: measuring image coverage needs PyMuPDF. Without it, the
+    per-page structural signal is unavailable, so the whole document is
+    classified as a single synthetic page against the character floor.
+    That is weaker — it is the pre-existing behaviour — but it is reported
+    honestly through `pages` having length 1 for a multi-page document, so
+    a caller can tell that per-page routing is not on offer.
+    """
+    if not pdf_bytes:
+        return PdfTextLayer(pages=(), tooling_available=pdf_text_tooling_available())
+
+    try:
+        import fitz  # type: ignore  # PyMuPDF
+    except ImportError:
+        return _classify_without_pymupdf(pdf_bytes)
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        logger.debug("PyMuPDF: failed to open document for classification", exc_info=True)
+        return _classify_without_pymupdf(pdf_bytes)
+
+    pages: list[PdfPage] = []
+    try:
+        for index in range(doc.page_count):
+            page = doc[index]
+            try:
+                text = page.get_text().strip()
+            except Exception:
+                logger.debug("PyMuPDF: get_text failed on page %d", index + 1, exc_info=True)
+                text = ""
+            substantive, reason = _classify_page(len(text), _page_image_coverage(page))
+            pages.append(
+                PdfPage(
+                    number=index + 1,
+                    text=text,
+                    is_substantive=substantive,
+                    reason=reason,
+                )
+            )
+    except Exception:
+        logger.debug("PyMuPDF: page walk failed", exc_info=True)
+    finally:
+        doc.close()
+
+    return PdfTextLayer(pages=tuple(pages), tooling_available=True)
+
+
+def _classify_without_pymupdf(pdf_bytes: bytes) -> PdfTextLayer:
+    """Whole-document fallback when per-page structure is unavailable."""
+    text, tooling = _extract_pdf_text_with_signal(pdf_bytes)
+    limpo = (text or "").strip()
+    if not limpo:
+        return PdfTextLayer(pages=(), tooling_available=tooling)
+    substantive, reason = _classify_page(len(limpo), 0.0)
+    return PdfTextLayer(
+        pages=(PdfPage(number=1, text=limpo, is_substantive=substantive, reason=reason),),
+        tooling_available=tooling,
+    )
+
+
+__all__ = [
+    "PdfPage",
+    "PdfTextLayer",
+    "classify_pdf_text_layer",
+    "extract_pdf_text",
+    "pdf_text_tooling_available",
+]

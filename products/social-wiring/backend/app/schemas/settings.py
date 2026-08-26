@@ -216,6 +216,64 @@ class InstagramAppConfigStatus(BaseModel):
     app_id_masked: str | None = None
 
 
+# ─── document retention policy (migration 079) ─────────────────────────
+class DocumentoRetencaoPolitica(BaseModel):
+    """One row of the retention screen.
+
+    Carries the effective value AND the platform default it may be
+    overriding, because the screen has to render "5 anos (padrão: 10 anos)"
+    and offer a restore — and a second request to learn the default would
+    make the two halves able to disagree.
+
+    `retencao_dias = None` means "manter indefinidamente" and is a real
+    policy, not a missing value. `ancora` names what the countdown starts
+    from (`envio` for cliente documents, `encerramento` for a deal's) —
+    without it a duration on screen is ambiguous, and a user reading "5 anos"
+    would have no way to know five years from what.
+    """
+
+    superficie: Literal["cliente", "atendimento"]
+    tipo_documento: str
+    retencao_dias: int | None
+    padrao_dias: int | None
+    personalizado: bool
+    motivo: str | None = None
+    padrao_motivo: str | None = None
+    ancora: Literal["envio", "encerramento"]
+    ancora_rotulo: str
+    atualizado_em: datetime | None = None
+    atualizado_por: str | None = None
+
+
+class DocumentoRetencaoLista(BaseModel):
+    """Outbound shape for GET /settings/documento-retencao."""
+
+    items: list[DocumentoRetencaoPolitica]
+    total: int
+
+
+class DocumentoRetencaoUpdate(BaseModel):
+    """Inbound payload for PUT /settings/documento-retencao.
+
+    `retencao_dias = null` is an explicit choice — keep indefinitely — and is
+    stored as an override row rather than by clearing the org's row, because
+    "the controller decided to keep these forever" and "the controller never
+    touched this" are different facts. Use DELETE for the second.
+
+    `ge=1`, not `ge=0`: zero would mean "expire the instant the clock starts",
+    which nobody sets deliberately, and it collides with the falsy check the
+    upload path uses. Mirrors migration 079's CHECK.
+    """
+
+    superficie: Literal["cliente", "atendimento"]
+    tipo_documento: str = Field(min_length=1, max_length=100)
+    retencao_dias: int | None = Field(default=None, ge=1)
+    motivo: str | None = Field(default=None, max_length=500)
+
+    class Config:
+        extra = "forbid"
+
+
 # ─── clientes inactivity threshold (D16, roadmap lead-card-hub-2026-08) ─
 class ClientesInactivityConfigUpdate(BaseModel):
     """Inbound payload for PUT /settings/clientes-inactivity.

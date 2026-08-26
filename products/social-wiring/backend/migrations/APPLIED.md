@@ -268,3 +268,167 @@ question answerable across the whole base at any time, and
   non-terminal states.
 
 Backfill touched 0 rows: only 1 document existed and it had no extraction.
+
+---
+
+## 073–078 — backfilled 2026-08-25
+
+These landed on the live database between 2026-08-24 and 2026-08-25 and were
+recorded in `social_wiring.schema_migrations` (the machine ledger) but not
+here. Backfilled on contact rather than left silent; row counts below were
+read from the live database at backfill time, not reconstructed.
+
+`073_atendimento_compradores_e_checklist.sql` · `074_cliente_vinculo.sql`
+— a second buyer on a deal, modelled as an edge table onto `clientes` rather
+than a person table of its own, plus the checklist fields that gate the move.
+
+`075_imovel_dados_cartorio.sql` — `imovel_dados` (matrícula number, registry
+number, prefeitura) + `imovel_documentos` (matrícula, guia IPTU). Deliberately
+NO access log and no retention clock: a matrícula is a public registry
+document about a property, not personal data. 0 rows at backfill.
+
+`076_imovel_dados_para_registry.sql` — corrective. 075 FK'd `imovel_dados` to
+`imoveis`, the disposable Vista mirror, so a delisted property would have
+taken its authored cartório data with it. Measured before the fix: 1062 of
+3017 registry imóveis (35%) were already absent from the mirror, and they were
+the SOLD ones. Repointed to `imovel_registry`, which is permanent.
+
+`077_atendimento_negociacao.sql` — `negociacao_defaults` (org-level split) +
+`atendimento_negociacao` (PK = atendimento_id, CHECK that the internal split
+sums to 100). Named `atendimento_negociacao`, not `negociacoes`: migration 060
+records the owner's own decision to rename away from that word after it
+collided with a funnel stage name. 0 rows at backfill.
+
+`078_atendimento_financiamento.sql` — `atendimento_financiamento` (three-valued
+`situacao`) + `atendimento_documentos` + `atendimento_documento_acessos`.
+Unlike 075, LGPD-complete: an imposto de renda is a person's declared income,
+so every content read appends to the access log. `retencao_ate` shipped NULL
+pending the owner's decision — answered by 079. 0 rows at backfill.
+
+## 079 — `079_documento_retencao_politicas.sql`
+
+* `documento_retencao_politicas`: the controller-owned retention policy,
+  two-tier (`org_id IS NULL` = platform default, an org row overrides it).
+  Moves retention off `cliente_documento_tipos.retencao_dias`, where only a
+  migration could change it, onto a table the Settings screen edits.
+* Seeded 17 platform rows: 9 for the `cliente` surface, **copied by SELECT
+  from the live `cliente_documento_tipos`** rather than retyped, and 8 for the
+  `atendimento` surface (the recommendation — 10y for the pacto/certidão set,
+  5y for the comprovante de residência, 2y for the FGTS set; rationale on each
+  row's `motivo` and in `LGPD-WARNINGS.md`).
+* Verified against the live database after apply: all 9 cliente values are
+  `IS NOT DISTINCT FROM` their catalogue counterparts, so this migration
+  changed no effective retention for any existing document.
+* `cliente_documento_tipos.retencao_dias` kept as a one-release rollback path
+  and COMMENTed as superseded. No data changed on that table.
+
+Touched 0 existing rows.
+
+## 080 — `080_vw_lead_corretor_contagem.sql`
+
+* `vw_lead_corretor_contagem` — lead count per broker, grouped in the
+  database, `security_invoker = true` (same posture as `vw_nome_conferencia`).
+* Replaces an N+1 in `dimensions_service.list_corretores_with_lead_count`:
+  29 brokers meant 30 sequential PostgREST round trips. Measured in prod on
+  2026-08-25, `GET /api/leads/corretores` was the slowest endpoint the
+  container served — 3343ms / 2083ms / 1828ms in one 25-minute window, against
+  a p50 of 6.4ms — and the app shell fetches it on every page.
+* The counting was never the bottleneck: `idx_sw_leads_org_corretor` already
+  covers every one of those counts. The round trips were.
+* Verified against the live database after apply: 29 brokers, **0 divergences**
+  between the old per-broker COUNT and the view, 12.087 leads attributed.
+
+A view — no table created, 0 rows touched.
+
+## 081 — `081_portal_roi_vendas_da_negociacao.sql`
+
+* `vw_portal_roi` now counts won deals from the funnel, not only the
+  manually-typed `lead_vendas` rows. Attribution runs
+  `atendimento_negociacao → atendimentos.lead_id → leads.origem_id`; a sale is
+  `status='aceita' AND closed_at IS NOT NULL`, which is the pair
+  `pipeline/routers/boards.py` sets on accepting a proposal and the only
+  definition of "won" the codebase has.
+* Why it was empty: `lead_vendas` and `lead_campanhas` both held **0 rows**.
+  The ROI screen showed 13.379 leads and 0 vendas because the sale had to be
+  typed a second time, in a place nobody goes.
+* Verified against the live database after apply: the attribution path
+  resolves for **1.282 of the 1.284** atendimentos that carry a lead
+  (all currently attributed to "Meta Ads (Leads)"). The 7 already-won deals
+  are NOT attributable — 5 carry no `lead_id` at all and 2 have leads that
+  predate `origem_id` — so the screen fills as deals close from here, not
+  retroactively. Stated rather than implied: this wiring is correct and its
+  history is empty.
+* The two vendas sources are summed and must stay disjoint; there is no shared
+  key that could detect a deal entered in both. Safe today (`lead_vendas` is
+  empty) — see the migration header before building a manual-entry UI for it.
+
+A view — no table created, 0 rows touched.
+
+## 082 — `082_roteiros_visitas.sql`
+
+✅ **APPLIED + VERIFIED 2026-08-26** (user go-ahead given after the row counts
+were stated). Verified live immediately after: `roteiros` 6 columns, `visitas`
+10, `visitas_registry_fk` → `imovel_registry` ON DELETE CASCADE, RLS enabled on
+both with 4 policies, 4 indexes, and `vw_imovel_visita_contagem` queryable.
+Zero existing rows touched — every statement was a CREATE.
+
+* `roteiros` + `visitas` — the qualificação → visita funnel gets a real object.
+  A visit used to be an agendamento with `tipo='visita'`: one property, no
+  order, not printable, and — the reason this exists — not countable.
+* `visitas.status` is three-valued (`pendente` / `realizada` / `nao_realizada`),
+  never a boolean. "Hasn't happened yet" and "didn't happen" are different
+  facts; merging them files every future visit under "did not".
+* 🔴 **`visitas (org_id, codigo)` FKs to `imovel_registry (org_id,
+  codigo_canonical)`, NOT to the `imoveis` mirror** — the same ruling 063 made
+  and 076 had to re-make after 075 got it wrong. The mirror holds only ACTIVE
+  Vista listings and 1062 of 3017 registered imóveis (35%, prod 2026-08-25)
+  have already left it. A mirror FK would reject a third of the catalog at
+  INSERT and delete visit history on delist — i.e. destroy exactly the
+  2024→2028 record the FK was asked for. `test_migration_082_roteiros_visitas
+  .py::TestFKTargetsTheRegistry` holds it shut.
+* `vw_imovel_visita_contagem` — per-imóvel visit counts, `security_invoker =
+  true` (071/080 posture), grouped on the registry código so a sold imóvel
+  keeps its history. Written WITH the tables rather than after an N+1 is
+  discovered (080's lesson, applied early).
+* The CHECK on `atendimento_agendamentos.tipo` is deliberately NOT narrowed:
+  live rows carry `'visita'`, and a migration that rejects data which already
+  exists is a break, not a cutover. The Agendar button stops OFFERING it.
+* No `proprietario_*` column: Vista exposes no owner data (D1, user-ratified
+  2026-08-25), and a column nothing can write is a placeholder side. Its
+  destination when a source exists is `imovel_dados` (075).
+
+## 052 — `052_imovelweb_portal_leads.sql`
+
+✅ **APPLIED + VERIFIED 2026-08-26.** Landed out of numeric order: the file was
+authored 2026-08-18 on `feat/imovelweb-portal-leads` and merged today, long
+after 053–082 had shipped. The slot was reserved and still free, so it kept its
+number rather than being renumbered — renumbering would have broken every
+reference in the project's own docs and tests.
+
+* `imovelweb_lead_events` (the durable delivery inbox, PK = vendor eventId),
+  `imovelweb_leads` (the lossless ledger) and `imovelweb_agencies` (the
+  tenant-resolution key). All three created EMPTY; RLS on, 6 policies,
+  8 indexes.
+* Checked against prod BEFORE applying, because this migration is **not**
+  purely additive — unlike 082 it touches two live tables:
+  - `ALTER TABLE leads ADD COLUMN IF NOT EXISTS external_source/external_lead_id`
+    — already present (051 added them), so a no-op.
+  - `CREATE UNIQUE INDEX IF NOT EXISTS uq_sw_leads_org_external_lead` — already
+    existed (051), so a no-op. Had it NOT existed, a unique index over 13.478
+    live leads could have failed on a duplicate; verified first rather than
+    attempted.
+  - `integration_accounts_provider_check` is DROPPED by dynamic lookup and
+    re-ADDed one value wider (`+ imovelweb`). Verified beforehand that the
+    providers actually in use are `gmail, meta, n8n, youtube` and that
+    **0 rows** would violate the new list. Confirmed after: `leads` still
+    13.478 rows, `integration_accounts` still 5.
+* 🔴 **Applying it does NOT make the integration live**, and that separation is
+  the point. The receiver 401s every delivery while no secret is configured
+  (`bypass_when_unset=False`), and the MCP connector is not registered in
+  `.mcp.json`. What applying it DOES buy: the two new scheduled jobs
+  (`imovelweb_leads_retry` */15, `imovelweb_reconcile` hourly) find an empty
+  queue and no-op cleanly. Without the tables they would have queried a missing
+  relation every fifteen minutes forever — swallowed by the jobs' own
+  `except`, so not fatal, but permanent error noise in prod.
+* Gate 2 (live traffic) still needs vendor credentials — see
+  `projects/imovelweb-portal-leads-ingestion/HANDOFF.md` §1.

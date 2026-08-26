@@ -350,7 +350,7 @@ function MetadataFields({
         </div>
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="upload-description">Descricao</Label>
+        <Label htmlFor="upload-description">Descrição</Label>
         <Textarea
           id="upload-description"
           value={form.description}
@@ -653,7 +653,7 @@ function HistoryCard({ activeJobId }: { activeJobId: string | null }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Historico recente</CardTitle>
+        <CardTitle>Histórico recente</CardTitle>
         <CardDescription>Os 25 envios mais recentes desta organizacao</CardDescription>
       </CardHeader>
       <CardContent>

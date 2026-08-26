@@ -49,6 +49,7 @@ from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError
 
 from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
 from app.services import clientes_service as svc
+from app.services import identidade_service as ident
 
 router = APIRouter(prefix="/api/clientes", tags=["clientes"])
 
@@ -261,6 +262,18 @@ class ClientePatchBody(StrictHttpModel):
     data_nascimento: Optional[date] = None
     genero: Optional[str] = None
 
+    # Migration 073. `celular` is here for the same reason `email` is: the
+    # canonical key holds one or the other, so a cliente keyed by email has
+    # nowhere else to put a phone — and celular is now REQUIRED to move an
+    # atendimento between stages.
+    #
+    # `genero_origem` is NOT accepted, exactly like `data_nascimento_origem`:
+    # gender is now also read off an identity document, so its provenance is
+    # the server's to stamp. A caller able to assert `origem='rg'` could make a
+    # typed value look like a document reading, or the reverse.
+    celular: Optional[str] = None
+    profissao: Optional[str] = None
+
 
 class MergeGrupoBody(StrictHttpModel):
     cliente_id_sobrevivente: UUID
@@ -275,6 +288,14 @@ class MergeGrupoOut(BaseModel):
 class ManterSeparadosOut(BaseModel):
     chave_canonica: str
     rejeitado: bool = True
+
+
+class MergeSegurosOut(BaseModel):
+    """Result of draining the auto-mergeable part of the review queue."""
+
+    grupos_mesclados: int
+    clientes_absorvidos: int
+    grupos_restantes: int
 
 
 class DesfazerOut(BaseModel):
@@ -346,6 +367,87 @@ async def list_revisao(
     rejected = _rejected_keys(client, org_id)
     visible = [g for g in groups if g["chave_canonica"] not in rejected]
     return _paginate_items(visible, page, page_size)
+
+
+@router.post("/revisao/merge-seguros", response_model=MergeSegurosOut)
+async def merge_seguros(
+    simular: bool = Query(False),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_clientes_client),
+) -> MergeSegurosOut:
+    """Drain every group the classifier considers unambiguous, in one action.
+
+    🔴 WHY THIS EXISTS, AND WHY IT IS STILL A BUTTON
+    -------------------------------------------------
+    The queue held 351 groups in production. At two clicks each that is an
+    afternoon of work nobody was ever going to do, so it was not being done —
+    and a review queue nobody drains is a data-quality problem that only grows.
+    Widening `normalize_name` (punctuation, origin markers, handle taglines)
+    moved 81 of those 351 into the auto-merge classes; this endpoint applies
+    exactly those.
+    
+    It is deliberately NOT automatic. `identidade_incerta` rows were parked
+    for a HUMAN, and folding customer records together is not reversible from
+    the operator's side — so the decision stays a person's, it just costs one
+    press instead of 162. Everything the classifier is unsure about (C4/C5/C6)
+    is untouched and still one-by-one.
+
+    The survivor is the candidate with the longest name, which is the
+    contract's own rule for C3 (`identidade_service.longest_raw_name`) — the
+    fuller spelling is the one worth keeping.
+
+    `simular=true` counts without merging. That is how the button gets to say
+    "Mesclar 81 grupos" instead of an unqualified "merge everything safe" —
+    a bulk action that will not tell you its size before you press it is one
+    people are right not to press.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    grupos = svc.list_review_groups(client, org_id)
+    mesclados = absorvidos = 0
+
+    for group in grupos:
+        _motivo, automatico = ident.classify_names(
+            [c.get("nome") for c in group["candidatos"]]
+        )
+        if not automatico:
+            continue
+
+        candidatos = group["candidatos"]
+        # Longest name wins; the id breaks ties so two runs agree.
+        sobrevivente = max(
+            candidatos, key=lambda c: (len((c.get("nome") or "").strip()), str(c["id"]))
+        )
+        outros = [c for c in candidatos if c["id"] != sobrevivente["id"]]
+        if not outros:
+            continue
+
+        if simular:
+            mesclados += 1
+            absorvidos += len(outros)
+            continue
+
+        for candidato in sorted(outros, key=lambda c: str(c["id"])):
+            svc.merge_clientes(
+                client,
+                org_id,
+                cliente_id_sobrevivente=UUID(str(sobrevivente["id"])),
+                cliente_id_absorvido=UUID(str(candidato["id"])),
+                motivo=group["motivo"],
+                # `automatico=False`: a person pressed the button. Recording it
+                # as a machine merge would make the audit trail claim nobody
+                # decided this.
+                automatico=False,
+            )
+            absorvidos += 1
+        mesclados += 1
+
+    return MergeSegurosOut(
+        grupos_mesclados=mesclados,
+        clientes_absorvidos=absorvidos,
+        grupos_restantes=len(grupos) - mesclados,
+    )
 
 
 @router.post("/revisao/{grupo}/merge", response_model=MergeGrupoOut)

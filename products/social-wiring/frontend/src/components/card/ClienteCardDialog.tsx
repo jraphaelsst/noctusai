@@ -24,7 +24,7 @@
  * `notFound`, handled like an error).
  */
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Bell,
@@ -33,7 +33,10 @@ import {
   ExternalLink,
   FileText,
   MoreHorizontal,
+  Pencil,
   Trash2,
+  UserPlus,
+  Users,
 } from "lucide-react";
 
 import { DetailSections } from "@noctusai/lib/components";
@@ -48,6 +51,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
+import {
+  DadosPessoaisForm,
+  type DadosPessoais,
+} from "@/components/card/DadosPessoaisForm";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
@@ -56,12 +63,15 @@ import type {
   Agendamento,
   AgendamentoCreateBody,
   CardAtendimento,
+  Comprador,
   Checklist,
   Documento,
   DocumentoChecklistItem,
   ExtracaoSugestao,
   CardDatas,
   Membro,
+  Roteiro,
+  StatusVisita,
   Tag,
   TimelineEntry,
   TipoDocumento,
@@ -72,6 +82,7 @@ import { Timeline } from "./Timeline";
 import { ChecklistDialog } from "./popovers/ChecklistDialog";
 import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
 import { CardSidebarNav } from "./CardSidebarNav";
+import { RoteirosSection } from "./RoteirosSection";
 import type { CardSubpageKey } from "./CardSidebarNav";
 import { EtiquetasPopover } from "./popovers/EtiquetasPopover";
 import { MembrosPopover } from "./popovers/MembrosPopover";
@@ -97,6 +108,43 @@ export interface ClienteCardDialogProps {
    *  board's "arquivar". The card itself owns nothing board-specific, so the
    *  board passes what only it can mean. */
   acoes?: ReactNode;
+
+  // ─── Compradores / partes do atendimento (migration 073) ───────────────
+  /**
+   * The OTHER people party to this atendimento. The titular is not in here —
+   * they are the card — so an empty list is the ordinary single-buyer case and
+   * the Geral section hides itself entirely.
+   */
+  compradores?: Comprador[];
+  compradoresLoading?: boolean;
+  onAdicionarComprador?: () => void;
+  onRemoverComprador?: (parteId: string) => void;
+  /**
+   * Renders one party's OWN checklist + documents panel.
+   *
+   * A render prop rather than data, because each party's panel needs its own
+   * queries keyed by THEIR `cliente_id`, and this component is presentational
+   * — it is rendered in tests with plain objects and no query client. The
+   * container owns the fetching; this file owns the collapsible chrome and the
+   * order people appear in.
+   */
+  renderDocumentosDePessoa?: (clienteId: string) => ReactNode;
+
+  /**
+   * The Negociação and Financiamento/Escritura subpages.
+   *
+   * Render props for the same reason `renderDocumentosDePessoa` is one: both
+   * need their own queries and mutations, and this component is presentational
+   * — it is rendered in tests with plain objects and no query client. Thunks,
+   * not elements, so a subpage nobody has opened costs nothing.
+   */
+  renderNegociacao?: () => ReactNode;
+  renderFinanciamento?: () => ReactNode;
+
+  /** Current values behind the typed checklist items, for the edit form. */
+  dadosPessoais?: DadosPessoais;
+  onSaveDadosPessoais?: (valores: DadosPessoais) => void;
+  dadosPessoaisSaving?: boolean;
   /**
    * The person's atendimentos, each with its ORIGIN record embedded. The card
    * renders the lead's own data from these — `clientes` holds identity and card
@@ -125,6 +173,22 @@ export interface ClienteCardDialogProps {
   onCreateAgendamento: (body: AgendamentoCreateBody) => void;
   onRemoveAgendamento: (id: string) => void;
   agendamentoSaving?: boolean;
+
+  // Roteiros (migration 082) — the qualificação → visita funnel. The Agendar
+  // button no longer offers "Visita"; a visit is a roteiro entry now, because
+  // only that can hold several properties, an order, and an outcome.
+  roteiros?: Roteiro[];
+  roteirosLoading?: boolean;
+  roteirosError?: string | null;
+  onCriarRoteiro: () => void;
+  onRemoverRoteiro: (roteiroId: string) => void;
+  onGerarRoteiroPdf: (roteiroId: string) => void;
+  onPatchVisita: (
+    roteiroId: string,
+    visitaId: string,
+    body: { status?: StatusVisita; observacao?: string | null },
+  ) => void;
+  roteiroPdfPendingId?: string | null;
 
   // Membros
   allMembros: Membro[];
@@ -182,6 +246,17 @@ export interface ClienteCardDialogProps {
   onTimelineLoadMore?: () => void;
   onPostComentario: (corpo: string) => void;
   postingComentario?: boolean;
+
+  /**
+   * The tab the user just opened.
+   *
+   * 🔴 Exists so the owner can fetch that tab's data ON DEMAND. Opening a card
+   * fired eight parallel reads — resumo, timeline, checklists, documentos,
+   * documento-checklist, agendamentos, compradores, negociação, financiamento
+   * — several taking 1,4–2,4 s in production, for panels the person may never
+   * open. Only this component knows which tab is active, so only it can say.
+   */
+  onSubpageChange?: (key: CardSubpageKey) => void;
 }
 
 export function ClienteCardDialog(props: ClienteCardDialogProps) {
@@ -190,6 +265,16 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   // `geral` is the open-on-mount subpage: the card is opened to DO something
   // far more often than to read the record behind it.
   const [subpage, setSubpage] = useState<CardSubpageKey>("geral");
+
+  // 🔴 Reported upward so the owner can fetch a tab's data WHEN IT IS OPENED.
+  // Opening a card fired eight parallel reads — resumo, timeline, checklists,
+  // documentos, documento-checklist, agendamentos, compradores, negociação,
+  // financiamento — several taking 1,4–2,4 s, for tabs the person may never
+  // look at. The dialog owns which tab is active; only it can say.
+  function selecionar(key: CardSubpageKey) {
+    setSubpage(key);
+    props.onSubpageChange?.(key);
+  }
   const record = useRecordSections(props.atendimentos);
   const emptyKeys = useMemo(
     () =>
@@ -203,7 +288,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
-        className="grid h-[85vh] max-w-6xl grid-cols-1 gap-0 overflow-hidden p-0 md:grid-cols-[184px_1fr_360px]"
+        className="grid h-[85vh] max-w-6xl grid-cols-1 gap-0 overflow-hidden p-0 md:grid-cols-[200px_1fr_360px]"
         data-testid="cliente-card-dialog"
       >
         {error ? (
@@ -233,13 +318,31 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
             </DialogDescription>
 
             {/* ── Left rail — subpage navigation ──────────────────── */}
-            <CardSidebarNav active={subpage} onSelect={setSubpage} emptyKeys={emptyKeys} />
+            <CardSidebarNav active={subpage} onSelect={selecionar} emptyKeys={emptyKeys} />
 
             {/* ── Middle pane — the active subpage ────────────────── */}
             <ScrollArea className="border-r p-6">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <h2 className="text-xl font-semibold">{nome}</h2>
-                {acoes ? <div className="flex shrink-0 gap-2">{acoes}</div> : null}
+                {/* Top-right action row. `acoes` is whatever board opened the
+                    card (its own buttons); "Adicionar Comprador" is card-level
+                    and belongs beside them rather than buried in a tab,
+                    because "this buyer is married" is discovered while reading
+                    anything on the card, not only the Documentos tab. */}
+                <div className="flex shrink-0 items-center gap-2">
+                  {props.onAdicionarComprador && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={props.onAdicionarComprador}
+                      data-testid="adicionar-comprador-btn"
+                    >
+                      <UserPlus className="mr-1.5 h-4 w-4" />
+                      Adicionar Comprador
+                    </Button>
+                  )}
+                  {acoes}
+                </div>
               </div>
 
               {/* The action row belongs to Geral. It was card-level chrome while
@@ -286,27 +389,6 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 />
               </div>
               )}
-
-              {/* The anexo picker lives OUTSIDE the tab switch on purpose: its
-                  trigger is on Documentos, and an input unmounted with the Geral
-                  row could not be opened from there.
-
-                  It had no trigger at all between 2026-08-19 and now — removing
-                  the generic `Adicionar` button took the only thing that opened
-                  it, and the comment that replaced it claimed the Anexos section
-                  owned a trigger that was never written. Uploading was
-                  unreachable in the UI for two days. `AnexosSection` now really
-                  does own it. */}
-              <input
-                id="card-anexo-file-input"
-                type="file"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) props.onUploadDocumento(file, props.tiposDocumento[0]?.tipo_documento ?? "outro");
-                  e.target.value = "";
-                }}
-              />
 
               {/* The sidebar picks WHICH of these the middle pane shows.
                   Geral keeps what you act on continuously — etiquetas, the
@@ -369,29 +451,126 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 />
               )}
 
+              {subpage === "roteiros" && (
+                <RoteirosSection
+                  roteiros={props.roteiros ?? []}
+                  loading={props.roteirosLoading}
+                  error={props.roteirosError}
+                  onCriar={props.onCriarRoteiro}
+                  onRemover={props.onRemoverRoteiro}
+                  onGerarPdf={props.onGerarRoteiroPdf}
+                  onPatchVisita={props.onPatchVisita}
+                  pdfPendingId={props.roteiroPdfPendingId}
+                />
+              )}
+
               {subpage === "documentos" && (
                 <>
-                  {/* The permanent checklist sits ABOVE anexos: it is the list of
-                      what must be COLLECTED, and the anexos below are what has
-                      arrived. Reading order follows the work. */}
-                  <DocumentoChecklistSection
-                    items={props.documentoChecklist ?? []}
-                    loading={props.documentoChecklistLoading}
-                    onToggle={props.onToggleDocumentoChecklist}
-                    onResolverSugestao={props.onResolverSugestao}
-                    sugestaoSaving={props.sugestaoSaving}
-                    sugestoesExtras={props.sugestoesExtras}
-                    nomeOficial={props.nomeOficial}
-                    nomeRegistro={props.nomeRegistro}
-                  />
-                  <AnexosSection
-                    documentos={props.documentos}
-                    loading={props.documentosLoading}
-                    uploading={props.uploadingDocumento}
-                    onOpenDocumento={props.onOpenDocumento}
-                    onDeleteDocumento={props.onDeleteDocumento}
-                  />
+                  {/* 🔴 ONE SECTION PER PERSON, and the titular is just the
+                      first of them.
+
+                      Every party to the deal needs the same eight items and
+                      the same uploads — that is the whole reason a comprador
+                      is a `clientes` row. Rendering them as peers rather than
+                      as "the client, plus some extras" is what keeps that true
+                      on screen as well as in the schema.
+
+                      Collapsible because a married buyer means two full
+                      panels, a buyer with a fiador means three, and a flat
+                      stack of three checklists is unreadable. The titular
+                      opens expanded (it is the one you came for); the others
+                      start collapsed and their queries only run when opened. */}
+                  <PessoaDocumentosSection
+                    nome={nome}
+                    papel="Titular"
+                    defaultOpen
+                    testId="titular"
+                  >
+                    {() => (
+                      <>
+                    {/* The form sits directly under the list of what is
+                        missing. Splitting them would mean reading the gap on
+                        one screen and filling it on another. */}
+                    {props.onSaveDadosPessoais && (
+                      <DadosPessoaisForm
+                        valores={props.dadosPessoais ?? {}}
+                        onSave={props.onSaveDadosPessoais}
+                        saving={props.dadosPessoaisSaving}
+                      />
+                    )}
+                    {/* The permanent checklist sits ABOVE anexos: it is the
+                        list of what must be COLLECTED, and the anexos below
+                        are what has arrived. Reading order follows the work. */}
+                    <DocumentoChecklistSection
+                      items={props.documentoChecklist ?? []}
+                      loading={props.documentoChecklistLoading}
+                      onToggle={props.onToggleDocumentoChecklist}
+                      onResolverSugestao={props.onResolverSugestao}
+                      sugestaoSaving={props.sugestaoSaving}
+                      sugestoesExtras={props.sugestoesExtras}
+                      nomeOficial={props.nomeOficial}
+                      nomeRegistro={props.nomeRegistro}
+                    />
+                    <AnexosSection
+                      documentos={props.documentos}
+                      loading={props.documentosLoading}
+                      uploading={props.uploadingDocumento}
+                      onUpload={(file) =>
+                        props.onUploadDocumento(
+                          file,
+                          props.tiposDocumento[0]?.tipo_documento ?? "outro",
+                        )
+                      }
+                      onOpenDocumento={props.onOpenDocumento}
+                      onDeleteDocumento={props.onDeleteDocumento}
+                    />
+                      </>
+                    )}
+                  </PessoaDocumentosSection>
+
+                  {(props.compradores ?? []).map((parte) => (
+                    <PessoaDocumentosSection
+                      key={parte.id}
+                      nome={nomeDaParte(parte)}
+                      papel={PAPEL_LABEL[parte.papel] ?? parte.papel}
+                      testId={`comprador-${parte.id}`}
+                    >
+                      {() => props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
+                    </PessoaDocumentosSection>
+                  ))}
                 </>
+              )}
+
+              {subpage === "geral" && (props.compradores ?? []).length > 0 && (
+                /* Hidden entirely when nobody has been added — the ordinary
+                   card has one buyer, and an empty "Compradores" heading on
+                   every one of them would be furniture that means nothing. It
+                   appears the moment a second party exists, which is exactly
+                   when it starts carrying information. */
+                <CompradoresSection
+                  compradores={props.compradores ?? []}
+                  onRemover={props.onRemoverComprador}
+                />
+              )}
+
+              {subpage === "financiamento" && (
+                <div data-testid="card-subpage-financiamento">
+                  {props.renderFinanciamento?.() ?? (
+                    <p className="text-sm text-muted-foreground">
+                      Financiamento indisponível.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {subpage === "negociacao" && (
+                <div data-testid="card-subpage-negociacao">
+                  {props.renderNegociacao?.() ?? (
+                    <p className="text-sm text-muted-foreground">
+                      Negociação indisponível.
+                    </p>
+                  )}
+                </div>
               )}
 
               {(subpage === "cliente" || subpage === "campanha") && (
@@ -426,6 +605,204 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
 }
 
 // ─── Sub-sections ───────────────────────────────────────────────────────────
+
+/**
+ * How a party's role reads on screen. Keys mirror
+ * `compradores_service.PAPEIS`; an unmapped value falls through to the raw
+ * string rather than rendering blank, so a role added on the server shows up
+ * as itself until someone gives it a label.
+ */
+const PAPEL_LABEL: Record<string, string> = {
+  comprador: "Comprador",
+  conjuge: "Cônjuge",
+  fiador: "Fiador",
+  procurador: "Procurador",
+  outro: "Outro",
+};
+
+/**
+ * The best name we hold for a party.
+ *
+ * Same precedence the checklist uses — the explicit `nome_completo` first,
+ * then whatever the channel supplied. The fallback is a visible placeholder
+ * rather than an empty string: a nameless collapsed row is unclickable in
+ * practice because there is nothing to read on it.
+ */
+function nomeDaParte(parte: Comprador): string {
+  return (
+    parte.cliente?.nome_completo?.trim() ||
+    parte.cliente?.nome?.trim() ||
+    "Sem nome"
+  );
+}
+
+/**
+ * One person's collapsible block of checklist + documents.
+ *
+ * 🔴 The children are rendered ONLY while open, and that is load-bearing
+ * rather than cosmetic: a party's panel runs its own queries against their
+ * `cliente_id`, so mounting three collapsed panels would fire three checklist
+ * fetches and three document fetches for panels nobody is looking at. Opening
+ * is what asks for the data.
+ */
+function PessoaDocumentosSection({
+  nome,
+  papel,
+  defaultOpen = false,
+  testId,
+  children,
+}: {
+  nome: string;
+  papel: string;
+  defaultOpen?: boolean;
+  testId: string;
+  /**
+   * A FUNCTION, not a node. JSX children are evaluated by the caller before
+   * this component ever runs, so `{open && children}` would still have built
+   * every collapsed party's subtree. Taking a thunk means a closed section
+   * costs literally nothing — which is the point, since each party's panel
+   * opens its own queries.
+   */
+  children: () => ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div
+      className="mb-4 rounded-lg border"
+      data-testid={`pessoa-documentos-${testId}`}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/50"
+        data-testid={`pessoa-documentos-toggle-${testId}`}
+      >
+        {open ? (
+          <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )}
+        <span className="truncate text-sm font-semibold">{nome}</span>
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+          {papel}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t px-3 pb-3 pt-3" data-testid={`pessoa-documentos-corpo-${testId}`}>
+          {children()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Geral's Compradores list — who else is on this deal.
+ *
+ * Rows are collapsed to a name and expand to the contact details, for the same
+ * reason the Documentos panels do: this list is short today and will not stay
+ * short (spouse, then fiador, then procurador), and a flat dump of everyone's
+ * details would push the rest of Geral off the screen.
+ *
+ * Deliberately NOT a second checklist surface. The documents live on the
+ * Documentos tab, one place, for every person — two places to tick the same
+ * item is how the two start disagreeing.
+ */
+function CompradoresSection({
+  compradores,
+  onRemover,
+}: {
+  compradores: Comprador[];
+  onRemover?: (parteId: string) => void;
+}) {
+  return (
+    <div className="mb-5" data-testid="compradores-section">
+      <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <Users className="h-3.5 w-3.5" />
+        Compradores
+      </p>
+      <div className="space-y-1.5">
+        {compradores.map((parte) => (
+          <CompradorRow key={parte.id} parte={parte} onRemover={onRemover} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CompradorRow({
+  parte,
+  onRemover,
+}: {
+  parte: Comprador;
+  onRemover?: (parteId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const pessoa = parte.cliente;
+
+  return (
+    <div className="rounded-md border" data-testid={`comprador-row-${parte.id}`}>
+      <div className="flex items-center gap-2 px-2.5 py-2">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          data-testid={`comprador-toggle-${parte.id}`}
+        >
+          {open ? (
+            <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          <span className="truncate text-sm">{nomeDaParte(parte)}</span>
+          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+            {PAPEL_LABEL[parte.papel] ?? parte.papel}
+          </span>
+        </button>
+        {onRemover && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+            onClick={() => onRemover(parte.id)}
+            title={`Remover ${nomeDaParte(parte)} deste atendimento`}
+            aria-label={`Remover ${nomeDaParte(parte)} deste atendimento`}
+            data-testid={`comprador-remover-${parte.id}`}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
+      {open && (
+        <dl
+          className="space-y-1 border-t px-2.5 py-2 text-sm"
+          data-testid={`comprador-detalhe-${parte.id}`}
+        >
+          <CompradorCampo rotulo="Celular" valor={pessoa?.celular} />
+          <CompradorCampo rotulo="Email" valor={pessoa?.email} />
+          {parte.observacao && (
+            <CompradorCampo rotulo="Observação" valor={parte.observacao} />
+          )}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+function CompradorCampo({ rotulo, valor }: { rotulo: string; valor?: string | null }) {
+  return (
+    <div className="flex gap-2">
+      <dt className="w-24 shrink-0 text-xs text-muted-foreground">{rotulo}</dt>
+      {/* An absent value says so rather than rendering an empty cell — a blank
+          beside a label reads as a rendering bug, not as missing data. */}
+      <dd className={valor ? "" : "text-muted-foreground"}>{valor || "—"}</dd>
+    </div>
+  );
+}
+
 
 function DataEntregaPill({ datas }: { datas: CardDatas }) {
   if (!datas.data_entrega) return null;
@@ -471,16 +848,22 @@ function DescricaoSection({
           Descrição
         </p>
         {!editing && (
+          // Icon-only, but NOT label-less: `aria-label` + `title` carry the
+          // word "Editar" for screen readers and on hover, so trading the
+          // visible text for space does not trade away what the button does.
           <Button
-            variant="outline"
-            size="sm"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
             onClick={() => {
               setDraft(corpo);
               setEditing(true);
             }}
+            title="Editar descrição"
+            aria-label="Editar descrição"
             data-testid="descricao-editar-btn"
           >
-            Editar
+            <Pencil className="h-4 w-4" />
           </Button>
         )}
       </div>
@@ -540,31 +923,57 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function AnexosSection({
+export function AnexosSection({
   documentos,
   loading,
   uploading,
+  onUpload,
   onOpenDocumento,
   onDeleteDocumento,
+  testId = "anexos-section",
 }: {
   documentos: Documento[];
   loading: boolean;
   uploading?: boolean;
+  onUpload: (file: File) => void;
   onOpenDocumento: (id: string) => void;
   onDeleteDocumento: (id: string, motivo: string) => void;
+  testId?: string;
 }) {
+  // 🔴 Its OWN input, held by a ref — NOT the shared
+  // `getElementById("card-anexo-file-input")` this used to reach for.
+  //
+  // That worked only while exactly one Anexos section was mounted. Compradores
+  // (migration 073) put one per PERSON on the Documentos tab, and every
+  // "Enviar anexo" button would have opened the same input and uploaded to the
+  // titular — a spouse's RG silently filed onto her husband's record, which is
+  // a data error and an LGPD one at once.
+  //
+  // A ref cannot address the wrong element, so the bug becomes unspellable
+  // rather than merely fixed.
+  const inputRef = useRef<HTMLInputElement>(null);
+
   return (
-    <div className="mb-4" data-testid="anexos-section">
+    <div className="mb-4" data-testid={testId}>
+      <input
+        ref={inputRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onUpload(file);
+          // Cleared so re-picking the SAME file fires `change` again.
+          e.target.value = "";
+        }}
+      />
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Anexos</p>
-        {/* The section owns its trigger — the claim the old comment made and
-            never delivered. It opens the hidden input the dialog keeps mounted
-            outside the tab switch. */}
+        {/* The section owns its trigger AND its input. */}
         <Button
           variant="outline"
           size="sm"
           disabled={uploading}
-          onClick={() => document.getElementById("card-anexo-file-input")?.click()}
+          onClick={() => inputRef.current?.click()}
           data-testid="anexo-enviar-btn"
         >
           {uploading ? "Enviando…" : "Enviar anexo"}
@@ -671,8 +1080,16 @@ function ChecklistBlock({
     <div data-testid={`checklist-block-${checklist.id}`}>
       <div className="mb-1 flex items-center justify-between">
         <p className="text-sm font-semibold">{checklist.titulo}</p>
-        <Button variant="outline" size="sm" onClick={onRemove} data-testid={`checklist-excluir-${checklist.id}`}>
-          Excluir
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+          onClick={onRemove}
+          title={`Excluir checklist ${checklist.titulo}`}
+          aria-label={`Excluir checklist ${checklist.titulo}`}
+          data-testid={`checklist-excluir-${checklist.id}`}
+        >
+          <Trash2 className="h-4 w-4" />
         </Button>
       </div>
       <div className="mb-2 flex items-center gap-2">
@@ -936,7 +1353,7 @@ function AgendamentosSection({
  * that opinion and hands the item back to the data. Without that affordance
  * the first click on an item would pin it forever.
  */
-function DocumentoChecklistSection({
+export function DocumentoChecklistSection({
   items,
   loading,
   onToggle,

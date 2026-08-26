@@ -74,6 +74,9 @@ class FakeIdentityExtractor:
             nome="FULANO DE TAL SILVA",
             nome_confianca=ExtractionConfidence.ALTA,
             nome_rotulo="NOME",
+            genero="Masculino",
+            genero_confianca=ExtractionConfidence.ALTA,
+            genero_rotulo="SEXO",
             source=TextSource.TEXT_LAYER,
         )
 

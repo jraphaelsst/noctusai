@@ -30,6 +30,11 @@ function baseProps(overrides: Partial<ClienteCardDialogProps> = {}): ClienteCard
     agendamentos: [],
     onCreateAgendamento: vi.fn(),
     onRemoveAgendamento: vi.fn(),
+    roteiros: [],
+    onCriarRoteiro: vi.fn(),
+    onRemoverRoteiro: vi.fn(),
+    onGerarRoteiroPdf: vi.fn(),
+    onPatchVisita: vi.fn(),
     allMembros: [],
     selectedMembros: [],
     onToggleMembro: vi.fn(),
@@ -132,7 +137,17 @@ describe("ClienteCardDialog — Anexos empty state", () => {
     // Removing the generic `Adicionar` button took the ONLY thing that opened
     // the file input, and nothing replaced it — uploading was unreachable.
     expect(screen.getByTestId("anexo-enviar-btn")).toBeTruthy();
-    expect(document.getElementById("card-anexo-file-input")).toBeTruthy();
+    // 🔴 The section owns its input, and this assertion says so BY SHAPE
+    // rather than by id. It used to look up the shared
+    // `card-anexo-file-input`, which was exactly what made per-person Anexos
+    // sections impossible: every buyer's upload button opened the same
+    // element and filed onto the titular. The input is found INSIDE the
+    // section now, so a second section cannot borrow this one's.
+    const secao = screen.getByTestId("anexos-section");
+    expect(secao.querySelector('input[type="file"]')).toBeTruthy();
+    // Queried off `document` rather than the render container: the card is a
+    // Radix Dialog and renders through a portal, so the container is empty.
+    expect(document.querySelectorAll('input[type="file"]')).toHaveLength(1);
   });
 });
 
@@ -804,5 +819,200 @@ describe("a barra de ações pertence ao Geral", () => {
     const screen = await open("agendamentos");
     // Same popover component, rendered by the section instead of the row.
     expect(screen.getByTestId("agendamento-trigger")).toBeTruthy();
+  });
+});
+
+
+describe("ClienteCardDialog — Compradores (migration 073)", () => {
+  const parte = (over: Record<string, unknown> = {}) => ({
+    id: "parte-1",
+    atendimento_id: "atd-1",
+    cliente_id: "cli-esposa",
+    papel: "comprador",
+    ordem: 0,
+    observacao: null,
+    created_at: "2026-08-24T00:00:00Z",
+    cliente: {
+      id: "cli-esposa",
+      nome: "Maria",
+      nome_completo: "Maria Mauricio",
+      celular: "+5511977776666",
+      email: null,
+    },
+    ...over,
+  }) as any;
+
+  it("offers Adicionar Comprador in the header when the handler is wired", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ onAdicionarComprador: vi.fn() })} />);
+    expect(screen.getByTestId("adicionar-comprador-btn")).toBeTruthy();
+  });
+
+  it("fires onAdicionarComprador when clicked", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const onAdicionar = vi.fn();
+    render(<ClienteCardDialog {...baseProps({ onAdicionarComprador: onAdicionar })} />);
+    fireEvent.click(screen.getByTestId("adicionar-comprador-btn"));
+    expect(onAdicionar).toHaveBeenCalledTimes(1);
+  });
+
+  it("🔴 hides the Geral Compradores section entirely when nobody was added", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ compradores: [] })} />);
+    // The ordinary card has one buyer. An empty heading on every one of them
+    // would be furniture that means nothing.
+    expect(screen.queryByTestId("compradores-section")).toBeNull();
+  });
+
+  it("shows the Geral Compradores section once a party exists", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ compradores: [parte()] })} />);
+    expect(screen.getByTestId("compradores-section")).toBeTruthy();
+    expect(screen.getByTestId("comprador-row-parte-1")).toBeTruthy();
+  });
+
+  it("keeps a party row collapsed until it is opened", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ compradores: [parte()] })} />);
+    expect(screen.queryByTestId("comprador-detalhe-parte-1")).toBeNull();
+    fireEvent.click(screen.getByTestId("comprador-toggle-parte-1"));
+    expect(screen.getByTestId("comprador-detalhe-parte-1")).toBeTruthy();
+  });
+
+  it("fires onRemoverComprador with the PARTE id, not the person id", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const onRemover = vi.fn();
+    render(
+      <ClienteCardDialog
+        {...baseProps({ compradores: [parte()], onRemoverComprador: onRemover })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("comprador-remover-parte-1"));
+    // Detaching from this deal, never deleting the person — passing
+    // `cliente_id` here would ask the API to remove the wrong thing.
+    expect(onRemover).toHaveBeenCalledWith("parte-1");
+  });
+
+  it("renders one Documentos section per person, titular first", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ compradores: [parte()] })} />);
+    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
+    expect(screen.getByTestId("pessoa-documentos-titular")).toBeTruthy();
+    expect(screen.getByTestId("pessoa-documentos-comprador-parte-1")).toBeTruthy();
+  });
+
+  it("🔴 does not render a party's panel until it is expanded", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderPanel = vi.fn(() => <div data-testid="painel-da-parte" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [parte()],
+          renderDocumentosDePessoa: renderPanel,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
+    // Load-bearing, not cosmetic: each panel runs its OWN checklist and
+    // document queries, so mounting three collapsed parties would fire six
+    // requests for panels nobody opened.
+    expect(renderPanel).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("painel-da-parte")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("pessoa-documentos-toggle-comprador-parte-1"));
+    expect(renderPanel).toHaveBeenCalledWith("cli-esposa");
+    expect(screen.getByTestId("painel-da-parte")).toBeTruthy();
+  });
+
+  it("falls back to a visible placeholder when a party has no name", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [
+            parte({ cliente: { id: "x", nome: null, nome_completo: null, celular: null, email: null } }),
+          ],
+        })}
+      />,
+    );
+    // A nameless collapsed row has nothing to read and nothing to click.
+    expect(screen.getByText("Sem nome")).toBeTruthy();
+  });
+});
+
+describe("ClienteCardDialog — icon actions", () => {
+  it("keeps Editar reachable by name once it is icon-only", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ descricaoCorpo: "Lead interessado" })} />);
+    // Trading the visible label for space must not trade away what the button
+    // does — the accessible name still carries it.
+    const btn = screen.getByTestId("descricao-editar-btn");
+    expect(btn.getAttribute("aria-label")).toBe("Editar descrição");
+    fireEvent.click(btn);
+    expect(screen.getByTestId("descricao-textarea")).toBeTruthy();
+  });
+});
+
+describe("ClienteCardDialog — Roteiros (migration 082)", () => {
+  it("offers the Roteiros tab right after Agendamentos", async () => {
+    // The rail's order is the reading order of the card, and the funnel the
+    // user named is qualificação → visita.
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+
+    const rail = screen.getByTestId("card-sidebar-nav");
+    const chaves = Array.from(rail.querySelectorAll("[data-testid^='card-subpage-tab-']")).map(
+      (el) => el.getAttribute("data-testid"),
+    );
+    expect(chaves).toContain("card-subpage-tab-roteiros");
+    expect(chaves.indexOf("card-subpage-tab-roteiros")).toBe(
+      chaves.indexOf("card-subpage-tab-agendamentos") + 1,
+    );
+  });
+
+  it("is never disabled — you go there to ADD", async () => {
+    // Same rule `agendamentos` and `documentos` follow: a tab disabled on an
+    // empty card is a dead end, not a hint.
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ roteiros: [] })} />);
+    expect((screen.getByTestId("card-subpage-tab-roteiros") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("shows the Roteiros section when the tab is opened", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+
+    fireEvent.click(screen.getByTestId("card-subpage-tab-roteiros"));
+    expect(screen.getByTestId("roteiros-section")).toBeTruthy();
+    expect(screen.getByTestId("roteiro-criar-trigger")).toBeTruthy();
+  });
+
+  it("🔴 still renders a historical tipo='visita' agendamento as 'Visita'", async () => {
+    // The Agendar button stopped OFFERING it; live rows still carry it, and
+    // history must read as "Visita", never as the raw slug. This is the paired
+    // half of `AgendamentoPopover.test.tsx`.
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          agendamentos: [
+            {
+              id: "ag-antigo",
+              atendimento_id: "a1",
+              quando: "2024-03-11T14:00:00Z",
+              tipo: "visita" as const,
+              nota: null,
+              lembrete_minutos_antes: null,
+              created_at: null,
+            },
+          ],
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("card-subpage-tab-agendamentos"));
+    expect(screen.getByTestId("agendamento-ag-antigo").textContent).toContain("Visita");
   });
 });

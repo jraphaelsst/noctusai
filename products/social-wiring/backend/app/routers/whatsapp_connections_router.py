@@ -74,6 +74,7 @@ from app.dependencies import (
     get_admin_client,
     get_current_user_org,
     get_settings,
+    get_scoped_admin_client,
 )
 from app.schemas.whatsapp_connection import (
     AutoReplyToggleOut,
@@ -115,6 +116,8 @@ from app.services.whatsapp_realtime import (
     publish_whatsapp_event,
     whatsapp_scope,
 )
+
+from app.services import table_reads
 
 logger = logging.getLogger(__name__)
 
@@ -822,6 +825,73 @@ def _message_dto_from_row(row: dict[str, Any]) -> MessageDTO:
     )
 
 
+def _telefone_do_chat(chat_id: str) -> Optional[str]:
+    """The E.164 key for a chat, or None when it is not a phone conversation.
+
+    WhatsApp chat ids look like `5511974693365@c.us`. Groups (`@g.us`) and LID
+    identifiers (`@lid`) are not phone numbers and must not be matched against
+    one — `182364311425240` is a LID, and pattern-matching it onto a cliente
+    would put a stranger's name on a stranger's conversation.
+    """
+    if not chat_id or "@" not in chat_id:
+        return None
+    local, _, dominio = chat_id.partition("@")
+    if dominio not in ("c.us", "s.whatsapp.net"):
+        return None
+    digitos = "".join(c for c in local if c.isdigit())
+    # Brazilian mobiles are 12-13 digits with the country code; anything much
+    # shorter or longer is not a number this CRM would hold.
+    if not (10 <= len(digitos) <= 15):
+        return None
+    return f"+{digitos}"
+
+
+def _nomear_pelos_clientes(org_id: UUID, items: list[ChatDTO]) -> None:
+    """Replace bare phone digits with the person's name, in place.
+
+    🔴 WHY THIS IS WORTH A QUERY. The inbox listed `5511974693365` and
+    `5519998839998` while the CRM held 10.258 clientes keyed on exactly those
+    numbers (`clientes.chave_canonica`). The platform knew who was writing and
+    showed a number anyway — the operator had to copy it into another screen to
+    find out.
+
+    Only a title that is STILL the raw digits is replaced. A name WhatsApp
+    itself resolved (a saved contact, a business profile) is what the person
+    on the other end chose to be called, and overriding it with a CRM
+    registration would be a downgrade, not an improvement.
+    """
+    por_chave: dict[str, ChatDTO] = {}
+    for item in items:
+        chave = _telefone_do_chat(item.chat_id)
+        if chave:
+            por_chave.setdefault(chave, item)
+    if not por_chave:
+        return
+
+    try:
+        client = get_scoped_admin_client("social_wiring")
+        linhas = table_reads.in_batched_rows(
+            client, "clientes", org_id, "chave_canonica", sorted(por_chave),
+            select="id,nome,chave_canonica",
+        )
+    except Exception:
+        # The inbox must render even if the CRM lookup fails. A conversation
+        # labelled with a phone number is the status quo; a 500 is not.
+        logger.warning("whatsapp: não foi possível resolver nomes de clientes", exc_info=True)
+        return
+
+    for linha in linhas:
+        item = por_chave.get(str(linha.get("chave_canonica") or ""))
+        if item is None:
+            continue
+        item.cliente_id = str(linha["id"])
+        nome = (linha.get("nome") or "").strip()
+        digitos_do_titulo = "".join(c for c in item.title if c.isdigit())
+        ainda_e_numero = digitos_do_titulo == item.title.strip().lstrip("+")
+        if nome and ainda_e_numero:
+            item.title = nome
+
+
 @router.get("/{connection_id}/chats", response_model=ChatsPage)
 async def list_chats(
     connection_id: UUID,
@@ -852,6 +922,7 @@ async def list_chats(
         connection_id=connection_id, limit=limit, before=before, archived=archived,
     )
     items = [ChatDTO(**s.as_dict()) for s in summaries]
+    _nomear_pelos_clientes(org_id, items)
     next_before = items[-1].last_message_at if len(items) == limit else None
     return ChatsPage(items=items, next_before=next_before)
 

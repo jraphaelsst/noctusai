@@ -14,10 +14,15 @@ Pagination: every unbounded read composes
 module's docstring for the two hazards it closes (PostgREST's 1 000-row
 cap, and a pager that never terminates if the backend disregards
 `range()`). `.in_()` filters over `_IN_FILTER_BATCH` are chunked first —
-PostgREST rides `in_()` values in the URL query string, and an
-unbatched ~1 000-item list is a bare 400 (see
-`clientes_service.py::_batched`'s identical rationale; this module keeps
-its own copy rather than importing that module's private helper).
+PostgREST rides `in_()` values in the URL query string, and an unbatched
+~1 000-item list is a bare 400.
+
+Those read helpers no longer live here. This module used to keep its own
+copy of `_batched` (a fork of `clientes_service`'s, and it said so); a
+third consumer arrived and they moved to `app.services.table_reads`. The
+`_t` / `_batched` / `_paged_rows` / `_resolve_actors` / `_actor` names
+below are aliases over the canonical definitions, so every call site in
+this file reads unchanged.
 """
 from __future__ import annotations
 
@@ -26,13 +31,18 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.persistence import iter_paged_rows
-from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError
+from noctusai_lib.primitives.exceptions import (
+    AppException,
+    ConflictError,
+    NotFoundError,
+)
 
 from app.dependencies import get_core_client
 from app.services import clientes_service as clientes_svc
+from app.services import table_reads
 
-_PAGE_SIZE = 1000
-_IN_FILTER_BATCH = 200
+_PAGE_SIZE = table_reads.PAGE_SIZE
+_IN_FILTER_BATCH = table_reads.IN_FILTER_BATCH
 
 
 # ─── shared helpers ─────────────────────────────────────────────────────
@@ -42,131 +52,23 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _t(client: Any, name: str):
-    return client.table(name)
+# ─── PostgREST read helpers — canonical definitions in `table_reads` ────
+#
+# These were defined here, and `_batched` was already a copy of
+# `clientes_service`'s. `imovel_hub` made a third consumer, so they moved to
+# `app.services.table_reads` (see that module's header for why THESE
+# helpers in particular are worth one home: each one's real body is a
+# defence against a limit that is invisible at the call site).
+#
+# The private names survive as aliases so every existing call site in this
+# module reads exactly as it did.
 
-
-def _batched(items: list, size: int = _IN_FILTER_BATCH):
-    """Yield `items` in chunks of `size` — see module docstring."""
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
-
-
-def _paged_rows(
-    client: Any,
-    table: str,
-    org_id: UUID,
-    *,
-    eq_filters: Optional[dict] = None,
-    order_col: str = "id",
-    id_key: str = "id",
-    refine: Optional[Any] = None,
-    select: str = "*",
-) -> list[dict]:
-    """Every row of `table` for `org_id` (+ `eq_filters`), paged past
-    PostgREST's row cap via the seed's shared pager. `refine`, when given,
-    is `fn(query) -> query` applied AFTER the eq filters and BEFORE
-    `.order()` — for filter shapes `eq_filters` can't express (e.g.
-    `.is_("deleted_at", "null")`).
-
-    `select` overrides the default `"*"` for a read that needs embedded
-    resources (a PostgREST join). The card summary uses it to bring each
-    atendimento's ORIGIN record along — see `get_card_resumo`.
-
-    Named `refine`, NOT `extra`: bandit's B610 flags any call to something
-    named `extra(...)` as Django's `QuerySet.extra()`, a genuine SQL
-    -injection vector. This is a plain Python callable over a PostgREST
-    query builder — no SQL string exists here — but the check matches on
-    the NAME, so the old name failed the SAST gate on every run. Renaming
-    is the honest fix; a `# nosec` would have silenced a scanner that was
-    doing its job badly rather than removing the collision, and teaches
-    the next person to reach for suppression first."""
-    eq_filters = eq_filters or {}
-
-    def fetch_page(start: int, end: int):
-        query = _t(client, table).select(select).eq("org_id", str(org_id))
-        for key, value in eq_filters.items():
-            query = query.eq(key, value)
-        if refine is not None:
-            query = refine(query)
-        return query.order(order_col).range(start, end).execute().data
-
-    return list(
-        iter_paged_rows(
-            fetch_page,
-            page_size=_PAGE_SIZE,
-            id_key=id_key,
-            label=f"{table} for org_id={org_id}",
-        )
-    )
-
-
-def _in_batched_rows(
-    client: Any, table: str, org_id: UUID, in_col: str, ids: list[str]
-) -> list[dict]:
-    """Every row of `table` matching `in_col IN ids`, batched (URL-length
-    safety) AND paged (row-cap safety) — composes both hazards from the
-    module docstring."""
-    if not ids:
-        return []
-    out: list[dict] = []
-    for batch in _batched(sorted(set(ids))):
-
-        def fetch_page(start: int, end: int, _batch=batch):
-            return (
-                _t(client, table)
-                .select("*")
-                .eq("org_id", str(org_id))
-                .in_(in_col, _batch)
-                .order("id")
-                .range(start, end)
-                .execute()
-                .data
-            )
-
-        out.extend(
-            iter_paged_rows(
-                fetch_page,
-                page_size=_PAGE_SIZE,
-                label=f"{table}.{in_col} batch for org_id={org_id}",
-            )
-        )
-    return out
-
-
-def _resolve_actors(ids: set) -> dict[str, dict]:
-    """`{id, nome}` for every id in `ids`, resolved against
-    `public.noctus_users` (the trusted user table — see
-    `app.dependencies.get_core_client`'s docstring for why this is the
-    `public`-schema client, not `social_wiring`). Missing users fall back
-    to `{"id": id, "nome": None}` — a stale/foreign id is not an error
-    here, just an unresolved name."""
-    clean_ids = {str(i) for i in ids if i}
-    if not clean_ids:
-        return {}
-    core = get_core_client()
-    out: dict[str, dict] = {}
-    for batch in _batched(sorted(clean_ids)):
-        rows = (
-            core.table("noctus_users")
-            .select("id,nome,email")
-            .in_("id", batch)
-            .execute()
-            .data
-            or []
-        )
-        for row in rows:
-            out[str(row["id"])] = {
-                "id": row["id"],
-                "nome": row.get("nome") or row.get("email"),
-            }
-    return out
-
-
-def _actor(resolved: dict[str, dict], raw_id: Optional[str]) -> Optional[dict]:
-    if not raw_id:
-        return None
-    return resolved.get(str(raw_id)) or {"id": raw_id, "nome": None}
+_t = table_reads.table
+_batched = table_reads.batched
+_paged_rows = table_reads.paged_rows
+_in_batched_rows = table_reads.in_batched_rows
+_resolve_actors = table_reads.resolve_actors
+_actor = table_reads.actor
 
 
 def ensure_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
@@ -177,6 +79,81 @@ def ensure_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
 
 
 # ─── Notas ──────────────────────────────────────────────────────────────
+
+
+# ─── Which atendimento does this belong to? ─────────────────────────────────
+#
+# Lives HERE rather than in the module that first needed it. It arrived with
+# agendamentos, and compradores (migration 073) is the second caller asking the
+# identical question — "this card is a person, but the thing I am attaching
+# belongs to a DEAL; which one?". Two copies of that answer would disagree
+# about archived and collapsed rows, which is the subtle half.
+#
+# `AmbiguousAtendimento` moves with it: the resolver's refusal is part of the
+# resolver, and a caller that imports one without the other cannot handle what
+# it raises. `agendamentos_service` re-exports both, so its existing importers
+# and tests are untouched.
+
+
+class AmbiguousAtendimento(AppException):
+    """The person has more than one open atendimento, so "the" one is a guess.
+
+    Raised rather than picking the newest: an appointment filed against the
+    wrong deal renders identically on the card and is wrong in the one place
+    D17 says matters — the history.
+
+    An `AppException`, NOT a bare exception the router converts: the seed's
+    handler renders `details` into the error envelope, so the candidate ids
+    survive to the client. A `raise HTTPException(detail={...})` does NOT —
+    the seed's HTTPException handler stringifies the detail into `message`,
+    which is how the first version of this shipped a 409 the UI could not read.
+    """
+
+    def __init__(self, candidates: list[str]):
+        self.candidates = candidates
+        super().__init__(
+            code="AMBIGUOUS_ATENDIMENTO",
+            message=(
+                "Este cliente tem mais de um atendimento aberto — escolha a qual "
+                "o agendamento pertence."
+                if candidates
+                else "Este cliente não tem atendimento aberto — informe atendimento_id."
+            ),
+            status_code=409,
+            details={"atendimentos": candidates},
+        )
+
+
+def _atendimentos_do_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
+    return _paged_rows(client, "atendimentos", org_id, eq_filters={"cliente_id": str(cliente_id)})
+
+
+def resolve_atendimento_id(
+    client: Any, org_id: UUID, cliente_id: UUID, explicit: Optional[UUID] = None
+) -> str:
+    """Which atendimento a new appointment belongs to.
+
+    `explicit` wins and is validated against this cliente — accepting an
+    unvalidated id would let a caller file an appointment onto someone else's
+    deal. Otherwise: the single open atendimento, or `AmbiguousAtendimento`.
+    """
+    rows = _atendimentos_do_cliente(client, org_id, cliente_id)
+    if explicit is not None:
+        if not any(str(r["id"]) == str(explicit) for r in rows):
+            raise NotFoundError("atendimentos", str(explicit))
+        return str(explicit)
+
+    abertos = [
+        r for r in rows
+        if r.get("substituida_por") is None and not r.get("arquivado", False)
+    ]
+    if len(abertos) == 1:
+        return str(abertos[0]["id"])
+    if not abertos:
+        # Every atendimento is closed/archived. Refuse rather than resurrect
+        # one — "which closed deal is this visit for?" is the user's call.
+        raise AmbiguousAtendimento([])
+    raise AmbiguousAtendimento([str(r["id"]) for r in abertos])
 
 
 def _nota_out(row: dict, resolved_actors: dict[str, dict]) -> dict:

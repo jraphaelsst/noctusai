@@ -23,6 +23,10 @@ from tests.modules.leads.conftest import ORG_A, ORG_B  # noqa: F401 — re-expor
 
 WEBHOOK_SECRET = "test-olx-secret"
 
+#: Distinct from the OLX one on purpose: a shared value would let a test
+#: pass while the receiver verified the wrong pipe's credential.
+IMOVELWEB_WEBHOOK_SECRET = "test-imovelweb-secret"
+
 
 @pytest.fixture
 def mock_db():
@@ -45,4 +49,11 @@ def http_client(mock_db):
         yield TestClient(app, raise_server_exceptions=True)
 
 
-__all__ = ["ORG_A", "ORG_B", "WEBHOOK_SECRET", "http_client", "mock_db"]
+__all__ = [
+    "IMOVELWEB_WEBHOOK_SECRET",
+    "ORG_A",
+    "ORG_B",
+    "WEBHOOK_SECRET",
+    "http_client",
+    "mock_db",
+]

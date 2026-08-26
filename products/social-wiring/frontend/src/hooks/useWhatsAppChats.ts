@@ -36,7 +36,7 @@ import {
   type InfiniteData,
 } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
-import { api } from "@noctusai/seed/infra";
+import { api, getAuthToken } from "@noctusai/seed/infra";
 import { useRealtimeStream, type RealtimeMessage } from "@noctusai/lib";
 
 const CONN_BASE = "/api/whatsapp/connections";
@@ -349,5 +349,11 @@ export function useWhatsAppRealtime(connId: string | null) {
 
   return useRealtimeStream(connId ? `${CONN_BASE}/${connId}/stream` : null, {
     onEvent,
+    // 🔴 Load-bearing. This list is `staleTime: Infinity` with no
+    // `refetchInterval` — deliberately, because the stream is supposed to
+    // patch the cache. Without a token the stream 401s and the inbox simply
+    // stops updating, with nothing on screen to say so. That was production
+    // until 2026-08-25.
+    getAuthToken,
   });
 }

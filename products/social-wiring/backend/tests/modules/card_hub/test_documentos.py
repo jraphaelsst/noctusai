@@ -14,6 +14,7 @@ from tests.modules.card_hub.conftest import (
     cliente_row,
     documento_row,
     documento_tipo_row,
+    retencao_politica_row,
 )
 
 
@@ -26,6 +27,9 @@ class TestUpload:
         cid = str(uuid4())
         scoped.set_table_data("clientes", [cliente_row(cid)])
         scoped.set_table_data("cliente_documento_tipos", [documento_tipo_row("contrato")])
+        scoped.set_table_data(
+            "documento_retencao_politicas", [retencao_politica_row("contrato")]
+        )
 
         resp = client.post(
             f"/api/clientes/{cid}/documentos",
@@ -46,6 +50,53 @@ class TestUpload:
         # Object path is org_id-first (contract §2, migration 057's
         # object-RLS policies key on the first path segment).
         assert stored[0]["storage_path"].startswith(f"{ORG_ID}/clientes/{cid}/")
+
+    def test_retencao_comes_from_the_policy_not_the_catalogue(
+        self, client, scoped, fake_storage
+    ):
+        """🔴 Migration 079 moved retention off `cliente_documento_tipos` onto
+        `documento_retencao_politicas`, so the Settings screen can change it
+        without a migration. This pins WHICH table wins: the catalogue still
+        carries a (superseded) 1825, the policy says 30, and the stamped date
+        must be 30 days out. Reading the catalogue again would silently ignore
+        whatever the controller set on screen."""
+        from datetime import datetime, timedelta, timezone
+
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        scoped.set_table_data(
+            "cliente_documento_tipos", [documento_tipo_row("contrato", retencao_dias=1825)]
+        )
+        scoped.set_table_data(
+            "documento_retencao_politicas", [retencao_politica_row("contrato", dias=30)]
+        )
+
+        resp = client.post(
+            f"/api/clientes/{cid}/documentos",
+            files={"file": ("contrato.pdf", b"%PDF-1.4 fake bytes", "application/pdf")},
+            data={"tipo_documento": "contrato"},
+            headers=_auth(),
+        )
+
+        assert resp.status_code == 201, resp.text
+        # 🔴 UTC, not `date.today()`. The service stamps `retencao_ate` from
+        # `documentos_service._today()` = `datetime.now(timezone.utc).date()`,
+        # deliberately — the retention SWEEP compares against the same clock,
+        # so both halves of the feature must agree on what "today" is.
+        #
+        # A bare `date.today()` is the RUNNER's local date, and this is an
+        # exact-equality assertion. In São Paulo (UTC−3) the two dates differ
+        # every night between 21:00 and 00:00 local (00:00–03:00 UTC), so this
+        # test was a time bomb that turned CI and `predeploy_check` red for
+        # three hours a day and green again by morning. It fired at 01:36 UTC
+        # on 2026-08-26 and blocked a production release.
+        #
+        # The other `date.today()` uses in this file are safe by slack — they
+        # place a fixture a whole day into the past or 30 into the future, so a
+        # one-day skew cannot flip them. This one had none.
+        hoje_utc = datetime.now(timezone.utc).date()
+        esperado = (hoje_utc + timedelta(days=30)).isoformat()
+        assert resp.json()["retencao_ate"] == esperado
 
     def test_upload_rejects_disallowed_mime_type(self, client, scoped, fake_storage):
         cid = str(uuid4())

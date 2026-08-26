@@ -6,12 +6,19 @@
 > well-trodden attack path and the cost of verification is trivially
 > small — there's no engineering excuse for an unsigned receiver.
 
-## The four shapes
+## The five shapes
 
-Every external webhook fits one of four shapes. Pick the matching pattern
+Every external webhook fits one of five shapes. Pick the matching pattern
 and STOP. Don't roll your own — the helpers in
-`noctusai_lib.security.webhook_signatures` cover three of them, the
-fourth uses the vendor SDK.
+`noctusai_lib.security.webhook_signatures` cover four of them, the fifth
+uses the vendor SDK.
+
+> **Heading corrected 2026-08-18.** It said "four" until the
+> `basic_shared_secret` scheme landed with the Grupo OLX receiver and this
+> line was not updated — `WebhookScheme` has carried four literals since.
+> Counting matters here: a reader who trusts "four" and finds no match for
+> a static-credential vendor concludes the library does not cover it, and
+> hand-rolls the fifth.
 
 ### 1. HMAC-SHA256 with `sha256=…` prefix (Hub-Signature scheme)
 
@@ -75,7 +82,27 @@ if not verify_svix_signature(
     raise HTTPException(401, "invalid signature")
 ```
 
-### 4. Vendor SDK (Stripe)
+### 4. Static shared secret in an `Authorization` header
+
+**Used by:** Grupo OLX portal leads (`Basic base64("vivareal:<key>")`),
+ImovelWeb / OpenNavent (`Basic base64("noctusai-imovelweb:<key>")` — a
+credential **we** choose and register with the vendor).
+
+**Helper:** `webhook_endpoint(scheme="basic_shared_secret", basic_username=…)`
+
+🔴 **This shape does not authenticate the BODY.** There is no signature
+over the payload, so anyone holding the secret can send anything, and a
+"tampered body" test would assert nothing. The compensations are TLS,
+idempotency on the vendor's own event id, and treating the body as a HINT
+rather than truth for anything that matters — ImovelWeb can re-fetch a
+message by id, and that re-fetch is authoritative.
+
+`basic_username` defaults to Grupo OLX's `vivareal`. A second vendor on
+this scheme MUST override it: leaving the default would make the two
+receivers accept each other's credential shape, which is nonsense across
+unrelated vendors.
+
+### 5. Vendor SDK (Stripe)
 
 Stripe ships its own verifier (`stripe.Webhook.construct_event`) that
 also checks the timestamp tolerance. **Use it. Don't wrap it. Don't
@@ -211,6 +238,19 @@ owns secret resolution); pins 4+5 still apply. The Stripe receiver in
 - ✅ `erp-imobiliario` — WAHA (pattern 2), `app/routers/whatsapp_webhook.py`
   — uses `webhook_endpoint(...)`; note it has **no dedup**, so the WAHA
   `message`/`message.any` double-delivery race is unguarded.
+- ✅ `social-wiring` — Grupo OLX portal leads (pattern 4),
+  `app/modules/portal_leads/routers/olx_webhook.py` — uses
+  `webhook_endpoint(scheme="basic_shared_secret", bypass_when_unset=False)`,
+  per-request secret resolver, `@limiter.limit`, status-code-pinned tests.
+  All 5 pins. Note pattern 4 has **no body binding** by construction — see
+  the shape above; that is a property of the vendor's scheme, not a gap in
+  this receiver. *(Added 2026-08-18: the OLX slice merged without appending
+  itself here, and this list's own banner is about exactly that.)*
+- ✅ `social-wiring` — ImovelWeb / OpenNavent (pattern 4),
+  `app/modules/portal_leads/routers/imovelweb_webhook.py` — same, plus
+  `basic_username="noctusai-imovelweb"` overriding the OLX default. All 5
+  pins. Its auth-boundary test asserts strict `== 401` and enumerates the
+  ONE intentionally public route.
 - ✅ `whatsapp-google-scheduling` (sibling repo) — WAHA (pattern 2)
   via vendored copy until published-package shape lands.
 

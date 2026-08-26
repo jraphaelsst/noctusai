@@ -33,15 +33,21 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Response,
     UploadFile,
 )
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 
 from app.modules.card_hub import agendamentos_service as agenda_svc
+from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
 from app.modules.card_hub import documentos_service as docs_svc
+from app.modules.card_hub import financiamento_service as financiamento_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
+from app.modules.card_hub import negociacao_service as negociacao_svc
+from app.modules.card_hub import roteiro_pdf_service as roteiro_pdf_svc
+from app.modules.card_hub import roteiros_service as roteiros_svc
 from app.modules.card_hub import services as svc
 from app.modules.card_hub import timeline_service
 from app.modules.card_hub.deps import (
@@ -50,6 +56,10 @@ from app.modules.card_hub.deps import (
     get_storage_backend,
 )
 from app.modules.card_hub.schemas import (
+    CompradorCreateBody,
+    FinanciamentoPatchBody,
+    NegociacaoDefaultsPatchBody,
+    NegociacaoPatchBody,
     AgendamentoCreateBody,
     AgendamentoPatchBody,
     ChecklistCreateBody,
@@ -62,8 +72,13 @@ from app.modules.card_hub.schemas import (
     MembrosSetBody,
     NotaCreateBody,
     NotaUpdateBody,
+    RoteiroCreateBody,
+    RoteiroOrdemBody,
+    RoteiroPatchBody,
     TagCreateBody,
     TagUpdateBody,
+    VisitaCreateBody,
+    VisitaPatchBody,
 )
 
 router = APIRouter(prefix="/api/clientes", tags=["card_hub"])
@@ -352,6 +367,166 @@ async def delete_agendamento_route(
     agenda_svc.remover(client, org_id, cliente_id, agendamento_id)
 
 
+# ─── Roteiros e visitas (migration 082) ─────────────────────────────────
+#
+# Mounted under `/api/clientes/{cliente_id}` for the same reason agendamentos
+# are: a roteiro belongs to an ATENDIMENTO, but the card is the person and
+# reads across all of their atendimentos. Every route proves the row belongs to
+# this cliente before touching it — and a visita route proves BOTH legs, so
+# reaching a visita through someone else's roteiro id fails exactly as reaching
+# the roteiro itself would.
+
+
+@router.get("/{cliente_id}/roteiros")
+async def list_roteiros_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return roteiros_svc.listar(client, org_id, cliente_id)
+
+
+@router.post("/{cliente_id}/roteiros", status_code=201)
+async def create_roteiro_route(
+    cliente_id: UUID,
+    body: RoteiroCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    # `AmbiguousAtendimento` is an AppException carrying its own 409, and an
+    # unknown código raises `NotFoundError` from `ensure_imovel` — both already
+    # structured, so there is nothing to translate here.
+    return roteiros_svc.criar(
+        client,
+        org_id,
+        cliente_id,
+        imoveis=body.imoveis,
+        titulo=body.titulo,
+        atendimento_id=body.atendimento_id,
+    )
+
+
+@router.patch("/{cliente_id}/roteiros/{roteiro_id}")
+async def patch_roteiro_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    body: RoteiroPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    updates = body.model_dump(exclude_unset=True)
+    return roteiros_svc.atualizar(
+        client, org_id, cliente_id, roteiro_id, titulo=updates.get("titulo", ...)
+    )
+
+
+@router.delete("/{cliente_id}/roteiros/{roteiro_id}", status_code=204)
+async def delete_roteiro_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    _user, org_id = _auth_parts(auth)
+    roteiros_svc.remover(client, org_id, cliente_id, roteiro_id)
+
+
+@router.put("/{cliente_id}/roteiros/{roteiro_id}/ordem")
+async def reorder_roteiro_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    body: RoteiroOrdemBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return roteiros_svc.reordenar(client, org_id, cliente_id, roteiro_id, body.visita_ids)
+
+
+@router.get("/{cliente_id}/roteiros/{roteiro_id}/pdf")
+async def roteiro_pdf_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> Response:
+    """The cronograma, one imóvel per page, in visiting order.
+
+    `Response` with explicit bytes rather than `StreamingResponse`: the whole
+    document is built in memory anyway (it is a handful of text pages), so
+    streaming would add a generator and remove the Content-Length.
+    """
+    _user, org_id = _auth_parts(auth)
+    cliente = svc.ensure_cliente(client, org_id, cliente_id)
+    roteiro = roteiros_svc.obter(client, org_id, cliente_id, roteiro_id)
+    pdf = roteiro_pdf_svc.gerar(
+        roteiro,
+        cliente_nome=cliente.get("nome_oficial") or cliente.get("nome"),
+    )
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{roteiro_pdf_svc.nome_arquivo(roteiro)}"'
+            )
+        },
+    )
+
+
+@router.post("/{cliente_id}/roteiros/{roteiro_id}/visitas", status_code=201)
+async def create_visita_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    body: VisitaCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return roteiros_svc.adicionar_visita(
+        client, org_id, cliente_id, roteiro_id, body.codigo
+    )
+
+
+@router.patch("/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}")
+async def patch_visita_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    visita_id: UUID,
+    body: VisitaPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    updates = body.model_dump(exclude_unset=True)
+    return roteiros_svc.atualizar_visita(
+        client,
+        org_id,
+        cliente_id,
+        roteiro_id,
+        visita_id,
+        status=updates.get("status", ...),
+        observacao=updates.get("observacao", ...),
+    )
+
+
+@router.delete(
+    "/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}", status_code=204
+)
+async def delete_visita_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    visita_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    _user, org_id = _auth_parts(auth)
+    roteiros_svc.remover_visita(client, org_id, cliente_id, roteiro_id, visita_id)
+
+
 # ─── Checklists ─────────────────────────────────────────────────────────
 
 
@@ -617,4 +792,226 @@ async def get_card_route(
     return timeline_service.get_card_resumo(client, org_id, cliente_id)
 
 
-__all__ = ["router"]
+# ─── Compradores / partes do atendimento (migration 073) ─────────────────────
+#
+# Mounted under `/api/clientes/{cliente_id}` rather than under the atendimento,
+# following `agendamentos`: the CARD is the surface these are managed from, the
+# card is a person, and making the frontend resolve an atendimento id before it
+# can render a panel would push a decision the service already knows how to
+# make out into every caller.
+
+
+@router.get("/{cliente_id}/compradores")
+async def list_compradores_route(
+    cliente_id: UUID,
+    atendimento_id: Optional[UUID] = None,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return compradores_svc.listar(
+        client, org_id, cliente_id, atendimento_id=atendimento_id
+    )
+
+
+@router.post("/{cliente_id}/compradores", status_code=201)
+async def create_comprador_route(
+    cliente_id: UUID,
+    body: CompradorCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    # `AmbiguousAtendimento` is an AppException carrying its own 409 + the
+    # candidate ids, so it needs no translation here — same as agendamentos.
+    return compradores_svc.adicionar(
+        client,
+        org_id,
+        cliente_id,
+        parte_cliente_id=body.cliente_id,
+        nome=body.nome,
+        celular=body.celular,
+        papel=body.papel or compradores_svc.PAPEL_PADRAO,
+        observacao=body.observacao,
+        atendimento_id=body.atendimento_id,
+        user_id=getattr(user, "id", None),
+    )
+
+
+@router.delete("/{cliente_id}/compradores/{parte_id}", status_code=204)
+async def delete_comprador_route(
+    cliente_id: UUID,
+    parte_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    _user, org_id = _auth_parts(auth)
+    compradores_svc.remover(client, org_id, cliente_id, parte_id)
+
+
+# ─── Negociação (migration 077) ─────────────────────────────────────────
+
+
+@router.get("/{cliente_id}/negociacao")
+async def get_negociacao_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return negociacao_svc.obter(client, org_id, cliente_id)
+
+
+@router.patch("/{cliente_id}/negociacao")
+async def patch_negociacao_route(
+    cliente_id: UUID,
+    body: NegociacaoPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    # `model_fields_set`, NOT `exclude_none`: `None` is a real value here
+    # (clearing a valor entered by mistake), so absence is the only thing
+    # that can mean "leave alone".
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return negociacao_svc.atualizar(
+        client, org_id, cliente_id, valores=valores,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+# ─── Financiamento / Escritura (migration 078) ──────────────────────────
+
+
+@router.get("/{cliente_id}/financiamento")
+async def get_financiamento_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return financiamento_svc.obter(client, org_id, cliente_id)
+
+
+@router.patch("/{cliente_id}/financiamento")
+async def patch_financiamento_route(
+    cliente_id: UUID,
+    body: FinanciamentoPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return financiamento_svc.atualizar(
+        client, org_id, cliente_id, valores=valores,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.post("/{cliente_id}/financiamento/documentos")
+async def upload_financiamento_documento_route(
+    cliente_id: UUID,
+    file: UploadFile = File(...),
+    tipo_documento: str = Form(...),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    data = await file.read()
+    return await financiamento_svc.upload(
+        client,
+        storage,
+        org_id,
+        cliente_id,
+        filename=file.filename or "arquivo",
+        content_type=file.content_type or "application/octet-stream",
+        data=data,
+        tipo_documento=tipo_documento,
+        enviado_por=getattr(user, "id", None),
+    )
+
+
+@router.get("/{cliente_id}/financiamento/documentos/{documento_id}/url")
+async def get_financiamento_documento_url_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    intent: str = Query("view"),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    return await financiamento_svc.url_do_documento(
+        client, storage, org_id, cliente_id, documento_id,
+        usuario_id=getattr(user, "id", None), intent=intent,
+    )
+
+
+@router.get("/{cliente_id}/financiamento/documentos/{documento_id}/acessos")
+async def list_financiamento_acessos_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return financiamento_svc.listar_acessos(client, org_id, cliente_id, documento_id)
+
+
+@router.delete(
+    "/{cliente_id}/financiamento/documentos/{documento_id}", status_code=204
+)
+async def delete_financiamento_documento_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    # A required query param, not a body — the seed `ApiClient.delete()` has
+    # no body parameter. An LGPD delete without a recorded reason is not one.
+    motivo: str = Query(..., min_length=1, max_length=500),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    user, org_id = _auth_parts(auth)
+    financiamento_svc.remover(
+        client, org_id, cliente_id, documento_id, motivo=motivo,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+# ─── The org's split rule ────────────────────────────────────────────────
+#
+# 🔴 A SEPARATE ROUTER, on `/api/negociacao`, deliberately.
+#
+# These are ORG settings, not a cliente resource, and hanging them off
+# `/api/clientes` would need a literal 1-segment path — which is exactly the
+# shape that structurally collides with `clientes_router`'s bare
+# `/{cliente_id}` (see this module's header for the `/tags` incident). A
+# distinct prefix has no such shape to collide with, so no mount-order
+# constraint applies to it at all.
+
+defaults_router = APIRouter(prefix="/api/negociacao", tags=["negociacao"])
+
+
+@defaults_router.get("/defaults")
+async def get_negociacao_defaults_route(
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return negociacao_svc.obter_defaults(client, org_id)
+
+
+@defaults_router.patch("/defaults")
+async def patch_negociacao_defaults_route(
+    body: NegociacaoDefaultsPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return negociacao_svc.atualizar_defaults(
+        client, org_id, valores=valores, usuario_id=getattr(user, "id", None)
+    )
+
+
+__all__ = ["defaults_router", "router"]

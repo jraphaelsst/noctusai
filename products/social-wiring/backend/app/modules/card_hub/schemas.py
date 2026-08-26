@@ -10,6 +10,7 @@ not by a second parallel schema declaration for every read shape).
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -146,6 +147,56 @@ class AgendamentoPatchBody(StrictHttpModel):
         return v
 
 
+# ─── Roteiros e visitas (migration 082) ─────────────────────────────────
+
+#: Mirrors the DB CHECK in `082` and `roteiros_service.STATUS_VALIDOS`. Three
+#: values, not a boolean: "hasn't happened yet" and "didn't happen" are
+#: different facts, and merging them would file every future visit under
+#: "did not" in the count this feature exists to produce.
+_STATUS_VISITA_VALUES = {"pendente", "realizada", "nao_realizada"}
+
+
+class RoteiroCreateBody(StrictHttpModel):
+    #: The códigos, IN VISITING ORDER — the array index becomes `visitas.ordem`.
+    #: The order is the payload, so a client that reorders and re-POSTs is
+    #: doing the right thing.
+    imoveis: list[str] = Field(min_length=1)
+    titulo: Optional[str] = None
+    #: Optional: with one open atendimento the server resolves it. Sent
+    #: explicitly when the person has several, which the server REFUSES to
+    #: guess at (409) rather than filing the roteiro against the wrong deal.
+    atendimento_id: Optional[UUID] = None
+
+
+class RoteiroPatchBody(StrictHttpModel):
+    titulo: Optional[str] = None
+
+
+class RoteiroOrdemBody(StrictHttpModel):
+    #: The COMPLETE ordered set, not a delta. A partial reorder that silently
+    #: succeeded would leave two visitas sharing a position and the route in an
+    #: order nobody chose — the service refuses a mismatch with a 400.
+    visita_ids: list[UUID] = Field(min_length=1)
+
+
+class VisitaCreateBody(StrictHttpModel):
+    codigo: str = Field(min_length=1)
+
+
+class VisitaPatchBody(StrictHttpModel):
+    status: Optional[str] = None
+    observacao: Optional[str] = None
+
+    @field_validator("status")
+    @classmethod
+    def _validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _STATUS_VISITA_VALUES:
+            raise ValueError(
+                f"status must be one of {sorted(_STATUS_VISITA_VALUES)}, got {v!r}"
+            )
+        return v
+
+
 # ─── Checklists ─────────────────────────────────────────────────────────
 
 
@@ -227,3 +278,98 @@ class DocumentoChecklistPatchBody(StrictHttpModel):
     """
 
     concluido: Optional[bool]
+
+
+# ─── Compradores / partes do atendimento (migration 073) ─────────────────────
+
+
+class CompradorCreateBody(StrictHttpModel):
+    """Add another person to this card's atendimento.
+
+    EITHER `cliente_id` (link someone already in this org — the spouse who is
+    herself a lead) OR `nome` (create her). Never both: when the two disagree
+    the caller's intent is unknowable, and picking one silently is how a
+    contract ends up naming the wrong person. The exclusivity is checked in the
+    service, which is also where the 422 is raised, so there is one rule rather
+    than a validator here and a check there.
+
+    `papel` is validated against `compradores_service.PAPEIS` — the definition
+    — rather than re-listed as a Literal here, for the same reason the
+    checklist keys are not re-listed in `DocumentoChecklistPatchBody`.
+
+    `atendimento_id` is optional and normally omitted: the service resolves the
+    person's single open atendimento. It is accepted for the case that
+    resolution refuses — someone with two open deals — where only the user can
+    say which one this comprador belongs to.
+    """
+
+    cliente_id: Optional[UUID] = None
+    nome: Optional[str] = Field(default=None, max_length=255)
+    celular: Optional[str] = Field(default=None, max_length=32)
+    papel: Optional[str] = None
+    observacao: Optional[str] = Field(default=None, max_length=2000)
+    atendimento_id: Optional[UUID] = None
+
+
+# ─── Negociação (migration 077) ──────────────────────────────────────────
+
+
+class NegociacaoPatchBody(StrictHttpModel):
+    """The commercial terms a human may set.
+
+    Every field Optional AND nullable; absence means "leave alone" (the
+    service reads `model_fields_set`), because `None` is a real value —
+    clearing a valor negociado that was entered by mistake has to be possible.
+
+    Money and percentages are `Decimal`, never `float`: a float cannot
+    represent centavos, and the whole commission split is built on them being
+    exact.
+    """
+
+    imovel_codigo: Optional[str] = Field(default=None, max_length=64)
+    valor_negociado: Optional[Decimal] = Field(default=None, ge=0)
+    pct_comissao: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    tem_parceria: Optional[bool] = None
+    pct_parceria: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_agencia: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_agentes: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_captador: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    formas_pagamento: Optional[str] = Field(default=None, max_length=2000)
+    parcelas: Optional[str] = Field(default=None, max_length=2000)
+    financiamento: Optional[bool] = None
+    #: 🔴 Not constrained to require `financiamento` — see migration 077. The
+    #: UI shows it conditionally; FGTS can legitimately fund a purchase with
+    #: no financing at all, so the rule is not frozen into the contract.
+    fgts: Optional[bool] = None
+    observacoes: Optional[str] = Field(default=None, max_length=4000)
+
+
+class NegociacaoDefaultsPatchBody(StrictHttpModel):
+    """The org's split rule.
+
+    🔴 Changing this does NOT touch existing negociações — their percentages
+    were copied at creation. It changes what the NEXT deal starts from.
+    """
+
+    pct_comissao: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_parceria: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_agencia: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_agentes: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    pct_captador: Optional[Decimal] = Field(default=None, ge=0, le=100)
+
+
+# ─── Financiamento / Escritura (migration 078) ───────────────────────────
+
+
+class FinanciamentoPatchBody(StrictHttpModel):
+    """The financing decision and its notes.
+
+    `situacao` is three-valued (`pendente`/`aprovado`/`recusado`) rather than a
+    boolean: "not yet decided" is where an application spends most of its life
+    and is not the same as a refusal.
+    """
+
+    situacao: Optional[Literal["pendente", "aprovado", "recusado"]] = None
+    situacao_motivo: Optional[str] = Field(default=None, max_length=2000)
+    fgts: Optional[bool] = None
+    observacoes: Optional[str] = Field(default=None, max_length=4000)

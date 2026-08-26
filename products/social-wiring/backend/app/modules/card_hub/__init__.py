@@ -37,6 +37,12 @@ Routes
     PUT                     /api/clientes/{id}/tags
     GET/PUT                 /api/clientes/{id}/membros
     PATCH                   /api/clientes/{id}/datas
+    GET/POST                /api/clientes/{id}/roteiros
+    PATCH/DELETE            /api/clientes/{id}/roteiros/{rid}
+    PUT                     /api/clientes/{id}/roteiros/{rid}/ordem
+    GET                     /api/clientes/{id}/roteiros/{rid}/pdf
+    POST                    /api/clientes/{id}/roteiros/{rid}/visitas
+    PATCH/DELETE            /api/clientes/{id}/roteiros/{rid}/visitas/{vid}
     GET/POST                /api/clientes/{id}/checklists
     PATCH/DELETE            /api/clientes/{id}/checklists/{cid}
     POST/PATCH/DELETE       /api/clientes/{id}/checklists/{cid}/itens[/{iid}]
@@ -59,15 +65,21 @@ def register() -> Any:
     `ModuleRegistration` here is not circular (same pattern as
     `app.modules.n8n.register`)."""
     from app.main import ModuleRegistration
-    from app.modules.card_hub import documentos_service
-    from app.modules.card_hub.router import router
+    from app.modules.card_hub import documentos_service, financiamento_service
+    from app.modules.card_hub.router import defaults_router, router
 
     # Configured at import time — before `start_scheduler()` fires in
     # `app/lifespan.py` (see `clientes_backfill_job.configure()`'s
     # identical rationale).
     documentos_service.configure()
+    # Two sweeps, not one: the cliente clock is stamped at upload and only
+    # needs collecting, while the atendimento clock is DERIVED from the deal's
+    # `closed_at` and has to be re-derived each run (migration 079).
+    financiamento_service.configure()
 
-    return ModuleRegistration(routers=[router], standard_routers=())
+    return ModuleRegistration(
+        routers=[router, defaults_router], standard_routers=()
+    )
 
 
 __all__ = ["register"]

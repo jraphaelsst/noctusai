@@ -312,6 +312,110 @@ export function useSaveClientesInactivityConfig() {
   });
 }
 
+// ─── Document retention policy tab (migration 079) ──────────────────────
+/** One document type's retention policy for this org. */
+export interface DocumentoRetencaoPolitica {
+  /** Which document surface this type belongs to. `imovel` is absent on
+   * purpose — `imovel_documentos` has no retention clock (a matrícula is a
+   * public registry document about a property, not personal data). */
+  superficie: "cliente" | "atendimento";
+  tipo_documento: string;
+  /** The EFFECTIVE value. `null` means "manter indefinidamente" — a real
+   * policy, not a missing value, and it must never render as a blank field. */
+  retencao_dias: number | null;
+  /** The platform default this may be overriding. Shown next to the
+   * effective value so "5 anos (padrão: 10 anos)" is one request, not two. */
+  padrao_dias: number | null;
+  /** `true` = this org set its own value; `false` = showing the default. */
+  personalizado: boolean;
+  motivo: string | null;
+  padrao_motivo: string | null;
+  /** What the countdown starts from. Without this a duration is ambiguous —
+   * "5 anos" from the upload and from the deal's close are years apart. */
+  ancora: "envio" | "encerramento";
+  ancora_rotulo: string;
+  atualizado_em: string | null;
+  atualizado_por: string | null;
+}
+
+export interface DocumentoRetencaoLista {
+  items: DocumentoRetencaoPolitica[];
+  total: number;
+}
+
+export const DOCUMENTO_RETENCAO_KEY = ["settings", "documento-retencao"] as const;
+
+/**
+ * useDocumentoRetencao — GET /api/settings/documento-retencao.
+ * Read is open to any authenticated org member; only the write is
+ * admin-gated (same split every other org config on this router uses).
+ *
+ * 🔴 `loading` gates on `isPending || isFetching`, never `isLoading`.
+ */
+export function useDocumentoRetencao() {
+  const query = useQuery({
+    queryKey: DOCUMENTO_RETENCAO_KEY,
+    queryFn: () =>
+      api.get<DocumentoRetencaoLista>("/api/settings/documento-retencao"),
+  });
+  return { ...query, loading: query.isPending || query.isFetching };
+}
+
+export interface DocumentoRetencaoSave {
+  superficie: "cliente" | "atendimento";
+  tipo_documento: string;
+  retencao_dias: number | null;
+  motivo?: string | null;
+}
+
+/**
+ * useSaveDocumentoRetencao — PUT /api/settings/documento-retencao.
+ * Admin-gated on the backend. Returns the WHOLE list, which is written
+ * straight into the cache — a partial response would leave the screen
+ * reconciling rows by hand.
+ */
+export function useSaveDocumentoRetencao() {
+  const qc = useQueryClient();
+  return useMutation<DocumentoRetencaoLista, unknown, DocumentoRetencaoSave>({
+    mutationFn: (body) =>
+      api.put<DocumentoRetencaoLista>("/api/settings/documento-retencao", body),
+    onSuccess: (data) => {
+      qc.setQueryData(DOCUMENTO_RETENCAO_KEY, data);
+      toast.success("Política de retenção atualizada.");
+    },
+    onError: (err: any) => {
+      toast.error(err?.message ?? "Falha ao salvar a política de retenção.");
+    },
+  });
+}
+
+/**
+ * useResetDocumentoRetencao — DELETE /api/settings/documento-retencao.
+ * Drops this org's override so the platform default applies again.
+ */
+export function useResetDocumentoRetencao() {
+  const qc = useQueryClient();
+  return useMutation<
+    DocumentoRetencaoLista,
+    unknown,
+    { superficie: string; tipo_documento: string }
+  >({
+    mutationFn: ({ superficie, tipo_documento }) =>
+      api.delete<DocumentoRetencaoLista>(
+        `/api/settings/documento-retencao?superficie=${encodeURIComponent(
+          superficie
+        )}&tipo_documento=${encodeURIComponent(tipo_documento)}`
+      ),
+    onSuccess: (data) => {
+      qc.setQueryData(DOCUMENTO_RETENCAO_KEY, data);
+      toast.success("Padrão da plataforma restaurado.");
+    },
+    onError: (err: any) => {
+      toast.error(err?.message ?? "Falha ao restaurar o padrão.");
+    },
+  });
+}
+
 // ─── Instagram App credentials tab ──────────────────────────────────────
 /**
  * useInstagramAppStatus — GET /api/settings/instagram-app/status.

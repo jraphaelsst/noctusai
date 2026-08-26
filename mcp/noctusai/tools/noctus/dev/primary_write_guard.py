@@ -485,6 +485,61 @@ def _is_ledger_only_git(sub: str, args: Sequence[str], cwd: str) -> bool:
     return False
 
 
+def _is_sync_to_remote_git(sub: str, args: Sequence[str], cwd: str) -> bool:
+    """Is this `git reset --hard <remote-tracking-ref>` — i.e. RE-SYNCING the
+    primary checkout to its remote, rather than writing work into it?
+
+    🔴 WHY THIS EXEMPTION EXISTS. This module's own `_GIT_WRITE_SUBCOMMANDS`
+    note says `pull`/`fetch`/`merge`/`push`/`worktree`/`tag`/`branch` are
+    deliberately absent because "syncing and integrating the primary checkout
+    on `dev` is the orchestrator's actual job, and a guard that fought it would
+    be switched off." `reset` was on the list anyway — and the moment the
+    primary DIVERGES (which `task_branch action=cleanup` causes by design: it
+    writes a recovery pointer into the primary and cannot commit it), a
+    fast-forward can no longer re-sync it. `reset --hard origin/<branch>` is
+    then the ONLY repair, and the guard refused precisely the operation that
+    fixes the state it exists to prevent. It fought the sync, exactly as the
+    note predicted, and cost several sessions real time.
+
+    WHY IT IS SAFE, and not merely convenient: this guard makes the primary a
+    read-only tree BY CONSTRUCTION. Every write into it is refused, so the only
+    things that can accumulate there are (a) regenerated artifacts and (b)
+    ledger appends under `LEDGER_PREFIXES` — the one exemption above. Neither
+    is work anybody can lose. A reset to the tree's own remote therefore
+    discards nothing the guard ever let land.
+
+    DELIBERATELY NARROW. The ref must resolve to a REMOTE-TRACKING ref
+    (`refs/remotes/…`). Still refused, unchanged:
+      · `git reset --hard HEAD~3` / `<sha>` / `<local-branch>` — a rewind, not
+        a sync, and the one shape that CAN destroy unpushed history.
+      · `git reset` (mixed/soft), which unstages rather than re-syncing.
+      · every other verb in `_GIT_WRITE_SUBCOMMANDS`.
+
+    Anything unreadable returns False — an unanswerable probe falls through to
+    the refusal, never past it (same posture as `_is_ledger_only_git`).
+    """
+    if sub != "reset":
+        return False
+
+    rest = list(args[args.index(sub) + 1:])
+    if "--hard" not in rest:
+        # A soft/mixed reset moves the index, not the tree, and is not how a
+        # checkout is re-synced. Out of scope rather than quietly allowed.
+        return False
+
+    refs = [a for a in rest if not a.startswith("-")]
+    if len(refs) != 1:
+        # Zero refs (`git reset --hard`, implicit HEAD) discards the working
+        # tree without syncing anything; more than one is a pathspec reset.
+        return False
+
+    # Ask git what the ref actually IS. A name that merely LOOKS remote
+    # (`origin/dev` as a local branch someone created) must not pass on
+    # spelling alone.
+    full = _run_git(["-C", cwd, "rev-parse", "--symbolic-full-name", refs[0]], None).strip()
+    return full.startswith("refs/remotes/")
+
+
 def _under_ledger(path: str, cwd: str) -> bool:
     if _is_unresolvable(path):
         return False
@@ -559,6 +614,11 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
                     rest = rest[:idx] + rest[idx + 2:]
             sub = next((a for a in rest if not a.startswith("-")), "")
             if sub in _GIT_WRITE_SUBCOMMANDS:
+                if _is_sync_to_remote_git(sub, rest, sub_cwd):
+                    # Re-syncing the primary to its remote is the orchestrator's
+                    # job, not a write of work — see the function's docstring for
+                    # why refusing it was the guard fighting its own purpose.
+                    continue
                 if _is_ledger_only_git(sub, rest, sub_cwd):
                     # The ledger exemption, honoured identically to
                     # `check_primary_checkout_commit`. Without this the two

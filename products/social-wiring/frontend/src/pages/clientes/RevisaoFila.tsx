@@ -37,6 +37,8 @@ import {
   DEFAULT_REVISAO_PAGE_SIZE,
   useRevisaoFila,
   useRevisaoMutations,
+  useRevisaoSegurosCount,
+  useMergeSeguros,
   type RevisaoGrupo,
 } from "@/hooks/useClientesRevisao";
 
@@ -50,6 +52,11 @@ export default function RevisaoFila() {
   const filtros = { page, page_size: DEFAULT_REVISAO_PAGE_SIZE };
   const queue = useRevisaoFila(filtros);
   const { merge, manterSeparados, desfazer } = useRevisaoMutations();
+  const seguros = useRevisaoSegurosCount();
+  const mergeSeguros = useMergeSeguros();
+  // Which card the keyboard is on. Index into the VISIBLE list, reset when
+  // the page changes so the cursor never points past the end.
+  const [cursor, setCursor] = useState(0);
 
   // Gate on isPending || isFetching, never isLoading (same rule as every
   // other page in this product — TanStack v5's isLoading is false mid-refetch).
@@ -75,6 +82,56 @@ export default function RevisaoFila() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, data, visibleItems.length, page]);
+
+  useEffect(() => {
+    setCursor(0);
+  }, [page]);
+
+  // 🔴 KEYBOARD FIRST, BECAUSE THE QUEUE IS LONG.
+  //
+  // 351 groups at two mouse trips each is why this queue was never drained.
+  // J/K move, M merges, S keeps separate — the same letters the operator is
+  // already saying out loud ("mesclar", "separar"). Ignored while focus is in
+  // a field, so typing never triggers a merge.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const alvo = e.target as HTMLElement | null;
+      const digitando =
+        alvo &&
+        (alvo.tagName === "INPUT" ||
+          alvo.tagName === "TEXTAREA" ||
+          alvo.isContentEditable);
+      if (digitando || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!visibleItems.length) return;
+
+      const atual = visibleItems[Math.min(cursor, visibleItems.length - 1)];
+      switch (e.key.toLowerCase()) {
+        case "j":
+        case "arrowdown":
+          e.preventDefault();
+          setCursor((c) => Math.min(c + 1, visibleItems.length - 1));
+          break;
+        case "k":
+        case "arrowup":
+          e.preventDefault();
+          setCursor((c) => Math.max(c - 1, 0));
+          break;
+        case "m":
+          e.preventDefault();
+          if (atual) handleMerge(atual);
+          break;
+        case "s":
+          e.preventDefault();
+          if (atual) handleManterSeparados(atual);
+          break;
+        default:
+          break;
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleItems, cursor]);
 
   function markResolved(grupoId: string) {
     setResolvedIds((prev) => new Set(prev).add(grupoId));
@@ -111,6 +168,26 @@ export default function RevisaoFila() {
     );
   }
 
+  function handleMergeSeguros() {
+    mergeSeguros.mutate(undefined, {
+      onSuccess: (r) => {
+        setResolvedIds(new Set());
+        setPage(1);
+        toast.success(
+          `${r.grupos_mesclados} grupo(s) mesclado(s).`,
+          {
+            description: `${r.clientes_absorvidos} cadastro(s) unidos. ${r.grupos_restantes} grupo(s) seguem aguardando decisão.`,
+            duration: 10000,
+          },
+        );
+      },
+      onError: (err) =>
+        toast.error("Não foi possível mesclar os grupos.", {
+          description: err instanceof Error ? err.message : undefined,
+        }),
+    });
+  }
+
   function handleManterSeparados(grupo: RevisaoGrupo) {
     manterSeparados.mutate(grupo.chave_canonica, {
       onSuccess: () => {
@@ -135,7 +212,42 @@ export default function RevisaoFila() {
             ? `${data.total.toLocaleString("pt-BR")} grupo(s) aguardando revisão.`
             : "Carregando…"}
         </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Teclado: <kbd className="rounded border px-1">J</kbd>/
+          <kbd className="rounded border px-1">K</kbd> navega ·{" "}
+          <kbd className="rounded border px-1">M</kbd> mescla ·{" "}
+          <kbd className="rounded border px-1">S</kbd> mantém separados
+        </p>
       </div>
+
+      {!queue.isError && (seguros.data?.grupos_mesclados ?? 0) > 0 && (
+        <Card
+          className="border-primary/30 bg-primary/5"
+          data-testid="revisao-seguros-banner"
+        >
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <div>
+              <p className="font-medium">
+                {seguros.data!.grupos_mesclados.toLocaleString("pt-BR")} grupo(s)
+                sem ambiguidade
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Mesmo nome com pontuação, marcador de origem ou apelido de rede
+                social. Cada mesclagem pode ser desfeita.
+              </p>
+            </div>
+            <Button
+              onClick={handleMergeSeguros}
+              disabled={mergeSeguros.isPending}
+              data-testid="revisao-merge-seguros-btn"
+            >
+              {mergeSeguros.isPending
+                ? "Mesclando…"
+                : `Mesclar ${seguros.data!.grupos_mesclados} grupo(s)`}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {queue.isError ? (
         <ErrorState onRetry={() => queue.refetch()} />
@@ -146,9 +258,21 @@ export default function RevisaoFila() {
       ) : (
         <>
           <div className="grid gap-4 lg:grid-cols-2">
-            {visibleItems.map((grupo) => (
-              <RevisaoGrupoCard
+            {visibleItems.map((grupo, i) => (
+              <div
                 key={grupo.chave_canonica}
+                className={
+                  i === Math.min(cursor, visibleItems.length - 1)
+                    ? "rounded-lg ring-2 ring-primary ring-offset-2 ring-offset-background"
+                    : undefined
+                }
+                data-testid={
+                  i === Math.min(cursor, visibleItems.length - 1)
+                    ? "revisao-cursor"
+                    : undefined
+                }
+              >
+              <RevisaoGrupoCard
                 grupo={grupo}
                 onMerge={handleMerge}
                 onManterSeparados={handleManterSeparados}
@@ -157,6 +281,7 @@ export default function RevisaoFila() {
                   manterSeparados.isPending && manterSeparados.variables === grupo.chave_canonica
                 }
               />
+              </div>
             ))}
           </div>
 

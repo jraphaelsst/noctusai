@@ -35,6 +35,9 @@ import {
   useCardResumo,
   useChecklistMutations,
   useChecklists,
+  useCompradorMutations,
+  useCompradores,
+  useDadosPessoaisMutation,
   useAgendamentoMutations,
   useAgendamentos,
   useDocumentoChecklist,
@@ -49,9 +52,18 @@ import {
   useTags,
   useTimeline,
   useTiposDocumento,
+  useRoteiros,
+  useRoteiroMutations,
+  baixarRoteiroPdf,
 } from "@/hooks/useCardHub";
 
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
+import type { CardSubpageKey } from "@/components/card/CardSidebarNav";
+import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
+import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
+import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
+import { NegociacaoContainer } from "@/components/NegociacaoContainer";
+import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
 
 export interface ClienteDetailModalProps {
   clienteId: string | null;
@@ -74,29 +86,61 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   // account-level preference; nothing in §2/§3 models one) — kept as
   // session-local UI state rather than inventing a field.
   const [colorBlindMode, setColorBlindMode] = useState(false);
+  const [compradorDialogOpen, setCompradorDialogOpen] = useState(false);
+  const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
+  // Which roteiro's PDF is being generated. Per-id, not a boolean: with two
+  // roteiros on screen a shared flag spins BOTH buttons and tells the user the
+  // wrong one is working.
+  const [roteiroPdfPendingId, setRoteiroPdfPendingId] = useState<string | null>(null);
 
   const shouldFetch = open && !!clienteId;
   const id = shouldFetch ? (clienteId as string) : null;
+
+  // 🔴 TAB-SCOPED FETCHING.
+  //
+  // Opening a card fired seven parallel reads — resumo, timeline, checklists,
+  // documentos, documento-checklist, agendamentos, compradores — several
+  // taking 1,4–2,4 s in production, so the card took ~2 s to become usable
+  // even for someone who only wanted to read a comment. Opening a card is the
+  // most repeated interaction of the day.
+  //
+  // A tab is fetched when it is first OPENED and stays loaded afterwards, so
+  // switching back is instant and never re-flashes a skeleton.
+  //
+  // `card`, `timeline`, `tags`, `corretores`, `checklists` and `compradores`
+  // are NOT gated: their data drives the header controls (Checklist, Etiquetas,
+  // Membros, Adicionar Comprador) and the sidebar's empty-state dots, all of
+  // which are visible from every tab. Gating those would trade a fast open for
+  // a header that populates late, which is worse.
+  const [abasVisitadas, setAbasVisitadas] = useState<Set<CardSubpageKey>>(
+    () => new Set<CardSubpageKey>(["geral"]),
+  );
+  const idSeAbriu = (aba: CardSubpageKey) => (abasVisitadas.has(aba) ? id : null);
 
   const card = useCardResumo(id);
   const timeline = useTimeline(id);
   const tags = useTags();
   const corretores = useLeadCorretores();
   const checklists = useChecklists(id);
-  const documentos = useDocumentos(id);
-  const documentoChecklist = useDocumentoChecklist(id);
+  const documentos = useDocumentos(idSeAbriu("documentos"));
+  const documentoChecklist = useDocumentoChecklist(idSeAbriu("documentos"));
   const tiposDocumento = useTiposDocumento();
 
   const notaMutations = useNotaMutations(id ?? "__none__");
   const tagCatalogMutations = useTagCatalogMutations();
   const setTagsMutation = useSetClienteTagsMutation(id ?? "__none__");
   const setMembrosMutation = useSetCardMembrosMutation(id ?? "__none__");
-  const agendamentos = useAgendamentos(id);
+  const agendamentos = useAgendamentos(idSeAbriu("agendamentos"));
   const agendamentoMutations = useAgendamentoMutations(id ?? "__none__");
+  const roteiros = useRoteiros(idSeAbriu("roteiros"));
+  const roteiroMutations = useRoteiroMutations(id ?? "__none__");
   const checklistMutations = useChecklistMutations(id ?? "__none__");
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
   const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
   const sugestaoMutation = useExtracaoSugestaoMutation(id ?? "__none__");
+  const compradores = useCompradores(id);
+  const compradorMutations = useCompradorMutations(id ?? "__none__");
+  const dadosPessoaisMutation = useDadosPessoaisMutation(id ?? "__none__");
 
   const timelineEntries = flattenTimeline(timeline.data?.pages);
 
@@ -176,6 +220,18 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
     }
   }
 
+  function handleAdicionarComprador(values: { nome: string; celular?: string }) {
+    compradorMutations.adicionar.mutate(values, {
+      onSuccess: () => setCompradorDialogOpen(false),
+      // The server's own message is surfaced verbatim rather than replaced by
+      // a generic one: its 409 says "esta pessoa já é parte deste atendimento"
+      // and its 400 explains an ambiguous atendimento, and both are things the
+      // operator can act on. A blanket "erro ao adicionar" would throw that
+      // away and read as a network failure.
+      onError: (err) => toastServerError(err, "Não foi possível adicionar."),
+    });
+  }
+
   function handleOpenDocumento(documentoId: string) {
     documentoMutations.getUrl.mutate(documentoId, {
       onSuccess: (res) => {
@@ -188,6 +244,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   if (!clienteId) return null;
 
   return (
+    <>
     <ClienteCardDialog
       open={open}
       onClose={onClose}
@@ -226,6 +283,41 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         })
       }
       agendamentoSaving={agendamentoMutations.create.isPending}
+      roteiros={roteiros.data ?? []}
+      // 🔴 `isPending || isFetching`, never `isLoading`: v5's `isLoading` is
+      // false during a background refetch, so the empty branch would render
+      // "nenhum roteiro criado" over roteiros that exist. Unlike the card
+      // itself (whose skeleton is `isPending`-only so mutations don't reflash
+      // it), this list is invalidated ONLY by its own mutations, so gating on
+      // `isFetching` costs no spurious skeletons.
+      roteirosLoading={roteiros.isPending || roteiros.isFetching}
+      roteirosError={roteiros.isError ? "Não foi possível carregar os roteiros." : null}
+      onCriarRoteiro={() => setRoteiroDialogOpen(true)}
+      onRemoverRoteiro={(roteiroId) =>
+        roteiroMutations.remove.mutate(roteiroId, {
+          onError: (err) => toastServerError(err, "Não foi possível remover o roteiro."),
+        })
+      }
+      onGerarRoteiroPdf={async (roteiroId) => {
+        if (!id) return;
+        setRoteiroPdfPendingId(roteiroId);
+        try {
+          await baixarRoteiroPdf(id, roteiroId);
+        } catch (err) {
+          toastServerError(err, "Não foi possível gerar o roteiro.");
+        } finally {
+          setRoteiroPdfPendingId(null);
+        }
+      }}
+      onPatchVisita={(roteiroId, visitaId, body) =>
+        roteiroMutations.patchVisita.mutate(
+          { roteiroId, visitaId, body },
+          {
+            onError: (err) => toastServerError(err, "Não foi possível salvar a visita."),
+          },
+        )
+      }
+      roteiroPdfPendingId={roteiroPdfPendingId}
       allMembros={corretores.data ?? []}
       selectedMembros={card.data?.membros ?? []}
       onToggleMembro={handleToggleMembro}
@@ -280,6 +372,37 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         )
       }
       uploadingDocumento={documentoMutations.upload.isPending}
+      dadosPessoais={documentoChecklist.data?.valores ?? {}}
+      dadosPessoaisSaving={dadosPessoaisMutation.isPending}
+      onSaveDadosPessoais={(valores) =>
+        dadosPessoaisMutation.mutate(valores, {
+          onError: (err) =>
+            toastServerError(err, "Não foi possível salvar os dados."),
+        })
+      }
+      compradores={compradores.data?.items ?? []}
+      compradoresLoading={compradores.isPending || compradores.isFetching}
+      onAdicionarComprador={() => setCompradorDialogOpen(true)}
+      onRemoverComprador={(parteId) =>
+        compradorMutations.remover.mutate(parteId, {
+          onError: (err) =>
+            toastServerError(err, "Não foi possível remover o comprador."),
+        })
+      }
+      // Each party's panel fetches its OWN checklist and documents, keyed by
+      // THEIR cliente_id. Passed as a render prop because `ClienteCardDialog`
+      // is presentational and must stay renderable without a query client.
+      renderDocumentosDePessoa={(pessoaId) => (
+        <PessoaDocumentosPanel clienteId={pessoaId} />
+      )}
+      // Thunks, not elements: a subpage nobody has opened costs no query.
+      onSubpageChange={(aba) =>
+        setAbasVisitadas((prev) =>
+          prev.has(aba) ? prev : new Set(prev).add(aba),
+        )
+      }
+      renderNegociacao={() => <NegociacaoContainer clienteId={id} />}
+      renderFinanciamento={() => <FinanciamentoContainer clienteId={id} />}
       onOpenDocumento={handleOpenDocumento}
       onDeleteDocumento={(documentoId, motivo) =>
         documentoMutations.remove.mutate(
@@ -305,5 +428,36 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       onPostComentario={handlePostComentario}
       postingComentario={notaMutations.create.isPending}
     />
+
+    {/* Sibling of the card rather than a child of it: nesting a Dialog inside
+        another Dialog's content fights the outer one's focus trap and scroll
+        lock, which is the bug the popovers on this card already had to set
+        `modal` to work around. */}
+    <AdicionarCompradorDialog
+      open={compradorDialogOpen}
+      onOpenChange={setCompradorDialogOpen}
+      onCreate={handleAdicionarComprador}
+      saving={compradorMutations.adicionar.isPending}
+    />
+
+    {/* Sibling of the card for the same reason `AdicionarCompradorDialog` is:
+        a Dialog nested inside another Dialog's content fights the outer focus
+        trap and scroll lock. */}
+    <CriarRoteiroDialog
+      open={roteiroDialogOpen}
+      onOpenChange={setRoteiroDialogOpen}
+      onCriar={(body) =>
+        roteiroMutations.create.mutate(body, {
+          onSuccess: () => setRoteiroDialogOpen(false),
+          // The 409 when a person has several open atendimentos arrives with
+          // the candidate ids, and a 404 names the codigo we do not know —
+          // both surfaced with the server own message, because only it can say
+          // which imovel or which deal was the problem.
+          onError: (err) => toastServerError(err, "Não foi possível criar o roteiro."),
+        })
+      }
+      saving={roteiroMutations.create.isPending}
+    />
+    </>
   );
 }

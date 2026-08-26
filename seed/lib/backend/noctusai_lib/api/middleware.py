@@ -6,17 +6,47 @@ Provides:
 - RequestLoggingMiddleware: logs request/response details with timing
 - MaxBodySizeMiddleware: rejects oversized request bodies before handlers run
 - get_correlation_id(): accessor for the current request's correlation ID
+
+🔴 ALL THREE ARE PURE ASGI, NOT `BaseHTTPMiddleware`. THAT IS THE POINT.
+------------------------------------------------------------------------
+`BaseHTTPMiddleware` runs the downstream app inside an anyio task group and
+re-emits the response through a memory stream. When a client goes away
+mid-response, that machinery can emit a final empty body chunk for a
+response whose `Content-Length` was already on the wire, and uvicorn kills
+the connection with:
+
+    RuntimeError: Response content shorter than Content-Length
+
+The client sees a reset, and anything in front of it (CloudFlare) turns
+that into a **502**. Nothing is logged as an error by the app itself — the
+response looked fine right up to the point where the body did not arrive.
+
+Found in production 2026-08-25: `erp.noctusai.com` was serving Bad Gateway
+to a browser while every health check passed and the container reported
+healthy. 260 occurrences in six hours. It hit erp and no other product
+because erp is the only one shipping a service worker — its prefetch and
+abort traffic is what produces the mid-response disconnects. Every other
+product had the same latent bug and simply no traffic shaped to trigger it.
+
+Pure ASGI middleware wraps `send`/`receive` and never re-frames the
+response, so the whole class of bug is gone rather than made rarer. The
+cost is that these classes cannot *replace* a response after the app has
+started sending one — which is not a real loss, since headers already on
+the wire cannot be recalled anyway. `MaxBodySizeMiddleware` tracks that
+explicitly (`started`) instead of pretending otherwise.
+
+Keep them pure ASGI. Reaching for `BaseHTTPMiddleware` because `dispatch`
+is more convenient re-opens a 502 nobody will connect back to this file.
 """
 from __future__ import annotations
 
 import time
 import uuid
 import logging
-from typing import Callable, Mapping, Optional
+from typing import Mapping, Optional
 
-from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import Headers, MutableHeaders
 
 DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
 
@@ -28,7 +58,7 @@ from noctusai_lib.primitives._correlation import correlation_id_var, get_correla
 logger = logging.getLogger(__name__)
 
 
-class CorrelationIdMiddleware(BaseHTTPMiddleware):
+class CorrelationIdMiddleware:
     """
     Middleware that generates or extracts correlation IDs for request tracking.
 
@@ -36,29 +66,42 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
     - Generates a new UUID if not present
     - Adds correlation ID to response headers
     - Stores in context variable for use throughout request lifecycle
+
+    Pure ASGI — see the module docstring for why that is not optional.
     """
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        # Get or generate correlation ID
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(scope=scope)
         correlation_id = (
-            request.headers.get("X-Correlation-ID") or
-            request.headers.get("X-Request-ID") or
-            str(uuid.uuid4())
+            headers.get("x-correlation-id")
+            or headers.get("x-request-id")
+            or str(uuid.uuid4())
         )
 
-        # Store in context variable
         token = correlation_id_var.set(correlation_id)
 
+        async def send_wrapper(message) -> None:
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["X-Correlation-ID"] = correlation_id
+            await send(message)
+
         try:
-            response = await call_next(request)
-            # Add correlation ID to response headers
-            response.headers["X-Correlation-ID"] = correlation_id
-            return response
+            await self.app(scope, receive, send_wrapper)
         finally:
+            # Reset in `finally`, not after the await, so a handler that
+            # raises cannot leak this request's id into the next one served
+            # on the same task.
             correlation_id_var.reset(token)
 
 
-class RequestLoggingMiddleware(BaseHTTPMiddleware):
+class RequestLoggingMiddleware:
     """
     Middleware that logs request/response details with timing.
 
@@ -66,66 +109,93 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     - Request: method, path, client IP, query params
     - Response: status code, duration
     - Slow requests (> 1s) are logged at WARNING level
+
+    Timing is measured to the response START (first byte), which is what
+    the previous `BaseHTTPMiddleware` implementation measured too — its
+    `call_next` returned once the response began, not once the body
+    finished. Streaming a large file therefore reports the time to begin
+    streaming, not the transfer time, and always did.
+
+    Pure ASGI — see the module docstring for why that is not optional.
     """
 
     SLOW_REQUEST_THRESHOLD_MS = 1000  # 1 second
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         start_time = time.perf_counter()
         correlation_id = get_correlation_id()
 
-        # Log request start
-        client_ip = request.client.host if request.client else "unknown"
+        client = scope.get("client")
+        client_ip = client[0] if client else "unknown"
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+        query_params = scope.get("query_string", b"").decode("latin-1")
+
         logger.info(
             "Request started",
             extra={
                 "correlation_id": correlation_id,
-                "method": request.method,
-                "path": request.url.path,
+                "method": method,
+                "path": path,
                 "client_ip": client_ip,
-                "query_params": str(request.query_params),
+                "query_params": query_params,
             }
         )
 
+        logged = False
+
+        async def send_wrapper(message) -> None:
+            nonlocal logged
+            if message["type"] == "http.response.start" and not logged:
+                logged = True
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                status_code = message["status"]
+
+                # Determine log level based on response status and duration
+                log_level = logging.INFO
+                if status_code >= 500:
+                    log_level = logging.ERROR
+                elif status_code >= 400:
+                    log_level = logging.WARNING
+                elif duration_ms > self.SLOW_REQUEST_THRESHOLD_MS:
+                    log_level = logging.WARNING
+
+                logger.log(
+                    log_level,
+                    "Request completed",
+                    extra={
+                        "correlation_id": correlation_id,
+                        "method": method,
+                        "path": path,
+                        "status_code": status_code,
+                        "duration_ms": round(duration_ms, 2),
+                        "slow_request": duration_ms > self.SLOW_REQUEST_THRESHOLD_MS,
+                    }
+                )
+
+                # Add timing header
+                MutableHeaders(scope=message)["X-Response-Time-Ms"] = str(
+                    round(duration_ms, 2)
+                )
+            await send(message)
+
         try:
-            response = await call_next(request)
-            duration_ms = (time.perf_counter() - start_time) * 1000
-
-            # Determine log level based on response status and duration
-            log_level = logging.INFO
-            if response.status_code >= 500:
-                log_level = logging.ERROR
-            elif response.status_code >= 400:
-                log_level = logging.WARNING
-            elif duration_ms > self.SLOW_REQUEST_THRESHOLD_MS:
-                log_level = logging.WARNING
-
-            logger.log(
-                log_level,
-                "Request completed",
-                extra={
-                    "correlation_id": correlation_id,
-                    "method": request.method,
-                    "path": request.url.path,
-                    "status_code": response.status_code,
-                    "duration_ms": round(duration_ms, 2),
-                    "slow_request": duration_ms > self.SLOW_REQUEST_THRESHOLD_MS,
-                }
-            )
-
-            # Add timing header
-            response.headers["X-Response-Time-Ms"] = str(round(duration_ms, 2))
-
-            return response
-
+            await self.app(scope, receive, send_wrapper)
         except Exception as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
             logger.exception(
                 "Request failed with exception",
                 extra={
                     "correlation_id": correlation_id,
-                    "method": request.method,
-                    "path": request.url.path,
+                    "method": method,
+                    "path": path,
                     "duration_ms": round(duration_ms, 2),
                     "error": str(e),
                 }
@@ -154,7 +224,7 @@ def _pattern_matches(pattern_segments: tuple[str, ...], path_segments: tuple[str
     return all(p == "*" or p == s for p, s in zip(pattern_segments, path_segments))
 
 
-class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+class MaxBodySizeMiddleware:
     """Reject requests whose body exceeds a per-route cap with 413 before
     any handler runs.
 
@@ -216,7 +286,7 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
         max_bytes: int = DEFAULT_MAX_BODY_BYTES,
         path_overrides: Optional[Mapping[str, int]] = None,
     ):
-        super().__init__(app)
+        self.app = app
         if max_bytes <= 0:
             raise ValueError("max_bytes must be positive")
         self.max_bytes = max_bytes
@@ -254,38 +324,58 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
                 best_limit = limit
         return best_limit
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        limit = self._limit_for(request.url.path)
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        cl = request.headers.get("content-length")
+        limit = self._limit_for(scope.get("path", ""))
+        headers = Headers(scope=scope)
+
+        cl = headers.get("content-length")
         if cl is not None:
             try:
                 declared = int(cl)
             except ValueError:
-                return JSONResponse(
+                await JSONResponse(
                     status_code=400,
                     content={"detail": "invalid Content-Length header"},
-                )
+                )(scope, receive, send)
+                return
             if declared > limit:
-                return _payload_too_large_response(limit, declared)
-            return await call_next(request)
+                await _payload_too_large_response(limit, declared)(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+            return
 
         # Streaming counter — only matters for chunked / unset-Content-Length.
-        original_receive = request.receive
         counter = {"n": 0}
 
         async def counting_receive():
-            msg = await original_receive()
+            msg = await receive()
             if msg["type"] == "http.request":
                 counter["n"] += len(msg.get("body", b"") or b"")
                 if counter["n"] > limit:
                     return {"type": "http.disconnect"}
             return msg
 
-        request._receive = counting_receive  # noqa: SLF001 — Starlette idiom
+        # Once `http.response.start` has gone downstream the status line is
+        # on the wire and no 413 can replace it. The previous
+        # `BaseHTTPMiddleware` version could swap a fully-buffered response
+        # object; pure ASGI cannot, and pretending otherwise would emit a
+        # second response for one request. In practice the cap trips while
+        # the handler is still awaiting `request.body()`, so nothing has
+        # been sent and the 413 lands normally.
+        started = False
+
+        async def send_wrapper(message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
 
         try:
-            response = await call_next(request)
+            await self.app(scope, counting_receive, send_wrapper)
         except Exception:
             # A tripped counter disconnects the ASGI receive channel, which
             # Starlette surfaces deep inside body parsing as
@@ -297,16 +387,17 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
             # surface as an opaque, unhandled 500. Anything that raised
             # WITHOUT tripping the cap is an unrelated downstream error
             # and must propagate untouched.
-            if counter["n"] > limit:
-                return _payload_too_large_response(limit, counter["n"])
+            if counter["n"] > limit and not started:
+                await _payload_too_large_response(limit, counter["n"])(
+                    scope, receive, send
+                )
+                return
             raise
 
         # Cap tripped but the handler never read the body (so nothing
         # downstream ever saw the disconnect) — still trips.
-        if counter["n"] > limit:
-            return _payload_too_large_response(limit, counter["n"])
-
-        return response
+        if counter["n"] > limit and not started:
+            await _payload_too_large_response(limit, counter["n"])(scope, receive, send)
 
 
 def _payload_too_large_response(limit: int, observed: Optional[int] = None) -> JSONResponse:

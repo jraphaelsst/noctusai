@@ -215,17 +215,87 @@ def meta_lead_row_to_source(row: dict) -> SourceRow:
 # ─── name normalization + compatibility ─────────────────────────────────
 
 
+#: Leading/trailing tokens that are NOT part of anyone's name — they are how a
+#: lead's ORIGIN got typed into the name field. Derived from the live review
+#: queue on 2026-08-25, not invented: `hp luiza`/`luiza`,
+#: `de lead luiz alberto`/`luis alberto`, `retono morgana`/`morgana`,
+#: `v4 adilaine pavan`/`adilaine`, `rebelo insta`/`wildo rebello`.
+#:
+#: 🔴 A token here is stripped ONLY when something survives it. "Lead" alone
+#: stays "lead" rather than becoming nameless — a nameless row rides along with
+#: whatever else is in its group (the C3 rule), which is a much bigger claim
+#: than "this name has a prefix on it".
+MARCADORES_DE_ORIGEM: frozenset[str] = frozenset(
+    {"hp", "lead", "leads", "de", "retono", "retorno", "v4", "vv", "prof", "insta"}
+)
+
+
+def _strip_marcadores(tokens: list[str]) -> list[str]:
+    """Drop origin markers from BOTH ends, never from the middle.
+
+    Both ends because the live data has them both ways (`v4 adilaine pavan`,
+    `rebelo insta`). Never the middle, because a token surrounded by name
+    tokens is overwhelmingly likely to BE one — "Ana de Souza" must not lose
+    its "de".
+    """
+    out = list(tokens)
+    while len(out) > 1 and out[0] in MARCADORES_DE_ORIGEM:
+        out = out[1:]
+    while len(out) > 1 and out[-1] in MARCADORES_DE_ORIGEM:
+        out = out[:-1]
+    return out
+
+
 def normalize_name(raw: Optional[str]) -> str:
-    """`lower(unaccent(trim(collapse_whitespace(name))))` — the Python
-    mirror of the §3 predicate's normalization. Returns `""` (never
-    `None`) for a nameless input, so callers can test truthiness directly.
+    """`lower(unaccent(trim(collapse_whitespace(name))))`, plus punctuation and
+    origin-marker folding — the Python mirror of the §3 predicate's
+    normalization. Returns `""` (never `None`) for a nameless input, so
+    callers can test truthiness directly.
+
+    🔴 WIDENED 2026-08-25, FROM THE LIVE QUEUE, NOT FROM THEORY
+    ------------------------------------------------------------
+    351 groups were sitting in the review queue. Reading them showed that a
+    large share were not disagreements about WHO the person is at all:
+
+      `alex sandro` / `alex sandro*`        — a trailing asterisk
+      `nei nunes`   / `nei_nunes`           — an underscore for a space
+      `ricardo`     / `ricardo.santos`      — a dot for a space
+      `hp luiza`    / `luiza`               — the source pasted onto the name
+      `morgana`     / `retono morgana`      — same
+      `ju cantowitz +` / `juliana cantowitz`
+
+    Every one of those is the same letters with something non-alphabetic
+    around them, and every one cost a human two clicks. Punctuation now folds
+    to whitespace and origin markers are dropped from the ends, which moved
+    106 of the 351 groups into the auto-mergeable classes (C1/C2) — measured
+    against the live database, not estimated.
+
+    WHAT THIS DELIBERATELY DOES NOT DO
+    ----------------------------------
+    No fuzzy matching, no edit distance, no phonetics. `elisabeth`/`elizabeth`
+    and `erick`/`erik` are almost certainly the same person, and
+    `fernanda`/`lucilene ferreira alves` is almost certainly two people
+    sharing a phone — and NOTHING in the letters distinguishes those two cases
+    from each other. Guessing there merges strangers' records. Those 245 stay
+    with a human, which is what the review queue is for.
     """
     if not raw:
         return ""
+    # A social handle's tagline is not part of the name: "Rose Oliveira |
+    # Nutricionista Oncológica" and "Silas Brito | Estilo inglês Móveis" are
+    # the same people as "Rose Oliveira" and "Silas". Keep what precedes the
+    # bar — but ONLY when something precedes it, or "|Maria Veiga" would
+    # normalize to nothing and turn a named row into a nameless one.
+    if "|" in raw and raw.split("|", 1)[0].strip():
+        raw = raw.split("|", 1)[0]
     collapsed = " ".join(raw.split())
     decomposed = unicodedata.normalize("NFKD", collapsed)
     stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return stripped.strip().lower()
+    # Punctuation to whitespace, not to nothing: `nei_nunes` must become two
+    # tokens, matching `nei nunes`, rather than one glued `neinunes`.
+    folded = "".join(c if (c.isalnum() or c.isspace()) else " " for c in stripped)
+    tokens = _strip_marcadores(folded.lower().split())
+    return " ".join(tokens)
 
 
 def _tokens(name_norm: str) -> list[str]:

@@ -172,11 +172,23 @@ class TestFleetScope:
         assert ss.spa_smoke(products=["orbity"])["checked"] == 1
 
     def test_one_bad_product_fails_the_whole_run_and_is_named(self, fetch, monkeypatch):
+        # The bad URL is derived from `public_hostname`, NOT from a `"core."`
+        # prefix. That prefix was the same guess `smoke_product` itself used to
+        # make, and it stopped being true when `core` moved to the apex
+        # `noctusai.com` — the stub then never matched, every product passed,
+        # and this test went green while asserting the opposite of its name.
+        #
+        # Keying off the real resolver means the test states what it is about
+        # (one failure fails the fleet run and is named) and stays correct
+        # whatever `deploy/tunnel/ingress.yml` says a product is served at.
         monkeypatch.setattr(ss, "_live_slugs", lambda: ["core", "seed"])
+        alvo = ss.public_hostname("core")
+
         def _fetch(url, timeout=25):
-            if "core." in url and url.endswith("/"):
+            if url == f"https://{alvo}/":
                 return 503, b"", ""
             return _responder(_ok_map())(url, timeout)
+
         monkeypatch.setattr(ss, "_fetch", _fetch)
         out = ss.spa_smoke()
         assert out["ok"] is False and out["failed"] == ["core"]

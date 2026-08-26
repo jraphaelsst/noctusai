@@ -21,6 +21,8 @@ import {
   Mail,
   MessageCircle,
   KeyRound,
+  RotateCcw,
+  ShieldCheck,
 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -45,11 +47,16 @@ import {
   useSaveInstagramApp,
   useClientesInactivityConfig,
   useSaveClientesInactivityConfig,
+  useDocumentoRetencao,
+  useSaveDocumentoRetencao,
+  useResetDocumentoRetencao,
+  type DocumentoRetencaoPolitica,
   type KeyStatusEntry,
   type Recipient,
   type RecipientCreate,
 } from "@/hooks/useSettings";
 import { useMarcas, type Marca } from "@/hooks/useMarcas";
+import { rotuloTipo } from "@/lib/documentoTipos";
 
 // ─── Reusable bits ──────────────────────────────────────────────────────
 function HealthBadge({ entry }: { entry: KeyStatusEntry }) {
@@ -116,7 +123,7 @@ function NotificationsTab() {
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Canais de notificacao</CardTitle>
+          <CardTitle>Canais de notificação</CardTitle>
           <CardDescription>
             Configurados via .env. Para alterar, edite os valores e reinicie o backend.
           </CardDescription>
@@ -147,10 +154,10 @@ function NotificationsTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Destinatarios</CardTitle>
+          <CardTitle>Destinatários</CardTitle>
           <CardDescription>
-            Lista fixa que recebe a notificacao em cada upload publicado.
-            No momento do upload da para desmarcar individualmente.
+            Lista fixa que recebe a notificação em cada upload publicado.
+            No momento do upload dá para desmarcar individualmente.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -715,7 +722,7 @@ function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
       <Card>
         <CardContent className="flex flex-col items-center gap-3 p-12 text-center">
           <p className="text-sm text-muted-foreground">
-            Nao foi possivel carregar o limite de inatividade de clientes.
+            Não foi possível carregar o limite de inatividade de clientes.
           </p>
           <Button
             variant="outline"
@@ -738,7 +745,7 @@ function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isValid) {
-      toast.error("Informe um numero inteiro maior ou igual a 0.");
+      toast.error("Informe um número inteiro maior ou igual a 0.");
       return;
     }
     save(parsedDraft, { onSuccess: () => setDirty(false) });
@@ -752,7 +759,7 @@ function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
           <div>
             <CardTitle>Inatividade de clientes</CardTitle>
             <CardDescription>
-              Clientes sem contato ha mais de N dias sao marcados como
+              Clientes sem contato há mais de N dias são marcados como
               inativos e saem do quadro; podem ser restaurados a qualquer
               momento.
             </CardDescription>
@@ -852,6 +859,274 @@ function VisibilidadeTab() {
 
 // ─── Page shell ────────────────────────────────────────────────────────
 export default function Settings() {
+// ─── Document retention tab (migration 079) ─────────────────────────────
+//
+// The screen the owner asked for: "leave a UI for it so i can change it later
+// if i need to". Every document type, its effective retention, the platform
+// default behind it, and a restore.
+//
+// 🔴 IT ALWAYS SHOWS THE ANCHOR. A retention period is a duration and a
+// duration alone is ambiguous — "5 anos" counted from the upload and from the
+// deal's close are years apart, and the atendimento surface counts from the
+// close because Lei 9.613/98 art. 10 III says "da conclusão da transação".
+// Rendering the number without `ancora_rotulo` would be a screen that reads
+// correctly and means something else.
+
+const SUPERFICIE_ROTULOS: Record<string, string> = {
+  cliente: "Documentos do cliente",
+  atendimento: "Documentos do atendimento (negociação)",
+};
+
+/** `null` is "manter indefinidamente" — a real policy, never a blank. */
+function formatRetencao(dias: number | null): string {
+  if (dias === null) return "Indefinidamente";
+  if (dias % 365 === 0) {
+    const anos = dias / 365;
+    return `${dias} dias (${anos} ${anos === 1 ? "ano" : "anos"})`;
+  }
+  return `${dias} dias`;
+}
+
+/** Sentinel for the "manter indefinidamente" option. A DOM input cannot hold
+ *  `null`, and "" is indistinguishable from "the field is empty because I am
+ *  still typing" — so the absence of a clock gets an explicit value. */
+const INDEFINIDO = "__indefinido__";
+
+function RetencaoLinha({
+  politica,
+  canEdit,
+}: {
+  politica: DocumentoRetencaoPolitica;
+  canEdit: boolean;
+}) {
+  const { mutate: save, isPending: saving } = useSaveDocumentoRetencao();
+  const { mutate: reset, isPending: resetting } = useResetDocumentoRetencao();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const iniciar = () => {
+    setDraft(
+      politica.retencao_dias === null ? INDEFINIDO : String(politica.retencao_dias)
+    );
+    setEditing(true);
+  };
+
+  const submeter = (e: React.FormEvent) => {
+    e.preventDefault();
+    const indefinido = draft === INDEFINIDO;
+    const parsed = Number(draft);
+    if (!indefinido && (!Number.isInteger(parsed) || parsed < 1)) {
+      toast.error("Informe um número inteiro de 1 dia ou mais.");
+      return;
+    }
+    save(
+      {
+        superficie: politica.superficie,
+        tipo_documento: politica.tipo_documento,
+        retencao_dias: indefinido ? null : parsed,
+      },
+      { onSuccess: () => setEditing(false) }
+    );
+  };
+
+  return (
+    <div
+      className="flex flex-col gap-2 border-b py-3 last:border-b-0"
+      data-testid={`retencao-row-${politica.superficie}-${politica.tipo_documento}`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          {/* The human label leads; the slug stays visible underneath because
+              it is what the API, the storage path and any support question
+              actually name. Showing only the slug — as this screen first did —
+              is the same defect the imóvel filters have. */}
+          <p className="text-sm font-medium">
+            {rotuloTipo(politica.superficie, politica.tipo_documento)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            <span className="font-mono">{politica.tipo_documento}</span>
+            {" · "}
+            {politica.ancora_rotulo}
+          </p>
+        </div>
+        {!editing && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm">{formatRetencao(politica.retencao_dias)}</span>
+            {politica.personalizado && (
+              <Badge variant="secondary" className="text-[11px]">
+                personalizado
+              </Badge>
+            )}
+            {canEdit && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={iniciar}
+                data-testid={`retencao-alterar-${politica.tipo_documento}`}
+              >
+                Alterar
+              </Button>
+            )}
+            {canEdit && politica.personalizado && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={resetting}
+                title={`Restaurar o padrão da plataforma (${formatRetencao(
+                  politica.padrao_dias
+                )})`}
+                aria-label={`Restaurar o padrão de ${rotuloTipo(politica.superficie, politica.tipo_documento)}`}
+                onClick={() =>
+                  reset({
+                    superficie: politica.superficie,
+                    tipo_documento: politica.tipo_documento,
+                  })
+                }
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* The default and the reason behind it — an audit asks "why this
+          number", and a bare integer answers nothing. */}
+      {politica.personalizado && (
+        <p className="text-xs text-muted-foreground">
+          Padrão da plataforma: {formatRetencao(politica.padrao_dias)}
+        </p>
+      )}
+      {politica.padrao_motivo && !politica.personalizado && (
+        <p className="text-xs text-muted-foreground">{politica.padrao_motivo}</p>
+      )}
+
+      {editing && (
+        <form onSubmit={submeter} className="flex flex-wrap items-center gap-2">
+          <Input
+            type="text"
+            inputMode="numeric"
+            className="h-8 w-32"
+            value={draft === INDEFINIDO ? "" : draft}
+            placeholder="dias"
+            onChange={(e) => setDraft(e.target.value)}
+            aria-label={`Retenção em dias para ${rotuloTipo(politica.superficie, politica.tipo_documento)}`}
+          />
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Switch
+              checked={draft === INDEFINIDO}
+              onCheckedChange={(on) => setDraft(on ? INDEFINIDO : "")}
+            />
+            Manter indefinidamente
+          </label>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={saving}
+            data-testid={`retencao-salvar-${politica.tipo_documento}`}
+          >
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Salvar"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setEditing(false)}
+          >
+            Cancelar
+          </Button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
+  const { data, loading, isError, refetch } = useDocumentoRetencao();
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center p-12">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 p-12 text-center">
+          <p className="text-sm text-muted-foreground">
+            Não foi possível carregar a política de retenção de documentos.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            data-testid="documento-retencao-retry-btn"
+          >
+            Tentar novamente
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const grupos = ["atendimento", "cliente"].filter((s) =>
+    data.items.some((p) => p.superficie === s)
+  );
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <ShieldCheck className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <CardTitle>Retenção de documentos</CardTitle>
+              <CardDescription>
+                Por quanto tempo cada tipo de documento é mantido antes de ser
+                removido automaticamente. A contagem só começa a partir do
+                marco indicado em cada linha.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        {!canEdit && (
+          <CardContent>
+            <p className="text-xs text-muted-foreground">
+              Somente owner ou admin podem alterar estes prazos.
+            </p>
+          </CardContent>
+        )}
+      </Card>
+
+      {grupos.map((superficie) => (
+        <Card key={superficie}>
+          <CardHeader>
+            <CardTitle className="text-base">
+              {SUPERFICIE_ROTULOS[superficie] ?? superficie}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {data.items
+              .filter((p) => p.superficie === superficie)
+              .map((p) => (
+                <RetencaoLinha
+                  key={`${p.superficie}:${p.tipo_documento}`}
+                  politica={p}
+                  canEdit={canEdit}
+                />
+              ))}
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
   const { user } = useAuthStore();
   const ssoCtx = resolveSSOContext(user?.user_metadata);
   const isAdminOrDev =
@@ -869,21 +1144,22 @@ export default function Settings() {
   return (
     <div className="container mx-auto max-w-5xl px-4 py-8">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Configuracoes</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Configurações</h1>
         <p className="text-sm text-muted-foreground">
-          Gerencie destinatarios de notificacao e status das chaves de integracao.
+          Gerencie destinatários de notificação e status das chaves de integração.
         </p>
       </header>
 
       <Tabs defaultValue="notifications" className="w-full">
         <TabsList
           className={`grid w-full ${
-            isAdminOrDev ? "grid-cols-4 sm:max-w-lg" : "grid-cols-3 sm:max-w-md"
+            isAdminOrDev ? "grid-cols-5 sm:max-w-2xl" : "grid-cols-4 sm:max-w-lg"
           }`}
         >
-          <TabsTrigger value="notifications">Notificacoes</TabsTrigger>
+          <TabsTrigger value="notifications">Notificações</TabsTrigger>
           <TabsTrigger value="keys">Chaves API</TabsTrigger>
           <TabsTrigger value="clientes">Clientes</TabsTrigger>
+          <TabsTrigger value="retencao">Retenção</TabsTrigger>
           {isAdminOrDev && (
             <TabsTrigger value="visibilidade">Visibilidade</TabsTrigger>
           )}
@@ -897,6 +1173,12 @@ export default function Settings() {
         </TabsContent>
         <TabsContent value="clientes" className="mt-6">
           <ClientesInactivityTab canEdit={canEditClientesInactivity} />
+        </TabsContent>
+        {/* Read is open to any member — a corretor should be able to look up
+            how long we keep a buyer's income tax return. Only the write is
+            narrowed to owner/admin, matching the backend's `_require_admin`. */}
+        <TabsContent value="retencao" className="mt-6">
+          <DocumentoRetencaoTab canEdit={canEditClientesInactivity} />
         </TabsContent>
         {isAdminOrDev && (
           <TabsContent value="visibilidade" className="mt-6">

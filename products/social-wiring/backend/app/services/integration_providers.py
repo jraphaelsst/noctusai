@@ -69,6 +69,46 @@ PROVIDERS: list[dict[str, Any]] = [
         "tutorial_url": "https://developers.grupozap.com/webhooks/integration_leads.html",
     },
     {
+        # ImovelWeb / Wimoveis / Casa Mineira via OpenNavent — Navent
+        # (Grupo QuintoAndar), a DIFFERENT vendor from the `olx` row above
+        # despite the overlapping portal names. Grupo OLX does bridge
+        # ImovelWeb into its own Gestor de Leads, so an advertiser can be
+        # live on both; the leads then arrive twice, under two vendor ids,
+        # and the direct pipe is the one that names the portal honestly.
+        #
+        # `oauth_supported: False` is about the ACCOUNT-CONNECT flow, not
+        # about the API: OpenNavent uses OAuth2 client credentials, which
+        # is machine-to-machine — no user, no redirect, no per-org consent
+        # to collect. There is nothing for the picker to send a user to.
+        "id": "imovelweb",
+        "display_name": "ImovelWeb / Wimoveis (OpenNavent)",
+        "icon": "imovelweb",
+        "oauth_supported": False,
+        "manual_entry": True,
+        "manual_key_fields": [
+            {
+                "name": "webhook_secret",
+                "label": "Chave do callback (definida por nós)",
+                "type": "password",
+                "placeholder": "Escolhida por nós e registrada no portal",
+            },
+            {
+                "name": "client_id",
+                "label": "Client ID (OpenNavent)",
+                "type": "text",
+                "placeholder": "Fornecido por integracao@imovelweb.com.br",
+            },
+            {
+                "name": "client_secret",
+                "label": "Client Secret (OpenNavent)",
+                "type": "password",
+                "placeholder": "Fornecido junto com o Client ID",
+            },
+        ],
+        "scopes": [],
+        "tutorial_url": "https://open-classifieds.notion.site/bra",
+    },
+    {
         "id": "youtube",
         "display_name": "YouTube",
         "icon": "youtube",

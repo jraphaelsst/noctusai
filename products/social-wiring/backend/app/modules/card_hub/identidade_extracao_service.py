@@ -129,10 +129,11 @@ _ESTADOS_NAO_TERMINAIS = ("pendente", "processando")
 
 # ─── The extracted fields, as data ──────────────────────────────────────────
 #
-# Table-driven rather than two parallel code paths. The two fields differ ONLY
-# in policy (`sobrescreve`) and in which columns hold them; expressing that as
-# rows means adding the third field — RG number and CPF number are the obvious
-# next ones — is a row here, not another branch through apply/suggest/confirm.
+# Table-driven rather than parallel code paths. The fields differ ONLY in
+# policy (`sobrescreve`) and in which columns hold them; expressing that as rows
+# is what made adding `genero` (migration 073) a single entry here rather than
+# another branch through apply/suggest/confirm. RG number and CPF number remain
+# the obvious next ones, on the same terms.
 
 
 @dataclass(frozen=True)
@@ -197,6 +198,18 @@ CAMPOS: tuple[CampoExtraido, ...] = (
         coluna_rotulo="extracao_nome_rotulo",
         sobrescreve=True,
     ),
+    # Migration 073. `sobrescreve=False`, like the birthdate and unlike the
+    # name: `genero` is a REGISTRATION field an operator types into the card,
+    # so first-writer-wins protects their entry. `nome_oficial` may overwrite
+    # only because it is held BESIDE the registration name rather than being
+    # it — there is no such second column here.
+    CampoExtraido(
+        item_key="genero",
+        coluna_valor="extracao_genero",
+        coluna_confianca="extracao_genero_confianca",
+        coluna_rotulo="extracao_genero_rotulo",
+        sobrescreve=False,
+    ),
 )
 
 CAMPO_POR_CHAVE: dict[str, CampoExtraido] = {c.item_key: c for c in CAMPOS}
@@ -228,6 +241,12 @@ def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional
             fields.nome_confianca.value,
             fields.nome_rotulo,
             fields.persistable_nome,
+        ),
+        "genero": (
+            fields.genero,
+            fields.genero_confianca.value,
+            fields.genero_rotulo,
+            fields.persistable_genero,
         ),
     }
 

@@ -22,8 +22,22 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Textarea } from "@/components/ui/textarea";
 import type { AgendamentoCreateBody, TipoAgendamento } from "@/types/cardHub";
 
+/**
+ * 🔴 "Visita" IS DELIBERATELY ABSENT (migration 082).
+ *
+ * A visit is not a calendar entry — it belongs to a ROTEIRO, which can hold
+ * several properties, keep them in visiting order, print a cronograma and
+ * record whether each one actually happened. An agendamento can do none of
+ * that, so offering "Visita" here would hand the user the weaker of two things
+ * under the better name.
+ *
+ * The VALUE stays legal everywhere else: the DB CHECK in `061` is untouched,
+ * the backend's `_TIPO_AGENDAMENTO_VALUES` still accepts it, and
+ * `ClienteCardDialog`'s `TIPO_LABEL` still renders it as "Visita". Live rows
+ * carry `tipo='visita'` and that history must keep reading correctly. This
+ * list is what the button OFFERS, not what the system accepts.
+ */
 export const TIPO_OPTIONS: { value: TipoAgendamento; label: string }[] = [
-  { value: "visita", label: "Visita" },
   { value: "ligacao", label: "Ligação" },
   { value: "reuniao", label: "Reunião" },
   { value: "outro", label: "Outro" },
@@ -54,7 +68,7 @@ export function AgendamentoPopover({
   saving,
 }: AgendamentoPopoverProps) {
   const [quando, setQuando] = useState("");
-  const [tipo, setTipo] = useState<TipoAgendamento>("visita");
+  const [tipo, setTipo] = useState<TipoAgendamento>("ligacao");
   const [nota, setNota] = useState("");
   const [lembrete, setLembrete] = useState<number | null>(60);
 

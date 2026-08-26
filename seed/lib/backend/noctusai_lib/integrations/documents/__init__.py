@@ -4,12 +4,19 @@
 
 - `IdentityFields` / `IdentityDocumentKind` / `ExtractionConfidence` /
   `TextSource` value objects, and the `IdentityExtractor` Protocol.
-- `find_birthdate(text)` / `find_name(text)` — the pure, label-anchored
-  Brazilian parsers. Usable on their own wherever text is already in hand.
+- `find_birthdate(text)` / `find_name(text)` / `find_gender(text)` — the pure,
+  label-anchored Brazilian parsers. Usable on their own wherever text is
+  already in hand.
 - `FakeIdentityExtractor` — deterministic; the dev/test default.
-- `LadderIdentityExtractor` — PDF text layer → rasterize→vision, composing
-  `integrations.media`. Imported lazily.
+- `LadderIdentityExtractor` — identity documents → `IdentityFields`.
+  Imported lazily.
 - `make_identity_extractor(real=...)` — factory.
+- `find_matricula(text)` + `MatriculaFields` / `FakeMatriculaExtractor` /
+  `LadderMatriculaExtractor` / `make_matricula_extractor(real=...)` — the
+  same shape for a certidão de matrícula. See `matricula_extractor.py` for
+  why it tempers a vision read harder than anything else here.
+- `DocumentTextLadder` — the shared "bytes → cheapest readable text" rung
+  chooser both real extractors compose.
 
 **Why this is a seed module and not product code.** RG/CPF extraction is
 requested as *the canonical procedure*, and the platform already has the
@@ -46,10 +53,29 @@ consumer must honour both:
 """
 from noctusai_lib.integrations.documents.birthdate import find_birthdate, normalize
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
+from noctusai_lib.integrations.documents.gender import find_gender
+from noctusai_lib.integrations.documents.ladder import (
+    DocumentTextLadder,
+    looks_like_pdf,
+)
+from noctusai_lib.integrations.documents.matricula import find_matricula
+from noctusai_lib.integrations.documents.matricula_extractor import (
+    FakeMatriculaExtractor,
+    MatriculaExtractor,
+    MatriculaFields,
+    make_matricula_extractor,
+)
 from noctusai_lib.integrations.documents.name import find_name, looks_like_a_name
 from noctusai_lib.integrations.documents.fake import (
     FakeIdentityExtractor,
     classify_kind,
+)
+from noctusai_lib.integrations.documents.transcription import (
+    DocumentTranscriber,
+    FakeDocumentTranscriber,
+    TranscribedPage,
+    Transcription,
+    make_document_transcriber,
 )
 from noctusai_lib.integrations.documents.text import (
     normalize_lines,
@@ -64,29 +90,60 @@ from noctusai_lib.integrations.documents.types import (
 )
 
 
-def __getattr__(name: str):  # pragma: no cover - lazy proxy
-    """Lazy-load `LadderIdentityExtractor` on first access, so importing
-    this package never requires PyMuPDF / the LLM stack."""
-    if name == "LadderIdentityExtractor":
-        from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
+#: Attribute name → the module it lives in, for the lazy proxy below. Both
+#: real extractors are listed: neither may be imported eagerly, since each
+#: pulls `integrations.media` (PyMuPDF / the LLM stack) on its ladder's first
+#: use, and a slim image must still be able to import this package.
+_LAZY: dict[str, str] = {
+    "LadderIdentityExtractor": "noctusai_lib.integrations.documents.real",
+    "LadderMatriculaExtractor": (
+        "noctusai_lib.integrations.documents.matricula_extractor"
+    ),
+    "LadderDocumentTranscriber": (
+        "noctusai_lib.integrations.documents.transcription"
+    ),
+}
 
-        return LadderIdentityExtractor
+
+def __getattr__(name: str):  # pragma: no cover - lazy proxy
+    """Lazy-load the real extractors on first access, so importing this
+    package never requires PyMuPDF / the LLM stack."""
+    modulo = _LAZY.get(name)
+    if modulo is not None:
+        import importlib
+
+        return getattr(importlib.import_module(modulo), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
+    "DocumentTextLadder",
+    "DocumentTranscriber",
     "ExtractionConfidence",
+    "FakeDocumentTranscriber",
     "FakeIdentityExtractor",
+    "FakeMatriculaExtractor",
     "IdentityDocumentKind",
     "IdentityExtractor",
     "IdentityFields",
+    "LadderDocumentTranscriber",
     "LadderIdentityExtractor",
+    "LadderMatriculaExtractor",
+    "MatriculaExtractor",
+    "MatriculaFields",
     "TextSource",
+    "TranscribedPage",
+    "Transcription",
     "classify_kind",
     "find_birthdate",
+    "find_gender",
+    "find_matricula",
     "find_name",
     "looks_like_a_name",
+    "looks_like_pdf",
+    "make_document_transcriber",
     "make_identity_extractor",
+    "make_matricula_extractor",
     "normalize",
     "normalize_lines",
     "strip_accents_upper",

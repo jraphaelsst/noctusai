@@ -196,3 +196,44 @@ export function useRevisaoMutations() {
 
   return { merge, manterSeparados, desfazer };
 }
+
+
+// ─── Bulk drain (2026-08-25) ────────────────────────────────────────────────
+
+export interface MergeSegurosResult {
+  grupos_mesclados: number;
+  clientes_absorvidos: number;
+  grupos_restantes: number;
+}
+
+export const REVISAO_SEGUROS_KEY = ["clientes", "revisao", "seguros"] as const;
+
+/**
+ * How many groups the classifier considers unambiguous — a dry run of the
+ * bulk merge, so the button can name its own size.
+ *
+ * A bulk action that will not say how much it is about to change is one people
+ * are right not to press, and this queue's whole problem is that nobody
+ * pressed anything: 351 groups at two clicks each.
+ */
+export function useRevisaoSegurosCount() {
+  const query = useQuery({
+    queryKey: REVISAO_SEGUROS_KEY,
+    queryFn: () =>
+      api.post<MergeSegurosResult>("/api/clientes/revisao/merge-seguros?simular=true"),
+  });
+  return { ...query, loading: query.isPending || query.isFetching };
+}
+
+/** Apply every unambiguous merge in one press. */
+export function useMergeSeguros() {
+  const qc = useQueryClient();
+  return useMutation<MergeSegurosResult, unknown, void>({
+    mutationFn: () =>
+      api.post<MergeSegurosResult>("/api/clientes/revisao/merge-seguros"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["clientes", "revisao"] });
+      qc.invalidateQueries({ queryKey: REVISAO_SEGUROS_KEY });
+    },
+  });
+}

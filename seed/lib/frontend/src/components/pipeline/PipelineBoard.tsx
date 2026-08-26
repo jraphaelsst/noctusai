@@ -63,6 +63,16 @@ export interface PipelineBoardProps<TCard> {
   columnClassName?: string;
   /** Extra controls rendered beside the stage-editor toggle. */
   toolbar?: React.ReactNode;
+  /**
+   * Ask the board endpoint for more cards per column.
+   *
+   * Rendered ONLY while some column is actually truncated (`exibidos < total`).
+   * A "load more" that is always visible is a control that lies half the time,
+   * and the board already knows which half it is in — the consumer does not.
+   */
+  onLoadMore?: () => void;
+  /** Label for the load-more control. */
+  loadMoreLabel?: string;
 }
 
 const DEFAULT_COLUMN_CLASS =
@@ -81,6 +91,8 @@ export function PipelineBoard<TCard>({
   className,
   columnClassName = DEFAULT_COLUMN_CLASS,
   toolbar,
+  onLoadMore,
+  loadMoreLabel = 'Carregar mais',
 }: PipelineBoardProps<TCard>) {
   const { descriptor } = hooks;
   const { data: colunas, isPending, isFetching, error } = hooks.useBoard(filtros);
@@ -100,11 +112,26 @@ export function PipelineBoard<TCard>({
     return counts;
   }, [columns]);
 
+  // Some column is showing fewer cards than it has.
+  const algumaTruncada = columns.some(
+    (c) => c.exibidos !== undefined && c.exibidos < (c.total ?? 0),
+  );
+
   return (
     <div className={className}>
-      {(editable || toolbar) && (
+      {(editable || toolbar || (onLoadMore && algumaTruncada)) && (
         <div className="flex flex-wrap items-center gap-2 mb-4">
           {toolbar}
+          {onLoadMore && algumaTruncada && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onLoadMore}
+              data-testid="pipeline-load-more"
+            >
+              {loadMoreLabel}
+            </Button>
+          )}
           {editable && (
             <Button
               variant={configurando ? 'primary' : 'outline'}
@@ -159,14 +186,28 @@ export function PipelineBoard<TCard>({
         renderColumnHeader={(stage) => {
           const coluna = columns.find((c) => c.etapa === stage.id);
           const classes = stageColorClasses(coluna?.stage?.cor);
+          const truncada =
+            coluna?.exibidos !== undefined && coluna.exibidos < (coluna.total ?? 0);
           return (
             <div className={`p-4 border-b ${classes.bgColor} ${classes.borderColor}`}>
               <div className="flex items-center justify-between mb-2 gap-2">
                 <h3 className={`font-semibold text-sm min-w-0 truncate ${classes.color}`}>
                   {coluna?.stage?.label ?? stage.label}
                 </h3>
-                <span className="text-xs rounded-full bg-background/60 px-2 py-0.5">
-                  {coluna?.total ?? 0}
+                <span
+                  className="text-xs rounded-full bg-background/60 px-2 py-0.5 whitespace-nowrap"
+                  title={
+                    truncada
+                      ? `Mostrando ${coluna!.exibidos} de ${coluna!.total} cartões`
+                      : undefined
+                  }
+                >
+                  {/* 🔴 A capped column must SAY it is capped. Showing the true
+                      total beside 50 rendered cards reads as a bug; showing
+                      only 50 under-reports the pipeline. Both numbers, always. */}
+                  {truncada
+                    ? `${coluna!.exibidos} de ${coluna!.total}`
+                    : (coluna?.total ?? 0)}
                 </span>
               </div>
               <p className="text-sm font-medium">{formatValue(coluna?.valorTotal ?? 0)}</p>

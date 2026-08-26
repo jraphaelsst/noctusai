@@ -47,6 +47,7 @@ import {
   useLeadSources,
 } from "@/hooks/useLeadsSources";
 import OlxWebhookCard from "./components/OlxWebhookCard";
+import ImovelWebWebhookCard from "./components/ImovelWebWebhookCard";
 import ReceiverTokensCard from "./components/ReceiverTokensCard";
 import {
   useLeadCorretorAliasMutations,
@@ -967,6 +968,10 @@ export default function Configuracao() {
         <div className="space-y-4" data-testid="portais-config">
           <ReceiverTokensCard />
           <OlxWebhookCard />
+          {/* A separate card, not a section of the OLX one: different
+              vendor, different credentials, different failure modes — and
+              an advertiser can be live on both at once. */}
+          <ImovelWebWebhookCard />
         </div>
       )}
     </div>

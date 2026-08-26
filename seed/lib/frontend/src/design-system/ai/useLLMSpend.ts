@@ -24,7 +24,7 @@
  *   }
  */
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@noctusai/seed/infra';
+import { coreApi } from '@noctusai/seed/infra';
 
 export type SpendStatus = 'unset' | 'ok' | 'warn' | 'hard_stop';
 
@@ -57,7 +57,7 @@ export function useLLMSpend(orgId: string | null | undefined, isAdmin: boolean) 
     queryKey: ['admin', 'llm-spend', orgId ?? '_none'],
     queryFn: async () => {
       try {
-        return await api.get<LLMSpendResponse>(`/api/admin/llm-spend/${encodeURIComponent(orgId!)}`);
+        return await coreApi.get<LLMSpendResponse>(`/api/admin/llm-spend/${encodeURIComponent(orgId!)}`);
       } catch (err) {
         if (err instanceof Error && err.message.startsWith('[404]')) {
           return null;

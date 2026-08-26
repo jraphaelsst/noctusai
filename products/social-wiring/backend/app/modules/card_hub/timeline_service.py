@@ -36,7 +36,9 @@ from app.modules.card_hub.services import (
     ensure_cliente,
 )
 
-_ALL_KINDS = {"nota", "touch", "movimento", "documento", "checklist", "sistema"}
+_ALL_KINDS = {
+    "nota", "touch", "movimento", "documento", "checklist", "sistema", "visita",
+}
 _DEFAULT_LIMIT = 50
 
 
@@ -283,12 +285,100 @@ def _gather_sistema(client: Any, org_id: UUID, cliente_id: UUID, cliente: dict) 
     return events
 
 
+def _gather_visitas(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
+    """Routes planned and visits that resolved — DERIVED, like every other
+    gatherer here (migration 082).
+
+    🔴 This is the half of the roteiros feature that makes it a MEMORY rather
+    than a counter. The user's requirement was explicit: in 2028, an agent
+    handling this person must be able to see what happened in 2024 — which
+    properties were walked, whether the visit happened, and what the corretor
+    wrote down. `visitas.observacao` is that sentence, and this is where it
+    becomes readable.
+
+    Nothing is written anywhere: `timeline_service` has no insert path, and
+    adding one for this would fork the module's whole design.
+
+    A `pendente` visita produces NO entry. `feedback_em` is null until the
+    outcome is recorded, and `_gather_sistema`'s ruling on "restored" applies
+    unchanged — an event with no honestly derivable timestamp is omitted, never
+    stamped with `now()`, which would misplace it in the sort order and lie
+    about when it happened.
+    """
+    atendimentos = card_hub_services._atendimentos_do_cliente(client, org_id, cliente_id)
+    if not atendimentos:
+        return []
+    roteiros = [
+        r
+        for r in _in_batched_rows(
+            client, "roteiros", org_id, "atendimento_id", [str(a["id"]) for a in atendimentos]
+        )
+        if r.get("deleted_at") is None
+    ]
+    if not roteiros:
+        return []
+
+    events: list[dict] = []
+    visitas = [
+        v
+        for v in _in_batched_rows(
+            client, "visitas", org_id, "roteiro_id", [str(r["id"]) for r in roteiros]
+        )
+        if v.get("deleted_at") is None
+    ]
+    por_roteiro: dict[str, int] = {}
+    for v in visitas:
+        por_roteiro[str(v["roteiro_id"])] = por_roteiro.get(str(v["roteiro_id"]), 0) + 1
+
+    for r in roteiros:
+        if not r.get("created_at"):
+            continue
+        events.append(
+            {
+                "id": f"roteiro-{r['id']}",
+                "kind": "visita",
+                "ocorrido_em": r["created_at"],
+                "ator": None,
+                "payload": {
+                    "evento": "roteiro_criado",
+                    "roteiro_id": r["id"],
+                    "titulo": r.get("titulo"),
+                    "imoveis": por_roteiro.get(str(r["id"]), 0),
+                },
+            }
+        )
+
+    for v in visitas:
+        if v.get("status") == "pendente" or not v.get("feedback_em"):
+            continue
+        events.append(
+            {
+                "id": f"visita-{v['id']}",
+                "kind": "visita",
+                "ocorrido_em": v["feedback_em"],
+                "ator": None,
+                "payload": {
+                    "evento": (
+                        "visita_realizada"
+                        if v["status"] == "realizada"
+                        else "visita_nao_realizada"
+                    ),
+                    "roteiro_id": v["roteiro_id"],
+                    "codigo": v.get("codigo"),
+                    "observacao": v.get("observacao"),
+                },
+            }
+        )
+    return events
+
+
 _GATHERERS = {
     "nota": _gather_notas,
     "touch": _gather_touches,
     "movimento": _gather_movimentos,
     "documento": _gather_documentos,
     "checklist": _gather_checklist_events,
+    "visita": _gather_visitas,
 }
 
 

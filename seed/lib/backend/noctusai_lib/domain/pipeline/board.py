@@ -38,12 +38,28 @@ def group_into_colunas(
     rows: list[dict[str, Any]],
     *,
     row_to_dto: Callable[[dict], dict] | None = None,
+    value_of: Callable[[dict], float] | None = None,
+    limite_cards: int | None = None,
 ) -> list[dict[str, Any]]:
     """One column per configured stage, cards bucketed by `etapa_id`.
 
     Cards whose `etapa_id` matches no configured stage are NOT silently
     dropped — see `orphan_cards`. Dropping them is how a board quietly loses a
     deal after a stage is deleted out from under it.
+
+    `value_of` overrides where a card's money comes from. The default reads
+    `cfg.value_field`, which is a single column name — fine while the value
+    lives on the card's own row, useless once it lives somewhere else. The
+    funil's does: `atendimentos.valor_estimado` is a field nobody fills, while
+    `atendimento_negociacao.valor_negociado` is the number the person closing
+    the deal actually types. A callable lets the caller answer "what is this
+    card worth" without this function learning about either table.
+
+    `limite_cards` truncates the CARDS in each column while leaving `total`
+    and `valorTotal` computed over ALL of them. 🔴 That split is the whole
+    point: a board showing 50 of 1.070 must still say 1.070 and still total
+    the money for 1.070. Truncating the counts too would turn a display limit
+    into a silent under-report of the pipeline.
     """
     by_stage: dict[str, list[dict]] = {s["id"]: [] for s in stages}
     for row in rows:
@@ -70,19 +86,33 @@ def group_into_colunas(
             [r.get("id") for r in stranded[:20]],
         )
 
+    def _valor(card: dict) -> float:
+        if value_of is not None:
+            return value_of(card)
+        return float(card.get(cfg.value_field) or 0)
+
     colunas = []
     for stage in stages:
         cards = by_stage[stage["id"]]
         cards.sort(key=lambda r: (r.get("kanban_pos", 0), r.get("created_at") or ""))
+        # Counts and money over the WHOLE column; only the card list is cut.
+        total = len(cards)
+        valor_total = sum(_valor(c) for c in cards)
+        visiveis = cards if limite_cards is None else cards[:limite_cards]
         colunas.append(
             {
                 # `etapa` carries the stage ID now. The frontend keys columns and
                 # drop targets off it, and an ID is what survives a rename.
                 "etapa": stage["id"],
                 "stage": stage_to_dto(stage),
-                "total": len(cards),
-                "valorTotal": sum(float(c.get(cfg.value_field) or 0) for c in cards),
-                "cards": [row_to_dto(c) for c in cards] if row_to_dto else cards,
+                "total": total,
+                "valorTotal": valor_total,
+                # How many of `total` this response actually carries. The board
+                # needs it to decide whether to offer "load more" — inferring
+                # it from `len(cards) < total` would break the moment a column
+                # is exactly `limite_cards` long.
+                "exibidos": len(visiveis),
+                "cards": [row_to_dto(c) for c in visiveis] if row_to_dto else visiveis,
             }
         )
     return colunas

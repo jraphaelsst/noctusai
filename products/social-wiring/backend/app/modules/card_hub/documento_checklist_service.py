@@ -14,7 +14,7 @@ something the record cannot show.
 
 🔴 WHY DERIVED RATHER THAN RECOMPUTED ON WRITE
 ----------------------------------------------
-The alternative is a hook that recomputes and stores the six ticks whenever a
+The alternative is a hook that recomputes and stores every tick whenever a
 cliente or a document changes. It loses for a structural reason: leads enter
 this product from Meta leadgen, OLX, ImovelWeb, Vista, the XLSX importer, the
 manual lead form, and the merge/undo path in `clientes_service`. Every one of
@@ -47,8 +47,10 @@ TABLE = "cliente_documento_checklist"
 CLIENTES_TABLE = "clientes"
 DOCUMENTOS_TABLE = "cliente_documentos"
 
-#: The six the user named, in the order they asked for them — the sequence you
-#: actually ask a person for their details in, not alphabetical.
+#: The fields the user named, in the order they asked for them — the sequence
+#: you actually ask a person for their details in, not alphabetical. The order
+#: is presentation AND meaning: it is the order the operator collects them in,
+#: so a card read top-to-bottom shows the next thing to ask for.
 #:
 #: Each item declares HOW it is satisfied, which is what makes the derivation a
 #: property of the definition rather than a parallel lookup table someone has
@@ -56,6 +58,8 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 #:
 #: - ``campos``    — done when ANY of those `clientes` columns is non-empty,
 #:                   listed most-canonical first.
+#: - ``fontes``    — named readers in `_FONTES`, for facts whose location
+#:                   depends on another column. Consulted AFTER `campos`.
 #: - ``documento`` — done when a non-deleted `cliente_documentos` row of that
 #:                   `tipo_documento` exists.
 #:
@@ -82,16 +86,64 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 #: phrase. On today's data it ticks the 5.733 rows that carry a real name and
 #: leaves the 4.417 push names alone.
 #:
-#: Note `nome_oficial` is deliberately absent. It is the name read off an
-#: identity document, held for COMPARISON against the registration (migration
-#: 071); letting it satisfy "do we know their name?" would collapse the two
-#: facts the comparison exists to keep apart.
+#: 🔴 DECISION CHANGED 2026-08-24 — `nome_oficial` NOW SATISFIES THIS ITEM.
+#:
+#: It used to be excluded, on the argument that the document name is held for
+#: COMPARISON against the registration (migration 071) and that letting it
+#: satisfy "do we know their name?" would collapse the two facts the comparison
+#: exists to keep apart.
+#:
+#: The product owner has ruled otherwise, and the ruling is about what the
+#: WORKFLOW is: the WhatsApp push name is what the lead arrives with and is all
+#: the funil gate requires; the person's legal full name is expected to arrive
+#: LATER, off their uploaded RG. Under that workflow the old rule made this item
+#: permanently red for exactly the clients who had done everything asked of
+#: them — they sent the document, the name was read off it, and the checklist
+#: still said "Nome Completo: pending".
+#:
+#: Nothing is collapsed by this. Both columns still exist, still hold different
+#: values, and `vw_nome_conferencia` (071) still measures the gap between them;
+#: the card still renders them side by side via `NomeOficial`. What changed is
+#: only whether holding a document-read name COUNTS as knowing the person's
+#: name. It does.
+#:
+#: Precedence is explicit-first: an operator-typed `nome_completo`, then the
+#: document read, then the channel-supplied `nome` — which still has to pass
+#: `looks_like_a_name`, so "Ana" continues not to satisfy it.
+#: 🔴 WHY `celular` AND `email` NEED A ``fontes`` AND NOT JUST A ``campos``
+#: ------------------------------------------------------------------------
+#: Both facts can live in one of two places, and which one is authoritative
+#: depends on a THIRD column. `clientes.chave_canonica` holds either a phone or
+#: an email, and `chave_tipo` says which — so "the client's phone number" is
+#: `chave_canonica` for a phone-keyed cliente and is emphatically NOT
+#: `chave_canonica` for an email-keyed one, where reading it would tick
+#: "Celular" with an email address.
+#:
+#: A plain `campos` entry cannot express that: it asks only whether a column is
+#: non-empty. So a source is a NAMED READER (`_FONTES`) that gets the whole
+#: row and returns a value or None, and an item may list several. `campos` is
+#: kept for the ordinary case rather than folded into `fontes`, because most
+#: items really are just "is this column filled in?" and spelling that as a
+#: lambda would make the common case the hard one to read.
+#:
+#: Precedence is list order, most-explicit first: an operator-typed `celular`
+#: outranks the registration key, exactly as `nome_completo` outranks `nome`.
 ITENS: tuple[dict[str, Any], ...] = (
     {"key": "nome_completo", "label": "Nome Completo",
-     "campos": ("nome_completo", "nome"), "exige": "nome_completo"},
-    {"key": "email", "label": "Email", "campos": ("email",)},
+     "campos": ("nome_completo", "nome_oficial", "nome"),
+     "exige": "nome_completo"},
+    # Comes from the registration act and is REQUIRED — `stage_gate.py` refuses
+    # to move an atendimento whose titular has no phone. It ticks itself for
+    # every phone-keyed cliente, which is most of them.
+    {"key": "celular", "label": "Celular",
+     "campos": ("celular",), "fontes": ("chave_telefone",)},
+    # Registration or later input, same shape as celular in the other
+    # direction: an email-keyed cliente already has it.
+    {"key": "email", "label": "Email",
+     "campos": ("email",), "fontes": ("chave_email",)},
     {"key": "data_nascimento", "label": "Data de Nascimento",
      "campos": ("data_nascimento",)},
+    {"key": "profissao", "label": "Profissão", "campos": ("profissao",)},
     {"key": "genero", "label": "Gênero", "campos": ("genero",)},
     {"key": "rg", "label": "RG", "documento": "rg"},
     {"key": "cpf", "label": "CPF", "documento": "cpf"},
@@ -99,16 +151,47 @@ ITENS: tuple[dict[str, Any], ...] = (
 
 ITEM_KEYS = tuple(item["key"] for item in ITENS)
 
+#: Named readers for facts that are not simply "is this column filled in?".
+#:
+#: Each declares the columns it reads, so `_CLIENTE_COLUNAS` below stays
+#: DERIVED from the definition. A hand-maintained select list beside a
+#: definition that can grow is the drift shape this codebase gates against
+#: elsewhere; there is no reason to hand-roll one here.
+_FONTES: dict[str, dict[str, Any]] = {
+    "chave_telefone": {
+        "colunas": ("chave_canonica", "chave_tipo"),
+        "ler": lambda c: (
+            c.get("chave_canonica") if c.get("chave_tipo") == "telefone" else None
+        ),
+    },
+    "chave_email": {
+        "colunas": ("chave_canonica", "chave_tipo"),
+        "ler": lambda c: (
+            c.get("chave_canonica") if c.get("chave_tipo") == "email" else None
+        ),
+    },
+}
+
+#: Columns read for DISPLAY beside the checklist but never used to derive a
+#: tick.
+#:
+#: Empty since 2026-08-24: `nome_oficial` was its only member and is now a real
+#: derivation input for `nome_completo` (see the ITENS docstring). Kept rather
+#: than deleted because the DISTINCTION is still meaningful — the next
+#: extracted-but-not-required field belongs here, not in an item.
+_CLIENTE_COLUNAS_EXIBICAO: tuple[str, ...] = ()
+
 #: Columns the derivation reads. Selected explicitly rather than `*` so adding
 #: a column to `clientes` cannot silently widen what this module pulls.
-#: Columns read for DISPLAY beside the checklist but never used to derive a
-#: tick. `nome_oficial` is here and not in any item's `campos` on purpose —
-#: see the ITENS docstring.
-_CLIENTE_COLUNAS_EXIBICAO = ("nome_oficial",)
-
 _CLIENTE_COLUNAS = tuple(
     dict.fromkeys(
         [col for i in ITENS for col in i.get("campos", ())]
+        + [
+            col
+            for i in ITENS
+            for fonte in i.get("fontes", ())
+            for col in _FONTES[fonte]["colunas"]
+        ]
         + list(_CLIENTE_COLUNAS_EXIBICAO)
     )
 )
@@ -150,15 +233,41 @@ def derivar(
     cliente = cliente or {}
     out: dict[str, bool] = {}
     for item in ITENS:
-        if "campos" in item:
-            exige = _VALIDADORES.get(item.get("exige", ""))
-            out[item["key"]] = any(
-                _preenchido(valor) and (exige is None or exige(str(valor)))
-                for valor in (cliente.get(col) for col in item["campos"])
-            )
-        else:
+        if "documento" in item:
             out[item["key"]] = item["documento"] in tipos_documento_presentes
+            continue
+        exige = _VALIDADORES.get(item.get("exige", ""))
+        # Plain columns first, then the named readers — list order IS
+        # precedence, and any one satisfying value ticks the item.
+        valores = [cliente.get(col) for col in item.get("campos", ())]
+        valores += [
+            _FONTES[fonte]["ler"](cliente) for fonte in item.get("fontes", ())
+        ]
+        out[item["key"]] = any(
+            _preenchido(valor) and (exige is None or exige(str(valor)))
+            for valor in valores
+        )
     return out
+
+
+def valor_de(cliente: Optional[dict], item_key: str) -> Any:
+    """The value backing one item, by the same precedence the tick uses.
+
+    Exists so a caller that needs the VALUE — the stage gate asking "does this
+    person actually have a phone?" — cannot answer it with a second, subtly
+    different rule. One definition, two readers.
+    """
+    cliente = cliente or {}
+    item = next((i for i in ITENS if i["key"] == item_key), None)
+    if item is None:
+        raise KeyError(item_key)
+    exige = _VALIDADORES.get(item.get("exige", ""))
+    valores = [cliente.get(col) for col in item.get("campos", ())]
+    valores += [_FONTES[fonte]["ler"](cliente) for fonte in item.get("fontes", ())]
+    for valor in valores:
+        if _preenchido(valor) and (exige is None or exige(str(valor))):
+            return valor
+    return None
 
 
 def _out(
@@ -226,10 +335,24 @@ def _cliente_row(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[dict]:
     return rows[0] if rows else None
 
 
+def cliente_para_derivacao(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> Optional[dict]:
+    """The cliente row this module derives from, for a second reader.
+
+    Public so `pipeline.stage_gate` can ask its `nome` question against the
+    SAME projection the checklist reads — not so it can re-derive a tick. The
+    gate's `nome` requirement is deliberately weaker than the checklist's
+    "Nome Completo" item, so it needs the row rather than the verdict; sharing
+    the row keeps the column list in one place even when the questions differ.
+    """
+    return _cliente_row(client, org_id, cliente_id)
+
+
 def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     """Every canonical item, derived, with any human override applied.
 
-    Always returns all six, in `ITENS` order, whether or not any override row
+    Always returns every item, in `ITENS` order, whether or not an override row
     exists — the list is the contract, the rows are just opinions about it.
     """
     ensure_cliente(client, org_id, cliente_id)
@@ -278,6 +401,32 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         "sugestoes_extras": extras,
         "nome_oficial": (cliente or {}).get("nome_oficial"),
         "nome_registro": _nome_registro(cliente),
+        # The VALUES behind the ticks, so the card can offer a form to fill
+        # them in. It rides on this response rather than getting an endpoint of
+        # its own for the same reason `sugestoes_extras` does: the checklist is
+        # already the "what is still missing" surface and the card already
+        # fetches it once — a second call would mean a second loading state for
+        # the same panel.
+        #
+        # Derived from `ITENS` rather than hand-listed, so an item added later
+        # becomes editable without anyone remembering to widen this dict.
+        "valores": valores_editaveis(cliente),
+    }
+
+
+#: Items whose value is TYPED rather than satisfied by uploading a document.
+#: `rg`/`cpf` are excluded by construction — they have no `campos`.
+def valores_editaveis(cliente: Optional[dict]) -> dict:
+    """`item_key -> current value` for every item a human fills in by hand.
+
+    Reads through `valor_de`, so the value shown in the form is the same one
+    the tick was decided from — a form seeded by a second, subtly different
+    rule would show an empty "Celular" box beside a ticked "Celular" item.
+    """
+    return {
+        item["key"]: valor_de(cliente, item["key"])
+        for item in ITENS
+        if "documento" not in item
     }
 
 
@@ -372,4 +521,7 @@ __all__ = [
     "derivar",
     "listar",
     "marcar",
+    "cliente_para_derivacao",
+    "valor_de",
+    "valores_editaveis",
 ]
