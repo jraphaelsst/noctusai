@@ -40,6 +40,7 @@ from fastapi import (
 from app.dependencies import coerce_org_uuid, get_current_user_org
 
 from app.modules.card_hub import agendamentos_service as agenda_svc
+from app.modules.card_hub import checklist_extras_service as extras_svc
 from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
 from app.modules.card_hub import documentos_service as docs_svc
@@ -63,6 +64,8 @@ from app.modules.card_hub.schemas import (
     AgendamentoCreateBody,
     AgendamentoPatchBody,
     ChecklistCreateBody,
+    ChecklistExtraCreateBody,
+    ChecklistExtraPatchBody,
     ChecklistItemCreateBody,
     ChecklistItemUpdateBody,
     ChecklistUpdateBody,
@@ -289,6 +292,143 @@ async def patch_documento_checklist_route(
                 f"got {item_key!r}"
             ),
         )
+
+
+# ─── Checklist extras (migration 083) ───────────────────────────────────
+#
+# The OTHER half of the same on-screen surface. Where the block above has no
+# create/delete — the mandatory list is the same for everyone and lives in code
+# — these lines are authored per client and so carry the full CRUD the other
+# half deliberately lacks. Two route groups rather than one polymorphic set,
+# because the two are not variants of one resource: one is a tick against a
+# code-owned definition, the other is a row somebody wrote.
+#
+# `tipo` mismatches come back as 422, matching
+# `patch_documento_checklist_route`'s answer to an unknown `item_key` — the
+# frontend drives both halves from one component and should not need two
+# mappings for "you sent the wrong shape".
+
+
+@router.get("/{cliente_id}/checklist-extras")
+async def list_checklist_extras_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return extras_svc.listar(client, org_id, cliente_id)
+
+
+@router.post("/{cliente_id}/checklist-extras", status_code=201)
+async def create_checklist_extra_route(
+    cliente_id: UUID,
+    body: ChecklistExtraCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return extras_svc.criar(client, org_id, cliente_id, label=body.label, tipo=body.tipo)
+
+
+@router.patch("/{cliente_id}/checklist-extras/{extra_id}")
+async def patch_checklist_extra_route(
+    cliente_id: UUID,
+    extra_id: UUID,
+    body: ChecklistExtraPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    # `model_fields_set`, NOT `exclude_none`: `None` is a real value here
+    # (clearing `valor_texto` unticks the line on purpose), so absence is the
+    # only thing that can mean "leave alone".
+    enviados = {k: getattr(body, k) for k in body.model_fields_set}
+    try:
+        return extras_svc.atualizar(
+            client,
+            org_id,
+            cliente_id,
+            extra_id,
+            label=enviados.get("label", ...),
+            valor_texto=enviados.get("valor_texto", ...),
+            ordem=enviados.get("ordem", ...),
+        )
+    except extras_svc.TipoIncompativel as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.delete("/{cliente_id}/checklist-extras/{extra_id}", status_code=204)
+async def delete_checklist_extra_route(
+    cliente_id: UUID,
+    extra_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    _user, org_id = _auth_parts(auth)
+    extras_svc.remover(client, org_id, cliente_id, extra_id)
+
+
+@router.post("/{cliente_id}/checklist-extras/{extra_id}/documento")
+async def upload_checklist_extra_documento_route(
+    cliente_id: UUID,
+    extra_id: UUID,
+    file: UploadFile = File(...),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+) -> dict:
+    """Attach (or REPLACE) the file answering one `arquivo` line.
+
+    No `tipo_documento` form field, unlike `/documentos`: an operator-authored
+    line is by definition the request the catalogue did not anticipate, so the
+    service files it under `outro` — see `checklist_extras_service
+    .TIPO_DOCUMENTO`. No identity-extraction background task either, for the
+    same reason: `outro` is not an identity document and
+    `identidade_svc.deve_extrair` would decline it anyway.
+    """
+    user, org_id = _auth_parts(auth)
+    data = await file.read()
+    try:
+        return await extras_svc.anexar_documento(
+            client,
+            storage,
+            org_id,
+            cliente_id,
+            extra_id,
+            filename=file.filename or "arquivo",
+            content_type=file.content_type or "application/octet-stream",
+            data=data,
+            enviado_por=getattr(user, "id", None),
+        )
+    except extras_svc.TipoIncompativel as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.delete("/{cliente_id}/checklist-extras/{extra_id}/documento", status_code=204)
+async def delete_checklist_extra_documento_route(
+    cliente_id: UUID,
+    extra_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+):
+    """Discard the FILE, keep the LINE — see `remover_documento`'s docstring.
+
+    No `motivo` query param, unlike `DELETE /documentos/{id}`: there the reason
+    is the operator's and an LGPD delete without one is not an LGPD delete;
+    here the reason is structural and always the same ("removed from a
+    checklist line so a new file can replace it"), so the service states it
+    rather than asking the caller to retype it.
+    """
+    user, org_id = _auth_parts(auth)
+    await extras_svc.remover_documento(
+        client,
+        storage,
+        org_id,
+        cliente_id,
+        extra_id,
+        usuario_id=getattr(user, "id", None),
+    )
 
 
 # ─── Agendamentos (migration 061 — many per atendimento) ────────────────

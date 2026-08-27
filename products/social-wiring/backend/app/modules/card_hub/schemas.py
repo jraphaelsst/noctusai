@@ -219,6 +219,36 @@ class ChecklistItemUpdateBody(StrictHttpModel):
     posicao: Optional[int] = None
 
 
+# ─── Checklist extras (migration 083) ───────────────────────────────────
+#
+# The operator-authored half of the card's checklist. The mandatory half is
+# code-owned (`documento_checklist_service.ITENS`) and has no create/delete
+# surface at all — see `router.py`'s note there for why.
+
+
+class ChecklistExtraCreateBody(StrictHttpModel):
+    label: str = Field(min_length=1)
+    #: Decided at creation and immutable afterwards. Flipping a line's `tipo`
+    #: would either strand a `valor_texto` nothing reads or strand a document
+    #: nothing points at, so the PATCH body below deliberately has no `tipo`
+    #: field — a line of the wrong kind is deleted and re-added, which is one
+    #: click and leaves no ambiguous row behind.
+    tipo: Literal["texto", "arquivo"]
+
+
+class ChecklistExtraPatchBody(StrictHttpModel):
+    """Every field optional; ABSENCE means "leave alone".
+
+    `None` is a real value here — clearing `valor_texto` unticks the line on
+    purpose — so the route reads `model_fields_set` rather than
+    `exclude_none`, the same way `NegociacaoPatchBody` is read.
+    """
+
+    label: Optional[str] = Field(default=None, min_length=1)
+    valor_texto: Optional[str] = None
+    ordem: Optional[int] = None
+
+
 # ─── Documentos ─────────────────────────────────────────────────────────
 #
 # No body model for DELETE — contract correction: the seed `ApiClient
@@ -229,6 +259,8 @@ class ChecklistItemUpdateBody(StrictHttpModel):
 
 __all__ = [
     "ChecklistCreateBody",
+    "ChecklistExtraCreateBody",
+    "ChecklistExtraPatchBody",
     "ChecklistItemCreateBody",
     "ChecklistItemUpdateBody",
     "ChecklistUpdateBody",

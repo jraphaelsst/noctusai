@@ -228,6 +228,40 @@ def retencao_politica_row(tipo_documento="contrato", *, superficie="cliente", di
     }
 
 
+def checklist_extra_row(
+    id_,
+    cliente_id,
+    *,
+    label="Convenção do condomínio",
+    tipo="texto",
+    valor_texto=None,
+    documento_id=None,
+    ordem=0,
+    deleted_at=None,
+    created_at="2026-01-01T00:00:00+00:00",
+) -> dict:
+    """A `cliente_checklist_extras` row (migration 083).
+
+    🔴 No `concluido` key, and that is not an omission: completion is DERIVED
+    from `valor_texto` / `documento_id` (see the migration header). A fixture
+    carrying a stored tick would let a test pass against a column the table
+    does not have.
+    """
+    return {
+        "id": id_,
+        "org_id": ORG_ID,
+        "cliente_id": cliente_id,
+        "label": label,
+        "tipo": tipo,
+        "valor_texto": valor_texto,
+        "documento_id": documento_id,
+        "ordem": ordem,
+        "created_at": created_at,
+        "updated_at": created_at,
+        "deleted_at": deleted_at,
+    }
+
+
 def documento_row(id_, cliente_id, *, tipo_documento="contrato", categoria_lgpd="contratual", storage_path=None, deleted_at=None, retencao_ate=None, enviado_por=None, created_at="2026-01-01T00:00:00+00:00") -> dict:
     return {
         "id": id_,
@@ -251,6 +285,7 @@ def documento_row(id_, cliente_id, *, tipo_documento="contrato", categoria_lgpd=
 __all__ = [
     "ORG_ID",
     "ORG_RAW",
+    "checklist_extra_row",
     "checklist_item_row",
     "checklist_row",
     "cliente_row",

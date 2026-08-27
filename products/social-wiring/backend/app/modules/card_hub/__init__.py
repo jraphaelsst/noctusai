@@ -46,6 +46,9 @@ Routes
     GET/POST                /api/clientes/{id}/checklists
     PATCH/DELETE            /api/clientes/{id}/checklists/{cid}
     POST/PATCH/DELETE       /api/clientes/{id}/checklists/{cid}/itens[/{iid}]
+    GET/POST                /api/clientes/{id}/checklist-extras
+    PATCH/DELETE            /api/clientes/{id}/checklist-extras/{eid}
+    POST/DELETE             /api/clientes/{id}/checklist-extras/{eid}/documento
     GET/POST                /api/clientes/{id}/documentos
     GET                     /api/clientes/{id}/documentos/{did}/url
     DELETE                  /api/clientes/{id}/documentos/{did}

@@ -356,6 +356,18 @@ _MAX_BODY_PATH_OVERRIDES = {
     # 30 MB, same as the clientes path: `financiamento_service`'s own
     # MAX_UPLOAD_BYTES (25 MB) is the business-policy limit and stays under it.
     "/api/clientes/*/financiamento/documentos": 30 * 1024 * 1024,  # 30 MB
+    # Checklist-extra upload (POST
+    # /api/clientes/{cliente_id}/checklist-extras/{extra_id}/documento —
+    # card_hub, migration 083). A THIRD `/api/clientes` entry, for the same
+    # reason the financiamento one is a second: pattern keys match on exact
+    # segment count, so neither of the entries above covers this five-segment
+    # shape. It routes through `documentos_service.upload_documento` — the same
+    # 25 MB business-policy limit and the same whole-file-into-memory read — so
+    # it gets the same 30 MB outer bound as the plain clientes path. Without
+    # this line an operator attaching an ordinary phone photo (3-8 MB) to a
+    # checklist line would get a 413 from the middleware, before the route that
+    # would have accepted it ever ran.
+    "/api/clientes/*/checklist-extras/*/documento": 30 * 1024 * 1024,  # 30 MB
 }
 
 app = create_product_app(

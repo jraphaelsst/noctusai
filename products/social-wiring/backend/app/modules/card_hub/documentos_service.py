@@ -136,6 +136,39 @@ def list_tipos_documento(client: Any) -> dict:
     return {"items": items, "total": len(items)}
 
 
+#: The columns a checklist line needs to NAME the document that satisfies it.
+#:
+#: Narrower than `_documento_out` on purpose: a checklist row is not a document
+#: browser. It needs enough to render "arquivo.pdf · 1,2 MB" beside a trash
+#: button and nothing more — no `retencao_ate`, no `enviado_por` (which would
+#: drag in an actor resolution across a second schema client for a name the
+#: line never shows), no signed URL.
+DOCUMENTO_RESUMO_COLUNAS = (
+    "id",
+    "nome_original",
+    "mime_type",
+    "tamanho_bytes",
+    "created_at",
+)
+
+
+def documento_resumo(row: Optional[dict]) -> Optional[dict]:
+    """The document summary a checklist line carries, or `None`.
+
+    ONE definition, two callers — `documento_checklist_service` (the mandatory
+    rg/cpf items) and `checklist_extras_service` (operator-authored `arquivo`
+    lines). Two copies of a five-key projection would drift the moment one side
+    added a field, and the frontend renders both through the same row
+    component, so a divergence would show up as a blank cell rather than an
+    error.
+
+    `.get()` throughout: a caller may hand over a row it selected narrowly.
+    """
+    if row is None:
+        return None
+    return {key: row.get(key) for key in DOCUMENTO_RESUMO_COLUNAS}
+
+
 def _documento_out(row: dict, resolved_actors: dict) -> dict:
     return {
         "id": row["id"],
@@ -449,8 +482,10 @@ def configure(*, scheduler: Any = None) -> None:
 
 __all__ = [
     "ALLOWED_MIME_TYPES",
+    "DOCUMENTO_RESUMO_COLUNAS",
     "MAX_UPLOAD_BYTES",
     "configure",
+    "documento_resumo",
     "delete_documento",
     "get_documento_url",
     "list_acessos",

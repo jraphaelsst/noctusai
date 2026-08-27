@@ -40,8 +40,9 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import looks_like_a_name
 
+from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
-from app.modules.card_hub.services import _now, _t, ensure_cliente
+from app.modules.card_hub.services import _now, _paged_rows, _t, ensure_cliente
 
 TABLE = "cliente_documento_checklist"
 CLIENTES_TABLE = "clientes"
@@ -275,6 +276,7 @@ def _out(
     derivado: bool,
     override: Optional[dict],
     sugestao: Optional[dict] = None,
+    documento: Optional[dict] = None,
 ) -> dict:
     """One checklist line: the canonical definition + derivation + override.
 
@@ -282,6 +284,15 @@ def _out(
     unchanged for existing consumers. `origem` is additive and says WHY, which
     is what lets the card explain a tick the user did not make — and, just as
     importantly, a tick that is stuck on because someone forced it.
+
+    `documento` NAMES the file behind a document-satisfied tick. The boolean
+    alone could say only *that* an RG had been uploaded, so the card could
+    render a tick but not a trash button — there was nothing to point it at,
+    and the operator had to leave the checklist for the Documentos tab to
+    delete the wrong scan they had just noticed. It is `None` for every item
+    with no `documento` key in its definition, always: a typed item is
+    satisfied by a column and there is no file to name. The key is emitted for
+    both kinds so the frontend renders one row shape, not two.
     """
     manual = override.get("concluido_manual") if override else None
     concluido = derivado if manual is None else bool(manual)
@@ -289,6 +300,7 @@ def _out(
         "key": item["key"],
         "label": item["label"],
         "concluido": concluido,
+        "documento": documento if "documento" in item else None,
         "origem": "derivado" if manual is None else "manual",
         "derivado": derivado,
         # A value an extractor read but was NOT confident enough to store
@@ -302,24 +314,43 @@ def _out(
     }
 
 
-def _tipos_presentes(client: Any, org_id: UUID, cliente_id: UUID) -> frozenset[str]:
-    """Document types this client has actually uploaded.
+def _documentos_por_tipo(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> dict[str, dict]:
+    """`tipo_documento -> the live document satisfying it`, for this client.
+
+    ONE read backs BOTH the tick and the file it names. The obvious shape — a
+    frozenset of types for the derivation, then a lookup per document item to
+    find the row — is two round-trips for a card that already renders eight
+    lines, and it can disagree with itself: the second read happens after the
+    first, so a document deleted in between produces a ticked item with no
+    document attached.
 
     Soft-deleted rows are excluded: a document the client asked us to delete
     cannot go on satisfying a requirement it no longer backs.
+
+    Most recent wins when a client has uploaded the same type twice. It is the
+    one the operator just sent and the one the card is showing, so it is also
+    the one a per-row trash button must discard. `created_at` is coalesced to
+    `""` because a row may legitimately predate the column being populated —
+    sorting must not raise on it.
     """
-    res = (
-        _t(client, DOCUMENTOS_TABLE)
-        .select("tipo_documento,deleted_at")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .execute()
+    rows = _paged_rows(
+        client,
+        DOCUMENTOS_TABLE,
+        org_id,
+        eq_filters={"cliente_id": str(cliente_id)},
+        refine=lambda q: q.is_("deleted_at", "null"),
     )
-    return frozenset(
-        r["tipo_documento"]
-        for r in (res.data or [])
-        if r.get("deleted_at") is None
-    )
+    rows.sort(key=lambda r: r.get("created_at") or "")
+    return {r["tipo_documento"]: r for r in rows if r.get("tipo_documento")}
+
+
+#: `_tipos_presentes` used to live here and returned only the set of types.
+#: Both callers now need the rows themselves (to name the file behind a tick),
+#: so it was folded into `_documentos_por_tipo` rather than left as a wrapper
+#: nothing calls — `frozenset(_documentos_por_tipo(...))` at the two call sites
+#: is the same fact with no second name to keep in step.
 
 
 def _cliente_row(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[dict]:
@@ -358,8 +389,8 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     ensure_cliente(client, org_id, cliente_id)
 
     cliente = _cliente_row(client, org_id, cliente_id)
-    tipos = _tipos_presentes(client, org_id, cliente_id)
-    derivado = derivar(cliente, tipos)
+    documentos = _documentos_por_tipo(client, org_id, cliente_id)
+    derivado = derivar(cliente, frozenset(documentos))
 
     res = (
         _t(client, TABLE)
@@ -377,6 +408,7 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             derivado[item["key"]],
             by_key.get(item["key"]),
             sugestoes.get(item["key"]),
+            docs_svc.documento_resumo(documentos.get(item.get("documento", ""))),
         )
         for item in ITENS
     ]
@@ -507,11 +539,21 @@ def marcar(
         _t(client, TABLE).insert(merged).execute()
 
     item = next(i for i in ITENS if i["key"] == item_key)
+    documentos = _documentos_por_tipo(client, org_id, cliente_id)
     derivado = derivar(
         _cliente_row(client, org_id, cliente_id),
-        _tipos_presentes(client, org_id, cliente_id),
+        frozenset(documentos),
     )
-    return _out(item, derivado[item["key"]], merged)
+    # Same line shape the GET returns, `documento` included — the card writes
+    # the PATCH response straight back into its list, so a narrower shape here
+    # would blank the trash button until the next refetch.
+    return _out(
+        item,
+        derivado[item["key"]],
+        merged,
+        None,
+        docs_svc.documento_resumo(documentos.get(item.get("documento", ""))),
+    )
 
 
 __all__ = [

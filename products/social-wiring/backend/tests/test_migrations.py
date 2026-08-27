@@ -492,3 +492,126 @@ def test_meta_webhook_carries_the_migration_file_only_banner(sql_meta_webhook: s
 # 042_whatsapp_inbox_realtime_schema.sql — whatsapp_chats + conversation_messages
 # ack/chat_id (whatsapp-realtime-inbox, Slice 3, 2026-08-03)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# 083_cliente_checklist_extras.sql — the operator-authored half of the card's
+# checklist (card_hub, 2026-08-27)
+# ---------------------------------------------------------------------------
+
+MIGRATION_083_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "migrations"
+    / "083_cliente_checklist_extras.sql"
+)
+
+
+@pytest.fixture(scope="module")
+def sql_extras() -> str:
+    assert MIGRATION_083_PATH.is_file(), f"Migration file missing at {MIGRATION_083_PATH}"
+    return MIGRATION_083_PATH.read_text(encoding="utf-8")
+
+
+def test_extras_table_is_created_schema_qualified(sql_extras: str) -> None:
+    assert re.search(
+        r"CREATE TABLE IF NOT EXISTS\s+social_wiring\.cliente_checklist_extras\s*\(",
+        sql_extras,
+    ), "Missing CREATE TABLE social_wiring.cliente_checklist_extras"
+
+
+def test_extras_tipo_check_matches_the_service(sql_extras: str) -> None:
+    """The CHECK and `checklist_extras_service.TIPOS_VALIDOS` are two guards on
+    one decision — the schema protects the API surface, the CHECK protects
+    every other writer. They must name the SAME set, or a migration writes a
+    row the service cannot render."""
+    from app.modules.card_hub import checklist_extras_service as extras_svc
+
+    match = re.search(r"CHECK \(tipo IN \(([^)]*)\)\)", sql_extras)
+    assert match, "Missing CHECK on tipo"
+    permitidos = {v.strip().strip("'") for v in match.group(1).split(",")}
+    assert permitidos == set(extras_svc.TIPOS_VALIDOS), (
+        f"tipo CHECK drifted from TIPOS_VALIDOS: {permitidos} vs "
+        f"{set(extras_svc.TIPOS_VALIDOS)}"
+    )
+
+
+def test_extras_has_no_stored_concluido_column(sql_extras: str) -> None:
+    """🔴 Completion is DERIVED. A `concluido` column could only agree with
+    `valor_texto`/`documento_id` or be silently wrong — and the retention sweep
+    soft-deletes documents with no knowledge of this table, so a stored tick
+    would outlive the file it asserts."""
+    bloco = sql_extras.split("CREATE TABLE IF NOT EXISTS", 1)[1].split(");", 1)[0]
+    assert "concluido" not in bloco, (
+        "cliente_checklist_extras must NOT store a concluido column"
+    )
+
+
+def test_extras_documento_fk_sets_null_never_cascades(sql_extras: str) -> None:
+    """Deleting the FILE keeps the LINE. A CASCADE would delete the request
+    because someone sent the wrong scan."""
+    assert re.search(
+        r"documento_id\s+UUID\s+REFERENCES\s+social_wiring\.cliente_documentos\(id\)\s+"
+        r"ON DELETE SET NULL",
+        sql_extras,
+    ), "documento_id must be ON DELETE SET NULL"
+    assert not re.search(
+        r"cliente_documentos\(id\)\s+ON DELETE CASCADE", sql_extras
+    ), "documento_id must never CASCADE"
+
+
+def test_extras_cliente_fk_cascades(sql_extras: str) -> None:
+    """The lines belong to the client — mirrors `cliente_documentos` (057) and
+    `cliente_documento_checklist` (067)."""
+    assert re.search(
+        r"cliente_id\s+UUID NOT NULL REFERENCES\s+social_wiring\.clientes\(id\)\s+"
+        r"ON DELETE CASCADE",
+        sql_extras,
+    ), "cliente_id must CASCADE from clientes"
+
+
+def test_extras_rls_is_enabled_and_org_scoped(sql_extras: str) -> None:
+    """Org scoping copied from the sibling tables rather than reinvented:
+    `public.current_org_id()`, never `auth.jwt()` / `user_metadata` (011)."""
+    assert re.search(
+        r"ALTER TABLE social_wiring\.cliente_checklist_extras ENABLE ROW LEVEL SECURITY",
+        sql_extras,
+    ), "RLS must be enabled"
+    assert re.search(
+        r'CREATE POLICY\s+"cliente_checklist_extras_select_own_org".*?'
+        r"USING \(org_id = public\.current_org_id\(\)\)",
+        sql_extras,
+        re.DOTALL,
+    ), "Missing org-scoped SELECT policy on current_org_id()"
+    assert re.search(
+        r'CREATE POLICY\s+"cliente_checklist_extras_service_role".*?FOR ALL\s+TO service_role',
+        sql_extras,
+        re.DOTALL,
+    ), "Missing service_role ALL policy"
+    sem_comentarios = "\n".join(
+        linha for linha in sql_extras.splitlines() if not linha.strip().startswith("--")
+    )
+    assert "auth.jwt()" not in sem_comentarios
+    assert "user_metadata" not in sem_comentarios
+
+
+def test_extras_is_idempotent_and_forward_only(sql_extras: str) -> None:
+    """Re-applying must be a no-op."""
+    created = set(re.findall(r'CREATE POLICY\s+"([^"]+)"', sql_extras))
+    dropped = set(re.findall(r'DROP POLICY IF EXISTS\s+"([^"]+)"', sql_extras))
+    assert created and created <= dropped, (
+        f"policies created without a preceding DROP IF EXISTS: {created - dropped}"
+    )
+    assert not re.findall(r"CREATE INDEX (?!IF NOT EXISTS)", sql_extras), (
+        "every CREATE INDEX must be IF NOT EXISTS"
+    )
+    assert not re.findall(r"CREATE TABLE (?!IF NOT EXISTS)", sql_extras), (
+        "every CREATE TABLE must be IF NOT EXISTS"
+    )
+
+
+def test_extras_carries_the_migration_file_only_banner(sql_extras: str) -> None:
+    """The banner is what stops an agent applying this to prod as a side
+    effect — application is an explicitly consented, separate step."""
+    assert "MIGRATION FILE ONLY" in sql_extras, (
+        "missing the 🔴 MIGRATION FILE ONLY banner (see migration 033)"
+    )
