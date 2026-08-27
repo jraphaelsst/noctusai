@@ -16,14 +16,21 @@
  *
  * 🔴 IT MOUNTS ITS OWN `TooltipProvider`.
  * ---------------------------------------
- * Radix's `Tooltip` throws without an ancestor provider, and nothing in this
- * product mounts one — the app shell does not, and `PortaisTable` worked
- * around the gap by falling back to a native `title` (see its docblock). A
- * provider is context only, so nesting one per button costs nothing at
- * runtime and makes this component renderable ANYWHERE, including in a test
- * that mounts a section on its own with no shell around it. That is the same
- * property everything under `card/**` already has, and the reason a shared
- * provider mounted "somewhere up there" would have been a trap.
+ * Radix's `Tooltip` throws without an ancestor provider. A provider is context
+ * only, so nesting one per button costs nothing at runtime and makes this
+ * component renderable ANYWHERE — including in a test that mounts a section on
+ * its own with no shell around it, which is the same property everything under
+ * `card/**` already has.
+ *
+ * CORRECTION (2026-08-27): an earlier version of this note claimed the seed
+ * shell mounts no provider. It does — `createProductApp` wraps the whole app
+ * in one (`seed/framework/frontend/src/app.tsx`), and social-wiring uses that
+ * factory. So the nested provider is INSURANCE for standalone rendering, not a
+ * workaround for a missing one, and it is not evidence of a seed gap. Radix
+ * providers nest legally, so the app path is unaffected either way. Left in
+ * place deliberately: the standalone-renderability property is worth the zero
+ * runtime cost, and removing it would make every `card/**` test that renders a
+ * section directly need a wrapper.
  *
  * Presentational only, same contract as the rest of `card/**`.
  */
