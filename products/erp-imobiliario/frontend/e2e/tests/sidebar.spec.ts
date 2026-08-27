@@ -1,6 +1,26 @@
+import type { Page } from '@playwright/test';
+
 import { test, expect } from '../fixtures/auth.fixture';
 import { mockDashboardAPIs } from '../fixtures/api-mocks';
 import { mockSupabaseQueries } from '../fixtures/supabase-mocks';
+
+/**
+ * Expand the desktop sidebar rail before asserting on TEXT.
+ *
+ * Since the seed shell's hover rail (`AppShell.tsx`, 2026-08-27) the sidebar
+ * rests icon-only at this suite's 1280px viewport: brand subtitle and group
+ * labels are `max-w-0 opacity-0` until the rail is hovered or focused.
+ *
+ * Only TEXT assertions need this. Nav LINKS stay visible collapsed — the `<a>`
+ * is still rendered and `aria-label` carries the accessible name — which is
+ * why `getByRole('link', ...)` assertions below are untouched, and why that
+ * distinction is worth keeping visible rather than hovering everywhere.
+ */
+async function expandSidebarRail(page: Page) {
+  const rail = page.locator('aside[data-rail-expanded]');
+  await rail.hover();
+  await expect(rail).toHaveAttribute('data-rail-expanded', 'true');
+}
 
 test.describe('Sidebar Navigation', () => {
   test('regular user sees nav items', async ({ authenticatedPage: page }) => {
@@ -26,6 +46,7 @@ test.describe('Sidebar Navigation', () => {
     await mockDashboardAPIs(page);
     await page.goto('/dashboard');
 
+    await expandSidebarRail(page);
     await expect(page.getByText('ONE')).toBeVisible();
   });
 
@@ -39,6 +60,7 @@ test.describe('Sidebar Navigation', () => {
     );
     await page.goto('/dashboard');
 
+    await expandSidebarRail(page);
     await expect(page.getByText('Painel de Controle')).toBeVisible();
     await expect(page.getByRole('link', { name: /Usuários|Usuarios/ })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Admin' })).toBeVisible();
