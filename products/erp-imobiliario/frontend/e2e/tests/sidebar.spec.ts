@@ -47,7 +47,19 @@ test.describe('Sidebar Navigation', () => {
     await page.goto('/dashboard');
 
     await expandSidebarRail(page);
-    await expect(page.getByText('ONE')).toBeVisible();
+    // 🔴 The HEADING, not `getByText('ONE')`.
+    //
+    // `getByText` matches case-insensitive SUBSTRINGS, so "ONE" also matches
+    // "Selec-ione" — the placeholder on the dashboard's two date-picker
+    // buttons. That made the locator resolve to 3 elements and fail on strict
+    // mode. The ambiguity was always there; it only surfaced once the rail
+    // hover above added enough of a wait for the dashboard body to finish
+    // rendering, where before this assertion raced ahead of it and happened to
+    // find the brand alone.
+    //
+    // A race that passes is not a passing test, so this pins the element the
+    // test is actually about rather than re-introducing the race.
+    await expect(page.getByRole('heading', { name: 'ONE' })).toBeVisible();
   });
 
   test('admin user sees Painel de Controle section', async ({ authenticatedPage: page }) => {

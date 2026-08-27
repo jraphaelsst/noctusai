@@ -22,7 +22,9 @@ errors_encountered: []
 drifts_surfaced:
   - "erp-imobiliario has a legacy supabase-mocks.ts that references Sidebar in e2e fixtures — not a product-level fork, just e2e wiring."
   - "2026-08-27 FIXED ON CONTACT: this file carried a private 3-line `cn()` helper — the only such copy in design-system/ (18+ siblings import the canonical twMerge-backed `cn` from ../../utils). Replaced with the canonical import."
-  - "2026-08-27 SURFACED, NOT FIXED (file-disjoint): products/erp-imobiliario/frontend/e2e/tests/sidebar.spec.ts asserts toBeVisible() on the brand subtitle ('ONE') and a group LABEL ('Painel de Controle'). At playwright's default 1280px desktop viewport those are now opacity-0/max-w-0 until the rail is hovered, so those two assertions need a hover step. Nav-LINK assertions are unaffected (the <a> stays visible and its aria-label preserves the accessible name). The spec is runs_in_ci:false, so nothing is silently red in CI."
+  - "2026-08-27 SURFACED then FIXED by the tech-lead: products/erp-imobiliario/frontend/e2e/tests/sidebar.spec.ts asserted toBeVisible() on the brand heading ('ONE') and a group LABEL ('Painel de Controle'). At playwright's 1280px desktop viewport those are opacity-0/max-w-0 until the rail is hovered, so both needed a hover step (`expandSidebarRail`, which waits on data-rail-expanded rather than a timeout). Nav-LINK assertions were correctly left untouched — the <a> stays visible collapsed and aria-label preserves its accessible name, so getByRole('link') passing WITHOUT a hover is the assertion that proves AT navigation still works."
+  - "2026-08-27 CORRECTION — this spec DOES run in CI. An earlier note here claimed runs_in_ci:false and that nothing could go silently red; the 'Tests & Build' workflow runs an 'ERP E2E Tests' job, and it went red on the rail commit (run 33097753056). The claim was wrong, not the gate."
+  - "2026-08-27 LATENT BUG the rail exposed: `getByText('ONE')` matches case-insensitive SUBSTRINGS, so it also matched 'Selec-ione' on the dashboard's two date-picker buttons — 3 elements, strict-mode violation. The ambiguity pre-dated the rail; it only surfaced once the hover step added enough wait for the dashboard body to render, where the assertion had previously raced ahead and found the brand alone. Fixed by pinning getByRole('heading', {name:'ONE'}). A race that passes is not a passing test."
 
 alternatives_considered:
   - "Products previously authored per-product sidebar components; Sidebar was absorbed to eliminate replication. The standaloneItems prop covers nav items outside groups (e.g. Settings)."
@@ -38,6 +40,9 @@ e2e_test:
   path: "products/erp-imobiliario/frontend/e2e/tests/sidebar.spec.ts"
   status: pending
   last_run: null
-  runs_in_ci: false
+  # Corrected 2026-08-27: the "Tests & Build" workflow runs an "ERP E2E Tests"
+  # job, and this spec went red there on the rail commit. Treat a change to the
+  # Sidebar/AppShell rail as CI-blocking for erp-imobiliario.
+  runs_in_ci: true
 
 bugs_fixed_during_dev: []
