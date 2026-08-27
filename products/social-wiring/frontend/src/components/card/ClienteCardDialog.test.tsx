@@ -1721,4 +1721,103 @@ describe("o resumo de contato no topo do Geral", () => {
     // A blank beside a label reads as a rendering bug, not as missing data.
     expect(screen.getByTestId("contato-celular").textContent).toContain("—");
   });
+
+  // ── the origin fallback ────────────────────────────────────────────────
+  //
+  // 🔴 FOUND BY LIVE-TESTING PROD (2026-08-27). `dadosPessoais` comes off the
+  // checklist's `valores`, which reads ONLY `clientes` columns. Most cards
+  // arrive from a campaign, where the contact sits on the `leads` row and
+  // `clientes.celular` is null — so this panel rendered "CELULAR —" on a real
+  // card while the funil card BEHIND it displayed that person's phone number.
+  // Rendering "we don't have this" over something we demonstrably have is the
+  // same family of defect as a lying loading state.
+
+  function atendimentoComLead(over: Record<string, unknown> = {}) {
+    return [
+      {
+        id: "at-1",
+        titulo: null,
+        status: null,
+        closed_at: null,
+        created_at: "2026-01-01T00:00:00Z",
+        lead_id: "lead-1",
+        meta_ads_lead_id: null,
+        campanha: null,
+        lead: {
+          id: "lead-1",
+          cliente_nome: "Ana Lima",
+          contato: "+5511996019031",
+          contato_tipo: "telefone",
+          empreendimento: null,
+          regiao: null,
+          data_entrada: null,
+          origem_raw: null,
+          ...over,
+        },
+      },
+    ] as never;
+  }
+
+  it("falls back to the ORIGIN record's contact when the client row is blank", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({ dadosPessoais: {}, atendimentos: atendimentoComLead() })}
+      />,
+    );
+    const celular = screen.getByTestId("contato-celular");
+    expect(celular.textContent).not.toContain("—");
+    // Rendered through `contatoValue` → `formatPhone`, the ONE phone seam.
+    expect(celular.textContent).toContain("5511996019031".slice(0, 4));
+    expect(screen.getByTestId("contato-nome").textContent).toContain("Ana Lima");
+  });
+
+  it("LABELS an inherited value so it cannot be read as a contradiction", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({ dadosPessoais: {}, atendimentos: atendimentoComLead() })}
+      />,
+    );
+    // The checklist below still reads Celular as pending, because the CLIENT
+    // record genuinely does not hold it. Without this tag the two would look
+    // like they disagree; with it they read as "known from the campaign, not
+    // yet on the record".
+    expect(screen.getByTestId("contato-celular-herdado")).toBeTruthy();
+  });
+
+  it("an explicit client value OUTRANKS the origin record and is not tagged", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          dadosPessoais: { celular: "+5511911112222" },
+          atendimentos: atendimentoComLead(),
+        })}
+      />,
+    );
+    // Explicit-first, mirroring the backend's `campos` precedence: an
+    // operator-typed value beats whatever the channel supplied.
+    expect(screen.getByTestId("contato-celular").textContent).toContain("911112222");
+    expect(screen.queryByTestId("contato-celular-herdado")).toBeNull();
+  });
+
+  it("routes an email-typed origin contact to Email, never to Celular", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          dadosPessoais: {},
+          atendimentos: atendimentoComLead({
+            contato: "ANA@example.com",
+            contato_tipo: "email",
+          }),
+        })}
+      />,
+    );
+    // The whole reason `contatoValue` is reused rather than re-derived: an
+    // email-keyed lead must not tick "Celular" with an email address.
+    expect(screen.getByTestId("contato-email").textContent).toContain("ana@example.com");
+    expect(screen.getByTestId("contato-celular").textContent).toContain("—");
+  });
 });

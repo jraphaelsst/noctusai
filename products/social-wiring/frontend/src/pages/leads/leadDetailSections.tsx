@@ -65,7 +65,28 @@ function OrigemChip({ cor, label }: { cor?: string | null; label: string }) {
  * returns it unchanged instead of blanking it. That is the point: a number
  * a human can see is a number a human can fix.
  */
-export function contatoValue(lead: Lead): string | null {
+/**
+ * What `contatoValue` actually needs — narrowed from the whole `Lead`
+ * (2026-08-27).
+ *
+ * It used to take `Lead`, so any caller holding a THINNER projection of the
+ * same record — `AtendimentoLead` on the card, which carries
+ * `contato`/`contato_tipo` and not the other 21 columns — had to cast to reach
+ * a function that would never have touched the difference. A cast at a call
+ * site is a type check deleted, and it would have been deleted to satisfy a
+ * requirement the body does not have.
+ *
+ * Declared STRUCTURALLY rather than as `Pick<Lead, …>` on purpose: the two
+ * projections of this column disagree on how tightly it is typed — `Lead`
+ * narrows `contato_tipo` to a union, `AtendimentoLead` keeps it `string` — so
+ * a `Pick` would still have rejected the thinner one. The body only ever asks
+ * `=== 'email'`, which `string` answers perfectly well, and the tighter `Lead`
+ * union stays assignable to it. (Those two projections drifting apart is worth
+ * reconciling on its own; this function is not the place to force it.)
+ */
+export type ContatoLike = { contato: string | null; contato_tipo: string | null };
+
+export function contatoValue(lead: ContatoLike): string | null {
   if (lead.contato_tipo === 'email') return lead.contato?.toLowerCase() ?? null;
   return formatPhone(lead.contato);
 }

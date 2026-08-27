@@ -69,7 +69,11 @@ import {
 
 import { DetailSections } from "@noctusai/lib/components";
 import type { DetailSection } from "@noctusai/lib/components";
-import { campanhaCardSubpages, leadCardSubpages } from "@/pages/leads/leadDetailSections";
+import {
+  campanhaCardSubpages,
+  contatoValue,
+  leadCardSubpages,
+} from "@/pages/leads/leadDetailSections";
 import type { CardSubpageSections } from "@/pages/leads/leadDetailSections";
 import { Button } from "@/components/ui/button";
 import {
@@ -486,7 +490,10 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                          everything, because they are what an operator reads
                          BEFORE picking up the phone — and reaching them used
                          to mean opening the Dados do cliente tab. */}
-                  <ContatoResumo dados={props.dadosPessoais} />
+                  <ContatoResumo
+                    dados={props.dadosPessoais}
+                    origem={contatoDeOrigem(props.atendimentos)}
+                  />
 
                   {/* c. Descrição */}
                   <DescricaoSection
@@ -736,16 +743,81 @@ function nomeDaParte(parte: Comprador): string {
  * place a value is edited, so the two can never disagree about how a write
  * happens.
  */
-function ContatoResumo({ dados }: { dados?: DadosPessoais }) {
-  const linhas: { icon: typeof UserIcon; rotulo: string; valor?: string | null }[] = [
-    { icon: UserIcon, rotulo: "Nome", valor: dados?.nome_completo },
-    { icon: Phone, rotulo: "Celular", valor: dados?.celular },
-    { icon: Mail, rotulo: "Email", valor: dados?.email },
-  ];
+/**
+ * What the ORIGIN records know about how to reach this person.
+ *
+ * 🔴 WHY THIS FALLBACK EXISTS (found by live-testing prod, 2026-08-27).
+ * --------------------------------------------------------------------
+ * `dadosPessoais` comes off the document checklist's `valores`, which reads
+ * ONLY `clientes` columns — deliberately, and `documento_checklist_service`
+ * argues that at length: a tick must mean "the client RECORD holds this".
+ *
+ * But most cards arrive from a campaign, and for those the contact lives on
+ * the `leads` row while `clientes.celular` / `chave_canonica` stay null. On a
+ * real prod card the summary therefore rendered "CELULAR —" while the funil
+ * card DIRECTLY BEHIND IT displayed that person's phone number. The data was
+ * there; this panel just wasn't looking where it lived.
+ *
+ * That is a lying readout of the same family as `check_lying_loading_state`:
+ * rendering "we don't have this" over something we demonstrably have.
+ *
+ * Reuses `contatoValue` — the canonical reader that already discriminates
+ * email-vs-phone off `contato_tipo` and applies `formatPhone` — rather than
+ * re-deriving the rule here. Most recent atendimento wins; older ones are
+ * likelier to carry a stale number.
+ */
+function contatoDeOrigem(atendimentos?: CardAtendimento[]): DadosPessoais {
+  const origem: DadosPessoais = {};
+  // Oldest → newest, so the newest non-empty value ends up winning.
+  const ordenados = [...(atendimentos ?? [])].sort((a, b) =>
+    (a.created_at ?? "").localeCompare(b.created_at ?? ""),
+  );
+  for (const at of ordenados) {
+    const lead = at.lead;
+    if (!lead) continue;
+    const valor = contatoValue(lead);
+    if (valor) {
+      if (lead.contato_tipo === "email") origem.email = valor;
+      else origem.celular = valor;
+    }
+    if (lead.cliente_nome?.trim()) origem.nome_completo = lead.cliente_nome.trim();
+  }
+  return origem;
+}
+
+function ContatoResumo({
+  dados,
+  origem,
+}: {
+  dados?: DadosPessoais;
+  /** Contact the ORIGIN records carry, used only where the client record is
+   *  blank. See `contatoDeOrigem`. */
+  origem?: DadosPessoais;
+}) {
+  const linhas: {
+    icon: typeof UserIcon;
+    rotulo: string;
+    valor?: string | null;
+    /** True when the value came from the origin record, not the client one. */
+    herdado: boolean;
+  }[] = (
+    [
+      ["Nome", UserIcon, dados?.nome_completo, origem?.nome_completo],
+      ["Celular", Phone, dados?.celular, origem?.celular],
+      ["Email", Mail, dados?.email, origem?.email],
+    ] as const
+  ).map(([rotulo, icon, proprio, herdado]) => ({
+    icon,
+    rotulo,
+    // Precedence is explicit-first, mirroring the backend's `campos` order: an
+    // operator-typed value outranks whatever the channel supplied.
+    valor: proprio || herdado,
+    herdado: !proprio && Boolean(herdado),
+  }));
 
   return (
     <dl className="mb-4 space-y-1" data-testid="contato-resumo">
-      {linhas.map(({ icon: Icon, rotulo, valor }) => (
+      {linhas.map(({ icon: Icon, rotulo, valor, herdado }) => (
         <div
           key={rotulo}
           className="flex items-center gap-2 text-sm"
@@ -761,6 +833,21 @@ function ContatoResumo({ dados }: { dados?: DadosPessoais }) {
           <dd className={cn("min-w-0 truncate", !valor && "text-muted-foreground")}>
             {valor || "—"}
           </dd>
+          {/* 🔴 An inherited value is LABELLED, not silently promoted. The
+              checklist beneath still reads this item as pending, because the
+              client record genuinely does not hold it yet — and without this
+              tag those two would look like they contradict each other. With
+              it, they read as what they are: "we know it from the campaign,
+              nobody has put it on the record". */}
+          {herdado && (
+            <span
+              className="shrink-0 rounded bg-muted px-1 text-[10px] uppercase tracking-wide text-muted-foreground"
+              title="Veio do cadastro de origem (campanha/portal); ainda não está no registro do cliente"
+              data-testid={`contato-${rotulo.toLowerCase()}-herdado`}
+            >
+              origem
+            </span>
+          )}
         </div>
       ))}
     </dl>
