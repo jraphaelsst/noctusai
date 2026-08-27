@@ -248,13 +248,27 @@ Smoke rows were deleted afterwards; the inbox is empty and the 958 stored leads 
 Permissions, App Review, Live mode and OAuth callbacks are **already done**. Remaining, at
 `developers.facebook.com`, and **only after Slice 2 is deployed to prod**:
 
+- [ ] 🔴 **ROTATE THE VERIFY TOKEN FIRST — the value in the vault is BURNED.**
+      Generate a NEW token, set it at Meta, and re-store it Fernet-encrypted under
+      `meta_webhook_verify_token` in `social_wiring.app_integration_config`.
+      **Do not install the current vault value.** It was published in plaintext in
+      this PUBLIC repo from 2026-08-04 (`8199e051`) until 2026-08-26 (`599a5776`),
+      and it is still readable in git history: the owner decided on 2026-08-27 to
+      rotate rather than rewrite 588 commits, because a rewrite does not un-publish
+      it either — GitHub keeps unreachable commits fetchable by SHA until Support
+      garbage-collects them. **Rotation is the only step that actually revokes it.**
+      Blast radius is small and this is cheap: the verify token guards only the
+      one-time GET handshake below. Payload authenticity is the **App Secret**
+      (`X-Hub-Signature-256`), which was never exposed.
 - [ ] Products → Webhooks → **Page** object
 - [ ] Callback URL `https://social.noctusai.com/api/meta/leadgen/webhook`
-- [ ] Verify Token = **(not written here — read it from the vault)**
+- [ ] Verify Token = **(not written here — read the ROTATED value from the vault)**
       *(REDACTED 2026-08-26: the literal token used to sit on the line above, in a PUBLIC repo.
       It is generated + stored Fernet-encrypted in `social_wiring.app_integration_config`
       under `meta_webhook_verify_token`; prod resolves Meta config from the vault, NOT
-      `.env` — the VPS `.env` carries no `META_*` keys at all. Verified live above.)*
+      `.env` — the VPS `.env` carries no `META_*` keys at all. Verified live above.
+      Redacting the file does NOT rotate the credential — see the ROTATE step above,
+      which is why it is the first box on this list rather than a footnote.)*
 - [ ] **Verify and Save** (Meta GETs the endpoint synchronously — it must be live first)
 - [ ] Tick the **`leadgen`** field → Subscribe *(app-level)*
 - [ ] Run our bootstrap `POST /api/meta/leadgen/subscriptions` *(per-Page level)*
