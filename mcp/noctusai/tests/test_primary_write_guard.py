@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev.primary_write_guard import (  # noqa: E402
     SHARED_BRANCHES,
     GuardContext,
+    _strip_redirections,
     bash_write_targets,
     decide,
     is_guarded_path,
@@ -479,3 +480,106 @@ def test_the_other_destructive_verbs_are_untouched():
     """The exemption is for `reset` alone; nothing else in the write set moves."""
     for cmd in ("git checkout .", "git clean -fd", "git stash", "git restore ."):
         assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None, cmd
+
+
+# ── redirections are not arguments ─────────────────────────────────────────
+#
+# `_tokens` is `shlex.split`, which has never heard of redirection: `2>&1`
+# arrives as a plain token and `>/dev/null` arrives fused into one. Both
+# exemptions above read POSITIONAL arguments, so a redirect sat in the list
+# pretending to be a ref or a pathspec — and both exemptions evaporated the
+# moment anyone appended `2>&1 | tail`, which is how an agent habitually writes
+# a command. Measured 2026-08-27 against the live hook: the bare form passed,
+# the piped form did not.
+
+def _sync_allowed(command: str) -> bool:
+    """Does the REAL repo's origin/dev exemption survive this spelling?"""
+    import subprocess
+
+    repo = str(Path(__file__).resolve().parents[3])
+    probe = subprocess.run(
+        ["git", "-C", repo, "rev-parse", "--symbolic-full-name", "origin/dev"],
+        capture_output=True, text=True,
+    )
+    if probe.returncode != 0 or not probe.stdout.startswith("refs/remotes/"):
+        import pytest
+
+        pytest.skip("origin/dev is not a remote-tracking ref in this checkout")
+
+    ctx = GuardContext(primary_root=repo, branch="dev", worktrees=())
+    return decide(
+        "Bash", {"command": command}, repo, ctx=ctx, allow_override=False,
+    ) is None
+
+
+def test_a_redirected_sync_is_still_a_sync():
+    """The regression this fix exists for. Every one of these is the SAME
+    operation as the bare form the test above already allows."""
+    for cmd in (
+        "git reset --hard origin/dev 2>&1 | tail -5",
+        "git reset --hard origin/dev >/dev/null",
+        "git reset --hard origin/dev > /dev/null 2>&1",
+        "git reset --hard origin/dev 2>/dev/null",
+        "git fetch origin && git reset --hard origin/dev 2>&1",
+    ):
+        assert _sync_allowed(cmd), cmd
+
+
+def test_a_redirect_cannot_smuggle_a_second_ref_past_the_count():
+    """Stripping redirects must not strip real arguments with them: two refs is
+    a pathspec reset, which stays refused however it is spelled."""
+    assert not _sync_allowed("git reset --hard origin/dev HEAD~3 2>&1")
+    assert not _sync_allowed("git reset --hard origin/dev -- some/path 2>&1")
+
+
+def test_a_rewind_stays_refused_when_redirected():
+    """The dangerous shape must not become allowed just because it grew a pipe."""
+    for cmd in (
+        "git reset --hard HEAD~3 2>&1 | tail -5",
+        "git reset --hard dev >/dev/null",
+    ):
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None, cmd
+
+
+def test_a_redirect_writing_into_the_primary_is_still_refused():
+    """The other leg still does its job: dropping redirects from the ARGUMENT
+    reading never drops them from the WRITE accounting. Refused for the file
+    write — the accurate reason — not for a miscounted ref."""
+    assert _decide(
+        "Bash", {"command": f"git reset --hard origin/dev > {PRIMARY}/out.txt"},
+        cwd=PRIMARY,
+    ) is not None
+
+
+def test_a_redirected_ledger_add_is_still_ledger_only():
+    """Same defect, same fix, the other call site: `2>&1` was read as a pathspec
+    that resolves nowhere, so the ledger exemption refused its own use case."""
+    assert _decide(
+        "Bash",
+        {"command": "git add project-history/worktree-salvage.ndjson 2>&1"},
+        cwd=PRIMARY,
+    ) is None
+
+
+def test_a_redirected_non_ledger_add_is_still_refused():
+    """And the refusal side of that same exemption is unmoved."""
+    assert _decide(
+        "Bash", {"command": "git add CLAUDE.md 2>&1"}, cwd=PRIMARY
+    ) is not None
+
+
+def test_strip_redirections_consumes_only_what_it_should():
+    """Unit-level pin on the operator/operand split: a fused redirect carries
+    its own filename, a bare one eats the token after it, and neither may eat
+    an argument."""
+    assert _strip_redirections(["a", "2>&1", "b"]) == ["a", "b"]
+    assert _strip_redirections(["a", ">/dev/null", "b"]) == ["a", "b"]
+    assert _strip_redirections(["a", ">", "out.txt", "b"]) == ["a", "b"]
+    assert _strip_redirections(["a", ">>", "out.txt", "b"]) == ["a", "b"]
+    assert _strip_redirections(["a", "2>", "err.txt", "b"]) == ["a", "b"]
+    assert _strip_redirections(["a", "&>", "all.txt", "b"]) == ["a", "b"]
+    assert _strip_redirections(["a", "<", "in.txt", "b"]) == ["a", "b"]
+    # Nothing that merely CONTAINS an angle bracket is a redirect.
+    assert _strip_redirections(["origin/dev", "HEAD~3", "-–hard"]) == [
+        "origin/dev", "HEAD~3", "-–hard"
+    ]

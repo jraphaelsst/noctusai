@@ -454,6 +454,49 @@ def _looks_like_path(token: str) -> bool:
     return bool(token) and not token.startswith("-") and "=" not in token.split("/")[0]
 
 
+# `>`, `>>`, `<`, `2>`, `&>`, `2>&1` — with or without the filename fused on.
+_REDIRECT_TOKEN_RE = re.compile(r"^(?:[0-9]*|&)(?:>>?|<)")
+
+
+def _strip_redirections(tokens: Sequence[str]) -> list[str]:
+    """Drop redirection operators + their operands from a tokenized segment.
+
+    🔴 WHY. `_tokens` is `shlex.split`, which knows nothing about redirection:
+    `git reset --hard origin/dev 2>&1` tokenizes to
+    `[…, 'origin/dev', '2>&1']`, and `>/dev/null` arrives fused as one token.
+    Both call sites below then read POSITIONAL arguments — the refs of a reset,
+    the pathspecs of an add — so a redirect landed in the list as if it were an
+    argument. `_is_sync_to_remote_git` saw two refs where the user wrote one and
+    refused; `_is_ledger_only_git` saw a pathspec that resolves nowhere and
+    refused. Both exemptions therefore evaporated the moment anyone appended
+    `2>&1 | tail`, which is exactly how an agent habitually writes a command.
+    Measured 2026-08-27: the bare form passed, the piped form did not.
+
+    WHY IT DOES NOT WEAKEN THE GUARD. A redirect that writes into the primary is
+    caught by a DIFFERENT leg — `bash_write_targets` scans `_redirect_targets`
+    over the whole command and appends every one of them to `targets`. Removing
+    them here removes them only from the ARGUMENT reading, never from the write
+    accounting: `git reset --hard origin/dev > <primary>/f` is still refused,
+    for the file write, which is the accurate reason.
+
+    A bare operator (`… > out.txt`) also consumes the token after it; a fused
+    one (`>out.txt`, `2>&1`) carries its own operand and consumes nothing.
+    """
+    out: list[str] = []
+    skip_next = False
+    for tok in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        match = _REDIRECT_TOKEN_RE.match(tok)
+        if match:
+            # Bare operator ⇒ the filename is the next token.
+            skip_next = match.group(0) == tok
+            continue
+        out.append(tok)
+    return out
+
+
 def _is_ledger_only_git(sub: str, args: Sequence[str], cwd: str) -> bool:
     """Is this `git add`/`commit` confined to the append-only ledgers?
 
@@ -470,7 +513,8 @@ def _is_ledger_only_git(sub: str, args: Sequence[str], cwd: str) -> bool:
     to the refusal, never past it.
     """
     if sub == "add":
-        paths = [a for a in args[args.index(sub) + 1:] if not a.startswith("-")]
+        tail = _strip_redirections(args[args.index(sub) + 1:])
+        paths = [a for a in tail if not a.startswith("-")]
         if not paths:
             return False
         return all(_under_ledger(p, cwd) for p in paths)
@@ -527,7 +571,7 @@ def _is_sync_to_remote_git(sub: str, args: Sequence[str], cwd: str) -> bool:
         # checkout is re-synced. Out of scope rather than quietly allowed.
         return False
 
-    refs = [a for a in rest if not a.startswith("-")]
+    refs = [a for a in _strip_redirections(rest) if not a.startswith("-")]
     if len(refs) != 1:
         # Zero refs (`git reset --hard`, implicit HEAD) discards the working
         # tree without syncing anything; more than one is a pathspec reset.
