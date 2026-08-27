@@ -8,8 +8,8 @@
  *   import type { NavGroup, NavItem, HeaderProps, HeaderUser } from "@noctusai/lib/design-system";
  */
 
-export { AppShell } from "./components/AppShell";
-export type { AppShellProps } from "./components/AppShell";
+export { AppShell, useSidebarRail } from "./components/AppShell";
+export type { AppShellProps, SidebarRailMode, SidebarRailState } from "./components/AppShell";
 
 export { Sidebar } from "./components/Sidebar";
 export type { SidebarProps, NavGroup, NavItem } from "./components/Sidebar";
