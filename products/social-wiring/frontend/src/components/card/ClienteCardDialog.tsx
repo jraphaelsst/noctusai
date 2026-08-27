@@ -773,14 +773,35 @@ function contatoDeOrigem(atendimentos?: CardAtendimento[]): DadosPessoais {
     (a.created_at ?? "").localeCompare(b.created_at ?? ""),
   );
   for (const at of ordenados) {
+    // 🔴 BOTH origin shapes, not just `lead`. A card is spawned from a portal
+    // lead OR from a Meta campaign, never both — and the two projections carry
+    // contact differently: `leads` has ONE `contato` discriminated by
+    // `contato_tipo`, while `meta_ads_leads` has separate `phone` and `email`
+    // columns. Reading only `lead` missed every campaign-sourced card, which
+    // on this board is most of them; caught by live-testing a real card whose
+    // Dados tab showed a phone AND an email that Geral rendered as "—".
     const lead = at.lead;
-    if (!lead) continue;
-    const valor = contatoValue(lead);
-    if (valor) {
-      if (lead.contato_tipo === "email") origem.email = valor;
-      else origem.celular = valor;
+    if (lead) {
+      const valor = contatoValue(lead);
+      if (valor) {
+        if (lead.contato_tipo === "email") origem.email = valor;
+        else origem.celular = valor;
+      }
+      if (lead.cliente_nome?.trim()) origem.nome_completo = lead.cliente_nome.trim();
     }
-    if (lead.cliente_nome?.trim()) origem.nome_completo = lead.cliente_nome.trim();
+
+    const campanha = at.campanha;
+    if (campanha) {
+      // `phone` is canonical E.164 since migration 037, but still rendered
+      // through the same seam so the card never shows a differently-formatted
+      // number than the leads table does.
+      const telefone = campanha.phone
+        ? contatoValue({ contato: campanha.phone, contato_tipo: "telefone" })
+        : null;
+      if (telefone) origem.celular = telefone;
+      if (campanha.email?.trim()) origem.email = campanha.email.trim().toLowerCase();
+      if (campanha.full_name?.trim()) origem.nome_completo = campanha.full_name.trim();
+    }
   }
   return origem;
 }

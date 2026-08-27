@@ -80,6 +80,26 @@ export function useSidebarRail(): SidebarRailState {
   return useContext(SidebarRailContext);
 }
 
+/**
+ * Did this focus arrive from the keyboard rather than a pointer?
+ *
+ * `:focus-visible` is the browser's own heuristic for that question, and it is
+ * the one thing that separates "a keyboard user is navigating the rail, keep it
+ * open" from "someone clicked a link and focus happens to be sitting there".
+ *
+ * Defaults to TRUE when the selector cannot be evaluated (very old engines,
+ * a non-Element target, jsdom): failing toward expanded keeps the nav usable,
+ * where failing toward collapsed would strand keyboard focus on clipped labels.
+ */
+function isKeyboardFocus(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return true;
+  try {
+    return target.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+}
+
 export interface AppShellProps {
   /** The sidebar content (typically a <Sidebar> component) */
   sidebar: React.ReactNode;
@@ -123,7 +143,16 @@ export function AppShell({ sidebar, header, children, railMode = "hover-expand" 
     ? {
         onMouseEnter: () => setRailHovered(true),
         onMouseLeave: () => setRailHovered(false),
-        onFocus: () => setRailFocused(true),
+        // 🔴 KEYBOARD focus only (fixed 2026-08-27, caught live in prod).
+        // `focusin` fires for a MOUSE click too, so clicking a nav item left
+        // focus on it and pinned the rail open over the page it had just
+        // navigated to — it only closed once something else took focus.
+        // `:focus-visible` is the browser's own "did this focus arrive by
+        // keyboard?" answer, which is exactly the distinction wanted here.
+        // Unsupported/throwing ⇒ treat as keyboard, because failing toward
+        // "expanded" keeps the nav usable rather than stranding focus on
+        // clipped labels.
+        onFocus: (e: React.FocusEvent) => setRailFocused(isKeyboardFocus(e.target)),
         onBlur: () => setRailFocused(false),
       }
     : {};

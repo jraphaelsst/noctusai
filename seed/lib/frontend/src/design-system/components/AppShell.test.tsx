@@ -82,7 +82,37 @@ const unhover = (el: Element) => fireEvent.mouseOut(el);
  * `el.focus()` is also not act()-wrapped, so its state update would not flush
  * before the assertion — fireEvent is.
  */
-const focusIn = (el: Element) => fireEvent.focusIn(el);
+/**
+ * 🔴 jsdom DOES NOT IMPLEMENT `:focus-visible` (2026-08-27).
+ *
+ * The shell asks `target.matches(':focus-visible')` to tell a KEYBOARD focus
+ * from focus that merely landed there after a mouse click — the browser's own
+ * heuristic, and the only thing that stops a click on a nav item pinning the
+ * rail open over the page it just navigated to.
+ *
+ * jsdom answers `false` for every element, keyboard or not, so a test cannot
+ * reach the keyboard branch without standing in for that heuristic. These two
+ * helpers do exactly that and nothing else: `keyboardFocusIn` makes the target
+ * report `:focus-visible`, `pointerFocusIn` makes it deny it. Both go through
+ * the same `focusIn` event, because the DISTINCTION under test is the selector
+ * answer, not the event.
+ *
+ * Stubbing per-element (not `Element.prototype`) keeps the fake scoped to the
+ * one node the test focuses, so nothing leaks into a sibling assertion.
+ */
+function focusInAs(el: Element, focusVisible: boolean) {
+  const real = el.matches.bind(el);
+  Object.defineProperty(el, "matches", {
+    configurable: true,
+    value: (selector: string) =>
+      selector === ":focus-visible" ? focusVisible : real(selector),
+  });
+  fireEvent.focusIn(el);
+}
+
+const keyboardFocusIn = (el: Element) => focusInAs(el, true);
+const pointerFocusIn = (el: Element) => focusInAs(el, false);
+const focusIn = keyboardFocusIn;
 const focusOut = (el: Element) => fireEvent.focusOut(el);
 
 /** `md:overflow-hidden` contains the substring "hidden" — match the utility. */
@@ -138,6 +168,31 @@ describe("AppShell hover rail", () => {
     focusIn(screen.getByRole("link", { name: "Dashboard" }));
 
     unhover(aside);
+    expect(aside).toHaveAttribute("data-rail-expanded", "true");
+  });
+
+  it("does NOT stay open when focus arrived from a MOUSE CLICK", () => {
+    // 🔴 THE PROD BUG (2026-08-27). This shipped using `focusin` alone, which
+    // fires for a click too — so clicking a nav item left focus sitting on it
+    // and pinned the rail open ACROSS the page the click had just navigated
+    // to. It only closed when something else happened to take focus. Found by
+    // clicking through the deployed app, not by any test.
+    const { aside } = renderShell();
+    const link = screen.getByRole("link", { name: "Dashboard" });
+
+    hover(aside);
+    pointerFocusIn(link);
+    unhover(aside);
+
+    expect(aside).toHaveAttribute("data-rail-expanded", "false");
+  });
+
+  it("still expands for a KEYBOARD focus on the same element", () => {
+    // The other half of the same rule: narrowing to `:focus-visible` must not
+    // cost the keyboard path, or tabbing lands on clipped labels again.
+    const { aside } = renderShell();
+
+    keyboardFocusIn(screen.getByRole("link", { name: "Dashboard" }));
     expect(aside).toHaveAttribute("data-rail-expanded", "true");
   });
 

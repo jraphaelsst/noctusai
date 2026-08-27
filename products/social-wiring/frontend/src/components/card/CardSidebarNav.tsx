@@ -134,9 +134,17 @@ export function CardSidebarNav({ active, onSelect, emptyKeys = [] }: CardSidebar
           "md:overflow-x-hidden md:overflow-y-auto md:border-b-0 md:border-r md:p-2",
           "md:transition-[width,background-color,box-shadow] md:duration-200",
           // The two expansion triggers, declared together on purpose.
-          "md:hover:w-56 md:focus-within:w-56",
-          "md:hover:bg-muted md:focus-within:bg-muted",
-          "md:hover:shadow-xl md:focus-within:shadow-xl",
+          // 🔴 `has-[:focus-visible]`, NOT `focus-within` (fixed 2026-08-27,
+          // caught live in prod). `focus-within` is true after a MOUSE click
+          // too, so clicking a rail item left focus on it and pinned the rail
+          // open across the pane the click had just navigated to — it only
+          // closed once you clicked something else. `:focus-visible` is set by
+          // the browser for keyboard/AT focus and NOT for a mouse click, which
+          // is exactly the distinction this needs: the keyboard path keeps its
+          // expansion, the pointer path stops sticking.
+          "md:hover:w-56 md:has-[:focus-visible]:w-56",
+          "md:hover:bg-muted md:has-[:focus-visible]:bg-muted",
+          "md:hover:shadow-xl md:has-[:focus-visible]:shadow-xl",
         )}
         data-testid="card-sidebar-nav"
       >
@@ -185,7 +193,11 @@ export function CardSidebarNav({ active, onSelect, emptyKeys = [] }: CardSidebar
                   "md:w-0 md:overflow-hidden md:whitespace-nowrap md:opacity-0",
                   "md:transition-[width,opacity] md:duration-200",
                   "md:group-hover:w-auto md:group-hover:whitespace-normal md:group-hover:opacity-100",
-                  "md:group-focus-within:w-auto md:group-focus-within:whitespace-normal md:group-focus-within:opacity-100",
+                  // Same `:focus-visible` switch as the rail width above — the
+                  // label must reveal on exactly the states the rail expands
+                  // on, or a keyboard user gets a wide rail full of clipped
+                  // labels.
+                  "md:group-has-[:focus-visible]:w-auto md:group-has-[:focus-visible]:whitespace-normal md:group-has-[:focus-visible]:opacity-100",
                 )}
               >
                 {label}

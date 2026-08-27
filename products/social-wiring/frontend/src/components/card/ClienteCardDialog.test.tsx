@@ -1473,13 +1473,25 @@ describe("a barra lateral como hover rail", () => {
     expect(nav.className).toContain("md:hover:w-56");
   });
 
-  it("🔴 focus-within expands it too — a hover-only rail is unreachable", async () => {
+  it("🔴 KEYBOARD focus expands it too — a hover-only rail is unreachable", async () => {
     const screen = await rail();
     const nav = screen.getByTestId("card-sidebar-nav");
-    expect(nav.className).toContain("md:focus-within:w-56");
+
+    // 🔴 `has-[:focus-visible]`, NOT `focus-within` (changed 2026-08-27 after
+    // clicking through the deployed card). `focus-within` is also true after a
+    // MOUSE click, so clicking a rail item left focus on it and pinned the
+    // rail open over the pane the click had just navigated to — it only closed
+    // once something else took focus. `:focus-visible` is the browser's own
+    // "did this focus arrive by keyboard?" answer, which keeps the keyboard
+    // path expanding while the pointer path stops sticking.
+    expect(nav.className).toContain("md:has-[:focus-visible]:w-56");
+    expect(nav.className).not.toContain("md:focus-within:w-56");
+
+    // The label must reveal on exactly the states the rail expands on, or a
+    // keyboard user gets a wide rail full of clipped labels.
     expect(
       screen.getByTestId("card-subpage-label-geral").className,
-    ).toContain("md:group-focus-within:w-auto");
+    ).toContain("md:group-has-[:focus-visible]:w-auto");
   });
 
   it("rests icon-only: the caption is in the DOM, its BOX is collapsed", async () => {
