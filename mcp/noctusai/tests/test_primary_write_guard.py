@@ -27,6 +27,8 @@ KB § PATTERNS/common/gate-methodology-sync.md
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.primary_write_guard import (  # noqa: E402
@@ -263,6 +265,136 @@ def test_bare_git_add_with_no_pathspec_is_refused():
     """`git add -A` stages whatever happens to be dirty — unknowable here, and
     an unanswerable probe must fall through to the refusal, not past it."""
     assert _decide("Bash", {"command": f"cd {PRIMARY} && git add -A"}) is not None
+
+
+# ── restoring a ledger (2026-08-27) ───────────────────────────────────────
+#
+# 🔴 THE ASYMMETRY. The guard let a ledger be DIRTIED and refused to let it be
+# CLEANED: writing `project-history/x.ndjson` is exempt, `git add` of it is
+# exempt, `git commit` of it is exempt — and `git checkout --`/`git restore` of
+# that same file was refused, because a git write is otherwise scoped to the
+# whole checkout. `noctus.dev.auto_improvement_log` writes that ledger into the
+# PRIMARY by design, so the only ways back were `reset --hard` (which also
+# discards unrelated pointer commits in the same tree) or switching the gate
+# off. A gate escapable only by disabling it is the anti-pattern, not the fix.
+
+def test_git_restore_of_a_ledger_path_is_allowed():
+    assert _decide(
+        "Bash", {"command": f"cd {PRIMARY} && git restore project-history/auto-improvement.ndjson"}
+    ) is None
+
+
+def test_git_checkout_double_dash_of_a_ledger_path_is_allowed():
+    assert _decide(
+        "Bash", {"command": f"cd {PRIMARY} && git checkout -- project-history/branch-tree.ndjson"}
+    ) is None
+
+
+def test_git_restore_of_a_source_path_is_still_refused():
+    assert _decide(
+        "Bash", {"command": f"cd {PRIMARY} && git restore products/x/app.py"}
+    ) is not None
+
+
+def test_git_restore_mixing_ledger_and_source_is_refused():
+    """Same laundering shape the `add` leg refuses."""
+    assert _decide(
+        "Bash",
+        {"command": f"cd {PRIMARY} && git restore project-history/x.ndjson products/x/app.py"},
+    ) is not None
+
+
+def test_pathless_git_restore_is_refused():
+    """`git restore :/` names no path this can read — and the pathless forms are
+    exactly the destructive ones."""
+    assert _decide("Bash", {"command": f"cd {PRIMARY} && git restore ."}) is not None
+
+
+def test_git_checkout_of_a_BRANCH_is_still_refused():
+    """🔴 The one that must never regress. Without the `--` requirement,
+    `git checkout dev` would read as a lone pathspec and switch the shared HEAD
+    out from under every linked worktree — the §9a sin the whole branching
+    methodology is built to prevent."""
+    assert _decide("Bash", {"command": f"cd {PRIMARY} && git checkout dev"}) is not None
+    assert _decide("Bash", {"command": f"cd {PRIMARY} && git checkout -b feat/x"}) is not None
+
+
+# ── the compound `add && commit` trap (2026-08-27) ────────────────────────
+#
+# The hook runs BEFORE the command, so in `git add <ledger> && git commit -m …`
+# the `add` has not executed and `diff --cached` is empty. The commit leg read
+# "nothing staged" and refused, so the ledger exemption worked only when the two
+# were split across separate tool calls — a trap rather than a rule, since the
+# compound is how the command is habitually written.
+#
+# Allowing it is safe because a preceding `add` of NON-ledger paths refuses the
+# whole command on its own leg (asserted below), so any commit reaching an empty
+# index in a compound was preceded by a ledger-only add that already passed.
+
+@pytest.fixture
+def empty_index(monkeypatch):
+    """Inject "the probe ANSWERED, and nothing is staged".
+
+    `PRIMARY` is a fictional path (see the module docstring — the forbidden
+    state is never created for real), so the real probe cannot run there and
+    correctly falls closed. These tests are about the branch AFTER a successful
+    probe, so the answer is injected rather than the repo being conjured.
+    """
+    import tools.noctus.dev.primary_write_guard as guard
+
+    monkeypatch.setattr(guard, "_run_git_checked", lambda *a, **k: (True, ""))
+
+
+def test_compound_ledger_add_then_commit_is_allowed(empty_index):
+    assert _decide(
+        "Bash",
+        {"command": f'cd {PRIMARY} && git add project-history/x.ndjson && git commit -m "ledger"'},
+    ) is None
+
+
+def test_compound_source_add_then_commit_is_refused_on_the_add_leg(empty_index):
+    """The safety property the empty-index allowance leans on: the ADD leg
+    refuses the whole command, so a commit can only ever reach an empty index
+    behind an add that was already ledger-confined."""
+    assert _decide(
+        "Bash",
+        {"command": f'cd {PRIMARY} && git add products/x/app.py && git commit -m "work"'},
+    ) is not None
+
+
+def test_git_commit_dash_a_is_refused_even_with_an_empty_index(empty_index):
+    """`-a` stages every modified tracked file AT COMMIT TIME, so an empty index
+    proves nothing about what the commit will contain. Clustered short flags
+    (`-am`) are why the check reads LETTERS, not whole tokens."""
+    assert _decide("Bash", {"command": f'cd {PRIMARY} && git commit -am "sweep"'}) is not None
+    assert _decide("Bash", {"command": f'cd {PRIMARY} && git commit --all -m "sweep"'}) is not None
+
+
+def test_git_commit_with_a_source_pathspec_is_refused(empty_index):
+    """Pathspecs commit their paths regardless of the index."""
+    assert _decide(
+        "Bash", {"command": f'cd {PRIMARY} && git commit -m "x" -- products/x/app.py'}
+    ) is not None
+
+
+def test_git_commit_with_a_ledger_pathspec_is_allowed(empty_index):
+    assert _decide(
+        "Bash", {"command": f'cd {PRIMARY} && git commit -m "x" -- project-history/x.ndjson'}
+    ) is None
+
+
+def test_git_commit_falls_closed_when_the_staged_probe_cannot_answer(monkeypatch):
+    """🔴 The empty-index allowance must not become a fail-OPEN.
+
+    `_run_git` collapses "git said nothing" and "git could not be asked" into
+    `""`. The commit leg is the one caller where those point in OPPOSITE
+    directions, so it uses `_run_git_checked`. If that distinction is ever lost,
+    every environment where the probe breaks becomes a blanket allow.
+    """
+    import tools.noctus.dev.primary_write_guard as guard
+
+    monkeypatch.setattr(guard, "_run_git_checked", lambda *a, **k: (False, ""))
+    assert _decide("Bash", {"command": f'cd {PRIMARY} && git commit -m "x"'}) is not None
 
 
 # ── `>` that is not a redirect ────────────────────────────────────────────

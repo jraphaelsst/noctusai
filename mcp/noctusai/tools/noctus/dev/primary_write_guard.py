@@ -336,14 +336,32 @@ class GuardContext:
 
 
 def _run_git(args: Sequence[str], cwd: str | None) -> str:
+    ok, out = _run_git_checked(args, cwd)
+    return out if ok else ""
+
+
+def _run_git_checked(args: Sequence[str], cwd: str | None) -> tuple[bool, str]:
+    """`(probe_answered, stdout)` — the distinction `_run_git` throws away.
+
+    🔴 `_run_git` returns `""` both when git SAID nothing and when git could not
+    be asked, which is fine for every caller that treats an empty answer as
+    "unknown ⇒ refuse". `_is_ledger_only_git`'s commit leg is the one caller for
+    which the two differ in DIRECTION: an empty staged set is a positive answer
+    (a compound whose ledger-only `add` has not run yet ⇒ allow), while a failed
+    probe is no answer at all (⇒ refuse). Collapsing them would turn every
+    environment where the probe breaks into a blanket allow — the exact
+    fail-OPEN inversion this module's docstring forbids.
+    """
     try:
         out = subprocess.run(
             ["git", *args], cwd=cwd, capture_output=True, text=True,
             timeout=10, check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return ""
-    return out.stdout.strip() if out.returncode == 0 else ""
+        return False, ""
+    if out.returncode != 0:
+        return False, ""
+    return True, out.stdout.strip()
 
 
 def discover_context(cwd: str | None = None) -> GuardContext | None:
@@ -497,34 +515,126 @@ def _strip_redirections(tokens: Sequence[str]) -> list[str]:
     return out
 
 
+def _is_autostaging_commit(rest: Sequence[str]) -> bool:
+    """Does this `git commit` stage content BY ITSELF?
+
+    `-a` bundles every modified tracked file at commit time and `-p` stages
+    interactively, so for either of them an empty index proves nothing about
+    what the commit will contain. Short flags cluster (`-am`), which is why the
+    letters of a single-dash token are inspected rather than whole tokens
+    compared.
+    """
+    for tok in rest:
+        if tok in {"--all", "--patch"}:
+            return True
+        if tok.startswith("-") and not tok.startswith("--") and len(tok) > 1:
+            if "a" in tok[1:] or "p" in tok[1:]:
+                return True
+    return False
+
+
+def _ledger_pathspecs(tail: Sequence[str], cwd: str) -> bool:
+    """True when `tail` names at least one path and every one is a ledger."""
+    paths = [a for a in tail if not a.startswith("-")]
+    if not paths:
+        return False
+    return all(_under_ledger(p, cwd) for p in paths)
+
+
 def _is_ledger_only_git(sub: str, args: Sequence[str], cwd: str) -> bool:
-    """Is this `git add`/`commit` confined to the append-only ledgers?
+    """Is this `git add`/`commit`/`restore` confined to the append-only ledgers?
 
     Mirrors `check_primary_checkout_commit`'s one sanctioned exception: a change
     whose ENTIRE content lives under `LEDGER_PREFIXES` is bookkeeping, not work,
     and parallel agents publish their branch pointers that way.
 
     - `git add <paths>` — judged on the pathspecs.
+    - `git restore <paths>` / `git checkout -- <paths>` — judged on the
+      pathspecs, same as `add`.
     - `git commit` — judged on the real STAGED SET, read the same way the commit
       keeper reads it. Guessing from the command line would be wrong: `git
       commit -am …` names no paths at all.
 
     Anything unreadable returns False — an unanswerable probe must fall through
     to the refusal, never past it.
+
+    🔴 WHY `restore` BELONGS HERE (added 2026-08-27)
+    ------------------------------------------------
+    The guard let a ledger be DIRTIED and refused to let it be CLEANED. Writing
+    `project-history/x.ndjson` is exempt via `is_guarded_path`; `git add` of it
+    is exempt here; `git commit` of it is exempt here — but `git checkout --`
+    and `git restore` of that same file were refused, because a git write is
+    otherwise scoped to its whole CHECKOUT rather than to its pathspecs.
+
+    That asymmetry is not theoretical. `noctus.dev.auto_improvement_log` and its
+    siblings write their ledger into the PRIMARY checkout by design. When the
+    orchestrator decides those lines belong elsewhere, the only remedies left
+    were `reset --hard origin/dev` — which also discards unrelated pointer
+    commits sitting in the same tree — or `NOCTUS_ALLOW_PRIMARY_WRITE`, i.e.
+    switching the gate off to undo something the gate itself had permitted. A
+    gate escapable only by disabling it is the shape
+    `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` warns about,
+    and it cost a real session on 2026-08-27.
+
+    It widens nothing: `restore`/`checkout` with an explicit ledger pathspec can
+    only touch files the guard already treats as bookkeeping. The PATHLESS forms
+    stay refused, and those are the destructive ones — `git checkout .`,
+    `git restore :/`, and above all `git checkout <branch>`, which switches the
+    shared HEAD out from under a peer worktree. A bare `checkout` therefore
+    qualifies ONLY via an explicit `--` separator, because before that separator
+    a lone token is ambiguous between a path and a branch name.
+
+    🔴 WHY AN EMPTY STAGED SET IS ALLOWED FOR `commit`
+    --------------------------------------------------
+    `git add <ledger> && git commit -m …` in ONE call could never pass. The hook
+    runs BEFORE the command, so the `add` has not executed yet and
+    `diff --cached` is empty — the probe read "nothing staged", returned False,
+    and refused. Splitting it across two tool calls worked, which makes it a
+    trap rather than a rule: the compound form is how the command is habitually
+    written, and a gate that fights the orchestrator's normal spelling is one
+    that gets switched off.
+
+    Allowing it is safe because of how the CALLER composes: a command is refused
+    if ANY of its segments is a guarded write. A preceding `git add` of
+    non-ledger paths therefore refuses the whole command on its own leg, so any
+    `commit` reaching an empty index inside a compound was necessarily preceded
+    by a ledger-only `add` that already passed.
+
+    Two forms stay refused, because for them an empty index proves nothing: a
+    commit that stages by itself (`-a`/`-p`), and a commit naming pathspecs,
+    which bypass the index entirely.
     """
     if sub == "add":
+        return _ledger_pathspecs(_strip_redirections(args[args.index(sub) + 1:]), cwd)
+
+    if sub in {"restore", "checkout"}:
         tail = _strip_redirections(args[args.index(sub) + 1:])
-        paths = [a for a in tail if not a.startswith("-")]
-        if not paths:
-            return False
-        return all(_under_ledger(p, cwd) for p in paths)
+        if "--" in tail:
+            return _ledger_pathspecs(tail[tail.index("--") + 1:], cwd)
+        # No separator: only `restore` is unambiguous, since it never takes a
+        # branch to switch to. `checkout dev` must stay refused.
+        return _ledger_pathspecs(tail, cwd) if sub == "restore" else False
 
     if sub == "commit":
-        staged = _run_git(["-C", cwd, "diff", "--cached", "--name-only"], None)
-        names = [n for n in staged.splitlines() if n.strip()]
-        if not names:
+        rest = list(args[args.index(sub) + 1:])
+        if _is_autostaging_commit(rest):
             return False
-        return all(any(n.startswith(prefix) for prefix in LEDGER_PREFIXES) for n in names)
+        answered, staged = _run_git_checked(["-C", cwd, "diff", "--cached", "--name-only"], None)
+        if not answered:
+            # The probe could not be run at all. No answer is not a permissive
+            # answer — fall through to the refusal, same posture as everywhere
+            # else in this module.
+            return False
+        names = [n for n in staged.splitlines() if n.strip()]
+        if names:
+            return all(any(n.startswith(prefix) for prefix in LEDGER_PREFIXES) for n in names)
+        # Genuinely nothing staged: a no-op, or a compound whose ledger-only
+        # `add` has not run yet. Pathspecs still have to be ledger-confined,
+        # because they commit their paths regardless of the index.
+        tail = _strip_redirections(rest)
+        if "--" in tail:
+            return _ledger_pathspecs(tail[tail.index("--") + 1:], cwd)
+        return True
 
     return False
 

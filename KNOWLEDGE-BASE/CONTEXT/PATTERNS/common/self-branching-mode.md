@@ -338,6 +338,54 @@ one definition, imported: `compliance.py` now takes `SHARED_BRANCHES` and the
 ledger allowlist **from** `primary_write_guard`, so the two gates cannot drift
 into disagreeing about what "shared" or "ledger" means.
 
+#### The ledger exemption covers the WHOLE round trip (2026-08-27)
+
+An exemption that lets a file be dirtied but not cleaned is not an exemption —
+it is a one-way door. Three legs are exempt when, and only when, every path
+they name is under `project-history/`:
+
+| leg | judged on |
+|---|---|
+| `git add <paths>` | the pathspecs |
+| `git restore <paths>` · `git checkout -- <paths>` | the pathspecs |
+| `git commit` | the real staged set |
+
+**Why `restore` had to join them.** `noctus.dev.auto_improvement_log` and its
+siblings write their ledger into the **primary** checkout by design. When the
+orchestrator decides those lines belong elsewhere, the guard permitted the
+write, permitted the `add`, permitted the `commit` — and refused the
+`git checkout --` that would undo it. The only remedies left were
+`reset --hard origin/dev`, which also discards unrelated pointer commits living
+in the same tree, or `NOCTUS_ALLOW_PRIMARY_WRITE=1` — switching the gate off to
+undo something the gate itself had allowed. That is the anti-pattern, not the
+repair (`KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`).
+
+**A bare `git checkout <token>` stays refused.** Only the explicit `--`
+separator makes a `checkout` qualify, because before it a lone token is
+ambiguous between a path and a **branch** — and switching the primary's HEAD out
+from under every linked worktree is the §9a sin this whole methodology exists to
+prevent. `git restore` needs no separator: it cannot switch a branch. Pathless
+forms (`git checkout .`, `git restore .`) name nothing readable and stay
+refused; those are the destructive ones.
+
+**`git add <ledger> && git commit -m …` in ONE call now works.** It never did
+before, and the reason was invisible: the hook runs *before* the command, so the
+`add` had not executed and `git diff --cached` was empty. The commit leg read
+"nothing staged" and refused. Splitting the two across separate tool calls
+worked — a trap rather than a rule, since the compound is how the command is
+habitually written. An empty index is now allowed, which is safe because a
+preceding `add` of non-ledger paths refuses the whole command on its **own**
+leg; a commit can therefore only reach an empty index behind an add that was
+already ledger-confined. Still refused: `git commit -a`/`-p` (they stage at
+commit time, so an empty index proves nothing) and any non-ledger pathspec.
+
+🔴 **Empty ≠ unanswerable.** `_run_git` returns `""` both when git said nothing
+and when git could not be asked. The commit leg is the one caller where those
+point in *opposite* directions, so it uses `_run_git_checked` and refuses when
+the probe did not answer. Collapsing the two would turn every environment where
+the probe breaks into a blanket allow — a fail-OPEN inversion, pinned by
+`test_git_commit_falls_closed_when_the_staged_probe_cannot_answer`.
+
 ### Two gates, deliberately
 
 The Bash leg can only ever be a good *parser* of an arbitrary shell command,
