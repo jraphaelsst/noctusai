@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import sys
 import tempfile
@@ -441,7 +442,28 @@ class TestPhase2OrganYamlFields:
 
     @pytest.mark.parametrize("name", PHASE_2_ORGANS)
     def test_organ_version_present(self, name):
-        """W2.3 introduces organ_version: '1.0' — all Phase-2 sidecars must carry it."""
+        """W2.3 introduces organ_version — all Phase-2 sidecars must carry it,
+        as a `MAJOR.MINOR` string.
+
+        🔴 THIS USED TO ASSERT `== "1.0"` (fixed 2026-08-27).
+
+        `KB § PATTERNS/architect/products-consume-canonical-organs.md` defines
+        the field as `organ_version: MAJOR.MINOR` — "semver-lite". A field
+        whose only legal value is its introduction value is not a version; it
+        is a constant, and the first organ whose contract actually changed
+        would turn its own correct bump into a CI failure.
+
+        That is exactly what happened: `AppShell` and `Sidebar` went to `1.1`
+        when the sidebar became a hover rail (new `railMode` prop, new
+        `useSidebarRail` export, changed layout behaviour) and this test went
+        red on the bump rather than on anything wrong.
+
+        So the assertion now enforces what the contract actually says — present,
+        and shaped `MAJOR.MINOR` — instead of freezing the value. Relaxing it to
+        "any string" would have been the monkey-patch; the SHAPE is the part
+        worth gating, because a sidecar carrying `organ_version: yes` (YAML's
+        favourite booby-trap) or `1.0.0` is a real defect this still catches.
+        """
         p = _find_organ_yaml(name, _REPO_ROOT)
         if p is None:
             pytest.skip(f"{name}.organ.yaml not found")
@@ -449,8 +471,16 @@ class TestPhase2OrganYamlFields:
         assert "organ_version" in data, (
             f"{name}.organ.yaml missing organ_version field (W2.3 contract)."
         )
-        assert data["organ_version"] == "1.0", (
-            f"{name}.organ.yaml organ_version should be '1.0', got {data['organ_version']!r}"
+        version = data["organ_version"]
+        assert isinstance(version, str), (
+            f"{name}.organ.yaml organ_version must be a QUOTED string, got "
+            f"{version!r} ({type(version).__name__}). Unquoted 1.10 parses as a "
+            f"float and silently becomes 1.1."
+        )
+        assert re.fullmatch(r"\d+\.\d+", version), (
+            f"{name}.organ.yaml organ_version must be MAJOR.MINOR (semver-lite, "
+            f"KB § PATTERNS/architect/products-consume-canonical-organs.md), got "
+            f"{version!r}"
         )
 
     @pytest.mark.parametrize("name", PHASE_2_ORGANS)
