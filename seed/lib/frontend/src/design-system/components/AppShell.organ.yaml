@@ -2,22 +2,35 @@ name: AppShell
 path: seed/lib/frontend/src/design-system/components/AppShell.tsx
 phase: pilot-seed
 registered_at: "2026-05-29"
-organ_version: "1.0"
+organ_version: "1.1"
 validation_status: emerging
 
 known_facts:
   - "Canonical layout wrapper: dark sidebar + light content area with responsive off-canvas mobile sidebar. Every product Layout wires AppShell + Sidebar + Header as a trio — core imports them directly; other products consume via createProductLayout() factory which wires all three."
-  - "Props-driven: accepts sidebar (ReactNode), header (render-prop receiving onMenuToggle), and children. Mobile overlay is self-contained (no external dependency) — the only state is sidebarOpen boolean."
+  - "Props-driven: accepts sidebar (ReactNode), header (render-prop receiving onMenuToggle), children, and the OPTIONAL railMode ('hover-expand' | 'expanded', default 'hover-expand'). State is sidebarOpen (mobile drawer) + railHovered/railFocused (desktop rail). Mobile overlay is self-contained (no external dependency)."
   - "Consumer count: core/Layout.tsx (direct import) + adconnect/seed/therapy-platform/erp-imobiliario via createProductLayout (indirect) — 5+ products rely on this shell; direct @noctusai/lib import site is core only."
-  - "No test file exists — emerging status pending colocated test."
+  - "DESKTOP HOVER RAIL (canonical default, 2026-08-27): at md+ the sidebar rests as a 64px icon rail (md:w-16) and expands to 256px (md:w-64) on hover OR keyboard focus. FLEET-WIDE by construction — every product inherits it through createProductLayout with no per-product opt-in."
+  - "🔴 OVERLAY CONTRACT — the expansion must never change the layout. Two mechanisms: (1) the <aside> is position:fixed at EVERY breakpoint (it was md:relative before 2026-08-27, i.e. its width WAS the layout); (2) a dedicated aria-hidden sibling div is the LAYOUT SLOT and holds the collapsed width (w-16) at all times, so `main` cannot reflow when the rail expands. Reintroducing md:relative, or making the slot width follow the rail, silently breaks the contract — AppShell.test.tsx asserts the slot width is unchanged across expansion."
+  - "Stacking: aside is z-50 below md (must clear its own z-40 mobile backdrop) and md:z-30 at desktop — above `main` (auto) and BELOW the canonical Dialog overlay (z-50, design-system/ui/Dialog.tsx), so an expanded rail can never cover an open modal."
+  - "Rail state reaches the sidebar subtree via SidebarRailContext (exported hook: useSidebarRail) rather than a required prop, so no consumer had to be re-wired. The context DEFAULT is {enabled:false, expanded:false, collapsed:false} — a <Sidebar> rendered OUTSIDE an AppShell keeps its pre-rail rendering exactly."
+  - "Hover and focus are tracked as SEPARATE booleans (expanded = hovered || focused) so tabbing out of the nav while the pointer is still over the rail does not collapse it, and vice versa. React 17+ implements onFocus/onBlur on the bubbling focusin/focusout pair, which is what makes the handler focus-within-equivalent without a CSS :focus-within dependency."
+  - "railMode='expanded' is the documented escape hatch back to the static 256px sidebar (slot widens to w-64). It is layout-equivalent to the pre-rail shell except the aside stays fixed (viewport-pinned) instead of stretching with page height."
+  - "Colocated test: AppShell.test.tsx (10 tests) — covers the slot invariant, hover expand/collapse, keyboard-focus expand, hover/focus independence, the railMode escape hatch, mobile-drawer non-regression, and the Sidebar's collapsed a11y."
 
-errors_encountered: []
+errors_encountered:
+  - "vitest/jsdom: fireEvent.mouseEnter does NOT trigger React's onMouseEnter — React synthesizes enter/leave from the delegated mouseover/mouseout pair. Tests must use fireEvent.mouseOver / mouseOut."
+  - "vitest/jsdom: a raw element.focus() did not expand the rail in tests — React listens for focusin (not the non-bubbling focus), and a bare DOM call is not act()-wrapped so the state update had not flushed by assertion time. fireEvent.focusIn / focusOut is the correct simulation and matches what a real tab-in dispatches."
 
 drifts_surfaced:
   - "adconnect/seed Dashboard.tsx mentions AppShell in a comment but does not import it directly — they consume via createProductLayout, which is the canonical pattern. Direct imports in non-core products would be a wiring drift."
+  - "2026-08-27: seed/framework/frontend/tests/createProductVitestConfig.test.ts fails to collect because @vitejs/plugin-react-swc is DECLARED in package.json but absent from the installed node_modules. Pre-existing install gap, unrelated to the rail work (vite.config.factory.ts untouched)."
+  - "2026-08-27: design-system/index.ts does not re-export SidebarRailMode / SidebarRailState / useSidebarRail, so the type name behind the public `railMode` prop is not importable from the @noctusai/lib/design-system barrel. Left alone for file-disjointness during the rail slice; the union is inlineable so nothing is blocked."
 
 alternatives_considered:
   - "Products previously authored per-product layout wrappers; AppShell was absorbed to eliminate this N=3+ replication. The createProductLayout factory further abstracts wiring so most products never import AppShell directly."
+  - "Pure-CSS rail via a Tailwind `group/rail` + `md:group-hover/rail:` variant chain (zero JS, zero re-render) was rejected: it makes Sidebar silently depend on an ancestor group name it cannot verify, so a <Sidebar> rendered outside AppShell would have permanently invisible labels. React context with a not-a-rail default fails safe instead."
+  - "Reserving the expanded width in the layout slot (so nothing overlaps) was rejected explicitly by the user: the expansion must float OVER the content, never resize it."
+  - "A required `collapsed` prop on AppShell/Sidebar was rejected — the rail is the new canonical default, so the API stays prop-free for every existing consumer; the only addition is the optional railMode escape hatch."
 
 manual_validation_log: []
 

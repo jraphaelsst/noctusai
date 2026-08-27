@@ -2,22 +2,33 @@ name: Sidebar
 path: seed/lib/frontend/src/design-system/components/Sidebar.tsx
 phase: pilot-seed
 registered_at: "2026-05-29"
-organ_version: "1.0"
+organ_version: "1.1"
 validation_status: emerging
 
 known_facts:
   - "Generic, prop-driven sidebar with collapsible navigation groups via @radix-ui/react-collapsible. NavGroup[] data drives rendering — no product-specific imports. Products provide nav data; Sidebar handles all rendering including collapse/expand animations."
   - "brandHref prop enables the brand logo/title to become a navigable link (e.g. back to Core dashboard) — backward-compatible default omits the link. This seam was added specifically for SSO multi-product nav."
   - "Consumed by core/Layout.tsx (direct import from @noctusai/lib/design-system) and indirectly by all products via createProductLayout(). erp-imobiliario has a dedicated e2e test (sidebar.spec.ts) proving the Sidebar renders correctly in at least one product."
-  - "No colocated unit test — emerging status pending."
+  - "ICON-RAIL RENDERING (2026-08-27): reads AppShell's SidebarRailContext via useSidebarRail(). When `collapsed` is true it renders icon-only AT md+ ONLY — every collapsed-mode class is md:-prefixed, so the mobile off-canvas drawer is the pre-rail rendering unchanged. Outside an AppShell the context default is not-a-rail, so a standalone <Sidebar> is also unchanged. SidebarProps gained NO new props."
+  - "COLLAPSE TECHNIQUE — labels collapse with `md:max-w-0 md:opacity-0` on an overflow-hidden span, NEVER `hidden`/`sr-only`. Three reasons: max-width is animatable so labels slide+fade on the same 200ms ease-in-out as the rail width (no pop); an opacity:0 element stays in the accessibility tree so the accessible name survives; zero max-width removes the label footprint so md:justify-center + md:gap-0 genuinely centre the icon in the 64px rail. Every interactive row also carries an explicit aria-label, plus a `title` while collapsed which doubles as the icon tooltip a rail needs."
+  - "GROUP-HEADER DECISION — while collapsed, a Radix Collapsible group trigger degrades to a muted icon row (label + chevron collapse to zero width) and the group's open/closed state is left EXACTLY as the user set it; it is deliberately NOT force-closed. Argument: a rail must surface DESTINATIONS, not categories — force-closing would empty the rail of the very icons it exists to show and would make the hover-expanded panel open onto an apparently-empty nav, costing a click on every navigation. Accepted consequence: a CLOSED group contributes only its own group icon to the rail."
+  - "Collapsible.Content drops its indent rail (md:ml-0 md:border-l-0 md:pl-0) while collapsed so item icons stay in the single centred column."
+  - "footerContent is arbitrary product ReactNode, so while collapsed it is CLIPPED (overflow-x-hidden) rather than restructured — Sidebar cannot know its shape. The seed's own BackToCore footer degrades to its ChevronLeft icon."
+  - "Root gained overflow-y-auto: AppShell now pins the aside to the viewport (fixed inset-y-0) at every breakpoint, so a long nav must scroll INSIDE the rail instead of being clipped away."
+  - "Covered by the colocated AppShell.test.tsx (collapsed a11y name + title, max-width-not-display collapse, destinations visible in the collapsed rail, unchanged standalone rendering)."
 
 errors_encountered: []
 
 drifts_surfaced:
   - "erp-imobiliario has a legacy supabase-mocks.ts that references Sidebar in e2e fixtures — not a product-level fork, just e2e wiring."
+  - "2026-08-27 FIXED ON CONTACT: this file carried a private 3-line `cn()` helper — the only such copy in design-system/ (18+ siblings import the canonical twMerge-backed `cn` from ../../utils). Replaced with the canonical import."
+  - "2026-08-27 SURFACED, NOT FIXED (file-disjoint): products/erp-imobiliario/frontend/e2e/tests/sidebar.spec.ts asserts toBeVisible() on the brand subtitle ('ONE') and a group LABEL ('Painel de Controle'). At playwright's default 1280px desktop viewport those are now opacity-0/max-w-0 until the rail is hovered, so those two assertions need a hover step. Nav-LINK assertions are unaffected (the <a> stays visible and its aria-label preserves the accessible name). The spec is runs_in_ci:false, so nothing is silently red in CI."
 
 alternatives_considered:
   - "Products previously authored per-product sidebar components; Sidebar was absorbed to eliminate replication. The standaloneItems prop covers nav items outside groups (e.g. Settings)."
+  - "Force-closing every Collapsible group while collapsed (so the rail shows only group icons) — rejected, see the group-header decision in known_facts."
+  - "Rendering a separate icon-only rail component alongside the full sidebar — rejected: two DOM trees for one nav guarantees they drift, and the labels could not animate between the two states."
+  - "Hiding labels with sr-only / hidden — rejected: display toggling pops at the end of the width transition and (for `hidden`) drops the name from the a11y tree."
 
 manual_validation_log: []
 
