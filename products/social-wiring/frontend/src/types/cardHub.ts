@@ -573,6 +573,70 @@ export interface DocumentoChecklistItem {
   sugestao: ExtracaoSugestao | null;
   concluido_em: string | null;
   concluido_por: string | null;
+  /**
+   * The file that satisfies this item, when the item is satisfied BY a file.
+   *
+   * Populated only for `rg` / `cpf` — the two items collected by uploading
+   * rather than by typing. `null` (or absent) everywhere else, which is what
+   * the row keys the trash icon off: an item with no file has nothing to
+   * discard, and a text item can never have one.
+   *
+   * OPTIONAL on purpose. This field is being added by the checklist-extras
+   * backend slice in a parallel worktree; typing it as optional means this
+   * branch renders correctly whether or not that one has merged — the trash
+   * simply does not appear until the server starts sending the file.
+   */
+  documento?: ChecklistDocumentoRef | null;
+}
+
+/**
+ * A stored file, as the checklist surfaces reference it.
+ *
+ * Deliberately NARROWER than `Documento`: neither the mandatory checklist rows
+ * nor the extras rows carry an LGPD category, a retention date or an uploader
+ * — that belongs to the Anexos list, which is where a document is managed as a
+ * document. Here a file is an ATTRIBUTE of a checklist row, and modelling it
+ * with the full shape would invite a row to start rendering fields it has no
+ * business owning.
+ */
+export interface ChecklistDocumentoRef {
+  id: string;
+  nome_original: string;
+  mime_type: string;
+  tamanho_bytes: number;
+  created_at: string;
+}
+
+/** Text data or file data — the two kinds of row the operator can create. */
+export type ChecklistExtraTipo = "texto" | "arquivo";
+
+/**
+ * An operator-created checklist row (`GET /api/clientes/{id}/checklist-extras`).
+ *
+ * The list BESIDE the mandatory one, and its opposite in every way that
+ * matters: these rows are created, renamed and destroyed by the person using
+ * the card, because they hold whatever THIS deal needs that the fleet-wide
+ * six do not.
+ *
+ * 🔴 `concluido` IS DERIVED, and there is no write path for it. The PATCH
+ * contract accepts `label`, `valor_texto` and `ordem` only — a tick follows
+ * from the row having a value or a file, exactly as the mandatory list's ticks
+ * follow from the record. The UI therefore renders this checkbox as a readout,
+ * never as a control; offering a checkbox that silently fails to persist would
+ * be the lying-state failure one layer down.
+ */
+export interface ChecklistExtra {
+  id: string;
+  label: string;
+  tipo: ChecklistExtraTipo;
+  valor_texto: string | null;
+  documento: ChecklistDocumentoRef | null;
+  concluido: boolean;
+  ordem: number;
+}
+
+export interface ChecklistExtrasResponse {
+  items: ChecklistExtra[];
 }
 
 export interface DocumentoChecklist {

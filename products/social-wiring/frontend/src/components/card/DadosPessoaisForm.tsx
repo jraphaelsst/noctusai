@@ -32,8 +32,8 @@
  * needs checking".
  */
 import { useEffect, useState } from "react";
+import { Check, Pencil, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -42,6 +42,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+import { TooltipIconButton } from "./TooltipIconButton";
 
 /** The taxonomy the UI offers. The COLUMN is unconstrained TEXT on purpose
  *  (migration 068) — a CHECK would freeze a product decision into the schema —
@@ -111,17 +113,18 @@ export function DadosPessoaisForm({
   if (!aberto) {
     return (
       <div className="mb-4">
-        <Button
+        {/* Icon-only, caption on hover — and the SAME string on `aria-label`,
+            because a hover caption is invisible to a screen reader. */}
+        <TooltipIconButton
+          label="Editar dados"
+          icon={Pencil}
           variant="outline"
-          size="sm"
+          testId={`${testId}-editar-btn`}
           onClick={() => {
             setDraft(valores);
             setAberto(true);
           }}
-          data-testid={`${testId}-editar-btn`}
-        >
-          Editar dados
-        </Button>
+        />
       </div>
     );
   }
@@ -194,18 +197,21 @@ export function DadosPessoaisForm({
         </Select>
       </Campo>
 
-      <div className="flex gap-2">
-        <Button size="sm" disabled={saving} onClick={submit} data-testid={`${testId}-salvar`}>
-          {saving ? "Salvando…" : "Salvar"}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
+      <div className="flex gap-1">
+        <TooltipIconButton
+          label={saving ? "Salvando…" : "Salvar dados"}
+          icon={Check}
+          variant="default"
+          disabled={saving}
+          onClick={submit}
+          testId={`${testId}-salvar`}
+        />
+        <TooltipIconButton
+          label="Cancelar"
+          icon={X}
           onClick={() => setAberto(false)}
-          data-testid={`${testId}-cancelar`}
-        >
-          Cancelar
-        </Button>
+          testId={`${testId}-cancelar`}
+        />
       </div>
     </div>
   );

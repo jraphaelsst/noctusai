@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+import { TooltipCaption } from "../TooltipIconButton";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { Tag } from "@/types/cardHub";
@@ -79,12 +81,24 @@ export function EtiquetasPopover({
       // scroll lock otherwise swallows wheel events aimed in here.
       modal
     >
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" data-testid="etiquetas-trigger">
-          <TagIcon className="mr-2 h-4 w-4" />
-          Etiquetas
-        </Button>
-      </PopoverTrigger>
+      {/* Icon-only, caption on hover — the card's rule for every action
+          (see `TooltipIconButton`). `aria-label` carries the SAME word, so
+          the button keeps an accessible name a hover cannot provide.
+          `TooltipCaption` wraps the PopoverTrigger rather than replacing the
+          Button, because the trigger is what must own the ref Radix hands it. */}
+      <TooltipCaption label="Etiquetas">
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            aria-label="Etiquetas"
+            data-testid="etiquetas-trigger"
+          >
+            <TagIcon className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </PopoverTrigger>
+      </TooltipCaption>
       <PopoverContent className="w-80" data-testid="etiquetas-popover">
         <div className="mb-3 flex items-center justify-between">
           <p className="text-sm font-semibold">Etiquetas</p>

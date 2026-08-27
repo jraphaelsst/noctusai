@@ -31,6 +31,7 @@ const { mockCreate, mockUpdate, mockCardResumo } = vi.hoisted(() => ({
 }));
 
 const documentosIds: (string | null)[] = [];
+const extrasIds: (string | null)[] = [];
 const agendamentosIds: (string | null)[] = [];
 const roteirosIds: (string | null)[] = [];
 
@@ -58,6 +59,19 @@ vi.mock("@/hooks/useCardHub", () => ({
     isFetching: false,
   }),
   useDocumentoChecklistMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  // Checklist extras — the operator-created rows the remodel added beside the
+  // server-defined six. Records its id for the tab-scoping assertion below.
+  useChecklistExtras: (id: string | null) => {
+    extrasIds.push(id);
+    return { data: [], isPending: false, isFetching: false, isError: false };
+  },
+  useChecklistExtraMutations: () => ({
+    criar: { mutate: vi.fn(), isPending: false },
+    atualizar: { mutate: vi.fn(), isPending: false },
+    remover: { mutate: vi.fn(), isPending: false },
+    uploadDocumento: { mutate: vi.fn(), isPending: false },
+    removerDocumento: { mutate: vi.fn(), isPending: false },
+  }),
   useExtracaoSugestaoMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useTiposDocumento: () => ({ data: [] }),
   useCompradores: () => ({
@@ -322,18 +336,30 @@ describe("ClienteDetailModal — a rejected mutation surfaces the server's own m
 
 // ─── Carregamento por aba (2026-08-25) ──────────────────────────────────────
 describe("ClienteDetailModal — só busca a aba que foi aberta", () => {
-  it("não busca documentos nem agendamentos ao abrir o cartão", async () => {
+  it("não busca agendamentos nem roteiros ao abrir o cartão", async () => {
     // 🔴 Abrir um cartão disparava sete leituras paralelas, várias de 1,4–2,4 s,
     // para abas que a pessoa talvez nunca abra. Abrir cartão é a interação mais
-    // repetida do dia.
-    documentosIds.length = 0;
+    // repetida do dia. O mecanismo continua valendo para as abas que restaram.
     agendamentosIds.length = 0;
     roteirosIds.length = 0;
 
     await render();
 
-    expect(documentosIds.every((id) => id === null)).toBe(true);
     expect(agendamentosIds.every((id) => id === null)).toBe(true);
     expect(roteirosIds.every((id) => id === null)).toBe(true);
+  });
+
+  it("🔴 busca SIM documentos e dados extras — eles agora são do Geral", async () => {
+    // A metade "documentos" desta regra foi APOSENTADA pela remodelagem, não
+    // quebrada por ela: a aba Documentos deixou de existir e o Geral — que
+    // abre junto com o cartão — absorveu a lista obrigatória, os arquivos e as
+    // linhas extras. É o custo, assumido, de pôr o trabalho na primeira tela.
+    documentosIds.length = 0;
+    extrasIds.length = 0;
+
+    await render();
+
+    expect(documentosIds.some((id) => id === "cl1")).toBe(true);
+    expect(extrasIds.some((id) => id === "cl1")).toBe(true);
   });
 });

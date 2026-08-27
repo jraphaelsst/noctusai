@@ -24,6 +24,11 @@
  * Mounted only while its section is EXPANDED (see
  * `ClienteCardDialog.PessoaDocumentosSection`), so a card with three parties
  * does not fire six queries for panels nobody has opened.
+ *
+ * The two sections it renders now live in their OWN files. They used to be
+ * exported from `ClienteCardDialog.tsx`, which made the 1691-line dialog a
+ * module barrel for components it did not own — an import cycle waiting to
+ * happen the moment either side grew.
  */
 import { toast } from "sonner";
 
@@ -37,10 +42,8 @@ import {
   useTiposDocumento,
 } from "@/hooks/useCardHub";
 
-import {
-  AnexosSection,
-  DocumentoChecklistSection,
-} from "@/components/card/ClienteCardDialog";
+import { AnexosSection } from "@/components/card/AnexosSection";
+import { DocumentoChecklistSection } from "@/components/card/DocumentoChecklistSection";
 import { DadosPessoaisForm } from "@/components/card/DadosPessoaisForm";
 
 export interface PessoaDocumentosPanelProps {
@@ -79,6 +82,10 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         }
       />
       <DocumentoChecklistSection
+        // Scoped to THIS person. The titular's checklist is on the same screen
+        // now (Geral absorbed the Documentos tab), so an unprefixed testid
+        // would name two different people's rows identically.
+        testIdPrefix={`documento-checklist-${clienteId}`}
         items={checklist.data?.items ?? []}
         // 🔴 `isPending || isFetching`, never `isLoading`. TanStack v5's
         // `isLoading` is false during a background refetch, so an empty branch
@@ -100,6 +107,39 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         sugestoesExtras={checklist.data?.sugestoes_extras}
         nomeOficial={checklist.data?.nome_oficial}
         nomeRegistro={checklist.data?.nome_registro}
+        // The row's inline editors write through the SAME `PATCH /clientes/{id}`
+        // mutation the form above uses — one write path for one set of columns.
+        valores={checklist.data?.valores ?? {}}
+        savingCampo={dados.isPending}
+        onSaveCampo={(patch) =>
+          dados.mutate(patch, {
+            onError: (e) =>
+              toast.error(erro(e, "Não foi possível salvar os dados.")),
+          })
+        }
+        uploading={docs.upload.isPending}
+        // A checklist row's file is filed under the ROW's key: the item IS the
+        // document type, so `rg` uploads as `rg`. Handing it the catalogue's
+        // first type (what the generic Anexos button does) would file every
+        // identity document as whatever happens to sort first.
+        onUploadDocumento={(item, file) =>
+          docs.upload.mutate(
+            { file, tipoDocumento: item.key },
+            {
+              onError: (e) =>
+                toast.error(erro(e, "Não foi possível enviar o documento.")),
+            },
+          )
+        }
+        onRemoverDocumento={(documentoId, item) =>
+          docs.remove.mutate(
+            { documentoId, motivo: `Descartado para reenvio de ${item.label}` },
+            {
+              onError: (e) =>
+                toast.error(erro(e, "Não foi possível descartar o documento.")),
+            },
+          )
+        }
       />
       <AnexosSection
         testId={`anexos-section-${clienteId}`}

@@ -44,6 +44,9 @@ import type {
   TipoDocumento,
   DocumentoChecklist,
   DocumentoChecklistItem,
+  ChecklistExtra,
+  ChecklistExtraTipo,
+  ChecklistExtrasResponse,
   Comprador,
   CompradoresResponse,
   ImovelBusca,
@@ -66,6 +69,8 @@ const MEMBROS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "membros"]
 const CHECKLISTS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "checklists"] as const;
 const DOC_CHECKLIST_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "documento-checklist"] as const;
+const CHECKLIST_EXTRAS_KEY = (clienteId: string) =>
+  [...FAMILY_KEY(clienteId), "checklist-extras"] as const;
 const AGENDAMENTOS_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "agendamentos"] as const;
 const ROTEIROS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "roteiros"] as const;
@@ -870,6 +875,110 @@ export function useDocumentoChecklistMutation(clienteId: string) {
   });
 }
 
+
+// ─── Checklist extras (operator-created rows) ─────────────────────────────
+
+/**
+ * The rows the OPERATOR added to this card, beside the server-defined six.
+ *
+ * A SEPARATE query rather than a wider `documento-checklist` payload, because
+ * the two lists have opposite lifecycles: the mandatory list is immutable and
+ * identical for every client, these rows are created and destroyed per deal.
+ * Folding them together would mean every extras edit invalidated the derived
+ * checklist, and every derivation refresh re-fetched rows nothing had touched.
+ */
+export function useChecklistExtras(clienteId: string | null) {
+  return useQuery({
+    queryKey: CHECKLIST_EXTRAS_KEY(clienteId ?? "__none__"),
+    queryFn: async () => {
+      const res = await api.get<ChecklistExtrasResponse>(
+        `${clienteBase(clienteId as string)}/checklist-extras`,
+      );
+      return res?.items ?? [];
+    },
+    enabled: !!clienteId,
+  });
+}
+
+/**
+ * Create / rename / fill / remove an extras row, and attach or discard its
+ * file.
+ *
+ * 🔴 NOT optimistic, unlike the mandatory checklist's tick. That tick is a
+ * local assertion over a value the server already holds and can be rolled back
+ * invisibly; these mutations CREATE and DESTROY rows whose ids the server
+ * assigns. Rendering an invented row would mean rendering upload and rename
+ * controls addressed to an id that does not exist yet.
+ *
+ * 🔴 `documento` DISCARD KEEPS THE ROW. `DELETE .../{extraId}/documento`
+ * removes the file; `DELETE .../{extraId}` removes the row. Two verbs, two
+ * routes, because "delete" means two different things on that line and a
+ * single one would eventually do the wrong one.
+ *
+ * Invalidates ONLY the extras list. An extra row is not derived from the
+ * client record, so it cannot move a badge, a tag or an appointment — and a
+ * wider invalidation is what used to make the whole card flash on every edit.
+ */
+export function useChecklistExtraMutations(clienteId: string) {
+  const qc = useQueryClient();
+  const base = `${clienteBase(clienteId)}/checklist-extras`;
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: CHECKLIST_EXTRAS_KEY(clienteId) });
+
+  const criar = useMutation({
+    mutationFn: (body: { label: string; tipo: ChecklistExtraTipo }) =>
+      api.post<ChecklistExtra>(base, body),
+    onSuccess: invalidate,
+  });
+
+  const atualizar = useMutation({
+    mutationFn: ({
+      extraId,
+      body,
+    }: {
+      extraId: string;
+      body: { label?: string; valor_texto?: string | null; ordem?: number };
+    }) => api.patch<ChecklistExtra>(`${base}/${encodeURIComponent(extraId)}`, body),
+    onSuccess: invalidate,
+  });
+
+  const remover = useMutation({
+    mutationFn: (extraId: string) => api.delete(`${base}/${encodeURIComponent(extraId)}`),
+    onSuccess: invalidate,
+  });
+
+  // Multipart bypasses the JSON-only seed `api` client, same pattern as
+  // `useDocumentoMutations.upload` — raw fetch with the auth header pulled
+  // from supabase, and no explicit content-type so the browser sets the
+  // multipart boundary.
+  const uploadDocumento = useMutation({
+    mutationFn: async ({ extraId, file }: { extraId: string; file: File }) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const headers = await getAuthHeader();
+      const response = await fetch(
+        apiUrl(`${base}/${encodeURIComponent(extraId)}/documento`),
+        { method: "POST", headers, body: formData },
+      );
+      if (!response.ok) {
+        // The server's own message — never a client-side guess at the limit
+        // it hit, which is a platform constant this UI does not own.
+        const detail = await response.json().catch(() => null);
+        throw new Error(detail?.error?.message ?? `Erro HTTP ${response.status}`);
+      }
+      return (await response.json()) as ChecklistExtra;
+    },
+    onSuccess: invalidate,
+  });
+
+  const removerDocumento = useMutation({
+    mutationFn: (extraId: string) =>
+      api.delete(`${base}/${encodeURIComponent(extraId)}/documento`),
+    onSuccess: invalidate,
+  });
+
+  return { criar, atualizar, remover, uploadDocumento, removerDocumento };
+}
 
 // ─── Compradores / partes do atendimento (migration 073) ──────────────────
 

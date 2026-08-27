@@ -35,6 +35,8 @@ import {
   useCardResumo,
   useChecklistMutations,
   useChecklists,
+  useChecklistExtraMutations,
+  useChecklistExtras,
   useCompradorMutations,
   useCompradores,
   useDadosPessoaisMutation,
@@ -122,8 +124,20 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const tags = useTags();
   const corretores = useLeadCorretores();
   const checklists = useChecklists(id);
-  const documentos = useDocumentos(idSeAbriu("documentos"));
-  const documentoChecklist = useDocumentoChecklist(idSeAbriu("documentos"));
+  // 🔴 KEYED ON `geral`, NOT ON A `documentos` TAB — because there is no
+  // Documentos tab any more. Geral absorbed it (collecting a document is not
+  // a separate errand from working the card), and Geral is the open-on-mount
+  // tab, so these three now read when the card opens.
+  //
+  // That partially spends the tab-scoped-fetching win, deliberately and with
+  // eyes open: the required-data checklist, the files behind it and the
+  // operator's extra rows are what the first screen IS. The mechanism itself
+  // is unchanged and still pays off for the tabs that remain — agendamentos,
+  // roteiros, negociação and financiamento are still fetched on first open.
+  const documentos = useDocumentos(idSeAbriu("geral"));
+  const documentoChecklist = useDocumentoChecklist(idSeAbriu("geral"));
+  const checklistExtras = useChecklistExtras(idSeAbriu("geral"));
+  const checklistExtraMutations = useChecklistExtraMutations(id ?? "__none__");
   const tiposDocumento = useTiposDocumento();
 
   const notaMutations = useNotaMutations(id ?? "__none__");
@@ -341,7 +355,12 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       }
       sugestaoSaving={sugestaoMutation.isPending}
       documentoChecklist={documentoChecklist.data?.items ?? []}
-      documentoChecklistLoading={documentoChecklist.isPending}
+      // 🔴 `isPending || isFetching`, never `isLoading`: v5's `isLoading` is
+      // false during a background refetch, so the empty branch would render an
+      // empty checklist over rows that exist.
+      documentoChecklistLoading={
+        documentoChecklist.isPending || documentoChecklist.isFetching
+      }
       sugestoesExtras={documentoChecklist.data?.sugestoes_extras}
       nomeOficial={documentoChecklist.data?.nome_oficial}
       nomeRegistro={documentoChecklist.data?.nome_registro}
@@ -357,8 +376,87 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
           },
         )
       }
+      // A checklist row's file is filed under the ROW's key: the item IS the
+      // document type, so `rg` uploads as `rg`. The generic Anexos button
+      // hands it the catalogue's first type, which is right for a loose
+      // attachment and wrong for an identity document.
+      onUploadDocumentoChecklist={(item, file) =>
+        documentoMutations.upload.mutate(
+          { file, tipoDocumento: item.key },
+          {
+            onError: (err) =>
+              toastServerError(err, "Não foi possível enviar o documento."),
+          },
+        )
+      }
+      // Discards the FILE. The row stays — the mandatory list is server-defined
+      // and there is no such thing as deleting "CPF" from it. The reason
+      // travels with the delete because the API requires one and because an
+      // access log entry that cannot say why is not an audit trail.
+      onRemoverDocumentoChecklist={(documentoId, item) =>
+        documentoMutations.remove.mutate(
+          { documentoId, motivo: `Descartado para reenvio de ${item.label}` },
+          {
+            onError: (err) =>
+              toastServerError(err, "Não foi possível descartar o documento."),
+          },
+        )
+      }
+      checklistExtras={checklistExtras.data ?? []}
+      // Same `isPending || isFetching` rule: this list is invalidated only by
+      // its own mutations, so gating on `isFetching` costs no spurious
+      // skeletons and stops the empty branch lying during a refetch.
+      checklistExtrasLoading={checklistExtras.isPending || checklistExtras.isFetching}
+      checklistExtrasError={
+        checklistExtras.isError ? "Não foi possível carregar os dados extras." : null
+      }
+      checklistExtrasSaving={
+        checklistExtraMutations.criar.isPending ||
+        checklistExtraMutations.atualizar.isPending ||
+        checklistExtraMutations.uploadDocumento.isPending ||
+        checklistExtraMutations.removerDocumento.isPending
+      }
+      onCriarChecklistExtra={(body) =>
+        checklistExtraMutations.criar.mutate(body, {
+          onError: (err) => toastServerError(err, "Não foi possível criar a linha."),
+        })
+      }
+      onRenomearChecklistExtra={(extraId, label) =>
+        checklistExtraMutations.atualizar.mutate(
+          { extraId, body: { label } },
+          { onError: (err) => toastServerError(err, "Não foi possível renomear a linha.") },
+        )
+      }
+      onSalvarTextoChecklistExtra={(extraId, valorTexto) =>
+        checklistExtraMutations.atualizar.mutate(
+          // An emptied field is written as `null`, not as `""` — "never filled"
+          // and "filled with nothing" must not become the same value.
+          { extraId, body: { valor_texto: valorTexto === "" ? null : valorTexto } },
+          { onError: (err) => toastServerError(err, "Não foi possível salvar o valor.") },
+        )
+      }
+      onRemoverChecklistExtra={(extraId) =>
+        checklistExtraMutations.remover.mutate(extraId, {
+          onError: (err) => toastServerError(err, "Não foi possível remover a linha."),
+        })
+      }
+      onUploadChecklistExtra={(extraId, file) =>
+        checklistExtraMutations.uploadDocumento.mutate(
+          { extraId, file },
+          {
+            // The 400 naming the exact limit/type it hit — never a client-side
+            // guess at the ceiling, which is a platform constant.
+            onError: (err) => toastServerError(err, "Não foi possível enviar o arquivo."),
+          },
+        )
+      }
+      onRemoverDocumentoChecklistExtra={(extraId) =>
+        checklistExtraMutations.removerDocumento.mutate(extraId, {
+          onError: (err) => toastServerError(err, "Não foi possível descartar o arquivo."),
+        })
+      }
       documentos={documentos.data ?? []}
-      documentosLoading={documentos.isPending}
+      documentosLoading={documentos.isPending || documentos.isFetching}
       tiposDocumento={tiposDocumento.data ?? []}
       onUploadDocumento={(file, tipoDocumento) =>
         documentoMutations.upload.mutate(

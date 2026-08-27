@@ -15,28 +15,56 @@
  * the seed extraction target.
  *
  * Presentational only (S3, §0): everything below is props in / callbacks
- * out. Zero imports from `@/pages/**` or any social-wiring-specific module.
- * The smart wrapper (`@/components/ClienteDetailModal.tsx`, outside
- * `card/**`) owns `useCardHub` and feeds this component.
+ * out. Zero imports from `@/pages/**`-owned data — the smart wrapper
+ * (`@/components/ClienteDetailModal.tsx`, outside `card/**`) owns
+ * `useCardHub` and feeds this component.
  *
  * States: loading / error / success at the dialog level (there is no
  * meaningful "empty" state for a single record — a missing record is
  * `notFound`, handled like an error).
+ *
+ * ─── The 2026-08 remodel ────────────────────────────────────────────────
+ *
+ * 🔴 GERAL ABSORBED THE DOCUMENTOS TAB. Collecting a document is not a
+ * separate errand from working the card — it IS the work — and splitting it
+ * off meant reading "RG pendente" on one screen and supplying it on another.
+ * Geral now reads top to bottom as the job: who this is (etiquetas, the
+ * contact line), what was said (descrição), what is still owed (the
+ * mandatory rows, then the operator's own extras), whose paperwork it is
+ * (each party's panel, then the anexos), and finally the working checklists.
+ *
+ * 🔴 EVERY ACTION IS AN ICON WITH ITS CAPTION ON HOVER — and with the SAME
+ * string as its `aria-label`, because a hover caption is invisible to a
+ * screen reader and to a keyboard. `TooltipIconButton` cannot be built
+ * without a label, so that pairing is structural rather than remembered.
+ * The two places that KEPT their words are documented where they are: the
+ * extracted-value Confirmar/Descartar pair (icons there would be confirmed
+ * by reflex, which is the failure that whole path exists to prevent) and
+ * the comment composer's post action.
+ *
+ * 🔴 THE SECTIONS LEFT THIS FILE. It was 1691 lines and was additionally
+ * acting as a module barrel for two components `PessoaDocumentosPanel`
+ * imported. `DocumentoChecklistSection`, `AnexosSection`, the row and the
+ * extras listing are now their own files under `card/`.
  */
 import type { ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertCircle,
   Bell,
+  Check,
   ChevronDown,
   ChevronUp,
-  ExternalLink,
   FileText,
+  Mail,
   MoreHorizontal,
   Pencil,
+  Phone,
+  Plus,
   Trash2,
+  User as UserIcon,
   UserPlus,
-  Users,
+  X,
 } from "lucide-react";
 
 import { DetailSections } from "@noctusai/lib/components";
@@ -63,12 +91,13 @@ import type {
   Agendamento,
   AgendamentoCreateBody,
   CardAtendimento,
+  ChecklistExtra,
+  ChecklistExtraTipo,
   Comprador,
   Checklist,
   Documento,
   DocumentoChecklistItem,
   ExtracaoSugestao,
-  CardDatas,
   Membro,
   Roteiro,
   StatusVisita,
@@ -77,7 +106,6 @@ import type {
   TipoDocumento,
 } from "@/types/cardHub";
 
-import { resolveDueState } from "./ClienteCardFace";
 import { Timeline } from "./Timeline";
 import { ChecklistDialog } from "./popovers/ChecklistDialog";
 import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
@@ -86,15 +114,13 @@ import { RoteirosSection } from "./RoteirosSection";
 import type { CardSubpageKey } from "./CardSidebarNav";
 import { EtiquetasPopover } from "./popovers/EtiquetasPopover";
 import { MembrosPopover } from "./popovers/MembrosPopover";
+import { AnexosSection } from "./AnexosSection";
+import { ChecklistExtrasSection } from "./ChecklistExtrasSection";
+import { DocumentoChecklistSection } from "./DocumentoChecklistSection";
+import { TokenCheckbox } from "./TokenCheckbox";
+import { TooltipIconButton } from "./TooltipIconButton";
 
 type PopoverKey = "etiquetas" | "agendamento" | "checklist" | "membros" | null;
-
-const DUE_LABEL: Record<string, string> = {
-  overdue: "Atrasado",
-  soon: "Entregar em breve",
-  upcoming: "",
-  done: "Concluído",
-};
 
 export interface ClienteCardDialogProps {
   open: boolean;
@@ -113,7 +139,7 @@ export interface ClienteCardDialogProps {
   /**
    * The OTHER people party to this atendimento. The titular is not in here —
    * they are the card — so an empty list is the ordinary single-buyer case and
-   * the Geral section hides itself entirely.
+   * the Compradores block hides itself entirely.
    */
   compradores?: Comprador[];
   compradoresLoading?: boolean;
@@ -141,7 +167,8 @@ export interface ClienteCardDialogProps {
   renderNegociacao?: () => ReactNode;
   renderFinanciamento?: () => ReactNode;
 
-  /** Current values behind the typed checklist items, for the edit form. */
+  /** Current values behind the typed checklist items — read by the inline row
+   *  editors AND by the full form on the Dados do cliente tab. */
   dadosPessoais?: DadosPessoais;
   onSaveDadosPessoais?: (valores: DadosPessoais) => void;
   dadosPessoaisSaving?: boolean;
@@ -196,14 +223,13 @@ export interface ClienteCardDialogProps {
   onToggleMembro: (membroId: string) => void;
   membrosSaving?: boolean;
 
-  // Descrição — derived by the container from the oldest non-deleted nota
-  // (§4's contract-gap note: `cliente_notas` covers BOTH Descrição and
-  // Comentários with no discriminator field; see the container's docblock).
+  // Descrição — derived by the container from the card's single description
+  // note (see the container's docblock for the `tipo` discriminator).
   descricaoCorpo: string;
   onSaveDescricao: (corpo: string) => void;
   descricaoSaving?: boolean;
 
-  // Documento checklist — the six identity fields every new client owes us.
+  // Documento checklist — the identity fields every new client owes us.
   // The LIST is canonical server-side, so there is no create/remove here.
   documentoChecklist?: DocumentoChecklistItem[];
   /** Extracted fields that are not checklist items — today `nome_oficial`. */
@@ -212,12 +238,36 @@ export interface ClienteCardDialogProps {
   nomeRegistro?: string | null;
   documentoChecklistLoading?: boolean;
   onToggleDocumentoChecklist: (key: string, concluido: boolean | null) => void;
+  /** Uploads the file that satisfies `rg` / `cpf`, filed under that item's key
+   *  as its `tipo_documento` — the row IS the type. */
+  onUploadDocumentoChecklist?: (item: DocumentoChecklistItem, file: File) => void;
+  /** Discards that file. The ROW stays: the mandatory list is server-defined
+   *  and there is no such thing as deleting "CPF" from it. */
+  onRemoverDocumentoChecklist?: (
+    documentoId: string,
+    item: DocumentoChecklistItem,
+  ) => void;
   onResolverSugestao?: (
     documentoId: string,
     acao: "confirmar" | "descartar",
     itemKey: string,
   ) => void;
   sugestaoSaving?: boolean;
+
+  // Checklist extras — the rows the OPERATOR creates, beside the mandatory
+  // ones. Separate props (not folded into `documentoChecklist`) because the
+  // two lists differ in every operation: these are created, renamed and
+  // destroyed by the person using the card.
+  checklistExtras?: ChecklistExtra[];
+  checklistExtrasLoading?: boolean;
+  checklistExtrasError?: string | null;
+  onCriarChecklistExtra?: (body: { label: string; tipo: ChecklistExtraTipo }) => void;
+  onRenomearChecklistExtra?: (extraId: string, label: string) => void;
+  onSalvarTextoChecklistExtra?: (extraId: string, valorTexto: string) => void;
+  onRemoverChecklistExtra?: (extraId: string) => void;
+  onUploadChecklistExtra?: (extraId: string, file: File) => void;
+  onRemoverDocumentoChecklistExtra?: (extraId: string) => void;
+  checklistExtrasSaving?: boolean;
 
   // Anexos
   documentos: Documento[];
@@ -255,6 +305,13 @@ export interface ClienteCardDialogProps {
    * documento-checklist, agendamentos, compradores, negociação, financiamento
    * — several taking 1,4–2,4 s in production, for panels the person may never
    * open. Only this component knows which tab is active, so only it can say.
+   *
+   * Still fired after the Documentos tab was absorbed into Geral: the tabs
+   * that remain (agendamentos, roteiros, negociação, financiamento) are still
+   * fetched on first open. What CHANGED is that documentos + the required-data
+   * checklist are now Geral's, and Geral is the open-on-mount tab — so those
+   * two are read when the card opens. That is the cost of putting the work on
+   * the first screen, and it is paid deliberately.
    */
   onSubpageChange?: (key: CardSubpageKey) => void;
 }
@@ -267,10 +324,6 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   const [subpage, setSubpage] = useState<CardSubpageKey>("geral");
 
   // 🔴 Reported upward so the owner can fetch a tab's data WHEN IT IS OPENED.
-  // Opening a card fired eight parallel reads — resumo, timeline, checklists,
-  // documentos, documento-checklist, agendamentos, compradores, negociação,
-  // financiamento — several taking 1,4–2,4 s, for tabs the person may never
-  // look at. The dialog owns which tab is active; only it can say.
   function selecionar(key: CardSubpageKey) {
     setSubpage(key);
     props.onSubpageChange?.(key);
@@ -285,10 +338,24 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
     [record],
   );
 
+  const compradores = props.compradores ?? [];
+
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      {/*
+        90vh × 90vw. The card carries three panes and the middle one now holds
+        everything the Documentos tab used to; at `max-w-6xl` the checklist
+        rows wrapped and the comment pane was a column of two-word lines.
+
+        The rail's column is the rail's COLLAPSED width and stays that width
+        while it is open — see `CardSidebarNav`: the expansion floats over the
+        middle pane rather than squeezing it.
+      */}
       <DialogContent
-        className="grid h-[85vh] max-w-6xl grid-cols-1 gap-0 overflow-hidden p-0 md:grid-cols-[200px_1fr_360px]"
+        className={cn(
+          "grid h-[90vh] w-[90vw] max-w-[90vw] grid-cols-1 gap-0 overflow-hidden p-0",
+          "md:grid-cols-[3.25rem_1fr_360px]",
+        )}
         data-testid="cliente-card-dialog"
       >
         {error ? (
@@ -317,7 +384,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               Detalhes do cartão de {nome}
             </DialogDescription>
 
-            {/* ── Left rail — subpage navigation ──────────────────── */}
+            {/* ── Left rail — subpage navigation (hover rail) ─────── */}
             <CardSidebarNav active={subpage} onSelect={selecionar} emptyKeys={emptyKeys} />
 
             {/* ── Middle pane — the active subpage ────────────────── */}
@@ -328,31 +395,28 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     card (its own buttons); "Adicionar Comprador" is card-level
                     and belongs beside them rather than buried in a tab,
                     because "this buyer is married" is discovered while reading
-                    anything on the card, not only the Documentos tab. */}
-                <div className="flex shrink-0 items-center gap-2">
+                    anything on the card. */}
+                <div className="flex shrink-0 items-center gap-1">
                   {props.onAdicionarComprador && (
-                    <Button
+                    <TooltipIconButton
+                      label="Adicionar Comprador"
+                      icon={UserPlus}
                       variant="outline"
-                      size="sm"
+                      testId="adicionar-comprador-btn"
                       onClick={props.onAdicionarComprador}
-                      data-testid="adicionar-comprador-btn"
-                    >
-                      <UserPlus className="mr-1.5 h-4 w-4" />
-                      Adicionar Comprador
-                    </Button>
+                    />
                   )}
                   {acoes}
                 </div>
               </div>
 
               {/* The action row belongs to Geral. It was card-level chrome while
-                  Geral held everything; now that agendamentos and anexos have
-                  their own tabs, a row of quick-actions floating above an
-                  unrelated tab is just noise. Each of those tabs carries its own
+                  Geral held everything; a row of quick-actions floating above an
+                  unrelated tab is just noise. Each other tab carries its own
                   trigger instead — the specific button next to the thing it
                   acts on, which is the same rule that retired `Adicionar`. */}
               {subpage === "geral" && (
-              <div className="mb-4 flex flex-wrap gap-2">
+              <div className="mb-4 flex flex-wrap gap-1">
                 <EtiquetasPopover
                   open={activePopover === "etiquetas"}
                   onOpenChange={(o) => setActivePopover(o ? "etiquetas" : null)}
@@ -390,13 +454,14 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               </div>
               )}
 
-              {/* The sidebar picks WHICH of these the middle pane shows.
-                  Geral keeps what you act on continuously — etiquetas, the
-                  description, the working checklists. Agendamentos and
-                  Documentos each own a tab because each is a workflow of its
-                  own, not a section you scroll past. */}
+              {/* ── GERAL ──────────────────────────────────────────
+                  The order below is the brief's, and it is the order the work
+                  happens in: who this is, what was said, what is still owed,
+                  whose paperwork it is, and only then the ad-hoc lists. */}
               {subpage === "geral" && (
                 <>
+                  {/* a. Etiquetas — only when set. An empty heading on every
+                         card would be furniture that means nothing. */}
                   {props.selectedTags.length > 0 && (
                     <div className="mb-4" data-testid="etiquetas-chips">
                       <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -417,12 +482,111 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     </div>
                   )}
 
+                  {/* b. The contact line. Three one-line rows, above
+                         everything, because they are what an operator reads
+                         BEFORE picking up the phone — and reaching them used
+                         to mean opening the Dados do cliente tab. */}
+                  <ContatoResumo dados={props.dadosPessoais} />
+
+                  {/* c. Descrição */}
                   <DescricaoSection
                     corpo={props.descricaoCorpo}
                     onSave={props.onSaveDescricao}
                     saving={props.descricaoSaving}
                   />
 
+                  {/* d. The mandatory checklist, as unified one-line rows. */}
+                  <DocumentoChecklistSection
+                    items={props.documentoChecklist ?? []}
+                    loading={props.documentoChecklistLoading}
+                    onToggle={props.onToggleDocumentoChecklist}
+                    onResolverSugestao={props.onResolverSugestao}
+                    sugestaoSaving={props.sugestaoSaving}
+                    sugestoesExtras={props.sugestoesExtras}
+                    nomeOficial={props.nomeOficial}
+                    nomeRegistro={props.nomeRegistro}
+                    valores={props.dadosPessoais}
+                    onSaveCampo={props.onSaveDadosPessoais}
+                    savingCampo={props.dadosPessoaisSaving}
+                    onUploadDocumento={props.onUploadDocumentoChecklist}
+                    onRemoverDocumento={props.onRemoverDocumentoChecklist}
+                    uploading={props.uploadingDocumento}
+                  />
+
+                  {/* e. The operator's own rows. */}
+                  {props.onCriarChecklistExtra && (
+                    <ChecklistExtrasSection
+                      items={props.checklistExtras ?? []}
+                      loading={props.checklistExtrasLoading}
+                      error={props.checklistExtrasError}
+                      onCriar={props.onCriarChecklistExtra}
+                      criando={props.checklistExtrasSaving}
+                      onRenomear={props.onRenomearChecklistExtra ?? (() => {})}
+                      onSalvarTexto={props.onSalvarTextoChecklistExtra ?? (() => {})}
+                      onRemover={props.onRemoverChecklistExtra ?? (() => {})}
+                      onUploadDocumento={props.onUploadChecklistExtra ?? (() => {})}
+                      onRemoverDocumento={
+                        props.onRemoverDocumentoChecklistExtra ?? (() => {})
+                      }
+                      salvando={props.checklistExtrasSaving}
+                    />
+                  )}
+
+                  {/* f. Everyone ELSE's paperwork, then this person's files.
+                         🔴 ONE PANEL PER PERSON, and the titular is not one of
+                         them — the titular IS the card, and their checklist is
+                         the section above. Every other party needs the same
+                         items and the same uploads, which is the whole reason
+                         a comprador is a `clientes` row.
+
+                         Collapsible because a married buyer means one extra
+                         panel, a fiador two, and their queries only run when
+                         opened. */}
+                  {compradores.length > 0 && (
+                    <div className="mb-4" data-testid="compradores-section">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Compradores
+                      </p>
+                      {compradores.map((parte) => (
+                        <PessoaDocumentosSection
+                          key={parte.id}
+                          nome={nomeDaParte(parte)}
+                          papel={PAPEL_LABEL[parte.papel] ?? parte.papel}
+                          testId={`comprador-${parte.id}`}
+                          acao={
+                            props.onRemoverComprador && (
+                              <TooltipIconButton
+                                label={`Remover ${nomeDaParte(parte)} deste atendimento`}
+                                icon={Trash2}
+                                testId={`comprador-remover-${parte.id}`}
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                onClick={() => props.onRemoverComprador?.(parte.id)}
+                              />
+                            )
+                          }
+                        >
+                          {() => props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
+                        </PessoaDocumentosSection>
+                      ))}
+                    </div>
+                  )}
+
+                  <AnexosSection
+                    documentos={props.documentos}
+                    loading={props.documentosLoading}
+                    uploading={props.uploadingDocumento}
+                    onUpload={(file) =>
+                      props.onUploadDocumento(
+                        file,
+                        props.tiposDocumento[0]?.tipo_documento ?? "outro",
+                      )
+                    }
+                    onOpenDocumento={props.onOpenDocumento}
+                    onDeleteDocumento={props.onDeleteDocumento}
+                  />
+
+                  {/* g. The user-created working checklists — last, and only
+                         when there are any. */}
                   <ChecklistsSection
                     checklists={props.checklists}
                     loading={props.checklistsLoading}
@@ -431,7 +595,6 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     onToggleItem={props.onToggleItem}
                     onRemoveItem={props.onRemoveItem}
                   />
-
                 </>
               )}
 
@@ -464,95 +627,6 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 />
               )}
 
-              {subpage === "documentos" && (
-                <>
-                  {/* 🔴 ONE SECTION PER PERSON, and the titular is just the
-                      first of them.
-
-                      Every party to the deal needs the same eight items and
-                      the same uploads — that is the whole reason a comprador
-                      is a `clientes` row. Rendering them as peers rather than
-                      as "the client, plus some extras" is what keeps that true
-                      on screen as well as in the schema.
-
-                      Collapsible because a married buyer means two full
-                      panels, a buyer with a fiador means three, and a flat
-                      stack of three checklists is unreadable. The titular
-                      opens expanded (it is the one you came for); the others
-                      start collapsed and their queries only run when opened. */}
-                  <PessoaDocumentosSection
-                    nome={nome}
-                    papel="Titular"
-                    defaultOpen
-                    testId="titular"
-                  >
-                    {() => (
-                      <>
-                    {/* The form sits directly under the list of what is
-                        missing. Splitting them would mean reading the gap on
-                        one screen and filling it on another. */}
-                    {props.onSaveDadosPessoais && (
-                      <DadosPessoaisForm
-                        valores={props.dadosPessoais ?? {}}
-                        onSave={props.onSaveDadosPessoais}
-                        saving={props.dadosPessoaisSaving}
-                      />
-                    )}
-                    {/* The permanent checklist sits ABOVE anexos: it is the
-                        list of what must be COLLECTED, and the anexos below
-                        are what has arrived. Reading order follows the work. */}
-                    <DocumentoChecklistSection
-                      items={props.documentoChecklist ?? []}
-                      loading={props.documentoChecklistLoading}
-                      onToggle={props.onToggleDocumentoChecklist}
-                      onResolverSugestao={props.onResolverSugestao}
-                      sugestaoSaving={props.sugestaoSaving}
-                      sugestoesExtras={props.sugestoesExtras}
-                      nomeOficial={props.nomeOficial}
-                      nomeRegistro={props.nomeRegistro}
-                    />
-                    <AnexosSection
-                      documentos={props.documentos}
-                      loading={props.documentosLoading}
-                      uploading={props.uploadingDocumento}
-                      onUpload={(file) =>
-                        props.onUploadDocumento(
-                          file,
-                          props.tiposDocumento[0]?.tipo_documento ?? "outro",
-                        )
-                      }
-                      onOpenDocumento={props.onOpenDocumento}
-                      onDeleteDocumento={props.onDeleteDocumento}
-                    />
-                      </>
-                    )}
-                  </PessoaDocumentosSection>
-
-                  {(props.compradores ?? []).map((parte) => (
-                    <PessoaDocumentosSection
-                      key={parte.id}
-                      nome={nomeDaParte(parte)}
-                      papel={PAPEL_LABEL[parte.papel] ?? parte.papel}
-                      testId={`comprador-${parte.id}`}
-                    >
-                      {() => props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
-                    </PessoaDocumentosSection>
-                  ))}
-                </>
-              )}
-
-              {subpage === "geral" && (props.compradores ?? []).length > 0 && (
-                /* Hidden entirely when nobody has been added — the ordinary
-                   card has one buyer, and an empty "Compradores" heading on
-                   every one of them would be furniture that means nothing. It
-                   appears the moment a second party exists, which is exactly
-                   when it starts carrying information. */
-                <CompradoresSection
-                  compradores={props.compradores ?? []}
-                  onRemover={props.onRemoverComprador}
-                />
-              )}
-
               {subpage === "financiamento" && (
                 <div data-testid="card-subpage-financiamento">
                   {props.renderFinanciamento?.() ?? (
@@ -571,6 +645,22 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     </p>
                   )}
                 </div>
+              )}
+
+              {/* 🔴 The Dados do cliente tab is no longer read-only. It showed
+                  what the record holds and offered nowhere to change it, so
+                  correcting a mistyped email meant leaving the card. The
+                  editor is `DadosPessoaisForm` — the SAME form each party's
+                  panel uses, writing through the SAME `onSaveDadosPessoais`
+                  path the inline rows use. A second editor for one set of
+                  columns would be two ways to write the same value, and one
+                  of them would be wrong first. */}
+              {subpage === "cliente" && props.onSaveDadosPessoais && (
+                <DadosPessoaisForm
+                  valores={props.dadosPessoais ?? {}}
+                  onSave={props.onSaveDadosPessoais}
+                  saving={props.dadosPessoaisSaving}
+                />
               )}
 
               {(subpage === "cliente" || subpage === "campanha") && (
@@ -637,6 +727,47 @@ function nomeDaParte(parte: Comprador): string {
 }
 
 /**
+ * The three fields an operator reads before doing anything else, as one-line
+ * rows at the top of Geral.
+ *
+ * They also appear as editable rows in the mandatory checklist below, and that
+ * is not a duplicate: there they answer "is this still owed?", here they
+ * answer "what is it?". Read-only on purpose — the checklist row is the ONE
+ * place a value is edited, so the two can never disagree about how a write
+ * happens.
+ */
+function ContatoResumo({ dados }: { dados?: DadosPessoais }) {
+  const linhas: { icon: typeof UserIcon; rotulo: string; valor?: string | null }[] = [
+    { icon: UserIcon, rotulo: "Nome", valor: dados?.nome_completo },
+    { icon: Phone, rotulo: "Celular", valor: dados?.celular },
+    { icon: Mail, rotulo: "Email", valor: dados?.email },
+  ];
+
+  return (
+    <dl className="mb-4 space-y-1" data-testid="contato-resumo">
+      {linhas.map(({ icon: Icon, rotulo, valor }) => (
+        <div
+          key={rotulo}
+          className="flex items-center gap-2 text-sm"
+          data-testid={`contato-${rotulo.toLowerCase()}`}
+        >
+          <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <dt className="w-16 shrink-0 text-xs uppercase tracking-wide text-muted-foreground">
+            {rotulo}
+          </dt>
+          {/* An absent value says so rather than rendering an empty cell — a
+              blank beside a label reads as a rendering bug, not as missing
+              data. */}
+          <dd className={cn("min-w-0 truncate", !valor && "text-muted-foreground")}>
+            {valor || "—"}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/**
  * One person's collapsible block of checklist + documents.
  *
  * 🔴 The children are rendered ONLY while open, and that is load-bearing
@@ -650,12 +781,16 @@ function PessoaDocumentosSection({
   papel,
   defaultOpen = false,
   testId,
+  acao,
   children,
 }: {
   nome: string;
   papel: string;
   defaultOpen?: boolean;
   testId: string;
+  /** Rendered in the header, beside the role badge — today the detach button.
+   *  Outside the toggle so clicking it does not also expand the panel. */
+  acao?: ReactNode;
   /**
    * A FUNCTION, not a node. JSX children are evaluated by the caller before
    * this component ever runs, so `{open && children}` would still have built
@@ -669,159 +804,35 @@ function PessoaDocumentosSection({
 
   return (
     <div
-      className="mb-4 rounded-lg border"
+      className="mb-2 rounded-lg border"
       data-testid={`pessoa-documentos-${testId}`}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/50"
-        data-testid={`pessoa-documentos-toggle-${testId}`}
-      >
-        {open ? (
-          <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-        )}
-        <span className="truncate text-sm font-semibold">{nome}</span>
-        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-          {papel}
-        </span>
-      </button>
-      {open && (
-        <div className="border-t px-3 pb-3 pt-3" data-testid={`pessoa-documentos-corpo-${testId}`}>
-          {children()}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Geral's Compradores list — who else is on this deal.
- *
- * Rows are collapsed to a name and expand to the contact details, for the same
- * reason the Documentos panels do: this list is short today and will not stay
- * short (spouse, then fiador, then procurador), and a flat dump of everyone's
- * details would push the rest of Geral off the screen.
- *
- * Deliberately NOT a second checklist surface. The documents live on the
- * Documentos tab, one place, for every person — two places to tick the same
- * item is how the two start disagreeing.
- */
-function CompradoresSection({
-  compradores,
-  onRemover,
-}: {
-  compradores: Comprador[];
-  onRemover?: (parteId: string) => void;
-}) {
-  return (
-    <div className="mb-5" data-testid="compradores-section">
-      <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        <Users className="h-3.5 w-3.5" />
-        Compradores
-      </p>
-      <div className="space-y-1.5">
-        {compradores.map((parte) => (
-          <CompradorRow key={parte.id} parte={parte} onRemover={onRemover} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CompradorRow({
-  parte,
-  onRemover,
-}: {
-  parte: Comprador;
-  onRemover?: (parteId: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const pessoa = parte.cliente;
-
-  return (
-    <div className="rounded-md border" data-testid={`comprador-row-${parte.id}`}>
-      <div className="flex items-center gap-2 px-2.5 py-2">
+      <div className="flex items-center gap-2 pr-2">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
-          data-testid={`comprador-toggle-${parte.id}`}
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/50"
+          data-testid={`pessoa-documentos-toggle-${testId}`}
         >
           {open ? (
             <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
           ) : (
             <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
           )}
-          <span className="truncate text-sm">{nomeDaParte(parte)}</span>
+          <span className="truncate text-sm font-semibold">{nome}</span>
           <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-            {PAPEL_LABEL[parte.papel] ?? parte.papel}
+            {papel}
           </span>
         </button>
-        {onRemover && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-            onClick={() => onRemover(parte.id)}
-            title={`Remover ${nomeDaParte(parte)} deste atendimento`}
-            aria-label={`Remover ${nomeDaParte(parte)} deste atendimento`}
-            data-testid={`comprador-remover-${parte.id}`}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        )}
+        {acao}
       </div>
       {open && (
-        <dl
-          className="space-y-1 border-t px-2.5 py-2 text-sm"
-          data-testid={`comprador-detalhe-${parte.id}`}
-        >
-          <CompradorCampo rotulo="Celular" valor={pessoa?.celular} />
-          <CompradorCampo rotulo="Email" valor={pessoa?.email} />
-          {parte.observacao && (
-            <CompradorCampo rotulo="Observação" valor={parte.observacao} />
-          )}
-        </dl>
+        <div className="border-t px-3 pb-3 pt-3" data-testid={`pessoa-documentos-corpo-${testId}`}>
+          {children()}
+        </div>
       )}
     </div>
-  );
-}
-
-function CompradorCampo({ rotulo, valor }: { rotulo: string; valor?: string | null }) {
-  return (
-    <div className="flex gap-2">
-      <dt className="w-24 shrink-0 text-xs text-muted-foreground">{rotulo}</dt>
-      {/* An absent value says so rather than rendering an empty cell — a blank
-          beside a label reads as a rendering bug, not as missing data. */}
-      <dd className={valor ? "" : "text-muted-foreground"}>{valor || "—"}</dd>
-    </div>
-  );
-}
-
-
-function DataEntregaPill({ datas }: { datas: CardDatas }) {
-  if (!datas.data_entrega) return null;
-  const state = resolveDueState(datas.data_entrega, datas.entrega_concluida);
-  const label = DUE_LABEL[state];
-  const stateClasses: Record<string, string> = {
-    overdue: "bg-red-500/20 text-red-400",
-    soon: "bg-amber-500/20 text-amber-400",
-    upcoming: "bg-secondary text-secondary-foreground",
-    done: "bg-emerald-500/20 text-emerald-400",
-  };
-  return (
-    <span
-      className={cn("inline-flex items-center gap-2 rounded px-2.5 py-1 text-sm font-medium", stateClasses[state])}
-      data-testid="data-entrega-pill"
-    >
-      {formatDate(datas.data_entrega, true)}
-      {label && <span data-testid="data-entrega-pill-label">{label}</span>}
-    </span>
   );
 }
 
@@ -848,23 +859,19 @@ function DescricaoSection({
           Descrição
         </p>
         {!editing && (
-          // Icon-only, but NOT label-less: `aria-label` + `title` carry the
-          // word "Editar" for screen readers and on hover, so trading the
-          // visible text for space does not trade away what the button does.
-          <Button
-            variant="ghost"
-            size="icon"
+          // Icon-only, but NOT label-less: `aria-label` + the hover caption
+          // carry the word "Editar", so trading the visible text for space
+          // does not trade away what the button does.
+          <TooltipIconButton
+            label="Editar descrição"
+            icon={Pencil}
+            testId="descricao-editar-btn"
             className="h-7 w-7"
             onClick={() => {
               setDraft(corpo);
               setEditing(true);
             }}
-            title="Editar descrição"
-            aria-label="Editar descrição"
-            data-testid="descricao-editar-btn"
-          >
-            <Pencil className="h-4 w-4" />
-          </Button>
+          />
         )}
       </div>
 
@@ -877,150 +884,44 @@ function DescricaoSection({
             data-testid="descricao-textarea"
             autoFocus
           />
-          <div className="flex gap-2">
-            <Button
-              size="sm"
+          <div className="flex gap-1">
+            <TooltipIconButton
+              label="Salvar descrição"
+              icon={Check}
+              testId="descricao-salvar-btn"
+              variant="default"
+              className="h-8 w-8"
               disabled={saving}
               onClick={() => {
                 onSave(draft);
                 setEditing(false);
               }}
-              data-testid="descricao-salvar-btn"
-            >
-              Salvar
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
-              Cancelar
-            </Button>
+            />
+            <TooltipIconButton
+              label="Cancelar"
+              icon={X}
+              testId="descricao-cancelar-btn"
+              className="h-8 w-8"
+              onClick={() => setEditing(false)}
+            />
           </div>
         </div>
       ) : corpo ? (
         <>
           <p className="whitespace-pre-wrap break-words text-sm">{shown}</p>
           {isLong && (
-            <Button
+            <TooltipIconButton
+              label={expanded ? "Mostrar menos" : "Mostrar mais"}
+              icon={expanded ? ChevronUp : ChevronDown}
+              testId="descricao-mostrar-mais"
               variant="outline"
-              size="sm"
-              className="mt-2"
+              className="mt-2 h-7 w-7"
               onClick={() => setExpanded((v) => !v)}
-              data-testid="descricao-mostrar-mais"
-            >
-              {expanded ? <ChevronUp className="mr-1 h-3.5 w-3.5" /> : <ChevronDown className="mr-1 h-3.5 w-3.5" />}
-              {expanded ? "Mostrar menos" : "Mostrar mais"}
-            </Button>
+            />
           )}
         </>
       ) : (
         <p className="text-sm italic text-muted-foreground">Sem descrição ainda.</p>
-      )}
-    </div>
-  );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export function AnexosSection({
-  documentos,
-  loading,
-  uploading,
-  onUpload,
-  onOpenDocumento,
-  onDeleteDocumento,
-  testId = "anexos-section",
-}: {
-  documentos: Documento[];
-  loading: boolean;
-  uploading?: boolean;
-  onUpload: (file: File) => void;
-  onOpenDocumento: (id: string) => void;
-  onDeleteDocumento: (id: string, motivo: string) => void;
-  testId?: string;
-}) {
-  // 🔴 Its OWN input, held by a ref — NOT the shared
-  // `getElementById("card-anexo-file-input")` this used to reach for.
-  //
-  // That worked only while exactly one Anexos section was mounted. Compradores
-  // (migration 073) put one per PERSON on the Documentos tab, and every
-  // "Enviar anexo" button would have opened the same input and uploaded to the
-  // titular — a spouse's RG silently filed onto her husband's record, which is
-  // a data error and an LGPD one at once.
-  //
-  // A ref cannot address the wrong element, so the bug becomes unspellable
-  // rather than merely fixed.
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  return (
-    <div className="mb-4" data-testid={testId}>
-      <input
-        ref={inputRef}
-        type="file"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onUpload(file);
-          // Cleared so re-picking the SAME file fires `change` again.
-          e.target.value = "";
-        }}
-      />
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Anexos</p>
-        {/* The section owns its trigger AND its input. */}
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={uploading}
-          onClick={() => inputRef.current?.click()}
-          data-testid="anexo-enviar-btn"
-        >
-          {uploading ? "Enviando…" : "Enviar anexo"}
-        </Button>
-      </div>
-      {loading ? (
-        <div className="h-10 animate-pulse rounded bg-muted" />
-      ) : documentos.length === 0 ? (
-        <p className="text-sm italic text-muted-foreground" data-testid="anexos-empty">
-          Nenhum anexo ainda.
-        </p>
-      ) : (
-        <ul className="space-y-1.5">
-          {documentos.map((doc) => (
-            <li
-              key={doc.id}
-              className="flex items-center gap-2 rounded border p-2 text-sm"
-              data-testid={`anexo-item-${doc.id}`}
-            >
-              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{doc.nome_original}</p>
-                <p className="text-xs text-muted-foreground">
-                  {formatBytes(doc.tamanho_bytes)} · {formatDate(doc.created_at, true)}
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => onOpenDocumento(doc.id)}
-                data-testid={`anexo-abrir-${doc.id}`}
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                onClick={() => onDeleteDocumento(doc.id, "Removido pelo usuário")}
-                data-testid={`anexo-remover-${doc.id}`}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );
@@ -1080,17 +981,13 @@ function ChecklistBlock({
     <div data-testid={`checklist-block-${checklist.id}`}>
       <div className="mb-1 flex items-center justify-between">
         <p className="text-sm font-semibold">{checklist.titulo}</p>
-        <Button
-          variant="ghost"
-          size="icon"
+        <TooltipIconButton
+          label={`Excluir checklist ${checklist.titulo}`}
+          icon={Trash2}
+          testId={`checklist-excluir-${checklist.id}`}
           className="h-7 w-7 text-muted-foreground hover:text-destructive"
           onClick={onRemove}
-          title={`Excluir checklist ${checklist.titulo}`}
-          aria-label={`Excluir checklist ${checklist.titulo}`}
-          data-testid={`checklist-excluir-${checklist.id}`}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
+        />
       </div>
       <div className="mb-2 flex items-center gap-2">
         <span className="w-9 text-xs text-muted-foreground">{percent}%</span>
@@ -1099,12 +996,11 @@ function ChecklistBlock({
       <ul className="space-y-1">
         {checklist.itens.map((item) => (
           <li key={item.id} className="group flex items-center gap-2">
-            <input
-              type="checkbox"
+            <TokenCheckbox
               checked={item.concluido}
-              onChange={(e) => onToggleItem(item.id, e.target.checked)}
-              className="h-4 w-4 shrink-0"
-              data-testid={`checklist-item-checkbox-${item.id}`}
+              onCheckedChange={(c) => onToggleItem(item.id, c)}
+              label={item.texto}
+              testId={`checklist-item-checkbox-${item.id}`}
             />
             <span className={cn("flex-1 text-sm", item.concluido && "text-muted-foreground line-through")}>
               {item.texto}
@@ -1112,6 +1008,7 @@ function ChecklistBlock({
             <button
               type="button"
               onClick={() => onRemoveItem(item.id)}
+              aria-label={`Remover ${item.texto}`}
               className="opacity-0 group-hover:opacity-100"
               data-testid={`checklist-item-remover-${item.id}`}
             >
@@ -1124,6 +1021,7 @@ function ChecklistBlock({
         <input
           type="text"
           placeholder="Adicionar um item"
+          aria-label={`Adicionar um item em ${checklist.titulo}`}
           value={novoItem}
           onChange={(e) => setNovoItem(e.target.value)}
           onKeyDown={(e) => {
@@ -1135,17 +1033,18 @@ function ChecklistBlock({
           className="h-8 flex-1 rounded border bg-background px-2 text-sm"
           data-testid={`checklist-novo-item-${checklist.id}`}
         />
-        <Button
+        <TooltipIconButton
+          label="Adicionar item"
+          icon={Plus}
+          testId={`checklist-adicionar-item-${checklist.id}`}
           variant="outline"
-          size="sm"
+          className="h-8 w-8"
           onClick={() => {
             if (!novoItem.trim()) return;
             onAddItem(novoItem.trim());
             setNovoItem("");
           }}
-        >
-          Adicionar
-        </Button>
+        />
       </div>
     </div>
   );
@@ -1190,7 +1089,7 @@ function hasAnyField(sections: DetailSection[]): boolean {
   return sections.some((section) => section.fields.some((field) => !field.hidden));
 }
 
-/** The two READ-ONLY record subpages. `geral`, `agendamentos` and `documentos`
+/** The two READ-ONLY record subpages. `geral`, `agendamentos` and `roteiros`
  *  are workflows with their own components, not field grids. */
 type RecordSubpageKey = Extract<CardSubpageKey, "cliente" | "campanha">;
 
@@ -1315,16 +1214,13 @@ function AgendamentosSection({
                   )}
                   {a.nota && <p className="mt-1 text-sm text-muted-foreground">{a.nota}</p>}
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0"
+                <TooltipIconButton
+                  label="Remover agendamento"
+                  icon={Trash2}
+                  testId={`agendamento-remover-${a.id}`}
+                  className="h-7 w-7"
                   onClick={() => onRemove(a.id)}
-                  aria-label="Remover agendamento"
-                  data-testid={`agendamento-remover-${a.id}`}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                />
               </div>
             </div>
           );
@@ -1336,332 +1232,16 @@ function AgendamentosSection({
 }
 
 /**
- * The permanent document checklist — the six identity fields every lead owes us
- * once they become a client.
+ * 🔴 The comment composer's post action KEPT ITS WORDS.
  *
- * There is no add/remove: the list is the SAME for every client by definition,
- * so it is defined server-side once (`documento_checklist_service.ITENS`).
- *
- * Ticks are DERIVED (migration 068): an item is done when the client record
- * carries the field or the document has been uploaded. Nothing here posts a
- * tick when data arrives — the next read simply reflects it, which is what
- * makes every ingestion channel (Meta, OLX, ImovelWeb, Vista, import, manual)
- * covered without any of them knowing this list exists.
- *
- * So a checkbox here is an OVERRIDE control, not the state itself. Clicking it
- * asserts a human opinion; the ↩ button beside an overridden item withdraws
- * that opinion and hands the item back to the data. Without that affordance
- * the first click on an item would pin it forever.
+ * The brief removed the text from every button in the card and put it on
+ * hover — with two exceptions, and this is one. The composer's button appears
+ * only once something has been typed, and at that moment it is the whole
+ * point of the box below it. A bare glyph beside a filled textarea does not
+ * say whether it posts, saves a draft or clears — and this is the one control
+ * whose misfire is public: a half-written note lands on the client's activity
+ * feed for the whole team to read.
  */
-export function DocumentoChecklistSection({
-  items,
-  loading,
-  onToggle,
-  onResolverSugestao,
-  sugestaoSaving,
-  sugestoesExtras,
-  nomeOficial,
-  nomeRegistro,
-}: {
-  items: DocumentoChecklistItem[];
-  loading?: boolean;
-  onToggle: (key: string, concluido: boolean | null) => void;
-  onResolverSugestao?: (
-    documentoId: string,
-    acao: "confirmar" | "descartar",
-    itemKey: string,
-  ) => void;
-  sugestaoSaving?: boolean;
-  sugestoesExtras?: Record<string, ExtracaoSugestao>;
-  nomeOficial?: string | null;
-  nomeRegistro?: string | null;
-}) {
-  if (loading) {
-    return (
-      <div className="mb-5" data-testid="documento-checklist-loading">
-        <div className="h-4 w-48 animate-pulse rounded bg-muted" />
-      </div>
-    );
-  }
-
-  const done = items.filter((i) => i.concluido).length;
-  const pct = items.length ? Math.round((done / items.length) * 100) : 0;
-
-  return (
-    <div className="mb-5" data-testid="documento-checklist-section">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Dados obrigatórios
-        </p>
-        <span className="text-xs text-muted-foreground" data-testid="documento-checklist-progresso">
-          {done}/{items.length}
-        </span>
-      </div>
-      <Progress value={pct} className="mb-2 h-1.5" />
-      <ul className="space-y-1">
-        {items.map((item) => (
-          <li key={item.key} className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="h-4 w-4 shrink-0 rounded border-muted-foreground/40"
-              checked={item.concluido}
-              onChange={(e) => onToggle(item.key, e.target.checked)}
-              data-testid={`documento-checklist-${item.key}`}
-              aria-label={item.label}
-            />
-            <span className={cn(item.concluido && "text-muted-foreground line-through")}>
-              {item.label}
-            </span>
-            {item.origem === "manual" && (
-              <>
-                {/* An overridden item says so. A tick that disagrees with the
-                    record is exactly the one a reader must not mistake for
-                    evidence that the data is there. */}
-                <span
-                  className="rounded bg-muted px-1 text-[10px] uppercase tracking-wide text-muted-foreground"
-                  title={
-                    item.derivado === item.concluido
-                      ? "Marcado manualmente"
-                      : `Marcado manualmente — os dados indicam "${
-                          item.derivado ? "preenchido" : "pendente"
-                        }"`
-                  }
-                  data-testid={`documento-checklist-${item.key}-manual`}
-                >
-                  manual
-                </span>
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                  onClick={() => onToggle(item.key, null)}
-                  title="Voltar a seguir os dados"
-                  aria-label={`Voltar ${item.label} a seguir os dados`}
-                  data-testid={`documento-checklist-${item.key}-limpar`}
-                >
-                  ↩
-                </button>
-              </>
-            )}
-          </li>
-        ))}
-        {items.map((item) =>
-          item.sugestao && onResolverSugestao ? (
-            <li key={`${item.key}-sugestao`}>
-              <SugestaoExtraida
-                itemKey={item.key}
-                label={item.label}
-                sugestao={item.sugestao}
-                onResolver={onResolverSugestao}
-                saving={sugestaoSaving}
-                formatarValor={formatarDataSugerida}
-              />
-            </li>
-          ) : null,
-        )}
-      </ul>
-      <NomeOficial
-        oficial={nomeOficial}
-        registro={nomeRegistro}
-        sugestao={sugestoesExtras?.nome_oficial}
-        onResolver={onResolverSugestao}
-        saving={sugestaoSaving}
-      />
-    </div>
-  );
-}
-
-
-/**
- * The name on the document, shown BESIDE the name from the registration.
- *
- * 🔴 The two are never merged, and this component is where that decision
- * becomes visible. The registration name is what the business knows the
- * person as; the document name is the legal one. Holding both is what makes
- * "how accurate is our registration data?" answerable — reconciling them
- * would answer it once, destructively, per row.
- *
- * So a divergence is rendered as INFORMATION, not as an error with a fix
- * button. There is nothing to correct here: both values are true.
- */
-function NomeOficial({
-  oficial,
-  registro,
-  sugestao,
-  onResolver,
-  saving,
-}: {
-  oficial?: string | null;
-  registro?: string | null;
-  sugestao?: ExtracaoSugestao;
-  onResolver?: (
-    documentoId: string,
-    acao: "confirmar" | "descartar",
-    itemKey: string,
-  ) => void;
-  saving?: boolean;
-}) {
-  if (!oficial && !sugestao) return null;
-
-  const normalizar = (v: string) =>
-    v
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toUpperCase()
-      .replace(/[^A-Z ]/g, " ")
-      .replace(/ +/g, " ")
-      .trim();
-  const diverge =
-    !!oficial && !!registro && normalizar(oficial) !== normalizar(registro);
-
-  return (
-    <div className="mt-3" data-testid="nome-oficial-bloco">
-      {oficial && (
-        <div className="rounded-md border border-border/60 bg-muted/30 p-2.5 text-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Nome no documento
-          </p>
-          <p className="mt-0.5 font-medium" data-testid="nome-oficial-valor">
-            {oficial}
-          </p>
-          {diverge && (
-            <p
-              className="mt-1 text-xs text-muted-foreground"
-              data-testid="nome-oficial-divergencia"
-            >
-              Cadastro: “{registro}” — diferente do documento.
-            </p>
-          )}
-        </div>
-      )}
-      {sugestao && onResolver && (
-        <SugestaoExtraida
-          itemKey="nome_oficial"
-          label="Nome no documento"
-          sugestao={sugestao}
-          onResolver={onResolver}
-          saving={saving}
-        />
-      )}
-    </div>
-  );
-}
-
-
-/**
- * A value read off a document that the extractor would not vouch for.
- *
- * 🔴 This is deliberately NOT styled as a filled-in field with an undo. A
- * birthdate on a photographed RG can be misread between two plausible years
- * (1980→1930) in a way no plausibility check catches, so the value must read
- * as a QUESTION until a person answers it. Anything that looks already-applied
- * gets confirmed by reflex, which is exactly the failure the low-confidence
- * path exists to prevent.
- *
- * The document name and the source are shown because they are what the
- * operator actually checks against — "we read this off rg.pdf, by OCR" tells
- * them where to look and how much to doubt it.
- */
-/**
- * One machine-read value, offered for a human decision.
- *
- * Takes the label and a formatter rather than a `DocumentoChecklistItem`,
- * because it now serves two callers whose values are not the same shape: a
- * birthdate (`YYYY-MM-DD`, needs reformatting) and the official name (already
- * display-ready). Threading a checklist item through it would have forced
- * `nome_oficial` to pretend to be a checklist item, which is exactly the
- * conflation the backend keeps apart.
- */
-function SugestaoExtraida({
-  itemKey,
-  label,
-  sugestao,
-  onResolver,
-  saving,
-  formatarValor = (v: string) => v,
-}: {
-  itemKey: string;
-  label: string;
-  sugestao: ExtracaoSugestao | null | undefined;
-  onResolver: (
-    documentoId: string,
-    acao: "confirmar" | "descartar",
-    itemKey: string,
-  ) => void;
-  saving?: boolean;
-  formatarValor?: (valor: string) => string;
-}) {
-  const s = sugestao;
-  if (!s) return null;
-
-  // OCR is the approximate rung; a PDF text layer is exact. Saying which one
-  // produced the value is the difference between "check this" and "glance".
-  const fonteLabel = s.fonte === "ocr" ? "leitura de imagem (OCR)" : "texto do PDF";
-
-  return (
-    <div
-      className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-2.5 text-sm"
-      data-testid={`documento-checklist-${itemKey}-sugestao`}
-    >
-      <p className="text-xs text-muted-foreground">
-        Encontramos em{" "}
-        <span className="font-medium text-foreground">
-          {s.documento_nome ?? "um documento"}
-        </span>
-        , por {fonteLabel} — confirme antes de salvar:
-      </p>
-      <p className="my-1 font-medium" data-testid={`documento-checklist-${itemKey}-sugestao-valor`}>
-        {label}: {formatarValor(s.valor)}
-      </p>
-      {s.substitui && s.valor_atual && (
-        /* Accepting this replaces something rather than filling a blank. Say
-           what it replaces, on the same screen as the decision — otherwise the
-           operator finds out afterwards, by noticing a value they did not
-           expect. */
-        <p className="text-xs text-muted-foreground">
-          Substitui o valor atual: “{s.valor_atual}”
-        </p>
-      )}
-      {s.rotulo && (
-        <p className="text-xs text-muted-foreground">Campo lido: “{s.rotulo}”</p>
-      )}
-      <div className="mt-2 flex gap-2">
-        <Button
-          size="sm"
-          variant="default"
-          disabled={saving}
-          onClick={() => onResolver(s.documento_id, "confirmar", itemKey)}
-          data-testid={`documento-checklist-${itemKey}-sugestao-confirmar`}
-        >
-          Confirmar
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={saving}
-          onClick={() => onResolver(s.documento_id, "descartar", itemKey)}
-          data-testid={`documento-checklist-${itemKey}-sugestao-descartar`}
-        >
-          Descartar
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/**
- * `YYYY-MM-DD` → `DD/MM/YYYY`, parsed by hand rather than through `new Date()`.
- *
- * `new Date("1980-05-12")` is parsed as UTC midnight and then rendered in the
- * viewer's local zone, so anywhere west of UTC it displays as the 11th — a
- * birthday off by one day, on the exact screen where the operator is checking
- * a date against a document.
- */
-function formatarDataSugerida(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
-}
-
-
 function ComentarioComposer({ onPost, posting }: { onPost: (corpo: string) => void; posting?: boolean }) {
   const [corpo, setCorpo] = useState("");
   return (

@@ -19,6 +19,8 @@ import { CalendarPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+import { TooltipCaption } from "../TooltipIconButton";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgendamentoCreateBody, TipoAgendamento } from "@/types/cardHub";
 
@@ -93,12 +95,24 @@ export function AgendamentoPopover({
     <Popover open={open} onOpenChange={onOpenChange} modal>
       {/* `modal` — see MembrosPopover: portaled out of the card dialog, whose
           scroll lock otherwise swallows wheel events aimed in here. */}
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" data-testid="agendamento-trigger">
-          <CalendarPlus className="mr-2 h-4 w-4" />
-          Agendar
-        </Button>
-      </PopoverTrigger>
+      {/* Icon-only, caption on hover — the card's rule for every action
+          (see `TooltipIconButton`). `aria-label` carries the SAME word, so
+          the button keeps an accessible name a hover cannot provide.
+          `TooltipCaption` wraps the PopoverTrigger rather than replacing the
+          Button, because the trigger is what must own the ref Radix hands it. */}
+      <TooltipCaption label="Agendar">
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            aria-label="Agendar"
+            data-testid="agendamento-trigger"
+          >
+            <CalendarPlus className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </PopoverTrigger>
+      </TooltipCaption>
       <PopoverContent className="w-80" data-testid="agendamento-popover">
         <p className="mb-3 text-sm font-semibold">Novo agendamento</p>
 

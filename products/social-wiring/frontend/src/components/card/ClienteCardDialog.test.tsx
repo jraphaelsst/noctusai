@@ -62,6 +62,21 @@ function baseProps(overrides: Partial<ClienteCardDialogProps> = {}): ClienteCard
   };
 }
 
+/** A derived, unticked checklist item — the ordinary shape. */
+function item(key: string, label: string, over: Record<string, unknown> = {}) {
+  return {
+    key,
+    label,
+    concluido: false,
+    origem: "derivado" as const,
+    derivado: false,
+    sugestao: null,
+    concluido_em: null,
+    concluido_por: null,
+    ...over,
+  };
+}
+
 async function render(props: ClienteCardDialogProps) {
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
@@ -123,20 +138,21 @@ describe("ClienteCardDialog — Descrição", () => {
 });
 
 describe("ClienteCardDialog — Anexos empty state", () => {
+  // No tab to open: Anexos lives on Geral now, under the parties' panels.
   it("shows the empty-anexos copy when there are no documentos", async () => {
-    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const { render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...baseProps({ documentos: [] })} />);
-    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
     expect(screen.getByTestId("anexos-empty")).toBeTruthy();
   });
 
   it("🔴 offers a way to upload — the trigger was missing entirely", async () => {
-    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const { render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...baseProps({ documentos: [] })} />);
-    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
     // Removing the generic `Adicionar` button took the ONLY thing that opened
     // the file input, and nothing replaced it — uploading was unreachable.
-    expect(screen.getByTestId("anexo-enviar-btn")).toBeTruthy();
+    // Icon-only now, so the assertion is on the name it still carries.
+    const btn = screen.getByTestId("anexo-enviar-btn");
+    expect(btn.getAttribute("aria-label")).toBe("Enviar anexo");
     // 🔴 The section owns its input, and this assertion says so BY SHAPE
     // rather than by id. It used to look up the shared
     // `card-anexo-file-input`, which was exactly what made per-person Anexos
@@ -145,9 +161,40 @@ describe("ClienteCardDialog — Anexos empty state", () => {
     // section now, so a second section cannot borrow this one's.
     const secao = screen.getByTestId("anexos-section");
     expect(secao.querySelector('input[type="file"]')).toBeTruthy();
+  });
+
+  it("🔴 every file input belongs to exactly one owner", async () => {
+    // The old form of this assertion counted ONE input in the document, which
+    // stopped being true the moment the checklist rows grew their own uploads.
+    // The RULE it protected is unchanged and is what is asserted here: no two
+    // owners share an input, so no upload can land on the wrong record.
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          documentos: [],
+          documentoChecklist: [
+            item("rg", "RG"),
+            item("cpf", "CPF"),
+            item("email", "Email"),
+          ],
+          onUploadDocumentoChecklist: vi.fn(),
+        })}
+      />,
+    );
     // Queried off `document` rather than the render container: the card is a
     // Radix Dialog and renders through a portal, so the container is empty.
-    expect(document.querySelectorAll('input[type="file"]')).toHaveLength(1);
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+    // anexos + rg + cpf, and NOT email — a typed item is never satisfied by a
+    // file, so it must not own one.
+    expect(inputs).toHaveLength(3);
+    expect(screen.getByTestId("anexos-section").querySelectorAll('input[type="file"]'))
+      .toHaveLength(1);
+    expect(screen.getByTestId("documento-checklist-rg-row").querySelectorAll('input[type="file"]'))
+      .toHaveLength(1);
+    expect(
+      screen.getByTestId("documento-checklist-email-row").querySelectorAll('input[type="file"]'),
+    ).toHaveLength(0);
   });
 });
 
@@ -366,6 +413,8 @@ describe("ordem das seções", () => {
 
   function full() {
     return baseProps({
+      onCriarChecklistExtra: vi.fn(),
+      selectedTags: [{ id: "t1", nome: "Urgente", cor: "#eb5a46" }],
       descricaoCorpo: "Lead interessado em imóvel",
       agendamentos: [AG as never],
       checklists: [{ id: "c1", titulo: "Checklist", posicao: 0, itens: [] } as never],
@@ -385,32 +434,55 @@ describe("ordem das seções", () => {
     });
   }
 
-  function orderOf(container: HTMLElement, screen: any, ids: string[]) {
-    const all = Array.from(container.querySelectorAll("*"));
-    return ids.map((id) => all.indexOf(screen.getByTestId(id)));
+  /**
+   * 🔴 Walks `document.body`, NOT the render container.
+   *
+   * The container form of this helper compared `-1` against `-1` for every id
+   * and passed unconditionally: the card is a Radix Dialog and renders through
+   * a portal, so nothing it asserts about is inside the container at all. The
+   * order assertions below only became real when this was fixed.
+   */
+  function orderOf(screen: any, ids: string[]) {
+    const all = Array.from(document.body.querySelectorAll("*"));
+    const idx = ids.map((id) => all.indexOf(screen.getByTestId(id)));
+    expect(idx.every((i) => i >= 0)).toBe(true);
+    return idx;
   }
 
-  it("Geral keeps descrição → checklist; agendamentos and anexos moved out", async () => {
+  it("🔴 Geral reads in the order the work happens", async () => {
     const { render, screen } = await import("@testing-library/react");
-    const { container } = render(<ClienteCardDialog {...full()} />);
+    render(<ClienteCardDialog {...full()} />);
 
-    const order = orderOf(container, screen, ["descricao-section", "checklists-section"]);
-    expect(order).toEqual([...order].sort((a, b) => a - b));
-    // They are not merely reordered — they are on other tabs now.
-    expect(screen.queryByTestId("agendamentos-section")).toBeNull();
-    expect(screen.queryByTestId("anexos-section")).toBeNull();
-  });
-
-  it("🔴 Documentos puts the required-data checklist ABOVE anexos", async () => {
-    const { fireEvent, render, screen } = await import("@testing-library/react");
-    const { container } = render(<ClienteCardDialog {...full()} />);
-    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
-
-    const order = orderOf(container, screen, [
+    // Etiquetas → contato → descrição → dados obrigatórios → extras →
+    // anexos → checklists de trabalho. Collecting a document is not a separate
+    // errand from working the card, so it is no longer a separate tab.
+    const order = orderOf(screen, [
+      "etiquetas-chips",
+      "contato-resumo",
+      "descricao-section",
       "documento-checklist-section",
+      "checklist-extras-section",
       "anexos-section",
+      "checklists-section",
     ]);
     expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("🔴 the required-data checklist stays ABOVE anexos", async () => {
+    // The list of what must be COLLECTED, then what has arrived. Reading order
+    // follows the work — the same rule the Documentos tab used to encode,
+    // preserved after the tab was absorbed.
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...full()} />);
+
+    const order = orderOf(screen, ["documento-checklist-section", "anexos-section"]);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("agendamentos still live on their own tab", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...full()} />);
+    expect(screen.queryByTestId("agendamentos-section")).toBeNull();
   });
 });
 
@@ -434,10 +506,14 @@ describe("dados obrigatórios (checklist permanente)", () => {
     concluido_por: null,
   }));
 
+  /**
+   * Geral, no navigation. The Documentos tab is gone: the required-data
+   * checklist is on the open-on-mount subpage now, because reading "RG
+   * pendente" on one screen and supplying it on another was the failure.
+   */
   async function openDocumentos(overrides = {}) {
     const { fireEvent, render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...baseProps({ documentoChecklist: ITENS, ...overrides })} />);
-    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
     return { fireEvent, screen };
   }
 
@@ -620,10 +696,12 @@ describe("dados obrigatórios (checklist permanente)", () => {
       documentoChecklist: withSugestao(),
       onResolverSugestao: vi.fn(),
     });
+    // `aria-checked`, not `.checked`: the row's checkbox is the design-token
+    // one built on Radix (a `role="checkbox"` button), never the raw browser
+    // input that ignored the theme.
     expect(
-      (screen.getByTestId("documento-checklist-data_nascimento") as HTMLInputElement)
-        .checked,
-    ).toBe(false);
+      screen.getByTestId("documento-checklist-data_nascimento").getAttribute("aria-checked"),
+    ).toBe("false");
     expect(screen.getByTestId("documento-checklist-progresso").textContent).toBe("0/6");
     expect(screen.getByTestId("documento-checklist-data_nascimento-sugestao")).toBeTruthy();
   });
@@ -676,10 +754,16 @@ describe("dados obrigatórios (checklist permanente)", () => {
     ).toBeNull();
   });
 
-  it("is NOT on Geral — it belongs to Documentos", async () => {
+  it("🔴 IS on Geral — the Documentos tab it used to live on is gone", async () => {
+    // This assertion is the exact inverse of the one it replaces. The old rule
+    // ("the required-data checklist belongs to Documentos, not Geral") was
+    // retired by the remodel, not broken by it: collecting a document is the
+    // work, so the list of what is missing belongs on the screen the card
+    // opens to. The tab it named no longer exists at all.
     const { render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...baseProps({ documentoChecklist: ITENS })} />);
-    expect(screen.queryByTestId("documento-checklist-section")).toBeNull();
+    expect(screen.getByTestId("documento-checklist-section")).toBeTruthy();
+    expect(screen.queryByTestId("card-subpage-tab-documentos")).toBeNull();
   });
 });
 
@@ -809,7 +893,7 @@ describe("a barra de ações pertence ao Geral", () => {
   });
 
   it("🔴 and nowhere else — a quick-action row over an unrelated tab is noise", async () => {
-    for (const tab of ["cliente", "agendamentos", "documentos", "campanha"]) {
+    for (const tab of ["cliente", "agendamentos", "roteiros", "campanha"]) {
       const screen = await open(tab);
       expect(screen.queryByTestId("etiquetas-trigger")).toBeNull();
     }
@@ -868,15 +952,13 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
     const { render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...baseProps({ compradores: [parte()] })} />);
     expect(screen.getByTestId("compradores-section")).toBeTruthy();
-    expect(screen.getByTestId("comprador-row-parte-1")).toBeTruthy();
-  });
-
-  it("keeps a party row collapsed until it is opened", async () => {
-    const { fireEvent, render, screen } = await import("@testing-library/react");
-    render(<ClienteCardDialog {...baseProps({ compradores: [parte()] })} />);
-    expect(screen.queryByTestId("comprador-detalhe-parte-1")).toBeNull();
-    fireEvent.click(screen.getByTestId("comprador-toggle-parte-1"));
-    expect(screen.getByTestId("comprador-detalhe-parte-1")).toBeTruthy();
+    // 🔴 ONE list of parties, not two. Geral used to carry a contact-detail
+    // list (`comprador-row-*`) AND the Documentos tab carried a paperwork
+    // panel for the same people. Absorbing the tab put both on one screen,
+    // where two lists of the same names is worse than either: the panel won,
+    // because it holds the contact fields as well as the checklist.
+    expect(screen.queryByTestId("comprador-row-parte-1")).toBeNull();
+    expect(screen.getByTestId("pessoa-documentos-comprador-parte-1")).toBeTruthy();
   });
 
   it("fires onRemoverComprador with the PARTE id, not the person id", async () => {
@@ -893,11 +975,22 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
     expect(onRemover).toHaveBeenCalledWith("parte-1");
   });
 
-  it("renders one Documentos section per person, titular first", async () => {
-    const { fireEvent, render, screen } = await import("@testing-library/react");
-    render(<ClienteCardDialog {...baseProps({ compradores: [parte()] })} />);
-    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
-    expect(screen.getByTestId("pessoa-documentos-titular")).toBeTruthy();
+  it("🔴 the titular has no panel of their own — they ARE the card", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [parte()],
+          documentoChecklist: [item("rg", "RG")],
+        })}
+      />,
+    );
+    // The titular's checklist is Geral's own section, not a collapsible named
+    // after them. Wrapping it would have hidden the card's own paperwork
+    // behind a click on the screen the card opens to.
+    expect(screen.queryByTestId("pessoa-documentos-titular")).toBeNull();
+    expect(screen.getByTestId("documento-checklist-section")).toBeTruthy();
+    // Everyone ELSE keeps a panel apiece.
     expect(screen.getByTestId("pessoa-documentos-comprador-parte-1")).toBeTruthy();
   });
 
@@ -912,7 +1005,6 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByTestId("card-subpage-tab-documentos"));
     // Load-bearing, not cosmetic: each panel runs its OWN checklist and
     // document queries, so mounting three collapsed parties would fire six
     // requests for panels nobody opened.
@@ -1014,5 +1106,619 @@ describe("ClienteCardDialog — Roteiros (migration 082)", () => {
 
     fireEvent.click(screen.getByTestId("card-subpage-tab-agendamentos"));
     expect(screen.getByTestId("agendamento-ag-antigo").textContent).toContain("Visita");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// The 2026-08 remodel
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("a linha unificada de um dado obrigatório", () => {
+  const TEXTO = item("email", "Email");
+  const DOC = item("rg", "RG");
+
+  async function linha(overrides = {}) {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          documentoChecklist: [TEXTO, DOC],
+          dadosPessoais: { email: "ana@example.com" },
+          onSaveDadosPessoais: vi.fn(),
+          onUploadDocumentoChecklist: vi.fn(),
+          onRemoverDocumentoChecklist: vi.fn(),
+          ...overrides,
+        })}
+      />,
+    );
+    return { fireEvent, screen };
+  }
+
+  it("🔴 the checkbox is the design-token one, never the browser default", async () => {
+    const { screen } = await linha();
+    const box = screen.getByTestId("documento-checklist-email");
+    // A raw `<input type="checkbox">` ignores the theme entirely: it stayed a
+    // hard white square on the dark card, and did not invert with it.
+    expect(box.tagName).not.toBe("INPUT");
+    expect(box.getAttribute("role")).toBe("checkbox");
+    expect(box.className).toContain("bg-card");
+    expect(box.className).toContain("border-border");
+    expect(box.className).toContain("data-[state=checked]:bg-primary");
+    // Softly rounded — not a hard square, not a pill.
+    expect(box.className).toContain("rounded-[0.375rem]");
+    // 🔴 Tokens only. A raw palette colour would not follow the theme, which
+    // is the whole reason the browser default was wrong.
+    expect(box.className).not.toMatch(/\b(bg|border|text)-(white|black|gray|blue|slate|zinc)-/);
+  });
+
+  it("shows the item, its current value and the tick on ONE row", async () => {
+    const { screen } = await linha();
+    const row = screen.getByTestId("documento-checklist-email-row");
+    expect(row.textContent).toContain("Email");
+    expect(row.textContent).toContain("ana@example.com");
+    expect(row.querySelector('[data-testid="documento-checklist-email"]')).toBeTruthy();
+  });
+
+  it("strikes through a satisfied item, and keeps doing so", async () => {
+    const { screen } = await linha({
+      documentoChecklist: [{ ...TEXTO, concluido: true, derivado: true }],
+    });
+    expect(screen.getByTestId("documento-checklist-email-label").className).toContain(
+      "line-through",
+    );
+  });
+
+  it("🔴 edits a TEXT item in place and sends ONLY the edited field", async () => {
+    const onSaveDadosPessoais = vi.fn();
+    const { fireEvent, screen } = await linha({ onSaveDadosPessoais });
+
+    fireEvent.click(screen.getByTestId("documento-checklist-email-editar"));
+    const input = screen.getByTestId("documento-checklist-email-input");
+    fireEvent.change(input, { target: { value: "nova@example.com" } });
+    fireEvent.click(screen.getByTestId("documento-checklist-email-salvar"));
+
+    // Only the edited key. Sending the whole shape from a row would let a
+    // stale draft of one field overwrite a sibling somebody else just fixed.
+    expect(onSaveDadosPessoais).toHaveBeenCalledWith({ email: "nova@example.com" });
+  });
+
+  it("an emptied field is saved as null, never as an empty string", async () => {
+    const onSaveDadosPessoais = vi.fn();
+    const { fireEvent, screen } = await linha({ onSaveDadosPessoais });
+    fireEvent.click(screen.getByTestId("documento-checklist-email-editar"));
+    fireEvent.change(screen.getByTestId("documento-checklist-email-input"), {
+      target: { value: "   " },
+    });
+    fireEvent.click(screen.getByTestId("documento-checklist-email-salvar"));
+    // "never filled" and "filled with nothing" must not become the same value.
+    expect(onSaveDadosPessoais).toHaveBeenCalledWith({ email: null });
+  });
+
+  it("cancelling an edit writes nothing", async () => {
+    const onSaveDadosPessoais = vi.fn();
+    const { fireEvent, screen } = await linha({ onSaveDadosPessoais });
+    fireEvent.click(screen.getByTestId("documento-checklist-email-editar"));
+    fireEvent.click(screen.getByTestId("documento-checklist-email-cancelar"));
+    expect(onSaveDadosPessoais).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("documento-checklist-email-input")).toBeNull();
+  });
+
+  it("🔴 a TEXT item offers no upload and no trash at all", async () => {
+    const { screen } = await linha();
+    expect(screen.queryByTestId("documento-checklist-email-upload")).toBeNull();
+    expect(screen.queryByTestId("documento-checklist-email-descartar-arquivo")).toBeNull();
+  });
+
+  it("a DOCUMENT item offers an upload and no inline editor", async () => {
+    const { screen } = await linha();
+    expect(screen.getByTestId("documento-checklist-rg-upload")).toBeTruthy();
+    // There is nothing to type: an RG is satisfied by a file.
+    expect(screen.queryByTestId("documento-checklist-rg-editar")).toBeNull();
+  });
+
+  it("🔴 the trash appears only once a file exists, and DISCARDS THE FILE", async () => {
+    const onRemoverDocumentoChecklist = vi.fn();
+    const comArquivo = {
+      ...DOC,
+      concluido: true,
+      derivado: true,
+      documento: {
+        id: "doc-rg",
+        nome_original: "rg.pdf",
+        mime_type: "application/pdf",
+        tamanho_bytes: 2048,
+        created_at: "2026-08-24T00:00:00Z",
+      },
+    };
+
+    const semArquivo = await linha();
+    expect(semArquivo.screen.queryByTestId("documento-checklist-rg-descartar-arquivo")).toBeNull();
+    (await import("@testing-library/react")).cleanup();
+
+    const { fireEvent, screen } = await linha({
+      documentoChecklist: [comArquivo],
+      onRemoverDocumentoChecklist,
+    });
+    expect(screen.getByTestId("documento-checklist-rg-row").textContent).toContain("rg.pdf");
+    fireEvent.click(screen.getByTestId("documento-checklist-rg-descartar-arquivo"));
+    // The card STAYS; the document is deleted for a fresh upload. A mandatory
+    // row is server-defined — there is no such thing as deleting "RG" from it.
+    expect(onRemoverDocumentoChecklist).toHaveBeenCalledWith("doc-rg", comArquivo);
+    expect(screen.getByTestId("documento-checklist-rg-row")).toBeTruthy();
+  });
+
+  it("🔴 renders without a trash when the backend has not shipped `documento` yet", async () => {
+    // The field is optional on purpose: this branch and the backend slice that
+    // populates it were built in parallel, and neither may assume the other.
+    const { screen } = await linha({ documentoChecklist: [DOC] });
+    expect(screen.getByTestId("documento-checklist-rg-row")).toBeTruthy();
+    expect(screen.queryByTestId("documento-checklist-rg-descartar-arquivo")).toBeNull();
+  });
+
+  it("keeps the manual badge and the withdraw affordance on the row", async () => {
+    const onToggle = vi.fn();
+    const { fireEvent, screen } = await linha({
+      documentoChecklist: [{ ...TEXTO, concluido: true, origem: "manual" }],
+      onToggleDocumentoChecklist: onToggle,
+    });
+    // A tick that disagrees with the record must never read as evidence the
+    // data is there — the one rule the derivation exists to protect.
+    expect(
+      screen.getByTestId("documento-checklist-email-manual").getAttribute("title"),
+    ).toContain("pendente");
+    fireEvent.click(screen.getByTestId("documento-checklist-email-limpar"));
+    expect(onToggle).toHaveBeenCalledWith("email", null);
+  });
+});
+
+describe("a listagem de dados extras", () => {
+  const extra = (over: Record<string, unknown> = {}) => ({
+    id: "ex-1",
+    label: "Certidão de casamento",
+    tipo: "texto" as const,
+    valor_texto: null,
+    documento: null,
+    concluido: false,
+    ordem: 0,
+    ...over,
+  });
+
+  async function lista(overrides = {}) {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          onCriarChecklistExtra: vi.fn(),
+          onRenomearChecklistExtra: vi.fn(),
+          onSalvarTextoChecklistExtra: vi.fn(),
+          onRemoverChecklistExtra: vi.fn(),
+          onUploadChecklistExtra: vi.fn(),
+          onRemoverDocumentoChecklistExtra: vi.fn(),
+          ...overrides,
+        })}
+      />,
+    );
+    return { fireEvent, screen };
+  }
+
+  it("sits BELOW the mandatory list — the ad-hoc rows come after the owed ones", async () => {
+    const { screen } = await lista({ documentoChecklist: [item("rg", "RG")] });
+    const all = Array.from(document.body.querySelectorAll("*"));
+    expect(all.indexOf(screen.getByTestId("checklist-extras-section"))).toBeGreaterThan(
+      all.indexOf(screen.getByTestId("documento-checklist-section")),
+    );
+  });
+
+  it("says so when there is nothing yet", async () => {
+    const { screen } = await lista({ checklistExtras: [] });
+    expect(screen.getByTestId("checklist-extras-empty")).toBeTruthy();
+  });
+
+  it("shows a skeleton while loading, never the empty copy over data in flight", async () => {
+    const { screen } = await lista({ checklistExtras: [], checklistExtrasLoading: true });
+    expect(screen.getByTestId("checklist-extras-loading")).toBeTruthy();
+    expect(screen.queryByTestId("checklist-extras-empty")).toBeNull();
+  });
+
+  it("surfaces a read failure instead of rendering as empty", async () => {
+    const { screen } = await lista({
+      checklistExtras: [],
+      checklistExtrasError: "Não foi possível carregar os dados extras.",
+    });
+    expect(screen.getByTestId("checklist-extras-erro")).toBeTruthy();
+    expect(screen.queryByTestId("checklist-extras-empty")).toBeNull();
+  });
+
+  it("🔴 offers the two kinds as two choices, and creates the one that was picked", async () => {
+    const onCriar = vi.fn();
+    const { fireEvent, screen } = await lista({ onCriarChecklistExtra: onCriar });
+
+    expect(screen.getByTestId("checklist-extras-add-texto").getAttribute("aria-label")).toBe(
+      "Adicionar dado de texto",
+    );
+    expect(screen.getByTestId("checklist-extras-add-arquivo").getAttribute("aria-label")).toBe(
+      "Adicionar dado de arquivo",
+    );
+
+    fireEvent.click(screen.getByTestId("checklist-extras-add-arquivo"));
+    fireEvent.change(screen.getByTestId("checklist-extras-novo-label"), {
+      target: { value: "Comprovante de renda" },
+    });
+    fireEvent.click(screen.getByTestId("checklist-extras-novo-salvar"));
+
+    // The KIND is a property of the row, chosen once, so the row can render
+    // the right affordance forever after.
+    expect(onCriar).toHaveBeenCalledWith({
+      label: "Comprovante de renda",
+      tipo: "arquivo",
+    });
+  });
+
+  it("refuses to create a nameless row", async () => {
+    const onCriar = vi.fn();
+    const { fireEvent, screen } = await lista({ onCriarChecklistExtra: onCriar });
+    fireEvent.click(screen.getByTestId("checklist-extras-add-texto"));
+    fireEvent.click(screen.getByTestId("checklist-extras-novo-salvar"));
+    expect(onCriar).not.toHaveBeenCalled();
+  });
+
+  it("renames a row", async () => {
+    const onRenomear = vi.fn();
+    const { fireEvent, screen } = await lista({
+      checklistExtras: [extra()],
+      onRenomearChecklistExtra: onRenomear,
+    });
+    fireEvent.click(screen.getByTestId("checklist-extras-ex-1-renomear"));
+    fireEvent.change(screen.getByTestId("checklist-extras-ex-1-label-input"), {
+      target: { value: "Certidão" },
+    });
+    fireEvent.click(screen.getByTestId("checklist-extras-ex-1-salvar"));
+    expect(onRenomear).toHaveBeenCalledWith("ex-1", "Certidão");
+  });
+
+  it("edits a TEXT row's value in place", async () => {
+    const onSalvarTexto = vi.fn();
+    const { fireEvent, screen } = await lista({
+      checklistExtras: [extra()],
+      onSalvarTextoChecklistExtra: onSalvarTexto,
+    });
+    fireEvent.click(screen.getByTestId("checklist-extras-ex-1-editar"));
+    fireEvent.change(screen.getByTestId("checklist-extras-ex-1-valor-input"), {
+      target: { value: "cartório 3" },
+    });
+    fireEvent.click(screen.getByTestId("checklist-extras-ex-1-salvar"));
+    expect(onSalvarTexto).toHaveBeenCalledWith("ex-1", "cartório 3");
+  });
+
+  it("a FILE row uploads instead of typing, and owns its own input", async () => {
+    const { screen } = await lista({
+      checklistExtras: [extra({ tipo: "arquivo" })],
+    });
+    expect(screen.getByTestId("checklist-extras-ex-1-upload")).toBeTruthy();
+    expect(screen.queryByTestId("checklist-extras-ex-1-editar")).toBeNull();
+    expect(
+      screen.getByTestId("checklist-extras-ex-1-row").querySelectorAll('input[type="file"]'),
+    ).toHaveLength(1);
+  });
+
+  it("🔴 discarding the FILE and removing the ROW are two different buttons", async () => {
+    const onRemover = vi.fn();
+    const onRemoverDocumento = vi.fn();
+    const { fireEvent, screen } = await lista({
+      checklistExtras: [
+        extra({
+          tipo: "arquivo",
+          concluido: true,
+          documento: {
+            id: "doc-9",
+            nome_original: "renda.pdf",
+            mime_type: "application/pdf",
+            tamanho_bytes: 4096,
+            created_at: "2026-08-24T00:00:00Z",
+          },
+        }),
+      ],
+      onRemoverChecklistExtra: onRemover,
+      onRemoverDocumentoChecklistExtra: onRemoverDocumento,
+    });
+
+    fireEvent.click(screen.getByTestId("checklist-extras-ex-1-descartar-arquivo"));
+    expect(onRemoverDocumento).toHaveBeenCalledWith("ex-1");
+    expect(onRemover).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("checklist-extras-ex-1-remover"));
+    expect(onRemover).toHaveBeenCalledWith("ex-1");
+  });
+
+  it("🔴 these rows ARE deletable — unlike the mandatory ones", async () => {
+    const { screen } = await lista({
+      checklistExtras: [extra()],
+      documentoChecklist: [item("rg", "RG")],
+    });
+    expect(screen.getByTestId("checklist-extras-ex-1-remover")).toBeTruthy();
+    // A mandatory row is server-defined; there is no button that removes it.
+    expect(screen.queryByTestId("documento-checklist-rg-remover")).toBeNull();
+  });
+
+  it("🔴 the extras tick is a readout, not a control that silently fails", async () => {
+    // The PATCH contract carries `label`, `valor_texto` and `ordem` — there is
+    // no field for `concluido`, so it is derived. A checkbox that moved and
+    // then did not persist would be a lying state.
+    const { screen } = await lista({ checklistExtras: [extra({ concluido: true })] });
+    const box = screen.getByTestId("checklist-extras-ex-1");
+    expect(box.getAttribute("aria-checked")).toBe("true");
+    expect(box.hasAttribute("disabled")).toBe(true);
+    expect(box.getAttribute("title")).toContain("automaticamente");
+  });
+});
+
+describe("a barra lateral como hover rail", () => {
+  async function rail() {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+    return screen;
+  }
+
+  it("🔴 expands as an OVERLAY — the reserved column never changes width", async () => {
+    const screen = await rail();
+    const trilho = screen.getByTestId("card-sidebar-rail");
+    const nav = screen.getByTestId("card-sidebar-nav");
+    // The COLUMN keeps the collapsed width; the nav floats above it. A width
+    // transition on the column would reflow the pane under the pointer, moving
+    // the thing the user is reading on every accidental hover.
+    expect(trilho.className).toContain("md:w-[3.25rem]");
+    expect(trilho.className).toContain("relative");
+    expect(nav.className).toContain("md:absolute");
+    expect(nav.className).toContain("md:w-[3.25rem]");
+    expect(nav.className).toContain("md:hover:w-56");
+  });
+
+  it("🔴 focus-within expands it too — a hover-only rail is unreachable", async () => {
+    const screen = await rail();
+    const nav = screen.getByTestId("card-sidebar-nav");
+    expect(nav.className).toContain("md:focus-within:w-56");
+    expect(
+      screen.getByTestId("card-subpage-label-geral").className,
+    ).toContain("md:group-focus-within:w-auto");
+  });
+
+  it("rests icon-only: the caption is in the DOM, its BOX is collapsed", async () => {
+    const screen = await rail();
+    const label = screen.getByTestId("card-subpage-label-cliente");
+    // Present, so revealing it is a transition rather than a mount — and so
+    // it never leaves the accessibility tree.
+    expect(label.textContent).toBe("Dados do cliente");
+    expect(label.className).toContain("md:w-0");
+    expect(label.className).toContain("md:opacity-0");
+    expect(label.className).toContain("md:group-hover:w-auto");
+  });
+
+  it("🔴 every rail button keeps an accessible name while collapsed", async () => {
+    const screen = await rail();
+    expect(screen.getByTestId("card-subpage-tab-geral").getAttribute("aria-label")).toBe(
+      "Geral",
+    );
+    expect(screen.getByTestId("card-subpage-tab-campanha").getAttribute("aria-label")).toBe(
+      "Campanha e imóvel",
+    );
+  });
+
+  it("keeps the mobile horizontal strip — it is never `hidden md:flex`", async () => {
+    const screen = await rail();
+    // Below `md` the dialog is one column; hiding the rail would make the
+    // cliente/campanha subpages unreachable on a phone, not merely restyled.
+    const nav = screen.getByTestId("card-sidebar-nav");
+    // Token-wise, not substring-wise: `md:overflow-x-hidden` is a legitimate
+    // class that CONTAINS "hidden" while hiding nothing.
+    const classes = nav.className.split(/\s+/);
+    expect(classes).not.toContain("hidden");
+    expect(classes).not.toContain("md:flex");
+    expect(classes).toContain("overflow-x-auto");
+  });
+
+  it("keeps the disabled-tab behaviour for empty record subpages", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ atendimentos: [] })} />);
+    expect((screen.getByTestId("card-subpage-tab-cliente") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByTestId("card-subpage-tab-geral") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("🔴 no longer offers a Documentos tab", async () => {
+    const screen = await rail();
+    expect(screen.queryByTestId("card-subpage-tab-documentos")).toBeNull();
+    // Financiamento inherits the slot it used to sit above, and keeps it.
+    const chaves = Array.from(
+      screen.getByTestId("card-sidebar-nav").querySelectorAll("[data-testid^='card-subpage-tab-']"),
+    ).map((el) => el.getAttribute("data-testid"));
+    expect(chaves.indexOf("card-subpage-tab-financiamento")).toBe(
+      chaves.indexOf("card-subpage-tab-roteiros") + 1,
+    );
+  });
+});
+
+describe("legendas nos botões (ícone + tooltip)", () => {
+  it("🔴 every icon-only action still says what it does, by name", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          onAdicionarComprador: vi.fn(),
+          descricaoCorpo: "Lead interessado",
+          documentos: [],
+        })}
+      />,
+    );
+    // A tooltip is NOT an accessible name — it is invisible to a screen reader
+    // and to a keyboard. Each of these carries the caption on `aria-label` too.
+    const esperado: [string, string][] = [
+      ["adicionar-comprador-btn", "Adicionar Comprador"],
+      ["anexo-enviar-btn", "Enviar anexo"],
+      ["descricao-editar-btn", "Editar descrição"],
+      ["etiquetas-trigger", "Etiquetas"],
+      ["agendamento-trigger", "Agendar"],
+      ["checklist-trigger", "Checklist"],
+      ["membros-trigger", "Membros"],
+    ];
+    for (const [testId, caption] of esperado) {
+      expect(screen.getByTestId(testId).getAttribute("aria-label")).toBe(caption);
+      expect(screen.getByTestId(testId).textContent).toBe("");
+    }
+  });
+
+  it("🔴 the extracted-value pair KEPT its words", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          documentoChecklist: [
+            item("data_nascimento", "Data de Nascimento", {
+              sugestao: {
+                valor: "1980-05-12",
+                documento_id: "doc-1",
+                documento_nome: "rg.pdf",
+                tipo_documento: "rg",
+                confianca: "baixa",
+                fonte: "ocr",
+                rotulo: "DATA DE NASCIMENTO",
+              },
+            }),
+          ],
+          onResolverSugestao: vi.fn(),
+        })}
+      />,
+    );
+    // Two bare glyphs here would be confirmed by reflex, which is the exact
+    // failure the low-confidence path exists to prevent. Anything that looks
+    // already-applied gets accepted without being read.
+    expect(
+      screen.getByTestId("documento-checklist-data_nascimento-sugestao-confirmar").textContent,
+    ).toBe("Confirmar");
+    expect(
+      screen.getByTestId("documento-checklist-data_nascimento-sugestao-descartar").textContent,
+    ).toBe("Descartar");
+  });
+
+  it("🔴 the comment composer KEPT its word too", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+    fireEvent.change(screen.getByTestId("comentario-textarea"), {
+      target: { value: "meia frase" },
+    });
+    // The one control whose misfire is public: a half-written note lands on
+    // the client's activity feed for the whole team to read.
+    expect(screen.getByTestId("comentario-enviar-btn").textContent).toBe("Comentar");
+  });
+});
+
+describe("a aba Dados do cliente ganhou um editor", () => {
+  const COM_REGISTRO = {
+    atendimentos: [
+      {
+        id: "a1",
+        titulo: "Ana",
+        status: "aberta",
+        closed_at: null,
+        created_at: null,
+        lead_id: null,
+        meta_ads_lead_id: "m1",
+        lead: null,
+        campanha: {
+          id: "m1",
+          full_name: "Ana",
+          email: "ana@example.com",
+          phone: null,
+          campaign_id: "c1",
+          campaign_name: "Campanha A",
+          form_id: "f1",
+          form_name: "Form A",
+          ad_id: null,
+          adset_id: null,
+          platform: "fb",
+          is_organic: false,
+          created_time: null,
+          answers: {},
+        },
+      },
+    ],
+  } as any;
+
+  it("🔴 is no longer read-only", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({ ...COM_REGISTRO, onSaveDadosPessoais: vi.fn() })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+    // It showed what the record holds and offered nowhere to change it, so
+    // correcting a mistyped email meant leaving the card.
+    expect(screen.getByTestId("dados-pessoais-editar-btn").getAttribute("aria-label")).toBe(
+      "Editar dados",
+    );
+    expect(screen.getByTestId("card-subpage-cliente")).toBeTruthy();
+  });
+
+  it("🔴 reuses the SAME form and the SAME write path", async () => {
+    const onSaveDadosPessoais = vi.fn();
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          ...COM_REGISTRO,
+          dadosPessoais: { email: "ana@example.com" },
+          onSaveDadosPessoais,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+    fireEvent.click(screen.getByTestId("dados-pessoais-editar-btn"));
+    fireEvent.change(screen.getByTestId("dados-pessoais-nome"), {
+      target: { value: "Ana Souza" },
+    });
+    fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+    // A second editor for one set of columns would be two ways to write the
+    // same value, and one of them would be wrong first.
+    expect(onSaveDadosPessoais).toHaveBeenCalledWith(
+      expect.objectContaining({ nome_completo: "Ana Souza" }),
+    );
+  });
+
+  it("offers no editor when the container wired no save path", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ ...COM_REGISTRO })} />);
+    fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+    expect(screen.queryByTestId("dados-pessoais-editar-btn")).toBeNull();
+  });
+});
+
+describe("o resumo de contato no topo do Geral", () => {
+  it("shows nome · celular · email as one-line rows", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          dadosPessoais: {
+            nome_completo: "Ana Souza",
+            celular: "+5511999998888",
+            email: "ana@example.com",
+          },
+        })}
+      />,
+    );
+    const resumo = screen.getByTestId("contato-resumo");
+    expect(resumo.textContent).toContain("Ana Souza");
+    expect(resumo.textContent).toContain("+5511999998888");
+    expect(resumo.textContent).toContain("ana@example.com");
+  });
+
+  it("an absent value says so rather than rendering a blank cell", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ dadosPessoais: {} })} />);
+    // A blank beside a label reads as a rendering bug, not as missing data.
+    expect(screen.getByTestId("contato-celular").textContent).toContain("—");
   });
 });
