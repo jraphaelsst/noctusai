@@ -11,9 +11,13 @@ with the appropriate FastMCP transport call — no tool code changes needed.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import logging
 import sys
 from pathlib import Path
+
+import anyio.to_thread
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -40,6 +44,67 @@ from mcp.server.fastmcp import FastMCP
 from tools import register_all
 
 
+def offload_blocking(fn):
+    """Run a SYNCHRONOUS tool in a worker thread instead of on the event loop.
+
+    🔴 WHY THE SERVER KEPT DYING MID-SESSION (root-caused 2026-08-28)
+    ----------------------------------------------------------------
+    FastMCP dispatches a tool like this
+    (`mcp/server/fastmcp/utilities/func_metadata.py`)::
+
+        if fn_is_async: return await fn(...)
+        else:           return fn(...)      # ← INLINE, on the event loop
+
+    A synchronous tool therefore blocks the asyncio loop for its ENTIRE
+    duration, and this server speaks JSON-RPC over **stdio** on that same loop.
+    While a sync tool runs, the server cannot read a request, answer a ping, or
+    write a response — it is completely deaf, and indistinguishable from hung.
+
+    173 of this toolkit's 185 tool modules are synchronous, and the worst
+    offenders are exactly the ones a deploy session calls:
+
+    * ``_vps_ssh.run_remote`` deliberately THROTTLES — a ≥3s minimum interval
+      between attempts plus a proactive rate-limiter that *sleeps* to stay
+      under 10 attempts/60s (fail2ban avoidance).
+    * ``deploy_image`` then polls container health with ``health_timeout=120``
+      and ``poll_interval=5`` — up to two minutes of ``time.sleep`` on top of
+      one throttled SSH round-trip per poll.
+
+    So one ``deploy_image`` holds the loop for MINUTES. Every call queued
+    behind it never gets serviced, and the observed failure is exactly that:
+    the long call eventually returns, while the calls waiting behind it die
+    with "Connection closed" (2026-08-27: `vps_ps`, `deploy_verify` ×2,
+    `spa_smoke` — all queued behind a running `deploy_image`).
+
+    That is why this reproduces on DEPLOY sessions specifically and had
+    recurred several times: those are the sessions that call the slow SSH
+    tools. Nothing was wrong with the network or the VPS.
+
+    THE FIX, AND WHY IT LIVES HERE
+    ------------------------------
+    Wrapping at the single ``server.tool`` seam fixes all 185 tools at once,
+    rather than asking every current and future tool author to remember to be
+    async. It is the same seam the ``structured_output=False`` default already
+    uses, for the same reason: a fleet-wide default belongs in one place.
+
+    An already-async tool is passed through untouched — the 12 that exist keep
+    their own concurrency.
+
+    ``functools.wraps`` is load-bearing, not cosmetic: FastMCP builds each
+    tool's argument schema with ``inspect.signature``, which follows
+    ``__wrapped__``. Without it every tool would register with the signature
+    ``(*args, **kwargs)`` and lose its parameters.
+    """
+    if inspect.iscoroutinefunction(fn):
+        return fn
+
+    @functools.wraps(fn)
+    async def _threaded(*args, **kwargs):
+        return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+
+    return _threaded
+
+
 def build_server() -> FastMCP:
     server = FastMCP(
         name="noctusai",
@@ -64,7 +129,12 @@ def build_server() -> FastMCP:
 
     def _tool(*args, **kwargs):
         kwargs.setdefault("structured_output", False)
-        return _orig_tool(*args, **kwargs)
+        deco = _orig_tool(*args, **kwargs)
+
+        def register(fn):
+            return deco(offload_blocking(fn))
+
+        return register
 
     server.tool = _tool  # type: ignore[method-assign]
     register_all(server)
