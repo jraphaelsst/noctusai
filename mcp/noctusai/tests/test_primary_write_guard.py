@@ -261,6 +261,89 @@ def test_git_add_mixing_ledger_and_source_is_refused():
     ) is not None
 
 
+# ── gitignored paths are not guarded paths (2026-08-30) ──────────────────
+#
+# 🔴 THE RECURRING FALSE POSITIVE. The guard refused EVERY path under the
+# primary except worktrees, `.git/` and the ledgers — including paths git
+# itself declares out-of-repo. So `npm install` (node_modules), any import
+# (`__pycache__`), a `vite build` (dist/) and removing a scratch dir were all
+# blocked, while the only documented way out (`NOCTUS_ALLOW_PRIMARY_WRITE=1`)
+# is unreachable from inside a command by design.
+#
+# A gitignored file cannot be committed, so it cannot cause the divergence this
+# gate exists to prevent — the same reasoning that already exempts the ledgers,
+# except git decides instead of a hardcoded prefix list.
+
+def _ctx_with_ignore(ignored: set[str], branch="dev"):
+    """A context whose `git check-ignore` answers from `ignored`.
+
+    jsdom-style stand-in: the real probe shells out to git against a REAL repo,
+    and `PRIMARY` here is deliberately fictional (the module docstring explains
+    why the forbidden state is never created for real).
+    """
+    import tools.noctus.dev.primary_write_guard as guard
+
+    def fake_rc(args, cwd=None):
+        path = args[-1]
+        return 0 if any(path.startswith(p) for p in ignored) else 1
+
+    return fake_rc
+
+
+def test_a_gitignored_path_in_the_primary_is_ALLOWED(monkeypatch):
+    import tools.noctus.dev.primary_write_guard as guard
+
+    monkeypatch.setattr(guard, "_run_git_rc", _ctx_with_ignore({f"{PRIMARY}/node_modules"}))
+    assert _decide("Bash", {"command": f"rm -rf {PRIMARY}/node_modules"}) is None
+
+
+def test_a_TRACKED_source_path_is_still_refused(monkeypatch):
+    """🔴 The property that must never regress — this is the original incident."""
+    import tools.noctus.dev.primary_write_guard as guard
+
+    monkeypatch.setattr(guard, "_run_git_rc", _ctx_with_ignore({f"{PRIMARY}/node_modules"}))
+    assert _decide(
+        "Edit", {"file_path": f"{PRIMARY}/products/social-wiring/backend/app/main.py"}
+    ) is not None
+
+
+def test_an_untracked_but_NOT_ignored_path_is_still_refused(monkeypatch):
+    """The middle category, and the one that matters most: a NEW source file an
+    agent is about to create in the wrong tree is untracked too. Only git
+    saying "ignored" exempts it."""
+    import tools.noctus.dev.primary_write_guard as guard
+
+    monkeypatch.setattr(guard, "_run_git_rc", _ctx_with_ignore(set()))
+    assert _decide("Bash", {"command": f"rm -rf {PRIMARY}/tmp"}) is not None
+
+
+def test_it_FAILS_CLOSED_when_check_ignore_cannot_answer(monkeypatch):
+    """`check-ignore` exits 128 when it cannot answer. An unanswerable probe
+    must keep the refusal, never pass it — same posture as the rest of the
+    module. Without this, any environment where git is unavailable would turn
+    the whole guard off."""
+    import tools.noctus.dev.primary_write_guard as guard
+
+    monkeypatch.setattr(guard, "_run_git_rc", lambda *a, **k: 128)
+    assert _decide("Bash", {"command": f"rm -rf {PRIMARY}/node_modules"}) is not None
+
+
+def test_worktree_writes_never_reach_the_ignore_probe(monkeypatch):
+    """Cost guard: the common allow-path (writing in a worktree) must return
+    before shelling out to git, or every tool call pays a subprocess."""
+    import tools.noctus.dev.primary_write_guard as guard
+
+    calls = []
+
+    def spy(*a, **k):
+        calls.append(a)
+        return 1
+
+    monkeypatch.setattr(guard, "_run_git_rc", spy)
+    assert _decide("Edit", {"file_path": f"{WT}/products/x/app.py"}) is None
+    assert calls == [], "check-ignore was run for a worktree write"
+
+
 def test_bare_git_add_with_no_pathspec_is_refused():
     """`git add -A` stages whatever happens to be dirty — unknowable here, and
     an unanswerable probe must fall through to the refusal, not past it."""

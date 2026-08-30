@@ -338,6 +338,46 @@ one definition, imported: `compliance.py` now takes `SHARED_BRANCHES` and the
 ledger allowlist **from** `primary_write_guard`, so the two gates cannot drift
 into disagreeing about what "shared" or "ledger" means.
 
+#### What git ignores, the guard ignores (2026-08-30)
+
+The guard refused **every** path under the primary except worktrees, `.git/` and
+the ledgers — including paths git itself declares out-of-repo. That blocked a
+whole class of ordinary work with no correct alternative:
+
+| refused | why it was never a divergence risk |
+|---|---|
+| `npm install` → `node_modules/` | gitignored |
+| any python import → `__pycache__/` | gitignored |
+| `vite build` → `dist/` | gitignored |
+| removing a scratch dir | gitignored (once declared) |
+
+🔴 **A gitignored file cannot be committed, so it cannot diverge `dev`** — which
+is the harm the refusal message itself names. This is the same reasoning that
+already exempts `project-history/`, with one improvement: **git decides**, not a
+hardcoded prefix list, so the exemption tracks the repo's own declaration and
+cannot drift from it.
+
+**Still refused, and this is the point:** every TRACKED path, and every
+untracked-but-**not**-ignored path. That second category is the original
+2026-08-18 incident — a NEW source file created in the wrong tree is untracked
+too. Only git saying *ignored* exempts it.
+
+**Fails closed.** `git check-ignore` exits 0 = ignored, 1 = not ignored,
+128 = cannot answer. Only a clean 0 exempts. This is load-bearing rather than
+defensive: in the test environment the probe genuinely returns 128, so 37
+existing refusal tests pass *because* it fails closed — verified by mutating it
+to fail open and watching them go red.
+
+**Cost is nil on the hot path.** The probe is only reached for a path already
+inside the primary, outside every worktree, outside `.git/` and outside the
+ledgers — the about-to-refuse set. A worktree write returns before it, pinned by
+`test_worktree_writes_never_reach_the_ignore_probe`.
+
+> **Corollary for scratch dirs.** Untracked-but-not-ignored at the repo root is
+> now doubly bad: it is the `drift-fix-on-contact` class *and* it makes the path
+> un-deletable by an agent. Declare scratch in `.gitignore` (root-anchored) at
+> the moment it is created. `/tmp/` was declared 2026-08-30 for exactly this.
+
 #### The ledger exemption covers the WHOLE round trip (2026-08-27)
 
 An exemption that lets a file be dirtied but not cleaned is not an exemption —

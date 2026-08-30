@@ -9,6 +9,14 @@
 /submission.md
 /SUBMISSION.md
 
+# Repo-root scratch. Root-anchored so a product's own `tmp/` is never silently
+# swallowed. Declared 2026-08-30: it had been accumulating untracked working
+# files at the root for months, which is the "untracked-at-root" drift class
+# `drift-fix-on-contact` names — and being untracked-but-NOT-ignored also made
+# it un-deletable by an agent, since `primary_write_guard` correctly refuses to
+# touch anything git has not been told is out-of-repo.
+/tmp/
+
 # Dependencies
 # No trailing slash: also matches the §5a wire_env node_modules SYMLINKS
 # (`node_modules/` matches dirs only ⇒ a symlink-to-dir leaked as untracked and

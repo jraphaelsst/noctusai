@@ -43,10 +43,24 @@ parser of an arbitrary shell command, never a proof.
 **Escape hatch.** `NOCTUS_ALLOW_PRIMARY_WRITE=1`, matching the commit keeper's
 `NOCTUS_ALLOW_PRIMARY_COMMIT=1` — an env var rather than a flag, so it cannot be
 set once and forgotten inside a script, and it is reported loudly when used.
-Legitimate orchestration writes to the primary tree (`git pull`, `git merge`
-during an integrate, `git worktree`) are not escape-hatched at all: they are
-exempt BY NAME below, because designing them out of the guard is better than
-teaching anyone to switch it off.
+
+🔴 **It is NOT usable from inside a denied command, and that is by design.**
+This runs as a `PreToolUse` hook: a SEPARATE process that reads its OWN
+`os.environ` and answers *before* the command is ever executed. So prefixing
+the command — `NOCTUS_ALLOW_PRIMARY_WRITE=1 rm -rf x/` — is inert; the hook
+sees that text as part of a string it is about to refuse, and the assignment
+would only have applied to a child process that never runs. The variable has to
+be in the environment of the Claude Code process itself (its launching shell,
+or `.claude/settings.json` → `env`), which makes reaching for it a deliberate
+human act rather than something an agent can type its way into mid-task.
+
+That property is worth keeping, so the answer to a false positive is never
+"hand the agent the hatch" — it is to design the legitimate case out of the
+guard. Two are already designed out: orchestration writes (`git pull`,
+`git merge` during an integrate, `git worktree`) are exempt BY NAME below, and
+anything `.gitignore` declares out-of-repo is exempt via `_git_ignores` —
+because content that cannot become a commit cannot cause the divergence this
+gate exists to prevent.
 """
 from __future__ import annotations
 
@@ -340,6 +354,28 @@ def _run_git(args: Sequence[str], cwd: str | None) -> str:
     return out if ok else ""
 
 
+def _run_git_rc(args: Sequence[str], cwd: str | None = None) -> int:
+    """The git EXIT CODE, for probes whose answer *is* the code.
+
+    `git check-ignore -q` is the caller that needs this: 0 = ignored,
+    1 = not ignored, 128 = could not answer. `_run_git` collapses 1 and 128 into
+    the same empty string, which would make "this path is tracked" and "git is
+    broken" indistinguishable — and those must land on the same SIDE here
+    (refuse) but for different reasons, so the distinction is kept readable.
+
+    Returns 128 when git cannot be run at all, so an unavailable probe is never
+    mistaken for a clean 0.
+    """
+    try:
+        out = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True,
+            timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 128
+    return out.returncode
+
+
 def _run_git_checked(args: Sequence[str], cwd: str | None) -> tuple[bool, str]:
     """`(probe_answered, stdout)` — the distinction `_run_git` throws away.
 
@@ -398,12 +434,60 @@ def _within(path: str, root: str) -> bool:
     return path == root or path.startswith(root + os.sep)
 
 
+def _git_ignores(path: str, ctx: GuardContext) -> bool:
+    """Does git itself say this path is NOT part of the repository?
+
+    🔴 WHY AN IGNORED PATH IS NOT A GUARDED PATH (added 2026-08-30)
+    ---------------------------------------------------------------
+    This guard exists to stop WORK landing in the primary checkout, and its own
+    refusal message states the harm exactly: "committing here diverges local
+    'dev' from origin". A gitignored path cannot be committed — `git add`
+    refuses it without `-f` — so it can never diverge anything. Refusing it
+    protects nothing and blocks a large class of ordinary, necessary work:
+
+        npm install            → node_modules/         (ignored)
+        pytest / any import    → __pycache__/, *.pyc   (ignored)
+        vite build             → dist/                 (ignored)
+        rm -rf a scratch dir   → whatever .gitignore says is scratch
+
+    Every one of those was refused, and the only documented way out —
+    `NOCTUS_ALLOW_PRIMARY_WRITE=1` — is unreachable from inside a command (see
+    the ESCAPE HATCH note in the module docstring). So the gate had no correct
+    path for work it should never have been stopping, which is precisely how a
+    gate teaches people to route around it.
+
+    This is the SAME reasoning that already exempts `LEDGER_PREFIXES`: content
+    that cannot become a divergent commit is not what this gate is about. The
+    difference is that git — not a hardcoded prefix list — decides, so the
+    exemption tracks the repo's own declaration and cannot drift from it.
+
+    🔴 STILL GUARDED, and this is the whole point: every TRACKED path, and every
+    untracked-but-not-ignored path (a NEW source file an agent is about to
+    create in the wrong tree — the original 2026-08-18 incident) stays refused.
+    `tmp/` was in that second category, which is why the session that found this
+    was right to be blocked until `.gitignore` said otherwise.
+
+    COST. `git check-ignore` is a subprocess, and this hook runs on EVERY tool
+    call — but this is only reached for a path that is already inside the
+    primary, outside every worktree, outside `.git/`, and outside the ledgers.
+    That is the about-to-refuse set, which is rare; the common allow-path
+    (a worktree write) returns before ever getting here.
+
+    FAILS CLOSED. `check-ignore` exits 0 = ignored, 1 = not ignored, 128 = it
+    could not answer. Only a clean 0 exempts; an unanswerable probe keeps the
+    refusal, same posture as everywhere else in this module.
+    """
+    rc = _run_git_rc(["-C", ctx.primary_root, "check-ignore", "-q", "--", path])
+    return rc == 0
+
+
 def is_guarded_path(path: str, ctx: GuardContext) -> bool:
     """True when writing `path` means writing the primary checkout's own tree.
 
     Excluded: anything inside a LINKED worktree (they physically live under the
-    primary root — see the module docstring), git's own metadata, and the
-    ledger prefixes the commit keeper already exempts.
+    primary root — see the module docstring), git's own metadata, the ledger
+    prefixes the commit keeper already exempts, and anything `.gitignore`
+    declares out-of-repo (see `_git_ignores`).
     """
     if not path:
         return False
@@ -414,7 +498,9 @@ def is_guarded_path(path: str, ctx: GuardContext) -> bool:
     rel = os.path.relpath(os.path.normpath(path), ctx.primary_root)
     if rel == ".git" or rel.startswith(".git" + os.sep):
         return False
-    return not any(rel.startswith(prefix) for prefix in LEDGER_PREFIXES)
+    if any(rel.startswith(prefix) for prefix in LEDGER_PREFIXES):
+        return False
+    return not _git_ignores(path, ctx)
 
 
 def _is_unresolvable(token: str) -> bool:
