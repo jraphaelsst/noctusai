@@ -17,9 +17,11 @@ import { supabase } from '@noctusai/seed/infra';
 
 export default function Usuarios() {
   const navigate = useNavigate();
-  const { isAdmin, isLoading: isLoadingRole } = useIsAdmin();
-  const { data: usuarios, isLoading: loadingUsuarios } = useProfiles();
-  const { data: metas, isLoading: loadingMetas } = useMetas();
+  const { isAdmin, isLoading: isLoadingRole, isPending: isPendingRole, roleData } = useIsAdmin();
+  const usuariosQuery = useProfiles();
+  const metasQuery = useMetas();
+  const { data: usuarios } = usuariosQuery;
+  const { data: metas } = metasQuery;
   const [selectedUsuario, setSelectedUsuario] = useState<typeof usuariosComStats[0] | null>(null);
   const [userRoles, setUserRoles] = useState<Map<string, string[]>>(new Map());
   
@@ -69,9 +71,17 @@ export default function Usuarios() {
     }
   };
   
-  const isLoading = loadingUsuarios || loadingMetas || isLoadingRole;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md.
+  const showUsuariosSkeleton =
+    (usuariosQuery.isPending && !usuariosQuery.data) ||
+    (metasQuery.isPending && !metasQuery.data) ||
+    (isPendingRole && roleData == null);
   
-  if (!isAdmin && !isLoadingRole) {
+  // "role resolved" (not "never isLoading") — an access-control gate,
+  // not a data-lying render branch; kept in the isPending && !data form
+  // for consistency with the rest of this file's fix.
+  if (!isAdmin && !(isPendingRole && roleData == null)) {
     return null;
   }
   
@@ -106,7 +116,7 @@ export default function Usuarios() {
 
       {/* Lista de Usuários */}
       <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-        {isLoading ? (
+        {showUsuariosSkeleton ? (
           <>
             <Skeleton className="h-96" />
             <Skeleton className="h-96" />

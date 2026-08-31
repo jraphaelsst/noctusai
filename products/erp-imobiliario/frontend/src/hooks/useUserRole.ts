@@ -16,9 +16,16 @@ export function useUserRole() {
 }
 
 export function useIsAdmin() {
-  const { data: role, isLoading } = useUserRole();
+  const { data: role, isLoading, isPending, isFetching } = useUserRole();
   return {
     isAdmin: role === 'admin',
+    // isLoading kept for existing non-render consumers (useEffect gates,
+    // disabled= props); a RENDER branch must use isPending && !data (here:
+    // role === null while isPending) — never isLoading — per
+    // KB § PATTERNS/frontend/lying-loading-state.md.
     isLoading,
+    isPending,
+    isFetching,
+    roleData: role,
   };
 }

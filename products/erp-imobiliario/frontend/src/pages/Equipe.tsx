@@ -80,7 +80,7 @@ const AVAILABLE_ROLES = [
 
 export default function Equipe() {
   const navigate = useNavigate();
-  const { isAdmin, isLoading: isLoadingRole } = useIsAdmin();
+  const { isAdmin, isLoading: isLoadingRole, isPending: isPendingRole, roleData } = useIsAdmin();
 
   // Modal state
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -99,15 +99,10 @@ export default function Equipe() {
 
   // ── Queries ──────────────────────────────────────────────
 
-  const {
-    data: members = [],
-    isLoading: loadingMembers,
-  } = useTeamMembers(isAdmin);
-
-  const {
-    data: invitations = [],
-    isLoading: loadingInvitations,
-  } = useTeamInvitations(isAdmin);
+  const membersQuery = useTeamMembers(isAdmin);
+  const invitationsQuery = useTeamInvitations(isAdmin);
+  const { data: members = [] } = membersQuery;
+  const { data: invitations = [] } = invitationsQuery;
 
   // ── Mutations ────────────────────────────────────────────
 
@@ -137,9 +132,16 @@ export default function Equipe() {
 
   // ── Guards ───────────────────────────────────────────────
 
-  if (!isAdmin && !isLoadingRole) return null;
+  // "role resolved" — an access-control gate, not a data-lying render
+  // branch; kept in the isPending && !data form for consistency.
+  if (!isAdmin && !(isPendingRole && roleData == null)) return null;
 
-  const isLoading = loadingMembers || loadingInvitations || isLoadingRole;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md.
+  const showEquipeSkeleton =
+    (membersQuery.isPending && !membersQuery.data) ||
+    (invitationsQuery.isPending && !invitationsQuery.data) ||
+    (isPendingRole && roleData == null);
 
   const pendingInvitations = invitations.filter((inv) => inv.status === "pending");
 
@@ -246,7 +248,7 @@ export default function Equipe() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showEquipeSkeleton ? (
             <div className="space-y-3">
               <Skeleton className="h-16" />
               <Skeleton className="h-16" />
@@ -316,7 +318,7 @@ export default function Equipe() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showEquipeSkeleton ? (
             <div className="space-y-3">
               <Skeleton className="h-14" />
               <Skeleton className="h-14" />
