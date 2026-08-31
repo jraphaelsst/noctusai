@@ -381,9 +381,25 @@ export function pct(curr: number, prev: number): number | null {
 
 // ─── actions helpers ────────────────────────────────────────────────────────
 
-/** Leads for a row — Meta's `actions["lead"]` (this account is lead-gen). */
+/** Leads for a row — the SUM of Meta's two lead action keys.
+ *
+ * `actions["lead"]` (off-Facebook pixel/CAPI Lead event) and
+ * `actions["onsite_conversion.lead"]` (native Instant Form submission) are
+ * distinct CAPTURE CHANNELS, not two names for the same number. A campaign
+ * with "Website + Instant forms" conversion locations legitimately populates
+ * both on one row, so the total is their sum.
+ *
+ * This was `a ?? b` — first-key-wins — which silently dropped the second
+ * channel on any mixed-mechanism row. It read as correct because the pilot
+ * account populates only `onsite_conversion.lead`, where the two agree.
+ * Kept deliberately in lockstep with the backend's
+ * `meta_ads/services/leads.py::leads_from_actions`: two different
+ * reconciliation semantics across the BE/FE seam is a drift bug waiting to
+ * happen, and the backend is the one that had to be fixed first.
+ */
 export function rowLeads(row: AdsInsightsRow): number {
-  return row.actions?.["lead"] ?? row.actions?.["onsite_conversion.lead"] ?? 0;
+  const a = row.actions ?? {};
+  return (a["lead"] ?? 0) + (a["onsite_conversion.lead"] ?? 0);
 }
 
 export function rowAction(row: AdsInsightsRow, key: string): number {
