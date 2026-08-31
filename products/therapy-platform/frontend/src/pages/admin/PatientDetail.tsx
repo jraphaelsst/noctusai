@@ -18,9 +18,9 @@ function getInitials(name: string) {
 export default function AdminPatientDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: patient, isLoading } = useAdminPatient(id);
+  const { data: patient, isPending } = useAdminPatient(id);
 
-  if (isLoading) {
+  if (isPending && !patient) {
     return (
       <div className="container mx-auto p-6 space-y-6">
         <div className="h-8 w-48 bg-muted animate-pulse rounded" />

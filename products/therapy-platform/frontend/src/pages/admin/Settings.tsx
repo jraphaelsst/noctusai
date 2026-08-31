@@ -95,12 +95,13 @@ const SETTING_SECTIONS: { title: string; description: string; settings: SettingR
 ];
 
 export default function AdminSettings() {
-  const { data: settings, isLoading } = usePlatformSettings();
+  const { data: settings, isPending } = usePlatformSettings();
   const updateSetting = useUpdatePlatformSetting();
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
 
   const settingsMap = (settings as Record<string, unknown>) ?? {};
+  const showSkeleton = isPending && !settings;
 
   const startEdit = (key: string) => {
     setEditingKey(key);
@@ -131,7 +132,7 @@ export default function AdminSettings() {
         <p className="text-muted-foreground">Gerencie os parametros globais do sistema</p>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="space-y-6">
           {Array.from({ length: 4 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

@@ -31,7 +31,7 @@ function getInitials(name: string) {
 export default function AdminTherapistDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: therapist, isLoading } = useAdminTherapist(id);
+  const { data: therapist, isPending } = useAdminTherapist(id);
   const approve = useApproveEntity();
   const reject = useRejectEntity();
   const suspend = useSuspendEntity();
@@ -41,7 +41,7 @@ export default function AdminTherapistDetail() {
   const [commissionEdit, setCommissionEdit] = useState(false);
   const [commissionValue, setCommissionValue] = useState('');
 
-  if (isLoading) {
+  if (isPending && !therapist) {
     return (
       <div className="container mx-auto p-6 space-y-6">
         <div className="h-8 w-48 bg-muted animate-pulse rounded" />

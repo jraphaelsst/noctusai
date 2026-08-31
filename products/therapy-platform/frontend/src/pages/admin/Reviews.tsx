@@ -29,11 +29,12 @@ function StarRating({ rating }: { rating: number }) {
 }
 
 export default function AdminReviews() {
-  const { data, isLoading } = useAdminReviews();
+  const { data, isPending } = useAdminReviews();
   const dismissFlag = useDismissReviewFlag();
   const hideReview = useHideReview();
 
   const reviews = (data?.data ?? []) as FlaggedReview[];
+  const showSkeleton = isPending && !data;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -44,7 +45,7 @@ export default function AdminReviews() {
         <p className="text-muted-foreground">Avaliacoes sinalizadas para revisao</p>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

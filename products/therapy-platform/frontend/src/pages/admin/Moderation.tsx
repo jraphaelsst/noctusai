@@ -34,8 +34,8 @@ interface Block {
 }
 
 export default function AdminModeration() {
-  const { data: reportsData, isLoading: reportsLoading } = useAdminReports();
-  const { data: blocksData, isLoading: blocksLoading } = useAdminBlocks();
+  const { data: reportsData, isPending: reportsPending } = useAdminReports();
+  const { data: blocksData, isPending: blocksPending } = useAdminBlocks();
   const resolveReport = useResolveReport();
 
   const [resolveDialogOpen, setResolveDialogOpen] = useState(false);
@@ -78,7 +78,7 @@ export default function AdminModeration() {
         </TabsList>
 
         <TabsContent value="denuncias" className="mt-4">
-          {reportsLoading ? (
+          {reportsPending && !reportsData ? (
             <div className="space-y-3">
               {Array.from({ length: 3 }).map((_, i) => (
                 <Card key={i} className="animate-pulse">
@@ -150,7 +150,7 @@ export default function AdminModeration() {
         </TabsContent>
 
         <TabsContent value="bloqueios" className="mt-4">
-          {blocksLoading ? (
+          {blocksPending && !blocksData ? (
             <div className="space-y-3">
               {Array.from({ length: 3 }).map((_, i) => (
                 <Card key={i} className="animate-pulse">

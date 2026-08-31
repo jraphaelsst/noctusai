@@ -36,13 +36,14 @@ export default function AdminTherapists() {
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  const { data, isLoading } = useAdminTherapists(
+  const { data, isPending } = useAdminTherapists(
     statusFilter !== 'todos' ? { status: statusFilter } : undefined
   );
   const approve = useApproveEntity();
   const reject = useRejectEntity();
 
   const therapists = (data?.data ?? []) as Terapeuta[];
+  const showSkeleton = isPending && !data;
 
   const filtered = useMemo(() => {
     if (!busca.trim()) return therapists;
@@ -89,7 +90,7 @@ export default function AdminTherapists() {
       </div>
 
       {/* List */}
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

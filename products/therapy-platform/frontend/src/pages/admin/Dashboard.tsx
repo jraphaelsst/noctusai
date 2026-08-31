@@ -14,31 +14,32 @@ const currencyBRL = (value: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
 
 export default function AdminDashboard() {
-  const { data, isLoading } = useAdminDashboard();
+  const { data, isPending } = useAdminDashboard();
   const metrics = (data ?? {}) as AdminDashboardMetrics;
+  const showSkeleton = isPending && !data;
 
   const cards = [
     {
       label: "Terapeutas Pendentes",
-      value: isLoading ? "…" : String(metrics.pending_therapists ?? 0),
+      value: showSkeleton ? "…" : String(metrics.pending_therapists ?? 0),
       icon: Users,
       color: "text-orange-500",
     },
     {
       label: "Clinicas Pendentes",
-      value: isLoading ? "…" : String(metrics.pending_clinics ?? 0),
+      value: showSkeleton ? "…" : String(metrics.pending_clinics ?? 0),
       icon: Building2,
       color: "text-blue-500",
     },
     {
       label: "Sessoes Hoje",
-      value: isLoading ? "…" : String(metrics.sessions_today ?? 0),
+      value: showSkeleton ? "…" : String(metrics.sessions_today ?? 0),
       icon: CalendarDays,
       color: "text-green-500",
     },
     {
       label: "Receita Total",
-      value: isLoading ? "…" : currencyBRL(metrics.total_revenue ?? 0),
+      value: showSkeleton ? "…" : currencyBRL(metrics.total_revenue ?? 0),
       icon: DollarSign,
       color: "text-primary",
     },

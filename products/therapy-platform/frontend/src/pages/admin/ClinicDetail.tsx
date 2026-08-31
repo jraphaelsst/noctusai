@@ -25,7 +25,7 @@ const STATUS_BADGE: Record<string, { label: string; variant: 'default' | 'second
 export default function AdminClinicDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: clinic, isLoading } = useAdminClinic(id);
+  const { data: clinic, isPending } = useAdminClinic(id);
   const approve = useApproveEntity();
   const reject = useRejectEntity();
   const suspend = useSuspendEntity();
@@ -35,7 +35,7 @@ export default function AdminClinicDetail() {
   const [commissionEdit, setCommissionEdit] = useState(false);
   const [commissionValue, setCommissionValue] = useState('');
 
-  if (isLoading) {
+  if (isPending && !clinic) {
     return (
       <div className="container mx-auto p-6 space-y-6">
         <div className="h-8 w-48 bg-muted animate-pulse rounded" />

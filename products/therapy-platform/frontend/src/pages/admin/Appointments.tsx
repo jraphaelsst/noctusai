@@ -44,10 +44,11 @@ export default function AdminAppointments() {
   if (dateStart) filters.date_start = dateStart;
   if (dateEnd) filters.date_end = dateEnd;
 
-  const { data, isLoading } = useAdminAppointments(
+  const { data, isPending } = useAdminAppointments(
     Object.keys(filters).length > 0 ? filters : undefined
   );
 
+  const showSkeleton = isPending && !data;
   const appointments = (data?.data ?? []) as AdminAppointment[];
 
   const filtered = useMemo(() => {
@@ -106,7 +107,7 @@ export default function AdminAppointments() {
         </Tabs>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

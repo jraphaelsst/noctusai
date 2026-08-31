@@ -31,13 +31,14 @@ export default function AdminClinics() {
   const [rejectTarget, setRejectTarget] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  const { data, isLoading } = useAdminClinics(
+  const { data, isPending } = useAdminClinics(
     statusFilter !== 'todos' ? { status: statusFilter } : undefined
   );
   const approve = useApproveEntity();
   const reject = useRejectEntity();
 
   const clinics = (data?.data ?? []) as Clinica[];
+  const showSkeleton = isPending && !data;
 
   const filtered = useMemo(() => {
     if (!busca.trim()) return clinics;
@@ -82,7 +83,7 @@ export default function AdminClinics() {
         </Tabs>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

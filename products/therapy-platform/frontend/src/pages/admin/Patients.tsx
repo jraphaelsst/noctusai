@@ -30,9 +30,10 @@ interface AdminPatient {
 export default function AdminPatients() {
   const navigate = useNavigate();
   const [busca, setBusca] = useState('');
-  const { data, isLoading } = useAdminPatients();
+  const { data, isPending } = useAdminPatients();
 
   const patients = (data?.data ?? []) as AdminPatient[];
+  const showSkeleton = isPending && !data;
 
   const filtered = useMemo(() => {
     if (!busca.trim()) return patients;
@@ -59,7 +60,7 @@ export default function AdminPatients() {
         />
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

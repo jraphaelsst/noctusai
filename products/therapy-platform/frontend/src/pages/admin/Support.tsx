@@ -9,7 +9,8 @@ import type { Conversation } from '@/types/messaging';
 
 export default function AdminSupport() {
   const [selectedId, setSelectedId] = useState<string | undefined>();
-  const { data, isLoading } = useAdminSupportConversations();
+  const { data, isPending } = useAdminSupportConversations();
+  const showSkeleton = isPending && !data;
 
   const conversations = ((data?.data ?? []) as Conversation[]).map(c => ({
     ...c,
@@ -41,7 +42,7 @@ export default function AdminSupport() {
             conversations={conversations}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            isLoading={isLoading}
+            isLoading={showSkeleton}
           />
         </div>
 
