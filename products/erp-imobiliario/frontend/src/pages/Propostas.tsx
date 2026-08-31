@@ -48,6 +48,7 @@ import {
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { CardListSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import {
   usePropostas,
@@ -118,7 +119,9 @@ export default function Propostas() {
   const showPropostasSkeleton = propostasQuery.isPending && !propostasQuery.data;
   const propostas = propostasData?.data || [];
 
-  const { data: stats } = usePropostaStats();
+  const statsQuery = usePropostaStats();
+  const { data: stats } = statsQuery;
+  const statsNotArrived = statsQuery.isPending && !statsQuery.data;
 
   const { mutate: createProposta, isPending: isCreating } = useCreateProposta();
   const { mutate: updateProposta } = useUpdateProposta();
@@ -203,7 +206,7 @@ export default function Propostas() {
             <Send className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.enviada || 0}</div>
+            <div className="text-2xl font-bold"><SummaryValue notArrived={statsNotArrived}>{stats?.enviada ?? 0}</SummaryValue></div>
           </CardContent>
         </Card>
 
@@ -213,7 +216,7 @@ export default function Propostas() {
             <Search className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.em_analise || 0}</div>
+            <div className="text-2xl font-bold"><SummaryValue notArrived={statsNotArrived}>{stats?.em_analise ?? 0}</SummaryValue></div>
           </CardContent>
         </Card>
 
@@ -223,7 +226,7 @@ export default function Propostas() {
             <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.contraproposta || 0}</div>
+            <div className="text-2xl font-bold"><SummaryValue notArrived={statsNotArrived}>{stats?.contraproposta ?? 0}</SummaryValue></div>
           </CardContent>
         </Card>
 
@@ -233,7 +236,7 @@ export default function Propostas() {
             <CheckCircle2 className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats?.aceita || 0}</div>
+            <div className="text-2xl font-bold text-green-600"><SummaryValue notArrived={statsNotArrived}>{stats?.aceita ?? 0}</SummaryValue></div>
           </CardContent>
         </Card>
 
@@ -243,7 +246,7 @@ export default function Propostas() {
             <XCircle className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats?.recusada || 0}</div>
+            <div className="text-2xl font-bold text-red-600"><SummaryValue notArrived={statsNotArrived}>{stats?.recusada ?? 0}</SummaryValue></div>
           </CardContent>
         </Card>
 
@@ -253,7 +256,7 @@ export default function Propostas() {
             <HandshakeIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.total || 0}</div>
+            <div className="text-2xl font-bold"><SummaryValue notArrived={statsNotArrived}>{stats?.total ?? 0}</SummaryValue></div>
           </CardContent>
         </Card>
       </div>

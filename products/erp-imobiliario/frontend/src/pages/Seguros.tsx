@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
 import { TableSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Button } from '@noctusai/seed/components/ui/button';
 import { Input } from '@noctusai/seed/components/ui/input';
@@ -109,7 +110,9 @@ export default function Seguros() {
   const showSegurosSkeleton = segurosQuery.isPending && !segurosQuery.data;
   const seguros = segurosData?.data || [];
 
-  const { data: vencimentos } = useVencimentosSeguros(30);
+  const vencimentosQuery = useVencimentosSeguros(30);
+  const { data: vencimentos } = vencimentosQuery;
+  const vencimentosNotArrived = vencimentosQuery.isPending && !vencimentosQuery.data;
 
   const { mutate: createSeguro, isPending: isCreating } = useCreateSeguro();
   const { mutate: updateSeguro, isPending: isUpdating } = useUpdateSeguro();
@@ -209,7 +212,7 @@ export default function Seguros() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {resumo.ativos}
+              <SummaryValue notArrived={showSegurosSkeleton}>{resumo.ativos}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -221,7 +224,7 @@ export default function Seguros() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              {formatCurrency(resumo.total_cobertura)}
+              <SummaryValue notArrived={showSegurosSkeleton}>{formatCurrency(resumo.total_cobertura)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -233,7 +236,7 @@ export default function Seguros() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(resumo.total_premio_anual)}
+              <SummaryValue notArrived={showSegurosSkeleton}>{formatCurrency(resumo.total_premio_anual)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -245,7 +248,7 @@ export default function Seguros() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-orange-600">
-              {resumo.vencendo_30d}
+              <SummaryValue notArrived={vencimentosNotArrived}>{resumo.vencendo_30d}</SummaryValue>
             </div>
           </CardContent>
         </Card>

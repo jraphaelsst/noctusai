@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@noctusai/seed/components/ui/select';
 import { CardListSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import { formatCurrency } from '@/lib/utils';
 
 export default function Permutas() {
@@ -196,13 +197,13 @@ function MatchesTab() {
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Total</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold">{stats.total}</div></CardContent></Card>
+          <CardContent><div className="text-2xl font-bold"><SummaryValue notArrived={showMatchesSkeleton}>{stats.total}</SummaryValue></div></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Pendentes</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-yellow-600">{stats.pendentes}</div></CardContent></Card>
+          <CardContent><div className="text-2xl font-bold text-yellow-600"><SummaryValue notArrived={showMatchesSkeleton}>{stats.pendentes}</SummaryValue></div></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Aceitos</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-green-600">{stats.aceitos}</div></CardContent></Card>
+          <CardContent><div className="text-2xl font-bold text-green-600"><SummaryValue notArrived={showMatchesSkeleton}>{stats.aceitos}</SummaryValue></div></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Score Médio</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold">{stats.mediaScore}%</div></CardContent></Card>
+          <CardContent><div className="text-2xl font-bold"><SummaryValue notArrived={showMatchesSkeleton}>{stats.mediaScore}%</SummaryValue></div></CardContent></Card>
       </div>
 
       <Card>
