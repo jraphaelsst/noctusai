@@ -34,7 +34,9 @@ function toCsv(rows: any[]): string {
 export default function MetasFechamentos() {
   const { data: periodos = [] } = usePeriodos();
   const [periodoId, setPeriodoId] = useState<string | null>(null);
-  const { data: fechamentos = [], isLoading } = useFechamentos(periodoId ?? undefined);
+  const fechamentosQuery = useFechamentos(periodoId ?? undefined);
+  const { data: fechamentos = [] } = fechamentosQuery;
+  const showFechamentosSkeleton = fechamentosQuery.isPending && !fechamentosQuery.data;
   const fechar = useFecharPeriodo();
   const [confirmOpen, setConfirmOpen] = useState<string | null>(null);
 
@@ -128,7 +130,7 @@ export default function MetasFechamentos() {
               Snapshots ({fechamentos.length})
             </CardTitle>
             <CardDescription>
-              {isLoading ? 'Carregando…' : 'Cada linha é um fechamento por agente.'}
+              {showFechamentosSkeleton ? 'Carregando…' : 'Cada linha é um fechamento por agente.'}
             </CardDescription>
           </div>
           {fechamentos.length > 0 && (

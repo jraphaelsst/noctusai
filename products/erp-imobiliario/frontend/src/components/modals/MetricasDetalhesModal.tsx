@@ -94,7 +94,9 @@ export function MetricasDetalhesModal({
     }
   }, [periodo]);
 
-  const { data: corretores, isLoading: isLoadingCorretores } = useProfiles();
+  const corretoresQuery = useProfiles();
+  const { data: corretores } = corretoresQuery;
+  const showCorretoresSkeletonOption = corretoresQuery.isPending && !corretoresQuery.data;
   const { data: userRole } = useUserRole();
   const canViewAllCorretores = userRole === 'admin';
 
@@ -327,7 +329,7 @@ export function MetricasDetalhesModal({
                         </SelectTrigger>
                         <SelectContent className="bg-background">
                           <SelectItem value="todos">Todos os usuários</SelectItem>
-                          {isLoadingCorretores ? (
+                          {showCorretoresSkeletonOption ? (
                             <SelectItem value="loading" disabled>Carregando...</SelectItem>
                           ) : (
                             corretores?.map((corretor) => (

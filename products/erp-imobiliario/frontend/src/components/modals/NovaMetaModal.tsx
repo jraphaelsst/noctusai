@@ -35,7 +35,9 @@ export function NovaMetaModal({ onSuccess }: NovaMetaModalProps) {
   const { user } = useAuthStore();
   const createMeta = useCreateMeta();
   const { isAdmin } = useIsAdmin();
-  const { data: profiles, isLoading: isLoadingProfiles } = useProfiles();
+  const profilesQuery = useProfiles();
+  const { data: profiles } = profilesQuery;
+  const showProfilesSkeletonOption = profilesQuery.isPending && !profilesQuery.data;
 
   const [formData, setFormData] = useState({
     usuario_id: user?.id || '',
@@ -134,7 +136,7 @@ export function NovaMetaModal({ onSuccess }: NovaMetaModalProps) {
                   <SelectValue placeholder="Selecione o usuário" />
                 </SelectTrigger>
                 <SelectContent>
-                  {isLoadingProfiles ? (
+                  {showProfilesSkeletonOption ? (
                     <SelectItem value="loading" disabled>Carregando...</SelectItem>
                   ) : (
                     profiles?.map((profile) => (

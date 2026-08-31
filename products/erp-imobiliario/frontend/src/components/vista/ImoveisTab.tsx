@@ -28,7 +28,10 @@ export function ImoveisTab() {
   const [draftFilters, setDraftFilters] = useState<VistaImoveisFilters>({});
   const [openDetail, setOpenDetail] = useState<string | null>(null);
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useVistaImoveis(true, page, 50, filters);
+  const { data, isPending, isError, error, refetch, isFetching } = useVistaImoveis(true, page, 50, filters);
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  const showSkeleton = isPending && !data;
 
   const applyFilters = () => {
     setFilters(draftFilters);
@@ -70,13 +73,13 @@ export function ImoveisTab() {
         </Card>
       )}
 
-      {isLoading && (
+      {showSkeleton && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-48 w-full" />)}
         </div>
       )}
 
-      {!isLoading && !isError && data && (
+      {!showSkeleton && !isError && data && (
         <>
           <PaginationBar
             page={page}
@@ -149,7 +152,7 @@ function ImovelDetalhesDialog({
   codigo, onOpenChange,
 }: { codigo: string | null; onOpenChange: (open: boolean) => void }) {
   const [showRaw, setShowRaw] = useState(false);
-  const { data, isLoading, isError, error } = useVistaImovelDetalhes(codigo);
+  const { data, isPending, isError, error } = useVistaImovelDetalhes(codigo);
   const open = !!codigo;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -160,7 +163,7 @@ function ImovelDetalhesDialog({
             {data?.base.status && <Badge variant="secondary">{data.base.status}</Badge>}
           </DialogTitle>
         </DialogHeader>
-        {isLoading && <Skeleton className="h-64 w-full" />}
+        {isPending && !data && <Skeleton className="h-64 w-full" />}
         {isError && (
           <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded p-3">
             {(error as Error)?.message || 'Erro ao carregar detalhes.'}

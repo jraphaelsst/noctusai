@@ -33,7 +33,9 @@ import {
 const CORES = ['#e53935', '#fb8c00', '#fdd835', '#43a047', '#1e88e5', '#8e24aa', '#6d4c41', '#546e7a'];
 
 export default function MetasEquipesConfig() {
-  const { data: equipes = [], isLoading } = useEquipes();
+  const equipesQuery = useEquipes();
+  const { data: equipes = [] } = equipesQuery;
+  const showEquipesSkeleton = equipesQuery.isPending && !equipesQuery.data;
   const [newOpen, setNewOpen] = useState(false);
   const [editing, setEditing] = useState<Equipe | null>(null);
   const [membrosEquipe, setMembrosEquipe] = useState<Equipe | null>(null);
@@ -61,7 +63,7 @@ export default function MetasEquipesConfig() {
         <CardHeader>
           <CardTitle className="text-base">Equipes ativas ({equipes.length})</CardTitle>
           <CardDescription>
-            {isLoading ? 'Carregando…' : 'Clique em "Membros" para gerenciar integrantes.'}
+            {showEquipesSkeleton ? 'Carregando…' : 'Clique em "Membros" para gerenciar integrantes.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
