@@ -368,6 +368,34 @@ _MAX_BODY_PATH_OVERRIDES = {
     # checklist line would get a 413 from the middleware, before the route that
     # would have accepted it ever ran.
     "/api/clientes/*/checklist-extras/*/documento": 30 * 1024 * 1024,  # 30 MB
+    # Chatbot platform-chat file staging (POST /api/chat/upload-file —
+    # `chat_router.stage_chat_file`). No dynamic segment, plain prefix.
+    # `stage_browser_upload` streams straight to disk with
+    # `shutil.copyfileobj` (no full-body buffering) — the SAME staging
+    # helper `/api/videos/upload` above uses — and the asset being staged
+    # is the same class (a video the chatbot's `prepare_upload_from_file`
+    # tool later hands off to the YouTube upload pipeline), so this gets
+    # the same 500 MB outer bound rather than a smaller, mismatched one.
+    # There is no separate business-policy constant to derive from here —
+    # `stage_chat_file` itself enforces no size cap — this bound is set by
+    # analogy to `/api/videos/upload`'s reasoning above.
+    "/api/chat/upload-file": 500 * 1024 * 1024,  # 500 MB
+    # Leads spreadsheet import — preview (dry-run parse, writes nothing)
+    # and commit (parses + upserts), POST /api/leads/import/{preview,commit}
+    # (`app/modules/leads/routers/imports.py`). Both plain prefixes, no
+    # dynamic segment. Both read the whole uploaded workbook into memory
+    # (`await file.read()`) before handing it to `import_service`, and
+    # both accept the exact same upload shape, so they share one bound.
+    # No business-policy byte limit exists in `import_service` /
+    # `xlsx_reader` to derive from — this is a JUDGMENT call, not a
+    # derived number: the source is the "CONTROLE LEADS" master
+    # spreadsheet the leads module's docstring describes as having run
+    # up to 29 sheets; XLSX's binary/compressed format keeps even a large
+    # multi-sheet workbook well under this bound in practice, so 50 MB
+    # gives comfortable headroom for the largest realistic historical
+    # export without meaningfully weakening the platform-wide guard.
+    "/api/leads/import/preview": 50 * 1024 * 1024,  # 50 MB
+    "/api/leads/import/commit": 50 * 1024 * 1024,  # 50 MB
 }
 
 app = create_product_app(

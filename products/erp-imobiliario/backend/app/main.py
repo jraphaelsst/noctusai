@@ -72,6 +72,72 @@ def _startup():
 # SEC-6 per-request-RLS-client seam (`get_current_user_org_unified`), which
 # this mount does NOT need (login/me/logout never build a per-request RLS
 # client; the api-token endpoints use the service-role clients above).
+
+# Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
+# 1 MB — see `noctusai_seed.ProductSettings`) exists to DoS-guard inbound
+# webhooks; browser uploads legitimately exceed it and need their own,
+# larger, per-route ceiling instead of weakening the default everywhere.
+# Every entry below is a PLAIN prefix (none of ERP's upload routes carry a
+# dynamic path segment before the upload leaf, so no `*`-wildcard pattern
+# is needed here) — see `products/social-wiring/backend/app/main.py`'s
+# `_MAX_BODY_PATH_OVERRIDES` block for the wildcard-pattern shape and the
+# footgun it exists to avoid, and
+# `noctusai_lib.api.middleware.MaxBodySizeMiddleware`'s docstring for the
+# longest-matching-prefix resolution rule this dict relies on.
+_MAX_BODY_PATH_OVERRIDES = {
+    # Matrícula PDF text-extraction upload (POST /api/matriculas/extrair —
+    # `routers/matriculas.py`). The route's own `MAX_FILE_SIZE` (20 MB) is
+    # the real business-policy limit — it raises a clear Portuguese 413
+    # ("Arquivo muito grande...") once the bytes are already in hand. This
+    # outer bound sits 5 MB above it so THAT message is what the user
+    # sees, not an opaque 413 from the middleware.
+    "/api/matriculas/extrair": 25 * 1024 * 1024,  # 25 MB
+    # Single-file generic upload (POST /api/storage/upload —
+    # `routers/storage.py`). `storage_service.MAX_FILE_SIZE` (10 MB) is the
+    # per-file business-policy limit, enforced by `storage.validate_file`
+    # AFTER `await file.read()` — same "outer bound above the service
+    # limit" reasoning as matriculas above.
+    #
+    # 🔴 Ordering footgun: `/api/storage/upload-multiple` (below)
+    # `.startswith("/api/storage/upload")` is True, so WITHOUT its own
+    # entry a multi-file request would silently resolve to THIS route's
+    # tighter limit via the longest-matching-prefix rule. Both routes are
+    # declared explicitly so `/api/storage/upload-multiple`'s longer,
+    # more-specific key wins for its own requests — omitting either entry
+    # would silently misroute the other.
+    "/api/storage/upload": 15 * 1024 * 1024,  # 15 MB
+    # Multi-file upload (POST /api/storage/upload-multiple —
+    # `routers/storage.py`), up to 20 files (`len(files) > 20` guard),
+    # each individually checked against the SAME `storage_service.
+    # MAX_FILE_SIZE` (10 MB) as the single-file route above. Unlike a
+    # single-file cap, this ceiling has to bound the WHOLE multipart
+    # request body, not one file — worst case is 20 files x 10 MB =
+    # 200 MB, so the outer bound is set well above that (+20 MB headroom
+    # for multipart boundary/header overhead across 20 parts), not just
+    # a few MB above a single file's limit the way the other entries here
+    # are.
+    "/api/storage/upload-multiple": 220 * 1024 * 1024,  # 220 MB
+    # Manual certidão PDF upload for a resultado that failed automation
+    # (POST /api/certidoes/resultados/{resultado_id}/upload —
+    # `routers/certidoes.py::upload_certidao_manual`). `{resultado_id}` is
+    # a dynamic segment BEFORE the leaf, so this needs the single-segment
+    # wildcard pattern shape (see the module comment above) rather than a
+    # plain prefix — `/api/certidoes` alone would also raise the cap on
+    # every JSON certidões route (list/consultas/download/...).
+    #
+    # JUDGMENT CALL, not derived: `upload_certidao_manual` validates only
+    # `content_type == "application/pdf"` — there is no `MAX_FILE_SIZE`
+    # constant anywhere in the certidões service to derive a number from.
+    # 25 MB is chosen by analogy to `/api/matriculas/extrair` above: both
+    # routes accept a scanned real-estate title/registry PDF (the same
+    # document class — a certidão is exactly the kind of paperwork a
+    # matrícula extraction consumes), so this route gets the same order
+    # of magnitude rather than falling back to a smaller generic-document
+    # default. Flagged here for ratification since no service-side number
+    # backs it.
+    "/api/certidoes/resultados/*/upload": 25 * 1024 * 1024,  # 25 MB
+}
+
 app = create_product_app(
     name="ERP Imobiliario",
     schema="erp",
@@ -151,4 +217,5 @@ app = create_product_app(
     lifespan_startup=_startup,
     standard_routers=["health", "notificacoes", "team", "llm", "ai_outputs", "ai_feedback", "status_paginas", "auth"],
     consent_features="app.services.ai_consent_features",
+    max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
 )

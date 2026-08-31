@@ -53,6 +53,29 @@ from app.routers import (
     treatment_plans,
 )
 
+# Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
+# 1 MB — see `noctusai_seed.ProductSettings`) exists to DoS-guard inbound
+# webhooks; browser uploads legitimately exceed it and need their own,
+# larger, per-route ceiling instead of weakening the default everywhere.
+# Plain prefix — no dynamic path segment before the upload leaf. See
+# `products/social-wiring/backend/app/main.py`'s
+# `_MAX_BODY_PATH_OVERRIDES` block for the wildcard-pattern shape (not
+# needed here) and
+# `noctusai_lib.api.middleware.MaxBodySizeMiddleware`'s docstring for the
+# resolution rule.
+_MAX_BODY_PATH_OVERRIDES = {
+    # Message attachment upload (POST /api/attachments/upload —
+    # `routers/attachments.py::upload_attachment`; images and audio).
+    # `attachment_service.MAX_FILE_SIZE` (50 MB) is the real
+    # business-policy limit — the router's own docstring already
+    # advertises "up to 50MB" — enforced by `attachment_service.
+    # upload_attachment` AFTER the whole file is read into memory
+    # (`await file.read()`). This outer bound sits ~20% above it so the
+    # service's own error is what the user sees, not an opaque 413 from
+    # the middleware.
+    "/api/attachments/upload": 60 * 1024 * 1024,  # 60 MB
+}
+
 app = create_product_app(
     name="Therapy Platform",
     schema="therapy",
@@ -105,4 +128,5 @@ app = create_product_app(
     consent_features="app.services.ai_consent_features",
     lifespan_startup=start_scheduler,
     lifespan_shutdown=stop_scheduler,
+    max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
 )

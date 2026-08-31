@@ -38,7 +38,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Core | 29 | 14 | 29 | 0 | 51 | 559 |
 | Erp Imobiliario | 63 | 57 | 68 | 71 | 132 | 1,865 |
 | Personal Finance | 15 | 18 | 30 | 16 | 48 | 482 |
-| Therapy Platform | 40 | 46 | 65 | 33 | 83 | 1,138 |
+| Therapy Platform | 40 | 46 | 65 | 34 | 83 | 1,138 |
 | Seed | 2 | 1 | 8 | 1 | 6 | 19 |
 | Daily Life | 6 | 8 | 11 | 7 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 25 | 235 |
@@ -48,7 +48,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Orbity | 10 | 11 | 20 | 19 | 31 | 654 |
 | Igig | 10 | 6 | 18 | 17 | 17 | 261 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 329 |
-| **Total** | **218** | **236** | **402** | **246** | **630** | **8,484** |
+| **Total** | **218** | **236** | **402** | **247** | **630** | **8,484** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

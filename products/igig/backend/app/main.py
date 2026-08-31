@@ -36,6 +36,37 @@ from app.routers.pauta_router import router as pauta_router
 from app.routers.example_router import router as example_router
 from app.routers.webhook_router import router as webhook_router
 
+# Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
+# 1 MB — see `noctusai_seed.ProductSettings`) exists to DoS-guard inbound
+# webhooks; browser uploads legitimately exceed it and need their own,
+# larger, per-route ceiling instead of weakening the default everywhere.
+# Both routes below have a dynamic path segment BEFORE the upload leaf, so
+# both need the single-segment wildcard pattern shape rather than a plain
+# prefix — a bare `/api/pautas` / `/api/marcas` prefix would also raise
+# the cap on every JSON route under those routers. See
+# `products/social-wiring/backend/app/main.py`'s `_MAX_BODY_PATH_OVERRIDES`
+# block for the wildcard-pattern footgun this avoids, and
+# `noctusai_lib.api.middleware.MaxBodySizeMiddleware`'s docstring for the
+# exact-segment-count matching rule.
+_MAX_BODY_PATH_OVERRIDES = {
+    # Pauta creative-piece upload (POST /api/pautas/{pauta_id}/pecas —
+    # `routers/pauta_router.py::enviar_peca`). The route's own
+    # `_PECA_MAX_BYTES` (50 MB) is the real business-policy limit — it
+    # raises a clear "Peça excede 50 MB" 413 once the bytes are already
+    # read into memory (`await arquivo.read()`). This outer bound sits
+    # ~20% above it so THAT message is what the user sees, not an opaque
+    # 413 from the middleware.
+    "/api/pautas/*/pecas": 60 * 1024 * 1024,  # 60 MB
+    # Brand logo upload (POST /api/marcas/{marca_id}/logo —
+    # `routers/marca_router.py::enviar_logo`). The route's own
+    # `_LOGO_MAX_BYTES` (2 MB) is the business-policy limit, same
+    # read-into-memory shape as pecas above. A logo is a much smaller
+    # asset than a creative piece, so the outer bound scales down with
+    # it — 3 MB gives headroom above the 2 MB cap without approaching
+    # the pecas ceiling.
+    "/api/marcas/*/logo": 3 * 1024 * 1024,  # 3 MB
+}
+
 app = create_product_app(
     name="IgIg",
     schema="igig",
@@ -52,6 +83,7 @@ app = create_product_app(
         distribuicao_router, integracoes_router, financeiro_router, comercial_router,
         example_router, webhook_router,
     ],
+    max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
     # consent catalog — see KB § PATTERNS/lgpd.md § 9):
