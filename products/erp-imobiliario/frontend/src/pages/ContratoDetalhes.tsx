@@ -33,9 +33,12 @@ export default function ContratoDetalhes() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('resumo');
 
-  const { data: contrato, isLoading } = useContrato(id);
+  const contratoQuery = useContrato(id);
+  const { data: contrato } = contratoQuery;
 
-  if (isLoading) return <DetailPageSkeleton />;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (contratoQuery.isPending && !contratoQuery.data) return <DetailPageSkeleton />;
 
   if (!contrato) {
     return (
