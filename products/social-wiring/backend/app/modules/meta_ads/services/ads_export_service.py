@@ -14,6 +14,8 @@ from datetime import date
 from typing import Any
 from uuid import UUID
 
+from app.modules.meta_ads.services.leads import leads_from_actions
+
 _SCHEMA = "social_wiring"
 
 
@@ -92,10 +94,7 @@ def build_report(
         row.reach += int(s.get("reach") or 0)
         row.clicks += int(s.get("clicks") or 0)
         actions = s.get("actions") or {}
-        try:
-            row.leads += float(actions.get("lead", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            pass
+        row.leads += leads_from_actions(actions) or 0.0
 
     rows = sorted(by_id.values(), key=lambda r: r.spend_cents, reverse=True)
     return Report(

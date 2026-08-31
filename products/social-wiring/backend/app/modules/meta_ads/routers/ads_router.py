@@ -47,6 +47,7 @@ from noctusai_lib.api import StrictHttpModel
 from app.config import settings
 from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
 from app.modules.meta_ads.services.ads_sync_service import AdsSyncService
+from app.modules.meta_ads.services.leads import leads_from_actions
 from app.modules.meta_ads.services.money import (
     cents_from_major_unit_float,
     cents_from_minor_unit_string,
@@ -425,7 +426,7 @@ def _campaign_out(
             impressions=latest_row.get("impressions"),
             clicks=latest_row.get("clicks"),
             reach=latest_row.get("reach"),
-            leads=actions.get("lead"),
+            leads=leads_from_actions(actions),
         )
     return AdsCampaignOut(
         object_id=camp.id,
@@ -625,7 +626,7 @@ def _aggregate_account_snapshots(
         reach = int(row.get("reach") or 0)
         clicks = int(row.get("clicks") or 0)
         actions = row.get("actions") or {}
-        leads = float(actions.get("lead", 0.0) or 0.0)
+        leads = leads_from_actions(actions) or 0.0
 
         tot_spend += spend
         tot_impr += impr
@@ -710,7 +711,7 @@ def _sum_totals(rows: list[AdsInsightsRowOut]) -> AdsTotalsOut:
     impressions = sum((r.impressions or 0) for r in rows)
     reach = sum((r.reach or 0) for r in rows)
     clicks = sum((r.clicks or 0) for r in rows)
-    leads = sum((r.actions or {}).get("lead", 0.0) for r in rows)
+    leads = sum((leads_from_actions(r.actions) or 0.0) for r in rows)
     return AdsTotalsOut(
         spend_cents=spend, impressions=impressions, reach=reach,
         clicks=clicks, leads=leads,

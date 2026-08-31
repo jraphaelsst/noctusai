@@ -259,6 +259,54 @@ class TestListCampaigns:
         assert latest["spend_cents"] == 38050
         assert latest["leads"] == 12.0
 
+    def test_latest_snapshot_counts_onsite_conversion_lead_key(self, client):
+        """REGRESSION: `_campaign_out` only read `actions["lead"]` — a
+        campaign latest-snapshot tile for the live pilot account (which
+        uses `onsite_conversion.lead`) showed `leads: null` (rendered as
+        "—", i.e. "no lead data") even though the row DID carry leads."""
+        tc, mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [
+                {
+                    "org_id": _ORG_A,
+                    "object_id": "camp_1", "date": "2026-07-01",
+                    "spend_cents": 38050, "impressions": 1000,
+                    "clicks": 42, "reach": 800,
+                    "actions": {"onsite_conversion.lead": 9.0},
+                }
+            ],
+        )
+        resp = tc.get("/api/meta/ads/campaigns")
+        assert resp.status_code == 200, resp.text
+        latest = resp.json()["data"][0]["latest"]
+        assert latest["leads"] == 9.0
+
+    def test_latest_snapshot_leads_none_when_no_lead_key_at_all(self, client):
+        """A row with NO lead action key (neither `lead` nor
+        `onsite_conversion.lead`) must stay `None` ("—" in the UI) — never
+        a fabricated `0.0` that would misrepresent "no data" as "zero
+        leads"."""
+        tc, mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [
+                {
+                    "org_id": _ORG_A,
+                    "object_id": "camp_1", "date": "2026-07-01",
+                    "spend_cents": 38050, "impressions": 1000,
+                    "clicks": 42, "reach": 800,
+                    "actions": {"link_click": 15.0},
+                }
+            ],
+        )
+        resp = tc.get("/api/meta/ads/campaigns")
+        assert resp.status_code == 200, resp.text
+        latest = resp.json()["data"][0]["latest"]
+        assert latest["leads"] is None
+
     def test_status_filter(self, client):
         tc, _mock_sb, caching = client
         adapter = FakeMetaAdapter()
@@ -333,6 +381,29 @@ class TestAccountInsights:
         assert resp.status_code == 200, resp.text
         assert resp.json()["totals"]["spend_cents"] == 0
         assert resp.json()["daily"] == []
+
+    def test_counts_onsite_conversion_lead_key(self, client):
+        """REGRESSION: `_aggregate_account_snapshots` only read
+        `actions["lead"]` — the overview tiles for the live pilot account
+        (which uses `onsite_conversion.lead`) showed `leads: 0`."""
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [{"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+              "date": "2026-07-01", "breakdown_key": None,
+              "spend_cents": 10000, "impressions": 500, "reach": 400,
+              "clicks": 20, "actions": {"onsite_conversion.lead": 6.0}}],
+        )
+        resp = tc.get("/api/meta/ads/insights/account?since=2026-07-01&until=2026-07-01")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["totals"]["leads"] == 6.0
+        by_date = {d["date"]: d for d in body["daily"]}
+        assert by_date["2026-07-01"]["leads"] == 6.0
+        # The raw per-action-type breakdown was already correct pre-fix
+        # (a straight passthrough) — pin it stays that way.
+        assert body["actions"]["onsite_conversion.lead"] == 6.0
 
 
 # ─── GET /insights/pacing ─────────────────────────────────────────────
@@ -752,6 +823,84 @@ class TestInsightsSeries:
         assert by_plat == {"instagram": 6000, "facebook": 4000}
 
 
+# ─── GET /insights/compare ──────────────────────────────────────────────
+class TestInsightsCompare:
+    """Meta reports lead-gen conversions under `actions["lead"]` (off-
+    Facebook pixel/CAPI) OR `actions["onsite_conversion.lead"]` (native
+    Instant Form) — see `app.modules.meta_ads.services.leads` for the
+    reconciliation. These tests pin `_sum_totals`/`leads_from_actions`
+    against BOTH keys so a pilot account using only the onsite key (the
+    live production account) is never silently reported as zero leads."""
+
+    def test_counts_onsite_conversion_lead_key(self, client):
+        """REGRESSION: before the fix, `_sum_totals` only read
+        `actions["lead"]`, so an account whose rows carry ONLY
+        `onsite_conversion.lead` (the live pilot account) reported
+        `leads=0` here — this must FAIL against the pre-fix code and PASS
+        after."""
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [{"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+              "date": "2026-07-01", "breakdown_key": None,
+              "spend_cents": 10000, "impressions": 500, "reach": 400,
+              "clicks": 20, "actions": {"onsite_conversion.lead": 7.0}}],
+        )
+        resp = tc.get(
+            "/api/meta/ads/insights/compare"
+            "?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-01"
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["current"]["leads"] == 7.0
+        assert body["deltas"]["leads"]["abs"] == 7.0
+
+    def test_sums_both_lead_action_keys_on_the_same_row_without_double_counting(
+        self, client
+    ):
+        """A row that legitimately carries BOTH keys (e.g. a campaign
+        configured with "Website + Instant forms" conversion locations)
+        represents leads captured through TWO distinct channels, not one
+        physical lead double-tagged — Meta's `action_type` breakdown never
+        tags a single conversion event under two types. The honest total
+        is the SUM (5 + 3 = 8), not a `??` first-match (which would drop
+        one channel's leads)."""
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [{"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+              "date": "2026-07-01", "breakdown_key": None,
+              "spend_cents": 10000, "impressions": 500, "reach": 400,
+              "clicks": 20,
+              "actions": {"lead": 5.0, "onsite_conversion.lead": 3.0}}],
+        )
+        resp = tc.get(
+            "/api/meta/ads/insights/compare"
+            "?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-01"
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["current"]["leads"] == 8.0
+
+    def test_row_with_neither_lead_key_contributes_zero_not_error(self, client):
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [{"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+              "date": "2026-07-01", "breakdown_key": None,
+              "spend_cents": 10000, "impressions": 500, "reach": 400,
+              "clicks": 20, "actions": {"link_click": 15.0}}],
+        )
+        resp = tc.get(
+            "/api/meta/ads/insights/compare"
+            "?object_id=camp_1&level=campaign&since=2026-07-01&until=2026-07-01"
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["current"]["leads"] == 0.0
+
+
 # ─── GET /export ──────────────────────────────────────────────────────
 class TestExport:
     def _seed(self, caching):
@@ -786,6 +935,38 @@ class TestExport:
         assert "LEADS" in body  # objective stripped of OUTCOME_
         assert "500.00" in body  # 50000 cents → reais
         assert "TOTAL" in body
+
+    def test_csv_export_counts_onsite_conversion_lead_key(self, client):
+        """REGRESSION: the export aggregator only read `actions["lead"]`
+        — a CSV/PDF report for the live pilot account (which uses
+        `onsite_conversion.lead`) showed 0 leads and a blank Custo/lead."""
+        tc, _mock_sb, caching = client
+        _override_adapter(_ORG_A, _seeded_adapter())
+        caching.schema("social_wiring").set_table_data(
+            "ads_accounts",
+            [{"org_id": _ORG_A, "name": "One Consultoria", "currency": "BRL"}],
+        )
+        caching.schema("social_wiring").set_table_data(
+            "ads_objects",
+            [{"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+              "name": "Campanha Leads", "objective": "OUTCOME_LEADS",
+              "effective_status": "ACTIVE"}],
+        )
+        caching.schema("social_wiring").set_table_data(
+            "ads_insight_snapshots",
+            [{"org_id": _ORG_A, "object_id": "camp_1", "level": "campaign",
+              "date": "2026-07-01", "breakdown_key": None,
+              "spend_cents": 50000, "impressions": 2000, "reach": 1500,
+              "clicks": 80, "actions": {"onsite_conversion.lead": 20.0},
+              "action_values": {}}],
+        )
+        resp = tc.get("/api/meta/ads/export?format=csv&since=2026-07-01&until=2026-07-01")
+        assert resp.status_code == 200, resp.text
+        body = resp.text
+        # Leads column (20) + Custo/lead (round(50000/20)=2500 cents =
+        # R$25.00) — both would be 0/blank pre-fix since only
+        # `onsite_conversion.lead` is present on the row.
+        assert "Campanha Leads,LEADS,ACTIVE,500.00,20,25.00,2000,1500,80" in body
 
     def test_pdf_export(self, client):
         tc, _mock_sb, caching = client
