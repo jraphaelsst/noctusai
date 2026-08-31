@@ -282,7 +282,14 @@ export function CampanhaManagerDialog({
 
           {view === "list" ? (
             <div className="space-y-4 pt-2">
-              {campanhas.isPending || campanhas.isFetching ? (
+              {/* First-load only. Every save/delete in this dialog
+                  invalidates `campanhas`, and `rows` always defaults to `[]`
+                  via `?? []` — gate on the RAW `campanhas.data` (undefined
+                  until the first successful fetch) so the table stays
+                  mounted through every background refetch instead of
+                  vanishing back to "Carregando…" after each save.
+                  (KB § PATTERNS/frontend/lying-loading-state.md) */}
+              {campanhas.isPending && !campanhas.data ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">Carregando…</p>
               ) : rows.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">

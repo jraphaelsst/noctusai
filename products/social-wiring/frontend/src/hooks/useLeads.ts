@@ -64,6 +64,11 @@ export function useLeadsList(filters: LeadsFilters, params?: ListLeadsParams) {
   return useQuery<LeadsPage>({
     queryKey: [...FAMILY_KEY, leadsFiltersQueryKey(filters), params],
     queryFn: () => api.get<LeadsPage>(qs ? `${BASE}?${qs}` : BASE),
+    // `filters` + `params` (page/pageSize/sort/order) drive the queryKey —
+    // every filter tweak, page turn, or sort click swaps to a fresh key
+    // with no cached data. Keep the previous page on screen instead of
+    // blanking the whole table for one round trip.
+    placeholderData: (prev) => prev,
   });
 }
 

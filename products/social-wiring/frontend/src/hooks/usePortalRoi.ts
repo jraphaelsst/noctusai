@@ -152,6 +152,10 @@ export function usePortalRoiResumo(filtros: PortalRoiFiltros = {}) {
       );
       return res ?? { periodo: null, totais: EMPTY_TOTAIS, portais: [] };
     },
+    // `filtros.periodo_*` drive the queryKey — every period change swaps
+    // to a fresh key with no cached data. Keep the previous totals on
+    // screen instead of blanking the summary for one round trip.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -172,6 +176,10 @@ export function usePortalRoiCampanhas(
       return res?.campanhas ?? [];
     },
     enabled: options.enabled,
+    // `filtros` (origem_id/periodo_*) drive the queryKey — keep the
+    // previous rows on screen instead of blanking the table while a
+    // filter change loads.
+    placeholderData: (prev) => prev,
   });
 }
 

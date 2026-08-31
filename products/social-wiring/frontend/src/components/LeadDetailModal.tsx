@@ -103,10 +103,18 @@ export function LeadDetailModal({
       }
       note={resolved?.needs_review ? explainNeedsReview(resolved, sources) : undefined}
       sections={resolved ? leadDetailSections(resolved) : []}
-      // Gate on `isPending || isFetching`, never bare `isLoading`: during a
-      // background refetch `isLoading` is false, so the modal would render an
-      // empty field grid over a record that exists.
-      isLoading={shouldFetch && (fetched.isPending || fetched.isFetching)}
+      // `fetched.isPending` alone — NOT `isPending || isFetching`. The
+      // organ (`EntityDetailDialog`, seed/lib/frontend/src/components/detail/
+      // EntityDetailDialog.tsx) takes exactly one `isLoading` boolean and
+      // swaps `<SkeletonGrid/>` in over the field grid whenever it's true,
+      // with no data-presence check of its own — so passing `isFetching`
+      // here replaced a fully-rendered lead with a skeleton on every
+      // background refetch, even though `resolved` still held the record.
+      // `fetched.isPending` already means "no data has ever landed for this
+      // leadId" (this hook sets no `placeholderData`), so it goes false
+      // after the first fetch and stays false through every later refetch
+      // for the same id. (KB § PATTERNS/frontend/lying-loading-state.md)
+      isLoading={shouldFetch && fetched.isPending}
       error={
         fetched.isError
           ? `Erro ao carregar o lead: ${(fetched.error as Error)?.message ?? 'tente novamente.'}`

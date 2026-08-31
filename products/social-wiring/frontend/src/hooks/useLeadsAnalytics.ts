@@ -38,6 +38,11 @@ export function useLeadsSummary(filters: LeadsFilters) {
       );
       return res.data;
     },
+    // `filters` (dates/origem/etc.) drives the queryKey — every filter
+    // tweak swaps the summary to a fresh key with no cached data, so
+    // without this the whole card blanks to undefined for one round trip.
+    // Keep last summary on screen until the new one lands.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -63,6 +68,10 @@ export function useLeadsTimeseries(filters: LeadsFilters, params?: TimeseriesPar
       const res = await api.get<SuccessEnvelope<TimeseriesOut>>(`${BASE}/timeseries?${qs}`);
       return res.data;
     },
+    // `filters`/`params` (grain, split) drive the queryKey — keep the
+    // previous chart on screen through a filter/grain change instead of
+    // blanking it while the new series loads.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -93,6 +102,8 @@ export function useLeadsByDimension(filters: LeadsFilters, params: ByDimensionPa
       const res = await api.get<SuccessEnvelope<ByDimensionOut>>(`${BASE}/by-dimension?${qs}`);
       return res.data;
     },
+    // Same reasoning — `filters`/`params.dim` drive the queryKey.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -108,6 +119,9 @@ export function useLeadsHeatmap(filters: LeadsFilters) {
       );
       return res.data;
     },
+    // `filters` drives the queryKey — keep the previous heatmap on screen
+    // through a filter change instead of blanking it for one round trip.
+    placeholderData: (prev) => prev,
   });
 }
 

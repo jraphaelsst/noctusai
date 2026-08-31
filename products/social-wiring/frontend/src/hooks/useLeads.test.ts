@@ -127,6 +127,44 @@ describe("useLeadsList", () => {
     expect(result.current.data).toBeDefined();
     expect(result.current.data?.data).toEqual([]);
   });
+
+  it("🔴 keeps the previous page mounted while a page turn loads (placeholderData, Cat B regression)", async () => {
+    // `page` drives the queryKey — every page turn swaps to a fresh key
+    // with no cached data. Without `placeholderData: (prev) => prev`,
+    // `data` would go `undefined` the instant `page` changes, blanking
+    // the whole table for one round trip.
+    let resolvePage2!: (v: unknown) => void;
+    mockApiGet
+      .mockResolvedValueOnce({
+        data: [makeLead("p1")],
+        pagination: { page: 1, page_size: 25, total: 2, total_pages: 2 },
+      })
+      .mockImplementationOnce(
+        () => new Promise((resolve) => { resolvePage2 = resolve; }),
+      );
+
+    const { Wrapper } = makeWrapper();
+    const { result, rerender } = renderHook(
+      ({ page }: { page: number }) => useLeadsList(EMPTY_FILTERS, { page }),
+      { wrapper: Wrapper, initialProps: { page: 1 } },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.data[0].id).toBe("p1");
+
+    rerender({ page: 2 });
+
+    await waitFor(() => expect(result.current.isFetching).toBe(true));
+    // The page-2 fetch is in flight and page-2's own cache entry is empty
+    // — this MUST still be page 1's data, not undefined.
+    expect(result.current.data?.data[0].id).toBe("p1");
+
+    resolvePage2({
+      data: [makeLead("p2")],
+      pagination: { page: 2, page_size: 25, total: 2, total_pages: 2 },
+    });
+    await waitFor(() => expect(result.current.data?.data[0].id).toBe("p2"));
+  });
 });
 
 describe("useLead", () => {

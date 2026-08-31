@@ -62,19 +62,24 @@ export function InstagramCardSection({ marcas }: { marcas: Marca[] }) {
   );
 
   const {
-    data: accounts = [],
+    data,
     isPending,
     isFetching,
     isError,
   } = useIntegrationAccounts(INSTAGRAM_PROVIDER);
+  const accounts = data ?? [];
   const oauthStart = useStartProviderOAuth(INSTAGRAM_PROVIDER);
   const submitToken = useSubmitInstagramToken();
   const deleteAccount = useDeleteAccount();
 
-  // `isPending || isFetching`, never `isLoading` — v5's isLoading is FALSE
-  // during a background refetch, which would drop us into the empty branch
-  // over live accounts (KB § PATTERNS/frontend/lying-loading-state.md).
-  const loading = isPending || isFetching;
+  // First-load skeleton only — never on a background refetch. Once `data`
+  // exists we keep the list mounted through every refetch instead of
+  // unmounting it back to a skeleton on each mutation
+  // (KB § PATTERNS/frontend/lying-loading-state.md). `isError` only wins
+  // when there is no data to fall back on; a background-refetch error must
+  // not blank out accounts that are already on screen.
+  const showSkeleton = isPending && !data;
+  const showError = !showSkeleton && isError && !data;
 
   function handleConnect() {
     oauthStart.mutate(oauthMarcaId ? { marcaId: oauthMarcaId } : undefined, {
@@ -214,20 +219,20 @@ export function InstagramCardSection({ marcas }: { marcas: Marca[] }) {
         </div>
       )}
 
-      {loading && (
+      {showSkeleton && (
         <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Carregando contas do Instagram...
         </div>
       )}
 
-      {!loading && isError && (
+      {showError && (
         <p className="py-4 text-sm text-destructive">
           Erro ao carregar contas. Tente recarregar a página.
         </p>
       )}
 
-      {!loading && !isError && accounts.length === 0 && (
+      {!showSkeleton && !showError && accounts.length === 0 && (
         <div className="rounded-md border border-dashed bg-muted/20 py-8 text-center">
           <Plus className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
@@ -238,7 +243,7 @@ export function InstagramCardSection({ marcas }: { marcas: Marca[] }) {
         </div>
       )}
 
-      {!loading && !isError && accounts.length > 0 && (
+      {!showSkeleton && accounts.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {accounts.map((acc) => (
             <IntegrationCard

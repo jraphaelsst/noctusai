@@ -70,8 +70,14 @@ const igAccount = {
   updated_at: "2026-01-01",
 };
 
+// `data: undefined` — NOT `[]` — mirrors TanStack Query's real pre-fetch
+// shape. The component now reads the raw `data` (undefined until the
+// first successful fetch) to decide skeleton/error vs. the settled-empty
+// state, and separately defaults `accounts = data ?? []` for rendering;
+// collapsing those two into one `[]` here would hide a showSkeleton/
+// showError regression (KB § PATTERNS/frontend/lying-loading-state.md).
 const idle = {
-  data: [],
+  data: undefined as { id: string }[] | undefined,
   isPending: false,
   isFetching: false,
   isError: false,
@@ -174,13 +180,36 @@ describe("InstagramCardSection — manual token fallback", () => {
 });
 
 describe("InstagramCardSection — states", () => {
-  it("shows a loading cue during a background refetch, not the empty state", async () => {
-    // The lying-loading-state class: isFetching true with isPending false is
-    // exactly the frame where `isLoading` would be FALSE and an isEmpty branch
-    // would render "nenhuma conta" over accounts that exist.
-    mockAccounts.mockReturnValue({ ...idle, isFetching: true, data: [igAccount] });
+  it("shows the skeleton only on first load — isPending, no data yet", async () => {
+    mockAccounts.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isFetching: true,
+      isError: false,
+    });
     const { getByText, queryByText } = await render();
     expect(getByText(/Carregando contas do Instagram/)).toBeTruthy();
+    expect(queryByText(/Nenhuma conta do Instagram conectada/)).toBeNull();
+  });
+
+  it("keeps the account grid mounted during a background refetch — never re-shows the skeleton (Cat A regression)", async () => {
+    // `isPending || isFetching` was itself the refetch-unmount bug: once
+    // accounts had loaded, EVERY background refetch (any mutation anywhere
+    // in the app that invalidates this query) flipped the old `loading`
+    // back to true and swapped the connected-accounts grid for
+    // "Carregando…" — every time. The fix is `isPending && !data`
+    // (first load only); `isFetching` alone, with data already present,
+    // must keep rendering the existing accounts.
+    // (KB § PATTERNS/frontend/lying-loading-state.md)
+    mockAccounts.mockReturnValue({
+      data: [igAccount],
+      isPending: false,
+      isFetching: true,
+      isError: false,
+    });
+    const { getAllByTestId, queryByText } = await render();
+    expect(getAllByTestId("ig-card")).toHaveLength(1);
+    expect(queryByText(/Carregando contas do Instagram/)).toBeNull();
     expect(queryByText(/Nenhuma conta do Instagram conectada/)).toBeNull();
   });
 

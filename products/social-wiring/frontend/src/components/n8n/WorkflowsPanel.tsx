@@ -539,11 +539,16 @@ export function WorkflowsPanel() {
           <div>
             <UnassignedBucket
               workflows={unassignedWorkflows}
-              // `isPending || isFetching`, never bare `isLoading`: TanStack v5
-              // sets `isLoading` false during a background refetch, so the
-              // bucket would render its empty state over workflows that exist
-              // — every time a drag-assignment invalidates this query.
-              loading={unassignedQuery.isPending || unassignedQuery.isFetching}
+              // First-load only — never `isPending || isFetching`. A
+              // drag-assign invalidates this query on every drop, and
+              // `unassignedWorkflows` always defaults to `[]` via `?? []`
+              // (never undefined), so gate on the RAW `unassignedQuery.data`
+              // (undefined until the first successful fetch) instead: once
+              // it has landed, this stays false through every background
+              // refetch and the bucket keeps its current contents mounted
+              // instead of flashing "Carregando…" after each drop.
+              // (KB § PATTERNS/frontend/lying-loading-state.md)
+              loading={unassignedQuery.isPending && !unassignedQuery.data}
               error={
                 unassignedQuery.isError
                   ? unassignedQuery.error?.message ?? "Falha ao carregar"

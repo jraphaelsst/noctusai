@@ -106,6 +106,37 @@ describe("CampanhaManagerDialog — list view", () => {
     expect(getByText("Nenhum lançamento registrado para este portal ainda.")).toBeTruthy();
     expect(queryByTestId("campanha-row")).toBeNull();
   });
+
+  it("🔴 keeps the lançamentos table mounted during a background refetch (Cat A regression)", async () => {
+    // Every save/delete in this dialog invalidates `campanhas`. The old
+    // gate (`campanhas.isPending || campanhas.isFetching`) stayed true
+    // through that refetch and swapped the just-saved table back to
+    // "Carregando…" every time. The fix reads the RAW `campanhas.data`
+    // (undefined until the first successful fetch), not `rows`
+    // (`campanhas.data ?? []`, always an array).
+    // (KB § PATTERNS/frontend/lying-loading-state.md)
+    mockUsePortalRoiCampanhas.mockReturnValue({
+      data: [row()],
+      isPending: false,
+      isFetching: true,
+      refetch: vi.fn(),
+    });
+    const { getAllByTestId, queryByText } = await renderDialog();
+    expect(getAllByTestId("campanha-row")).toHaveLength(1);
+    expect(queryByText("Carregando…")).toBeNull();
+  });
+
+  it("shows the skeleton only on first load (isPending, no data yet)", async () => {
+    mockUsePortalRoiCampanhas.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isFetching: true,
+      refetch: vi.fn(),
+    });
+    const { getByText, queryByTestId } = await renderDialog();
+    expect(getByText("Carregando…")).toBeTruthy();
+    expect(queryByTestId("campanha-row")).toBeNull();
+  });
 });
 
 describe("CampanhaManagerDialog — create flow", () => {

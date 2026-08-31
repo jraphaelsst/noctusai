@@ -153,3 +153,81 @@ describe("WhatsAppChatWindow — ChatWindow wiring", () => {
     expect(mutate).toHaveBeenCalledWith({ enabled: false });
   });
 });
+
+describe("WhatsAppChatWindow — Cat A regression: isLoading during a background refetch", () => {
+  // The seed `<ChatWindow>` organ exposes exactly ONE loading boolean per
+  // async slot (`ChatAsyncResult.isLoading`,
+  // seed/lib/frontend/src/design-system/chat/ChatWindow.tsx) and swaps its
+  // whole thread list / message panel for a skeleton whenever it is true,
+  // with no data-presence check of its own. Reporting `isPending ||
+  // isFetching` here meant every realtime update / poll / sent message —
+  // anything that triggers a background refetch — unmounted an
+  // already-rendered conversation list or message panel back to a
+  // skeleton. `isPending` alone already means "no data has ever landed
+  // for this query key" (neither hook sets `placeholderData`), so it goes
+  // false after the first fetch and stays false through every later
+  // refetch for the same connection/chat.
+  // (KB § PATTERNS/frontend/lying-loading-state.md)
+
+  it("useThreads adapter: isLoading is false during a background refetch once data has landed", async () => {
+    mockUseWhatsAppChats.mockReturnValue({
+      data: [
+        {
+          chat_id: "c1",
+          title: "Ana",
+          last_message_preview: "Oi",
+          last_message_at: "2026-07-01T10:00:00Z",
+          last_direction: "inbound",
+          unread_count: 0,
+          last_read_at: null,
+          archived: false,
+          pinned: false,
+        },
+      ],
+      isPending: false,
+      // A realtime event / mutation invalidated the query — refetching in
+      // the background, but the last successful page is still here.
+      isFetching: true,
+      isError: false,
+    });
+    await renderWindow();
+    const threads = lastProps.adapter.useThreads("conn-1");
+    expect(threads.isLoading).toBe(false);
+    expect(threads.data).toHaveLength(1);
+  });
+
+  it("useThreads adapter: isLoading is true on first load (isPending, no data yet)", async () => {
+    mockUseWhatsAppChats.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isFetching: true,
+      isError: false,
+    });
+    await renderWindow();
+    const threads = lastProps.adapter.useThreads("conn-1");
+    expect(threads.isLoading).toBe(true);
+  });
+
+  it("useMessages adapter: isLoading is false during a background refetch once data has landed", async () => {
+    mockUseWhatsAppChatMessages.mockReturnValue({
+      data: [
+        {
+          id: "m1",
+          chat_id: "c1",
+          direction: "inbound",
+          body: "Oi",
+          created_at: "2026-07-01T10:00:00Z",
+          provider_message_id: null,
+          structured_payload: null,
+        },
+      ],
+      isPending: false,
+      isFetching: true,
+      isError: false,
+    });
+    await renderWindow();
+    const messages = lastProps.adapter.useMessages("conn-1", "c1");
+    expect(messages.isLoading).toBe(false);
+    expect(messages.data).toHaveLength(1);
+  });
+});

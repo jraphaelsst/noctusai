@@ -140,4 +140,26 @@ describe("ImovelDocumentosCard", () => {
     fireEvent.click(screen.getByLabelText(/remover matricula\.pdf/i));
     expect(onRemove).toHaveBeenCalledWith("d1", "arquivo errado");
   });
+
+  it("🔴 keeps the document list mounted during a background refetch (Cat A regression)", async () => {
+    // The caller passes `loading={query.isPending || query.isFetching}`
+    // (`pages/ImovelDetalhes.tsx`, out of this file's zone) — so `loading`
+    // stays true through every refetch an upload/remove mutation triggers.
+    // Gating the skeleton on `loading` alone unmounted an already-rendered
+    // document list back to "Carregando…" on every such refetch. The fix
+    // also requires `documentos.length === 0`, so a refetch of a
+    // non-empty list must keep rendering it.
+    // (KB § PATTERNS/frontend/lying-loading-state.md)
+    const { screen, queryByText } = await render({
+      documentos: [doc()],
+      loading: true,
+    });
+    expect(screen.getByText("matricula.pdf")).toBeTruthy();
+    expect(queryByText("Carregando…")).toBeNull();
+  });
+
+  it("shows the skeleton while genuinely empty and loading (first load)", async () => {
+    const { screen } = await render({ documentos: [], loading: true });
+    expect(screen.getByText("Carregando…")).toBeTruthy();
+  });
 });

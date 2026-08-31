@@ -51,7 +51,7 @@ function displayContact(title: string | null | undefined, chatId: string): strin
 // ─── WhatsApp adapter ─────────────────────────────────────────────────────────
 
 function useWhatsAppThreadsAdapter(connectionId: string | null) {
-  const { data: chats, isPending, isFetching, isError } = useWhatsAppChats(connectionId);
+  const { data: chats, isPending, isError } = useWhatsAppChats(connectionId);
   return {
     data: (chats ?? []).map((chat) => ({
       id: chat.chat_id,
@@ -61,16 +61,24 @@ function useWhatsAppThreadsAdapter(connectionId: string | null) {
       lastDirection: chat.last_direction,
       unreadCount: chat.unread_count,
     })),
-    // isPending || isFetching, never isLoading: in TanStack v5 isLoading is
-    // false during a background refetch, so an isEmpty branch would render
-    // "no conversations" over data that exists. (check_lying_loading_state)
-    isLoading: isPending || isFetching,
+    // `isPending` alone, NOT `isPending || isFetching` — deliberately the
+    // opposite of the usual isLoading advice here. ChatWindow's
+    // `ChatAsyncResult` (seed/lib/frontend/src/design-system/chat/ChatWindow.tsx)
+    // exposes exactly ONE boolean and swaps its whole thread list on it, so
+    // this adapter is the only place that can pre-resolve "first load vs.
+    // background refetch". `isPending` already means "no data has ever
+    // landed for this query key" in TanStack v5 (this hook sets no
+    // `placeholderData`), so it stays false through every background
+    // refetch/poll once the first page has landed — the conversation list
+    // never unmounts back to a skeleton on a realtime update or after a
+    // send. (KB § PATTERNS/frontend/lying-loading-state.md)
+    isLoading: isPending,
     isError,
   };
 }
 
 function useWhatsAppMessagesAdapter(connectionId: string | null, chatId: string | null) {
-  const { data: messages, isPending, isFetching, isError } =
+  const { data: messages, isPending, isError } =
     useWhatsAppChatMessages(connectionId, chatId);
   return {
     data: (messages ?? []).map((m) => ({
@@ -79,7 +87,12 @@ function useWhatsAppMessagesAdapter(connectionId: string | null, chatId: string 
       body: m.body || (m.structured_payload ? "[mídia]" : ""),
       created_at: m.created_at,
     })),
-    isLoading: isPending || isFetching,
+    // Same reasoning as useWhatsAppThreadsAdapter above — `isPending` alone.
+    // This matters MORE here than for the thread list: unmounting the
+    // message panel on every background poll/send also destroys scroll
+    // position, so a chat that stayed rendered but silently updated is
+    // strictly better than one that flickers to a skeleton and jumps.
+    isLoading: isPending,
     isError,
   };
 }

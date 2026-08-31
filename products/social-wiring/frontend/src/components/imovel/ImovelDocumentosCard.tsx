@@ -123,7 +123,13 @@ export default function ImovelDocumentosCard({
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        {loading ? (
+        {/* `loading` is the caller's `isPending || isFetching`, and it
+            stays true through every background refetch. Gate the skeleton
+            on "no data yet" (documentos.length === 0) too, so a refetch
+            triggered by an upload/remove mutation never unmounts an
+            already-rendered document list back to "Carregando…"
+            (KB § PATTERNS/frontend/lying-loading-state.md). */}
+        {loading && documentos.length === 0 ? (
           <p className="text-sm text-muted-foreground">Carregando…</p>
         ) : documentos.length === 0 ? (
           <p className="text-sm text-muted-foreground">

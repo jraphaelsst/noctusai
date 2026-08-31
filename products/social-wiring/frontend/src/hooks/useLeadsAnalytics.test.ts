@@ -69,6 +69,37 @@ describe("useLeadsSummary", () => {
     expect(url).toContain("origem_id=src-1");
     expect(url).toContain("needs_review=true");
   });
+
+  it("🔴 keeps the previous summary mounted while a filter change loads (placeholderData, Cat B regression)", async () => {
+    // `filters` drives the queryKey for every hook in this file — a
+    // filter change swaps to a fresh key with no cached data. Without
+    // `placeholderData: (prev) => prev`, `data` would go `undefined` the
+    // instant the filter changes, blanking the whole card for one round
+    // trip. Representative of the identical fix applied to
+    // useLeadsTimeseries / useLeadsByDimension / useLeadsHeatmap below.
+    let resolveSecond!: (v: unknown) => void;
+    mockApiGet
+      .mockResolvedValueOnce({ data: { total: 10 } })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+
+    const { result, rerender } = renderHook(
+      ({ filters }) => useLeadsSummary(filters),
+      { wrapper: makeWrapper(), initialProps: { filters: EMPTY_FILTERS } },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect((result.current.data as any)?.total).toBe(10);
+
+    rerender({ filters: { ...EMPTY_FILTERS, needs_review: true } });
+
+    await waitFor(() => expect(result.current.isFetching).toBe(true));
+    // The new filter's fetch is in flight, its own cache entry is empty —
+    // this MUST still be the previous total, not undefined.
+    expect((result.current.data as any)?.total).toBe(10);
+
+    resolveSecond({ data: { total: 20 } });
+    await waitFor(() => expect((result.current.data as any)?.total).toBe(20));
+  });
 });
 
 describe("useLeadsTimeseries", () => {

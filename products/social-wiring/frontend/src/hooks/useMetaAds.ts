@@ -256,6 +256,10 @@ export function useAdsCampaigns(status?: string, objective?: string) {
       api.get<AdsCampaignsList>(
         `/api/meta/ads/campaigns${qs({ status, objective })}`,
       ),
+    // `status`/`objective` filter toggles drive the queryKey — keep the
+    // previous campaign list on screen instead of blanking the table
+    // while the filtered one loads.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -272,6 +276,10 @@ export function useAdsChildren(
         )}`,
       ),
     enabled: !!objectId,
+    // `level` (adset/ad) toggles the drill-down — keep the previous
+    // children list on screen instead of blanking it while the new
+    // level loads.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -295,6 +303,10 @@ export function useAdsInsightsSeries(
         })}`,
       ),
     enabled: !!objectId && !!since && !!until,
+    // `level`/`since`/`until`/`breakdown` all drive the queryKey — keep
+    // the previous series on screen instead of blanking the chart while
+    // the new period/level loads.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -319,6 +331,10 @@ export function useAdsAccountInsights(since: string, until: string) {
         `/api/meta/ads/insights/account${qs({ since, until })}`,
       ),
     enabled: !!since && !!until,
+    // `since`/`until` drive the queryKey — every period change swaps to a
+    // fresh key with no cached data. Keep the previous aggregate on
+    // screen instead of blanking it for one round trip.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -340,6 +356,10 @@ export function useAdsInsightsCompare(
         })}`,
       ),
     enabled: !!objectId && !!since && !!until,
+    // `level`/`since`/`until` drive the queryKey — keep the previous
+    // comparison on screen instead of blanking it while the new
+    // period/level loads.
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -361,6 +381,10 @@ export function useAdsActivities(
         })}`,
       ),
     enabled: !!since && !!until,
+    // `since`/`until` (and `objectId` scoping) drive the queryKey — keep
+    // the previous activity feed on screen instead of blanking it while
+    // the new period loads.
+    placeholderData: (prev) => prev,
   });
 }
 

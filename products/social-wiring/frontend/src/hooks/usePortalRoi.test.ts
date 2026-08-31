@@ -66,6 +66,7 @@ vi.mock("@tanstack/react-query", () => {
 });
 
 import { ApiError } from "@noctusai/lib";
+import { useQuery as mockedUseQuery } from "@tanstack/react-query";
 import {
   findConflictingCampanha,
   formatCount,
@@ -123,6 +124,17 @@ describe("usePortalRoiResumo", () => {
       portais: [],
     });
   });
+
+  it("🔴 sets placeholderData so a period change doesn't blank the summary (Cat B regression)", async () => {
+    // `filtros.periodo_*` drives the queryKey. Without `placeholderData:
+    // (prev) => prev`, changing the period would swap to a fresh key with
+    // no cached data and `data` would go `undefined` for one round trip.
+    usePortalRoiResumo();
+    const call = (mockedUseQuery as any).mock.calls.at(-1)[0];
+    expect(typeof call.placeholderData).toBe("function");
+    const prev = { periodo: null, totais: {}, portais: [] };
+    expect(call.placeholderData(prev)).toBe(prev);
+  });
 });
 
 describe("usePortalRoiCampanhas", () => {
@@ -159,6 +171,14 @@ describe("usePortalRoiCampanhas", () => {
     mockGet.mockResolvedValue(null);
     const hook = usePortalRoiCampanhas({}) as any;
     expect(await hook._queryFn()).toEqual([]);
+  });
+
+  it("🔴 sets placeholderData so a filtros change doesn't blank the table (Cat B regression)", async () => {
+    usePortalRoiCampanhas({ origem_id: "o1" });
+    const call = (mockedUseQuery as any).mock.calls.at(-1)[0];
+    expect(typeof call.placeholderData).toBe("function");
+    const prev: CampanhaRow[] = [];
+    expect(call.placeholderData(prev)).toBe(prev);
   });
 });
 
