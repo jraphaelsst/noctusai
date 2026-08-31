@@ -29,6 +29,15 @@ const DEFAULT_RECORDING_PURPOSE =
 
 export const CONSENT_POLICY_VERSION = 'v1';
 
+// `appointmentId` can change while a consuming session/history view stays
+// mounted (switching between appointments). `placeholderData` is NOT used
+// here on purpose: this is the LGPD consent audit trail for a specific
+// appointment (recording/transcription/AI-summary consent state).
+// Keeping the previous appointment's consent grants on screen while the
+// next appointment's load would show one appointment's consent status
+// attributed to another — a compliance-relevant exposure bug, not a UX
+// nicety. Appointment switches show a loading state instead.
+// Per `KB § PATTERNS/frontend/lying-loading-state.md` § Key-changing queries.
 export function useConsents(appointmentId?: string) {
   const { user } = useAuthStore();
   return useQuery<ConsentRecord[]>({

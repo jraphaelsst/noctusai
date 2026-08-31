@@ -9,6 +9,15 @@ const KEYS = {
   patientVersions: ['longitudinal', 'personal', 'versions'] as const,
 };
 
+// `patientId` comes from the route (PatientProfile.tsx) and can change
+// via in-app navigation between patient profiles without a full remount.
+// `placeholderData` is NOT used here on purpose: this is a clinical
+// longitudinal analysis (therapist-facing psych summary) of a specific
+// patient. Keeping the previous patient's analysis on screen while the
+// next patient's loads would show one patient's clinical summary
+// attributed to another — a cross-patient exposure bug, not a UX nicety.
+// Patient switches show a skeleton instead.
+// Per `KB § PATTERNS/frontend/lying-loading-state.md` § Key-changing queries.
 export function useClinicalLongitudinal(patientId?: string) {
   const { user } = useAuthStore();
   return useQuery<ClinicalLongitudinal>({

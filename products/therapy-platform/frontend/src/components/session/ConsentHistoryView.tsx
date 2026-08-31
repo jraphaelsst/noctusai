@@ -59,11 +59,11 @@ function formatDate(iso: string): string {
 }
 
 export function ConsentHistoryView({ appointmentId, canRevoke = true }: ConsentHistoryViewProps) {
-  const { data: records, isLoading } = useConsents(appointmentId);
+  const { data: records, isPending } = useConsents(appointmentId);
   const revoke = useRevokeConsent();
   const [pendingRevoke, setPendingRevoke] = useState<ConsentRecord | null>(null);
 
-  if (isLoading) {
+  if (isPending && !records) {
     return (
       <div className="flex items-center justify-center p-6">
         <Loader2 className="h-5 w-5 animate-spin text-gray-400" />

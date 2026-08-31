@@ -12,7 +12,7 @@ import { useSessionDetail, usePatientNotes, useCreatePatientNote, useUpdatePatie
 export default function PatientSessionDetail() {
   const { id } = useParams<{ id: string }>();
 
-  const { data: session, isLoading } = useSessionDetail(id);
+  const { data: session, isPending } = useSessionDetail(id);
   const { data: notes } = usePatientNotes(id);
   const createNote = useCreatePatientNote();
   const updateNote = useUpdatePatientNote();
@@ -53,7 +53,7 @@ export default function PatientSessionDetail() {
     }
   }
 
-  if (isLoading) {
+  if (isPending && !session) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-gray-400" />

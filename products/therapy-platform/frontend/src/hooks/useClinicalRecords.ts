@@ -3,6 +3,15 @@ import { api, useAuthStore } from '@noctusai/seed/infra';
 import { toast } from 'sonner';
 import type { Anamnese, TreatmentPlan, EvolutionNote } from '@/types';
 
+// `patientId` is a therapist-typed identifier (ClinicalRecords.tsx §
+// "ID do Paciente" input) — the queryKey below changes while these hooks'
+// consuming tabs stay mounted. `placeholderData` is NOT used on purpose:
+// these are clinical psychotherapy records (anamnese / treatment plans /
+// evolution notes). Keeping the previous patient's clinical text on screen
+// while the next patient's record loads would show one patient's psych
+// notes momentarily attributed to another — a cross-patient data-exposure
+// bug, not a UX nicety. Patient switches show a skeleton instead.
+// Per `KB § PATTERNS/frontend/lying-loading-state.md` § Key-changing queries.
 const KEYS = {
   anamnese: (patientId: string) => ['anamnese', patientId] as const,
   treatmentPlans: (patientId: string) => ['treatment-plans', patientId] as const,

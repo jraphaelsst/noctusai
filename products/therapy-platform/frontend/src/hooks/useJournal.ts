@@ -33,6 +33,14 @@ export function useSessionJournal(page = 1, pageSize = 10) {
   });
 }
 
+// `sessionRecordId` comes from the route (patient/therapist SessionDetail
+// pages) and can change via in-app navigation between session records
+// without a full remount. `placeholderData` is NOT used here on purpose:
+// this is clinical session content (base + clinical summary). Keeping the
+// previous session's summary on screen while the next session's loads
+// would show one session's clinical text attributed to another. Session
+// switches show a loading state instead.
+// Per `KB § PATTERNS/frontend/lying-loading-state.md` § Key-changing queries.
 export function useSessionDetail(sessionRecordId?: string) {
   const { user } = useAuthStore();
   return useQuery<SessionRecord & { latest_clinical?: SessionSummaryVersion; latest_base?: SessionSummaryVersion }>({

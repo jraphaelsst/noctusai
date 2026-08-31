@@ -42,7 +42,7 @@ export default function TherapistSessionDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const { data: session, isLoading } = useSessionDetail(id);
+  const { data: session, isPending } = useSessionDetail(id);
   const { data: versions } = useSessionVersions(id);
   const { data: audioSegments } = useSessionAudio(id);
   const { data: observations } = useObservations(id);
@@ -121,7 +121,7 @@ export default function TherapistSessionDetail() {
     deleteObservation.mutate({ id: obsId, session_record_id: id });
   }
 
-  if (isLoading) {
+  if (isPending && !session) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-gray-400" />

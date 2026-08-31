@@ -81,7 +81,7 @@ export default function ClinicalRecords() {
 // ── Anamnese Tab ──────────────────────────────────────────────
 
 function AnamneseTab({ patientId }: { patientId: string }) {
-  const { data: anamnese, isLoading } = useAnamnese(patientId);
+  const { data: anamnese, isPending } = useAnamnese(patientId);
   const createAnamnese = useCreateAnamnese();
   const updateAnamnese = useUpdateAnamnese();
   const [editing, setEditing] = useState(false);
@@ -122,7 +122,7 @@ function AnamneseTab({ patientId }: { patientId: string }) {
     }
   }
 
-  if (isLoading) {
+  if (isPending && !anamnese) {
     return <div className="flex h-32 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
 
@@ -219,7 +219,7 @@ function AnamneseTab({ patientId }: { patientId: string }) {
 // ── Treatment Plan Tab ──────────────────────────────────────────────
 
 function TreatmentPlanTab({ patientId }: { patientId: string }) {
-  const { data: plansData, isLoading } = useTreatmentPlans(patientId);
+  const { data: plansData, isPending } = useTreatmentPlans(patientId);
   const createPlan = useCreateTreatmentPlan();
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ titulo: '', descricao: '', data_inicio: '', data_revisao: '' });
@@ -235,7 +235,7 @@ function TreatmentPlanTab({ patientId }: { patientId: string }) {
     });
   }
 
-  if (isLoading) {
+  if (isPending && !plansData) {
     return <div className="flex h-32 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
 
@@ -323,7 +323,7 @@ function TreatmentPlanTab({ patientId }: { patientId: string }) {
 // ── Evolution Notes Tab ──────────────────────────────────────────────
 
 function EvolutionTab({ patientId }: { patientId: string }) {
-  const { data: notesData, isLoading } = useEvolutionNotes(patientId);
+  const { data: notesData, isPending } = useEvolutionNotes(patientId);
   const createNote = useCreateEvolutionNote();
   const [showCreate, setShowCreate] = useState(false);
   const [formato, setFormato] = useState<'soap' | 'livre'>('soap');
@@ -343,7 +343,7 @@ function EvolutionTab({ patientId }: { patientId: string }) {
     });
   }
 
-  if (isLoading) {
+  if (isPending && !notesData) {
     return <div className="flex h-32 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
 

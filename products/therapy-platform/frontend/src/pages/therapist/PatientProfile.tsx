@@ -17,15 +17,17 @@ export default function PatientProfile() {
   const navigate = useNavigate();
 
   // Journal sessions for this patient — filtered server-side ideally, but we fetch all for now
-  const { data: journalData, isLoading: loadingJournal } = useSessionJournal(1, 50);
-  const { data: longitudinal, isLoading: loadingLong } = useClinicalLongitudinal(patientId);
+  const { data: journalData, isPending: journalPending } = useSessionJournal(1, 50);
+  const { data: longitudinal, isPending: longPending } = useClinicalLongitudinal(patientId);
   const { data: longVersions } = useClinicalLongitudinalVersions(patientId);
 
   const sessions = journalData?.data ?? [];
 
-  const isLoading = loadingJournal || loadingLong;
+  // Nothing to render yet from either source — a background refetch on
+  // already-resolved data must NOT re-trigger this gate.
+  const showSkeleton = (journalPending && !journalData) || (longPending && !longitudinal);
 
-  if (isLoading) {
+  if (showSkeleton) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
