@@ -55,6 +55,8 @@ export default function Scheduling() {
       : null,
   );
   const slots = candidatesQuery.data?.data ?? [];
+  const showSlotsSkeleton = candidatesQuery.isPending && !candidatesQuery.data;
+  const isRefreshingSlots = candidatesQuery.isFetching && !!candidatesQuery.data;
 
   const gcalQuery = useGcalAuthorizeUrl(therapistId);
   const needsAuth = gcalQuery.data?.data?.needs_authorization;
@@ -135,24 +137,25 @@ export default function Scheduling() {
         </label>
       </div>
 
-      {/* Gate BOTH branches on isPending || isFetching, never isLoading.
-          TanStack Query v5: isLoading === isPending && isFetching, so it is
-          FALSE during a background refetch — e.g. when the window dates or
-          patient id change and this query refetches with data already in
-          cache. On isLoading alone the spinner disappears AND the
-          empty-state opens while real slots are still in flight, telling the
-          therapist "nenhum horário disponível" over a window that has some.
+      {/* Two-signal form: showSlotsSkeleton (nothing to render yet) gates the
+          skeleton; the empty state only fires once the query has resolved
+          (`!isPending`) regardless of a background refetch; isRefreshingSlots
+          is a non-destructive indicator only — it never unmounts the slot
+          list. `placeholderData` on useCandidateSlots keeps `data` populated
+          across window/date changes so this never flickers to the skeleton
+          branch on every keystroke.
           Per `KB § PATTERNS/frontend/lying-loading-state.md`; keeper
           `check_lying_loading_state`. */}
       <div data-testid="slot-list">
-        {(candidatesQuery.isPending || candidatesQuery.isFetching) && (
-          <p>Carregando horários…</p>
+        {showSlotsSkeleton && <p>Carregando horários…</p>}
+        {isRefreshingSlots && (
+          <p className="text-sm text-muted-foreground" aria-live="polite">
+            Atualizando…
+          </p>
         )}
-        {!candidatesQuery.isPending &&
-          !candidatesQuery.isFetching &&
-          slots.length === 0 && (
-            <p>Nenhum horário disponível na janela selecionada.</p>
-          )}
+        {!candidatesQuery.isPending && slots.length === 0 && (
+          <p>Nenhum horário disponível na janela selecionada.</p>
+        )}
         <ul className="grid gap-2 md:grid-cols-2">
           {slots.map((s, idx) => {
             const start = new Date(s.start_at);

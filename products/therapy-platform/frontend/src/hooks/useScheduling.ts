@@ -57,6 +57,11 @@ export function useCandidateSlots(params: CandidatesParams | null) {
     },
     enabled: !!user && !!params,
     staleTime: 30 * 1000,
+    // Window dates + patient/therapist filters change this queryKey; keep the
+    // previous window's slots on screen during the transition instead of
+    // flashing a skeleton. Not authorisation-scoped across the key change —
+    // same therapist_id, only the date window narrows/widens.
+    placeholderData: (prev) => prev,
   });
 }
 
