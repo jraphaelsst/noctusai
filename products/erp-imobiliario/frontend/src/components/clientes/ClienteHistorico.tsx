@@ -3,6 +3,7 @@ import { Card } from '@noctusai/seed/components/ui/card';
 import { Badge } from '@noctusai/seed/components/ui/badge';
 import { useAtividades } from '@/hooks/useAtividades';
 import { usePropostas } from '@/hooks/usePropostas';
+import { CardListSkeleton } from '@/components/ui/page-skeleton';
 import { TIPOS_ATIVIDADE } from '@/lib/etapasConfig';
 import { formatDate } from '@/lib/utils';
 import { formatCurrency } from '@/lib/utils';
@@ -47,8 +48,10 @@ interface ClienteHistoricoProps {
 }
 
 export function ClienteHistorico({ clienteId }: ClienteHistoricoProps) {
-  const { data: atividades } = useAtividades(clienteId);
-  const { data: propostasResult } = usePropostas({ cliente_id: clienteId });
+  const atividadesQuery = useAtividades(clienteId);
+  const propostasQuery = usePropostas({ cliente_id: clienteId });
+  const { data: atividades } = atividadesQuery;
+  const { data: propostasResult } = propostasQuery;
 
   const events = useMemo<TimelineEvent[]>(() => {
     const propostas = propostasResult?.data || [];
@@ -108,6 +111,19 @@ export function ClienteHistorico({ clienteId }: ClienteHistoricoProps) {
 
     return items;
   }, [atividades, propostasResult]);
+
+  // NOC-FIX(lying-loading-state): events.length === 0 was previously computed
+  // straight off possibly-undefined query data with no loading gate at all —
+  // "Nenhum evento registrado" rendered during the initial fetch, before
+  // either query had ever resolved. Gate the skeleton on isPending && !data
+  // for both sources; never on isLoading (KB § PATTERNS/frontend/lying-loading-state.md).
+  const showSkeleton =
+    (atividadesQuery.isPending && !atividadesQuery.data) ||
+    (propostasQuery.isPending && !propostasQuery.data);
+
+  if (showSkeleton) {
+    return <CardListSkeleton count={3} />;
+  }
 
   if (events.length === 0) {
     return (

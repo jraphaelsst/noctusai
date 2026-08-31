@@ -28,9 +28,10 @@ export default function PropostaDetalhes() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('resumo');
 
-  const { data: proposta, isLoading } = useProposta(id);
+  const propostaQuery = useProposta(id);
+  const { data: proposta } = propostaQuery;
 
-  if (isLoading) return <DetailPageSkeleton />;
+  if (propostaQuery.isPending && !propostaQuery.data) return <DetailPageSkeleton />;
 
   if (!proposta) {
     return (

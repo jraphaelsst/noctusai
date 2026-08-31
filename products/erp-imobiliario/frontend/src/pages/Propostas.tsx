@@ -111,9 +111,11 @@ export default function Propostas() {
   const [contraCondicoes, setContraCondicoes] = useState<string>('');
   const [contraObs, setContraObs] = useState<string>('');
 
-  const { data: propostasData, isLoading } = usePropostas({
+  const propostasQuery = usePropostas({
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
   });
+  const propostasData = propostasQuery.data;
+  const showPropostasSkeleton = propostasQuery.isPending && !propostasQuery.data;
   const propostas = propostasData?.data || [];
 
   const { data: stats } = usePropostaStats();
@@ -280,7 +282,7 @@ export default function Propostas() {
 
       {/* Proposals List */}
       <div className="space-y-4">
-        {isLoading ? (
+        {showPropostasSkeleton ? (
           <CardListSkeleton count={3} />
         ) : propostas.length === 0 ? (
           <EmptyState

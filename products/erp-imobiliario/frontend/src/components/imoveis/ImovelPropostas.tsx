@@ -10,10 +10,12 @@ interface ImovelPropostasProps {
 }
 
 export function ImovelPropostas({ imovelId }: ImovelPropostasProps) {
-  const { data: result, isLoading } = usePropostas({ imovel_id: imovelId });
+  const propostasQuery = usePropostas({ imovel_id: imovelId });
+  const { data: result } = propostasQuery;
   const propostas = result?.data || [];
+  const showSkeleton = propostasQuery.isPending && !propostasQuery.data;
 
-  if (isLoading) {
+  if (showSkeleton) {
     return (
       <Card className="p-8 text-center">
         <p className="text-muted-foreground">Carregando propostas...</p>
