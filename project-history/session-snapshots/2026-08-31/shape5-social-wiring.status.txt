@@ -1,0 +1,35 @@
+M  KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
+ M products/social-wiring/frontend/src/components/MarcaModal.tsx
+ M products/social-wiring/frontend/src/components/mailchimp/MailchimpGate.tsx
+ M products/social-wiring/frontend/src/components/n8n/N8nSettingsPanel.tsx
+ M products/social-wiring/frontend/src/components/n8n/WorkflowsPanel.tsx
+ M products/social-wiring/frontend/src/hooks/useMailchimpSegments.ts
+ M products/social-wiring/frontend/src/pages/Conexao.test.tsx
+ M products/social-wiring/frontend/src/pages/Conexao.tsx
+ M products/social-wiring/frontend/src/pages/Conexoes.test.tsx
+ M products/social-wiring/frontend/src/pages/Conexoes.tsx
+ M products/social-wiring/frontend/src/pages/EmailCampanhas.test.tsx
+ M products/social-wiring/frontend/src/pages/EmailListas.tsx
+ M products/social-wiring/frontend/src/pages/EmailMarketingConfig.test.tsx
+ M products/social-wiring/frontend/src/pages/EmailMarketingConfig.tsx
+ M products/social-wiring/frontend/src/pages/EmailMembros.test.tsx
+M  products/social-wiring/frontend/src/pages/Equipe.tsx
+ M products/social-wiring/frontend/src/pages/Marcas.test.tsx
+ M products/social-wiring/frontend/src/pages/Marcas.tsx
+ M products/social-wiring/frontend/src/pages/Monitor.tsx
+ M products/social-wiring/frontend/src/pages/Upload.tsx
+ M products/social-wiring/frontend/src/pages/WhatsAppChat.test.tsx
+ M products/social-wiring/frontend/src/pages/WhatsAppChat.tsx
+M  products/social-wiring/frontend/src/pages/meta/AdDetalheModal.tsx
+ M products/social-wiring/frontend/src/pages/meta/FbComentarios.test.tsx
+ M products/social-wiring/frontend/src/pages/meta/FbComentarios.tsx
+ M products/social-wiring/frontend/src/pages/meta/FbConteudo.test.tsx
+ M products/social-wiring/frontend/src/pages/meta/FbConteudo.tsx
+ M products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.test.tsx
+ M products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.tsx
+ M products/social-wiring/frontend/src/pages/meta/IgComentarios.test.tsx
+ M products/social-wiring/frontend/src/pages/meta/IgComentarios.tsx
+ M products/social-wiring/frontend/src/pages/meta/IgConteudo.test.tsx
+ M products/social-wiring/frontend/src/pages/meta/IgConteudo.tsx
+ M products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.test.tsx
+ M products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.tsx

@@ -1,0 +1,583 @@
+diff --git a/products/daily-life/frontend/src/components/DailyBriefBadge.tsx b/products/daily-life/frontend/src/components/DailyBriefBadge.tsx
+index cf934005..9663faf4 100644
+--- a/products/daily-life/frontend/src/components/DailyBriefBadge.tsx
++++ b/products/daily-life/frontend/src/components/DailyBriefBadge.tsx
+@@ -15,9 +15,9 @@ import { Sparkles } from "lucide-react";
+ 
+ export function DailyBriefBadge() {
+   const [open, setOpen] = useState(false);
+-  const { data, isLoading, isError } = useDailyBrief();
++  const { data, isError } = useDailyBrief();
+ 
+-  if (isLoading || isError || !data) return null;
++  if (isError || !data) return null;
+ 
+   return (
+     <div style={{ position: "relative", display: "inline-flex" }}>
+diff --git a/products/daily-life/frontend/src/pages/Agenda.tsx b/products/daily-life/frontend/src/pages/Agenda.tsx
+index 8fc37fb1..282feb41 100644
+--- a/products/daily-life/frontend/src/pages/Agenda.tsx
++++ b/products/daily-life/frontend/src/pages/Agenda.tsx
+@@ -96,7 +96,7 @@ export default function Agenda() {
+   // Hooks
+   // ---------------------------------------------------------------------------
+ 
+-  const { data: response, isLoading } = useAgenda(inicio, fim, page, pageSize);
++  const { data: response, isPending } = useAgenda(inicio, fim, page, pageSize);
+ 
+   const createMutation = useCreateEvento(() => closeModal());
+   const updateMutation = useUpdateEvento(() => closeModal());
+@@ -232,7 +232,7 @@ export default function Agenda() {
+       </div>
+ 
+       {/* Event List */}
+-      {isLoading ? (
++      {isPending && !response ? (
+         <div className="flex flex-col items-center justify-center py-20 gap-3">
+           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+           <p className="text-sm text-muted-foreground">Carregando eventos...</p>
+diff --git a/products/daily-life/frontend/src/pages/Metas.tsx b/products/daily-life/frontend/src/pages/Metas.tsx
+index 26ec82a7..dc410afe 100644
+--- a/products/daily-life/frontend/src/pages/Metas.tsx
++++ b/products/daily-life/frontend/src/pages/Metas.tsx
+@@ -91,7 +91,7 @@ export default function Metas() {
+   // Hooks
+   // ---------------------------------------------------------------------------
+ 
+-  const { data: metasRes, isLoading } = useMetas(page, {
++  const { data: metasRes, isPending } = useMetas(page, {
+     tipo: tipoFilter,
+     status: statusFilter,
+   });
+@@ -233,7 +233,7 @@ export default function Metas() {
+       </div>
+ 
+       {/* Goal Cards */}
+-      {isLoading ? (
++      {isPending && !metasRes ? (
+         <div className="flex flex-col items-center justify-center py-20 gap-3">
+           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+           <p className="text-sm text-muted-foreground">Carregando metas...</p>
+diff --git a/products/daily-life/frontend/src/pages/Notas.tsx b/products/daily-life/frontend/src/pages/Notas.tsx
+index 3f7f643c..7a6a0cf4 100644
+--- a/products/daily-life/frontend/src/pages/Notas.tsx
++++ b/products/daily-life/frontend/src/pages/Notas.tsx
+@@ -89,7 +89,7 @@ export default function Notas() {
+   // Hooks
+   // ---------------------------------------------------------------------------
+ 
+-  const { data: response, isLoading } = useNotas(busca, page, pageSize);
++  const { data: response, isPending } = useNotas(busca, page, pageSize);
+ 
+   const createMutation = useCreateNota(() => closeModal());
+   const updateMutation = useUpdateNota(() => closeModal());
+@@ -198,7 +198,7 @@ export default function Notas() {
+       </div>
+ 
+       {/* Notes Grid */}
+-      {isLoading ? (
++      {isPending && !response ? (
+         <div className="flex flex-col items-center justify-center py-20 gap-3">
+           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+           <p className="text-sm text-muted-foreground">Carregando notas...</p>
+diff --git a/products/daily-life/frontend/src/pages/Tarefas.tsx b/products/daily-life/frontend/src/pages/Tarefas.tsx
+index ce5fc1d5..6579b5e0 100644
+--- a/products/daily-life/frontend/src/pages/Tarefas.tsx
++++ b/products/daily-life/frontend/src/pages/Tarefas.tsx
+@@ -71,7 +71,7 @@ export default function Tarefas() {
+   // Hooks
+   // ---------------------------------------------------------------------------
+ 
+-  const { data: tarefasRes, isLoading } = useTarefas(page, {
++  const { data: tarefasRes, isPending } = useTarefas(page, {
+     status: statusFilter,
+     prioridade: prioridadeFilter,
+     categoria: categoriaFilter,
+@@ -210,7 +210,7 @@ export default function Tarefas() {
+       </div>
+ 
+       {/* Task List */}
+-      {isLoading ? (
++      {isPending && !tarefasRes ? (
+         <div className="flex flex-col items-center justify-center py-20 gap-3">
+           <Loader2 className="h-8 w-8 animate-spin text-primary" />
+           <p className="text-sm text-muted-foreground">Carregando tarefas...</p>
+diff --git a/products/personal-finance/frontend/src/hooks/useRelatorios.ts b/products/personal-finance/frontend/src/hooks/useRelatorios.ts
+index d67d53d0..6c1f02ea 100644
+--- a/products/personal-finance/frontend/src/hooks/useRelatorios.ts
++++ b/products/personal-finance/frontend/src/hooks/useRelatorios.ts
+@@ -46,6 +46,7 @@ export function useFluxoCaixa(dataInicio?: string, dataFim?: string) {
+       });
+       return result.data;
+     },
++    placeholderData: (prev) => prev,
+     enabled: !!user && !!dataInicio && !!dataFim,
+     staleTime: 5 * 60 * 1000,
+   });
+diff --git a/products/personal-finance/frontend/src/pages/Carteira.tsx b/products/personal-finance/frontend/src/pages/Carteira.tsx
+index a60570c0..89d8ccdd 100644
+--- a/products/personal-finance/frontend/src/pages/Carteira.tsx
++++ b/products/personal-finance/frontend/src/pages/Carteira.tsx
+@@ -77,7 +77,7 @@ const EMPTY_FORM = { nome: "", tipo: "geral", corretora: "" };
+ 
+ export default function CarteiraPag() {
+   const navigate = useNavigate();
+-  const { data: carteiras, isLoading } = useCarteiras();
++  const { data: carteiras, isPending } = useCarteiras();
+   const createMutation = useCreateCarteira();
+   const updateMutation = useUpdateCarteira();
+   const deleteMutation = useDeleteCarteira();
+@@ -113,7 +113,7 @@ export default function CarteiraPag() {
+     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !carteiras) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/CarteiraDetalhes.tsx b/products/personal-finance/frontend/src/pages/CarteiraDetalhes.tsx
+index 02f562b5..e92342aa 100644
+--- a/products/personal-finance/frontend/src/pages/CarteiraDetalhes.tsx
++++ b/products/personal-finance/frontend/src/pages/CarteiraDetalhes.tsx
+@@ -24,8 +24,8 @@ const EMPTY_FORM = { ticker: "", nome: "", tipo: "acao", quantidade: 0, preco_me
+ export default function CarteiraDetalhes() {
+   const { id } = useParams<{ id: string }>();
+   const navigate = useNavigate();
+-  const { data: carteira, isLoading: carteiraLoading } = useCarteira(id);
+-  const { data: ativos, isLoading: ativosLoading } = useAtivos(id);
++  const { data: carteira, isPending: carteiraPending } = useCarteira(id);
++  const { data: ativos, isPending: ativosPending } = useAtivos(id);
+   const { data: resumo } = useCarteiraResumo(id);
+ 
+   const createMutation = useCreateAtivo();
+@@ -41,7 +41,7 @@ export default function CarteiraDetalhes() {
+   const [form, setForm] = useState(EMPTY_FORM);
+   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+ 
+-  const isLoading = carteiraLoading || ativosLoading;
++  const showSkeleton = (carteiraPending && !carteira) || (ativosPending && !ativos);
+ 
+   const sortedAtivos = useMemo(() => {
+     const lista = [...(ativos || [])];
+@@ -114,7 +114,7 @@ export default function CarteiraDetalhes() {
+     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
+   };
+ 
+-  if (isLoading) {
++  if (showSkeleton) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/Categorias.tsx b/products/personal-finance/frontend/src/pages/Categorias.tsx
+index 7ad0e1ce..768cbb92 100644
+--- a/products/personal-finance/frontend/src/pages/Categorias.tsx
++++ b/products/personal-finance/frontend/src/pages/Categorias.tsx
+@@ -115,8 +115,8 @@ function CategoriaCard({
+ }
+ 
+ export default function Categorias() {
+-  const { data: categorias, isLoading: flatLoading } = useCategorias();
+-  const { data: arvore, isLoading: arvoreLoading } = useCategoriasArvore();
++  const { data: categorias, isPending: flatPending } = useCategorias();
++  const { data: arvore, isPending: arvorePending } = useCategoriasArvore();
+   const createMutation = useCreateCategoria();
+   const updateMutation = useUpdateCategoria();
+   const deleteMutation = useDeleteCategoria();
+@@ -127,7 +127,7 @@ export default function Categorias() {
+   const [form, setForm] = useState(EMPTY_FORM);
+   const [deleteTarget, setDeleteTarget] = useState<Categoria | null>(null);
+ 
+-  const isLoading = flatLoading || arvoreLoading;
++  const showSkeleton = (flatPending && !categorias) || (arvorePending && !arvore);
+ 
+   const openCreate = () => {
+     setForm(EMPTY_FORM);
+@@ -168,7 +168,7 @@ export default function Categorias() {
+     deleteMutation.mutate(deleteTarget.id, { onSuccess: () => setDeleteTarget(null) });
+   };
+ 
+-  if (isLoading) {
++  if (showSkeleton) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/ContaDetalhes.tsx b/products/personal-finance/frontend/src/pages/ContaDetalhes.tsx
+index 02702ef0..6929a4d4 100644
+--- a/products/personal-finance/frontend/src/pages/ContaDetalhes.tsx
++++ b/products/personal-finance/frontend/src/pages/ContaDetalhes.tsx
+@@ -29,13 +29,13 @@ const EMPTY_FORM = { nome: "", tipo: "corrente", instituicao: "", saldo: 0, moed
+ export default function ContaDetalhes() {
+   const { id } = useParams<{ id: string }>();
+   const navigate = useNavigate();
+-  const { data: conta, isLoading: contaLoading } = useConta(id);
++  const { data: conta, isPending: contaPending } = useConta(id);
+   const updateMutation = useUpdateConta();
+   const deleteMutation = useDeleteConta();
+ 
+   const [page, setPage] = useState(1);
+   const pageSize = 10;
+-  const { data: transacoesResult, isLoading: txLoading } = useTransacoes({ conta_id: id, page, page_size: pageSize });
++  const { data: transacoesResult, isPending: txPending } = useTransacoes({ conta_id: id, page, page_size: pageSize });
+ 
+   const [editOpen, setEditOpen] = useState(false);
+   const [form, setForm] = useState(EMPTY_FORM);
+@@ -64,7 +64,7 @@ export default function ContaDetalhes() {
+     deleteMutation.mutate(conta.id, { onSuccess: () => navigate("/contas") });
+   };
+ 
+-  if (contaLoading) {
++  if (contaPending && !conta) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+@@ -153,7 +153,7 @@ export default function ContaDetalhes() {
+       <div className="space-y-3">
+         <h2 className="text-lg font-semibold">Transacoes Recentes</h2>
+         <div className="rounded-lg border bg-card overflow-auto">
+-          {txLoading ? (
++          {txPending && !transacoesResult ? (
+             <div className="flex items-center justify-center py-12">
+               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+             </div>
+diff --git a/products/personal-finance/frontend/src/pages/Contas.tsx b/products/personal-finance/frontend/src/pages/Contas.tsx
+index 5bea158a..4f9d4416 100644
+--- a/products/personal-finance/frontend/src/pages/Contas.tsx
++++ b/products/personal-finance/frontend/src/pages/Contas.tsx
+@@ -74,7 +74,7 @@ const EMPTY_FORM = { nome: "", tipo: "corrente", instituicao: "", saldo: 0, moed
+ 
+ export default function Contas() {
+   const navigate = useNavigate();
+-  const { data: contas, isLoading } = useContas();
++  const { data: contas, isPending } = useContas();
+   const createMutation = useCreateConta();
+   const updateMutation = useUpdateConta();
+   const deleteMutation = useDeleteConta();
+@@ -118,7 +118,7 @@ export default function Contas() {
+     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !contas) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/Dashboard.tsx b/products/personal-finance/frontend/src/pages/Dashboard.tsx
+index 9a31f733..7ccf616c 100644
+--- a/products/personal-finance/frontend/src/pages/Dashboard.tsx
++++ b/products/personal-finance/frontend/src/pages/Dashboard.tsx
+@@ -105,8 +105,8 @@ function MetaResumo({ m }: { m: Meta }) {
+ }
+ 
+ export default function Dashboard() {
+-  const { data: kpis, isLoading: kpisLoading } = useDashboardKPIs();
+-  const { data: resumo, isLoading: resumoLoading } = useDashboardResumo();
++  const { data: kpis, isPending: kpisPending } = useDashboardKPIs();
++  const { data: resumo, isPending: resumoPending } = useDashboardResumo();
+ 
+   const currentMonth = getCurrentMonth();
+   const [ano, mes] = currentMonth.split("-");
+@@ -117,9 +117,9 @@ export default function Dashboard() {
+   const { data: patrimonioHist } = usePatrimonioHistorico(12);
+   const { data: transacoesCat } = useTransacoesPorCategoria(dataInicio, dataFim);
+ 
+-  const isLoading = kpisLoading || resumoLoading;
++  const showSkeleton = (kpisPending && !kpis) || (resumoPending && !resumo);
+ 
+-  if (isLoading) {
++  if (showSkeleton) {
+     return (
+       <div className="space-y-6">
+         <h1 className="text-2xl font-bold">Dashboard</h1>
+diff --git a/products/personal-finance/frontend/src/pages/MetaDetalhes.tsx b/products/personal-finance/frontend/src/pages/MetaDetalhes.tsx
+index f3d97d94..0f26ad1e 100644
+--- a/products/personal-finance/frontend/src/pages/MetaDetalhes.tsx
++++ b/products/personal-finance/frontend/src/pages/MetaDetalhes.tsx
+@@ -31,7 +31,7 @@ const EMPTY_CONTRIBUICAO = { valor: 0, descricao: "" };
+ export default function MetaDetalhes() {
+   const { id } = useParams<{ id: string }>();
+   const navigate = useNavigate();
+-  const { data: meta, isLoading } = useMeta(id);
++  const { data: meta, isPending } = useMeta(id);
+   const { data: progresso } = useMetaProgresso(id);
+   const updateMutation = useUpdateMeta();
+   const deleteMutation = useDeleteMeta();
+@@ -87,7 +87,7 @@ export default function MetaDetalhes() {
+     );
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !meta) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/Metas.tsx b/products/personal-finance/frontend/src/pages/Metas.tsx
+index e9ae39f6..5b04398f 100644
+--- a/products/personal-finance/frontend/src/pages/Metas.tsx
++++ b/products/personal-finance/frontend/src/pages/Metas.tsx
+@@ -114,7 +114,7 @@ const EMPTY_CONTRIBUICAO = { valor: 0, descricao: "" };
+ 
+ export default function Metas() {
+   const navigate = useNavigate();
+-  const { data: metas, isLoading } = useMetas();
++  const { data: metas, isPending } = useMetas();
+   const createMutation = useCreateMeta();
+   const updateMutation = useUpdateMeta();
+   const deleteMutation = useDeleteMeta();
+@@ -181,7 +181,7 @@ export default function Metas() {
+     );
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !metas) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/Operacoes.tsx b/products/personal-finance/frontend/src/pages/Operacoes.tsx
+index 4c3040ad..69a95b45 100644
+--- a/products/personal-finance/frontend/src/pages/Operacoes.tsx
++++ b/products/personal-finance/frontend/src/pages/Operacoes.tsx
+@@ -43,7 +43,7 @@ const EMPTY_FORM = {
+ 
+ export default function Operacoes() {
+   const [filtroCarteira, setFiltroCarteira] = useState<string>("");
+-  const { data: operacoes, isLoading } = useOperacoes(filtroCarteira ? { carteira_id: filtroCarteira } : undefined);
++  const { data: operacoes, isPending } = useOperacoes(filtroCarteira ? { carteira_id: filtroCarteira } : undefined);
+   const { data: carteiras } = useCarteiras();
+   const createMutation = useCreateOperacao();
+   const deleteMutation = useDeleteOperacao();
+@@ -91,7 +91,7 @@ export default function Operacoes() {
+     setForm(newForm);
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !operacoes) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/OrcamentoDetalhes.tsx b/products/personal-finance/frontend/src/pages/OrcamentoDetalhes.tsx
+index 682119c1..cb3e2688 100644
+--- a/products/personal-finance/frontend/src/pages/OrcamentoDetalhes.tsx
++++ b/products/personal-finance/frontend/src/pages/OrcamentoDetalhes.tsx
+@@ -20,7 +20,7 @@ const EMPTY_ITEM_FORM = { categoria_id: "", valor_planejado: 0 };
+ export default function OrcamentoDetalhes() {
+   const { id } = useParams<{ id: string }>();
+   const navigate = useNavigate();
+-  const { data: orcamento, isLoading } = useOrcamento(id);
++  const { data: orcamento, isPending } = useOrcamento(id);
+   const { data: categorias } = useCategorias();
+   const updateMutation = useUpdateOrcamento();
+   const deleteMutation = useDeleteOrcamento();
+@@ -86,7 +86,7 @@ export default function OrcamentoDetalhes() {
+     deleteItemMutation.mutate(deleteItemId, { onSuccess: () => setDeleteItemId(null) });
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !orcamento) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/Orcamentos.tsx b/products/personal-finance/frontend/src/pages/Orcamentos.tsx
+index 62d175bf..4ab4990f 100644
+--- a/products/personal-finance/frontend/src/pages/Orcamentos.tsx
++++ b/products/personal-finance/frontend/src/pages/Orcamentos.tsx
+@@ -105,7 +105,7 @@ const EMPTY_FORM = { nome: "", metodo: "zero_based", periodo: "mensal", ativo: t
+ 
+ export default function Orcamentos() {
+   const navigate = useNavigate();
+-  const { data: orcamentos, isLoading } = useOrcamentos();
++  const { data: orcamentos, isPending } = useOrcamentos();
+   const createMutation = useCreateOrcamento();
+   const updateMutation = useUpdateOrcamento();
+   const deleteMutation = useDeleteOrcamento();
+@@ -142,7 +142,7 @@ export default function Orcamentos() {
+     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !orcamentos) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/Patrimonio.tsx b/products/personal-finance/frontend/src/pages/Patrimonio.tsx
+index a2cdcf65..faa42a65 100644
+--- a/products/personal-finance/frontend/src/pages/Patrimonio.tsx
++++ b/products/personal-finance/frontend/src/pages/Patrimonio.tsx
+@@ -6,13 +6,13 @@ import type { PatrimonioSnapshot } from "@/types";
+ import { Landmark, Camera, TrendingUp, TrendingDown } from "lucide-react";
+ 
+ export default function Patrimonio() {
+-  const { data: atual, isLoading: atualLoading } = usePatrimonioAtual();
+-  const { data: historico, isLoading: histLoading } = usePatrimonioHistorico(24);
++  const { data: atual, isPending: atualPending } = usePatrimonioAtual();
++  const { data: historico, isPending: histPending } = usePatrimonioHistorico(24);
+   const criarSnapshot = useCriarSnapshot();
+ 
+-  const isLoading = atualLoading || histLoading;
++  const showSkeleton = (atualPending && !atual) || (histPending && !historico);
+ 
+-  if (isLoading) {
++  if (showSkeleton) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/Recorrentes.tsx b/products/personal-finance/frontend/src/pages/Recorrentes.tsx
+index 2f81b194..a773505b 100644
+--- a/products/personal-finance/frontend/src/pages/Recorrentes.tsx
++++ b/products/personal-finance/frontend/src/pages/Recorrentes.tsx
+@@ -111,7 +111,7 @@ const EMPTY_FORM = {
+ };
+ 
+ export default function Recorrentes() {
+-  const { data: recorrentes, isLoading } = useRecorrentes();
++  const { data: recorrentes, isPending } = useRecorrentes();
+   const { data: contas } = useContas();
+   const { data: categorias } = useCategorias();
+   const createMutation = useCreateRecorrente();
+@@ -173,7 +173,7 @@ export default function Recorrentes() {
+     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !recorrentes) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/Relatorios.tsx b/products/personal-finance/frontend/src/pages/Relatorios.tsx
+index e408c2b7..e94fc552 100644
+--- a/products/personal-finance/frontend/src/pages/Relatorios.tsx
++++ b/products/personal-finance/frontend/src/pages/Relatorios.tsx
+@@ -21,7 +21,7 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
+   // and the Mes selector updates instantly; without a signal the numbers
+   // would silently read as the newly-selected month's while still being
+   // the old one's.
+-  const { data: relatorio, isLoading, isFetching } = useRelatorioMensal(mes);
++  const { data: relatorio, isPending, isFetching } = useRelatorioMensal(mes);
+ 
+   const meses = useMemo(() => {
+     const result: string[] = [];
+@@ -33,7 +33,7 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
+     return result;
+   }, []);
+ 
+-  if (isLoading) {
++  if (isPending && !relatorio) {
+     return (
+       <div className="flex items-center justify-center py-20">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+@@ -130,7 +130,7 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
+         </div>
+       )}
+ 
+-      {!relatorio && !isLoading && (
++      {!relatorio && !isPending && (
+         <div className="text-center py-12 text-muted-foreground">
+           <FileBarChart className="w-12 h-12 mx-auto mb-3 opacity-50" />
+           <p className="text-lg font-medium">Nenhum dado para o periodo selecionado</p>
+@@ -144,14 +144,14 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
+ function AnualView({ ano, onAnoChange }: { ano: number; onAnoChange: (a: number) => void }) {
+   // Same isFetching-indicator rationale as MensalView above — the Ano
+   // selector updates instantly while the totals below carry no visible year.
+-  const { data: relatorio, isLoading, isFetching } = useRelatorioAnual(ano);
++  const { data: relatorio, isPending, isFetching } = useRelatorioAnual(ano);
+ 
+   const anos = useMemo(() => {
+     const now = new Date().getFullYear();
+     return Array.from({ length: 5 }, (_, i) => now - i);
+   }, []);
+ 
+-  if (isLoading) {
++  if (isPending && !relatorio) {
+     return (
+       <div className="flex items-center justify-center py-20">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+@@ -242,9 +242,9 @@ function FluxoCaixaView() {
+   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+   const [dataFim, setDataFim] = useState(`${mesAtual}-${String(lastDay).padStart(2, "0")}`);
+ 
+-  const { data: fluxo, isLoading } = useFluxoCaixa(dataInicio, dataFim);
++  const { data: fluxo, isPending, isFetching: fluxoFetching } = useFluxoCaixa(dataInicio, dataFim);
+ 
+-  if (isLoading) {
++  if (isPending && !fluxo) {
+     return (
+       <div className="flex items-center justify-center py-20">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+@@ -276,6 +276,11 @@ function FluxoCaixaView() {
+           <label className="text-sm font-medium text-muted-foreground">Ate:</label>
+           <input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+         </div>
++        {fluxoFetching && (
++          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
++            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Atualizando...
++          </span>
++        )}
+       </div>
+ 
+       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+diff --git a/products/personal-finance/frontend/src/pages/Transacoes.tsx b/products/personal-finance/frontend/src/pages/Transacoes.tsx
+index 8e7be08f..33fc56c3 100644
+--- a/products/personal-finance/frontend/src/pages/Transacoes.tsx
++++ b/products/personal-finance/frontend/src/pages/Transacoes.tsx
+@@ -32,7 +32,7 @@ export default function Transacoes() {
+   const [dataFim, setDataFim] = useState<string | undefined>();
+   const pageSize = 20;
+ 
+-  const { data: result, isLoading } = useTransacoes({
++  const { data: result, isPending } = useTransacoes({
+     page,
+     page_size: pageSize,
+     busca: busca || undefined,
+@@ -108,7 +108,7 @@ export default function Transacoes() {
+ 
+   const isSaving = createMutation.isPending || updateMutation.isPending;
+ 
+-  if (isLoading && page === 1) {
++  if (isPending && !result) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/Watchlist.tsx b/products/personal-finance/frontend/src/pages/Watchlist.tsx
+index ab8056fb..90ca2a9a 100644
+--- a/products/personal-finance/frontend/src/pages/Watchlist.tsx
++++ b/products/personal-finance/frontend/src/pages/Watchlist.tsx
+@@ -90,7 +90,7 @@ const EMPTY_ITEM_FORM = { ticker: "", nome: "", alerta_preco_acima: "", alerta_p
+ 
+ export default function Watchlist() {
+   const navigate = useNavigate();
+-  const { data: watchlists, isLoading } = useWatchlists();
++  const { data: watchlists, isPending } = useWatchlists();
+   const createWlMutation = useCreateWatchlist();
+   const deleteWlMutation = useDeleteWatchlist();
+   const addItemMutation = useAddWatchlistItem();
+@@ -125,7 +125,7 @@ export default function Watchlist() {
+     addItemMutation.mutate(payload, { onSuccess: () => { setAddItemWlId(null); setItemForm(EMPTY_ITEM_FORM); } });
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !watchlists) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
+diff --git a/products/personal-finance/frontend/src/pages/WatchlistDetalhes.tsx b/products/personal-finance/frontend/src/pages/WatchlistDetalhes.tsx
+index c71394e8..226ea219 100644
+--- a/products/personal-finance/frontend/src/pages/WatchlistDetalhes.tsx
++++ b/products/personal-finance/frontend/src/pages/WatchlistDetalhes.tsx
+@@ -13,7 +13,7 @@ const EMPTY_ITEM_FORM = { ticker: "", nome: "", alerta_preco_acima: "", alerta_p
+ export default function WatchlistDetalhes() {
+   const { id } = useParams<{ id: string }>();
+   const navigate = useNavigate();
+-  const { data: watchlist, isLoading } = useWatchlist(id);
++  const { data: watchlist, isPending } = useWatchlist(id);
+   const deleteWlMutation = useDeleteWatchlist();
+   const addItemMutation = useAddWatchlistItem();
+   const removeItemMutation = useRemoveWatchlistItem();
+@@ -40,7 +40,7 @@ export default function WatchlistDetalhes() {
+     addItemMutation.mutate(payload, { onSuccess: () => { setAddItemOpen(false); setItemForm(EMPTY_ITEM_FORM); } });
+   };
+ 
+-  if (isLoading) {
++  if (isPending && !watchlist) {
+     return (
+       <div className="flex items-center justify-center min-h-[60vh]">
+         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

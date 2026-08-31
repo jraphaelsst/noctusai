@@ -1,0 +1,1702 @@
+diff --git a/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md b/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
+index 6ed15799..b8aa6bed 100644
+--- a/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
++++ b/KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md
+@@ -38,7 +38,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
+ | Core | 29 | 14 | 29 | 0 | 51 | 559 |
+ | Erp Imobiliario | 63 | 57 | 68 | 78 | 133 | 1,868 |
+ | Personal Finance | 15 | 18 | 30 | 26 | 48 | 482 |
+-| Therapy Platform | 40 | 46 | 65 | 34 | 84 | 1,140 |
++| Therapy Platform | 40 | 46 | 65 | 35 | 84 | 1,140 |
+ | Seed | 2 | 1 | 8 | 1 | 6 | 19 |
+ | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
+ | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
+@@ -48,7 +48,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
+ | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
+ | Igig | 10 | 6 | 18 | 17 | 18 | 264 |
+ | P Studio | 8 | 10 | 12 | 1 | 20 | 329 |
+-| **Total** | **218** | **236** | **403** | **265** | **635** | **8,507** |
++| **Total** | **218** | **236** | **403** | **266** | **635** | **8,507** |
+ <!-- kb-counts:end:inventory -->
+ 
+ ## Database
+diff --git a/products/social-wiring/frontend/src/components/MarcaModal.tsx b/products/social-wiring/frontend/src/components/MarcaModal.tsx
+index 40898bf6..1ff6c345 100644
+--- a/products/social-wiring/frontend/src/components/MarcaModal.tsx
++++ b/products/social-wiring/frontend/src/components/MarcaModal.tsx
+@@ -388,7 +388,12 @@ function MailchimpProviderRow({
+   icon: LucideIcon;
+   label: string;
+ }) {
+-  const { data: connection, isLoading } = useMailchimpConnection(marcaId);
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would blank this connection indicator on every background
++  // refresh. Not keyed by `marcaId` (queryKey is a constant — see the
++  // hook), so no per-row key-change flicker either.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data: connection, isPending } = useMailchimpConnection(marcaId);
+   const [formOpen, setFormOpen] = useState(false);
+   const connected = !!connection?.connected;
+ 
+@@ -426,7 +431,7 @@ function MailchimpProviderRow({
+           </div>
+         </div>
+ 
+-        {isLoading ? (
++        {isPending ? (
+           <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+         ) : connected ? (
+           <div className="flex items-center gap-2">
+@@ -648,9 +653,12 @@ function ContasTab({ client }: { client: Marca }) {
+   }
+ 
+   // Integration accounts
++  // `isPending`, not `isLoading` — destructure-RENAME shape
++  // (`isLoading: loadingInt`), the same banned pattern the AST
++  // scanner doesn't track by alias name. → KB § PATTERNS/frontend/lying-loading-state.md
+   const {
+     data: intAccounts = [],
+-    isLoading: loadingInt,
++    isPending: loadingInt,
+     isError: errorInt,
+   } = useIntegrationAccounts({ marcaId: client.id });
+ 
+@@ -712,9 +720,12 @@ function ContasTab({ client }: { client: Marca }) {
+   }
+ 
+   // WhatsApp connections
++  // `isPending`, not `isLoading` — destructure-RENAME shape
++  // (`isLoading: loadingWa`), the same banned pattern the AST scanner
++  // doesn't track by alias name. → KB § PATTERNS/frontend/lying-loading-state.md
+   const {
+     data: waConnections = [],
+-    isLoading: loadingWa,
++    isPending: loadingWa,
+     isError: errorWa,
+   } = useClientWhatsAppConnections(client.id);
+ 
+@@ -1051,9 +1062,12 @@ function ContasTab({ client }: { client: Marca }) {
+ // ─── Tab: Chat ────────────────────────────────────────────────────────────────
+ 
+ function ChatTab({ client }: { client: Marca }) {
++  // `isPending`, not `isLoading` — same rule; also `client.id`-keyed,
++  // so switching to a different marca's chat tab correctly resets to
++  // skeleton (no `placeholderData` — cross-entity hazard).
+   const {
+     data: waConnections = [],
+-    isLoading,
++    isPending,
+     isError,
+   } = useClientWhatsAppConnections(client.id);
+ 
+@@ -1068,7 +1082,7 @@ function ChatTab({ client }: { client: Marca }) {
+ 
+   const selectedLine = waConnections.find((l) => l.id === selectedId);
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
+         <Loader2 className="h-6 w-6 animate-spin" />
+diff --git a/products/social-wiring/frontend/src/components/mailchimp/MailchimpGate.tsx b/products/social-wiring/frontend/src/components/mailchimp/MailchimpGate.tsx
+index 371daf50..510bc1b2 100644
+--- a/products/social-wiring/frontend/src/components/mailchimp/MailchimpGate.tsx
++++ b/products/social-wiring/frontend/src/components/mailchimp/MailchimpGate.tsx
+@@ -19,9 +19,14 @@ interface MailchimpGateProps {
+ }
+ 
+ export function MailchimpGate({ children }: MailchimpGateProps) {
+-  const { data, isLoading } = useMailchimpConnection();
++  // `isPending` (not `isLoading`) — TanStack v5's `isLoading` is
++  // `isPending && isFetching` and goes FALSE mid-refetch, which would let
++  // the `!data?.connected` branch below win and unmount `children` on
++  // every background refetch. Bare `isPending` is correct here: it stays
++  // true only until data first resolves. → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data, isPending } = useMailchimpConnection();
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="space-y-4 p-6" data-testid="mailchimp-gate-loading">
+         <Skeleton className="h-8 w-48" />
+diff --git a/products/social-wiring/frontend/src/components/n8n/N8nSettingsPanel.tsx b/products/social-wiring/frontend/src/components/n8n/N8nSettingsPanel.tsx
+index f1eb7b47..c198e941 100644
+--- a/products/social-wiring/frontend/src/components/n8n/N8nSettingsPanel.tsx
++++ b/products/social-wiring/frontend/src/components/n8n/N8nSettingsPanel.tsx
+@@ -83,7 +83,11 @@ export function N8nSettingsPanel() {
+     );
+   }
+ 
+-  if (settingsQuery.isLoading) {
++  // `isPending` — bare, not `isLoading`: `isLoading` is `isPending &&
++  // isFetching` in v5 and goes FALSE mid-refetch, which would let a
++  // later branch win and unmount this form on every background
++  // refetch. → KB § PATTERNS/frontend/lying-loading-state.md
++  if (settingsQuery.isPending) {
+     return (
+       <div className="max-w-xl space-y-4">
+         <Skeleton className="h-10 w-full" />
+@@ -167,7 +171,7 @@ export function N8nSettingsPanel() {
+ 
+         <div className="space-y-2">
+           <Label htmlFor="n8n-tag">Tag da marca</Label>
+-          {tagsQuery.isLoading ? (
++          {tagsQuery.isPending ? (
+             <Skeleton className="h-10 w-full" />
+           ) : (
+             <Select value={tagSelection} onValueChange={setTagSelection}>
+diff --git a/products/social-wiring/frontend/src/components/n8n/WorkflowsPanel.tsx b/products/social-wiring/frontend/src/components/n8n/WorkflowsPanel.tsx
+index ac40ebc5..5f8a10d5 100644
+--- a/products/social-wiring/frontend/src/components/n8n/WorkflowsPanel.tsx
++++ b/products/social-wiring/frontend/src/components/n8n/WorkflowsPanel.tsx
+@@ -444,7 +444,10 @@ export function WorkflowsPanel() {
+     );
+   }
+ 
+-  if (clientQuery.isLoading) {
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this list on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  if (clientQuery.isPending) {
+     return (
+       <div className="space-y-2">
+         {[1, 2, 3].map((i) => (
+diff --git a/products/social-wiring/frontend/src/hooks/useMailchimpSegments.ts b/products/social-wiring/frontend/src/hooks/useMailchimpSegments.ts
+index c026516f..c387b754 100644
+--- a/products/social-wiring/frontend/src/hooks/useMailchimpSegments.ts
++++ b/products/social-wiring/frontend/src/hooks/useMailchimpSegments.ts
+@@ -7,6 +7,7 @@
+  * Built on @tanstack/react-query v5. queryFns never return undefined.
+  */
+ import {
++  keepPreviousData,
+   useMutation,
+   useQuery,
+   useQueryClient,
+@@ -68,6 +69,11 @@ export function useMailchimpSegments(params?: ListSegmentsParams) {
+   return useQuery<SegmentsOut>({
+     queryKey: [...SEGMENTS_KEY, params],
+     queryFn: () => api.get<SegmentsOut>(qs ? `${BASE}?${qs}` : BASE),
++    // The key varies only by `offset`/`count` — paging through the SAME
++    // list, never a different entity — so keeping the previous page
++    // visible while the next one loads is safe (standard pagination UX,
++    // no cross-entity mismatch hazard).
++    placeholderData: keepPreviousData,
+   });
+ }
+ 
+@@ -89,6 +95,14 @@ export function useMailchimpSegmentMembers(
+           : `${BASE}/${segmentId}/members`,
+       ),
+     enabled: segmentId != null,
++    // NO placeholderData — `segmentId` is part of the key. Reusing a
++    // different segment's member page while its drawer re-opens for a
++    // NEW segment would render segment A's members under segment B's
++    // header, the exact cross-entity hazard this product has shipped
++    // before (leads-under-wrong-broker). Offset-only re-pagination
++    // within the SAME segment re-fetches from a cold cache anyway
++    // (each offset is its own query key) so there is no smooth-paging
++    // upside here to trade against that risk.
+   });
+ }
+ 
+diff --git a/products/social-wiring/frontend/src/pages/Conexao.test.tsx b/products/social-wiring/frontend/src/pages/Conexao.test.tsx
+index 764b3b1e..76616774 100644
+--- a/products/social-wiring/frontend/src/pages/Conexao.test.tsx
++++ b/products/social-wiring/frontend/src/pages/Conexao.test.tsx
+@@ -138,7 +138,7 @@ const makeDefaultActions = () => ({
+ });
+ 
+ beforeEach(() => {
+-  mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: false });
++  mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: false });
+   mockUseWhatsAppConnectionMutations.mockReturnValue(makeDefaultMutations());
+   mockUseWhatsAppConnectionStatus.mockReturnValue({ data: null });
+   mockUseWhatsAppConnectionQr.mockReturnValue({ data: null });
+@@ -165,7 +165,7 @@ async function renderWhatsAppConnections() {
+ 
+ describe("WhatsAppConnections — empty + loading states", () => {
+   it("shows loading spinner while connections are loading", async () => {
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: true });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: true });
+     const { getByTestId } = await renderWhatsAppConnections();
+     expect(getByTestId("loading-connections")).toBeTruthy();
+   });
+@@ -346,7 +346,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
+       session_name: "sw_atendimento_sp",
+       webhook_url: "https://social.noctusai.com/api/whatsapp/webhook/tok123",
+     });
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
+     mockUseWhatsAppConnectionStatus.mockReturnValue({
+       data: { connection_id: line.id, status: "STOPPED", paired: false, me_id: null, me_name: null, session: line.session_name, error: null },
+     });
+@@ -365,7 +365,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
+ 
+   it("detail dialog does NOT contain editable session / server / webhook inputs", async () => {
+     const line = makeLine();
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
+ 
+     const { getByText, fireEvent, queryByPlaceholderText } = await renderWhatsAppConnections();
+     fireEvent.click(getByText("Atendimento SP").closest("button")!);
+@@ -377,7 +377,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
+ 
+   it("shows paired success banner when status.paired=true", async () => {
+     const line = makeLine();
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
+     mockUseWhatsAppConnectionStatus.mockReturnValue({
+       data: {
+         connection_id: line.id,
+@@ -402,7 +402,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
+       .mockResolvedValue({ connection_id: "conn-1", api_key: "revealed-key" });
+     mockUseRevealApiKey.mockReturnValue({ mutateAsync: revealMutate, isPending: false });
+     const line = makeLine();
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
+ 
+     const rtl = await import("@testing-library/react");
+     const { getByText, getByTestId, queryByTestId } = await renderWhatsAppConnections();
+@@ -437,7 +437,7 @@ describe("ConnectionDetailDialog — QR restart behavior", () => {
+     });
+ 
+     const line = makeLine();
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
+     mockUseWhatsAppConnectionStatus.mockReturnValue({
+       data: {
+         connection_id: line.id,
+@@ -473,7 +473,7 @@ describe("ConnectionDetailDialog — QR restart behavior", () => {
+     });
+ 
+     const line = makeLine();
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
+     // Status starts as FAILED (unpaired)
+     mockUseWhatsAppConnectionStatus.mockReturnValue({
+       data: {
+diff --git a/products/social-wiring/frontend/src/pages/Conexao.tsx b/products/social-wiring/frontend/src/pages/Conexao.tsx
+index 2b38b93e..baeaf242 100644
+--- a/products/social-wiring/frontend/src/pages/Conexao.tsx
++++ b/products/social-wiring/frontend/src/pages/Conexao.tsx
+@@ -200,7 +200,10 @@ function ConnectionRow({
+  * heading.
+  */
+ export function WhatsAppConnections() {
+-  const { data: lines, isLoading } = useWhatsAppConnections();
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this list on every background refresh (this page
++  // polls connection status). → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data: lines, isPending } = useWhatsAppConnections();
+   const { create, remove } = useWhatsAppConnectionMutations();
+   const [creating, setCreating] = useState(false);
+   // selected = a connection to view/manage (normal select)
+@@ -251,7 +254,7 @@ export function WhatsAppConnections() {
+       </div>
+ 
+       {/* ── Loading ── */}
+-      {isLoading ? (
++      {isPending ? (
+         <div className="flex items-center justify-center py-16" data-testid="loading-connections">
+           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+         </div>
+diff --git a/products/social-wiring/frontend/src/pages/Conexoes.test.tsx b/products/social-wiring/frontend/src/pages/Conexoes.test.tsx
+index d36729f6..48176745 100644
+--- a/products/social-wiring/frontend/src/pages/Conexoes.test.tsx
++++ b/products/social-wiring/frontend/src/pages/Conexoes.test.tsx
+@@ -239,7 +239,7 @@ describe("Conexoes — IntegrationCard rendering", () => {
+       makeAccount({ id: "acc-2", account_label: "Canal 2" }),
+     ];
+     setAccounts({
+-      data: accounts, isLoading: false, isError: false,
++      data: accounts, isLoading: false, isPending: false, isError: false,
+     });
+ 
+     const { getAllByTestId } = await renderConexoes();
+@@ -261,7 +261,7 @@ describe("Conexoes — IntegrationCard rendering", () => {
+ describe("Conexoes — empty state", () => {
+   it("shows empty state when no YouTube accounts", async () => {
+     setAccounts({
+-      data: [], isLoading: false, isError: false,
++      data: [], isLoading: false, isPending: false, isError: false,
+     });
+     const { getByText } = await renderConexoes();
+     expect(getByText(/Nenhuma conta YouTube conectada/i)).toBeTruthy();
+@@ -269,7 +269,7 @@ describe("Conexoes — empty state", () => {
+ 
+   it("shows loading spinner while accounts loading", async () => {
+     setAccounts({
+-      data: [], isLoading: true, isError: false,
++      data: [], isLoading: true, isPending: true, isError: false,
+     });
+     const { getByText } = await renderConexoes();
+     expect(getByText(/Carregando contas YouTube/i)).toBeTruthy();
+@@ -277,7 +277,7 @@ describe("Conexoes — empty state", () => {
+ 
+   it("shows error state when accounts fail to load", async () => {
+     setAccounts({
+-      data: [], isLoading: false, isError: true,
++      data: [], isLoading: false, isPending: false, isError: true,
+     });
+     const { getByText } = await renderConexoes();
+     expect(getByText(/Erro ao carregar contas/i)).toBeTruthy();
+@@ -291,7 +291,7 @@ describe("Conexoes — client grouping", () => {
+       makeAccount({ id: "acc-2", marca_id: null, account_label: "Canal Livre" }),
+     ];
+     setAccounts({
+-      data: accounts, isLoading: false, isError: false,
++      data: accounts, isLoading: false, isPending: false, isError: false,
+     });
+     mockClients.mockReturnValue({
+       data: [clientA], isLoading: false, isError: false,
+@@ -311,7 +311,7 @@ describe("Conexoes — client grouping", () => {
+       makeAccount({ id: "acc-2", marca_id: null, account_label: "Canal Livre" }),
+     ];
+     setAccounts({
+-      data: accounts, isLoading: false, isError: false,
++      data: accounts, isLoading: false, isPending: false, isError: false,
+     });
+     mockClients.mockReturnValue({
+       data: [clientA], isLoading: false, isError: false,
+diff --git a/products/social-wiring/frontend/src/pages/Conexoes.tsx b/products/social-wiring/frontend/src/pages/Conexoes.tsx
+index 4c11b055..fc74511f 100644
+--- a/products/social-wiring/frontend/src/pages/Conexoes.tsx
++++ b/products/social-wiring/frontend/src/pages/Conexoes.tsx
+@@ -158,9 +158,12 @@ function WhatsAppConnectionCard({
+ 
+ // ─── WhatsApp card section ─────────────────────────────────────────────────────
+ function WhatsAppCardSection() {
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this list on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
+   const {
+     data: connections,
+-    isLoading,
++    isPending,
+     isError,
+   } = useWhatsAppConnections();
+   const { remove } = useWhatsAppConnectionMutations();
+@@ -181,7 +184,7 @@ function WhatsAppCardSection() {
+     });
+   };
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="flex h-24 items-center justify-center gap-2 text-sm text-muted-foreground" data-testid="wa-loading">
+         <Loader2 className="h-4 w-4 animate-spin" />
+@@ -339,7 +342,10 @@ function YouTubeCardSection({
+ }: {
+   marcas: Marca[];
+ }) {
+-  const { data: accounts = [], isLoading, isError } =
++  // `isPending`, not `isLoading` — per KB § PATTERNS/frontend/lying-loading-state.md
++  // the rule is absolute (no `.isLoading` in a render branch), even though
++  // this file's `&&`-gated shape isn't yet one of the AST-tracked kinds.
++  const { data: accounts = [], isPending, isError } =
+     useIntegrationAccounts("youtube");
+ 
+   const adopt = useAdoptLegacy("youtube");
+@@ -492,7 +498,7 @@ function YouTubeCardSection({
+       </div>
+ 
+       {/* Loading */}
+-      {isLoading && (
++      {isPending && (
+         <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+           <Loader2 className="h-4 w-4 animate-spin" />
+           Carregando contas YouTube...
+@@ -507,7 +513,7 @@ function YouTubeCardSection({
+       )}
+ 
+       {/* Empty */}
+-      {!isLoading && !isError && accounts.length === 0 && (
++      {!isPending && !isError && accounts.length === 0 && (
+         <div className="rounded-md border border-dashed bg-muted/20 py-8 text-center">
+           <Plus className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
+           <p className="text-sm text-muted-foreground">
+@@ -519,7 +525,7 @@ function YouTubeCardSection({
+       )}
+ 
+       {/* Client groups */}
+-      {!isLoading && !isError && accounts.length > 0 && (
++      {!isPending && !isError && accounts.length > 0 && (
+         <div className="space-y-6">
+           {groups.map(({ client, accounts: groupAccounts }) => (
+             <ClientSection
+diff --git a/products/social-wiring/frontend/src/pages/EmailCampanhas.test.tsx b/products/social-wiring/frontend/src/pages/EmailCampanhas.test.tsx
+index 179ad59e..82babc2f 100644
+--- a/products/social-wiring/frontend/src/pages/EmailCampanhas.test.tsx
++++ b/products/social-wiring/frontend/src/pages/EmailCampanhas.test.tsx
+@@ -180,7 +180,7 @@ const defaultMutations = () => ({
+ });
+ 
+ beforeEach(() => {
+-  mockUseMailchimpConnection.mockReturnValue({ data: { connected: true }, isLoading: false });
++  mockUseMailchimpConnection.mockReturnValue({ data: { connected: true }, isPending: false });
+   mockUseMailchimpCampaigns.mockReturnValue({
+     data: { items: [], total: 0 },
+     isLoading: false,
+@@ -205,13 +205,13 @@ async function renderCampanhas() {
+ 
+ describe("EmailCampanhas — gate", () => {
+   it("shows NotConnected when disconnected", async () => {
+-    mockUseMailchimpConnection.mockReturnValue({ data: { connected: false }, isLoading: false });
++    mockUseMailchimpConnection.mockReturnValue({ data: { connected: false }, isPending: false });
+     const { getByTestId } = await renderCampanhas();
+     expect(getByTestId("mailchimp-not-connected")).toBeTruthy();
+   });
+ 
+   it("shows loading skeleton while gate probe is in flight", async () => {
+-    mockUseMailchimpConnection.mockReturnValue({ data: undefined, isLoading: true });
++    mockUseMailchimpConnection.mockReturnValue({ data: undefined, isPending: true });
+     const { getByTestId } = await renderCampanhas();
+     expect(getByTestId("mailchimp-gate-loading")).toBeTruthy();
+   });
+diff --git a/products/social-wiring/frontend/src/pages/EmailListas.tsx b/products/social-wiring/frontend/src/pages/EmailListas.tsx
+index 69e0d2cb..7a93c4c9 100644
+--- a/products/social-wiring/frontend/src/pages/EmailListas.tsx
++++ b/products/social-wiring/frontend/src/pages/EmailListas.tsx
+@@ -80,7 +80,10 @@ function MembrosDrawer({ segment, onClose }: MembrosDrawerProps) {
+   const [addError, setAddError] = useState<string | null>(null);
+   const { addMember, removeMember } = useMailchimpSegmentMutations();
+ 
+-  const { data, isLoading } = useMailchimpSegmentMembers(
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this member list on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data, isPending } = useMailchimpSegmentMembers(
+     segment?.id ?? null,
+     { count: PAGE_SIZE, offset: memberOffset },
+   );
+@@ -192,7 +195,7 @@ function MembrosDrawer({ segment, onClose }: MembrosDrawerProps) {
+ 
+         {/* Member list */}
+         <div className="flex-1 overflow-y-auto">
+-          {isLoading ? (
++          {isPending ? (
+             <div className="p-4 space-y-2">
+               {Array.from({ length: 5 }).map((_, i) => (
+                 <Skeleton key={i} className="h-10 w-full" />
+@@ -274,7 +277,11 @@ function ListasContent() {
+   const [formName, setFormName] = useState("");
+   const [editingSegment, setEditingSegment] = useState<SegmentOut | null>(null);
+ 
+-  const { data, isLoading, isError, error } = useMailchimpSegments({
++  // `isPending`, not `isLoading` — the list is `placeholderData`-backed
++  // (keepPreviousData) for pagination, so `isPending` only fires once,
++  // on the very first load; paging never re-triggers this skeleton.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data, isPending, isError, error } = useMailchimpSegments({
+     count: PAGE_SIZE,
+     offset,
+   });
+@@ -355,7 +362,7 @@ function ListasContent() {
+         </div>
+ 
+         {/* Loading */}
+-        {isLoading && (
++        {isPending && (
+           <div className="space-y-2" data-testid="listas-loading">
+             {Array.from({ length: 5 }).map((_, i) => (
+               <Skeleton key={i} className="h-12 w-full" />
+@@ -377,7 +384,7 @@ function ListasContent() {
+         )}
+ 
+         {/* Empty */}
+-        {!isLoading && !isError && data?.items.length === 0 && (
++        {!isPending && !isError && data?.items.length === 0 && (
+           <Card data-testid="listas-empty">
+             <CardHeader>
+               <CardTitle className="text-base">Nenhuma lista encontrada</CardTitle>
+@@ -389,7 +396,7 @@ function ListasContent() {
+         )}
+ 
+         {/* Table */}
+-        {!isLoading && !isError && (data?.items.length ?? 0) > 0 && (
++        {!isPending && !isError && (data?.items.length ?? 0) > 0 && (
+           <Card data-testid="listas-table">
+             <CardContent className="p-0">
+               <table className="w-full text-sm">
+diff --git a/products/social-wiring/frontend/src/pages/EmailMarketingConfig.test.tsx b/products/social-wiring/frontend/src/pages/EmailMarketingConfig.test.tsx
+index b3851df4..ddc6278d 100644
+--- a/products/social-wiring/frontend/src/pages/EmailMarketingConfig.test.tsx
++++ b/products/social-wiring/frontend/src/pages/EmailMarketingConfig.test.tsx
+@@ -126,7 +126,7 @@ const defaultMutations = () => ({
+ beforeEach(() => {
+   mockUseMailchimpConnection.mockReturnValue({
+     data: { connected: false },
+-    isLoading: false,
++    isPending: false,
+   });
+   mockUseMailchimpAudiences.mockReturnValue({
+     data: null,
+@@ -199,7 +199,7 @@ describe("EmailMarketingConfig — connected state", () => {
+         account_name: "Minha Conta",
+         email: "joao@exemplo.com",
+       },
+-      isLoading: false,
++      isPending: false,
+     });
+     mockUseMailchimpAudiences.mockReturnValue({
+       data: { items: [makeAudience()], total: 1 },
+diff --git a/products/social-wiring/frontend/src/pages/EmailMarketingConfig.tsx b/products/social-wiring/frontend/src/pages/EmailMarketingConfig.tsx
+index cea4f81a..c6dbda70 100644
+--- a/products/social-wiring/frontend/src/pages/EmailMarketingConfig.tsx
++++ b/products/social-wiring/frontend/src/pages/EmailMarketingConfig.tsx
+@@ -55,7 +55,10 @@ import {
+ } from "@/hooks/useMailchimpConnection";
+ 
+ export default function EmailMarketingConfig() {
+-  const { data: connection, isLoading } = useMailchimpConnection();
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this whole config page on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data: connection, isPending } = useMailchimpConnection();
+   const { put, patch, remove } = useMailchimpConnectionMutations();
+   const { data: audiences } = useMailchimpAudiences(connection?.connected === true);
+ 
+@@ -106,7 +109,7 @@ export default function EmailMarketingConfig() {
+     });
+   }
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="p-6 max-w-2xl mx-auto space-y-4">
+         <Skeleton className="h-8 w-48" />
+diff --git a/products/social-wiring/frontend/src/pages/EmailMembros.test.tsx b/products/social-wiring/frontend/src/pages/EmailMembros.test.tsx
+index 505c6f91..f9cb67d1 100644
+--- a/products/social-wiring/frontend/src/pages/EmailMembros.test.tsx
++++ b/products/social-wiring/frontend/src/pages/EmailMembros.test.tsx
+@@ -144,7 +144,7 @@ const defaultMutations = () => ({
+ beforeEach(() => {
+   mockUseMailchimpConnection.mockReturnValue({
+     data: { connected: true },
+-    isLoading: false,
++    isPending: false,
+   });
+   mockUseMailchimpContacts.mockReturnValue({
+     data: { items: [], total: 0 },
+@@ -170,7 +170,7 @@ describe("EmailMembros — MailchimpGate", () => {
+   it("shows NotConnected when connection.connected=false", async () => {
+     mockUseMailchimpConnection.mockReturnValue({
+       data: { connected: false },
+-      isLoading: false,
++      isPending: false,
+     });
+     const { getByTestId } = await renderEmailMembros();
+     expect(getByTestId("mailchimp-not-connected")).toBeTruthy();
+@@ -179,7 +179,7 @@ describe("EmailMembros — MailchimpGate", () => {
+   it("shows loading skeleton while gate probe is in flight", async () => {
+     mockUseMailchimpConnection.mockReturnValue({
+       data: undefined,
+-      isLoading: true,
++      isPending: true,
+     });
+     const { getByTestId } = await renderEmailMembros();
+     expect(getByTestId("mailchimp-gate-loading")).toBeTruthy();
+diff --git a/products/social-wiring/frontend/src/pages/Equipe.tsx b/products/social-wiring/frontend/src/pages/Equipe.tsx
+index 894c31a0..5891f486 100644
+--- a/products/social-wiring/frontend/src/pages/Equipe.tsx
++++ b/products/social-wiring/frontend/src/pages/Equipe.tsx
+@@ -31,15 +31,20 @@ export default function Equipe() {
+ 
+   const members = membersQuery.data ?? [];
+   const invitations = invitationsQuery.data ?? [];
+-  // `isPending || isFetching`, never `isLoading`: in TanStack v5 `isLoading`
+-  // is `isPending && isFetching`, so it goes FALSE during a background
+-  // refetch and the empty branches below would render "no data" over data
+-  // that exists. → KB § PATTERNS/frontend/lying-loading-state.md
+-  const loading =
+-    membersQuery.isPending ||
+-    membersQuery.isFetching ||
+-    invitationsQuery.isPending ||
+-    invitationsQuery.isFetching;
++  // Two signals, never `isLoading` and never a bare `isFetching` gating an
++  // early return. `isPending || isFetching` is FALSE→TRUE on every
++  // background refetch (adding a member, cancelling an invite both
++  // invalidate these queries), so the OLD `loading` here unmounted this
++  // whole 8-row team list to a spinner on every mutation — the live
++  // incident this fix closes. `showSkeleton` fires ONLY pre-first-load;
++  // `isRefreshing` is an indicator only, never an early return.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const showSkeleton =
++    (membersQuery.isPending && !membersQuery.data) ||
++    (invitationsQuery.isPending && !invitationsQuery.data);
++  const isRefreshing =
++    (membersQuery.isFetching && !!membersQuery.data) ||
++    (invitationsQuery.isFetching && !!invitationsQuery.data);
+   // An empty list and a failed request are DIFFERENT states — conflating them
+   // is what hid the 500 behind "Nenhum convite pendente".
+   const invitationsError = invitationsQuery.isError;
+@@ -88,7 +93,7 @@ export default function Equipe() {
+     }
+   }
+ 
+-  if (loading) {
++  if (showSkeleton) {
+     return (
+       <div className="flex flex-col items-center justify-center py-20 gap-3">
+         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+@@ -104,7 +109,12 @@ export default function Equipe() {
+         <div className="flex items-center gap-3">
+           <Users className="h-6 w-6 text-primary" />
+           <div>
+-            <h1 className="text-2xl font-bold text-foreground">Equipe</h1>
++            <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
++              Equipe
++              {isRefreshing && (
++                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" data-testid="equipe-refreshing" />
++              )}
++            </h1>
+             <p className="text-sm text-muted-foreground">
+               {members.length} membro{members.length !== 1 ? "s" : ""} na organizacao
+             </p>
+diff --git a/products/social-wiring/frontend/src/pages/Marcas.test.tsx b/products/social-wiring/frontend/src/pages/Marcas.test.tsx
+index 058d0f4f..ad83f4b3 100644
+--- a/products/social-wiring/frontend/src/pages/Marcas.test.tsx
++++ b/products/social-wiring/frontend/src/pages/Marcas.test.tsx
+@@ -71,7 +71,7 @@ const makeClient = (overrides: Partial<{
+ // ─── Defaults ────────────────────────────────────────────────────────────────
+ 
+ beforeEach(() => {
+-  mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
++  mockUseClients.mockReturnValue({ data: [], isPending: false, isError: false });
+   mockUseCreateClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+   mockUseUpdateClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+   mockUseDeleteClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+@@ -98,7 +98,7 @@ async function renderMarcas(initialEntries: string[] = ["/"]) {
+ 
+ describe("Marcas — loading state", () => {
+   it("renders skeleton while loading", async () => {
+-    mockUseClients.mockReturnValue({ data: undefined, isLoading: true, isError: false });
++    mockUseClients.mockReturnValue({ data: undefined, isPending: true, isError: false });
+     const { getByTestId } = await renderMarcas();
+     expect(getByTestId("clients-skeleton")).toBeTruthy();
+   });
+@@ -110,7 +110,7 @@ describe("Marcas — success state", () => {
+       makeClient({ id: "c-1", name: "Acme Corp" }),
+       makeClient({ id: "c-2", name: "Beta Ltd", slug: "beta" }),
+     ];
+-    mockUseClients.mockReturnValue({ data: marcas, isLoading: false, isError: false });
++    mockUseClients.mockReturnValue({ data: marcas, isPending: false, isError: false });
+ 
+     const { getAllByTestId, getByText } = await renderMarcas();
+     expect(getAllByTestId("client-card").length).toBe(2);
+@@ -119,7 +119,7 @@ describe("Marcas — success state", () => {
+   });
+ 
+   it("renders the page header", async () => {
+-    mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
++    mockUseClients.mockReturnValue({ data: [], isPending: false, isError: false });
+     const { getByText } = await renderMarcas();
+     expect(getByText("Marcas")).toBeTruthy();
+   });
+@@ -127,7 +127,7 @@ describe("Marcas — success state", () => {
+   it("renders kind badge when present", async () => {
+     mockUseClients.mockReturnValue({
+       data: [makeClient({ kind: "empresa" })],
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { getByText } = await renderMarcas();
+@@ -137,7 +137,7 @@ describe("Marcas — success state", () => {
+ 
+ describe("Marcas — empty state", () => {
+   it("renders empty state when no clients", async () => {
+-    mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
++    mockUseClients.mockReturnValue({ data: [], isPending: false, isError: false });
+     const { getByTestId } = await renderMarcas();
+     expect(getByTestId("marcas-empty")).toBeTruthy();
+   });
+@@ -147,7 +147,7 @@ describe("Marcas — error state", () => {
+   it("renders error state on fetch failure", async () => {
+     mockUseClients.mockReturnValue({
+       data: undefined,
+-      isLoading: false,
++      isPending: false,
+       isError: true,
+       error: new Error("Network error"),
+     });
+@@ -160,7 +160,7 @@ describe("Marcas — error state", () => {
+ describe("Marcas — modal interactions", () => {
+   it("opens MarcaModal when card is clicked", async () => {
+     const client = makeClient({ id: "c-1", name: "Acme Corp" });
+-    mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
++    mockUseClients.mockReturnValue({ data: [client], isPending: false, isError: false });
+ 
+     const { getAllByTestId, getByTestId, fireEvent } = await renderMarcas();
+ 
+@@ -174,7 +174,7 @@ describe("Marcas — modal interactions", () => {
+ 
+   it("opens MarcaModal on Chat tab when chat button is clicked", async () => {
+     const client = makeClient({ id: "c-1", name: "Acme Corp" });
+-    mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
++    mockUseClients.mockReturnValue({ data: [client], isPending: false, isError: false });
+ 
+     const { getAllByTestId, getByTestId, fireEvent } = await renderMarcas();
+ 
+@@ -187,7 +187,7 @@ describe("Marcas — modal interactions", () => {
+ 
+   it("closes modal when onClose is called", async () => {
+     const client = makeClient({ id: "c-1", name: "Acme Corp" });
+-    mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
++    mockUseClients.mockReturnValue({ data: [client], isPending: false, isError: false });
+ 
+     const { getAllByTestId, queryByTestId, getByText, fireEvent } = await renderMarcas();
+ 
+@@ -202,7 +202,7 @@ describe("Marcas — modal interactions", () => {
+ 
+ describe("Marcas — create dialog", () => {
+   it("shows at least one create dialog button", async () => {
+-    mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
++    mockUseClients.mockReturnValue({ data: [], isPending: false, isError: false });
+     // The empty state renders a second CreateClientDialog, so multiple buttons exist.
+     const { getAllByTestId } = await renderMarcas();
+     const buttons = getAllByTestId("create-client-btn");
+diff --git a/products/social-wiring/frontend/src/pages/Marcas.tsx b/products/social-wiring/frontend/src/pages/Marcas.tsx
+index 22dd313d..6503a3c8 100644
+--- a/products/social-wiring/frontend/src/pages/Marcas.tsx
++++ b/products/social-wiring/frontend/src/pages/Marcas.tsx
+@@ -297,7 +297,10 @@ function ClientsSkeleton() {
+ // ─── Page ─────────────────────────────────────────────────────────────────────
+ 
+ export default function MarcasPage() {
+-  const { data: marcas = [], isLoading, isError, error } = useMarcas();
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this list on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data: marcas = [], isPending, isError, error } = useMarcas();
+ 
+   const [modalClient, setModalClient] = useState<Marca | null>(null);
+   const [modalTab, setModalTab] = useState<"contas" | "chat">("contas");
+@@ -339,7 +342,7 @@ export default function MarcasPage() {
+       </div>
+ 
+       {/* Content */}
+-      {isLoading ? (
++      {isPending ? (
+         <ClientsSkeleton />
+       ) : isError ? (
+         <div
+diff --git a/products/social-wiring/frontend/src/pages/Monitor.tsx b/products/social-wiring/frontend/src/pages/Monitor.tsx
+index a7b3d387..324473b3 100644
+--- a/products/social-wiring/frontend/src/pages/Monitor.tsx
++++ b/products/social-wiring/frontend/src/pages/Monitor.tsx
+@@ -97,7 +97,12 @@ function ConversationRow({
+ }
+ 
+ function DetailPanel({ sessionId }: { sessionId: string }) {
+-  const { data, isLoading } = useIntakeConversation(sessionId);
++  // NOT `isLoading` — banned per KB § PATTERNS/frontend/lying-loading-state.md.
++  // `!data` alone already IS the correct "nothing to render yet" signal
++  // (undefined until first resolve, then persists); this endpoint also
++  // polls every 5s, so a bare `isFetching` here would have re-blanked the
++  // detail panel on every poll tick — `!data` never does.
++  const { data } = useIntakeConversation(sessionId);
+   const cancel = useCancelConversation();
+ 
+   const onCancel = () =>
+@@ -110,7 +115,7 @@ function DetailPanel({ sessionId }: { sessionId: string }) {
+         toast.error(e?.message ?? "Falha ao cancelar"),
+     });
+ 
+-  if (isLoading || !data) {
++  if (!data) {
+     return (
+       <div className="flex h-full items-center justify-center">
+         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+@@ -210,7 +215,10 @@ function DetailPanel({ sessionId }: { sessionId: string }) {
+ }
+ 
+ export default function MonitorPage() {
+-  const { data: conversations, isLoading, refetch } = useIntakeConversations();
++  // `isPending`, not `isLoading` — same polling reasoning as above: this
++  // list also refetches every 5s, so the gate below must stay FALSE
++  // after the first successful load, never re-fire on a poll tick.
++  const { data: conversations, isPending, refetch } = useIntakeConversations();
+   const [selected, setSelected] = useState<string | null>(null);
+ 
+   return (
+@@ -239,7 +247,7 @@ export default function MonitorPage() {
+               </CardDescription>
+             </CardHeader>
+             <Separator />
+-            {isLoading ? (
++            {isPending ? (
+               <div className="flex items-center justify-center p-10">
+                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+               </div>
+diff --git a/products/social-wiring/frontend/src/pages/Upload.tsx b/products/social-wiring/frontend/src/pages/Upload.tsx
+index cb86a2f2..0424f8af 100644
+--- a/products/social-wiring/frontend/src/pages/Upload.tsx
++++ b/products/social-wiring/frontend/src/pages/Upload.tsx
+@@ -418,7 +418,10 @@ function YouTubeAccountPicker({
+   onChange: (accountId: string) => void;
+   disabled?: boolean;
+ }) {
+-  const { data: accounts = [], isLoading } = useIntegrationAccounts("youtube");
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this select on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data: accounts = [], isPending } = useIntegrationAccounts("youtube");
+ 
+   // Auto-select on first load ONLY when there is exactly one account — with
+   // more than one, the user must pick explicitly (the placeholder below).
+@@ -427,7 +430,7 @@ function YouTubeAccountPicker({
+     onChange(soleAccount.id);
+   }
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="grid gap-1.5">
+         <Label>Conta YouTube</Label>
+diff --git a/products/social-wiring/frontend/src/pages/WhatsAppChat.test.tsx b/products/social-wiring/frontend/src/pages/WhatsAppChat.test.tsx
+index 30400db1..b1224576 100644
+--- a/products/social-wiring/frontend/src/pages/WhatsAppChat.test.tsx
++++ b/products/social-wiring/frontend/src/pages/WhatsAppChat.test.tsx
+@@ -124,7 +124,7 @@ beforeEach(() => {
+ 
+   mockUseWhatsAppConnections.mockReturnValue({
+     data: [makeConn()],
+-    isLoading: false,
++    isPending: false,
+     isError: false,
+   });
+   mockUseWhatsAppConnectionMutations.mockReturnValue({
+@@ -150,19 +150,19 @@ function getSubtab(key: string) {
+ 
+ describe("WhatsAppChat — connection states", () => {
+   it("shows loading spinner while connections load", async () => {
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: true, isError: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: true, isError: false });
+     const { getByText } = await renderPage();
+     expect(getByText("Carregando conexões...")).toBeTruthy();
+   });
+ 
+   it("shows an error message when connections fail to load", async () => {
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: true });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: false, isError: true });
+     const { getByText } = await renderPage();
+     expect(getByText("Erro ao carregar conexões. Recarregue a página.")).toBeTruthy();
+   });
+ 
+   it("shows empty state (no shell) when no connections exist, with a link to /conexoes", async () => {
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: false, isError: false });
+     const { getByText } = await renderPage();
+     expect(getByText("Nenhuma conexão WhatsApp")).toBeTruthy();
+     expect(getByText("Conexões")).toBeTruthy();
+@@ -184,7 +184,7 @@ describe("WhatsAppChat — connection selector", () => {
+   it("renders one button per connection in the accountSwitcher slot", async () => {
+     mockUseWhatsAppConnections.mockReturnValue({
+       data: [makeConn({ id: "c1", label: "SP" }), makeConn({ id: "c2", label: "RJ" })],
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { rtl } = await renderPage();
+@@ -196,7 +196,7 @@ describe("WhatsAppChat — connection selector", () => {
+   it("switching connections re-points both subtabs", async () => {
+     mockUseWhatsAppConnections.mockReturnValue({
+       data: [makeConn({ id: "c1", label: "SP" }), makeConn({ id: "c2", label: "RJ" })],
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { rtl } = await renderPage();
+@@ -221,7 +221,7 @@ describe("WhatsAppChat — deep-link default selection", () => {
+     mockActiveAccountState.activeAccountId = "c2";
+     mockUseWhatsAppConnections.mockReturnValue({
+       data: [makeConn({ id: "c1", label: "SP" }), makeConn({ id: "c2", label: "RJ" })],
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     await renderPage();
+@@ -232,7 +232,7 @@ describe("WhatsAppChat — deep-link default selection", () => {
+     mockActiveAccountState.activeAccountId = "some-other-provider-account";
+     mockUseWhatsAppConnections.mockReturnValue({
+       data: [makeConn({ id: "c1", label: "SP" })],
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     await renderPage();
+@@ -244,7 +244,7 @@ describe("WhatsAppChat — Chat subtab", () => {
+   it("renders WhatsAppChatWindow with the selected connection's id and auto_reply_enabled", async () => {
+     mockUseWhatsAppConnections.mockReturnValue({
+       data: [makeConn({ id: "conn-9", auto_reply_enabled: true })],
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { rtl } = await renderPage();
+@@ -257,7 +257,7 @@ describe("WhatsAppChat — Chat subtab", () => {
+ describe("WhatsAppChat — Configurações subtab", () => {
+   it("renders ConnectionSettingsPanel with the selected connection's full line", async () => {
+     const conn = makeConn({ id: "conn-9", label: "Atendimento RJ" });
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isLoading: false, isError: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isPending: false, isError: false });
+     const { rtl } = await renderPage();
+     rtl.render(getSubtab("config").render());
+     expect(lastConfigPanelProps.line).toEqual(conn);
+@@ -265,7 +265,7 @@ describe("WhatsAppChat — Configurações subtab", () => {
+ 
+   it("onRequestDelete opens the inline confirm dialog; confirming calls the remove mutation", async () => {
+     const conn = makeConn({ id: "conn-9", label: "Atendimento RJ" });
+-    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isLoading: false, isError: false });
++    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isPending: false, isError: false });
+     const mutate = vi.fn();
+     mockUseWhatsAppConnectionMutations.mockReturnValue({ remove: { mutate, isPending: false } });
+ 
+diff --git a/products/social-wiring/frontend/src/pages/WhatsAppChat.tsx b/products/social-wiring/frontend/src/pages/WhatsAppChat.tsx
+index fcc00abd..8be1ba09 100644
+--- a/products/social-wiring/frontend/src/pages/WhatsAppChat.tsx
++++ b/products/social-wiring/frontend/src/pages/WhatsAppChat.tsx
+@@ -146,7 +146,10 @@ function ConfigPanel({
+ // ─── Page ─────────────────────────────────────────────────────────────────────
+ 
+ export default function WhatsAppChat() {
+-  const { data: connections = [], isLoading, isError } = useWhatsAppConnections();
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this whole chat picker on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data: connections = [], isPending, isError } = useWhatsAppConnections();
+   const { remove } = useWhatsAppConnectionMutations();
+ 
+   const activeAccountId = useActiveAccountId("whatsapp");
+@@ -189,7 +192,7 @@ export default function WhatsAppChat() {
+     });
+   }
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="flex h-64 items-center justify-center gap-3 text-muted-foreground">
+         <Loader2 className="h-5 w-5 animate-spin" />
+diff --git a/products/social-wiring/frontend/src/pages/meta/AdDetalheModal.tsx b/products/social-wiring/frontend/src/pages/meta/AdDetalheModal.tsx
+index 596fabb1..2823ca43 100644
+--- a/products/social-wiring/frontend/src/pages/meta/AdDetalheModal.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/AdDetalheModal.tsx
+@@ -21,7 +21,7 @@
+  * which already computes those four deltas server-side.
+  */
+ import { useMemo } from "react";
+-import { DollarSign, Eye, MousePointerClick, Target, Users } from "lucide-react";
++import { DollarSign, Eye, Loader2, MousePointerClick, Target, Users } from "lucide-react";
+ import {
+   CartesianGrid,
+   Line,
+@@ -206,11 +206,29 @@ export function AdDetalheModal({
+   const seriesQ = useAdsInsightsSeries(ad.object_id, "ad", range.since, range.until);
+   const prevSeriesQ = useAdsInsightsSeries(ad.object_id, "ad", prev.since, prev.until);
+ 
+-  // Never gate on `isLoading` alone — false mid-refetch (v5), which would
+-  // let a stale/empty branch win over data that's actually there.
+-  const loadingKpis =
+-    compareQ.isPending || compareQ.isFetching || prevSeriesQ.isPending || prevSeriesQ.isFetching;
+-  const loadingChart = seriesQ.isPending || seriesQ.isFetching;
++  // Two signals, never a bare `isFetching` reaching a render gate. The OLD
++  // `isPending || isFetching` here was Mode B: TRUE on every background
++  // refetch (switching the date-range preset re-fetches all three
++  // queries), so `loadingChart` unmounted the chart to "Carregando…" and
++  // `loadingKpis` blanked every KPI tile to "—" on every preset change —
++  // even though the previous numbers were still valid to show.
++  // `showSkeleton*` gates on `!data` DIRECTLY (not `isPending && !data`) —
++  // "nothing to render yet" IS "no data," full stop, and this stays
++  // correct even in the defensive case where a query's `data` has been
++  // cleared without `isPending` having flipped back (a key-change with no
++  // `placeholderData`, or a reset mid-refetch). It can never mask real
++  // data: `!data` is false the instant data exists, refetch or not.
++  // `isRefreshing*` is an indicator only, never an early return / ternary
++  // unmount. → KB § PATTERNS/frontend/lying-loading-state.md
++  const showSkeletonKpis = !compareQ.data || !prevSeriesQ.data;
++  const isRefreshingKpis =
++    (compareQ.isFetching && !!compareQ.data) || (prevSeriesQ.isFetching && !!prevSeriesQ.data);
++  // `&& !seriesQ.isError` — the ternary below checks the skeleton BEFORE
++  // `seriesQ.isError` (mirrors the original branch order), so a resolved
++  // error with no data must not be swallowed by the skeleton branch.
++  const showSkeletonChart = !seriesQ.data && !seriesQ.isError;
++  const isRefreshingChart = seriesQ.isFetching && !!seriesQ.data;
++  const isRefreshing = isRefreshingKpis || isRefreshingChart;
+ 
+   const curLeads = useMemo(
+     () => (seriesQ.data?.rows ?? []).reduce((sum, r) => sum + rowLeads(r), 0),
+@@ -264,7 +282,13 @@ export function AdDetalheModal({
+           </DialogDescription>
+         </DialogHeader>
+ 
+-        <div className="flex items-center justify-end">
++        <div className="flex items-center justify-end gap-2">
++          {isRefreshing && (
++            <Loader2
++              className="h-3.5 w-3.5 animate-spin text-muted-foreground"
++              data-testid="ad-detalhe-refreshing"
++            />
++          )}
+           <DateRangeSelect preset={preset} onChange={setPreset} />
+         </div>
+ 
+@@ -282,7 +306,7 @@ export function AdDetalheModal({
+                 label={t.label}
+                 value={t.value}
+                 hint={t.hint}
+-                loading={loadingKpis}
++                loading={showSkeletonKpis}
+               />
+             ))}
+           </div>
+@@ -290,7 +314,7 @@ export function AdDetalheModal({
+ 
+         <div>
+           <h3 className="mb-2 text-sm font-medium">Gasto ao longo do tempo</h3>
+-          {loadingChart ? (
++          {showSkeletonChart ? (
+             <div className="flex h-56 items-center justify-center text-sm text-muted-foreground">
+               Carregando…
+             </div>
+diff --git a/products/social-wiring/frontend/src/pages/meta/FbComentarios.test.tsx b/products/social-wiring/frontend/src/pages/meta/FbComentarios.test.tsx
+index ad0f941a..1de864ed 100644
+--- a/products/social-wiring/frontend/src/pages/meta/FbComentarios.test.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/FbComentarios.test.tsx
+@@ -68,15 +68,15 @@ function setDefaults() {
+   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
+   mockUseMetaContext.mockReturnValue({
+     data: { instagram: null, pages: [{ id: "page-1", name: "Minha Página" }], user: null },
+-    isLoading: false,
++    isPending: false,
+     isError: false,
+   });
+   mockUseFbPosts.mockReturnValue({
+     data: { posts: [{ id: "post-1", message: "publicação 1" }] },
+-    isLoading: false,
++    isPending: false,
+     isError: false,
+   });
+-  mockUseFbComments.mockReturnValue({ data: { comments: [] }, isLoading: false, isError: false });
++  mockUseFbComments.mockReturnValue({ data: { comments: [] }, isPending: false, isError: false });
+   mockUseFbReplyComment.mockReturnValue(noopMutation());
+   mockUseFbHideComment.mockReturnValue(noopMutation());
+   mockUseFbDeleteComment.mockReturnValue(noopMutation());
+@@ -103,7 +103,7 @@ describe("FbComentarios — no pages", () => {
+   it("shows the no-pages state", async () => {
+     mockUseMetaContext.mockReturnValue({
+       data: { instagram: null, pages: [], user: null },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { getByTestId } = await renderPage();
+@@ -113,7 +113,7 @@ describe("FbComentarios — no pages", () => {
+ 
+ describe("FbComentarios — no posts", () => {
+   it("shows the no-posts message", async () => {
+-    mockUseFbPosts.mockReturnValue({ data: { posts: [] }, isLoading: false, isError: false });
++    mockUseFbPosts.mockReturnValue({ data: { posts: [] }, isPending: false, isError: false });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("fb-comments-no-posts")).toBeTruthy();
+   });
+@@ -121,13 +121,13 @@ describe("FbComentarios — no posts", () => {
+ 
+ describe("FbComentarios — comments list states", () => {
+   it("renders a loading state", async () => {
+-    mockUseFbComments.mockReturnValue({ data: undefined, isLoading: true, isError: false });
++    mockUseFbComments.mockReturnValue({ data: undefined, isPending: true, isError: false });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("fb-comments-loading")).toBeTruthy();
+   });
+ 
+   it("renders an error state", async () => {
+-    mockUseFbComments.mockReturnValue({ data: undefined, isLoading: false, isError: true });
++    mockUseFbComments.mockReturnValue({ data: undefined, isPending: false, isError: true });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("fb-comments-error")).toBeTruthy();
+   });
+@@ -140,7 +140,7 @@ describe("FbComentarios — comments list states", () => {
+   it("renders the comments list on success and replies", async () => {
+     mockUseFbComments.mockReturnValue({
+       data: { comments: [{ id: "c1", text: "oi", from_username: "fulano" }] },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const reply = vi.fn();
+@@ -155,7 +155,7 @@ describe("FbComentarios — comments list states", () => {
+   it("shows the App Review gate on a gated delete action", async () => {
+     mockUseFbComments.mockReturnValue({
+       data: { comments: [{ id: "c1", text: "oi" }] },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     mockUseFbDeleteComment.mockReturnValue({
+diff --git a/products/social-wiring/frontend/src/pages/meta/FbComentarios.tsx b/products/social-wiring/frontend/src/pages/meta/FbComentarios.tsx
+index acd3849e..db9ec800 100644
+--- a/products/social-wiring/frontend/src/pages/meta/FbComentarios.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/FbComentarios.tsx
+@@ -39,7 +39,12 @@ import {
+ } from "./FbPageSelect";
+ 
+ function CommentsList({ accountId, postId }: { accountId: string; postId: string }) {
+-  const { data, isLoading, isError } = useFbComments(accountId, postId);
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this comment list on every background refresh.
++  // No `placeholderData` — `postId` is part of the key, and reusing a
++  // different post's comments while switching posts would show them
++  // under the wrong post. → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data, isPending, isError } = useFbComments(accountId, postId);
+   const reply = useFbReplyComment(accountId, postId);
+   const hide = useFbHideComment(accountId, postId);
+   const del = useFbDeleteComment(accountId, postId);
+@@ -51,7 +56,7 @@ function CommentsList({ accountId, postId }: { accountId: string; postId: string
+     (del.data && isAppReviewGate(del.data) && del.data) ||
+     null;
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="space-y-2" data-testid="fb-comments-loading">
+         {Array.from({ length: 3 }).map((_, i) => (
+@@ -140,13 +145,17 @@ function CommentsList({ accountId, postId }: { accountId: string; postId: string
+ 
+ export default function FbComentarios() {
+   const accountId = useActiveMetaAccountId();
+-  const { data: context, isLoading: contextLoading, isError: contextError } = useFbPages(accountId);
++  // `isPending`, not `isLoading` — the AST scanner tracks bare
++  // `.isLoading`/direct-name destructures; this destructure-RENAME
++  // (`isLoading: contextLoading`) is the same banned shape, caught by
++  // manual review, not the detector. → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data: context, isPending: contextPending, isError: contextError } = useFbPages(accountId);
+   const [pageId, setPageId] = useState<string | null>(null);
+ 
+   const pages = context?.pages ?? [];
+   const resolvedPageId = pageId ?? (pages[0]?.id ?? null);
+ 
+-  const { data: postsData, isLoading: postsLoading, isError: postsError } = useFbPosts(
++  const { data: postsData, isPending: postsPending, isError: postsError } = useFbPosts(
+     accountId,
+     resolvedPageId,
+   );
+@@ -169,7 +178,7 @@ export default function FbComentarios() {
+     );
+   }
+ 
+-  if (contextLoading) return <FbContextLoading />;
++  if (contextPending) return <FbContextLoading />;
+   if (contextError) return <FbContextError />;
+   if (pages.length === 0) return <FbNoPages />;
+ 
+@@ -178,7 +187,7 @@ export default function FbComentarios() {
+       <CardHeader className="space-y-3">
+         <CardTitle>Comentários por publicação</CardTitle>
+         <FbPageSelect accountId={accountId} pages={pages} selectedId={pageId} onSelect={setPageId} />
+-        {postsLoading ? (
++        {postsPending ? (
+           <Skeleton className="h-10 w-64" />
+         ) : postsError ? (
+           <div className="flex items-center gap-2 text-sm text-destructive">
+diff --git a/products/social-wiring/frontend/src/pages/meta/FbConteudo.test.tsx b/products/social-wiring/frontend/src/pages/meta/FbConteudo.test.tsx
+index 4f78d253..ca0f29fc 100644
+--- a/products/social-wiring/frontend/src/pages/meta/FbConteudo.test.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/FbConteudo.test.tsx
+@@ -66,10 +66,10 @@ function setDefaults() {
+   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
+   mockUseMetaContext.mockReturnValue({
+     data: { instagram: null, pages: [{ id: "page-1", name: "Minha Página" }], user: null },
+-    isLoading: false,
++    isPending: false,
+     isError: false,
+   });
+-  mockUseFbPosts.mockReturnValue({ data: { posts: [] }, isLoading: false, isError: false });
++  mockUseFbPosts.mockReturnValue({ data: { posts: [] }, isPending: false, isError: false });
+   mockUseFbPublish.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, data: undefined });
+ }
+ 
+@@ -94,7 +94,7 @@ describe("FbConteudo — no pages", () => {
+   it("shows the no-pages state", async () => {
+     mockUseMetaContext.mockReturnValue({
+       data: { instagram: null, pages: [], user: null },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { getByTestId } = await renderPage();
+@@ -104,13 +104,13 @@ describe("FbConteudo — no pages", () => {
+ 
+ describe("FbConteudo — posts list states", () => {
+   it("renders a loading state", async () => {
+-    mockUseFbPosts.mockReturnValue({ data: undefined, isLoading: true, isError: false });
++    mockUseFbPosts.mockReturnValue({ data: undefined, isPending: true, isError: false });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("fb-posts-loading")).toBeTruthy();
+   });
+ 
+   it("renders an error state", async () => {
+-    mockUseFbPosts.mockReturnValue({ data: undefined, isLoading: false, isError: true });
++    mockUseFbPosts.mockReturnValue({ data: undefined, isPending: false, isError: true });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("fb-posts-error")).toBeTruthy();
+   });
+@@ -123,7 +123,7 @@ describe("FbConteudo — posts list states", () => {
+   it("renders the posts list on success", async () => {
+     mockUseFbPosts.mockReturnValue({
+       data: { posts: [{ id: "p1", message: "oi", likes_count: 3, comments_count: 1 }] },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { getByTestId } = await renderPage();
+diff --git a/products/social-wiring/frontend/src/pages/meta/FbConteudo.tsx b/products/social-wiring/frontend/src/pages/meta/FbConteudo.tsx
+index 0bf44dd4..6367e397 100644
+--- a/products/social-wiring/frontend/src/pages/meta/FbConteudo.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/FbConteudo.tsx
+@@ -159,10 +159,13 @@ function PublishForm({ accountId, pageId }: { accountId: string; pageId: string
+ }
+ 
+ function PostsList({ accountId, pageId }: { accountId: string; pageId: string }) {
+-  const { data, isLoading, isError } = useFbPosts(accountId, pageId);
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this posts list on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data, isPending, isError } = useFbPosts(accountId, pageId);
+   const posts = data?.posts ?? [];
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="space-y-2" data-testid="fb-posts-loading">
+         {Array.from({ length: 3 }).map((_, i) => (
+@@ -206,7 +209,8 @@ function PostsList({ accountId, pageId }: { accountId: string; pageId: string })
+ 
+ export default function FbConteudo() {
+   const accountId = useActiveMetaAccountId();
+-  const { data: context, isLoading, isError } = useFbPages(accountId);
++  // `isPending`, not `isLoading` — same rule, page-context fetch.
++  const { data: context, isPending, isError } = useFbPages(accountId);
+   const [pageId, setPageId] = useState<string | null>(null);
+ 
+   if (!accountId) {
+@@ -219,7 +223,7 @@ export default function FbConteudo() {
+     );
+   }
+ 
+-  if (isLoading) return <FbContextLoading />;
++  if (isPending) return <FbContextLoading />;
+   if (isError) return <FbContextError />;
+ 
+   const pages = context?.pages ?? [];
+diff --git a/products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.test.tsx b/products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.test.tsx
+index ffcbdd31..5cd6c6a2 100644
+--- a/products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.test.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.test.tsx
+@@ -49,10 +49,10 @@ function setDefaults() {
+   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
+   mockUseMetaContext.mockReturnValue({
+     data: { instagram: null, pages: [{ id: "page-1", name: "Minha Página" }], user: null },
+-    isLoading: false,
++    isPending: false,
+     isError: false,
+   });
+-  mockUseFbInsights.mockReturnValue({ data: { object_id: "page-1", metrics: {}, series: [] }, isLoading: false, isError: false });
++  mockUseFbInsights.mockReturnValue({ data: { object_id: "page-1", metrics: {}, series: [] }, isPending: false, isError: false });
+ }
+ 
+ beforeEach(() => setDefaults());
+@@ -74,13 +74,13 @@ describe("FbVisaoGeral — no account selected", () => {
+ 
+ describe("FbVisaoGeral — context states", () => {
+   it("renders a loading state", async () => {
+-    mockUseMetaContext.mockReturnValue({ data: undefined, isLoading: true, isError: false });
++    mockUseMetaContext.mockReturnValue({ data: undefined, isPending: true, isError: false });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("fb-context-loading")).toBeTruthy();
+   });
+ 
+   it("renders an error state", async () => {
+-    mockUseMetaContext.mockReturnValue({ data: undefined, isLoading: false, isError: true });
++    mockUseMetaContext.mockReturnValue({ data: undefined, isPending: false, isError: true });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("fb-context-error")).toBeTruthy();
+   });
+@@ -88,7 +88,7 @@ describe("FbVisaoGeral — context states", () => {
+   it("renders a no-pages state", async () => {
+     mockUseMetaContext.mockReturnValue({
+       data: { instagram: null, pages: [], user: null },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { getByTestId } = await renderPage();
+@@ -98,13 +98,13 @@ describe("FbVisaoGeral — context states", () => {
+ 
+ describe("FbVisaoGeral — insights states", () => {
+   it("renders a loading state", async () => {
+-    mockUseFbInsights.mockReturnValue({ data: undefined, isLoading: true, isError: false });
++    mockUseFbInsights.mockReturnValue({ data: undefined, isPending: true, isError: false });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("fb-insights-loading")).toBeTruthy();
+   });
+ 
+   it("renders an error state", async () => {
+-    mockUseFbInsights.mockReturnValue({ data: undefined, isLoading: false, isError: true });
++    mockUseFbInsights.mockReturnValue({ data: undefined, isPending: false, isError: true });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("fb-insights-error")).toBeTruthy();
+   });
+@@ -117,7 +117,7 @@ describe("FbVisaoGeral — insights states", () => {
+   it("renders metric cards on success", async () => {
+     mockUseFbInsights.mockReturnValue({
+       data: { object_id: "page-1", metrics: { page_impressions: 500 }, series: [] },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { getByTestId, getByText } = await renderPage();
+diff --git a/products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.tsx b/products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.tsx
+index 9b547a41..fabb5bc3 100644
+--- a/products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/FbVisaoGeral.tsx
+@@ -23,9 +23,12 @@ import {
+ } from "./FbPageSelect";
+ 
+ function InsightsPanel({ accountId, pageId }: { accountId: string; pageId: string }) {
+-  const { data, isLoading, isError } = useFbInsights(accountId, pageId);
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount these KPI tiles on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data, isPending, isError } = useFbInsights(accountId, pageId);
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div
+         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+@@ -77,7 +80,8 @@ function InsightsPanel({ accountId, pageId }: { accountId: string; pageId: strin
+ 
+ export default function FbVisaoGeral() {
+   const accountId = useActiveMetaAccountId();
+-  const { data: context, isLoading, isError } = useFbPages(accountId);
++  // `isPending`, not `isLoading` — same rule, page-context fetch.
++  const { data: context, isPending, isError } = useFbPages(accountId);
+   const [pageId, setPageId] = useState<string | null>(null);
+ 
+   if (!accountId) {
+@@ -94,7 +98,7 @@ export default function FbVisaoGeral() {
+     );
+   }
+ 
+-  if (isLoading) return <FbContextLoading />;
++  if (isPending) return <FbContextLoading />;
+   if (isError) return <FbContextError />;
+ 
+   const pages = context?.pages ?? [];
+diff --git a/products/social-wiring/frontend/src/pages/meta/IgComentarios.test.tsx b/products/social-wiring/frontend/src/pages/meta/IgComentarios.test.tsx
+index 73394ed2..d41e05f6 100644
+--- a/products/social-wiring/frontend/src/pages/meta/IgComentarios.test.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/IgComentarios.test.tsx
+@@ -66,10 +66,10 @@ function setDefaults() {
+   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
+   mockUseIgMedia.mockReturnValue({
+     data: { media: [{ id: "media-1", caption: "post 1" }] },
+-    isLoading: false,
++    isPending: false,
+     isError: false,
+   });
+-  mockUseIgComments.mockReturnValue({ data: { comments: [] }, isLoading: false, isError: false });
++  mockUseIgComments.mockReturnValue({ data: { comments: [] }, isPending: false, isError: false });
+   mockUseIgReplyComment.mockReturnValue(noopMutation());
+   mockUseIgHideComment.mockReturnValue(noopMutation());
+   mockUseIgDeleteComment.mockReturnValue(noopMutation());
+@@ -94,7 +94,7 @@ describe("IgComentarios — no account selected", () => {
+ 
+ describe("IgComentarios — media selector", () => {
+   it("shows a no-media message when there are no posts", async () => {
+-    mockUseIgMedia.mockReturnValue({ data: { media: [] }, isLoading: false, isError: false });
++    mockUseIgMedia.mockReturnValue({ data: { media: [] }, isPending: false, isError: false });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("ig-comments-no-media")).toBeTruthy();
+   });
+@@ -102,13 +102,13 @@ describe("IgComentarios — media selector", () => {
+ 
+ describe("IgComentarios — comments list states", () => {
+   it("renders a loading state", async () => {
+-    mockUseIgComments.mockReturnValue({ data: undefined, isLoading: true, isError: false });
++    mockUseIgComments.mockReturnValue({ data: undefined, isPending: true, isError: false });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("ig-comments-loading")).toBeTruthy();
+   });
+ 
+   it("renders an error state", async () => {
+-    mockUseIgComments.mockReturnValue({ data: undefined, isLoading: false, isError: true });
++    mockUseIgComments.mockReturnValue({ data: undefined, isPending: false, isError: true });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("ig-comments-error")).toBeTruthy();
+   });
+@@ -121,7 +121,7 @@ describe("IgComentarios — comments list states", () => {
+   it("renders the comments list on success and replies", async () => {
+     mockUseIgComments.mockReturnValue({
+       data: { comments: [{ id: "c1", text: "oi", from_username: "fulano" }] },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const reply = vi.fn();
+@@ -136,7 +136,7 @@ describe("IgComentarios — comments list states", () => {
+   it("shows the App Review gate on a gated hide action", async () => {
+     mockUseIgComments.mockReturnValue({
+       data: { comments: [{ id: "c1", text: "oi" }] },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     mockUseIgHideComment.mockReturnValue({
+diff --git a/products/social-wiring/frontend/src/pages/meta/IgComentarios.tsx b/products/social-wiring/frontend/src/pages/meta/IgComentarios.tsx
+index 0527dea3..6a8ba424 100644
+--- a/products/social-wiring/frontend/src/pages/meta/IgComentarios.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/IgComentarios.tsx
+@@ -36,7 +36,12 @@ function CommentsList({
+   accountId: string;
+   mediaId: string;
+ }) {
+-  const { data, isLoading, isError } = useIgComments(accountId, mediaId);
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this comment list on every background refresh.
++  // No `placeholderData` — `mediaId` is part of the key, and reusing a
++  // different post's comments while switching posts would show them
++  // under the wrong post. → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data, isPending, isError } = useIgComments(accountId, mediaId);
+   const reply = useIgReplyComment(accountId, mediaId);
+   const hide = useIgHideComment(accountId, mediaId);
+   const del = useIgDeleteComment(accountId, mediaId);
+@@ -48,7 +53,7 @@ function CommentsList({
+     (del.data && isAppReviewGate(del.data) && del.data) ||
+     null;
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="space-y-2" data-testid="ig-comments-loading">
+         {Array.from({ length: 3 }).map((_, i) => (
+@@ -148,7 +153,8 @@ function CommentsList({
+ 
+ export default function IgComentarios() {
+   const accountId = useActiveMetaAccountId();
+-  const { data, isLoading, isError } = useIgMedia(accountId, 25);
++  // `isPending`, not `isLoading` — same rule, media-list fetch.
++  const { data, isPending, isError } = useIgMedia(accountId, 25);
+   const media = data?.media ?? [];
+   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null);
+ 
+@@ -175,7 +181,7 @@ export default function IgComentarios() {
+     <Card>
+       <CardHeader className="space-y-3">
+         <CardTitle>Comentários por post</CardTitle>
+-        {isLoading ? (
++        {isPending ? (
+           <Skeleton className="h-10 w-64" />
+         ) : isError ? (
+           <div className="flex items-center gap-2 text-sm text-destructive">
+diff --git a/products/social-wiring/frontend/src/pages/meta/IgConteudo.test.tsx b/products/social-wiring/frontend/src/pages/meta/IgConteudo.test.tsx
+index eefc385e..9a9a5e18 100644
+--- a/products/social-wiring/frontend/src/pages/meta/IgConteudo.test.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/IgConteudo.test.tsx
+@@ -62,7 +62,7 @@ vi.mock("lucide-react", () => ({
+ 
+ function setDefaults() {
+   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
+-  mockUseIgMedia.mockReturnValue({ data: { media: [] }, isLoading: false, isError: false });
++  mockUseIgMedia.mockReturnValue({ data: { media: [] }, isPending: false, isError: false });
+   mockUseIgPublish.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, data: undefined });
+ }
+ 
+@@ -85,13 +85,13 @@ describe("IgConteudo — no account selected", () => {
+ 
+ describe("IgConteudo — media grid states", () => {
+   it("renders a loading grid", async () => {
+-    mockUseIgMedia.mockReturnValue({ data: undefined, isLoading: true, isError: false });
++    mockUseIgMedia.mockReturnValue({ data: undefined, isPending: true, isError: false });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("ig-content-grid-loading")).toBeTruthy();
+   });
+ 
+   it("renders an error state", async () => {
+-    mockUseIgMedia.mockReturnValue({ data: undefined, isLoading: false, isError: true });
++    mockUseIgMedia.mockReturnValue({ data: undefined, isPending: false, isError: true });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("ig-content-grid-error")).toBeTruthy();
+   });
+@@ -104,7 +104,7 @@ describe("IgConteudo — media grid states", () => {
+   it("renders a media grid on success", async () => {
+     mockUseIgMedia.mockReturnValue({
+       data: { media: [{ id: "1", thumbnail_url: "http://x/1.jpg", caption: "oi" }] },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { getByTestId } = await renderPage();
+diff --git a/products/social-wiring/frontend/src/pages/meta/IgConteudo.tsx b/products/social-wiring/frontend/src/pages/meta/IgConteudo.tsx
+index 1402df81..c2f18bb5 100644
+--- a/products/social-wiring/frontend/src/pages/meta/IgConteudo.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/IgConteudo.tsx
+@@ -187,10 +187,13 @@ function MediaTypeFallback({ mediaType }: { mediaType?: string | null }) {
+ }
+ 
+ function MediaGrid({ accountId }: { accountId: string }) {
+-  const { data, isLoading, isError } = useIgMedia(accountId, 24);
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this media grid on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data, isPending, isError } = useIgMedia(accountId, 24);
+   const media = data?.media ?? [];
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div data-testid="ig-content-grid-loading">
+         <p className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
+diff --git a/products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.test.tsx b/products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.test.tsx
+index 9b2b24ba..b22101c5 100644
+--- a/products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.test.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.test.tsx
+@@ -81,15 +81,15 @@ function setDefaults() {
+   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
+   mockUseMetaContext.mockReturnValue({
+     data: { instagram: makeAccount(), pages: [], user: null },
+-    isLoading: false,
++    isPending: false,
+     isError: false,
+   });
+   mockUseIgInsights.mockReturnValue({
+     data: { object_id: "x", metrics: { reach: 500, profile_views: 80 }, series: [] },
+-    isLoading: false,
++    isPending: false,
+   });
+-  mockUseIgMedia.mockReturnValue({ data: { media: [] }, isLoading: false, isError: false });
+-  mockUseIgSnapshots.mockReturnValue({ data: { snapshots: [] }, isLoading: false, isError: false });
++  mockUseIgMedia.mockReturnValue({ data: { media: [] }, isPending: false, isError: false });
++  mockUseIgSnapshots.mockReturnValue({ data: { snapshots: [] }, isPending: false, isError: false });
+   mockUseCaptureIgSnapshot.mockReturnValue({ mutate: vi.fn(), isPending: false });
+ }
+ 
+@@ -119,13 +119,13 @@ describe("IgVisaoGeral — no account selected", () => {
+ 
+ describe("IgVisaoGeral — context states", () => {
+   it("renders a skeleton while context is loading", async () => {
+-    mockUseMetaContext.mockReturnValue({ data: undefined, isLoading: true, isError: false });
++    mockUseMetaContext.mockReturnValue({ data: undefined, isPending: true, isError: false });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("ig-overview-loading")).toBeTruthy();
+   });
+ 
+   it("renders an error state when context fails", async () => {
+-    mockUseMetaContext.mockReturnValue({ data: undefined, isLoading: false, isError: true });
++    mockUseMetaContext.mockReturnValue({ data: undefined, isPending: false, isError: true });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("ig-overview-error")).toBeTruthy();
+   });
+@@ -133,7 +133,7 @@ describe("IgVisaoGeral — context states", () => {
+   it("renders an empty state when there is no IG account", async () => {
+     mockUseMetaContext.mockReturnValue({
+       data: { instagram: null, pages: [], user: null },
+-      isLoading: false,
++      isPending: false,
+       isError: false,
+     });
+     const { getByTestId } = await renderPage();
+@@ -179,7 +179,7 @@ describe("IgVisaoGeral — success", () => {
+   it("surfaces the insights error banner", async () => {
+     mockUseIgInsights.mockReturnValue({
+       data: { object_id: "x", metrics: {}, series: [], error: "permissão negada" },
+-      isLoading: false,
++      isPending: false,
+     });
+     const { getByTestId } = await renderPage();
+     expect(getByTestId("ig-insights-error")).toBeTruthy();
+diff --git a/products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.tsx b/products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.tsx
+index 04aa47d2..3476ef8c 100644
+--- a/products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.tsx
++++ b/products/social-wiring/frontend/src/pages/meta/IgVisaoGeral.tsx
+@@ -56,7 +56,10 @@ import {
+ // ─── Followers trend chart ───────────────────────────────────────────────────
+ 
+ function FollowersTrendChart({ accountId }: { accountId: string }) {
+-  const { data, isLoading, isError } = useIgSnapshots(accountId, 90);
++  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
++  // and would unmount this chart on every background refresh.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data, isPending, isError } = useIgSnapshots(accountId, 90);
+ 
+   const chartData = useMemo(
+     () =>
+@@ -70,7 +73,7 @@ function FollowersTrendChart({ accountId }: { accountId: string }) {
+     [data],
+   );
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div data-testid="ig-trend-loading">
+         <Skeleton className="h-64 rounded-md" />
+@@ -159,10 +162,11 @@ function FollowersTrendChart({ accountId }: { accountId: string }) {
+ // ─── Per-post table ───────────────────────────────────────────────────────────
+ 
+ function PostsTable({ accountId }: { accountId: string }) {
+-  const { data, isLoading, isError } = useIgMedia(accountId, 25);
++  // `isPending`, not `isLoading` — same rule, per-post table fetch.
++  const { data, isPending, isError } = useIgMedia(accountId, 25);
+   const media = data?.media ?? [];
+ 
+-  if (isLoading) {
++  if (isPending) {
+     return (
+       <div className="space-y-2" data-testid="ig-posts-loading">
+         {Array.from({ length: 4 }).map((_, i) => (
+@@ -257,9 +261,13 @@ function PostsTable({ accountId }: { accountId: string }) {
+ 
+ export default function IgVisaoGeral() {
+   const accountId = useActiveMetaAccountId();
+-  const { data: context, isLoading: contextLoading, isError: contextError } =
++  // `isPending`, not `isLoading` — destructure-RENAME shape
++  // (`isLoading: contextLoading` / `isLoading: insightsLoading`), same
++  // banned pattern the AST scanner doesn't track by alias name.
++  // → KB § PATTERNS/frontend/lying-loading-state.md
++  const { data: context, isPending: contextPending, isError: contextError } =
+     useMetaContext(accountId);
+-  const { data: insights, isLoading: insightsLoading } = useIgInsights(accountId, 30);
++  const { data: insights, isPending: insightsPending } = useIgInsights(accountId, 30);
+   const capture = useCaptureIgSnapshot(accountId);
+ 
+   if (!accountId) {
+@@ -276,7 +284,7 @@ export default function IgVisaoGeral() {
+     );
+   }
+ 
+-  if (contextLoading) {
++  if (contextPending) {
+     return (
+       <div className="space-y-4" data-testid="ig-overview-loading">
+         <Skeleton className="h-10 w-64" />
+@@ -361,14 +369,14 @@ export default function IgVisaoGeral() {
+         <MetricCard
+           icon={Eye}
+           label="Alcance (30d)"
+-          value={insightsLoading ? "—" : formatNumber(alcance)}
+-          loading={insightsLoading}
++          value={insightsPending ? "—" : formatNumber(alcance)}
++          loading={insightsPending}
+         />
+         <MetricCard
+           icon={Instagram}
+           label="Visitas ao perfil (30d)"
+-          value={insightsLoading ? "—" : formatNumber(visitas)}
+-          loading={insightsLoading}
++          value={insightsPending ? "—" : formatNumber(visitas)}
++          loading={insightsPending}
+         />
+       </div>
+ 
