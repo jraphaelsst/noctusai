@@ -39,6 +39,7 @@ export function useDocumentos(filtros?: FiltrosDocumentos) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -72,6 +73,7 @@ export function useTemplates(filtros?: { tipo?: string; ativo?: boolean }) {
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

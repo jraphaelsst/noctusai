@@ -60,6 +60,7 @@ export function useLeaderboard(periodo: Periodo = 'geral') {
     },
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -78,6 +79,7 @@ export function useMeusPontos(page: number = 1) {
     },
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

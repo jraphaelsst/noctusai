@@ -32,6 +32,7 @@ export function useComissoes(filtros?: FiltrosComissoes) {
       };
     },
     enabled: !!user,
+    placeholderData: (prev) => prev,
   });
 }
 

@@ -38,6 +38,7 @@ export function useManutencao(filtros?: FiltrosManutencao) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

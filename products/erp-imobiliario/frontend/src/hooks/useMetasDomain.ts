@@ -236,6 +236,7 @@ export function useMetasEmpresa(periodoId?: string) {
       return unwrap<MetaEmpresa[]>(await api.get(`/api/metas/empresa${qs}`));
     },
     enabled: !!user,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -246,6 +247,7 @@ export function useCascadeResumo(periodoId: string | null) {
     queryFn: async () =>
       unwrap<CascadeResumo>(await api.get(`/api/metas/empresa/resumo?periodo_id=${periodoId}`)),
     enabled: !!user && !!periodoId,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -281,6 +283,7 @@ export function useMetasEquipe(periodoId?: string) {
       return unwrap<MetaEquipe[]>(await api.get(`/api/metas/equipes-quotas${qs}`));
     },
     enabled: !!user,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -309,6 +312,7 @@ export function useRegrasPontuacao(evento_tipo?: string) {
       return unwrap<RegraPontuacao[]>(await api.get(`/api/metas/regras-pontuacao${qs}`));
     },
     enabled: !!user,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -414,6 +418,7 @@ export function useRankings(params: { equipe_id?: string; data_inicio?: string; 
     queryFn: async () => unwrap<Rankings>(await api.get(`/api/metas/rankings?${qs}`)),
     enabled: !!user,
     staleTime: 30 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -428,6 +433,7 @@ export function useFechamentos(periodoId?: string) {
       return unwrap<any[]>(await api.get(`/api/metas/fechamentos${qs}`));
     },
     enabled: !!user,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -451,5 +457,6 @@ export function useTrimestreAggregate(trimestreId: string | null) {
     queryKey: ['metas', 'fechamentos-trimestre', trimestreId],
     queryFn: async () => unwrap<any>(await api.get(`/api/metas/fechamentos/trimestre/${trimestreId}`)),
     enabled: !!user && !!trimestreId,
+    placeholderData: (prev) => prev,
   });
 }

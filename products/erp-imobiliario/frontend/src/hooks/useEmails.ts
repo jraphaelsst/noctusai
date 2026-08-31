@@ -66,6 +66,7 @@ export function useEmails(filtros?: FiltrosEmails) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -123,6 +124,7 @@ export function useEmailTemplates(filtros?: FiltrosTemplates) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

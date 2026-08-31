@@ -17,6 +17,7 @@ export function useRankingCorretores(periodo: number = 30) {
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -45,6 +46,7 @@ export function useAtividadeMensal(meses: number = 6) {
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

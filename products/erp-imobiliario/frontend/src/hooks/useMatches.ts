@@ -50,6 +50,7 @@ export function useMatches(options?: {
       return (result.data || []) as Match[];
     },
     enabled: !!user,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -129,12 +130,32 @@ export function useAtualizarStatusMatch() {
       const result = await api.patch(`/api/matching/${matchId}`, { status });
       return result.data as Match;
     },
+    // Optimistic accept/reject: sets `status` on the matching row of every
+    // cached `['matches', ...]` list immediately; `onError` rolls back to the
+    // pre-mutation snapshot. Same rollback discipline as
+    // products/social-wiring/frontend/src/hooks/useCardHub.ts
+    // useSetClienteTagsMutation (~L235).
+    onMutate: async ({ matchId, status }: { matchId: string; status: 'aceito' | 'rejeitado' }) => {
+      await queryClient.cancelQueries({ queryKey: ['matches'] });
+      const previousQueries = queryClient.getQueriesData<Match[]>({ queryKey: ['matches'] });
+      previousQueries.forEach(([queryKey, data]) => {
+        if (!data) return;
+        queryClient.setQueryData<Match[]>(
+          queryKey,
+          data.map((m) => (m.id === matchId ? { ...m, status } : m)),
+        );
+      });
+      return { previousQueries };
+    },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['matches'] });
       queryClient.invalidateQueries({ queryKey: ['match-counts'] });
       toast.success(variables.status === 'aceito' ? 'Match aceito!' : 'Match rejeitado');
     },
-    onError: (error: Error) => {
+    onError: (error: Error, _variables, context) => {
+      context?.previousQueries?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
       toast.error('Erro ao atualizar match', { description: error.message });
     },
   });

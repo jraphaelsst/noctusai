@@ -36,6 +36,7 @@ export function useSeguros(filtros?: FiltrosSeguros) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -63,6 +64,7 @@ export function useVencimentosSeguros(dias: number = 30) {
     },
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

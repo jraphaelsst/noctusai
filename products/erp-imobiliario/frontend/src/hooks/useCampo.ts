@@ -52,6 +52,7 @@ export function useCheckins(filters?: {
     },
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

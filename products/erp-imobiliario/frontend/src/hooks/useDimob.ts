@@ -53,5 +53,6 @@ export function useDimobPreview(ano: number, enabled: boolean) {
     },
     enabled: !!user && enabled,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }

@@ -52,6 +52,7 @@ export function useMetaLeads(page = 1, pageSize = 20, importado?: boolean) {
       };
     },
     enabled: !!user,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -110,6 +111,7 @@ export function useMetaCampanhas(page = 1, pageSize = 20) {
       };
     },
     enabled: !!user,
+    placeholderData: (prev) => prev,
   });
 }
 

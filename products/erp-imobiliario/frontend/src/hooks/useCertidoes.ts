@@ -91,6 +91,7 @@ export function useCertidaoConsultas(filtros?: FiltrosConsultas) {
       }
       return false;
     },
+    placeholderData: (prev) => prev,
   });
 }
 

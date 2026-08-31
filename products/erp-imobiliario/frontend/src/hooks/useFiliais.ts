@@ -38,6 +38,7 @@ export function useFiliais(filters?: { is_active?: boolean }) {
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

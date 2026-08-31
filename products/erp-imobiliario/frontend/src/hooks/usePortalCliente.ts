@@ -60,6 +60,7 @@ export function usePortalAcessos(filtros?: FiltrosAcessos) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -117,6 +118,7 @@ export function useChamadosPortal(filtros?: FiltrosChamados) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

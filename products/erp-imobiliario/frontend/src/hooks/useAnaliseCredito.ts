@@ -33,6 +33,7 @@ export function useAnalisesCredito(filters?: {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

@@ -34,6 +34,7 @@ export function useBIVendas(filtros?: FiltrosPeriodo) {
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -64,6 +65,7 @@ export function useBICorretores(periodo?: string) {
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -95,5 +97,6 @@ export function useBIFinanceiro(filtros?: FiltrosPeriodo) {
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }

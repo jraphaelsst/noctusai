@@ -22,6 +22,7 @@ export function useLocacoes(status?: string) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

@@ -37,6 +37,7 @@ export function usePropostas(filtros?: FiltrosPropostas) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

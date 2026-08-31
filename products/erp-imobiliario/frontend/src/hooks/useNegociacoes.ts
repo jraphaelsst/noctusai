@@ -27,5 +27,6 @@ export function useNegociacoes(filtroStatus: StatusNegociacao | 'todas') {
       return (res.data || []) as Negociacao[];
     },
     enabled: !!user,
+    placeholderData: (prev) => prev,
   });
 }

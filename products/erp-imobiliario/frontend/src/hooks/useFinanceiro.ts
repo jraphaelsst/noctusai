@@ -41,6 +41,7 @@ export function useFinanceiro(filtros?: FiltrosFinanceiro) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -71,6 +72,7 @@ export function useResumoFinanceiro(filtros?: { data_inicio?: string; data_fim?:
     },
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -85,6 +87,7 @@ export function useFluxoCaixa(meses: number = 12) {
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

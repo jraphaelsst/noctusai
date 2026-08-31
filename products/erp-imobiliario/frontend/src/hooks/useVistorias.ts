@@ -29,6 +29,7 @@ export function useVistorias(filtros?: FiltrosVistorias) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

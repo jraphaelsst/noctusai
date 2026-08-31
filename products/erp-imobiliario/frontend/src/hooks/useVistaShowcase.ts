@@ -203,6 +203,7 @@ export function useVistaImoveis(
     },
     enabled,
     staleTime: 30_000,
+    placeholderData: (prev) => prev,
   });
 }
 

@@ -74,6 +74,7 @@ export function useExtratos(filtros?: FiltrosExtratos) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -97,6 +98,7 @@ export function useConciliacao(filtros?: FiltrosConciliacao) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

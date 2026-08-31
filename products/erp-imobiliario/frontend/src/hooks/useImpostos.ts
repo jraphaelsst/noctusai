@@ -38,6 +38,7 @@ export function useImpostos(filtros?: FiltrosImpostos) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -68,6 +69,7 @@ export function useResumoImpostos(filtros?: { ano?: number; imovel_id?: string }
     },
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

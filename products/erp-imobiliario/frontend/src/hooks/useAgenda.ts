@@ -91,6 +91,7 @@ export function useEventos(filtros?: FiltrosEvento) {
     },
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

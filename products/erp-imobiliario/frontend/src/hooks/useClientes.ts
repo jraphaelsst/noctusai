@@ -30,6 +30,7 @@ export function useClientes(filtros?: FiltrosClientes) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -116,12 +117,33 @@ export function useToggleArquivarCliente() {
       const result = await api.post(`/api/clientes/${id}/arquivar`);
       return result.data as Cliente;
     },
+    // Optimistic: flips `arquivado` on the matching row of every cached
+    // `['clientes', ...]` list immediately, so the button feels instant
+    // instead of waiting a round-trip + the onSuccess invalidation below.
+    // `onError` rolls back to the pre-mutation snapshot. Same rollback
+    // discipline as products/social-wiring/frontend/src/hooks/useCardHub.ts
+    // useSetClienteTagsMutation (~L235).
+    onMutate: async (id: string) => {
+      await queryClient.cancelQueries({ queryKey: ['clientes'] });
+      const previousQueries = queryClient.getQueriesData<Cliente[]>({ queryKey: ['clientes'] });
+      previousQueries.forEach(([queryKey, data]) => {
+        if (!data) return;
+        queryClient.setQueryData<Cliente[]>(
+          queryKey,
+          data.map((c) => (c.id === id ? { ...c, arquivado: !c.arquivado } : c)),
+        );
+      });
+      return { previousQueries };
+    },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
       queryClient.invalidateQueries({ queryKey: ['funil'] });
       toast.success(data?.arquivado ? 'Cliente arquivado' : 'Cliente desarquivado');
     },
-    onError: (error: Error) => {
+    onError: (error: Error, _id, context) => {
+      context?.previousQueries?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
       toast.error('Erro ao arquivar cliente', { description: error.message });
     },
   });

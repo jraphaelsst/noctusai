@@ -83,6 +83,7 @@ export function useCampanhas(filtros?: FiltrosCampanhas) {
     },
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 

@@ -67,11 +67,24 @@ export function ClientesTab() {
     setPage(1);
   };
 
-  // 🔴 `isPending || isFetching`, never `isLoading`. In TanStack v5
-  // `isLoading` is false during a background refetch, so an empty-state branch
-  // guarded by it renders "nenhum cliente" over data that exists
+  // Gate the FIRST-load skeleton on `isPending && !data`, never on
+  // `isPending || isFetching` alone — that shape is true on every background
+  // refetch too, so each page/filter change (or any mutation elsewhere that
+  // invalidates this query) unmounted the whole table mid-interaction
+  // (the structures-disappearing-on-refetch class). `isFetching && !!data`
+  // covers the "still fetching, but keep showing what we have" case instead.
+  // Neither branch ever reads `isLoading`: in TanStack v5 `isLoading` is
+  // false during a background refetch, so an empty-state branch guarded by
+  // it would render "nenhum cliente" over data that exists
   // (KB § PATTERNS/frontend/lying-loading-state.md).
-  const busy = isPending || isFetching;
+  //
+  // `useVistaClientes` deliberately ships no `placeholderData` (LGPD — see
+  // the hook's own doc comment: a stale page must not survive a filter/page
+  // change for a personal-data table), so `data` really does go undefined on
+  // every page/filter change here, not just on first mount — `showSkeleton`
+  // covers that case too, by construction.
+  const showSkeleton = isPending && !data;
+  const isRefreshing = isFetching && !!data;
 
   return (
     <div className="space-y-4">
@@ -112,10 +125,10 @@ export function ClientesTab() {
         </Card>
       )}
 
-      {busy && !isError && <Skeleton className="h-96 w-full" />}
+      {showSkeleton && !isError && <Skeleton className="h-96 w-full" />}
 
-      {!busy && !isError && data && (
-        <>
+      {!showSkeleton && !isError && data && (
+        <div className={isRefreshing ? 'opacity-70 transition-opacity' : undefined}>
           <PaginationBar
             page={page}
             pageSize={data.pagination?.quantidade ?? 0}
@@ -132,7 +145,7 @@ export function ClientesTab() {
           ) : (
             <ClientesTable items={data.items} onOpen={setOpenDetail} />
           )}
-        </>
+        </div>
       )}
 
       <ClienteDetalhesDialog
@@ -207,7 +220,13 @@ function ClienteDetalhesDialog({
 }: { codigo: string | null; onOpenChange: (open: boolean) => void }) {
   const { data, isPending, isFetching, isError, error } = useVistaClienteDetalhes(codigo);
   const open = !!codigo;
-  const busy = open && (isPending || isFetching);
+  // Same shape as the list above: `isPending && !data` gates the first-load
+  // skeleton, `isFetching && !!data` marks a background refresh without
+  // unmounting the dialog body. `useVistaClienteDetalhes` is keyed by
+  // `codigo`, so opening a NEW client still shows the skeleton correctly
+  // (a fresh query key starts with no cached `data`).
+  const showSkeleton = open && isPending && !data;
+  const isRefreshing = open && isFetching && !!data;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -220,11 +239,11 @@ function ClienteDetalhesDialog({
           </DialogTitle>
         </DialogHeader>
 
-        {busy && <Skeleton className="h-56 w-full" />}
+        {showSkeleton && <Skeleton className="h-56 w-full" />}
         {isError && <ErrorPanel error={error as Error} />}
 
-        {!busy && data && (
-          <div className="space-y-4 text-sm">
+        {!showSkeleton && data && (
+          <div className={`space-y-4 text-sm ${isRefreshing ? 'opacity-70 transition-opacity' : ''}`}>
             <FieldGrid
               title="Contato e relacionamento"
               rows={[

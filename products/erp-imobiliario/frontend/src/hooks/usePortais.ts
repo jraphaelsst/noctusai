@@ -54,6 +54,7 @@ export function useImoveisPortal(prontoParaPortais?: boolean) {
     },
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
   });
 }
 
@@ -67,6 +68,25 @@ export function useTogglePortal() {
       });
       return result.data;
     },
+    // Optimistic toggle: flips `pronto_para_portais` on the matching row of
+    // every cached `['portais-imoveis', ...]` list immediately; `onError`
+    // rolls back to the pre-mutation snapshot. Same rollback discipline as
+    // products/social-wiring/frontend/src/hooks/useCardHub.ts
+    // useSetClienteTagsMutation (~L235). The three invalidateQueries calls in
+    // onSuccess below — incl. the root `['imoveis']` key — are Category C
+    // (root-key invalidation, out of scope for this slice) and stay as-is.
+    onMutate: async ({ imovelId, prontoParaPortais }: { imovelId: string; prontoParaPortais: boolean }) => {
+      await queryClient.cancelQueries({ queryKey: ['portais-imoveis'] });
+      const previousQueries = queryClient.getQueriesData<ImovelPortal[]>({ queryKey: ['portais-imoveis'] });
+      previousQueries.forEach(([queryKey, data]) => {
+        if (!data) return;
+        queryClient.setQueryData<ImovelPortal[]>(
+          queryKey,
+          data.map((imv) => (imv.id === imovelId ? { ...imv, pronto_para_portais: prontoParaPortais } : imv)),
+        );
+      });
+      return { previousQueries };
+    },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['portais-feeds'] });
       queryClient.invalidateQueries({ queryKey: ['portais-imoveis'] });
@@ -74,7 +94,10 @@ export function useTogglePortal() {
       const label = variables.prontoParaPortais ? 'ativado' : 'desativado';
       toast.success(`Portal ${label} para o imovel`);
     },
-    onError: (error: Error) => {
+    onError: (error: Error, _variables, context) => {
+      context?.previousQueries?.forEach(([queryKey, data]) => {
+        queryClient.setQueryData(queryKey, data);
+      });
       toast.error('Erro ao alterar status do portal', { description: error.message });
     },
   });
