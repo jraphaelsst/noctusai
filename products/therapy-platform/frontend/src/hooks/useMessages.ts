@@ -15,6 +15,24 @@ interface MessagesResponse {
   page_size: number;
 }
 
+// `KEYS.list(conversationId, page)` has two independently-changing axes,
+// and they need OPPOSITE placeholderData treatment:
+//
+//   - `page` changing within the SAME conversation is the same person's
+//     thread — keeping the previous page mounted while the next loads is a
+//     legitimate pagination-flicker fix.
+//   - `conversationId` changing is a DIFFERENT person's private thread.
+//     Reusing the previous conversation's `data` here would render one
+//     patient's messages under the newly-selected patient's header until
+//     the real fetch resolves — the same cross-patient exposure class
+//     documented (and refused) in useClinicalRecords / useLongitudinal /
+//     useConsents / useJournal. This is NOT a style choice; do not widen
+//     it to `(prev) => prev` in a future sweep.
+//
+// So the placeholder is scoped by comparing the previous query's own
+// conversationId (via TanStack's `previousQuery` callback arg) against the
+// CURRENT conversationId — only reused when they match.
+// Per `KB § PATTERNS/frontend/lying-loading-state.md` § Key-changing queries.
 export function useMessages(conversationId?: string, page = 1, pageSize = 50) {
   const { user } = useAuthStore();
   return useQuery<MessagesResponse>({
@@ -25,7 +43,10 @@ export function useMessages(conversationId?: string, page = 1, pageSize = 50) {
       );
       return res.data ?? res;
     },
-    placeholderData: (prev) => prev,
+    placeholderData: (prevData, prevQuery) => {
+      const prevConversationId = prevQuery?.queryKey[1];
+      return prevConversationId === conversationId ? prevData : undefined;
+    },
     enabled: !!user && !!conversationId,
     staleTime: 5 * 1000,
     refetchInterval: 3 * 1000,
