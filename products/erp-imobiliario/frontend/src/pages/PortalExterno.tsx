@@ -71,12 +71,22 @@ function isExpired(dateStr: string): boolean {
 // --- Public Portal View (token-based, no auth) ---
 
 function PortalPublicoView({ token }: { token: string }) {
-  const { data: portalData, isLoading: isValidating, error: validationError } = usePortalValidar(token);
-  const { data: imoveis, isLoading: isLoadingImoveis } = usePortalImoveis(token);
-  const { data: contratos, isLoading: isLoadingContratos } = usePortalContratos(token);
-  const { data: financeiro, isLoading: isLoadingFinanceiro } = usePortalFinanceiro(token);
+  const portalQuery = usePortalValidar(token);
+  const imoveisQuery = usePortalImoveis(token);
+  const contratosQuery = usePortalContratos(token);
+  const financeiroQuery = usePortalFinanceiro(token);
+  const { data: portalData, error: validationError } = portalQuery;
+  const { data: imoveis } = imoveisQuery;
+  const { data: contratos } = contratosQuery;
+  const { data: financeiro } = financeiroQuery;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  const isValidatingPortal = portalQuery.isPending && !portalQuery.data;
+  const showImoveisSkeleton = imoveisQuery.isPending && !imoveisQuery.data;
+  const showContratosSkeleton = contratosQuery.isPending && !contratosQuery.data;
+  const showFinanceiroSkeleton = financeiroQuery.isPending && !financeiroQuery.data;
 
-  if (isValidating) {
+  if (isValidatingPortal) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center space-y-4">
@@ -133,7 +143,7 @@ function PortalPublicoView({ token }: { token: string }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {isLoadingImoveis ? (
+            {showImoveisSkeleton ? (
               <TableSkeleton rows={3} />
             ) : imoveis && imoveis.length > 0 ? (
               <Table>
@@ -183,7 +193,7 @@ function PortalPublicoView({ token }: { token: string }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {isLoadingContratos ? (
+            {showContratosSkeleton ? (
               <TableSkeleton rows={3} />
             ) : contratos && contratos.length > 0 ? (
               <Table>
@@ -235,7 +245,7 @@ function PortalPublicoView({ token }: { token: string }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {isLoadingFinanceiro ? (
+            {showFinanceiroSkeleton ? (
               <TableSkeleton rows={3} />
             ) : financeiro && financeiro.length > 0 ? (
               <Table>
@@ -287,7 +297,9 @@ function PortalPublicoView({ token }: { token: string }) {
 // --- Agent Management View (authenticated) ---
 
 function PortalGerenciamentoView() {
-  const { data: tokens, isLoading } = usePortalTokens();
+  const tokensQuery = usePortalTokens();
+  const { data: tokens } = tokensQuery;
+  const showTokensSkeleton = tokensQuery.isPending && !tokensQuery.data;
   const { mutate: gerarLink, isPending: isGerando } = useGerarLink();
   const { mutate: revogarToken } = useRevogarToken();
 
@@ -412,7 +424,7 @@ function PortalGerenciamentoView() {
           <CardTitle>Links de Acesso Ativos</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showTokensSkeleton ? (
             <TableSkeleton rows={3} />
           ) : activeTokens.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">

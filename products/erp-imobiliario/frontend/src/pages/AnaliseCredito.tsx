@@ -186,11 +186,13 @@ export default function AnaliseCredito() {
   // Detail dialog
   const [selectedAnalise, setSelectedAnalise] = useState<AnaliseType | null>(null);
 
-  const { data: analises, isLoading } = useAnalisesCredito({
+  const analisesQuery = useAnalisesCredito({
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
     fonte: filtroFonte !== 'todos' ? filtroFonte : undefined,
     cpf: filtroCpf ? cleanCpf(filtroCpf) : undefined,
   });
+  const { data: analises } = analisesQuery;
+  const showAnalisesSkeleton = analisesQuery.isPending && !analisesQuery.data;
   const { mutate: consultar, isPending: isConsultando } = useConsultarCredito();
 
   const handleConsultar = () => {
@@ -393,7 +395,7 @@ export default function AnaliseCredito() {
           <CardTitle>Historico de Consultas</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showAnalisesSkeleton ? (
             <TableSkeleton rows={4} />
           ) : !analises || analises.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">

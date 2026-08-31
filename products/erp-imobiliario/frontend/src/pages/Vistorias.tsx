@@ -116,10 +116,12 @@ export default function Vistorias() {
   const navigate = useNavigate();
   const { user } = useAuthStore();
 
-  const { data: vistorias = [], isLoading } = useVistorias({
+  const vistoriasQuery = useVistorias({
     tipo: filtroTipo !== 'todos' ? filtroTipo : undefined,
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
   });
+  const { data: vistorias = [] } = vistoriasQuery;
+  const showVistoriasSkeleton = vistoriasQuery.isPending && !vistoriasQuery.data;
   const createMutation = useCreateVistoria();
   const updateMutation = useUpdateVistoria();
   const deleteMutation = useDeleteVistoria();
@@ -300,7 +302,7 @@ export default function Vistorias() {
       </Card>
 
       {/* Vistorias List */}
-      {isLoading ? (
+      {showVistoriasSkeleton ? (
         <CardGridSkeleton count={6} />
       ) : filtrados.length === 0 ? (
         <Card>
