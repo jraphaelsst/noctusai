@@ -46,12 +46,26 @@ vi.mock("@/hooks/useLeadsAnalytics", () => ({
 
 vi.mock("@noctusai/lib/design-system", () => ({
   AreaChart: () => <div data-testid="area-chart" />,
-  ChartCard: ({ children, title }: any) => (
-    <div data-testid="chart-card">
-      <p>{title}</p>
-      {children}
-    </div>
-  ),
+  // Replicates the REAL ChartCard's state priority (loading > error >
+  // isEmpty > children — see seed/lib/frontend/src/design-system/charts/
+  // ChartCard.tsx) instead of always rendering `children` regardless of the
+  // `loading`/`error`/`isEmpty` props. A mock that ignores those props can
+  // never fail when a page miscomputes them — which is exactly why this
+  // test file could not catch the 2026-07-21/22 "Sem dados" incident
+  // (`KB § PATTERNS/frontend/lying-loading-state.md`). Emits a
+  // distinguishable `data-chart-state` marker.
+  ChartCard: ({ children, title, loading, error, isEmpty }: any) => {
+    const state = loading ? "loading" : error ? "error" : isEmpty ? "empty" : "success";
+    return (
+      <div data-testid="chart-card" data-chart-title={title} data-chart-state={state}>
+        <p>{title}</p>
+        {state === "loading" && <div data-testid="chart-card-skeleton" role="status" aria-label="Carregando" />}
+        {state === "error" && <p role="alert">{error}</p>}
+        {state === "empty" && <p>Sem dados para o período selecionado.</p>}
+        {state === "success" && children}
+      </div>
+    );
+  },
   TableSkeleton: () => <div data-testid="table-skeleton" />,
   formatPercent: (v: number) => `${v}%`,
   formatPercentDelta: (v: number) => `${v}%`,
@@ -136,5 +150,59 @@ describe("Origens — table error recovery", () => {
 
     fireEvent.click(clearButton);
     expect(mockClearAll).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── Regression: 2026-07-21/22 "Sem dados" over 28 brokers / 12,177 leads ──
+//
+// `ChartCard`'s priority is loading > error > empty. `Origens.tsx` gates
+// the "Evolução por origem" card on `timeseriesQ.isPending && !timeseriesQ.data`
+// — the two-signal fix (`KB § PATTERNS/frontend/lying-loading-state.md`). The
+// buggy predecessor gated on the bare `.isLoading` field
+// (`isPending && isFetching`), which goes false the instant a fetch is not
+// actively in flight even though no data has ever resolved (e.g. between
+// retry attempts) — the empty branch then won.
+describe("Origens — ChartCard loading state (regression)", () => {
+  const EVOLUCAO_TITLE = "Evolução por origem";
+  const TIMESERIES_DATA = {
+    grain: "mes",
+    split: "origem",
+    series_meta: [{ key: "viva-real", label: "Viva Real", cor: "#111" }],
+    points: [{ label: "Jan", series: { "viva-real": 10 } }],
+  };
+
+  it("Mode A guard: never shows the empty state while data has not resolved (isPending true, isFetching false, no data)", async () => {
+    mockUseLeadsTimeseries.mockReturnValue(
+      makeQuery({ isPending: true, isFetching: false, data: undefined }),
+    );
+    const { container } = await renderPage();
+
+    const card = container.querySelector(`[data-chart-title="${EVOLUCAO_TITLE}"]`);
+    expect(card?.getAttribute("data-chart-state")).toBe("loading");
+    expect(card?.textContent).not.toMatch(/Sem dados/i);
+  });
+
+  it("Mode B guard: keeps the chart mounted through a real background-refetch transition (data resolved, then fetching again)", async () => {
+    mockUseLeadsTimeseries.mockReturnValue(makeQuery({ data: TIMESERIES_DATA }));
+    const React = (await import("react")).default;
+    const { default: Origens } = await import("./Origens");
+    const { container, rerender } = await renderPage();
+
+    let card = container.querySelector(`[data-chart-title="${EVOLUCAO_TITLE}"]`);
+    expect(card?.getAttribute("data-chart-state")).toBe("success");
+    expect(card?.querySelector('[data-testid="area-chart"]')).toBeTruthy();
+
+    // Background refetch starts on top of already-resolved data — the exact
+    // TanStack v5 state a live refetch produces (`isPending: false` because
+    // data has resolved once; `isFetching: true` for the request in flight).
+    mockUseLeadsTimeseries.mockReturnValue(
+      makeQuery({ isFetching: true, data: TIMESERIES_DATA }),
+    );
+    rerender(React.createElement(Origens));
+
+    card = container.querySelector(`[data-chart-title="${EVOLUCAO_TITLE}"]`);
+    expect(card?.getAttribute("data-chart-state")).toBe("success");
+    expect(card?.querySelector('[data-testid="area-chart"]')).toBeTruthy();
+    expect(card?.textContent).not.toMatch(/Sem dados/i);
   });
 });

@@ -29,13 +29,27 @@ vi.mock("@/hooks/useLeadsAnalytics", () => ({
 
 vi.mock("@noctusai/lib/design-system", () => ({
   BarChart: () => <div data-testid="bar-chart" />,
-  ChartCard: ({ children, title, subtitle }: any) => (
-    <div data-testid="chart-card">
-      <p>{title}</p>
-      <p>{subtitle}</p>
-      {children}
-    </div>
-  ),
+  // Replicates the REAL ChartCard's state priority (loading > error >
+  // isEmpty > children — see seed/lib/frontend/src/design-system/charts/
+  // ChartCard.tsx) instead of always rendering `children` regardless of the
+  // `loading`/`error`/`isEmpty` props. A mock that ignores those props can
+  // never fail when a page miscomputes them — which is exactly why this
+  // test file could not catch the 2026-07-21/22 "Sem dados" incident
+  // (`KB § PATTERNS/frontend/lying-loading-state.md`). Emits a
+  // distinguishable `data-chart-state` marker.
+  ChartCard: ({ children, title, subtitle, loading, error, isEmpty }: any) => {
+    const state = loading ? "loading" : error ? "error" : isEmpty ? "empty" : "success";
+    return (
+      <div data-testid="chart-card" data-chart-title={title} data-chart-state={state}>
+        <p>{title}</p>
+        <p>{subtitle}</p>
+        {state === "loading" && <div data-testid="chart-card-skeleton" role="status" aria-label="Carregando" />}
+        {state === "error" && <p role="alert">{error}</p>}
+        {state === "empty" && <p>Sem dados para o período selecionado.</p>}
+        {state === "success" && children}
+      </div>
+    );
+  },
   TableSkeleton: () => <div data-testid="table-skeleton" />,
   formatPercent: (v: number) => `${v}%`,
   formatPercentDelta: (v: number) => `${v}%`,
@@ -101,5 +115,54 @@ describe("Empreendimentos — table error recovery", () => {
 
     fireEvent.click(clearButton);
     expect(mockClearAll).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── Regression: 2026-07-21/22 "Sem dados" over 28 brokers / 12,177 leads ──
+//
+// `ChartCard`'s priority is loading > error > empty. `Empreendimentos.tsx`
+// gates the ranking card on `byDimQ.isPending && !byDimQ.data` — the
+// two-signal fix (`KB § PATTERNS/frontend/lying-loading-state.md`). The
+// buggy predecessor gated on the bare `.isLoading` field
+// (`isPending && isFetching`), which goes false the instant a fetch is not
+// actively in flight even though no data has ever resolved (e.g. between
+// retry attempts) — the empty branch then won.
+describe("Empreendimentos — ChartCard loading state (regression)", () => {
+  const RANKING_TITLE = "Leads por empreendimento";
+
+  it("Mode A guard: never shows the empty state while data has not resolved (isPending true, isFetching false, no data)", async () => {
+    mockUseLeadsByDimension.mockReturnValue(
+      makeQuery({ isPending: true, isFetching: false, data: undefined }),
+    );
+    const { container } = await renderPage();
+
+    const card = container.querySelector(`[data-chart-title="${RANKING_TITLE}"]`);
+    expect(card?.getAttribute("data-chart-state")).toBe("loading");
+    expect(card?.textContent).not.toMatch(/Sem dados/i);
+  });
+
+  it("Mode B guard: keeps the chart mounted through a real background-refetch transition (data resolved, then fetching again)", async () => {
+    const resolved = { dim: "empreendimento", total: 50, buckets: BUCKETS };
+    mockUseLeadsByDimension.mockReturnValue(makeQuery({ data: resolved }));
+    const React = (await import("react")).default;
+    const { default: Empreendimentos } = await import("./Empreendimentos");
+    const { container, rerender } = await renderPage();
+
+    let card = container.querySelector(`[data-chart-title="${RANKING_TITLE}"]`);
+    expect(card?.getAttribute("data-chart-state")).toBe("success");
+    expect(card?.querySelector('[data-testid="bar-chart"]')).toBeTruthy();
+
+    // Background refetch starts on top of already-resolved data — the exact
+    // TanStack v5 state a live refetch produces (`isPending: false` because
+    // data has resolved once; `isFetching: true` for the request in flight).
+    mockUseLeadsByDimension.mockReturnValue(
+      makeQuery({ isFetching: true, data: resolved }),
+    );
+    rerender(React.createElement(Empreendimentos));
+
+    card = container.querySelector(`[data-chart-title="${RANKING_TITLE}"]`);
+    expect(card?.getAttribute("data-chart-state")).toBe("success");
+    expect(card?.querySelector('[data-testid="bar-chart"]')).toBeTruthy();
+    expect(card?.textContent).not.toMatch(/Sem dados/i);
   });
 });
