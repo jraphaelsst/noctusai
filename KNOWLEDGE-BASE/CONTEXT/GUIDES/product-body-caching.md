@@ -4,7 +4,7 @@
 >
 > **NOT another codification rule.** This is a guide / recipe / lessons / gotchas — sibling of `KB § GUIDES/production-deploy.md` (recipe + lessons) and `KB § GUIDES/absorb-seed-workspace.md` (10-gate procedure), not a `PATTERNS/` doc.
 >
-> **Born:** 2026-05-29, from the **seed pilot** (`projects/seed-organs-cache/` Phase 1).
+> **Born:** 2026-05-29, from the **seed pilot** (the `seed-organs-cache` project, Phase 1; closed 2026-08-31 — this guide is the durable record of what it proved).
 
 ---
 
@@ -24,7 +24,7 @@
 - `KB § PATTERNS/architect/absorbed-product-seed-shape-seam.md` — the absorbed-product seed-shape seam (the *legitimate-divergence* shape).
 - `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` — the 5 forbidden rationalizations the seed pilot caught its codifiers using.
 - `KB § PATTERNS/common/persistent-files-absorption.md` — absorb-at-project-close (continuous variant of which is build-learn-cache).
-- `projects/seed-organs-cache/PROJECT.md` — the pilot project, the worked example.
+- The `seed-organs-cache` pilot (closed 2026-08-31) — the worked example this guide was extracted from.
 
 ---
 
@@ -127,7 +127,7 @@ For each product to cache, run waves **W_a → W_e in dependency order**. Each w
 1. Orchestrator runs `noctus.dev.find_reusable_component "<a real query a future builder would ask>"` and reports the top-3 to the user.
 2. User runs the product's UI surfaces backed by the cached organs and reports findings (works / breaks-when-X / unexpected-Y).
 3. EACH finding lands via `noctus.dev.organ_knowledge_append <name> manual_validation_log "<finding + status + date>"`.
-4. The embedding refresh runs **inline** (synchronous, per `projects/seed-organs-cache/PROJECT.md §3b`) — the next query reflects this validation immediately.
+4. The embedding refresh runs **inline** (synchronous — the seed pilot's §3b decision, 2026-05-29) — the next query reflects this validation immediately.
 5. Acceptance is binary: every organ has `validation_status=validated` (consumers ≥3 ∧ has_test ∧ no NOC-REMEDIATE markers ∧ no recent bugfix in 14d) OR is honestly tagged `emerging` / `shelfware`. **No "available but unused."**
 
 The cache reflects the journey **as it happens**, not at project close.
@@ -226,5 +226,5 @@ This extends `persistent-files-absorption.md` from "absorb at project close" to 
 - `KB § PATTERNS/common/cache-as-agent-tool.md` — caches ARE the search engines.
 - `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` — the 5 forbidden rationalizations.
 - `KB § PATTERNS/common/persistent-files-absorption.md` — continuous variant = build-learn-cache.
-- `projects/seed-organs-cache/PROJECT.md` — the pilot project (worked example).
+- The `seed-organs-cache` pilot (closed 2026-08-31) — the worked example.
 - Recent worked-example commits: `1bbafead` (W4 register+embed+find), `74c7e4a9` (W3 validation_signal), `23164dce` (W2 component_bundle), `fe9c3bfc` (W1 re-export attribution), `25491bc0` (vectorize META-RULE), `ea7514e7` (build-learn-cache), `62560ede` (no-verify loophole + 5 rationalizations), `fe81e3c7` (surface-and-resume tooling).

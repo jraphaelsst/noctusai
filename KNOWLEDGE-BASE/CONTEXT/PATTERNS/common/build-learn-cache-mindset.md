@@ -143,7 +143,7 @@ The cache is **append-only across the artifact's lifetime**, not just its initia
 
 ## 5 · Worked example — this project IS the worked example
 
-The `seed-organs-cache` project active this session (`projects/seed-organs-cache/PROJECT.md`) is the body-layer companion to this rule. The project builds an organ-knowledge cache as a seed primitive (the body); this rule codifies the methodology that explains WHY (the mind). The recursion is the proof:
+The `seed-organs-cache` project (2026-05-29, closed 2026-08-31) was the body-layer companion to this rule; its recipe is preserved in `KB § GUIDES/product-body-caching.md`. The project builds an organ-knowledge cache as a seed primitive (the body); this rule codifies the methodology that explains WHY (the mind). The recursion is the proof:
 
 - **The 8 knowledge categories above** are themselves the schema the project's body layer materializes. The schema lives here (KB methodology surface); the implementation lives in the seed (code surface). Both move together — code-DRY + methodology-DRY in lockstep.
 - **The knowledge cached DURING this codification session** is itself an example: the user's surfacing language ("known facts, errors encountered, drifts surfaced, alternatives, manual validation, e2e, bugs fixed") IS an entry under this rule's own `known_facts`. The codification is its own first artifact.
@@ -202,4 +202,4 @@ The loop is only real if appending + querying knowledge is a one-call operation 
 - **Stage 3** (KB + CLAUDE.md + CONTEXTUALIZE.md) — **this doc** + the §1 one-liner + the §2 mirror. Same-commit s1→s3 compression via `codify_log force=True` (user explicit ask).
 - **Stage 4** (keeper detector) — **deferred** to a follow-up. Candidate `check_artifact_has_knowledge_sidecar` (advisory; audits long-lived artifacts in `products/<slug>/` + `seed-lib/` for presence of a `<artifact>.knowledge.yaml` sidecar OR a corresponding `noc-graph` `artifact_knowledge` node). Stage-4 lands AFTER the seed-organs-cache project ships the body — the storage shape has to exist first.
 
-**Sibling pending edit (flagged, not done here)**: `projects/seed-organs-cache/PROJECT.md` should add a section pointer to this KB doc — the project's body layer + this rule's mind layer compose. Tech-lead picks this up in `feat/seed-organs-cache-project-extend-blc` (NOT this slice — file-disjoint).
+**Resolved 2026-08-31.** This once flagged a pending pointer back from `seed-organs-cache`'s PROJECT.md and a branch (`feat/seed-organs-cache-project-extend-blc`) that was never created. The project is closed and the body-layer recipe now lives in `KB § GUIDES/product-body-caching.md`, so the two layers compose doc-to-doc with no project folder in between.
