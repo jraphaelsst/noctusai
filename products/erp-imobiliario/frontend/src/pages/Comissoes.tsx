@@ -74,12 +74,14 @@ export default function Comissoes() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const statusParam = filtroStatus === 'todos' ? undefined : filtroStatus as ComissaoStatus;
-  const { data: comissoesResult, isLoading } = useComissoes({ status: statusParam });
+  const comissoesQuery = useComissoes({ status: statusParam });
   const { data: resumo } = useComissaoResumo();
   const createMutation = useCreateComissao();
   const updateMutation = useUpdateComissao();
   const deleteMutation = useDeleteComissao();
 
+  const comissoesResult = comissoesQuery.data;
+  const showComissoesSkeleton = comissoesQuery.isPending && !comissoesQuery.data;
   const comissoes = comissoesResult?.data || [];
   const totais = resumo?.totais;
 
@@ -295,7 +297,7 @@ export default function Comissoes() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showComissoesSkeleton ? (
             <MetricsTableSkeleton cards={0} />
           ) : comissoes.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
