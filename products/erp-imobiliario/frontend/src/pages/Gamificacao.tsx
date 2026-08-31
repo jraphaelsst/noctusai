@@ -85,9 +85,15 @@ export default function Gamificacao() {
   const [periodo, setPeriodo] = useState<Periodo>('geral');
   const [pontosPage, setPontosPage] = useState(1);
 
-  const { data: leaderboard, isLoading: loadingLeaderboard } = useLeaderboard(periodo);
-  const { data: pontosResult, isLoading: loadingPontos } = useMeusPontos(pontosPage);
-  const { data: conquistas, isLoading: loadingConquistas } = useMinhasConquistas();
+  const leaderboardQuery = useLeaderboard(periodo);
+  const pontosQuery = useMeusPontos(pontosPage);
+  const conquistasQuery = useMinhasConquistas();
+  const { data: leaderboard } = leaderboardQuery;
+  const { data: pontosResult } = pontosQuery;
+  const { data: conquistas } = conquistasQuery;
+  const showLeaderboardSkeleton = leaderboardQuery.isPending && !leaderboardQuery.data;
+  const showPontosSkeleton = pontosQuery.isPending && !pontosQuery.data;
+  const showConquistasSkeleton = conquistasQuery.isPending && !conquistasQuery.data;
 
   const pontuacoes: Pontuacao[] = pontosResult?.data || [];
   const totalPontos = pontosResult?.total_pontos ?? 0;
@@ -176,7 +182,7 @@ export default function Gamificacao() {
               </div>
             </CardHeader>
             <CardContent>
-              {loadingLeaderboard ? (
+              {showLeaderboardSkeleton ? (
                 <TableSkeleton rows={3} />
               ) : ranking.length === 0 ? (
                 <div className="py-12 text-center text-muted-foreground">
@@ -265,7 +271,7 @@ export default function Gamificacao() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {loadingPontos ? (
+              {showPontosSkeleton ? (
                 <TableSkeleton rows={3} />
               ) : pontuacoes.length === 0 ? (
                 <div className="py-6 text-center text-muted-foreground">
@@ -327,7 +333,7 @@ export default function Gamificacao() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {loadingConquistas ? (
+          {showConquistasSkeleton ? (
             <TableSkeleton rows={3} />
           ) : allConquistas.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
