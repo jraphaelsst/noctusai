@@ -19,6 +19,7 @@ import {
   Monitor, Clock,
 } from "lucide-react";
 import { CardListSkeleton } from "@/components/ui/page-skeleton";
+import { SummaryValue } from "@/components/ui/summary-value";
 
 function timeAgo(dateStr: string) {
   if (!dateStr) return "";
@@ -39,8 +40,12 @@ export default function Notificacoes() {
   const [tab, setTab] = useState("todas");
   const apenasNaoLidas = tab === "nao-lidas";
 
-  const { data: notificacoesResp, isLoading } = useNotificacoes(1, 100, apenasNaoLidas);
-  const { data: contagem } = useContagemNaoLidas();
+  const notificacoesQuery = useNotificacoes(1, 100, apenasNaoLidas);
+  const { data: notificacoesResp } = notificacoesQuery;
+  const showNotificacoesSkeleton = notificacoesQuery.isPending && !notificacoesQuery.data;
+  const contagemQuery = useContagemNaoLidas();
+  const { data: contagem } = contagemQuery;
+  const contagemNotArrived = contagemQuery.isPending && !contagemQuery.data;
   const marcarLida = useMarcarComoLida();
   const marcarTodas = useMarcarTodasComoLidas();
   const { data: prefsResp } = useNotificacaoPreferencias();
@@ -82,7 +87,9 @@ export default function Notificacoes() {
           <div>
             <h1 className="text-2xl font-bold">Notificações</h1>
             <p className="text-sm text-muted-foreground">
-              {naoLidas > 0 ? `${naoLidas} não lida${naoLidas > 1 ? "s" : ""}` : "Tudo em dia"}
+              <SummaryValue notArrived={contagemNotArrived} className="h-4 w-24">
+                {naoLidas > 0 ? `${naoLidas} não lida${naoLidas > 1 ? "s" : ""}` : "Tudo em dia"}
+              </SummaryValue>
             </p>
           </div>
         </div>
@@ -121,7 +128,7 @@ export default function Notificacoes() {
         <TabsContent value="todas" className="mt-4">
           <NotificacaoList
             notificacoes={notificacoes}
-            isLoading={isLoading}
+            isLoading={showNotificacoesSkeleton}
             onMarcarLida={(id: string) => marcarLida.mutate(id)}
           />
         </TabsContent>
@@ -129,7 +136,7 @@ export default function Notificacoes() {
         <TabsContent value="nao-lidas" className="mt-4">
           <NotificacaoList
             notificacoes={notificacoes}
-            isLoading={isLoading}
+            isLoading={showNotificacoesSkeleton}
             onMarcarLida={(id: string) => marcarLida.mutate(id)}
           />
         </TabsContent>
