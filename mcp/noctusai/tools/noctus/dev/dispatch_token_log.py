@@ -198,13 +198,38 @@ def register(server) -> None:
                               estimated_tokens=estimated_tokens,
                               outcome=outcome, notes=notes)
 
+    # NOTE (2026-08-31, tool-name-uniqueness triage): this module and
+    # `dispatch_budget.py` BOTH declared `name="noctus.dev.dispatch_budget_summary"`.
+    # `dispatch_budget.register` runs before `dispatch_token_log.register`
+    # in `register_all` (`tools/noctus/dev/__init__.py`), so
+    # `dispatch_budget.py`'s (agent, model, window_days) token-sum
+    # aggregation — over the {agent, slug, input_tokens, output_tokens,
+    # model, source_ref} entry shape written by `dispatch_budget_log` —
+    # was the live tool; THIS (agent, since) outcome/duration aggregation
+    # — over the DIFFERENT {slug, agent, duration_minutes,
+    # estimated_tokens, outcome, notes} entry shape written by
+    # `log_completion` above — was silently dead code registered a
+    # second time under the same name. Both modules read/write the SAME
+    # ledger file (`project-history/dispatch-budget.ndjson`) with two
+    # DIFFERENT row schemas — a real, separate drift worth flagging (see
+    # the delivery-note drift-found). Not behaviourally equivalent, so
+    # renamed rather than deleted per the no-silent-behavior-change rule:
+    # the winning name's semantics are untouched; this one keeps its
+    # capability under an honest, non-colliding name that pairs with the
+    # already-unique `noctus.dev.dispatch_log_completion` tool above.
     @server.tool(
-        name="noctus.dev.dispatch_budget_summary",
+        name="noctus.dev.dispatch_completion_summary",
         description=(
-            "Aggregate dispatch budget rows. Returns total_dispatches, "
-            "by_outcome counts, by_agent {dispatches, avg_minutes, "
-            "avg_tokens}, total_estimated_tokens, landed_rate. Optional "
-            "`agent=<name>` + `since=<ISO date>` filters."
+            "Aggregate dispatch-COMPLETION rows logged via "
+            "`noctus.dev.dispatch_log_completion` (the {duration_minutes, "
+            "estimated_tokens, outcome} manual-log shape — a DIFFERENT "
+            "entry schema than `noctus.dev.dispatch_budget_summary`, "
+            "though both read the same "
+            "`project-history/dispatch-budget.ndjson` file). Returns "
+            "total_dispatches, by_outcome counts, by_agent {dispatches, "
+            "avg_minutes, avg_tokens}, total_estimated_tokens, "
+            "landed_rate. Optional `agent=<name>` + `since=<ISO date>` "
+            "filters."
         ),
     )
     def _sum(agent: str | None = None, since: str | None = None) -> dict:

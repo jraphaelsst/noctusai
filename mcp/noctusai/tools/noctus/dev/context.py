@@ -116,6 +116,20 @@ def get_product_context(slug: str) -> dict:
 
 
 def register(server) -> None:
+    # NOTE (2026-08-31, tool-name-uniqueness triage): this module and
+    # `agent_context.py` BOTH declared `name="noctus.dev.agent_context"`.
+    # FastMCP keeps the first registration in `register_all`'s call order
+    # (`agent_context.register` runs before `context.register` — see
+    # `tools/noctus/dev/__init__.py`), so `agent_context.py`'s per-agent
+    # compact-bundle lookup (`acc.lookup(agent_name)`, REQUIRED
+    # `agent_name` arg) was the live tool; THIS zero-arg full-platform
+    # bootstrap was silently dead code registered a second time under the
+    # same name (FastMCP only warns: "Tool already exists"). The two are
+    # NOT behaviourally equivalent — different signature, different
+    # payload shape, different purpose — so per the no-silent-behavior-
+    # change rule this was renamed rather than deleted: the winning name
+    # keeps its existing (already-live) semantics untouched, and this
+    # capability survives under its own honest name instead of vanishing.
     desc_agent = "Full platform context for an agent starting fresh. Call FIRST."
     desc_product = "Everything needed to work on a product: structure + MASTER-PROMPT + README"
 
@@ -126,7 +140,7 @@ def register(server) -> None:
         return get_product_context(slug)
 
     server.tool(
-        name="noctus.dev.agent_context",
+        name="noctus.dev.platform_bootstrap_context",
         description=desc_agent,
     )(_agent_context)
     server.tool(
