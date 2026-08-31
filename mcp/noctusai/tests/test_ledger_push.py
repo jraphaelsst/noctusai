@@ -195,8 +195,17 @@ class TestAlreadyCommitted:
         )
         assert res == {"ok": True, "status": "pushed", "pushed": True}
         subs = r.subs()
-        assert "status" not in subs and "add" not in subs and "commit" not in subs
-        assert subs[0] == "fetch"  # straight to the push leg
+        # The COMMIT leg is what must be skipped: no add, no commit.
+        assert "add" not in subs and "commit" not in subs
+        # `status` is no longer a valid proxy for "the commit leg ran" — the push
+        # leg's benign-stash pre-check calls a BARE `git status --porcelain`. The
+        # commit leg's status is PATH-SCOPED (`-- <rel_paths>`), so assert on that
+        # distinction rather than on the subcommand name.
+        scoped_status = [c for c in r.calls if _sub(c) == "status" and "--" in c]
+        assert not scoped_status, f"commit-leg (path-scoped) status ran: {scoped_status}"
+        # First call is the benign-stash pre-check, then straight to the push leg.
+        assert subs[0] == "status" and "--" not in r.calls[0]
+        assert "fetch" in subs
 
 
 # ── stale-primary rebase path ──────────────────────────────────────────────────
@@ -331,3 +340,86 @@ class TestCommandShape:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ── the primary/origin divergence loop (the 2026-08-31 fix) ───────────────────
+# ROOT CAUSE. `git rebase` refuses on ANY dirty file. The cost-log pre-commit
+# hook dirties project-history/vector-costs.ndjson on essentially every commit —
+# including the ledger commit this helper makes one line earlier. So the rebase
+# leg was refused, the helper returned committed_locally=True / pushed=False, and
+# the PRIMARY checkout was left diverged from origin/dev. That divergence was
+# then hand-fixed with `git -c rebase.autoStash=true rebase origin/dev` once per
+# session, and accumulated 4+ ledger entries against it before being fixed here.
+#
+# task_branch.integrate has auto-stashed benign artifacts since 2026-05-28
+# ("Bug C"); the identical leg here never inherited it. Both now share
+# _benign_stash.
+class TestBenignStashUnblocksTheRebase:
+    def test_hook_dirtied_ledger_is_stashed_so_the_push_succeeds(self):
+        """The exact recurring failure: the tree is dirty ONLY with a known-benign
+        hook artifact. It must be stashed, the rebase must run, the push must
+        succeed, and the artifact must be restored."""
+        r = FakeRunner(status_dirty=True, push_rcs=[0],
+                       diff_tree="project-history/worktree-salvage.ndjson\n",
+                       ledger_rel="project-history/vector-costs.ndjson")
+        res = LP.commit_and_ff_push_ledger(
+            runner=r, rel_paths=["project-history/worktree-salvage.ndjson"],
+            already_committed=True,
+        )
+        assert res["pushed"] is True, res
+        subs = r.subs()
+        assert "stash" in subs, "benign artifact must be stashed before the rebase"
+        assert "rebase" in subs, "the rebase must actually run"
+        # stash push precedes the rebase; stash pop restores afterwards.
+        stashes = [c for c in r.calls if _sub(c) == "stash"]
+        assert any("push" in c for c in stashes), stashes
+        assert any("pop" in c for c in stashes), "the artifact must be restored"
+        assert subs.index("stash") < subs.index("rebase")
+
+    def test_real_dirty_work_blocks_loudly_and_names_the_files(self):
+        """The inverse: genuine in-progress work must NOT be silently stashed. It
+        blocks — but as an explicit, named dirty_blocked, not a mystery
+        divergence."""
+        r = FakeRunner(status_dirty=True, push_rcs=[0],
+                       ledger_rel="products/social-wiring/backend/app/main.py")
+        res = LP.commit_and_ff_push_ledger(
+            runner=r, rel_paths=["project-history/worktree-salvage.ndjson"],
+            already_committed=True,
+        )
+        assert res["ok"] is False
+        assert res["status"] == "dirty_blocked"
+        assert res["committed_locally"] is True
+        assert "products/social-wiring/backend/app/main.py" in res["dirty_files"]
+        assert "products/social-wiring/backend/app/main.py" in res["error"]
+        subs = r.subs()
+        assert "rebase" not in subs, "must not attempt a rebase it knows will be refused"
+        assert "push" not in subs, "must not push"
+        assert "stash" not in subs, "real work must never be silently stashed"
+
+    def test_stash_is_popped_even_when_the_push_fails(self):
+        """A failed push must still leave the tree as we found it — a
+        stashed-and-forgotten artifact is its own drift."""
+        r = FakeRunner(status_dirty=True, push_rcs=[1, 1],
+                       diff_tree="project-history/worktree-salvage.ndjson\n",
+                       ledger_rel="project-history/vector-costs.ndjson")
+        res = LP.commit_and_ff_push_ledger(
+            runner=r, rel_paths=["project-history/worktree-salvage.ndjson"],
+            already_committed=True,
+        )
+        assert res["ok"] is False
+        stashes = [c for c in r.calls if _sub(c) == "stash"]
+        assert any("pop" in c for c in stashes), f"stash never popped: {r.subs()}"
+
+    def test_no_force_or_autostash_shortcut_is_ever_issued(self):
+        """The fix must not smuggle in a force/`-X`/config override — it stashes
+        an explicit, known-benign path set and nothing else."""
+        r = FakeRunner(status_dirty=True, push_rcs=[0],
+                       diff_tree="project-history/worktree-salvage.ndjson\n",
+                       ledger_rel="project-history/vector-costs.ndjson")
+        LP.commit_and_ff_push_ledger(
+            runner=r, rel_paths=["project-history/worktree-salvage.ndjson"],
+            already_committed=True,
+        )
+        flat = " ".join(" ".join(c) for c in r.calls)
+        for banned in ("--force", "-f ", "-X", "reset --hard", "autoStash"):
+            assert banned not in flat, f"banned token {banned!r} issued: {flat}"

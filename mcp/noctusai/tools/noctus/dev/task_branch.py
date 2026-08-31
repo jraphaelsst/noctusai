@@ -72,12 +72,18 @@ git and asserts the allowlist, the dev-only-push boundary, and the rebase-retry.
 """
 from __future__ import annotations
 
-import fnmatch
 import logging
 import os
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
+
+from tools.noctus.dev._benign_stash import (
+    BENIGN_REFRESH_PATTERNS,
+    classify_dirty as _shared_classify_dirty,
+    pop_stash as _shared_pop_stash,
+    stash_benign as _shared_stash_benign,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,15 +114,11 @@ _BANNED_TOKENS = (
 # reconstructable and never contain task work — so they are benign for the
 # purpose of the rebase pre-check and should be auto-stashed rather than
 # blocking integrate.
-_BENIGN_REFRESH_PATTERNS = (
-    "KNOWLEDGE-BASE/AGENT-CONTEXT.md",
-    "KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md",
-    "project-history/vector-costs.ndjson",
-    "project-history/auto-improvement.ndjson",
-    "project-history/worktree-salvage.ndjson",
-    "project-history/branch-tree.ndjson",
-    ".claude/cache/*",
-)
+# Canonical home is now ``_benign_stash`` — the SAME patterns and the SAME
+# stash/pop mechanism are used by ``_ledger_push``'s rebase leg, which had the
+# identical bug and never got this fix. Re-exported here under the historical
+# private name so this module's public surface is unchanged.
+_BENIGN_REFRESH_PATTERNS = BENIGN_REFRESH_PATTERNS
 
 
 def _default_run_local(cmd: list[str], cwd: str | None = None) -> tuple[int, str, str]:
@@ -244,20 +246,7 @@ def _classify_dirty_files(
     XY-code stripped). A git-status failure → ([], ["<git-status-failed>"]) so the
     caller treats it conservatively as a real conflict.
     """
-    rc, out, _e = runner(["git", "status", "--porcelain"], cwd=wt_path)
-    if rc != 0:
-        return [], ["<git-status-failed>"]
-    benign: list[str] = []
-    real: list[str] = []
-    for raw in out.splitlines():
-        if not raw.strip():
-            continue
-        # porcelain format: "XY path" or "XY old -> new"; take the last token
-        parts = raw[3:].strip()
-        path = parts.split(" -> ")[-1].strip()
-        matched = any(fnmatch.fnmatch(path, pat) for pat in _BENIGN_REFRESH_PATTERNS)
-        (benign if matched else real).append(path)
-    return benign, real
+    return _shared_classify_dirty(lambda *a: runner(["git", *a], cwd=wt_path))
 
 
 def _rebase_in_progress(runner, wt_path: str) -> bool:
@@ -368,33 +357,20 @@ def _stash_benign_artifacts(
     Returns True if the stash succeeded (or there was nothing to stash), False on
     failure (caller falls back to surfacing the files as blocking).
     """
-    if not benign:
-        return True
-    if verbose:
-        logger.debug("task_branch.integrate: auto-stashing %d benign artifact(s): %s",
-                     len(benign), benign)
-    rc, _o, err = runner(
-        ["git", "-C", wt_path, "stash", "push", "--include-untracked",
-         "--message", "task_branch auto-stash: benign refresh artifacts", "--"] + benign
+    return _shared_stash_benign(
+        lambda *a: runner(["git", "-C", wt_path, *a]),
+        benign,
+        log_prefix="task_branch.integrate",
     )
-    if rc != 0:
-        logger.warning("task_branch.integrate: auto-stash failed (%s); "
-                       "proceeding without stash — rebase may be blocked",
-                       (err or "").strip())
-        return False
-    return True
 
 
 def _pop_stash(runner, wt_path: str, verbose: bool = False) -> None:
     """Pop the auto-stash created by ``_stash_benign_artifacts``. Best-effort:
     a pop failure is logged but never raises (the integrate already completed)."""
-    if verbose:
-        logger.debug("task_branch.integrate: popping auto-stash")
-    rc, _o, err = runner(["git", "-C", wt_path, "stash", "pop"])
-    if rc != 0:
-        logger.warning("task_branch.integrate: stash pop failed (%s); "
-                       "the benign artifacts remain stashed — run `git stash pop` "
-                       "in the worktree to restore them", (err or "").strip())
+    _shared_pop_stash(
+        lambda *a: runner(["git", "-C", wt_path, *a]),
+        log_prefix="task_branch.integrate",
+    )
 
 # ── env auto-wire (the §5a verification-env recipe, mechanized) ──────────────
 # A fresh worktree is a clean git checkout: node_modules/ is gitignored ⇒ ABSENT,

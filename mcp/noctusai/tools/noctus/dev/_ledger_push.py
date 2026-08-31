@@ -29,6 +29,13 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
+from tools.noctus.dev._benign_stash import (
+    classify_dirty,
+    dirty_blocked_result,
+    pop_stash,
+    stash_benign,
+)
+
 logger = logging.getLogger(__name__)
 
 # (rc, stdout, stderr) subprocess runner — the injected git seam. Both call
@@ -124,6 +131,53 @@ def commit_and_ff_push_ledger(
             return {"ok": False, "error": f"git commit failed: {(err_c or '').strip()}"}
 
     # ── Push leg: fetch → divergence-guard → rebase → FF-push (one retry) ──────
+    #
+    # BENIGN-STASH PRE-CHECK (the divergence-loop fix). `git rebase` refuses on
+    # ANY dirty file, and our own cost-log pre-commit hook dirties
+    # project-history/vector-costs.ndjson on essentially every commit — including
+    # the ledger commit made just above. That refusal made this leg return
+    # committed_locally=True / pushed=False and leave the PRIMARY checkout
+    # diverged from origin/<dev>: the recurring loop that was hand-fixed with
+    # `git -c rebase.autoStash=true rebase origin/dev` once per session.
+    # task_branch.integrate has stashed benign artifacts since 2026-05-28 ("Bug
+    # C"); the same leg here never got it. Now both share _benign_stash.
+    #
+    # Only KNOWN-benign artifacts are stashed. Real in-progress work still
+    # blocks — but as an explicit, named dirty_blocked that says which files and
+    # what to do, instead of a generic failure that surfaces later as a mystery
+    # divergence.
+    benign, real = classify_dirty(g)
+    if real:
+        logger.warning("%s: real dirty file(s) block the rebase onto %s: %s",
+                       _log_prefix, dev_ref, real)
+        return dirty_blocked_result(real, dev_ref)
+    benign_stashed = stash_benign(g, benign, log_prefix=_log_prefix) and bool(benign)
+
+    try:
+        return _push_leg(
+            g=g, remote=remote, dev_branch=dev_branch, dev_ref=dev_ref,
+            ledger_set=ledger_set, _fetch=_fetch, _log_prefix=_log_prefix,
+        )
+    finally:
+        # Restore the benign artifacts whatever happened, so the tree is left as
+        # we found it (a stashed-and-forgotten ledger row is its own drift).
+        if benign_stashed:
+            pop_stash(g, log_prefix=_log_prefix)
+
+
+def _push_leg(
+    *,
+    g: Callable[..., tuple[int, str, str]],
+    remote: str,
+    dev_branch: str,
+    dev_ref: str,
+    ledger_set: set[str],
+    _fetch: bool,
+    _log_prefix: str,
+) -> dict[str, Any]:
+    """fetch → divergence-guard → rebase → FF-push, with a single retry on the
+    concurrent-push race. Split out so the caller can guarantee the benign-stash
+    pop in a ``finally`` regardless of which branch returns."""
     last_err = ""
     for _attempt in (1, 2):
         # 1. Fetch so origin/<dev> reflects any peer push (incl. a worktree's

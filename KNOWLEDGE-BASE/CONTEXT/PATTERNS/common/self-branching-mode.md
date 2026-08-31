@@ -463,3 +463,61 @@ expensive.** A gate placed at the first *expensive* consequence still lets the
 work be done in the wrong place; a gate placed at the *act* prevents it. When a
 gate fires but the same class of incident keeps costing rework, the gate is at
 the wrong point in the pipeline, not too weak.
+
+---
+
+## §12 · The primary/origin divergence loop (2026-08-31) — six encounters, one unlifted fix
+
+**Symptom.** After a worktree `integrate` + `cleanup`, the PRIMARY checkout is left
+diverged from `origin/dev` (typically `1↔1`), with an uncommitted
+`project-history/vector-costs.ndjson`. The operator clears it by hand with
+`git -c rebase.autoStash=true rebase origin/dev`, every session.
+
+**Why it kept coming back.** `task_branch cleanup` records the worktree-salvage
+recovery pointer by committing it on the primary and delegating the push to
+`_ledger_push.commit_and_ff_push_ledger`, whose push leg is
+`fetch → divergence-guard → rebase onto origin/dev → FF-push`. Two facts collide:
+
+1. `git rebase` refuses on **any** dirty file — it does not care which.
+2. The cost-log pre-commit hook dirties `project-history/vector-costs.ndjson` on
+   essentially **every** commit — including the ledger commit made one line earlier.
+
+So the rebase was refused ("cannot rebase: You have unstaged changes"), the helper
+returned `committed_locally=True, pushed=False`, and the primary stayed diverged.
+
+**The fix already existed — one level up.** `task_branch.integrate` hit the identical
+wall on 2026-05-28 (logged N=5+, "Bug C") and solved it: classify dirty files into
+benign-vs-real, auto-stash the benign ones before the rebase, pop after. That fix was
+never lifted into `_ledger_push`, which has the *same rebase leg* and is used by four
+ledger writers. One site was fixed; its twin kept paying.
+
+**Now.** Both share `tools/noctus/dev/_benign_stash.py` — one pattern set, one
+stash/pop mechanism. `_ledger_push` stashes benign artifacts around its rebase and
+pops them in a `finally`, so the tree is restored whatever the outcome.
+
+### What stays loud
+
+Only the known-benign set is stashed. Real in-progress work still blocks the push —
+but as an explicit `status="dirty_blocked"` naming the files and saying what to do,
+instead of a generic failure that surfaces sessions later as an unexplained
+divergence. **Never** `--autostash`/`--force` over a tree you have not classified.
+
+### Two lessons worth more than the fix
+
+- **A fix lifted into a shared helper must be lifted from every call site that shares
+  the leg, not just the one that hurt.** The DRY lift to `_ledger_push` (2026-06-30)
+  moved the *idiom* but left the *hardening* behind in `task_branch`. Extracting shared
+  code without its accumulated fixes silently un-fixes the copy.
+- **A fake that cannot express the failure will pass forever.** Every `_ledger_push`
+  test used a runner whose `rebase` returned a scripted rc regardless of tree state, so
+  no fake-based test could ever have caught this. The regression is pinned in
+  `test_ledger_push_realgit.py` against **real git**, with a control proving the old
+  code fails the same scenario. When a bug lives in a tool's interaction with an
+  external process, the test must use the real process.
+
+### Related, and NOT the same thing
+
+The 2026-06-30 `post-checkout` entry ("cost-log churn vs rebase") looks identical and
+is not: it guards churn *during* a rebase's checkout step (the `sequencer` check). This
+one is dirt *before* the rebase starts. Closing that one is part of why this looked
+already-solved for two months.
