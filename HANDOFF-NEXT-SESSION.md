@@ -129,9 +129,15 @@ Recap of why there were two mechanisms, since it is the useful part:
   current and future caller inherits it with no per-tool bookkeeping (a per-tool registry
   would be the "hand-maintained lists drift" shape).
 
-Not yet observed live: a rebuild triggered *during* heavy concurrency. This session's
-graph was in-sync, so the fast path (0.58s) is what mostly ran. The subprocess path
-remains unit-tested + measured rather than production-exercised.
+**The subprocess path itself is now production-exercised too.** A `task_branch
+action='cleanup'` at the end of this session triggered a real rebuild inside the live MCP
+server: `rebuild: full`, 39,747 nodes / 63,880 edges in **11.6s**, and the server stayed
+responsive and answered the very next tool call normally. So both the in-sync fast path
+and the heavy subprocess path have now run in a live session.
+
+Still not observed: a heavy rebuild triggered *concurrently with* several other in-flight
+tool calls. That is the precise incident shape, and it remains inferred from the
+measurement rather than witnessed in production.
 
 ---
 
