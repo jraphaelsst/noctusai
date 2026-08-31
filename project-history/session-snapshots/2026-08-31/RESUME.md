@@ -13,9 +13,10 @@
 
 | branch | state | commits ahead of `dev` |
 |---|---|---|
-| `feat/cat-c-erp-hooks` | ✅ **COMPLETE + pushed** | 20 |
-| `feat/shape5-remaining-products` | ⚠️ **PARTIAL + pushed** | 2 (p-studio, adconnect) |
-| `feat/shape5-social-wiring` | ❌ **NOT pushed — zero commits existed** | 0 |
+| `feat/cat-c-erp-hooks` | ✅ **COMPLETE + pushed**, gates green | 20 |
+| `feat/shape5-remaining-products` | ✅ **COMPLETE + pushed**, gates green | 5 |
+| `feat/shape5-social-wiring` | ⚠️ **PARTIAL + pushed** — Mode B committed, Shape 5 uncommitted | 1 |
+| `feat/tech-lead-session-wrap` | ✅ handoff + this file + the patch | — |
 
 All three worktrees also still exist on the original machine under
 `.claude/worktrees/<slug>/`, but that does NOT travel. Only the pushed branches do.
@@ -66,49 +67,105 @@ follow renamed destructuring bindings.
 
 ---
 
-## 3 · `feat/shape5-remaining-products` — PARTIAL
+## 2b · 🔴 THE DETECTOR HAS TWO CONFIRMED BLIND SPOTS — "0 findings" IS NOT CLEAN
 
-**Committed + pushed (2 commits):** p-studio and adconnect Shape-5 eliminated.
+**Two engineers found this independently, in different products, with separate repros.** Treat it
+as established.
 
-**Uncommitted at snapshot time:** 23 changed files, captured as
-`shape5-remaining-products.uncommitted.patch` (29 KB) with `…status.txt` alongside.
-Remaining products in its scope: **core, daily-life, personal-finance**
-(measured pre-fix: core 1, daily-life 5, personal-finance 14).
+`mcp/noctusai/node/lying_loading_scan.mjs` misses two whole shapes:
 
-**To resume on another machine:**
-```bash
-git fetch origin && git checkout feat/shape5-remaining-products
-git apply project-history/session-snapshots/2026-08-31/shape5-remaining-products.uncommitted.patch
+**Gap 1 — renamed destructuring binding.** The occurrence collector is name-hardcoded
+(`scanTaint(sourceFile, "isLoading", false)`), so a renamed binding never produces a read of the
+literal identifier and the taint pass never starts:
+```tsx
+const { isLoading: contaLoading } = useConta();
+if (contaLoading) return <Skeleton/>;   // single-hop early return — NOT detected
 ```
-Then verify per product (`tsc` / `vitest` / `vite build`, exit codes via `rc=$?`) before committing.
-**Review the patch before applying** — it is a point-in-time capture of an agent mid-edit, so it
-may contain a half-finished file. Prefer re-doing a product cleanly over trusting a partial hunk.
+Repro'd in isolation on `personal-finance/pages/ContaDetalhes.tsx` → `[]`.
+
+**Gap 2 — negation.** `climb()` has no `SyntaxKind.PrefixUnaryExpression` case, so a negated
+occurrence hits the catch-all and stops instead of climbing through the `!` into the `&&`/ternary:
+```tsx
+!isLoading && rows.length === 0 ? <Empty/> : <List/>   // Shape-2 empty-over-data — NOT detected
+```
+Repro'd in isolation on `adconnect/pages/Orders.tsx` → `[]`.
+
+### Why this matters more than any single fix
+1. **"detector reports 0" was the acceptance criterion I gave four engineers. It was wrong.**
+   Two of them caught it anyway and hand-grepped; the others' clean results are therefore
+   **unverified, not verified**.
+2. Products reported clean this wave — **therapy-platform, orbity, igig, dev-team,
+   knowledge-extractor** — were measured with this tool. Their zeros may be false cleans.
+3. The counts in §5 are **floors, not totals**. Every "extra" fix in §3's table
+   (adconnect 3→7, core 1→2, personal-finance 13→18) is a site the detector could not see.
+
+### The fix (filed, not done)
+Extend `lying_loading_scan.mjs`:
+- **(a)** add a `PrefixUnaryExpression` case to `climb()` that continues through `!` — noting that
+  a no-data guard sitting beside a *negated* occurrence means the opposite thing, so the
+  `NO_DATA_GUARD_RE` sibling-match must be interpreted inverted there;
+- **(b)** track the LOCAL bound name of a renamed destructure as an additional taint name,
+  symmetric with the existing one-hop alias tracking for `const carregando = isPending || isFetching`.
+
+**Then re-run the fleet scan** — it will very likely surface new sites in products already marked
+clean this wave. Until it lands, pair every scan with a manual `grep -rn isLoading` and read
+through each hit.
+
+### Related, out of everyone's scope this wave
+`seed/lib/frontend/src/design-system/ai/DigestCard.tsx:102` gates its whole body on a bare
+`isLoading` **prop**, and three products pass their hook's `isLoading` straight through
+(`core/pages/admin/AdminAuditDigest.tsx`, `daily-life/components/WeeklyReviewCard.tsx`,
+`personal-finance/components/MonthlyNarrativeCard.tsx`). Safe today — none of those three has a
+user-changeable query key — but it is a canonical organ whose contract is a landmine for the next
+consumer with a dynamic key. Route to whoever owns `seed/lib/frontend`: widen the prop contract to
+`isPending`/`data` (or `isFetching`/`refreshing`) rather than a raw `isLoading` boolean.
 
 ---
 
-## 4 · `feat/shape5-social-wiring` — NOT PUSHED, patch is the only durable copy
+## 3 · `feat/shape5-remaining-products` — DONE, ready to integrate
 
-The engineer had made **zero commits** after ~45 minutes; all 35 changed files were uncommitted.
-Captured as `shape5-social-wiring.uncommitted.patch` (84 KB) + `…status.txt`.
+Finished after the first snapshot. **5 commits, one per product, clean tree, all gates green.**
 
-Its scope was: the 2 Mode-B sites (`pages/Equipe.tsx:91`, `pages/meta/AdDetalheModal.tsx:293` —
-these were relayed from a run that could not be reproduced, so **verify them with the scanner
-before assuming they are real**) plus 27 Shape-5 sites measured at `216daf12`.
+| product | reported | fixed | detector after | tests |
+|---|---:|---:|---:|---|
+| p-studio | 9 | 9 | 0 | 5 files / 108 tests ✅ |
+| adconnect | 3 | **7** | 0 | 1 file / 2 tests (thin — stated honestly) |
+| core | 1 | **2** | 0 | 4 files / 16 tests ✅ |
+| daily-life | 5 | 5 | 0 | 3 files / 7 tests ✅ |
+| personal-finance | 13 | **18** | 0 | 19 files / 55 tests ✅ |
+
+`tsc` / `vitest` / `vite build` all rc=0 per product. Note the fixed counts EXCEED the reported
+ones — that difference is §2b, and it is the most important thing in this file.
+
+`placeholderData` added where the key genuinely varies (p-studio's `incluirInativos`/date-range/
+status-filter hooks, personal-finance's `useFluxoCaixa`), and **deliberately refused** on
+route-param detail queries where a fresh skeleton on navigating between IDs is the correct
+behaviour. No shared component's contract changed.
+
+**To land it:** `noctus.dev.task_branch action='integrate' slug='shape5-remaining-products' confirm=True`
+
+## 4 · `feat/shape5-social-wiring` — PARTIAL, pushed
+
+**Committed + pushed (1 commit, `04ae9a27`):** *"close Mode-B unmount-over-data at Equipe +
+AdDetalheModal"* — so the two Mode-B sites WERE real and are now fixed. That answers the open
+question about whether they existed.
+
+**Uncommitted at final snapshot:** 32 files, captured as
+`shape5-social-wiring.uncommitted.patch` (74 KB) + `…status.txt`. This is the Shape-5 sweep for
+social-wiring (27 sites measured at `216daf12`), interrupted mid-flight.
 
 **To resume:**
 ```bash
-git fetch origin && git checkout -b feat/shape5-social-wiring origin/dev
+git fetch origin && git checkout feat/shape5-social-wiring
 git apply project-history/session-snapshots/2026-08-31/shape5-social-wiring.uncommitted.patch
 ```
-Same caution as §3, and more of it — this work never reached a single commit, so nothing in it was
-ever gate-checked. `products/social-wiring/frontend` has a ~996-test suite; run it fully.
-**Do not weaken `pages/leads/*.test.tsx`** — those gained real Mode-A/Mode-B guards this session.
+**Review before applying** — a point-in-time capture of an agent mid-edit may contain a
+half-finished file, and none of it was ever gate-checked. `products/social-wiring/frontend` has a
+~996-test suite; run it in full. **Do not weaken `pages/leads/*.test.tsx`** — those gained real
+Mode-A/Mode-B guards this session.
 
-Honestly assessed: re-running this slice from scratch against the current `dev` may be cheaper and
-safer than reconciling a 35-file uncommitted patch. The patch exists so the option is yours, not
-so it must be used.
-
----
+Given §2b, re-running this slice cleanly against current `dev` is a defensible alternative to
+reconciling the patch — and it would pick up the alias/negation sites the detector misses anyway.
 
 ## 5 · Per-product Shape-5 state (measured at `216daf12`, before these branches landed)
 
