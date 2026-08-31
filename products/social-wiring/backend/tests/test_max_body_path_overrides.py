@@ -62,10 +62,25 @@ class TestSocialWiringMaxBodyPathOverrides:
     def test_unrelated_json_routes_stay_on_default(self, client):
         app = client.raw().app
         overrides = _overrides_from_app(app)
+        # NOTE: `/api/chat/message` deliberately is NOT in this list.
+        # It reads like a JSON route by name, which is exactly why it was
+        # missed when these ceilings were first declared — but it is
+        # multipart and takes `file: UploadFile | None = File(None)`,
+        # staging video attachments through the same `stage_browser_upload`
+        # helper as `/api/chat/upload-file`. The boot-time derivation and
+        # `check_upload_route_body_override` both flag it; see the
+        # dedicated assertion below.
         for path in (
             "/api/leads/import/batches",
-            "/api/chat/message",
             "/api/clientes",
             "/api/marcas",
         ):
             assert _limit_for(overrides, path) == _UNMATCHED_SENTINEL, path
+
+    def test_chat_message_carries_the_attachment_ceiling(self, client):
+        """`/api/chat/message` is multipart, not JSON — it must NOT sit on
+        the 1 MB webhook default. Same 500 MB as `/api/chat/upload-file`:
+        same disk-streaming staging helper, same video asset class."""
+        app = client.raw().app
+        overrides = _overrides_from_app(app)
+        assert _limit_for(overrides, "/api/chat/message") == 500 * 1024 * 1024

@@ -380,6 +380,21 @@ _MAX_BODY_PATH_OVERRIDES = {
     # `stage_chat_file` itself enforces no size cap — this bound is set by
     # analogy to `/api/videos/upload`'s reasoning above.
     "/api/chat/upload-file": 500 * 1024 * 1024,  # 500 MB
+    # Chatbot message WITH an optional attachment (POST /api/chat/message —
+    # `chat_router.chat_message`, `file: UploadFile | None = File(None)`).
+    # A SEPARATE entry from `/api/chat/upload-file` above: pattern keys match
+    # on exact segment count and this is a different path, so the sibling
+    # entry does not cover it. It was missed when the fleet ceilings were
+    # first declared and was caught by the boot-time derivation added in the
+    # same wave — the optional `| None` form is easy to overlook by eye,
+    # which is precisely why the derivation exists.
+    #
+    # Same 500 MB as `/api/chat/upload-file`: this route hands the attachment
+    # to the SAME `stage_browser_upload` disk-streaming helper (no full-body
+    # buffering), and explicitly branches on `video/*` to register the file
+    # for the YouTube upload pipeline — so it carries the same asset class
+    # and deserves the same outer bound, not a smaller mismatched one.
+    "/api/chat/message": 500 * 1024 * 1024,  # 500 MB
     # Leads spreadsheet import — preview (dry-run parse, writes nothing)
     # and commit (parses + upserts), POST /api/leads/import/{preview,commit}
     # (`app/modules/leads/routers/imports.py`). Both plain prefixes, no
