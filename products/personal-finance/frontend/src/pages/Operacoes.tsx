@@ -43,7 +43,7 @@ const EMPTY_FORM = {
 
 export default function Operacoes() {
   const [filtroCarteira, setFiltroCarteira] = useState<string>("");
-  const { data: operacoes, isLoading } = useOperacoes(filtroCarteira ? { carteira_id: filtroCarteira } : undefined);
+  const { data: operacoes, isPending } = useOperacoes(filtroCarteira ? { carteira_id: filtroCarteira } : undefined);
   const { data: carteiras } = useCarteiras();
   const createMutation = useCreateOperacao();
   const deleteMutation = useDeleteOperacao();
@@ -91,7 +91,7 @@ export default function Operacoes() {
     setForm(newForm);
   };
 
-  if (isLoading) {
+  if (isPending && !operacoes) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

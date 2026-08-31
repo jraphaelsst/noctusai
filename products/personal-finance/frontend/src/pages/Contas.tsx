@@ -74,7 +74,7 @@ const EMPTY_FORM = { nome: "", tipo: "corrente", instituicao: "", saldo: 0, moed
 
 export default function Contas() {
   const navigate = useNavigate();
-  const { data: contas, isLoading } = useContas();
+  const { data: contas, isPending } = useContas();
   const createMutation = useCreateConta();
   const updateMutation = useUpdateConta();
   const deleteMutation = useDeleteConta();
@@ -118,7 +118,7 @@ export default function Contas() {
     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
   };
 
-  if (isLoading) {
+  if (isPending && !contas) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

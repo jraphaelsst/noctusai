@@ -46,6 +46,7 @@ export function useFluxoCaixa(dataInicio?: string, dataFim?: string) {
       });
       return result.data;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user && !!dataInicio && !!dataFim,
     staleTime: 5 * 60 * 1000,
   });

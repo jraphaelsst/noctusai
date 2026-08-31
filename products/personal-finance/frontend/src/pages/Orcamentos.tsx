@@ -105,7 +105,7 @@ const EMPTY_FORM = { nome: "", metodo: "zero_based", periodo: "mensal", ativo: t
 
 export default function Orcamentos() {
   const navigate = useNavigate();
-  const { data: orcamentos, isLoading } = useOrcamentos();
+  const { data: orcamentos, isPending } = useOrcamentos();
   const createMutation = useCreateOrcamento();
   const updateMutation = useUpdateOrcamento();
   const deleteMutation = useDeleteOrcamento();
@@ -142,7 +142,7 @@ export default function Orcamentos() {
     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
   };
 
-  if (isLoading) {
+  if (isPending && !orcamentos) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

@@ -114,7 +114,7 @@ const EMPTY_CONTRIBUICAO = { valor: 0, descricao: "" };
 
 export default function Metas() {
   const navigate = useNavigate();
-  const { data: metas, isLoading } = useMetas();
+  const { data: metas, isPending } = useMetas();
   const createMutation = useCreateMeta();
   const updateMutation = useUpdateMeta();
   const deleteMutation = useDeleteMeta();
@@ -181,7 +181,7 @@ export default function Metas() {
     );
   };
 
-  if (isLoading) {
+  if (isPending && !metas) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

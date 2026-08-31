@@ -115,8 +115,8 @@ function CategoriaCard({
 }
 
 export default function Categorias() {
-  const { data: categorias, isLoading: flatLoading } = useCategorias();
-  const { data: arvore, isLoading: arvoreLoading } = useCategoriasArvore();
+  const { data: categorias, isPending: flatPending } = useCategorias();
+  const { data: arvore, isPending: arvorePending } = useCategoriasArvore();
   const createMutation = useCreateCategoria();
   const updateMutation = useUpdateCategoria();
   const deleteMutation = useDeleteCategoria();
@@ -127,7 +127,7 @@ export default function Categorias() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [deleteTarget, setDeleteTarget] = useState<Categoria | null>(null);
 
-  const isLoading = flatLoading || arvoreLoading;
+  const showSkeleton = (flatPending && !categorias) || (arvorePending && !arvore);
 
   const openCreate = () => {
     setForm(EMPTY_FORM);
@@ -168,7 +168,7 @@ export default function Categorias() {
     deleteMutation.mutate(deleteTarget.id, { onSuccess: () => setDeleteTarget(null) });
   };
 
-  if (isLoading) {
+  if (showSkeleton) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

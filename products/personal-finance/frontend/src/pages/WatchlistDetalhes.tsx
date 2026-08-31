@@ -13,7 +13,7 @@ const EMPTY_ITEM_FORM = { ticker: "", nome: "", alerta_preco_acima: "", alerta_p
 export default function WatchlistDetalhes() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: watchlist, isLoading } = useWatchlist(id);
+  const { data: watchlist, isPending } = useWatchlist(id);
   const deleteWlMutation = useDeleteWatchlist();
   const addItemMutation = useAddWatchlistItem();
   const removeItemMutation = useRemoveWatchlistItem();
@@ -40,7 +40,7 @@ export default function WatchlistDetalhes() {
     addItemMutation.mutate(payload, { onSuccess: () => { setAddItemOpen(false); setItemForm(EMPTY_ITEM_FORM); } });
   };
 
-  if (isLoading) {
+  if (isPending && !watchlist) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

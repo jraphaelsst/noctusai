@@ -31,7 +31,7 @@ const EMPTY_CONTRIBUICAO = { valor: 0, descricao: "" };
 export default function MetaDetalhes() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: meta, isLoading } = useMeta(id);
+  const { data: meta, isPending } = useMeta(id);
   const { data: progresso } = useMetaProgresso(id);
   const updateMutation = useUpdateMeta();
   const deleteMutation = useDeleteMeta();
@@ -87,7 +87,7 @@ export default function MetaDetalhes() {
     );
   };
 
-  if (isLoading) {
+  if (isPending && !meta) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

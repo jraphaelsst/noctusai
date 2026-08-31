@@ -105,8 +105,8 @@ function MetaResumo({ m }: { m: Meta }) {
 }
 
 export default function Dashboard() {
-  const { data: kpis, isLoading: kpisLoading } = useDashboardKPIs();
-  const { data: resumo, isLoading: resumoLoading } = useDashboardResumo();
+  const { data: kpis, isPending: kpisPending } = useDashboardKPIs();
+  const { data: resumo, isPending: resumoPending } = useDashboardResumo();
 
   const currentMonth = getCurrentMonth();
   const [ano, mes] = currentMonth.split("-");
@@ -117,9 +117,9 @@ export default function Dashboard() {
   const { data: patrimonioHist } = usePatrimonioHistorico(12);
   const { data: transacoesCat } = useTransacoesPorCategoria(dataInicio, dataFim);
 
-  const isLoading = kpisLoading || resumoLoading;
+  const showSkeleton = (kpisPending && !kpis) || (resumoPending && !resumo);
 
-  if (isLoading) {
+  if (showSkeleton) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-bold">Dashboard</h1>
