@@ -31,9 +31,12 @@ ADDING A NEW DETECTOR — read this first.
 # 2026-05-02 by ast-callers-consolidation Phase 0 → accept.
 import ast
 import hashlib
+import json
 import logging
 import re
+import shutil
 import sqlite3
+import subprocess
 import textwrap
 from pathlib import Path
 
@@ -8328,6 +8331,87 @@ _EMPTY_PROP_RE = re.compile(r"\b(?:isEmpty|empty)\s*=")
 _LYING_LOADING_RATIONALE_RE = re.compile(r"lying-loading-ok", re.IGNORECASE)
 _LYING_LOADING_RATIONALE_WINDOW = 3
 
+# ---------------------------------------------------------------------------
+# Mode B — the 2026-08-31 skeleton-over-data / refetch-unmount class. AST-first
+# (`mcp/noctusai/node/lying_loading_scan.mjs`, ts-morph — see that file's
+# docstring for the full detection algorithm) because it is a same-file
+# DATAFLOW question (does an `if`-test's `isFetching` term, or the local
+# variable it flows through, carry a `&& !data`-shaped guard before reaching
+# an early `return` / JSX ternary?) that a line/brace regex answers
+# unreliably. `mcp/noctusai/node/` is the SAME dedicated Node-tooling
+# directory `ts_ast_rename_symbol` already spawns into — see that module's
+# docstring for why it lives there (devDependency of tooling, not of any
+# product's shipped frontend).
+# ---------------------------------------------------------------------------
+_LYING_LOADING_MODEB_SCRIPT = REPO_ROOT / "mcp" / "noctusai" / "node" / "lying_loading_scan.mjs"
+_LYING_LOADING_MODEB_TIMEOUT_SECONDS = 120
+
+_LYING_LOADING_MODEB_KIND_LABEL: dict[str, str] = {
+    "early_return": "an `if (...) return ...;` early-return",
+    "return_expr": "a `return <cond> ? … : …` / `return <cond> && …` whole-body render",
+    "jsx_ternary": "a JSX ternary `{cond ? <A/> : <B/>}`",
+}
+
+
+def _run_lying_loading_modeb_scan(
+    files: list[Path],
+) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
+    """Batch-invoke `lying_loading_scan.mjs` for every candidate Mode-B file.
+
+    ONE subprocess for the whole scan (not one per file — ~250 fleet-wide
+    candidates would dominate wall-clock via per-process ts-morph
+    `Project` construction). Returns ``(results, per_file_errors,
+    bootstrap_error)``:
+
+    - ``results``: ``{abs_path: [finding, ...]}`` for files that parsed.
+    - ``per_file_errors``: ``{abs_path: message}`` for files ts-morph could
+      not add/parse (a real parse failure — surfaced, never silently
+      dropped from the scan).
+    - ``bootstrap_error``: set (and the other two empty) when the scan
+      could not run AT ALL — `node` missing from PATH, `ts-morph` not
+      installed (`cd mcp/noctusai/node && npm install`), a script crash,
+      or a timeout. Per `KB § 01-PHILOSOPHY.md` "no silent errors": Mode B
+      going dark must be VISIBLE in the fleet-scan output (one issue, see
+      `check_lying_loading_state`), not indistinguishable from "scanned,
+      zero findings."
+    """
+    if not files:
+        return {}, {}, None
+    if shutil.which("node") is None:
+        return {}, {}, "node_unavailable: `node` not on PATH — Mode B AST scan cannot run"
+    if not _LYING_LOADING_MODEB_SCRIPT.exists():
+        return {}, {}, f"script_missing: {_LYING_LOADING_MODEB_SCRIPT} not found"
+    payload = {"files": [str(p) for p in files]}
+    try:
+        proc = subprocess.run(
+            ["node", str(_LYING_LOADING_MODEB_SCRIPT)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=_LYING_LOADING_MODEB_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return {}, {}, f"timeout: Mode B AST scan exceeded {_LYING_LOADING_MODEB_TIMEOUT_SECONDS}s"
+    except OSError as exc:
+        return {}, {}, f"spawn_failed: {exc}"
+    if proc.returncode != 0:
+        stderr_tail = (proc.stderr or "")[-800:]
+        # `Cannot find module 'ts-morph'` is the specific, actionable case
+        # (node_modules/ is gitignored — `npm install` was never run here).
+        if "Cannot find module" in stderr_tail or "ERR_MODULE_NOT_FOUND" in stderr_tail:
+            return {}, {}, (
+                "ts_morph_not_installed: run `cd mcp/noctusai/node && npm install` "
+                f"— {stderr_tail.strip()[:300]}"
+            )
+        return {}, {}, f"node_crashed (exit {proc.returncode}): {stderr_tail}"
+    try:
+        parsed = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
+    if not parsed.get("ok"):
+        return {}, {}, f"bad_request: {parsed.get('error')}"
+    return parsed.get("results", {}), parsed.get("errors", {}), None
+
 
 def _lying_loading_product_fe_src_dirs(root: Path) -> list[Path]:
     """Every `products/<slug>/frontend/src` directory on disk.
@@ -8386,7 +8470,9 @@ def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
 
     `isLoading === isPending && isFetching` — FALSE during a background
     refetch. A UI gated on `.isLoading` falls through to its EMPTY branch
-    mid-refetch, rendering "no data" over data that exists. Three shapes:
+    mid-refetch, rendering "no data" over data that exists. Five shapes
+    (numbering is this function's own; see the KB pattern for the disjoint
+    narrative "Shapes to recognise" numbering):
 
       1. `loading={q.isLoading}` / `isLoading={q.isLoading}` JSX prop.
       2. The higher-value variant: the SAME JSX opening tag also carries an
@@ -8394,6 +8480,19 @@ def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
          that shipped live (`ChartCard`'s loading > error > empty priority).
       3. The hand-rolled equivalent: `!X.isLoading && ... && rows.length
          === 0 && <EmptyState/>`.
+      4. Mode B (see SCOPE below) — an unguarded `.isFetching` reaching an
+         early `return`, a whole-body ternary/`&&`-render, or a JSX child
+         ternary.
+      5. The bare `.isLoading` early-return / ternary — `const { data,
+         isLoading } = useX(); if (isLoading) return <Skeleton/>;` — added
+         2026-08-31 alongside shape 4. No `loading=` JSX prop (shapes 1/2
+         miss it), no `isEmpty=` pairing, no `.length === 0` hand-rolled
+         guard (shape 3 misses it): 21/21 of `orbity`'s Mode-A fixes were
+         this exact shape, falling straight out of the idiomatic
+         `const { data, isLoading } = useX()` destructure. Guard-AGNOSTIC —
+         unlike shape 4, no co-occurring condition rehabilitates a bare
+         `.isLoading` reaching a render gate; the doc's rule is absolute
+         ("No `.isLoading` anywhere in a render branch"), not conditional.
 
     Correct gate (revised 2026-08-31): `showSkeleton = q.isPending &&
     !q.data`, with `q.isFetching && !!q.data` allowed ONLY as a
@@ -8410,22 +8509,57 @@ def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
     mocked query object never transitions through a background refetch, and
     two tests actively hard-coded the buggy contract until `0c182a9b`.
 
-    SCOPE: this detector covers the `.isLoading` (empty-over-data) mode
-    only; `isPending && !data` contains no `isLoading` and passes by
-    construction. The refetch-unmount mode is doc-enforced, not
-    gate-enforced — it needs cross-file dataflow on a `loading` prop.
-    See `KB § PATTERNS/frontend/lying-loading-state.md`.
+    SCOPE (revised 2026-08-31 — Mode B AND shape 5 are now gated, not
+    doc-only): shapes 1-3 (`.isLoading`-keyed, JSX prop / hand-rolled guard)
+    stay regex/text scanned — each is a single-token-value question
+    (`loading={x.isLoading}` IS or ISN'T the exact prop value), which a
+    brace-walk answers exactly. Shapes 4 (Mode B: skeleton-over-data /
+    refetch-unmount, an unguarded `.isFetching` reaching an early `return`,
+    a whole-body ternary/`&&`-render, or a JSX child ternary) and 5 (a bare
+    `.isLoading` reaching the SAME gating positions, guard-agnostic) are
+    AST-scanned via `mcp/noctusai/node/lying_loading_scan.mjs` (ts-morph,
+    one `Project`/batch call, two taint passes — see that module's
+    docstring for the full climb algorithm). AST, not regex, because it's a
+    same-file DATAFLOW question ("does this `isFetching`/`isLoading` term
+    reach a render-gate, directly or via a `const carregando = isPending ||
+    isFetching;` alias two statements later, and — for `isFetching` only —
+    is it guarded?") that a line/brace scan cannot answer reliably.
+
+    STILL genuinely out of scope, stated honestly rather than silently
+    passed: (a) a SECOND variable-alias hop (`const x = carregando; ...; if
+    (x) return ...`); (b) a `loading` prop/hook-return value threaded across
+    files (the `useX()` hook computes `isPending || isFetching`, a
+    *different* file consumes it as a `loading` prop) — genuine cross-file
+    dataflow, the same gap this docstring named before Mode B had a gate at
+    all; (c) bare `isPending` alone (no `isFetching`, no `&& !data`) is
+    DELIBERATELY not flagged — TanStack v5 defines `isPending` as "no data
+    has EVER resolved," which already implies `data === undefined`, and the
+    KB pattern's own decision procedure blesses `if (isPending) return
+    <Skeleton/>;` as CORRECT; flagging it produces false positives against
+    non-query `.isPending` (e.g. a mutation's `isPending`, which carries no
+    `data` concept at all — see the Node script's docstring for the exact
+    fleet counter-example). If the scan tooling itself is unavailable (`node`
+    missing, `ts-morph` not installed — `node_modules/` is gitignored) that
+    is ALSO surfaced as one explicit finding, never a silent zero-findings
+    pass. See `KB § PATTERNS/frontend/lying-loading-state.md`.
 
     Severity: `_LYING_LOADING_SEVERITY` (`warning` — observe-first cadence on
     a brand-new detector; promote to `high` in one line once clean for a
     cycle). Escape hatch: `lying-loading-ok` in a same-line or
-    up-to-3-preceding-line comment. Per
+    up-to-3-preceding-line comment — applies to BOTH modes. Per
     `KB § PATTERNS/frontend/lying-loading-state.md`.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
     if not root.exists():
         return issues
+
+    # Mode-B candidates collected while walking Mode A's file loop, batched
+    # into ONE `lying_loading_scan.mjs` subprocess call after the loop —
+    # `path_str -> {product, relative, lines}` so the finding pass below can
+    # apply the SAME escape-hatch + line-number machinery as Mode A without
+    # re-reading every file a second time.
+    modeb_context: dict[str, dict] = {}
 
     for src_dir in _lying_loading_product_fe_src_dirs(root):
         product = src_dir.parent.parent.name
@@ -8439,14 +8573,25 @@ def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
             except (OSError, UnicodeDecodeError) as exc:
                 logger.debug("compliance: cannot read %s (%s)", path, exc)
                 continue
-            if "isLoading" not in content:
-                continue  # cheap pre-filter — most FE files don't touch TanStack.
+            has_is_loading = "isLoading" in content
+            has_is_fetching = "isFetching" in content
+            if not has_is_loading and not has_is_fetching:
+                continue  # cheap pre-filter — most FE files touch neither TanStack flag.
             try:
                 relative = str(path.relative_to(root))
             except ValueError:
                 logger.debug("compliance: file outside repo root: %s", path)
                 continue
             lines = content.splitlines()
+
+            # AST pass covers BOTH taints (`isFetching` guard-aware, `isLoading`
+            # Shape 5 guard-agnostic) — queue whenever either token is present.
+            if has_is_fetching or has_is_loading:
+                modeb_context[str(path)] = {"product": product, "relative": relative, "lines": lines}
+
+            if not has_is_loading:
+                continue  # Mode A regex shapes (below) need `.isLoading` specifically; AST pass already queued above.
+
             _lines_nc, lines_code_only = _strip_for_scan(content, path.suffix)
             code_only_text = "\n".join(lines_code_only)
 
@@ -8528,6 +8673,110 @@ def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
                         f"Escape hatch: `lying-loading-ok` in a same-line or "
                         f"preceding-line comment."
                     ),
+                    "severity": _LYING_LOADING_SEVERITY,
+                })
+
+    # Mode B — batched AST scan (see `_run_lying_loading_modeb_scan` +
+    # `mcp/noctusai/node/lying_loading_scan.mjs`).
+    modeb_paths = [Path(p) for p in modeb_context]
+    modeb_results, modeb_errors, modeb_bootstrap_error = _run_lying_loading_modeb_scan(modeb_paths)
+
+    if modeb_bootstrap_error is not None:
+        # The scan could not run AT ALL — surface it as ONE explicit finding
+        # rather than silently reporting zero Mode-B hits (no-silent-errors).
+        issues.append({
+            "product": "*",
+            "file": "mcp/noctusai/node/lying_loading_scan.mjs",
+            "issue": (
+                "Mode B (`isFetching` refetch-unmount) AST scan could not "
+                f"run — {modeb_bootstrap_error}. `check_lying_loading_state` "
+                "fell back to Mode A (`.isLoading`) coverage ONLY for this "
+                "run; the 2026-08-31 skeleton-over-data class is UNCHECKED "
+                "until this is fixed. Per "
+                "`KB § PATTERNS/frontend/lying-loading-state.md`."
+            ),
+            "severity": _LYING_LOADING_SEVERITY,
+        })
+    else:
+        for file_path, err in modeb_errors.items():
+            ctx = modeb_context.get(file_path)
+            issues.append({
+                "product": ctx["product"] if ctx else "*",
+                "file": ctx["relative"] if ctx else file_path,
+                "issue": (
+                    f"Mode B AST scan could not parse `{ctx['relative'] if ctx else file_path}` "
+                    f"({err}) — this file's `.isFetching` usage was NOT checked for the "
+                    "refetch-unmount class. Per `KB § PATTERNS/frontend/lying-loading-state.md`."
+                ),
+                "severity": _LYING_LOADING_SEVERITY,
+            })
+
+        for file_path, findings in modeb_results.items():
+            ctx = modeb_context.get(file_path)
+            if ctx is None:
+                continue  # defensive — the node script only ever echoes back paths we sent it.
+            product = ctx["product"]
+            relative = ctx["relative"]
+            file_lines = ctx["lines"]
+
+            def _modeb_escape_hatched(line_idx_1based: int, _lines: list[str] = file_lines) -> bool:
+                window_start = max(0, line_idx_1based - 1 - _LYING_LOADING_RATIONALE_WINDOW)
+                window = _lines[window_start:line_idx_1based]
+                return any(_LYING_LOADING_RATIONALE_RE.search(ln) for ln in window)
+
+            for finding in findings:
+                line_no = finding.get("line")
+                if not isinstance(line_no, int) or line_no < 1:
+                    continue
+                if _modeb_escape_hatched(line_no):
+                    continue
+                kind = finding.get("kind", "early_return")
+                kind_label = _LYING_LOADING_MODEB_KIND_LABEL.get(kind, kind)
+                snippet = finding.get("snippet", "")
+                via = finding.get("via")
+                via_note = f" (via local variable `{via}`)" if via else ""
+                taint = finding.get("taint", "isFetching")
+                if taint == "isLoading":
+                    # Shape 5 — bare `.isLoading` reaching a gate directly (no
+                    # JSX `loading=` prop wrapper, no `isEmpty=`/hand-rolled
+                    # `.length === 0` guard — shapes 1-3 already cover those).
+                    # Guard-agnostic by design: the KB pattern's rule is
+                    # ABSOLUTE ("No `.isLoading` anywhere in a render
+                    # branch") — no co-occurring condition rehabilitates it.
+                    issue_text = (
+                        f"`{relative}:{line_no}` — `isLoading`{via_note} reaches "
+                        f"{kind_label} (Shape 5 — the bare destructured/early-return "
+                        f"form, not a JSX `loading=` prop): `{snippet}`. TanStack "
+                        f"Query v5: `isLoading === isPending && isFetching` — FALSE "
+                        f"during a background refetch, so this falls through / "
+                        f"unmounts on every mutation, not just first load. "
+                        f"`.isLoading` must NEVER appear in a render-gating branch, "
+                        f"with or without an extra guard — use `showSkeleton = "
+                        f"isPending && !data` instead. Per "
+                        f"`KB § PATTERNS/frontend/lying-loading-state.md`. "
+                        f"Escape hatch: `lying-loading-ok` in a same-line or "
+                        f"preceding-line comment."
+                    )
+                else:
+                    issue_text = (
+                        f"`{relative}:{line_no}` — `isFetching`{via_note} reaches "
+                        f"{kind_label} without a `&& !data`/`&& <arr>.length === 0`-shaped "
+                        f"guard: `{snippet}`. `isFetching` is TRUE on every background "
+                        f"refetch, so this unmounts real content on every mutation, not "
+                        f"just on first load (fleet audit 2026-08-31: 70 sites + 140 "
+                        f"key-change-flicker sites; fixes `ca62b07b` `1e770842` `d2726e13` "
+                        f"`0c182a9b` `15c56505` `991848b1` `22ca3ac6`). Correct gate: "
+                        f"`showSkeleton = isPending && !data` — `isFetching` participates "
+                        f"ONLY as `isFetching && !!data` for a non-destructive indicator "
+                        f"(spinner/opacity), never inside the term that decides whether to "
+                        f"render at all. Per `KB § PATTERNS/frontend/lying-loading-state.md`. "
+                        f"Escape hatch: `lying-loading-ok` in a same-line or "
+                        f"preceding-line comment."
+                    )
+                issues.append({
+                    "product": product,
+                    "file": relative,
+                    "issue": issue_text,
                     "severity": _LYING_LOADING_SEVERITY,
                 })
 

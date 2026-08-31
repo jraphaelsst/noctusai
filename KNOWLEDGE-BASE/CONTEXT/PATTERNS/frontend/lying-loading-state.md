@@ -280,7 +280,11 @@ swap. Per `KB § PATTERNS/backend/boundary-contract-tests.md` § 5
 
 `mcp/noctusai/tools/noctus/dev/compliance.py`, severity `warning`
 (`_LYING_LOADING_SEVERITY` is the one-line promotion switch). Scans every
-`products/<slug>/frontend/src/**/*.tsx` and flags three shapes:
+`products/<slug>/frontend/src/**/*.tsx` and flags FIVE shapes across both
+modes. (This numbering is the DETECTOR's own — distinct from the § *Shapes to
+recognise* narrative numbering above, which illustrates before/after code
+pairs rather than enumerating what the gate checks; the two lists describe
+overlapping but not identical things and are not meant to line up 1:1.)
 
 1. A JSX `loading=` / `isLoading=` prop whose value is EXACTLY
    `<chain>.isLoading`.
@@ -288,34 +292,87 @@ swap. Per `KB § PATTERNS/backend/boundary-contract-tests.md` § 5
    `isEmpty=` / `empty=` prop — the exact "empty outranks loading" shape that
    shipped live.
 3. The hand-rolled `!X.isLoading && … && rows.length === 0` guard.
+4. *(Mode B, see below.)* An unguarded `.isFetching` reaching an early
+   `return`, a whole-body `return <cond> ? … : …` / `return <cond> && …`, or
+   a JSX child ternary — directly, or through ONE local-variable hop.
+5. **Shape 5 — the bare `.isLoading` early-return / ternary**, added
+   2026-08-31 alongside Mode B. `const { data, isLoading } = useX(); if
+   (isLoading) return <Skeleton/>;` has no `loading=` JSX prop (shapes 1/2
+   miss it), no `isEmpty=` pairing, and no `.length === 0` hand-rolled guard
+   (shape 3 misses it) — but it violates the doc's own absolute rule (§
+   *Checklist*, first line: "No `.isLoading` anywhere in a render branch")
+   and it recurs mechanically because it falls straight out of the
+   idiomatic `const { data, isLoading } = useX()` destructure. Fleet
+   evidence: **21 of 21** Mode-A fixes in `orbity` were this exact shape,
+   caught by neither shape 1, 2, nor 3. Guard-agnostic by design — unlike
+   Shape 4/Mode B, no co-occurring condition rehabilitates a bare
+   `.isLoading` in a gating position; the rule is absolute, not conditional.
 
-**Scope — it covers Mode A only.** The detector early-exits on
-`if "isLoading" not in content`, and its prop regex requires the value to be
-*exactly* `x.isLoading`; `isPending && !data` contains no `isLoading` and
-passes cleanly (confirmed by the negative fixtures in
-`mcp/noctusai/tests/test_lying_loading_state_detector.py:150-165`). The
-2026-08-31 correction therefore needed **no detector change** — which is also
-the honest statement of its limit: **Mode B is currently doc-enforced, not
-gate-enforced.** The unmount shape is `if (loading) return <skeleton/>` where
-`loading` traces through props or a hook's return value across files; catching
-it needs cross-file dataflow, which this text-based scanner does not do. Treat
-review and this document as the control for Mode B until that changes.
+**Shapes 1–3 stay regex/text-scanned** (`_strip_for_scan` + brace-walk) — each
+is a single-token-value question a brace-walk answers exactly. **Shapes 4
+(Mode B) and 5 are AST-scanned** via `mcp/noctusai/node/
+lying_loading_scan.mjs` (ts-morph — see that module's docstring for the full
+climb algorithm), because BOTH are the same underlying question: "does this
+identifier reach a render-gating position (an `if`-test whose branch returns,
+a whole-body ternary, or a JSX child ternary), directly or through one local
+alias, and — for `isFetching` only — is it guarded?" That is a same-file
+DATAFLOW question a line/brace regex cannot answer reliably (multi-line
+conditions, parenthesised sub-expressions, a `const carregando = isPending ||
+isFetching;` alias used two statements later); a real parser (the TypeScript
+binder, via `findReferencesAsNodes()`) answers it exactly — "is this the
+SAME `carregando` declared above" is a real symbol question, not a
+name-coincidence.
+
+**Genuinely still out of scope**, stated honestly rather than silently
+passed (the 2026-08-31 pass strengthens the case that the ORIGINAL
+"needs cross-file dataflow" caveat below was over-broad — shapes 1–3 and 5
+are all single-file and now decidable; say what is ACTUALLY left, not what
+the old docstring assumed):
+
+- A SECOND variable-alias hop (`const x = carregando; …; if (x) return
+  …;`) — the AST scan resolves exactly one hop.
+- A `loading` prop / hook-return value threaded across FILES — the hook
+  computes `isPending || isFetching` (or destructures `isLoading`) in one
+  file, a *different* file's component consumes it as a `loading` prop and
+  does its own unguarded early return. This is the one gap that is
+  genuinely cross-file; review is still the control for it.
+- Bare `isPending` with no `isFetching` and no `.isLoading` present at all
+  — deliberately NOT flagged. TanStack v5 defines `isPending` as "no data
+  has EVER resolved," which already implies `data === undefined`; the
+  decision procedure above blesses `if (isPending) return <Skeleton/>;` as
+  CORRECT, and flagging it fleet-wide produces false positives against
+  non-query `.isPending` (a MUTATION's `isPending`, which carries no `data`
+  concept — see the Node script's docstring for the exact fleet
+  counter-example, `LeadScoreBadge.tsx:49`).
+
 → `KB § PATTERNS/common/gate-methodology-sync.md`
 
-**🔴 Known drift — the keeper's own remediation text still prescribes the
-superseded gate.** `compliance.py:8488` tells the engineer to
-"Use `{query_expr}.isPending || {query_expr}.isFetching`", and
-`compliance.py:8513` tells them to "Use `!X.isPending && !X.isFetching && …`".
-Every time this detector fires it therefore pushes the reader straight into
-Mode B. Those two strings must be corrected to the two-signal form
-(`isPending && !data` for the skeleton branch; `!isPending` for the empty
-branch) — the docstring and header comment above them were corrected on
-2026-08-31, the message strings were left untouched because that edit fell
-outside the documentation slice's write zone. Until they change, trust this
-document over the finding text.
+**Historical note — the "known drift" this section used to describe is
+fixed.** An earlier revision of this doc (2026-08-31, same day) flagged that
+the shape-1/2 and shape-3 remediation STRINGS still prescribed the
+superseded `isPending || isFetching` gate even though the docstring above
+them had already been corrected — and told the reader to "trust this
+document over the finding text" until that landed. Both strings were
+corrected in `f4b4c625`; the live text now reads "A bare `isPending ||
+isFetching` closes THIS hole and opens the opposite one…" (shape 1/2) and
+"Do NOT reach for `!X.isPending && !X.isFetching`… mirror-image bug" (shape
+3). Verified against the current `compliance.py` 2026-08-31 — do not restore
+the old warning; it now manufactures a false finding against a correct
+detector, which is worse than no warning (it trains readers to distrust a
+correct tool).
 
 **Escape hatch:** `lying-loading-ok` in a same-line or up-to-3-preceding-line
-comment (genuinely non-TanStack `isLoading`, e.g. a `Fake` test double).
+comment (genuinely non-TanStack `isLoading`/`isFetching`, e.g. a `Fake` test
+double). Applies to all five shapes.
+
+**Tooling dependency (Shapes 4/5 only):** the AST scan needs `node` +
+`mcp/noctusai/node/node_modules` (`cd mcp/noctusai/node && npm install` —
+gitignored, not provisioned by any CI step today, a real gap; see this
+pattern's Codification history). When either is missing, `check_lying_
+loading_state` does NOT silently skip Shapes 4/5 — it appends ONE explicit
+finding naming the failure (`node_unavailable` / `ts_morph_not_installed` /
+a per-file parse error), per `KB § 01-PHILOSOPHY.md` "no silent errors".
+Shapes 1–3 (regex) are unaffected either way.
 
 **Wired into:** `check_all_products()` · `tools/noctus/dev/review.py::_detect()`
 · CLI `python mcp/noctusai/cli.py --check-lying-loading-state` ·
@@ -326,7 +383,11 @@ comment (genuinely non-TanStack `isLoading`, e.g. a `Fake` test double).
 against `ae9087ce` (matching `b0cb47b1`'s own count) and **18** against
 `ae9087ce^`. It also found a previously-unknown live instance in
 `products/therapy-platform/.../Scheduling.tsx:140` — it generalises beyond its
-origin incident.
+origin incident. The 2026-08-31 Shape-4/5 pass found 2 live Mode-B instances
+(`social-wiring/pages/Equipe.tsx:91`, `social-wiring/pages/meta/
+AdDetalheModal.tsx:293`) against a fleet where 9 prior fix commits (`ca62b07b`
+… `22ca3ac6`) had already landed most of the 70-site audit — the low residual
+count reflects concurrent fixes in flight, not a narrow detector.
 
 ### Why the file is still named `lying-loading-state`
 
@@ -359,7 +420,9 @@ renaming the doc alone would split those and buy nothing.
 - [ ] Regression tests assert **both** modes: skeleton over `data: undefined`
       (with `isFetching: false`), and content still mounted at
       `isPending: false, isFetching: true, data: present`.
-- [ ] `--check-lying-loading-state` clean — and remember it only covers Mode A.
+- [ ] `--check-lying-loading-state` clean — covers Mode A (shapes 1-3 + 5)
+      AND Mode B (shape 4); the one genuinely undecidable case is a `loading`
+      value threaded across files (see § *The detector* for the full list).
 
 ---
 
@@ -375,5 +438,13 @@ renaming the doc alone would split those and buy nothing.
   decision procedure in the same wave. Two engineers flagged the
   doc-vs-reality contradiction independently and unprompted — the doc, not the
   detector, was the pusher.
+- **s4, 2026-08-31 (same day)** — gate↔methodology sync closed: Mode B
+  (shape 4) AND the newly-named Shape 5 (bare `.isLoading` early-return —
+  21/21 of `orbity`'s Mode-A fixes were this shape, caught by neither shape
+  1, 2, nor 3) are now AST-gated via `mcp/noctusai/node/
+  lying_loading_scan.mjs` (ts-morph), not doc-only. Two independent
+  engineers this wave filed the stale "known drift" paragraph as a live
+  `drift-found` before this pass corrected it — see the historical note in
+  § *The detector*.
 
 → `KB § PATTERNS/common/methodology-codification-pipeline.md`
