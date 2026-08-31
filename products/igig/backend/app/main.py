@@ -84,6 +84,25 @@ app = create_product_app(
         example_router, webhook_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
+    # 🔴 Chaves sem as quais este produto NÃO deve subir em produção. O guard
+    # de boot (`require_prod_config`) aborta listando todas as faltantes de
+    # uma vez, e `noctus.dev.predeploy_check` lê ESTA MESMA lista
+    # estaticamente — então a lacuna aparece antes do deploy, não no startup.
+    # Mesmo padrão de `products/p-studio/backend/app/main.py`.
+    #
+    # Só entra uma chave cuja ausência produz comportamento ERRADO E
+    # SILENCIOSO:
+    #   • IGIG_COFRE_KEY — sem ela `marca_router._chave_cofre()` e
+    #     `integracoes_router._chave()` recusam TODA gravação no Cofre e em
+    #     Integrações com 409 "Cofre/Criptografia não configurada" — e essa
+    #     é exatamente a falha que ficou semanas silenciosa em produção
+    #     porque nada a declarava aqui. Ela SÓ entra agora porque foi
+    #     verificado primeiro, deliberadamente, que a chave já está setada
+    #     no `.env` de produção (roundtrip Fernet real testado dentro do
+    #     container, 2026-08-31) — declarar uma chave AUSENTE transforma um
+    #     aviso em recusa de boot, ou seja, em uma queda. Antes de declarar
+    #     uma segunda chave aqui, confirme em produção do mesmo jeito.
+    required_prod_config=["IGIG_COFRE_KEY"],
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
     # consent catalog — see KB § PATTERNS/lgpd.md § 9):
