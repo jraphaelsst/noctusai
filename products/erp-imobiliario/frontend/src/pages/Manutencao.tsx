@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
 import { TableSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Button } from '@noctusai/seed/components/ui/button';
 import { Input } from '@noctusai/seed/components/ui/input';
@@ -107,7 +108,9 @@ export default function Manutencao() {
   const showManutencaoSkeleton = manutencaoQuery.isPending && !manutencaoQuery.data;
   const ordens = manutencaoData?.data || [];
 
-  const { data: resumo } = useResumoManutencao();
+  const resumoQuery = useResumoManutencao();
+  const { data: resumo } = resumoQuery;
+  const resumoNotArrived = resumoQuery.isPending && !resumoQuery.data;
 
   const { mutate: createOrdem, isPending: isCreating } = useCreateOrdemServico();
   const { mutate: updateOrdem, isPending: isUpdating } = useUpdateOrdemServico();
@@ -189,7 +192,7 @@ export default function Manutencao() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {resumo?.por_status?.aberto || 0}
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.por_status?.aberto ?? 0}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -201,7 +204,7 @@ export default function Manutencao() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">
-              {resumo?.por_status?.em_andamento || 0}
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.por_status?.em_andamento ?? 0}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -213,7 +216,7 @@ export default function Manutencao() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-orange-600">
-              {resumo?.tempo_medio_resolucao || 0} dias
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.tempo_medio_resolucao ?? 0} dias</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -225,7 +228,7 @@ export default function Manutencao() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(resumo?.custo_total || 0)}
+              <SummaryValue notArrived={resumoNotArrived}>{formatCurrency(resumo?.custo_total ?? 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>

@@ -59,6 +59,7 @@ import {
   Users,
 } from 'lucide-react';
 import { MetricsTableSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const statusConfig: Record<ComissaoStatus, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
@@ -75,7 +76,9 @@ export default function Comissoes() {
 
   const statusParam = filtroStatus === 'todos' ? undefined : filtroStatus as ComissaoStatus;
   const comissoesQuery = useComissoes({ status: statusParam });
-  const { data: resumo } = useComissaoResumo();
+  const resumoQuery = useComissaoResumo();
+  const { data: resumo } = resumoQuery;
+  const resumoNotArrived = resumoQuery.isPending && !resumoQuery.data;
   const createMutation = useCreateComissao();
   const updateMutation = useUpdateComissao();
   const deleteMutation = useDeleteComissao();
@@ -208,7 +211,7 @@ export default function Comissoes() {
             <Clock className="h-4 w-4 text-yellow-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totais?.total_pendente || 0)}</div>
+            <div className="text-2xl font-bold"><SummaryValue notArrived={resumoNotArrived}>{formatCurrency(totais?.total_pendente ?? 0)}</SummaryValue></div>
           </CardContent>
         </Card>
         <Card>
@@ -217,7 +220,7 @@ export default function Comissoes() {
             <CheckCircle2 className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totais?.total_aprovada || 0)}</div>
+            <div className="text-2xl font-bold"><SummaryValue notArrived={resumoNotArrived}>{formatCurrency(totais?.total_aprovada ?? 0)}</SummaryValue></div>
           </CardContent>
         </Card>
         <Card>
@@ -226,7 +229,7 @@ export default function Comissoes() {
             <DollarSign className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totais?.total_paga || 0)}</div>
+            <div className="text-2xl font-bold"><SummaryValue notArrived={resumoNotArrived}>{formatCurrency(totais?.total_paga ?? 0)}</SummaryValue></div>
           </CardContent>
         </Card>
         <Card>
@@ -235,8 +238,8 @@ export default function Comissoes() {
             <DollarSign className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(totais?.total_geral || 0)}</div>
-            <p className="text-xs text-muted-foreground">{totais?.quantidade || 0} comissoes</p>
+            <div className="text-2xl font-bold"><SummaryValue notArrived={resumoNotArrived}>{formatCurrency(totais?.total_geral ?? 0)}</SummaryValue></div>
+            <p className="text-xs text-muted-foreground"><SummaryValue notArrived={resumoNotArrived} className="h-3 w-16">{totais?.quantidade ?? 0} comissoes</SummaryValue></p>
           </CardContent>
         </Card>
       </div>
