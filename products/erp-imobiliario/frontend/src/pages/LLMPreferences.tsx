@@ -9,8 +9,10 @@ const { useLLMProviders, useLLMModels, useLLMPreferences, useUpdateLLMPreference
   createLLMHooks(api);
 
 export default function LLMPreferences() {
-  const { data: providers = [], isLoading: loadingProviders } = useLLMProviders();
-  const { data: prefs, isLoading: loadingPrefs } = useLLMPreferences();
+  const providersQuery = useLLMProviders();
+  const prefsQuery = useLLMPreferences();
+  const { data: providers = [] } = providersQuery;
+  const { data: prefs } = prefsQuery;
   const update = useUpdateLLMPreferences();
 
   const [provider, setProvider] = useState<string | null>(null);
@@ -40,7 +42,9 @@ export default function LLMPreferences() {
     }
   }
 
-  if (loadingProviders || loadingPrefs) {
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if ((providersQuery.isPending && !providersQuery.data) || (prefsQuery.isPending && !prefsQuery.data)) {
     return (
       <div className="p-6 text-sm text-muted-foreground">Carregando…</div>
     );

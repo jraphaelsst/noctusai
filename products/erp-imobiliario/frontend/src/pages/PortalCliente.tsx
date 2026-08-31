@@ -85,12 +85,16 @@ export default function PortalCliente() {
   const [gerarForm, setGerarForm] = useState({ cliente_id: '', data_expiracao: '' });
   const [respondForm, setRespondForm] = useState({ status: '', resposta: '' });
 
-  const { data: acessosData, isLoading: isLoadingAcessos } = usePortalAcessos();
+  const acessosQuery = usePortalAcessos();
+  const { data: acessosData } = acessosQuery;
+  const showAcessosSkeleton = acessosQuery.isPending && !acessosQuery.data;
   const acessos = acessosData?.data || [];
 
-  const { data: chamadosData, isLoading: isLoadingChamados } = useChamadosPortal({
+  const chamadosQuery = useChamadosPortal({
     status: filtroStatusChamado !== 'todos' ? filtroStatusChamado : undefined,
   });
+  const { data: chamadosData } = chamadosQuery;
+  const showChamadosSkeleton = chamadosQuery.isPending && !chamadosQuery.data;
   const chamados = chamadosData?.data || [];
 
   const { mutate: gerarAcesso, isPending: isGerando } = useGerarAcesso();
@@ -233,7 +237,7 @@ export default function PortalCliente() {
       {activeTab === 'acessos' && (
         <Card>
           <CardContent className="pt-6">
-            {isLoadingAcessos ? (
+            {showAcessosSkeleton ? (
               <TableSkeleton rows={3} />
             ) : acessos.length === 0 ? (
               <div className="py-8 text-center text-muted-foreground">
@@ -328,7 +332,7 @@ export default function PortalCliente() {
           {/* Chamados Table */}
           <Card>
             <CardContent className="pt-6">
-              {isLoadingChamados ? (
+              {showChamadosSkeleton ? (
                 <TableSkeleton rows={3} />
               ) : chamados.length === 0 ? (
                 <div className="py-8 text-center text-muted-foreground">

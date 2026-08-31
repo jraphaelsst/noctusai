@@ -99,10 +99,14 @@ export default function Banco() {
   const [lancamentoIdInput, setLancamentoIdInput] = useState('');
   const [remessaForm, setRemessaForm] = useState(emptyRemessaForm);
 
-  const { data: extratosData, isLoading: isLoadingExtratos } = useExtratos();
+  const extratosQuery = useExtratos();
+  const { data: extratosData } = extratosQuery;
+  const showExtratosSkeleton = extratosQuery.isPending && !extratosQuery.data;
   const extratos = extratosData?.data || [];
 
-  const { data: conciliacaoData, isLoading: isLoadingConciliacao } = useConciliacao();
+  const conciliacaoQuery = useConciliacao();
+  const { data: conciliacaoData } = conciliacaoQuery;
+  const showConciliacaoSkeleton = conciliacaoQuery.isPending && !conciliacaoQuery.data;
   const conciliacaoItems = conciliacaoData?.data || [];
 
   const { mutate: importarExtrato, isPending: isImporting } = useImportarExtrato();
@@ -249,7 +253,7 @@ export default function Banco() {
         <TabsContent value="extratos">
           <Card>
             <CardContent className="pt-6">
-              {isLoadingExtratos ? (
+              {showExtratosSkeleton ? (
                 <TableSkeleton rows={4} />
               ) : extratos.length === 0 ? (
                 <div className="py-8 text-center text-muted-foreground">
@@ -302,7 +306,7 @@ export default function Banco() {
         <TabsContent value="conciliacao">
           <Card>
             <CardContent className="pt-6">
-              {isLoadingConciliacao ? (
+              {showConciliacaoSkeleton ? (
                 <TableSkeleton rows={4} />
               ) : conciliacaoItems.length === 0 ? (
                 <div className="py-8 text-center text-muted-foreground">

@@ -96,12 +96,16 @@ export default function Documentos() {
   const [templateForm, setTemplateForm] = useState<TemplateCreateData>(emptyTemplateForm);
   const [generateVars, setGenerateVars] = useState<Record<string, string>>({});
 
-  const { data: documentosData, isLoading: isLoadingDocs } = useDocumentos({
+  const documentosQuery = useDocumentos({
     tipo: filtroTipo !== 'todos' ? filtroTipo : undefined,
   });
+  const { data: documentosData } = documentosQuery;
+  const showDocumentosSkeleton = documentosQuery.isPending && !documentosQuery.data;
   const documentos = documentosData?.data || [];
 
-  const { data: templatesData, isLoading: isLoadingTemplates } = useTemplates();
+  const templatesQuery = useTemplates();
+  const { data: templatesData } = templatesQuery;
+  const showTemplatesSkeleton = templatesQuery.isPending && !templatesQuery.data;
   const templates = templatesData?.data || [];
 
   const { mutate: createDocumento, isPending: isCreatingDoc } = useCreateDocumento();
@@ -211,7 +215,7 @@ export default function Documentos() {
             </Button>
           </div>
 
-          {isLoadingDocs ? (
+          {showDocumentosSkeleton ? (
             <CardGridSkeleton count={6} />
           ) : documentos.length === 0 ? (
             <Card>
@@ -308,7 +312,7 @@ export default function Documentos() {
             </Button>
           </div>
 
-          {isLoadingTemplates ? (
+          {showTemplatesSkeleton ? (
             <CardGridSkeleton count={4} />
           ) : templates.length === 0 ? (
             <Card>

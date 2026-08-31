@@ -70,8 +70,14 @@ const modoIcons: Record<ModoDistribuicao, React.ReactNode> = {
 };
 
 export default function Distribuicao() {
-  const { data: config, isLoading: loadingConfig } = useDistribuicaoConfig();
-  const { data: fila, isLoading: loadingFila } = useDistribuicaoFila();
+  const configQuery = useDistribuicaoConfig();
+  const filaQuery = useDistribuicaoFila();
+  const { data: config } = configQuery;
+  const { data: fila } = filaQuery;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  const showConfigSkeleton = configQuery.isPending && !configQuery.data;
+  const showFilaSkeleton = filaQuery.isPending && !filaQuery.data;
   const { data: profiles } = useProfiles();
   const { data: clientes } = useClientes();
   const updateConfig = useUpdateDistribuicaoConfig();
@@ -148,7 +154,7 @@ export default function Distribuicao() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {loadingConfig ? (
+              {showConfigSkeleton ? (
                 <CardListSkeleton count={2} />
               ) : (
                 <>
@@ -255,7 +261,7 @@ export default function Distribuicao() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {loadingFila ? (
+              {showFilaSkeleton ? (
                 <CardListSkeleton count={3} />
               ) : !fila || fila.corretores_ativos.length === 0 ? (
                 <div className="py-8 text-center text-muted-foreground">

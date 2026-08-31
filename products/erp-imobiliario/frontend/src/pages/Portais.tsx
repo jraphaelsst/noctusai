@@ -45,13 +45,17 @@ const portalColors: Record<string, string> = {
 };
 
 export default function Portais() {
-  const { data: feeds = [], isLoading: feedsLoading } = usePortaisFeeds();
+  const feedsQuery = usePortaisFeeds();
+  const { data: feeds = [] } = feedsQuery;
+  const showFeedsSkeleton = feedsQuery.isPending && !feedsQuery.data;
   const [filtroPortal, setFiltroPortal] = useState<string>('todos');
   const [busca, setBusca] = useState('');
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
 
   const prontoFilter = filtroPortal === 'prontos' ? true : filtroPortal === 'nao_prontos' ? false : undefined;
-  const { data: imoveis = [], isLoading: imoveisLoading } = useImoveisPortal(prontoFilter);
+  const imoveisQuery = useImoveisPortal(prontoFilter);
+  const { data: imoveis = [] } = imoveisQuery;
+  const showImoveisPortalSkeleton = imoveisQuery.isPending && !imoveisQuery.data;
   const toggleMutation = useTogglePortal();
 
   const zapUrl = usePortalFeedUrl('zap');
@@ -103,7 +107,7 @@ export default function Portais() {
 
       {/* Feed Cards */}
       <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
-        {feedsLoading ? (
+        {showFeedsSkeleton ? (
           <CardGridSkeleton count={3} />
         ) : (
           feeds.map((feed) => (
@@ -191,7 +195,7 @@ export default function Portais() {
           </div>
 
           {/* Table */}
-          {imoveisLoading ? (
+          {showImoveisPortalSkeleton ? (
             <TableSkeleton rows={4} />
           ) : imoveisFiltrados.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">

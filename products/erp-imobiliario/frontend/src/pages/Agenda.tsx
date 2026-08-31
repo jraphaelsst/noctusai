@@ -177,7 +177,9 @@ export default function Agenda() {
       ? { data_inicio: weekStart, data_fim: weekEnd }
       : { data_inicio: monthStart, data_fim: monthEnd };
 
-  const { data: eventosResult, isLoading } = useEventos(dateRange);
+  const eventosQuery = useEventos(dateRange);
+  const { data: eventosResult } = eventosQuery;
+  const showEventosSkeleton = eventosQuery.isPending && !eventosQuery.data;
   const { data: eventosHoje } = useEventosHoje();
   const createEvento = useCreateEvento();
   const deleteEvento = useDeleteEvento();
@@ -457,10 +459,10 @@ export default function Agenda() {
             </Tabs>
           </div>
 
-          {isLoading && <CardListSkeleton count={3} />}
+          {showEventosSkeleton && <CardListSkeleton count={3} />}
 
           {/* Week View */}
-          {view === 'semana' && !isLoading && (
+          {view === 'semana' && !showEventosSkeleton && (
             <Card>
               <CardContent className="p-0 overflow-x-auto">
                 <div className="min-w-[700px]">
@@ -566,7 +568,7 @@ export default function Agenda() {
           )}
 
           {/* Month View */}
-          {view === 'mes' && !isLoading && (
+          {view === 'mes' && !showEventosSkeleton && (
             <Card>
               <CardContent className="p-4">
                 {/* Month header */}

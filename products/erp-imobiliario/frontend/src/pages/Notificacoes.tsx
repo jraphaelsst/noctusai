@@ -128,7 +128,7 @@ export default function Notificacoes() {
         <TabsContent value="todas" className="mt-4">
           <NotificacaoList
             notificacoes={notificacoes}
-            isLoading={showNotificacoesSkeleton}
+            showSkeleton={showNotificacoesSkeleton}
             onMarcarLida={(id: string) => marcarLida.mutate(id)}
           />
         </TabsContent>
@@ -136,7 +136,7 @@ export default function Notificacoes() {
         <TabsContent value="nao-lidas" className="mt-4">
           <NotificacaoList
             notificacoes={notificacoes}
-            isLoading={showNotificacoesSkeleton}
+            showSkeleton={showNotificacoesSkeleton}
             onMarcarLida={(id: string) => marcarLida.mutate(id)}
           />
         </TabsContent>
@@ -198,14 +198,14 @@ export default function Notificacoes() {
 
 function NotificacaoList({
   notificacoes,
-  isLoading,
+  showSkeleton,
   onMarcarLida,
 }: {
   notificacoes: any[];
-  isLoading: boolean;
+  showSkeleton: boolean;
   onMarcarLida: (id: string) => void;
 }) {
-  if (isLoading) {
+  if (showSkeleton) {
     return <CardListSkeleton count={4} />;
   }
 
