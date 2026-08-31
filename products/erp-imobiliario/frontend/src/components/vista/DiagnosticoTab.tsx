@@ -18,7 +18,7 @@ import { useVistaDiagnostico } from '@/hooks/useVistaShowcase';
 import { ErrorPanel, StatusPill } from './shared';
 
 export function DiagnosticoTab() {
-  const { data, isLoading, isError, error, refetch, isFetching } = useVistaDiagnostico(true);
+  const { data, isPending, isError, error, refetch, isFetching } = useVistaDiagnostico(true);
   return (
     <div className="space-y-4">
       <Card>
@@ -31,7 +31,8 @@ export function DiagnosticoTab() {
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm space-y-2">
-          {isLoading && <Skeleton className="h-12 w-full" />}
+          {/* isPending && !data — never isLoading — per KB § PATTERNS/frontend/lying-loading-state.md (Shape 5). */}
+          {isPending && !data && <Skeleton className="h-12 w-full" />}
           {isError && <ErrorPanel error={error as Error} />}
           {data && (
             <>

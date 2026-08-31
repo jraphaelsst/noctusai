@@ -28,7 +28,9 @@ const tipoLabels: Record<TipoMeta, string> = {
 
 export function ConfiguracoesMetasModal() {
   const [open, setOpen] = useState(false);
-  const { data: configs, isLoading: isLoadingConfigs } = useMetasConfig();
+  const configsQuery = useMetasConfig();
+  const { data: configs } = configsQuery;
+  const showConfigsSkeleton = configsQuery.isPending && !configsQuery.data;
   const upsertConfig = useUpsertMetaConfig();
   const [formData, setFormData] = useState<Record<string, number | string>>({});
   const [activeStates, setActiveStates] = useState<Record<string, boolean>>({});
@@ -110,7 +112,7 @@ export function ConfiguracoesMetasModal() {
           <DialogTitle>Configurações de Metas</DialogTitle>
         </DialogHeader>
 
-        {isLoadingConfigs ? (
+        {showConfigsSkeleton ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>

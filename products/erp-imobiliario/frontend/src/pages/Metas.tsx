@@ -48,7 +48,9 @@ export default function Metas() {
   const [metaParaExcluir, setMetaParaExcluir] = useState<string | null>(null);
   const [confirmarExclusaoMassa, setConfirmarExclusaoMassa] = useState(false);
 
-  const { data: metas, isLoading } = useMetas();
+  const metasQuery = useMetas();
+  const { data: metas } = metasQuery;
+  const showMetasSkeleton = metasQuery.isPending && !metasQuery.data;
   const { data: userRole } = useUserRole();
   const deleteMeta = useDeleteMeta();
   const { reordenarMetas, getMetasOrdenadas } = useMetasOrdem();
@@ -311,7 +313,7 @@ export default function Metas() {
 
         {/* Aba Todas - Mostra todas as seções */}
         <TabsContent value="todas" className="mt-6">
-          {isLoading ? (
+          {showMetasSkeleton ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <Skeleton className="h-48" />
               <Skeleton className="h-48" />
@@ -376,7 +378,7 @@ export default function Metas() {
 
           return (
             <TabsContent key={tipo} value={tipo} className="mt-6">
-              {isLoading ? (
+              {showMetasSkeleton ? (
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                   <Skeleton className="h-48" />
                   <Skeleton className="h-48" />
@@ -416,7 +418,7 @@ export default function Metas() {
 
         {/* Aba Histórico */}
         <TabsContent value="historico" className="mt-6">
-          {isLoading ? (
+          {showMetasSkeleton ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <Skeleton className="h-48" />
             </div>

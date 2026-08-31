@@ -188,7 +188,8 @@ export default function MetasDashboard() {
 
             {(['unificado', 'pontos', 'vgv'] as const).map(view => (
               <TabsContent key={view} value={view}>
-                {rankings.isLoading && <p className="text-muted-foreground">Carregando...</p>}
+                {/* isPending && !data — never isLoading — per KB § PATTERNS/frontend/lying-loading-state.md (Shape 5). */}
+                {rankings.isPending && !rankings.data && <p className="text-muted-foreground">Carregando...</p>}
                 {rankings.data && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2">
                     <TopAgentsBarChart view={view} />

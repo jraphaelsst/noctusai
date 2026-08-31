@@ -43,9 +43,12 @@ export interface MetaEventoIndicatorProps {
 }
 
 export function MetaEventoIndicator({ refType, refId, className = '' }: MetaEventoIndicatorProps) {
-  const { data: eventos = [], isLoading } = useMetaEventosFor(refType, refId ?? null);
+  const eventosQuery = useMetaEventosFor(refType, refId ?? null);
+  const { data: eventos = [] } = eventosQuery;
 
-  if (isLoading || !refId) return null;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if ((eventosQuery.isPending && !eventosQuery.data) || !refId) return null;
   if (!eventos.length) return null;
 
   // Aggregate when multiple eventos share the same reference (e.g. multi-

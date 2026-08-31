@@ -39,7 +39,9 @@ const MODALIDADE_LABELS: Record<string, string> = {
 };
 
 export default function MetasRegrasConfig() {
-  const { data: regras = [], isLoading } = useRegrasPontuacao();
+  const regrasQuery = useRegrasPontuacao();
+  const { data: regras = [] } = regrasQuery;
+  const showRegrasSkeleton = regrasQuery.isPending && !regrasQuery.data;
   const [newOpen, setNewOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -68,7 +70,7 @@ export default function MetasRegrasConfig() {
         <CardHeader>
           <CardTitle className="text-base">Regras ativas ({regras.length})</CardTitle>
           <CardDescription>
-            {isLoading ? 'Carregando…' : 'Regras da sua organização + defaults da plataforma.'}
+            {showRegrasSkeleton ? 'Carregando…' : 'Regras da sua organização + defaults da plataforma.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -114,7 +116,9 @@ export default function MetasRegrasConfig() {
 // ─────────────────────────────────────────────────────────────────
 
 function CalculoConfigCard() {
-  const { data: cfg, isLoading } = useMetasConfig();
+  const cfgQuery = useMetasConfig();
+  const { data: cfg } = cfgQuery;
+  const showCfgSkeleton = cfgQuery.isPending && !cfgQuery.data;
   const upsert = useUpsertConfig();
 
   const [vgv, setVgv] = useState<string>('');
@@ -150,7 +154,7 @@ function CalculoConfigCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {isLoading ? (
+        {showCfgSkeleton ? (
           <p className="text-sm text-muted-foreground">Carregando…</p>
         ) : (
           <>
