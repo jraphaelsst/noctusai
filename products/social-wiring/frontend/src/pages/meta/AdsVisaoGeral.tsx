@@ -301,8 +301,12 @@ export default function AdsVisaoGeral() {
   const prevQ = useAdsAccountInsights(prev.since, prev.until);
   const sync = useAdsSync();
 
-  // Account resolution gates first — never a zeros dashboard.
-  if (accountQ.isPending || accountQ.isFetching) return <AdsLoading />;
+  // Account resolution gates first — never a zeros dashboard. `&& !account`
+  // (not `|| isFetching`) — this account query isn't filter-keyed, but
+  // "Sincronizar agora" invalidates the whole `meta-ads` namespace, so the
+  // old gate blanked this ENTIRE page, including the very sync button the
+  // user just clicked, on every sync.
+  if (accountQ.isPending && !account) return <AdsLoading />;
   if (accountQ.isError || !account) {
     return <AdsNotConfigured detail={(accountQ.error as Error)?.message} />;
   }
@@ -311,7 +315,7 @@ export default function AdsVisaoGeral() {
   const prevTotals = normTotals(prevQ.data);
   const tiles = buildTiles(objective, curTotals, prevTotals, currency);
   const loadingTotals =
-    campaignsQ.isPending || campaignsQ.isFetching || curQ.isPending || curQ.isFetching;
+    (campaignsQ.isPending && !campaignsQ.data) || (curQ.isPending && !curQ.data);
 
   return (
     <div className="space-y-6">

@@ -77,7 +77,7 @@ export default function VisaoGeral() {
         <StatTile
           label="Total de leads"
           value={summary ? formatCompactNumber(summary.total) : "—"}
-          loading={summaryQ.isPending || summaryQ.isFetching}
+          loading={summaryQ.isPending && !summaryQ.data}
           delta={variacao}
           hint="vs. período anterior"
         />
@@ -88,25 +88,25 @@ export default function VisaoGeral() {
               ? `${formatCompactNumber(summary.novos)} / ${formatCompactNumber(summary.retornos)}`
               : "—"
           }
-          loading={summaryQ.isPending || summaryQ.isFetching}
+          loading={summaryQ.isPending && !summaryQ.data}
         />
         <StatTile
           label="Média diária"
           value={summary ? summary.media_diaria.toFixed(1) : "—"}
-          loading={summaryQ.isPending || summaryQ.isFetching}
+          loading={summaryQ.isPending && !summaryQ.data}
         />
         <StatTile
           label="Top origem"
           value={summary?.top_origem?.label ?? "—"}
           hint={summary?.top_origem ? `${formatPercent(summary.top_origem.share_pct)} do total` : undefined}
-          loading={summaryQ.isPending || summaryQ.isFetching}
+          loading={summaryQ.isPending && !summaryQ.data}
         />
         <StatTile
           label="Variação"
           value={variacao === null ? "—" : formatPercent(Math.abs(variacao))}
           delta={variacao}
           hint="vs. período anterior"
-          loading={summaryQ.isPending || summaryQ.isFetching}
+          loading={summaryQ.isPending && !summaryQ.data}
         />
         {/*
           StatTile (seed organ) has no onClick prop — wrapping it in a plain
@@ -125,7 +125,7 @@ export default function VisaoGeral() {
             icon={AlertCircle}
             label="Precisam de revisão"
             value={summary ? formatCompactNumber(summary.needs_review) : "—"}
-            loading={summaryQ.isPending || summaryQ.isFetching}
+            loading={summaryQ.isPending && !summaryQ.data}
             hint={filters.needs_review === true ? "filtro ativo — clique para limpar" : "clique para filtrar"}
           />
         </button>
@@ -134,7 +134,7 @@ export default function VisaoGeral() {
       <ChartCard
         title="Evolução mensal por origem"
         subtitle="Total de leads por mês, separados por origem canônica."
-        loading={timeseriesQ.isPending || timeseriesQ.isFetching}
+        loading={timeseriesQ.isPending && !timeseriesQ.data}
         error={timeseriesQ.isError ? "Erro ao carregar a evolução mensal." : null}
         isEmpty={areaData.length === 0}
         actions={timeseriesQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
@@ -146,7 +146,7 @@ export default function VisaoGeral() {
         <ChartCard
           title="Leads por origem"
           subtitle={origemSubtitle}
-          loading={origemQ.isPending || origemQ.isFetching}
+          loading={origemQ.isPending && !origemQ.data}
           error={origemQ.isError ? "Erro ao carregar leads por origem." : null}
           isEmpty={donutData.length === 0}
           actions={origemQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
@@ -157,7 +157,7 @@ export default function VisaoGeral() {
         <ChartCard
           title="Top 10 corretores"
           subtitle={corretorSubtitle}
-          loading={corretorQ.isPending || corretorQ.isFetching}
+          loading={corretorQ.isPending && !corretorQ.data}
           error={corretorQ.isError ? "Erro ao carregar o ranking de corretores." : null}
           isEmpty={corretorData.length === 0}
           actions={corretorQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
@@ -174,7 +174,7 @@ export default function VisaoGeral() {
       <ChartCard
         title="Heatmap ano × mês"
         subtitle="Volume de leads por mês, todos os anos importados."
-        loading={heatmapQ.isPending || heatmapQ.isFetching}
+        loading={heatmapQ.isPending && !heatmapQ.data}
         error={heatmapQ.isError ? "Erro ao carregar o heatmap." : null}
         isEmpty={!heatmapQ.data || heatmapQ.data.anos.length === 0}
         minBodyHeight={220}

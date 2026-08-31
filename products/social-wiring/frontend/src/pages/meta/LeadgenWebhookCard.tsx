@@ -248,7 +248,7 @@ function BulkResultsSummary({
 function DeliveryHealth() {
   const eventsQ = useLeadgenEvents(20);
 
-  if (eventsQ.isPending || eventsQ.isFetching) {
+  if (eventsQ.isPending && !eventsQ.data) {
     return (
       <p className="text-sm text-muted-foreground" data-testid="leadgen-health-loading">
         Carregando saúde da entrega…
@@ -317,7 +317,7 @@ export default function LeadgenWebhookCard() {
     null,
   );
 
-  if (subsQ.isPending || subsQ.isFetching) {
+  if (subsQ.isPending && !subsQ.data) {
     return <AdsLoading label="Carregando inscrições do webhook…" />;
   }
   if (subsQ.isError) {

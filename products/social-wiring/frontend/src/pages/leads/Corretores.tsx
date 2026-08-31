@@ -53,7 +53,7 @@ export default function Corretores() {
         <ChartCard
           title="Ranking de corretores"
           subtitle="Total de leads no período selecionado."
-          loading={byDimQ.isPending || byDimQ.isFetching}
+          loading={byDimQ.isPending && !byDimQ.data}
           error={byDimQ.isError ? "Erro ao carregar o ranking." : null}
           isEmpty={rankedBuckets.length === 0}
           actions={byDimQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
@@ -69,7 +69,7 @@ export default function Corretores() {
         <ChartCard
           title="Participação por corretor"
           subtitle={donutSubtitle}
-          loading={byDimQ.isPending || byDimQ.isFetching}
+          loading={byDimQ.isPending && !byDimQ.data}
           error={byDimQ.isError ? "Erro ao carregar a participação." : null}
           isEmpty={buckets.length === 0}
           actions={byDimQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}
@@ -81,7 +81,7 @@ export default function Corretores() {
       <ChartCard
         title="Evolução por corretor"
         subtitle="Total de leads por mês, cada corretor em sua própria série."
-        loading={timeseriesQ.isPending || timeseriesQ.isFetching}
+        loading={timeseriesQ.isPending && !timeseriesQ.data}
         error={timeseriesQ.isError ? "Erro ao carregar a evolução por corretor." : null}
         isEmpty={areaData.length === 0}
         actions={timeseriesQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}

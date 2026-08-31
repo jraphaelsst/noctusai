@@ -67,7 +67,7 @@ export default function Origens() {
       <ChartCard
         title="Evolução por origem"
         subtitle="Total de leads por mês, cada origem em sua própria série."
-        loading={timeseriesQ.isPending || timeseriesQ.isFetching}
+        loading={timeseriesQ.isPending && !timeseriesQ.data}
         error={timeseriesQ.isError ? "Erro ao carregar a evolução por origem." : null}
         isEmpty={areaData.length === 0}
         actions={timeseriesQ.isError ? <ClearFiltersButton onClick={clearAll} /> : undefined}

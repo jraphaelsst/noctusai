@@ -73,7 +73,11 @@ export default function ImovelDetalhes() {
   const documentoMutations = useImovelDocumentoMutations(codigo ?? "");
   const teamQuery = useTeamMembers();
 
-  const loading = query.isPending || query.isFetching;
+  // First load only — `isPending && !data`, not `|| isFetching`. This is the
+  // ENTIRE detail page; the old gate replaced header/ficha/sidebar with a
+  // skeleton on every background refetch of `query` (e.g. window refocus),
+  // collapsing then restoring the whole layout under the user.
+  const loading = query.isPending && !query.data;
   const imovel = query.data;
 
   if (loading) {
@@ -273,7 +277,7 @@ export default function ImovelDetalhes() {
           <ImovelCartorioCard
             dados={dadosQuery.data}
             membros={teamQuery.data ?? []}
-            loading={dadosQuery.isPending || dadosQuery.isFetching}
+            loading={dadosQuery.isPending && !dadosQuery.data}
             saving={dadosMutation.isPending}
             error={dadosMutation.error?.message ?? null}
             onSave={(patch) => dadosMutation.mutate(patch)}
@@ -281,7 +285,7 @@ export default function ImovelDetalhes() {
 
           <ImovelDocumentosCard
             documentos={documentosQuery.data ?? []}
-            loading={documentosQuery.isPending || documentosQuery.isFetching}
+            loading={documentosQuery.isPending && !documentosQuery.data}
             uploading={documentoMutations.upload.isPending}
             error={
               documentoMutations.upload.error?.message ??

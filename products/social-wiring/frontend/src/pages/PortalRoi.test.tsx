@@ -86,17 +86,57 @@ beforeEach(() => {
 });
 
 describe("PortalRoi — loading", () => {
-  it("gates on isPending || isFetching, never isLoading (no isEmpty flash mid-refetch)", async () => {
+  it("shows the skeleton on first load — isPending true, no data yet", async () => {
     mockUsePortalRoiResumo.mockReturnValue({
-      isPending: false,
+      isPending: true,
       isFetching: true,
       isError: false,
-      data: { periodo: null, totais: {}, portais: [] },
+      data: undefined,
       refetch: vi.fn(),
     });
     const { getByTestId, queryByTestId } = await renderPage();
     expect(getByTestId("portal-roi-loading")).toBeTruthy();
     expect(queryByTestId("portal-row")).toBeNull();
+  });
+
+  // Regression guard for the 2026-07-21 leads-analytics incident (b0cb47b1):
+  // the empty/loading branch must NEVER win while `data` is undefined, even
+  // when `isPending` alone is somehow false (defensive — TanStack v5 sets
+  // `isPending` for any query whose key has never resolved, but the gate
+  // itself must not rely on that invariant holding forever).
+  it("never renders the success table when data is still undefined", async () => {
+    mockUsePortalRoiResumo.mockReturnValue({
+      isPending: true,
+      isFetching: false,
+      isError: false,
+      data: undefined,
+      refetch: vi.fn(),
+    });
+    const { queryByTestId, queryByText } = await renderPage();
+    expect(queryByTestId("portal-row")).toBeNull();
+    expect(queryByText("Nenhuma origem de lead configurada ainda.")).toBeNull();
+  });
+
+  // The 2026-08-31 refetch-unmount bug: `isPending || isFetching` re-armed
+  // the skeleton on EVERY background refetch (e.g. right after registering
+  // a spend entry), tearing down the stat tiles + table even though the
+  // data was already on screen. `isPending && !data` must keep rendering
+  // it — a subsequent refetch is not "nothing to render".
+  it("keeps the stat tiles + table mounted during a background refetch (isFetching true, data present)", async () => {
+    mockUsePortalRoiResumo.mockReturnValue({
+      isPending: false,
+      isFetching: true,
+      isError: false,
+      data: {
+        periodo: null,
+        totais: { investimento: null, total_leads: 3728, total_vendas: 0, valor_vendas: 0, cpl: null, roi: null, taxa_conversao: null },
+        portais: [portal({ origem_id: "o1", label: "Senseys", total_leads: 3728 })],
+      },
+      refetch: vi.fn(),
+    });
+    const { getAllByTestId, queryByTestId } = await renderPage();
+    expect(queryByTestId("portal-roi-loading")).toBeNull();
+    expect(getAllByTestId("portal-row")).toHaveLength(1);
   });
 });
 

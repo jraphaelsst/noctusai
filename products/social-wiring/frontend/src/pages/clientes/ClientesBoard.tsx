@@ -74,10 +74,14 @@ export default function ClientesBoard() {
   const corretores = useLeadCorretores();
   const { update } = useClienteMutations();
 
-  // Gate on isPending || isFetching, never isLoading — TanStack v5's
-  // `isLoading` is false during a background refetch, so an isEmpty branch
-  // keyed on it would flash "nenhum cliente" over data that still exists.
-  const loading = board.isPending || board.isFetching;
+  // First load only — `isPending && !data`, never `isLoading` (TanStack v5's
+  // `isLoading` is false mid-refetch, so an isEmpty branch keyed on it would
+  // flash "nenhum cliente" over data that still exists) and never a bare
+  // `|| isFetching` either (that gate replaced the whole 8-card grid with
+  // skeletons on every filter/restore refetch — the query has
+  // `placeholderData`, so the real data is present the entire time and was
+  // being thrown away by this render gate).
+  const loading = board.isPending && !board.data;
   const data = board.data;
   const hasFilters = Boolean(search || corretorId);
   const isEmpty = !loading && !board.isError && (data?.items.length ?? 0) === 0;

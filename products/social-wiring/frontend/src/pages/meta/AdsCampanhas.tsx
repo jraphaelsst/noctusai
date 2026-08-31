@@ -60,7 +60,7 @@ function ChildRows({
   currency: string;
 }) {
   const adsetsQ = useAdsChildren(campaignId, "adset");
-  const loading = adsetsQ.isPending || adsetsQ.isFetching;
+  const loading = adsetsQ.isPending && !adsetsQ.data;
   if (loading) {
     return (
       <tr>
@@ -225,7 +225,7 @@ export default function AdsCampanhas() {
     [campaigns],
   );
 
-  if (accountQ.isPending || accountQ.isFetching) return <AdsLoading />;
+  if (accountQ.isPending && !account) return <AdsLoading />;
   if (accountQ.isError || !account) return <AdsNotConfigured detail={(accountQ.error as Error)?.message} />;
 
   return (
@@ -257,7 +257,7 @@ export default function AdsCampanhas() {
           </CardTitle>
         </CardHeader>
         <CardContent className="px-0">
-          {campaignsQ.isPending || campaignsQ.isFetching ? (
+          {campaignsQ.isPending && !campaignsQ.data ? (
             <div className="space-y-2 px-4">
               {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
             </div>

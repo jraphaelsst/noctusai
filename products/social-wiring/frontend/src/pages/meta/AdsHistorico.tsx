@@ -139,7 +139,7 @@ export default function AdsHistorico() {
     ];
   }, [seriesQ.data]);
 
-  if (accountQ.isPending || accountQ.isFetching) return <AdsLoading />;
+  if (accountQ.isPending && !account) return <AdsLoading />;
   if (accountQ.isError || !account) return <AdsNotConfigured detail={(accountQ.error as Error)?.message} />;
 
   return (
@@ -165,7 +165,7 @@ export default function AdsHistorico() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {seriesQ.isPending || seriesQ.isFetching ? (
+          {seriesQ.isPending && !seriesQ.data ? (
             <AdsLoading label="Carregando série…" />
           ) : seriesQ.isError ? (
             <AdsError onRetry={() => seriesQ.refetch()} />
@@ -209,7 +209,7 @@ export default function AdsHistorico() {
             <CardDescription>Gasto por plataforma (IG / FB / …)</CardDescription>
           </CardHeader>
           <CardContent>
-            {placementQ.isPending || placementQ.isFetching ? (
+            {placementQ.isPending && !placementQ.data ? (
               <AdsLoading label="Carregando…" />
             ) : !placementAvailable ? (
               <p className="py-10 text-center text-sm text-muted-foreground">

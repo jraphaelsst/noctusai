@@ -126,6 +126,32 @@ describe("ClientesBoard — loading/error", () => {
     const { getByText } = await renderPage();
     expect(getByText("Não foi possível carregar os clientes.")).toBeTruthy();
   });
+
+  // The 2026-08-31 refetch-unmount bug: `isPending || isFetching` re-armed
+  // the 8-skeleton grid on EVERY filter change / restore mutation, tearing
+  // down the whole 8-card grid even though `placeholderData` keeps the
+  // previous page's real cards on `data` the entire time. `isPending &&
+  // !data` must keep them mounted through that refetch.
+  it("keeps the existing cliente cards mounted during a background refetch (isPending false, isFetching true, data present)", async () => {
+    mockUseClientesBoard.mockReturnValue({
+      isPending: false,
+      isFetching: true,
+      isError: false,
+      data: {
+        items: [cliente({ id: "cl1", nome: "Maria Silva" })],
+        total: 9320,
+        page: 1,
+        pages: 389,
+      },
+      refetch: vi.fn(),
+    });
+    // `loading`/success are mutually-exclusive branches in ClientesBoard's
+    // own ternary — rendering the real card here proves the skeleton branch
+    // did NOT win, without depending on a `data-testid` the Skeleton organ
+    // doesn't carry.
+    const { getAllByTestId } = await renderPage();
+    expect(getAllByTestId("cliente-card")).toHaveLength(1);
+  });
 });
 
 describe("ClientesBoard — one card per human", () => {

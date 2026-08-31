@@ -125,16 +125,35 @@ async function renderCard() {
 }
 
 describe("LeadgenWebhookCard — loading / error", () => {
-  it("renders the loading state", async () => {
+  it("renders the loading state on first load — isPending true, no data yet", async () => {
     mockUseLeadgenSubscriptions.mockReturnValue({ data: undefined, isPending: true, isFetching: false, isError: false, refetch: vi.fn() });
     const { getByTestId } = await renderCard();
     expect(getByTestId("leadgen-loading")).toBeTruthy();
   });
 
-  it("renders the loading state while a background refetch is in flight (isPending false, isFetching true)", async () => {
+  // Regression guard for the 2026-07-21 leads-analytics incident (b0cb47b1):
+  // the loading/empty branch must never win while `data` is genuinely
+  // undefined — proven here with `isFetching: false` too, so it isn't
+  // riding on isFetching to cover the gap.
+  it("never renders the subscribed Page rows while data is still undefined", async () => {
+    mockUseLeadgenSubscriptions.mockReturnValue({ data: undefined, isPending: true, isFetching: false, isError: false, refetch: vi.fn() });
+    const { queryByTestId } = await renderCard();
+    expect(queryByTestId("leadgen-page-row-p1")).toBeNull();
+  });
+
+  // The 2026-08-31 refetch-unmount bug: `isPending || isFetching` re-armed
+  // this gate on EVERY background refetch, and `subscribe`/`unsubscribe`/
+  // `setPageMarca` all invalidate this exact query — so clicking Inscrever,
+  // Desinscrever, or the per-Page Marca <select> tore down the whole card
+  // (Sync button, every Page row) mid-interaction, then rebuilt it.
+  // `isPending && !data` must keep it mounted through that refetch.
+  it("keeps every Page row + the callback URL mounted during a background refetch (isPending false, isFetching true, data present)", async () => {
     mockUseLeadgenSubscriptions.mockReturnValue({ data: makeSubscriptions(), isPending: false, isFetching: true, isError: false, refetch: vi.fn() });
-    const { getByTestId } = await renderCard();
-    expect(getByTestId("leadgen-loading")).toBeTruthy();
+    const { getByTestId, queryByTestId } = await renderCard();
+    expect(queryByTestId("leadgen-loading")).toBeNull();
+    expect(getByTestId("leadgen-page-row-p1")).toBeTruthy();
+    expect(getByTestId("leadgen-page-row-p2")).toBeTruthy();
+    expect(getByTestId("leadgen-copy-callback-url")).toBeTruthy();
   });
 
   it("renders the error state and retries on click", async () => {
@@ -304,6 +323,18 @@ describe("LeadgenWebhookCard — delivery health", () => {
     const { getByTestId } = await renderCard();
     expect(getByTestId("leadgen-health-error")).toBeTruthy();
     expect(getByTestId("leadgen-page-row-p1")).toBeTruthy();
+  });
+
+  it("keeps rendering the counts/badges during a background refetch (isPending false, isFetching true, data present)", async () => {
+    mockUseLeadgenEvents.mockReturnValue({
+      data: { counts: { received: 5, processed: 4, error: 1 }, last_received_at: "2026-08-01T12:00:00Z", events: [] },
+      isPending: false,
+      isFetching: true,
+      isError: false,
+    });
+    const { getByTestId, queryByTestId } = await renderCard();
+    expect(queryByTestId("leadgen-health-loading")).toBeNull();
+    expect(getByTestId("leadgen-delivery-health").textContent).toContain("Último evento recebido");
   });
 });
 

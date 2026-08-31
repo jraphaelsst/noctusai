@@ -171,7 +171,7 @@ describe("AdsCampanhas", () => {
     expect(screen.queryByTestId("ads-error")).toBeNull();
   });
 
-  it("shows the account-loading state via isPending/isFetching, never isLoading", async () => {
+  it("shows the account-loading state on first load — isPending true, no data yet", async () => {
     mockUseAdsAccount.mockReturnValue({
       data: undefined,
       isPending: true,
@@ -180,6 +180,24 @@ describe("AdsCampanhas", () => {
     });
     const { screen } = await renderPage();
     expect(screen.getByTestId("ads-loading")).toBeTruthy();
+  });
+
+  // The 2026-08-31 refetch-unmount bug: `isPending || isFetching` re-armed
+  // this whole-page gate on every `meta-ads` namespace refetch — including
+  // right after a status/objective filter change re-fires `campaignsQ`, and
+  // any other Ads subtab's "Sincronizar agora" invalidates the whole
+  // namespace. `isPending && !account` must keep the filters + table
+  // mounted through that refetch.
+  it("keeps the filters + campaign table mounted during a background account refetch (isPending false, isFetching true, data present)", async () => {
+    mockUseAdsAccount.mockReturnValue({
+      data: { data: [ACCOUNT] },
+      isPending: false,
+      isFetching: true,
+      isError: false,
+    });
+    const { screen } = await renderPage();
+    expect(screen.queryByTestId("ads-loading")).toBeNull();
+    expect(await screen.findByText("Campanha Um")).toBeTruthy();
   });
 
   it("shows the not-configured state when there's no ad account", async () => {

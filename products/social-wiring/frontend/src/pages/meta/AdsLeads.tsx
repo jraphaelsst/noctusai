@@ -245,7 +245,7 @@ function RecordsPanel({
         </select>
       </CardHeader>
       <CardContent>
-        {recordsQ.isPending || recordsQ.isFetching ? (
+        {recordsQ.isPending && !recordsQ.data ? (
           <AdsLoading label="Carregando registros…" />
         ) : recordsQ.data?.gated ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
@@ -308,7 +308,7 @@ export default function AdsLeads() {
   const onSync = () =>
     sync.mutate(undefined, { onSuccess: (r) => setJobId(r.job_id) });
 
-  if (formsQ.isPending || formsQ.isFetching) return <AdsLoading />;
+  if (formsQ.isPending && !formsQ.data) return <AdsLoading />;
   if (formsQ.isError) {
     const msg = (formsQ.error as Error)?.message ?? "";
     // A not-configured / gated account surfaces the actionable state, not

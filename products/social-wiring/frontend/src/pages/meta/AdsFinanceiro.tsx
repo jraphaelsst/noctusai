@@ -99,7 +99,7 @@ export default function AdsFinanceiro() {
     [pacingQ.data],
   );
 
-  if (accountQ.isPending || accountQ.isFetching) return <AdsLoading />;
+  if (accountQ.isPending && !account) return <AdsLoading />;
   if (accountQ.isError || !account) return <AdsNotConfigured detail={(accountQ.error as Error)?.message} />;
 
   return (
@@ -127,7 +127,7 @@ export default function AdsFinanceiro() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {pacingQ.isPending || pacingQ.isFetching ? (
+          {pacingQ.isPending && !pacingQ.data ? (
             <AdsLoading label="Resolvendo orçamentos das campanhas ativas…" />
           ) : !pacing.length ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
@@ -193,7 +193,7 @@ export default function AdsFinanceiro() {
           </div>
         </CardHeader>
         <CardContent>
-          {seriesQ.isPending || seriesQ.isFetching ? (
+          {seriesQ.isPending && !seriesQ.data ? (
             <AdsLoading label="Carregando…" />
           ) : !costTrend.length ? (
             <p className="py-8 text-center text-sm text-muted-foreground">Sem dados no período.</p>

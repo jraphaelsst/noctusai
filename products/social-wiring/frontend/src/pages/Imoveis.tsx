@@ -74,10 +74,14 @@ export default function Imoveis() {
   const caracteristicas = useCaracteristicas();
   const sync = useSyncImoveis();
 
-  // Gate on isPending || isFetching, never isLoading. TanStack v5's
-  // `isLoading` is false during a background refetch, so an isEmpty branch
-  // keyed on it renders "nenhum imóvel" over data that exists.
-  const loading = imoveis.isPending || imoveis.isFetching;
+  // First load only — `isPending && !data`, never `isLoading` (TanStack v5's
+  // `isLoading` is false mid-refetch, so an isEmpty branch keyed on it renders
+  // "nenhum imóvel" over data that exists) and never a bare `|| isFetching`
+  // either (that gate replaced the whole 8-card grid with skeletons on every
+  // filter/sync refetch — the query has `placeholderData`, so the real data
+  // is present the entire time and was being thrown away by this render
+  // gate).
+  const loading = imoveis.isPending && !imoveis.data;
   const page = imoveis.data;
   const hasFilters = Boolean(
     filters.status ||

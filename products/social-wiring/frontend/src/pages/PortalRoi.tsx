@@ -46,11 +46,13 @@ export default function PortalRoi() {
   const resumo = usePortalRoiResumo();
   const [manager, setManager] = useState<{ origemId: string; origemLabel: string } | null>(null);
 
-  // Gate on isPending || isFetching, never isLoading — TanStack v5's
-  // `isLoading` is false during a background refetch (e.g. right after a
-  // spend entry invalidates the resumo query), so an `isEmpty` branch keyed
-  // on it would flash "nenhum portal" over data that still exists.
-  const loading = resumo.isPending || resumo.isFetching;
+  // First load only — `isPending && !data`, never `isLoading` (TanStack v5's
+  // `isLoading` is false mid-refetch, so an `isEmpty` branch keyed on it
+  // would flash "nenhum portal" over data that still exists) and never a
+  // bare `|| isFetching` either: a spend entry via CampanhaManagerDialog
+  // invalidates this same resumo query, and the old gate replaced the whole
+  // StatTileRow + PortaisTable with a skeleton right after every save.
+  const loading = resumo.isPending && !resumo.data;
   const data = resumo.data;
   const portais = data?.portais ?? [];
   // "Empty" = no lead_sources configured at all — NOT "sources with no
