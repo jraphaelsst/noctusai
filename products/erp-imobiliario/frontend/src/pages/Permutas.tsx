@@ -60,7 +60,9 @@ export default function Permutas() {
 // ==================== PERFIS TAB ====================
 function PerfisTab() {
   const navigate = useNavigate();
-  const { data: perfis = [], isLoading } = usePerfilsPermuta();
+  const perfisQuery = usePerfilsPermuta();
+  const { data: perfis = [] } = perfisQuery;
+  const showPerfisSkeleton = perfisQuery.isPending && !perfisQuery.data;
   const { data: matchCounts = {} } = useMatchCounts();
   const [busca, setBusca] = useState('');
   const [perfilExpandido, setPerfilExpandido] = useState<string | null>(null);
@@ -90,9 +92,9 @@ function PerfisTab() {
         </CardContent>
       </Card>
 
-      {isLoading && <CardListSkeleton count={3} />}
+      {showPerfisSkeleton && <CardListSkeleton count={3} />}
 
-      {!isLoading && filtrados.length === 0 && (
+      {!showPerfisSkeleton && filtrados.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             <ArrowLeftRight className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -168,7 +170,9 @@ function PerfisTab() {
 
 // ==================== MATCHES TAB ====================
 function MatchesTab() {
-  const { data: allMatches = [], isLoading } = useMatches();
+  const allMatchesQuery = useMatches();
+  const { data: allMatches = [] } = allMatchesQuery;
+  const showMatchesSkeleton = allMatchesQuery.isPending && !allMatchesQuery.data;
   const atualizarMutation = useAtualizarStatusMatch();
   const recalcularMutation = useRecalcularMatches();
   const [filtroScore, setFiltroScore] = useState('todos');
@@ -216,7 +220,7 @@ function MatchesTab() {
         </CardContent>
       </Card>
 
-      {isLoading ? (
+      {showMatchesSkeleton ? (
         <CardListSkeleton count={3} />
       ) : filtrados.length === 0 ? (
         <Card>
@@ -251,10 +255,11 @@ function MatchesTab() {
 
 // ==================== SHARED COMPONENTS ====================
 function PerfilMatchesSection({ perfilId }: { perfilId: string }) {
-  const { data: matches = [], isLoading } = useMatches({ ativo_destino_id: perfilId });
+  const matchesQuery = useMatches({ ativo_destino_id: perfilId });
+  const { data: matches = [] } = matchesQuery;
   const atualizarMutation = useAtualizarStatusMatch();
 
-  if (isLoading) return <CardListSkeleton count={3} />;
+  if (matchesQuery.isPending && !matchesQuery.data) return <CardListSkeleton count={3} />;
   if (matches.length === 0) return <div className="mt-4 p-4 text-center text-muted-foreground bg-muted/50 rounded-lg">Nenhum match. Tente recalcular.</div>;
 
   return (
