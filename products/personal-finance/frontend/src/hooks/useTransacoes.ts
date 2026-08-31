@@ -32,6 +32,7 @@ export function useTransacoes(filtros?: FiltrosTransacoes) {
       const result = await api.get("/api/transacoes", params);
       return result as { data: Transacao[]; total: number; page: number; page_size: number };
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

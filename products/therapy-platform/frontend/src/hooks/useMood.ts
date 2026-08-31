@@ -21,6 +21,7 @@ export function useMoodEntries(filters?: { page?: number; page_size?: number }) 
       const res = await api.get(`/api/mood${qs ? `?${qs}` : ''}`);
       return res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 30 * 1000,
   });

@@ -35,6 +35,7 @@ export function useTransactions(filters?: TransactionFilters, page = 1, pageSize
       if (filters?.date_end) params.set('date_end', filters.date_end);
       return api.get(`/api/transactions?${params}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

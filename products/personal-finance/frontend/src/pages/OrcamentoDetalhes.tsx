@@ -10,7 +10,7 @@ import { METODO_ORCAMENTO_LABELS } from "@/lib/constants";
 import type { OrcamentoItem } from "@/types";
 import Modal from "@/components/Modal";
 import Breadcrumbs from "@/components/Breadcrumbs";
-import { ArrowLeft, Pencil, Trash2, Plus } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, Plus, Loader2 } from "lucide-react";
 
 const inputClass = "w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary";
 
@@ -29,7 +29,13 @@ export default function OrcamentoDetalhes() {
   const deleteItemMutation = useDeleteOrcamentoItem();
 
   const [periodoMes, setPeriodoMes] = useState(getCurrentMonth());
-  const { data: progresso } = useOrcamentoProgresso(id, periodoMes);
+  // `isFetching` (not `isLoading`) drives the subtle "Atualizando" affordance
+  // on the Progresso Total card below — placeholderData keeps the previous
+  // period's totals on screen during a periodoMes change, but those totals
+  // carry no visible date the way a table row would, and the period
+  // selector above updates instantly — without a signal the card would
+  // silently show the wrong month's numbers under the new selected period.
+  const { data: progresso, isFetching: progressoFetching } = useOrcamentoProgresso(id, periodoMes);
 
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -179,8 +185,11 @@ export default function OrcamentoDetalhes() {
       <div className="rounded-lg border bg-card p-6 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">Progresso Total</h2>
-          <div className="text-right">
-            <p className="text-xl font-bold">{formatCurrency(totalGasto)}</p>
+          <div className={`text-right ${progressoFetching ? "opacity-60" : ""}`}>
+            <p className="text-xl font-bold flex items-center justify-end gap-1.5">
+              {formatCurrency(totalGasto)}
+              {progressoFetching && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+            </p>
             <p className="text-sm text-muted-foreground">de {formatCurrency(totalPlanejado)}</p>
           </div>
         </div>

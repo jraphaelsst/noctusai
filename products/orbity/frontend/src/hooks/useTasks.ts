@@ -118,6 +118,7 @@ export function useTasks(filters?: TaskFilters) {
       // Backend returns { items, total, page, page_size }
       return result as TaskListResponse;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });
@@ -181,12 +182,45 @@ export function useUpdateTaskStatus() {
       const result = await api.patch(`/api/tasks/${id}/status`, { status });
       return result as Task;
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['orbity-tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['orbity-task', data.id] });
+    // Optimistic — a status-select change should land instantly on the card
+    // instead of waiting a round-trip; a failure rolls every touched
+    // '['orbity-tasks', ...]' filter variant plus the single-task cache back
+    // to their pre-change snapshots. Mirrors the onMutate/onError rollback
+    // discipline in products/social-wiring/frontend/src/hooks/useCardHub.ts.
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['orbity-tasks'] });
+      await queryClient.cancelQueries({ queryKey: ['orbity-task', id] });
+
+      const previousLists = queryClient.getQueriesData<TaskListResponse>({
+        queryKey: ['orbity-tasks'],
+      });
+      previousLists.forEach(([key, page]) => {
+        if (!page) return;
+        queryClient.setQueryData<TaskListResponse>(key, {
+          ...page,
+          items: page.items.map((t) => (t.id === id ? { ...t, status } : t)),
+        });
+      });
+
+      const previousTask = queryClient.getQueryData<Task>(['orbity-task', id]);
+      if (previousTask) {
+        queryClient.setQueryData<Task>(['orbity-task', id], { ...previousTask, status });
+      }
+
+      return { previousLists, previousTask };
     },
-    onError: (error: Error) => {
+    onError: (error: Error, variables, context) => {
+      context?.previousLists?.forEach(([key, page]) => {
+        queryClient.setQueryData(key, page);
+      });
+      if (context?.previousTask) {
+        queryClient.setQueryData(['orbity-task', variables.id], context.previousTask);
+      }
       toast.error('Erro ao atualizar status', { description: error.message });
+    },
+    onSettled: (data, _error, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['orbity-tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['orbity-task', data?.id ?? variables.id] });
     },
   });
 }

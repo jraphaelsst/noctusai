@@ -30,6 +30,7 @@ export function useBiSessoes(periodo = '30d') {
       const res = await api.get(`/api/bi/sessoes?periodo=${periodo}`);
       return res.data ?? res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });
@@ -43,6 +44,7 @@ export function useBiReceita(periodo = '30d') {
       const res = await api.get(`/api/bi/receita?periodo=${periodo}`);
       return res.data ?? res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

@@ -16,6 +16,7 @@ export function useHomeworkList(page = 1, pageSize = 10) {
       const res = await api.get(`/api/homework?page=${page}&page_size=${pageSize}`);
       return res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

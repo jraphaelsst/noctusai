@@ -44,6 +44,7 @@ export function useOrcamentoProgresso(id?: string, periodoMes?: string) {
       const result = await api.get(`/api/orcamentos/${id}/progresso`, params);
       return result.data;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user && !!id,
     staleTime: 2 * 60 * 1000,
   });

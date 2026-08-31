@@ -61,6 +61,7 @@ export function useTarefas(
   return useQuery({
     queryKey: ["tarefas", page, filters.status, filters.prioridade, filters.categoria],
     queryFn: () => api.get<{ data: Tarefa[]; total: number; page: number; page_size: number }>(`/api/tasks?${buildParams()}`),
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

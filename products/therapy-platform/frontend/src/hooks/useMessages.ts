@@ -25,6 +25,7 @@ export function useMessages(conversationId?: string, page = 1, pageSize = 50) {
       );
       return res.data ?? res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user && !!conversationId,
     staleTime: 5 * 1000,
     refetchInterval: 3 * 1000,

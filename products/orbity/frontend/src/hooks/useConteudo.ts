@@ -218,6 +218,7 @@ export function usePosts(filters?: PostFilters) {
         page_size: filters?.page_size ?? 50,
       });
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

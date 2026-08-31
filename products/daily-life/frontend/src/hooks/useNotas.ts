@@ -50,6 +50,7 @@ export function useNotas(busca: string, page: number, pageSize: number) {
   return useQuery<PaginatedNotaResponse>({
     queryKey: ["notas", busca, page],
     queryFn: () => api.get(`/api/notes?${queryParams.toString()}`),
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

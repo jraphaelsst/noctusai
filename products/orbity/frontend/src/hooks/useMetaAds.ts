@@ -264,6 +264,7 @@ export function useCampaigns(filters?: CampaignFilters) {
         page_size: filters?.page_size ?? 50,
       });
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 3 * 60 * 1000,
   });

@@ -133,7 +133,13 @@ function EmptyState({ label, onAdd }: { label: string; onAdd?: () => void }) {
 // ---------------------------------------------------------------------------
 
 function OverviewTab({ month }: { month: string }) {
-  const { data, isLoading, error, refetch } = useCashFlow(month);
+  // `isFetching` (not `isLoading`) drives the subtle "Atualizando" badge
+  // below — placeholderData keeps the previous month's totals on screen
+  // during a month change (the selector lives outside this component and
+  // updates instantly), but these summary cards carry no visible date, so
+  // a plain flip with zero signal would silently show the wrong month's
+  // figures under the newly-selected month.
+  const { data, isLoading, isFetching, error, refetch } = useCashFlow(month);
 
   if (isLoading) return <LoadingState label="Carregando fluxo de caixa..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
@@ -189,22 +195,31 @@ function OverviewTab({ month }: { month: string }) {
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-      {cards.map((card) => {
-        const Icon = card.icon;
-        return (
-          <div
-            key={card.label}
-            className={`rounded-lg border ${card.border} ${card.bg} p-5 flex flex-col gap-2`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">{card.label}</span>
-              <Icon className={`h-4 w-4 ${card.color}`} />
+    <div className="space-y-2">
+      {isFetching && (
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Atualizando...
+        </span>
+      )}
+      <div
+        className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 transition-opacity ${isFetching ? "opacity-60" : ""}`}
+      >
+        {cards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <div
+              key={card.label}
+              className={`rounded-lg border ${card.border} ${card.bg} p-5 flex flex-col gap-2`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">{card.label}</span>
+                <Icon className={`h-4 w-4 ${card.color}`} />
+              </div>
+              <p className={`text-xl font-bold ${card.color}`}>{fmtCurrency(card.value)}</p>
             </div>
-            <p className={`text-xl font-bold ${card.color}`}>{fmtCurrency(card.value)}</p>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -49,6 +49,7 @@ export function NewConversation({ open, onOpenChange, onConversationCreated }: N
       const res = await api.get(`/api/users/search?q=${encodeURIComponent(search)}`);
       return res.data ?? res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user && search.length >= 2,
     staleTime: 30 * 1000,
   });

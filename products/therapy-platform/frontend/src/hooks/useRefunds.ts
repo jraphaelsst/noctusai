@@ -19,6 +19,7 @@ export function useRefundRequests(page = 1, pageSize = 10) {
       });
       return api.get(`/api/refunds?${params}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

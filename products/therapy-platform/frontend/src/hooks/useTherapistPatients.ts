@@ -55,6 +55,7 @@ export function useTherapistPatients(busca?: string) {
       const qs = params.toString();
       return api.get(`/api/patients${qs ? `?${qs}` : ''}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

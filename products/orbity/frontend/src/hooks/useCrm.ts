@@ -254,12 +254,49 @@ export function useMoveLeadStage() {
   return useMutation({
     mutationFn: ({ id, stage_id }: { id: string; stage_id: string }) =>
       api.patch<Lead>(`/api/crm/leads/${id}/stage`, { stage_id }),
+    // Optimistic — a kanban drag must land instantly; without this the card
+    // snaps back to its old column for a full round-trip before the funil
+    // refetch lands. Rollback restores the pre-drag funil snapshot on
+    // failure. Mirrors the onMutate/onError discipline in
+    // products/social-wiring/frontend/src/hooks/useCardHub.ts.
+    onMutate: async ({ id, stage_id }) => {
+      await qc.cancelQueries({ queryKey: crmKeys.funil() });
+      const previousFunil = qc.getQueryData<FunilStage[]>(crmKeys.funil());
+      if (previousFunil) {
+        let movedLead: Lead | undefined;
+        const withoutLead = previousFunil.map((fs) => {
+          const stillHere = fs.leads.filter((l) => {
+            if (l.id === id) {
+              movedLead = l;
+              return false;
+            }
+            return true;
+          });
+          return { ...fs, leads: stillHere };
+        });
+        if (movedLead) {
+          const moved = { ...movedLead, stage_id };
+          qc.setQueryData<FunilStage[]>(
+            crmKeys.funil(),
+            withoutLead.map((fs) =>
+              fs.stage.id === stage_id ? { ...fs, leads: [...fs.leads, moved] } : fs
+            )
+          );
+        }
+      }
+      return { previousFunil };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousFunil) {
+        qc.setQueryData(crmKeys.funil(), context.previousFunil);
+      }
+      toast.error("Falha ao mover lead");
+    },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: crmKeys.funil() });
       toast.success("Lead movido");
     },
-    onError: () => {
-      toast.error("Falha ao mover lead");
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: crmKeys.funil() });
     },
   });
 }

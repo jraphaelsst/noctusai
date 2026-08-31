@@ -21,6 +21,7 @@ export function useRecurringSchedules(filters?: RecurringFilters) {
       const qs = params.toString();
       return api.get(`/api/recurring${qs ? `?${qs}` : ''}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

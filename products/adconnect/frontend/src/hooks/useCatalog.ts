@@ -23,6 +23,7 @@ export function useCatalog(filters: CatalogFilters = {}) {
       const result = await api.get("/api/products", params);
       return (result.data || []) as Product[];
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

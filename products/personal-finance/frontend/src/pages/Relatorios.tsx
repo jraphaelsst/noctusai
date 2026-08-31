@@ -5,7 +5,7 @@ import { LineChartCard } from "@/components/charts/LineChartCard";
 import { DonutChartCard } from "@/components/charts/DonutChartCard";
 import { formatCurrency, formatPercent, getCurrentMonth, getMonthLabel } from "@/lib/utils";
 import { CHART_COLORS } from "@/lib/constants";
-import { FileBarChart, TrendingUp, TrendingDown } from "lucide-react";
+import { FileBarChart, TrendingUp, TrendingDown, Loader2 } from "lucide-react";
 
 type TabView = "mensal" | "anual" | "fluxo";
 
@@ -15,7 +15,13 @@ const tabClass = (active: boolean) =>
   }`;
 
 function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string) => void }) {
-  const { data: relatorio, isLoading } = useRelatorioMensal(mes);
+  // `isFetching` (not `isLoading`) drives the subtle "Atualizando" badge
+  // below — placeholderData keeps the previous month's totals on screen
+  // during a `mes` change, but these summary cards carry no visible date,
+  // and the Mes selector updates instantly; without a signal the numbers
+  // would silently read as the newly-selected month's while still being
+  // the old one's.
+  const { data: relatorio, isLoading, isFetching } = useRelatorioMensal(mes);
 
   const meses = useMemo(() => {
     const result: string[] = [];
@@ -54,9 +60,14 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
         <select value={mes} onChange={(e) => onMesChange(e.target.value)} className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary">
           {meses.map((m) => (<option key={m} value={m}>{getMonthLabel(m)}</option>))}
         </select>
+        {isFetching && (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Atualizando...
+          </span>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-1 sm:grid-cols-4 gap-4 transition-opacity ${isFetching ? "opacity-60" : ""}`}>
         <div className="rounded-lg border bg-card p-4">
           <p className="text-sm text-muted-foreground">Receita</p>
           <p className="text-xl font-bold text-emerald-500">{formatCurrency(receita)}</p>
@@ -131,7 +142,9 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
 }
 
 function AnualView({ ano, onAnoChange }: { ano: number; onAnoChange: (a: number) => void }) {
-  const { data: relatorio, isLoading } = useRelatorioAnual(ano);
+  // Same isFetching-indicator rationale as MensalView above — the Ano
+  // selector updates instantly while the totals below carry no visible year.
+  const { data: relatorio, isLoading, isFetching } = useRelatorioAnual(ano);
 
   const anos = useMemo(() => {
     const now = new Date().getFullYear();
@@ -171,9 +184,14 @@ function AnualView({ ano, onAnoChange }: { ano: number; onAnoChange: (a: number)
         <select value={ano} onChange={(e) => onAnoChange(Number(e.target.value))} className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary">
           {anos.map((a) => (<option key={a} value={a}>{a}</option>))}
         </select>
+        {isFetching && (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Atualizando...
+          </span>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-1 sm:grid-cols-4 gap-4 transition-opacity ${isFetching ? "opacity-60" : ""}`}>
         <div className="rounded-lg border bg-card p-4">
           <p className="text-sm text-muted-foreground">Receita Anual</p>
           <p className="text-xl font-bold text-emerald-500">{formatCurrency(receitaAnual)}</p>

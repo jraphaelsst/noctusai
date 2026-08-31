@@ -40,6 +40,7 @@ export function useAdminTherapists(filters?: Record<string, string>) {
       const qs = params.toString();
       return api.get(`/api/admin/therapists${qs ? `?${qs}` : ''}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 30 * 1000,
   });
@@ -67,6 +68,7 @@ export function useAdminClinics(filters?: Record<string, string>) {
       const qs = params.toString();
       return api.get(`/api/admin/clinics${qs ? `?${qs}` : ''}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 30 * 1000,
   });
@@ -94,6 +96,7 @@ export function useAdminPatients(filters?: Record<string, string>) {
       const qs = params.toString();
       return api.get(`/api/admin/patients${qs ? `?${qs}` : ''}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 30 * 1000,
   });
@@ -121,6 +124,7 @@ export function useAdminAppointments(filters?: Record<string, string>) {
       const qs = params.toString();
       return api.get(`/api/admin/appointments${qs ? `?${qs}` : ''}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 30 * 1000,
   });

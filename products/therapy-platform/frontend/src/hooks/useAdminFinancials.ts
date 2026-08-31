@@ -35,6 +35,7 @@ export function useAdminTransactions(filters: Record<string, string>, page: numb
       Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
       return api.get(`/api/admin/financials/transactions?${params}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });
@@ -74,6 +75,7 @@ export function useAdminPayouts(page: number, pageSize: number) {
       const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
       return api.get(`/api/admin/financials/payouts?${params}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 60 * 1000,
   });

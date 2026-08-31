@@ -11,6 +11,7 @@ export function useRelatorioMensal(mes?: string) {
       const result = await api.get("/api/relatorios/mensal", { mes });
       return result.data;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user && !!mes,
     staleTime: 5 * 60 * 1000,
   });
@@ -26,6 +27,7 @@ export function useRelatorioAnual(ano?: number) {
       const result = await api.get("/api/relatorios/anual", { ano });
       return result.data;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user && !!ano,
     staleTime: 5 * 60 * 1000,
   });

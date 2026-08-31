@@ -97,6 +97,7 @@ export function useAgendaEvents(filters?: AgendaFilters) {
       const result = await api.get('/api/agenda/events', params);
       return result as AgendaEventListResponse;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

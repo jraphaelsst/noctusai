@@ -33,6 +33,7 @@ export function useBookableSlots(therapistId: string, startDate: string, endDate
       );
       return res.data ?? res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user && !!therapistId && !!startDate && !!endDate,
     staleTime: 30 * 1000,
   });

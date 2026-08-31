@@ -26,6 +26,7 @@ export function useOperacoes(filtros?: FiltrosOperacoes) {
       const result = await api.get("/api/operacoes", params);
       return (result.data || []) as Operacao[];
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

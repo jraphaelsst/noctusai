@@ -34,6 +34,7 @@ export function useClinicTransfers(page = 1, pageSize = 10) {
       });
       return api.get(`/api/clinic/financials/transfers?${params}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

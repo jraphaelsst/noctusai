@@ -27,6 +27,7 @@ export function useConversations(filter?: ConversationFilter) {
       const res = await api.get(url);
       return res.data ?? res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 10 * 1000,
     refetchInterval: 5 * 1000,

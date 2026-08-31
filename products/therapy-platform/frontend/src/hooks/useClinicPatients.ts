@@ -53,6 +53,7 @@ export function useClinicPatients(busca?: string) {
       const qs = params.toString();
       return api.get(`/api/patients${qs ? `?${qs}` : ''}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 60 * 1000,
   });

@@ -16,6 +16,7 @@ export function useInvoices(page = 1, pageSize = 10) {
       const res = await api.get(`/api/invoices?page=${page}&page_size=${pageSize}`);
       return res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

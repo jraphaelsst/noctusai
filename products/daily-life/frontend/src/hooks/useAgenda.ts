@@ -54,6 +54,7 @@ export function useAgenda(inicio: string, fim: string, page: number, pageSize: n
   return useQuery<PaginatedEventoResponse>({
     queryKey: ["agenda", inicio, fim, page],
     queryFn: () => api.get(`/api/schedule?data_inicio=${inicio}&data_fim=${fim}&page=${page}&page_size=${pageSize}`),
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });

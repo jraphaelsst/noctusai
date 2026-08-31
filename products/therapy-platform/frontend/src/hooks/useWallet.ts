@@ -33,6 +33,7 @@ export function useWalletMovements(page = 1, pageSize = 10) {
       });
       return api.get(`/api/wallets/me/movements?${params}`);
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 30 * 1000,
   });

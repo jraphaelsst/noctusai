@@ -5,12 +5,17 @@ import { formatCurrency, getCurrentMonth, getMonthLabel } from "@/lib/utils";
 import { METODO_ORCAMENTO_LABELS } from "@/lib/constants";
 import type { Orcamento, OrcamentoItem } from "@/types";
 import Modal from "@/components/Modal";
-import { Plus, PiggyBank, Pencil, Trash2 } from "lucide-react";
+import { Plus, PiggyBank, Pencil, Trash2, Loader2 } from "lucide-react";
 
 const inputClass = "w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary";
 
 function OrcamentoProgressoCard({ orcamento, periodoMes, onEdit, onDelete, onClick }: { orcamento: Orcamento; periodoMes: string; onEdit: () => void; onDelete: () => void; onClick: () => void }) {
-  const { data: progresso } = useOrcamentoProgresso(orcamento.id, periodoMes);
+  // `isFetching` (not `isLoading`) drives the subtle "Atualizando" affordance
+  // below — placeholderData keeps last period's numbers on screen during a
+  // periodoMes change, but this card carries no per-row date the way a
+  // table would, so a plain flip with zero signal would silently show the
+  // wrong month's totals under the new period label.
+  const { data: progresso, isFetching: progressoFetching } = useOrcamentoProgresso(orcamento.id, periodoMes);
 
   const itens: OrcamentoItem[] = progresso?.itens || [];
   const totalPlanejado = itens.reduce((acc: number, item: OrcamentoItem) => acc + item.valor_planejado, 0);
@@ -34,8 +39,11 @@ function OrcamentoProgressoCard({ orcamento, periodoMes, onEdit, onDelete, onCli
           </p>
         </div>
         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-          <div className="text-right mr-2">
-            <p className="text-sm font-medium">{formatCurrency(totalGasto)}</p>
+          <div className={`text-right mr-2 ${progressoFetching ? "opacity-60" : ""}`}>
+            <p className="text-sm font-medium flex items-center justify-end gap-1">
+              {formatCurrency(totalGasto)}
+              {progressoFetching && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+            </p>
             <p className="text-xs text-muted-foreground">de {formatCurrency(totalPlanejado)}</p>
           </div>
           <button onClick={onEdit} className="p-1.5 rounded-md hover:bg-accent transition" title="Editar">

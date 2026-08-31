@@ -442,6 +442,7 @@ export function useCashFlow(month: string) {
         `/api/financial/cash-flow/${monthParam}`,
       );
     },
+    placeholderData: (prev) => prev,
     enabled: !!user && !!month,
     staleTime: 2 * 60 * 1000,
   });

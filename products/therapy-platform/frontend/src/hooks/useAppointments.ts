@@ -24,6 +24,7 @@ export function useAppointments(filters?: AppointmentFilters) {
       const res = await api.get(`/api/appointments${qs ? `?${qs}` : ''}`);
       return res;
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 30 * 1000,
   });

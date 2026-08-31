@@ -74,6 +74,7 @@ export function useMetas(
   return useQuery({
     queryKey: ["metas", page, filters.tipo, filters.status],
     queryFn: () => api.get<{ data: Meta[]; total: number }>(`/api/goals?${buildParams()}`),
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
   });
