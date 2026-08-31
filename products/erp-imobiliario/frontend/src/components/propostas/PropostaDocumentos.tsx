@@ -19,10 +19,13 @@ interface PropostaDocumentosProps {
 }
 
 export function PropostaDocumentos({ propostaId }: PropostaDocumentosProps) {
-  const { data: result, isLoading } = useDocumentos({ proposta_id: propostaId });
+  const documentosQuery = useDocumentos({ proposta_id: propostaId });
+  const { data: result } = documentosQuery;
   const documentos = result?.data || [];
 
-  if (isLoading) {
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (documentosQuery.isPending && !documentosQuery.data) {
     return (
       <Card className="p-8 text-center">
         <p className="text-muted-foreground">Carregando documentos...</p>

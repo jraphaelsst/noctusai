@@ -25,10 +25,13 @@ export function DocumentosTab({ entityType, entityId, emptyMessage }: Documentos
   const filtros = {
     [`${entityType}_id`]: entityId,
   };
-  const { data: result, isLoading } = useDocumentos(filtros);
+  const documentosQuery = useDocumentos(filtros);
+  const { data: result } = documentosQuery;
   const documentos = result?.data || [];
 
-  if (isLoading) {
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (documentosQuery.isPending && !documentosQuery.data) {
     return (
       <Card className="p-8 text-center">
         <p className="text-muted-foreground">Carregando documentos...</p>
