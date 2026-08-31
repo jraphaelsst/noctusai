@@ -60,6 +60,30 @@ describe('Personal Finance useAI hooks', () => {
     expect(result.current.data?.matched_categoria_id).toBe('cat-food');
   });
 
+  it('useCategorizeTransaction invalidates only its own ai_outputs key — NOT the whole "transacoes" list (wave-2)', async () => {
+    mockPost.mockResolvedValue({
+      data: { ref_type: 'transacao', ref_id: 'tx-1', kind: 'category', label: 'Alimentação' },
+    });
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client }, children);
+
+    const { useCategorizeTransaction } = await import('@/hooks/useAI');
+    const { result } = renderHook(() => useCategorizeTransaction(), { wrapper });
+
+    result.current.mutate({ transacao_id: 'tx-1' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const keys = invalidateSpy.mock.calls.map((c) => (c[0] as { queryKey: unknown[] }).queryKey);
+    expect(keys).toContainEqual(['ai_outputs', 'transacao', 'tx-1']);
+    // categorize_transaction_endpoint never writes to `transacoes` — only
+    // persists an ai_outputs suggestion row.
+    expect(keys).not.toContainEqual(['transacoes']);
+  });
+
   it('useRecurringFlag posts to /api/ai/transacoes/{id}/recurring-flag and returns AIOutput', async () => {
     mockPost.mockResolvedValue({
       data: {

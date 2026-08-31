@@ -68,6 +68,57 @@ export function useTransacoesPorCategoria(dataInicio?: string, dataFim?: string)
   });
 }
 
+/**
+ * Shared onSuccess for all three transação mutations (wave-2 narrowing).
+ * Every key here is backed by a read of the actual backend service
+ * (`TransacoesService`), not a guess:
+ *
+ * - "transacoes" — the mutated resource itself. Keep.
+ * - "contas" + "conta" — `_atualizar_saldo_conta` recomputes the affected
+ *   account's `saldo` on every create/update/delete. "contas" (list) was
+ *   already invalidated; "conta" (singular) is ADDED here — it was not
+ *   before, and `ContaDetalhes.tsx` reads `useConta(id)` independently of
+ *   the list, so a transação created elsewhere left that page showing a
+ *   stale balance as current (exactly the risk this wave exists to close).
+ *   Neither create nor update lets us target the one affected account id
+ *   client-side for delete (the delete mutationFn only receives the id,
+ *   not the row), so this stays a root-key invalidate rather than a
+ *   per-account narrow.
+ * - "orcamento" (singular family: `["orcamento", id, "progresso", mes]`),
+ *   NOT "orcamentos" (the plain budget list) — `_sincronizar_orcamento`
+ *   only ever writes `orcamento_itens.valor_gasto` for this transação's
+ *   categoria+month, which `useOrcamentoProgresso` reads under the
+ *   "orcamento" root (`useOrcamentos.ts`). The `Orcamento` rows themselves
+ *   (nome/metodo/periodo/ativo) never change from a transação. The old
+ *   "orcamentos" invalidation was therefore a WRONG-KEY bug, not just an
+ *   over-broad one: it refetched a list that could never change and never
+ *   touched the one query (budget "gasto" totals) that actually did.
+ * - "dashboard" — `DashboardService.kpis()` reads `relatorios_service`
+ *   (this month's receita/despesa) directly, and `.resumo()` returns
+ *   `transacoes_recentes`. Keep.
+ * - "relatorios" — left BROAD deliberately. `_invalidar_cache_mensal`
+ *   confirms the transação's own month is recomputed server-side, but
+ *   `useRelatorioAnual`/`useFluxoCaixa` cover arbitrary year/date ranges
+ *   the frontend cannot evaluate against this transação's date. Unsure
+ *   whether an open anual/fluxo-caixa query overlaps → keep, per the
+ *   wave-2 bar ("when in doubt, leave the broad invalidation alone").
+ * - "patrimonio" narrowed to `["patrimonio", "atual"]` —
+ *   `PatrimonioService.calcular_atual()` reads live `contas.saldo` +
+ *   `ativos.valor_atual`, so it moves with this transação.
+ *   `["patrimonio", "historico"]` is snapshot rows written ONLY by
+ *   `useCriarSnapshot` (`usePatrimonio.ts`) — a transação can never touch
+ *   them, so refetching historico here was pure waste.
+ */
+function invalidateAposTransacao(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ["transacoes"] });
+  queryClient.invalidateQueries({ queryKey: ["contas"] });
+  queryClient.invalidateQueries({ queryKey: ["conta"] });
+  queryClient.invalidateQueries({ queryKey: ["orcamento"] });
+  queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  queryClient.invalidateQueries({ queryKey: ["relatorios"] });
+  queryClient.invalidateQueries({ queryKey: ["patrimonio", "atual"] });
+}
+
 export function useCreateTransacao() {
   const queryClient = useQueryClient();
 
@@ -77,12 +128,7 @@ export function useCreateTransacao() {
       return result.data as Transacao;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["transacoes"] });
-      queryClient.invalidateQueries({ queryKey: ["contas"] });
-      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["relatorios"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      invalidateAposTransacao(queryClient);
       toast.success("Transacao criada com sucesso!");
     },
     onError: (error: Error) => {
@@ -100,12 +146,7 @@ export function useUpdateTransacao() {
       return result.data as Transacao;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["transacoes"] });
-      queryClient.invalidateQueries({ queryKey: ["contas"] });
-      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["relatorios"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      invalidateAposTransacao(queryClient);
       toast.success("Transacao atualizada com sucesso!");
     },
     onError: (error: Error) => {
@@ -122,12 +163,7 @@ export function useDeleteTransacao() {
       await api.delete(`/api/transacoes/${id}`);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["transacoes"] });
-      queryClient.invalidateQueries({ queryKey: ["contas"] });
-      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["relatorios"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      invalidateAposTransacao(queryClient);
       toast.success("Transacao excluida com sucesso!");
     },
     onError: (error: Error) => {

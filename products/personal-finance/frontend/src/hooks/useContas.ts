@@ -58,8 +58,13 @@ export function useCreateConta() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["contas"] });
+      // Adding an account changes contas.saldo → PatrimonioService/
+      // DashboardService.kpis both read it live. Keep both.
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      // Narrowed to "atual" — calcular_atual() reads live contas.saldo;
+      // "historico" is immutable snapshot rows, only useCriarSnapshot
+      // (usePatrimonio.ts) writes them.
+      queryClient.invalidateQueries({ queryKey: ["patrimonio", "atual"] });
       toast.success("Conta criada com sucesso!");
     },
     onError: (error: Error) => {
@@ -76,10 +81,17 @@ export function useUpdateConta() {
       const result = await api.patch(`/api/contas/${id}`, data);
       return result.data as Conta;
     },
-    onSuccess: () => {
+    onSuccess: (conta) => {
+      // Direct patch, not invalidate — the response already carries the
+      // full updated row. This was missing before: ContaDetalhes.tsx
+      // reads `useConta(id)` on the SAME page this mutation is called
+      // from, so editing an account there left its own header (name,
+      // balance) showing the pre-edit value until an unrelated refetch
+      // happened to land — a page not reflecting its own edit.
+      queryClient.setQueryData(["conta", conta.id], conta);
       queryClient.invalidateQueries({ queryKey: ["contas"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      queryClient.invalidateQueries({ queryKey: ["patrimonio", "atual"] });
       toast.success("Conta atualizada com sucesso!");
     },
     onError: (error: Error) => {
@@ -95,10 +107,14 @@ export function useDeleteConta() {
     mutationFn: async (id: string) => {
       await api.delete(`/api/contas/${id}`);
     },
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["contas"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      queryClient.invalidateQueries({ queryKey: ["patrimonio", "atual"] });
+      // Purge rather than invalidate — the account is gone, so
+      // refetching `["conta", id]` would just 404. removeQueries drops
+      // it from cache instead of triggering a doomed refetch.
+      queryClient.removeQueries({ queryKey: ["conta", id] });
       toast.success("Conta excluída com sucesso!");
     },
     onError: (error: Error) => {

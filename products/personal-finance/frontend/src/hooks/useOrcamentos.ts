@@ -60,7 +60,11 @@ export function useCreateOrcamento() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      // Dropped "dashboard" — grepped DashboardService (kpis + resumo):
+      // it reads patrimonio, relatorios/mensal and ativos, never the
+      // orcamentos/orcamento_itens tables. A budget CRUD cannot change
+      // any dashboard number; this invalidation never did anything but
+      // force a wasted refetch.
       toast.success("Orcamento criado com sucesso!");
     },
     onError: (error: Error) => {
@@ -77,9 +81,14 @@ export function useUpdateOrcamento() {
       const result = await api.patch(`/api/orcamentos/${id}`, data);
       return result.data as Orcamento;
     },
-    onSuccess: () => {
+    onSuccess: (orcamento) => {
+      // Direct patch — the response carries the full row, and
+      // OrcamentoDetalhes.tsx reads `useOrcamento(id)` on the SAME page
+      // this mutation fires from; without this the page didn't reflect
+      // its own rename/period edit until an unrelated refetch happened.
+      queryClient.setQueryData(["orcamento", orcamento.id], orcamento);
       queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      // "dashboard" dropped — see useCreateOrcamento's comment.
       toast.success("Orcamento atualizado com sucesso!");
     },
     onError: (error: Error) => {
@@ -95,9 +104,13 @@ export function useDeleteOrcamento() {
     mutationFn: async (id: string) => {
       await api.delete(`/api/orcamentos/${id}`);
     },
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      // Purge, don't invalidate — the row is gone, so a refetch of
+      // `["orcamento", id]` (OrcamentoDetalhes.tsx navigates away on
+      // success, but a second tab may not) would just 404.
+      queryClient.removeQueries({ queryKey: ["orcamento", id] });
+      // "dashboard" dropped — see useCreateOrcamento's comment.
       toast.success("Orcamento excluido com sucesso!");
     },
     onError: (error: Error) => {
@@ -106,6 +119,14 @@ export function useDeleteOrcamento() {
   });
 }
 
+/**
+ * Item mutations (wave-2 narrowing): "orcamento" (singular family — covers
+ * `["orcamento", id]` AND `["orcamento", id, "progresso", mes]`) is the
+ * ONLY key an item write can affect — `orcamento_itens` rows never change
+ * the parent `Orcamento` row (nome/metodo/periodo/ativo), so "orcamentos"
+ * (the plain list) is dropped. "dashboard" dropped for the same reason as
+ * the orcamento CRUD above — DashboardService never reads orcamento data.
+ */
 export function useCreateOrcamentoItem() {
   const queryClient = useQueryClient();
 
@@ -116,8 +137,6 @@ export function useCreateOrcamentoItem() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orcamento"] });
-      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Item adicionado com sucesso!");
     },
     onError: (error: Error) => {
@@ -136,8 +155,6 @@ export function useUpdateOrcamentoItem() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orcamento"] });
-      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Item atualizado com sucesso!");
     },
     onError: (error: Error) => {
@@ -155,8 +172,6 @@ export function useDeleteOrcamentoItem() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orcamento"] });
-      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Item removido com sucesso!");
     },
     onError: (error: Error) => {

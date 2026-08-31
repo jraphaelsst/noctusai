@@ -68,6 +68,13 @@ export function useCreateEvento(onSuccess?: () => void) {
     onSuccess: () => {
       toast.success("Evento criado com sucesso");
       queryClient.invalidateQueries({ queryKey: ["agenda"] });
+      // `useDashboardTodayEvents` (useDashboard.ts) hits the exact same
+      // `/api/schedule` endpoint (today's window) under a DIFFERENT query
+      // key ("dashboard-today-events") — a fix-on-contact found while
+      // auditing this file for wave-2: the dashboard's "today" widget
+      // never refreshed after an agenda CRUD because nothing invalidated
+      // its key.
+      queryClient.invalidateQueries({ queryKey: ["dashboard-today-events"] });
       onSuccess?.();
     },
     onError: (err: any) => toast.error("Erro ao criar evento", { description: err?.message }),
@@ -83,6 +90,8 @@ export function useUpdateEvento(onSuccess?: () => void) {
     onSuccess: () => {
       toast.success("Evento atualizado");
       queryClient.invalidateQueries({ queryKey: ["agenda"] });
+      // See useCreateEvento's comment for why "dashboard-today-events" is here.
+      queryClient.invalidateQueries({ queryKey: ["dashboard-today-events"] });
       onSuccess?.();
     },
     onError: (err: any) => toast.error("Erro ao atualizar evento", { description: err?.message }),
@@ -97,6 +106,8 @@ export function useDeleteEvento(onSuccess?: () => void) {
     onSuccess: () => {
       toast.success("Evento removido");
       queryClient.invalidateQueries({ queryKey: ["agenda"] });
+      // See useCreateEvento's comment for why "dashboard-today-events" is here.
+      queryClient.invalidateQueries({ queryKey: ["dashboard-today-events"] });
       onSuccess?.();
     },
     onError: (err: any) => toast.error("Erro ao remover evento", { description: err?.message }),

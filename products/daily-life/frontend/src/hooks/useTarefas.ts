@@ -87,6 +87,12 @@ export function useCreateTarefa(onSuccess?: () => void) {
       toast.success("Tarefa criada com sucesso");
       qc.invalidateQueries({ queryKey: ["tarefas"] });
       qc.invalidateQueries({ queryKey: ["tarefas-stats"] });
+      // `useDashboardTaskStats` (useDashboard.ts) hits the exact same
+      // `/api/tasks/stats/resumo` endpoint under a DIFFERENT query key
+      // ("dashboard-task-stats") — a fix-on-contact found while auditing
+      // this file for wave-2: the dashboard's task widget never
+      // refreshed after a task CRUD because nothing invalidated its key.
+      qc.invalidateQueries({ queryKey: ["dashboard-task-stats"] });
       onSuccess?.();
     },
     onError: (err: any) => toast.error("Erro ao criar tarefa", { description: err?.message }),
@@ -102,6 +108,8 @@ export function useUpdateTarefa(onSuccess?: () => void) {
       toast.success("Tarefa atualizada");
       qc.invalidateQueries({ queryKey: ["tarefas"] });
       qc.invalidateQueries({ queryKey: ["tarefas-stats"] });
+      // See useCreateTarefa's comment for why "dashboard-task-stats" is here.
+      qc.invalidateQueries({ queryKey: ["dashboard-task-stats"] });
       onSuccess?.();
     },
     onError: (err: any) => toast.error("Erro ao atualizar tarefa", { description: err?.message }),
@@ -117,6 +125,8 @@ export function useDeleteTarefa(onSuccess?: () => void) {
       toast.success("Tarefa removida");
       qc.invalidateQueries({ queryKey: ["tarefas"] });
       qc.invalidateQueries({ queryKey: ["tarefas-stats"] });
+      // See useCreateTarefa's comment for why "dashboard-task-stats" is here.
+      qc.invalidateQueries({ queryKey: ["dashboard-task-stats"] });
       onSuccess?.();
     },
     onError: (err: any) => toast.error("Erro ao remover tarefa", { description: err?.message }),

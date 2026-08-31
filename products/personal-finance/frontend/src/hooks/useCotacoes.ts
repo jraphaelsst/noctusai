@@ -27,12 +27,25 @@ export function useAtualizarPrecos() {
       return result.data;
     },
     onSuccess: () => {
+      // DELIBERATELY LEFT BROAD (all but "patrimonio", see below) —
+      // CotacoesService.atualizar_todos() loops every ativa carteira and
+      // rewrites preco_atual/valor_atual/ganho_perda for EVERY holding
+      // in the org (atualizar_precos_carteira, called per portfolio).
+      // There is no narrower key to invalidate: "ativos" genuinely all
+      // changed, "carteiras"/"carteira" (valor_total/resumo alloc, both
+      // derived from ativos.valor_atual) genuinely all changed, and we
+      // don't have the full ticker set client-side to scope "cotacao"
+      // to just the ones that moved. This is the one mutation in this
+      // file where "nukes the whole cache" is the CORRECT description
+      // of what the backend actually did.
       queryClient.invalidateQueries({ queryKey: ["cotacao"] });
       queryClient.invalidateQueries({ queryKey: ["ativos"] });
       queryClient.invalidateQueries({ queryKey: ["carteiras"] });
       queryClient.invalidateQueries({ queryKey: ["carteira"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      // The one narrowing that IS safe here: "atual" (live sum) moves,
+      // "historico" (immutable snapshot rows) does not.
+      queryClient.invalidateQueries({ queryKey: ["patrimonio", "atual"] });
       toast.success("Precos atualizados com sucesso!");
     },
     onError: (error: Error) => {

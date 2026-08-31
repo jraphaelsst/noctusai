@@ -76,8 +76,17 @@ export function useUpdateMeta() {
       const result = await api.patch(`/api/metas/${id}`, data);
       return result.data as Meta;
     },
-    onSuccess: () => {
+    onSuccess: (meta) => {
+      // Direct patch — MetaDetalhes.tsx reads `useMeta(id)` on the SAME
+      // page this mutation is called from (it also calls useUpdateMeta),
+      // but the "meta" singular key was never invalidated here before —
+      // only "meta_contribuicoes"-driven useAddContribuicao below did
+      // that. An edit on the goal's own detail page left the page not
+      // reflecting its own edit.
+      queryClient.setQueryData(["meta", meta.id], meta);
       queryClient.invalidateQueries({ queryKey: ["metas"] });
+      // DashboardService.resumo() returns metas_ativas (top-5 active
+      // goals) — a rename/target change is visible there.
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Meta atualizada com sucesso!");
     },
@@ -94,9 +103,13 @@ export function useDeleteMeta() {
     mutationFn: async (id: string) => {
       await api.delete(`/api/metas/${id}`);
     },
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["metas"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      // Purge — the goal is gone; MetaDetalhes.tsx navigates away on its
+      // own delete, but a refetch of `["meta", id]` from elsewhere would
+      // just 404.
+      queryClient.removeQueries({ queryKey: ["meta", id] });
       toast.success("Meta excluida com sucesso!");
     },
     onError: (error: Error) => {
@@ -116,7 +129,13 @@ export function useAddContribuicao() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["metas"] });
       queryClient.invalidateQueries({ queryKey: ["meta"] });
-      queryClient.invalidateQueries({ queryKey: ["contas"] });
+      // "contas" dropped — MetasService.adicionar_contribuicao only
+      // inserts a `meta_contribuicoes` row and patches `metas.valor_atual`
+      // server-side; it never calls `_atualizar_saldo_conta` or writes
+      // to the `contas` table (`ContribuicaoCreate.transacao_id` is an
+      // optional back-reference to an ALREADY-existing transação, not a
+      // new one this endpoint creates). A contribution cannot move an
+      // account balance through this code path.
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Contribuicao adicionada com sucesso!");
     },

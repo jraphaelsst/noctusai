@@ -63,8 +63,18 @@ export function useUpdateCategoria() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["categorias"] });
+      // "transacoes" — TransacoesService joins
+      // `categoria:categorias(id,nome,icone,cor)` into every list row, so
+      // renaming/recoloring a categoria changes what the transações list
+      // displays even though no transação row itself changed.
       queryClient.invalidateQueries({ queryKey: ["transacoes"] });
-      queryClient.invalidateQueries({ queryKey: ["orcamentos"] });
+      // "orcamento" (singular family), NOT "orcamentos" (the plain list)
+      // — same wrong-key shape as useTransacoes.ts: OrcamentosService's
+      // item query also joins `categoria:categorias(id,nome,icone,cor)`,
+      // which `useOrcamentoProgresso` reads under "orcamento". The
+      // `Orcamento` rows themselves never embed categoria fields, so
+      // "orcamentos" here never refreshed anything real.
+      queryClient.invalidateQueries({ queryKey: ["orcamento"] });
       toast.success("Categoria atualizada com sucesso!");
     },
     onError: (error: Error) => {

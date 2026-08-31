@@ -41,11 +41,20 @@ export function useCreateAtivo() {
       return result.data as Ativo;
     },
     onSuccess: () => {
+      // "ativos"/"carteiras"/"carteira"/"dashboard" all KEPT broad:
+      // CarteiraService.listar() enriches every carteira with
+      // valor_total/ganho_perda_total/total_ativos computed live from
+      // "ativos" (same for CarteiraService.resumo()'s allocation), and
+      // DashboardService.kpis() sums ativos.valor_atual/ganho_perda
+      // directly — an ativo write legitimately moves all four.
       queryClient.invalidateQueries({ queryKey: ["ativos"] });
       queryClient.invalidateQueries({ queryKey: ["carteiras"] });
       queryClient.invalidateQueries({ queryKey: ["carteira"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      // Narrowed to "atual" — PatrimonioService.calcular_atual() sums
+      // ativos.valor_atual live; "historico" is immutable snapshot rows
+      // only useCriarSnapshot (usePatrimonio.ts) writes.
+      queryClient.invalidateQueries({ queryKey: ["patrimonio", "atual"] });
       toast.success("Ativo adicionado com sucesso!");
     },
     onError: (error: Error) => {
@@ -63,11 +72,13 @@ export function useUpdateAtivo() {
       return result.data as Ativo;
     },
     onSuccess: () => {
+      // Same set as useCreateAtivo — see its comment. "patrimonio"
+      // narrowed to "atual" for the same reason.
       queryClient.invalidateQueries({ queryKey: ["ativos"] });
       queryClient.invalidateQueries({ queryKey: ["carteiras"] });
       queryClient.invalidateQueries({ queryKey: ["carteira"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      queryClient.invalidateQueries({ queryKey: ["patrimonio", "atual"] });
       toast.success("Ativo atualizado com sucesso!");
     },
     onError: (error: Error) => {
@@ -84,11 +95,13 @@ export function useDeleteAtivo() {
       await api.delete(`/api/ativos/${id}`);
     },
     onSuccess: () => {
+      // Same set as useCreateAtivo — see its comment. "patrimonio"
+      // narrowed to "atual" for the same reason.
       queryClient.invalidateQueries({ queryKey: ["ativos"] });
       queryClient.invalidateQueries({ queryKey: ["carteiras"] });
       queryClient.invalidateQueries({ queryKey: ["carteira"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      queryClient.invalidateQueries({ queryKey: ["patrimonio", "atual"] });
       toast.success("Ativo removido com sucesso!");
     },
     onError: (error: Error) => {

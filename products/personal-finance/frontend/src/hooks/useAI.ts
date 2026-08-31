@@ -36,8 +36,16 @@ export function useCategorizeTransaction() {
       return result.data as AIOutputResult;
     },
     onSuccess: (_d, v) => {
+      // "transacoes" (whole list) DROPPED — `categorize_transaction_endpoint`
+      // (routers/ai.py) only reads the transação to build the LLM prompt
+      // and persists an `ai_outputs` row via `_persist_indicator`; it
+      // never writes to the `transacoes` table itself (no `.update()`
+      // anywhere in that path). Applying a suggested category is a
+      // separate write (not wired to this hook today) that would go
+      // through `useUpdateTransacao`, which already invalidates
+      // "transacoes" correctly on its own. Invalidating the whole list
+      // here — for a read-only suggestion — was pure waste.
       invalidateOutputs(qc, 'transacao', v.transacao_id);
-      qc.invalidateQueries({ queryKey: ['transacoes'] });
     },
     onError: (error: Error) =>
       toast.error('Erro ao categorizar transação', { description: error.message }),

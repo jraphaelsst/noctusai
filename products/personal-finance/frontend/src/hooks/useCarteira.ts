@@ -57,8 +57,11 @@ export function useCreateCarteira() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["carteiras"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      // Dropped "dashboard" + "patrimonio" — a new carteira has zero
+      // ativos (CarteiraService.criar only inserts the carteiras row; no
+      // holding is created alongside it), so DashboardService.kpis
+      // (which sums ativos.*) and PatrimonioService.calcular_atual
+      // (same) cannot have moved.
       toast.success("Carteira criada com sucesso!");
     },
     onError: (error: Error) => {
@@ -75,10 +78,18 @@ export function useUpdateCarteira() {
       const result = await api.patch(`/api/carteiras/${id}`, data);
       return result.data as Carteira;
     },
-    onSuccess: () => {
+    onSuccess: (carteira) => {
+      // Direct patch — CarteiraDetalhes.tsx reads `useCarteira(id)`
+      // independently of the "carteiras" list, and this mutation is
+      // fired from the LIST page (Carteira.tsx), so the singular query
+      // was never invalidated before: renaming a portfolio there left a
+      // stale name on its own detail page for up to its 5-minute
+      // staleTime. The response already carries the full updated row.
+      queryClient.setQueryData(["carteira", carteira.id], carteira);
       queryClient.invalidateQueries({ queryKey: ["carteiras"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      // Dropped "dashboard" + "patrimonio" — CarteiraService.atualizar
+      // only patches carteiras columns (nome/etc.), never touches
+      // ativos, so neither aggregate can have moved.
       toast.success("Carteira atualizada com sucesso!");
     },
     onError: (error: Error) => {
@@ -94,10 +105,19 @@ export function useDeleteCarteira() {
     mutationFn: async (id: string) => {
       await api.delete(`/api/carteiras/${id}`);
     },
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["carteiras"] });
+      // KEPT, unlike create/update — `ativos.carteira_id` is
+      // `REFERENCES carteiras(id) ON DELETE CASCADE` (migration
+      // 001_personal_finance.sql), so deleting a carteira deletes every
+      // holding in it. That genuinely moves DashboardService.kpis
+      // (ativos sums) and PatrimonioService.calcular_atual — narrowed
+      // to "atual" only, "historico" stays snapshot-only.
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      queryClient.invalidateQueries({ queryKey: ["patrimonio"] });
+      queryClient.invalidateQueries({ queryKey: ["patrimonio", "atual"] });
+      // Purge — the carteira (and its cascaded ativos) are gone, so a
+      // refetch of `["carteira", id]` would just 404.
+      queryClient.removeQueries({ queryKey: ["carteira", id] });
       toast.success("Carteira excluida com sucesso!");
     },
     onError: (error: Error) => {
