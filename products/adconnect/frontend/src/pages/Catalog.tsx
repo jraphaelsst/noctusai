@@ -28,7 +28,7 @@ export default function Catalog() {
   const [sortBy, setSortBy] = useState<CatalogFilters["sort_by"]>("name");
   const [inStockOnly, setInStockOnly] = useState(false);
 
-  const { data: products, isLoading, error } = useCatalog({
+  const { data: products, isPending, error } = useCatalog({
     search,
     category: category || undefined,
     in_stock_only: inStockOnly,
@@ -114,13 +114,13 @@ export default function Catalog() {
       </div>
 
       {/* Product grid */}
-      {isLoading && (
+      {isPending && !products && (
         <p className="text-sm text-muted-foreground">Carregando produtos…</p>
       )}
       {error && (
         <p className="text-sm text-destructive">Erro ao carregar: {error.message}</p>
       )}
-      {!isLoading && filtered.length === 0 && (
+      {!isPending && filtered.length === 0 && (
         <div className="rounded-lg border border-border border-dashed bg-muted/30 p-12 text-center">
           <p className="text-sm text-muted-foreground">
             Nenhum produto encontrado para os filtros aplicados.

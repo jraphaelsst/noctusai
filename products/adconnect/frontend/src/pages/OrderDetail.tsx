@@ -27,9 +27,9 @@ const statusLabel: Record<OrderStatus, string> = {
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: order, isLoading, error } = useOrder(id);
+  const { data: order, isPending, error } = useOrder(id);
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Carregando…</p>;
+  if (isPending && !order) return <p className="text-sm text-muted-foreground">Carregando…</p>;
   if (error) return <p className="text-sm text-destructive">Erro: {error.message}</p>;
 
   if (!order) {
