@@ -84,7 +84,7 @@ export function useMarcas(clienteId?: string) {
   return {
     ...query,
     marcas: query.data ?? [],
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 
@@ -104,7 +104,7 @@ export function useRepertorio(clienteId: string | undefined) {
   return {
     ...query,
     repertorio: query.data ?? null,
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 
@@ -141,7 +141,7 @@ export function useAcessos(clienteId: string | undefined) {
   return {
     ...query,
     acessos: query.data ?? [],
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 

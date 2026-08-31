@@ -7,8 +7,14 @@
  *   - the agency's team (authenticated) — quadro, mover, timesheet, link
  *   - the agency's CLIENT (public, token-authenticated) — the approval portal
  *
- * Loading is exposed as `isPending || isFetching`, never `isLoading`, per
- * `check_lying_loading_state`.
+ * `loading` is `isPending && !data` — first load only, never `isLoading`
+ * and never `|| isFetching`. TanStack v5's `isLoading` is false during a
+ * background refetch, so `|| isFetching` was true on EVERY refetch (not just
+ * the first), and the kanban/portal below would replace their whole content
+ * with a skeleton on every mutation-triggered invalidation — the collapsing
+ * layout the fleet audit flagged. `check_lying_loading_state` blocks the
+ * `isLoading` shape; this file must not reintroduce the `isFetching`
+ * equivalent.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -77,26 +83,59 @@ export interface LinkAprovacao {
 }
 
 export const ESTEIRA_QUERY_KEY = ["igig", "esteira"] as const;
+const QUADRO_KEY = [...ESTEIRA_QUERY_KEY, "quadro"] as const;
 
 // ─── Agency-side (authenticated) ───────────────────────────────────────
 export function useQuadro() {
   const query = useQuery({
-    queryKey: [...ESTEIRA_QUERY_KEY, "quadro"],
+    queryKey: QUADRO_KEY,
     queryFn: () => api.get<Quadro>("/api/esteira/quadro"),
   });
 
   return {
     ...query,
     quadro: query.data ?? null,
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 
+/**
+ * Move a tarefa to another etapa — optimistic. The select-driven move is
+ * instant in the UI (`onMutate`); without this the card would visibly snap
+ * back to its old column for a full round-trip before the refetch confirms
+ * the move. `onError` restores the pre-move board from the snapshot.
+ */
 export function useMoverTarefa() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, etapa }: { id: string; etapa: Etapa }) =>
       api.post<Tarefa>(`/api/esteira/tarefas/${id}/mover`, { etapa }),
+    onMutate: async ({ id, etapa }) => {
+      await qc.cancelQueries({ queryKey: QUADRO_KEY });
+      const previous = qc.getQueryData<Quadro>(QUADRO_KEY);
+      const origem = previous
+        ? (Object.keys(previous.colunas) as Etapa[]).find((e) =>
+            previous.colunas[e].some((t) => t.id === id),
+          )
+        : undefined;
+      const tarefa = previous && origem ? previous.colunas[origem].find((t) => t.id === id) : undefined;
+
+      if (previous && origem && tarefa) {
+        qc.setQueryData<Quadro>(QUADRO_KEY, {
+          ...previous,
+          colunas: {
+            ...previous.colunas,
+            [origem]: previous.colunas[origem].filter((t) => t.id !== id),
+            [etapa]: [...(previous.colunas[etapa] ?? []), { ...tarefa, etapa }],
+          },
+        });
+      }
+
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) qc.setQueryData(QUADRO_KEY, context.previous);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ESTEIRA_QUERY_KEY }),
   });
 }
@@ -111,7 +150,7 @@ export function useApontamentos(tarefaId: string | null) {
   return {
     ...query,
     apontamentos: query.data ?? [],
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 
@@ -183,7 +222,7 @@ export function useAprovacaoPublica(token: string | undefined) {
   return {
     ...query,
     aprovacao: query.data ?? null,
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 

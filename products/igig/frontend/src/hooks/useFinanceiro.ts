@@ -66,8 +66,11 @@ export function useFaturas(competencia?: string) {
     queryKey: [...FINANCEIRO_QUERY_KEY, "faturas", competencia ?? ""],
     queryFn: () =>
       api.get<Fatura[]>("/api/financeiro/faturas", competencia ? { competencia } : {}),
+    // `competencia` rides in the key — switching it is a new key. Keep the
+    // previous list on screen instead of blanking to a skeleton.
+    placeholderData: (prev) => prev,
   });
-  return { ...query, faturas: query.data ?? [], loading: query.isPending || query.isFetching };
+  return { ...query, faturas: query.data ?? [], loading: query.isPending && !query.data };
 }
 
 export function useCriarFatura() {
@@ -106,16 +109,23 @@ export function useExcedentes(competencia: string) {
     queryKey: [...FINANCEIRO_QUERY_KEY, "excedentes", competencia],
     queryFn: () => api.get<Excedente[]>(`/api/financeiro/excedentes/${competencia}`),
     enabled: /^\d{4}-\d{2}$/.test(competencia),
+    // `competencia` rides in the key — changing the month picker is a new
+    // key. Keep the previous list on screen instead of blanking to a
+    // skeleton.
+    placeholderData: (prev) => prev,
   });
-  return { ...query, excedentes: query.data ?? [], loading: query.isPending || query.isFetching };
+  return { ...query, excedentes: query.data ?? [], loading: query.isPending && !query.data };
 }
 
 export function useDRE(competencia?: string) {
   const query = useQuery({
     queryKey: [...FINANCEIRO_QUERY_KEY, "dre", competencia ?? ""],
     queryFn: () => api.get<DRE[]>("/api/financeiro/dre", competencia ? { competencia } : {}),
+    // `competencia` rides in the key — keep the previous rows on screen
+    // instead of blanking to a skeleton while the new competência loads.
+    placeholderData: (prev) => prev,
   });
-  return { ...query, linhas: query.data ?? [], loading: query.isPending || query.isFetching };
+  return { ...query, linhas: query.data ?? [], loading: query.isPending && !query.data };
 }
 
 export function useInadimplentes() {
@@ -123,5 +133,5 @@ export function useInadimplentes() {
     queryKey: [...FINANCEIRO_QUERY_KEY, "inadimplentes"],
     queryFn: () => api.get<Inadimplente[]>("/api/financeiro/inadimplentes"),
   });
-  return { ...query, atrasadas: query.data ?? [], loading: query.isPending || query.isFetching };
+  return { ...query, atrasadas: query.data ?? [], loading: query.isPending && !query.data };
 }

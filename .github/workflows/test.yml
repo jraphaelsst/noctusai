@@ -168,10 +168,12 @@ jobs:
     # (proves vitest+jsdom+testing-library run) so they join the gate too.
     # 2026-08-13: `orbity` added (real specs under src/hooks/__tests__/, found
     # missing by `check_ci_test_matrix_coverage`). `knowledge-extractor` /
-    # `igig` / `products/seed` remain out — each has a vitest.config.ts but
-    # ZERO `*.test.ts(x)` files yet. `vitest run` fails on
-    # "no test files found", so a product joins the matrix the same commit it gets
-    # its first test. `fail-fast: false` so one product's red doesn't mask others.
+    # `products/seed` remain out — each has a vitest.config.ts but ZERO
+    # `*.test.ts(x)` files yet. `vitest run` fails on "no test files found",
+    # so a product joins the matrix the same commit it gets its first test.
+    # 2026-08-31: `igig` added — the refetch-unmount fleet-audit fix landed
+    # its first `*.test.ts(x)` files (hook + page regression suites).
+    # `fail-fast: false` so one product's red doesn't mask others.
     name: Product Frontend Tests (vitest)
     runs-on: ubuntu-latest
     strategy:
@@ -188,6 +190,7 @@ jobs:
           - dev-team
           - orbity
           - p-studio
+          - igig
 
     steps:
       - uses: actions/checkout@v7

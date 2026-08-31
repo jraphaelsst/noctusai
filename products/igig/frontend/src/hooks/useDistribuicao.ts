@@ -68,7 +68,7 @@ export function usePublicacoes(pautaId?: string) {
   return {
     ...query,
     publicacoes: query.data ?? [],
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 
@@ -116,6 +116,6 @@ export function useEficiencia() {
   return {
     ...query,
     linhas: query.data ?? [],
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }

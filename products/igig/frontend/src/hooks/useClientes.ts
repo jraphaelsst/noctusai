@@ -5,10 +5,15 @@
  * one hook file per domain entity; never inline useQuery/useMutation in a
  * page). Backend mirror: `app/routers/cliente_router.py`.
  *
- * Loading is exposed as `isPending || isFetching`, never `isLoading`. In
- * TanStack v5 `isLoading` is false during a background refetch, so a page
- * gating an empty-state on it renders "nenhum cliente" over data that
- * exists — the lying-loading-state class the `check_lying_loading_state`
+ * `loading` is `isPending && !data` — first load only, never `isLoading`
+ * and never `|| isFetching`. TanStack v5's `isLoading` is false during a
+ * background refetch, so gating on it (or on a plain `isFetching`) would
+ * render "nenhum cliente" — or unmount the list entirely — over data that
+ * is merely refetching, e.g. right after `useCriarCliente` invalidates the
+ * list while the user is still typing in `busca`. `useClientes` also carries
+ * `placeholderData: (prev) => prev` for exactly that case: the previous
+ * result set stays on screen (instead of blanking) while the new one is
+ * in flight. The lying-loading-state class the `check_lying_loading_state`
  * keeper blocks.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -67,14 +72,20 @@ export function useClientes(filtros: ClientesFiltros = {}) {
   const query = useQuery({
     queryKey: [...CLIENTES_QUERY_KEY, filtros.busca ?? "", filtros.status ?? ""],
     queryFn: () => api.get<ClienteListResponse>("/api/clientes", buildParams(filtros)),
+    // `busca`/`status` ride in the query key, so every keystroke is a new
+    // key. Without this the list would blank to the skeleton on each
+    // keystroke while the previous key's data is thrown away; with it, the
+    // prior result set stays on screen until the new one lands.
+    placeholderData: (prev) => prev,
   });
 
   return {
     ...query,
     clientes: query.data?.itens ?? [],
     total: query.data?.total ?? 0,
-    // See the module docstring: isPending || isFetching, never isLoading.
-    loading: query.isPending || query.isFetching,
+    // See the module docstring: isPending && !data, never isLoading and
+    // never `|| isFetching`.
+    loading: query.isPending && !query.data,
   };
 }
 

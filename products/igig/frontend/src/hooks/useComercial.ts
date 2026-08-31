@@ -72,8 +72,11 @@ export function useLeads(status?: string) {
   const query = useQuery({
     queryKey: [...COMERCIAL_QUERY_KEY, "leads", status ?? ""],
     queryFn: () => api.get<Lead[]>("/api/comercial/leads", status ? { status_filtro: status } : {}),
+    // `status` rides in the key — switching the filter is a new key. Keep
+    // the previous list on screen instead of blanking to a skeleton.
+    placeholderData: (prev) => prev,
   });
-  return { ...query, leads: query.data ?? [], loading: query.isPending || query.isFetching };
+  return { ...query, leads: query.data ?? [], loading: query.isPending && !query.data };
 }
 
 export function useConverterLead() {
@@ -100,7 +103,7 @@ export function useOrcamentos() {
     queryKey: [...COMERCIAL_QUERY_KEY, "orcamentos"],
     queryFn: () => api.get<Orcamento[]>("/api/comercial/orcamentos"),
   });
-  return { ...query, orcamentos: query.data ?? [], loading: query.isPending || query.isFetching };
+  return { ...query, orcamentos: query.data ?? [], loading: query.isPending && !query.data };
 }
 
 export function useCriarOrcamento() {

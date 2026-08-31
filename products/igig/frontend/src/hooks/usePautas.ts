@@ -63,11 +63,16 @@ export function useCalendario(inicio: string, fim: string) {
   const query = useQuery({
     queryKey: [...PAUTAS_QUERY_KEY, "calendario", inicio, fim],
     queryFn: () => api.get<Calendario>("/api/pautas/calendario", { inicio, fim }),
+    // `inicio`/`fim` ride in the key — paging to another month is a brand
+    // new key. Without this the whole grid would go back to a skeleton on
+    // every page; with it, the previous month's pautas stay on screen until
+    // the new month lands.
+    placeholderData: (prev) => prev,
   });
   return {
     ...query,
     itens: query.data?.itens ?? [],
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 
@@ -80,7 +85,7 @@ export function usePautas(clienteId?: string) {
   return {
     ...query,
     pautas: query.data ?? [],
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 

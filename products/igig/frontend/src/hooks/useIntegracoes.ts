@@ -33,7 +33,7 @@ export function useIntegracoes() {
   return {
     ...query,
     integracoes: query.data ?? [],
-    loading: query.isPending || query.isFetching,
+    loading: query.isPending && !query.data,
   };
 }
 
