@@ -34,7 +34,7 @@ from noctusai_lib.primitives.exceptions import ValidationError_
 from app.modules.card_hub import services as svc
 from app.modules.card_hub.deps import BUCKET, get_card_hub_client
 from app.services import documento_retencao, table_reads
-from app.services.documento_store import DocumentoStore, now_iso
+from app.services.documento_store import DocumentoStore, documento_base, now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +103,10 @@ def _linha(client: Any, org_id: UUID, atendimento_id: UUID) -> Optional[dict]:
 
 def _documento_out(row: dict, resolved: dict) -> dict:
     return {
-        "id": row["id"],
-        "nome_original": row["nome_original"],
-        "mime_type": row["mime_type"],
-        "tamanho_bytes": row["tamanho_bytes"],
-        "tipo_documento": row["tipo_documento"],
+        **documento_base(row, resolved),
         "grupo": "fgts" if row["tipo_documento"] in TIPOS_FGTS else "escritura",
         "categoria_lgpd": row.get("categoria_lgpd"),
         "retencao_ate": row.get("retencao_ate"),
-        "enviado_por": table_reads.actor(resolved, row.get("enviado_por")),
-        "created_at": row["created_at"],
     }
 
 

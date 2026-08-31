@@ -78,6 +78,39 @@ def format_bytes_human(n: int) -> str:
     return f"{n / 1024:.0f}KB"
 
 
+def documento_base(row: dict, resolved_actors: dict) -> dict:
+    """The 7-field core every documento-listing surface starts from.
+
+    ONE definition, three callers — `card_hub.documentos_service` (client
+    RG/CPF-class uploads), `card_hub.financiamento_service` (FGTS/escritura
+    paperwork) and `imovel_hub.documentos_service` (matrícula/IPTU). Each
+    layers its own fields on top (`categoria_lgpd`/`retencao_ate`/
+    `thumbnail_url`, `grupo`, `codigo`/`extracao_*`) because those genuinely
+    differ per surface — see each module's own docstring for why. What does
+    NOT differ across all three is these seven: the identity, the file's own
+    metadata, WHO sent it (resolved against `public.noctus_users` via
+    `table_reads.actor`, never the raw id), and WHEN.
+
+    Mirrors `DocumentoStore.guardar`'s row construction — the write-side row
+    and this read-side projection are the same seven keys (minus `org_id`,
+    `storage_path` and the owner column, which are per-surface / internal),
+    seen from opposite ends of the same table.
+
+    `resolved_actors` is the caller's `table_reads.resolve_actors(...)` map
+    for the whole page being listed — resolved once per listing, not once
+    per row.
+    """
+    return {
+        "id": row["id"],
+        "nome_original": row["nome_original"],
+        "mime_type": row["mime_type"],
+        "tamanho_bytes": row["tamanho_bytes"],
+        "tipo_documento": row["tipo_documento"],
+        "enviado_por": table_reads.actor(resolved_actors, row.get("enviado_por")),
+        "created_at": row["created_at"],
+    }
+
+
 @dataclass(frozen=True)
 class DocumentoStore:
     """One configured document surface.
@@ -366,6 +399,7 @@ class DocumentoStore:
 __all__ = [
     "SIGNED_URL_TTL_SECONDS",
     "DocumentoStore",
+    "documento_base",
     "format_bytes_human",
     "now_iso",
     "today",

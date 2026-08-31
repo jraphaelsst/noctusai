@@ -40,7 +40,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub.deps import BUCKET
 from app.services import table_reads
-from app.services.documento_store import DocumentoStore
+from app.services.documento_store import DocumentoStore, documento_base
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +86,8 @@ def _t(client: Any, name: str):
 
 def _documento_out(row: dict, resolved: dict) -> dict:
     return {
-        "id": row["id"],
+        **documento_base(row, resolved),
         "codigo": row["codigo"],
-        "nome_original": row["nome_original"],
-        "mime_type": row["mime_type"],
-        "tamanho_bytes": row["tamanho_bytes"],
-        "tipo_documento": row["tipo_documento"],
-        "enviado_por": table_reads.actor(resolved, row.get("enviado_por")),
-        "created_at": row["created_at"],
         # Extraction state, surfaced so the UI can show "lendo…" / "não
         # encontrei um número" rather than an empty field that looks broken.
         "extracao_status": row.get("extracao_status"),

@@ -32,6 +32,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.services import documento_retencao
+from app.services.documento_store import documento_base
 
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.deps import BUCKET, get_card_hub_client
@@ -143,6 +144,12 @@ def list_tipos_documento(client: Any) -> dict:
 #: button and nothing more — no `retencao_ate`, no `enviado_por` (which would
 #: drag in an actor resolution across a second schema client for a name the
 #: line never shows), no signed URL.
+#:
+#: 5 of `app.services.documento_store.documento_base`'s 7 core columns —
+#: everything but `tipo_documento` and `enviado_por` (see above). Not built
+#: as a slice of `documento_base(row, {})`: that call still REQUIRES
+#: `tipo_documento` on `row` (a `KeyError`) and still runs the actor
+#: resolution this projection exists specifically to skip.
 DOCUMENTO_RESUMO_COLUNAS = (
     "id",
     "nome_original",
@@ -171,15 +178,9 @@ def documento_resumo(row: Optional[dict]) -> Optional[dict]:
 
 def _documento_out(row: dict, resolved_actors: dict) -> dict:
     return {
-        "id": row["id"],
-        "nome_original": row["nome_original"],
-        "mime_type": row["mime_type"],
-        "tamanho_bytes": row["tamanho_bytes"],
-        "tipo_documento": row["tipo_documento"],
+        **documento_base(row, resolved_actors),
         "categoria_lgpd": row["categoria_lgpd"],
         "retencao_ate": row.get("retencao_ate"),
-        "enviado_por": _actor(resolved_actors, row.get("enviado_por")),
-        "created_at": row["created_at"],
         # No thumbnail pipeline in this slice (no image-processing step
         # exists anywhere in this product yet) — always `None`, which the
         # contract's `|null` shape explicitly allows. Not a silent gap:
