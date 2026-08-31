@@ -148,3 +148,182 @@ class TestFrozenHistoryIsNotDebt:
         r = _repo(tmp_path, {"scratch/wip.patch": self.MALFORMED})
         res = scan_remediation_markers(repo_root=r)
         assert res["total"] == 1
+
+
+class TestDeclarationVsCitation:
+    """2026-08-31 rewrite: a fresh sweep of the real repo found 142 markers,
+    ~120 "malformed" — nearly all of them prose *citing* a marker that lives
+    elsewhere, not a genuine deferral. These fixtures pin the declaration/
+    citation discriminator per marker declared in the module docstring.
+    Each is proven to fail against the pre-rewrite scanner (single-line-only,
+    `[class]` + optional date-anywhere-on-the-line) before this fix landed —
+    see the dispatch note; `d0170d92` is the standing lesson that a fixture
+    unable to express the failure passes forever.
+    """
+
+    def test_real_multiline_marker_date_on_continuation_line(self, tmp_path):
+        """The `— <date>` frequently lands 2-3 lines below the `[class]:`
+        open — a genuine, common shape (`imovel_normalizer.py`,
+        `config.py`'s `house-port` marker). The OLD scanner only ever looked
+        at the single git-grep-captured line, so this was reported
+        malformed (missing date) even though the marker IS dated."""
+        r = _repo(tmp_path, {
+            "svc.py": (
+                "def f():\n"
+                "    # NOC-REMEDIATE[dry]: extract this helper once the 3rd\n"
+                "    # consumer lands; keep it local until then, tracked\n"
+                "    # here rather than a premature seed lift — 2026-05-25\n"
+                "    return 1\n"
+            ),
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 1
+        assert res["malformed"] == [], f"date on line 3 of the block missed: {res}"
+        assert res["exit_code"] == 0
+
+    def test_prose_citation_with_real_class_not_counted_at_all(self, tmp_path):
+        """A KB/roadmap sentence CITING a marker declared elsewhere (`` `NOC-
+        REMEDIATE[x]` `` — a backtick-quoted noun-phrase reference, no colon,
+        no fresh deferral text) must not be counted as a marker at all — not
+        even as malformed. This is the `auth-boundary-false-green.md` /
+        `roteiros-visitas-PROJECT.md` shape verified in the live repo."""
+        r = _repo(tmp_path, {
+            "doc.md": (
+                "Actual test execution is scoped as\n"
+                "`NOC-REMEDIATE[canonical-runner-exec]` — see that module for rationale.\n"
+            ),
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 0, f"a citation must not be counted at all: {res}"
+        assert res["status"] == "clean"
+
+    def test_python_docstring_citation_pointing_elsewhere_not_counted(self, tmp_path):
+        """A docstring CAN also merely cite a marker ("See the ... marker at
+        the handling site") — being inside a docstring is necessary but not
+        sufficient; the declaration-shape check still applies. This is the
+        `whatsapp_router.py:28` shape."""
+        r = _repo(tmp_path, {
+            "svc.py": (
+                '"""Module doc.\n\n'
+                "Acknowledged but not persisted. See the ``NOC-REMEDIATE[x]``\n"
+                "marker at the handling site.\n"
+                '"""\n'
+                "x = 1\n"
+            ),
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 0, f"a docstring citation must not be counted: {res}"
+
+    def test_python_string_literal_citation_not_counted(self, tmp_path):
+        """`assert "NOC-REMEDIATE[x]" in some_string` tests that ANOTHER
+        function emits the marker text — it is not itself a declaration.
+        AST/tokenize context (comment vs. docstring vs. ordinary string
+        literal) is the discriminator; a colon-shaped ordinary string still
+        must not count. This is the `test_canonical_test_audit.py` /
+        `test_component_bundle.py` shape."""
+        r = _repo(tmp_path, {
+            "test_thing.py": (
+                "def test_x():\n"
+                '    assert _marker("// NOC-REMEDIATE[x]: something") is True\n'
+            ),
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 0, f"a marker inside a plain string literal is a citation: {res}"
+
+    def test_ellipsis_class_placeholder_not_counted(self, tmp_path):
+        """`NOC-REMEDIATE[...]` (the ellipsis-as-"some class" notation, seen
+        in `validation_signal.py`'s own docstring) is a placeholder, exactly
+        like the pre-existing `[<class>]` angle-bracket rule — not a real
+        class."""
+        r = _repo(tmp_path, {
+            "svc.py": (
+                "def f():\n"
+                '    """has_x: True when a ``NOC-REMEDIATE[...]`` marker appears."""\n'
+                "    return 1\n"
+            ),
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 0, f"ellipsis class is a placeholder, not real: {res}"
+
+    def test_undated_real_marker_still_reported_defective(self, tmp_path):
+        """A genuine comment-based declaration with NO date anywhere in its
+        block must still be counted and flagged malformed — the point of the
+        exercise is to STOP under-reporting genuine debt, not to suppress
+        it. This is the `canonical_test_audit.py:33` /
+        `meta_ads_service.py` shape (verified real, undated, in the live
+        repo)."""
+        r = _repo(tmp_path, {
+            "svc.py": (
+                "def f():\n"
+                "    # NOC-REMEDIATE[orbity-x]: wire the real client once\n"
+                "    # credentials are available.\n"
+                "    return 1\n"
+            ),
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 1
+        assert len(res["malformed"]) == 1
+        assert res["malformed"][0]["class"] == "orbity-x"
+        assert res["exit_code"] == 1
+
+    def test_adjacent_reversed_bullet_declarations_stay_separate(self, tmp_path):
+        """Three sibling bullet-form declarations (`label — NOC-REMEDIATE
+        [class]`), one per line, must be parsed as THREE independent
+        markers — not concatenated into one garbled record (the bug this
+        rewrite introduced-then-fixed: the block-extension step originally
+        pulled each bullet's SIBLING line in as "continuation text").
+        Mirrors `meta_ads_service.py`'s three-bullet docstring."""
+        r = _repo(tmp_path, {
+            "svc.py": (
+                '"""\n'
+                "Seams:\n"
+                "  - OAuth flow    — NOC-REMEDIATE[x]\n"
+                "  - Sync pull     — NOC-REMEDIATE[x]\n"
+                "  - CAPI feedback — NOC-REMEDIATE[x]\n"
+                '"""\n'
+            ),
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 3, f"each bullet is its own marker: {res}"
+        for m in res["malformed"]:
+            assert "NOC-REMEDIATE" not in m["text"], (
+                f"a sibling bullet's own marker leaked into this record's text: {m}"
+            )
+            assert m["text"].startswith("-"), m
+
+    def test_leading_date_before_marker_is_never_misread_as_the_markers_date(self, tmp_path):
+        """A bullet whose line OPENS with an unrelated timestamp
+        (`2026-05-29 (W5): ... NOC-REMEDIATE[x]`, a changelog-entry-date
+        prefix) must not have that leading date misattributed to the marker
+        — the date search is scoped to text strictly AFTER the marker's own
+        `]`. This citation (no colon, not bare, not a reversed-bullet
+        ending) is also not a declaration at all."""
+        r = _repo(tmp_path, {
+            "doc.md": (
+                "- 2026-05-29 (W5): shipped the loop. Tracked as "
+                "`NOC-REMEDIATE[x]`.\n"
+            ),
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert res["total"] == 0, (
+            f"a leading changelog date must not manufacture a fake well-formed marker: {res}"
+        )
+
+    def test_forbidden_on_except_still_fires_multiline(self, tmp_path):
+        """The FORBIDDEN on-`except` shape must still fire even when the
+        marker's own explanatory text wraps onto a second line — the
+        multi-line read must not accidentally launder a suppression marker
+        into a plain (non-except) malformed one."""
+        r = _repo(tmp_path, {
+            "svc.py": (
+                "try:\n"
+                "    pass\n"
+                "except Exception:  # NOC-REMEDIATE[err]: handle it properly\n"
+                "    # once the retry policy lands — 2026-05-13\n"
+                "    pass\n"
+            ),
+        })
+        res = scan_remediation_markers(repo_root=r)
+        assert len(res["on_except"]) == 1
+        assert res["on_except"][0]["class"] == "err"
+        assert res["exit_code"] == 1
