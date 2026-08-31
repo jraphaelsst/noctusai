@@ -14,6 +14,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -38,6 +39,80 @@ except ImportError as exc:
         "Run `pip install -e seed/lib/backend` from the repo root to fix.",
         exc,
     )
+
+
+def _load_repo_root_dotenv() -> None:
+    """Load the repo-root ``.env`` into this process's environment.
+
+    🔴 WHY THIS EXISTS (root-caused 2026-08-31, recurred every session for
+    two weeks) — ``.mcp.json`` launches this server with no ``env`` block
+    and no dotenv loading, so ``SUPABASE_URL`` / ``SUPABASE_SERVICE_ROLE_KEY``
+    were never in the server's environment even though the repo-root
+    ``.env`` has them. Every catalog-backed tool (``deploy_verify``,
+    ``refresh_build_scope``, …) silently fell back to the checked-in
+    ``deploy/fleet/build-scope.txt`` snapshot every single session — the
+    fallback itself is correct design (it refuses to guess), the defect
+    was the server never getting credentials it could have had.
+
+    Runs BEFORE ``register_all``/``build_server`` import any ``tools/*``
+    module, so a tool that reads ``os.environ`` at call time (not just at
+    import time) sees the loaded values either way.
+
+    ``override=False`` is load-bearing: an already-set environment
+    variable ALWAYS wins over the ``.env`` file — this never clobbers a
+    value the caller (shell, CI, launcher) deliberately set. Missing
+    ``.env`` is NOT an error (fresh clone / CI must still boot) — logged
+    once at INFO and the server continues with whatever the process
+    environment already has.
+
+    ``python-dotenv`` is already a declared + installed dependency of this
+    server's own venv (``mcp/noctusai/requirements.txt`` +
+    ``pyproject.toml``, both pin ``python-dotenv>=1.0.0``) — same package
+    ``tools/noctus/dev/ai_brain.py`` already uses (lazily, on first LLM
+    call) for this identical repo-root ``.env``. Reused here rather than
+    the connector-MCP ``mcp/_kit/settings.py`` idiom: that one builds a
+    per-connector frozen-dataclass settings object for a small named
+    ``env_map`` (e.g. ``VISTA_BASE_URL``), not a bulk "populate
+    ``os.environ`` for whatever downstream code reads directly" load —
+    the wrong shape for this server's ~185 tool modules that read
+    ``SUPABASE_URL`` etc. straight off ``os.environ.get(...)``.
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        from dotenv import load_dotenv
+    except ImportError as exc:  # pragma: no cover - dependency is pinned in requirements.txt
+        logger.warning(
+            "server: python-dotenv not installed (%s); relying on already-set "
+            "env. Run `pip install -r mcp/noctusai/requirements.txt`.",
+            exc,
+        )
+        return
+
+    from settings import REPO_ROOT
+
+    dotenv_path = REPO_ROOT / ".env"
+    if not dotenv_path.exists():
+        logger.info(
+            "server: no repo-root .env at %s; relying on already-set process "
+            "env (expected on a fresh clone / CI).",
+            dotenv_path,
+        )
+        return
+
+    before = len(os.environ)
+    load_dotenv(dotenv_path, override=False)
+    after = len(os.environ)
+    logger.info(
+        "server: loaded repo-root .env (%s new key(s), override=False so an "
+        "already-set env var always wins). Catalog creds present: "
+        "SUPABASE_URL=%s SUPABASE_SERVICE_ROLE_KEY=%s",
+        after - before,
+        bool(os.environ.get("SUPABASE_URL")),
+        bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY")),
+    )
+
+
+_load_repo_root_dotenv()
 
 from mcp.server.fastmcp import FastMCP
 
