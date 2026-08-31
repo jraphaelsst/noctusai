@@ -18,6 +18,7 @@
  *   } = createNotificationHooks(api, useAuthStore);
  */
 import {
+  keepPreviousData,
   useQuery,
   useMutation,
   useQueryClient,
@@ -75,6 +76,10 @@ export function createNotificationHooks(
       // "servidor indisponível" toast on every standalone page load).
       enabled: authReady && !!user,
       staleTime: 30 * 1000,
+      // Keyed on `page` — paging forward/back is a key change, so `data`
+      // would otherwise go `undefined` for a tick and the notification list
+      // would blank every page click instead of just updating in place.
+      placeholderData: keepPreviousData,
     });
   }
 

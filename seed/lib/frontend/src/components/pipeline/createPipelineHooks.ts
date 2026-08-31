@@ -16,7 +16,7 @@
  *
  * Once is enough.
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 import type {
@@ -94,6 +94,16 @@ export function createPipelineHooks<TCard>(
         return unwrap<PipelineColumn<TCard>[]>(result, []);
       },
       enabled: options?.enabled ?? true,
+      // The query key is keyed on `filtros`, so a filter change is a KEY
+      // change, not a background refetch of the same key — TanStack treats
+      // it as a brand-new query and `data` goes `undefined` for one tick.
+      // Without this, `PipelineBoard` blanks to its loading/empty state on
+      // every filter edit (compounding the Category-A unmount bug above:
+      // even with `KanbanBoard`'s `columns.length === 0` guard, a genuine
+      // key change makes `columns` genuinely empty for that tick).
+      // `keepPreviousData` carries the OLD key's rows forward until the new
+      // key's response lands, so the board never blanks on a filter change.
+      placeholderData: keepPreviousData,
     });
   }
 
@@ -212,18 +222,48 @@ export function createPipelineHooks<TCard>(
   }
 
   function useUpdateStage() {
+    const queryClient = useQueryClient();
     const refresh = useStageRefresh();
     return useMutation({
       mutationFn: async (vars: { id: string; input: StageUpdateInput }) => {
         const result = await api.patch(`${stagesEndpoint}/${vars.id}`, vars.input);
         return unwrap<PipelineStage | null>(result, null);
       },
+      // Optimistic: a rename in `PipelineStagesManager` is cheap + exactly
+      // rollbackable (we know precisely what changed), so waiting a round
+      // trip to see the new label reads as unresponsive. Rollback discipline
+      // mirrors `products/social-wiring/frontend/src/hooks/useCardHub.ts`'s
+      // `useSetClienteTagsMutation`: cancel in-flight reads of this key,
+      // snapshot, patch, restore the snapshot on error.
+      onMutate: async (vars) => {
+        await queryClient.cancelQueries({ queryKey: stagesKey });
+        const previous = queryClient.getQueryData<PipelineStage[]>(stagesKey);
+        if (previous) {
+          queryClient.setQueryData<PipelineStage[]>(
+            stagesKey,
+            previous.map((s) =>
+              // `StageUpdateInput.cor` is a plain `string` (the raw value out
+              // of a colour picker, unvalidated) while `PipelineStage.cor` is
+              // the narrower `StageColor` union — the cast is safe because
+              // this merge is a TRANSIENT optimistic snapshot, immediately
+              // either confirmed by the settle-time refetch or rolled back
+              // via `context.previous` on error; it never persists as-is.
+              s.id === vars.id ? ({ ...s, ...vars.input } as PipelineStage) : s,
+            ),
+          );
+        }
+        return { previous };
+      },
+      onError: (error: Error, _vars, context) => {
+        if (context?.previous) {
+          queryClient.setQueryData(stagesKey, context.previous);
+        }
+        toast.error('Erro ao atualizar etapa', { description: error.message });
+      },
       onSuccess: (stage) => {
         toast.success(`Etapa "${stage?.label ?? ''}" atualizada`);
         refresh();
       },
-      onError: (error: Error) =>
-        toast.error('Erro ao atualizar etapa', { description: error.message }),
     });
   }
 
@@ -254,18 +294,42 @@ export function createPipelineHooks<TCard>(
   }
 
   function useReorderStages() {
+    const queryClient = useQueryClient();
     const refresh = useStageRefresh();
     return useMutation({
       mutationFn: async (ordem: string[]) => {
         const result = await api.post(`${stagesEndpoint}/reordenar`, { ordem });
         return unwrap<PipelineStage[]>(result, []);
       },
+      // Optimistic: `PipelineStagesManager`'s up/down buttons should move
+      // the row on click, not on round-trip. `ordem` (the full new id
+      // order) IS the exact new `posicao` assignment, so — same rollback
+      // discipline as `useUpdateStage` above — the snapshot restore on
+      // error is exact, not a guess.
+      onMutate: async (ordem: string[]) => {
+        await queryClient.cancelQueries({ queryKey: stagesKey });
+        const previous = queryClient.getQueryData<PipelineStage[]>(stagesKey);
+        if (previous) {
+          const posicaoById = new Map(ordem.map((id, index) => [id, index]));
+          queryClient.setQueryData<PipelineStage[]>(
+            stagesKey,
+            previous.map((s) =>
+              posicaoById.has(s.id) ? { ...s, posicao: posicaoById.get(s.id)! } : s,
+            ),
+          );
+        }
+        return { previous };
+      },
+      onError: (error: Error, _vars, context) => {
+        if (context?.previous) {
+          queryClient.setQueryData(stagesKey, context.previous);
+        }
+        toast.error('Erro ao reordenar etapas', { description: error.message });
+      },
       onSuccess: () => {
         toast.success('Ordem das etapas atualizada');
         refresh();
       },
-      onError: (error: Error) =>
-        toast.error('Erro ao reordenar etapas', { description: error.message }),
     });
   }
 

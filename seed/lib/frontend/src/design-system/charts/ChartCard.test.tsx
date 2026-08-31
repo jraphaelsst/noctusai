@@ -74,4 +74,28 @@ describe("ChartCard", () => {
     expect(screen.getByRole("status", { name: "Carregando" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  // REGRESSION for the refetch-unmount bug (`KB § PATTERNS/frontend/
+  // lying-loading-state.md`). A consumer's `isPending || isFetching` flips
+  // `loading` back to `true` on every background refetch even though
+  // `children` already reflects valid (possibly stale) data. Before this
+  // fix `loading ? skeleton : ...` blanked the chart back to a skeleton on
+  // every refetch; now the organ remembers it has shown real content once
+  // and keeps rendering it.
+  it("REGRESSION: keeps showing chart children through a background refetch (loading flips true again after data has rendered)", () => {
+    const { rerender } = render(
+      <ChartCard title="X">
+        <div>chart body</div>
+      </ChartCard>,
+    );
+    expect(screen.getByText("chart body")).toBeInTheDocument();
+
+    rerender(
+      <ChartCard title="X" loading>
+        <div>chart body</div>
+      </ChartCard>,
+    );
+    expect(screen.getByText("chart body")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Carregando" })).not.toBeInTheDocument();
+  });
 });

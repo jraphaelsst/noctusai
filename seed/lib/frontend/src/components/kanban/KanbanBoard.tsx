@@ -17,10 +17,21 @@
  * (and the actual mutation/API call) stay the consumer's job — the organ
  * never imports anything domain-specific.
  *
- * States: `isLoading` → `loadingState` (default: column skeletons).
- * `error` → `errorState`. `columns.length === 0` → `emptyState` (no stages
- * configured at all — distinct from an individual empty column, which
- * `KanbanColumn` handles on its own).
+ * States: `isLoading` → `loadingState` (default: column skeletons) —
+ * honoured ONLY while `columns` is still empty. `error` → `errorState`.
+ * `columns.length === 0` → `emptyState` (no stages configured at all —
+ * distinct from an individual empty column, which `KanbanColumn` handles
+ * on its own).
+ *
+ * `isLoading` scoping is deliberate (`KB § PATTERNS/frontend/
+ * lying-loading-state.md`): a consumer's `useMoveCard` is typically
+ * optimistic, so its `onSettled` flips `isFetching` true on every drag —
+ * if the board unmounted on that flip it would blank + re-mount on every
+ * single move. Once `columns` holds real data the board never unmounts for
+ * it again, so a consumer that still passes the broad `isPending ||
+ * isFetching` (rather than scoping it to the empty case itself, as the
+ * canonical `Funil.tsx` pattern does) is safe by construction here — no
+ * consumer change required to pick up the fix.
  *
  * Usage (erp-shaped data):
  * ```tsx
@@ -168,7 +179,13 @@ export function KanbanBoard<TCard, TStageId extends string = string>({
     onMove(cardId, result.fromStage, result.toStage, result.toIndex);
   }
 
-  if (isLoading) {
+  // Gate on `isLoading && columns.length === 0`, never bare `isLoading`:
+  // once real columns exist, a background refetch (e.g. `useMoveCard`'s
+  // optimistic `onSettled` invalidation) must never unmount the board — see
+  // the file header. This also preserves the 2026-07-21 empty-over-loading
+  // regression fix: when `columns` is genuinely empty, `isLoading` still
+  // wins over the `emptyState` branch below.
+  if (isLoading && columns.length === 0) {
     return <>{loadingState ?? <DefaultLoadingState />}</>;
   }
 

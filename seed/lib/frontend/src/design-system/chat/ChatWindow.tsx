@@ -68,6 +68,13 @@ export interface ChatMessage {
 
 interface ChatAsyncResult<T> {
   data?: T;
+  /**
+   * Whatever the adapter's underlying query considers "loading" — TanStack's
+   * real `isLoading` (pending ∧ no cached data) OR a broader `isPending ||
+   * isFetching`. Either is safe: `ChatWindow` scopes this to the "no rows
+   * yet" case internally (`data.length === 0`), so it never unmounts an
+   * already-populated thread/list during a background refetch.
+   */
   isLoading: boolean;
   isError: boolean;
 }
@@ -417,7 +424,17 @@ function ThreadPanel({
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        {loadingMsgs ? (
+        {/*
+          Gate on `loadingMsgs && messages.length === 0`, never bare
+          `loadingMsgs` (`KB § PATTERNS/frontend/lying-loading-state.md`).
+          Unmounting a populated thread ALSO destroys the scroll position
+          (see `scrollRef` above), so re-mounting on every background
+          refetch is worse here than on a typical list — the user is
+          scrolled back to the bottom on every poll. Once `messages` holds
+          real rows, a later `loadingMsgs=true` (whatever the adapter's
+          `isLoading` actually tracks) no longer unmounts the thread.
+        */}
+        {loadingMsgs && messages.length === 0 ? (
           <MessagesSkeleton />
         ) : errorMsgs ? (
           <ErrorState label="Erro ao carregar mensagens." fullHeight />
@@ -534,7 +551,8 @@ export function ChatWindow({
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Conversas</p>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {loadingThreads ? (
+          {/* Same scoping as the message list below — see its comment. */}
+          {loadingThreads && threads.length === 0 ? (
             <ThreadListSkeleton />
           ) : errorThreads ? (
             <ErrorState label="Erro ao carregar conversas." />

@@ -105,6 +105,24 @@ describe("ChatWindow — thread list states", () => {
     render(<ChatWindow scopeId="scope-1" adapter={makeAdapter()} emptySelectionLabel="Selecione uma conversa" />);
     expect(screen.getByText("Selecione uma conversa")).toBeTruthy();
   });
+
+  // REGRESSION for the refetch-unmount bug (`KB § PATTERNS/frontend/
+  // lying-loading-state.md`). Whatever the adapter's `isLoading` actually
+  // tracks, once `data` holds real rows a `true` value must not replace them
+  // with the skeleton — a background poll must not blank the thread list.
+  it("REGRESSION: keeps rendering threads when isLoading is true but data is already populated (background refetch)", () => {
+    render(
+      <ChatWindow
+        scopeId="scope-1"
+        adapter={makeAdapter({
+          useThreads: () => ({ data: [threadA, threadB], isLoading: true, isError: false }),
+        })}
+      />,
+    );
+    expect(screen.getByText("João Raphael")).toBeTruthy();
+    expect(screen.getByText("Maria Silva")).toBeTruthy();
+    expect(screen.queryByTestId("chat-thread-list-skeleton")).toBeNull();
+  });
 });
 
 describe("ChatWindow — thread panel + messages", () => {
@@ -152,6 +170,27 @@ describe("ChatWindow — thread panel + messages", () => {
     fireEvent.click(screen.getByTestId("chat-thread-t1"));
     expect(screen.getByText("Bom dia!")).toBeTruthy();
     expect(screen.getByText("Tudo bem!")).toBeTruthy();
+  });
+
+  // REGRESSION for the refetch-unmount bug — the user-reported symptom:
+  // unmounting a populated message list ALSO destroys scroll position, so
+  // this matters more here than on a typical list.
+  it("REGRESSION: keeps rendering messages when isLoading is true but data is already populated (background refetch)", () => {
+    render(
+      <ChatWindow
+        scopeId="scope-1"
+        adapter={makeAdapter({
+          useMessages: () => ({
+            data: [makeMessage("m1", "inbound", "Bom dia!")],
+            isLoading: true,
+            isError: false,
+          }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+    expect(screen.getByText("Bom dia!")).toBeTruthy();
+    expect(screen.queryByTestId("chat-messages-skeleton")).toBeNull();
   });
 });
 

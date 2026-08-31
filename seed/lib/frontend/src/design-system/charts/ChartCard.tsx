@@ -9,7 +9,7 @@
  * Heatmap, or something else entirely) is passed as `children` and only
  * renders in the success state.
  */
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { cn } from "../../utils";
 
 export interface ChartCardProps {
@@ -43,6 +43,24 @@ export function ChartCard({
   children,
   className,
 }: ChartCardProps) {
+  // A chart's `children` is the CONSUMER's rendered output, not raw query
+  // data — the organ has no `data` object to derive from directly, unlike
+  // `KanbanBoard`'s `columns` or `EntityDetailDialog`'s `sections`. So the
+  // organ tracks, internally, whether it has ever shown a real chart body
+  // before (`error`/`isEmpty` both false). Once true, a later background
+  // refetch — which typically flips `loading` back to `true` via the
+  // consumer's `isPending || isFetching` while `children` still reflects
+  // valid (possibly stale) data — no longer blanks the card back to a
+  // skeleton. `KB § PATTERNS/frontend/lying-loading-state.md`. This makes
+  // the fix apply to every existing consumer with zero prop changes on
+  // their side; a consumer that already scopes `loading` to `isPending`
+  // only sees no behavioural difference at all.
+  const hasRenderedOnceRef = useRef(false);
+  const showLoadingSkeleton = loading && !hasRenderedOnceRef.current;
+  if (!loading && !error && !isEmpty) {
+    hasRenderedOnceRef.current = true;
+  }
+
   return (
     <div className={cn("rounded-lg border border-border bg-card p-4", className)}>
       <div className="mb-4 flex items-start justify-between gap-3">
@@ -54,7 +72,7 @@ export function ChartCard({
       </div>
 
       <div style={{ minHeight: minBodyHeight }} className="flex flex-col">
-        {loading ? (
+        {showLoadingSkeleton ? (
           <div
             role="status"
             aria-label="Carregando"

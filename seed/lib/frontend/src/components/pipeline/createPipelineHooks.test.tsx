@@ -115,6 +115,34 @@ describe('useBoard', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([]);
   });
+
+  // Category B — `filtros` is IN the query key, so a filter change is a KEY
+  // change, TanStack's normal behaviour for which is `data → undefined` for
+  // one tick. Without `placeholderData: keepPreviousData` that tick blanks
+  // `PipelineBoard` to its loading/empty state on every filter edit.
+  it('REGRESSION: keeps the previous filter rows on screen while a new filter key is in flight (keepPreviousData)', async () => {
+    const filtrosA = { busca: 'x' };
+    const filtrosB = { busca: 'y' };
+    (api.get as any).mockResolvedValueOnce({ data: board() });
+    const hooks = makeHooks();
+
+    const { result, rerender } = renderHook(
+      ({ filtros }: { filtros: Record<string, any> }) => hooks.useBoard(filtros),
+      { wrapper, initialProps: { filtros: filtrosA } },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.[0].etapa).toBe(STAGE_A);
+
+    // The new key's fetch never resolves during this assertion window, so
+    // the ONLY way `data` can already be non-empty right after the key
+    // changes is `keepPreviousData` carrying the old key's rows forward.
+    (api.get as any).mockImplementation(() => new Promise(() => {}));
+    rerender({ filtros: filtrosB });
+
+    expect(result.current.data?.[0].etapa).toBe(STAGE_A);
+    expect(result.current.isPlaceholderData).toBe(true);
+  });
 });
 
 describe('useMoveCard — optimistic update', () => {
@@ -312,5 +340,79 @@ describe('stage CRUD', () => {
     expect(api.post).toHaveBeenCalledWith('/api/board/etapas/reordenar', {
       ordem: ['s3', 's1', 's2'],
     });
+  });
+});
+
+describe('useUpdateStage — optimistic rename (Category D)', () => {
+  it('renames the stage instantly, then rolls back to the pre-rename snapshot on error', async () => {
+    queryClient.setQueryData(['testboard-stages'], [
+      { id: 's1', slug: 'a', label: 'Antigo', cor: 'secondary', posicao: 0, papel: null, ativo: true },
+    ]);
+    // Reject only when we say so, so the optimistic write is observable
+    // first — same false-green guard as `useMoveCard`'s rollback test.
+    let fail!: (e: Error) => void;
+    (api.patch as any).mockImplementation(
+      () => new Promise((_resolve, reject) => { fail = reject; }),
+    );
+
+    const hooks = makeHooks();
+    const { result } = renderHook(() => hooks.useUpdateStage(), { wrapper });
+
+    act(() => {
+      result.current.mutate({ id: 's1', input: { label: 'Novo' } });
+    });
+
+    // 1. the optimistic rename DID land in the cache immediately
+    await waitFor(() => {
+      const stages = queryClient.getQueryData<any[]>(['testboard-stages'])!;
+      expect(stages[0].label).toBe('Novo');
+    });
+
+    // 2. ...and is fully undone on failure
+    await act(async () => {
+      fail(new Error('boom'));
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const stages = queryClient.getQueryData<any[]>(['testboard-stages'])!;
+    expect(stages[0].label).toBe('Antigo');
+  });
+});
+
+describe('useReorderStages — optimistic reorder (Category D)', () => {
+  it('reorders stage.posicao instantly, then rolls back to the pre-reorder snapshot on error', async () => {
+    queryClient.setQueryData(['testboard-stages'], [
+      { id: 's1', slug: 'a', label: 'A', cor: 'secondary', posicao: 0, papel: null, ativo: true },
+      { id: 's2', slug: 'b', label: 'B', cor: 'secondary', posicao: 1, papel: null, ativo: true },
+      { id: 's3', slug: 'c', label: 'C', cor: 'secondary', posicao: 2, papel: null, ativo: true },
+    ]);
+    let fail!: (e: Error) => void;
+    (api.post as any).mockImplementation(
+      () => new Promise((_resolve, reject) => { fail = reject; }),
+    );
+
+    const hooks = makeHooks();
+    const { result } = renderHook(() => hooks.useReorderStages(), { wrapper });
+
+    act(() => {
+      result.current.mutate(['s3', 's1', 's2']);
+    });
+
+    // 1. the optimistic reorder DID land — `ordem` IS the new posicao map
+    await waitFor(() => {
+      const stages = queryClient.getQueryData<any[]>(['testboard-stages'])!;
+      const posicaoById = Object.fromEntries(stages.map((s) => [s.id, s.posicao]));
+      expect(posicaoById).toEqual({ s3: 0, s1: 1, s2: 2 });
+    });
+
+    // 2. ...and is fully undone on failure
+    await act(async () => {
+      fail(new Error('boom'));
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const stages = queryClient.getQueryData<any[]>(['testboard-stages'])!;
+    const posicaoById = Object.fromEntries(stages.map((s) => [s.id, s.posicao]));
+    expect(posicaoById).toEqual({ s1: 0, s2: 1, s3: 2 });
   });
 });

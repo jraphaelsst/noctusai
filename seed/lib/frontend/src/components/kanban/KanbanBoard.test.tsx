@@ -120,7 +120,44 @@ describe('<KanbanBoard/> — generality across differently-shaped cards', () => 
     expect(screen.getByText('Quente')).toBeInTheDocument();
   });
 
-  it('shows the loading state and does not render columns while loading', () => {
+  it('shows the loading state when there is no data yet (columns empty)', () => {
+    render(
+      <KanbanBoard<Cliente, Etapa>
+        columns={[]}
+        getCardId={(c) => c.id}
+        getCardStage={(c) => c.etapa_atual}
+        renderCard={(c) => <span>{c.nome}</span>}
+        onMove={() => {}}
+        isLoading
+      />,
+    );
+    expect(screen.getByRole('status')).toBeInTheDocument();
+  });
+
+  it('never lets the empty state win over loading when data is still undefined (the 2026-07-21 "Sem dados" regression)', () => {
+    render(
+      <KanbanBoard<Cliente, Etapa>
+        columns={[]}
+        getCardId={(c) => c.id}
+        getCardStage={(c) => c.etapa_atual}
+        renderCard={(c) => <span>{c.nome}</span>}
+        onMove={() => {}}
+        isLoading
+      />,
+    );
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.queryByText('Nenhuma etapa configurada.')).not.toBeInTheDocument();
+  });
+
+  // REGRESSION for the refetch-unmount bug: `useMoveCard`'s optimistic
+  // mutation flips `isFetching` true again in `onSettled`, and a naive
+  // consumer forwards that as `isLoading={isPending || isFetching}`. Before
+  // this fix, `if (isLoading) return loadingState` unmounted the ENTIRE
+  // board — every card, every column — on every single drag, even though
+  // `columns` already held real data. This test constructs exactly that
+  // state directly (`columns` populated + `isLoading` true) without needing
+  // a live query mock, and proves the board keeps rendering.
+  it('REGRESSION: does not unmount already-rendered cards when isLoading flips true again (background refetch)', () => {
     render(
       <KanbanBoard<Cliente, Etapa>
         columns={erpColumns()}
@@ -131,8 +168,12 @@ describe('<KanbanBoard/> — generality across differently-shaped cards', () => 
         isLoading
       />,
     );
-    expect(screen.getByRole('status')).toBeInTheDocument();
-    expect(screen.queryByText('Ana')).not.toBeInTheDocument();
+    expect(screen.getByText('Ana')).toBeInTheDocument();
+    expect(screen.getByText('Bruno')).toBeInTheDocument();
+    // Scoped to the loading skeleton's own label — `@dnd-kit`'s DndContext
+    // renders its own `role="status"` aria-live region for accessibility
+    // announcements, unrelated to this organ's loading state.
+    expect(screen.queryByRole('status', { name: 'Carregando quadro' })).not.toBeInTheDocument();
   });
 
   it('shows the error state', () => {

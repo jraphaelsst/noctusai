@@ -114,7 +114,13 @@ export interface EntityDetailDialogProps {
   note?: React.ReactNode;
   sections?: DetailSection[];
   actions?: DetailAction[];
-  /** The record is still being fetched — renders a skeleton grid. */
+  /**
+   * The record is still being fetched — renders a skeleton grid. Honoured
+   * ONLY while `sections` has no visible fields yet; once real fields exist
+   * a later `true` (e.g. a background refetch after an edit) keeps showing
+   * them instead of blanking to the skeleton. Safe to pass a broad
+   * `isPending || isFetching` — the organ scopes it internally.
+   */
   isLoading?: boolean;
   /** Fetch failed. Takes precedence over `isLoading` and `sections`. */
   error?: React.ReactNode;
@@ -228,6 +234,19 @@ export function EntityDetailDialog({
   const startActions = (actions ?? []).filter((a) => a.align === 'start');
   const endActions = (actions ?? []).filter((a) => a.align !== 'start');
 
+  // `sections` IS the record's data (unlike `ChartCard`'s `children`, which
+  // is the consumer's already-rendered output) — so, unlike `ChartCard`, no
+  // internal ref is needed; the organ derives directly from the data it was
+  // handed. `isLoading` is honoured ONLY while there is genuinely nothing to
+  // show yet. This is the exact symptom the user reported: editing a field
+  // re-fetches the record, `isLoading` flips true again, and — before this
+  // guard — the whole 8-row `SkeletonGrid` replaced the already-populated
+  // field grid while the dialog's height collapsed and came back.
+  // `KB § PATTERNS/frontend/lying-loading-state.md`.
+  const hasVisibleSections = (sections ?? []).some((s) =>
+    s.fields.some((f) => !f.hidden),
+  );
+
   return (
     <Dialog
       open={open}
@@ -260,7 +279,7 @@ export function EntityDetailDialog({
             <p className="text-sm text-destructive" data-testid={`${testId}-error`}>
               {error}
             </p>
-          ) : isLoading ? (
+          ) : isLoading && !hasVisibleSections ? (
             <SkeletonGrid />
           ) : notFound ? (
             <p className="text-sm text-muted-foreground" data-testid={`${testId}-not-found`}>

@@ -9,7 +9,7 @@
  * Auto-disables when `refId` is null/undefined; returns empty until the
  * entity exists.
  */
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@noctusai/seed/infra';
 
 import type { AIOutput } from './types';
@@ -50,5 +50,10 @@ export function useAIOutputFor(
     },
     enabled: enabled && !!refType && !!refId,
     staleTime,
+    // Keyed on `refId` — switching entities (e.g. clicking the next kanban
+    // card) is a key change, not a background refetch, so `data` would
+    // otherwise go `undefined` for a tick and the consumer's AI-output panel
+    // would flash empty every navigation.
+    placeholderData: keepPreviousData,
   });
 }

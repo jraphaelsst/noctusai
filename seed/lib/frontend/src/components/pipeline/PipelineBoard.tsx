@@ -164,10 +164,16 @@ export function PipelineBoard<TCard>({
         `columns`/`getCardId`/`renderCard` pin `TCard` by inference anyway.
       */}
       <KanbanBoard
-        // Gate on `isPending || isFetching`, never bare `isLoading`: during a
-        // background refetch `isLoading` is false, so the empty branch would
-        // render an empty board over data that exists.
-        isLoading={isPending || isFetching}
+        // Scoped to the empty case — never bare `isPending || isFetching` —
+        // matching the canonical `Funil.tsx` pattern
+        // (`KB § PATTERNS/frontend/lying-loading-state.md`). `useMoveCard` is
+        // optimistic, so its `onSettled` flips `isFetching` true on every
+        // drag; an unscoped `isLoading` here would blank + re-mount the whole
+        // board on every card move. `KanbanBoard` itself now also ignores
+        // `isLoading` once `columns` is non-empty (defense in depth), so this
+        // scoping is belt-and-braces, not the only thing standing between the
+        // consumer and a flicker.
+        isLoading={isPending || (isFetching && columns.length === 0)}
         error={error}
         loadingState={loadingState}
         columns={columns.map((coluna: PipelineColumn<TCard>) => ({

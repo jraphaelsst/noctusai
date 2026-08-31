@@ -90,13 +90,29 @@ describe('rendering the record', () => {
 });
 
 describe('async states — the reason a kanban card can open this safely', () => {
-  it('shows a skeleton, not an empty grid, while fetching', () => {
+  it('shows a skeleton, not an empty grid, while fetching (no sections yet)', () => {
     // A card carries a PROJECTION of the record. Rendering its missing
     // columns as blank fields would assert "these are empty" about data
-    // that simply has not arrived.
-    renderDialog({ isLoading: true });
+    // that simply has not arrived. `sections: []` is the genuine
+    // first-open case — nothing has arrived yet.
+    renderDialog({ isLoading: true, sections: [] });
     expect(screen.getByTestId('entity-detail-loading')).toBeInTheDocument();
     expect(screen.queryByText('Contato')).not.toBeInTheDocument();
+  });
+
+  // REGRESSION for the refetch-unmount bug (`KB § PATTERNS/frontend/
+  // lying-loading-state.md`). Reported symptom: edit one field on a record
+  // whose detail dialog is open, the fetch that reloads the record flips
+  // `isLoading` true again, and the whole 8-row `SkeletonGrid` replaced the
+  // already-populated field grid while the dialog's height collapsed and
+  // came back. Before this fix `isLoading` alone gated the skeleton; now it
+  // is scoped to "no visible sections yet", so a background refetch of an
+  // already-open record keeps the fields on screen.
+  it('REGRESSION: keeps showing already-loaded fields when isLoading flips true again (background refetch)', () => {
+    renderDialog({ isLoading: true }); // default SECTIONS — data already present
+    expect(screen.getByText('Contato')).toBeInTheDocument();
+    expect(screen.getByText('+5511994573387')).toBeInTheDocument();
+    expect(screen.queryByTestId('entity-detail-loading')).not.toBeInTheDocument();
   });
 
   it('error wins over loading and over sections', () => {
