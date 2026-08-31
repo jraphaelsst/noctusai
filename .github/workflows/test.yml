@@ -546,6 +546,19 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Set up Node
+        # `mcp/noctusai/node/` (ts-morph, gitignored `node_modules`) needs a
+        # runtime that satisfies its transitive deps' `engines.node` floor —
+        # `brace-expansion`/`minimatch`/`balanced-match` all require
+        # `20 || >=22` (checked against the ts-morph 24→28 bump, a44d2591).
+        # `ubuntu-latest` is NOT guaranteed to expose a matching `node` on
+        # PATH without this step — same reason every FE-build/test job in
+        # this file already pins one. Match that pin (20) rather than trust
+        # an unpinned runner default that could silently drift underneath us.
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
       - name: Install system build deps (libpq for psycopg; ffi for cffi)
         run: |
           sudo apt-get update
@@ -559,6 +572,20 @@ jobs:
         # billing-gated since it was added) — the unenforced-gate lesson, one layer down.
         working-directory: mcp/noctusai
         run: pip install -r requirements.txt
+
+      - name: Install MCP toolkit node deps (ts-morph — the AST keepers need it)
+        # `check_lying_loading_state` Mode B (+ `ts_ast_rename_symbol`) shell
+        # out to `node` against `mcp/noctusai/node/lying_loading_scan.mjs` /
+        # `ts_ast_edit.mjs`, which import `ts-morph` from this dir's OWN
+        # gitignored `node_modules` — a separate tooling dependency from any
+        # product frontend, never installed by the FE jobs above. Landed
+        # ab37df8d (Mode B AST detector) with NO install step here, so the
+        # new AST-backed tests self-skipped in CI and a real fleet scan
+        # degraded to a single bootstrap-error finding — honest about the
+        # gap, but zero coverage. `npm ci` (not `npm install`): the lockfile
+        # at `mcp/noctusai/node/package-lock.json` is the freeze.
+        working-directory: mcp/noctusai/node
+        run: npm ci --no-audit --no-fund
 
       - name: Prime hermetic state (version stamp + structural caches; zero OpenAI)
         # The suite has tests that assert the STRUCTURAL keeper-mirror caches
