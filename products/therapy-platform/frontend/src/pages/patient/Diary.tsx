@@ -18,7 +18,8 @@ import type { JournalEntry } from '@/types';
 
 export default function Diary() {
   const [page, setPage] = useState(1);
-  const { data, isLoading } = useJournalEntries(page);
+  const { data, isPending } = useJournalEntries(page);
+  const showSkeleton = isPending && !data;
   const createEntry = useCreateJournalEntry();
   const updateEntry = useUpdateJournalEntry();
   const deleteEntry = useDeleteJournalEntry();
@@ -87,7 +88,7 @@ export default function Diary() {
         </Button>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>

@@ -35,7 +35,8 @@ export default function PatientWallet() {
   const [topUpMethod, setTopUpMethod] = useState('card');
   const [withdrawAmount, setWithdrawAmount] = useState('');
 
-  const { data: wallet, isLoading: walletLoading } = useWallet();
+  const { data: wallet, isPending: walletPending } = useWallet();
+  const showWalletSkeleton = walletPending && !wallet;
   const { data: movementsData } = useWalletMovements(movPage, 10);
   const { data: txData } = useTransactions(undefined, txPage, 10);
   const topUp = useTopUp();
@@ -91,7 +92,7 @@ export default function PatientWallet() {
               <div>
                 <p className="text-sm text-muted-foreground">Saldo Disponivel</p>
                 <p className="text-3xl font-bold">
-                  {walletLoading ? '...' : formatCurrency(wallet?.balance ?? 0)}
+                  {showWalletSkeleton ? '...' : formatCurrency(wallet?.balance ?? 0)}
                 </p>
               </div>
             </div>

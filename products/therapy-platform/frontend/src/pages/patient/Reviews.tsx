@@ -53,7 +53,8 @@ export default function PatientReviews() {
   const [editNota, setEditNota] = useState(5);
   const [editComentario, setEditComentario] = useState('');
 
-  const { data, isLoading } = usePatientReviews();
+  const { data, isPending } = usePatientReviews();
+  const showSkeleton = isPending && !data;
   const deleteReview = useDeleteReview();
   const updateReview = useUpdateReview(() => setEditDialogOpen(false));
 
@@ -94,7 +95,7 @@ export default function PatientReviews() {
         </Card>
       )}
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

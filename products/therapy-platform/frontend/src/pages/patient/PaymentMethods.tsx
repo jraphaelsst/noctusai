@@ -41,7 +41,8 @@ export default function PaymentMethods() {
   const [cardCvc, setCardCvc] = useState('');
   const [cardName, setCardName] = useState('');
 
-  const { data: methods, isLoading } = usePaymentMethods();
+  const { data: methods, isPending } = usePaymentMethods();
+  const showSkeleton = isPending && !methods;
   const addMethod = useAddPaymentMethod();
   const removeMethod = useRemovePaymentMethod();
 
@@ -144,7 +145,7 @@ export default function PaymentMethods() {
           </Dialog>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showSkeleton ? (
             <p className="text-sm text-muted-foreground">Carregando...</p>
           ) : !methods || methods.length === 0 ? (
             <div className="text-center py-8">

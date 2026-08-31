@@ -11,10 +11,10 @@ import type { PatientLongitudinal } from '@/types/session';
 const MIN_SESSIONS = 3;
 
 export default function Journey() {
-  const { data: latest, isLoading } = usePatientLongitudinal();
+  const { data: latest, isPending } = usePatientLongitudinal();
   const { data: versions } = usePatientLongitudinalVersions();
 
-  if (isLoading) {
+  if (isPending && !latest) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-gray-400" />

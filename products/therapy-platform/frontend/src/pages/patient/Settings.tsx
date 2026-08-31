@@ -13,7 +13,7 @@ import { useNavigate } from 'react-router-dom';
 
 export default function PatientSettings() {
   const navigate = useNavigate();
-  const { data: settings, isLoading } = usePatientSettings();
+  const { data: settings, isPending } = usePatientSettings();
   const updateSettings = useUpdatePatientSettings();
 
   const s = (settings as Record<string, unknown>) ?? {};
@@ -55,7 +55,7 @@ export default function PatientSettings() {
     updateSettings.mutate(notifications);
   };
 
-  if (isLoading) {
+  if (isPending && !settings) {
     return (
       <div className="container mx-auto p-6 space-y-6">
         <div className="h-8 w-48 bg-muted animate-pulse rounded" />

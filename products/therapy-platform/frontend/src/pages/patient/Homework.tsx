@@ -19,7 +19,8 @@ const STATUS_BADGE: Record<string, { label: string; variant: 'default' | 'second
 
 export default function PatientHomework() {
   const [page, setPage] = useState(1);
-  const { data, isLoading } = useHomeworkList(page);
+  const { data, isPending } = useHomeworkList(page);
+  const showSkeleton = isPending && !data;
   const submitHomework = useSubmitHomework();
 
   const [submitOpen, setSubmitOpen] = useState(false);
@@ -50,7 +51,7 @@ export default function PatientHomework() {
         <p className="text-muted-foreground">Tarefas e atividades atribuidas pelo seu terapeuta</p>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>

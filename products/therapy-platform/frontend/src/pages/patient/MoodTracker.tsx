@@ -17,7 +17,8 @@ const EMOCOES = [
 
 export default function MoodTracker() {
   const [page, setPage] = useState(1);
-  const { data: entriesData, isLoading } = useMoodEntries({ page, page_size: 10 });
+  const { data: entriesData, isPending } = useMoodEntries({ page, page_size: 10 });
+  const showSkeleton = isPending && !entriesData;
   const { data: analytics } = useMoodAnalytics();
   const createMood = useCreateMoodEntry();
 
@@ -158,7 +159,7 @@ export default function MoodTracker() {
           <CardTitle className="text-lg">Historico</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showSkeleton ? (
             <div className="flex h-32 items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>

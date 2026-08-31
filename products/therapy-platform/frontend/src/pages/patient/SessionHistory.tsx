@@ -10,7 +10,8 @@ export default function SessionHistory() {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const pageSize = 10;
-  const { data, isLoading } = useSessionJournal(page, pageSize);
+  const { data, isPending } = useSessionJournal(page, pageSize);
+  const showSkeleton = isPending && !data;
 
   const sessions = data?.data ?? [];
   const total = data?.total ?? 0;
@@ -23,13 +24,13 @@ export default function SessionHistory() {
         <p className="mt-1 text-sm text-gray-500">Historico de sessoes e resumos</p>
       </div>
 
-      {isLoading && (
+      {showSkeleton && (
         <div className="flex h-40 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
         </div>
       )}
 
-      {!isLoading && sessions.length === 0 && (
+      {!isPending && sessions.length === 0 && (
         <div className="flex h-40 items-center justify-center rounded-lg border border-dashed">
           <div className="text-center">
             <FileText className="mx-auto h-8 w-8 text-gray-300" />

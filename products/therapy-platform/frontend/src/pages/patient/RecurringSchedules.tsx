@@ -54,9 +54,10 @@ export default function PatientRecurringSchedules() {
   const [statusFilter, setStatusFilter] = useState<'active' | 'paused' | 'ended' | undefined>(undefined);
   const [changeDialog, setChangeDialog] = useState<RecurringSchedule | null>(null);
 
-  const { data: schedulesData, isLoading } = useRecurringSchedules(
+  const { data: schedulesData, isPending } = useRecurringSchedules(
     statusFilter ? { status: statusFilter } : undefined
   );
+  const showSkeleton = isPending && !schedulesData;
 
   const endRecurring = useEndRecurring();
   const skipOccurrence = useSkipOccurrence();
@@ -101,7 +102,7 @@ export default function PatientRecurringSchedules() {
       </Tabs>
 
       {/* Schedules list */}
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="text-center py-12 text-muted-foreground">Carregando...</div>
       ) : schedules.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">

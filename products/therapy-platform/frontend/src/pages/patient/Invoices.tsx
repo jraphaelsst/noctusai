@@ -14,7 +14,8 @@ const STATUS_BADGE: Record<string, { label: string; variant: 'default' | 'second
 
 export default function PatientInvoices() {
   const [page, setPage] = useState(1);
-  const { data, isLoading } = useInvoices(page);
+  const { data, isPending } = useInvoices(page);
+  const showSkeleton = isPending && !data;
 
   const invoices = data?.data ?? [];
   const total = data?.total ?? 0;
@@ -29,7 +30,7 @@ export default function PatientInvoices() {
         <p className="text-muted-foreground">Recibos e comprovantes das suas sessoes</p>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
