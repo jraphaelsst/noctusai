@@ -19,22 +19,6 @@ export function useRecorrentes(ativo?: boolean) {
   });
 }
 
-export function useProximasContas(dias?: number) {
-  const { user } = useAuthStore();
-
-  return useQuery({
-    queryKey: ["recorrentes", "proximas", dias],
-    queryFn: async () => {
-      const params: { dias?: number } = {};
-      if (dias !== undefined) params.dias = dias;
-      const result = await api.get("/api/recorrentes/proximas", params);
-      return (result.data || []) as Recorrente[];
-    },
-    enabled: !!user,
-    staleTime: 2 * 60 * 1000,
-  });
-}
-
 export function useCreateRecorrente() {
   const queryClient = useQueryClient();
 
