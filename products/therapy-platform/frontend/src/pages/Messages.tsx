@@ -34,7 +34,7 @@ export default function Messages() {
             conversations={conversations}
             selectedId={selectedConversationId ?? undefined}
             onSelect={(id) => setSelectedConversationId(id)}
-            isLoading={showSkeleton}
+            showSkeleton={showSkeleton}
           />
         </div>
       )}

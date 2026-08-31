@@ -42,7 +42,7 @@ export default function AdminSupport() {
             conversations={conversations}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            isLoading={showSkeleton}
+            showSkeleton={showSkeleton}
           />
         </div>
 

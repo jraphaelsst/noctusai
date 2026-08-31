@@ -14,7 +14,7 @@ interface ConversationListProps {
   conversations: Conversation[];
   selectedId?: string;
   onSelect: (id: string) => void;
-  isLoading?: boolean;
+  showSkeleton?: boolean;
 }
 
 function formatRelativeTime(dateStr?: string): string {
@@ -47,7 +47,7 @@ const FILTER_TABS: { value: ConversationFilter; label: string }[] = [
   { value: 'suporte', label: 'Suporte' },
 ];
 
-export function ConversationList({ conversations, selectedId, onSelect, isLoading }: ConversationListProps) {
+export function ConversationList({ conversations, selectedId, onSelect, showSkeleton }: ConversationListProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<ConversationFilter>('todas');
   const [newConvOpen, setNewConvOpen] = useState(false);
@@ -126,9 +126,9 @@ export function ConversationList({ conversations, selectedId, onSelect, isLoadin
       {/* Conversation items */}
       <ScrollArea className="flex-1">
         {/* Belt-and-braces: refuse to skeleton once real rows exist,
-            independent of how carefully the caller computed `isLoading`.
+            independent of how carefully the caller computed `showSkeleton`.
             Per `KB § PATTERNS/frontend/lying-loading-state.md`. */}
-        {isLoading && conversations.length === 0 ? (
+        {showSkeleton && conversations.length === 0 ? (
           <div className="space-y-2 p-3">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="flex items-center gap-3 p-3 animate-pulse">
