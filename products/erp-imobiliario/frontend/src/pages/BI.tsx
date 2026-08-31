@@ -35,6 +35,7 @@ import {
 import { TrendingUp, Users, Building2, DollarSign, Target } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 import { TableSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import {
   useBIVendas,
   useBICaptacao,
@@ -72,11 +73,24 @@ export default function BI() {
     periodo_fim: periodoFim || undefined,
   };
 
-  const { data: vendas, isLoading: loadingVendas } = useBIVendas(filtrosPeriodo);
-  const { data: captacao, isLoading: loadingCaptacao } = useBICaptacao();
-  const { data: corretores, isLoading: loadingCorretores } = useBICorretores(periodoCorretores);
-  const { data: imoveis, isLoading: loadingImoveis } = useBIImoveis();
-  const { data: financeiro, isLoading: loadingFinanceiro } = useBIFinanceiro(filtrosPeriodo);
+  const vendasQuery = useBIVendas(filtrosPeriodo);
+  const captacaoQuery = useBICaptacao();
+  const corretoresQuery = useBICorretores(periodoCorretores);
+  const imoveisQuery = useBIImoveis();
+  const financeiroQuery = useBIFinanceiro(filtrosPeriodo);
+  const { data: vendas } = vendasQuery;
+  const { data: captacao } = captacaoQuery;
+  const { data: corretores } = corretoresQuery;
+  const { data: imoveis } = imoveisQuery;
+  const { data: financeiro } = financeiroQuery;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md. Each gates both the
+  // top summary cards (via SummaryValue) and the chart-skeleton below it.
+  const loadingVendas = vendasQuery.isPending && !vendasQuery.data;
+  const loadingCaptacao = captacaoQuery.isPending && !captacaoQuery.data;
+  const loadingCorretores = corretoresQuery.isPending && !corretoresQuery.data;
+  const loadingImoveis = imoveisQuery.isPending && !imoveisQuery.data;
+  const loadingFinanceiro = financeiroQuery.isPending && !financeiroQuery.data;
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-6">
@@ -137,7 +151,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {vendas?.total_vendas ?? 0}
+                  <SummaryValue notArrived={loadingVendas}>{vendas?.total_vendas ?? 0}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -149,7 +163,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {formatCurrency(vendas?.ticket_medio ?? 0)}
+                  <SummaryValue notArrived={loadingVendas}>{formatCurrency(vendas?.ticket_medio ?? 0)}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -161,7 +175,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {(vendas?.taxa_conversao ?? 0).toFixed(1)}%
+                  <SummaryValue notArrived={loadingVendas}>{(vendas?.taxa_conversao ?? 0).toFixed(1)}%</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -173,7 +187,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {vendas?.tempo_medio_dias ?? 0}
+                  <SummaryValue notArrived={loadingVendas}>{vendas?.tempo_medio_dias ?? 0}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -217,7 +231,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {captacao?.total_leads ?? 0}
+                  <SummaryValue notArrived={loadingCaptacao}>{captacao?.total_leads ?? 0}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -229,7 +243,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {(captacao?.taxa_conversao ?? 0).toFixed(1)}%
+                  <SummaryValue notArrived={loadingCaptacao}>{(captacao?.taxa_conversao ?? 0).toFixed(1)}%</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -385,7 +399,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {imoveis?.total_ativos ?? 0}
+                  <SummaryValue notArrived={loadingImoveis}>{imoveis?.total_ativos ?? 0}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -397,7 +411,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {imoveis?.media_dias_mercado ?? 0}
+                  <SummaryValue notArrived={loadingImoveis}>{imoveis?.media_dias_mercado ?? 0}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -409,7 +423,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">
-                  {formatCurrency(imoveis?.preco_m2_medio ?? 0)}
+                  <SummaryValue notArrived={loadingImoveis}>{formatCurrency(imoveis?.preco_m2_medio ?? 0)}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -490,7 +504,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-green-600">
-                  {formatCurrency(financeiro?.receita_total ?? 0)}
+                  <SummaryValue notArrived={loadingFinanceiro}>{formatCurrency(financeiro?.receita_total ?? 0)}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -502,7 +516,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-red-600">
-                  {formatCurrency(financeiro?.despesa_total ?? 0)}
+                  <SummaryValue notArrived={loadingFinanceiro}>{formatCurrency(financeiro?.despesa_total ?? 0)}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -514,7 +528,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className={`text-2xl font-bold ${(financeiro?.saldo ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {formatCurrency(financeiro?.saldo ?? 0)}
+                  <SummaryValue notArrived={loadingFinanceiro}>{formatCurrency(financeiro?.saldo ?? 0)}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
@@ -526,7 +540,7 @@ export default function BI() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-blue-600">
-                  {formatCurrency(financeiro?.previsao_receita ?? 0)}
+                  <SummaryValue notArrived={loadingFinanceiro}>{formatCurrency(financeiro?.previsao_receita ?? 0)}</SummaryValue>
                 </div>
               </CardContent>
             </Card>
