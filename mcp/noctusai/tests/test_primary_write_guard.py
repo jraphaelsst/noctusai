@@ -798,3 +798,225 @@ def test_strip_redirections_consumes_only_what_it_should():
     assert _strip_redirections(["origin/dev", "HEAD~3", "-–hard"]) == [
         "origin/dev", "HEAD~3", "-–hard"
     ]
+
+
+# ── a redirect token read as a path — every command branch, not just git
+# (2026-08-31) ───────────────────────────────────────────────────────────
+#
+# 🔴 THE SHARPEST FALSE POSITIVE. `rm -rf .claude/worktrees/p-studio-absorption
+# 2>&1` was REFUSED, and the refusal named `('2>&1')` as the target: `_tokens`
+# is `shlex.split`, which does not know `2>&1` is a redirect, and the
+# `_ALWAYS_WRITE`/`sed -i` branches filtered candidates with `_looks_like_path`
+# alone — a token with no leading `-` and no `=`, which `2>&1` satisfies. The
+# path being removed WAS gitignored (`.claude/worktrees/` — `.gitignore:72`)
+# and should have hit the `_git_ignores` exemption; it never got the chance
+# because the bogus `2>&1` "target" was evaluated instead. Proof it is the
+# token alone: the identical command WITHOUT the redirect passed immediately
+# (`ef6f7aa1` had already fixed this for the two GIT-specific call sites —
+# `_is_ledger_only_git`, `_is_sync_to_remote_git` — but never for the generic
+# `_ALWAYS_WRITE`/`sed` argument reading every OTHER write command goes
+# through).
+
+def test_a_redirect_operator_is_not_read_as_the_rm_target():
+    """The exact incident. `bash_write_targets` must name only the real path —
+    proves the fix at the parser level, independent of the ignore probe."""
+    targets, uncertain = bash_write_targets(
+        f"rm -rf {PRIMARY}/.claude/worktrees/p-studio-absorption 2>&1", PRIMARY
+    )
+    assert targets == [f"{PRIMARY}/.claude/worktrees/p-studio-absorption"]
+    assert uncertain is False
+
+
+def test_a_gitignored_rm_target_with_a_trailing_redirect_is_ALLOWED(monkeypatch):
+    """The end-to-end shape: once the bogus token is gone, the existing
+    `_git_ignores` exemption gets the chance it never had."""
+    import tools.noctus.dev.primary_write_guard as guard
+
+    monkeypatch.setattr(
+        guard, "_run_git_rc", _ctx_with_ignore({f"{PRIMARY}/.claude/worktrees"})
+    )
+    assert _decide(
+        "Bash",
+        {"command": f"rm -rf {PRIMARY}/.claude/worktrees/p-studio-absorption 2>&1"},
+    ) is None
+
+
+def test_a_TRACKED_rm_target_with_a_trailing_redirect_is_STILL_refused(monkeypatch):
+    """The refusal side must survive the redirect too — this is what proves the
+    fix did not just make `_ALWAYS_WRITE` permissive."""
+    import tools.noctus.dev.primary_write_guard as guard
+
+    monkeypatch.setattr(guard, "_run_git_rc", _ctx_with_ignore(set()))
+    verdict = _decide("Bash", {"command": f"rm -rf {PRIMARY}/CLAUDE.md 2>&1"})
+    assert verdict is not None
+    assert verdict["targets"] == [f"{PRIMARY}/CLAUDE.md"]
+
+
+def test_the_redirect_operator_family_is_not_read_as_a_path():
+    """`2>&1`, `>`, `>>`, `2>`, `&>`, `<` — bare or fused, none of them may
+    survive into the candidate-path list `_ALWAYS_WRITE`/`sed` read AS THE
+    RM TARGET. `2>&1` names no file (fd duplication) and `< in.txt` reads
+    rather than writes, so `scratch` is the only target for those. `> out`,
+    `>> out`, `2> err`, `&> both` really do write a second file — that one is
+    still caught, correctly, by the OTHER leg (`_redirect_targets` scanning
+    the whole command); this test's point is that neither operator is ever
+    mistaken for `rm`'s own argument."""
+    only_scratch = ("2>&1", "< in.txt")
+    scratch_plus_real_write = {
+        "> out.txt": "out.txt",
+        ">> out.txt": "out.txt",
+        "2> err.txt": "err.txt",
+        "&> both.log": "both.log",
+    }
+    for suffix in only_scratch:
+        targets, _ = bash_write_targets(f"rm -rf {PRIMARY}/scratch {suffix}", PRIMARY)
+        assert targets == [f"{PRIMARY}/scratch"], suffix
+    for suffix, real_file in scratch_plus_real_write.items():
+        targets, _ = bash_write_targets(f"rm -rf {PRIMARY}/scratch {suffix}", PRIMARY)
+        # Redirect targets are collected before the per-command argument scan.
+        assert targets == [f"{PRIMARY}/{real_file}", f"{PRIMARY}/scratch"], suffix
+
+
+def test_sed_i_with_a_trailing_redirect_names_only_the_real_file():
+    """Same defect, the other affected branch: `sed -i` also filtered its
+    positional file list with `_looks_like_path` alone."""
+    targets, uncertain = bash_write_targets(
+        f"sed -i '' 's/a/b/' {PRIMARY}/CLAUDE.md 2>&1", PRIMARY
+    )
+    assert targets == [f"{PRIMARY}/CLAUDE.md"]
+    assert uncertain is False
+
+
+# ── a git sub-verb that only reads, on a write-capable subcommand
+# (2026-08-31) ─────────────────────────────────────────────────────────────
+#
+# `stash` is correctly in `_GIT_WRITE_SUBCOMMANDS` — a bare `git stash` (or
+# `push`/`pop`/`apply`/`drop`) writes. But the guard never looked at the
+# SUB-subcommand, so `git stash list` / `git stash show` — pure reads, no
+# different in kind from `git log` — were refused too. Audited over every
+# member of `_GIT_WRITE_SUBCOMMANDS` for the same shape: `git clean -n`
+# (dry run), `git rm -n` / `git mv -n` (dry run), `git apply --check`
+# (validate only), and `-h`/`--help` on any of them (prints usage, does
+# nothing) all had the identical defect.
+
+def test_git_stash_list_and_show_are_reads():
+    for cmd in ("git stash list", "git stash list --oneline", "git stash show", "git stash show -p"):
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is None, cmd
+
+
+def test_git_stash_writing_subverbs_are_still_refused():
+    """The audit must not widen `stash` itself — only its READ sub-verbs."""
+    for cmd in ("git stash", "git stash push", "git stash pop", "git stash apply", "git stash drop"):
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None, cmd
+
+
+def test_git_clean_dry_run_is_a_read():
+    for cmd in ("git clean -n", "git clean --dry-run", "git clean -n -fd"):
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is None, cmd
+
+
+def test_git_clean_without_dry_run_is_still_refused():
+    assert _decide("Bash", {"command": "git clean -fd"}, cwd=PRIMARY) is not None
+
+
+def test_git_rm_and_mv_dry_run_are_reads():
+    for cmd in ("git rm -n CLAUDE.md", "git rm --dry-run CLAUDE.md", "git mv -n a b"):
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is None, cmd
+
+
+def test_git_rm_and_mv_without_dry_run_are_still_refused():
+    assert _decide("Bash", {"command": "git rm CLAUDE.md"}, cwd=PRIMARY) is not None
+    assert _decide("Bash", {"command": "git mv a b"}, cwd=PRIMARY) is not None
+
+
+def test_git_apply_check_is_a_read():
+    assert _decide("Bash", {"command": "git apply --check x.patch"}, cwd=PRIMARY) is None
+
+
+def test_git_apply_without_check_is_still_refused():
+    assert _decide("Bash", {"command": "git apply x.patch"}, cwd=PRIMARY) is not None
+
+
+def test_help_on_any_write_subcommand_is_a_read():
+    for cmd in ("git commit -h", "git reset --help", "git checkout -h", "git stash -h"):
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is None, cmd
+
+
+# ── `-C <primary>` targets for TARGETING, never for write-intent by itself
+# (2026-08-31) ──────────────────────────────────────────────────────────────
+#
+# `-C <path>` says WHERE a git subcommand runs, not WHETHER it writes. Reads
+# (`status`, `diff --stat`, `log`, `rev-list`) were never members of
+# `_GIT_WRITE_SUBCOMMANDS`, so `-C` pointing them at the primary was already
+# correctly allowed by the `-C` extraction this module has shipped with since
+# the guard's first commit (`e2ae1201`) — verified against current HEAD before
+# writing these; they do NOT reproduce a bug today. Pinned anyway as a
+# regression test, since `-C` targeting is the exact mechanism the guard's own
+# WRITE leg (`git -C <primary> commit`, tested below and pre-existing) relies
+# on, and a future change to that extraction must not silently start treating
+# `-C`'s mere presence as write intent.
+
+def test_a_read_subcommand_via_dash_C_into_the_primary_stays_allowed():
+    for cmd in (
+        f"git -C {PRIMARY} status",
+        f"git -C {PRIMARY} status --short",
+        f"git -C {PRIMARY} diff --stat",
+        f"git -C {PRIMARY} log --oneline -5",
+        f"git -C {PRIMARY} rev-list HEAD",
+    ):
+        assert _decide("Bash", {"command": cmd}, cwd=WT) is None, cmd
+
+
+def test_a_write_subcommand_via_dash_C_into_the_primary_is_still_refused():
+    """The other half of the same guarantee, already covered once above
+    (`test_git_dash_c_into_the_primary_is_caught`) — pinned again alongside its
+    read-side sibling so the two live next to each other."""
+    for cmd in (
+        f"git -C {PRIMARY} commit -am wip",
+        f"git -C {PRIMARY} reset --hard HEAD~1",
+        f"git -C {PRIMARY} checkout -b feat/x",
+    ):
+        assert _decide("Bash", {"command": cmd}, cwd=WT) is not None, cmd
+
+
+# ── the must-still-refuse list, confirmed together (2026-08-31) ───────────
+#
+# Every false-positive fix above touches shared parsing (`_strip_redirections`
+# now runs on every command branch, not just git's; a new `_is_read_only_git`
+# gate sits in front of every `_GIT_WRITE_SUBCOMMANDS` member). This is the
+# single place that re-asserts none of it leaked into the refusal side.
+
+def test_the_must_still_refuse_list_is_intact():
+    """`git merge` is deliberately absent from this list: `_GIT_WRITE_SUBCOMMANDS`
+    excludes it BY NAME (see that constant's own docstring) because integrating
+    the primary checkout on `dev` is the orchestrator's actual job — pinned
+    since the guard's first commit by
+    `test_the_orchestrators_own_git_duties_are_exempt_by_name`. Pre-existing,
+    untouched by this pass; listing it here would contradict the guard's own
+    established design rather than test it."""
+    for cmd in (
+        "git commit -am wip",
+        "git rebase origin/dev",
+        "git reset --hard HEAD~1",
+        "git checkout dev",
+        "git switch dev",
+        "git restore .",
+        "git clean -fd",
+        "git stash",
+        "git stash push",
+        "git stash pop",
+        "git stash apply",
+        "git stash drop",
+        "rm -rf CLAUDE.md",
+        "mv CLAUDE.md x.md",
+        "sed -i '' 's/a/b/' CLAUDE.md",
+    ):
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None, cmd
+    assert _decide("Edit", {"file_path": f"{PRIMARY}/CLAUDE.md"}) is not None
+    assert _decide("Write", {"file_path": f"{PRIMARY}/x.py"}) is not None
+
+
+def test_git_pull_stays_allowed():
+    """Deliberately absent from `_GIT_WRITE_SUBCOMMANDS` — the documented
+    remedy for primary/origin divergence, not a work write."""
+    assert _decide("Bash", {"command": "git pull --ff-only"}, cwd=PRIMARY) is None

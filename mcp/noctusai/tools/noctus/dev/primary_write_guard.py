@@ -107,6 +107,54 @@ _GIT_WRITE_SUBCOMMANDS = {
     "checkout", "switch", "restore", "stash", "clean", "mv", "rm",
 }
 
+#: `<subcommand> <first-non-flag-token>` pairs that are READS despite `sub`
+#: living in `_GIT_WRITE_SUBCOMMANDS` above. `stash` bare/`push` writes, but
+#: `stash list`/`stash show` only print — verified 2026-08-31 against
+#: `git stash -h`, which lists these as the read-only sub-verbs.
+_GIT_READ_ONLY_SUBVERBS = {
+    "stash": {"list", "show"},
+}
+
+#: Flags that turn an otherwise write-capable subcommand into a dry run —
+#: verified 2026-08-31 against each command's own `-h`: `git rm -n`,
+#: `git mv -n`, `git clean -n` all print `dry run` in their own help text;
+#: `git apply --check` "instead of applying the patch, see if it applies".
+#: Audited over every member of `_GIT_WRITE_SUBCOMMANDS`; the rest
+#: (`commit`, `add`, `am`, `cherry-pick`, `revert`, `rebase`, `reset`,
+#: `checkout`, `switch`, `restore`) have no such flag, so they are absent
+#: rather than silently assumed safe.
+_GIT_DRY_RUN_FLAGS = {
+    "clean": {"-n", "--dry-run"},
+    "rm": {"-n", "--dry-run"},
+    "mv": {"-n", "--dry-run"},
+    "apply": {"--check"},
+}
+
+#: `-h`/`--help` on ANY write-capable subcommand prints usage and exits
+#: without touching the tree — true for every git subcommand, not just the
+#: ones enumerated above, so this is checked independently of `sub`.
+_HELP_FLAGS = {"-h", "--help"}
+
+
+def _is_read_only_git(sub: str, rest: Sequence[str]) -> bool:
+    """Is `git <sub> …` a READ despite `sub` being write-capable in general?
+
+    Two shapes, both audited off `_GIT_WRITE_SUBCOMMANDS` itself rather than
+    hardcoded to the one instance that got reported (`git stash list`,
+    2026-08-31): a SUB-verb that only prints, and a flag that turns an
+    otherwise-mutating verb into a dry run or a help screen.
+    """
+    if _HELP_FLAGS & set(rest):
+        return True
+    tail = rest[rest.index(sub) + 1:] if sub in rest else []
+    subverb = next((a for a in tail if not a.startswith("-")), "")
+    if subverb in _GIT_READ_ONLY_SUBVERBS.get(sub, set()):
+        return True
+    if _GIT_DRY_RUN_FLAGS.get(sub, set()) & set(tail):
+        return True
+    return False
+
+
 #: Redirection targets that are sinks, not files.
 _SINKS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
 
@@ -585,6 +633,19 @@ def _strip_redirections(tokens: Sequence[str]) -> list[str]:
 
     A bare operator (`… > out.txt`) also consumes the token after it; a fused
     one (`>out.txt`, `2>&1`) carries its own operand and consumes nothing.
+
+    🔴 EXTENDED TO EVERY COMMAND-READING BRANCH (2026-08-31). The three call
+    sites below were the git-specific instance; the identical defect lived,
+    unfixed, in every OTHER branch of `bash_write_targets` that reads
+    positional args (`sed -i`'s file list, `_ALWAYS_WRITE`'s candidates) — all
+    of them also just `shlex.split` a segment and then filter by
+    `_looks_like_path`, which does not know `2>&1` is not a path either. Fixed
+    once, at the single `args = tokens[1:]` assignment `bash_write_targets`
+    shares across every branch, rather than per-branch: confirmed on
+    `rm -rf .claude/worktrees/<slug> 2>&1`, refused because the guard read
+    `2>&1` itself as the rm target — the SAME command without the trailing
+    redirect passed immediately, and the path being removed was gitignored
+    scratch the whole time.
     """
     out: list[str] = []
     skip_next = False
@@ -829,7 +890,21 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
         if not tokens:
             continue
         name = os.path.basename(tokens[0])
-        args = tokens[1:]
+        # `_tokens` is `shlex.split`, which knows nothing about redirection:
+        # `rm -rf x/ 2>&1` tokenizes `2>&1` as an ordinary trailing argument,
+        # and every branch below that reads POSITIONAL args (`sed`'s files,
+        # `_ALWAYS_WRITE`'s candidates) then saw it and read it as a PATH —
+        # `_looks_like_path('2>&1')` is True, so the guard resolved a file
+        # named `2>&1` under the cwd and refused on it. `bash_write_targets`
+        # already strips redirections before reading `git`'s positional refs
+        # (see `_strip_redirections`'s own docstring for the git-side version
+        # of this bug, fixed 2026-08-27); every other command-reading branch
+        # had the identical defect, unfixed, until 2026-08-31 — confirmed on
+        # `rm -rf .claude/worktrees/<slug> 2>&1`, which the SAME command
+        # without the redirect passed immediately. The actual file write is
+        # still caught: `_redirect_targets` above scans the WHOLE command for
+        # every real redirect independent of this per-command arg reading.
+        args = _strip_redirections(tokens[1:])
 
         if name == "sed":
             if any(a == "-i" or a.startswith("-i") for a in args):
@@ -854,6 +929,12 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
                     rest = rest[:idx] + rest[idx + 2:]
             sub = next((a for a in rest if not a.startswith("-")), "")
             if sub in _GIT_WRITE_SUBCOMMANDS:
+                if _is_read_only_git(sub, rest):
+                    # `git stash list`, `git clean -n`, `git apply --check`,
+                    # `git <anything> -h` — the sub-verb/flag makes this
+                    # invocation a READ despite `sub` itself being
+                    # write-capable in general. See `_is_read_only_git`.
+                    continue
                 if _is_sync_to_remote_git(sub, rest, sub_cwd):
                     # Re-syncing the primary to its remote is the orchestrator's
                     # job, not a write of work — see the function's docstring for
