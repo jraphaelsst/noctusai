@@ -124,7 +124,7 @@ beforeEach(() => {
 
   mockUseWhatsAppConnections.mockReturnValue({
     data: [makeConn()],
-    isLoading: false,
+    isPending: false,
     isError: false,
   });
   mockUseWhatsAppConnectionMutations.mockReturnValue({
@@ -150,19 +150,19 @@ function getSubtab(key: string) {
 
 describe("WhatsAppChat — connection states", () => {
   it("shows loading spinner while connections load", async () => {
-    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: true, isError: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: true, isError: false });
     const { getByText } = await renderPage();
     expect(getByText("Carregando conexões...")).toBeTruthy();
   });
 
   it("shows an error message when connections fail to load", async () => {
-    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: true });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: false, isError: true });
     const { getByText } = await renderPage();
     expect(getByText("Erro ao carregar conexões. Recarregue a página.")).toBeTruthy();
   });
 
   it("shows empty state (no shell) when no connections exist, with a link to /conexoes", async () => {
-    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: false, isError: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: false, isError: false });
     const { getByText } = await renderPage();
     expect(getByText("Nenhuma conexão WhatsApp")).toBeTruthy();
     expect(getByText("Conexões")).toBeTruthy();
@@ -184,7 +184,7 @@ describe("WhatsAppChat — connection selector", () => {
   it("renders one button per connection in the accountSwitcher slot", async () => {
     mockUseWhatsAppConnections.mockReturnValue({
       data: [makeConn({ id: "c1", label: "SP" }), makeConn({ id: "c2", label: "RJ" })],
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { rtl } = await renderPage();
@@ -196,7 +196,7 @@ describe("WhatsAppChat — connection selector", () => {
   it("switching connections re-points both subtabs", async () => {
     mockUseWhatsAppConnections.mockReturnValue({
       data: [makeConn({ id: "c1", label: "SP" }), makeConn({ id: "c2", label: "RJ" })],
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { rtl } = await renderPage();
@@ -221,7 +221,7 @@ describe("WhatsAppChat — deep-link default selection", () => {
     mockActiveAccountState.activeAccountId = "c2";
     mockUseWhatsAppConnections.mockReturnValue({
       data: [makeConn({ id: "c1", label: "SP" }), makeConn({ id: "c2", label: "RJ" })],
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     await renderPage();
@@ -232,7 +232,7 @@ describe("WhatsAppChat — deep-link default selection", () => {
     mockActiveAccountState.activeAccountId = "some-other-provider-account";
     mockUseWhatsAppConnections.mockReturnValue({
       data: [makeConn({ id: "c1", label: "SP" })],
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     await renderPage();
@@ -244,7 +244,7 @@ describe("WhatsAppChat — Chat subtab", () => {
   it("renders WhatsAppChatWindow with the selected connection's id and auto_reply_enabled", async () => {
     mockUseWhatsAppConnections.mockReturnValue({
       data: [makeConn({ id: "conn-9", auto_reply_enabled: true })],
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { rtl } = await renderPage();
@@ -257,7 +257,7 @@ describe("WhatsAppChat — Chat subtab", () => {
 describe("WhatsAppChat — Configurações subtab", () => {
   it("renders ConnectionSettingsPanel with the selected connection's full line", async () => {
     const conn = makeConn({ id: "conn-9", label: "Atendimento RJ" });
-    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isLoading: false, isError: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isPending: false, isError: false });
     const { rtl } = await renderPage();
     rtl.render(getSubtab("config").render());
     expect(lastConfigPanelProps.line).toEqual(conn);
@@ -265,7 +265,7 @@ describe("WhatsAppChat — Configurações subtab", () => {
 
   it("onRequestDelete opens the inline confirm dialog; confirming calls the remove mutation", async () => {
     const conn = makeConn({ id: "conn-9", label: "Atendimento RJ" });
-    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isLoading: false, isError: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [conn], isPending: false, isError: false });
     const mutate = vi.fn();
     mockUseWhatsAppConnectionMutations.mockReturnValue({ remove: { mutate, isPending: false } });
 

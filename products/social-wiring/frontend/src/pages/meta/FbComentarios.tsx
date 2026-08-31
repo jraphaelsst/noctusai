@@ -39,7 +39,12 @@ import {
 } from "./FbPageSelect";
 
 function CommentsList({ accountId, postId }: { accountId: string; postId: string }) {
-  const { data, isLoading, isError } = useFbComments(accountId, postId);
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this comment list on every background refresh.
+  // No `placeholderData` — `postId` is part of the key, and reusing a
+  // different post's comments while switching posts would show them
+  // under the wrong post. → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data, isPending, isError } = useFbComments(accountId, postId);
   const reply = useFbReplyComment(accountId, postId);
   const hide = useFbHideComment(accountId, postId);
   const del = useFbDeleteComment(accountId, postId);
@@ -51,7 +56,7 @@ function CommentsList({ accountId, postId }: { accountId: string; postId: string
     (del.data && isAppReviewGate(del.data) && del.data) ||
     null;
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="space-y-2" data-testid="fb-comments-loading">
         {Array.from({ length: 3 }).map((_, i) => (
@@ -140,13 +145,17 @@ function CommentsList({ accountId, postId }: { accountId: string; postId: string
 
 export default function FbComentarios() {
   const accountId = useActiveMetaAccountId();
-  const { data: context, isLoading: contextLoading, isError: contextError } = useFbPages(accountId);
+  // `isPending`, not `isLoading` — the AST scanner tracks bare
+  // `.isLoading`/direct-name destructures; this destructure-RENAME
+  // (`isLoading: contextLoading`) is the same banned shape, caught by
+  // manual review, not the detector. → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data: context, isPending: contextPending, isError: contextError } = useFbPages(accountId);
   const [pageId, setPageId] = useState<string | null>(null);
 
   const pages = context?.pages ?? [];
   const resolvedPageId = pageId ?? (pages[0]?.id ?? null);
 
-  const { data: postsData, isLoading: postsLoading, isError: postsError } = useFbPosts(
+  const { data: postsData, isPending: postsPending, isError: postsError } = useFbPosts(
     accountId,
     resolvedPageId,
   );
@@ -169,7 +178,7 @@ export default function FbComentarios() {
     );
   }
 
-  if (contextLoading) return <FbContextLoading />;
+  if (contextPending) return <FbContextLoading />;
   if (contextError) return <FbContextError />;
   if (pages.length === 0) return <FbNoPages />;
 
@@ -178,7 +187,7 @@ export default function FbComentarios() {
       <CardHeader className="space-y-3">
         <CardTitle>Comentários por publicação</CardTitle>
         <FbPageSelect accountId={accountId} pages={pages} selectedId={pageId} onSelect={setPageId} />
-        {postsLoading ? (
+        {postsPending ? (
           <Skeleton className="h-10 w-64" />
         ) : postsError ? (
           <div className="flex items-center gap-2 text-sm text-destructive">

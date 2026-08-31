@@ -444,7 +444,10 @@ export function WorkflowsPanel() {
     );
   }
 
-  if (clientQuery.isLoading) {
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this list on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  if (clientQuery.isPending) {
     return (
       <div className="space-y-2">
         {[1, 2, 3].map((i) => (

@@ -36,7 +36,12 @@ function CommentsList({
   accountId: string;
   mediaId: string;
 }) {
-  const { data, isLoading, isError } = useIgComments(accountId, mediaId);
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this comment list on every background refresh.
+  // No `placeholderData` — `mediaId` is part of the key, and reusing a
+  // different post's comments while switching posts would show them
+  // under the wrong post. → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data, isPending, isError } = useIgComments(accountId, mediaId);
   const reply = useIgReplyComment(accountId, mediaId);
   const hide = useIgHideComment(accountId, mediaId);
   const del = useIgDeleteComment(accountId, mediaId);
@@ -48,7 +53,7 @@ function CommentsList({
     (del.data && isAppReviewGate(del.data) && del.data) ||
     null;
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="space-y-2" data-testid="ig-comments-loading">
         {Array.from({ length: 3 }).map((_, i) => (
@@ -148,7 +153,8 @@ function CommentsList({
 
 export default function IgComentarios() {
   const accountId = useActiveMetaAccountId();
-  const { data, isLoading, isError } = useIgMedia(accountId, 25);
+  // `isPending`, not `isLoading` — same rule, media-list fetch.
+  const { data, isPending, isError } = useIgMedia(accountId, 25);
   const media = data?.media ?? [];
   const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null);
 
@@ -175,7 +181,7 @@ export default function IgComentarios() {
     <Card>
       <CardHeader className="space-y-3">
         <CardTitle>Comentários por post</CardTitle>
-        {isLoading ? (
+        {isPending ? (
           <Skeleton className="h-10 w-64" />
         ) : isError ? (
           <div className="flex items-center gap-2 text-sm text-destructive">

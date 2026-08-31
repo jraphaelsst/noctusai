@@ -97,7 +97,12 @@ function ConversationRow({
 }
 
 function DetailPanel({ sessionId }: { sessionId: string }) {
-  const { data, isLoading } = useIntakeConversation(sessionId);
+  // NOT `isLoading` — banned per KB § PATTERNS/frontend/lying-loading-state.md.
+  // `!data` alone already IS the correct "nothing to render yet" signal
+  // (undefined until first resolve, then persists); this endpoint also
+  // polls every 5s, so a bare `isFetching` here would have re-blanked the
+  // detail panel on every poll tick — `!data` never does.
+  const { data } = useIntakeConversation(sessionId);
   const cancel = useCancelConversation();
 
   const onCancel = () =>
@@ -110,7 +115,7 @@ function DetailPanel({ sessionId }: { sessionId: string }) {
         toast.error(e?.message ?? "Falha ao cancelar"),
     });
 
-  if (isLoading || !data) {
+  if (!data) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -210,7 +215,10 @@ function DetailPanel({ sessionId }: { sessionId: string }) {
 }
 
 export default function MonitorPage() {
-  const { data: conversations, isLoading, refetch } = useIntakeConversations();
+  // `isPending`, not `isLoading` — same polling reasoning as above: this
+  // list also refetches every 5s, so the gate below must stay FALSE
+  // after the first successful load, never re-fire on a poll tick.
+  const { data: conversations, isPending, refetch } = useIntakeConversations();
   const [selected, setSelected] = useState<string | null>(null);
 
   return (
@@ -239,7 +247,7 @@ export default function MonitorPage() {
               </CardDescription>
             </CardHeader>
             <Separator />
-            {isLoading ? (
+            {isPending ? (
               <div className="flex items-center justify-center p-10">
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               </div>

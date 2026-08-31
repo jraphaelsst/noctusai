@@ -159,10 +159,13 @@ function PublishForm({ accountId, pageId }: { accountId: string; pageId: string 
 }
 
 function PostsList({ accountId, pageId }: { accountId: string; pageId: string }) {
-  const { data, isLoading, isError } = useFbPosts(accountId, pageId);
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this posts list on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data, isPending, isError } = useFbPosts(accountId, pageId);
   const posts = data?.posts ?? [];
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="space-y-2" data-testid="fb-posts-loading">
         {Array.from({ length: 3 }).map((_, i) => (
@@ -206,7 +209,8 @@ function PostsList({ accountId, pageId }: { accountId: string; pageId: string })
 
 export default function FbConteudo() {
   const accountId = useActiveMetaAccountId();
-  const { data: context, isLoading, isError } = useFbPages(accountId);
+  // `isPending`, not `isLoading` — same rule, page-context fetch.
+  const { data: context, isPending, isError } = useFbPages(accountId);
   const [pageId, setPageId] = useState<string | null>(null);
 
   if (!accountId) {
@@ -219,7 +223,7 @@ export default function FbConteudo() {
     );
   }
 
-  if (isLoading) return <FbContextLoading />;
+  if (isPending) return <FbContextLoading />;
   if (isError) return <FbContextError />;
 
   const pages = context?.pages ?? [];

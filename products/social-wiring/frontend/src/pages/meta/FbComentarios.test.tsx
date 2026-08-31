@@ -68,15 +68,15 @@ function setDefaults() {
   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
   mockUseMetaContext.mockReturnValue({
     data: { instagram: null, pages: [{ id: "page-1", name: "Minha Página" }], user: null },
-    isLoading: false,
+    isPending: false,
     isError: false,
   });
   mockUseFbPosts.mockReturnValue({
     data: { posts: [{ id: "post-1", message: "publicação 1" }] },
-    isLoading: false,
+    isPending: false,
     isError: false,
   });
-  mockUseFbComments.mockReturnValue({ data: { comments: [] }, isLoading: false, isError: false });
+  mockUseFbComments.mockReturnValue({ data: { comments: [] }, isPending: false, isError: false });
   mockUseFbReplyComment.mockReturnValue(noopMutation());
   mockUseFbHideComment.mockReturnValue(noopMutation());
   mockUseFbDeleteComment.mockReturnValue(noopMutation());
@@ -103,7 +103,7 @@ describe("FbComentarios — no pages", () => {
   it("shows the no-pages state", async () => {
     mockUseMetaContext.mockReturnValue({
       data: { instagram: null, pages: [], user: null },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { getByTestId } = await renderPage();
@@ -113,7 +113,7 @@ describe("FbComentarios — no pages", () => {
 
 describe("FbComentarios — no posts", () => {
   it("shows the no-posts message", async () => {
-    mockUseFbPosts.mockReturnValue({ data: { posts: [] }, isLoading: false, isError: false });
+    mockUseFbPosts.mockReturnValue({ data: { posts: [] }, isPending: false, isError: false });
     const { getByTestId } = await renderPage();
     expect(getByTestId("fb-comments-no-posts")).toBeTruthy();
   });
@@ -121,13 +121,13 @@ describe("FbComentarios — no posts", () => {
 
 describe("FbComentarios — comments list states", () => {
   it("renders a loading state", async () => {
-    mockUseFbComments.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    mockUseFbComments.mockReturnValue({ data: undefined, isPending: true, isError: false });
     const { getByTestId } = await renderPage();
     expect(getByTestId("fb-comments-loading")).toBeTruthy();
   });
 
   it("renders an error state", async () => {
-    mockUseFbComments.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    mockUseFbComments.mockReturnValue({ data: undefined, isPending: false, isError: true });
     const { getByTestId } = await renderPage();
     expect(getByTestId("fb-comments-error")).toBeTruthy();
   });
@@ -140,7 +140,7 @@ describe("FbComentarios — comments list states", () => {
   it("renders the comments list on success and replies", async () => {
     mockUseFbComments.mockReturnValue({
       data: { comments: [{ id: "c1", text: "oi", from_username: "fulano" }] },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const reply = vi.fn();
@@ -155,7 +155,7 @@ describe("FbComentarios — comments list states", () => {
   it("shows the App Review gate on a gated delete action", async () => {
     mockUseFbComments.mockReturnValue({
       data: { comments: [{ id: "c1", text: "oi" }] },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     mockUseFbDeleteComment.mockReturnValue({

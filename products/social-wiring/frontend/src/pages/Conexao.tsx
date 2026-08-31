@@ -200,7 +200,10 @@ function ConnectionRow({
  * heading.
  */
 export function WhatsAppConnections() {
-  const { data: lines, isLoading } = useWhatsAppConnections();
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this list on every background refresh (this page
+  // polls connection status). → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data: lines, isPending } = useWhatsAppConnections();
   const { create, remove } = useWhatsAppConnectionMutations();
   const [creating, setCreating] = useState(false);
   // selected = a connection to view/manage (normal select)
@@ -251,7 +254,7 @@ export function WhatsAppConnections() {
       </div>
 
       {/* ── Loading ── */}
-      {isLoading ? (
+      {isPending ? (
         <div className="flex items-center justify-center py-16" data-testid="loading-connections">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>

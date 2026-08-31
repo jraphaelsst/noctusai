@@ -388,7 +388,12 @@ function MailchimpProviderRow({
   icon: LucideIcon;
   label: string;
 }) {
-  const { data: connection, isLoading } = useMailchimpConnection(marcaId);
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would blank this connection indicator on every background
+  // refresh. Not keyed by `marcaId` (queryKey is a constant — see the
+  // hook), so no per-row key-change flicker either.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data: connection, isPending } = useMailchimpConnection(marcaId);
   const [formOpen, setFormOpen] = useState(false);
   const connected = !!connection?.connected;
 
@@ -426,7 +431,7 @@ function MailchimpProviderRow({
           </div>
         </div>
 
-        {isLoading ? (
+        {isPending ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
         ) : connected ? (
           <div className="flex items-center gap-2">
@@ -648,9 +653,12 @@ function ContasTab({ client }: { client: Marca }) {
   }
 
   // Integration accounts
+  // `isPending`, not `isLoading` — destructure-RENAME shape
+  // (`isLoading: loadingInt`), the same banned pattern the AST
+  // scanner doesn't track by alias name. → KB § PATTERNS/frontend/lying-loading-state.md
   const {
     data: intAccounts = [],
-    isLoading: loadingInt,
+    isPending: loadingInt,
     isError: errorInt,
   } = useIntegrationAccounts({ marcaId: client.id });
 
@@ -712,9 +720,12 @@ function ContasTab({ client }: { client: Marca }) {
   }
 
   // WhatsApp connections
+  // `isPending`, not `isLoading` — destructure-RENAME shape
+  // (`isLoading: loadingWa`), the same banned pattern the AST scanner
+  // doesn't track by alias name. → KB § PATTERNS/frontend/lying-loading-state.md
   const {
     data: waConnections = [],
-    isLoading: loadingWa,
+    isPending: loadingWa,
     isError: errorWa,
   } = useClientWhatsAppConnections(client.id);
 
@@ -1051,9 +1062,12 @@ function ContasTab({ client }: { client: Marca }) {
 // ─── Tab: Chat ────────────────────────────────────────────────────────────────
 
 function ChatTab({ client }: { client: Marca }) {
+  // `isPending`, not `isLoading` — same rule; also `client.id`-keyed,
+  // so switching to a different marca's chat tab correctly resets to
+  // skeleton (no `placeholderData` — cross-entity hazard).
   const {
     data: waConnections = [],
-    isLoading,
+    isPending,
     isError,
   } = useClientWhatsAppConnections(client.id);
 
@@ -1068,7 +1082,7 @@ function ChatTab({ client }: { client: Marca }) {
 
   const selectedLine = waConnections.find((l) => l.id === selectedId);
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
         <Loader2 className="h-6 w-6 animate-spin" />

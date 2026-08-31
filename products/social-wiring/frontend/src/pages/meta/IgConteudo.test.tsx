@@ -62,7 +62,7 @@ vi.mock("lucide-react", () => ({
 
 function setDefaults() {
   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
-  mockUseIgMedia.mockReturnValue({ data: { media: [] }, isLoading: false, isError: false });
+  mockUseIgMedia.mockReturnValue({ data: { media: [] }, isPending: false, isError: false });
   mockUseIgPublish.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, data: undefined });
 }
 
@@ -85,13 +85,13 @@ describe("IgConteudo — no account selected", () => {
 
 describe("IgConteudo — media grid states", () => {
   it("renders a loading grid", async () => {
-    mockUseIgMedia.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    mockUseIgMedia.mockReturnValue({ data: undefined, isPending: true, isError: false });
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-content-grid-loading")).toBeTruthy();
   });
 
   it("renders an error state", async () => {
-    mockUseIgMedia.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    mockUseIgMedia.mockReturnValue({ data: undefined, isPending: false, isError: true });
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-content-grid-error")).toBeTruthy();
   });
@@ -104,7 +104,7 @@ describe("IgConteudo — media grid states", () => {
   it("renders a media grid on success", async () => {
     mockUseIgMedia.mockReturnValue({
       data: { media: [{ id: "1", thumbnail_url: "http://x/1.jpg", caption: "oi" }] },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { getByTestId } = await renderPage();

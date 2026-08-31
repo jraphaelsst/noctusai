@@ -297,7 +297,10 @@ function ClientsSkeleton() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function MarcasPage() {
-  const { data: marcas = [], isLoading, isError, error } = useMarcas();
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this list on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data: marcas = [], isPending, isError, error } = useMarcas();
 
   const [modalClient, setModalClient] = useState<Marca | null>(null);
   const [modalTab, setModalTab] = useState<"contas" | "chat">("contas");
@@ -339,7 +342,7 @@ export default function MarcasPage() {
       </div>
 
       {/* Content */}
-      {isLoading ? (
+      {isPending ? (
         <ClientsSkeleton />
       ) : isError ? (
         <div
