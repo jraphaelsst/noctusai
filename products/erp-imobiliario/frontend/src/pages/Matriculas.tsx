@@ -62,7 +62,9 @@ export default function Matriculas() {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: extracoes = [], isLoading } = useMatriculaExtracoes();
+  const extracoesQuery = useMatriculaExtracoes();
+  const { data: extracoes = [] } = extracoesQuery;
+  const showExtracoesSkeleton = extracoesQuery.isPending && !extracoesQuery.data;
   const { data: selected } = useMatriculaExtracao(selectedId || undefined);
   const uploadMutation = useUploadMatricula();
   const deleteMutation = useDeleteExtracao();
@@ -287,7 +289,7 @@ export default function Matriculas() {
           <CardTitle className="text-lg">Histórico de Extrações</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showExtracoesSkeleton ? (
             <CardGridSkeleton count={3} />
           ) : extracoes.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">

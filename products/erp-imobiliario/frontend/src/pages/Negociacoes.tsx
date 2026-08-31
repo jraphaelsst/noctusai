@@ -13,7 +13,9 @@ import { StatusNegociacao } from '@/types/imoveis';
 export default function Negociacoes() {
   const [filtroStatus, setFiltroStatus] = useState<StatusNegociacao | 'todas'>('todas');
 
-  const { data: negociacoes = [], isLoading } = useNegociacoes(filtroStatus);
+  const negociacoesQuery = useNegociacoes(filtroStatus);
+  const { data: negociacoes = [] } = negociacoesQuery;
+  const showNegociacoesSkeleton = negociacoesQuery.isPending && !negociacoesQuery.data;
 
   // Estatísticas
   const stats = {
@@ -105,7 +107,7 @@ export default function Negociacoes() {
 
       {/* Lista de Negociações */}
       <div className="space-y-4">
-        {isLoading ? (
+        {showNegociacoesSkeleton ? (
           <CardListSkeleton count={3} />
         ) : negociacoes.length === 0 ? (
           <Card>

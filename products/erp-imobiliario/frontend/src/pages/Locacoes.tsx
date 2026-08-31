@@ -86,7 +86,9 @@ export default function Locacoes() {
   const navigate = useNavigate();
   const [filtroStatus, setFiltroStatus] = useState('todos');
   const [busca, setBusca] = useState('');
-  const { data: contratos = [], isLoading } = useLocacoes(filtroStatus !== 'todos' ? filtroStatus : undefined);
+  const contratosQuery = useLocacoes(filtroStatus !== 'todos' ? filtroStatus : undefined);
+  const { data: contratos = [] } = contratosQuery;
+  const showLocacoesSkeleton = contratosQuery.isPending && !contratosQuery.data;
   const createMutation = useCreateLocacao();
   const updateMutation = useUpdateLocacao();
   const deleteMutation = useDeleteLocacao();
@@ -278,7 +280,7 @@ export default function Locacoes() {
       </Card>
 
       {/* Contracts List */}
-      {isLoading ? (
+      {showLocacoesSkeleton ? (
         <CardGridSkeleton count={4} />
       ) : filtrados.length === 0 ? (
         <EmptyState

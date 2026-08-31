@@ -116,13 +116,17 @@ export default function Emails() {
   const [emailFormData, setEmailFormData] = useState<EmailFormData>(emptyEmailForm);
   const [templateFormData, setTemplateFormData] = useState<TemplateFormData>(emptyTemplateForm);
 
-  const { data: emailsData, isLoading } = useEmails({
+  const emailsQuery = useEmails({
     direcao: filtroDirecao !== 'todos' ? filtroDirecao : undefined,
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
   });
+  const emailsData = emailsQuery.data;
+  const showEmailsSkeleton = emailsQuery.isPending && !emailsQuery.data;
   const emails = emailsData?.data || [];
 
-  const { data: templatesData, isLoading: isLoadingTemplates } = useEmailTemplates();
+  const templatesQuery = useEmailTemplates();
+  const { data: templatesData } = templatesQuery;
+  const showTemplatesSkeleton = templatesQuery.isPending && !templatesQuery.data;
   const templates = templatesData?.data || [];
 
   const { mutate: enviarEmail, isPending: isSending } = useEnviarEmail();
@@ -308,7 +312,7 @@ export default function Emails() {
             </Button>
           </CardHeader>
           <CardContent>
-            {isLoadingTemplates ? (
+            {showTemplatesSkeleton ? (
               <TableSkeleton rows={3} />
             ) : templates.length === 0 ? (
               <div className="py-8 text-center text-muted-foreground">
@@ -400,7 +404,7 @@ export default function Emails() {
       {/* Email List Table */}
       <Card>
         <CardContent className="pt-6">
-          {isLoading ? (
+          {showEmailsSkeleton ? (
             <TableSkeleton rows={4} />
           ) : emails.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">

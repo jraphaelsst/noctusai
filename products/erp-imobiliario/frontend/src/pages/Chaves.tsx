@@ -66,9 +66,11 @@ export default function Chaves() {
   const [retiradaForm, setRetiradaForm] = useState({ corretor_nome: '', motivo: '' });
   const [devolucaoForm, setDevolucaoForm] = useState({ corretor_nome: '', motivo: '' });
 
-  const { data: chaves = [], isLoading } = useChaves(
+  const chavesQuery = useChaves(
     filtroStatus ? { status: filtroStatus } : undefined
   );
+  const { data: chaves = [] } = chavesQuery;
+  const showChavesSkeleton = chavesQuery.isPending && !chavesQuery.data;
   const createMutation = useCreateChave();
   const retiradaMutation = useRetirarChave();
   const devolucaoMutation = useDevolverChave();
@@ -193,7 +195,7 @@ export default function Chaves() {
       </div>
 
       {/* Key list */}
-      {isLoading ? (
+      {showChavesSkeleton ? (
         <MetricsTableSkeleton cards={0} />
       ) : filtradas.length === 0 ? (
         <Card>
