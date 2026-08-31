@@ -63,7 +63,8 @@ function slugify(text: string): string {
 }
 
 export default function SiteImoveis() {
-  const { data: config, isLoading: isLoadingConfig } = useSiteConfig();
+  const configQuery = useSiteConfig();
+  const { data: config } = configQuery;
   const { data: preview } = useSitePreview();
   const { mutate: createConfig, isPending: isCreating } = useCreateSiteConfig();
   const { mutate: updateConfig, isPending: isUpdating } = useUpdateSiteConfig();
@@ -165,7 +166,9 @@ export default function SiteImoveis() {
 
   const publicUrl = `${BACKEND_URL}/api/site/public/${formData.slug}`;
 
-  if (isLoadingConfig) {
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (configQuery.isPending && !configQuery.data) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />

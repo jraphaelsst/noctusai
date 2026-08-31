@@ -41,8 +41,14 @@ export default function WhatsAppInbox() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
 
-  const { data: conversations = [], isLoading: loadingConversations } = useWhatsAppConversations();
-  const { data: messages = [], isLoading: loadingMessages } = useWhatsAppMessages(selectedPhone);
+  const conversationsQuery = useWhatsAppConversations();
+  const messagesQuery = useWhatsAppMessages(selectedPhone);
+  const { data: conversations = [] } = conversationsQuery;
+  const { data: messages = [] } = messagesQuery;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  const showConversationsSkeleton = conversationsQuery.isPending && !conversationsQuery.data;
+  const showMessagesSkeleton = messagesQuery.isPending && !messagesQuery.data;
   const { data: configStatus } = useWhatsAppConfig();
   const sendMessage = useSendWhatsAppMessage(selectedPhone);
 
@@ -99,7 +105,7 @@ export default function WhatsAppInbox() {
             </div>
           </div>
           <ScrollArea className="flex-1">
-            {loadingConversations ? (
+            {showConversationsSkeleton ? (
               <div className="p-4"><CardListSkeleton count={3} /></div>
             ) : filteredConversations.length === 0 ? (
               <div className="p-4 text-center text-sm text-muted-foreground">
@@ -172,7 +178,7 @@ export default function WhatsAppInbox() {
               {/* Messages */}
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-3 max-w-2xl mx-auto">
-                  {loadingMessages ? (
+                  {showMessagesSkeleton ? (
                     <CardListSkeleton count={3} />
                   ) : messages.length === 0 ? (
                     <p className="text-center text-sm text-muted-foreground">

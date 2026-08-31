@@ -93,7 +93,9 @@ export default function Campo() {
   const [vistoriaChecklist, setVistoriaChecklist] = useState<Record<string, boolean>>({});
   const [vistoriaObs, setVistoriaObs] = useState('');
 
-  const { data: checkins, isLoading: isLoadingCheckins } = useCheckins();
+  const checkinsQuery = useCheckins();
+  const { data: checkins } = checkinsQuery;
+  const showCheckinsSkeleton = checkinsQuery.isPending && !checkinsQuery.data;
   const { mutate: createCheckin, isPending: isCreatingCheckin } = useCreateCheckin();
   const { mutate: criarVistoria, isPending: isCriandoVistoria } = useVistoriaRapida();
   const { data: imoveisProximos } = useImoveisProximos(
@@ -489,7 +491,7 @@ export default function Campo() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoadingCheckins ? (
+          {showCheckinsSkeleton ? (
             <TableSkeleton rows={4} />
           ) : recentCheckins.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">

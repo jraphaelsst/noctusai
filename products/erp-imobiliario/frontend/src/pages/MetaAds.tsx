@@ -41,13 +41,17 @@ export default function MetaAds() {
 
   // Leads
   const [leadsPage, setLeadsPage] = useState(1);
-  const { data: leadsData, isLoading: leadsLoading } = useMetaLeads(leadsPage);
+  const leadsQuery = useMetaLeads(leadsPage);
+  const { data: leadsData } = leadsQuery;
+  const showLeadsSkeleton = leadsQuery.isPending && !leadsQuery.data;
   const syncLeads = useSyncMetaLeads();
   const importarLead = useImportarLeadComoCliente();
 
   // Campaigns
   const [campanhasPage, setCampanhasPage] = useState(1);
-  const { data: campanhasData, isLoading: campanhasLoading } = useMetaCampanhas(campanhasPage);
+  const campanhasQuery = useMetaCampanhas(campanhasPage);
+  const { data: campanhasData } = campanhasQuery;
+  const showCampanhasSkeleton = campanhasQuery.isPending && !campanhasQuery.data;
   const syncCampanhas = useSyncMetaCampanhas();
 
   const leads = leadsData?.data ?? [];
@@ -108,7 +112,7 @@ export default function MetaAds() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {leadsLoading ? (
+                  {showLeadsSkeleton ? (
                     <TableRow>
                       <TableCell colSpan={5} className="p-0">
                         <TableSkeleton rows={3} />
@@ -190,7 +194,7 @@ export default function MetaAds() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {campanhasLoading ? (
+                  {showCampanhasSkeleton ? (
                     <TableRow>
                       <TableCell colSpan={7} className="p-0">
                         <TableSkeleton rows={3} />

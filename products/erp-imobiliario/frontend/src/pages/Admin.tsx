@@ -21,8 +21,10 @@ interface UserWithRoles {
 
 export default function Admin() {
   const navigate = useNavigate();
-  const { isAdmin, isLoading: isLoadingRole } = useIsAdmin();
-  const { data: profiles = [], isLoading: isLoadingProfiles } = useProfiles();
+  const { isAdmin, isLoading: isLoadingRole, isPending: isPendingRole, roleData } = useIsAdmin();
+  const profilesQuery = useProfiles();
+  const { data: profiles = [] } = profilesQuery;
+  const showProfilesSkeleton = profilesQuery.isPending && !profilesQuery.data;
   const [selectedUser, setSelectedUser] = useState<{ id: string; nome: string; roles: string[] } | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -126,7 +128,9 @@ export default function Admin() {
     }
   };
 
-  if (isLoadingRole || !isAdmin) {
+  // "role resolved" — an access-control gate, not a data-lying render
+  // branch; kept in the isPending && !data form for consistency.
+  if ((isPendingRole && roleData == null) || !isAdmin) {
     return null;
   }
 
@@ -151,7 +155,7 @@ export default function Admin() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {isLoadingProfiles ? (
+          {showProfilesSkeleton ? (
             <CardListSkeleton count={4} />
           ) : usersWithRoles.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">

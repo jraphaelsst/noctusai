@@ -47,9 +47,17 @@ export default function Relatorios() {
   const [periodoRanking, setPeriodoRanking] = useState<number>(30);
   const [mesesAtividade, setMesesAtividade] = useState<number>(6);
 
-  const { data: ranking, isLoading: loadingRanking } = useRankingCorretores(periodoRanking);
-  const { data: conversao, isLoading: loadingConversao } = useConversaoFunil();
-  const { data: atividade, isLoading: loadingAtividade } = useAtividadeMensal(mesesAtividade);
+  const rankingQuery = useRankingCorretores(periodoRanking);
+  const conversaoQuery = useConversaoFunil();
+  const atividadeQuery = useAtividadeMensal(mesesAtividade);
+  const { data: ranking } = rankingQuery;
+  const { data: conversao } = conversaoQuery;
+  const { data: atividade } = atividadeQuery;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  const showRankingSkeleton = rankingQuery.isPending && !rankingQuery.data;
+  const showConversaoSkeleton = conversaoQuery.isPending && !conversaoQuery.data;
+  const showAtividadeSkeleton = atividadeQuery.isPending && !atividadeQuery.data;
   const { exportCSV } = useExportCSV();
 
   const [exporting, setExporting] = useState(false);
@@ -173,7 +181,7 @@ export default function Relatorios() {
 
           <Card>
             <CardContent className="pt-6">
-              {loadingRanking ? (
+              {showRankingSkeleton ? (
                 <TableSkeleton rows={3} />
               ) : !ranking || ranking.length === 0 ? (
                 <div className="py-12 text-center text-muted-foreground">
@@ -241,7 +249,7 @@ export default function Relatorios() {
 
           <Card>
             <CardContent className="pt-6">
-              {loadingConversao ? (
+              {showConversaoSkeleton ? (
                 <TableSkeleton rows={3} />
               ) : !conversao || conversao.length === 0 ? (
                 <div className="py-12 text-center text-muted-foreground">
@@ -396,7 +404,7 @@ export default function Relatorios() {
 
           <Card>
             <CardContent className="pt-6">
-              {loadingAtividade ? (
+              {showAtividadeSkeleton ? (
                 <TableSkeleton rows={3} />
               ) : !atividade || atividade.length === 0 ? (
                 <div className="py-12 text-center text-muted-foreground">

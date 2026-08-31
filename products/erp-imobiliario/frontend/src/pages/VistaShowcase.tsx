@@ -40,10 +40,12 @@ import { PermissionPlaceholderTab } from '@/components/vista/PermissionPlacehold
 import { UsuariosTab } from '@/components/vista/UsuariosTab';
 
 export default function VistaShowcase() {
-  const { isAdmin, isLoading: isLoadingRole } = useIsAdmin();
+  const { isAdmin, isPending: isPendingRole, roleData } = useIsAdmin();
   const [activeTab, setActiveTab] = useState('imoveis');
 
-  if (isLoadingRole) {
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (isPendingRole && roleData == null) {
     return (
       <div className="p-8 space-y-4">
         <Skeleton className="h-8 w-64" />
@@ -117,8 +119,9 @@ function PageHeader() {
 }
 
 function SubTabsBar() {
-  const { data: tabs, isLoading } = useVistaTabs(true);
-  if (isLoading || !tabs) {
+  const tabsQuery = useVistaTabs(true);
+  const { data: tabs } = tabsQuery;
+  if ((tabsQuery.isPending && !tabsQuery.data) || !tabs) {
     return (
       <div className="flex gap-2">
         {Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-9 w-24" />)}
