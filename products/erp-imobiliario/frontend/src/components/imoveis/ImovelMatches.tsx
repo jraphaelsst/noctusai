@@ -25,10 +25,11 @@ interface ImovelMatchesProps {
 }
 
 export function ImovelMatches({ imovelId }: ImovelMatchesProps) {
-  const { data: matches = [], isLoading } = useMatches({ ativo_origem_id: imovelId });
+  const matchesQuery = useMatches({ ativo_origem_id: imovelId });
+  const { data: matches = [] } = matchesQuery;
   const atualizarStatus = useAtualizarStatusMatch();
 
-  if (isLoading) {
+  if (matchesQuery.isPending && !matchesQuery.data) {
     return (
       <Card className="p-8 text-center">
         <p className="text-muted-foreground">Carregando matches...</p>

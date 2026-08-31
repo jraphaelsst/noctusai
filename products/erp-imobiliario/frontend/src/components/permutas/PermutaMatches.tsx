@@ -7,10 +7,11 @@ interface PermutaMatchesProps {
 }
 
 export function PermutaMatches({ perfilId }: PermutaMatchesProps) {
-  const { data: matches = [], isLoading } = useMatches({ ativo_destino_id: perfilId });
+  const matchesQuery = useMatches({ ativo_destino_id: perfilId });
+  const { data: matches = [] } = matchesQuery;
   const atualizarMutation = useAtualizarStatusMatch();
 
-  if (isLoading) {
+  if (matchesQuery.isPending && !matchesQuery.data) {
     return (
       <Card className="p-8 text-center">
         <p className="text-muted-foreground">Carregando matches...</p>

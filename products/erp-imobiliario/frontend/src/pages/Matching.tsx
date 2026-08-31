@@ -18,9 +18,11 @@ import { CardListSkeleton } from '@/components/ui/page-skeleton';
 function Matching() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
-  const { data: matches = [], isLoading } = useMatches({
+  const matchesQuery = useMatches({
     status: statusFilter !== 'all' ? statusFilter : undefined,
   });
+  const { data: matches = [] } = matchesQuery;
+  const showMatchesSkeleton = matchesQuery.isPending && !matchesQuery.data;
 
   const recalcularMutation = useRecalcularMatches();
   const statusMutation = useAtualizarStatusMatch();
@@ -87,7 +89,7 @@ function Matching() {
       </div>
 
       {/* Results */}
-      {isLoading ? (
+      {showMatchesSkeleton ? (
         <CardListSkeleton count={4} />
       ) : matches.length === 0 ? (
         <Card>
