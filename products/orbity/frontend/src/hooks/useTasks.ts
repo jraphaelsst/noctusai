@@ -258,6 +258,7 @@ export function useRoutines(activeOnly?: boolean) {
       });
       return result as Routine[];
     },
+    placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
   });
