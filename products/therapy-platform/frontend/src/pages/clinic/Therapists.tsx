@@ -22,7 +22,8 @@ export default function ClinicTherapists() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
 
-  const { data, isLoading } = useClinicTherapists();
+  const { data, isPending } = useClinicTherapists();
+  const showSkeleton = isPending && !data;
 
   const therapists = data?.data ?? [];
 
@@ -46,7 +47,7 @@ export default function ClinicTherapists() {
         </Button>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

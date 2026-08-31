@@ -9,8 +9,9 @@ const { useLLMProviders, useLLMModels, useLLMPreferences, useUpdateLLMPreference
   createLLMHooks(api);
 
 export default function LLMPreferences() {
-  const { data: providers = [], isLoading: loadingProviders } = useLLMProviders();
-  const { data: prefs, isLoading: loadingPrefs } = useLLMPreferences();
+  const { data: providersData, isPending: providersPending } = useLLMProviders();
+  const providers = providersData ?? [];
+  const { data: prefs, isPending: prefsPending } = useLLMPreferences();
   const update = useUpdateLLMPreferences();
 
   const [provider, setProvider] = useState<string | null>(null);
@@ -40,7 +41,10 @@ export default function LLMPreferences() {
     }
   }
 
-  if (loadingProviders || loadingPrefs) {
+  const showSkeleton =
+    (providersPending && !providersData) || (prefsPending && !prefs);
+
+  if (showSkeleton) {
     return (
       <div className="p-6 text-sm text-muted-foreground">Carregando…</div>
     );

@@ -24,7 +24,8 @@ export default function ClinicPatients() {
 
   // Server-side busca filtering supported by `/api/patients?busca=…`;
   // we keep the local filter as a defensive layer over the returned page.
-  const { data, isLoading } = useClinicPatients(busca);
+  const { data, isPending } = useClinicPatients(busca);
+  const showSkeleton = isPending && !data;
 
   const patients = data?.data ?? [];
 
@@ -54,7 +55,7 @@ export default function ClinicPatients() {
         />
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="space-y-3">
           {Array.from({ length: 4 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

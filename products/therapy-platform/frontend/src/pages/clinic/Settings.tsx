@@ -28,15 +28,20 @@ export default function ClinicSettings() {
   const { user } = useAuthStore();
   const clinicId = (user?.user_metadata as { clinic_id?: string } | undefined)?.clinic_id;
 
-  const { data: branding, isLoading: brandingLoading } = useClinicBranding();
-  const { data: clinicProfile, isLoading: profileLoading } = useClinicProfile(clinicId);
-  const { data: adminSettings, isLoading: adminLoading } = useClinicAdminSettings();
+  const { data: branding, isPending: brandingPending } = useClinicBranding();
+  const { data: clinicProfile, isPending: profilePending } = useClinicProfile(clinicId);
+  const { data: adminSettings, isPending: adminPending } = useClinicAdminSettings();
 
   const updateBranding = useUpdateClinicBranding();
   const updateProfile = useUpdateClinicProfile(clinicId);
   const updateAdminSettings = useUpdateClinicAdminSettings();
 
-  const isLoading = brandingLoading || profileLoading || adminLoading;
+  // Nothing to render from any of the three yet — a background refetch on
+  // already-resolved settings must NOT re-trigger this gate.
+  const showSkeleton =
+    (brandingPending && !branding) ||
+    (profilePending && !clinicProfile) ||
+    (adminPending && !adminSettings);
 
   const [profile, setProfile] = useState({
     name: '',
@@ -117,7 +122,7 @@ export default function ClinicSettings() {
     updateBranding.mutate(brandingForm);
   };
 
-  if (isLoading) {
+  if (showSkeleton) {
     return (
       <div className="container mx-auto p-6 space-y-6">
         <div className="h-8 w-48 bg-muted animate-pulse rounded" />
