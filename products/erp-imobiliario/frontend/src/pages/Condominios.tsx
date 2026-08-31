@@ -17,7 +17,9 @@ import {
 import { CardGridSkeleton } from '@/components/ui/page-skeleton';
 
 export default function Condominios() {
-  const { data: condominios = [], isLoading } = useCondominios();
+  const condominiosQuery = useCondominios();
+  const { data: condominios = [] } = condominiosQuery;
+  const showCondominiosSkeleton = condominiosQuery.isPending && !condominiosQuery.data;
   const deleteMutation = useDeleteCondominio();
   const [busca, setBusca] = useState('');
   const [dialogAberto, setDialogAberto] = useState(false);
@@ -76,7 +78,7 @@ export default function Condominios() {
         </CardContent>
       </Card>
 
-      {isLoading ? (
+      {showCondominiosSkeleton ? (
         <CardGridSkeleton count={6} />
       ) : filtrados.length === 0 ? (
         <Card>

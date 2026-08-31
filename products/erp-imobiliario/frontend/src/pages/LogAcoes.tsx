@@ -47,11 +47,13 @@ export default function LogAcoes() {
   const { data: profiles } = useProfiles();
   const canViewAll = userRole === "admin";
 
-  const { data: logs, isLoading } = useActionLogs(
+  const logsQuery = useActionLogs(
     filtroUsuario !== "todos" ? filtroUsuario : undefined,
     dataInicio,
     dataFim
   );
+  const { data: logs } = logsQuery;
+  const showLogsSkeleton = logsQuery.isPending && !logsQuery.data;
 
   return (
     <div className="space-y-6">
@@ -193,7 +195,7 @@ export default function LogAcoes() {
           <CardTitle>Histórico de Ações</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showLogsSkeleton ? (
             <div className="space-y-3">
               <Skeleton className="h-20" />
               <Skeleton className="h-20" />

@@ -94,9 +94,11 @@ export default function Filiais() {
   const [formData, setFormData] = useState<FilialFormData>(emptyForm);
   const [showConsolidado, setShowConsolidado] = useState(false);
 
-  const { data: filiais, isLoading } = useFiliais(
+  const filiaisQuery = useFiliais(
     showInactive ? undefined : { is_active: true }
   );
+  const { data: filiais } = filiaisQuery;
+  const showFiliaisSkeleton = filiaisQuery.isPending && !filiaisQuery.data;
   const { data: consolidado } = useConsolidadoFiliais();
   const { data: profiles } = useProfiles();
   const { mutate: createFilial, isPending: isCreating } = useCreateFilial();
@@ -374,7 +376,7 @@ export default function Filiais() {
       )}
 
       {/* Branch Cards */}
-      {isLoading ? (
+      {showFiliaisSkeleton ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>

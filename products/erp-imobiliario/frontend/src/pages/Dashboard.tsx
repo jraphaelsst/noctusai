@@ -51,7 +51,9 @@ const categoriaColors = {
 };
 
 export default function Dashboard() {
-  const { data: metas, isLoading } = useMetas();
+  const metasQuery = useMetas();
+  const { data: metas } = metasQuery;
+  const showMetasSkeleton = metasQuery.isPending && !metasQuery.data;
   const [modalAberto, setModalAberto] = useState(false);
   const [impedimentosModalAberto, setImpedimentosModalAberto] = useState(false);
   const [filtroModal, setFiltroModal] = useState<'all' | 'concluidas' | 'abertas' | 'atrasadas' | 'concluidas_no_prazo' | 'melhor_categoria' | 'vencem_amanha'>('all');
@@ -298,7 +300,7 @@ export default function Dashboard() {
 
       {/* Métricas Principais - Linha 1 */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-        {isLoading ? (
+        {showMetasSkeleton ? (
           <>
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
@@ -342,7 +344,7 @@ export default function Dashboard() {
 
       {/* Métricas de Performance - Linha 2 */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-5">
-        {isLoading ? (
+        {showMetasSkeleton ? (
           <>
             <Skeleton className="h-32" />
             <Skeleton className="h-32" />
@@ -396,7 +398,7 @@ export default function Dashboard() {
 
       {/* Métricas Adicionais - Linha 3 */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-        {isLoading ? (
+        {showMetasSkeleton ? (
           <>
             <Skeleton className="h-32" />
           </>
@@ -634,7 +636,7 @@ export default function Dashboard() {
       </Card>
 
       {/* Gráficos de Análise */}
-      {!isLoading && metas && metas.length > 0 && (
+      {!showMetasSkeleton && metas && metas.length > 0 && (
         <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-2">
           {/* Gráfico de Status */}
           <Card 

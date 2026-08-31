@@ -14,7 +14,9 @@ import { formatCurrency } from '@/lib/utils';
 
 export default function Imoveis() {
   const navigate = useNavigate();
-  const { data: imoveis = [], isLoading } = useImoveis();
+  const imoveisQuery = useImoveis();
+  const { data: imoveis = [] } = imoveisQuery;
+  const showImoveisSkeleton = imoveisQuery.isPending && !imoveisQuery.data;
   const { data: condominios = [] } = useCondominios();
   const [busca, setBusca] = useState('');
   const [filtroTipo, setFiltroTipo] = useState('todos');
@@ -74,7 +76,7 @@ export default function Imoveis() {
         </CardContent>
       </Card>
 
-      {isLoading ? (
+      {showImoveisSkeleton ? (
         <CardGridSkeleton count={6} />
       ) : imoveisFiltrados.length === 0 ? (
         <Card>

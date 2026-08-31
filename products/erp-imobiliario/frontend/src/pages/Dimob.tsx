@@ -57,7 +57,9 @@ export default function Dimob() {
   const [previewActive, setPreviewActive] = useState(false);
   const [generating, setGenerating] = useState(false);
 
-  const { data: preview, isLoading, isError } = useDimobPreview(selectedYear, previewActive);
+  const previewQuery = useDimobPreview(selectedYear, previewActive);
+  const { data: preview, isError } = previewQuery;
+  const showPreviewSkeleton = previewQuery.isPending && !previewQuery.data;
 
   const handlePreview = () => {
     setPreviewActive(true);
@@ -143,8 +145,8 @@ export default function Dimob() {
               </Select>
             </div>
 
-            <Button onClick={handlePreview} disabled={isLoading} variant="outline">
-              {isLoading ? (
+            <Button onClick={handlePreview} disabled={previewQuery.isFetching} variant="outline">
+              {showPreviewSkeleton ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               ) : (
                 <Eye className="h-4 w-4 mr-2" />
@@ -179,7 +181,7 @@ export default function Dimob() {
       {/* Preview Content */}
       {previewActive && (
         <>
-          {isLoading ? (
+          {showPreviewSkeleton ? (
             <CardListSkeleton count={3} />
           ) : isError ? (
             <Card>

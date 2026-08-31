@@ -30,10 +30,12 @@ export default function Clientes() {
   const [deleteClienteId, setDeleteClienteId] = useState<string | null>(null);
 
   const filtrosStore = useFunilFiltrosStore();
-  const { data: clientes, isLoading } = useClientes({
+  const clientesQuery = useClientes({
     ...filtrosStore,
     etapa: filtrosStore.etapa === 'todas' ? undefined : filtrosStore.etapa,
   });
+  const { data: clientes } = clientesQuery;
+  const showClientesSkeleton = clientesQuery.isPending && !clientesQuery.data;
   const { mutate: toggleArquivar } = useToggleArquivarCliente();
   const { mutate: deleteCliente } = useDeleteCliente();
 
@@ -57,7 +59,7 @@ export default function Clientes() {
       <FiltrosFunil />
 
       <div className="grid gap-4">
-        {isLoading ? (
+        {showClientesSkeleton ? (
           <CardListSkeleton count={4} />
         ) : clientes && clientes.length > 0 ? (
           clientes.map((cliente) => {
