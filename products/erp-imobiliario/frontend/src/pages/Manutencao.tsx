@@ -98,11 +98,13 @@ export default function Manutencao() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [formData, setFormData] = useState<OrdemServicoCreateData>(emptyForm);
 
-  const { data: manutencaoData, isLoading } = useManutencao({
+  const manutencaoQuery = useManutencao({
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
     prioridade: filtroPrioridade !== 'todos' ? filtroPrioridade : undefined,
     tipo: filtroTipo !== 'todos' ? filtroTipo : undefined,
   });
+  const manutencaoData = manutencaoQuery.data;
+  const showManutencaoSkeleton = manutencaoQuery.isPending && !manutencaoQuery.data;
   const ordens = manutencaoData?.data || [];
 
   const { data: resumo } = useResumoManutencao();
@@ -279,7 +281,7 @@ export default function Manutencao() {
       {/* Orders Table */}
       <Card>
         <CardContent className="pt-6">
-          {isLoading ? (
+          {showManutencaoSkeleton ? (
             <TableSkeleton rows={4} />
           ) : ordens.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
