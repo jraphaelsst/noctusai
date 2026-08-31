@@ -85,10 +85,14 @@ export default function Marketing() {
   const [formFiltroOrigem, setFormFiltroOrigem] = useState('');
   const [formFiltroEtapa, setFormFiltroEtapa] = useState('');
 
-  const { data: campanhasData, isLoading } = useCampanhas({
+  const campanhasQuery = useCampanhas({
     status: filtroStatus === 'todos' ? undefined : filtroStatus,
   });
-  const { data: alertas = [], isLoading: loadingAlertas } = useAlertasMarketing();
+  const { data: campanhasData } = campanhasQuery;
+  const showCampanhasSkeleton = campanhasQuery.isPending && !campanhasQuery.data;
+  const alertasQuery = useAlertasMarketing();
+  const { data: alertas = [] } = alertasQuery;
+  const showAlertasSkeleton = alertasQuery.isPending && !alertasQuery.data;
   const createMutation = useCreateCampanha();
   const updateMutation = useUpdateCampanha();
   const deleteMutation = useDeleteCampanha();
@@ -182,7 +186,7 @@ export default function Marketing() {
             </CardContent>
           </Card>
 
-          {isLoading ? (
+          {showCampanhasSkeleton ? (
             <CardGridSkeleton count={6} />
           ) : filtradas.length === 0 ? (
             <Card>
@@ -282,7 +286,7 @@ export default function Marketing() {
               </p>
             </CardHeader>
             <CardContent>
-              {loadingAlertas ? (
+              {showAlertasSkeleton ? (
                 <p className="text-center text-muted-foreground py-4">Processando alertas...</p>
               ) : alertas.length === 0 ? (
                 <p className="text-center text-muted-foreground py-4">
