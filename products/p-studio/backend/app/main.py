@@ -34,6 +34,23 @@ app = create_product_app(
     name="P Studio",
     schema="p_studio",
     settings=settings,
+    # 🔴 Chaves sem as quais este produto NÃO deve subir em produção. O guard
+    # de boot (`require_prod_config`) aborta listando todas as faltantes de
+    # uma vez, e `noctus.dev.predeploy_check` lê ESTA MESMA lista
+    # estaticamente — então a lacuna aparece antes do deploy, não no startup.
+    #
+    # Só entram chaves cuja ausência produz comportamento ERRADO E SILENCIOSO:
+    #   • ENCRYPTION_KEY   — sem ela a credencial do provedor não pode ser
+    #                        gravada nem lida; a tela de Integrações vira um
+    #                        503 permanente.
+    #   • P_STUDIO_ORG_ID  — sem ele todo request autenticado morre em 500, e
+    #                        um valor ERRADO é pior: carimba escritas na org
+    #                        errada e a RLS as recusa longe da causa.
+    #
+    # As `ASAAS_*` NÃO entram: desde a migration 008 elas são o degrau legado
+    # da escada de `resolver_provedor`, e a credencial real vive cifrada no
+    # banco. Exigi-las aqui recriaria o acoplamento que aquele trabalho tirou.
+    required_prod_config=["ENCRYPTION_KEY", "P_STUDIO_ORG_ID"],
     version="0.1.0",
     standard_routers=["health", "notificacoes", "team", "status_paginas"],
     routers=[

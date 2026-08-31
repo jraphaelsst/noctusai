@@ -12,6 +12,8 @@ import datetime as dt
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev import predeploy_check as PC  # noqa: E402
@@ -574,3 +576,150 @@ def test_load_baseline_required_env_matches_seed_constant():
         from noctusai_lib.config.deploy_config import BASELINE_REQUIRED_PROD_ENV
         assert keys == list(BASELINE_REQUIRED_PROD_ENV)
         assert "REDIS_SESSION_ENCRYPTION_KEY" in keys
+
+
+# ── load_product_required_prod_config — the per-product opt-in, read statically ─
+def _write_main_py(tmp_path, product: str, body: str) -> None:
+    main_py = tmp_path / "products" / product / "backend" / "app" / "main.py"
+    main_py.parent.mkdir(parents=True, exist_ok=True)
+    main_py.write_text(body, encoding="utf-8")
+
+
+def test_load_product_required_prod_config_reads_literal_list(tmp_path):
+    _write_main_py(
+        tmp_path,
+        "widget",
+        'app = create_product_app(\n'
+        '    name="Widget",\n'
+        '    schema="widget",\n'
+        '    settings=settings,\n'
+        '    required_prod_config=["ENCRYPTION_KEY", "SOME_ID"],\n'
+        '    version="0.1.0",\n'
+        ')\n',
+    )
+    keys = PC.load_product_required_prod_config(tmp_path, "widget")
+    assert keys == ["ENCRYPTION_KEY", "SOME_ID"]
+
+
+def test_load_product_required_prod_config_no_declaration_returns_empty(tmp_path):
+    _write_main_py(
+        tmp_path,
+        "widget",
+        'app = create_product_app(\n'
+        '    name="Widget",\n'
+        '    schema="widget",\n'
+        '    settings=settings,\n'
+        '    version="0.1.0",\n'
+        ')\n',
+    )
+    assert PC.load_product_required_prod_config(tmp_path, "widget") == []
+
+
+def test_load_product_required_prod_config_missing_main_py_returns_empty(tmp_path):
+    assert PC.load_product_required_prod_config(tmp_path, "ghost") == []
+
+
+def test_load_product_required_prod_config_unparseable_main_py_returns_empty(tmp_path):
+    _write_main_py(tmp_path, "widget", "def broken(:\n")
+    assert PC.load_product_required_prod_config(tmp_path, "widget") == []
+
+
+def test_load_product_required_prod_config_non_literal_raises_and_names_product(tmp_path):
+    _write_main_py(
+        tmp_path,
+        "widget",
+        'app = create_product_app(\n'
+        '    name="Widget",\n'
+        '    settings=settings,\n'
+        '    required_prod_config=SOME_COMPUTED_LIST,\n'
+        '    version="0.1.0",\n'
+        ')\n',
+    )
+    with pytest.raises(ValueError, match="widget"):
+        PC.load_product_required_prod_config(tmp_path, "widget")
+
+
+def test_load_product_required_prod_config_non_literal_element_raises(tmp_path):
+    _write_main_py(
+        tmp_path,
+        "widget",
+        'app = create_product_app(\n'
+        '    name="Widget",\n'
+        '    settings=settings,\n'
+        '    required_prod_config=["ENCRYPTION_KEY", SOME_VAR],\n'
+        '    version="0.1.0",\n'
+        ')\n',
+    )
+    with pytest.raises(ValueError, match="widget"):
+        PC.load_product_required_prod_config(tmp_path, "widget")
+
+
+def test_load_product_required_prod_config_against_real_social_wiring():
+    # Confirms the reader parses the actual on-disk declaration, not just a
+    # synthetic fixture.
+    from settings import REPO_ROOT  # noqa: E402
+
+    keys = PC.load_product_required_prod_config(Path(REPO_ROOT), "social-wiring")
+    assert "ENCRYPTION_KEY" in keys
+
+
+def test_load_product_required_prod_config_against_real_p_studio():
+    from settings import REPO_ROOT  # noqa: E402
+
+    keys = PC.load_product_required_prod_config(Path(REPO_ROOT), "p-studio")
+    assert "ENCRYPTION_KEY" in keys
+    assert "P_STUDIO_ORG_ID" in keys
+
+
+# ── required_prod_env_present runner — folds in the per-product declaration ────
+def test_required_prod_env_runner_folds_in_product_declared_keys(monkeypatch, tmp_path):
+    snap = tmp_path / ".env.prod"
+    snap.write_text("REDIS_SESSION_ENCRYPTION_KEY=a-real-secret\nENCRYPTION_KEY=another-secret\n")
+    monkeypatch.setattr(PC, "_load_baseline_required_env", lambda: ["REDIS_SESSION_ENCRYPTION_KEY"])
+    monkeypatch.setattr(
+        PC, "load_product_required_prod_config", lambda root, product: ["ENCRYPTION_KEY"]
+    )
+    ok, msg = PC._default_run_check("required_prod_env_present", "social-wiring", tmp_path)
+    assert ok is True
+    assert "1 declared by social-wiring" in msg
+
+
+def test_required_prod_env_runner_blocks_on_missing_product_declared_key(monkeypatch, tmp_path):
+    # The product declares ENCRYPTION_KEY; the snapshot lacks it — the gate
+    # must check strictly AT LEAST as much as the boot guard enforces.
+    snap = tmp_path / ".env.prod"
+    snap.write_text("REDIS_SESSION_ENCRYPTION_KEY=a-real-secret\n")  # ENCRYPTION_KEY absent
+    monkeypatch.setattr(PC, "_load_baseline_required_env", lambda: ["REDIS_SESSION_ENCRYPTION_KEY"])
+    monkeypatch.setattr(
+        PC, "load_product_required_prod_config", lambda root, product: ["ENCRYPTION_KEY"]
+    )
+    ok, msg = PC._default_run_check("required_prod_env_present", "social-wiring", tmp_path)
+    assert ok is False
+    assert "ENCRYPTION_KEY" in msg
+
+
+def test_required_prod_env_runner_no_product_declaration_unchanged(monkeypatch, tmp_path):
+    # Back-compat: a product declaring nothing sees the exact same baseline-only
+    # behavior as before this feature existed.
+    snap = tmp_path / ".env.prod"
+    snap.write_text("REDIS_SESSION_ENCRYPTION_KEY=a-real-secret\n")
+    monkeypatch.setattr(PC, "_load_baseline_required_env", lambda: ["REDIS_SESSION_ENCRYPTION_KEY"])
+    monkeypatch.setattr(PC, "load_product_required_prod_config", lambda root, product: [])
+    ok, msg = PC._default_run_check("required_prod_env_present", "core", tmp_path)
+    assert ok is True
+    assert "0 declared by core" in msg
+
+
+def test_required_prod_env_runner_skips_loudly_on_non_literal_declaration(monkeypatch, tmp_path):
+    snap = tmp_path / ".env.prod"
+    snap.write_text("REDIS_SESSION_ENCRYPTION_KEY=a-real-secret\n")
+    monkeypatch.setattr(PC, "_load_baseline_required_env", lambda: ["REDIS_SESSION_ENCRYPTION_KEY"])
+
+    def _raise(root, product):
+        raise ValueError(f"{product}: required_prod_config is not a literal list")
+
+    monkeypatch.setattr(PC, "load_product_required_prod_config", _raise)
+    ok, msg = PC._default_run_check("required_prod_env_present", "widget", tmp_path)
+    assert ok is True  # SKIP, not a pass-by-omission — the message says so
+    assert "SKIPPED" in msg
+    assert "widget" in msg

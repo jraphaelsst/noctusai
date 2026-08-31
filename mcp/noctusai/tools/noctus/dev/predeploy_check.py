@@ -28,6 +28,7 @@ pattern). The default `run_check` shells out (mirrors `noctus.dev.vite_build`
 """
 from __future__ import annotations
 
+import ast
 import datetime as _dt
 import functools
 import os
@@ -474,6 +475,70 @@ def _load_baseline_required_env() -> list[str]:
     return baseline_required_prod_env()
 
 
+def load_product_required_prod_config(root: pathlib.Path, product: str) -> list[str]:
+    """The product's own ``create_product_app(required_prod_config=[...])`` keys.
+
+    WHY THIS EXISTS. The boot guard already folds TWO sources together
+    (``noctusai_seed/app.py``): the fleet-wide baseline **and** the per-product
+    ``required_prod_config=[...]`` opt-in. This gate read only the first — so a
+    product could declare a key required, boot-abort in production on it, and
+    ``predeploy_check`` would still return ``ready``. The gate checked less than
+    the runtime enforced, which is the one direction a pre-deploy gate must
+    never be wrong in.
+
+    Read **statically, via AST** — never by importing the product's
+    ``app.main``. Importing would execute ``create_product_app`` (Supabase
+    clients, credential resolution, LLM wiring) inside the gate, needing a full
+    env just to answer a question about a literal list. AST-first is also the
+    house rule for anything a parser can read.
+    (``KB § PATTERNS/common/ast.md``)
+
+    Returns ``[]`` for a product with no declaration, an unreadable ``main.py``,
+    or a non-literal argument — with one deliberate exception: a NON-LITERAL
+    argument is a case this reader genuinely cannot resolve, so it raises
+    :class:`ValueError` and the caller SKIPs loudly. Silently reading zero keys
+    off a product that declared some is exactly the false-green this function
+    exists to remove.
+    """
+    main_py = root / "products" / product / "backend" / "app" / "main.py"
+    if not main_py.exists():
+        return []
+
+    try:
+        tree = ast.parse(main_py.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = getattr(func, "id", None) or getattr(func, "attr", None)
+        if name != "create_product_app":
+            continue
+        for kw in node.keywords:
+            if kw.arg != "required_prod_config":
+                continue
+            if not isinstance(kw.value, (ast.List, ast.Tuple)):
+                raise ValueError(
+                    f"{product}: required_prod_config is not a literal list — "
+                    "this gate reads it statically and cannot evaluate an "
+                    "expression. Inline the keys as string literals."
+                )
+            keys: list[str] = []
+            for element in kw.value.elts:
+                if not isinstance(element, ast.Constant) or not isinstance(
+                    element.value, str
+                ):
+                    raise ValueError(
+                        f"{product}: required_prod_config holds a non-literal "
+                        "entry — inline the keys as string literals."
+                    )
+                keys.append(element.value)
+            return keys
+    return []
+
+
 def _default_run_check(
     check: str, product: str, root: pathlib.Path, prod_env_path: str | None = None
 ) -> tuple[bool, str]:
@@ -532,8 +597,11 @@ def _default_run_check(
             f"non-localhost prod URL ({env_path.name})"
         )
     if check == "required_prod_env_present":
-        # Platform-wide (product arg unused): every seed-baseline required-in-prod
-        # env key must be present + non-empty in the prod snapshot. SKIPs loudly
+        # Two sources folded together (the same two the boot guard folds):
+        # the seed-baseline required-in-prod env keys (platform-wide) PLUS
+        # this product's own `create_product_app(required_prod_config=[...])`
+        # declaration (read statically below). Every key from either source
+        # must be present + non-empty in the prod snapshot. SKIPs loudly
         # (ok=True) when no snapshot resolves (same pattern as prod_config_parity)
         # or when the seed baseline is unreadable from here.
         env_path = _resolve_prod_env_path(root, prod_env_path)
@@ -552,12 +620,27 @@ def _default_run_check(
                 "required-env list unreadable from here (deploy_config import "
                 "failed)."
             )
+        # Fold in the product's OWN declaration — the second source the boot
+        # guard already enforces. Without this the gate checks strictly less
+        # than the runtime does, and a declared-but-unprovisioned key passes
+        # pre-deploy and aborts the container at startup instead.
+        try:
+            product_keys = load_product_required_prod_config(root, product)
+        except ValueError as exc:
+            return True, (
+                f"required_prod_env_present SKIPPED — {exc} (skipping loudly "
+                "rather than reading zero keys off a product that declared some)"
+            )
+        for key in product_keys:
+            if key not in required:
+                required.append(key)
         env = _parse_env_file(env_path.read_text(encoding="utf-8"))
         audit = audit_required_prod_env_present(required, env)
         if audit["violations"]:
             return False, "required prod env MISSING: " + "; ".join(audit["violations"])
         return True, (
-            f"required prod env ok — {audit['checked']} baseline key(s) present "
+            f"required prod env ok — {audit['checked']} key(s) present "
+            f"({len(product_keys)} declared by {product}) "
             f"in the prod snapshot ({env_path.name})"
         )
     if check == "cors_roster_complete":

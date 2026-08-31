@@ -417,6 +417,16 @@ app = create_product_app(
     name="Social Wiring",
     schema="social_wiring",
     settings=settings,
+    # 🔴 Chave sem a qual este produto NÃO deve subir em produção. O guard de
+    # boot aborta listando as faltantes, e `noctus.dev.predeploy_check` lê esta
+    # mesma lista estaticamente — a lacuna aparece antes do deploy.
+    #
+    # ENCRYPTION_KEY: `app/services/credential_vault.py` RECUSA gravar sem ela
+    # (`EncryptionNotConfigured` → 503) em vez de guardar token em claro. Sem a
+    # chave, TODA integração deste produto — Google, Meta, Instagram, Gmail,
+    # Mailchimp, WhatsApp — fica inoperante, e o sintoma aparece uma a uma, no
+    # primeiro OAuth de cada uma, nunca no deploy.
+    required_prod_config=["ENCRYPTION_KEY"],
     version="0.1.0",
     limiter=limiter,
     # Module-contributed base (_STANDARD_ROUTERS) + product-global "status_paginas".
