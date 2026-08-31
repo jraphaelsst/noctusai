@@ -26,9 +26,12 @@ interface LocacaoVistoriasProps {
 
 export function LocacaoVistorias({ imovelId }: LocacaoVistoriasProps) {
   const navigate = useNavigate();
-  const { data: vistorias = [], isLoading } = useVistorias({ imovel_id: imovelId });
+  const vistoriasQuery = useVistorias({ imovel_id: imovelId });
+  const { data: vistorias = [] } = vistoriasQuery;
 
-  if (isLoading) {
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (vistoriasQuery.isPending && !vistoriasQuery.data) {
     return (
       <Card className="p-8 text-center">
         <p className="text-muted-foreground">Carregando vistorias...</p>

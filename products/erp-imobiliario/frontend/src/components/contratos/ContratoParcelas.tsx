@@ -37,7 +37,8 @@ interface ContratoParcelasProps {
 }
 
 export function ContratoParcelas({ contratoId, valorTotal }: ContratoParcelasProps) {
-  const { data: parcelas = [], isLoading } = useParcelas(contratoId);
+  const parcelasQuery = useParcelas(contratoId);
+  const { data: parcelas = [] } = parcelasQuery;
   const { mutate: gerarParcelas, isPending: isGenerating } = useGerarParcelas();
   const { mutate: updateParcela } = useUpdateParcela();
 
@@ -56,7 +57,9 @@ export function ContratoParcelas({ contratoId, valorTotal }: ContratoParcelasPro
     updateParcela({ parcelaId, status: 'pago', data_pagamento: new Date().toISOString().split('T')[0] });
   };
 
-  if (isLoading) {
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (parcelasQuery.isPending && !parcelasQuery.data) {
     return (
       <Card className="p-8 text-center">
         <p className="text-muted-foreground">Carregando parcelas...</p>

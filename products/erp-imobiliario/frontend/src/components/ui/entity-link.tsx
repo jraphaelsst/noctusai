@@ -21,14 +21,22 @@ interface EntityLinkProps {
 }
 
 function ClienteLabel({ id }: { id: string }) {
-  const { data: cliente, isLoading } = useCliente(id);
-  if (isLoading) return <Skeleton className="h-4 w-24 inline-block" />;
+  const clienteQuery = useCliente(id);
+  const { data: cliente } = clienteQuery;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (clienteQuery.isPending && !clienteQuery.data) {
+    return <Skeleton className="h-4 w-24 inline-block" />;
+  }
   return <>{cliente?.nome || `#${id.slice(0, 8)}`}</>;
 }
 
 function ImovelLabel({ id }: { id: string }) {
-  const { data: imovel, isLoading } = useImovel(id);
-  if (isLoading) return <Skeleton className="h-4 w-24 inline-block" />;
+  const imovelQuery = useImovel(id);
+  const { data: imovel } = imovelQuery;
+  if (imovelQuery.isPending && !imovelQuery.data) {
+    return <Skeleton className="h-4 w-24 inline-block" />;
+  }
   return <>{imovel?.titulo_anuncio || imovel?.tipo_imovel || `#${id.slice(0, 8)}`}</>;
 }
 

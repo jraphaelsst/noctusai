@@ -19,8 +19,11 @@ import { useVistaUsuarios } from '@/hooks/useVistaShowcase';
 import { EmptyPanel, ErrorPanel } from './shared';
 
 export function UsuariosTab() {
-  const { data: usuarios, isLoading, isError, error } = useVistaUsuarios(true);
-  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  const usuariosQuery = useVistaUsuarios(true);
+  const { data: usuarios, isError, error } = usuariosQuery;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (usuariosQuery.isPending && !usuariosQuery.data) return <Skeleton className="h-64 w-full" />;
   if (isError) return <ErrorPanel error={error as Error} />;
   if (!usuarios || usuarios.length === 0) {
     return <EmptyPanel message="Nenhum usuário interno retornado pela Vista." />;

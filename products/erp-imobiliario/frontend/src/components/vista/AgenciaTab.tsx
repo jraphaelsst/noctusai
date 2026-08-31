@@ -9,8 +9,11 @@ import { useVistaAgencias } from '@/hooks/useVistaShowcase';
 import { EmptyPanel, ErrorPanel } from './shared';
 
 export function AgenciaTab() {
-  const { data: agencias, isLoading, isError, error } = useVistaAgencias(true);
-  if (isLoading) return <Skeleton className="h-32 w-full" />;
+  const agenciasQuery = useVistaAgencias(true);
+  const { data: agencias, isError, error } = agenciasQuery;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (agenciasQuery.isPending && !agenciasQuery.data) return <Skeleton className="h-32 w-full" />;
   if (isError) return <ErrorPanel error={error as Error} />;
   if (!agencias || agencias.length === 0) {
     return <EmptyPanel message="Nenhuma agência retornada." />;
