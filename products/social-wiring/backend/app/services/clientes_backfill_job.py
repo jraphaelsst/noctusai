@@ -33,15 +33,16 @@ KB § PATTERNS/architect/project-execution.md · roadmap
 """
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 
 from noctusai_lib.api import scheduler as seed_scheduler
 
 from app.config import settings
 from app.dependencies import get_admin_client
-from app.services import clientes_service
+from app.services import clientes_service, sync_lease
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,139 @@ def _run_clientes_backfill_job(*, run_fn: Any = None) -> None:
         logger.error("clientes_backfill: job run failed", exc_info=True)
 
 
+#: Serialises the UNSCHEDULED sweeps against each other and against the
+#: scheduled pass. `run_clientes_backfill` is org-wide and idempotent, so a
+#: second concurrent pass only redoes the first's work while racing it on the
+#: same rows. Same DB-lease mechanism the nightly Vista sync uses
+#: (`imoveis_sync_scheduler._LEASE_NAME`, migration 070).
+_LEASE_NAME = "clientes_backfill"
+
+
+def run_now(
+    *,
+    admin_client: Any = None,
+    admin_factory: Any = None,
+    lease_fn: Any = None,
+    backfill_fn: Any = None,
+) -> dict[str, Any]:
+    """One sweep RIGHT NOW, serialised by the database lease.
+
+    The shared body behind BOTH non-scheduled entry points — the startup
+    catch-up (`schedule_catch_up`) and the operator-triggered
+    `POST /api/clientes/backfill`. Both ask the identical question ("attach
+    whatever is still unattached, now") and neither may run alongside the
+    scheduled pass, so there is ONE implementation holding ONE lease rather
+    than two callers each inventing a guard that would then disagree.
+
+    `skipped="lease_held"` is a NORMAL outcome, not an error: it means another
+    sweep is already doing exactly this work. Callers surface it as such.
+
+    NOC-REMEDIATE[backfill-inflight-arrival]: a lead created WHILE a sweep is
+    in flight can be missed by it (the sweep already read its source rows) and
+    then skipped by its own trigger (lease held), so it waits for the next
+    scheduled pass. Closing this needs a "re-run requested during run" flag on
+    the lease rather than a second concurrent sweep; deferred deliberately
+    because the common case — an operator adding one lead — is fully covered.
+    """
+    resolve_admin = admin_factory or get_admin_client
+    admin = admin_client if admin_client is not None else resolve_admin()
+    if admin is None:
+        logger.error(
+            "clientes_backfill: no admin client available — sweep NOT run.",
+        )
+        return {"skipped": "no-admin-client", "orgs": []}
+
+    with (lease_fn or sync_lease.lease)(admin, _LEASE_NAME) as acquired:
+        if not acquired:
+            logger.info(
+                "clientes_backfill: another sweep holds the lease — skipping "
+                "this trigger (the in-flight pass covers the same work).",
+            )
+            return {"skipped": "lease_held", "orgs": []}
+        return (backfill_fn or run_clientes_backfill)(admin_client=admin)
+
+
+# Strong references to in-flight tasks. Without this the event loop only holds
+# a weak reference and a long sweep can be collected mid-run. Mirrors
+# `imoveis_sync_scheduler._BACKGROUND_TASKS` — same hazard, same guard.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+async def catch_up(*, run_fn: Any = None) -> None:
+    """Run ONE sweep now, off the event loop.
+
+    🔴 Why a startup catch-up exists at all (found in prod 2026-08-31).
+
+    APScheduler holds its schedule IN MEMORY and an interval job's first run is
+    `now + interval` — `noctusai_lib.api.scheduler.register`'s own docstring
+    says so, and adds "the caller needs its own catch-up on startup". This
+    module never had one. The consequence is the opposite of what an operator
+    expects: every restart RE-ARMED the full `clientes_backfill_interval_hours`
+    window instead of catching up, so a fleet that deploys often could starve
+    the sweep indefinitely and newly-created leads would keep sitting there
+    with `atendimentos.cliente_id IS NULL` — unmovable, because `stage_gate`
+    refuses a card with no titular.
+
+    `run_clientes_backfill` is re-runnable and no-ops cheaply when there is
+    nothing to attach (see `_run_clientes_backfill_job`'s log guard), so this
+    is unconditional rather than an "is it overdue?" probe — there is no
+    persisted last-run timestamp to probe, and inventing one to avoid a no-op
+    would be more machinery than the no-op costs.
+
+    Run in an executor because the sweep is synchronous and does paged network
+    I/O; awaiting it directly on the loop would block every other request for
+    the duration.
+    """
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, lambda: _catch_up_body(run_fn=run_fn))
+
+
+def _catch_up_body(*, run_fn: Any = None) -> None:
+    """The catch-up's synchronous body — lease-guarded, never raising.
+
+    Swallows like `_run_clientes_backfill_job` does and for the same reason: a
+    failure here must not take down application startup, which is the one
+    caller. The error is logged with its traceback, never silently dropped.
+
+    `run_fn` is the Class-B seam that lets a test drive both branches with a
+    double instead of reassigning `run_now` on this module — replacing an
+    attribute on the module under test swaps out the very thing the test
+    claims to exercise. → KB § PATTERNS/compliance/testing.md.
+    """
+    try:
+        result = (run_fn or run_now)()
+        if result.get("skipped"):
+            logger.info(
+                "clientes_backfill catch-up: skipped (%s).", result["skipped"],
+            )
+    except Exception:
+        logger.error("clientes_backfill: startup catch-up failed", exc_info=True)
+
+
+def schedule_catch_up(*, run_fn: Any = None) -> Optional[asyncio.Task]:
+    """Fire the catch-up as a background task and return immediately.
+
+    Returns the task so a caller (and the tests) can await it; production
+    intentionally does not — a sweep over every org's intake rows must not
+    stall startup past the container health check. Mirrors
+    `imoveis_sync_scheduler.schedule_catch_up` exactly: same shape, same
+    reason, so there is ONE catch-up idiom in this product rather than two.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.error(
+            "clientes_backfill: schedule_catch_up called outside an event "
+            "loop — the catch-up did NOT start.",
+        )
+        return None
+
+    task = loop.create_task(catch_up(run_fn=run_fn))
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
+
 def configure(*, cfg: Any = None, scheduler: Any = None) -> None:
     """Register the steady-state pass on the seed-side scheduler.
 
@@ -204,4 +338,10 @@ def configure(*, cfg: Any = None, scheduler: Any = None) -> None:
     )
 
 
-__all__ = ["configure", "run_clientes_backfill"]
+__all__ = [
+    "catch_up",
+    "configure",
+    "run_clientes_backfill",
+    "run_now",
+    "schedule_catch_up",
+]

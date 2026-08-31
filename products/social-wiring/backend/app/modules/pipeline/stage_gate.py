@@ -8,10 +8,18 @@ the person's name or how to phone them produces a pipeline that reports work
 in progress on records that cannot be worked, and the discovery happens at the
 worst possible moment: when someone tries to call.
 
-So this is enforced server-side, on the move itself. The frontend disables the
-drag and says why, but that is a courtesy — the API is the gate, because the
-drag is not the only way a card moves (the board, the card dialog, and any
-future automation all reach the same endpoint).
+So this is enforced server-side, on the move itself. The API is the ONLY gate,
+which is the right place for it: the drag is not the only way a card moves (the
+board, the card dialog, and any future automation all reach the same endpoint).
+
+⚠️ CORRECTED 2026-08-31. This paragraph used to claim "the frontend disables
+the drag and says why, but that is a courtesy". No such logic has ever existed
+— there is no pendências check anywhere in `PipelineBoard`, `KanbanCard` or
+`AtendimentoCard`, so the drag is always enabled and the operator discovers the
+requirement only by attempting a move and reading the refusal toast. That is a
+defensible design (the refusal is clear and immediate), but the docstring
+described a courtesy affordance that was never built, which is worse than
+describing none: a reader trusts it and stops looking.
 
 🔴 WHY IT ASKS THE CHECKLIST INSTEAD OF READING COLUMNS
 -------------------------------------------------------
@@ -85,6 +93,16 @@ EXIGENCIAS: tuple[dict, ...] = (
 #: never disagree with the rules above.
 CAMPOS_OBRIGATORIOS: tuple[str, ...] = tuple(e["key"] for e in EXIGENCIAS)
 
+#: The pendência returned when the atendimento has no titular row AT ALL.
+#:
+#: Deliberately NOT one of `EXIGENCIAS`: it is a different failure with a
+#: different remedy. The `EXIGENCIAS` say "this person is missing a field";
+#: this says "there is no person record yet". Only the second one is fixed by
+#: waiting for (or running) the cadastro sync — telling the operator to fill in
+#: a name they already filled in is a dead end. See `pendencias`' docstring.
+SEM_CLIENTE_KEY = "_sem_cliente"
+SEM_CLIENTE: dict[str, str] = {"key": SEM_CLIENTE_KEY, "label": "Cadastro do cliente"}
+
 
 def _tem_algum_campo(cliente: Optional[dict], colunas: tuple[str, ...]) -> bool:
     """Is any of these columns non-empty?
@@ -114,15 +132,22 @@ def pendencias(
 
     Empty list = the gate is open.
 
-    A card with NO cliente at all is reported as missing everything rather
-    than waved through. An atendimento without a person attached cannot have
-    that person's name, and answering "nothing is missing" for it would be the
-    silent-fallback shape — a gate that passes hardest exactly where the data
-    is most absent.
+    A card with NO cliente at all is still REFUSED — never waved through. An
+    atendimento without a person attached cannot have that person's name, and
+    answering "nothing is missing" for it would be the silent-fallback shape —
+    a gate that passes hardest exactly where the data is most absent.
+
+    🔴 But it is refused with its OWN reason (`SEM_CLIENTE`), not by claiming
+    every field is missing. Reporting the `EXIGENCIAS` here made the refusal
+    lie: a lead the operator had just typed a name AND a phone into came back
+    "Nome, Celular são obrigatórios e ainda não consta no cadastro" (found in
+    prod 2026-08-31). Both were present — on the LEAD. What was absent was the
+    `clientes` row, which `clientes_backfill` attaches asynchronously. Naming
+    the wrong cause sends the operator to re-type data that is already there,
+    which is worse than no message at all.
     """
-    faltando = [{"key": e["key"], "label": e["label"]} for e in EXIGENCIAS]
     if cliente_id is None:
-        return faltando
+        return [dict(SEM_CLIENTE)]
 
     cliente = checklist_svc.cliente_para_derivacao(client, org_id, cliente_id)
     estado = {
@@ -147,7 +172,20 @@ def mensagem(pendentes: list[dict[str, str]]) -> str:
     One field at a time turns a two-field gap into two failed attempts, and the
     operator learns the requirement by trial and error instead of being told
     it.
+
+    `SEM_CLIENTE` gets its own sentence because its remedy is different: there
+    is nothing for the operator to type. Falling through to the field list here
+    would reproduce exactly the misleading refusal this sentinel exists to
+    prevent.
     """
+    if any(p.get("key") == SEM_CLIENTE_KEY for p in pendentes):
+        return (
+            "Não é possível mover este atendimento: o cadastro do cliente "
+            "ainda não foi vinculado a esta negociação. Para um lead recém-"
+            "criado isso acontece na sincronização de cadastros, que roda "
+            "periodicamente e pode ser disparada na hora por um administrador."
+        )
+
     faltando = ", ".join(p["label"] for p in pendentes)
     return (
         f"Não é possível mover este atendimento: {faltando} "
@@ -156,4 +194,10 @@ def mensagem(pendentes: list[dict[str, str]]) -> str:
     )
 
 
-__all__ = ["CAMPOS_OBRIGATORIOS", "pendencias", "mensagem"]
+__all__ = [
+    "CAMPOS_OBRIGATORIOS",
+    "SEM_CLIENTE",
+    "SEM_CLIENTE_KEY",
+    "pendencias",
+    "mensagem",
+]

@@ -26,7 +26,9 @@ being evidence — the seams keep the real code path running.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -246,3 +248,126 @@ class TestSchedulerWiring:
         ).read_text()
         assert "clientes_backfill_job" in main_src
         assert "clientes_backfill_job.configure()" in main_src
+
+
+# ─── The 2026-08-31 prod findings: no catch-up, no on-demand path ──────────
+
+
+@contextmanager
+def _lease_cm(acquired: bool):
+    """Stand-in for `sync_lease.lease` — same context-manager contract."""
+    yield acquired
+
+
+class TestRunNow:
+    """`run_now` — the shared, lease-guarded body behind BOTH unscheduled
+    entry points (the startup catch-up and `POST /api/clientes/backfill`).
+
+    🔴 What this guards. Before it existed the ONLY thing that ever attached
+    `atendimentos.cliente_id` was the interval job, and an interval job's first
+    run is `now + interval`. So every restart RE-ARMED the full window instead
+    of catching up, and a hand-created lead could sit with a card that
+    `stage_gate` refuses to move for hours. Walking a card end-to-end in prod
+    on 2026-08-31 hit exactly that: name and phone both typed, move refused.
+    """
+
+    def test_runs_the_sweep_when_the_lease_is_free(self):
+        seen: dict = {}
+
+        def _lease(admin, name, **kw):
+            seen["lease_name"] = name
+            seen["lease_admin"] = admin
+            return _lease_cm(True)
+
+        def _backfill(*, admin_client):
+            seen["ran_with"] = admin_client
+            return {"skipped": None, "orgs": [{"org_id": _ORG_A, "ok": True}]}
+
+        admin = object()
+        out = job.run_now(admin_client=admin, lease_fn=_lease, backfill_fn=_backfill)
+
+        assert seen["ran_with"] is admin
+        assert seen["lease_name"] == "clientes_backfill"
+        assert seen["lease_admin"] is admin
+        assert out["skipped"] is None
+        assert out["orgs"] == [{"org_id": _ORG_A, "ok": True}]
+
+    def test_does_not_start_a_second_sweep_while_one_is_in_flight(self):
+        """`lease_held` is a NORMAL outcome. The point of the lease is that
+        the sweep body must NOT run — asserting only on the return value
+        would pass even if it did."""
+        seen: dict = {}
+
+        def _backfill(*, admin_client):  # pragma: no cover — must not run
+            seen["ran"] = True
+            return {"skipped": None, "orgs": []}
+
+        out = job.run_now(
+            admin_client=object(),
+            lease_fn=lambda *a, **kw: _lease_cm(False),
+            backfill_fn=_backfill,
+        )
+
+        assert out == {"skipped": "lease_held", "orgs": []}
+        assert "ran" not in seen
+
+    def test_reports_a_missing_admin_client_instead_of_crashing(self, caplog):
+        """Reachable only because `admin_factory` is a declared seam — the
+        no-client branch is exactly the one a restart in a misconfigured
+        environment takes."""
+        with caplog.at_level(logging.ERROR):
+            out = job.run_now(
+                admin_factory=lambda: None,
+                lease_fn=lambda *a, **kw: _lease_cm(True),
+            )
+        assert out == {"skipped": "no-admin-client", "orgs": []}
+        assert "no admin client" in caplog.text
+
+
+class TestStartupCatchUp:
+    def test_catch_up_body_swallows_so_startup_survives(self, caplog):
+        """Its one caller is application startup. A raising catch-up would
+        take the container down on boot — strictly worse than a late sweep.
+
+        Driven through the `run_fn` seam, not by reassigning `job.run_now`."""
+        def _boom():
+            raise RuntimeError("boom")
+
+        with caplog.at_level(logging.ERROR):
+            job._catch_up_body(run_fn=_boom)  # must not raise
+        assert "startup catch-up failed" in caplog.text
+
+    def test_catch_up_body_reports_a_skipped_sweep(self, caplog):
+        with caplog.at_level(logging.INFO):
+            job._catch_up_body(run_fn=lambda: {"skipped": "lease_held", "orgs": []})
+        assert "skipped (lease_held)" in caplog.text
+
+    def test_schedule_catch_up_outside_an_event_loop_is_loud(self, caplog):
+        """Returning None silently would reproduce the original bug in a new
+        costume: no catch-up, and nothing saying so."""
+        with caplog.at_level(logging.ERROR):
+            assert job.schedule_catch_up() is None
+        assert "did NOT start" in caplog.text
+
+    def test_schedule_catch_up_runs_the_sweep_on_the_loop(self):
+        """End-to-end through the real `schedule_catch_up` -> `catch_up` ->
+        executor path, with only the sweep itself doubled via `run_fn`."""
+        ran: dict = {}
+
+        async def _drive():
+            task = job.schedule_catch_up(
+                run_fn=lambda: ran.setdefault("ran", True) or {"skipped": None},
+            )
+            assert task is not None
+            await task
+
+        asyncio.run(_drive())
+        assert ran.get("ran") is True
+
+    def test_lifespan_actually_calls_it(self):
+        """The original outage was an unwired function, so assert the WIRING,
+        not just that the function works when called."""
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[2] / "app" / "lifespan.py").read_text()
+        assert "clientes_backfill_job" in src
+        assert "schedule_clientes_catch_up()" in src

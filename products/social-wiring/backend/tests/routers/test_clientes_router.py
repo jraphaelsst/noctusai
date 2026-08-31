@@ -979,3 +979,107 @@ class TestDesfazer:
 
         resp = client.post(f"/api/clientes/merges/{merge_id}/desfazer", headers=_auth())
         assert resp.status_code == 409, resp.text
+
+
+class TestBackfillOnDemand:
+    """`POST /api/clientes/backfill` — the missing operator action.
+
+    🔴 Why it exists (prod, 2026-08-31). `atendimentos.cliente_id` was
+    populated ONLY by an interval job: no trigger, no endpoint, no UI. A lead
+    created by hand therefore got a funil card that `stage_gate` refused to
+    move, and the operator had no way to resolve it — only to wait up to
+    `clientes_backfill_interval_hours`.
+    """
+
+    def test_requires_auth(self, anon_client):
+        """Strict `== 401` — a tuple would pass if the route were absent."""
+        resp = anon_client.post("/api/clientes/backfill")
+        assert resp.status_code == 401
+
+    def test_runs_the_sweep_and_returns_what_it_did(self, client):
+        from app.main import app
+        from app.routers.clientes_router import get_backfill_runner
+
+        calls: list = []
+
+        def _fake_runner():
+            def _run():
+                calls.append(True)
+                return {
+                    "skipped": None,
+                    "orgs": [{
+                        "org_id": ORG_ID, "ok": True,
+                        "clientes_created": 2, "touches_created": 3,
+                        "atendimentos_repointed": 2, "atendimentos_collapsed": 0,
+                        "stragglers_parked_for_review": 0,
+                        "clientes_reactivated": 1,
+                    }],
+                }
+            return _run
+
+        app.dependency_overrides[get_backfill_runner] = _fake_runner
+        try:
+            resp = client.post("/api/clientes/backfill")
+        finally:
+            app.dependency_overrides.pop(get_backfill_runner, None)
+
+        assert resp.status_code == 200, resp.text
+        assert calls == [True]
+        body = resp.json()
+        assert body["skipped"] is None
+        assert body["orgs"][0]["clientes_created"] == 2
+        assert body["orgs"][0]["atendimentos_repointed"] == 2
+        assert body["orgs"][0]["clientes_reactivated"] == 1
+
+    def test_surfaces_lease_held_as_a_normal_outcome(self, client):
+        """A second press while a sweep is in flight is not an error — it is
+        the lease doing its job. It must NOT be reported as a failure."""
+        from app.main import app
+        from app.routers.clientes_router import get_backfill_runner
+
+        app.dependency_overrides[get_backfill_runner] = lambda: (
+            lambda: {"skipped": "lease_held", "orgs": []}
+        )
+        try:
+            resp = client.post("/api/clientes/backfill")
+        finally:
+            app.dependency_overrides.pop(get_backfill_runner, None)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"skipped": "lease_held", "orgs": []}
+
+    def test_reports_a_failed_org_rather_than_omitting_it(self, client):
+        """A per-org failure returns `ok=false` with zeroed counters. Dropping
+        the row would read as "nothing to do" instead of "this one broke"."""
+        from app.main import app
+        from app.routers.clientes_router import get_backfill_runner
+
+        app.dependency_overrides[get_backfill_runner] = lambda: (
+            lambda: {"skipped": None, "orgs": [{"org_id": ORG_ID, "ok": False}]}
+        )
+        try:
+            resp = client.post("/api/clientes/backfill")
+        finally:
+            app.dependency_overrides.pop(get_backfill_runner, None)
+
+        assert resp.status_code == 200, resp.text
+        org = resp.json()["orgs"][0]
+        assert org["ok"] is False
+        assert org["clientes_created"] == 0
+
+    def test_route_is_declared_before_the_cliente_id_catch_all(self, client):
+        """`/backfill` is a literal 1-segment path exactly like
+        `/{cliente_id}`. Declared after it, FastAPI would try to parse
+        "backfill" as a UUID and 422 — the hazard the module docstring flags
+        for `/revisao`. A 422 here means the ordering regressed."""
+        from app.main import app
+        from app.routers.clientes_router import get_backfill_runner
+
+        app.dependency_overrides[get_backfill_runner] = lambda: (
+            lambda: {"skipped": None, "orgs": []}
+        )
+        try:
+            resp = client.post("/api/clientes/backfill")
+        finally:
+            app.dependency_overrides.pop(get_backfill_runner, None)
+        assert resp.status_code != 422

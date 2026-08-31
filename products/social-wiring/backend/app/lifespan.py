@@ -120,6 +120,21 @@ async def on_startup() -> None:
 
     schedule_catch_up()
 
+    # Person-layer catch-up — SAME reason as the Vista one above, different
+    # data. `clientes_backfill` is an interval job, and an interval job's first
+    # run is `now + interval`, so a restart re-armed the whole 6h window rather
+    # than catching up. Until it runs, a freshly-created lead has
+    # `atendimentos.cliente_id IS NULL` and `stage_gate` refuses to move its
+    # card at all — so a deploy could leave brand-new leads unworkable for
+    # hours (found in prod 2026-08-31).
+    #
+    # Scheduled, NOT awaited, for the same health-check reason.
+    from app.services.clientes_backfill_job import (
+        schedule_catch_up as schedule_clientes_catch_up,
+    )
+
+    schedule_clientes_catch_up()
+
     logger.info(
         "Social Wiring lifespan startup: ConversationModule ready (org_id=%s).",
         org_id,

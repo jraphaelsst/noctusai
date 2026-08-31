@@ -148,7 +148,20 @@ def _gather_movimentos(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict
         m["de_etapa_id"] for m in moves if m.get("de_etapa_id")
     }
     stages = _in_batched_rows(client, "pipeline_stages", org_id, "id", list(stage_ids)) if stage_ids else []
-    stage_names = {s["id"]: s.get("nome", s["id"]) for s in stages}
+    # 🔴 `pipeline_stages` names its human-readable column `label` — there is no
+    # `nome` column on that table at all. The original `s.get("nome", s["id"])`
+    # therefore ALWAYS fell through to its default, so every movimento entry
+    # rendered the stage's raw UUID: `Moveu de "b9e34f2d-2268-…" para
+    # "4c3df1a7-68c7-…"`, on BOTH boards, for every card (found in prod
+    # 2026-08-31 walking a card end-to-end).
+    #
+    # The default is the bug's camouflage: a missing key silently produced a
+    # plausible-looking string instead of failing, which is exactly the
+    # silent-fallback shape. `slug` is the honest intermediate fallback (still
+    # human-readable) before the id is used as a genuine last resort.
+    stage_names = {
+        s["id"]: (s.get("label") or s.get("slug") or s["id"]) for s in stages
+    }
 
     autor_ids = {m["responsavel_id"] for m in moves if m.get("responsavel_id")}
     resolved = _resolve_actors(autor_ids)

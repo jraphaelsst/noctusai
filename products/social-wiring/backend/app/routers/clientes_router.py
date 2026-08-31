@@ -48,6 +48,7 @@ from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError
 
 from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
+from app.services import clientes_backfill_job
 from app.services import clientes_service as svc
 from app.services import identidade_service as ident
 
@@ -367,6 +368,82 @@ async def list_revisao(
     rejected = _rejected_keys(client, org_id)
     visible = [g for g in groups if g["chave_canonica"] not in rejected]
     return _paginate_items(visible, page, page_size)
+
+
+class BackfillOrgOut(BaseModel):
+    """What the sweep did for one org. A per-org failure reports `ok=false`
+    and leaves the counters at zero rather than omitting the org — a missing
+    row would read as "nothing to do" instead of "this one broke"."""
+
+    org_id: str
+    ok: bool
+    clientes_created: int = 0
+    touches_created: int = 0
+    atendimentos_repointed: int = 0
+    atendimentos_collapsed: int = 0
+    stragglers_parked_for_review: int = 0
+    clientes_reactivated: int = 0
+
+
+class BackfillOut(BaseModel):
+    skipped: Optional[str] = None
+    orgs: list[BackfillOrgOut] = Field(default_factory=list)
+
+
+# 🔴 ROUTE ORDER: `/backfill` is a literal 1-segment path exactly like
+# `/{cliente_id}` — it MUST stay above the bare `/{cliente_id}` GET/PATCH
+# routes or FastAPI would try to parse "backfill" as a UUID and 422. Same
+# hazard the module docstring flags for `/revisao`.
+def get_backfill_runner():
+    """DI seam: the person-layer sweep this route triggers.
+
+    Tests override via `app.dependency_overrides[get_backfill_runner]` with a
+    double, so the route's own behaviour (auth, response shaping, the
+    `skipped` passthrough) is exercised without running a real org-wide sweep.
+    Declared rather than patched — replacing `clientes_backfill_job.run_now`
+    on this module would swap out the very thing the test claims to exercise.
+    → KB § PATTERNS/backend/di-test-seam.md.
+    """
+    return clientes_backfill_job.run_now
+
+
+@router.post("/backfill", response_model=BackfillOut)
+def executar_backfill(
+    auth=Depends(get_current_user_org),
+    run_sweep=Depends(get_backfill_runner),
+) -> BackfillOut:
+    """Run the person-layer sweep NOW instead of waiting for the schedule.
+
+    🔴 Why this endpoint exists (found in prod 2026-08-31).
+
+    `atendimentos.cliente_id` is populated ONLY by `clientes_backfill`, an
+    interval job. There was no trigger, no on-demand path, and no UI anywhere
+    that could attach a person — so a lead created by hand sat with
+    `cliente_id IS NULL` until the next scheduled pass, and `stage_gate`
+    refuses to move a card whose atendimento has no titular. An operator who
+    had just typed a name and a phone was told the card could not move, with
+    no action available to them. This is that missing action.
+
+    Deliberately runs the SAME all-orgs body as the scheduled pass rather than
+    an org-scoped variant: this button means "run the job now", and a second
+    org-scoped implementation of the same sweep is exactly the kind of
+    near-duplicate that drifts from the original. The work done for other orgs
+    is work the scheduler would have done anyway.
+
+    Safe to expose to any authenticated org member because it is idempotent
+    AND lease-guarded — a repeated press while a sweep is in flight returns
+    `skipped="lease_held"` without starting a second pass, so it cannot be
+    used to pile on load. Declared `def` (not `async def`) so FastAPI runs the
+    synchronous, network-bound sweep in its threadpool instead of blocking the
+    event loop.
+    """
+    _user, _token, raw_org = auth
+    coerce_org_uuid(raw_org)  # rejects a malformed org claim before any work
+    result = run_sweep()
+    return BackfillOut(
+        skipped=result.get("skipped"),
+        orgs=[BackfillOrgOut(**o) for o in result.get("orgs", [])],
+    )
 
 
 @router.post("/revisao/merge-seguros", response_model=MergeSegurosOut)

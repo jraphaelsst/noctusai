@@ -281,3 +281,69 @@ class TestOrgIsolation:
         resp_a = http_client.get("/api/leads", headers=auth_headers())
         names = {r["cliente_nome"] for r in resp_a.json()["data"]}
         assert "OrgB" not in names
+
+
+class TestCreateSchedulesPersonLayerSweep:
+    """🔴 A created lead must become WORKABLE, not merely visible.
+
+    Migration 034's trigger spawns the funil card on insert, but
+    `atendimentos.cliente_id` is attached by `clientes_backfill` — and that
+    was an interval job with no trigger and no on-demand path. So the card
+    appeared and then `stage_gate` refused to move it, for up to
+    `clientes_backfill_interval_hours`, while the operator looked at the name
+    and phone they had just typed (found in prod 2026-08-31). Creating the
+    lead now schedules the sweep.
+    """
+
+    def test_create_schedules_the_sweep(self, http_client):
+        from app.main import app
+        from app.modules.leads.routers.leads import get_person_layer_sweep
+
+        ran: list = []
+        app.dependency_overrides[get_person_layer_sweep] = lambda: (
+            lambda: ran.append(True)
+        )
+        try:
+            resp = http_client.post(
+                "/api/leads",
+                json={"data_entrada": "2026-07-01", "cliente_nome": "Zed"},
+                headers=auth_headers(),
+            )
+        finally:
+            app.dependency_overrides.pop(get_person_layer_sweep, None)
+
+        assert resp.status_code == 201, resp.text
+        # TestClient runs background tasks before returning, so by here the
+        # sweep must have been invoked — scheduled, not merely constructed.
+        assert ran == [True]
+
+    def test_sweep_runs_after_the_response_not_before_it(self, http_client):
+        """It is a BackgroundTask on purpose: lead creation must not wait on
+        an org-wide sweep. If this ever became a blocking call, the 201 would
+        start carrying the sweep's latency."""
+        from app.main import app
+        from app.modules.leads.routers.leads import get_person_layer_sweep
+
+        order: list = []
+
+        def _sweep_dep():
+            def _run():
+                order.append("sweep")
+            return _run
+
+        app.dependency_overrides[get_person_layer_sweep] = _sweep_dep
+        try:
+            resp = http_client.post(
+                "/api/leads",
+                json={"data_entrada": "2026-07-01", "cliente_nome": "Yan"},
+                headers=auth_headers(),
+            )
+            order.append("response-built")
+        finally:
+            app.dependency_overrides.pop(get_person_layer_sweep, None)
+
+        assert resp.status_code == 201, resp.text
+        assert order == ["sweep", "response-built"], (
+            "the sweep must run in the background task phase, i.e. after the "
+            "handler returned its response body"
+        )
