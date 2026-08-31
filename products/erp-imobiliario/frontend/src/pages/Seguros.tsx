@@ -101,10 +101,12 @@ export default function Seguros() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [formData, setFormData] = useState<SeguroCreateData>(emptyForm);
 
-  const { data: segurosData, isLoading } = useSeguros({
+  const segurosQuery = useSeguros({
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
     tipo_cobertura: filtroCobertura !== 'todos' ? filtroCobertura : undefined,
   });
+  const segurosData = segurosQuery.data;
+  const showSegurosSkeleton = segurosQuery.isPending && !segurosQuery.data;
   const seguros = segurosData?.data || [];
 
   const { data: vencimentos } = useVencimentosSeguros(30);
@@ -287,7 +289,7 @@ export default function Seguros() {
       {/* Seguros Table */}
       <Card>
         <CardContent className="pt-6">
-          {isLoading ? (
+          {showSegurosSkeleton ? (
             <TableSkeleton rows={4} />
           ) : seguros.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
