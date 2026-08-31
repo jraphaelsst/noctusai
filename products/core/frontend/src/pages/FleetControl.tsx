@@ -75,7 +75,7 @@ function StatusBadge({ p }: { p: FleetProduct }) {
 
 export function FleetControl() {
   const queryClient = useQueryClient();
-  const { data, isLoading, error } = useFleet();
+  const { data, isPending, error } = useFleet();
 
   const act = useMutation<FleetProduct, Error, { slug: string; verb: Verb }>({
     mutationFn: async ({ slug, verb }) => {
@@ -125,14 +125,14 @@ export function FleetControl() {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {isLoading && (
+            {isPending && !data && (
               <tr>
                 <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
                   Carregando frota...
                 </td>
               </tr>
             )}
-            {!isLoading &&
+            {!isPending &&
               (data?.products ?? []).map((p) => {
                 const pending = pendingFor(p.slug);
                 return (
@@ -177,7 +177,7 @@ export function FleetControl() {
                   </tr>
                 );
               })}
-            {!isLoading && (data?.products ?? []).length === 0 && !error && (
+            {!isPending && (data?.products ?? []).length === 0 && !error && (
               <tr>
                 <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
                   <Power className="mx-auto mb-2 h-6 w-6 opacity-40" />

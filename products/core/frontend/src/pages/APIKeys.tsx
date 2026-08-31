@@ -33,7 +33,7 @@ function scopeLabel(status: CredentialStatus | undefined): string {
 
 export function APIKeys() {
   const navigate = useNavigate();
-  const { data: credentials, isLoading, refetch } = useLLMCredentials();
+  const { data: credentials, isPending, refetch } = useLLMCredentials();
   const update = useUpdateLLMCredentials();
 
   const [values, setValues] = useState<Record<string, string>>({});
@@ -88,7 +88,7 @@ export function APIKeys() {
         </div>
       )}
 
-      {isLoading ? (
+      {isPending && !credentials ? (
         <p className="text-sm text-muted-foreground">Carregando…</p>
       ) : (
         <div className="space-y-5">
