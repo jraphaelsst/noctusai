@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
 import { TableSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Button } from '@noctusai/seed/components/ui/button';
 import { Input } from '@noctusai/seed/components/ui/input';
@@ -113,9 +114,11 @@ export default function Impostos() {
   const showImpostosSkeleton = impostosQuery.isPending && !impostosQuery.data;
   const impostos = impostosData?.data || [];
 
-  const { data: resumo } = useResumoImpostos({
+  const resumoQuery = useResumoImpostos({
     ano: filtroAno,
   });
+  const { data: resumo } = resumoQuery;
+  const resumoNotArrived = resumoQuery.isPending && !resumoQuery.data;
 
   const { mutate: createImposto, isPending: isCreating } = useCreateImposto();
   const { mutate: updateImposto, isPending: isUpdating } = useUpdateImposto();
@@ -202,7 +205,7 @@ export default function Impostos() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(resumo?.total_devido || 0)}
+              <SummaryValue notArrived={resumoNotArrived}>{formatCurrency(resumo?.total_devido ?? 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -214,7 +217,7 @@ export default function Impostos() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              {formatCurrency(resumo?.total_pago || 0)}
+              <SummaryValue notArrived={resumoNotArrived}>{formatCurrency(resumo?.total_pago ?? 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -226,7 +229,7 @@ export default function Impostos() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-orange-600">
-              {formatCurrency(resumo?.total_pendente || 0)}
+              <SummaryValue notArrived={resumoNotArrived}>{formatCurrency(resumo?.total_pendente ?? 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -238,7 +241,7 @@ export default function Impostos() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {formatCurrency(resumo?.total_atrasado || 0)}
+              <SummaryValue notArrived={resumoNotArrived}>{formatCurrency(resumo?.total_atrasado ?? 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
