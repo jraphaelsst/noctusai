@@ -59,7 +59,10 @@ describe("useRepertorio — loading formula", () => {
 describe("useAcessos — loading formula", () => {
   it("REGRESSION: does not report loading right after useCriarAcesso/useRemoverAcesso invalidate the cofre", () => {
     queryState = {
-      data: [{ id: "a1", rotulo: "Meta Business", tem_senha: true }],
+      data: {
+        cofre_configurado: true,
+        itens: [{ id: "a1", rotulo: "Meta Business", tem_senha: true }],
+      },
       isPending: false,
       isFetching: true,
       isError: false,
@@ -68,5 +71,25 @@ describe("useAcessos — loading formula", () => {
     const { loading, acessos } = useAcessos("cliente-1");
     expect(loading).toBe(false);
     expect(acessos).toHaveLength(1);
+  });
+});
+
+describe("useAcessos — cofreConfigurado", () => {
+  it("is null before the client's vault has ever loaded", () => {
+    queryState = { data: undefined, isPending: true, isFetching: true, isError: false, error: null };
+    expect(useAcessos("cliente-1").cofreConfigurado).toBeNull();
+  });
+
+  it("is read off the wrapper, independent of whether itens is empty", () => {
+    queryState = {
+      data: { cofre_configurado: false, itens: [] },
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+    };
+    const { cofreConfigurado, acessos } = useAcessos("cliente-1");
+    expect(cofreConfigurado).toBe(false);
+    expect(acessos).toHaveLength(0);
   });
 });

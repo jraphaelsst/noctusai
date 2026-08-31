@@ -132,16 +132,30 @@ export function useAtualizarMarca() {
 }
 
 // ─── Cofre de Acessos ──────────────────────────────────────────────────
+/** Mirror of backend `AcessosOut` — the vault entries PLUS whether a new
+ * password can be stored. Wrapped (rather than a flag on each `Acesso`,
+ * as `IntegracaoStatus` does) because `itens` can legitimately be empty,
+ * and an empty list must not be read as "cofre configured, no entries yet"
+ * when it's actually "cofre not configured at all". */
+export interface AcessosResponse {
+  cofre_configurado: boolean;
+  itens: Acesso[];
+}
+
 export function useAcessos(clienteId: string | undefined) {
   const query = useQuery({
     queryKey: [...COFRE_QUERY_KEY, clienteId],
-    queryFn: () => api.get<Acesso[]>(`/api/marcas/acessos/${clienteId}`),
+    queryFn: () => api.get<AcessosResponse>(`/api/marcas/acessos/${clienteId}`),
     enabled: Boolean(clienteId),
   });
   return {
     ...query,
-    acessos: query.data ?? [],
+    acessos: query.data?.itens ?? [],
     loading: query.isPending && !query.data,
+    // `null` while unknown (not yet loaded / no client selected) so the
+    // page can tell that apart from a real "not configured" — and never
+    // flash a false warning before the first response arrives.
+    cofreConfigurado: query.data ? query.data.cofre_configurado : null,
   };
 }
 
@@ -156,6 +170,30 @@ export function useCriarAcesso() {
       usuario?: string;
       senha?: string;
     }) => api.post<Acesso>("/api/marcas/acessos", payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: COFRE_QUERY_KEY }),
+  });
+}
+
+/**
+ * Edit an existing vault entry. Backend mirror: `marca_router.atualizar_acesso`
+ * (PATCH `/api/marcas/acessos/{id}`) — open to any org member, same as
+ * creating one; only REVEALING a stored password is admin-gated. `senha` is
+ * optional here too: omitting it edits the other fields without touching the
+ * stored password, matching `AcessoUpdate`'s `exclude_none` semantics
+ * server-side.
+ */
+export function useAtualizarAcesso() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: {
+      id: string;
+      rotulo?: string;
+      plataforma?: string;
+      url?: string;
+      usuario?: string;
+      senha?: string;
+      observacoes?: string;
+    }) => api.patch<Acesso>(`/api/marcas/acessos/${id}`, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: COFRE_QUERY_KEY }),
   });
 }

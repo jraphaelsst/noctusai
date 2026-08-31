@@ -21,6 +21,9 @@ export interface IntegracaoStatus {
   conectado_em: string | null;
   /** Set after an auth failure — the UI turns this into "reconectar". */
   ultimo_erro: string | null;
+  /** Whether `IGIG_COFRE_KEY` is set on this deploy. Same value on every
+   * channel — shown so the setup screen can say so BEFORE a save fails. */
+  cofre_configurado: boolean;
 }
 
 export const INTEGRACOES_QUERY_KEY = ["igig", "integracoes"] as const;
@@ -34,6 +37,11 @@ export function useIntegracoes() {
     ...query,
     integracoes: query.data ?? [],
     loading: query.isPending && !query.data,
+    // One key encrypts every channel, so every entry carries the same
+    // value — read off the first once the list has loaded. `null` (not
+    // `false`) while unknown, so a caller can tell "not configured" apart
+    // from "hasn't loaded yet" and never flash a false warning.
+    cofreConfigurado: query.data ? query.data[0]?.cofre_configurado ?? false : null,
   };
 }
 

@@ -43,3 +43,32 @@ describe("useIntegracoes — loading formula", () => {
     expect(useIntegracoes().loading).toBe(true);
   });
 });
+
+describe("useIntegracoes — cofreConfigurado", () => {
+  it("is null before the list has ever loaded — never a false 'not configured' flash", () => {
+    queryState = { data: undefined, isPending: true, isFetching: true, isError: false, error: null };
+    expect(useIntegracoes().cofreConfigurado).toBeNull();
+  });
+
+  it("reads the flag off the loaded list (one key encrypts every channel)", () => {
+    queryState = {
+      data: [{ canal: "instagram", conectado: false, cofre_configurado: true }],
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+    };
+    expect(useIntegracoes().cofreConfigurado).toBe(true);
+  });
+
+  it("surfaces false so the page can warn before a save fails", () => {
+    queryState = {
+      data: [{ canal: "instagram", conectado: false, cofre_configurado: false }],
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+    };
+    expect(useIntegracoes().cofreConfigurado).toBe(false);
+  });
+});
