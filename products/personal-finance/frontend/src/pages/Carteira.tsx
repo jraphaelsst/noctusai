@@ -77,7 +77,7 @@ const EMPTY_FORM = { nome: "", tipo: "geral", corretora: "" };
 
 export default function CarteiraPag() {
   const navigate = useNavigate();
-  const { data: carteiras, isLoading } = useCarteiras();
+  const { data: carteiras, isPending } = useCarteiras();
   const createMutation = useCreateCarteira();
   const updateMutation = useUpdateCarteira();
   const deleteMutation = useDeleteCarteira();
@@ -113,7 +113,7 @@ export default function CarteiraPag() {
     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
   };
 
-  if (isLoading) {
+  if (isPending && !carteiras) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

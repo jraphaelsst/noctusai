@@ -111,7 +111,7 @@ const EMPTY_FORM = {
 };
 
 export default function Recorrentes() {
-  const { data: recorrentes, isLoading } = useRecorrentes();
+  const { data: recorrentes, isPending } = useRecorrentes();
   const { data: contas } = useContas();
   const { data: categorias } = useCategorias();
   const createMutation = useCreateRecorrente();
@@ -173,7 +173,7 @@ export default function Recorrentes() {
     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
   };
 
-  if (isLoading) {
+  if (isPending && !recorrentes) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

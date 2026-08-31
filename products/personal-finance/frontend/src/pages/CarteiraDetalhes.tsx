@@ -24,8 +24,8 @@ const EMPTY_FORM = { ticker: "", nome: "", tipo: "acao", quantidade: 0, preco_me
 export default function CarteiraDetalhes() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: carteira, isLoading: carteiraLoading } = useCarteira(id);
-  const { data: ativos, isLoading: ativosLoading } = useAtivos(id);
+  const { data: carteira, isPending: carteiraPending } = useCarteira(id);
+  const { data: ativos, isPending: ativosPending } = useAtivos(id);
   const { data: resumo } = useCarteiraResumo(id);
 
   const createMutation = useCreateAtivo();
@@ -41,7 +41,7 @@ export default function CarteiraDetalhes() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
-  const isLoading = carteiraLoading || ativosLoading;
+  const showSkeleton = (carteiraPending && !carteira) || (ativosPending && !ativos);
 
   const sortedAtivos = useMemo(() => {
     const lista = [...(ativos || [])];
@@ -114,7 +114,7 @@ export default function CarteiraDetalhes() {
     deleteMutation.mutate(deleteConfirmId, { onSuccess: () => setDeleteConfirmId(null) });
   };
 
-  if (isLoading) {
+  if (showSkeleton) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

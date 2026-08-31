@@ -90,7 +90,7 @@ const EMPTY_ITEM_FORM = { ticker: "", nome: "", alerta_preco_acima: "", alerta_p
 
 export default function Watchlist() {
   const navigate = useNavigate();
-  const { data: watchlists, isLoading } = useWatchlists();
+  const { data: watchlists, isPending } = useWatchlists();
   const createWlMutation = useCreateWatchlist();
   const deleteWlMutation = useDeleteWatchlist();
   const addItemMutation = useAddWatchlistItem();
@@ -125,7 +125,7 @@ export default function Watchlist() {
     addItemMutation.mutate(payload, { onSuccess: () => { setAddItemWlId(null); setItemForm(EMPTY_ITEM_FORM); } });
   };
 
-  if (isLoading) {
+  if (isPending && !watchlists) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

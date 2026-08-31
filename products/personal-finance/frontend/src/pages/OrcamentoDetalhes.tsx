@@ -20,7 +20,7 @@ const EMPTY_ITEM_FORM = { categoria_id: "", valor_planejado: 0 };
 export default function OrcamentoDetalhes() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: orcamento, isLoading } = useOrcamento(id);
+  const { data: orcamento, isPending } = useOrcamento(id);
   const { data: categorias } = useCategorias();
   const updateMutation = useUpdateOrcamento();
   const deleteMutation = useDeleteOrcamento();
@@ -86,7 +86,7 @@ export default function OrcamentoDetalhes() {
     deleteItemMutation.mutate(deleteItemId, { onSuccess: () => setDeleteItemId(null) });
   };
 
-  if (isLoading) {
+  if (isPending && !orcamento) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

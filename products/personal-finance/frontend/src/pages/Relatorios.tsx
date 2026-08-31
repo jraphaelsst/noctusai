@@ -21,7 +21,7 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
   // and the Mes selector updates instantly; without a signal the numbers
   // would silently read as the newly-selected month's while still being
   // the old one's.
-  const { data: relatorio, isLoading, isFetching } = useRelatorioMensal(mes);
+  const { data: relatorio, isPending, isFetching } = useRelatorioMensal(mes);
 
   const meses = useMemo(() => {
     const result: string[] = [];
@@ -33,7 +33,7 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
     return result;
   }, []);
 
-  if (isLoading) {
+  if (isPending && !relatorio) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
@@ -130,7 +130,7 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
         </div>
       )}
 
-      {!relatorio && !isLoading && (
+      {!relatorio && !isPending && (
         <div className="text-center py-12 text-muted-foreground">
           <FileBarChart className="w-12 h-12 mx-auto mb-3 opacity-50" />
           <p className="text-lg font-medium">Nenhum dado para o periodo selecionado</p>
@@ -144,14 +144,14 @@ function MensalView({ mes, onMesChange }: { mes: string; onMesChange: (m: string
 function AnualView({ ano, onAnoChange }: { ano: number; onAnoChange: (a: number) => void }) {
   // Same isFetching-indicator rationale as MensalView above — the Ano
   // selector updates instantly while the totals below carry no visible year.
-  const { data: relatorio, isLoading, isFetching } = useRelatorioAnual(ano);
+  const { data: relatorio, isPending, isFetching } = useRelatorioAnual(ano);
 
   const anos = useMemo(() => {
     const now = new Date().getFullYear();
     return Array.from({ length: 5 }, (_, i) => now - i);
   }, []);
 
-  if (isLoading) {
+  if (isPending && !relatorio) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
@@ -242,9 +242,9 @@ function FluxoCaixaView() {
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const [dataFim, setDataFim] = useState(`${mesAtual}-${String(lastDay).padStart(2, "0")}`);
 
-  const { data: fluxo, isLoading } = useFluxoCaixa(dataInicio, dataFim);
+  const { data: fluxo, isPending, isFetching: fluxoFetching } = useFluxoCaixa(dataInicio, dataFim);
 
-  if (isLoading) {
+  if (isPending && !fluxo) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
@@ -276,6 +276,11 @@ function FluxoCaixaView() {
           <label className="text-sm font-medium text-muted-foreground">Ate:</label>
           <input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} className="px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
         </div>
+        {fluxoFetching && (
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Atualizando...
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

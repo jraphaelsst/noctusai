@@ -6,13 +6,13 @@ import type { PatrimonioSnapshot } from "@/types";
 import { Landmark, Camera, TrendingUp, TrendingDown } from "lucide-react";
 
 export default function Patrimonio() {
-  const { data: atual, isLoading: atualLoading } = usePatrimonioAtual();
-  const { data: historico, isLoading: histLoading } = usePatrimonioHistorico(24);
+  const { data: atual, isPending: atualPending } = usePatrimonioAtual();
+  const { data: historico, isPending: histPending } = usePatrimonioHistorico(24);
   const criarSnapshot = useCriarSnapshot();
 
-  const isLoading = atualLoading || histLoading;
+  const showSkeleton = (atualPending && !atual) || (histPending && !historico);
 
-  if (isLoading) {
+  if (showSkeleton) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

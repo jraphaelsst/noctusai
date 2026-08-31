@@ -32,7 +32,7 @@ export default function Transacoes() {
   const [dataFim, setDataFim] = useState<string | undefined>();
   const pageSize = 20;
 
-  const { data: result, isLoading } = useTransacoes({
+  const { data: result, isPending } = useTransacoes({
     page,
     page_size: pageSize,
     busca: busca || undefined,
@@ -108,7 +108,7 @@ export default function Transacoes() {
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
-  if (isLoading && page === 1) {
+  if (isPending && !result) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />

@@ -29,13 +29,13 @@ const EMPTY_FORM = { nome: "", tipo: "corrente", instituicao: "", saldo: 0, moed
 export default function ContaDetalhes() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: conta, isLoading: contaLoading } = useConta(id);
+  const { data: conta, isPending: contaPending } = useConta(id);
   const updateMutation = useUpdateConta();
   const deleteMutation = useDeleteConta();
 
   const [page, setPage] = useState(1);
   const pageSize = 10;
-  const { data: transacoesResult, isLoading: txLoading } = useTransacoes({ conta_id: id, page, page_size: pageSize });
+  const { data: transacoesResult, isPending: txPending } = useTransacoes({ conta_id: id, page, page_size: pageSize });
 
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -64,7 +64,7 @@ export default function ContaDetalhes() {
     deleteMutation.mutate(conta.id, { onSuccess: () => navigate("/contas") });
   };
 
-  if (contaLoading) {
+  if (contaPending && !conta) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" />
@@ -153,7 +153,7 @@ export default function ContaDetalhes() {
       <div className="space-y-3">
         <h2 className="text-lg font-semibold">Transacoes Recentes</h2>
         <div className="rounded-lg border bg-card overflow-auto">
-          {txLoading ? (
+          {txPending && !transacoesResult ? (
             <div className="flex items-center justify-center py-12">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
