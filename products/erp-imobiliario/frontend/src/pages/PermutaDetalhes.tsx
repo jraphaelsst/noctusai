@@ -18,9 +18,12 @@ export default function PermutaDetalhes() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('resumo');
 
-  const { data: perfil, isLoading } = usePerfilPermuta(id);
+  const perfilQuery = usePerfilPermuta(id);
+  const { data: perfil } = perfilQuery;
 
-  if (isLoading) return <DetailPageSkeleton />;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (perfilQuery.isPending && !perfilQuery.data) return <DetailPageSkeleton />;
 
   if (!perfil) {
     return (

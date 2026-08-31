@@ -33,9 +33,12 @@ export default function VistoriaDetalhes() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('resumo');
 
-  const { data: vistoria, isLoading } = useVistoria(id);
+  const vistoriaQuery = useVistoria(id);
+  const { data: vistoria } = vistoriaQuery;
 
-  if (isLoading) return <DetailPageSkeleton />;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (vistoriaQuery.isPending && !vistoriaQuery.data) return <DetailPageSkeleton />;
 
   if (!vistoria) {
     return (

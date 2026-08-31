@@ -23,9 +23,12 @@ export default function ImovelDetalhes() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('resumo');
 
-  const { data: imovel, isLoading } = useImovel(id);
+  const imovelQuery = useImovel(id);
+  const { data: imovel } = imovelQuery;
 
-  if (isLoading) return <DetailPageSkeleton />;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (imovelQuery.isPending && !imovelQuery.data) return <DetailPageSkeleton />;
 
   if (!imovel) {
     return (

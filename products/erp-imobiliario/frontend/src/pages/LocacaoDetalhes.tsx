@@ -26,9 +26,12 @@ export default function LocacaoDetalhes() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('resumo');
 
-  const { data: locacao, isLoading } = useLocacao(id);
+  const locacaoQuery = useLocacao(id);
+  const { data: locacao } = locacaoQuery;
 
-  if (isLoading) return <DetailPageSkeleton />;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (locacaoQuery.isPending && !locacaoQuery.data) return <DetailPageSkeleton />;
 
   if (!locacao) {
     return (

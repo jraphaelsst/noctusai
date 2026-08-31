@@ -27,13 +27,16 @@ export default function ClienteDetalhes() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('resumo');
 
-  const { data: cliente, isLoading } = useCliente(id);
+  const clienteQuery = useCliente(id);
+  const { data: cliente } = clienteQuery;
   const { mutate: toggleArquivar } = useToggleArquivarCliente();
   const { mutate: moverNegociacao } = funilPipeline.useMoveCard();
   const { data: etapasFunil } = funilPipeline.useStages();
   const { data: negociacoesAbertas } = useNegociacoesDoCliente(id);
 
-  if (isLoading) return <DetailPageSkeleton />;
+  // isPending && !data — never isLoading — per
+  // KB § PATTERNS/frontend/lying-loading-state.md (Shape 5).
+  if (clienteQuery.isPending && !clienteQuery.data) return <DetailPageSkeleton />;
 
   if (!cliente) {
     return (
