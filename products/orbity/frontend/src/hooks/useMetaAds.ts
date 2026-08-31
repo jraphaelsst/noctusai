@@ -353,33 +353,6 @@ export function useUpdateSituation() {
 }
 
 // ---------------------------------------------------------------------------
-// Campaign metrics
-// ---------------------------------------------------------------------------
-
-export function useCampaignMetrics(
-  campaignId: string,
-  dateFrom?: string,
-  dateTo?: string,
-) {
-  const { user } = useAuthStore();
-
-  return useQuery({
-    queryKey: ["meta-ads-metrics", campaignId, dateFrom, dateTo],
-    queryFn: async () => {
-      return api.get<CampaignMetric[]>(
-        `/api/meta-ads/campaigns/${campaignId}/metrics`,
-        {
-          date_from: dateFrom,
-          date_to: dateTo,
-        },
-      );
-    },
-    enabled: !!user && !!campaignId,
-    staleTime: 2 * 60 * 1000,
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Sync seam (NOC-REMEDIATE[orbity-meta-ads-live])
 // ---------------------------------------------------------------------------
 
