@@ -13,18 +13,20 @@
  */
 import { useState } from "react";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
-import { Eye, KeyRound, Plus, Save, Trash2 } from "lucide-react";
+import { Eye, KeyRound, Pencil, Plus, Save, ShieldAlert, Trash2, X } from "lucide-react";
 
 import { RepertorioSidebar } from "@/components/RepertorioSidebar";
 import { useClientes } from "@/hooks/useClientes";
 import {
   useAcessos,
+  useAtualizarAcesso,
   useAtualizarMarca,
   useCriarAcesso,
   useCriarMarca,
   useMarcas,
   useRemoverAcesso,
   useRevelarSenha,
+  type Acesso,
   type CorPaleta,
   type LinhaEditorial,
   type Marca as MarcaTipo,
@@ -42,6 +44,148 @@ function Secao({ titulo, children }: { titulo: string; children: React.ReactNode
   );
 }
 
+/**
+ * One vault entry, with an inline edit mode.
+ *
+ * `senha` starts empty in edit mode too — write-only, same convention as
+ * `Integracoes.tsx`'s `LinhaCanal`: the API never returns a stored
+ * credential, so there is nothing to prefill, and leaving it empty on
+ * submit means "keep the current password" (the backend's `AcessoUpdate`
+ * treats an omitted `senha` as untouched).
+ */
+function AcessoRow({
+  acesso,
+  revelado,
+  onRevelar,
+  revelarPending,
+  onRemover,
+}: {
+  acesso: Acesso;
+  revelado: string | undefined;
+  onRevelar: () => void;
+  revelarPending: boolean;
+  onRemover: () => void;
+}) {
+  const atualizar = useAtualizarAcesso();
+  const [editando, setEditando] = useState(false);
+  const [campos, setCampos] = useState({
+    rotulo: acesso.rotulo,
+    usuario: acesso.usuario ?? "",
+    url: acesso.url ?? "",
+    senha: "",
+  });
+
+  if (!editando) {
+    return (
+      <li className="flex flex-wrap items-center gap-2 py-2">
+        <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm text-foreground">{acesso.rotulo}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {acesso.usuario || "sem usuário"}
+          </p>
+        </div>
+        {acesso.tem_senha ? (
+          revelado ? (
+            <code className="rounded bg-muted px-2 py-1 text-xs text-foreground">{revelado}</code>
+          ) : (
+            <Button variant="outline" size="sm" disabled={revelarPending} onClick={onRevelar}>
+              <Eye className="mr-2 h-3 w-3" />
+              Revelar
+            </Button>
+          )
+        ) : (
+          <Badge variant="muted">sem senha</Badge>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={`Editar ${acesso.rotulo}`}
+          onClick={() => {
+            setCampos({
+              rotulo: acesso.rotulo,
+              usuario: acesso.usuario ?? "",
+              url: acesso.url ?? "",
+              senha: "",
+            });
+            setEditando(true);
+          }}
+        >
+          <Pencil className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={`Remover ${acesso.rotulo}`}
+          onClick={onRemover}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </li>
+    );
+  }
+
+  return (
+    <li className="space-y-2 py-2">
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!campos.rotulo.trim()) return;
+          atualizar.mutate(
+            {
+              id: acesso.id,
+              rotulo: campos.rotulo.trim(),
+              usuario: campos.usuario.trim() || undefined,
+              url: campos.url.trim() || undefined,
+              senha: campos.senha.trim() || undefined,
+            },
+            { onSuccess: () => setEditando(false) },
+          );
+        }}
+      >
+        <Input
+          aria-label={`Rótulo de ${acesso.rotulo}`}
+          value={campos.rotulo}
+          onChange={(e) => setCampos((c) => ({ ...c, rotulo: e.target.value }))}
+          className="min-w-[140px] flex-1"
+        />
+        <Input
+          aria-label={`Usuário de ${acesso.rotulo}`}
+          value={campos.usuario}
+          onChange={(e) => setCampos((c) => ({ ...c, usuario: e.target.value }))}
+          className="min-w-[120px] flex-1"
+        />
+        <Input
+          aria-label={`Nova senha de ${acesso.rotulo}`}
+          type="password"
+          placeholder="manter senha atual…"
+          value={campos.senha}
+          onChange={(e) => setCampos((c) => ({ ...c, senha: e.target.value }))}
+          className="min-w-[140px] flex-1"
+        />
+        <Button type="submit" disabled={!campos.rotulo.trim() || atualizar.isPending}>
+          <Save className="mr-2 h-4 w-4" />
+          Salvar
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          aria-label={`Cancelar edição de ${acesso.rotulo}`}
+          onClick={() => setEditando(false)}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </form>
+      {atualizar.isError && (
+        <p className="text-xs text-destructive">
+          {atualizar.error instanceof Error ? atualizar.error.message : "Não foi possível salvar."}
+        </p>
+      )}
+    </li>
+  );
+}
+
 export default function Marca() {
   const { clientes, loading: carregandoClientes } = useClientes();
   const [clienteId, setClienteId] = useState<string>("");
@@ -54,7 +198,11 @@ export default function Marca() {
   const atualizarMarca = useAtualizarMarca();
 
   // ── Cofre ────────────────────────────────────────────────────────
-  const { acessos, loading: carregandoAcessos } = useAcessos(clienteId || undefined);
+  const {
+    acessos,
+    loading: carregandoAcessos,
+    cofreConfigurado,
+  } = useAcessos(clienteId || undefined);
   const criarAcesso = useCriarAcesso();
   const removerAcesso = useRemoverAcesso();
   const revelar = useRevelarSenha();
@@ -201,6 +349,22 @@ export default function Marca() {
 
             {/* ── Cofre de Acessos ─────────────────────────────── */}
             <Secao titulo="Cofre de Acessos">
+              {/* Surfaced up front — `cofreConfigurado` is `null` until the
+                  vault has loaded, so this never flashes on first render.
+                  A passwordless entry (rótulo/usuário/url only) still works
+                  while unconfigured (`AcessoCreate`'s `senha` is optional),
+                  so only the note is shown here, not a disabled form. */}
+              {cofreConfigurado === false && (
+                <div className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  <p>
+                    Cofre não configurado neste ambiente (IGIG_COFRE_KEY). Acessos sem
+                    senha ainda podem ser guardados; senhas serão recusadas até que o
+                    servidor seja configurado.
+                  </p>
+                </div>
+              )}
+
               <form
                 className="flex flex-wrap items-end gap-2"
                 onSubmit={(e) => {
@@ -242,8 +406,12 @@ export default function Marca() {
 
               {criarAcesso.isError && (
                 <p className="mt-2 text-sm text-destructive">
-                  Não foi possível guardar. Se o cofre não estiver configurado
-                  (IGIG_COFRE_KEY), a senha é recusada em vez de ser gravada em texto puro.
+                  {/* The server's own message — a 409 says the vault isn't
+                      configured, a 404 says the client vanished, and this
+                      must never blame the wrong one. */}
+                  {criarAcesso.error instanceof Error
+                    ? criarAcesso.error.message
+                    : "Não foi possível guardar."}
                 </p>
               )}
 
@@ -254,49 +422,28 @@ export default function Marca() {
               ) : (
                 <ul className="mt-3 divide-y divide-border">
                   {acessos.map((acesso) => (
-                    <li key={acesso.id} className="flex flex-wrap items-center gap-2 py-2">
-                      <KeyRound className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm text-foreground">{acesso.rotulo}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {acesso.usuario || "sem usuário"}
-                        </p>
-                      </div>
-                      {acesso.tem_senha ? (
-                        reveladas[acesso.id] ? (
-                          <code className="rounded bg-muted px-2 py-1 text-xs text-foreground">
-                            {reveladas[acesso.id]}
-                          </code>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={revelar.isPending}
-                            onClick={() => handleRevelar(acesso.id)}
-                          >
-                            <Eye className="mr-2 h-3 w-3" />
-                            Revelar
-                          </Button>
-                        )
-                      ) : (
-                        <Badge variant="muted">sem senha</Badge>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        aria-label={`Remover ${acesso.rotulo}`}
-                        onClick={() => removerAcesso.mutate(acesso.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </li>
+                    <AcessoRow
+                      key={acesso.id}
+                      acesso={acesso}
+                      revelado={reveladas[acesso.id]}
+                      onRevelar={() => handleRevelar(acesso.id)}
+                      revelarPending={revelar.isPending}
+                      onRemover={() => removerAcesso.mutate(acesso.id)}
+                    />
                   ))}
                 </ul>
               )}
 
               {revelar.isError && (
                 <p className="mt-2 text-sm text-destructive">
-                  Não foi possível revelar. Apenas administradores podem ler senhas.
+                  {revelar.error instanceof Error ? revelar.error.message : "Não foi possível revelar."}
+                </p>
+              )}
+              {removerAcesso.isError && (
+                <p className="mt-2 text-sm text-destructive">
+                  {removerAcesso.error instanceof Error
+                    ? removerAcesso.error.message
+                    : "Não foi possível remover."}
                 </p>
               )}
             </Secao>

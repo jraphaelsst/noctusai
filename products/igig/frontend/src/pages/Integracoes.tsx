@@ -13,7 +13,7 @@
 import { useState } from "react";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { AlertTriangle, Link2Off, Plug } from "lucide-react";
+import { AlertTriangle, Link2Off, Plug, ShieldAlert } from "lucide-react";
 
 import type { Canal } from "@/hooks/useDistribuicao";
 import {
@@ -111,15 +111,20 @@ function LinhaCanal({ integracao }: { integracao: IntegracaoStatus }) {
           onChange={(e) => setConta(e.target.value)}
           className="min-w-[140px]"
         />
-        <Button type="submit" disabled={!token.trim() || conectar.isPending}>
+        <Button
+          type="submit"
+          disabled={!token.trim() || conectar.isPending || !integracao.cofre_configurado}
+        >
           {integracao.conectado ? "Substituir" : "Conectar"}
         </Button>
       </form>
 
       {conectar.isError && (
         <p className="text-xs text-destructive">
-          Não foi possível salvar. Sem IGIG_COFRE_KEY o token é recusado em vez de
-          ser gravado em texto puro.
+          {/* The server's own message — a 409 says "não configurado", a
+              revoked/invalid token says something else entirely, and this
+              must never blame the wrong one. */}
+          {conectar.error instanceof Error ? conectar.error.message : "Não foi possível salvar."}
         </p>
       )}
     </li>
@@ -127,7 +132,7 @@ function LinhaCanal({ integracao }: { integracao: IntegracaoStatus }) {
 }
 
 export default function Integracoes() {
-  const { integracoes, loading } = useIntegracoes();
+  const { integracoes, loading, cofreConfigurado } = useIntegracoes();
 
   return (
     <div className="space-y-6 p-6">
@@ -138,6 +143,19 @@ export default function Integracoes() {
           são exibidos de volta.
         </p>
       </header>
+
+      {/* Surfaced up front, not only after a failed connect attempt —
+          `cofreConfigurado` is `null` until the list has loaded, so this
+          never flashes on first render. */}
+      {cofreConfigurado === false && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            Criptografia não configurada neste ambiente (IGIG_COFRE_KEY). Nenhum
+            canal pode ser conectado até que o servidor seja configurado.
+          </p>
+        </div>
+      )}
 
       <section className="rounded-lg border border-border bg-card p-4">
         {loading ? (
