@@ -28,10 +28,29 @@
  * that moved and then silently failed to persist is the lying-state failure
  * (`CLAUDE.md` §1) wearing a different hat.
  *
+ * 🔴 LOADING NEVER UNMOUNTS ROWS THAT EXIST
+ * ------------------------------------------
+ * `loading` only skeletons while `items` is genuinely empty (see
+ * `DocumentoChecklistSection`'s docblock for the incident this rule comes
+ * from). `refreshing` is a separate, non-reserving spinner for "a fetch is
+ * in flight and we already have rows" — visible, never a layout change.
+ *
  * Presentational only (`card/**`): props in, callbacks out.
  */
 import { useRef, useState } from "react";
-import { Check, FileText, FileUp, FileX, ListPlus, Pencil, Trash2, Type, Upload, X } from "lucide-react";
+import {
+  Check,
+  FileText,
+  FileUp,
+  FileX,
+  ListPlus,
+  Loader2,
+  Pencil,
+  Trash2,
+  Type,
+  Upload,
+  X,
+} from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -46,7 +65,13 @@ const TICK_DERIVADO =
 
 export interface ChecklistExtrasSectionProps {
   items: ChecklistExtra[];
+  /** No `items` yet — the FIRST load only. Ignored once the list is
+   *  non-empty, so a stale `true` mid-refetch can never blank real rows
+   *  (same rule as `DocumentoChecklistSection`). */
   loading?: boolean;
+  /** A fetch is in flight AND `items` already has rows — a small,
+   *  non-reserving spinner beside the heading. Never unmounts the list. */
+  refreshing?: boolean;
   error?: string | null;
   onCriar: (body: { label: string; tipo: ChecklistExtraTipo }) => void;
   criando?: boolean;
@@ -64,6 +89,7 @@ export interface ChecklistExtrasSectionProps {
 export function ChecklistExtrasSection({
   items,
   loading,
+  refreshing,
   error,
   onCriar,
   criando,
@@ -91,9 +117,17 @@ export function ChecklistExtrasSection({
   return (
     <div className="mb-5" data-testid={`${testIdPrefix}-section`}>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Outros dados
-        </p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Outros dados
+          </p>
+          {refreshing && (
+            <Loader2
+              className="h-3 w-3 animate-spin text-muted-foreground"
+              data-testid={`${testIdPrefix}-refreshing`}
+            />
+          )}
+        </div>
         <div className="flex items-center gap-1">
           <TooltipIconButton
             label="Adicionar dado de texto"
@@ -163,7 +197,10 @@ export function ChecklistExtrasSection({
         </div>
       )}
 
-      {loading ? (
+      {/* `items.length === 0` guards the skeleton the same way the mandatory
+          checklist does: a stale `loading=true` mid-refetch can never
+          replace rows that are already here. */}
+      {loading && items.length === 0 ? (
         <div className="h-10 animate-pulse rounded bg-muted" data-testid={`${testIdPrefix}-loading`} />
       ) : error ? (
         <p className="text-sm text-destructive" data-testid={`${testIdPrefix}-erro`}>

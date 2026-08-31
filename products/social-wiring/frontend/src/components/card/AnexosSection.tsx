@@ -14,7 +14,7 @@
  * Presentational only (`card/**`): props in, callbacks out.
  */
 import { useRef } from "react";
-import { ExternalLink, FileText, Trash2, Upload } from "lucide-react";
+import { ExternalLink, FileText, Loader2, Trash2, Upload } from "lucide-react";
 
 import { formatDate } from "@/lib/utils";
 import type { Documento } from "@/types/cardHub";
@@ -24,7 +24,13 @@ import { formatBytes } from "./format";
 
 export interface AnexosSectionProps {
   documentos: Documento[];
+  /** No `documentos` yet — the FIRST load only. Ignored once the list is
+   *  non-empty, so a stale `true` mid-refetch can never blank real rows
+   *  (same rule as `DocumentoChecklistSection`). */
   loading: boolean;
+  /** A fetch is in flight AND `documentos` already has rows — a small,
+   *  non-reserving spinner beside the heading. Never unmounts the list. */
+  refreshing?: boolean;
   uploading?: boolean;
   onUpload: (file: File) => void;
   onOpenDocumento: (id: string) => void;
@@ -35,6 +41,7 @@ export interface AnexosSectionProps {
 export function AnexosSection({
   documentos,
   loading,
+  refreshing,
   uploading,
   onUpload,
   onOpenDocumento,
@@ -69,7 +76,15 @@ export function AnexosSection({
         }}
       />
       <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Anexos</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Anexos</p>
+          {refreshing && (
+            <Loader2
+              className="h-3 w-3 animate-spin text-muted-foreground"
+              data-testid="anexos-refreshing"
+            />
+          )}
+        </div>
         {/* The section owns its trigger AND its input. Icon-only now, with the
             words it used to show carried by the tooltip AND by `aria-label` —
             a hover caption alone is invisible to a screen reader. */}
@@ -82,7 +97,10 @@ export function AnexosSection({
           onClick={() => inputRef.current?.click()}
         />
       </div>
-      {loading ? (
+      {/* `documentos.length === 0` guards the skeleton the same way the
+          checklist above does: a stale `loading=true` mid-refetch can never
+          replace rows that are already here. */}
+      {loading && documentos.length === 0 ? (
         <div className="h-10 animate-pulse rounded bg-muted" />
       ) : documentos.length === 0 ? (
         <p className="text-sm italic text-muted-foreground" data-testid="anexos-empty">

@@ -112,6 +112,23 @@ describe("RoteirosSection — states", () => {
     expect(getByTestId("roteiros-erro")).toBeTruthy();
     expect(queryByTestId("roteiros-empty")).toBeNull();
   });
+
+  it("🔴 keeps roteiros mounted while `loading` is true AND they already exist", async () => {
+    // The bug a screen recording caught, reproduced here: patching a visita's
+    // outcome invalidates this SAME list, and a stale `loading=true` mid-
+    // refetch must never unmount roteiros that are already on screen.
+    const { getByTestId, queryByTestId } = await render(
+      baseProps({ loading: true, roteiros: [roteiro()] }),
+    );
+    expect(getByTestId("roteiro-r1")).toBeTruthy();
+    expect(queryByTestId("roteiros-loading")).toBeNull();
+  });
+
+  it("shows the subtle refreshing indicator beside the heading, not over the list", async () => {
+    const { getByTestId } = await render(baseProps({ refreshing: true, roteiros: [roteiro()] }));
+    expect(getByTestId("roteiros-refreshing")).toBeTruthy();
+    expect(getByTestId("roteiro-r1")).toBeTruthy();
+  });
 });
 
 describe("RoteirosSection — contabilização", () => {

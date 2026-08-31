@@ -17,7 +17,13 @@
  * the error to the caller) on failure — never a silently-swallowed
  * mutation, per the brief's mandatory rule.
  */
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
 
@@ -83,10 +89,6 @@ const COMPRADORES_KEY = (clienteId: string) =>
 const TAGS_KEY = [...ROOT_KEY, "tags"] as const;
 const TIPOS_DOC_KEY = [...ROOT_KEY, "tiposDocumento"] as const;
 
-function invalidateCliente(qc: QueryClient, clienteId: string) {
-  return qc.invalidateQueries({ queryKey: FAMILY_KEY(clienteId) });
-}
-
 function invalidateEverything(qc: QueryClient) {
   return qc.invalidateQueries({ queryKey: ROOT_KEY });
 }
@@ -96,10 +98,13 @@ function invalidateEverything(qc: QueryClient) {
  * changes elsewhere: the card's badges (item counts) and the timeline (the
  * activity entry the edit produces).
  *
- * `invalidateCliente` refetches the WHOLE family, so ticking one checkbox also
- * re-fetched documentos and membros, neither of which a checklist edit can
- * affect. Combined with the section skeletons that used to key off
- * `isFetching`, that is what made the card feel like it reloaded on every move.
+ * Invalidating `FAMILY_KEY(clienteId)` WHOLESALE — every query this cliente
+ * has, not just this one — used to be this file's default reflex (every
+ * mutation below has since been narrowed the same way; see each one's own
+ * docblock). Ticking one checklist item re-fetched documentos and membros,
+ * neither of which a checklist edit can affect. Combined with the section
+ * skeletons that used to key off `isFetching` alone, that is what made the
+ * card feel like it reloaded on every move.
  */
 function invalidateChecklistFamily(qc: QueryClient, clienteId: string) {
   return Promise.all([
@@ -149,9 +154,22 @@ export function flattenTimeline(pages: TimelinePage[] | undefined): TimelineEntr
 
 // ─── Notas ───────────────────────────────────────────────────────────────
 
+/**
+ * A nota is either a `comentario` (timeline-only, plus the `notas` badge
+ * count) or the card's single `descricao` (card STATE on `CardResumo`, never
+ * duplicated into the timeline — see `CardResumo.descricao`'s docblock).
+ * Either way the two things that change are `card` (badges, and `descricao`
+ * for the `descricao`-typed case) and `timeline` (the `nota`-kind entry) —
+ * never compradores, roteiros, agendamentos, documentos or membros, so
+ * narrowed to those two instead of the whole card-hub family.
+ */
 export function useNotaMutations(clienteId: string) {
   const qc = useQueryClient();
-  const invalidate = () => invalidateCliente(qc, clienteId);
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
+    ]);
 
   // `tipo` mirrors `card_hub/schemas.py::NotaCreateBody` — defaults to
   // "comentario" (the composer's case); the description editor passes
@@ -225,6 +243,12 @@ export function useTagCatalogMutations() {
  * the checkbox flips instantly in `EtiquetasPopover`, and a failure rolls
  * `CardResumo.tags` back to the pre-toggle snapshot rather than leaving a
  * lying checked box the server never accepted.
+ *
+ * `onSettled` re-confirms `CARD_KEY` ONLY — the same key `onMutate`/`onError`
+ * touch, and the only one `CardResumo.tags` lives on. It used to invalidate
+ * the whole card-hub family, which meant toggling a tag chip also refetched
+ * documentos, roteiros, agendamentos and the checklist for no reason a tag
+ * write can produce.
  */
 export function useSetClienteTagsMutation(clienteId: string) {
   const qc = useQueryClient();
@@ -250,7 +274,7 @@ export function useSetClienteTagsMutation(clienteId: string) {
         qc.setQueryData(CARD_KEY(clienteId), context.previous);
       }
     },
-    onSettled: () => invalidateCliente(qc, clienteId),
+    onSettled: () => qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
   });
 }
 
@@ -267,6 +291,14 @@ export function useCardMembros(clienteId: string | null) {
   });
 }
 
+/**
+ * `card.data.membros` (`CardResumo.membros`) is what the header's Membros
+ * control actually renders — `MEMBROS_KEY`/`useCardMembros` above has no
+ * consumer today, but is invalidated alongside it anyway since it is this
+ * write's own list and costs nothing to keep honest. Neither compradores,
+ * roteiros, agendamentos, documentos nor the checklist can change from a
+ * membros PUT, so this no longer invalidates the whole family.
+ */
 export function useSetCardMembrosMutation(clienteId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -274,7 +306,11 @@ export function useSetCardMembrosMutation(clienteId: string) {
       api.put<ItemsEnvelope<Membro>>(`${clienteBase(clienteId)}/membros`, {
         lead_corretor_ids: leadCorretorIds,
       }),
-    onSuccess: () => invalidateCliente(qc, clienteId),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+        qc.invalidateQueries({ queryKey: MEMBROS_KEY(clienteId) }),
+      ]),
   });
 }
 
@@ -546,6 +582,14 @@ export function useRoteiros(clienteId: string | null) {
  * `enabled` gates on two characters: a one-character term matches most of the
  * catalog, and paying a round trip to render a list nobody can use is worse
  * than showing the hint.
+ *
+ * `placeholderData: keepPreviousData` — the queryKey is the DEBOUNCED term,
+ * so every keystroke's settle is a brand-new key with no cache of its own.
+ * Without this, the popover's list emptied and re-showed "Buscando..." on
+ * every keystroke's settle, even while the PREVIOUS term's results were
+ * still perfectly good to look at; this keeps them on screen (as
+ * `isPlaceholderData`) until the new term's answer arrives, so `busca.data`
+ * never goes `undefined` mid-typing.
  */
 export function useImoveisBusca(termo: string) {
   const limpo = termo.trim();
@@ -556,6 +600,7 @@ export function useImoveisBusca(termo: string) {
         `/api/imoveis?search=${encodeURIComponent(limpo)}&page_size=10`,
       ),
     enabled: limpo.length >= 2,
+    placeholderData: keepPreviousData,
     // The result for a given term cannot change while someone is typing, and
     // backspacing to a previous term is the common move.
     staleTime: 30_000,
@@ -712,9 +757,24 @@ async function getAuthHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * Uploading/removing a loose attachment touches four things, never the
+ * whole family: `documentos` (its own list), `card` (`badges.documentos`),
+ * `documento-checklist` (an `rg`/`cpf` upload satisfies that mandatory item
+ * — ticks are DERIVED from documento existence too, see
+ * `DocumentoChecklistSection`'s docblock) and `timeline` (a `documento`-kind
+ * entry). Compradores, roteiros, agendamentos and membros cannot move from
+ * an attachment write.
+ */
 export function useDocumentoMutations(clienteId: string) {
   const qc = useQueryClient();
-  const invalidate = () => invalidateCliente(qc, clienteId);
+  const invalidate = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: DOCUMENTOS_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
+    ]);
   const base = clienteBase(clienteId);
 
   // Multipart bypasses the JSON-only seed `api` client, same pattern as
@@ -1052,10 +1112,28 @@ export function useCompradorMutations(clienteId: string) {
  * "checklist write" endpoint, because a tick is derived and the way to satisfy
  * an item IS to supply the data.
  *
- * 🔴 Invalidates BOTH families. The write goes through the clientes API but the
- * thing that visibly changes is the card's checklist, and this hook is the
- * card's. Invalidating only one leaves whichever surface the operator is
- * looking at showing the value they just replaced.
+ * 🔴 SCOPED invalidation, not the whole card-hub family.
+ *
+ * Used to be `invalidateQueries({ queryKey: FAMILY_KEY(clienteId) })` — every
+ * query this cliente has, including compradores, roteiros, agendamentos,
+ * documentos and membros, none of which a name/email/profissão edit can
+ * possibly change. That is exactly the mechanism a screen recording caught:
+ * clearing one field flipped `isFetching` on `documento-checklist` (which
+ * DOES derive from these fields — see `DocumentoChecklistSection`'s
+ * docblock) at the same time as everything else, and the section's
+ * early-return-on-loading shape turned that into all 8 rows vanishing.
+ *
+ * Narrowed to exactly what this write can change:
+ *   - `documento-checklist` — the ticks and `valores` derive from these exact
+ *     columns (the whole reason this mutation exists per the docblock above).
+ *   - `card` — its `badges.checklist_concluidos`/`checklist_total` move with
+ *     the same ticks, and `cliente.nome` in the header can change too.
+ *   - `timeline` — a satisfied item is a `checklist`-kind entry, the same
+ *     activity a checklist tick produces (mirrors `invalidateChecklistFamily`
+ *     below, applied here because satisfying an item via data IS a checklist
+ *     edit, just routed through the clientes API).
+ *   - `["sw", "clientes"]` — a SEPARATE root (the clientes list/board), kept
+ *     as-is: that surface shows `nome`/`email` outside this card entirely.
  *
  * Not optimistic: this writes to a person's record, and a checklist item
  * flipping green before the server agreed is the one moment a rejected save
@@ -1072,7 +1150,9 @@ export function useDadosPessoaisMutation(clienteId: string) {
       api.patch(`${clienteBase(clienteId)}`, body),
     onSuccess: () =>
       Promise.all([
-        qc.invalidateQueries({ queryKey: FAMILY_KEY(clienteId) }),
+        qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) }),
+        qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+        qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
         qc.invalidateQueries({ queryKey: ["sw", "clientes"] }),
       ]),
   });

@@ -210,6 +210,9 @@ export interface ClienteCardDialogProps {
   // only that can hold several properties, an order, and an outcome.
   roteiros?: Roteiro[];
   roteirosLoading?: boolean;
+  /** A fetch is in flight AND `roteiros` already has rows — never unmounts
+   *  the list (`KB § PATTERNS/frontend/lying-loading-state.md`). */
+  roteirosRefreshing?: boolean;
   roteirosError?: string | null;
   onCriarRoteiro: () => void;
   onRemoverRoteiro: (roteiroId: string) => void;
@@ -241,6 +244,9 @@ export interface ClienteCardDialogProps {
   nomeOficial?: string | null;
   nomeRegistro?: string | null;
   documentoChecklistLoading?: boolean;
+  /** A fetch is in flight AND `documentoChecklist` already has rows — never
+   *  unmounts the section (`KB § PATTERNS/frontend/lying-loading-state.md`). */
+  documentoChecklistRefreshing?: boolean;
   onToggleDocumentoChecklist: (key: string, concluido: boolean | null) => void;
   /** Uploads the file that satisfies `rg` / `cpf`, filed under that item's key
    *  as its `tipo_documento` — the row IS the type. */
@@ -264,6 +270,9 @@ export interface ClienteCardDialogProps {
   // destroyed by the person using the card.
   checklistExtras?: ChecklistExtra[];
   checklistExtrasLoading?: boolean;
+  /** A fetch is in flight AND `checklistExtras` already has rows — never
+   *  unmounts the list (`KB § PATTERNS/frontend/lying-loading-state.md`). */
+  checklistExtrasRefreshing?: boolean;
   checklistExtrasError?: string | null;
   onCriarChecklistExtra?: (body: { label: string; tipo: ChecklistExtraTipo }) => void;
   onRenomearChecklistExtra?: (extraId: string, label: string) => void;
@@ -276,6 +285,9 @@ export interface ClienteCardDialogProps {
   // Anexos
   documentos: Documento[];
   documentosLoading: boolean;
+  /** A fetch is in flight AND `documentos` already has rows — never unmounts
+   *  the list (`KB § PATTERNS/frontend/lying-loading-state.md`). */
+  documentosRefreshing?: boolean;
   tiposDocumento: TipoDocumento[];
   onUploadDocumento: (file: File, tipoDocumento: string) => void;
   uploadingDocumento?: boolean;
@@ -506,6 +518,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   <DocumentoChecklistSection
                     items={props.documentoChecklist ?? []}
                     loading={props.documentoChecklistLoading}
+                    refreshing={props.documentoChecklistRefreshing}
                     onToggle={props.onToggleDocumentoChecklist}
                     onResolverSugestao={props.onResolverSugestao}
                     sugestaoSaving={props.sugestaoSaving}
@@ -525,6 +538,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     <ChecklistExtrasSection
                       items={props.checklistExtras ?? []}
                       loading={props.checklistExtrasLoading}
+                      refreshing={props.checklistExtrasRefreshing}
                       error={props.checklistExtrasError}
                       onCriar={props.onCriarChecklistExtra}
                       criando={props.checklistExtrasSaving}
@@ -581,6 +595,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   <AnexosSection
                     documentos={props.documentos}
                     loading={props.documentosLoading}
+                    refreshing={props.documentosRefreshing}
                     uploading={props.uploadingDocumento}
                     onUpload={(file) =>
                       props.onUploadDocumento(
@@ -625,6 +640,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 <RoteirosSection
                   roteiros={props.roteiros ?? []}
                   loading={props.roteirosLoading}
+                  refreshing={props.roteirosRefreshing}
                   error={props.roteirosError}
                   onCriar={props.onCriarRoteiro}
                   onRemover={props.onRemoverRoteiro}

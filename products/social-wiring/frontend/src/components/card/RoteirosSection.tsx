@@ -9,6 +9,16 @@
  *
  * "Gerar Roteiro" downloads the PDF cronograma, one imóvel per page.
  *
+ * 🔴 LOADING NEVER UNMOUNTS ROTEIROS THAT EXIST
+ * ------------------------------------------------
+ * `loading` only skeletons while `roteiros` is genuinely empty — a stale
+ * `true` from the caller mid-refetch can never blank rows that are already
+ * here. `refreshing` is the separate, non-reserving spinner beside the
+ * heading for "a fetch is in flight and we already have roteiros" (see
+ * `DocumentoChecklistSection`'s docblock for the incident this rule comes
+ * from: an early return on the caller's `isPending || isFetching` alone used
+ * to replace the whole list on every unrelated card mutation).
+ *
  * Presentational (S3, same contract as the rest of `card/**`): props in,
  * callbacks out. The dialog and the mutations belong to the smart wrapper.
  */
@@ -34,7 +44,12 @@ const STATUS_OPCOES: { value: StatusVisita; label: string; classe: string }[] = 
 
 export interface RoteirosSectionProps {
   roteiros: Roteiro[];
+  /** No `roteiros` yet — the FIRST load only. Ignored once the list is
+   *  non-empty (see the file docblock). */
   loading?: boolean;
+  /** A fetch is in flight AND `roteiros` already has rows — a small,
+   *  non-reserving spinner beside the heading. Never unmounts the list. */
+  refreshing?: boolean;
   error?: string | null;
   onCriar: () => void;
   onRemover: (roteiroId: string) => void;
@@ -50,6 +65,7 @@ export interface RoteirosSectionProps {
 export function RoteirosSection({
   roteiros,
   loading,
+  refreshing,
   error,
   onCriar,
   onRemover,
@@ -60,18 +76,26 @@ export function RoteirosSection({
   return (
     <div data-testid="roteiros-section">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">Roteiros</h3>
+        <div className="flex items-center gap-1.5">
+          <h3 className="text-sm font-semibold">Roteiros</h3>
+          {refreshing && (
+            <Loader2
+              className="h-3 w-3 animate-spin text-muted-foreground"
+              data-testid="roteiros-refreshing"
+            />
+          )}
+        </div>
         <Button size="sm" onClick={onCriar} data-testid="roteiro-criar-trigger">
           <Plus className="mr-2 h-4 w-4" />
           Criar Roteiro
         </Button>
       </div>
 
-      {/* 🔴 The loading branch is gated by the CALLER on `isPending ||
-          isFetching`, never `isLoading` — v5's `isLoading` is false during a
-          background refetch, so an empty branch would render "nenhum roteiro"
-          over roteiros that exist. */}
-      {loading ? (
+      {/* `roteiros.length === 0` guards the skeleton: a stale `loading=true`
+          mid-refetch (the caller still gates it on `isPending || isFetching`,
+          never `isLoading`) can never replace roteiros that are already
+          here — see the file docblock. */}
+      {loading && roteiros.length === 0 ? (
         <div className="space-y-2" data-testid="roteiros-loading">
           <div className="h-20 animate-pulse rounded-lg bg-muted" />
           <div className="h-20 animate-pulse rounded-lg bg-muted" />

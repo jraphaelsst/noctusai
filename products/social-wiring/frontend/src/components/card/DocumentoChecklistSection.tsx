@@ -25,7 +25,30 @@
  * (`ChecklistItemRow`), unchanged in meaning.
  *
  * Presentational only (`card/**`): props in, callbacks out.
+ *
+ * 🔴 LOADING NEVER UNMOUNTS ROWS THAT EXIST.
+ * -------------------------------------------
+ * The 8 rows here used to vanish behind a single skeleton bar on EVERY save —
+ * not just the first load, but every background refetch a mutation elsewhere
+ * on the card triggered (a checklist tick, a dados-pessoais save). The caller
+ * gated `loading` on `isPending || isFetching`, which is correct for never
+ * showing the EMPTY state over live data, but this component then treated
+ * that single boolean as "hide everything" — so the moment `isFetching`
+ * flipped true mid-refetch, the whole section unmounted and the card jumped.
+ *
+ * The fix is two-part, and both halves matter:
+ *   - `loading` here means "genuinely nothing to render yet" — the caller
+ *     still computes it off `isPending` (v5's `isPending` is `data ===
+ *     undefined`, which `isLoading` is NOT during a background refetch), but
+ *     this component ALSO refuses to skeleton when `items` is non-empty, so a
+ *     stale `true` from upstream can never blank real rows.
+ *   - `refreshing` is a SEPARATE, non-reserving signal (a small spinner
+ *     beside the progress count) for "a fetch is in flight and we already
+ *     have data" — visible, but it never changes this section's height or
+ *     removes a row.
  */
+import { Loader2 } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import type {
@@ -39,7 +62,12 @@ import { formatarDataISO } from "./format";
 
 export interface DocumentoChecklistSectionProps {
   items: DocumentoChecklistItem[];
+  /** No `items` yet — the FIRST load only. Ignored once `items` is non-empty
+   *  (see the file docblock); a stale `true` here can never blank real rows. */
   loading?: boolean;
+  /** A fetch is in flight AND `items` already has data — shows a small,
+   *  non-reserving spinner beside the progress count. Never unmounts rows. */
+  refreshing?: boolean;
   onToggle: (key: string, concluido: boolean | null) => void;
   onResolverSugestao?: (
     documentoId: string,
@@ -68,6 +96,7 @@ export interface DocumentoChecklistSectionProps {
 export function DocumentoChecklistSection({
   items,
   loading,
+  refreshing,
   onToggle,
   onResolverSugestao,
   sugestaoSaving,
@@ -82,7 +111,10 @@ export function DocumentoChecklistSection({
   uploading,
   testIdPrefix = "documento-checklist",
 }: DocumentoChecklistSectionProps) {
-  if (loading) {
+  // `items.length === 0` is the second half of the guard: even a caller that
+  // still sends `loading=true` mid-refetch cannot blank rows that are
+  // actually here — see the file docblock.
+  if (loading && items.length === 0) {
     return (
       <div className="mb-5" data-testid={`${testIdPrefix}-loading`}>
         <div className="h-4 w-48 animate-pulse rounded bg-muted" />
@@ -99,9 +131,17 @@ export function DocumentoChecklistSection({
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Dados obrigatórios
         </p>
-        <span className="text-xs text-muted-foreground" data-testid={`${testIdPrefix}-progresso`}>
-          {done}/{items.length}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {refreshing && (
+            <Loader2
+              className="h-3 w-3 animate-spin text-muted-foreground"
+              data-testid={`${testIdPrefix}-refreshing`}
+            />
+          )}
+          <span className="text-xs text-muted-foreground" data-testid={`${testIdPrefix}-progresso`}>
+            {done}/{items.length}
+          </span>
+        </div>
       </div>
       <Progress value={pct} className="mb-2 h-1.5" />
       {items.length === 0 ? (

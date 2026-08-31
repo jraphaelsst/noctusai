@@ -298,13 +298,18 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       }
       agendamentoSaving={agendamentoMutations.create.isPending}
       roteiros={roteiros.data ?? []}
-      // 🔴 `isPending || isFetching`, never `isLoading`: v5's `isLoading` is
-      // false during a background refetch, so the empty branch would render
-      // "nenhum roteiro criado" over roteiros that exist. Unlike the card
-      // itself (whose skeleton is `isPending`-only so mutations don't reflash
-      // it), this list is invalidated ONLY by its own mutations, so gating on
-      // `isFetching` costs no spurious skeletons.
-      roteirosLoading={roteiros.isPending || roteiros.isFetching}
+      // 🔴 SKELETON ONLY WHEN THERE IS NOTHING TO SHOW — never `isLoading`
+      // (v5's is false during a background refetch, so an empty branch keyed
+      // off it renders "nenhum roteiro criado" over roteiros that exist) AND
+      // never bare `isPending || isFetching` either: patching ONE visita's
+      // outcome invalidates this SAME list (`useRoteiroMutations`), and
+      // gating the skeleton on `isFetching` alone used to collapse every
+      // roteiro on screen — including the one the operator had just
+      // clicked — the moment the PATCH settled. `isPending && !data` is
+      // "genuinely nothing fetched yet"; `isFetching && !!data` below is a
+      // refetch with something to keep showing.
+      roteirosLoading={roteiros.isPending && !roteiros.data}
+      roteirosRefreshing={roteiros.isFetching && !!roteiros.data}
       roteirosError={roteiros.isError ? "Não foi possível carregar os roteiros." : null}
       onCriarRoteiro={() => setRoteiroDialogOpen(true)}
       onRemoverRoteiro={(roteiroId) =>
@@ -355,11 +360,27 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       }
       sugestaoSaving={sugestaoMutation.isPending}
       documentoChecklist={documentoChecklist.data?.items ?? []}
-      // 🔴 `isPending || isFetching`, never `isLoading`: v5's `isLoading` is
-      // false during a background refetch, so the empty branch would render an
-      // empty checklist over rows that exist.
-      documentoChecklistLoading={
-        documentoChecklist.isPending || documentoChecklist.isFetching
+      // 🔴 TWO SEPARATE SIGNALS, NOT ONE `isLoading`-SHAPED BOOLEAN.
+      //
+      // This used to be `isPending || isFetching` — right about never
+      // rendering the EMPTY state over live rows (v5's `isLoading` is false
+      // during a background refetch, so an empty branch keyed off it alone
+      // would do exactly that), but wrong about what "loading" should mean to
+      // the SECTION below: every mutation elsewhere on the card that touches
+      // this cliente (a dados-pessoais save, a checklist tick) invalidates
+      // this query, `isFetching` flips true, and the section treated that one
+      // flag as "unmount and skeleton" — replacing all 8 rows with a thin bar
+      // on every unrelated edit, which is the exact bug a screen recording
+      // caught.
+      //
+      // `documentoChecklistLoading` now means ONLY "genuinely nothing to
+      // render yet" (`isPending && !data` — the first load). A refetch while
+      // data exists is `documentoChecklistRefreshing` instead: a small,
+      // non-reserving indicator in the section header, never a section that
+      // disappears and reflows the card under it.
+      documentoChecklistLoading={documentoChecklist.isPending && !documentoChecklist.data}
+      documentoChecklistRefreshing={
+        documentoChecklist.isFetching && !!documentoChecklist.data
       }
       sugestoesExtras={documentoChecklist.data?.sugestoes_extras}
       nomeOficial={documentoChecklist.data?.nome_oficial}
@@ -403,10 +424,14 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         )
       }
       checklistExtras={checklistExtras.data ?? []}
-      // Same `isPending || isFetching` rule: this list is invalidated only by
-      // its own mutations, so gating on `isFetching` costs no spurious
-      // skeletons and stops the empty branch lying during a refetch.
-      checklistExtrasLoading={checklistExtras.isPending || checklistExtras.isFetching}
+      // Same two-signal split as `documentoChecklist` above: `isPending &&
+      // !data` is the genuine first load; a background refetch while rows
+      // exist (renaming a row, saving its text, uploading its file — every
+      // one of THIS list's own mutations invalidates it) is
+      // `checklistExtrasRefreshing` instead, so editing one row never
+      // skeletons the rest.
+      checklistExtrasLoading={checklistExtras.isPending && !checklistExtras.data}
+      checklistExtrasRefreshing={checklistExtras.isFetching && !!checklistExtras.data}
       checklistExtrasError={
         checklistExtras.isError ? "Não foi possível carregar os dados extras." : null
       }
@@ -456,7 +481,11 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         })
       }
       documentos={documentos.data ?? []}
-      documentosLoading={documentos.isPending || documentos.isFetching}
+      // Same two-signal split: `isPending && !data` is the genuine first
+      // load; an upload/remove refetch while attachments exist is
+      // `documentosRefreshing` instead, so the list never blanks mid-upload.
+      documentosLoading={documentos.isPending && !documentos.data}
+      documentosRefreshing={documentos.isFetching && !!documentos.data}
       tiposDocumento={tiposDocumento.data ?? []}
       onUploadDocumento={(file, tipoDocumento) =>
         documentoMutations.upload.mutate(

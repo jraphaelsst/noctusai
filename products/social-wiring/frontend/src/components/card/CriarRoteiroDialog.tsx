@@ -113,6 +113,12 @@ export function CriarRoteiroDialog({
   // 🔴 `isPending || isFetching`, never `isLoading`: v5's `isLoading` is false
   // during a background refetch, so an "nenhum imóvel" branch keyed off it
   // renders "no results" over results that exist.
+  //
+  // `useImoveisBusca` keeps the PREVIOUS term's `data` on screen while a new
+  // term's request is in flight (`placeholderData: keepPreviousData`), so
+  // `resultados` below is only ever truly empty when nothing has matched
+  // yet — `buscando` alone must not blank a list that is still good to look
+  // at while the next keystroke settles.
   const buscando = busca.isPending || busca.isFetching;
   const termoUtil = termoDebounced.trim().length >= 2;
   const resultados = busca.data?.items ?? [];
@@ -215,23 +221,40 @@ export function CriarRoteiroDialog({
                   <p className="px-3 py-2 text-sm text-muted-foreground">
                     Digite ao menos 2 caracteres.
                   </p>
-                ) : buscando ? (
-                  <p
-                    className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
-                    data-testid="roteiro-busca-carregando"
-                  >
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Buscando...
-                  </p>
                 ) : busca.isError ? (
                   <p className="px-3 py-2 text-sm text-destructive" data-testid="roteiro-busca-erro">
                     Não foi possível buscar os imóveis.
                   </p>
                 ) : resultados.length === 0 ? (
-                  <p className="px-3 py-2 text-sm text-muted-foreground" data-testid="roteiro-busca-vazio">
-                    Nenhum imóvel encontrado para “{termoDebounced.trim()}”.
-                  </p>
+                  // Only reachable with NO results to show yet — either the
+                  // very first fetch for this term, or a genuinely empty
+                  // match. `keepPreviousData` means a term that already
+                  // matched something never lands here while its refetch is
+                  // in flight; that case is the `buscando &&` spinner below,
+                  // ABOVE the still-visible list from the previous term.
+                  buscando ? (
+                    <p
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
+                      data-testid="roteiro-busca-carregando"
+                    >
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Buscando...
+                    </p>
+                  ) : (
+                    <p className="px-3 py-2 text-sm text-muted-foreground" data-testid="roteiro-busca-vazio">
+                      Nenhum imóvel encontrado para “{termoDebounced.trim()}”.
+                    </p>
+                  )
                 ) : (
-                  <ul>
+                  <>
+                    {buscando && (
+                      <p
+                        className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground"
+                        data-testid="roteiro-busca-carregando"
+                      >
+                        <Loader2 className="h-3 w-3 animate-spin" /> Atualizando…
+                      </p>
+                    )}
+                    <ul>
                     {resultados.map((row) => {
                       const jaEsta = jaNoRoteiro.has(row.codigo.toUpperCase());
                       return (
@@ -256,7 +279,8 @@ export function CriarRoteiroDialog({
                         </li>
                       );
                     })}
-                  </ul>
+                    </ul>
+                  </>
                 )}
               </div>
             )}
