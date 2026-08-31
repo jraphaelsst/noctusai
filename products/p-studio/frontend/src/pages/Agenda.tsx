@@ -74,7 +74,7 @@ export default function Agenda() {
   const [ancora, setAncora] = useState(hojeISO());
   const [inicio, fim] = periodo(visao, ancora);
 
-  const { data: captacoes, isLoading, error } = useCaptacoes(inicio, fim);
+  const { data: captacoes, isPending, error } = useCaptacoes(inicio, fim);
   const { data: clientes } = useClientes();
   const { data: imoveis } = useImoveis();
   const { data: negocios } = useNegocios();
@@ -186,7 +186,7 @@ export default function Agenda() {
     }
   };
 
-  if (isLoading) return <Spinner />;
+  if (isPending && !captacoes) return <Spinner />;
   if (error) return <ErroBox erro={error} />;
 
   return (

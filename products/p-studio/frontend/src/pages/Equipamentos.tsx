@@ -39,7 +39,7 @@ const FORM_VAZIO = {
 
 export default function Equipamentos() {
   const [incluirInativos, setIncluirInativos] = useState(false);
-  const { data: equipamentos, isLoading, error } = useEquipamentos(incluirInativos);
+  const { data: equipamentos, isPending, error } = useEquipamentos(incluirInativos);
 
   const [modal, setModal] = useState<"novo" | "editar" | null>(null);
   const [selecionado, setSelecionado] = useState<Equipamento | null>(null);
@@ -108,7 +108,7 @@ export default function Equipamentos() {
     0
   );
 
-  if (isLoading) return <Spinner />;
+  if (isPending && !equipamentos) return <Spinner />;
   if (error) return <ErroBox erro={error} />;
 
   return (

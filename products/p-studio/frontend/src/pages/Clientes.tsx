@@ -33,7 +33,7 @@ const FORM_VAZIO = {
 
 export default function Clientes() {
   const [incluirInativos, setIncluirInativos] = useState(false);
-  const { data: clientes, isLoading, error } = useClientes(incluirInativos);
+  const { data: clientes, isPending, error } = useClientes(incluirInativos);
   const { data: metricas } = useClientesMetricas();
 
   const [modal, setModal] = useState<"novo" | "editar" | null>(null);
@@ -101,7 +101,7 @@ export default function Clientes() {
     setModal(null);
   };
 
-  if (isLoading) return <Spinner />;
+  if (isPending && !clientes) return <Spinner />;
   if (error) return <ErroBox erro={error} />;
 
   return (

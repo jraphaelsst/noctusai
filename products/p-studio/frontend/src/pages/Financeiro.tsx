@@ -68,7 +68,7 @@ const STATUS_EDITAVEIS = ["a_faturar", "faturado", "recebido", "cancelado"];
 
 export default function Financeiro() {
   const [filtro, setFiltro] = useState("");
-  const { data: lancamentos, isLoading, error } = useLancamentos(filtro || undefined);
+  const { data: lancamentos, isPending, error } = useLancamentos(filtro || undefined);
   const { data: resumo } = useResumoFinanceiro();
   const { data: porCliente } = useReceitaPorCliente();
   const { data: statusLista } = useStatusFinanceiro();
@@ -170,7 +170,7 @@ export default function Financeiro() {
     setBaixa(null);
   };
 
-  if (isLoading) return <Spinner />;
+  if (isPending && !lancamentos) return <Spinner />;
   if (error) return <ErroBox erro={error} />;
 
   return (

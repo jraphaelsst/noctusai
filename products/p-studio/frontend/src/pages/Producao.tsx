@@ -39,7 +39,7 @@ const FORM_VAZIO = {
 };
 
 export default function ProducaoPage() {
-  const { data: producoes, isLoading, error } = useProducoes();
+  const { data: producoes, isPending, error } = useProducoes();
   const { data: etapas } = useEtapasProducao();
   const { data: clientes } = useClientes();
   const { data: negocios } = useNegocios();
@@ -91,7 +91,7 @@ export default function ProducaoPage() {
     setComentario("");
   };
 
-  if (isLoading) return <Spinner />;
+  if (isPending && !producoes) return <Spinner />;
   if (error) return <ErroBox erro={error} />;
 
   const rotuloEtapa = (id: string) => (etapas ?? []).find((e) => e.id === id)?.label ?? id;

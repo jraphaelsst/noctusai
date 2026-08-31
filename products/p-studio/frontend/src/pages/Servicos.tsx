@@ -30,7 +30,7 @@ const FORM_VAZIO = { nome: "", categoria: "Fotografia", preco: "0", prazo_dias: 
 
 export default function Servicos() {
   const [incluirInativos, setIncluirInativos] = useState(false);
-  const { data: servicos, isLoading, error } = useServicos(incluirInativos);
+  const { data: servicos, isPending, error } = useServicos(incluirInativos);
 
   const [modal, setModal] = useState<"novo" | "editar" | null>(null);
   const [selecionado, setSelecionado] = useState<Servico | null>(null);
@@ -81,7 +81,7 @@ export default function Servicos() {
   const alternarAtivo = (servico: Servico) =>
     editar.mutate({ id: servico.id, ativo: !servico.ativo });
 
-  if (isLoading) return <Spinner />;
+  if (isPending && !servicos) return <Spinner />;
   if (error) return <ErroBox erro={error} />;
 
   return (
