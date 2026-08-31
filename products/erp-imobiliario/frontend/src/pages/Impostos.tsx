@@ -104,11 +104,13 @@ export default function Impostos() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [formData, setFormData] = useState<ImpostoCreateData>(emptyForm);
 
-  const { data: impostosData, isLoading } = useImpostos({
+  const impostosQuery = useImpostos({
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
     tipo: filtroTipo !== 'todos' ? filtroTipo : undefined,
     ano: filtroAno,
   });
+  const impostosData = impostosQuery.data;
+  const showImpostosSkeleton = impostosQuery.isPending && !impostosQuery.data;
   const impostos = impostosData?.data || [];
 
   const { data: resumo } = useResumoImpostos({
@@ -288,7 +290,7 @@ export default function Impostos() {
       {/* Impostos Table */}
       <Card>
         <CardContent className="pt-6">
-          {isLoading ? (
+          {showImpostosSkeleton ? (
             <TableSkeleton rows={4} />
           ) : impostos.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
