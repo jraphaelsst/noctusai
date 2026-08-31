@@ -16,10 +16,19 @@ blessed and promoted, and all 7 live products were deployed and verified on 2026
 
 | ref | sha | meaning |
 |---|---|---|
-| `origin/dev` | `34a0c4c4` | tree clean, primary worktree only |
-| `origin/main` | `34a0c4c4` | ✅ blessed |
-| `origin/prod` | `34a0c4c4` | ✅ promoted — what the VPS runs |
-| `origin/prod-backup` | `d5f492a2` | ✅ previous prod — the rollback pointer |
+| `origin/dev` | `0e13ea71` | tree clean, no stashes, primary worktree only |
+| `origin/main` | `0e13ea71` | ✅ blessed |
+| `origin/prod` | `0e13ea71` | ✅ promoted |
+| `origin/prod-backup` | `34a0c4c4` | ✅ previous prod — the rollback pointer |
+
+**The live fleet deliberately runs the OLDER `34a0c4c4` images, and that is
+correct.** The 8 commits promoted after it touch only MCP tooling, KB, docs and
+ledgers — `git diff --name-only 34a0c4c4..0e13ea71` contains zero `products/`,
+`seed/` or `core/` paths. `release stage=promote` reported `rebuild.needed:
+false`, and `deploy_verify` classifies every product as steady state ("13 files
+changed … but NONE touch this product's build inputs"). Images rebuild only when
+their build scope changes. **Do not "fix" this by redeploying** — it is the
+designed behaviour, and a needless swap is downtime for nothing.
 
 **Evidence, each leg observed on `34a0c4c4` itself:**
 
@@ -99,6 +108,9 @@ Carried forward unchanged from the previous handoff — none of these were touch
   `personal-finance/useRecorrentes.ts::useProximasContas`.
 - **3 `ChartCard`-mocking test files** (`Corretores`/`Origens`/`Empreendimentos`) drop the
   `loading` prop entirely, so they structurally cannot catch a gate regression.
+- **The MCP server must be RESTARTED to pick up the divergence-loop fix** (§5). It
+  runs whatever it imported at startup, so `task_branch cleanup` will keep
+  reporting `salvage_pushed: false` in any session started before the fix landed.
 - **MCP server env:** started without `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`, which
   is why catalog-backed tools fall back (see §1.2). Worth fixing at the server-launch
   layer so `deploy_verify` reads the live catalog directly.
@@ -167,3 +179,52 @@ set -a && . ./.env && set +a   # gives catalog-backed tools their Supabase creds
 - A backgrounded or timed-out `deploy_image` is **`unverified`, not success** — always
   confirm with `deploy_verify`, which is an independent witness with zero dependency on
   `deploy_image` having run.
+
+
+---
+
+## 5 · THE PRIMARY/ORIGIN DIVERGENCE LOOP — ROOT-CAUSED AND FIXED (`d0170d92`)
+
+The loop the previous handoff catalogued in §3c ("the ledger helper's rebase leg
+cannot run against a dirty tree, and the cost-log hook dirties that very file on
+every commit") is **fixed at the tool level**. It had been hand-cleared once per
+session and had accumulated **five prior ledger entries, all marked closed**,
+because each one fixed an adjacent symptom while the cause survived.
+
+**Cause.** `_ledger_push.commit_and_ff_push_ledger` rebases onto `origin/dev`
+before FF-pushing. `git rebase` refuses on ANY dirty file, and the cost-log
+pre-commit hook dirties `project-history/vector-costs.ndjson` on essentially every
+commit — including the ledger commit made one line earlier. The rebase was
+refused, the helper returned `committed_locally=True, pushed=False`, and the
+primary was left diverged.
+
+**The fix already existed one level up.** `task_branch.integrate` solved the
+identical wall on 2026-05-28 ("Bug C", logged N=5+) by classifying dirty files
+benign-vs-real and auto-stashing the benign ones. The 2026-06-30 DRY lift moved
+the *idiom* into `_ledger_push` and left the *hardening* behind — silently
+un-fixing the copy. Both now share `tools/noctus/dev/_benign_stash.py`.
+
+Real in-progress work still blocks, but as an explicit `status="dirty_blocked"`
+naming the files, not a mystery divergence. No `--force`/`--autostash` shortcut is
+issued; only the known-benign set is stashed, popped in a `finally`.
+
+**Two lessons worth more than the fix:**
+- **Extracting shared code without its accumulated fixes silently un-fixes the
+  copy.** Lift the hardening with the idiom, from every site that shares the leg.
+- **A fake that cannot express the failure will pass forever.** Every
+  `_ledger_push` test used a runner whose `rebase` returned a scripted rc
+  regardless of tree state, so no fake-based test could have caught this. Pinned
+  in `test_ledger_push_realgit.py` against REAL git, with a control run confirming
+  the old code fails the same scenario (1↔1 divergence, row never lands).
+
+Also hardened: the porcelain parser's fixed 3-char offset silently TRUNCATED any
+non-canonical `git status` line into a *different* path, which then misclassified
+as real work. That truncation is what made 7 `branch_pointer` tests fail on first
+contact with the shared helper.
+
+Depth: `KB § PATTERNS/common/self-branching-mode.md` §12.
+
+⚠️ **Restart the MCP server to get this.** A server started before `d0170d92` still
+runs the old module, so cleanup keeps reporting `salvage_pushed: false` and you
+keep reconciling by hand with
+`git -c rebase.autoStash=true rebase origin/dev && git push origin HEAD:dev`.
