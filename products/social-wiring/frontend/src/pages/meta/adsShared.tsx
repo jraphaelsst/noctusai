@@ -353,6 +353,32 @@ export function AdsError({
   );
 }
 
+// ─── status badge (shared: Campanhas table + AdDetalheModal header) ────────
+
+/** ACTIVE/PAUSED/... → pt-BR badge label + Tailwind class. Lifted out of
+ *  AdsCampanhas (was file-local) so AdDetalheModal renders the identical
+ *  badge for an ad's own effective_status, not a re-implementation. */
+export function statusVariant(effective?: string | null): {
+  label: string;
+  cls: string;
+} {
+  const s = (effective ?? "").toUpperCase();
+  if (s === "ACTIVE") return { label: "Ativa", cls: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30" };
+  if (s === "PAUSED") return { label: "Pausada", cls: "bg-amber-500/15 text-amber-600 border-amber-500/30" };
+  if (s.includes("REVIEW")) return { label: "Em análise", cls: "bg-blue-500/15 text-blue-600 border-blue-500/30" };
+  if (s === "DELETED" || s === "ARCHIVED") return { label: "Arquivada", cls: "bg-muted text-muted-foreground" };
+  return { label: effective ?? "—", cls: "bg-muted text-muted-foreground" };
+}
+
+// ─── period-comparison math (shared: VisaoGeral + AdDetalheModal) ──────────
+
+/** `(curr - prev) / prev * 100`, or null when there's no prior baseline —
+ *  the single pct-change formula every Δ% tile in the Ads console uses. */
+export function pct(curr: number, prev: number): number | null {
+  if (!prev) return null;
+  return ((curr - prev) / prev) * 100;
+}
+
 // ─── actions helpers ────────────────────────────────────────────────────────
 
 /** Leads for a row — Meta's `actions["lead"]` (this account is lead-gen). */

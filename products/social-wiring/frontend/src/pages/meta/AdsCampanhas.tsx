@@ -33,20 +33,10 @@ import {
   useAdsCampaigns,
   useAdsChildren,
   type AdsCampaign,
+  type AdsObject,
 } from "@/hooks/useMetaAds";
-import { AdsError, AdsLoading, AdsNotConfigured } from "./adsShared";
-
-function statusVariant(effective?: string | null): {
-  label: string;
-  cls: string;
-} {
-  const s = (effective ?? "").toUpperCase();
-  if (s === "ACTIVE") return { label: "Ativa", cls: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30" };
-  if (s === "PAUSED") return { label: "Pausada", cls: "bg-amber-500/15 text-amber-600 border-amber-500/30" };
-  if (s.includes("REVIEW")) return { label: "Em análise", cls: "bg-blue-500/15 text-blue-600 border-blue-500/30" };
-  if (s === "DELETED" || s === "ARCHIVED") return { label: "Arquivada", cls: "bg-muted text-muted-foreground" };
-  return { label: effective ?? "—", cls: "bg-muted text-muted-foreground" };
-}
+import { AdsError, AdsLoading, AdsNotConfigured, statusVariant } from "./adsShared";
+import { AdDetalheModal } from "./AdDetalheModal";
 
 function objectiveLabel(obj?: string | null): string {
   if (!obj) return "—";
@@ -125,6 +115,7 @@ function AdsetRow({
   currency: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [selectedAd, setSelectedAd] = useState<AdsObject | null>(null);
   const adsQ = useAdsChildren(open ? adsetId : null, "ad");
   const sv = statusVariant(status);
   const ads = adsQ.data?.data ?? [];
@@ -158,12 +149,19 @@ function AdsetRow({
         return (
           <tr key={ad.object_id}>
             <td className="py-2 pl-16 pr-4">
-              <div className="flex items-center gap-2">
+              {/* A real <button>, same keyboard-activation contract as the
+                  ad-set toggle above — clickable AND reachable/activatable
+                  via keyboard, never mouse-only. */}
+              <button
+                type="button"
+                className="flex items-center gap-2 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => setSelectedAd(ad)}
+              >
                 {ad.creative_thumbnail_url && (
                   <img src={ad.creative_thumbnail_url} alt="" className="h-8 w-8 rounded object-cover" />
                 )}
-                <span className="text-sm">{ad.name ?? ad.object_id}</span>
-              </div>
+                <span className="text-sm underline-offset-2 hover:underline">{ad.name ?? ad.object_id}</span>
+              </button>
             </td>
             <td className="px-4 py-2 text-xs text-muted-foreground">Anúncio</td>
             <td className="px-4 py-2"><Badge variant="outline" className={asv.cls}>{asv.label}</Badge></td>
@@ -173,6 +171,13 @@ function AdsetRow({
           </tr>
         );
       })}
+      {selectedAd && (
+        <AdDetalheModal
+          ad={selectedAd}
+          currency={currency}
+          onClose={() => setSelectedAd(null)}
+        />
+      )}
     </>
   );
 }
