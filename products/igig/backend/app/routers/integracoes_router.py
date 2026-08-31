@@ -72,6 +72,7 @@ async def listar_integracoes(
     an operator can see what is still missing.
     """
     org_id = _org(auth)
+    cofre_ok = bool(settings.igig_cofre_key)
     saida: list[IntegracaoStatus] = []
     for canal in CANAIS:
         registro = repos.integracao.por_canal(org_id, canal)
@@ -80,6 +81,7 @@ async def listar_integracoes(
                 canal=canal,
                 conectado=_fallback_env(canal),
                 origem="env" if _fallback_env(canal) else "nenhuma",
+                cofre_configurado=cofre_ok,
             ))
             continue
         saida.append(IntegracaoStatus(
@@ -89,6 +91,7 @@ async def listar_integracoes(
             conta_externa=registro.get("conta_externa"),
             conectado_em=registro.get("conectado_em"),
             ultimo_erro=registro.get("ultimo_erro"),
+            cofre_configurado=cofre_ok,
         ))
     return saida
 
@@ -115,6 +118,8 @@ async def conectar_canal(
         origem="org",
         conta_externa=registro.get("conta_externa"),
         conectado_em=registro.get("conectado_em"),
+        # `_chave()` above already succeeded, or this line would never run.
+        cofre_configurado=True,
     )
 
 

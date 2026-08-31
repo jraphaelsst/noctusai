@@ -23,6 +23,7 @@ __all__ = [
     "AcessoCreate",
     "AcessoUpdate",
     "AcessoOut",
+    "AcessosOut",
     "SenhaRevelada",
     "LogoOut",
 ]
@@ -169,6 +170,22 @@ class AcessoOut(BaseModel):
     tem_senha: bool = False
     created_at: str | None = None
     updated_at: str | None = None
+
+
+class AcessosOut(BaseModel):
+    """Vault entries for one client, plus whether the vault can accept a
+    new password on THIS deploy.
+
+    `itens` is empty exactly when the client has no entries yet — which is
+    also true when `IGIG_COFRE_KEY` is unset, so `cofre_configurado` is not
+    inferable from an empty list alone. Wrapping the list (rather than
+    stamping the flag on every `AcessoOut`, the shape `IntegracaoStatus`
+    uses) is what lets the setup screen know BEFORE a client has any
+    entries at all, instead of only learning it from a failed save.
+    """
+
+    cofre_configurado: bool
+    itens: list[AcessoOut] = Field(default_factory=list)
 
 
 class SenhaRevelada(BaseModel):

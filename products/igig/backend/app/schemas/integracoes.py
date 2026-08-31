@@ -33,3 +33,9 @@ class IntegracaoStatus(BaseModel):
     conectado_em: str | None = None
     #: Set after an auth failure — the UI turns this into "reconectar".
     ultimo_erro: str | None = None
+    #: Whether `IGIG_COFRE_KEY` is set on THIS deploy. The same value on
+    #: every entry (one key encrypts every channel), but carried per-item
+    #: rather than wrapping the list, because `CANAIS` is a fixed non-empty
+    #: set — the setup screen shows this up front instead of only learning
+    #: it from a failed connect attempt.
+    cofre_configurado: bool = False

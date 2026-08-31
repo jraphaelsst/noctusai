@@ -39,6 +39,7 @@ from app.schemas.marca import (
     AcessoCreate,
     AcessoOut,
     AcessoUpdate,
+    AcessosOut,
     LogoOut,
     MarcaCreate,
     MarcaOut,
@@ -247,14 +248,23 @@ async def enviar_logo(
 
 
 # ── Cofre de Acessos ────────────────────────────────────────────────
-@router.get("/acessos/{cliente_id}", response_model=list[AcessoOut])
+@router.get("/acessos/{cliente_id}", response_model=AcessosOut)
 async def listar_acessos(
     cliente_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
-) -> list[AcessoOut]:
-    """Vault entries for a client. Passwords are NOT included."""
-    return [_acesso_out(a) for a in repos.acesso.do_cliente(_org(auth), cliente_id)]
+) -> AcessosOut:
+    """Vault entries for a client, plus whether the vault is configured.
+
+    Passwords are NOT included. `cofre_configurado` lets the setup screen
+    say so BEFORE someone types a password and hits a 409 — including for a
+    client with zero entries, where a per-item flag would have nothing to
+    attach to.
+    """
+    return AcessosOut(
+        cofre_configurado=bool(settings.igig_cofre_key),
+        itens=[_acesso_out(a) for a in repos.acesso.do_cliente(_org(auth), cliente_id)],
+    )
 
 
 @router.post("/acessos", response_model=AcessoOut, status_code=status.HTTP_201_CREATED)

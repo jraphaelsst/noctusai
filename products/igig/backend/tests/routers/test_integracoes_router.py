@@ -58,6 +58,19 @@ class TestStatus:
         assert body["instagram"]["origem"] == "env"
         assert body["tiktok"]["conectado"] is False
 
+    def test_reports_cofre_configurado_true_when_the_key_is_set(self, api):
+        """The `api` fixture sets `igig_cofre_key` — the setup screen must
+        know this WITHOUT trying (and failing) a save first."""
+        body = api.get("/api/integracoes").json()
+        assert all(i["cofre_configurado"] is True for i in body)
+
+    def test_reports_cofre_configurado_false_when_the_key_is_unset(self, api, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "igig_cofre_key", "")
+        body = api.get("/api/integracoes").json()
+        assert all(i["cofre_configurado"] is False for i in body)
+
 
 class TestConexao:
     def test_connect_returns_201_and_no_token(self, api):

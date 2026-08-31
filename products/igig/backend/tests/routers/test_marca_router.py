@@ -180,6 +180,28 @@ class TestCofre:
         assert self.SEGREDO not in resp.text
         assert "senha_cifrada" not in resp.text
 
+    def test_listing_reports_configured_entries_under_itens(self, api, cliente):
+        self._criar(api, cliente)
+        resp = api.get(f"/api/marcas/acessos/{cliente['id']}")
+        body = resp.json()
+        assert body["cofre_configurado"] is True
+        assert len(body["itens"]) == 1
+        assert body["itens"][0]["rotulo"] == "Meta Business"
+
+    def test_listing_reports_unconfigured_vault_even_with_zero_entries(
+        self, api, cliente, monkeypatch
+    ):
+        """The gap this closes: an empty `itens` looks the same whether the
+        client has no entries yet OR the vault can't accept one — only this
+        flag tells them apart, and it must be right when `itens` is empty."""
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "igig_cofre_key", "")
+        resp = api.get(f"/api/marcas/acessos/{cliente['id']}")
+        body = resp.json()
+        assert body["cofre_configurado"] is False
+        assert body["itens"] == []
+
     def test_entry_without_a_password_reports_tem_senha_false(self, api, cliente):
         resp = api.post("/api/marcas/acessos", json={
             "cliente_id": cliente["id"], "rotulo": "Drive", "url": "https://drive.example/x",
