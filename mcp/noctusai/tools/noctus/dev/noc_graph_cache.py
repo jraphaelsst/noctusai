@@ -36,6 +36,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import subprocess
+import sys
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +46,20 @@ from typing import Any, Iterable, Optional
 logger = logging.getLogger(__name__)
 
 from settings import REPO_ROOT
+
+
+# ── GIL-starvation guard (2026-08-31 recurrence) ────────────────────────────
+#
+# Toggled ONLY by `server.py`'s `run()` — True for the entire lifetime of a
+# live `noctusai` MCP stdio server process, False everywhere else (CLI
+# invocations, pytest, ad-hoc scripts). See `refresh()`'s docstring + the
+# `offload_blocking` docstring in `server.py` for the full mechanism. A
+# module-level flag toggled at ONE call site (not a per-tool registry) is
+# the "default safe, opt-in via a structural signal" shape CLAUDE.md §1
+# requires for classification that must not become a hand-maintained list —
+# every current AND future caller of `refresh()` gets the isolation for
+# free, with zero per-caller bookkeeping.
+IN_MCP_SERVER = False
 
 
 # ── Schema ──────────────────────────────────────────────────────────────────
@@ -427,13 +443,35 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
 
     Returns ``{ok, status, nodes, edges, rows_written, scope, build_seconds,
     source_sha}`` (status ∈ ``in-sync`` | ``refreshed`` | ``incremental``).
-    """
-    from noctusai_lib.graph import build_graph
 
+    🔴 GIL-STARVATION GUARD (2026-08-31 recurrence, additive to the 2026-08-28
+    `offload_blocking` fix in ``server.py`` — that fix does NOT cover this).
+    Everything past the ``in-sync`` early-return below is pure-Python CPU work
+    (an AST walk across the whole repo + Louvain clustering + O(N²)-guarded
+    semantic scoring) — 13-20s / 39k+ nodes / 63k+ edges at current repo
+    scale. `offload_blocking` moves a sync tool off the event-loop THREAD,
+    which fixes I/O-bound blockers (a thread waiting on a socket/subprocess
+    releases the GIL) but does nothing for CPU-bound ones: CPython's GIL is
+    process-wide, so a pure-Python loop running in a worker thread still
+    fights the event-loop thread for it. Measured
+    (``test_server_offloads_blocking_tools.py::
+    test_sustained_cpu_bound_concurrent_load_stalls_the_transport_via_offload_blocking_alone``):
+    an I/O-bound blocker (``time.sleep``) under sustained concurrent load
+    left stdio round-trip latency at ~0.3ms avg / 2.3ms max; the SAME shape
+    of load with a CPU-bound blocker pushed avg latency to ~22s / max ~40s —
+    the "Connection closed" failure, from a second, distinct mechanism.
+    When ``IN_MCP_SERVER`` (set only by the live server process — see the
+    module-level flag above), a genuinely-needed rebuild is delegated to a
+    SUBPROCESS instead (``_refresh_via_cli_subprocess``): the parent worker
+    thread just blocks on ``subprocess.run().wait()``, which — like
+    ``time.sleep`` — is a blocking OS wait that releases the GIL, while the
+    actual CPU-heavy work runs in a separate process with its own separate
+    GIL. Outside the server (CLI, tests, scripts) this branch never fires —
+    `refresh()`'s in-process behavior is UNCHANGED there.
+    """
     root = repo_root or REPO_ROOT
     cache_p = cache_path(root)
     live_sha = compute_source_sha(root)
-    live_bucket_shas = compute_bucket_shas(root)
 
     if not force:
         cached_sha = get_cached_source_sha(root)
@@ -445,6 +483,13 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
                 "rows_written": 0,
                 "scope": "repo",
             }
+
+    if IN_MCP_SERVER:
+        return _refresh_via_cli_subprocess(force=force, repo_root=root)
+
+    from noctusai_lib.graph import build_graph
+
+    live_bucket_shas = compute_bucket_shas(root)
 
     # Decide full vs incremental. Incremental is viable iff the EXPENSIVE
     # ``code`` bucket is unchanged AND a cache with code nodes already exists.
@@ -497,6 +542,81 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
         "nodes": len(graph.nodes),
         "edges": len(graph.edges),
         "build_seconds": graph.meta.get("build_seconds"),
+    }
+
+
+def _read_cache_meta(cache_p: Path) -> dict[str, str]:
+    """Raw ``cache_meta`` read — NO freshness check (unlike ``load_summary``,
+    which calls ``_ensure_fresh_on_read`` and would recurse back into a
+    rebuild decision). Used to reconstitute ``refresh()``'s return shape
+    after a subprocess-delegated rebuild has already brought the cache
+    current."""
+    if not cache_p.exists():
+        return {}
+    conn = _connect(cache_p)
+    try:
+        rows = conn.execute("SELECT key, value FROM cache_meta").fetchall()
+        return {r["key"]: r["value"] for r in rows}
+    finally:
+        conn.close()
+
+
+def _refresh_via_cli_subprocess(force: bool, repo_root: Path) -> dict[str, Any]:
+    """Run the ACTUAL rebuild in an isolated subprocess instead of in-process.
+
+    Re-execs ``cli.py --refresh-noc-graph`` — the SAME entry point every
+    pre-commit / post-merge / CI caller already uses (not a new code path).
+    Two benefits fall out of reuse rather than reinvention:
+
+    1. GIL isolation (the reason this exists): the CPU-heavy work runs in a
+       process with its own GIL, and the parent's ``subprocess.run()`` wait
+       is a blocking OS wait — it releases the parent worker THREAD's claim
+       on ITS process's GIL, exactly like ``time.sleep`` (see the
+       ``offload_blocking`` docstring in ``server.py``). The MCP server's
+       event loop is therefore never contended for the duration of the
+       rebuild, regardless of how long it takes or how many run
+       concurrently.
+    2. Correctness bonus: ``cli.py``'s ``--refresh-noc-graph`` handler wraps
+       the rebuild in ``acquire_refresh_lock("noc-graph")`` — a lock the
+       in-process call this replaces did NOT take. Concurrent MCP-triggered
+       refreshes (the exact "several agents independently triggering cache
+       refreshes in the same window" 2026-08-31 incident condition) now
+       serialize on that lock instead of racing to overwrite the same
+       SQLite cache.
+
+    Reconstructs ``refresh()``'s normal return shape from the now-fresh
+    ``cache_meta`` table (cheap SELECTs — no re-walk) rather than trying to
+    marshal a ``Graph`` object across the process boundary.
+    """
+    cli_path = REPO_ROOT / "mcp" / "noctusai" / "cli.py"
+    argv = [sys.executable, str(cli_path), "--refresh-noc-graph"]
+    if force:
+        argv.append("--force")
+    proc = subprocess.run(
+        argv,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "noc-graph subprocess refresh failed "
+            f"(rc={proc.returncode}): {(proc.stderr or proc.stdout)[-2000:]}"
+        )
+    meta = _read_cache_meta(cache_path(repo_root))
+    node_count = int(meta.get("node_count") or 0)
+    edge_count = int(meta.get("edge_count") or 0)
+    build_seconds = meta.get("build_seconds")
+    return {
+        "ok": True,
+        "status": "refreshed" if meta.get("rebuild") == "full" else "incremental",
+        "source_sha": meta.get("aggregate_source_sha"),
+        "rows_written": node_count + edge_count,
+        "scope": meta.get("scope", "repo"),
+        "nodes": node_count,
+        "edges": edge_count,
+        "build_seconds": float(build_seconds) if build_seconds else None,
     }
 
 
@@ -1010,4 +1130,6 @@ __all__ = [
     "load_summary",
     "register",
     "_ensure_fresh_on_read",
+    "IN_MCP_SERVER",
+    "_refresh_via_cli_subprocess",
 ]

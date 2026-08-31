@@ -80,6 +80,55 @@ def offload_blocking(fn):
     recurred several times: those are the sessions that call the slow SSH
     tools. Nothing was wrong with the network or the VPS.
 
+    🔴 A SECOND, DISTINCT MECHANISM (root-caused 2026-08-31) — THIS FIX DOES
+    NOT COVER IT
+    -------------------------------------------------------------------
+    The server died again 2026-08-31 on a NON-deploy session: 8 concurrent
+    subagents + the orchestrator, one of them mid-``task_branch
+    action=integrate`` (whose ``cache_settle`` leg can trigger a noc-graph
+    rebuild — 39,450 nodes / 62,815 edges, ~13-20s of pure-Python AST-walk +
+    clustering), while several OTHER agents independently triggered cache
+    refreshes in the same window.
+
+    ``anyio.to_thread.run_sync`` moves a sync tool off the event-loop
+    **thread**, which is exactly why it fixes the SSH/``time.sleep`` case
+    above: a thread blocked on socket I/O or ``time.sleep`` releases
+    CPython's GIL, so the event-loop thread runs freely while it waits. It
+    does **NOT** fix a CPU-BOUND blocker: a pure-Python loop (AST walking,
+    dict/string building, embedding math) holds the GIL for essentially its
+    entire duration — released only at CPython's ~5ms switch-interval
+    boundaries — and the event-loop thread is just one more contender for
+    those brief windows. Under sustained concurrent CPU-bound load this is
+    catastrophic, not marginal: measured via the real ``mcp.server.stdio``
+    transport plumbing (which ALSO hops through ``anyio.to_thread.run_sync``
+    for every stdin-readline / stdout-write / flush — see
+    ``mcp/noctusai/tests/test_server_offloads_blocking_tools.py``), 6
+    concurrent ~15s CPU-bound calls (the noc-graph-rebuild scale) pushed
+    stdio round-trip latency to ~22s average / ~40s max (357/400 messages
+    delayed >5s), while the IDENTICAL load shape with an I/O-bound blocker
+    (``time.sleep``) stayed at ~0.3ms average / 2.3ms max. Same wrapper,
+    same concurrency shape — the only variable is whether the blocking call
+    holds the GIL. That is the "Connection closed" failure from a second,
+    unrelated root cause: not one huge call queuing everyone else (the
+    2026-08-27 shape, fixed above), but many GIL-holding calls simultaneously
+    starving the loop's own ability to service stdio.
+
+    THE FIX for the CPU-bound case does NOT live at this generic
+    ``server.tool`` seam — a blanket "run every sync tool in a subprocess"
+    would tax the ~170 genuinely I/O-bound / cheap tools with real process-
+    spawn overhead for zero benefit. It is a TARGETED classification at the
+    one identified genuinely-CPU-heavy operation: ``noc_graph_cache.refresh()``
+    checks a module-level ``IN_MCP_SERVER`` flag (set below, in ``run()``)
+    and, when a rebuild is actually needed, delegates to a subprocess
+    (``_refresh_via_cli_subprocess``) instead of running ``build_graph`` in
+    this process — see that function's docstring for the full mechanism.
+    Classification lives at the ONE call that does the CPU-heavy work, not
+    as a hand-maintained per-tool list: every current and future caller of
+    ``noc_graph_cache.refresh()`` (task_branch's cache_settle,
+    ``noctus.dev.refresh_all_caches``, ``noctus.dev.settle_structural_caches``,
+    the lazy-on-read gate on every ``noctus.graph.*`` query) gets the
+    isolation automatically, with no per-caller bookkeeping to drift.
+
     THE FIX, AND WHY IT LIVES HERE
     ------------------------------
     Wrapping at the single ``server.tool`` seam fixes all 185 tools at once,
@@ -142,6 +191,14 @@ def build_server() -> FastMCP:
 
 
 def run() -> None:
+    # 🔴 GIL-starvation guard (2026-08-31) — flips noc_graph_cache.refresh()'s
+    # rebuild branch to a subprocess for the lifetime of THIS process only.
+    # See offload_blocking's docstring above + noc_graph_cache.refresh()'s
+    # docstring for the mechanism. Set here (not at import time) so importing
+    # server.py — e.g. `from server import offload_blocking` in tests — never
+    # flips it; only actually running the stdio server does.
+    from tools.noctus.dev import noc_graph_cache
+    noc_graph_cache.IN_MCP_SERVER = True
     build_server().run("stdio")
 
 
