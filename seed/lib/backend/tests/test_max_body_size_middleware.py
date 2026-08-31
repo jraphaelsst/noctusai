@@ -17,7 +17,12 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-from noctusai_lib.api.middleware import MaxBodySizeMiddleware
+from noctusai_lib.api.middleware import (
+    KEEP_DEFAULT_MAX_BODY,
+    MaxBodySizeMiddleware,
+    path_is_covered_by_overrides,
+    to_wildcard_pattern,
+)
 
 
 def _make_app(
@@ -109,6 +114,46 @@ def test_default_cap_via_configure_app(monkeypatch):
     assert client.post("/echo", content=b"x" * 200).status_code == 200
     # 300B trips the cap
     assert client.post("/echo", content=b"x" * 300).status_code == 413
+
+
+def test_configure_app_returns_the_effective_max_body_path_overrides():
+    """`create_product_app` needs the SAME map `configure_app` actually
+    wired into the middleware — including the settings-vs-kwarg fallback
+    — to hand to the boot-time upload-route derivation. Covers both
+    resolution paths: the explicit kwarg, and the `settings.
+    max_body_path_overrides` fallback when the kwarg is omitted."""
+    from types import SimpleNamespace
+
+    from noctusai_lib.api.app_factory import configure_app
+
+    base_settings_kwargs = dict(
+        cors_origins_list=["http://localhost"],
+        sentry_dsn="",
+        is_production=False,
+        debug=True,
+    )
+
+    # Explicit kwarg wins.
+    app1 = FastAPI()
+    settings1 = SimpleNamespace(**base_settings_kwargs)
+    kwarg_overrides = {"/api/foo/upload": 999}
+    resolved1 = configure_app(app1, settings1, max_body_path_overrides=kwarg_overrides)
+    assert resolved1 == kwarg_overrides
+
+    # Falls back to settings.max_body_path_overrides when the kwarg is omitted.
+    app2 = FastAPI()
+    settings_overrides = {"/api/bar/upload": 111}
+    settings2 = SimpleNamespace(
+        **base_settings_kwargs, max_body_path_overrides=settings_overrides
+    )
+    resolved2 = configure_app(app2, settings2)
+    assert resolved2 == settings_overrides
+
+    # Neither present -> None, not a KeyError / AttributeError.
+    app3 = FastAPI()
+    settings3 = SimpleNamespace(**base_settings_kwargs)
+    resolved3 = configure_app(app3, settings3)
+    assert resolved3 is None
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -428,3 +473,83 @@ def test_construction_rejects_non_positive_pattern_override():
         MaxBodySizeMiddleware(
             app=None, max_bytes=1024, path_overrides={"/api/clientes/*/documentos": 0}
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# KEEP_DEFAULT_MAX_BODY sentinel — the documented opt-out for a route that
+# should genuinely stay at the app-wide default despite declaring an
+# UploadFile parameter (see `noctusai_seed.upload_route_overrides`).
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_keep_default_sentinel_behaves_identically_to_the_app_wide_default():
+    client, _ = _make_app(
+        max_bytes=256, path_overrides={"/echo": KEEP_DEFAULT_MAX_BODY}
+    )
+    assert client.post("/echo", content=b"x" * 200).status_code == 200
+    assert client.post("/echo", content=b"x" * 300).status_code == 413
+
+
+def test_keep_default_sentinel_does_not_trip_the_positive_value_guard():
+    # A plain `int <= 0` would raise (see test_construction_rejects_non_positive_
+    # override above) — the sentinel must NOT be treated as such a value.
+    MaxBodySizeMiddleware(
+        app=None, max_bytes=1024, path_overrides={"/api/avatar/upload": KEEP_DEFAULT_MAX_BODY}
+    )
+    MaxBodySizeMiddleware(
+        app=None,
+        max_bytes=1024,
+        path_overrides={"/api/clientes/*/avatar": KEEP_DEFAULT_MAX_BODY},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# to_wildcard_pattern / path_is_covered_by_overrides — the boot-time
+# derivation's shared vocabulary with the middleware's own matching rules.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_to_wildcard_pattern_converts_every_dynamic_segment():
+    assert (
+        to_wildcard_pattern("/api/clientes/{cliente_id}/documentos")
+        == "/api/clientes/*/documentos"
+    )
+    assert (
+        to_wildcard_pattern("/api/clientes/{cliente_id}/checklist-extras/{extra_id}/documento")
+        == "/api/clientes/*/checklist-extras/*/documento"
+    )
+
+
+def test_to_wildcard_pattern_handles_path_converters():
+    assert to_wildcard_pattern("/api/files/{path:path}") == "/api/files/*"
+
+
+def test_to_wildcard_pattern_is_a_no_op_for_a_fully_literal_path():
+    assert to_wildcard_pattern("/api/videos/upload") == "/api/videos/upload"
+
+
+def test_path_is_covered_by_overrides_pattern_match():
+    overrides = {"/api/clientes/*/documentos": 30}
+    assert path_is_covered_by_overrides("/api/clientes/*/documentos", overrides)
+    # Different segment count under the same prefix — NOT covered by the
+    # pattern (mirrors _pattern_matches' exact-shape requirement).
+    assert not path_is_covered_by_overrides(
+        "/api/clientes/*/financiamento/documentos", overrides
+    )
+
+
+def test_path_is_covered_by_overrides_prefix_match():
+    overrides = {"/api/videos/upload": 500}
+    assert path_is_covered_by_overrides("/api/videos/upload", overrides)
+    assert path_is_covered_by_overrides("/api/videos/upload/from-code", overrides)
+    assert not path_is_covered_by_overrides("/api/videos/list", overrides)
+
+
+def test_path_is_covered_by_overrides_sentinel_value_still_counts_as_covered():
+    overrides = {"/api/avatar/upload": KEEP_DEFAULT_MAX_BODY}
+    assert path_is_covered_by_overrides("/api/avatar/upload", overrides)
+
+
+def test_path_is_covered_by_overrides_empty_or_none():
+    assert not path_is_covered_by_overrides("/api/anything", None)
+    assert not path_is_covered_by_overrides("/api/anything", {})

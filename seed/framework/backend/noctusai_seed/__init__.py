@@ -10,6 +10,7 @@ Two layers:
 
 Products import from both. Domain-specific code lives in the product only.
 """
+from noctusai_lib.api.middleware import KEEP_DEFAULT_MAX_BODY
 from noctusai_lib.integrations.llm import LLMConfig
 from noctusai_lib.integrations.llm.client import configure_llm, get_llm_config, shutdown_llm
 
@@ -56,6 +57,10 @@ __all__ = [
     "configure_llm",
     "get_llm_config",
     "shutdown_llm",
+    # Explicit opt-out sentinel for `max_body_path_overrides` — a route
+    # that deliberately stays at the app-wide default. See
+    # `noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY`.
+    "KEEP_DEFAULT_MAX_BODY",
     # Runtime propagation breadcrumb (see `seed-inheritance-hardening` Phase 3)
     "__seed_version__",
 ]

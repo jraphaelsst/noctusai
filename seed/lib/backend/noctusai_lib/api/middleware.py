@@ -40,15 +40,48 @@ is more convenient re-opens a 502 nobody will connect back to this file.
 """
 from __future__ import annotations
 
+import re
 import time
 import uuid
 import logging
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Union
 
 from fastapi.responses import JSONResponse
 from starlette.datastructures import Headers, MutableHeaders
 
 DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+class _KeepDefaultMaxBodySentinel:
+    """Sentinel type for `KEEP_DEFAULT_MAX_BODY` — see that constant."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover — cosmetic only
+        return "KEEP_DEFAULT_MAX_BODY"
+
+
+KEEP_DEFAULT_MAX_BODY = _KeepDefaultMaxBodySentinel()
+"""Explicit opt-out value for a `max_body_path_overrides` entry.
+
+An `UploadFile`-declaring route that should genuinely stay at the
+app-wide default cap (e.g. a small profile-photo thumbnail endpoint)
+still needs a map entry — `noctusai_seed.app.create_product_app`'s
+boot-time derivation (`noctusai_seed.upload_route_overrides`) refuses
+to boot when it finds an upload route with NO entry at all, because a
+missing entry is indistinguishable from "nobody has looked at this
+yet". Map that route to `KEEP_DEFAULT_MAX_BODY` instead of a byte count
+to record "someone decided this on purpose" — the middleware then
+applies `max_bytes` (the app-wide default) for that route, identical to
+having no override, but the derivation treats the entry as covered.
+
+    max_body_path_overrides={
+        "/api/videos/upload": 500 * 1024 * 1024,
+        "/api/avatar/upload": KEEP_DEFAULT_MAX_BODY,  # deliberately small
+    }
+"""
+
+MaxBodyOverrideValue = Union[int, _KeepDefaultMaxBodySentinel]
 
 # `correlation_id_var` and `get_correlation_id` live in the dep-free
 # `primitives._correlation` module so logging_config can use them without
@@ -224,6 +257,58 @@ def _pattern_matches(pattern_segments: tuple[str, ...], path_segments: tuple[str
     return all(p == "*" or p == s for p, s in zip(pattern_segments, path_segments))
 
 
+_DYNAMIC_PATH_SEGMENT_RE = re.compile(r"^\{[^{}]+\}$")
+
+
+def to_wildcard_pattern(route_path: str) -> str:
+    """Convert a FastAPI route-path template (`"/api/clientes/{cliente_id}/documentos"`)
+    into this module's override-key wildcard form
+    (`"/api/clientes/*/documentos"`) — every `{param}` (or
+    `{param:converter}`) path segment becomes a bare `*`, everything else
+    is copied verbatim.
+
+    The inverse-ish counterpart to `_pattern_matches`: a hand-written
+    `max_body_path_overrides` pattern key and a route's templated path
+    are written in two different vocabularies (`*` vs `{param}`) for the
+    same shape; this is the one function that translates between them,
+    used by `noctusai_seed.upload_route_overrides` so the derived key
+    from a *live* route and a hand-written override compare
+    apples-to-apples via `path_is_covered_by_overrides` below.
+    """
+    segments = _split_path_segments(route_path)
+    converted = tuple(
+        "*" if _DYNAMIC_PATH_SEGMENT_RE.match(s) else s for s in segments
+    )
+    return "/" + "/".join(converted)
+
+
+def path_is_covered_by_overrides(
+    pattern_key: str, path_overrides: Optional[Mapping[str, object]]
+) -> bool:
+    """True if `pattern_key` (already in this module's wildcard-pattern
+    form — see `to_wildcard_pattern`) is covered by AT LEAST ONE entry in
+    `path_overrides`, via the same two matching rules `_limit_for`
+    applies at request time: an exact wildcard-pattern match, or a
+    plain-prefix match. The entry's VALUE is irrelevant here — a route
+    mapped to `KEEP_DEFAULT_MAX_BODY` counts as covered exactly like one
+    mapped to a real byte ceiling, because presence of the key is the
+    "someone decided this on purpose" signal
+    (`noctusai_seed.upload_route_overrides` is the caller that cares
+    about that distinction; this function only answers "is there an
+    entry at all").
+    """
+    if not path_overrides:
+        return False
+    pattern_segments = _split_path_segments(pattern_key)
+    for key in path_overrides:
+        if "*" in key:
+            if _pattern_matches(_split_path_segments(key), pattern_segments):
+                return True
+        elif pattern_key.startswith(key):
+            return True
+    return False
+
+
 class MaxBodySizeMiddleware:
     """Reject requests whose body exceeds a per-route cap with 413 before
     any handler runs.
@@ -277,6 +362,16 @@ class MaxBodySizeMiddleware:
     `settings.max_body_path_overrides` (see `configure_app` /
     `create_product_app`), or pass `max_bytes` / `path_overrides` directly
     when wiring.
+
+    **Every `UploadFile`-declaring route needs an entry — compliance is
+    enforced at boot, not left to hand-maintenance.**
+    `noctusai_seed.app.create_product_app` walks the mounted route table
+    after every router is registered and refuses to boot if it finds an
+    `UploadFile` route with no matching entry here (see
+    `noctusai_seed.upload_route_overrides`). A value may be a real byte
+    ceiling (`int`) or the explicit `KEEP_DEFAULT_MAX_BODY` sentinel for
+    a route that should deliberately stay at `max_bytes` — a route is
+    never silently "covered" by omission.
     """
 
     def __init__(
@@ -284,7 +379,7 @@ class MaxBodySizeMiddleware:
         app,
         *,
         max_bytes: int = DEFAULT_MAX_BODY_BYTES,
-        path_overrides: Optional[Mapping[str, int]] = None,
+        path_overrides: Optional[Mapping[str, MaxBodyOverrideValue]] = None,
     ):
         self.app = app
         if max_bytes <= 0:
@@ -297,7 +392,14 @@ class MaxBodySizeMiddleware:
         # `_limit_for` never re-splits on every request.
         self._path_patterns: list[tuple[tuple[str, ...], int, str]] = []
         for key, limit in (path_overrides or {}).items():
-            if limit <= 0:
+            # `KEEP_DEFAULT_MAX_BODY` resolves to the app-wide default —
+            # behaviourally identical to having no entry, but the
+            # *presence* of the entry is what the boot-time derivation
+            # (`noctusai_seed.upload_route_overrides`) checks for. See
+            # that sentinel's docstring.
+            if limit is KEEP_DEFAULT_MAX_BODY:
+                limit = self.max_bytes
+            elif limit <= 0:
                 raise ValueError(
                     f"path_overrides[{key!r}] must be positive, got {limit}"
                 )

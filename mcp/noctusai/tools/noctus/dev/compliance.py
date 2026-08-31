@@ -6087,6 +6087,364 @@ def check_ci_test_matrix_coverage(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_upload_route_body_override` — the STATIC BACKSTOP for the
+# `max_body_path_overrides` hand-maintained-list-drift class (sibling of
+# `check_dependabot_product_coverage` / `check_ci_test_matrix_coverage`
+# above — same family, third surface). The PRIMARY mechanism is a runtime
+# refusal: `noctusai_seed.app.create_product_app` (via
+# `noctusai_seed.upload_route_overrides.enforce_upload_route_overrides`)
+# walks the LIVE, fully-mounted route table after boot and refuses to
+# start if any `UploadFile`-declaring route lacks a `max_body_path_overrides`
+# entry. That is exhaustive and exact — this keeper exists so the SAME
+# drift is caught at COMMIT time, before a boot ever has to happen (CI, a
+# reviewer, or an agent authoring a new upload route all get the same
+# signal without running the app).
+#
+# `MaxBodySizeMiddleware` (`noctusai_lib.api.middleware`) caps every inbound
+# body at `settings.max_body_bytes` (1 MB default — a webhook DoS guard). A
+# route receiving a real upload needs a bigger, PER-ROUTE cap declared in
+# `max_body_path_overrides`; a forgotten entry doesn't fail a test (fixture
+# uploads are small) — it 413s only on a realistically-sized file, in
+# production, before the handler that would have accepted it ever runs.
+# Found 2026-08-31: only `social-wiring` had ANY entries, and even it was
+# missing 3 of its own upload routes (`/api/chat/upload-file`,
+# `/api/leads/import/preview`, `/api/leads/import/commit`); four other
+# products (`erp-imobiliario`, `igig`, `adconnect`, `therapy-platform`)
+# had upload routes and ZERO entries.
+#
+# STATIC-ANALYSIS SCOPE (read before trusting a clean run as exhaustive):
+# this keeper resolves a route's mounted path from ONLY (a) the router's
+# own `APIRouter(prefix=...)` literal (or a same-file post-hoc
+# `<router>.prefix = "<literal>"` assignment when the constructor didn't
+# set one — the legacy `adconnect` pattern) and (b) the route decorator's
+# own path literal. It does NOT resolve an EXTRA prefix a product might
+# apply at `app.include_router(router, prefix=...)` time in `main.py` —
+# no product in this fleet does that for an upload route today, but a
+# future one could, and this keeper would then derive a shorter-than-real
+# pattern key. The runtime check above has no such gap (it reads
+# `app.routes` AFTER every router is mounted) — treat this keeper as the
+# fast, approximate commit-time signal, and the boot-time refusal as the
+# source of truth.
+#
+# Opt-out: map the route to `noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY`
+# instead of a byte count — this keeper only checks for the KEY's presence
+# (pattern OR prefix match, mirroring `MaxBodySizeMiddleware._limit_for`'s
+# own two-tier lookup), never the value, so the sentinel counts as covered
+# exactly like a real ceiling.
+#
+# No auto-fix tool: the byte ceiling is a judgment call per route (a
+# 500 MB property-walkthrough video vs. a 30 MB phone photo) — the same
+# reason the runtime refusal doesn't auto-assign a number either.
+#
+# → KB § PATTERNS/backend/upload-route-body-override-derivation.md
+# ---------------------------------------------------------------------------
+
+_UPLOAD_FILE_HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
+_UPLOAD_ROUTE_DYNAMIC_SEGMENT_RE = re.compile(r"^\{[^{}]+\}$")
+
+
+def _upload_route_annotation_references_upload_file(node: "ast.expr | None") -> bool:
+    """AST-level structural mirror of
+    `noctusai_seed.upload_route_overrides._annotation_declares_upload_file`
+    — same shapes (`UploadFile`, `list[UploadFile]` / `List[UploadFile]`,
+    `UploadFile | None`, `Optional[UploadFile]` / `Union[UploadFile, None]`,
+    `Annotated[UploadFile, File(...)]`, and nested combinations),
+    recognized without importing or executing the product's code (a
+    product's own deps are not guaranteed to be installed where this
+    keeper runs)."""
+    if node is None:
+        return False
+    if isinstance(node, ast.Name):
+        return node.id == "UploadFile"
+    if isinstance(node, ast.Attribute):
+        return node.attr == "UploadFile"
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        # PEP-604 `X | Y` at the AST level, regardless of which Python
+        # version actually executes the file.
+        return _upload_route_annotation_references_upload_file(
+            node.left
+        ) or _upload_route_annotation_references_upload_file(node.right)
+    if isinstance(node, ast.Subscript):
+        base_name = None
+        if isinstance(node.value, ast.Name):
+            base_name = node.value.id
+        elif isinstance(node.value, ast.Attribute):
+            base_name = node.value.attr
+        slice_node = node.slice
+        elements = (
+            list(slice_node.elts) if isinstance(slice_node, ast.Tuple) else [slice_node]
+        )
+        if base_name == "Annotated":
+            # First element is the real type; the rest is FastAPI/Pydantic
+            # metadata (`File(...)`, etc.) — irrelevant to this check.
+            return bool(elements) and _upload_route_annotation_references_upload_file(
+                elements[0]
+            )
+        return any(_upload_route_annotation_references_upload_file(e) for e in elements)
+    return False
+
+
+def _upload_route_extract_router_prefixes(tree: "ast.Module") -> dict:
+    """Map each `<name> = APIRouter(...)` variable to its `prefix=`
+    string literal (empty string if no `prefix` kwarg was passed). Also
+    honors a later `<name>.prefix = "<literal>"` assignment in the same
+    module — but ONLY to fill a gap the constructor left empty; a
+    constructor-time prefix always wins (matches the products in this
+    fleet, none of which override a non-empty constructor prefix this
+    way)."""
+    prefixes: dict = {}
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "APIRouter"
+        ):
+            continue
+        name = node.targets[0].id
+        prefix = ""
+        for kw in node.value.keywords:
+            if (
+                kw.arg == "prefix"
+                and isinstance(kw.value, ast.Constant)
+                and isinstance(kw.value.value, str)
+            ):
+                prefix = kw.value.value
+        prefixes[name] = prefix
+
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Attribute)
+            and node.targets[0].attr == "prefix"
+            and isinstance(node.targets[0].value, ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            continue
+        name = node.targets[0].value.id
+        if name in prefixes and not prefixes[name]:
+            prefixes[name] = node.value.value
+
+    return prefixes
+
+
+def _upload_route_iter_routes(tree: "ast.Module", prefixes: dict):
+    """Yield `(mounted_pattern_key, method, func_name, lineno)` for every
+    route in `tree` whose endpoint declares an `UploadFile` parameter, in
+    ANY of the annotation shapes
+    `_upload_route_annotation_references_upload_file` recognizes."""
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for deco in node.decorator_list:
+            if not isinstance(deco, ast.Call):
+                continue
+            func = deco.func
+            if not isinstance(func, ast.Attribute) or not isinstance(func.value, ast.Name):
+                continue
+            router_var = func.value.id
+            method = func.attr
+            if router_var not in prefixes or method not in _UPLOAD_FILE_HTTP_METHODS:
+                continue
+
+            route_path = ""
+            if deco.args and isinstance(deco.args[0], ast.Constant) and isinstance(
+                deco.args[0].value, str
+            ):
+                route_path = deco.args[0].value
+            else:
+                for kw in deco.keywords:
+                    if (
+                        kw.arg == "path"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)
+                    ):
+                        route_path = kw.value.value
+
+            all_args = [*node.args.args, *node.args.kwonlyargs]
+            has_upload = any(
+                _upload_route_annotation_references_upload_file(arg.annotation)
+                for arg in all_args
+            )
+            if not has_upload:
+                continue
+
+            mounted = prefixes[router_var].rstrip("/") + "/" + route_path.lstrip("/")
+            mounted = mounted.rstrip("/") or "/"
+            segments = tuple(s for s in mounted.split("/") if s)
+            pattern_key = "/" + "/".join(
+                "*" if _UPLOAD_ROUTE_DYNAMIC_SEGMENT_RE.match(s) else s for s in segments
+            )
+            yield pattern_key, method, node.name, node.lineno
+
+
+def _upload_route_extract_override_keys(main_py: Path) -> set:
+    """Extract the string keys of the dict passed as
+    `create_product_app(..., max_body_path_overrides=<dict-literal-or-Name>)`.
+    Resolves a `Name` reference against every module-level (or nested —
+    `ast.walk`, defensively) `<name> = {...}` dict-literal assignment in
+    the same file, matching how every product in this fleet declares the
+    map today (`_MAX_BODY_PATH_OVERRIDES = {...}` then passed by name).
+    Only the KEYS matter here — a value is either a byte-count literal or
+    the `KEEP_DEFAULT_MAX_BODY` sentinel (an `ast.Attribute`/`ast.Name`,
+    not a literal); either way, presence of the key is what "covered"
+    means (mirrors the runtime `path_is_covered_by_overrides` contract)."""
+    if not main_py.is_file():
+        return set()
+    try:
+        source = main_py.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(main_py))
+    except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+        logger.debug("compliance: cannot parse %s (%s)", main_py, exc)
+        return set()
+
+    dict_literals_by_name: dict = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Dict)
+        ):
+            dict_literals_by_name[node.targets[0].id] = node.value
+
+    override_dict_node = None
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "create_product_app"
+        ):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "max_body_path_overrides":
+                continue
+            if isinstance(kw.value, ast.Dict):
+                override_dict_node = kw.value
+            elif isinstance(kw.value, ast.Name) and kw.value.id in dict_literals_by_name:
+                override_dict_node = dict_literals_by_name[kw.value.id]
+
+    if override_dict_node is None:
+        return set()
+
+    keys: set = set()
+    for key_node in override_dict_node.keys:
+        if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+            keys.add(key_node.value)
+    return keys
+
+
+def _upload_route_pattern_matches(pattern_segments: tuple, path_segments: tuple) -> bool:
+    if len(pattern_segments) != len(path_segments):
+        return False
+    return all(p == "*" or p == s for p, s in zip(pattern_segments, path_segments))
+
+
+def _upload_route_is_covered(pattern_key: str, override_keys: set) -> bool:
+    """Same two-tier lookup as `MaxBodySizeMiddleware._limit_for` /
+    `noctusai_lib.api.middleware.path_is_covered_by_overrides`: an exact
+    `*`-wildcard pattern match, else a plain-prefix match. Duplicated
+    here (rather than imported) because this MCP tool layer stays
+    independent of the seed's runtime package — same accept-with-
+    rationale posture as this file's other AST-only detectors."""
+    if not override_keys:
+        return False
+    pattern_segments = tuple(s for s in pattern_key.split("/") if s)
+    for key in override_keys:
+        if "*" in key:
+            key_segments = tuple(s for s in key.split("/") if s)
+            if _upload_route_pattern_matches(key_segments, pattern_segments):
+                return True
+        elif pattern_key.startswith(key):
+            return True
+    return False
+
+
+def check_upload_route_body_override(repo_root: Path | None = None) -> list[dict]:
+    """Every `UploadFile`-declaring route under `products/<slug>/backend/app/`
+    must have a matching entry in that product's `max_body_path_overrides`
+    map (a real byte ceiling, or the explicit
+    `noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY` opt-out) — else a
+    forgotten entry silently caps the route at the 1 MB webhook-DoS
+    default and 413s in production on any realistically-sized upload,
+    before the handler that would have accepted it ever runs.
+
+    STATIC backstop for the RUNTIME primary mechanism
+    (`noctusai_seed.upload_route_overrides.enforce_upload_route_overrides`,
+    which `create_product_app` calls after every router is mounted and
+    which is exhaustive/exact). See this section's header comment for
+    this keeper's narrower static-resolution scope. Fix: add the missing
+    pattern key(s) to that product's `max_body_path_overrides` dict — no
+    auto-fix tool, the ceiling is a per-route judgment call. Severity
+    `high`. See `KB § PATTERNS/backend/upload-route-body-override-derivation.md`.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    products_dir = root / "products"
+    if not products_dir.is_dir():
+        return issues
+
+    for product_dir in sorted(products_dir.iterdir()):
+        if not product_dir.is_dir():
+            continue
+        backend_app = product_dir / "backend" / "app"
+        if not backend_app.is_dir():
+            continue
+        slug = product_dir.name
+
+        override_keys = _upload_route_extract_override_keys(backend_app / "main.py")
+
+        for py_file in sorted(backend_app.rglob("*.py")):
+            rel_parts = py_file.relative_to(backend_app).parts
+            if any(
+                part in ("tests", "migrations", "__pycache__") or part.startswith("test_")
+                for part in rel_parts
+            ):
+                continue
+            try:
+                source = py_file.read_text(encoding="utf-8")
+                tree = ast.parse(source, filename=str(py_file))
+            except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+                logger.debug("compliance: cannot parse %s (%s)", py_file, exc)
+                continue
+
+            prefixes = _upload_route_extract_router_prefixes(tree)
+            if not prefixes:
+                continue
+
+            rel = py_file.relative_to(root)
+            for pattern_key, method, func_name, lineno in _upload_route_iter_routes(
+                tree, prefixes
+            ):
+                if _upload_route_is_covered(pattern_key, override_keys):
+                    continue
+                issues.append({
+                    "product": slug,
+                    "file": f"{rel}:{lineno}",
+                    "issue": (
+                        f"`{func_name}` ({method.upper()} {pattern_key}) "
+                        f"declares an UploadFile parameter but "
+                        f"`{slug}/backend/app/main.py` has no "
+                        f"max_body_path_overrides entry covering "
+                        f"`{pattern_key}` — it silently inherits the 1 MB "
+                        f"webhook-DoS default and will 413 on any "
+                        f"realistically-sized upload. Add `\"{pattern_key}\": "
+                        f"<max-bytes>` (or "
+                        f"`noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY` "
+                        f"if this route should genuinely stay small) to "
+                        f"max_body_path_overrides."
+                    ),
+                    "severity": "high",
+                })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_hardcoded_fleet_size_literal` — a seed test
 # (`seed/lib/backend/tests/`) must NOT assert a frozen *fleet-size* numeric
 # literal (`len(...) >= 10`, `== 12`, `> 8`, …) against a registry-derived
@@ -10756,6 +11114,13 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-13 sibling (found while building the dependabot fix — same
     # class, second surface): test.yml's per-product CI matrices.
     all_issues.extend(check_ci_test_matrix_coverage())
+    # 2026-08-31 THIRD surface of the same hand-maintained-list-drift
+    # class: a product's `max_body_path_overrides` map. Only social-wiring
+    # had ANY entries, and even it was missing 3 of its own upload routes;
+    # four other products had zero. Static backstop for the exhaustive
+    # runtime refusal in `create_product_app` /
+    # `noctusai_seed.upload_route_overrides`.
+    all_issues.extend(check_upload_route_body_override())
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())

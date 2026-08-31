@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Mapping
+from typing import Mapping, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +27,7 @@ from noctusai_lib.primitives.exceptions import (
 from .middleware import (
     CorrelationIdMiddleware,
     DEFAULT_MAX_BODY_BYTES,
+    MaxBodyOverrideValue,
     MaxBodySizeMiddleware,
     RequestLoggingMiddleware,
 )
@@ -42,10 +43,10 @@ def configure_app(
     cors_allow_headers: list[str] | None = None,
     cors_expose_headers: list[str] | None = None,
     max_body_bytes: int | None = None,
-    max_body_path_overrides: Mapping[str, int] | None = None,
+    max_body_path_overrides: Mapping[str, MaxBodyOverrideValue] | None = None,
     allow_credentials: bool = True,
     product_name: str | None = None,
-) -> None:
+) -> Optional[Mapping[str, MaxBodyOverrideValue]]:
     """
     Apply shared configuration to a FastAPI app instance.
 
@@ -91,6 +92,17 @@ def configure_app(
         product_name: Optional product slug surfaced in the CORS guard
                       error message. When None, falls back to
                       `settings.product_name` or '<unknown>'.
+
+    Returns:
+        The EFFECTIVE `max_body_path_overrides` mapping actually wired
+        into `MaxBodySizeMiddleware` — the `max_body_path_overrides`
+        kwarg if given, else `settings.max_body_path_overrides`, else
+        `None`. `noctusai_seed.app.create_product_app` captures this to
+        feed `noctusai_seed.upload_route_overrides.enforce_upload_route_overrides`
+        the SAME map the middleware is actually using — resolving the
+        settings-vs-kwarg fallback twice, independently, would risk the
+        boot-time check validating against a different map than the one
+        the middleware runs with.
 
     Raises:
         RuntimeError: If `settings.cors_origins_list` contains '*' AND
@@ -235,3 +247,5 @@ def configure_app(
         logger.warning("app_factory: postgrest not installed; PostgREST exception handler not registered")
 
     app.add_exception_handler(Exception, generic_exception_handler)
+
+    return max_body_path_overrides

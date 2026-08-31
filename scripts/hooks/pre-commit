@@ -475,6 +475,31 @@ if [[ -n "$STAGED_CI_MATRIX" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies. Upload-route body-override gate (blocking, only when a ─
+# product backend .py file changed) ────────────────────────────────────────
+# Keeper `check_upload_route_body_override` + `KB § PATTERNS/backend/
+# upload-route-body-override-derivation.md`. THIRD surface of the same
+# hand-maintained-list-drift class as 6e-ter/6e-quater above, applied to
+# `max_body_path_overrides` — the per-route request-body-size cap map every
+# `UploadFile` route needs an entry in (else it silently inherits the 1 MB
+# webhook-DoS default and 413s in production on a realistically-sized
+# upload). 2026-08-31: only social-wiring had ANY entries, missing 3 of its
+# own routes; erp-imobiliario/igig/adconnect/therapy-platform had zero. This
+# is the STATIC backstop — the PRIMARY, exhaustive mechanism is a runtime
+# refusal in `create_product_app` (`noctusai_seed.upload_route_overrides`).
+# Fires on any product backend .py change (a new/changed route, or an edit
+# to the overrides map itself) — no auto-fix (the ceiling is a per-route
+# judgment call), so the message points at what to add, not a repair tool.
+STAGED_UPLOAD_ROUTES=$(git diff --cached --name-only 2>/dev/null | grep -E '^products/[^/]+/backend/app/.*\.py$' || true)
+if [[ -n "$STAGED_UPLOAD_ROUTES" ]] && have_py; then
+    echo "[pre-commit] product backend .py staged — checking upload-route body-override coverage..."
+    if ! "$PY" "$CLI" --check-upload-route-body-override --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] UPLOAD-ROUTE-BODY-OVERRIDE check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Add the missing pattern key(s) to that product's max_body_path_overrides map in app/main.py — a real byte ceiling, or noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY if the route should genuinely stay small. See KB § PATTERNS/backend/upload-route-body-override-derivation.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6f. Lying-loading-state gate (advisory, only when a product frontend ──
 # .tsx changed) ──────────────────────────────────────────────────────────
 # Keeper `check_lying_loading_state` + `KB § PATTERNS/frontend/lying-

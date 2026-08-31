@@ -34,6 +34,7 @@ from fastapi import FastAPI
 from noctusai_lib.domain.ai.consent import configure_consent_module
 from noctusai_lib.logging_config import configure_logging, resolve_json_logs
 from noctusai_lib.api.app_factory import configure_app
+from noctusai_lib.api.middleware import MaxBodyOverrideValue
 from noctusai_lib.config.credentials import configure_credentials
 from noctusai_lib.config.deploy_config import (
     baseline_required_prod_env,
@@ -48,6 +49,7 @@ from noctusai_seed.dependencies import create_dependencies
 from noctusai_seed.health import HealthEndpointConfig, mount_health_endpoints
 from noctusai_seed.llm_defaults import default_llm_config
 from noctusai_seed.routers import build_standard_routers
+from noctusai_seed.upload_route_overrides import enforce_upload_route_overrides
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,7 @@ def create_product_app(
     health_config: Optional[HealthEndpointConfig] = None,
     serve_spa: Optional[str] = None,
     required_prod_config: Optional[list[str]] = None,
-    max_body_path_overrides: Optional[Mapping[str, int]] = None,
+    max_body_path_overrides: Optional[Mapping[str, MaxBodyOverrideValue]] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -168,14 +170,24 @@ def create_product_app(
             product inherits. See ``KB § PATTERNS/deploy-config-contract.md``.
         max_body_path_overrides: Per-route request-body-size cap, layered on
             top of the app-wide ``settings.max_body_bytes`` (default 1 MB —
-            right for webhooks, wrong for uploads). ``{"<path-prefix>":
-            <max-bytes>, ...}``; the longest matching prefix of the request
-            path wins, everything else keeps the app-wide default. Falls
-            back to ``settings.max_body_path_overrides`` when the kwarg is
-            omitted, so a product can declare it via its settings class
-            instead if that fits its wiring better. Default `None` — no
-            overrides, unchanged behavior. See
-            ``noctusai_lib.api.middleware.MaxBodySizeMiddleware``.
+            right for webhooks, wrong for uploads). ``{"<path-prefix-or-*-pattern>":
+            <max-bytes-or-KEEP_DEFAULT_MAX_BODY>, ...}``; the longest matching
+            prefix (or an exact ``*``-wildcard pattern) wins, everything else
+            keeps the app-wide default. Falls back to
+            ``settings.max_body_path_overrides`` when the kwarg is omitted, so
+            a product can declare it via its settings class instead if that
+            fits its wiring better. Default `None` — no overrides, unchanged
+            behavior. See ``noctusai_lib.api.middleware.MaxBodySizeMiddleware``.
+
+            **Enforced at boot, not left to hand-maintenance:** every route
+            (across ``routers`` and ``standard_routers``) whose endpoint
+            declares an ``UploadFile`` parameter — in any annotation shape,
+            recursively unwrapped — MUST have a matching entry here or
+            ``create_product_app`` raises ``RuntimeError`` and refuses to
+            finish booting. Map a route that should genuinely stay at the
+            default to ``noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY``
+            instead of omitting it. See
+            ``noctusai_seed.upload_route_overrides``.
     """
     # 1. Configure logging
     app_name = schema.replace("_", "-").replace(" ", "-").lower()
@@ -381,7 +393,7 @@ def create_product_app(
     app.state.deps = deps
 
     # 8. Apply shared configuration (Sentry, CORS, exceptions, middleware, rate limiting)
-    configure_app(
+    _effective_max_body_path_overrides = configure_app(
         app, settings, limiter=limiter,
         max_body_path_overrides=max_body_path_overrides,
     )
@@ -400,6 +412,23 @@ def create_product_app(
     if routers:
         for router in routers:
             app.include_router(router)
+
+    # 10a. Boot-time refusal: every route mounted above (9 + 10) whose
+    #      endpoint declares an UploadFile parameter MUST have a matching
+    #      entry in max_body_path_overrides. MUST run here — after every
+    #      router is mounted — not inside `configure_app` (step 8), which
+    #      builds MaxBodySizeMiddleware before any router exists, so
+    #      `app.routes` is empty at that point and there would be nothing
+    #      to check. `_effective_max_body_path_overrides` (not the raw
+    #      `max_body_path_overrides` param) is used so this validates
+    #      against the SAME map the middleware is actually enforcing,
+    #      including when a product declares overrides via
+    #      `settings.max_body_path_overrides` instead of the kwarg. See
+    #      `noctusai_seed.upload_route_overrides` /
+    #      `KB § PATTERNS/backend/upload-route-body-override-derivation.md`.
+    enforce_upload_route_overrides(
+        app, _effective_max_body_path_overrides, product_name=name,
+    )
 
     # 11. Mount the seed-baked /_health + /_ready ops endpoints. Idempotent
     #     by design (raises if mounted twice on the same app). An empty
