@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@noctusai/seed/components/ui/card';
 import { TableSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import { Badge } from '@noctusai/seed/components/ui/badge';
 import { Button } from '@noctusai/seed/components/ui/button';
 import { Input } from '@noctusai/seed/components/ui/input';
@@ -99,12 +100,16 @@ export default function Assinaturas() {
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [formData, setFormData] = useState<EnviarAssinaturaData>(emptyForm);
 
-  const { data: assinaturasData, isLoading } = useAssinaturas({
+  const assinaturasQuery = useAssinaturas({
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
   });
+  const assinaturasData = assinaturasQuery.data;
+  const showAssinaturasSkeleton = assinaturasQuery.isPending && !assinaturasQuery.data;
   const assinaturas = assinaturasData?.data || [];
 
-  const { data: resumo } = useResumoAssinaturas();
+  const resumoQuery = useResumoAssinaturas();
+  const { data: resumo } = resumoQuery;
+  const resumoNotArrived = resumoQuery.isPending && !resumoQuery.data;
 
   const { mutate: enviarAssinatura, isPending: isEnviando } = useEnviarAssinatura();
   const { mutate: cancelarAssinatura } = useCancelarAssinatura();
@@ -179,7 +184,7 @@ export default function Assinaturas() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-orange-600">
-              {resumo?.pendentes || 0}
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.pendentes ?? 0}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -191,7 +196,7 @@ export default function Assinaturas() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">
-              {resumo?.enviadas || 0}
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.enviadas ?? 0}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -203,7 +208,7 @@ export default function Assinaturas() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              {resumo?.assinadas || 0}
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.assinadas ?? 0}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -215,7 +220,7 @@ export default function Assinaturas() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {resumo?.expiradas || 0}
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.expiradas ?? 0}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -246,7 +251,7 @@ export default function Assinaturas() {
       {/* Signatures Table */}
       <Card>
         <CardContent className="pt-6">
-          {isLoading ? (
+          {showAssinaturasSkeleton ? (
             <TableSkeleton rows={4} />
           ) : assinaturas.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">

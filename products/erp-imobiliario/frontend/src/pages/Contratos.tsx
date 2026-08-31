@@ -65,6 +65,7 @@ import {
   Contrato,
 } from '@/types/contratos';
 import { MetricsTableSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   rascunho: 'outline',
@@ -102,13 +103,17 @@ export default function Contratos() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [formData, setFormData] = useState<ContratoCreateData>(emptyForm);
 
-  const { data: contratosData, isLoading } = useContratos({
+  const contratosQuery = useContratos({
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
     tipo: filtroTipo !== 'todos' ? filtroTipo : undefined,
   });
+  const contratosData = contratosQuery.data;
+  const showContratosSkeleton = contratosQuery.isPending && !contratosQuery.data;
   const contratos = contratosData?.data || [];
 
-  const { data: resumo } = useResumoContratos();
+  const resumoQuery = useResumoContratos();
+  const { data: resumo } = resumoQuery;
+  const resumoNotArrived = resumoQuery.isPending && !resumoQuery.data;
 
   const { mutate: createContrato, isPending: isCreating } = useCreateContrato();
   const { mutate: updateContrato, isPending: isUpdating } = useUpdateContrato();
@@ -188,7 +193,7 @@ export default function Contratos() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {resumo ? Object.values(resumo.por_status).reduce((a, b) => a + b, 0) : 0}
+              <SummaryValue notArrived={resumoNotArrived}>{Object.values(resumo?.por_status ?? {}).reduce((a, b) => a + b, 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -200,7 +205,7 @@ export default function Contratos() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(resumo?.valor_total || 0)}
+              <SummaryValue notArrived={resumoNotArrived}>{formatCurrency(resumo?.valor_total ?? 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -212,7 +217,7 @@ export default function Contratos() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              {resumo?.por_status?.ativo || 0}
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.por_status?.ativo ?? 0}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -224,7 +229,7 @@ export default function Contratos() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-orange-600">
-              {resumo?.inadimplencia?.parcelas_atrasadas || 0}
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.inadimplencia?.parcelas_atrasadas ?? 0}</SummaryValue>
             </div>
             {resumo?.inadimplencia?.taxa_inadimplencia != null && (
               <p className="text-xs text-muted-foreground">
@@ -270,7 +275,7 @@ export default function Contratos() {
       {/* Contracts Table */}
       <Card>
         <CardContent className="pt-6">
-          {isLoading ? (
+          {showContratosSkeleton ? (
             <MetricsTableSkeleton cards={0} />
           ) : contratos.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
