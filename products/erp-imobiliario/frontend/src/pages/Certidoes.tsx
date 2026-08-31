@@ -125,10 +125,12 @@ export default function Certidoes() {
   const [expandedAnalise, setExpandedAnalise] = useState<string | null>(null);
   const { user } = useAuthStore();
 
-  const { data: consultas = [], isLoading } = useCertidaoConsultas({
+  const consultasQuery = useCertidaoConsultas({
     busca: busca || undefined,
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
   });
+  const consultas = consultasQuery.data ?? [];
+  const showConsultasSkeleton = consultasQuery.isPending && !consultasQuery.data;
   const { data: detalhe } = useCertidaoConsulta(detalheId || undefined);
   const { data: tjspFila } = useTjspFila();
   const createMutation = useCreateConsulta();
@@ -428,7 +430,7 @@ export default function Certidoes() {
       </Card>
 
       {/* Consultas List */}
-      {isLoading ? (
+      {showConsultasSkeleton ? (
         <CardGridSkeleton count={4} />
       ) : consultas.length === 0 ? (
         <Card>
