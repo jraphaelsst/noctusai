@@ -195,6 +195,19 @@ From the original field report — verify against production after the swap:
   uncommitted ledger line, and the `false` is easy to miss in a large result payload — which is how
   9 pointers accumulated unlanded. Fix candidates: write the pointer from a short-lived worktree it
   can commit from, or surface the drift as a first-class warning rather than one field.
+  > **Correction (2026-08-31, root-caused):** the bolded diagnosis above is wrong on two counts, kept
+  > here unedited (see the standing rule) rather than silently rewritten. **The primary-write guard is
+  > not involved at all** — `task_branch._push_salvage_ledger_from_primary` commits the recovery
+  > pointer on the primary *deliberately* (that is the documented 2026-06-30 fix for rebase-integrated
+  > slugs), and that commit **succeeds**. The actual cause: `commit_and_ff_push_ledger`'s commit leg
+  > (`git commit -- rel_paths`) does not truly restrict the resulting commit to `rel_paths` — a
+  > pre-commit hook that stages a second file mid-commit (our own vector-costs drain, step 10c, by
+  > design) rides into the SAME commit, and the divergence guard used to treat that rider as
+  > "non-ledger" and refuse to push, **permanently** (the stranded commit never disappears, so every
+  > subsequent teardown hits the same refusal — a self-latching loop, not a one-shot guard). Fixed in
+  > `mcp/noctusai/tools/noctus/dev/_ledger_push.py` (the guard now tolerates a known-benign rider via
+  > the same `is_benign()` predicate the stash pre-check uses) + the bare `salvage_pushed: false` now
+  > carries a `salvage_push_reason`. Full account: `KB § PATTERNS/common/self-branching-mode.md` §12a.
 - ~~**`126086ca` cohort drift predates this release**~~ → **CLOSED** (all six swapped; see the banner).
   The underlying question is still worth answering: why did a prior deploy swap one product and leave
   the rest behind, and what stops that recurring?

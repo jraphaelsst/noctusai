@@ -287,7 +287,7 @@ def _push_salvage_ledger_from_primary(
     dev_branch: str,
     remote: str = "origin",
     verbose: bool = False,
-) -> bool:
+) -> dict[str, Any]:
     """Commit the dirty salvage ledger from the PRIMARY ``dev`` checkout + FF-push
     it to dev — the robust ``fetch → divergence-guard → rebase-onto-origin/dev →
     FF-push`` idiom (mirrors ``branch_pointer._ff_or_rebase_push_to_dev``).
@@ -304,15 +304,17 @@ def _push_salvage_ledger_from_primary(
     leaves the WORKTREE untouched (so ``git worktree remove`` needs no worktree-side
     commit, and NOTHING lands on the to-be-deleted branch).
 
-    Path-scopes ``add``/``commit`` to the ledger file ONLY so unrelated primary
-    working-tree state is never swept onto dev. The divergence-guard REFUSES to
-    push when any NON-ledger commit is ahead of ``origin/<dev>`` (never leak
-    non-ledger work onto dev) — in that case the row stays committed on local dev
-    and ships with the next dev push. The ``project-history/*.ndjson`` files carry
-    a ``merge=union`` gitattribute + are append-only, so the rebase is conflict-
-    free. BEST-EFFORT: any failure logs a warning + returns False; cleanup always
-    proceeds (the row is already on disk + idempotent next time). Returns True iff
-    the row is verified pushed to ``origin/<dev>``.
+    Stages ``add``/``commit`` to the ledger file (plus whatever a pre-commit hook
+    additionally stages mid-commit — see ``_ledger_push``'s module docstring for
+    why that is NOT actually excludable, and why it is safe: the divergence
+    guard tolerates known-benign riders and still blocks on anything else). The
+    divergence-guard REFUSES to push when any commit ahead of ``origin/<dev>``
+    touches a REAL non-ledger, non-benign path (never leak real work onto dev) —
+    in that case the row stays committed on local dev and ships with the next
+    dev push. The ``project-history/*.ndjson`` files carry a ``merge=union``
+    gitattribute + are append-only, so the rebase is conflict-free. BEST-EFFORT:
+    a failure never raises; cleanup always proceeds (the row is already on disk
+    + idempotent next time).
 
     All git IO goes through the injected ``runner`` directly (NOT ``_git``): the
     leg needs ``add``/``commit``/``diff-tree`` which are intentionally off the
@@ -321,8 +323,12 @@ def _push_salvage_ledger_from_primary(
 
     The ``commit → fetch → divergence-guard → rebase-onto-origin/dev → FF-push``
     idiom is the shared :func:`commit_and_ff_push_ledger` helper (the N=3 DRY
-    lift); this leg just supplies the path-scoped salvage commit message + maps
-    the structured result back to the ``bool`` contract (True iff pushed).
+    lift); this leg just supplies the salvage commit message. Returns the FULL
+    structured result (``{"ok", "status", "pushed", "error", ...}``) rather than
+    collapsing it to a bare bool — a caller that only reads ``pushed`` still
+    gets the same True/False signal, but a caller that surfaces the result (as
+    ``task_branch`` cleanup now does) can say WHY a push failed instead of a
+    silent ``salvage_pushed: false`` (no-silent-errors).
     """
     from tools.noctus.dev._ledger_push import commit_and_ff_push_ledger  # lazy import
 
@@ -333,7 +339,7 @@ def _push_salvage_ledger_from_primary(
            "+ rebase-onto-dev FF-pushed so the row lands on origin/dev even when "
            "dev advanced past the branch base (2026-06-30 rebase-integrated-slug "
            "lost-row fix); leaves the worktree clean for remove.")
-    res = commit_and_ff_push_ledger(
+    return commit_and_ff_push_ledger(
         runner=runner,
         root=root,
         rel_paths=[rel_ledger],
@@ -343,7 +349,6 @@ def _push_salvage_ledger_from_primary(
         already_committed=False,
         _log_prefix="task_branch.cleanup",
     )
-    return bool(res.get("pushed"))
 
 
 def _stash_benign_artifacts(
@@ -1054,18 +1059,33 @@ def task_branch(
     # reliably lands on origin/dev — the 2026-06-30 lost-row fix for rebase-
     # integrated slugs (the old worktree-HEAD:dev push was non-FF → orphaned the
     # commit on the force-deleted branch). Best-effort: a push failure is reported
-    # (salvage_pushed=False) but cleanup proceeds — the row is on local dev (ships
-    # with the next dev push) + idempotent next-time, and the bulk-sweep keepers
-    # still find it.
+    # (salvage_pushed=False, salvage_push_reason=<why>) but cleanup proceeds — the
+    # row is on local dev (ships with the next dev push) + idempotent next-time,
+    # and the bulk-sweep keepers still find it. `salvage_push_reason` is the
+    # no-silent-errors fix for the 2026-08-31 divergence-loop incident: a bare
+    # `salvage_pushed: false` gave the caller no way to tell "genuinely diverged,
+    # needs a human" apart from "will self-heal next run" — see
+    # `_push_salvage_ledger_from_primary` / `_ledger_push.commit_and_ff_push_ledger`
+    # for the possible `status` values (dirty_blocked / non-ledger-ahead / rebase
+    # conflict / push-failed-after-retry).
     salvage_pushed = False
+    salvage_push_reason: str | None = None
     if salvage_ledger:
         rel_ledger = "project-history/worktree-salvage.ndjson"
         if verbose:
             logger.debug("task_branch.cleanup: committing + FF-pushing salvage ledger "
                          "from primary checkout %s: %s", root, rel_ledger)
-        salvage_pushed = _push_salvage_ledger_from_primary(
+        salvage_push_result = _push_salvage_ledger_from_primary(
             runner, root=str(root), rel_ledger=rel_ledger,
             dev_branch=dev_branch, remote=remote, verbose=verbose)
+        salvage_pushed = bool(salvage_push_result.get("pushed"))
+        if not salvage_pushed:
+            salvage_push_reason = (
+                salvage_push_result.get("error")
+                or f"push not attempted (status={salvage_push_result.get('status')!r})"
+            )
+            logger.warning("task_branch.cleanup: salvage ledger push did not land: %s",
+                           salvage_push_reason)
     # Attempt the remove. If it fails, check whether the only "dirty" files
     # are gitignored (e.g. `.claude/cache/*.sqlite`). If so, the refusal is
     # spurious — git considers those files non-blocking. We force-remove via
@@ -1095,8 +1115,12 @@ def task_branch(
     result = {**plan, "status": "cleaned", "exit_code": 0, "worktree_removed": True,
               "branch_deleted": True, "salvage_ledger": salvage_ledger,
               "salvage_pushed": salvage_pushed,
+              "salvage_push_reason": salvage_push_reason,
               "message": f"removed {wt_path} + deleted {branch} (recovery pointer → "
-                         f"{salvage_ledger or 'ledger'}). Back on {dev_branch} baseline."}
+                         f"{salvage_ledger or 'ledger'}). Back on {dev_branch} baseline."
+                         + ("" if salvage_pushed or not salvage_ledger else
+                            f" NOTE: salvage row committed locally but NOT pushed — "
+                            f"{salvage_push_reason}")}
     if settle_fn is not None:
         try:
             result["cache_settle"] = settle_fn()

@@ -17,9 +17,22 @@ ledgers carry a ``merge=union`` gitattribute + are append-only, so a
 behind/diverged local ``dev`` base replays cleanly on rebase. They are ALSO the
 only cache-exempt paths — a push that changes only ledger files must never
 trigger a cache refresh. The divergence guard enforces the flip side: it
-REFUSES to push when any NON-ledger commit is ahead of ``origin/<dev>``, so
-delegating the push from the primary checkout can never leak unrelated work
-onto dev.
+REFUSES to push when any commit ahead of ``origin/<dev>`` touches a path that
+is neither the caller's ``rel_paths`` NOR a known-benign refresh artifact
+(``_benign_stash.is_benign`` — the SAME predicate the stash pre-check uses),
+so delegating the push from the primary checkout can never leak real,
+unrelated work onto dev.
+
+NOTE — the commit leg is NOT actually restricted to ``rel_paths`` the way its
+name (and older comments in this file) implied. ``git commit -- <pathspec>``
+(``--only`` included) stages the named paths for you, but it does NOT exclude
+whatever a pre-commit HOOK further stages mid-commit — our own hook's step 10c
+unconditionally ``git add``s ``project-history/vector-costs.ndjson`` on every
+commit (by design: KB § PATTERNS/common/vector-cost-tracking.md), so it rides
+into the SAME commit this helper makes. That is why the divergence guard
+tolerates *known-benign* riders instead of only ``rel_paths`` — see the guard's
+inline comment for the incident this caused (the commit is safe as long as
+every rider is a declared-benign artifact; anything else still blocks loudly).
 
 KB § PATTERNS/architect/branch-tree-tracking.md · KB § PATTERNS/common/self-branching-mode.md
 """
@@ -32,6 +45,7 @@ from typing import Any, Callable
 from tools.noctus.dev._benign_stash import (
     classify_dirty,
     dirty_blocked_result,
+    is_benign,
     pop_stash,
     stash_benign,
 )
@@ -186,15 +200,46 @@ def _push_leg(
             g("fetch", remote)
 
         # 2. Divergence guard — EVERY commit ahead of origin/<dev> must touch
-        #    ONLY the cache-exempt ledger paths, else pushing HEAD:<dev> would
-        #    leak non-ledger work onto dev.
+        #    ONLY the cache-exempt ledger paths (rel_paths) OR another
+        #    known-benign refresh artifact, else pushing HEAD:<dev> would leak
+        #    non-ledger work onto dev.
+        #
+        #    WHY "OR benign" (the 2026-08-31 divergence-loop root cause, take 2).
+        #    `git commit -m msg -- rel_paths` does NOT actually restrict the
+        #    resulting commit to `rel_paths` — that only controls what git
+        #    stages FOR YOU from the pathspec; anything a pre-commit HOOK
+        #    stages mid-commit (via its own `git add`) rides into the SAME
+        #    commit regardless, `--only` included (verified empirically: a
+        #    hook that `git add`s a second file during the commit call puts
+        #    that file in the resulting tree even under `--only <pathspec>`).
+        #    Our own pre-commit hook's step 10c does exactly this on EVERY
+        #    commit — it drains the vector-costs spool into
+        #    project-history/vector-costs.ndjson and unconditionally
+        #    `git add`s it, BY DESIGN ("rides along with whatever is being
+        #    committed" — KB § PATTERNS/common/vector-cost-tracking.md). The
+        #    guard used to treat that rider as "non-ledger" and refuse
+        #    forever: the tainted commit never disappears (it is still ahead
+        #    of origin/dev on every subsequent call), so every teardown from
+        #    then on refused too — a SELF-LATCHING loop, worse than the
+        #    dirty-tree refusal `d0170d92` fixed, because a rebase failure
+        #    self-clears (dirt is transient) but a stranded non-ledger commit
+        #    does not.
+        #
+        #    `is_benign()` is the SAME predicate the stash pre-check already
+        #    uses (BENIGN_REFRESH_PATTERNS) — one canonical list, not a second
+        #    hand-maintained one that can drift out of sync with it. A file
+        #    that is NOT on that list (e.g. a genuine KB/product edit some
+        #    other hook step swept in) still fails the guard and blocks
+        #    loudly — the "real work never leaks onto dev" property is
+        #    unchanged, just no longer defeated by our OWN hook's declared-
+        #    benign side effects.
         rc_rl, out_rl, _ = g("rev-list", f"{dev_ref}..HEAD")
         ahead = [s.strip() for s in (out_rl or "").splitlines() if s.strip()]
         non_ledger: list[str] = []
         for sha in ahead:
             _rc_dt, out_dt, _ = g("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
             changed = [f.strip() for f in (out_dt or "").splitlines() if f.strip()]
-            if any(f not in ledger_set for f in changed):
+            if any(f not in ledger_set and not is_benign(f) for f in changed):
                 non_ledger.append(sha)
         if non_ledger:
             shas = ", ".join(s[:8] for s in non_ledger)

@@ -521,3 +521,67 @@ The 2026-06-30 `post-checkout` entry ("cost-log churn vs rebase") looks identica
 is not: it guards churn *during* a rebase's checkout step (the `sequencer` check). This
 one is dirt *before* the rebase starts. Closing that one is part of why this looked
 already-solved for two months.
+
+## §12a · The SAME symptom recurred hours after §12 shipped — a second, deeper cause
+
+**§12's fix was real and correct — and did not close the loop.** Hours after the stash
+lift shipped, a `task_branch cleanup` returned a bare `salvage_pushed: false` and left
+the primary `8 behind / 1 ahead` of `origin/dev`. §12's own regression tests all still
+passed; the incident happened anyway. Two claims in §12 (and in
+`projects/prod-fleet-swap-handoff/PROJECT.md` §7, corrected alongside this entry) need
+retraction: **the primary-write guard was never involved** — the salvage commit is made
+*deliberately* on the primary by `task_branch._push_salvage_ledger_from_primary`, and
+that commit **succeeds**; and the failure this time was **not** the rebase refusing on
+dirt — reproduction showed the tree was *clean* by the time the rebase leg ran.
+
+**Root cause, pinned to a line.** `commit_and_ff_push_ledger`'s commit leg runs
+`git commit -m <msg> -- <rel_paths>`. That does **not** restrict the resulting commit
+to `rel_paths` — pathspec-limited commit (`--only` included) only controls what git
+stages *for you*; it does **not** exclude a path a pre-commit **hook** stages mid-commit
+via its own `git add`. Verified with plain git, no python involved: a hook that
+`git add`s a second file during `git commit --only -- <pathspec>` puts that file in the
+resulting tree regardless. Our own pre-commit hook's step 10c does exactly this on
+**every** commit — it drains the vector-costs spool into
+`project-history/vector-costs.ndjson` and unconditionally `git add`s it, *by design*
+(KB § PATTERNS/common/vector-cost-tracking.md — "rides along with whatever is being
+committed"). So the ledger commit this helper makes touches two files:
+`rel_paths` (the caller's ledger) **and** `vector-costs.ndjson` (the hook's rider) — but
+the divergence guard's `ledger_set` only ever knew about `rel_paths`
+(`mcp/noctusai/tools/noctus/dev/_ledger_push.py`, the `if any(f not in ledger_set ...)`
+check in `_push_leg`). It saw a commit touching a path outside `ledger_set`, correctly
+by its own (incomplete) rule, and refused: `committed_locally=True, retryable=False`.
+Collapsed through the old `bool(res.get("pushed"))` return, that surfaced as a bare
+`salvage_pushed: false` with no reason (its own defect — see below).
+
+**Why this is worse than §12's bug: it is self-latching.** A dirty-tree rebase refusal
+clears itself the moment the tree is clean again — transient. A stranded non-ledger-
+looking commit does not: it stays ahead of `origin/dev` forever, so the guard refuses
+on **every subsequent call** too, until a human reconciles by hand. That matches the
+observed history exactly — a loop that "regrows on every teardown" and needed manual
+clearing once per session, the `8 behind / 1 ahead` shape growing as `origin/dev`
+advances underneath the stuck commit.
+
+**The fix.** The divergence guard now tolerates a rider *iff* it is a known-benign
+refresh artifact — `_benign_stash.is_benign`, the **same** predicate the stash
+pre-check already uses, not a second hand-maintained list (the platform's own
+"hand-maintained lists drift" rule applies to the guard's tolerance set exactly as much
+as to a product-slug roster). A rider that is **not** declared benign still blocks
+loudly — real work never leaks onto `dev`, no matter how it got staged. This also
+self-heals a commit *already* stranded by the pre-fix code, as long as its only rider
+was benign: the very next call now passes the guard and pushes it, instead of the
+divergence growing forever.
+
+**The reporting defect, fixed alongside it.** `_push_salvage_ledger_from_primary` used
+to collapse the full structured result to `bool(res.get("pushed"))`, discarding
+`status`/`error`/`dirty_files`. It now returns the full dict; `task_branch cleanup`
+surfaces `salvage_push_reason` (and folds it into `message`) whenever `salvage_pushed`
+is `False`, so a failed salvage push says WHY instead of a silent `false`
+(no-silent-errors).
+
+**Pinned with real git, again.** `test_ledger_push_realgit.py` gained a second fixture
+that installs an *actual* `.git/hooks/pre-commit` mimicking step 10c (stage a second
+file mid-commit), plus a control run that applies the exact pre-fix predicate to the
+real resulting commit and shows it would have blocked. A third test proves a
+genuinely non-benign rider (not on `BENIGN_REFRESH_PATTERNS`) still blocks loudly and
+never reaches `origin/dev` — the property the fix must preserve, not merely the
+symptom it must remove.
