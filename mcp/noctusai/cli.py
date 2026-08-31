@@ -19,6 +19,7 @@ Usage:
 import argparse
 import json
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -2716,4 +2717,24 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Structural backstop, NOT a diagnosis: a crash under a bare (non-venv)
+    # interpreter was observed ONCE to print a traceback and still exit 0
+    # (`--auto-improvement-query` -> ModuleNotFoundError). The root cause was
+    # investigated and NOT reproduced — a targeted AST sweep of every
+    # `except` inside `main()` found only two `sqlite3.Error` handlers
+    # (neither matching), no bare `except`/`except BaseException`, no
+    # `sys.excepthook` override, and no `atexit` handler anywhere in this
+    # tree; reproducing the exact failure (bare `/usr/bin/python3`, no
+    # `mcp/noctusai/.venv`) correctly raised the traceback AND exited 1.
+    # Ship the backstop regardless: it is now load-bearing for
+    # `_refresh_via_cli_subprocess` (`tools/noctus/dev/noc_graph_cache.py`),
+    # which raises on `proc.returncode != 0` — a CLI that returns 0 on a
+    # crash would silently defeat that check. `SystemExit` passes through
+    # untouched so every existing `sys.exit(N)` call site keeps its code.
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException:
+        traceback.print_exc()
+        sys.exit(1)
