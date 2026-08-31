@@ -21,7 +21,7 @@
  * which already computes those four deltas server-side.
  */
 import { useMemo } from "react";
-import { DollarSign, Eye, MousePointerClick, Target, Users } from "lucide-react";
+import { DollarSign, Eye, Loader2, MousePointerClick, Target, Users } from "lucide-react";
 import {
   CartesianGrid,
   Line,
@@ -206,11 +206,29 @@ export function AdDetalheModal({
   const seriesQ = useAdsInsightsSeries(ad.object_id, "ad", range.since, range.until);
   const prevSeriesQ = useAdsInsightsSeries(ad.object_id, "ad", prev.since, prev.until);
 
-  // Never gate on `isLoading` alone — false mid-refetch (v5), which would
-  // let a stale/empty branch win over data that's actually there.
-  const loadingKpis =
-    compareQ.isPending || compareQ.isFetching || prevSeriesQ.isPending || prevSeriesQ.isFetching;
-  const loadingChart = seriesQ.isPending || seriesQ.isFetching;
+  // Two signals, never a bare `isFetching` reaching a render gate. The OLD
+  // `isPending || isFetching` here was Mode B: TRUE on every background
+  // refetch (switching the date-range preset re-fetches all three
+  // queries), so `loadingChart` unmounted the chart to "Carregando…" and
+  // `loadingKpis` blanked every KPI tile to "—" on every preset change —
+  // even though the previous numbers were still valid to show.
+  // `showSkeleton*` gates on `!data` DIRECTLY (not `isPending && !data`) —
+  // "nothing to render yet" IS "no data," full stop, and this stays
+  // correct even in the defensive case where a query's `data` has been
+  // cleared without `isPending` having flipped back (a key-change with no
+  // `placeholderData`, or a reset mid-refetch). It can never mask real
+  // data: `!data` is false the instant data exists, refetch or not.
+  // `isRefreshing*` is an indicator only, never an early return / ternary
+  // unmount. → KB § PATTERNS/frontend/lying-loading-state.md
+  const showSkeletonKpis = !compareQ.data || !prevSeriesQ.data;
+  const isRefreshingKpis =
+    (compareQ.isFetching && !!compareQ.data) || (prevSeriesQ.isFetching && !!prevSeriesQ.data);
+  // `&& !seriesQ.isError` — the ternary below checks the skeleton BEFORE
+  // `seriesQ.isError` (mirrors the original branch order), so a resolved
+  // error with no data must not be swallowed by the skeleton branch.
+  const showSkeletonChart = !seriesQ.data && !seriesQ.isError;
+  const isRefreshingChart = seriesQ.isFetching && !!seriesQ.data;
+  const isRefreshing = isRefreshingKpis || isRefreshingChart;
 
   const curLeads = useMemo(
     () => (seriesQ.data?.rows ?? []).reduce((sum, r) => sum + rowLeads(r), 0),
@@ -264,7 +282,13 @@ export function AdDetalheModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-2">
+          {isRefreshing && (
+            <Loader2
+              className="h-3.5 w-3.5 animate-spin text-muted-foreground"
+              data-testid="ad-detalhe-refreshing"
+            />
+          )}
           <DateRangeSelect preset={preset} onChange={setPreset} />
         </div>
 
@@ -282,7 +306,7 @@ export function AdDetalheModal({
                 label={t.label}
                 value={t.value}
                 hint={t.hint}
-                loading={loadingKpis}
+                loading={showSkeletonKpis}
               />
             ))}
           </div>
@@ -290,7 +314,7 @@ export function AdDetalheModal({
 
         <div>
           <h3 className="mb-2 text-sm font-medium">Gasto ao longo do tempo</h3>
-          {loadingChart ? (
+          {showSkeletonChart ? (
             <div className="flex h-56 items-center justify-center text-sm text-muted-foreground">
               Carregando…
             </div>

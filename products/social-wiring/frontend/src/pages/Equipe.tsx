@@ -31,15 +31,20 @@ export default function Equipe() {
 
   const members = membersQuery.data ?? [];
   const invitations = invitationsQuery.data ?? [];
-  // `isPending || isFetching`, never `isLoading`: in TanStack v5 `isLoading`
-  // is `isPending && isFetching`, so it goes FALSE during a background
-  // refetch and the empty branches below would render "no data" over data
-  // that exists. → KB § PATTERNS/frontend/lying-loading-state.md
-  const loading =
-    membersQuery.isPending ||
-    membersQuery.isFetching ||
-    invitationsQuery.isPending ||
-    invitationsQuery.isFetching;
+  // Two signals, never `isLoading` and never a bare `isFetching` gating an
+  // early return. `isPending || isFetching` is FALSE→TRUE on every
+  // background refetch (adding a member, cancelling an invite both
+  // invalidate these queries), so the OLD `loading` here unmounted this
+  // whole 8-row team list to a spinner on every mutation — the live
+  // incident this fix closes. `showSkeleton` fires ONLY pre-first-load;
+  // `isRefreshing` is an indicator only, never an early return.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const showSkeleton =
+    (membersQuery.isPending && !membersQuery.data) ||
+    (invitationsQuery.isPending && !invitationsQuery.data);
+  const isRefreshing =
+    (membersQuery.isFetching && !!membersQuery.data) ||
+    (invitationsQuery.isFetching && !!invitationsQuery.data);
   // An empty list and a failed request are DIFFERENT states — conflating them
   // is what hid the 500 behind "Nenhum convite pendente".
   const invitationsError = invitationsQuery.isError;
@@ -88,7 +93,7 @@ export default function Equipe() {
     }
   }
 
-  if (loading) {
+  if (showSkeleton) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -104,7 +109,12 @@ export default function Equipe() {
         <div className="flex items-center gap-3">
           <Users className="h-6 w-6 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Equipe</h1>
+            <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+              Equipe
+              {isRefreshing && (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" data-testid="equipe-refreshing" />
+              )}
+            </h1>
             <p className="text-sm text-muted-foreground">
               {members.length} membro{members.length !== 1 ? "s" : ""} na organizacao
             </p>
