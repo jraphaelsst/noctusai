@@ -102,10 +102,14 @@ END $$;
 -- ----------------------------------------------------------------------------
 DO $$
 DECLARE
-  r RECORD;
-  pair TEXT[];
-BEGIN
-  FOR pair IN SELECT * FROM (VALUES
+  -- A plpgsql array literal, deliberately NOT `FOR ... IN SELECT * FROM
+  -- (VALUES ARRAY[...], ...)`: each row of a VALUES list must be
+  -- parenthesised, so that shape is a syntax error, and it is one the live
+  -- database catches only when this block actually runs. Caught here on
+  -- 2026-08-18 by the real apply — the earlier dry run had exercised the
+  -- table rename and the stage updates but not this loop, which is a fair
+  -- reminder that a probe only proves the statements it actually contains.
+  pairs   TEXT[][] := ARRAY[
       ARRAY['negociacoes_venda_pkey',                    'atendimentos_pkey'],
       ARRAY['negociacoes_venda_lead_id_fkey',            'atendimentos_lead_id_fkey'],
       ARRAY['negociacoes_venda_meta_ads_lead_id_fkey',   'atendimentos_meta_ads_lead_id_fkey'],
@@ -115,28 +119,34 @@ BEGIN
       ARRAY['negociacoes_venda_status_check',            'atendimentos_status_check'],
       ARRAY['negociacoes_venda_valor_estimado_check',    'atendimentos_valor_estimado_check'],
       ARRAY['negociacoes_venda_closed_at_matches_status','atendimentos_closed_at_matches_status']
-  ) AS t(x) LOOP
+  ];
+  proc_pairs TEXT[][] := ARRAY[
+      ARRAY['processos_venda_negociacao_venda_id_fkey', 'processos_venda_atendimento_id_fkey'],
+      ARRAY['processos_venda_negociacao_venda_id_key',  'processos_venda_atendimento_id_key']
+  ];
+  i INTEGER;
+BEGIN
+  FOR i IN 1 .. array_length(pairs, 1) LOOP
     IF EXISTS (
       SELECT 1 FROM pg_constraint c
         JOIN pg_class cl ON cl.oid = c.conrelid
         JOIN pg_namespace n ON n.oid = cl.relnamespace
-      WHERE n.nspname='social_wiring' AND cl.relname='atendimentos' AND c.conname = pair[1]
+      WHERE n.nspname='social_wiring' AND cl.relname='atendimentos' AND c.conname = pairs[i][1]
     ) THEN
-      EXECUTE format('ALTER TABLE social_wiring.atendimentos RENAME CONSTRAINT %I TO %I', pair[1], pair[2]);
+      EXECUTE format('ALTER TABLE social_wiring.atendimentos RENAME CONSTRAINT %I TO %I',
+                     pairs[i][1], pairs[i][2]);
     END IF;
   END LOOP;
 
-  FOR pair IN SELECT * FROM (VALUES
-      ARRAY['processos_venda_negociacao_venda_id_fkey', 'processos_venda_atendimento_id_fkey'],
-      ARRAY['processos_venda_negociacao_venda_id_key',  'processos_venda_atendimento_id_key']
-  ) AS t(x) LOOP
+  FOR i IN 1 .. array_length(proc_pairs, 1) LOOP
     IF EXISTS (
       SELECT 1 FROM pg_constraint c
         JOIN pg_class cl ON cl.oid = c.conrelid
         JOIN pg_namespace n ON n.oid = cl.relnamespace
-      WHERE n.nspname='social_wiring' AND cl.relname='processos_venda' AND c.conname = pair[1]
+      WHERE n.nspname='social_wiring' AND cl.relname='processos_venda' AND c.conname = proc_pairs[i][1]
     ) THEN
-      EXECUTE format('ALTER TABLE social_wiring.processos_venda RENAME CONSTRAINT %I TO %I', pair[1], pair[2]);
+      EXECUTE format('ALTER TABLE social_wiring.processos_venda RENAME CONSTRAINT %I TO %I',
+                     proc_pairs[i][1], proc_pairs[i][2]);
     END IF;
   END LOOP;
 END $$;
