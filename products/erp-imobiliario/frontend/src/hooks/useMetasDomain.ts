@@ -172,8 +172,12 @@ export function useAdicionarMembro(equipeId: string) {
     mutationFn: async (body: { user_id: string; papel?: 'lider' | 'corretor' }) =>
       unwrap<EquipeMembro>(await api.post(`/api/metas/equipes/${equipeId}/membros`, body)),
     onSuccess: () => {
+      // `equipes_service.adicionar_membro` (backend) only writes
+      // `equipe_membros` — never `equipes` (no denormalized membro count on
+      // that row: `listar_equipes` is a bare `select("*")`, and the FE
+      // `Equipe` type carries no membros field). The `['metas','equipes']`
+      // invalidation dropped here never had anything to refresh.
       qc.invalidateQueries({ queryKey: ['metas', 'equipe-membros', equipeId] });
-      qc.invalidateQueries({ queryKey: ['metas', 'equipes'] });
     },
   });
 }
@@ -193,8 +197,11 @@ export function useRemoverMembro(equipeId: string) {
     mutationFn: async (membro_id: string) =>
       unwrap<any>(await api.delete(`/api/metas/equipes/${equipeId}/membros/${membro_id}`)),
     onSuccess: () => {
+      // Same reasoning as useAdicionarMembro: `remover_membro` is a soft-
+      // delete on `equipe_membros` (sets `left_at`) and never touches the
+      // `equipes` row, so the `['metas','equipes']` list invalidation is
+      // dropped here too.
       qc.invalidateQueries({ queryKey: ['metas', 'equipe-membros', equipeId] });
-      qc.invalidateQueries({ queryKey: ['metas', 'equipes'] });
     },
   });
 }
@@ -258,6 +265,15 @@ export function useUpsertMetaEmpresa() {
       unwrap<MetaEmpresa>(await api.post('/api/metas/empresa', body)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['metas', 'empresa'] });
+      // Pre-existing gap fixed in-flight (fix-on-contact): `resumo_cascata`
+      // (backend/app/services/metas_empresa_service.py) reads `metas_empresa`
+      // fresh on every call and returns `meta_empresa`/`saldo_a_alocar`
+      // derived straight from the row this mutation just wrote. Without
+      // this, `MetasEmpresa.tsx` (which renders both `useMetasEmpresa` and
+      // `useCascadeResumo` side by side) kept showing the OLD company
+      // target's allocation balance after a save — stale data, not a
+      // cosmetic flicker.
+      qc.invalidateQueries({ queryKey: ['metas', 'empresa-resumo'] });
       toast.success('Meta da empresa atualizada');
     },
   });
@@ -332,6 +348,14 @@ export function useUpsertConfig() {
       unwrap<MetasConfig>(await api.put('/api/metas/configuracao', body)),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['metas', 'config'] });
+      // Pre-existing gap fixed in-flight (fix-on-contact):
+      // `compute_rankings` (backend/app/services/meta_rankings_service.py)
+      // reads `vgv_por_ponto`/`peso_pontos`/`peso_vgv` from this same
+      // config LIVE on every call and folds them straight into
+      // `pontos_vgv`/`score_unificado` — it is not a snapshot taken at
+      // event time. Without this, `rankings` kept showing scores computed
+      // under the OLD weights after a config save.
+      qc.invalidateQueries({ queryKey: ['metas', 'rankings'] });
       toast.success('Configuração atualizada');
     },
   });

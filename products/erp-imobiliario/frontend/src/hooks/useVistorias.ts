@@ -67,6 +67,13 @@ export function useCreateVistoria() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vistorias'] });
+      // Left broad, not audited to the same depth this slice gave
+      // useContratos/useLocacoes/useClientes: a vistoria can carry a
+      // locação status transition server-side (entry/exit inspection) that
+      // this frontend file doesn't itself compute — unsure whether
+      // `contratos_locacao` gets a write from vistoria creation without
+      // reading the vistorias backend service, which this pass didn't
+      // reach. Kept per the brief's "unsure → keep it" rule.
       queryClient.invalidateQueries({ queryKey: ['locacoes'] });
       toast.success('Vistoria criada com sucesso!');
     },
@@ -84,9 +91,10 @@ export function useUpdateVistoria() {
       const result = await api.patch(`/api/vistorias/${id}`, data);
       return result.data as Vistoria;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['vistorias'] });
-      queryClient.invalidateQueries({ queryKey: ['vistoria'] });
+      // Narrowed to the id the response confirms (was blanket ['vistoria']).
+      queryClient.invalidateQueries({ queryKey: ['vistoria', data.id] });
       toast.success('Vistoria atualizada com sucesso!');
     },
     onError: (error: Error) => {
@@ -120,9 +128,10 @@ export function useAddFotosVistoria() {
       const result = await api.post(`/api/vistorias/${id}/fotos`, { urls });
       return result.data as Vistoria;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['vistorias'] });
-      queryClient.invalidateQueries({ queryKey: ['vistoria'] });
+      // Narrowed to the id the response confirms (was blanket ['vistoria']).
+      queryClient.invalidateQueries({ queryKey: ['vistoria', data.id] });
       toast.success('Fotos adicionadas com sucesso!');
     },
     onError: (error: Error) => {

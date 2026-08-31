@@ -68,7 +68,11 @@ export function useCreateCliente() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
-      queryClient.invalidateQueries({ queryKey: ['funil'] });
+      // 'funil' dropped: since the P1.5.4 reshape (see useFunil.ts's
+      // docblock) the board's cards are `negociacoes_venda` rows, not
+      // clientes — `criar_cliente` (backend/app/routers/clientes.py) only
+      // INSERTs into `clientes`, never `negociacoes_venda`, so a brand-new
+      // cliente has no deal and cannot appear on the board yet.
       toast.success('Cliente criado com sucesso!');
     },
     onError: (error: Error) => {
@@ -99,6 +103,11 @@ export function useUpdateCliente() {
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      // Kept: the funil board's cards nest the cliente as a join
+      // (`cliente:clientes!...(id, nome, email, telefone, origem)` —
+      // backend/app/services/negociacoes_venda_service.py NEGOCIACAO_SELECT),
+      // so editing nome/email/telefone/origem here changes what an open
+      // deal's card renders.
       queryClient.invalidateQueries({ queryKey: ['funil'] });
       queryClient.invalidateQueries({ queryKey: ['cliente', variables.id] });
       toast.success('Cliente atualizado com sucesso!');
@@ -137,7 +146,13 @@ export function useToggleArquivarCliente() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
-      queryClient.invalidateQueries({ queryKey: ['funil'] });
+      // 'funil' dropped: the board filters on the NEGOCIAÇÃO's own
+      // `arquivado` column (backend/app/routers/funil.py `incluir_arquivados`
+      // → `.eq("arquivado", False)` on negociacoes_venda), not the cliente's —
+      // a distinct field toggled by useFunil.ts's useArquivarNegociacao. The
+      // nested cliente join also doesn't project `arquivado`
+      // (NEGOCIACAO_SELECT: id, nome, email, telefone, origem), so nothing
+      // on a card changes here either.
       toast.success(data?.arquivado ? 'Cliente arquivado' : 'Cliente desarquivado');
     },
     onError: (error: Error, _id, context) => {
@@ -158,6 +173,10 @@ export function useDeleteCliente() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientes'] });
+      // Kept: `negociacoes_venda.cliente_id` is `REFERENCES erp.clientes(id)
+      // ON DELETE CASCADE` (migrations/040_negociacoes_venda.sql) — deleting
+      // a cliente deletes its open deals too, which removes cards from the
+      // board.
       queryClient.invalidateQueries({ queryKey: ['funil'] });
       toast.success('Cliente excluído com sucesso!');
     },

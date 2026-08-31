@@ -49,7 +49,13 @@ export function useCreateLocacao() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['locacoes'] });
-      queryClient.invalidateQueries({ queryKey: ['imoveis'] });
+      // 'imoveis' dropped: `criar_contrato` (backend/app/routers/locacoes.py)
+      // only INSERTs into `contratos_locacao` — no trigger or router code
+      // writes back to `ativos`/`imoveis` (confirmed: no `ativos` reference
+      // anywhere in locacoes.py, and no CREATE TRIGGER on
+      // contratos_locacao in migrations/). The imóvel's own `status` is a
+      // separate, manually-edited field — this invalidation had nothing
+      // to refresh.
       toast.success('Contrato de locação criado com sucesso!');
     },
     onError: (error: Error) => {
@@ -66,9 +72,11 @@ export function useUpdateLocacao() {
       const result = await api.patch(`/api/locacoes/${id}`, data);
       return result.data as ContratoLocacao;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['locacoes'] });
-      queryClient.invalidateQueries({ queryKey: ['locacao'] });
+      // Narrowed to the id the response confirms (was blanket ['locacao'],
+      // invalidating every cached locação regardless of which one changed).
+      queryClient.invalidateQueries({ queryKey: ['locacao', data.id] });
       toast.success('Contrato atualizado com sucesso!');
     },
     onError: (error: Error) => {
@@ -86,7 +94,8 @@ export function useDeleteLocacao() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['locacoes'] });
-      queryClient.invalidateQueries({ queryKey: ['imoveis'] });
+      // 'imoveis' dropped: same reasoning as useCreateLocacao — deleting a
+      // contratos_locacao row has no write path to ativos/imoveis.
       toast.success('Contrato excluído com sucesso!');
     },
     onError: (error: Error) => {

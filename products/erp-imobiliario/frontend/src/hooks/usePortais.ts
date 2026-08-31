@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, useAuthStore } from '@noctusai/seed/infra';
+import type { Imovel } from './useImoveis';
 
 export interface PortalFeed {
   portal: string;
@@ -69,14 +70,14 @@ export function useTogglePortal() {
       return result.data;
     },
     // Optimistic toggle: flips `pronto_para_portais` on the matching row of
-    // every cached `['portais-imoveis', ...]` list immediately; `onError`
-    // rolls back to the pre-mutation snapshot. Same rollback discipline as
+    // every cached `['portais-imoveis', ...]` list AND the `['imoveis']`
+    // list immediately; `onError` rolls back both to the pre-mutation
+    // snapshot. Same rollback discipline as
     // products/social-wiring/frontend/src/hooks/useCardHub.ts
-    // useSetClienteTagsMutation (~L235). The three invalidateQueries calls in
-    // onSuccess below — incl. the root `['imoveis']` key — are Category C
-    // (root-key invalidation, out of scope for this slice) and stay as-is.
+    // useSetClienteTagsMutation (~L235).
     onMutate: async ({ imovelId, prontoParaPortais }: { imovelId: string; prontoParaPortais: boolean }) => {
       await queryClient.cancelQueries({ queryKey: ['portais-imoveis'] });
+      await queryClient.cancelQueries({ queryKey: ['imoveis'] });
       const previousQueries = queryClient.getQueriesData<ImovelPortal[]>({ queryKey: ['portais-imoveis'] });
       previousQueries.forEach(([queryKey, data]) => {
         if (!data) return;
@@ -85,12 +86,28 @@ export function useTogglePortal() {
           data.map((imv) => (imv.id === imovelId ? { ...imv, pronto_para_portais: prontoParaPortais } : imv)),
         );
       });
-      return { previousQueries };
+      const previousImoveis = queryClient.getQueryData<Imovel[]>(['imoveis']);
+      if (previousImoveis) {
+        queryClient.setQueryData<Imovel[]>(
+          ['imoveis'],
+          previousImoveis.map((imv) =>
+            imv.id === imovelId ? { ...imv, pronto_para_portais: prontoParaPortais } : imv,
+          ),
+        );
+      }
+      return { previousQueries, previousImoveis };
     },
     onSuccess: (_data, variables) => {
+      // `toggle_portal` (backend/app/routers/portais.py) is a single-field
+      // `UPDATE ativos SET pronto_para_portais = ...` — no other imovel
+      // field changes, so the `['imoveis']` list is fully reconciled by
+      // the onMutate patch already; a blanket `invalidateQueries(['imoveis'])`
+      // here used to force-refetch the WHOLE imoveis list (every property
+      // in the org) for a single boolean flip. `portais-feeds` is kept as
+      // a real invalidate: it's a derived per-portal `imoveis_prontos`
+      // COUNT we don't have the new aggregate value for on the client.
       queryClient.invalidateQueries({ queryKey: ['portais-feeds'] });
       queryClient.invalidateQueries({ queryKey: ['portais-imoveis'] });
-      queryClient.invalidateQueries({ queryKey: ['imoveis'] });
       const label = variables.prontoParaPortais ? 'ativado' : 'desativado';
       toast.success(`Portal ${label} para o imovel`);
     },
@@ -98,6 +115,9 @@ export function useTogglePortal() {
       context?.previousQueries?.forEach(([queryKey, data]) => {
         queryClient.setQueryData(queryKey, data);
       });
+      if (context?.previousImoveis) {
+        queryClient.setQueryData(['imoveis'], context.previousImoveis);
+      }
       toast.error('Erro ao alterar status do portal', { description: error.message });
     },
   });

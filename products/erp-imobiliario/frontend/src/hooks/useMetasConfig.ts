@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, useAuthStore } from '@noctusai/seed/infra';
 import { TipoMeta, CategoriaMeta } from "@/types";
 import { toast } from "sonner";
+import { METAS_ROOT } from "./useMetas";
 
 export interface MetaConfig {
   id: string;
@@ -58,7 +59,12 @@ export function useUpsertMetaConfig() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["metas-config"] });
-      queryClient.invalidateQueries({ queryKey: ["metas"] });
+      // The mutationFn itself calls POST /api/metas/criar-hoje when the
+      // config is active, which writes new erp.metas rows — so the
+      // personal-metas list (METAS_ROOT, NOT the team/gamification
+      // "metas" domain in useMetasDomain.ts — see useMetas.ts docblock)
+      // genuinely changes here.
+      queryClient.invalidateQueries({ queryKey: [METAS_ROOT] });
       toast.success("Sucesso!", { description: "Configurações salvas e metas criadas com sucesso." });
     },
     onError: (error: Error) => {

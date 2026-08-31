@@ -119,11 +119,15 @@ export function useUpdateLancamento() {
       const result = await api.patch(`/api/financeiro/${id}`, data);
       return result.data as Lancamento;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // 'status'/'categoria'/'data' are all /api/financeiro list filters and
+      // resumo/fluxo dimensions — kept broad, can't statically know which
+      // filtered views or which month bucket this edit moves the row across.
       queryClient.invalidateQueries({ queryKey: ['financeiro'] });
       queryClient.invalidateQueries({ queryKey: ['financeiro-resumo'] });
       queryClient.invalidateQueries({ queryKey: ['financeiro-fluxo'] });
-      queryClient.invalidateQueries({ queryKey: ['lancamento'] });
+      // Narrowed to the id the response confirms (was blanket ['lancamento']).
+      queryClient.invalidateQueries({ queryKey: ['lancamento', data.id] });
       toast.success('Lançamento atualizado com sucesso!');
     },
     onError: (error: Error) => {

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from '@noctusai/seed/infra';
 import { toast } from "sonner";
+import { METAS_ROOT } from "./useMetas";
 
 export function useConcluirMetaAgrupada() {
   const queryClient = useQueryClient();
@@ -11,7 +12,10 @@ export function useConcluirMetaAgrupada() {
       return result.data as { success: boolean; error?: string; message?: string };
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["metas"] });
+      // `concluir_meta_agrupada` (migrations/003) only writes `erp.metas` —
+      // no meta_evento row, so the team/gamification domain
+      // (useMetasDomain.ts) is untouched; scoped to METAS_ROOT.
+      queryClient.invalidateQueries({ queryKey: [METAS_ROOT] });
       toast.success("Sucesso!", { description: data.message || "Meta concluída com sucesso." });
     },
     onError: (error: Error) => {
