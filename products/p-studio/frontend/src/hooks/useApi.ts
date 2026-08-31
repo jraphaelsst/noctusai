@@ -32,6 +32,7 @@ export const useClientes = (incluirInativos = false) =>
   useQuery({
     queryKey: ["clientes", { incluirInativos }],
     queryFn: () => api.get<Cliente[]>(`/api/clientes${qs({ incluir_inativos: incluirInativos ? "true" : undefined })}`),
+    placeholderData: (prev) => prev, // toggling "incluir inativos" keeps the list mounted instead of flashing a skeleton
   });
 
 export const useClientesMetricas = () =>
@@ -47,6 +48,7 @@ export const useServicos = (incluirInativos = false) =>
   useQuery({
     queryKey: ["servicos", { incluirInativos }],
     queryFn: () => api.get<Servico[]>(`/api/servicos${qs({ incluir_inativos: incluirInativos ? "true" : undefined })}`),
+    placeholderData: (prev) => prev, // toggling "incluir inativos" keeps the list mounted instead of flashing a skeleton
   });
 
 export const useEquipamentos = (incluirInativos = false) =>
@@ -54,6 +56,7 @@ export const useEquipamentos = (incluirInativos = false) =>
     queryKey: ["equipamentos", { incluirInativos }],
     queryFn: () =>
       api.get<Equipamento[]>(`/api/equipamentos${qs({ incluir_inativos: incluirInativos ? "true" : undefined })}`),
+    placeholderData: (prev) => prev, // toggling "incluir inativos" keeps the list mounted instead of flashing a skeleton
   });
 
 // ── CRM ────────────────────────────────────────────────────────────────────
@@ -74,6 +77,7 @@ export const useCaptacoes = (inicio?: string, fim?: string) =>
   useQuery({
     queryKey: ["captacoes", { inicio, fim }],
     queryFn: () => api.get<Captacao[]>(`/api/captacoes${qs({ inicio, fim })}`),
+    placeholderData: (prev) => prev, // navigating the agenda window keeps the previous range mounted instead of flashing a skeleton
   });
 
 // ── Produção ───────────────────────────────────────────────────────────────
@@ -94,6 +98,7 @@ export const useLancamentos = (status?: string) =>
   useQuery({
     queryKey: ["financeiro", { status }],
     queryFn: () => api.get<Lancamento[]>(`/api/financeiro${qs({ status })}`),
+    placeholderData: (prev) => prev, // changing the status filter keeps the list mounted instead of flashing a skeleton
   });
 
 export const useResumoFinanceiro = () =>

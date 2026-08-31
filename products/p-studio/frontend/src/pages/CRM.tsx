@@ -43,7 +43,7 @@ const FORM_VAZIO = {
 };
 
 export default function CRM() {
-  const { data: negocios, isLoading, error } = useNegocios();
+  const { data: negocios, isPending, error } = useNegocios();
   const { data: etapas } = useEtapasNegocio();
   const { data: clientes } = useClientes();
   const { data: imoveis } = useImoveis();
@@ -120,7 +120,7 @@ export default function CRM() {
 
   const totalGeral = (negocios ?? []).reduce((s, n) => s + (n.valor ?? 0), 0);
 
-  if (isLoading) return <Spinner />;
+  if (isPending && !negocios) return <Spinner />;
   if (error) return <ErroBox erro={error} />;
 
   return (

@@ -45,7 +45,7 @@ const FORM_VAZIO = {
 };
 
 export default function Imoveis() {
-  const { data: imoveis, isLoading, error } = useImoveis();
+  const { data: imoveis, isPending, error } = useImoveis();
   const { data: clientes } = useClientes();
 
   const [busca, setBusca] = useState("");
@@ -130,7 +130,7 @@ export default function Imoveis() {
     return alvo.includes(busca.toLowerCase());
   });
 
-  if (isLoading) return <Spinner />;
+  if (isPending && !imoveis) return <Spinner />;
   if (error) return <ErroBox erro={error} />;
 
   return (

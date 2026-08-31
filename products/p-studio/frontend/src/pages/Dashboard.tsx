@@ -17,9 +17,9 @@ import { COR_STATUS, TOM_NEGOCIO } from "@/lib/status";
 import { fmtMoeda, fmtMoedaCurta, fmtPercentual } from "@/lib/utils";
 
 export default function Dashboard() {
-  const { data, isLoading, error } = useDashboard();
+  const { data, isPending, error } = useDashboard();
 
-  if (isLoading) return <Spinner />;
+  if (isPending && !data) return <Spinner />;
   if (error) return <ErroBox erro={error} />;
   if (!data) return null;
 
