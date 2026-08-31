@@ -590,11 +590,29 @@ async def update_cliente_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_clientes_client),
 ) -> dict:
-    """nome, ativo/arquivado (manual restore, D4)."""
+    """nome, ativo/arquivado (manual restore, D4).
+
+    🔴 `mode="json"` is load-bearing, not decoration. `data_nascimento` is
+    typed `Optional[date]` (above), so plain `model_dump(exclude_unset=True)`
+    hands back a live `datetime.date` object for any request that actually
+    sets a birthdate. That object flows straight into `svc.update_cliente`'s
+    `.update(payload)`, which — on the REAL client — is `postgrest-py`
+    building an `httpx` request with `json=payload`; `httpx` serializes with
+    the stdlib `json` module, which has never known how to encode `date`
+    (`TypeError: Object of type date is not JSON serializable`), so every
+    genuine "set the birthdate" PATCH 500'd. `mode="json"` makes
+    `model_dump()` return the same ISO string PostgREST/Postgres already
+    round-trip on the way IN — Gênero and Profissão never hit this because
+    they stay `str` after validation, which is why only the date field ever
+    errored. Caught only because this project's tests spy on the payload
+    handed to `.update()`; the mock client itself stores whatever Python
+    object it is given and would never have caught it (`tests/routers/
+    test_clientes_router.py::TestPatchCliente::
+    test_patch_data_nascimento_payload_is_json_serializable`)."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    updates = body.model_dump(exclude_unset=True)
+    updates = body.model_dump(exclude_unset=True, mode="json")
     if "ativo" in updates:
         if updates["ativo"]:
             updates["arquivado_em"] = None

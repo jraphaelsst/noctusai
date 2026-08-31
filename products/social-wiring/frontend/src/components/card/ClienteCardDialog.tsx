@@ -257,6 +257,11 @@ export interface ClienteCardDialogProps {
     documentoId: string,
     item: DocumentoChecklistItem,
   ) => void;
+  /** Opens a checklist document (RG/CPF) inline in a new tab — same id space
+   *  as Anexos' `onOpenDocumento`. */
+  onVisualizarDocumentoChecklist?: (documentoId: string) => void;
+  /** Downloads a checklist document under its original filename. */
+  onBaixarDocumentoChecklist?: (documentoId: string, nomeArquivo: string) => void;
   onResolverSugestao?: (
     documentoId: string,
     acao: "confirmar" | "descartar",
@@ -531,6 +536,8 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     onUploadDocumento={props.onUploadDocumentoChecklist}
                     onRemoverDocumento={props.onRemoverDocumentoChecklist}
                     uploading={props.uploadingDocumento}
+                    onVisualizarDocumento={props.onVisualizarDocumentoChecklist}
+                    onBaixarDocumento={props.onBaixarDocumentoChecklist}
                   />
 
                   {/* e. The operator's own rows. */}

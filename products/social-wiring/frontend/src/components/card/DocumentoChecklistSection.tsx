@@ -89,6 +89,10 @@ export interface DocumentoChecklistSectionProps {
   /** Discards that file. The row stays — the list is server-defined. */
   onRemoverDocumento?: (documentoId: string, item: DocumentoChecklistItem) => void;
   uploading?: boolean;
+  /** Opens a checklist document (`rg` / `cpf`) inline in a new tab. */
+  onVisualizarDocumento?: (documentoId: string) => void;
+  /** Downloads a checklist document under its original filename. */
+  onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
   /** Disambiguates testids when several people's checklists are on screen. */
   testIdPrefix?: string;
 }
@@ -109,6 +113,8 @@ export function DocumentoChecklistSection({
   onUploadDocumento,
   onRemoverDocumento,
   uploading,
+  onVisualizarDocumento,
+  onBaixarDocumento,
   testIdPrefix = "documento-checklist",
 }: DocumentoChecklistSectionProps) {
   // `items.length === 0` is the second half of the guard: even a caller that
@@ -164,6 +170,8 @@ export function DocumentoChecklistSection({
               onUploadDocumento={onUploadDocumento}
               onRemoverDocumento={onRemoverDocumento}
               uploading={uploading}
+              onVisualizarDocumento={onVisualizarDocumento}
+              onBaixarDocumento={onBaixarDocumento}
               testIdPrefix={testIdPrefix}
             />
           ))}

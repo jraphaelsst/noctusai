@@ -813,9 +813,23 @@ export function useDocumentoMutations(clienteId: string) {
     onSuccess: invalidate,
   });
 
+  // `intent` mirrors `useFinanciamento.ts`'s `getUrl` — the more complete of
+  // the two shapes this hook family had drifted into (this one used to take
+  // a bare `documentoId`, defaulting the backend's `intent` query param to
+  // `"view"` always, so a caller wanting the DOWNLOAD access-log entry had
+  // no way to ask for it). 🔴 Each call is a RECORDED access
+  // (`cliente_documento_acessos`) — never call this speculatively.
   const getUrl = useMutation({
-    mutationFn: (documentoId: string) =>
-      api.get<DocumentoUrlResponse>(`${base}/documentos/${encodeURIComponent(documentoId)}/url`),
+    mutationFn: ({
+      documentoId,
+      intent = "view",
+    }: {
+      documentoId: string;
+      intent?: "view" | "download";
+    }) =>
+      api.get<DocumentoUrlResponse>(
+        `${base}/documentos/${encodeURIComponent(documentoId)}/url?intent=${intent}`,
+      ),
   });
 
   return { upload, remove, getUrl };

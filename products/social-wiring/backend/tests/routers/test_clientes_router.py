@@ -518,6 +518,44 @@ class TestPatchCliente:
         )
         assert resp.status_code == 404, resp.text
 
+    def test_patch_data_nascimento_payload_is_json_serializable(self, client, scoped):
+        """🔴 Regression for the "date field errors when setting it" bug.
+
+        `ClientePatchBody.data_nascimento` is typed `Optional[date]`, so
+        `model_dump(exclude_unset=True)` — WITHOUT `mode="json"` — hands back
+        a live `datetime.date` object. That object used to flow straight into
+        `svc.update_cliente`'s `.update(payload)`, which on the REAL client is
+        `postgrest-py` building an `httpx` request with `json=payload`; `httpx`
+        serializes with the stdlib `json` module, which has never known how to
+        encode `date` — every genuine "set the birthdate" PATCH 500'd in
+        production. `genero`/`profissao` never hit this because they stay
+        `str` after validation, which is exactly why only the date field ever
+        errored.
+
+        The mock client used everywhere else in this suite stores whatever
+        Python object `.update()` is handed — it never serializes — so this
+        is the ONE assertion in the file that actually inspects the payload
+        TYPE rather than trusting a 200 status code. `resp.status_code == 200`
+        alone would have stayed green through the whole outage.
+        """
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"data_nascimento": "1990-05-15"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+
+        payload = scoped.table("clientes").updated_payloads[-1]
+        # The exact TypeError httpx raises for a raw `datetime.date` — this
+        # is what proves the fix, not just that FastAPI returned 200.
+        import json as _json
+
+        _json.dumps(payload)  # raises TypeError on the pre-fix code
+        assert payload["data_nascimento"] == "1990-05-15"
+        assert isinstance(payload["data_nascimento"], str)
+
     def test_patch_extra_field_rejected(self, client, scoped):
         """`StrictHttpModel`'s `extra='forbid'` — a raw `arquivado_em` in
         the body must 422, not silently write an arbitrary timestamp."""

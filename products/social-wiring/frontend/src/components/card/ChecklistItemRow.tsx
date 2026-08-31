@@ -40,7 +40,17 @@
  * Presentational only (`card/**`): props in, callbacks out.
  */
 import { useRef, useState } from "react";
-import { Check, FileText, Pencil, Trash2, Undo2, Upload, X } from "lucide-react";
+import {
+  Check,
+  Download,
+  ExternalLink,
+  FileText,
+  Pencil,
+  Trash2,
+  Undo2,
+  Upload,
+  X,
+} from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import {
@@ -99,6 +109,13 @@ export interface ChecklistItemRowProps {
   /** Discards the FILE. The row stays, ready for a fresh upload. */
   onRemoverDocumento?: (documentoId: string, item: DocumentoChecklistItem) => void;
   uploading?: boolean;
+  /** Opens the file INLINE in a new tab — the same `cliente_documentos` id
+   *  space and the same `GET .../documentos/{id}/url` round trip Anexos
+   *  already uses, so a checklist-satisfying RG/CPF is opened exactly like
+   *  any other attachment. */
+  onVisualizarDocumento?: (documentoId: string) => void;
+  /** Downloads the file, saved under its ORIGINAL filename. */
+  onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
   /** Disambiguates testids when several people's checklists are on screen. */
   testIdPrefix?: string;
 }
@@ -112,6 +129,8 @@ export function ChecklistItemRow({
   onUploadDocumento,
   onRemoverDocumento,
   uploading,
+  onVisualizarDocumento,
+  onBaixarDocumento,
   testIdPrefix = "documento-checklist",
 }: ChecklistItemRowProps) {
   const tid = `${testIdPrefix}-${item.key}`;
@@ -133,7 +152,20 @@ export function ChecklistItemRow({
   function salvar() {
     if (!campo || !onSaveCampo) return;
     const limpo = rascunho.trim();
-    onSaveCampo({ [campo.campo]: limpo === "" ? null : limpo } as DadosPessoais);
+    // 🔴 A `select` field (today only `genero`) always DISPLAYS a value —
+    // the dropdown below falls back to `GENEROS[0]` ("Masculino") when
+    // `rascunho` is still empty, exactly like `DadosPessoaisForm`'s default.
+    // Until this line, Save sent the RAW `rascunho` instead of what was on
+    // screen: opening the editor on an unset gênero shows "Masculino" from
+    // that same fallback, but `rascunho` itself stays `""` unless the
+    // operator actually clicks the dropdown — so confirming the visible
+    // default with no interaction sent `null`, silently clearing the field,
+    // while picking "Feminino" always fires `onValueChange` and worked. The
+    // fallback must be applied HERE too, or Save can send something other
+    // than what the operator just confirmed.
+    const valorFinal =
+      campo.tipo === "select" ? limpo || GENEROS[0] : limpo === "" ? null : limpo;
+    onSaveCampo({ [campo.campo]: valorFinal } as DadosPessoais);
     setEditando(false);
   }
 
@@ -299,6 +331,29 @@ export function ChecklistItemRow({
             onClick={() => inputArquivo.current?.click()}
           />
         </>
+      )}
+
+      {/* View + download — only once a file exists. Same document id space
+          as Anexos (`GET .../documentos/{id}/url`), so these are the exact
+          view/download affordance the erp-imobiliario Certidões page has,
+          applied to the RG/CPF rows. */}
+      {ehDocumento && item.documento && onVisualizarDocumento && (
+        <TooltipIconButton
+          label={`Visualizar ${item.label}`}
+          icon={ExternalLink}
+          testId={`${tid}-visualizar`}
+          className="h-7 w-7"
+          onClick={() => onVisualizarDocumento(item.documento!.id)}
+        />
+      )}
+      {ehDocumento && item.documento && onBaixarDocumento && (
+        <TooltipIconButton
+          label={`Baixar ${item.label}`}
+          icon={Download}
+          testId={`${tid}-baixar`}
+          className="h-7 w-7"
+          onClick={() => onBaixarDocumento(item.documento!.id, item.documento!.nome_original)}
+        />
       )}
 
       {/* Only once a file exists — and it discards the FILE, never the row.

@@ -61,6 +61,7 @@ import {
 
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
 import type { CardSubpageKey } from "@/components/card/CardSidebarNav";
+import { baixarArquivo } from "@/components/card/format";
 import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
 import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
 import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
@@ -247,12 +248,31 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   }
 
   function handleOpenDocumento(documentoId: string) {
-    documentoMutations.getUrl.mutate(documentoId, {
-      onSuccess: (res) => {
-        window.open(res.url, "_blank", "noopener,noreferrer");
+    documentoMutations.getUrl.mutate(
+      { documentoId, intent: "view" },
+      {
+        onSuccess: (res) => {
+          window.open(res.url, "_blank", "noopener,noreferrer");
+        },
+        onError: (err) => toastServerError(err, "Não foi possível abrir o anexo."),
       },
-      onError: (err) => toastServerError(err, "Não foi possível abrir o anexo."),
-    });
+    );
+  }
+
+  // `intent: "download"` records a DIFFERENT access-log action than the
+  // view above, even though today's signed URL is shaped identically either
+  // way — see `card/format.ts::baixarArquivo`'s docblock for why the
+  // filename still comes from the CLIENT side of this call.
+  function handleBaixarDocumento(documentoId: string, nomeArquivo: string) {
+    documentoMutations.getUrl.mutate(
+      { documentoId, intent: "download" },
+      {
+        onSuccess: (res) => {
+          void baixarArquivo(res.url, nomeArquivo);
+        },
+        onError: (err) => toastServerError(err, "Não foi possível baixar o arquivo."),
+      },
+    );
   }
 
   if (!clienteId) return null;
@@ -423,6 +443,10 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
           },
         )
       }
+      // Same id space as Anexos — reuses `handleOpenDocumento` rather than a
+      // second "open a signed URL" implementation.
+      onVisualizarDocumentoChecklist={handleOpenDocumento}
+      onBaixarDocumentoChecklist={handleBaixarDocumento}
       checklistExtras={checklistExtras.data ?? []}
       // Same two-signal split as `documentoChecklist` above: `isPending &&
       // !data` is the genuine first load; a background refetch while rows

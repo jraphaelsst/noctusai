@@ -24,3 +24,42 @@ export function formatarDataISO(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 }
+
+/**
+ * Downloads a signed document URL, saved under its ORIGINAL filename.
+ *
+ * 🔴 WHY THIS EXISTS INSTEAD OF `window.open(url)`
+ * -------------------------------------------------
+ * `GET .../documentos/{id}/url` mints a plain, inline-viewable signed URL —
+ * the seed `StorageBackend.signed_url()` protocol has no `Content-Disposition`
+ * override, so the SERVER cannot force a browser download with the original
+ * name (only Supabase Storage's own object name, which is
+ * `{org_id}/clientes/{cliente_id}/{document_id}`, no extension, no original
+ * name). `window.open`ing that URL either renders it inline (view — correct)
+ * or, for a download, saves a file literally named after a UUID.
+ *
+ * Fetching the bytes and driving the save through an anchor's `download`
+ * attribute lets the BROWSER pick the filename regardless of what the URL's
+ * own headers say — the same technique
+ * `erp-imobiliario/frontend/src/lib/file-download.ts::downloadFile` uses for
+ * certidões, including the same graceful degrade: a fetch that fails (CORS,
+ * an expired signed URL between mint and click) still opens the file in a
+ * new tab rather than leaving the click looking like it did nothing.
+ */
+export async function baixarArquivo(url: string, nomeArquivo: string): Promise<void> {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Download falhou (${resp.status})`);
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = nomeArquivo;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}

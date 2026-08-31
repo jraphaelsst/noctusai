@@ -45,6 +45,7 @@ import {
 import { AnexosSection } from "@/components/card/AnexosSection";
 import { DocumentoChecklistSection } from "@/components/card/DocumentoChecklistSection";
 import { DadosPessoaisForm } from "@/components/card/DadosPessoaisForm";
+import { baixarArquivo } from "@/components/card/format";
 
 export interface PessoaDocumentosPanelProps {
   clienteId: string;
@@ -140,6 +141,27 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
             },
           )
         }
+        onVisualizarDocumento={(documentoId) =>
+          docs.getUrl.mutate(
+            { documentoId, intent: "view" },
+            {
+              onSuccess: (res) =>
+                window.open(res.url, "_blank", "noopener,noreferrer"),
+              onError: (e) =>
+                toast.error(erro(e, "Não foi possível abrir o documento.")),
+            },
+          )
+        }
+        onBaixarDocumento={(documentoId, nomeArquivo) =>
+          docs.getUrl.mutate(
+            { documentoId, intent: "download" },
+            {
+              onSuccess: (res) => void baixarArquivo(res.url, nomeArquivo),
+              onError: (e) =>
+                toast.error(erro(e, "Não foi possível baixar o documento.")),
+            },
+          )
+        }
       />
       <AnexosSection
         testId={`anexos-section-${clienteId}`}
@@ -159,12 +181,15 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
           )
         }
         onOpenDocumento={(documentoId) =>
-          docs.getUrl.mutate(documentoId, {
-            onSuccess: (res) =>
-              window.open(res.url, "_blank", "noopener,noreferrer"),
-            onError: (e) =>
-              toast.error(erro(e, "Não foi possível abrir o anexo.")),
-          })
+          docs.getUrl.mutate(
+            { documentoId, intent: "view" },
+            {
+              onSuccess: (res) =>
+                window.open(res.url, "_blank", "noopener,noreferrer"),
+              onError: (e) =>
+                toast.error(erro(e, "Não foi possível abrir o anexo.")),
+            },
+          )
         }
         onDeleteDocumento={(documentoId, motivo) =>
           docs.remove.mutate(
