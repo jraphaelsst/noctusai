@@ -88,14 +88,18 @@ class TestContadorDeCaracteres:
     def test_counts_the_copy(self, api, cliente):
         texto = "Pão quentinho todo dia às 6h."
         resp = _criar(api, cliente, copy_texto=texto)
+        assert resp.status_code == 201
         assert resp.json()["caracteres_copy"] == len(texto)
 
     def test_zero_without_copy(self, api, cliente):
-        assert _criar(api, cliente).json()["caracteres_copy"] == 0
+        resp = _criar(api, cliente)
+        assert resp.status_code == 201
+        assert resp.json()["caracteres_copy"] == 0
 
     def test_updates_after_an_edit(self, api, cliente):
         criada = _criar(api, cliente, copy_texto="curto").json()
         resp = api.patch(f"/api/pautas/{criada['id']}", json={"copy_texto": "um texto bem maior"})
+        assert resp.status_code == 200
         assert resp.json()["caracteres_copy"] == len("um texto bem maior")
 
 
