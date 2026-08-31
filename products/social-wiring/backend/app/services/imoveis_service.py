@@ -363,7 +363,7 @@ class ImoveisService:
         ~1919 rows that is fine; at 50k it is not. Replace with a
         Postgres-side aggregate (a view or RPC returning distinct values and
         slug counts) rather than raising the page size. Named destination:
-        roadmap `social-wiring-imoveis-vista-2026-08`, Phase 2 follow-up.
+        roadmap `social-wiring-imoveis-vista-2026-08`, Phase 2 follow-up. — 2026-08-04
         """
         page_size = 1000
         out: list[dict] = []

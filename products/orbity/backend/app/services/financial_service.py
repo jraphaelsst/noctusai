@@ -14,7 +14,7 @@ NOC-REMEDIATE[orbity-finance-fiscal]
   Conexa/Asaas gateway integration seam: when the fiscal adapter lands,
   wire it at revenues.status → 'gateway_pending' + external_id column.
   See KB § ABSORPTIONS/orbity/09-DEEPDIVE-FINANCIAL-MANAGEMENT.md §5 for
-  the dunning engine shape, billing_type enum, and gateway-fee netting.
+  the dunning engine shape, billing_type enum, and gateway-fee netting. — 2026-06-03
 """
 from __future__ import annotations
 

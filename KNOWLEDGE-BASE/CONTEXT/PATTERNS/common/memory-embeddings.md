@@ -83,4 +83,4 @@ Same contract as the other 6 keeper-mirror caches:
 corpus at N=4, the embedding-cache infrastructure is in DRY violation.
 v4.1 should extract `noctusai_lib.cache.embedding_cache` framework + thin
 per-corpus modules. For now, the 4 modules reuse helpers via import
-(`from .kb_embeddings import _embed_sync, _cosine, ...`).
+(`from .kb_embeddings import _embed_sync, _cosine, ...`). — 2026-05-27

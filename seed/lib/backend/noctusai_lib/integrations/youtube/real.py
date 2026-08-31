@@ -243,7 +243,7 @@ class RealYoutubeClient:
     # that acquires first. Deferred: YouTube also has a hard daily QUOTA
     # (units/day) that a request-rate limiter does NOT model — the snapshot
     # job is already low-frequency. See
-    # KB § PATTERNS/common/outbound-rate-limiting.md.
+    # KB § PATTERNS/common/outbound-rate-limiting.md. — 2026-07-24
     """Real YouTube Data API v3 client.
 
     Pass either `api_key` (read-only public data — the common case) OR

@@ -223,7 +223,7 @@ class VistaClient:
         # `await rate_limit.acquire_async("vista")` (mirror the Mailchimp
         # wiring). Deferred: Vista call volume is low today, but a
         # property-list sync loop should be paced before it grows. See
-        # KB § PATTERNS/common/outbound-rate-limiting.md.
+        # KB § PATTERNS/common/outbound-rate-limiting.md. — 2026-07-24
         if not self.configured:
             raise VistaConfigError(
                 "Vista is not configured (VISTA_BASE_URL / VISTA_API_KEY missing)"

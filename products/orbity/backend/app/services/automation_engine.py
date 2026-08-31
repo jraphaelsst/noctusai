@@ -15,12 +15,12 @@ Design:
       from noctusai_lib.domain.chatbot.delivery import send_reply_parts_sync
       class RealWhatsAppSender:
           def send(self, phone, message, org_id):
-              send_reply_parts_sync(phone, message, org_id=org_id)
+              send_reply_parts_sync(phone, message, org_id=org_id) — 2026-06-03
 
   - run_due_actions(db, org_id) — process automation_pending_actions where
     scheduled_for <= now(). Calls WhatsAppSender.send for send_message steps.
     NOC-REMEDIATE[orbity-automation-scheduler] — attach a pg_cron trigger or
-      Celery beat task that calls this method every minute per org.
+      Celery beat task that calls this method every minute per org. — 2026-06-03
 
 Step types handled:
   send_message / send_whatsapp_media → schedule a pending_action (send seam)
@@ -215,7 +215,7 @@ class WhatsAppSender(Protocol):
         from noctusai_lib.domain.chatbot.delivery import send_reply_parts_sync
         class RealWhatsAppSender:
             def send(self, phone: str, message: str, org_id: str) -> None:
-                send_reply_parts_sync(phone, message, org_id=org_id)
+                send_reply_parts_sync(phone, message, org_id=org_id) — 2026-06-03
     """
 
     def send(self, phone: str, message: str, org_id: str) -> None:
@@ -571,7 +571,7 @@ def run_due_actions(
     Marks each row as 'sent' or 'failed'. Returns counts.
 
     NOC-REMEDIATE[orbity-automation-scheduler] — call this from pg_cron or
-      a Celery beat task every minute, per-org or globally.
+      a Celery beat task every minute, per-org or globally. — 2026-06-03
     """
     if sender is None:
         sender = FakeWhatsAppSender()
@@ -623,7 +623,7 @@ def run_due_actions(
 
             elif step_type == "action":
                 # NOC-REMEDIATE[orbity-automation-action-exec] — execute CRM
-                # side-effects: create_task, move_lead, add_tag, etc.
+                # side-effects: create_task, move_lead, add_tag, etc. — 2026-06-03
                 action_type = payload.get("action_type", "")
                 logger.info(
                     "run_due_actions: action=%s action_type=%r — side-effects pending remediation",

@@ -24,7 +24,7 @@
 --   - The scheduler (run_due_actions) processes automation_pending_actions
 --     where scheduled_for <= now(); intended to be called by a pg_cron job
 --     or a task-queue worker.
---     NOC-REMEDIATE[orbity-automation-scheduler] — attach real cron trigger
+--     NOC-REMEDIATE[orbity-automation-scheduler] — attach real cron trigger — 2026-06-03
 -- ============================================================================
 
 SET search_path = orbity, public;

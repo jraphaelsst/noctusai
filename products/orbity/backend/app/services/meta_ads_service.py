@@ -3,9 +3,9 @@ Meta Ads service — ad accounts CRUD, campaign CRUD + situation tracking,
 campaign metrics upsert (sync seam), and spend-vs-leads aggregate.
 
 Live-integration seams:
-  - OAuth connect flow   — NOC-REMEDIATE[orbity-meta-ads-live]
-  - Campaign sync pull   — NOC-REMEDIATE[orbity-meta-ads-live]
-  - CAPI lead feedback   — NOC-REMEDIATE[orbity-meta-ads-live]
+  - OAuth connect flow   — NOC-REMEDIATE[orbity-meta-ads-live] — 2026-06-03
+  - Campaign sync pull   — NOC-REMEDIATE[orbity-meta-ads-live] — 2026-06-03
+  - CAPI lead feedback   — NOC-REMEDIATE[orbity-meta-ads-live] — 2026-06-03
 
 The service is fully operational with the Fake adapter (default).
 The MetaAdsClient Protocol seam is the named injection point for the
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # vault/credential-store factory is wired. The Protocol is the contract;
 # the Fake is the safe dev/test default consuming noctusai_lib.integrations.meta's
 # FakeMetaAdapter. Do NOT hand-roll any Meta HTTP calls here — consume
-# noctusai_lib.integrations.meta.get_meta_adapter as the factory.
+# noctusai_lib.integrations.meta.get_meta_adapter as the factory. — 2026-06-03
 # ---------------------------------------------------------------------------
 
 class MetaAdsClient(Protocol):
@@ -75,7 +75,7 @@ class FakeMetaAdsClient:
     Replace the service's client injection with a real factory once the vault
     is wired. The factory signature:
         make_meta_ads_client(credential_store, org_id) -> MetaAdsClient
-    See noctusai_lib.integrations.meta.get_meta_adapter for the pattern.
+    See noctusai_lib.integrations.meta.get_meta_adapter for the pattern. — 2026-06-03
     """
 
     def __init__(self) -> None:
@@ -126,7 +126,7 @@ def _make_default_client() -> MetaAdsClient:
     """Return the Fake client (safe default for dev/test).
 
     NOC-REMEDIATE[orbity-meta-ads-live]: Replace with the real factory call
-    once noctusai_lib.integrations.meta credential resolution + vault are wired.
+    once noctusai_lib.integrations.meta credential resolution + vault are wired. — 2026-06-03
     """
     return FakeMetaAdsClient()
 
@@ -162,7 +162,7 @@ class MetaAdsService:
         self._db = db
         self._org_id = str(org_id)
         # NOC-REMEDIATE[orbity-meta-ads-live]: pass the real factory result here
-        # once the credential store / vault adapter is available at request time.
+        # once the credential store / vault adapter is available at request time. — 2026-06-03
         self._client: MetaAdsClient = client or _make_default_client()
 
     def _t(self, table: str):
@@ -464,7 +464,7 @@ class MetaAdsService:
     # real client via the service constructor once the vault/credential store is
     # wired. The factory:
     #   real_client = make_meta_ads_client(credential_store, org_id)
-    #   svc = MetaAdsService(db, org_id, client=real_client)
+    #   svc = MetaAdsService(db, org_id, client=real_client) — 2026-06-03
     # ------------------------------------------------------------------
 
     def sync_campaigns(self, ad_account_id: str) -> dict[str, Any]:

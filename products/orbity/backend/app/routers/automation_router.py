@@ -334,7 +334,7 @@ async def run_due(
     """Process due automation_pending_actions for this org.
 
     Intended to be called by the scheduler (pg_cron / Celery beat).
-    NOC-REMEDIATE[orbity-automation-scheduler] — attach real trigger.
+    NOC-REMEDIATE[orbity-automation-scheduler] — attach real trigger. — 2026-06-03
     """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)

@@ -175,7 +175,7 @@ export function useDeleteAgendaEvent() {
  * GCal sync — calls POST /api/agenda/events/{id}/sync-gcal.
  * The backend wires through AgendaService.sync_to_gcal() which uses
  * FakeCalendarAdapter by default. Returns the updated event with gcal_event_id.
- * NOC-REMEDIATE[orbity-agenda-gcal]: real adapter requires credential wiring.
+ * NOC-REMEDIATE[orbity-agenda-gcal]: real adapter requires credential wiring. — 2026-06-03
  */
 export function useSyncGcal() {
   const queryClient = useQueryClient();

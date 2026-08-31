@@ -14,7 +14,7 @@
 --   at the service layer. This migration stores the reference only.
 --   NOC-REMEDIATE[orbity-meta-ads-live]: when the vault adapter is wired,
 --   ensure the reference column is kept encrypted at rest (bytea+pgcrypto or
---   the noc credential store convention). See KB § PATTERNS/backend/seed-fake-real-adapter.md.
+--   the noc credential store convention). See KB § PATTERNS/backend/seed-fake-real-adapter.md. — 2026-06-03
 --
 -- IDEMPOTENT: CREATE TABLE IF NOT EXISTS + DROP POLICY IF EXISTS.
 --
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS orbity.ad_accounts (
     status                TEXT NOT NULL DEFAULT 'active'
                               CHECK (status IN ('active', 'paused', 'disconnected', 'error')),
     -- Credential REFERENCE into the vault adapter. NOT the raw token.
-    -- NOC-REMEDIATE[orbity-meta-ads-live]: wire the real vault / credential store here.
+    -- NOC-REMEDIATE[orbity-meta-ads-live]: wire the real vault / credential store here. — 2026-06-03
     access_token_ref      TEXT,
     connected_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),

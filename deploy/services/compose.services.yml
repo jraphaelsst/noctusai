@@ -90,7 +90,7 @@ services:
       # .env.services when production-deploy-migration was archived). Relaxed
       # from `:?` to optional so the project stays compose-manageable; the
       # PDF.co / Infosimples workflows stay inert until real values are supplied
-      # in .env.services. NOC-REMEDIATE[config-gap]: recover the two keys + set them.
+      # in .env.services. NOC-REMEDIATE[config-gap]: recover the two keys + set them. — 2026-06-22
       PDF_CO_API_KEY: ${PDF_CO_API_KEY:-}
       INFOSIMPLES_API_TOKEN: ${INFOSIMPLES_API_TOKEN:-}
       # NOTE: this n8n stores its DB as SQLite inside n8n-data (no DB_POSTGRESDB_* in the

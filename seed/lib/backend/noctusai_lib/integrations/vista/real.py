@@ -188,7 +188,7 @@ class VistaRESTAdapter:
     # feed the live YouTube fan-out and a field-set change alters
     # `PropertyData.description` — a behaviour change that wants its own
     # slice, not a drive-by. Named destination: roadmap
-    # `social-wiring-imoveis-vista-2026-08`, Phase 2 follow-up.
+    # `social-wiring-imoveis-vista-2026-08`, Phase 2 follow-up. — 2026-08-03
 
     def _client(self) -> VistaClient:
         return VistaClient(self._base_url, self._api_key)

@@ -376,7 +376,7 @@ def migrate_product(
         # NOC-REMEDIATE[credentials]: no supabase_access_token resolved.
         # Store it DB-first (preferred): platform_settings['supabase_access_token']
         # (global scope) — or set env SUPABASE_ACCESS_TOKEN in the MCP .env.
-        # Create the PAT at: https://supabase.com/dashboard/account/tokens
+        # Create the PAT at: https://supabase.com/dashboard/account/tokens — 2026-07-27
         return {
             "status": "not_configured",
             "product": product,

@@ -38,7 +38,7 @@ NOC-REMEDIATE[dry-documento-store]: `card_hub.documentos_service` predates
 this and is NOT yet migrated onto it. It is the LGPD-complete original and its
 retention sweep + tipos table are wired into a scheduler and a data table, so
 moving it is its own change with its own test surface — not a rider on this
-one. Named destination: the next change that touches that file.
+one. Named destination: the next change that touches that file. — 2026-08-25
 """
 from __future__ import annotations
 

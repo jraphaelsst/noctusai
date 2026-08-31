@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS orbity.report_snapshots (
     --   "generated_at": "2026-06-01T12:00:00+00:00"
     --   -- NOC-REMEDIATE[orbity-reports-metrics-source]: when Meta-ads organ
     --   -- lands, extend with: "spend", "cpl", "campaigns" from
-    --   -- orbity.ad_account_metrics / selected_ad_accounts.
+    --   -- orbity.ad_account_metrics / selected_ad_accounts. — 2026-06-03
     -- }
 );
 

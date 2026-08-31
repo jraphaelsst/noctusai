@@ -8,7 +8,7 @@ Aggregation sources (generate_snapshot):
 
 NOC-REMEDIATE[orbity-reports-metrics-source]: when the Meta-ads organ lands,
 extend generate_snapshot to pull spend/cpl/campaigns from
-orbity.ad_account_metrics and orbity.selected_ad_accounts.
+orbity.ad_account_metrics and orbity.selected_ad_accounts. — 2026-06-03
 
 Public token read:
   Uses the admin (service_role) client so RLS is bypassed. The server
@@ -175,7 +175,7 @@ class ReportsService:
         # NOC-REMEDIATE[orbity-reports-metrics-source]: extend here with
         # spend/cpl/campaigns from orbity.ad_account_metrics + selected_ad_accounts
         # once the Meta-ads organ lands (migration 013+). The payload key
-        # "meta_ads" will be added: {"spend": ..., "cpl": ..., "active_campaigns": ...}
+        # "meta_ads" will be added: {"spend": ..., "cpl": ..., "active_campaigns": ...} — 2026-06-03
 
         payload: dict[str, Any] = {
             "period": {"start": period_start, "end": period_end},
@@ -239,7 +239,7 @@ class ReportsService:
 
         NOC-REMEDIATE[orbity-reports-metrics-source]: if financial organ
         tables (revenues) are not yet in this branch, this returns zeros
-        gracefully — the table not existing raises an exception caught below.
+        gracefully — the table not existing raises an exception caught below. — 2026-06-03
         """
         try:
             result = (

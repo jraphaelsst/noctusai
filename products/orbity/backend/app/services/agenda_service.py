@@ -20,7 +20,7 @@ GCal sync seam (NOC-REMEDIATE[orbity-agenda-gcal]):
   to AgendaService. Requires: (1) Google OAuth consent + token store
   integration in orbity.settings; (2) per-org credential resolver;
   (3) calendar_id storage (per-org config table or org settings JSON).
-  See KB § INTEGRATIONS/google.md for the token store + resolver pattern.
+  See KB § INTEGRATIONS/google.md for the token store + resolver pattern. — 2026-06-03
 
 No silent errors: every except logs at the right level and re-raises.
 """

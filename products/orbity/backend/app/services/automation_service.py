@@ -38,7 +38,7 @@ class AutomationService:
         db:      Supabase client (schema-scoped to orbity by the database module)
         org_id:  tenant UUID (string form used in queries)
         sender:  WhatsAppSender implementation; defaults to FakeWhatsAppSender.
-                 NOC-REMEDIATE[orbity-automation-live-send] — inject RealWhatsAppSender.
+                 NOC-REMEDIATE[orbity-automation-live-send] — inject RealWhatsAppSender. — 2026-06-03
     """
 
     def __init__(

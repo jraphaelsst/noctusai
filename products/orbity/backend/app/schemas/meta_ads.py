@@ -30,7 +30,7 @@ class AdAccountCreate(StrictHttpModel):
     status: AdAccountStatusLiteral = "active"
     # access_token_ref is a CREDENTIAL REFERENCE — never the raw token.
     # NOC-REMEDIATE[orbity-meta-ads-live]: the real vault factory injects
-    # the reference when the OAuth connect flow completes.
+    # the reference when the OAuth connect flow completes. — 2026-06-03
     access_token_ref: Optional[str] = Field(default=None, max_length=1024)
 
 

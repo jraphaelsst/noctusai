@@ -52,7 +52,7 @@ class SnapshotOutcome:
     needs_probe_count: int = 0         # ambiguous items left for the probe tier
     # NOC-REMEDIATE[yt-shorts-probe] — ambiguous items not probed in v1;
     # a follow-up scheduler job can walk needs_probe items and resolve via
-    # GET youtube.com/shorts/{id} HTTP probe (un-quota'd) + update the row.
+    # GET youtube.com/shorts/{id} HTTP probe (un-quota'd) + update the row. — 2026-06-02
     error: str | None = None
 
 

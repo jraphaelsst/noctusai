@@ -161,7 +161,7 @@ class WahaClient:
     # refactor to a single `_request` helper first. Deferred: WAHA calls
     # are largely user-paced today (chat sends), but the chat-history
     # backfill loop is a burst risk. See
-    # KB § PATTERNS/common/outbound-rate-limiting.md.
+    # KB § PATTERNS/common/outbound-rate-limiting.md. — 2026-07-24
     """WAHA HTTP client with both sync and async send paths.
 
     Vendor-URL rewrite (SESSION-NOTES §4.3, workspace commit ``fedd4cf``):

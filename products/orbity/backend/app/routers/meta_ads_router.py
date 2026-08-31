@@ -31,7 +31,7 @@ Live-integration seams (NOC-REMEDIATE[orbity-meta-ads-live]):
     defaults to FakeMetaAdsClient. Wire the real client at service construction
     when vault/credentials are ready.
   - CAPI lead-quality feedback: not in this router — owned by the CRM sync
-    pipeline (lead scored → CAPI dispatch). NOC-REMEDIATE[orbity-meta-ads-live].
+    pipeline (lead scored → CAPI dispatch). NOC-REMEDIATE[orbity-meta-ads-live]. — 2026-06-03
 """
 from __future__ import annotations
 
@@ -387,7 +387,7 @@ async def sync_campaigns(
     adapter ran. Wire the real client once the vault/credential store is available.
 
     CAPI lead-quality feedback is a separate seam — owned by the CRM pipeline
-    and not triggered here. NOC-REMEDIATE[orbity-meta-ads-live].
+    and not triggered here. NOC-REMEDIATE[orbity-meta-ads-live]. — 2026-06-03
     """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)

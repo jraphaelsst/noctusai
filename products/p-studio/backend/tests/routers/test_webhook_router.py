@@ -71,7 +71,7 @@ def admin_db(fake_db):
 
     # NOC-REMEDIATE[di-seam]: `webhook_asaas` ainda chama `get_admin_client()`
     # inline, então este patch de módulo continua necessário. Trocar por
-    # `Depends` remove o último monkey-patch deste arquivo.
+    # `Depends` remove o último monkey-patch deste arquivo. — 2026-08-19
     import app.routers.integracoes_router as mod
 
     original = mod.get_admin_client

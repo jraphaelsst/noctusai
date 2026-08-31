@@ -36,7 +36,7 @@ test invocation is non-trivial to make robust across the fleet.
   (which already handles the subprocess / venv / working-dir dance) per slug for
   the execution leg — this tool delivers the DISCOVERY + CLASSIFICATION needed to
   target it. Implement by composing canonical_test_audit (for slug list) with
-  pytest (for execution) in an orchestrated sweep.
+  pytest (for execution) in an orchestrated sweep. — 2026-05-30
 
 ## What ships today
 
@@ -255,7 +255,7 @@ def audit_canonical_tests(
     NOC-REMEDIATE[canonical-runner-exec]: compose this audit's `execution_ready`
     product list with `noctus.dev.pytest(slug=...)` for the execution leg.
     Each product's venv must exist; use `noctus.dev.pytest` which already handles
-    subprocess/venv/working-dir. See module docstring for full rationale.
+    subprocess/venv/working-dir. See module docstring for full rationale. — 2026-05-30
     """
     base = products_dir if products_dir is not None else PRODUCTS_DIR
     inventory = discover_canonical_tests(products_dir=base, product_slug=product_slug)

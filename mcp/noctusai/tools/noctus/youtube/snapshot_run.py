@@ -83,7 +83,7 @@ logger = logging.getLogger(__name__)
 # + product base URL.  Until those are available in the MCP environment this tool
 # returns a stub with manual instructions.  Upgrade path: when the platform ships
 # a service-account token and a product URL registry, replace _STUB_RESPONSE with
-# an httpx.post call to ``{base_url}/api/youtube/snapshot/run?account_id={id}``.
+# an httpx.post call to ``{base_url}/api/youtube/snapshot/run?account_id={id}``. — 2026-06-02
 
 
 def snapshot_run(

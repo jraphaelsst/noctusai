@@ -94,4 +94,4 @@ No `source_type` = search across all 5.
 ## Known debt
 
 `NOC-REMEDIATE[embedding-cache-framework]`: same as memory-embeddings —
-N=4 of the embedding-cache pattern, formalization owed in v4.1.
+N=4 of the embedding-cache pattern, formalization owed in v4.1. — 2026-05-27

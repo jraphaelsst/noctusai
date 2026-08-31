@@ -71,7 +71,7 @@
 -- desenvolvimento para um seed script dev-only, fora da cadeia de migrations
 -- que roda contra produção. Afeta a 002 deste produto e qualquer migration da
 -- frota que semeie `auth.users`. Ver o cabeçalho da 002 e
--- `KB § PATTERNS/security/lgpd.md`.
+-- `KB § PATTERNS/security/lgpd.md`. — 2026-08-17
 -- ============================================================================
 
 DO $$

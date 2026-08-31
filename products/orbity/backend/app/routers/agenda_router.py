@@ -16,7 +16,7 @@ GCal sync:
   The sync endpoint wires through AgendaService.sync_to_gcal(), which
   uses the injected CalendarAdapter (FakeCalendarAdapter by default).
   When real GCal credentials are configured, the Real adapter fires.
-  NOC-REMEDIATE[orbity-agenda-gcal]: see agenda_service.py for wiring notes.
+  NOC-REMEDIATE[orbity-agenda-gcal]: see agenda_service.py for wiring notes. — 2026-06-03
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ router = APIRouter(tags=["Agenda"])
 
 def _svc(token: str, org_id: UUID) -> AgendaService:
     # Wires the FakeCalendarAdapter by default.
-    # NOC-REMEDIATE[orbity-agenda-gcal]: pass calendar_adapter=get_calendar_adapter(resolver, ...)
+    # NOC-REMEDIATE[orbity-agenda-gcal]: pass calendar_adapter=get_calendar_adapter(resolver, ...) — 2026-06-03
     return AgendaService(get_user_client(token), org_id=org_id)
 
 
@@ -187,7 +187,7 @@ async def sync_gcal(
     gcal_event_id.
 
     NOC-REMEDIATE[orbity-agenda-gcal]: real adapter requires credential
-    wiring — see agenda_service.py for instructions.
+    wiring — see agenda_service.py for instructions. — 2026-06-03
     """
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)

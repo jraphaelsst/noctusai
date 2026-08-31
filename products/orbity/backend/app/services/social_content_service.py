@@ -21,7 +21,7 @@ NOC-REMEDIATE[orbity-content-publish]: when a post status moves to "approved"
       adapter = get_meta_adapter(...)
       adapter.publish_instagram_post(...)
   The Meta adapter ships in noctusai_lib.integrations.meta (Real+Fake+factory).
-  Wire at the service layer with the org's FB access token from client_credentials.
+  Wire at the service layer with the org's FB access token from client_credentials. — 2026-06-03
 
 No silent errors: every except logs at the right level and re-raises.
 No monkey-patching our own code.
@@ -446,7 +446,7 @@ class PublicApprovalService:
             # and auto-publish is configured, call the seed Meta integration here:
             #   from noctusai_lib.integrations.meta import get_meta_adapter
             #   adapter = get_meta_adapter(org_id=..., access_token=...)
-            #   adapter.publish_instagram_post(post_id=post_id, ...)
+            #   adapter.publish_instagram_post(post_id=post_id, ...) — 2026-06-03
 
         except (LookupError, ValueError):
             raise
