@@ -40,6 +40,7 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import { TableSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import { formatDate } from '@/lib/utils';
 import { ACAO_LABELS } from '@/lib/constants';
 
@@ -124,7 +125,7 @@ export default function Gamificacao() {
             <Star className="h-5 w-5 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-primary">{totalPontos}</div>
+            <div className="text-3xl font-bold text-primary"><SummaryValue notArrived={showPontosSkeleton} className="h-9 w-16">{totalPontos}</SummaryValue></div>
             <p className="text-xs text-muted-foreground">pontos acumulados</p>
           </CardContent>
         </Card>
@@ -149,10 +150,12 @@ export default function Gamificacao() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">
-              {conquistasDesbloqueadas.length}
-              <span className="text-lg text-muted-foreground font-normal">
-                /{allConquistas.length}
-              </span>
+              <SummaryValue notArrived={showConquistasSkeleton} className="h-9 w-16">
+                {conquistasDesbloqueadas.length}
+                <span className="text-lg text-muted-foreground font-normal">
+                  /{allConquistas.length}
+                </span>
+              </SummaryValue>
             </div>
             <p className="text-xs text-muted-foreground">desbloqueadas</p>
           </CardContent>
