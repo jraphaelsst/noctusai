@@ -1,230 +1,334 @@
-# HANDOFF — 2026-08-31 (session 2, post-promotion) → next session
+# HANDOFF — 2026-08-31 (session 3, dangling-work drain) → next session
 
 > **You are the tech-lead.** Contextualize first (`/contextualize`), then read this.
 > Everything below is verified state, not expectation. Where something is unverified,
-> it says so explicitly.
+> it says so.
 >
-> **Nothing is in flight. Prod is current and verified. There is no outstanding
-> release work.**
+> **Nothing is in flight. `dev` is 42 commits ahead of `main`/`prod`, and the
+> promotion decision is the owner's — see §0.**
 
 ---
 
-## 0 · THE PROMOTION IS DONE — VERIFIED, NOT ASSUMED
-
-The previous handoff's §0 ("prod is ~35 commits behind") is **closed**. 36 commits were
-blessed and promoted, and all 7 live products were deployed and verified on 2026-08-31.
+## 0 · REF STATE — `dev` IS AHEAD, PROD IS NOT PROMOTED
 
 | ref | sha | meaning |
 |---|---|---|
-| `origin/dev` | `0e13ea71` | tree clean, no stashes, primary worktree only |
-| `origin/main` | `0e13ea71` | ✅ blessed |
-| `origin/prod` | `0e13ea71` | ✅ promoted |
-| `origin/prod-backup` | `34a0c4c4` | ✅ previous prod — the rollback pointer |
+| `origin/dev` | `fed11999` | 42 commits of this session's work |
+| `origin/main` | `7765cbee` | ⬅ **not blessed** — unchanged since session 2 |
+| `origin/prod` | `7765cbee` | ⬅ **not promoted** — unchanged since session 2 |
+| `origin/prod-backup` | `0e13ea71` | rollback pointer |
 
-**The live fleet deliberately runs the OLDER `34a0c4c4` images, and that is
-correct.** The 8 commits promoted after it touch only MCP tooling, KB, docs and
-ledgers — `git diff --name-only 34a0c4c4..0e13ea71` contains zero `products/`,
-`seed/` or `core/` paths. `release stage=promote` reported `rebuild.needed:
-false`, and `deploy_verify` classifies every product as steady state ("13 files
-changed … but NONE touch this product's build inputs"). Images rebuild only when
-their build scope changes. **Do not "fix" this by redeploying** — it is the
-designed behaviour, and a needless swap is downtime for nothing.
+**This is deliberate, not an oversight.** Prod-exposure registration is the owner's
+decision, never an agent's (`KB § PATTERNS/devops/prod-exposure-consent.md`). Session 3
+did the work; it did not promote it. The live fleet is healthy and running `34a0c4c4`
+images — untouched all session except the two prod changes in §1.4.
 
-**Evidence, each leg observed on `34a0c4c4` itself:**
-
-| gate | result |
-|---|---|
-| CI (`Tests & Build`) | ✅ green — run `33419899008`, `headSha` confirmed = `34a0c4c4` |
-| `predeploy_check` × 7 live | ✅ all `ready`, exit 0, 7/7 sub-checks each |
-| GHCR fleet build on `prod` ref | ✅ success — run `33422383724` (this is what moves `:latest`) |
-| `deploy_image` × 7 | ✅ all `deployed` + healthy, swap-verify matched running image id AND revision |
-| `deploy_verify` | ✅ `verified` — 0 missing / 0 drifted / 0 degraded / 0 unverifiable |
-| `spa_smoke` | ✅ 7/7 serving a real JS bundle, deep link `/login` → 200 |
-
-Every live product reports `startup_hook_error: null`. Deploy order was
-**canary-then-fan-out**: social-wiring first (it carried the most change), fully verified
-on all three witnesses, then the remaining six in batches, `core` last.
-
-**Rollback, if ever needed:** `prod-backup` is `d5f492a2`, and every product has a
-`:previous` image tag snapshotted from this deploy.
+**Before any promotion:** CI green on the tip, then `predeploy_check` per live product,
+then `release stage=promote`, then `deploy_image` + `deploy_verify`. Skill `noc-ship`.
 
 ---
 
-## 1 · THREE CORRECTIONS TO THE PREVIOUS HANDOFF
+## 1 · WHAT SHIPPED (42 commits, 11 branches, all integrated + rebase-clean)
 
-Recorded because each one would have cost the next session time.
+### 1.1 The lying-loading-state class — now gated, not just documented
 
-1. **The dev tip was `34a0c4c4`, not `32fb55fe`.** The previous handoff was written one
-   commit before its own final docs commit. CI was already green on `34a0c4c4`, so the
-   promotion never needed a new CI run — the "check its result, do not assume it"
-   instruction was right, and checking is what revealed the tip had moved.
-2. **The `build-scope.txt` fallback warning was a false alarm.** `deploy_verify` warns
-   that it fell back to the 2026-08-17 snapshot when `SUPABASE_URL` /
-   `SUPABASE_SERVICE_ROLE_KEY` are absent from the MCP server's env. Checked against the
-   **live catalog** via `--refresh-build-scope` with the root `.env` sourced: the snapshot
-   matches exactly (same 7 live, same 5 inactive). The warning is about *roster staleness
-   risk*, not an observed mismatch. **The MCP server is started without those two vars**,
-   so this warning will recur every session until that changes — it is not new drift.
-3. **The two leftover stash entries are NOT empty.** The previous handoff called them
-   "two now-empty stash entries." They hold 3 + 2 lines of
-   `project-history/auto-improvement.ndjson` — the 5 recovered ledger rows themselves. The
-   *conclusion* was right (safe to drop) and is now **verified**: all 5 rows were matched
-   by exact `ts` against the committed ledger and are present. They are redundant
-   duplicates, not empty. Dropping them (`git stash drop` ×2) is a local write and was
-   deliberately left to the owner.
+The morning session fixed ~70 Mode-B sites by hand. This session closed the gate behind them.
 
----
+- **`check_lying_loading_state` gained two AST shapes** (`ab37df8d`), implemented with
+  ts-morph in `mcp/noctusai/node/lying_loading_scan.mjs`:
+  - **Mode B** — `isFetching` reaching an early `return` / ternary / JSX-child gate, guard-aware.
+  - **Shape 5** — a bare `.isLoading` reaching the same three gates. **This was the big one:**
+    no `loading=` prop, no `isEmpty=`, no hand-rolled `.length === 0` guard, so all three
+    original shapes missed it entirely while the fleet reported "clean."
+  - Resolves through **one variable-alias hop** via the real TS binder, not name matching.
+  - Found and fixed a genuine false positive mid-build: a `useState` array-destructured
+    `isLoading` looks identical to query state. Excluded by requiring the identifier to
+    resolve to an `ObjectBindingPattern`. Regression fixture added.
+- **Fleet sweeps** cleared: orbity (21 Mode-A sites), therapy-platform (~110 conversions +
+  1 real Mode-B in `Scheduling.tsx`), erp-imobiliario (18 consumer sites across 17 files),
+  plus the Shape-5 wave (§3 for the residual).
+- **Three blind tests fixed** — `pages/leads/{Corretores,Origens,Empreendimentos}.test.tsx`
+  mocked `ChartCard` in a way that dropped the `loading` prop entirely, so they
+  structurally could not catch the bug that shipped live on those very pages. The mock now
+  reproduces the real `loading > error > isEmpty > children` priority, and each file gained
+  a Mode-A and a Mode-B guard, **mutation-proved in both directions**: reintroducing
+  `loading={q.isLoading}` fails only the Mode-A guard; reintroducing `isPending || isFetching`
+  fails only the Mode-B guard.
 
-## 2 · STILL OPEN, NOT ASSIGNED
+**Severity is still `warning` (observe-first) — deliberately.** Do not promote it to `high`
+until the fleet measures zero; see §3.
 
-Carried forward unchanged from the previous handoff — none of these were touched.
+### 1.2 The primary/origin divergence loop — ROOT-CAUSED, this time for real
 
-- **`cli.py` rc=0 on a crashed dispatch — UNREPRODUCED.** Highest value; it undermines
-  every other gate. Observed once: `--auto-improvement-query` under a bare `python` raised
-  `ModuleNotFoundError`, printed a traceback, and still exited 0. An AST sweep of every
-  `except` in `main()` found only two, both `sqlite3.Error`, neither matching.
-  **Do not treat the cause as known.** Suggested structural backstop when someone next
-  touches `main()`: wrap the `if __name__ == "__main__"` dispatch in a top-level
-  `try/except Exception: traceback.print_exc(); sys.exit(1)`.
-  **Workaround meanwhile: always use `venv/bin/python3`.**
-- **Outline-corpus baseline tolerance.** ±5% relative is wrong for small files — one
-  legitimate export is 25% on a 4-symbol file, so it keeps firing on the files it has
-  least to say about. An absolute floor (±1 symbol regardless) fits its stated intent.
-  Loosening a guard is a deliberate decision, not a side effect of a red build.
-- **Cat C remainder:** orbity (63) and therapy-platform (25) untouched; 8 erp hooks
-  unaudited (`useCertidoes`, `useComissoes`, `useGamificacao`, `useImpostos`,
-  `useManutencao`, `usePropostas`, `useSeguros`, `useMatches`).
-- **`IGIG_COFRE_KEY`** — igig has the same latent shape as `ENCRYPTION_KEY` but was
-  **deliberately left undeclared**: no evidence the key is set in prod, and a wrong
-  declaration is an **outage**, not a warning. Verify via the VPS `.env` first, then add
-  `required_prod_config` to `products/igig/backend/app/main.py`.
-- **p-studio migration `009`** is committed but **unapplied** — applying it is the
-  owner's call. (Verified previously: `p-studio` org has 0 members, `noctusai` has 1.)
-- **Duplicate MCP tool registration:** `noctus.dev.agent_context` and
-  `noctus.dev.dispatch_budget_summary` emit "Tool already exists" on every
-  `build_server()`.
-- **Dead code found in passing:** `orbity/hooks/useClients.ts` (zero consumers),
-  `useMetaAds.ts::useCampaignMetrics`,
-  `personal-finance/useRecorrentes.ts::useProximasContas`.
-- **3 `ChartCard`-mocking test files** (`Corretores`/`Origens`/`Empreendimentos`) drop the
-  `loading` prop entirely, so they structurally cannot catch a gate regression.
-- **The MCP server must be RESTARTED to pick up the divergence-loop fix** (§5). It
-  runs whatever it imported at startup, so `task_branch cleanup` will keep
-  reporting `salvage_pushed: false` in any session started before the fix landed.
-- **MCP server env:** started without `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`, which
-  is why catalog-backed tools fall back (see §1.2). Worth fixing at the server-launch
-  layer so `deploy_verify` reads the live catalog directly.
+`d0170d92` (morning) fixed a real cause and the symptom **still recurred** hours later. It is
+now genuinely closed (`8c0af23e`).
 
----
+**Cause.** `_ledger_push`'s divergence guard requires every commit ahead of `origin/dev` to
+touch only `ledger_set`. `task_branch` passes just `worktree-salvage.ndjson` — but the
+pre-commit hook's step 10c `git add`s `project-history/vector-costs.ndjson` **into that very
+commit**. The guard then rejected its own commit as contaminated.
 
-## 3 · MCP SERVER DEATH — NOW WITH LIVE EVIDENCE
+**Why it was worse than what it replaced:** self-latching. The old rebase-refusal cleared
+itself on the next rebase; this one refused *forever* until a human reconciled — which is
+exactly the "regrows every teardown, cleared by hand once a session" history.
 
-`a186dd9b` fixed the **second** death mechanism. The previous handoff flagged it as
-unit-tested and measurement-backed but **never having run a live session**. That caveat is
-now discharged.
+**Fix:** the guard now tolerates a rider iff `_benign_stash.is_benign(f)` — the **same
+predicate** the stash pre-check already uses, so there is no second hand-maintained list to
+drift. Real work still blocks loudly as `dirty_blocked`.
 
-**This session ran the fixed server for the entire promotion** — including 4 and then 3
-concurrent `predeploy_check` calls (each running a vite build + pytest), 3 concurrent
-`deploy_image` swaps, and a full `deploy_verify` + `spa_smoke` sweep. **The server never
-stalled or died.** Long calls backgrounded cleanly at the 120s boundary and returned
-correct results; the stdio channel stayed responsive throughout.
+**Verified, not assumed:** reproduced in a throwaway repo with a real pre-commit hook;
+`test_ledger_push_realgit.py` applies the *pre-fix* predicate to a real commit's real
+`diff-tree` and asserts it would have blocked. 79 tests pass.
 
-Recap of why there were two mechanisms, since it is the useful part:
+**Also corrected:** `git commit -- <paths>` (`--only` included) does **not** exclude a file a
+hook adds mid-commit. That was tested explicitly — it is the obvious fix and it does not work.
 
-- `39e4256f` wrapped sync tools in `anyio.to_thread.run_sync`. That genuinely fixes
-  **I/O-bound** blockers (SSH sleeps, subprocess waits) because those release the GIL.
-- It does nothing for **CPU-bound** ones — threads share the GIL. Measured at incident
-  scale (6 concurrent ~15s calls): I/O-bound control avg **0.3 ms** round-trip; CPU-bound
-  avg **22.2 s**, max **40.2 s**, 100% single-core, full serialization.
-- `a186dd9b` re-execs the graph rebuild as a **subprocess**, whose blocking OS wait
-  releases the GIL. The gate sits at the one call that does the heavy work, so every
-  current and future caller inherits it with no per-tool bookkeeping (a per-tool registry
-  would be the "hand-maintained lists drift" shape).
+**Reporting fixed too:** a failed salvage push now returns `salvage_push_reason` instead of a
+bare `false`.
 
-**The subprocess path itself is now production-exercised too.** A `task_branch
-action='cleanup'` at the end of this session triggered a real rebuild inside the live MCP
-server: `rebuild: full`, 39,747 nodes / 63,880 edges in **11.6s**, and the server stayed
-responsive and answered the very next tool call normally. So both the in-sync fast path
-and the heavy subprocess path have now run in a live session.
+### 1.3 Everything else
 
-Still not observed: a heavy rebuild triggered *concurrently with* several other in-flight
-tool calls. That is the precise incident shape, and it remains inferred from the
-measurement rather than witnessed in production.
+- **Dependabot fully drained** — 20 PRs landed in 5 coherent commits, 2 already superseded,
+  **zero deferred**. All four lockfile/slug keepers at 0 issues; **no `overrides` block
+  touched** (the trap that froze this fleet three times).
+- **`cli.py` exit-0 backstop** (`7ddda6ea`) — see §2.3 for the honest caveat.
+- **Two silently-dead duplicate tool registrations resolved** (`23b0a5b1`). Both losers
+  *differed* from the winners, so they were renamed rather than deleted:
+  `noctus.dev.platform_bootstrap_context`, `noctus.dev.dispatch_completion_summary`.
+  `build_server()` now logs **zero** collisions, enforced by a new uniqueness test.
+- **Outline-corpus baseline** now relative-OR-absolute (±5% **or** ±1 symbol), with a test
+  proving a genuine multi-symbol regression still fails.
+- **MCP server loads the repo-root `.env`** (`80e37fff`, `override=False`) — catalog-backed
+  tools stop falling back to the 2026-08-17 snapshot. The refreshed roster came back
+  **byte-identical**; it was stale in timestamp only.
+- **CI now provisions `mcp/noctusai/node`** (`09c77fc1`) — measured **6 passed/17 skipped →
+  23 passed/0 skipped**. Node pinned to 20 (ts-morph 28's transitive deps require `20 || >=22`).
+  Install is ~1.7s; caching deliberately declined as not worth the machinery.
+- **Remediation markers: 142 → 70 real, 0 malformed.** The scanner now distinguishes a
+  *declaration* from a *citation* (it was flagging docs that merely teach the syntax) and
+  parses multi-line markers. 50 dates recovered via `git blame` at their **true introduction
+  date**, not stamped with today's. `on_except` remains 0.
+- **9 shipped-but-unclosed projects archived** (`cffea0a9`) — see §4.
+
+### 1.4 PROD CHANGES — two, both verified
+
+1. **p-studio migration `009` applied** (`20260831202859`). Verified after: 0 rows under the
+   old org, 17 seed rows under `noctusai`, `p-studio` org row preserved as the file intends.
+2. **`IGIG_COFRE_KEY` generated and set** in `/opt/noctus/noctusai/.env`; igig recreated and
+   healthy. Proven by a real Fernet encrypt/decrypt roundtrip **inside the running container**
+   (`len=44`, `roundtrip_ok=True`). Backup: `/root/.env.bak.20260831-igig-cofre`.
+   Now declared in `required_prod_config` with a boot-refusal test.
+3. **igig migration `013` applied** as a verified no-op — see §2.4, it is a cautionary tale.
 
 ---
 
-## 4 · KNOWN-GOOD COMMANDS
+## 2 · CORRECTIONS TO THE RECORD — things previously believed that are FALSE
 
+Read this section before trusting any prior handoff.
+
+### 2.1 `prod-fleet-swap-handoff` §7 was wrong about its own cause
+It claimed `salvage_pushed:false` happens "because the primary-write guard forbids committing
+there." It does not — `task_branch._push_salvage_ledger_from_primary` commits from the primary
+**deliberately, and that commit succeeds**. Corrected in-place; real cause in §1.2.
+
+### 2.2 `lying-loading-state.md` was actively lying, and it cost time twice
+Lines 305–315 claimed the keeper's remediation strings still prescribed the superseded
+`isPending || isFetching`, and instructed readers to *"trust this document over the finding
+text."* `f4b4c625` had already fixed those strings. **Two independent engineers filed this as
+a live finding.** A stale warning that manufactures false findings is worse than no warning.
+Block deleted, replaced with a one-line historical note.
+
+### 2.3 The `cli.py` rc=0 bug may never have existed
+Unreproduced despite a real attempt. CPython already exits 1 on an escaping exception —
+**3 of the 4 new tests pass on both pre- and post-fix code**, and the engineer said so rather
+than staging a fake win. Two live hypotheses: a background-thread exception (which the new
+backstop structurally *cannot* catch), or the original observation was itself a `cmd | tail`
+exit-code misread — the exact anti-pattern in CLAUDE.md §1. The backstop still earns its
+place: it stops a missing `SystemExit` passthrough corrupting a real `exit(2)` into `exit(1)`.
+
+### 2.4 igig migration `013` nearly made prod LESS safe — check live before applying
+The first draft added `SECURITY DEFINER` to `igig.set_updated_at()`. Migration `006` never had
+it. A fix aimed at advisor 0011 would have converted an invoker-rights trigger into a
+definer-rights one while its comment claimed "body unchanged from 006" — the body was, the
+security context was not. Cause: copying the **shape** of `therapy_012`/`erp_028` rather than
+their **reason** (those pin `search_path` on functions that genuinely *are* `SECURITY DEFINER`).
+Both precedents were re-checked and are correct; the error was local to this draft.
+**And prod already had the fix**, applied out-of-band — live was safer than the migration.
+Corrected, then applied as a true no-op; all **18 triggers** still bound afterwards.
+
+### 2.5 The migration ledger is NOT a reliable record of what is applied
+Verified three times: p_studio `007`/`008` and social-wiring `060` are demonstrably applied but
+**absent from `supabase_migration_list`**. So the ledger cannot answer "is N applied?", and a
+replay from migrations alone would not reproduce prod. **Query the live schema before applying
+anything.** Logged as broad drift; deliberately not auto-fixed, because a double-apply on a
+non-idempotent migration is the worse failure.
+
+### 2.6 A count I relayed was inflated by a stale base
+The detector's "173 Shape-5 sites" was measured at `7765cbee`, **before** three concurrent
+sweeps integrated. therapy went ~30 → 1, orbity ~20 → 0. But ~120 were genuinely real
+(erp 61, social-wiring 27, personal-finance 14, p-studio 9, daily-life 5, adconnect 3, core 1).
+Lesson: a fleet count is only valid at the sha it was measured on — `per-branch green ≠
+integration green`, running in reverse.
+
+---
+
+## 3 · STILL OPEN
+
+### Needs an owner decision (nobody else can answer these)
+1. **Promote to prod?** `dev` is 42 commits ahead. Everything is CI-green and integrated.
+2. **`deploy-config-pilot-consume`** — for **erp-imobiliario only** now (social-wiring and
+   p-studio already declare; therapy is inactive): *which env keys must never fall back to a
+   dev default in prod?*
+3. **`imovelweb-portal-leads-ingestion`** — *send the drafted `gate-1-credential-request.md`
+   to `integracao@imovelweb.com.br`, yes or no?* Everything buildable without credentials is
+   built; this is the only real blocker.
+4. **`therapy-scheduling-pilot-rollout`** — *reactivate therapy-platform, or park this?*
+   Phase 3 needs live Google OAuth QA but the product is `ativo=false`.
+5. **`prod-fleet-swap-handoff` §5** — *have you eyeballed the 5 social-wiring surfaces in
+   prod?* (ROI, funil totals, duplicate queue, new panel, Negociação money field.) No agent
+   can close this. The project is archived; this checklist outlived it deliberately.
+
+### Real engineering work, filed not started
+- **p-studio react-router CVE** (GHSA-wrjc-x8rr-h8h6, moderate). **No patched 6.x exists** —
+  the only fix is a v6→v7 major migration off p-studio's deliberate v6 lag. Needs its own
+  Gate-3 migration project; the skill's own history says v6→v7 was near-zero-source-edit
+  fleet-wide, so this is likely small but must not be forced through a dependabot bump.
+- **`check_lying_loading_state` severity promotion** to `high` — only once the fleet measures
+  zero. Check first: it is a one-line change (`_LYING_LOADING_SEVERITY`) plus the cli.py help
+  text and the "warnings — observe-first" output line, which must move together.
+- **~49 body-only test assertions** across 7 igig router test files (no status-code pin).
+  Logged s1. This is an authoring convention, not a fresh defect — a mass rewrite needs a
+  decision, not a sweep.
+- **The 9 "route-exists ≠ wired" findings** in therapy-platform from `noctus.dev.review`.
+
+### Systemic, and getting worse — worth attention
+- **The AST detector times out at 120s fleet-wide.** It is honest (emits one explicit
+  bootstrap/timeout finding, `product: "*"`, never a silent zero) but **the gate does not
+  actually run at fleet scale**. Per-product invocation takes ~10s and works — the recipe is
+  in §5. Root fix: scope the scan per-product, or profile the `getSymbol()` resolution that
+  took it from ~3s to ~90–100s.
+- **noc-graph cache refresh timed out at 300s, twice.** It was ~12s this morning. Pre-commit
+  hooks now take ~7 minutes on a product worktree. Something in the cache/gate layer got
+  materially slower today; nobody has profiled it.
+- **`02-LANDSCAPE.md`'s auto-derived counts drift on a clean checkout**
+  (`cli.py --update-kb-counts --check` reports drift with nothing modified), and pre-commit
+  can leave it in a staged+unstaged `MM` state non-deterministically. It blocked a primary
+  `git pull` this session.
+- **`noctus.dev.status`'s bucket classifier reports `blocked: 0`** while at least six projects
+  self-describe as blocked — one literally opens `🔒 BLOCKED-EXTERNAL`. Teaching it to read
+  `BLOCKED-USER`/`BLOCKED-EXTERNAL`/`🔒` moves 6–8 projects out of `executing`, and
+  *"6 executing, 8 waiting"* is a portfolio someone can act on.
+- **The highest-leverage fix in the whole audit:** `PROJECT.md` has no machine-checkable
+  done-condition, so nothing could ever keep it fresh — three months of drift was the
+  *expected* outcome, not a lapse. `auto_improvement_reconcile` already takes predicates
+  (`path_exists:`, `grep_present:`, `keeper:`, `superseded_by:`). Add a
+  `**Done when (machine):**` line to PROJECT.md and have `noctus.dev.status` evaluate it and
+  override the prose icon. All 9 projects archived this session would have self-closed.
+
+---
+
+## 4 · PROJECT PORTFOLIO — now honest
+
+**Archived (9)**, each verified against the tree rather than its status prose:
+`vps-exec-sql-helper` · `dispatch-pattern-hardening` · `dispatch-with-project-notes` ·
+`prod-deploy-compose-durable-relocate` · `prod-deploy-compose-vps-cutover` ·
+`n8n-workflows-page` · `harness-agents-skills` · `container-first-codify-and-absorb-ke` ·
+`seed-organs-cache`.
+
+Two fought the gates, and the gates were right:
+- `container-first…` had a `findings.md` → learn-before-archive. All six lessons were
+  confirmed to have durable homes first. **Note:** the build-saga lessons live in
+  `containerization-operations.md`, **not** `containerization.md` as its findings file implied.
+- `seed-organs-cache` had 6 KB references calling it "the pilot project, the worked example."
+  Rewritten as historical citations so `KB § GUIDES/product-body-caching.md` stands alone.
+  A stale TODO naming a branch that was never created was resolved in passing.
+
+**Superseded, safe to close:** `p-studio-absorption-rollout` (the roadmap won — two trackers,
+the project doc rotted), `remaining-five-fleet-mount`, `finance-therapy-vps-deploy`,
+`frontend-deps-base-consolidation` (Phases 2–4 target the dormant local fleet).
+
+**Genuinely live, with collapsed scope:** `platform-auth-modernization` (fan-out is **4 live
+products**, not 9) · `product-internal-wiring` (Wave 2 is **erp only**) ·
+`meta-video-reels-publish` (correctly gated on a consumer that does not exist) ·
+`seed-lift-ke-gap-seams` (correctly deferred at N=1) · `worktree-sensitivity-guard` (small) ·
+`codification-backlog-drain` (low value).
+
+**Marker classes at N≥3 — both already formalized, no new work:**
+- The 30 orbity markers **are** M2/M3 of `roadmaps/orbity-2026-06.md`. Linked, not
+  re-tracked — a second tracker would have repeated the p-studio mistake. They are deliberate
+  Fake-adapter defaults, **not rot**; `reports-metrics-source` is *gated on* `meta-ads-live`.
+- `rate-limit` needed nothing: `outbound-rate-limiting.md` already has an adoption table
+  naming Vista/WAHA/YouTube as deferred with a trigger.
+
+**The scanner's N≥3 list is a prompt to check, not a work queue.**
+
+---
+
+## 5 · KNOWN-GOOD COMMANDS + TRAPS
+
+```bash
+P=/Users/rapha/Documents/repository/NoctusAI/noctusai
+V=$P/venv/bin/python3
+
+$V mcp/noctusai/cli.py --verify-kb-sync --check-claude-md-router
+$V mcp/noctusai/cli.py --predeploy-check <slug>          # value form, NOT --product
+$V mcp/noctusai/cli.py --deploy-verify --spa-smoke
+set -a && . ./.env && set +a    # gives catalog-backed tools their Supabase creds
 ```
-VENV=/Users/rapha/Documents/repository/NoctusAI/noctusai/venv/bin/python3
-$VENV mcp/noctusai/cli.py --predeploy-check <slug>          # value form, NOT --product
-$VENV mcp/noctusai/cli.py --verify-kb-sync --check-claude-md-router
-$VENV mcp/noctusai/cli.py --deploy-image <slug> --deploy-image-confirm
-$VENV mcp/noctusai/cli.py --deploy-verify --spa-smoke
-set -a && . ./.env && set +a   # gives catalog-backed tools their Supabase creds
+
+**Per-product lying-loading scan (~10s — the fleet-wide call times out):**
+```bash
+find products/<SLUG>/frontend/src -name '*.tsx' ! -name '*.test.tsx' ! -name '*.spec.tsx' \
+ | $V -c "import sys,json,os;print(json.dumps({'files':[os.path.abspath(l.strip()) for l in sys.stdin if l.strip()]}))" \
+ | node $P/mcp/noctusai/node/lying_loading_scan.mjs
 ```
+Returns `{results:{absPath:[finding,…]}, errors:{absPath:msg}}`. **`errors` must be empty** —
+a non-empty entry is a real parse failure, not noise. Node resolves `ts-morph` from the
+script's own directory, so run the PRIMARY's script pointed at any worktree's files; no
+symlink needed.
 
-**Traps that have actually cost time — all still live:**
-- Verify by **exit code** captured as `rc=$?`. `cmd | tail` returns *tail's* status.
-- Fresh worktrees have **no `node_modules`** — use `task_branch action='start'
-  wire_env=True`, or every vitest/vite/tsc run fails with `ERR_MODULE_NOT_FOUND` and looks
-  like a real break.
-- **Never run `pytest mcp/noctusai/tests` unbounded** — `TestSeedCompliance` /
-  `TestAIFeatureCompleteness` are documented at 25–50+ minutes locally.
-- **`primary_write_guard` and shell redirects:** a redirect target containing a shell
-  variable (`> "$dir/f$i.txt"`) cannot be statically parsed, so the guard judges the
-  command against the primary checkout and refuses — even for a read-only check. Write the
-  path literally, or restructure to avoid the redirect. This is guard-working-as-designed,
-  not a false positive to route around.
-- A backgrounded or timed-out `deploy_image` is **`unverified`, not success** — always
-  confirm with `deploy_verify`, which is an independent witness with zero dependency on
-  `deploy_image` having run.
+**Traps that cost time THIS session:**
+- **Verify by exit code captured as `rc=$?`.** `cmd | tail` returns *tail's* status. This may
+  even be the origin of the phantom rc=0 bug (§2.3).
+- **A heredoc does not survive a backgrounded shell** — `git commit -F -` read empty stdin and
+  silently did nothing while reporting rc=0. Use a message file.
+- **`task_branch action=start wire_env=True` returns ~1.2 MB** of per-file wiring detail and
+  blows the tool-result budget. The worktree is still created; confirm with `git worktree list`.
+- **The `primary_write_guard` will refuse a compound command containing any write to the
+  primary on `dev`.** That is correct. Do not route around it — work in a worktree.
+- **Never `pytest mcp/noctusai/tests` unbounded** — `TestSeedCompliance` /
+  `TestAIFeatureCompleteness` take 25–50+ minutes.
+- **Pre-commit now takes minutes**, sometimes >2, on product worktrees. Background the commit
+  rather than assuming it hung.
+- **The live MCP server does not hot-reload tool modules.** After editing one, a fresh-process
+  CLI run reflects the change; the running server does not. **Restart it to pick up §1.2's
+  divergence fix** — until then `task_branch cleanup` still uses the old code path.
 
+**Owner action, one line** — the primary checkout is behind `origin/dev` with a dirty
+auto-derived `02-LANDSCAPE.md` (self-branching mode correctly forbade an agent from fixing it):
+```bash
+cd $P && git checkout -- KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md && git pull --ff-only origin dev
+```
 
 ---
 
-## 5 · THE PRIMARY/ORIGIN DIVERGENCE LOOP — ROOT-CAUSED AND FIXED (`d0170d92`)
+## 6 · METHODOLOGY LESSONS WORTH MORE THAN THE FIXES
 
-The loop the previous handoff catalogued in §3c ("the ledger helper's rebase leg
-cannot run against a dirty tree, and the cost-log hook dirties that very file on
-every commit") is **fixed at the tool level**. It had been hand-cleared once per
-session and had accumulated **five prior ledger entries, all marked closed**,
-because each one fixed an adjacent symptom while the cause survived.
-
-**Cause.** `_ledger_push.commit_and_ff_push_ledger` rebases onto `origin/dev`
-before FF-pushing. `git rebase` refuses on ANY dirty file, and the cost-log
-pre-commit hook dirties `project-history/vector-costs.ndjson` on essentially every
-commit — including the ledger commit made one line earlier. The rebase was
-refused, the helper returned `committed_locally=True, pushed=False`, and the
-primary was left diverged.
-
-**The fix already existed one level up.** `task_branch.integrate` solved the
-identical wall on 2026-05-28 ("Bug C", logged N=5+) by classifying dirty files
-benign-vs-real and auto-stashing the benign ones. The 2026-06-30 DRY lift moved
-the *idiom* into `_ledger_push` and left the *hardening* behind — silently
-un-fixing the copy. Both now share `tools/noctus/dev/_benign_stash.py`.
-
-Real in-progress work still blocks, but as an explicit `status="dirty_blocked"`
-naming the files, not a mystery divergence. No `--force`/`--autostash` shortcut is
-issued; only the known-benign set is stashed, popped in a `finally`.
-
-**Two lessons worth more than the fix:**
-- **Extracting shared code without its accumulated fixes silently un-fixes the
-  copy.** Lift the hardening with the idiom, from every site that shares the leg.
-- **A fake that cannot express the failure will pass forever.** Every
-  `_ledger_push` test used a runner whose `rebase` returned a scripted rc
-  regardless of tree state, so no fake-based test could have caught this. Pinned
-  in `test_ledger_push_realgit.py` against REAL git, with a control run confirming
-  the old code fails the same scenario (1↔1 divergence, row never lands).
-
-Also hardened: the porcelain parser's fixed 3-char offset silently TRUNCATED any
-non-canonical `git status` line into a *different* path, which then misclassified
-as real work. That truncation is what made 7 `branch_pointer` tests fail on first
-contact with the shared helper.
-
-Depth: `KB § PATTERNS/common/self-branching-mode.md` §12.
-
-⚠️ **Restart the MCP server to get this.** A server started before `d0170d92` still
-runs the old module, so cleanup keeps reporting `salvage_pushed: false` and you
-keep reconciling by hand with
-`git -c rebase.autoStash=true rebase origin/dev && git push origin HEAD:dev`.
+1. **A gate whose dependency is not provisioned is not a gate.** The AST keeper shipped and
+   did nothing in CI because `node_modules` is gitignored and no job installed it — in a job
+   whose own comment reads *"an unenforced quality gate is silent debt."*
+2. **A fake that cannot express the failure passes forever.** `test_task_branch.py` asserts
+   *both* `salvage_pushed` outcomes against a scripted runner whose `rebase` returns a canned
+   code regardless of tree state. That is why the bug survived five closed ledger entries.
+   Real-git tests are the only thing that closed it.
+3. **Copy the reasoning, not the template.** §2.4's near-miss came from matching two
+   precedents' *shape* instead of their *reason*.
+4. **A stale doc that says "trust me over the tool" is worse than no doc** (§2.2).
+5. **A count is only valid at the sha it was measured on** (§2.6).
+6. **The scanner's N≥3 list is a prompt to check, not a work queue** — both classes were
+   already formalized.
+7. **A subagent refusing an out-of-band instruction is correct behaviour.** The dependabot
+   engineer declined a mid-flight `SendMessage` asking it to edit CI — unrelated to its brief,
+   unverifiable provenance — and said a real tech-lead should dispatch it normally. It was
+   right; the task was re-dispatched properly. Use `SendMessage` to *extend* a brief; use a
+   fresh dispatch for genuinely new scope.
