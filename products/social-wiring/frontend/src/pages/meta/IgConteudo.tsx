@@ -187,10 +187,13 @@ function MediaTypeFallback({ mediaType }: { mediaType?: string | null }) {
 }
 
 function MediaGrid({ accountId }: { accountId: string }) {
-  const { data, isLoading, isError } = useIgMedia(accountId, 24);
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this media grid on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data, isPending, isError } = useIgMedia(accountId, 24);
   const media = data?.media ?? [];
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div data-testid="ig-content-grid-loading">
         <p className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">

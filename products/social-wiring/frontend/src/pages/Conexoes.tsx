@@ -158,9 +158,12 @@ function WhatsAppConnectionCard({
 
 // ─── WhatsApp card section ─────────────────────────────────────────────────────
 function WhatsAppCardSection() {
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this list on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
   const {
     data: connections,
-    isLoading,
+    isPending,
     isError,
   } = useWhatsAppConnections();
   const { remove } = useWhatsAppConnectionMutations();
@@ -181,7 +184,7 @@ function WhatsAppCardSection() {
     });
   };
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="flex h-24 items-center justify-center gap-2 text-sm text-muted-foreground" data-testid="wa-loading">
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -339,7 +342,10 @@ function YouTubeCardSection({
 }: {
   marcas: Marca[];
 }) {
-  const { data: accounts = [], isLoading, isError } =
+  // `isPending`, not `isLoading` — per KB § PATTERNS/frontend/lying-loading-state.md
+  // the rule is absolute (no `.isLoading` in a render branch), even though
+  // this file's `&&`-gated shape isn't yet one of the AST-tracked kinds.
+  const { data: accounts = [], isPending, isError } =
     useIntegrationAccounts("youtube");
 
   const adopt = useAdoptLegacy("youtube");
@@ -492,7 +498,7 @@ function YouTubeCardSection({
       </div>
 
       {/* Loading */}
-      {isLoading && (
+      {isPending && (
         <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Carregando contas YouTube...
@@ -507,7 +513,7 @@ function YouTubeCardSection({
       )}
 
       {/* Empty */}
-      {!isLoading && !isError && accounts.length === 0 && (
+      {!isPending && !isError && accounts.length === 0 && (
         <div className="rounded-md border border-dashed bg-muted/20 py-8 text-center">
           <Plus className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
@@ -519,7 +525,7 @@ function YouTubeCardSection({
       )}
 
       {/* Client groups */}
-      {!isLoading && !isError && accounts.length > 0 && (
+      {!isPending && !isError && accounts.length > 0 && (
         <div className="space-y-6">
           {groups.map(({ client, accounts: groupAccounts }) => (
             <ClientSection

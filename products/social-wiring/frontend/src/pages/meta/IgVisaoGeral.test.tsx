@@ -81,15 +81,15 @@ function setDefaults() {
   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
   mockUseMetaContext.mockReturnValue({
     data: { instagram: makeAccount(), pages: [], user: null },
-    isLoading: false,
+    isPending: false,
     isError: false,
   });
   mockUseIgInsights.mockReturnValue({
     data: { object_id: "x", metrics: { reach: 500, profile_views: 80 }, series: [] },
-    isLoading: false,
+    isPending: false,
   });
-  mockUseIgMedia.mockReturnValue({ data: { media: [] }, isLoading: false, isError: false });
-  mockUseIgSnapshots.mockReturnValue({ data: { snapshots: [] }, isLoading: false, isError: false });
+  mockUseIgMedia.mockReturnValue({ data: { media: [] }, isPending: false, isError: false });
+  mockUseIgSnapshots.mockReturnValue({ data: { snapshots: [] }, isPending: false, isError: false });
   mockUseCaptureIgSnapshot.mockReturnValue({ mutate: vi.fn(), isPending: false });
 }
 
@@ -119,13 +119,13 @@ describe("IgVisaoGeral — no account selected", () => {
 
 describe("IgVisaoGeral — context states", () => {
   it("renders a skeleton while context is loading", async () => {
-    mockUseMetaContext.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    mockUseMetaContext.mockReturnValue({ data: undefined, isPending: true, isError: false });
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-overview-loading")).toBeTruthy();
   });
 
   it("renders an error state when context fails", async () => {
-    mockUseMetaContext.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    mockUseMetaContext.mockReturnValue({ data: undefined, isPending: false, isError: true });
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-overview-error")).toBeTruthy();
   });
@@ -133,7 +133,7 @@ describe("IgVisaoGeral — context states", () => {
   it("renders an empty state when there is no IG account", async () => {
     mockUseMetaContext.mockReturnValue({
       data: { instagram: null, pages: [], user: null },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { getByTestId } = await renderPage();
@@ -179,7 +179,7 @@ describe("IgVisaoGeral — success", () => {
   it("surfaces the insights error banner", async () => {
     mockUseIgInsights.mockReturnValue({
       data: { object_id: "x", metrics: {}, series: [], error: "permissão negada" },
-      isLoading: false,
+      isPending: false,
     });
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-insights-error")).toBeTruthy();

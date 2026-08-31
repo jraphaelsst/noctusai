@@ -49,10 +49,10 @@ function setDefaults() {
   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
   mockUseMetaContext.mockReturnValue({
     data: { instagram: null, pages: [{ id: "page-1", name: "Minha Página" }], user: null },
-    isLoading: false,
+    isPending: false,
     isError: false,
   });
-  mockUseFbInsights.mockReturnValue({ data: { object_id: "page-1", metrics: {}, series: [] }, isLoading: false, isError: false });
+  mockUseFbInsights.mockReturnValue({ data: { object_id: "page-1", metrics: {}, series: [] }, isPending: false, isError: false });
 }
 
 beforeEach(() => setDefaults());
@@ -74,13 +74,13 @@ describe("FbVisaoGeral — no account selected", () => {
 
 describe("FbVisaoGeral — context states", () => {
   it("renders a loading state", async () => {
-    mockUseMetaContext.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    mockUseMetaContext.mockReturnValue({ data: undefined, isPending: true, isError: false });
     const { getByTestId } = await renderPage();
     expect(getByTestId("fb-context-loading")).toBeTruthy();
   });
 
   it("renders an error state", async () => {
-    mockUseMetaContext.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    mockUseMetaContext.mockReturnValue({ data: undefined, isPending: false, isError: true });
     const { getByTestId } = await renderPage();
     expect(getByTestId("fb-context-error")).toBeTruthy();
   });
@@ -88,7 +88,7 @@ describe("FbVisaoGeral — context states", () => {
   it("renders a no-pages state", async () => {
     mockUseMetaContext.mockReturnValue({
       data: { instagram: null, pages: [], user: null },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { getByTestId } = await renderPage();
@@ -98,13 +98,13 @@ describe("FbVisaoGeral — context states", () => {
 
 describe("FbVisaoGeral — insights states", () => {
   it("renders a loading state", async () => {
-    mockUseFbInsights.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    mockUseFbInsights.mockReturnValue({ data: undefined, isPending: true, isError: false });
     const { getByTestId } = await renderPage();
     expect(getByTestId("fb-insights-loading")).toBeTruthy();
   });
 
   it("renders an error state", async () => {
-    mockUseFbInsights.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    mockUseFbInsights.mockReturnValue({ data: undefined, isPending: false, isError: true });
     const { getByTestId } = await renderPage();
     expect(getByTestId("fb-insights-error")).toBeTruthy();
   });
@@ -117,7 +117,7 @@ describe("FbVisaoGeral — insights states", () => {
   it("renders metric cards on success", async () => {
     mockUseFbInsights.mockReturnValue({
       data: { object_id: "page-1", metrics: { page_impressions: 500 }, series: [] },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { getByTestId, getByText } = await renderPage();

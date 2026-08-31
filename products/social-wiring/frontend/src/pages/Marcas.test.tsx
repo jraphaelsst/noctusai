@@ -71,7 +71,7 @@ const makeClient = (overrides: Partial<{
 // ─── Defaults ────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
+  mockUseClients.mockReturnValue({ data: [], isPending: false, isError: false });
   mockUseCreateClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseUpdateClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseDeleteClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
@@ -98,7 +98,7 @@ async function renderMarcas(initialEntries: string[] = ["/"]) {
 
 describe("Marcas — loading state", () => {
   it("renders skeleton while loading", async () => {
-    mockUseClients.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    mockUseClients.mockReturnValue({ data: undefined, isPending: true, isError: false });
     const { getByTestId } = await renderMarcas();
     expect(getByTestId("clients-skeleton")).toBeTruthy();
   });
@@ -110,7 +110,7 @@ describe("Marcas — success state", () => {
       makeClient({ id: "c-1", name: "Acme Corp" }),
       makeClient({ id: "c-2", name: "Beta Ltd", slug: "beta" }),
     ];
-    mockUseClients.mockReturnValue({ data: marcas, isLoading: false, isError: false });
+    mockUseClients.mockReturnValue({ data: marcas, isPending: false, isError: false });
 
     const { getAllByTestId, getByText } = await renderMarcas();
     expect(getAllByTestId("client-card").length).toBe(2);
@@ -119,7 +119,7 @@ describe("Marcas — success state", () => {
   });
 
   it("renders the page header", async () => {
-    mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
+    mockUseClients.mockReturnValue({ data: [], isPending: false, isError: false });
     const { getByText } = await renderMarcas();
     expect(getByText("Marcas")).toBeTruthy();
   });
@@ -127,7 +127,7 @@ describe("Marcas — success state", () => {
   it("renders kind badge when present", async () => {
     mockUseClients.mockReturnValue({
       data: [makeClient({ kind: "empresa" })],
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { getByText } = await renderMarcas();
@@ -137,7 +137,7 @@ describe("Marcas — success state", () => {
 
 describe("Marcas — empty state", () => {
   it("renders empty state when no clients", async () => {
-    mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
+    mockUseClients.mockReturnValue({ data: [], isPending: false, isError: false });
     const { getByTestId } = await renderMarcas();
     expect(getByTestId("marcas-empty")).toBeTruthy();
   });
@@ -147,7 +147,7 @@ describe("Marcas — error state", () => {
   it("renders error state on fetch failure", async () => {
     mockUseClients.mockReturnValue({
       data: undefined,
-      isLoading: false,
+      isPending: false,
       isError: true,
       error: new Error("Network error"),
     });
@@ -160,7 +160,7 @@ describe("Marcas — error state", () => {
 describe("Marcas — modal interactions", () => {
   it("opens MarcaModal when card is clicked", async () => {
     const client = makeClient({ id: "c-1", name: "Acme Corp" });
-    mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
+    mockUseClients.mockReturnValue({ data: [client], isPending: false, isError: false });
 
     const { getAllByTestId, getByTestId, fireEvent } = await renderMarcas();
 
@@ -174,7 +174,7 @@ describe("Marcas — modal interactions", () => {
 
   it("opens MarcaModal on Chat tab when chat button is clicked", async () => {
     const client = makeClient({ id: "c-1", name: "Acme Corp" });
-    mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
+    mockUseClients.mockReturnValue({ data: [client], isPending: false, isError: false });
 
     const { getAllByTestId, getByTestId, fireEvent } = await renderMarcas();
 
@@ -187,7 +187,7 @@ describe("Marcas — modal interactions", () => {
 
   it("closes modal when onClose is called", async () => {
     const client = makeClient({ id: "c-1", name: "Acme Corp" });
-    mockUseClients.mockReturnValue({ data: [client], isLoading: false, isError: false });
+    mockUseClients.mockReturnValue({ data: [client], isPending: false, isError: false });
 
     const { getAllByTestId, queryByTestId, getByText, fireEvent } = await renderMarcas();
 
@@ -202,7 +202,7 @@ describe("Marcas — modal interactions", () => {
 
 describe("Marcas — create dialog", () => {
   it("shows at least one create dialog button", async () => {
-    mockUseClients.mockReturnValue({ data: [], isLoading: false, isError: false });
+    mockUseClients.mockReturnValue({ data: [], isPending: false, isError: false });
     // The empty state renders a second CreateClientDialog, so multiple buttons exist.
     const { getAllByTestId } = await renderMarcas();
     const buttons = getAllByTestId("create-client-btn");

@@ -56,7 +56,10 @@ import {
 // ─── Followers trend chart ───────────────────────────────────────────────────
 
 function FollowersTrendChart({ accountId }: { accountId: string }) {
-  const { data, isLoading, isError } = useIgSnapshots(accountId, 90);
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this chart on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data, isPending, isError } = useIgSnapshots(accountId, 90);
 
   const chartData = useMemo(
     () =>
@@ -70,7 +73,7 @@ function FollowersTrendChart({ accountId }: { accountId: string }) {
     [data],
   );
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div data-testid="ig-trend-loading">
         <Skeleton className="h-64 rounded-md" />
@@ -159,10 +162,11 @@ function FollowersTrendChart({ accountId }: { accountId: string }) {
 // ─── Per-post table ───────────────────────────────────────────────────────────
 
 function PostsTable({ accountId }: { accountId: string }) {
-  const { data, isLoading, isError } = useIgMedia(accountId, 25);
+  // `isPending`, not `isLoading` — same rule, per-post table fetch.
+  const { data, isPending, isError } = useIgMedia(accountId, 25);
   const media = data?.media ?? [];
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="space-y-2" data-testid="ig-posts-loading">
         {Array.from({ length: 4 }).map((_, i) => (
@@ -257,9 +261,13 @@ function PostsTable({ accountId }: { accountId: string }) {
 
 export default function IgVisaoGeral() {
   const accountId = useActiveMetaAccountId();
-  const { data: context, isLoading: contextLoading, isError: contextError } =
+  // `isPending`, not `isLoading` — destructure-RENAME shape
+  // (`isLoading: contextLoading` / `isLoading: insightsLoading`), same
+  // banned pattern the AST scanner doesn't track by alias name.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data: context, isPending: contextPending, isError: contextError } =
     useMetaContext(accountId);
-  const { data: insights, isLoading: insightsLoading } = useIgInsights(accountId, 30);
+  const { data: insights, isPending: insightsPending } = useIgInsights(accountId, 30);
   const capture = useCaptureIgSnapshot(accountId);
 
   if (!accountId) {
@@ -276,7 +284,7 @@ export default function IgVisaoGeral() {
     );
   }
 
-  if (contextLoading) {
+  if (contextPending) {
     return (
       <div className="space-y-4" data-testid="ig-overview-loading">
         <Skeleton className="h-10 w-64" />
@@ -361,14 +369,14 @@ export default function IgVisaoGeral() {
         <MetricCard
           icon={Eye}
           label="Alcance (30d)"
-          value={insightsLoading ? "—" : formatNumber(alcance)}
-          loading={insightsLoading}
+          value={insightsPending ? "—" : formatNumber(alcance)}
+          loading={insightsPending}
         />
         <MetricCard
           icon={Instagram}
           label="Visitas ao perfil (30d)"
-          value={insightsLoading ? "—" : formatNumber(visitas)}
-          loading={insightsLoading}
+          value={insightsPending ? "—" : formatNumber(visitas)}
+          loading={insightsPending}
         />
       </div>
 

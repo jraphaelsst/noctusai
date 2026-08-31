@@ -19,9 +19,14 @@ interface MailchimpGateProps {
 }
 
 export function MailchimpGate({ children }: MailchimpGateProps) {
-  const { data, isLoading } = useMailchimpConnection();
+  // `isPending` (not `isLoading`) — TanStack v5's `isLoading` is
+  // `isPending && isFetching` and goes FALSE mid-refetch, which would let
+  // the `!data?.connected` branch below win and unmount `children` on
+  // every background refetch. Bare `isPending` is correct here: it stays
+  // true only until data first resolves. → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data, isPending } = useMailchimpConnection();
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="space-y-4 p-6" data-testid="mailchimp-gate-loading">
         <Skeleton className="h-8 w-48" />

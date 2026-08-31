@@ -7,6 +7,7 @@
  * Built on @tanstack/react-query v5. queryFns never return undefined.
  */
 import {
+  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -68,6 +69,11 @@ export function useMailchimpSegments(params?: ListSegmentsParams) {
   return useQuery<SegmentsOut>({
     queryKey: [...SEGMENTS_KEY, params],
     queryFn: () => api.get<SegmentsOut>(qs ? `${BASE}?${qs}` : BASE),
+    // The key varies only by `offset`/`count` — paging through the SAME
+    // list, never a different entity — so keeping the previous page
+    // visible while the next one loads is safe (standard pagination UX,
+    // no cross-entity mismatch hazard).
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -89,6 +95,14 @@ export function useMailchimpSegmentMembers(
           : `${BASE}/${segmentId}/members`,
       ),
     enabled: segmentId != null,
+    // NO placeholderData — `segmentId` is part of the key. Reusing a
+    // different segment's member page while its drawer re-opens for a
+    // NEW segment would render segment A's members under segment B's
+    // header, the exact cross-entity hazard this product has shipped
+    // before (leads-under-wrong-broker). Offset-only re-pagination
+    // within the SAME segment re-fetches from a cold cache anyway
+    // (each offset is its own query key) so there is no smooth-paging
+    // upside here to trade against that risk.
   });
 }
 

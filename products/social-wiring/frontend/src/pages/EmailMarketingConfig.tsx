@@ -55,7 +55,10 @@ import {
 } from "@/hooks/useMailchimpConnection";
 
 export default function EmailMarketingConfig() {
-  const { data: connection, isLoading } = useMailchimpConnection();
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this whole config page on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data: connection, isPending } = useMailchimpConnection();
   const { put, patch, remove } = useMailchimpConnectionMutations();
   const { data: audiences } = useMailchimpAudiences(connection?.connected === true);
 
@@ -106,7 +109,7 @@ export default function EmailMarketingConfig() {
     });
   }
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="p-6 max-w-2xl mx-auto space-y-4">
         <Skeleton className="h-8 w-48" />

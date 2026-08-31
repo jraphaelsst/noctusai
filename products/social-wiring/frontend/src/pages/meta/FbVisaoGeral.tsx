@@ -23,9 +23,12 @@ import {
 } from "./FbPageSelect";
 
 function InsightsPanel({ accountId, pageId }: { accountId: string; pageId: string }) {
-  const { data, isLoading, isError } = useFbInsights(accountId, pageId);
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount these KPI tiles on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data, isPending, isError } = useFbInsights(accountId, pageId);
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div
         className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
@@ -77,7 +80,8 @@ function InsightsPanel({ accountId, pageId }: { accountId: string; pageId: strin
 
 export default function FbVisaoGeral() {
   const accountId = useActiveMetaAccountId();
-  const { data: context, isLoading, isError } = useFbPages(accountId);
+  // `isPending`, not `isLoading` — same rule, page-context fetch.
+  const { data: context, isPending, isError } = useFbPages(accountId);
   const [pageId, setPageId] = useState<string | null>(null);
 
   if (!accountId) {
@@ -94,7 +98,7 @@ export default function FbVisaoGeral() {
     );
   }
 
-  if (isLoading) return <FbContextLoading />;
+  if (isPending) return <FbContextLoading />;
   if (isError) return <FbContextError />;
 
   const pages = context?.pages ?? [];

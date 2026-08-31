@@ -146,7 +146,10 @@ function ConfigPanel({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function WhatsAppChat() {
-  const { data: connections = [], isLoading, isError } = useWhatsAppConnections();
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this whole chat picker on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data: connections = [], isPending, isError } = useWhatsAppConnections();
   const { remove } = useWhatsAppConnectionMutations();
 
   const activeAccountId = useActiveAccountId("whatsapp");
@@ -189,7 +192,7 @@ export default function WhatsAppChat() {
     });
   }
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="flex h-64 items-center justify-center gap-3 text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin" />

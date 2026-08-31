@@ -80,7 +80,10 @@ function MembrosDrawer({ segment, onClose }: MembrosDrawerProps) {
   const [addError, setAddError] = useState<string | null>(null);
   const { addMember, removeMember } = useMailchimpSegmentMutations();
 
-  const { data, isLoading } = useMailchimpSegmentMembers(
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this member list on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data, isPending } = useMailchimpSegmentMembers(
     segment?.id ?? null,
     { count: PAGE_SIZE, offset: memberOffset },
   );
@@ -192,7 +195,7 @@ function MembrosDrawer({ segment, onClose }: MembrosDrawerProps) {
 
         {/* Member list */}
         <div className="flex-1 overflow-y-auto">
-          {isLoading ? (
+          {isPending ? (
             <div className="p-4 space-y-2">
               {Array.from({ length: 5 }).map((_, i) => (
                 <Skeleton key={i} className="h-10 w-full" />
@@ -274,7 +277,11 @@ function ListasContent() {
   const [formName, setFormName] = useState("");
   const [editingSegment, setEditingSegment] = useState<SegmentOut | null>(null);
 
-  const { data, isLoading, isError, error } = useMailchimpSegments({
+  // `isPending`, not `isLoading` — the list is `placeholderData`-backed
+  // (keepPreviousData) for pagination, so `isPending` only fires once,
+  // on the very first load; paging never re-triggers this skeleton.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data, isPending, isError, error } = useMailchimpSegments({
     count: PAGE_SIZE,
     offset,
   });
@@ -355,7 +362,7 @@ function ListasContent() {
         </div>
 
         {/* Loading */}
-        {isLoading && (
+        {isPending && (
           <div className="space-y-2" data-testid="listas-loading">
             {Array.from({ length: 5 }).map((_, i) => (
               <Skeleton key={i} className="h-12 w-full" />
@@ -377,7 +384,7 @@ function ListasContent() {
         )}
 
         {/* Empty */}
-        {!isLoading && !isError && data?.items.length === 0 && (
+        {!isPending && !isError && data?.items.length === 0 && (
           <Card data-testid="listas-empty">
             <CardHeader>
               <CardTitle className="text-base">Nenhuma lista encontrada</CardTitle>
@@ -389,7 +396,7 @@ function ListasContent() {
         )}
 
         {/* Table */}
-        {!isLoading && !isError && (data?.items.length ?? 0) > 0 && (
+        {!isPending && !isError && (data?.items.length ?? 0) > 0 && (
           <Card data-testid="listas-table">
             <CardContent className="p-0">
               <table className="w-full text-sm">

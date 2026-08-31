@@ -66,10 +66,10 @@ function setDefaults() {
   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
   mockUseMetaContext.mockReturnValue({
     data: { instagram: null, pages: [{ id: "page-1", name: "Minha Página" }], user: null },
-    isLoading: false,
+    isPending: false,
     isError: false,
   });
-  mockUseFbPosts.mockReturnValue({ data: { posts: [] }, isLoading: false, isError: false });
+  mockUseFbPosts.mockReturnValue({ data: { posts: [] }, isPending: false, isError: false });
   mockUseFbPublish.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, data: undefined });
 }
 
@@ -94,7 +94,7 @@ describe("FbConteudo — no pages", () => {
   it("shows the no-pages state", async () => {
     mockUseMetaContext.mockReturnValue({
       data: { instagram: null, pages: [], user: null },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { getByTestId } = await renderPage();
@@ -104,13 +104,13 @@ describe("FbConteudo — no pages", () => {
 
 describe("FbConteudo — posts list states", () => {
   it("renders a loading state", async () => {
-    mockUseFbPosts.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    mockUseFbPosts.mockReturnValue({ data: undefined, isPending: true, isError: false });
     const { getByTestId } = await renderPage();
     expect(getByTestId("fb-posts-loading")).toBeTruthy();
   });
 
   it("renders an error state", async () => {
-    mockUseFbPosts.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    mockUseFbPosts.mockReturnValue({ data: undefined, isPending: false, isError: true });
     const { getByTestId } = await renderPage();
     expect(getByTestId("fb-posts-error")).toBeTruthy();
   });
@@ -123,7 +123,7 @@ describe("FbConteudo — posts list states", () => {
   it("renders the posts list on success", async () => {
     mockUseFbPosts.mockReturnValue({
       data: { posts: [{ id: "p1", message: "oi", likes_count: 3, comments_count: 1 }] },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const { getByTestId } = await renderPage();

@@ -239,7 +239,7 @@ describe("Conexoes — IntegrationCard rendering", () => {
       makeAccount({ id: "acc-2", account_label: "Canal 2" }),
     ];
     setAccounts({
-      data: accounts, isLoading: false, isError: false,
+      data: accounts, isLoading: false, isPending: false, isError: false,
     });
 
     const { getAllByTestId } = await renderConexoes();
@@ -261,7 +261,7 @@ describe("Conexoes — IntegrationCard rendering", () => {
 describe("Conexoes — empty state", () => {
   it("shows empty state when no YouTube accounts", async () => {
     setAccounts({
-      data: [], isLoading: false, isError: false,
+      data: [], isLoading: false, isPending: false, isError: false,
     });
     const { getByText } = await renderConexoes();
     expect(getByText(/Nenhuma conta YouTube conectada/i)).toBeTruthy();
@@ -269,7 +269,7 @@ describe("Conexoes — empty state", () => {
 
   it("shows loading spinner while accounts loading", async () => {
     setAccounts({
-      data: [], isLoading: true, isError: false,
+      data: [], isLoading: true, isPending: true, isError: false,
     });
     const { getByText } = await renderConexoes();
     expect(getByText(/Carregando contas YouTube/i)).toBeTruthy();
@@ -277,7 +277,7 @@ describe("Conexoes — empty state", () => {
 
   it("shows error state when accounts fail to load", async () => {
     setAccounts({
-      data: [], isLoading: false, isError: true,
+      data: [], isLoading: false, isPending: false, isError: true,
     });
     const { getByText } = await renderConexoes();
     expect(getByText(/Erro ao carregar contas/i)).toBeTruthy();
@@ -291,7 +291,7 @@ describe("Conexoes — client grouping", () => {
       makeAccount({ id: "acc-2", marca_id: null, account_label: "Canal Livre" }),
     ];
     setAccounts({
-      data: accounts, isLoading: false, isError: false,
+      data: accounts, isLoading: false, isPending: false, isError: false,
     });
     mockClients.mockReturnValue({
       data: [clientA], isLoading: false, isError: false,
@@ -311,7 +311,7 @@ describe("Conexoes — client grouping", () => {
       makeAccount({ id: "acc-2", marca_id: null, account_label: "Canal Livre" }),
     ];
     setAccounts({
-      data: accounts, isLoading: false, isError: false,
+      data: accounts, isLoading: false, isPending: false, isError: false,
     });
     mockClients.mockReturnValue({
       data: [clientA], isLoading: false, isError: false,

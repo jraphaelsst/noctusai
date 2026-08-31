@@ -418,7 +418,10 @@ function YouTubeAccountPicker({
   onChange: (accountId: string) => void;
   disabled?: boolean;
 }) {
-  const { data: accounts = [], isLoading } = useIntegrationAccounts("youtube");
+  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
+  // and would unmount this select on every background refresh.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  const { data: accounts = [], isPending } = useIntegrationAccounts("youtube");
 
   // Auto-select on first load ONLY when there is exactly one account — with
   // more than one, the user must pick explicitly (the placeholder below).
@@ -427,7 +430,7 @@ function YouTubeAccountPicker({
     onChange(soleAccount.id);
   }
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <div className="grid gap-1.5">
         <Label>Conta YouTube</Label>

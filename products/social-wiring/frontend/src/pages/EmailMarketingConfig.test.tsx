@@ -126,7 +126,7 @@ const defaultMutations = () => ({
 beforeEach(() => {
   mockUseMailchimpConnection.mockReturnValue({
     data: { connected: false },
-    isLoading: false,
+    isPending: false,
   });
   mockUseMailchimpAudiences.mockReturnValue({
     data: null,
@@ -199,7 +199,7 @@ describe("EmailMarketingConfig — connected state", () => {
         account_name: "Minha Conta",
         email: "joao@exemplo.com",
       },
-      isLoading: false,
+      isPending: false,
     });
     mockUseMailchimpAudiences.mockReturnValue({
       data: { items: [makeAudience()], total: 1 },

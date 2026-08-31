@@ -66,10 +66,10 @@ function setDefaults() {
   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
   mockUseIgMedia.mockReturnValue({
     data: { media: [{ id: "media-1", caption: "post 1" }] },
-    isLoading: false,
+    isPending: false,
     isError: false,
   });
-  mockUseIgComments.mockReturnValue({ data: { comments: [] }, isLoading: false, isError: false });
+  mockUseIgComments.mockReturnValue({ data: { comments: [] }, isPending: false, isError: false });
   mockUseIgReplyComment.mockReturnValue(noopMutation());
   mockUseIgHideComment.mockReturnValue(noopMutation());
   mockUseIgDeleteComment.mockReturnValue(noopMutation());
@@ -94,7 +94,7 @@ describe("IgComentarios — no account selected", () => {
 
 describe("IgComentarios — media selector", () => {
   it("shows a no-media message when there are no posts", async () => {
-    mockUseIgMedia.mockReturnValue({ data: { media: [] }, isLoading: false, isError: false });
+    mockUseIgMedia.mockReturnValue({ data: { media: [] }, isPending: false, isError: false });
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-comments-no-media")).toBeTruthy();
   });
@@ -102,13 +102,13 @@ describe("IgComentarios — media selector", () => {
 
 describe("IgComentarios — comments list states", () => {
   it("renders a loading state", async () => {
-    mockUseIgComments.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    mockUseIgComments.mockReturnValue({ data: undefined, isPending: true, isError: false });
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-comments-loading")).toBeTruthy();
   });
 
   it("renders an error state", async () => {
-    mockUseIgComments.mockReturnValue({ data: undefined, isLoading: false, isError: true });
+    mockUseIgComments.mockReturnValue({ data: undefined, isPending: false, isError: true });
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-comments-error")).toBeTruthy();
   });
@@ -121,7 +121,7 @@ describe("IgComentarios — comments list states", () => {
   it("renders the comments list on success and replies", async () => {
     mockUseIgComments.mockReturnValue({
       data: { comments: [{ id: "c1", text: "oi", from_username: "fulano" }] },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     const reply = vi.fn();
@@ -136,7 +136,7 @@ describe("IgComentarios — comments list states", () => {
   it("shows the App Review gate on a gated hide action", async () => {
     mockUseIgComments.mockReturnValue({
       data: { comments: [{ id: "c1", text: "oi" }] },
-      isLoading: false,
+      isPending: false,
       isError: false,
     });
     mockUseIgHideComment.mockReturnValue({

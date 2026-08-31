@@ -138,7 +138,7 @@ const makeDefaultActions = () => ({
 });
 
 beforeEach(() => {
-  mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: false });
+  mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: false });
   mockUseWhatsAppConnectionMutations.mockReturnValue(makeDefaultMutations());
   mockUseWhatsAppConnectionStatus.mockReturnValue({ data: null });
   mockUseWhatsAppConnectionQr.mockReturnValue({ data: null });
@@ -165,7 +165,7 @@ async function renderWhatsAppConnections() {
 
 describe("WhatsAppConnections — empty + loading states", () => {
   it("shows loading spinner while connections are loading", async () => {
-    mockUseWhatsAppConnections.mockReturnValue({ data: [], isLoading: true });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [], isPending: true });
     const { getByTestId } = await renderWhatsAppConnections();
     expect(getByTestId("loading-connections")).toBeTruthy();
   });
@@ -346,7 +346,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
       session_name: "sw_atendimento_sp",
       webhook_url: "https://social.noctusai.com/api/whatsapp/webhook/tok123",
     });
-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
     mockUseWhatsAppConnectionStatus.mockReturnValue({
       data: { connection_id: line.id, status: "STOPPED", paired: false, me_id: null, me_name: null, session: line.session_name, error: null },
     });
@@ -365,7 +365,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
 
   it("detail dialog does NOT contain editable session / server / webhook inputs", async () => {
     const line = makeLine();
-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
 
     const { getByText, fireEvent, queryByPlaceholderText } = await renderWhatsAppConnections();
     fireEvent.click(getByText("Atendimento SP").closest("button")!);
@@ -377,7 +377,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
 
   it("shows paired success banner when status.paired=true", async () => {
     const line = makeLine();
-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
     mockUseWhatsAppConnectionStatus.mockReturnValue({
       data: {
         connection_id: line.id,
@@ -402,7 +402,7 @@ describe("ConnectionDetailDialog — read-only derived fields", () => {
       .mockResolvedValue({ connection_id: "conn-1", api_key: "revealed-key" });
     mockUseRevealApiKey.mockReturnValue({ mutateAsync: revealMutate, isPending: false });
     const line = makeLine();
-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
 
     const rtl = await import("@testing-library/react");
     const { getByText, getByTestId, queryByTestId } = await renderWhatsAppConnections();
@@ -437,7 +437,7 @@ describe("ConnectionDetailDialog — QR restart behavior", () => {
     });
 
     const line = makeLine();
-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
     mockUseWhatsAppConnectionStatus.mockReturnValue({
       data: {
         connection_id: line.id,
@@ -473,7 +473,7 @@ describe("ConnectionDetailDialog — QR restart behavior", () => {
     });
 
     const line = makeLine();
-    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isLoading: false });
+    mockUseWhatsAppConnections.mockReturnValue({ data: [line], isPending: false });
     // Status starts as FAILED (unpaired)
     mockUseWhatsAppConnectionStatus.mockReturnValue({
       data: {

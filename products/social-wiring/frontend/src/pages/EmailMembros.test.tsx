@@ -144,7 +144,7 @@ const defaultMutations = () => ({
 beforeEach(() => {
   mockUseMailchimpConnection.mockReturnValue({
     data: { connected: true },
-    isLoading: false,
+    isPending: false,
   });
   mockUseMailchimpContacts.mockReturnValue({
     data: { items: [], total: 0 },
@@ -170,7 +170,7 @@ describe("EmailMembros — MailchimpGate", () => {
   it("shows NotConnected when connection.connected=false", async () => {
     mockUseMailchimpConnection.mockReturnValue({
       data: { connected: false },
-      isLoading: false,
+      isPending: false,
     });
     const { getByTestId } = await renderEmailMembros();
     expect(getByTestId("mailchimp-not-connected")).toBeTruthy();
@@ -179,7 +179,7 @@ describe("EmailMembros — MailchimpGate", () => {
   it("shows loading skeleton while gate probe is in flight", async () => {
     mockUseMailchimpConnection.mockReturnValue({
       data: undefined,
-      isLoading: true,
+      isPending: true,
     });
     const { getByTestId } = await renderEmailMembros();
     expect(getByTestId("mailchimp-gate-loading")).toBeTruthy();

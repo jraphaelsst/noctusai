@@ -83,7 +83,11 @@ export function N8nSettingsPanel() {
     );
   }
 
-  if (settingsQuery.isLoading) {
+  // `isPending` — bare, not `isLoading`: `isLoading` is `isPending &&
+  // isFetching` in v5 and goes FALSE mid-refetch, which would let a
+  // later branch win and unmount this form on every background
+  // refetch. → KB § PATTERNS/frontend/lying-loading-state.md
+  if (settingsQuery.isPending) {
     return (
       <div className="max-w-xl space-y-4">
         <Skeleton className="h-10 w-full" />
@@ -167,7 +171,7 @@ export function N8nSettingsPanel() {
 
         <div className="space-y-2">
           <Label htmlFor="n8n-tag">Tag da marca</Label>
-          {tagsQuery.isLoading ? (
+          {tagsQuery.isPending ? (
             <Skeleton className="h-10 w-full" />
           ) : (
             <Select value={tagSelection} onValueChange={setTagSelection}>
