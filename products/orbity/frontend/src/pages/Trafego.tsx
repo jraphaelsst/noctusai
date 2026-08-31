@@ -239,12 +239,12 @@ function AggregateCard() {
   const periodEnd = format(today, "yyyy-MM-dd");
   const periodStart = format(subMonths(today, 1), "yyyy-MM-dd");
 
-  const { data, isLoading, error } = useSpendLeadsAggregate(
+  const { data, isPending, error } = useSpendLeadsAggregate(
     periodStart,
     periodEnd,
   );
 
-  if (isLoading) {
+  if (isPending && !data) {
     return (
       <div className="rounded-lg border border-border bg-card p-5 flex items-center gap-3">
         <Loader2 className="h-5 w-5 animate-spin text-primary" />
@@ -597,7 +597,7 @@ function CampaignDialog({
 
 function CampanhasTab() {
   const [filters, setFilters] = useState<CampaignFilters>({});
-  const { data, isLoading, error, refetch } = useCampaigns(filters);
+  const { data, isPending, error, refetch } = useCampaigns(filters);
   const { data: accountsData } = useAdAccounts();
   const deleteMut = useDeleteCampaign();
   const situationMut = useUpdateSituation();
@@ -712,7 +712,7 @@ function CampanhasTab() {
       </div>
 
       {/* Content */}
-      {isLoading ? (
+      {isPending && !data ? (
         <LoadingState label="Carregando campanhas..." />
       ) : error ? (
         <ErrorState message={error.message} onRetry={() => refetch()} />
@@ -1050,7 +1050,7 @@ function AdAccountDialog({ open, editing, onClose }: AdAccountDialogProps) {
 // ---------------------------------------------------------------------------
 
 function ContasTab() {
-  const { data, isLoading, error, refetch } = useAdAccounts();
+  const { data, isPending, error, refetch } = useAdAccounts();
   const deleteMut = useDeleteAdAccount();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AdAccount | null>(null);
@@ -1075,7 +1075,7 @@ function ContasTab() {
         </button>
       </div>
 
-      {isLoading ? (
+      {isPending && !data ? (
         <LoadingState label="Carregando contas de anúncio..." />
       ) : error ? (
         <ErrorState message={error.message} onRetry={() => refetch()} />

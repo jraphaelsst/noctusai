@@ -333,7 +333,7 @@ export default function Agenda() {
   const [editingEvent, setEditingEvent] = useState<AgendaEvent | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
 
-  const { data, isLoading, isError, error } = useAgendaEvents(
+  const { data, isPending, isError, error } = useAgendaEvents(
     filterType ? { event_type: filterType } : undefined
   );
   const deleteEvent = useDeleteAgendaEvent();
@@ -371,7 +371,7 @@ export default function Agenda() {
   };
 
   // ── Loading state ──
-  if (isLoading) {
+  if (isPending && !data) {
     return (
       <div className="flex items-center justify-center py-20 text-muted-foreground">
         <Loader2 className="h-6 w-6 animate-spin mr-2" />

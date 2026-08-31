@@ -500,13 +500,13 @@ function StepDialog({
 // ---------------------------------------------------------------------------
 
 function StepsEditor({ flow }: { flow: Flow }) {
-  const { data: steps, isLoading, error, refetch } = useSteps(flow.id);
+  const { data: steps, isPending, error, refetch } = useSteps(flow.id);
   const deleteMut = useDeleteStep();
   const [stepDialogOpen, setStepDialogOpen] = useState(false);
   const [editingStep, setEditingStep] = useState<Step | null>(null);
   const [confirmDeleteStep, setConfirmDeleteStep] = useState<Step | null>(null);
 
-  if (isLoading) return <LoadingState label="Carregando passos..." />;
+  if (isPending && !steps) return <LoadingState label="Carregando passos..." />;
   if (error)
     return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
@@ -743,7 +743,7 @@ function TriggerDialog({
 // ---------------------------------------------------------------------------
 
 function FlowsTab() {
-  const { data: flows, isLoading, error, refetch } = useFlows();
+  const { data: flows, isPending, error, refetch } = useFlows();
   const deleteMut = useDeleteFlow();
   const updateMut = useUpdateFlow();
 
@@ -753,7 +753,7 @@ function FlowsTab() {
   const [expandedFlow, setExpandedFlow] = useState<string | null>(null);
   const [triggerFlow, setTriggerFlow] = useState<Flow | null>(null);
 
-  if (isLoading) return <LoadingState label="Carregando fluxos..." />;
+  if (isPending && !flows) return <LoadingState label="Carregando fluxos..." />;
   if (error)
     return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
@@ -951,12 +951,12 @@ function FlowsTab() {
 // ---------------------------------------------------------------------------
 
 function ExecutionsTab() {
-  const { data: executions, isLoading, error, refetch } = useExecutions();
+  const { data: executions, isPending, error, refetch } = useExecutions();
   const cancelMut = useCancelExecution();
   const runDueMut = useRunDue();
   const [confirmCancel, setConfirmCancel] = useState<Execution | null>(null);
 
-  if (isLoading) return <LoadingState label="Carregando execucoes..." />;
+  if (isPending && !executions) return <LoadingState label="Carregando execucoes..." />;
   if (error)
     return <ErrorState message={error.message} onRetry={() => refetch()} />;
 

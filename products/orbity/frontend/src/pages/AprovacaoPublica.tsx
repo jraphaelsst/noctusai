@@ -162,7 +162,7 @@ function PlatformBadge({ platform }: { platform: string }) {
 
 export default function AprovacaoPublica() {
   const { token } = useParams<{ token: string }>();
-  const { data, isLoading, isError, error } = usePublicApproval(token ?? null);
+  const { data, isPending, isError, error } = usePublicApproval(token ?? null);
   const decide = useDecideApproval(token ?? null);
 
   const [feedback, setFeedback] = useState("");
@@ -170,7 +170,7 @@ export default function AprovacaoPublica() {
   const [submitted, setSubmitted] = useState<ApprovalDecision | null>(null);
 
   // --- Loading ---
-  if (isLoading) return <LoadingState />;
+  if (isPending && !data) return <LoadingState />;
 
   // --- Error / expired / already decided ---
   if (isError) {

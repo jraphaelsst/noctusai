@@ -70,7 +70,7 @@ vi.mock("@/hooks/useCrm", () => ({
   useDeleteLead: idleMutation,
   useMoveLeadStage: () => ({ mutate: mockMoveMutate, isPending: false }),
   useSeedDefaultStages: idleMutation,
-  useLeadActivities: () => ({ data: [], isLoading: false }),
+  useLeadActivities: () => ({ data: [], isPending: false }),
   useAddActivity: idleMutation,
 }));
 

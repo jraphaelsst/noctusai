@@ -273,7 +273,7 @@ export default function Tarefas() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-  const { data, isLoading, isError, error } = useTasks(
+  const { data, isPending, isError, error } = useTasks(
     filterPriority ? { priority: filterPriority } : undefined
   );
   const updateStatus = useUpdateTaskStatus();
@@ -307,7 +307,7 @@ export default function Tarefas() {
   };
 
   // ── Loading state ──
-  if (isLoading) {
+  if (isPending && !data) {
     return (
       <div className="flex items-center justify-center py-20 text-muted-foreground">
         <Loader2 className="h-6 w-6 animate-spin mr-2" />

@@ -378,14 +378,14 @@ interface ListTabProps {
 }
 
 function ListTab({ onSelectReport }: ListTabProps) {
-  const { data, isLoading, error, refetch } = useReports();
+  const { data, isPending, error, refetch } = useReports();
   const deleteMut = useDeleteReport();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Report | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Report | null>(null);
 
-  if (isLoading) return <LoadingState label="Carregando relatórios..." />;
+  if (isPending && !data) return <LoadingState label="Carregando relatórios..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
   const items = Array.isArray(data) ? data : [];
@@ -595,7 +595,7 @@ interface DetailTabProps {
 }
 
 function DetailTab({ report, onBack }: DetailTabProps) {
-  const { data: snapshots, isLoading, error, refetch } = useReportSnapshots(report.id);
+  const { data: snapshots, isPending, error, refetch } = useReportSnapshots(report.id);
   const generateMut = useGenerateSnapshot();
   const updateMut = useUpdateReport();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -694,7 +694,7 @@ function DetailTab({ report, onBack }: DetailTabProps) {
         <h3 className="text-base font-semibold text-foreground mb-3">
           Dados do último snapshot
         </h3>
-        {isLoading ? (
+        {isPending && !snapshots ? (
           <LoadingState label="Carregando snapshots..." />
         ) : error ? (
           <ErrorState message={error.message} onRetry={() => refetch()} />

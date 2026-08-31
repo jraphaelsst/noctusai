@@ -413,7 +413,12 @@ interface LeadDetailPanelProps {
 }
 
 function LeadDetailPanel({ lead, stages, onClose, onEdit }: LeadDetailPanelProps) {
-  const { data: activities, isLoading: activitiesLoading } = useLeadActivities(lead.id);
+  // No `placeholderData` here on purpose: this panel stays mounted while the
+  // user switches between leads (no `key={lead.id}`), so the previous lead's
+  // activities would otherwise render — briefly — under the NEW lead's header.
+  // Showing the loading text for a beat is correct; showing the wrong lead's
+  // history is not.
+  const { data: activities, isPending: activitiesPending } = useLeadActivities(lead.id);
   const addActivity = useAddActivity();
   const [actType, setActType] = useState("nota");
   const [actNote, setActNote] = useState("");
@@ -556,7 +561,7 @@ function LeadDetailPanel({ lead, stages, onClose, onEdit }: LeadDetailPanelProps
           </form>
 
           {/* Activity list */}
-          {activitiesLoading ? (
+          {activitiesPending && !activities ? (
             <p className="text-xs text-gray-400">Carregando atividades...</p>
           ) : !activities || activities.length === 0 ? (
             <p className="text-xs text-gray-400 italic">Nenhuma atividade registrada.</p>

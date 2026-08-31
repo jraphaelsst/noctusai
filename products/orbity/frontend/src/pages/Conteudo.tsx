@@ -574,7 +574,7 @@ function PipelineTab({
   campaignFilter?: string;
   onEditPost: (post: Post) => void;
 }) {
-  const { data, isLoading, error, refetch } = usePosts(
+  const { data, isPending, error, refetch } = usePosts(
     campaignFilter ? { campaign_id: campaignFilter } : undefined,
   );
   const [approvalPostId, setApprovalPostId] = useState<string | null>(null);
@@ -582,7 +582,7 @@ function PipelineTab({
     ? (data?.items ?? []).find((p) => p.id === approvalPostId) ?? null
     : null;
 
-  if (isLoading) return <LoadingState label="Carregando pipeline..." />;
+  if (isPending && !data) return <LoadingState label="Carregando pipeline..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
   const posts = data?.items ?? [];
@@ -724,7 +724,7 @@ function PostsTab({
   campaigns: Campaign[];
   campaignFilter?: string;
 }) {
-  const { data, isLoading, error, refetch } = usePosts(
+  const { data, isPending, error, refetch } = usePosts(
     campaignFilter ? { campaign_id: campaignFilter } : undefined,
   );
   const deleteMut = useDeletePost();
@@ -736,7 +736,7 @@ function PostsTab({
     ? (data?.items ?? []).find((p) => p.id === approvalPostId) ?? null
     : null;
 
-  if (isLoading) return <LoadingState label="Carregando posts..." />;
+  if (isPending && !data) return <LoadingState label="Carregando posts..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
   const items = data?.items ?? [];
@@ -1055,14 +1055,14 @@ function CampanhasTab({
 }: {
   onSelectCampaign: (id: string | undefined) => void;
 }) {
-  const { data, isLoading, error, refetch } = useCampaigns();
+  const { data, isPending, error, refetch } = useCampaigns();
   const deleteMut = useDeleteCampaign();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Campaign | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Campaign | null>(null);
   const [activeCampaignId, setActiveCampaignId] = useState<string | undefined>(undefined);
 
-  if (isLoading) return <LoadingState label="Carregando campanhas..." />;
+  if (isPending && !data) return <LoadingState label="Carregando campanhas..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
   const items = data?.items ?? [];

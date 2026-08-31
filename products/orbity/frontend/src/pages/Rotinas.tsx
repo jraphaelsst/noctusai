@@ -282,7 +282,7 @@ export default function Rotinas() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
 
-  const { data: routines, isLoading, isError, error } = useRoutines(showActiveOnly);
+  const { data: routines, isPending, isError, error } = useRoutines(showActiveOnly);
   const deleteRoutine = useDeleteRoutine();
   const updateRoutine = useUpdateRoutine();
   const runDue = useRunDueRoutines();
@@ -326,7 +326,7 @@ export default function Rotinas() {
   };
 
   // ── Loading state ──
-  if (isLoading) {
+  if (isPending && !routines) {
     return (
       <div className="flex items-center justify-center py-20 text-muted-foreground">
         <Loader2 className="h-6 w-6 animate-spin mr-2" />

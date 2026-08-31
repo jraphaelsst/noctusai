@@ -139,9 +139,9 @@ function OverviewTab({ month }: { month: string }) {
   // updates instantly), but these summary cards carry no visible date, so
   // a plain flip with zero signal would silently show the wrong month's
   // figures under the newly-selected month.
-  const { data, isLoading, isFetching, error, refetch } = useCashFlow(month);
+  const { data, isPending, isFetching, error, refetch } = useCashFlow(month);
 
-  if (isLoading) return <LoadingState label="Carregando fluxo de caixa..." />;
+  if (isPending && !data) return <LoadingState label="Carregando fluxo de caixa..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
   if (!data) return <EmptyState label="Sem dados para este mes" />;
 
@@ -417,13 +417,13 @@ function ContractDialog({
 }
 
 function ContractsTab() {
-  const { data, isLoading, error, refetch } = useContracts();
+  const { data, isPending, error, refetch } = useContracts();
   const deleteMut = useDeleteContract();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Contract | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Contract | null>(null);
 
-  if (isLoading) return <LoadingState label="Carregando contratos..." />;
+  if (isPending && !data) return <LoadingState label="Carregando contratos..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
   const items = data?.items ?? [];
@@ -736,13 +736,13 @@ function ExpenseDialog({
 }
 
 function ExpensesTab() {
-  const { data, isLoading, error, refetch } = useExpenses();
+  const { data, isPending, error, refetch } = useExpenses();
   const deleteMut = useDeleteExpense();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Expense | null>(null);
 
-  if (isLoading) return <LoadingState label="Carregando despesas..." />;
+  if (isPending && !data) return <LoadingState label="Carregando despesas..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
   const items = data?.items ?? [];
@@ -1064,13 +1064,13 @@ function RevenueDialog({
 }
 
 function RevenuesTab() {
-  const { data, isLoading, error, refetch } = useRevenues();
+  const { data, isPending, error, refetch } = useRevenues();
   const deleteMut = useDeleteRevenue();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Revenue | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Revenue | null>(null);
 
-  if (isLoading) return <LoadingState label="Carregando receitas..." />;
+  if (isPending && !data) return <LoadingState label="Carregando receitas..." />;
   if (error) return <ErrorState message={error.message} onRetry={() => refetch()} />;
 
   const items = data?.items ?? [];

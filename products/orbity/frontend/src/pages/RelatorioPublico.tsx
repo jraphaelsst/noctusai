@@ -221,9 +221,9 @@ function EmptyState({ report }: { report: PublicReport }) {
 
 export default function RelatorioPublico() {
   const { token } = useParams<{ token: string }>();
-  const { data, isLoading, isError, error } = usePublicReport(token ?? null);
+  const { data, isPending, isError, error } = usePublicReport(token ?? null);
 
-  if (isLoading) return <LoadingState />;
+  if (isPending && !data) return <LoadingState />;
 
   if (isError) {
     return <ErrorState message={(error as Error)?.message ?? "Erro desconhecido"} />;
