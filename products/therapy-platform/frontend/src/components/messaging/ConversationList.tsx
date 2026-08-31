@@ -125,7 +125,10 @@ export function ConversationList({ conversations, selectedId, onSelect, isLoadin
 
       {/* Conversation items */}
       <ScrollArea className="flex-1">
-        {isLoading ? (
+        {/* Belt-and-braces: refuse to skeleton once real rows exist,
+            independent of how carefully the caller computed `isLoading`.
+            Per `KB § PATTERNS/frontend/lying-loading-state.md`. */}
+        {isLoading && conversations.length === 0 ? (
           <div className="space-y-2 p-3">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="flex items-center gap-3 p-3 animate-pulse">

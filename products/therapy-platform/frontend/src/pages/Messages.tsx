@@ -7,8 +7,9 @@ export default function Messages() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
 
-  const { data: conversationsData, isLoading } = useConversations();
+  const { data: conversationsData, isPending } = useConversations();
   const conversations = conversationsData?.data ?? [];
+  const showSkeleton = isPending && !conversationsData;
 
   const selectedConversation = useMemo(
     () => conversations.find((c) => c.id === selectedConversationId) ?? null,
@@ -33,7 +34,7 @@ export default function Messages() {
             conversations={conversations}
             selectedId={selectedConversationId ?? undefined}
             onSelect={(id) => setSelectedConversationId(id)}
-            isLoading={isLoading}
+            isLoading={showSkeleton}
           />
         </div>
       )}

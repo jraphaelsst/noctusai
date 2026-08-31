@@ -60,7 +60,8 @@ export function ChatThread({ conversation, onBack, showBackButton }: ChatThreadP
   const [reportMessageId, setReportMessageId] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState('');
 
-  const { data: messagesData, isLoading } = useMessages(conversation?.id, page);
+  const { data: messagesData, isPending } = useMessages(conversation?.id, page);
+  const showSkeleton = isPending && !messagesData;
   const sendMessage = useSendMessage();
   const markAsRead = useMarkAsRead();
   const deleteMessage = useDeleteMessage();
@@ -176,7 +177,7 @@ export function ChatThread({ conversation, onBack, showBackButton }: ChatThreadP
 
       {/* Messages area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-4 py-3">
-        {isLoading ? (
+        {showSkeleton ? (
           <div className="space-y-3">
             {Array.from({ length: 6 }).map((_, i) => (
               <div

@@ -42,7 +42,7 @@ export function NewConversation({ open, onOpenChange, onConversationCreated }: N
   const { user } = useAuthStore();
   const startConversation = useStartConversation();
 
-  const { data: searchResults, isLoading } = useQuery<SearchUser[]>({
+  const { data: searchResults, isPending } = useQuery<SearchUser[]>({
     queryKey: ['user-search', search],
     queryFn: async () => {
       if (!search.trim() || search.length < 2) return [];
@@ -53,6 +53,7 @@ export function NewConversation({ open, onOpenChange, onConversationCreated }: N
     enabled: !!user && search.length >= 2,
     staleTime: 30 * 1000,
   });
+  const showSkeleton = isPending && !searchResults;
 
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
@@ -135,7 +136,7 @@ export function NewConversation({ open, onOpenChange, onConversationCreated }: N
             </div>
 
             <ScrollArea className="h-[300px]">
-              {isLoading && (
+              {showSkeleton && (
                 <div className="flex justify-center py-4">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>

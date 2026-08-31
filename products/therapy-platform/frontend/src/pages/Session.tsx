@@ -45,8 +45,13 @@ export default function Session() {
   const userName = (user?.user_metadata?.nome as string) ?? 'Participante';
 
   // Queries
-  const { data: appointment, isLoading: loadingAppt } = useAppointment(appointmentId);
-  const { data: status, isLoading: loadingStatus } = useSessionStatus(appointmentId);
+  const { data: appointment, isPending: apptPending } = useAppointment(appointmentId);
+  const { data: status, isPending: statusPending } = useSessionStatus(appointmentId);
+  // Nothing resolved from either query yet — a background refetch on an
+  // already-resolved appointment/status must NOT flip the phase back to
+  // 'loading' (this page's status query polls while the call is active).
+  const loadingAppt = apptPending && !appointment;
+  const loadingStatus = statusPending && !status;
   const isSessionActive = status?.video_room_status === 'active' || status?.video_room_status === 'paused';
   const { data: overtime } = useOvertimeInfo(appointmentId, isSessionActive);
 
