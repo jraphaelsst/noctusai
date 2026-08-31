@@ -27,7 +27,8 @@ const STATUS_BADGE: Record<string, { label: string; variant: 'default' | 'second
 
 export default function CrisisAlerts() {
   const [page, setPage] = useState(1);
-  const { data, isLoading } = useCrisisAlerts(page);
+  const { data, isPending } = useCrisisAlerts(page);
+  const showSkeleton = isPending && !data;
   const reviewAlert = useReviewCrisisAlert();
 
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -57,7 +58,7 @@ export default function CrisisAlerts() {
         <p className="text-muted-foreground">Monitoramento de sinais de crise detectados automaticamente</p>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>

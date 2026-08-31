@@ -13,7 +13,7 @@ import { Separator } from '@noctusai/seed/components/ui/separator';
 import { useTherapistSettings, useUpdateTherapistSettings } from '@/hooks/useSettings';
 
 export default function TherapistSettings() {
-  const { data: settings, isLoading } = useTherapistSettings();
+  const { data: settings, isPending } = useTherapistSettings();
   const updateSettings = useUpdateTherapistSettings();
 
   const s = (settings as Record<string, unknown>) ?? {};
@@ -90,7 +90,7 @@ export default function TherapistSettings() {
     });
   };
 
-  if (isLoading) {
+  if (isPending && !settings) {
     return (
       <div className="container mx-auto p-6 space-y-6">
         <div className="h-8 w-48 bg-muted animate-pulse rounded" />

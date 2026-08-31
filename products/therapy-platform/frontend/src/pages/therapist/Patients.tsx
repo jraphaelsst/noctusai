@@ -23,7 +23,8 @@ export default function TherapistPatients() {
   const navigate = useNavigate();
   const [busca, setBusca] = useState('');
 
-  const { data, isLoading } = useTherapistPatients(busca);
+  const { data, isPending } = useTherapistPatients(busca);
+  const showSkeleton = isPending && !data;
 
   const patients = data?.data ?? [];
 
@@ -52,7 +53,7 @@ export default function TherapistPatients() {
         />
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

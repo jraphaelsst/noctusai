@@ -21,7 +21,8 @@ function StarRating({ rating, size = 'md' }: { rating: number; size?: 'sm' | 'md
 }
 
 export default function TherapistReviews() {
-  const { data, isLoading } = useTherapistReviews();
+  const { data, isPending } = useTherapistReviews();
+  const showSkeleton = isPending && !data;
 
   const reviews = data?.data ?? [];
   // Summary is not yet emitted by the backend — see hook docstring.
@@ -73,7 +74,7 @@ export default function TherapistReviews() {
       </Card>
 
       {/* Reviews list */}
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <Card key={i} className="animate-pulse">

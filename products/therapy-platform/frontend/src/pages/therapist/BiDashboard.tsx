@@ -16,8 +16,8 @@ const PERIODOS = [
 
 export default function BiDashboard() {
   const [periodo, setPeriodo] = useState('30d');
-  const { data: resumo, isLoading: resumoLoading } = useBiResumo();
-  const { data: sessoes, isLoading: sessoesLoading } = useBiSessoes(periodo);
+  const { data: resumo, isPending: resumoPending } = useBiResumo();
+  const { data: sessoes, isPending: sessoesPending } = useBiSessoes(periodo);
   const { data: receita } = useBiReceita(periodo);
   const { data: cancelamentos } = useBiCancelamentos();
 
@@ -50,7 +50,7 @@ export default function BiDashboard() {
       </div>
 
       {/* Metric Cards */}
-      {resumoLoading ? (
+      {resumoPending && !resumo ? (
         <div className="flex h-32 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
@@ -76,7 +76,7 @@ export default function BiDashboard() {
           <CardTitle className="text-lg">Sessoes por Periodo</CardTitle>
         </CardHeader>
         <CardContent>
-          {sessoesLoading ? (
+          {sessoesPending && !sessoes ? (
             <div className="flex h-32 items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>

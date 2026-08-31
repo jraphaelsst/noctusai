@@ -39,9 +39,10 @@ import {
 export default function TherapistRecurringSchedules() {
   const [statusFilter, setStatusFilter] = useState<'active' | 'paused' | 'ended' | undefined>(undefined);
 
-  const { data: schedulesData, isLoading } = useRecurringSchedules(
+  const { data: schedulesData, isPending } = useRecurringSchedules(
     statusFilter ? { status: statusFilter } : undefined
   );
+  const showSkeleton = isPending && !schedulesData;
 
   const pauseRecurring = usePauseRecurring();
   const resumeRecurring = useResumeRecurring();
@@ -82,7 +83,7 @@ export default function TherapistRecurringSchedules() {
       </Tabs>
 
       {/* Schedules list */}
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="text-center py-12 text-muted-foreground">Carregando...</div>
       ) : schedules.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">

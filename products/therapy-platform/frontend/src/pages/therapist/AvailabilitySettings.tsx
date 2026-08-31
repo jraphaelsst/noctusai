@@ -36,7 +36,9 @@ import { DAY_OF_WEEK_LABELS, type AvailabilitySlot } from '@/types/scheduling';
 
 export default function AvailabilitySettings() {
   const navigate = useNavigate();
-  const { data: slots = [], isLoading } = useAvailabilitySlots();
+  const { data, isPending } = useAvailabilitySlots();
+  const slots = data ?? [];
+  const showSkeleton = isPending && !data;
   const createSlot = useCreateSlot();
   const deleteSlot = useDeleteSlot();
   const blockDates = useBlockDates();
@@ -126,7 +128,7 @@ export default function AvailabilitySettings() {
           </Button>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {showSkeleton ? (
             <p className="text-sm text-muted-foreground">Carregando...</p>
           ) : Object.keys(recurringByDay).length === 0 ? (
             <p className="text-sm text-muted-foreground">

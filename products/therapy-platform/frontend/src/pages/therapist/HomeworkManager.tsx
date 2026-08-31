@@ -21,7 +21,8 @@ const STATUS_BADGE: Record<string, { label: string; variant: 'default' | 'second
 
 export default function HomeworkManager() {
   const [page, setPage] = useState(1);
-  const { data, isLoading } = useHomeworkList(page);
+  const { data, isPending } = useHomeworkList(page);
+  const showSkeleton = isPending && !data;
   const createHomework = useCreateHomework();
   const reviewHomework = useReviewHomework();
 
@@ -69,7 +70,7 @@ export default function HomeworkManager() {
         </Button>
       </div>
 
-      {isLoading ? (
+      {showSkeleton ? (
         <div className="flex h-64 items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
