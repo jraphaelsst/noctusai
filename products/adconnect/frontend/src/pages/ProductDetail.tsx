@@ -19,11 +19,11 @@ function formatBRL(value: number): string {
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: product, isLoading, error } = useProduct(id);
+  const { data: product, isPending, error } = useProduct(id);
   const { addItem } = useCartMutations();
   const [quantity, setQuantity] = useState(1);
 
-  if (isLoading) {
+  if (isPending && !product) {
     return <p className="text-sm text-muted-foreground">Carregando…</p>;
   }
   if (error) {

@@ -39,7 +39,7 @@ const statusClass: Record<OrderStatus, string> = {
 
 export default function Orders() {
   const navigate = useNavigate();
-  const { data: orders, isLoading, error } = useOrders();
+  const { data: orders, isPending, error } = useOrders();
 
   return (
     <div className="space-y-6">
@@ -53,10 +53,10 @@ export default function Orders() {
         </div>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">Carregando…</p>}
+      {isPending && !orders && <p className="text-sm text-muted-foreground">Carregando…</p>}
       {error && <p className="text-sm text-destructive">Erro: {error.message}</p>}
 
-      {!isLoading && orders.length === 0 ? (
+      {!isPending && orders.length === 0 ? (
         <div className="rounded-lg border border-border border-dashed bg-muted/30 p-12 text-center space-y-3">
           <ClipboardList className="h-10 w-10 text-muted-foreground/40 mx-auto" />
           <p className="text-sm text-muted-foreground">

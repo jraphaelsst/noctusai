@@ -17,10 +17,10 @@ function formatBRL(value: number): string {
 
 export default function Cart() {
   const navigate = useNavigate();
-  const { data: cart, isLoading, error } = useCart();
+  const { data: cart, isPending, error } = useCart();
   const { updateItem, removeItem } = useCartMutations();
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Carregando…</p>;
+  if (isPending && !cart) return <p className="text-sm text-muted-foreground">Carregando…</p>;
   if (error) return <p className="text-sm text-destructive">Erro: {error.message}</p>;
 
   const items = cart?.items ?? [];

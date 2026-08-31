@@ -28,7 +28,7 @@ const modeLabel: Record<SelloutSubmissionMode, string> = {
 
 export default function SelloutHistory() {
   const navigate = useNavigate();
-  const { data: reports, isLoading, error } = useSelloutHistory();
+  const { data: reports, isPending, error } = useSelloutHistory();
 
   return (
     <div className="space-y-6">
@@ -52,10 +52,10 @@ export default function SelloutHistory() {
         </button>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">Carregando…</p>}
+      {isPending && !reports && <p className="text-sm text-muted-foreground">Carregando…</p>}
       {error && <p className="text-sm text-destructive">Erro: {error.message}</p>}
 
-      {!isLoading && reports.length === 0 ? (
+      {!isPending && reports.length === 0 ? (
         <div className="rounded-lg border border-border border-dashed bg-muted/30 p-12 text-center space-y-3">
           <FileText className="h-10 w-10 text-muted-foreground/40 mx-auto" />
           <p className="text-sm text-muted-foreground">

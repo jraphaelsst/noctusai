@@ -34,7 +34,7 @@ const statusClass: Record<RewardStatus, string> = {
 };
 
 export default function RewardsLedger() {
-  const { data: rewards = [], isLoading, error } = useRewards();
+  const { data: rewards = [], isPending, error } = useRewards();
   // Totals are derived client-side from the rewards list (the hook returns the
   // raw Reward[] query, not pre-aggregated totals).
   const totalAccrued = rewards.reduce((sum, r) => sum + r.amount, 0);
@@ -77,10 +77,10 @@ export default function RewardsLedger() {
       </div>
 
       {/* Ledger */}
-      {isLoading && <p className="text-sm text-muted-foreground">Carregando…</p>}
+      {isPending && <p className="text-sm text-muted-foreground">Carregando…</p>}
       {error && <p className="text-sm text-destructive">Erro: {error.message}</p>}
 
-      {!isLoading && rewards.length === 0 ? (
+      {!isPending && rewards.length === 0 ? (
         <div className="rounded-lg border border-border border-dashed bg-muted/30 p-12 text-center space-y-3">
           <Award className="h-10 w-10 text-muted-foreground/40 mx-auto" />
           <p className="text-sm text-muted-foreground">
