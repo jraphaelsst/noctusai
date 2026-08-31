@@ -8264,9 +8264,18 @@ def check_query_fn_returns_undefined(repo_root: Path | None = None) -> list[dict
 # loading > error > empty). ~2s after a correct skeleton frame, mid-refetch,
 # every card flipped to "Sem dados para o período selecionado." against a
 # live dataset of 28 brokers / 12,177 leads. Fixed in `b0cb47b1` (14 props,
-# 4 files) by switching to `loading={q.isPending || q.isFetching}`. A
-# hand-rolled predecessor of the same bug (`!byDimQ.isLoading && ... &&
-# buckets.length === 0`) was fixed one commit earlier in `ae9087ce`.
+# 4 files). A hand-rolled predecessor of the same bug (`!byDimQ.isLoading
+# && ... && buckets.length === 0`) was fixed one commit earlier in
+# `ae9087ce`.
+#
+# The 2026-07-22 fix prescribed `loading={q.isPending || q.isFetching}`.
+# That is WRONG as a universal: `isFetching` is true on every background
+# refetch, so an early-return skeleton unmounts its subtree on every
+# mutation (fleet audit 2026-08-31 — 70 sites). The canonical gate is now
+# `q.isPending && !q.data`, with `q.isFetching && !!q.data` as a
+# non-destructive indicator only. This detector is unaffected (it only
+# matches `.isLoading`) and covers the empty-over-data mode ONLY.
+# KB § PATTERNS/frontend/lying-loading-state.md.
 #
 # Invisible to tests: a mocked query object never transitions through a
 # background refetch, so a unit test exercising `isLoading` never sees the
@@ -8386,12 +8395,26 @@ def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
       3. The hand-rolled equivalent: `!X.isLoading && ... && rows.length
          === 0 && <EmptyState/>`.
 
-    Correct gate: `q.isPending || q.isFetching`. Live incident 2026-07-21/22 —
+    Correct gate (revised 2026-08-31): `showSkeleton = q.isPending &&
+    !q.data`, with `q.isFetching && !!q.data` allowed ONLY as a
+    non-destructive refreshing indicator. NOT `q.isPending || q.isFetching`
+    — that was this doc's original prescription and it is true on every
+    background refetch, so an early-return skeleton unmounts the subtree on
+    every mutation (fleet audit 2026-08-31: 70 sites + 140 key-change
+    flicker sites; fixes `ca62b07b` `1e770842` `d2726e13` `0c182a9b`
+    `15c56505` `991848b1` `22ca3ac6`). Live incident 2026-07-21/22 —
     `products/social-wiring/frontend/src/pages/leads/*.tsx` rendered "Sem
     dados para o período selecionado." mid-refetch against 28 brokers /
     12,177 real leads. Fixed in `b0cb47b1` (JSX-prop shape, 14 props / 4
     files) + `ae9087ce` (hand-rolled shape). Invisible to unit tests — a
-    mocked query object never transitions through a background refetch.
+    mocked query object never transitions through a background refetch, and
+    two tests actively hard-coded the buggy contract until `0c182a9b`.
+
+    SCOPE: this detector covers the `.isLoading` (empty-over-data) mode
+    only; `isPending && !data` contains no `isLoading` and passes by
+    construction. The refetch-unmount mode is doc-enforced, not
+    gate-enforced — it needs cross-file dataflow on a `loading` prop.
+    See `KB § PATTERNS/frontend/lying-loading-state.md`.
 
     Severity: `_LYING_LOADING_SEVERITY` (`warning` — observe-first cadence on
     a brand-new detector; promote to `high` in one line once clean for a
