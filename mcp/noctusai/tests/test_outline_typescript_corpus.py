@@ -12,8 +12,23 @@ that claim:
    a syntax it used to handle.
 3. **A baseline snapshot** — the per-file symbol count is captured to
    `tests/fixtures/outline_corpus_baseline.json`. Future runs must stay
-   within ±5% per file (tolerance for legitimate symbol additions /
-   removals during normal feature work).
+   within ±5% **OR** ±1 symbol per file, whichever is more permissive
+   (tolerance for legitimate symbol additions / removals during normal
+   feature work).
+
+   Decided 2026-08-31, after repeated false fires on small files: a
+   RELATIVE-ONLY tolerance is wrong at small symbol counts — one
+   legitimate export added to a 4-symbol file is a 25% move, well past
+   ±5%, so the guard fired hardest on exactly the files it has the
+   least statistical basis to say anything about. The intent of this
+   test is to catch a CORPUS-WIDE regex regression (the regex backend
+   silently stops recognizing a syntax shape across many files), not to
+   gate a single-symbol edit on one small file — an absolute ±1-symbol
+   floor lets that legitimate case through while the relative ±5% rule
+   still catches genuine multi-symbol regressions on files of any size
+   (see `test_within_tolerance_of_baseline`'s docstring for the
+   two-sided proof: a 1-symbol move on a small file passes, a
+   multi-symbol regression on that same small file still fails).
 
 Marked `@pytest.mark.slow` so the default suite stays fast.
 
@@ -44,6 +59,16 @@ SKIP_DIRS = {"node_modules", ".venv", "dist", "build", "playwright-report",
              "test-results", "__pycache__", "coverage", "e2e", ".backup"}
 BASELINE_FILE = Path(__file__).resolve().parent / "fixtures" / "outline_corpus_baseline.json"
 TOLERANCE = 0.05  # ±5% per file
+# Absolute floor, decided 2026-08-31: a delta passes if it is within
+# TOLERANCE *or* within ABS_SYMBOL_FLOOR symbols, whichever is more
+# permissive. Relative-only tolerance is wrong for small files — one
+# legitimate export on a 4-symbol file is a 25% move, well past ±5%, so a
+# relative-only guard fires hardest on the files it has least basis to
+# judge. The absolute floor targets what this test actually cares about
+# (a corpus-wide regex regression), not a single legitimate symbol edit.
+# Large files keep the ±5% behaviour unchanged since a 1-symbol floor is
+# already looser there than 5% of a large count.
+ABS_SYMBOL_FLOOR = 1
 
 
 def _walk_corpus() -> list[Path]:
@@ -137,8 +162,20 @@ class TestCorpusSymbolCoverage:
 
 @pytest.mark.slow
 class TestCorpusBaselineSnapshot:
-    """Per-file symbol count must stay within ±5% of the recorded baseline.
-    First run captures the baseline if absent."""
+    """Per-file symbol count must stay within ±5% **or** ±1 symbol
+    (`ABS_SYMBOL_FLOOR`) of the recorded baseline, whichever is more
+    permissive. First run captures the baseline if absent.
+
+    Relative-OR-absolute, not relative-only (decided 2026-08-31): a
+    1-symbol move on a small file (e.g. 4 -> 5 symbols, a 25% relative
+    delta) now PASSES via the absolute floor, while a genuine
+    multi-symbol regression on that same small file (e.g. 4 -> 2, also
+    within the floor's raw magnitude but a real corpus-signal drop)
+    still FAILS because ±1 alone doesn't cover it AND the relative ±5%
+    doesn't either. See `test_absolute_floor_passes_single_symbol_move`
+    and `test_multi_symbol_regression_still_fails` below for both halves
+    proven directly against this same comparison logic.
+    """
 
     def test_within_tolerance_of_baseline(self, corpus_results: dict[str, dict]):
         if not BASELINE_FILE.exists():
@@ -161,12 +198,52 @@ class TestCorpusBaselineSnapshot:
             now = r["symbol_count"]
             if base == 0:
                 continue
+            if _within_tolerance(base, now):
+                continue
             delta = abs(now - base) / base
-            if delta > TOLERANCE:
-                regressions.append(
-                    f"{path}: baseline={base} now={now} delta={delta:.1%}"
-                )
+            regressions.append(
+                f"{path}: baseline={base} now={now} delta={delta:.1%}"
+            )
         assert not regressions, (
-            f"{len(regressions)} file(s) drifted >{TOLERANCE:.0%} from "
-            f"baseline:\n  " + "\n  ".join(regressions[:10])
+            f"{len(regressions)} file(s) drifted >{TOLERANCE:.0%} AND "
+            f">{ABS_SYMBOL_FLOOR} symbol(s) from baseline:\n  "
+            + "\n  ".join(regressions[:10])
         )
+
+
+def _within_tolerance(base: int, now: int) -> bool:
+    """A baseline->now move passes if it's within the RELATIVE tolerance
+    OR the ABSOLUTE symbol floor — whichever is more permissive. Shared
+    by the corpus test and its two direct unit tests below so the unit
+    tests exercise the EXACT comparison the corpus test uses, not a
+    hand-copied re-implementation that could drift from it.
+    """
+    if base == 0:
+        return True  # pre-existing guard: nothing to compare against
+    delta = abs(now - base) / base
+    abs_delta = abs(now - base)
+    return delta <= TOLERANCE or abs_delta <= ABS_SYMBOL_FLOOR
+
+
+class TestAbsoluteFloorDecision:
+    """Direct, non-corpus proof of the 2026-08-31 relative-OR-absolute
+    decision — both halves matter, the second more than the first (a
+    tolerance that never fires is not a guard)."""
+
+    def test_absolute_floor_passes_single_symbol_move(self):
+        """A 1-symbol move on a small file (4 -> 5, a 25% relative delta —
+        well past ±5%) passes because it's within the ±1 absolute floor.
+        This is the exact false-fire shape that cost a ratification
+        commit (32fb55fe) before this fix."""
+        assert _within_tolerance(base=4, now=5) is True
+        assert _within_tolerance(base=4, now=3) is True
+
+    def test_multi_symbol_regression_still_fails(self):
+        """A genuine multi-symbol regression on that SAME small file (4 -> 2,
+        a 50% relative delta AND a 2-symbol absolute move) still fails —
+        the absolute floor does not swallow a real corpus-signal drop just
+        because the file is small."""
+        assert _within_tolerance(base=4, now=2) is False
+        # And the relative ±5% rule is unchanged for large files.
+        assert _within_tolerance(base=200, now=250) is False  # +25%, no floor rescue at this scale
+        assert _within_tolerance(base=200, now=208) is True   # +4%, within ±5%
