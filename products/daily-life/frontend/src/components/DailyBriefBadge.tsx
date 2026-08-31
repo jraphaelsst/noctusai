@@ -15,9 +15,9 @@ import { Sparkles } from "lucide-react";
 
 export function DailyBriefBadge() {
   const [open, setOpen] = useState(false);
-  const { data, isLoading, isError } = useDailyBrief();
+  const { data, isError } = useDailyBrief();
 
-  if (isLoading || isError || !data) return null;
+  if (isError || !data) return null;
 
   return (
     <div style={{ position: "relative", display: "inline-flex" }}>

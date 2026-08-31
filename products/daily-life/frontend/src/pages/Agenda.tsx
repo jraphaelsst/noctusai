@@ -96,7 +96,7 @@ export default function Agenda() {
   // Hooks
   // ---------------------------------------------------------------------------
 
-  const { data: response, isLoading } = useAgenda(inicio, fim, page, pageSize);
+  const { data: response, isPending } = useAgenda(inicio, fim, page, pageSize);
 
   const createMutation = useCreateEvento(() => closeModal());
   const updateMutation = useUpdateEvento(() => closeModal());
@@ -232,7 +232,7 @@ export default function Agenda() {
       </div>
 
       {/* Event List */}
-      {isLoading ? (
+      {isPending && !response ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm text-muted-foreground">Carregando eventos...</p>

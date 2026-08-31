@@ -89,7 +89,7 @@ export default function Notas() {
   // Hooks
   // ---------------------------------------------------------------------------
 
-  const { data: response, isLoading } = useNotas(busca, page, pageSize);
+  const { data: response, isPending } = useNotas(busca, page, pageSize);
 
   const createMutation = useCreateNota(() => closeModal());
   const updateMutation = useUpdateNota(() => closeModal());
@@ -198,7 +198,7 @@ export default function Notas() {
       </div>
 
       {/* Notes Grid */}
-      {isLoading ? (
+      {isPending && !response ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm text-muted-foreground">Carregando notas...</p>

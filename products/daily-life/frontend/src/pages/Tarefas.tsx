@@ -71,7 +71,7 @@ export default function Tarefas() {
   // Hooks
   // ---------------------------------------------------------------------------
 
-  const { data: tarefasRes, isLoading } = useTarefas(page, {
+  const { data: tarefasRes, isPending } = useTarefas(page, {
     status: statusFilter,
     prioridade: prioridadeFilter,
     categoria: categoriaFilter,
@@ -210,7 +210,7 @@ export default function Tarefas() {
       </div>
 
       {/* Task List */}
-      {isLoading ? (
+      {isPending && !tarefasRes ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <p className="text-sm text-muted-foreground">Carregando tarefas...</p>
