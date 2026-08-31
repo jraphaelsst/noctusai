@@ -53,6 +53,7 @@ import {
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
 import { MetricsTableSkeleton } from '@/components/ui/page-skeleton';
+import { SummaryValue } from '@/components/ui/summary-value';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import {
   useFinanceiro,
@@ -153,13 +154,17 @@ export default function Financeiro() {
   const formaPagamentoValue = watch('forma_pagamento');
   const statusValue = watch('status');
 
-  const { data: financeiroData, isLoading } = useFinanceiro({
+  const financeiroQuery = useFinanceiro({
     tipo: filtroTipo !== 'todos' ? filtroTipo : undefined,
     status: filtroStatus !== 'todos' ? filtroStatus : undefined,
   });
+  const financeiroData = financeiroQuery.data;
+  const showFinanceiroSkeleton = financeiroQuery.isPending && !financeiroQuery.data;
   const lancamentos = financeiroData?.data || [];
 
-  const { data: resumo } = useResumoFinanceiro();
+  const resumoQuery = useResumoFinanceiro();
+  const { data: resumo } = resumoQuery;
+  const resumoNotArrived = resumoQuery.isPending && !resumoQuery.data;
   const { data: fluxoCaixa } = useFluxoCaixa(12);
 
   const { mutate: createLancamento, isPending: isCreating } = useCreateLancamento();
@@ -260,7 +265,7 @@ export default function Financeiro() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              {formatCurrency(resumo?.receitas || 0)}
+              <SummaryValue notArrived={resumoNotArrived}>{formatCurrency(resumo?.receitas ?? 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -272,7 +277,7 @@ export default function Financeiro() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600">
-              {formatCurrency(resumo?.despesas || 0)}
+              <SummaryValue notArrived={resumoNotArrived}>{formatCurrency(resumo?.despesas ?? 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -284,7 +289,7 @@ export default function Financeiro() {
           </CardHeader>
           <CardContent>
             <div className={`text-2xl font-bold ${(resumo?.saldo || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {formatCurrency(resumo?.saldo || 0)}
+              <SummaryValue notArrived={resumoNotArrived}>{formatCurrency(resumo?.saldo ?? 0)}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -296,7 +301,7 @@ export default function Financeiro() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-orange-600">
-              {resumo?.atrasados || 0}
+              <SummaryValue notArrived={resumoNotArrived}>{resumo?.atrasados ?? 0}</SummaryValue>
             </div>
           </CardContent>
         </Card>
@@ -375,7 +380,7 @@ export default function Financeiro() {
       {/* Transactions Table */}
       <Card>
         <CardContent className="pt-6">
-          {isLoading ? (
+          {showFinanceiroSkeleton ? (
             <MetricsTableSkeleton cards={0} />
           ) : lancamentos.length === 0 ? (
             <EmptyState
