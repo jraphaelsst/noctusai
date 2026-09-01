@@ -614,7 +614,7 @@ def test_full_lifecycle_emits_no_banned_token_and_only_dev_pushes():
 # ── env auto-wire (the §5a verification-env recipe) ──
 def _seed_primary(primary, *, slugs=("alpha",), with_product_nm=True,
                   with_seed_nm=True, product_nm_entries=("react",),
-                  with_dotenv=True):
+                  with_dotenv=True, with_toolkit_nm=True):
     """Build a fixture PRIMARY tree under `primary` (a tmp Path): seed-frontend
     packages (+ their node_modules) and products/<slug>/frontend (+ node_modules
     seeded with `product_nm_entries` — fixture vendor packages the per-entry
