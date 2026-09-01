@@ -71,13 +71,22 @@ class FakeVps:
     """Fakes the `run_remote` seam `vps_exec.exec_cmd` calls with — a single
     shell-command STRING per invocation."""
 
-    def __init__(self, containers: dict[str, dict] | None = None):
+    def __init__(self, containers: dict[str, dict] | None = None,
+                 transport_error: str | None = None,
+                 transport_rc: int = 255):
         # slug -> {found, state, health, revision, probe_ok, health_body}
         self.containers = containers or {}
         self.calls: list[str] = []
+        # When set, EVERY call fails the way ssh itself fails — rc 255 and a
+        # transport message on stderr. Models an unreachable host / an open
+        # circuit breaker, where the probe learns nothing about the container.
+        self.transport_error = transport_error
+        self.transport_rc = transport_rc
 
     def __call__(self, cmd: str) -> tuple[int, str, str]:
         self.calls.append(cmd)
+        if self.transport_error is not None:
+            return self.transport_rc, "", self.transport_error
         m = _CONTAINER_RE.search(cmd)
         slug = m.group(1) if m else ""
         info = self.containers.get(slug, {})
@@ -421,3 +430,54 @@ def test_compose_provides_container_and_port_lookup_only(tmp_path):
     igig = next(p for p in r["products"] if p["product"] == "igig")
     assert igig["container"] == "noctus-igig" and igig["port"] == "8006"
     assert any("curl" in c for c in vps.calls)  # port resolved -> probe ran
+
+
+# ── transport failure is NOT evidence of a missing container ───────────
+# Regression for 2026-09-01: `deploy_verify` reported social-wiring
+# `missing` ("not deployed at all") twice while the container was running
+# and healthy — once on "ssh: Network is unreachable", once on the circuit
+# breaker's own fast-fail, which explicitly says "no connection attempted".
+# `missing` is a rollback-grade claim; asserting it when the probe never
+# reached the host invents a fact. `unverifiable` already existed for
+# exactly this and was simply never reached.
+
+def test_ssh_transport_failure_is_unverifiable_not_missing():
+    vps = FakeVps(transport_error="ssh: connect to host 1.2.3.4 port 22: Network is unreachable")
+    r = DV.deploy_verify(products=["core"], run_remote=vps,
+                         run_local=FakeGit(), repo_root=str(_REPO_ROOT))
+    assert r["missing"] == [], "a host we could not reach must never be reported as not-deployed"
+    assert r["unverifiable"] == ["core"]
+    assert r["status"] == "unverifiable"
+    note = r["products"][0]["note"]
+    assert "could not REACH" in note and "UNKNOWN" in note
+
+
+def test_open_circuit_breaker_is_unverifiable_not_missing():
+    """The breaker's fast-fail path returns rc 255 and says so in words."""
+    vps = FakeVps(transport_error=(
+        "ssh circuit OPEN for noctus-vps — FAST FAIL, no connection attempted: "
+        "2 consecutive connection failures; cooling down for 435s more."
+    ))
+    r = DV.deploy_verify(products=["core"], run_remote=vps,
+                         run_local=FakeGit(), repo_root=str(_REPO_ROOT))
+    assert r["missing"] == []
+    assert r["unverifiable"] == ["core"]
+
+
+def test_transport_detected_from_stderr_even_without_rc_255():
+    """A runner that collapses exit codes must still not yield `missing`."""
+    vps = FakeVps(transport_error="ssh: Could not resolve hostname noctus-vps",
+                  transport_rc=1)
+    r = DV.deploy_verify(products=["core"], run_remote=vps,
+                         run_local=FakeGit(), repo_root=str(_REPO_ROOT))
+    assert r["missing"] == [] and r["unverifiable"] == ["core"]
+
+
+def test_genuinely_absent_container_is_still_missing():
+    """The other side of the proof — the real finding must survive the fix.
+    `docker inspect` on an absent container exits 1 with 'No such object'."""
+    r = DV.deploy_verify(products=["core"], run_remote=FakeVps({"core": {"found": False}}),
+                         run_local=FakeGit(), repo_root=str(_REPO_ROOT))
+    assert r["missing"] == ["core"]
+    assert r["status"] == "missing"
+    assert "not deployed at all" in r["products"][0]["note"]

@@ -278,6 +278,46 @@ def _diff_drift(
     }
 
 
+#: SSH's own convention: 255 means *ssh* failed (connect refused, network
+#: unreachable, auth, host-key) — every other code is the REMOTE command's.
+#: `_vps_ssh`'s circuit breaker deliberately reuses 255 for its fast-fail path,
+#: so one predicate covers both. Verified empirically 2026-09-01 against the
+#: live host: `docker inspect <absent-container>` → 1, unreachable host → 255.
+_SSH_TRANSPORT_RC = 255
+
+#: Belt-and-braces for a runner that does not preserve rc (injected fakes, a
+#: wrapper that collapses codes). Matched case-insensitively against stderr.
+_TRANSPORT_SIGNATURES = (
+    "circuit open",
+    "no connection attempted",
+    "network is unreachable",
+    "connection refused",
+    "connection timed out",
+    "could not resolve hostname",
+    "no route to host",
+    "permission denied (publickey",
+    "host key verification failed",
+    "operation timed out",
+    "broken pipe",
+)
+
+
+def _is_transport_failure(result: dict[str, Any]) -> bool:
+    """Did the probe fail to REACH the host, rather than answer about it?
+
+    The distinction is the whole point: `missing` asserts "this product is not
+    deployed", which is a rollback-grade claim. If ssh never connected we know
+    nothing about the container, and saying `missing` invents a fact. That
+    exact false negative fired twice on 2026-09-01 (once "Network is
+    unreachable", once the circuit breaker's own fast-fail) and reported
+    social-wiring as not-deployed while it was running and healthy.
+    """
+    if result.get("exit_code") == _SSH_TRANSPORT_RC:
+        return True
+    err = (result.get("stderr") or "").lower()
+    return any(sig in err for sig in _TRANSPORT_SIGNATURES)
+
+
 def _verify_one(
     entry: dict[str, Any],
     expected_sha: str,
@@ -307,15 +347,34 @@ def _verify_one(
         ssh_host=ssh_host, run_remote=run_remote,
     )
     if not r_inspect["ok"]:
+        transport = _is_transport_failure(r_inspect)
+        detail = (r_inspect.get("stderr") or "").strip()[:200]
         if actionable:
-            out["verdict"] = "missing"
-            out["note"] = (
-                f"catalog-active+live product has NO running container "
-                f"'{container}' on '{ssh_host}' — not deployed at all, a distinct "
-                f"finding from stale-but-running ({(r_inspect.get('stderr') or '').strip()[:200]})."
-            )
+            if transport:
+                # The probe never reached the host — we know NOTHING about this
+                # container. `unverifiable` says exactly that; `missing` would
+                # assert it is not deployed, which is a rollback-grade claim
+                # made on no evidence.
+                out["verdict"] = "unverifiable"
+                out["note"] = (
+                    f"could not REACH '{ssh_host}' to inspect '{container}' — the "
+                    f"probe never connected, so its deploy state is UNKNOWN (this "
+                    f"is not evidence of a missing container). Re-run once the "
+                    f"host is reachable ({detail})."
+                )
+            else:
+                out["verdict"] = "missing"
+                out["note"] = (
+                    f"catalog-active+live product has NO running container "
+                    f"'{container}' on '{ssh_host}' — not deployed at all, a distinct "
+                    f"finding from stale-but-running ({detail})."
+                )
         else:
-            out["note"] = "not ativo+live in the catalog — no container found; nothing to report."
+            out["note"] = (
+                "not ativo+live in the catalog — host unreachable, nothing to report."
+                if transport
+                else "not ativo+live in the catalog — no container found; nothing to report."
+            )
         return out
 
     out["found"] = True
