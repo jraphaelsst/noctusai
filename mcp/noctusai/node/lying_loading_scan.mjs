@@ -93,6 +93,41 @@
  * `isLoading` alias stays guard-agnostic) because `findRenamedBindingLocals`
  * is invoked once per `scanTaint(name, guardAware)` call, keyed by `name`.
  *
+ * GAP 2 (fixed 2026-09-01) — NEGATION STOPPED THE CLIMB. `climb()` had no
+ * `PrefixUnaryExpression` case, so `!isLoading && rows.length === 0 ?
+ * <Empty/> : <List/>` hit the final catch-all at the `!` boundary and
+ * returned `{type:"none"}` before ever reaching the ternary above it. Only
+ * `!` (`SyntaxKind.ExclamationToken`) is a transparent climb-through
+ * boundary — `-`/`+`/`~`/`++`/`--` don't apply to a boolean loading/fetching
+ * term and stop the climb, same as any other unrecognised boundary.
+ *
+ * INVERTED GUARD UNDER NEGATION — the subtle half of Gap 2, resolved as
+ * follows and NOT reversible without re-litigating this reasoning: beside a
+ * POSITIVE occurrence, a `&&`-sibling matching `NO_DATA_GUARD_RE` (e.g.
+ * `rows.length === 0`) is PROTECTIVE — `isFetching && rows.length === 0`
+ * is true only in the genuinely-loading-with-no-data state, so it cannot
+ * misfire while real data exists. Beside a NEGATED occurrence, the SAME
+ * textual match means the OPPOSITE: `!isLoading && rows.length === 0` is
+ * true not just when truly idle-and-empty but ALSO during the transient
+ * window right after a query-KEY change, when `isLoading` has already
+ * dropped false (TanStack v5: `isLoading === isPending && isFetching`,
+ * false the instant either goes false) while the derived array is
+ * momentarily empty before the new key's data lands — exactly the "140
+ * key-change flicker sites" class and the live 12,177-lead incident this
+ * whole detector exists for. So a match found WHILE the climb is under an
+ * active negation must NEVER set `guarded = true` — it is evidence FOR the
+ * bug, not evidence of a protective guard. Concretely: `climb()` tracks a
+ * `negated` boolean, XOR-flipped at every `!` climbed through (so `!!x`
+ * round-trips to non-negated, correctly treated as the ORIGINAL unnegated
+ * case), and the `&&`-sibling guard check is skipped entirely whenever
+ * `negated` is true — never inverted to actively PENALISE (no double
+ * jeopardy), just never allowed to grant safety it does not have. This
+ * matters concretely for `isFetching` (guard-aware): a hypothetical
+ * `!isFetching && !data` would, without this fix, wrongly earn
+ * `guarded = true` and suppress a real finding; `isLoading` (guard-agnostic)
+ * is unaffected by `guarded` either way — see `scanTaint`'s
+ * `isViolation`.
+ *
  * Deliberately NOT flagged (by design, not omission):
  *   - bare `isPending` with no `isFetching` in the same test, and no
  *     `&& !data` companion. TanStack Query v5 defines `isPending` as
@@ -276,10 +311,14 @@ function statementReturns(stmt) {
  *   {type: "gate", kind, guarded, line, snippet}
  *   {type: "none"}
  * `guarded` = a `&&`-sibling matching NO_DATA_GUARD_RE was passed on the
- * climb from `startNode` to the returned boundary (declaration OR gate). */
+ * climb from `startNode` to the returned boundary (declaration OR gate),
+ * WHILE NOT under an active negation — see the module docstring's "GAP 2 /
+ * INVERTED GUARD UNDER NEGATION" section for why a match under negation
+ * must never set `guarded = true`. */
 function climb(startNode) {
   let current = startNode;
   let guarded = false;
+  let negated = false; // XOR-flipped per `!` climbed through — `!!x` round-trips to false.
 
   while (true) {
     const parent = current.getParent();
@@ -291,13 +330,25 @@ function climb(startNode) {
       continue;
     }
 
+    if (pk === SyntaxKind.PrefixUnaryExpression) {
+      // Only logical negation (`!`) is a transparent climb-through boundary
+      // — `-`/`+`/`~`/`++`/`--` don't apply to a boolean loading/fetching
+      // term and stop the climb like any other unrecognised boundary.
+      if (parent.getOperatorToken() !== SyntaxKind.ExclamationToken) {
+        return { type: "none" };
+      }
+      negated = !negated;
+      current = parent;
+      continue;
+    }
+
     if (pk === SyntaxKind.BinaryExpression) {
       const opText = parent.getOperatorToken().getText();
       if (opText === "&&") {
         const left = parent.getLeft();
         const right = parent.getRight();
         const sibling = current === left ? right : left;
-        if (sibling && NO_DATA_GUARD_RE.test(sibling.getText())) {
+        if (sibling && !negated && NO_DATA_GUARD_RE.test(sibling.getText())) {
           guarded = true;
         }
       }

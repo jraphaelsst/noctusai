@@ -514,6 +514,51 @@ export function AddRoleModal() {
 """
 
 
+# ---------------------------------------------------------------------------
+# Gap 2 — negation stopped the climb. `climb()` had no PrefixUnaryExpression
+# case, so a negated occurrence hit the catch-all and never reached the
+# ternary/return above it. Real-world repro pulled from the dispatch brief
+# (adconnect/pages/Orders.tsx pre-fix shape) — bare destructured `isLoading`,
+# so Mode A's `.isLoading`-with-a-dot regex (`_HANDROLLED_LOADING_GUARD_RE`)
+# cannot see it either; this is a Mode-B-only gap.
+# ---------------------------------------------------------------------------
+_GAP2_POSITIVE_NEGATED_ISLOADING_TERNARY = """\
+export function Orders() {
+  const { data: rows, isLoading } = useOrders();
+  return (
+    <div>
+      {!isLoading && rows.length === 0 ? <Empty /> : <List rows={rows} />}
+    </div>
+  );
+}
+"""
+
+# `!!isFetching && !data` — DOUBLE negation must round-trip to the ORIGINAL
+# unnegated, protectively-guarded case (`isFetching && !data` is the
+# canonical safe shape) — MUST NOT be flagged. Proves the `negated` XOR-flip
+# is correct, not a one-shot "seen a `!`" flag.
+_GAP2_NEGATIVE_DOUBLE_NEGATION_GUARDED = """\
+export function Panel() {
+  const { data, isFetching } = usePanel();
+  if (!!isFetching && !data) return <Skeleton />;
+  return <Real data={data} />;
+}
+"""
+
+# `!isFetching && !data` — a SINGLE negation of the guard-aware taint. Per
+# the module docstring's "INVERTED GUARD UNDER NEGATION" reasoning, a match
+# under negation must NEVER grant `guarded = true` (it is not proven safe by
+# the same textual match that IS protective in the unnegated case) — so this
+# non-canonical shape IS flagged, deliberately, rather than silently trusted.
+_GAP2_POSITIVE_NEGATED_ISFETCHING_NOT_RESCUED = """\
+export function Panel() {
+  const { data, isFetching } = usePanel();
+  if (!isFetching && !data) return <Empty />;
+  return <Real data={data} />;
+}
+"""
+
+
 @_modeb_only
 class TestLyingLoadingStateModeB:
     def test_positive_early_return_shipped_shape_flagged(self, tmp_path):
@@ -720,3 +765,40 @@ class TestLyingLoadingStateModeB:
         _product_file(repo, "erp-imobiliario", "components/AddRoleModal.tsx", _GAP1_NEGATIVE_USESTATE_ARRAY_NOT_A_RENAME)
         issues = check_lying_loading_state(repo_root=repo)
         assert issues == [], f"useState array-destructure must not be flagged: {issues}"
+
+    # -----------------------------------------------------------------
+    # Gap 2 — negation stops the climb.
+    # -----------------------------------------------------------------
+
+    def test_gap2_positive_negated_isloading_ternary_flagged(self, tmp_path):
+        """The REAL `adconnect/pages/Orders.tsx` shape — `!isLoading &&
+        rows.length === 0 ? <Empty/> : <List/>` — MUST be flagged. Confirmed
+        FAILING against the pre-fix scanner (`[]`) before this fix landed.
+        Bare destructured `isLoading` (no dot) — also invisible to Mode A's
+        `_HANDROLLED_LOADING_GUARD_RE`, so this is a Mode-B-only gap."""
+        repo = _make_repo(tmp_path)
+        _product_file(repo, "adconnect", "pages/Orders.tsx", _GAP2_POSITIVE_NEGATED_ISLOADING_TERNARY)
+        issues = check_lying_loading_state(repo_root=repo)
+        assert issues, "negated isLoading reaching a JSX ternary must be flagged"
+        assert any("Shape 5" in i["issue"] for i in issues)
+        assert any("JSX ternary" in i["issue"] for i in issues)
+
+    def test_gap2_negative_double_negation_guarded_not_flagged(self, tmp_path):
+        """`!!isFetching && !data` — double negation round-trips to the
+        ORIGINAL protectively-guarded shape — MUST NOT be flagged. Proves
+        the `negated` tracker is a true XOR flip, not a one-shot latch."""
+        repo = _make_repo(tmp_path)
+        _product_file(repo, "demo", "pages/Panel.tsx", _GAP2_NEGATIVE_DOUBLE_NEGATION_GUARDED)
+        issues = check_lying_loading_state(repo_root=repo)
+        assert issues == [], f"double-negated guarded isFetching must not be flagged: {issues}"
+
+    def test_gap2_positive_negated_isfetching_not_rescued_by_guard(self, tmp_path):
+        """`!isFetching && !data` — a SINGLE negation of the guard-aware
+        taint. Per the documented inverted-guard resolution, a `&&`-sibling
+        match under negation must NEVER grant `guarded = true` — MUST be
+        flagged, not silently trusted as safe."""
+        repo = _make_repo(tmp_path)
+        _product_file(repo, "demo", "pages/Panel.tsx", _GAP2_POSITIVE_NEGATED_ISFETCHING_NOT_RESCUED)
+        issues = check_lying_loading_state(repo_root=repo)
+        assert issues, "negated isFetching must not be silently rescued by an inverted guard match"
+        assert any("`isFetching`" in i["issue"] for i in issues)

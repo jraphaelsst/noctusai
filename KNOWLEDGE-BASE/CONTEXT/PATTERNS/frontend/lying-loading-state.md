@@ -341,6 +341,26 @@ this fix does not regress that exclusion. Real-world names caught by this:
 `contextLoading`, `postsLoading`, `insightsLoading`, `feedsLoading`,
 `isLoadingProfiles`, `isLoadingRole`.
 
+**Negation no longer stops the climb (fixed 2026-09-01).** `!isLoading &&
+rows.length === 0 ? <Empty/> : <List/>` used to be invisible — the AST
+climb had no `PrefixUnaryExpression` case, so a negated occurrence hit the
+catch-all and never reached the ternary above it. Only `!` climbs through
+(`-`/`+`/`~`/`++`/`--` still stop the climb); a `!!` double-negation
+round-trips to the ORIGINAL unnegated case. The subtle part: a `&&`-sibling
+matching the "no data yet" guard shape (`rows.length === 0`, `!data`, …)
+means the OPPOSITE thing next to a negated occurrence than next to a
+positive one. Beside `isFetching` (positive), that sibling is PROTECTIVE —
+`isFetching && rows.length === 0` only fires in the genuinely-loading state.
+Beside `!isLoading` (negated), the SAME sibling is the live incident's
+signature: `isLoading` drops false the instant `isPending` OR `isFetching`
+does, so `!isLoading` is true not just when idle but also mid-refetch —
+and `rows.length === 0` is briefly true too, right after a query-KEY
+change, before the new key's data lands. So a guard-shaped sibling found
+UNDER an active negation is never allowed to mark the occurrence "guarded"
+— it is evidence of the transient-empty bug, not a rescue. This only
+changes outcomes for the guard-aware `isFetching` taint (Shape 5's
+`isLoading` pass is guard-agnostic regardless).
+
 **Genuinely still out of scope**, stated honestly rather than silently
 passed (the 2026-08-31 pass strengthens the case that the ORIGINAL
 "needs cross-file dataflow" caveat below was over-broad — shapes 1–3 and 5
