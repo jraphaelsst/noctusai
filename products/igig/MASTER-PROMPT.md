@@ -89,6 +89,12 @@ Seed-first. Backend is `create_product_app()` from `noctusai_seed`; frontend is
 - Domain language is pt-BR (cliente, marca, pauta, tarefa, refação,
   apontamento); code constructs are English; user-facing errors pt-BR.
 - Never let a missing input render as a confident zero — say it is missing.
+- **Never PERSIST a signed URL.** `storage.signed_url` defaults to a one-hour
+  TTL. Store the immutable storage KEY (`marca.logo_key`, `peca.storage_key`)
+  and mint the URL per response. `enviar_logo` wrote the signed URL into
+  `marca.logo_url`, so every brand logo rendered for an hour and then 404'd
+  forever — invisible until the upload UI shipped and a logo finally existed
+  to expire (prod, 2026-09-01). Migration `015` + `_com_logo` fixed it.
 - Auth tests assert strict `== 401`.
 - Request models are `StrictHttpModel` (unknown key ⇒ 422).
 - `IGIG_COFRE_KEY` is a boot requirement; without it the Cofre and Integrações

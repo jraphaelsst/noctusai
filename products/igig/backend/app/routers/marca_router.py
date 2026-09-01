@@ -116,6 +116,31 @@ def _acesso_out(row: dict) -> AcessoOut:
     return AcessoOut(**row, tem_senha=bool(row.get("senha_cifrada")))
 
 
+async def _com_logo(linha: dict) -> dict:
+    """Return the row with a FRESHLY-SIGNED `logo_url` minted from `logo_key`.
+
+    🔴 A signed URL must never be persisted. `storage.signed_url` defaults to a
+    one-hour TTL, and `enviar_logo` used to write that value straight into
+    `marca.logo_url` — so every logo rendered for an hour and then 404'd
+    forever (observed in prod 2026-09-01: `naturalWidth: 0` on a logo uploaded
+    90 minutes earlier). The key is the durable thing; the URL is a credential
+    minted per response. Same shape `peca.storage_key` already used.
+
+    Rows with no `logo_key` (created before `015`, or never given a logo) pass
+    through untouched rather than erroring — a brand without a logo is normal.
+    """
+    chave = linha.get("logo_key")
+    if not chave:
+        return linha
+    armazenamento = get_storage()
+    return {
+        **linha,
+        "logo_url": await armazenamento.signed_url(
+            bucket=settings.igig_storage_bucket, key=str(chave)
+        ),
+    }
+
+
 # ── Marca ───────────────────────────────────────────────────────────
 @router.get("", response_model=list[MarcaOut])
 async def listar_marcas(
@@ -127,7 +152,7 @@ async def listar_marcas(
     linhas = (
         repos.marca.do_cliente(org_id, cliente_id) if cliente_id else repos.marca.listar(org_id)
     )
-    return [MarcaOut(**m) for m in linhas]
+    return [MarcaOut(**await _com_logo(m)) for m in linhas]
 
 
 @router.post("", response_model=MarcaOut, status_code=status.HTTP_201_CREATED)
@@ -165,6 +190,7 @@ async def obter_repertorio(
     marca = repos.marca.repertorio(org_id, cliente_id)
     if marca is None:
         return RepertorioOut(cliente_nome=cliente.get("nome"))
+    marca = await _com_logo(marca)
     return RepertorioOut(
         cliente_nome=cliente.get("nome"),
         marca_nome=marca.get("nome"),
@@ -184,7 +210,7 @@ async def obter_marca(
     repos: Repositorios = Depends(get_repositorios),
 ) -> MarcaOut:
     try:
-        return MarcaOut(**repos.marca.buscar(_org(auth), marca_id))
+        return MarcaOut(**await _com_logo(repos.marca.buscar(_org(auth), marca_id)))
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Marca não encontrada")
 
@@ -242,7 +268,11 @@ async def enviar_logo(
         content_type=arquivo.content_type,
     )
     url = await armazenamento.signed_url(bucket=settings.igig_storage_bucket, key=chave)
-    repos.marca.atualizar(org_id, marca_id, {"logo_url": url})
+    # Persist the KEY. `logo_url` is written too so a consumer reading the row
+    # directly still sees something, but it is authoritative for exactly as
+    # long as the TTL — every READ path re-signs from `logo_key` via
+    # `_com_logo`.
+    repos.marca.atualizar(org_id, marca_id, {"logo_key": chave, "logo_url": url})
     logger.info("logo enviado org=%s marca=%s key=%s", org_id, marca_id, chave)
     return LogoOut(storage_key=chave, url=url)
 

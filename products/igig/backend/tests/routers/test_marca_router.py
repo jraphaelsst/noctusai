@@ -283,3 +283,87 @@ class TestCofre:
             "cliente_id": "nao-existe", "rotulo": "X",
         })
         assert resp.status_code == 404
+
+
+# ── Logo: the URL is minted per-read, NEVER persisted ───────────────────────
+#
+# `storage.signed_url` defaults to a ONE-HOUR TTL. `enviar_logo` used to write
+# that value into `marca.logo_url`, so every brand logo rendered for an hour
+# and then 404'd forever — confirmed in production 2026-09-01 on a logo
+# uploaded 90 minutes earlier. `015` added `logo_key`; these pin that the key
+# is what persists and that every READ re-signs from it.
+
+class TestLogoSignedUrlFreshness:
+    @pytest.fixture(autouse=True)
+    def _fake_storage(self, monkeypatch):
+        """Select the in-memory backend and clear the lru_cache around it."""
+        from app.config import settings
+        from app import storage as storage_mod
+
+        monkeypatch.setattr(settings, "igig_storage_kind", "fake")
+        storage_mod.get_storage.cache_clear()
+        yield
+        storage_mod.get_storage.cache_clear()
+
+    def _marca_com_logo(self, api):
+        cliente = api.post("/api/clientes", json={"nome": "Padaria Sol"}).json()
+        marca = api.post(
+            "/api/marcas", json={"cliente_id": cliente["id"], "nome": "Padaria Sol"}
+        ).json()
+        resposta = api.post(
+            f"/api/marcas/{marca['id']}/logo",
+            files={"arquivo": ("logo.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        )
+        return cliente, marca, resposta
+
+    def test_upload_persists_the_key_not_only_the_url(self, api, repos):
+        _cliente, marca, resposta = self._marca_com_logo(api)
+        assert resposta.status_code == 201
+
+        linha = repos.marca.buscar(ORG, marca["id"])
+        assert linha.get("logo_key"), "the durable key must be persisted"
+        # The key is a storage path, never a URL — that is the whole point.
+        assert "://" not in str(linha["logo_key"])
+
+    def test_read_remints_the_url_over_a_stale_stored_value(self, api, repos):
+        _cliente, marca, resposta = self._marca_com_logo(api)
+        assert resposta.status_code == 201
+
+        # Simulate the expired state: a stored URL from an hour ago.
+        repos.marca.atualizar(ORG, marca["id"], {"logo_url": "fake://EXPIRED"})
+
+        lido = api.get(f"/api/marcas/{marca['id']}")
+        assert lido.status_code == 200
+        assert lido.json()["logo_url"] != "fake://EXPIRED", (
+            "a read must re-sign from logo_key, not echo the stored URL"
+        )
+        assert repos.marca.buscar(ORG, marca["id"])["logo_key"] in lido.json()["logo_url"]
+
+    def test_list_remints_too(self, api, repos):
+        _cliente, marca, _ = self._marca_com_logo(api)
+        repos.marca.atualizar(ORG, marca["id"], {"logo_url": "fake://EXPIRED"})
+
+        listadas = api.get("/api/marcas")
+        assert listadas.status_code == 200
+        assert listadas.json()[0]["logo_url"] != "fake://EXPIRED"
+
+    def test_repertorio_remints_too(self, api, repos):
+        """The Módulo 2 sidebar is the surface a designer stares at all day —
+        it must not be the one showing a dead logo."""
+        cliente, marca, _ = self._marca_com_logo(api)
+        repos.marca.atualizar(ORG, marca["id"], {"logo_url": "fake://EXPIRED"})
+
+        rep = api.get(f"/api/marcas/repertorio/{cliente['id']}")
+        assert rep.status_code == 200
+        assert rep.json()["logo_url"] != "fake://EXPIRED"
+
+    def test_a_marca_without_a_logo_is_untouched(self, api, repos):
+        """No logo is a normal state, not an error — the row passes through."""
+        cliente = api.post("/api/clientes", json={"nome": "Sem Logo"}).json()
+        marca = api.post(
+            "/api/marcas", json={"cliente_id": cliente["id"], "nome": "Sem Logo"}
+        ).json()
+
+        lido = api.get(f"/api/marcas/{marca['id']}")
+        assert lido.status_code == 200
+        assert lido.json()["logo_url"] is None
