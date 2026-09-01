@@ -46,9 +46,9 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Social Wiring | 22 | 41 | 107 | 73 | 181 | 2,608 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
-| Igig | 10 | 5 | 20 | 17 | 18 | 280 |
+| Igig | 10 | 5 | 21 | 17 | 18 | 280 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
-| **Total** | **218** | **235** | **417** | **266** | **637** | **8,551** |
+| **Total** | **218** | **235** | **418** | **266** | **637** | **8,551** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

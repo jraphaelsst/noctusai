@@ -490,7 +490,29 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
             return
         wire.append({"link": link, "target": src, "kind": "dotenv"})
 
+    def _link_toolkit_node_modules() -> None:
+        """`mcp/noctusai/node/node_modules` — the ts-morph runtime the
+        lying-loading-state detector's Mode-B AST scan shells out to.
+
+        Same class as `.env`: gitignored, so absent from every fresh worktree,
+        and its absence degrades to a WARNING finding rather than an error —
+        `test_negative_correct_gate_not_flagged` fails with
+        `ts_morph_not_installed` and reads like a detector regression. Nothing
+        nests inside it, so a whole-dir symlink is safe.
+        """
+        rel = os.path.join("mcp", "noctusai", "node", "node_modules")
+        src = os.path.join(primary_root, rel)
+        link = os.path.join(wt_root, rel)
+        if not fs.exists(src):
+            skipped.append({"link": link, "reason": f"primary toolkit node_modules absent: {src}"})
+            return
+        if fs.is_dir(link) and not fs.is_symlink(link):
+            skipped.append({"link": link, "reason": "real node_modules already present in worktree"})
+            return
+        wire.append({"link": link, "target": src, "kind": "node_modules"})
+
     _link_root_dotenv()
+    _link_toolkit_node_modules()
 
     def _link_whole_node_modules(rel_pkg: str) -> None:
         """Seed-frontend node_modules ONLY. Nothing ever nests inside these
