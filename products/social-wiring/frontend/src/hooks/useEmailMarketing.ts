@@ -460,6 +460,12 @@ export function useEmTemplates(categoria?: string) {
   });
 }
 
+export interface TemplatePreview {
+  assunto: string;
+  corpo_html: string;
+  variaveis_usadas?: string[];
+}
+
 export interface EmTemplateInput {
   nome: string;
   assunto: string;
@@ -501,7 +507,9 @@ export function useEmTemplateMutations() {
         id: string;
         variaveis: Record<string, string>;
       }) =>
-        api.post<Envelope<{ assunto: string; html: string }>>(
+        // Field names mirror the route's own response, verified live:
+        // `{assunto, corpo_html, variaveis_usadas}` — NOT `html`.
+        api.post<Envelope<TemplatePreview>>(
           `${BASE}/templates/${encodeURIComponent(id)}/preview`,
           { variaveis },
         ),

@@ -44,6 +44,7 @@ import {
   useEmTemplateMutations,
   useEmTemplates,
   type EmTemplate,
+  type TemplatePreview,
 } from "@/hooks/useEmailMarketing";
 
 const CATEGORIA_LABEL: Record<string, string> = {
@@ -59,9 +60,7 @@ function PreviewPanel() {
   const templates = useEmTemplates();
   const { preview } = useEmTemplateMutations();
   const [id, setId] = useState("");
-  const [result, setResult] = useState<{ assunto: string; html: string } | null>(
-    null,
-  );
+  const [result, setResult] = useState<TemplatePreview | null>(null);
 
   function run() {
     if (!id) return;
@@ -114,7 +113,7 @@ function PreviewPanel() {
             <iframe
               title="Pré-visualização do template"
               sandbox=""
-              srcDoc={result.html}
+              srcDoc={result.corpo_html}
               className="h-80 w-full rounded border bg-white"
             />
           </div>
@@ -258,6 +257,15 @@ export default function EmailTemplatesNoc() {
         api={api}
         apiPath="/api/email-marketing/templates"
         singularName="Template"
+        // `DELETE /templates/{id}` is the ONE soft delete in this module (the
+        // service sets `ativo=false`; contacts / lists / campaigns /
+        // automations all hard-delete). The list does not filter on `ativo`,
+        // so a row labelled "Excluir" would stay on screen after a success
+        // toast — an action lying about what it did. Name it for what it is.
+        deleteLabel="Desativar"
+        deleteConfirm={(row) =>
+          `Desativar "${row.nome}"? Ele continua na lista, marcado como inativo, e pode ser reativado pelo botão Editar.`
+        }
         emptyMessage="Nenhum template ainda."
         columns={[
           { key: "nome", header: "Nome" },
