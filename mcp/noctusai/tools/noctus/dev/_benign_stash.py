@@ -32,6 +32,23 @@ working tree (real in-progress work) still blocks the rebase — but the callers
 now surface it as an explicit ``dirty_blocked`` naming the files, instead of a
 generic failure that reads as a mystery divergence later.
 
+THE LIST ITSELF WAS THE THIRD BUG (fixed 2026-09-01). ``BENIGN_REFRESH_PATTERNS``
+started life as four hand-copied ``project-history/*.ndjson`` filenames plus two
+hand-copied KB paths. The pre-commit hook's own KB-counts regenerator
+(``kb_sync.update_kb_counts`` / ``--update-kb-counts``, step 2) writes THREE
+marker-block targets — ``KNOWLEDGE-BASE/AGENT-CONTEXT.md``,
+``KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md``, AND
+``KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`` — and only two of the three ever made
+it into the hand-copied list. ``branch_pointer.py`` writes its ledger AND a
+byte-identical mirror (``branch-tree.mirror.ndjson``) atomically, every time; only
+the ledger name made it in. Both omissions are the exact anti-pattern CLAUDE.md
+§1 names for hand-maintained coverage lists: correct the day they're written,
+stale the day a sibling artifact is added. See the derivation helpers below —
+the KB-counts half is now read straight from ``kb_sync``'s own manifest instead
+of re-typed, and the ledger half is a directory-wide glob instead of one literal
+per filename, so a FOURTH regenerated ``project-history/*.ndjson`` sibling (or a
+FOURTH kb-counts region target) is covered on arrival, not on the next incident.
+
 KB § PATTERNS/common/self-branching-mode.md · KB § PATTERNS/architect/branch-tree-tracking.md
 """
 from __future__ import annotations
@@ -47,24 +64,94 @@ logger = logging.getLogger(__name__)
 # this module never has to know.
 RunGit = Callable[..., tuple[int, str, str]]
 
+
+def _kb_counts_regenerated_rel_paths() -> tuple[str, ...]:
+    """Repo-relative paths ``kb_sync.update_kb_counts()`` regenerates — and the
+    pre-commit hook's step 2 auto-``git add``s when they were clean beforehand
+    (see ``scripts/hooks/pre-commit`` § "auto-staged (machine count-refresh of a
+    clean file)"). Read straight from ``kb_sync._regions()`` — the SAME manifest
+    the regenerator itself walks to decide what to rewrite — instead of a
+    hand-copied filename list.
+
+    THE BUG THIS REPLACES: the hand-copied list carried
+    ``KNOWLEDGE-BASE/AGENT-CONTEXT.md`` and ``KNOWLEDGE-BASE/CONTEXT/
+    06-AGENTS.md`` (two of ``_regions()``'s three DISTINCT target files) but not
+    ``KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`` (the third — it carries TWO
+    regions, "inventory" and "database"). ``02-LANDSCAPE.md`` gets rewritten by
+    step 2 on essentially every commit that changes the product/schema/tool
+    counts, was never classified benign, and refused the rebase every time —
+    the identical shape as the ``vector-costs.ndjson`` bug this module already
+    fixed once, one file over.
+
+    ``kb_sync`` has no reverse dependency on this module (or on ``_ledger_push``
+    / ``branch_pointer`` / ``task_branch``), so importing it here — even at
+    module-load time — cannot form an import cycle. A failure importing it is
+    logged and degrades to an EMPTY tuple: conservative, because the caller
+    then blocks the rebase loudly on what turns out to be a benign file rather
+    than silently believing the working tree needs no stashing (see
+    "no silent errors", CLAUDE.md §1).
+    """
+    try:
+        from pathlib import Path as _Path
+
+        from settings import REPO_ROOT as _REPO_ROOT
+        from tools.kb_sync import _regions as _kb_regions
+    except Exception:
+        logger.warning(
+            "benign_stash: could not import tools.kb_sync to derive the "
+            "KB-counts regenerated-path set; the KB-counts docs it would have "
+            "covered will now block a rebase they dirty (conservative — see "
+            "the derivation docstring)", exc_info=True)
+        return ()
+    repo = _Path(_REPO_ROOT)
+    rels: set[str] = set()
+    for _region, (path, _renderer) in _kb_regions(repo).items():
+        try:
+            rels.add(str(path.relative_to(repo)))
+        except ValueError:
+            continue  # a region target outside the repo root — not our concern
+    return tuple(sorted(rels))
+
+
 # Known-benign refresh artifacts — files our own pre-commit / cache-refresh hooks
 # write as side effects. They appear in ``git status --porcelain``, block a
 # rebase, and carry no task work.
 #
-# All four ``project-history/*.ndjson`` ledgers are ``merge=union`` append-only
-# logs churned by the post-checkout/post-merge cache-settle hooks
-# (noc-graph / auto-improvement / worktree-salvage / branch-tree). They are
-# reconstructable and never contain task work, so they are benign for the purpose
-# of the rebase pre-check.
+# ``project-history/*.ndjson`` IS the invariant, not a coincidence of four
+# filenames — .gitattributes already carries the SAME glob
+# (``project-history/*.ndjson merge=union``) for the whole directory, because
+# every ledger there is an append-only structured log written by an MCP tool,
+# never hand-edited prose. The glob covers every ledger the directory holds
+# TODAY (vector-costs / auto-improvement / worktree-salvage / branch-tree /
+# branch-tree's own mirror) and every ledger a FUTURE writer drops in — no
+# per-filename entry required. The five literal entries below are kept
+# alongside it ONLY because ``task_branch``'s test suite
+# (``test_task_branch.py::test_benign_patterns_contains_worktree_salvage`` and
+# its siblings) pins specific SUBSTRINGS inside ``_BENIGN_REFRESH_PATTERNS``
+# itself — a glob string doesn't contain the literal filename as a substring,
+# so the pin needs the literal alongside the glob. Functionally the glob alone
+# already covers all five (`is_benign` matches via ``fnmatch``, not substring).
+#
+# ``project-history/PROJECT-HISTORY.md`` (this pre-commit hook's step 3b
+# target, ``history.render_project_history``) is a literal entry for a
+# DIFFERENT reason: it has no importable single-source constant the way the
+# KB-counts docs and the ledgers do (its output path is a local default
+# inside ``render_project_history``, not a module-level name), so — unlike
+# the two derived groups above — it genuinely cannot be derived without
+# reaching into that function's internals. Discovered in-flight while
+# investigating this same recurrence class (regenerated + auto-staged by the
+# SAME hook, same failure shape); documented here rather than left for a
+# fifth incident to find it.
 BENIGN_REFRESH_PATTERNS: tuple[str, ...] = (
-    "KNOWLEDGE-BASE/AGENT-CONTEXT.md",
-    "KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md",
+    "project-history/*.ndjson",
     "project-history/vector-costs.ndjson",
     "project-history/auto-improvement.ndjson",
     "project-history/worktree-salvage.ndjson",
     "project-history/branch-tree.ndjson",
+    "project-history/branch-tree.mirror.ndjson",
+    "project-history/PROJECT-HISTORY.md",
     ".claude/cache/*",
-)
+) + _kb_counts_regenerated_rel_paths()
 
 STASH_MESSAGE = "task_branch auto-stash: benign refresh artifacts"
 
@@ -178,6 +265,7 @@ def dirty_blocked_result(real: list[str], dev_ref: str) -> dict[str, Any]:
 
 __all__ = [
     "BENIGN_REFRESH_PATTERNS", "STASH_MESSAGE", "RunGit",
+    "_kb_counts_regenerated_rel_paths",
     "is_benign", "strip_status_code", "classify_porcelain", "classify_dirty",
     "stash_benign", "pop_stash", "dirty_blocked_result",
 ]

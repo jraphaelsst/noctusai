@@ -585,3 +585,91 @@ real resulting commit and shows it would have blocked. A third test proves a
 genuinely non-benign rider (not on `BENIGN_REFRESH_PATTERNS`) still blocks loudly and
 never reaches `origin/dev` — the property the fix must preserve, not merely the
 symptom it must remove.
+
+## §12b · The loop recurred a THIRD time — the list itself was the bug (2026-09-01)
+
+**§12a's mechanism was correct. What it fixed was a mechanism gap, not the underlying
+one.** §12a made the divergence guard tolerate a rider *iff* `_benign_stash.is_benign()`
+says so — but `BENIGN_REFRESH_PATTERNS` was still a **hand-copied list of six literal
+strings**, and it was incomplete on arrival. A primary checkout was observed
+`51 behind / 1 ahead` with a stranded `chore(branch-pointer)` commit and two dirty
+files still sitting in the tree.
+
+**Root cause: two regenerated siblings were never added to the hand-copied list.**
+
+1. `scripts/hooks/pre-commit` step 2 (`--update-kb-counts` → `kb_sync.update_kb_counts`)
+   rewrites **three** marker-block targets: `KNOWLEDGE-BASE/AGENT-CONTEXT.md`,
+   `KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md`, and `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`
+   (`kb_sync._regions()` — the "inventory" and "database" regions both target
+   `02-LANDSCAPE.md`). Only the first two were ever copied into
+   `BENIGN_REFRESH_PATTERNS`. `02-LANDSCAPE.md` gets rewritten — and auto-`git add`ed
+   by step 2 when it started clean — on essentially every commit that changes the
+   product/schema/tool counts, so it rides into whatever commit is being built exactly
+   like `vector-costs.ndjson` did in §12a, and refused the rebase every time it mattered.
+2. `branch_pointer.py`'s `_write_row` writes the ledger **and** a byte-identical mirror
+   (`project-history/branch-tree.mirror.ndjson`) atomically, every call — the
+   `check_branch_tree_mirror` keeper hard-blocks any drift between the two. Only the
+   ledger's filename was ever copied into the list; the mirror was not.
+
+**This is the exact anti-pattern CLAUDE.md §1 names** for hardcoded coverage lists
+("hand-maintained lists drift and break the fleet — derive, don't sync by hand"),
+applied one layer beneath where that rule usually bites (product-slug rosters,
+dependabot coverage, CI matrices) — here the "fleet" is the set of files a hook
+regenerates, and the "coverage list" is `BENIGN_REFRESH_PATTERNS` itself.
+
+**The fix — derive what's derivable, generalize what's a directory convention, and
+name what's neither out loud.**
+
+* **KB-counts docs** (`AGENT-CONTEXT.md` / `06-AGENTS.md` / `02-LANDSCAPE.md`) are now
+  read straight from `kb_sync._regions()` — the SAME manifest the regenerator itself
+  walks — via `_benign_stash._kb_counts_regenerated_rel_paths()`, instead of re-typed.
+  A fourth marker-block target added to `kb_sync` in the future is covered on arrival.
+  `kb_sync` has zero reverse dependency on `_benign_stash` / `_ledger_push` /
+  `branch_pointer`, so importing it — even at `_benign_stash` module-load time — cannot
+  form an import cycle (verified by importing in every module order: `branch_pointer`
+  first, `task_branch` first, `_ledger_push` first — all clean).
+* **The `project-history/*.ndjson` ledgers** are now covered by a directory-wide glob,
+  not one literal per filename. This is not a new invariant invented for the fix — it's
+  the SAME rule `.gitattributes` already encodes for the whole directory
+  (`project-history/*.ndjson merge=union`), because every ledger there is an
+  append-only structured log an MCP tool writes, never hand-edited prose. The glob
+  closes the mirror-file gap and covers any future sibling ledger by construction. The
+  four prior literal filenames stay in the tuple ALONGSIDE the glob, purely for
+  backward compatibility: `test_task_branch.py`'s
+  `test_benign_patterns_contains_worktree_salvage` and siblings pin specific
+  **substrings** inside `_BENIGN_REFRESH_PATTERNS` itself, and a glob string does not
+  contain a literal filename as a substring — functionally the glob alone already
+  covers all of them (`is_benign` matches via `fnmatch`, not substring).
+* **`project-history/PROJECT-HISTORY.md`** (pre-commit step 3b's target, discovered
+  in-flight while auditing this same recurrence class — regenerated + auto-staged by
+  the SAME hook, same failure shape, not previously reported) stays a literal entry:
+  its output path is a local default inside `history.render_project_history`, not an
+  importable module-level constant, so unlike the two groups above it genuinely cannot
+  be derived without reaching into that function's internals.
+
+**Preserving the boundary.** Widening one literal filename into a directory glob risks
+swallowing genuine work that happens to live in the same directory. Only the STASH is
+widened, not the risk profile: `stash_benign` + `pop_stash` round-trip the content
+losslessly, so a brand-new `project-history/*.ndjson` file surviving the stash is the
+intended outcome (extensibility), not silent loss. A NON-`.ndjson` file under
+`project-history/` (e.g. a hand-authored roadmap doc) still classifies as real and
+still blocks — pinned by `TestWidenedGlobStillBlocksRealWork` in `test_benign_stash.py`.
+
+**The gate.** `test_benign_stash.py` gained two cross-module contract tests that do
+NOT re-derive from `_benign_stash`'s own production code: `TestKbCountsDerivationGate`
+independently re-reads `kb_sync._regions()` and asserts `is_benign()` covers every
+target; `TestBranchTreeMirrorDerivationGate` independently reads
+`branch_pointer.LEDGER_REL` / `MIRROR_REL` and asserts both are benign (branch_pointer
+is deliberately NOT imported by `_benign_stash`'s production derivation, to avoid the
+import cycle — this test is the genuinely independent check that the outcome still
+agrees). Both failed against the pre-fix hand-copied list (verified: `git stash` the
+fix, re-run, 5 failures surface exactly the two known gaps; `git stash pop`, all green)
+— the mechanism that stops a fourth recurrence, not a description of one that already
+happened. `test_ledger_push_realgit.py` gained a third real-git fixture
+(`stale_primary_with_kb_counts_hook_that_stages_mid_commit`) installing an actual
+`.git/hooks/pre-commit` that regenerates a `02-LANDSCAPE.md`-shaped file mid-commit on
+a stale/behind primary — proven to strand the commit (`dirty_blocked`) against the
+pre-fix code and land cleanly (`pushed=True`, primary level with `origin/dev`) against
+the fix. A fake-runner test cannot express this: a scripted `rebase` call returns a
+canned code regardless of tree state, which is precisely why this bug survived three
+rounds before a real-git harness caught it.

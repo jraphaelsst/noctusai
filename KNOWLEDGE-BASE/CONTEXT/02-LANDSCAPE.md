@@ -43,12 +43,12 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 22 | 41 | 107 | 73 | 179 | 2,582 |
+| Social Wiring | 22 | 41 | 107 | 73 | 180 | 2,606 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 10 | 6 | 20 | 17 | 19 | 272 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 329 |
-| **Total** | **218** | **236** | **417** | **266** | **636** | **8,515** |
+| **Total** | **218** | **236** | **417** | **266** | **637** | **8,539** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

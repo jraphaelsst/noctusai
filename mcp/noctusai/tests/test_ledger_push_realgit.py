@@ -397,3 +397,132 @@ def test_a_genuinely_non_benign_rider_still_blocks_loudly(
     ), res
     _rc, remote_show, _ = _git("show", "dev:REAL_DOC.md", cwd=origin)
     assert _rc != 0, "the non-benign rider must NEVER reach origin/dev"
+
+
+# ── take 3: the divergence loop RECURRED for a THIRD reason (fixed 2026-09-01) ─
+#
+# THE BUG. Take 2's fix made the divergence guard tolerate a rider IFF
+# `_benign_stash.is_benign()` says so. But `BENIGN_REFRESH_PATTERNS` was itself
+# a hand-copied list, and it was INCOMPLETE: the pre-commit hook's step 2
+# (`--update-kb-counts`) rewrites THREE marker-block targets —
+# `KNOWLEDGE-BASE/AGENT-CONTEXT.md`, `KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md`, and
+# `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md` — and only the first two were ever
+# copied into the list. `02-LANDSCAPE.md` gets rewritten (and step 2
+# auto-`git add`s it, since it starts clean) on essentially every commit that
+# changes the product/schema/tool counts, so it rides into the SAME commit as
+# a ledger row exactly like `vector-costs.ndjson` did in take 2 — but
+# `is_benign('KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md')` said False, so the
+# divergence guard refused it as "non-ledger", stranding the commit.
+#
+# THIS TEST is real git end-to-end, mirroring take 2's harness exactly but
+# with a hook that regenerates a 02-LANDSCAPE.md-SHAPED file (not
+# vector-costs.ndjson again — that would only re-prove take 2). It proves the
+# fix at the level that matters: `_benign_stash`'s DERIVED pattern set (read
+# from `kb_sync._regions()`, not hand-copied) closes this specific gap, and a
+# stale/behind primary's ledger-only push now succeeds where the old
+# hand-copied list would have stranded it.
+def _install_kb_counts_regen_hook(repo: str) -> None:
+    """A REAL `.git/hooks/pre-commit` that mimics step 2 of the noc pre-commit
+    hook for ONE of its three targets: rewrite `KNOWLEDGE-BASE/CONTEXT/
+    02-LANDSCAPE.md` (append a line, simulating a changed auto-derived count
+    block) and `git add` it — on EVERY commit, exactly like the real hook's
+    "auto-staged (machine count-refresh of a clean file)" leg does when the
+    file was clean beforehand."""
+    hook = pathlib.Path(repo, ".git", "hooks", "pre-commit")
+    hook.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "echo '<!-- count refreshed -->' >> KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md\n"
+        "git add -- KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md\n"
+    )
+    hook.chmod(0o755)
+
+
+@pytest.fixture()
+def stale_primary_with_kb_counts_hook_that_stages_mid_commit():
+    """Take-3 incident shape: origin/dev has advanced (rebase genuinely
+    required), the primary tree starts CLEAN, and a REAL pre-commit hook
+    regenerates + stages `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md` (a
+    kb_sync-owned marker-block target, NOT one of the four ndjson ledgers)
+    DURING the commit this helper makes."""
+    tmp = tempfile.mkdtemp(prefix="noc-divloop3-")
+    origin = os.path.join(tmp, "origin.git")
+    primary = os.path.join(tmp, "primary")
+    peer = os.path.join(tmp, "peer")
+
+    _git("init", "--bare", "-b", "dev", origin)
+    _git("clone", origin, primary)
+    _identity(primary)
+    pathlib.Path(primary, "project-history").mkdir(parents=True)
+    pathlib.Path(primary, "KNOWLEDGE-BASE", "CONTEXT").mkdir(parents=True)
+    pathlib.Path(primary, LEDGER).write_text('{"row": 0}\n')
+    pathlib.Path(primary, "KNOWLEDGE-BASE", "CONTEXT", "02-LANDSCAPE.md").write_text(
+        "# Landscape\n<!-- kb-counts:start:inventory -->\nstub\n<!-- kb-counts:end:inventory -->\n")
+    pathlib.Path(primary, ".gitattributes").write_text(
+        "project-history/*.ndjson merge=union\n")
+    _git("add", "-A", cwd=primary)
+    _git("commit", "-m", "base", cwd=primary)
+    _git("push", "origin", "HEAD:dev", cwd=primary)
+    _install_kb_counts_regen_hook(primary)
+
+    # A peer advances origin/dev — the primary's local dev is now behind.
+    _git("clone", origin, peer)
+    _identity(peer)
+    pathlib.Path(peer, "PEER.md").write_text("peer work\n")
+    _git("add", "-A", cwd=peer)
+    _git("commit", "-m", "peer advances dev", cwd=peer)
+    _git("push", "origin", "HEAD:dev", cwd=peer)
+
+    # A new ledger row to deliver. The tree is otherwise CLEAN — the hook is
+    # the only source of the second file, not pre-existing dirt.
+    pathlib.Path(primary, LEDGER).write_text(
+        '{"row": 0}\n{"row": 1, "recovery": "pointer"}\n')
+    yield origin, primary
+
+
+def test_kb_counts_regen_rider_no_longer_strands_the_commit(
+    stale_primary_with_kb_counts_hook_that_stages_mid_commit,
+):
+    """THE FIX, end to end with real git, for the THIRD reason the loop
+    recurred: a hook that regenerates + stages a kb_sync-owned marker-block
+    doc (not one of the four ndjson ledgers already covered by take 2) must
+    not strand the ledger commit — the row lands on origin/dev, and the
+    primary ends up level with it."""
+    origin, primary = stale_primary_with_kb_counts_hook_that_stages_mid_commit
+    landscape_rel = "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md"
+
+    res = commit_and_ff_push_ledger(
+        runner=_runner_for(primary), root=primary, rel_paths=[LEDGER],
+        commit_msg="chore(branch-pointer): record recovery pointer",
+        already_committed=False,
+    )
+
+    # ── control: prove the commit is genuinely two-file (the mechanism) ──
+    _rc, tip, _ = _git("rev-parse", "HEAD", cwd=primary)
+    _rc, changed_out, _ = _git(
+        "diff-tree", "--no-commit-id", "--name-only", "-r", tip.strip(), cwd=primary)
+    changed = [f for f in changed_out.splitlines() if f.strip()]
+    assert LEDGER in changed and landscape_rel in changed, (
+        f"expected the kb-counts hook's rider to ride into the SAME commit: {changed!r}")
+
+    # CONTROL: the pre-fix predicate, run against this SAME real commit,
+    # would have blocked it — proving the bug is real, not merely theorized.
+    assert _old_divergence_guard_would_block(changed, {LEDGER}) is True, (
+        "control failed: the pre-fix predicate should flag this commit as "
+        "non-ledger (that IS the bug being fixed)")
+
+    # THE FIX: the actual helper call above must still have succeeded, closing
+    # the gap that a hand-copied BENIGN_REFRESH_PATTERNS list left open.
+    assert res.get("pushed") is True, (
+        f"row not pushed despite a kb-counts-regen rider: {res!r}")
+    assert res.get("status") == "pushed"
+
+    _rc, out, _ = _git("show", f"dev:{LEDGER}", cwd=origin)
+    assert "recovery" in out, "the ledger row never reached origin/dev"
+
+    _git("fetch", "origin", cwd=primary)
+    _rc, counts, _ = _git("rev-list", "--left-right", "--count",
+                          "origin/dev...HEAD", cwd=primary)
+    assert counts.strip() == "0\t0", (
+        f"primary is diverged from origin/dev ({counts.strip()!r}) — the "
+        "self-latching loop the fix exists to close")
