@@ -8,15 +8,26 @@
  * data that is merely refetching.
  */
 import { useState } from "react";
-import { Badge, Button, Input, TableSkeleton } from "@noctusai/lib/design-system";
+import {
+  Badge,
+  Button,
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
+  Input,
+  TableSkeleton,
+} from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { Plus, Search, Trash2, UserCheck } from "lucide-react";
+import { Pencil, Plus, Search, Trash2, UserCheck } from "lucide-react";
 
 import {
   useAtivarCliente,
+  useAtualizarCliente,
   useClientes,
   useCriarCliente,
   useRemoverCliente,
+  type Cliente,
   type StatusCliente,
 } from "@/hooks/useClientes";
 
@@ -49,7 +60,13 @@ export default function Clientes() {
   });
   const criar = useCriarCliente();
   const ativar = useAtivarCliente();
+  const atualizar = useAtualizarCliente();
   const remover = useRemoverCliente();
+
+  /** The client open in the edit dialog, or null. */
+  const [emEdicao, setEmEdicao] = useState<Cliente | null>(null);
+  /** Deletion cascades to marca/contrato/pauta/tarefa, so it asks first. */
+  const [aRemover, setARemover] = useState<Cliente | null>(null);
 
   function handleCriar(event: React.FormEvent) {
     event.preventDefault();
@@ -189,7 +206,16 @@ export default function Clientes() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => remover.mutate(cliente.id)}
+                onClick={() => setEmEdicao(cliente)}
+                aria-label={`Editar ${cliente.nome}`}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setARemover(cliente)}
                 disabled={remover.isPending}
                 aria-label={`Remover ${cliente.nome}`}
               >
@@ -199,6 +225,152 @@ export default function Clientes() {
           ))}
         </ul>
       )}
+
+      {emEdicao && (
+        <DialogoEdicao
+          cliente={emEdicao}
+          salvando={atualizar.isPending}
+          erro={atualizar.isError}
+          onFechar={() => setEmEdicao(null)}
+          onSalvar={(patch) =>
+            atualizar.mutate(
+              { id: emEdicao.id, ...patch },
+              { onSuccess: () => setEmEdicao(null) },
+            )
+          }
+        />
+      )}
+
+      {/* Hard delete cascades to marca / contrato / pauta / tarefa /
+          apontamento — naming that in the prompt, because "are you sure?"
+          alone does not tell anyone what they are about to lose. */}
+      <Dialog open={!!aRemover} onClose={() => setARemover(null)} title="Remover cliente">
+        <DialogHeader>Remover cliente</DialogHeader>
+        <DialogBody>
+          <p className="text-sm text-foreground">
+            Remover <strong>{aRemover?.nome}</strong>?
+          </p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Isso apaga também a marca, os contratos, as pautas, as tarefas e os
+            apontamentos de horas deste cliente. A ação não pode ser desfeita.
+          </p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setARemover(null)}>
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={remover.isPending}
+            onClick={() => {
+              if (!aRemover) return;
+              remover.mutate(aRemover.id, { onSuccess: () => setARemover(null) });
+            }}
+          >
+            {remover.isPending ? "Removendo…" : "Remover"}
+          </Button>
+        </DialogFooter>
+      </Dialog>
     </div>
+  );
+}
+
+/** Edit dialog — every field the API accepts, including the status the
+ *  `ativar` shortcut cannot reach (inativo / inadimplente). */
+function DialogoEdicao({
+  cliente,
+  salvando,
+  erro,
+  onFechar,
+  onSalvar,
+}: {
+  cliente: Cliente;
+  salvando: boolean;
+  erro: boolean;
+  onFechar: () => void;
+  onSalvar: (patch: Record<string, string>) => void;
+}) {
+  const [form, setForm] = useState({
+    nome: cliente.nome ?? "",
+    nicho: cliente.nicho ?? "",
+    email: cliente.email ?? "",
+    telefone: cliente.telefone ?? "",
+    origem: cliente.origem ?? "",
+    observacoes: cliente.observacoes ?? "",
+    status: cliente.status,
+  });
+
+  function campo(chave: keyof typeof form) {
+    return {
+      value: form[chave] as string,
+      onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
+        setForm({ ...form, [chave]: e.target.value }),
+    };
+  }
+
+  return (
+    <Dialog open onClose={onFechar} title={`Editar ${cliente.nome}`}>
+      <DialogHeader>Editar cliente</DialogHeader>
+      <DialogBody>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs text-muted-foreground">
+            Nome
+            <Input className="mt-1" {...campo("nome")} />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            Nicho
+            <Input className="mt-1" {...campo("nicho")} />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            E-mail
+            <Input className="mt-1" type="email" {...campo("email")} />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            Telefone
+            <Input className="mt-1" {...campo("telefone")} />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            Origem
+            <Input className="mt-1" {...campo("origem")} />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            Status
+            <select
+              className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
+              value={form.status}
+              onChange={(e) =>
+                setForm({ ...form, status: e.target.value as StatusCliente })
+              }
+            >
+              {(Object.keys(STATUS_LABEL) as StatusCliente[]).map((s) => (
+                <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label className="mt-3 block text-xs text-muted-foreground">
+          Observações
+          <textarea
+            className="mt-1 min-h-[80px] w-full rounded-md border border-border bg-background p-2 text-sm text-foreground"
+            value={form.observacoes}
+            onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
+          />
+        </label>
+        {erro && (
+          <p className="mt-2 text-sm text-destructive">
+            Não foi possível salvar as alterações.
+          </p>
+        )}
+      </DialogBody>
+      <DialogFooter>
+        <Button variant="outline" onClick={onFechar}>Cancelar</Button>
+        <Button
+          disabled={!form.nome.trim() || salvando}
+          onClick={() => onSalvar(form)}
+        >
+          {salvando ? "Salvando…" : "Salvar"}
+        </Button>
+      </DialogFooter>
+    </Dialog>
   );
 }

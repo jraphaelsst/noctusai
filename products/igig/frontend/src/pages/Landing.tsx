@@ -32,18 +32,18 @@ export default function Landing() {
             NoctusAI IgIg
           </div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-foreground">
-            A minimal NoctusAI product
+            O ERP da sua agência de comunicação
           </h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-            Proves the entire shared stack works: authentication, layout,
-            notifications, theme, and SSO.
+            Do lead ao contrato assinado, da pauta à peça aprovada pelo cliente,
+            do apontamento de horas à margem real por conta — em um só lugar.
           </p>
           <div className="flex items-center justify-center gap-3 pt-2">
             <Link
               to="/login"
               className="inline-flex items-center justify-center gap-2 h-11 px-6 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
             >
-              Comecar Agora
+              Começar agora
               <ArrowRight className="h-4 w-4" />
             </Link>
             <a

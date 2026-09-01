@@ -19,6 +19,9 @@ const { mockGet, mockPost } = vi.hoisted(() => ({
 }));
 vi.mock("@noctusai/seed/infra", () => ({
   api: { get: mockGet, post: mockPost },
+  // The timesheet is bound to the signed-in user (apontamentos are
+  // per-person), so the page reads the auth store on render.
+  useAuthStore: () => ({ user: { id: "usuario-1", email: "teste@igig.local" } }),
 }));
 
 vi.mock("@tanstack/react-query", () => {
@@ -65,19 +68,34 @@ const QUADRO: Quadro = {
   } as never,
 };
 
+/**
+ * The page issues three queries — the quadro plus `usePautas` and
+ * `useProfissionais`, which feed the "nova tarefa" selectors. A single
+ * `mockReturnValue` would hand the Quadro object to all three and blow up on
+ * `pautas.map`. Route by query key so the quadro state under test is the only
+ * thing these cases vary; the companion lists stay settled and empty.
+ */
+function mockQuadroState(state: Record<string, unknown>) {
+  mockUseQuery.mockImplementation(((opts: { queryKey?: unknown[] }) => {
+    const chave = JSON.stringify(opts?.queryKey ?? []);
+    if (chave.includes("esteira")) return state;
+    return { data: [], isPending: false, isFetching: false, isError: false, error: null };
+  }) as never);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 describe("Esteira — first load", () => {
   it("shows the skeleton before any data has ever arrived", () => {
-    mockUseQuery.mockReturnValue({
+    mockQuadroState({
       data: undefined,
       isPending: true,
       isFetching: true,
       isError: false,
       error: null,
-    } as never);
+    });
 
     render(<Esteira />);
 
@@ -91,13 +109,13 @@ describe("Esteira — refetch-unmount regression", () => {
     // isPending false + isFetching true + data present — exactly what
     // TanStack v5 reports right after `useMoverTarefa`/`useIniciarTimer`/
     // etc. invalidate the quadro. This must NOT collapse the board.
-    mockUseQuery.mockReturnValue({
+    mockQuadroState({
       data: QUADRO,
       isPending: false,
       isFetching: true,
       isError: false,
       error: null,
-    } as never);
+    });
 
     render(<Esteira />);
 
@@ -107,13 +125,13 @@ describe("Esteira — refetch-unmount regression", () => {
   });
 
   it("still shows the settled board once the refetch completes", () => {
-    mockUseQuery.mockReturnValue({
+    mockQuadroState({
       data: QUADRO,
       isPending: false,
       isFetching: false,
       isError: false,
       error: null,
-    } as never);
+    });
 
     render(<Esteira />);
 
@@ -123,13 +141,13 @@ describe("Esteira — refetch-unmount regression", () => {
 
 describe("Esteira — error state", () => {
   it("shows the error message and no skeleton once the query errors out", () => {
-    mockUseQuery.mockReturnValue({
+    mockQuadroState({
       data: undefined,
       isPending: false,
       isFetching: false,
       isError: true,
       error: new Error("boom"),
-    } as never);
+    });
 
     render(<Esteira />);
 

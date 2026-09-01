@@ -112,6 +112,24 @@ export function useAtivarCliente() {
   });
 }
 
+/**
+ * Edit a client.
+ *
+ * `PATCH /api/clientes/{id}` shipped with the router but had no consumer, so
+ * the U of CRUD was simply absent: `email`, `telefone`, `origem`,
+ * `observacoes` and any status change other than prospect→ativo could be
+ * written by the API and never by a human. A CRM whose contact fields cannot
+ * be corrected is not a CRM.
+ */
+export function useAtualizarCliente() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: Partial<ClienteCreate> & { id: string; status?: StatusCliente }) =>
+      api.patch<Cliente>(`/api/clientes/${id}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: CLIENTES_QUERY_KEY }),
+  });
+}
+
 export function useRemoverCliente() {
   const qc = useQueryClient();
   return useMutation({

@@ -18,7 +18,7 @@
 | **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
 | **Social Wiring** | `products/social-wiring/` | Social-ops hub: email-marketing + WhatsApp-scheduling. Consolidation target of `media-scheduling`/`youtube-crawler`/`mailing`/`imobi-scheduling` (Wave 4, 2026-05-16) | 8011/8160 | `social_wiring` |
 | **Knowledge Extractor** | `products/knowledge-extractor/` | Course-methodology RAG: Drive→transcribe→summarize→extract methodology→pgvector KB. Backend-only; absorbed from the sibling `knowledge-extractor` repo 2026-05-23 (seam-swap + container gate in flight, `container-first-codify-and-absorb-ke`) | 8012/8150 | `knowledge_extractor` |
-| **IgIg** | `products/igig/` | Agency ERP for a communication agency: CRM/orçamentos, Central da Marca, planejamento editorial, esteira de produção criativa + portal de aprovação white-label, distribuição/métricas, financeiro/retainers. **Develops on SQLite** via the `noctusai_lib.integrations.persistence` seam (domain data only — auth stays on Supabase); migrates to Supabase later. Tenant isolation is app-layer `org_id` scoping on the SQLite path (accept-with-rationale) with real RLS policies shipped in the migrations for the Postgres path. Merges into `orbity` in the future | 8013/8170 | `igig` |
+| **IgIg** | `products/igig/` | Agency ERP for a communication agency: CRM/orçamentos + calculadora de escopo, Central da Marca + Cofre, planejamento editorial, esteira de produção criativa + portal de aprovação white-label, distribuição/métricas, financeiro/retainers + DRE, e **Custos** (funções + profissionais) — a tabela de custo/hora que M1/M5/M6 compartilham via `custo_hora_efetivo`. Domain data on Supabase (schema `igig`) através do seam `noctusai_lib.integrations.persistence`; RLS em todas as tabelas. Merges into `orbity` in the future | 8013/8170 | `igig` |
 | **P Studio** | `products/p-studio/` | ERP for a real-estate photography/AV production studio: cadastros (clientes/imóveis/serviços/equipamentos), comercial funnel (`negocios`), shoot scheduling (`captacoes` + equipment checklist), production pipeline (`producoes`), financeiro with real bank billing. Billing goes through a `ProvedorCobranca` Protocol — Asaas is the only adapter allowed to know Asaas vocabulary, so the move to Banco do Brasil is an adapter swap. Absorbed 2026-08-13 from the sibling workspace `cadu/p-studio/` (project `p-studio-absorption-rollout`); schema + PostgREST exposure were already applied to the shared Supabase before absorption | 8014/8180 | `p_studio` |
 | **Orbity** | `products/orbity/` | Agency operating-system (absorbing `sistema-orbity`): CRM/funil, clients, contracts, financeiro, agenda, WhatsApp automation, Meta ads, notifications — built seed-first via the absorption capability-uplift loop (in flight on `feat/orbity-build`, roadmap `project-history/roadmaps/orbity-2026-06.md`, knowledge `KB § ABSORPTIONS/orbity/`) | 8010/8140 | `orbity` |
 
@@ -46,9 +46,9 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Social Wiring | 22 | 41 | 107 | 73 | 180 | 2,606 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
-| Igig | 10 | 6 | 20 | 17 | 19 | 272 |
-| P Studio | 8 | 10 | 12 | 1 | 20 | 329 |
-| **Total** | **218** | **236** | **417** | **266** | **637** | **8,539** |
+| Igig | 10 | 5 | 20 | 17 | 18 | 280 |
+| P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
+| **Total** | **218** | **235** | **417** | **266** | **636** | **8,549** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

@@ -15,7 +15,7 @@ export default function Login() {
       <LoginForm
         brandIcon={Palette}
         brandTitle="IgIg"
-        brandSubtitle="A minimal NoctusAI product"
+        brandSubtitle="ERP para agências de comunicação"
         supabase={supabase}
         onSuccess={() => navigate("/")}
         showForgotPassword

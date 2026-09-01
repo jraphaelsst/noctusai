@@ -33,7 +33,7 @@ from app.routers.comercial_router import router as comercial_router
 from app.routers.financeiro_router import router as financeiro_router
 from app.routers.integracoes_router import router as integracoes_router
 from app.routers.pauta_router import router as pauta_router
-from app.routers.example_router import router as example_router
+from app.routers.custos_router import router as custos_router
 from app.routers.webhook_router import router as webhook_router
 
 # Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
@@ -74,14 +74,14 @@ app = create_product_app(
     version="0.1.0",
     limiter=limiter,
     standard_routers=["health", "notificacoes", "team"],
-    # Per-product routers go here. The placeholders are the canonical
-    # skeletons — rename + extend per the TODO(new-product) markers in
-    # ``app/routers/example_router.py`` (CRUD shape) and
-    # ``app/routers/webhook_router.py`` (signed-receiver shape).
+    # Per-product routers. The seed's `example_router` scaffold was removed
+    # once the six módulos landed — it shipped a live /api/example CRUD in a
+    # production agency ERP. `webhook_router` stays as the signed-receiver
+    # shape the signature provider will use (NOC-REMEDIATE[igig-assinatura]).
     routers=[
         cliente_router, esteira_router, marca_router, pauta_router,
         distribuicao_router, integracoes_router, financeiro_router, comercial_router,
-        example_router, webhook_router,
+        custos_router, webhook_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     # 🔴 Chaves sem as quais este produto NÃO deve subir em produção. O guard

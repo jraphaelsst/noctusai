@@ -113,7 +113,14 @@ export function useCriarMarca() {
   return useMutation({
     mutationFn: (payload: Partial<Marca> & { cliente_id: string; nome: string }) =>
       api.post<Marca>("/api/marcas", payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: MARCA_QUERY_KEY }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: MARCA_QUERY_KEY });
+      // Same reason as `useAtualizarMarca`: the Módulo 2 sidebar reads the
+      // repertório, which is a DIFFERENT query key. Without this the sidebar
+      // keeps saying "este cliente ainda não tem marca cadastrada" while the
+      // brand editor is open right next to it.
+      qc.invalidateQueries({ queryKey: ["igig", "repertorio"] });
+    },
   });
 }
 

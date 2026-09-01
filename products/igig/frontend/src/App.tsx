@@ -26,14 +26,11 @@ const Distribuicao = lazy(() => import("@/pages/Distribuicao"));
 const Integracoes = lazy(() => import("@/pages/Integracoes"));
 const Financeiro = lazy(() => import("@/pages/Financeiro"));
 const Comercial = lazy(() => import("@/pages/Comercial"));
+const Custos = lazy(() => import("@/pages/Custos"));
 // PUBLIC route — the agency's client, no noc account. Token is the auth.
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
-// Placeholder domain page — rename + replace per
-// `products/seed/frontend/src/pages/Example.tsx`. Backend mirror at
-// `app/routers/example_router.py`.
-const Example = lazy(() => import("@/pages/Example"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -52,7 +49,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Distribuição", href: "/distribuicao", icon: BarChart3, route: "distribuicao" },
       { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
       { name: "Integrações", href: "/integracoes", icon: Plug, route: "integracoes" },
-      { name: "Example", href: "/example", icon: Boxes, route: "example" },
+      { name: "Custos", href: "/custos", icon: Boxes, route: "custos" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
   },
@@ -74,7 +71,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Distribuição", href: "/distribuicao", icon: BarChart3 },
       { name: "Financeiro", href: "/financeiro", icon: Wallet },
       { name: "Integrações", href: "/integracoes", icon: Plug },
-      { name: "Example", href: "/example", icon: Boxes },
+      { name: "Custos", href: "/custos", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
   },
@@ -100,7 +97,7 @@ export default createProductApp({
     { path: "/distribuicao", component: Distribuicao },
     { path: "/financeiro", component: Financeiro },
     { path: "/integracoes", component: Integracoes },
-    { path: "/example", component: Example },
+    { path: "/custos", component: Custos },
     { path: "/equipe", component: Equipe },
   ],
   Layout,

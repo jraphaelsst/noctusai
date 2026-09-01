@@ -105,6 +105,28 @@ export function useQuadro() {
  * back to its old column for a full round-trip before the refetch confirms
  * the move. `onError` restores the pre-move board from the snapshot.
  */
+/**
+ * Create a tarefa on the board.
+ *
+ * `POST /api/esteira/tarefas` shipped with the router but had no consumer, so
+ * the MVP module — the one the spec names as the priority deliverable — could
+ * not be started from the UI at all: the eight columns rendered and stayed
+ * permanently empty. A tarefa always belongs to a pauta, so the caller must
+ * supply one; the backend 404s otherwise rather than creating an orphan.
+ */
+export function useCriarTarefa() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: {
+      pauta_id: string;
+      titulo: string;
+      responsavel_id?: string | null;
+      prazo?: string | null;
+    }) => api.post<Tarefa>("/api/esteira/tarefas", payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ESTEIRA_QUERY_KEY }),
+  });
+}
+
 export function useMoverTarefa() {
   const qc = useQueryClient();
   return useMutation({
