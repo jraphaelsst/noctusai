@@ -12,7 +12,6 @@ Static segments ("Listas") inside the org's default audience.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -35,9 +34,6 @@ router = APIRouter(prefix="/api/mailchimp/segments", tags=["Mailchimp"])
 
 _require_client = make_require_mailchimp_client(require_audience=True)
 
-
-def _subscriber_hash(email: str) -> str:
-    return hashlib.md5(email.strip().lower().encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324
 
 
 def _segment_out(s) -> SegmentOut:
@@ -159,7 +155,5 @@ async def remove_segment_member(
 ) -> Response:
     client, record = client_record
     async with translate_mailchimp_errors():
-        await client.remove_segment_member(
-            record.audience_id, segment_id, _subscriber_hash(email)
-        )
+        await client.remove_segment_member(record.audience_id, segment_id, email)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

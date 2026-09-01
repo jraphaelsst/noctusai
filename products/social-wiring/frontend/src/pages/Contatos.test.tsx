@@ -149,7 +149,8 @@ const defaultMutations = () => ({
 beforeEach(() => {
   mockUseContacts.mockReturnValue({
     data: makeContactsPage([]),
-    isLoading: false,
+    isPending: false,
+      isFetching: false,
     isError: false,
     error: null,
   });
@@ -171,7 +172,8 @@ describe("Contatos (in-home) — loading / empty / error / success states", () =
   it("renders loading skeleton while contacts are fetching", async () => {
     mockUseContacts.mockReturnValue({
       data: undefined,
-      isLoading: true,
+      isPending: true,
+      isFetching: true,
       isError: false,
     });
     const { getByTestId } = await renderContatos();
@@ -186,7 +188,8 @@ describe("Contatos (in-home) — loading / empty / error / success states", () =
   it("renders error card on failure", async () => {
     mockUseContacts.mockReturnValue({
       data: undefined,
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: true,
       error: new Error("Network Error"),
     });
@@ -197,7 +200,8 @@ describe("Contatos (in-home) — loading / empty / error / success states", () =
   it("renders contact row with nome as primary label", async () => {
     mockUseContacts.mockReturnValue({
       data: makeContactsPage([makeContact()]),
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId, getByText } = await renderContatos();
@@ -208,7 +212,8 @@ describe("Contatos (in-home) — loading / empty / error / success states", () =
   it("renders source badge for WhatsApp contacts", async () => {
     mockUseContacts.mockReturnValue({
       data: makeContactsPage([makeContact({ source: "whatsapp", id: "contact-2" })]),
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId } = await renderContatos();
@@ -218,7 +223,8 @@ describe("Contatos (in-home) — loading / empty / error / success states", () =
   it("renders source badge for manual contacts", async () => {
     mockUseContacts.mockReturnValue({
       data: makeContactsPage([makeContact()]),
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId } = await renderContatos();
@@ -262,7 +268,8 @@ describe("Contatos (in-home) — archive", () => {
   it("archive button opens confirm dialog", async () => {
     mockUseContacts.mockReturnValue({
       data: makeContactsPage([makeContact()]),
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId, fireEvent } = await renderContatos();
@@ -278,7 +285,8 @@ describe("Contatos (in-home) — archive", () => {
     });
     mockUseContacts.mockReturnValue({
       data: makeContactsPage([makeContact()]),
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId, fireEvent } = await renderContatos();

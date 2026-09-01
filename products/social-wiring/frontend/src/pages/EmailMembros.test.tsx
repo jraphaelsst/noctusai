@@ -148,7 +148,8 @@ beforeEach(() => {
   });
   mockUseMailchimpContacts.mockReturnValue({
     data: { items: [], total: 0 },
-    isLoading: false,
+    isPending: false,
+      isFetching: false,
     isError: false,
     error: null,
   });
@@ -190,7 +191,8 @@ describe("EmailMembros — loading / empty / error / success states", () => {
   it("renders loading skeleton while members are fetching", async () => {
     mockUseMailchimpContacts.mockReturnValue({
       data: undefined,
-      isLoading: true,
+      isPending: true,
+      isFetching: true,
       isError: false,
     });
     const { getByTestId } = await renderEmailMembros();
@@ -202,10 +204,26 @@ describe("EmailMembros — loading / empty / error / success states", () => {
     expect(getByTestId("membros-empty")).toBeTruthy();
   });
 
+  // Regression — the blank-page hole. `isLoading` is false between retries and
+  // while a query is paused, so this exact state rendered NOTHING: no skeleton,
+  // no error, and both data branches compared `undefined` against a number.
+  // Observed live on /email-marketing/templates (mailchimp 500, 2026-09-01).
+  it("renders the empty state — not a blank page — when settled with no data", async () => {
+    mockUseMailchimpContacts.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isFetching: false,
+      isError: false,
+    });
+    const { getByTestId } = await renderEmailMembros();
+    expect(getByTestId("membros-empty")).toBeTruthy();
+  });
+
   it("renders error card on failure", async () => {
     mockUseMailchimpContacts.mockReturnValue({
       data: undefined,
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: true,
       error: new Error("Network Error"),
     });
@@ -216,7 +234,8 @@ describe("EmailMembros — loading / empty / error / success states", () => {
   it("renders member rows with email", async () => {
     mockUseMailchimpContacts.mockReturnValue({
       data: { items: [makeMember()], total: 1 },
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId } = await renderEmailMembros();

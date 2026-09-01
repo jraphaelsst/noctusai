@@ -110,13 +110,18 @@ function MembrosContent() {
   const [form, setForm] = useState<MemberFormState>(emptyForm());
   const [editingEmail, setEditingEmail] = useState<string | null>(null);
 
-  const { data, isLoading, isError, error } = useMailchimpContacts({
+  const { data, isPending, isFetching, isError, error } = useMailchimpContacts({
     status: statusFilter || undefined,
     count: PAGE_SIZE,
     offset,
   });
 
   const { upsert, archive } = useMailchimpContactMutations();
+  // Skeleton ONLY when there is nothing to show — the seed idiom
+  // (PipelineBoard / PipelineStagesManager). Bare `isLoading` is false
+  // between retries and while a query is paused, which rendered a blank
+  // page on a failed fetch (mailchimp templates 500, 2026-09-01).
+  const showSkeleton = isPending || (isFetching && (data?.items.length ?? 0) === 0);
 
   function openCreate() {
     setForm(emptyForm());
@@ -222,7 +227,7 @@ function MembrosContent() {
       </div>
 
       {/* Loading */}
-      {isLoading && (
+      {showSkeleton && (
         <div className="space-y-2" data-testid="membros-loading">
           {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-12 w-full" />
@@ -245,7 +250,7 @@ function MembrosContent() {
       )}
 
       {/* Empty */}
-      {!isLoading && !isError && data?.items.length === 0 && (
+      {!showSkeleton && !isError && (data?.items.length ?? 0) === 0 && (
         <Card data-testid="membros-empty">
           <CardHeader>
             <CardTitle className="text-base">Nenhum membro encontrado</CardTitle>
@@ -259,7 +264,7 @@ function MembrosContent() {
       )}
 
       {/* Table */}
-      {!isLoading && !isError && (data?.items.length ?? 0) > 0 && (
+      {!showSkeleton && !isError && (data?.items.length ?? 0) > 0 && (
         <Card data-testid="membros-table">
           <CardContent className="p-0">
             <div className="overflow-x-auto">

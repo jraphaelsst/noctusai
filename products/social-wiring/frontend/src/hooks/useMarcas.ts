@@ -44,7 +44,6 @@ export interface UpdateClientInput {
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
 const CLIENTS_KEY = ["sw", "clients"] as const;
-const CLIENT_KEY = (id: string) => ["sw", "clients", "detail", id] as const;
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
 
@@ -55,17 +54,6 @@ export function useMarcas() {
       const res = await api.get<Marca[]>("/api/marcas");
       return res ?? [];
     },
-  });
-}
-
-export function useClient(id: string) {
-  return useQuery({
-    queryKey: CLIENT_KEY(id),
-    queryFn: async () => {
-      const res = await api.get<Marca>(`/api/marcas/${id}`);
-      return res;
-    },
-    enabled: !!id,
   });
 }
 
@@ -87,11 +75,8 @@ export function useUpdateMarca() {
   return useMutation({
     mutationFn: ({ id, ...payload }: UpdateClientInput & { id: string }) =>
       api.patch<Marca>(`/api/marcas/${id}`, payload),
-    onSuccess: (res) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: CLIENTS_KEY });
-      if ((res as any)?.id) {
-        qc.invalidateQueries({ queryKey: CLIENT_KEY((res as any).id) });
-      }
     },
   });
 }

@@ -9,7 +9,6 @@ Proxies Mailchimp Marketing API member endpoints for the default audience.
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import Optional
 
@@ -29,9 +28,6 @@ router = APIRouter(prefix="/api/mailchimp/contacts", tags=["Mailchimp"])
 
 _require_client = make_require_mailchimp_client(require_audience=True)
 
-
-def _subscriber_hash(email: str) -> str:
-    return hashlib.md5(email.strip().lower().encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324
 
 
 def _member_out(m) -> MemberOut:
@@ -74,7 +70,7 @@ async def get_contact(
 ) -> MemberOut:
     client, record = client_record
     async with translate_mailchimp_errors():
-        member = await client.get_member(record.audience_id, _subscriber_hash(email))
+        member = await client.get_member(record.audience_id, email)
     return _member_out(member)
 
 
@@ -89,8 +85,7 @@ async def upsert_contact(
     async with translate_mailchimp_errors():
         member = await client.upsert_member(
             record.audience_id,
-            _subscriber_hash(email),
-            email=email,
+            email,
             status=body.status,
             first_name=body.first_name,
             last_name=body.last_name,
@@ -98,8 +93,8 @@ async def upsert_contact(
         if body.tags is not None:
             await client.set_member_tags(
                 record.audience_id,
-                _subscriber_hash(email),
-                tags=body.tags,
+                email,
+                active_tags=body.tags,
             )
     return _member_out(member)
 
@@ -112,5 +107,5 @@ async def archive_contact(
     """Archive (soft-delete) a member from the audience."""
     client, record = client_record
     async with translate_mailchimp_errors():
-        await client.archive_member(record.audience_id, _subscriber_hash(email))
+        await client.archive_member(record.audience_id, email)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

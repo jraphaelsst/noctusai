@@ -183,13 +183,16 @@ beforeEach(() => {
   mockUseMailchimpConnection.mockReturnValue({ data: { connected: true }, isPending: false });
   mockUseMailchimpCampaigns.mockReturnValue({
     data: { items: [], total: 0 },
-    isLoading: false,
+    isPending: false,
+      isFetching: false,
     isError: false,
     error: null,
   });
   mockUseMailchimpCampaignMutations.mockReturnValue(defaultMutations());
-  mockUseMailchimpSegments.mockReturnValue({ data: { items: [], total: 0 }, isLoading: false });
-  mockUseMailchimpTemplates.mockReturnValue({ data: { items: [], total: 0 }, isLoading: false });
+  mockUseMailchimpSegments.mockReturnValue({ data: { items: [], total: 0 }, isPending: false,
+      isFetching: false });
+  mockUseMailchimpTemplates.mockReturnValue({ data: { items: [], total: 0 }, isPending: false,
+      isFetching: false });
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -221,7 +224,8 @@ describe("EmailCampanhas — loading / empty / success states", () => {
   it("renders loading skeleton while campaigns are fetching", async () => {
     mockUseMailchimpCampaigns.mockReturnValue({
       data: undefined,
-      isLoading: true,
+      isPending: true,
+      isFetching: true,
       isError: false,
     });
     const { getByTestId } = await renderCampanhas();
@@ -233,10 +237,26 @@ describe("EmailCampanhas — loading / empty / success states", () => {
     expect(getByTestId("campanhas-empty")).toBeTruthy();
   });
 
+  // Regression — the blank-page hole. `isLoading` is false between retries and
+  // while a query is paused, so this exact state rendered NOTHING: no skeleton,
+  // no error, and both data branches compared `undefined` against a number.
+  // Observed live on /email-marketing/templates (mailchimp 500, 2026-09-01).
+  it("renders the empty state — not a blank page — when settled with no data", async () => {
+    mockUseMailchimpCampaigns.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isFetching: false,
+      isError: false,
+    });
+    const { getByTestId } = await renderCampanhas();
+    expect(getByTestId("campanhas-empty")).toBeTruthy();
+  });
+
   it("renders campaign rows when data present", async () => {
     mockUseMailchimpCampaigns.mockReturnValue({
       data: { items: [makeDraftCampaign(), makeSentCampaign()], total: 2 },
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId } = await renderCampanhas();
@@ -249,7 +269,8 @@ describe("EmailCampanhas — status badges", () => {
   it("draft campaign shows 'Rascunho' badge", async () => {
     mockUseMailchimpCampaigns.mockReturnValue({
       data: { items: [makeDraftCampaign()], total: 1 },
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId } = await renderCampanhas();
@@ -260,7 +281,8 @@ describe("EmailCampanhas — status badges", () => {
   it("sent campaign shows 'Enviada' badge", async () => {
     mockUseMailchimpCampaigns.mockReturnValue({
       data: { items: [makeSentCampaign()], total: 1 },
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId } = await renderCampanhas();
@@ -307,7 +329,8 @@ describe("EmailCampanhas — send action", () => {
   it("send button opens send confirm dialog", async () => {
     mockUseMailchimpCampaigns.mockReturnValue({
       data: { items: [makeDraftCampaign()], total: 1 },
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId, fireEvent } = await renderCampanhas();
@@ -323,7 +346,8 @@ describe("EmailCampanhas — send action", () => {
     });
     mockUseMailchimpCampaigns.mockReturnValue({
       data: { items: [makeDraftCampaign()], total: 1 },
-      isLoading: false,
+      isPending: false,
+      isFetching: false,
       isError: false,
     });
     const { getByTestId, fireEvent } = await renderCampanhas();

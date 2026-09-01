@@ -362,7 +362,7 @@ export function useIgDeleteComment(accountId: string | null, mediaId: string | n
   return useMutation<GatedResult<{ ok: true }>, unknown, string>({
     mutationFn: (commentId) =>
       api.delete<GatedResult<{ ok: true }>>(
-        `/api/meta/instagram/comments/${commentId}${qs({ account_id: accountId })}`,
+        `/api/meta/instagram/comments${qs({ account_id: accountId, comment_id: commentId })}`,
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: IG_COMMENTS_KEY(accountId, mediaId) });
@@ -499,7 +499,7 @@ export function useFbDeleteComment(accountId: string | null, postId: string | nu
   return useMutation<GatedResult<{ ok: true }>, unknown, string>({
     mutationFn: (commentId) =>
       api.delete<GatedResult<{ ok: true }>>(
-        `/api/meta/facebook/comments/${commentId}${qs({ account_id: accountId })}`,
+        `/api/meta/facebook/comments${qs({ account_id: accountId, comment_id: commentId })}`,
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: FB_COMMENTS_KEY(accountId, postId) });

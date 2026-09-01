@@ -28,6 +28,7 @@ Error classes are re-defined locally here (not imported from the seed lib):
 """
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +56,14 @@ from app.sqlite_client import SQLiteClient
 
 
 # ── Simple data objects (used internally by the fake) ────────────────────────
+
+def _subscriber_hash(email: str) -> str:
+    """Mirror `noctusai_lib...client.subscriber_hash` — the REAL client hashes
+    the email itself, so the double must take an email and hash it too. A
+    double that accepted a pre-hashed value let every member route ship
+    double-hashing bugs that only showed up against live Mailchimp."""
+    return hashlib.md5(email.strip().lower().encode("utf-8"), usedforsecurity=False).hexdigest()  # noqa: S324
+
 
 @dataclass
 class _Page:
@@ -187,23 +196,24 @@ class ContractFakeMailchimpClient:
             items = [m for m in items if m.status == status]
         return _Page(items=items[offset: offset + count], total=len(items))
 
-    async def get_member(self, audience_id: str, subscriber_hash: str) -> _Member:
+    async def get_member(self, audience_id: str, email: str) -> _Member:
         members_map = self._ensure_audience_members(audience_id)
-        m = members_map.get(subscriber_hash)
+        m = members_map.get(_subscriber_hash(email))
         if m is None:
-            raise MailchimpNotFoundError(f"Member {subscriber_hash!r} not found")
+            raise MailchimpNotFoundError(f"Member {email!r} not found")
         return m
 
     async def upsert_member(
         self,
         audience_id: str,
-        subscriber_hash: str,
-        *,
         email: str,
+        *,
         status: str = "subscribed",
-        first_name: Optional[str] = None,
-        last_name: Optional[str] = None,
+        first_name: str = "",
+        last_name: str = "",
+        status_if_new: str = "subscribed",
     ) -> _Member:
+        subscriber_hash = _subscriber_hash(email)
         members_map = self._ensure_audience_members(audience_id)
         existing = members_map.get(subscriber_hash)
         if existing:
@@ -220,20 +230,25 @@ class ContractFakeMailchimpClient:
         return m
 
     async def set_member_tags(
-        self, audience_id: str, subscriber_hash: str, *, tags: list[str]
+        self,
+        audience_id: str,
+        email: str,
+        *,
+        active_tags: list[str],
+        inactive_tags: Optional[list[str]] = None,
     ) -> None:
         members_map = self._ensure_audience_members(audience_id)
-        m = members_map.get(subscriber_hash)
+        m = members_map.get(_subscriber_hash(email))
         if m:
-            m.tags = list(tags)
+            m.tags = list(active_tags)
 
-    async def archive_member(self, audience_id: str, subscriber_hash: str) -> None:
+    async def archive_member(self, audience_id: str, email: str) -> None:
         members_map = self._ensure_audience_members(audience_id)
-        m = members_map.get(subscriber_hash)
+        m = members_map.get(_subscriber_hash(email))
         if m:
             m.status = "archived"
         else:
-            raise MailchimpNotFoundError(f"Member {subscriber_hash!r} not found")
+            raise MailchimpNotFoundError(f"Member {email!r} not found")
 
     # ── Segments ──────────────────────────────────────────────────────────
 
@@ -302,12 +317,12 @@ class ContractFakeMailchimpClient:
         return members_map[h]
 
     async def remove_segment_member(
-        self, audience_id: str, segment_id: int, subscriber_hash: str
+        self, audience_id: str, segment_id: int, email: str
     ) -> None:
         segs = self._ensure_audience_segments(audience_id)
         if segment_id not in segs:
             raise MailchimpNotFoundError(f"Segment {segment_id} not found")
-        segs[segment_id]._members.discard(subscriber_hash)
+        segs[segment_id]._members.discard(_subscriber_hash(email))
         segs[segment_id].member_count = len(segs[segment_id]._members)
 
     # ── Templates ─────────────────────────────────────────────────────────
@@ -315,13 +330,14 @@ class ContractFakeMailchimpClient:
     async def list_templates(
         self,
         *,
-        type: Optional[str] = None,
         count: int = 25,
         offset: int = 0,
     ) -> _Page:
+        # Signature MUST mirror `MailchimpClient.list_templates` exactly. An
+        # extra kwarg here (a `type=` filter the Protocol/Fake/Real never had)
+        # let the router call `list_templates(type="user", ...)`, stayed green
+        # in CI, and 500'd against the real client in prod (2026-09-01).
         items = list(self._templates.values())
-        if type:
-            items = [t for t in items if t.type == type]
         return _Page(items=items[offset: offset + count], total=len(items))
 
     async def get_template(self, template_id: int) -> _Template:
@@ -411,7 +427,7 @@ class ContractFakeMailchimpClient:
         from_name: Optional[str] = None,
         reply_to: Optional[str] = None,
         segment_id: Optional[int] = None,
-        audience_id: Optional[str] = None,
+        template_id: Optional[int] = None,
     ) -> _Campaign:
         c = self._campaigns.get(campaign_id)
         if c is None:
@@ -460,7 +476,7 @@ class ContractFakeMailchimpClient:
             raise MailchimpNotFoundError(f"Campaign {campaign_id!r} not found")
         c.status = "save"
 
-    async def send_test(self, campaign_id: str, *, emails: list[str]) -> None:
+    async def send_test(self, campaign_id: str, *, test_emails: list[str]) -> None:
         if campaign_id not in self._campaigns:
             raise MailchimpNotFoundError(f"Campaign {campaign_id!r} not found")
 

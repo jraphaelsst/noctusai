@@ -119,7 +119,6 @@ async def update_campaign(
             from_name=body.from_name,
             reply_to=body.reply_to,
             segment_id=body.segment_id,
-            audience_id=record.audience_id,
         )
     return _campaign_out(campaign)
 
@@ -180,5 +179,5 @@ async def test_campaign(
 ) -> dict:
     client, _record = client_record
     async with translate_mailchimp_errors():
-        await client.send_test(campaign_id, emails=body.emails)
+        await client.send_test(campaign_id, test_emails=body.emails)
     return {"ok": True}

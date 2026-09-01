@@ -72,12 +72,16 @@ function TemplatesContent() {
   const [createForm, setCreateForm] = useState({ name: "", html: "" });
   const [renameValue, setRenameValue] = useState("");
 
-  const { data, isLoading, isError, error } = useMailchimpTemplates({
+  const { data, isPending, isFetching, isError, error } = useMailchimpTemplates({
     count: PAGE_SIZE,
     offset,
   });
   const { create, update, remove } = useMailchimpTemplateMutations();
-
+  // Skeleton ONLY when there is nothing to show — the seed idiom
+  // (PipelineBoard / PipelineStagesManager). Bare `isLoading` is false
+  // between retries and while a query is paused, which rendered a blank
+  // page on a failed fetch (mailchimp templates 500, 2026-09-01).
+  const showSkeleton = isPending || (isFetching && (data?.items.length ?? 0) === 0);
   function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     create.mutate(
@@ -152,7 +156,7 @@ function TemplatesContent() {
       </div>
 
       {/* Loading */}
-      {isLoading && (
+      {showSkeleton && (
         <div
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
           data-testid="templates-loading"
@@ -177,7 +181,7 @@ function TemplatesContent() {
       )}
 
       {/* Empty */}
-      {!isLoading && !isError && data?.items.length === 0 && (
+      {!showSkeleton && !isError && (data?.items.length ?? 0) === 0 && (
         <Card data-testid="templates-empty">
           <CardHeader>
             <CardTitle className="text-base">Nenhum template encontrado</CardTitle>
@@ -190,7 +194,7 @@ function TemplatesContent() {
       )}
 
       {/* Card grid */}
-      {!isLoading && !isError && (data?.items.length ?? 0) > 0 && (
+      {!showSkeleton && !isError && (data?.items.length ?? 0) > 0 && (
         <>
           <div
             className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"

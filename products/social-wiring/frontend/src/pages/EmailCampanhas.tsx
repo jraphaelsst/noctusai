@@ -136,13 +136,17 @@ function CampanhasContent() {
   const [testEmails, setTestEmails] = useState("");
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm());
 
-  const { data, isLoading, isError, error } = useMailchimpCampaigns({
+  const { data, isPending, isFetching, isError, error } = useMailchimpCampaigns({
     count: PAGE_SIZE,
     offset,
   });
   const { create, remove, send, schedule, unschedule, sendTest } =
     useMailchimpCampaignMutations();
-
+  // Skeleton ONLY when there is nothing to show — the seed idiom
+  // (PipelineBoard / PipelineStagesManager). Bare `isLoading` is false
+  // between retries and while a query is paused, which rendered a blank
+  // page on a failed fetch (mailchimp templates 500, 2026-09-01).
+  const showSkeleton = isPending || (isFetching && (data?.items.length ?? 0) === 0);
   // For dropdowns in create modal
   const { data: segments } = useMailchimpSegments({ count: 100 });
   const { data: templates } = useMailchimpTemplates({ count: 100 });
@@ -272,7 +276,7 @@ function CampanhasContent() {
       </div>
 
       {/* Loading */}
-      {isLoading && (
+      {showSkeleton && (
         <div className="space-y-2" data-testid="campanhas-loading">
           {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-14 w-full" />
@@ -294,7 +298,7 @@ function CampanhasContent() {
       )}
 
       {/* Empty */}
-      {!isLoading && !isError && data?.items.length === 0 && (
+      {!showSkeleton && !isError && (data?.items.length ?? 0) === 0 && (
         <Card data-testid="campanhas-empty">
           <CardHeader>
             <CardTitle className="text-base">Nenhuma campanha encontrada</CardTitle>
@@ -306,7 +310,7 @@ function CampanhasContent() {
       )}
 
       {/* Table */}
-      {!isLoading && !isError && (data?.items.length ?? 0) > 0 && (
+      {!showSkeleton && !isError && (data?.items.length ?? 0) > 0 && (
         <Card data-testid="campanhas-table">
           <CardContent className="p-0">
             <div className="overflow-x-auto">

@@ -66,7 +66,7 @@ async def list_templates(
 ) -> TemplateListOut:
     client, record = client_record
     async with translate_mailchimp_errors():
-        page = await client.list_templates(type="user", count=count, offset=offset)
+        page = await client.list_templates(count=count, offset=offset)
     return TemplateListOut(
         items=[_template_out(t, record.server_prefix) for t in page.items],
         total=page.total,
