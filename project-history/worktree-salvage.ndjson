@@ -568,3 +568,4 @@
 {"ts": "2026-09-01T18:42:17.067926+00:00", "kind": "session-end-sweep", "worktree_count": 0, "safe_to_cleanup": [], "uncommitted": [], "ahead_of_dev": [], "remote_integrated_count": 15, "remote_unique_aged_count": 0, "pointers_healed": []}
 {"ts": "2026-09-01", "event": "worktree-sweep", "path": ".claude/worktrees/sw-e2e-endpoint-ui-parity", "branch": "feat/sw-e2e-endpoint-ui-parity", "sha": "311cdf8dd0da5e84ce0f80788f431a4744869149", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-01", "event": "worktree-sweep", "path": ".claude/worktrees/sw-e2e-findings-ledger", "branch": "feat/sw-e2e-findings-ledger", "sha": "5ccef308664c871510bc20e55c1cd0f3f8ef8074", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-01", "event": "worktree-sweep", "path": ".claude/worktrees/igig-e2e-sweep", "branch": "feat/igig-e2e-sweep", "sha": "87c6a00e666edc0dfb219b8c9bc7c42ad3cdbd25", "reason": "task_branch cleanup (learn-before-delete)"}
