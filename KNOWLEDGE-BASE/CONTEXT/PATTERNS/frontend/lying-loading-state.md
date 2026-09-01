@@ -412,6 +412,39 @@ finding naming the failure (`node_unavailable` / `ts_morph_not_installed` /
 a per-file parse error), per `KB § 01-PHILOSOPHY.md` "no silent errors".
 Shapes 1–3 (regex) are unaffected either way.
 
+**Mode B batches PER PRODUCT, concurrently (fixed 2026-09-01, "Gap 3").**
+The original design ran ONE `node` subprocess for the whole fleet (a single
+ts-morph `Project`, every candidate file added to it) against a single
+120s timeout — a "gate that cannot complete is not a gate" failure mode: a
+timed-out fleet-wide batch degraded Mode B to exactly ONE `product: "*"`
+finding for the ENTIRE fleet, not just the slow product. `_run_lying_
+loading_modeb_scan()` now spawns one `node` subprocess PER PRODUCT
+(`_run_lying_loading_modeb_scan_one_product`), run concurrently (bounded by
+`_LYING_LOADING_MODEB_MAX_WORKERS = 4`), each with its OWN
+`_LYING_LOADING_MODEB_TIMEOUT_SECONDS = 60` budget. A product whose batch
+times out or crashes now surfaces ONE finding SCOPED to that product (never
+`"*"`) — every OTHER product's Mode-B coverage in the same run is
+unaffected; bounded blast radius, not all-or-nothing.
+
+Measured wall-clock on the dispatch engineer's machine (~101 Mode-B
+candidate files across 13 products, `--check-lying-loading-state`, 3 runs
+each): fleet-wide single batch (pre-fix, post Gap-1/2) **~2.0–2.3s**;
+per-product concurrent batches (post-fix) **~2.8–3.5s** — a small
+*regression* on THIS hardware, from ~13 separate `node`/ts-morph
+process-startup costs that a single shared `Project` amortised away. The
+fleet-wide single batch did NOT reproduce the ~90–100s / 120s-timeout
+failure three independent engineers reported (their environment, and/or a
+larger candidate-file count at the time, evidently differs) — stated
+honestly rather than manufacturing a "before" number that didn't happen
+here. The per-product architecture is kept anyway because it fixes the
+STRUCTURAL failure mode (one pathological product's files can no longer
+zero out the whole fleet's coverage; each product's timeout budget is now
+generously sized relative to ITS OWN batch, not the fleet's), which the
+brief explicitly asked for over "simply raising the timeout" — a resilience
+property, not a raw-speed one, and the honest ~1s local cost is the price
+of it. If a future large/slow fleet DOES hit the per-product timeout,
+`_LYING_LOADING_MODEB_MAX_WORKERS` is the tuning knob, not the ceiling.
+
 **Wired into:** `check_all_products()` · `tools/noctus/dev/review.py::_detect()`
 · CLI `python mcp/noctusai/cli.py --check-lying-loading-state` ·
 `scripts/hooks/pre-commit` § 6f (advisory, never blocks) · regression tests
@@ -497,6 +530,13 @@ renaming the doc alone would split those and buy nothing.
   `knowledge-extractor`) were re-scanned against the fixed tool — see
   the fleet re-scan table this dispatch's return recorded (a live re-scan
   was NOT re-embedded into this doc, which drifts; consult
-  `check_lying_loading_state`'s live output for current counts).
+  `check_lying_loading_state`'s live output for current counts). Same
+  dispatch also fixed **Gap 3** — the fleet-wide Mode-B scan ran as one
+  120s-budgeted subprocess, and a timeout degraded the ENTIRE fleet to a
+  single `product: "*"` finding; now one `node` subprocess per PRODUCT,
+  concurrent, each with its own 60s budget — see § *The detector* for the
+  measured before/after wall-clock and why the fix is kept for its
+  bounded-blast-radius property even though it was not measurably faster
+  on the dispatch engineer's own hardware.
 
 → `KB § PATTERNS/common/methodology-codification-pipeline.md`

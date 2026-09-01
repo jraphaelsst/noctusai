@@ -672,6 +672,44 @@ class TestLyingLoadingStateModeB:
         assert "AST scan could not run" in issues[0]["issue"]
         assert "node_unavailable" in issues[0]["issue"]
 
+    def test_modeb_per_product_bootstrap_error_scoped_not_global(self, tmp_path, monkeypatch):
+        """GAP 3 — one product's Mode-B batch times out (or crashes). MUST
+        surface as ONE finding SCOPED to that product (never a global
+        `product: "*"`), while a DIFFERENT product's real finding in the
+        SAME run is unaffected. Proves the bounded-blast-radius property:
+        a pathological product can no longer zero out the whole fleet's
+        Mode-B coverage the way the old single-fleet-wide-batch design
+        did."""
+        import tools.noctus.dev.compliance as compliance_module
+
+        repo = _make_repo(tmp_path)
+        _product_file(repo, "flaky-product", "pages/LeadsPanel.tsx", _MODEB_POSITIVE_EARLY_RETURN)
+        _product_file(repo, "healthy-product", "pages/LeadsPanel.tsx", _MODEB_POSITIVE_EARLY_RETURN)
+
+        real_fn = compliance_module._run_lying_loading_modeb_scan_one_product
+
+        def _fake_per_product_scan(product, files):
+            if product == "flaky-product":
+                return {}, {}, "timeout: Mode B AST scan for `flaky-product` exceeded 60s (1 files)"
+            return real_fn(product, files)
+
+        monkeypatch.setattr(
+            compliance_module, "_run_lying_loading_modeb_scan_one_product", _fake_per_product_scan
+        )
+        issues = check_lying_loading_state(repo_root=repo)
+
+        assert not any(i["product"] == "*" for i in issues), (
+            f"a single product's failure must never degrade to a global '*' finding: {issues}"
+        )
+        scoped = [
+            i for i in issues
+            if i["product"] == "flaky-product" and "AST scan for" in i["issue"]
+        ]
+        assert scoped, f"flaky product's timeout must surface as a scoped finding: {issues}"
+        assert any(
+            i["product"] == "healthy-product" and "early-return" in i["issue"] for i in issues
+        ), f"the healthy product's real finding must still land in the same run: {issues}"
+
     def test_positive_shape5_bare_islloading_early_return_flagged(self, tmp_path):
         """`if (isLoading) return <Skeleton/>;` (bare destructured, no JSX
         `loading=` prop wrapper) — the shape 21/21 orbity fixes were — MUST

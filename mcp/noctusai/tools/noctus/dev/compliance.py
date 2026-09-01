@@ -38,6 +38,7 @@ import shutil
 import sqlite3
 import subprocess
 import textwrap
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -8344,7 +8345,15 @@ _LYING_LOADING_RATIONALE_WINDOW = 3
 # product's shipped frontend).
 # ---------------------------------------------------------------------------
 _LYING_LOADING_MODEB_SCRIPT = REPO_ROOT / "mcp" / "noctusai" / "node" / "lying_loading_scan.mjs"
-_LYING_LOADING_MODEB_TIMEOUT_SECONDS = 120
+# PER-PRODUCT timeout (was 120s FLEET-WIDE — see "GAP 3" below). A per-
+# product batch is always <= the old fleet-wide batch, so this budget is
+# deliberately generous relative to measured per-product wall-clock, not a
+# tight ceiling.
+_LYING_LOADING_MODEB_TIMEOUT_SECONDS = 60
+# Bounded concurrent `node` subprocesses — enough to turn "N products at
+# ~10s sequential" into a handful of overlapped batches without spawning an
+# unbounded number of ts-morph processes at once. See "GAP 3" below.
+_LYING_LOADING_MODEB_MAX_WORKERS = 4
 
 _LYING_LOADING_MODEB_KIND_LABEL: dict[str, str] = {
     "early_return": "an `if (...) return ...;` early-return",
@@ -8353,34 +8362,16 @@ _LYING_LOADING_MODEB_KIND_LABEL: dict[str, str] = {
 }
 
 
-def _run_lying_loading_modeb_scan(
-    files: list[Path],
+def _run_lying_loading_modeb_scan_one_product(
+    product: str, files: list[Path],
 ) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
-    """Batch-invoke `lying_loading_scan.mjs` for every candidate Mode-B file.
+    """Invoke `lying_loading_scan.mjs` for ONE product's candidate files.
 
-    ONE subprocess for the whole scan (not one per file — ~250 fleet-wide
-    candidates would dominate wall-clock via per-process ts-morph
-    `Project` construction). Returns ``(results, per_file_errors,
-    bootstrap_error)``:
-
-    - ``results``: ``{abs_path: [finding, ...]}`` for files that parsed.
-    - ``per_file_errors``: ``{abs_path: message}`` for files ts-morph could
-      not add/parse (a real parse failure — surfaced, never silently
-      dropped from the scan).
-    - ``bootstrap_error``: set (and the other two empty) when the scan
-      could not run AT ALL — `node` missing from PATH, `ts-morph` not
-      installed (`cd mcp/noctusai/node && npm install`), a script crash,
-      or a timeout. Per `KB § 01-PHILOSOPHY.md` "no silent errors": Mode B
-      going dark must be VISIBLE in the fleet-scan output (one issue, see
-      `check_lying_loading_state`), not indistinguishable from "scanned,
-      zero findings."
+    Same per-call contract as `_run_lying_loading_modeb_scan` (the
+    orchestrator below) documents for a single batch — see that function's
+    docstring for why the scan is now split per product ("GAP 3"). Returns
+    ``(results, per_file_errors, bootstrap_error)`` scoped to `product`.
     """
-    if not files:
-        return {}, {}, None
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH — Mode B AST scan cannot run"
-    if not _LYING_LOADING_MODEB_SCRIPT.exists():
-        return {}, {}, f"script_missing: {_LYING_LOADING_MODEB_SCRIPT} not found"
     payload = {"files": [str(p) for p in files]}
     try:
         proc = subprocess.run(
@@ -8391,7 +8382,10 @@ def _run_lying_loading_modeb_scan(
             timeout=_LYING_LOADING_MODEB_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        return {}, {}, f"timeout: Mode B AST scan exceeded {_LYING_LOADING_MODEB_TIMEOUT_SECONDS}s"
+        return {}, {}, (
+            f"timeout: Mode B AST scan for `{product}` exceeded "
+            f"{_LYING_LOADING_MODEB_TIMEOUT_SECONDS}s ({len(files)} files)"
+        )
     except OSError as exc:
         return {}, {}, f"spawn_failed: {exc}"
     if proc.returncode != 0:
@@ -8411,6 +8405,89 @@ def _run_lying_loading_modeb_scan(
     if not parsed.get("ok"):
         return {}, {}, f"bad_request: {parsed.get('error')}"
     return parsed.get("results", {}), parsed.get("errors", {}), None
+
+
+def _run_lying_loading_modeb_scan(
+    files_by_product: dict[str, list[Path]],
+) -> tuple[dict[str, list[dict]], dict[str, str], dict[str, str], str | None]:
+    """Batch-invoke `lying_loading_scan.mjs` ONCE PER PRODUCT, concurrently.
+
+    GAP 3 (fixed 2026-09-01) — the ORIGINAL design ran ONE subprocess for
+    the whole fleet (a single ts-morph `Project`, every candidate file
+    added via `addSourceFilesAtPaths`), reasoned as avoiding "one spawn per
+    file [that] would dominate wall-clock via per-process ts-morph `Project`
+    construction." That reasoning solved the wrong axis: a single
+    fleet-wide `Project` is an ALL-OR-NOTHING unit — if the batch exceeds
+    `_LYING_LOADING_MODEB_TIMEOUT_SECONDS` (previously 120s, fleet-wide),
+    `check_lying_loading_state()` degrades to exactly ONE `product: "*"`
+    finding for the ENTIRE fleet, honest about degrading but unable to
+    complete — "a gate that cannot complete is not a gate." Splitting into
+    N per-product `Project`s (this function) fixes the STRUCTURAL problem,
+    not just the symptom a raised ceiling would paper over:
+      - one pathological product's files can no longer starve every OTHER
+        product's real Mode-B coverage — that product alone degrades,
+        NAMED and scoped, while every other product's findings still land
+        in the same run;
+      - each product's own timeout budget is now PER-PRODUCT
+        (`_LYING_LOADING_MODEB_TIMEOUT_SECONDS`, 60s — always a smaller
+        batch than the old fleet-wide one, so the same wall-clock budget
+        that used to cover the WHOLE fleet now covers ONE product with
+        margin to spare);
+      - run CONCURRENTLY (bounded by `_LYING_LOADING_MODEB_MAX_WORKERS`),
+        not sequentially — so per-product `Project`-construction overhead
+        (~13 products today) doesn't just multiply wall-clock back up to
+        where it started. Measured before/after in `KB § PATTERNS/
+        frontend/lying-loading-state.md`.
+
+    Returns ``(results, per_file_errors, per_product_bootstrap_errors,
+    global_bootstrap_error)``:
+
+    - ``results``: ``{abs_path: [finding, ...]}`` merged across every
+      product that scanned successfully.
+    - ``per_file_errors``: ``{abs_path: message}`` merged across every
+      product — a real per-file ts-morph parse failure, never silently
+      dropped from the scan.
+    - ``per_product_bootstrap_errors``: ``{product: message}`` — set for a
+      product whose OWN subprocess timed out, crashed, or returned
+      malformed output. That product's files are simply ABSENT from
+      ``results`` — the caller surfaces ONE explicit finding per affected
+      product (never a silent zero-findings pass), while every OTHER
+      product's real findings still land in this same run.
+    - ``global_bootstrap_error``: set (and the other three empty) only
+      when the scan cannot run AT ALL for ANY product — `node` missing
+      from PATH, or the script file itself missing. Checked ONCE upfront
+      (these conditions are identical for every product; N identical
+      per-product failures would just be noise, not more information).
+      Per `KB § 01-PHILOSOPHY.md` "no silent errors": Mode B going dark
+      must be VISIBLE in the fleet-scan output, not indistinguishable from
+      "scanned, zero findings."
+    """
+    if not files_by_product:
+        return {}, {}, {}, None
+    if shutil.which("node") is None:
+        return {}, {}, {}, "node_unavailable: `node` not on PATH — Mode B AST scan cannot run"
+    if not _LYING_LOADING_MODEB_SCRIPT.exists():
+        return {}, {}, {}, f"script_missing: {_LYING_LOADING_MODEB_SCRIPT} not found"
+
+    results: dict[str, list[dict]] = {}
+    per_file_errors: dict[str, str] = {}
+    per_product_bootstrap_errors: dict[str, str] = {}
+
+    with ThreadPoolExecutor(max_workers=_LYING_LOADING_MODEB_MAX_WORKERS) as pool:
+        futures = {
+            pool.submit(_run_lying_loading_modeb_scan_one_product, product, files): product
+            for product, files in files_by_product.items()
+        }
+        for fut in as_completed(futures):
+            product = futures[fut]
+            product_results, product_errors, product_bootstrap_error = fut.result()
+            if product_bootstrap_error is not None:
+                per_product_bootstrap_errors[product] = product_bootstrap_error
+                continue
+            results.update(product_results)
+            per_file_errors.update(product_errors)
+
+    return results, per_file_errors, per_product_bootstrap_errors, None
 
 
 def _lying_loading_product_fe_src_dirs(root: Path) -> list[Path]:
@@ -8676,20 +8753,30 @@ def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
                     "severity": _LYING_LOADING_SEVERITY,
                 })
 
-    # Mode B — batched AST scan (see `_run_lying_loading_modeb_scan` +
-    # `mcp/noctusai/node/lying_loading_scan.mjs`).
-    modeb_paths = [Path(p) for p in modeb_context]
-    modeb_results, modeb_errors, modeb_bootstrap_error = _run_lying_loading_modeb_scan(modeb_paths)
+    # Mode B — one batched AST scan PER PRODUCT, run concurrently (see
+    # `_run_lying_loading_modeb_scan` + `mcp/noctusai/node/
+    # lying_loading_scan.mjs` — "GAP 3" in that function's docstring for
+    # why this is per-product, not one giant fleet-wide batch).
+    modeb_files_by_product: dict[str, list[Path]] = {}
+    for file_path, ctx in modeb_context.items():
+        modeb_files_by_product.setdefault(ctx["product"], []).append(Path(file_path))
+    (
+        modeb_results,
+        modeb_errors,
+        modeb_product_bootstrap_errors,
+        modeb_global_bootstrap_error,
+    ) = _run_lying_loading_modeb_scan(modeb_files_by_product)
 
-    if modeb_bootstrap_error is not None:
-        # The scan could not run AT ALL — surface it as ONE explicit finding
-        # rather than silently reporting zero Mode-B hits (no-silent-errors).
+    if modeb_global_bootstrap_error is not None:
+        # The scan could not run AT ALL, for ANY product — surface it as ONE
+        # explicit finding rather than silently reporting zero Mode-B hits
+        # (no-silent-errors).
         issues.append({
             "product": "*",
             "file": "mcp/noctusai/node/lying_loading_scan.mjs",
             "issue": (
                 "Mode B (`isFetching` refetch-unmount) AST scan could not "
-                f"run — {modeb_bootstrap_error}. `check_lying_loading_state` "
+                f"run — {modeb_global_bootstrap_error}. `check_lying_loading_state` "
                 "fell back to Mode A (`.isLoading`) coverage ONLY for this "
                 "run; the 2026-08-31 skeleton-over-data class is UNCHECKED "
                 "until this is fixed. Per "
@@ -8698,6 +8785,23 @@ def check_lying_loading_state(repo_root: Path | None = None) -> list[dict]:
             "severity": _LYING_LOADING_SEVERITY,
         })
     else:
+        for product, err in modeb_product_bootstrap_errors.items():
+            # THIS product's own batch failed (timeout / crash / malformed
+            # output) — scoped and named, never "*". Every OTHER product's
+            # Mode-B coverage in this same run is unaffected (the whole
+            # point of per-product batching — see "GAP 3").
+            issues.append({
+                "product": product,
+                "file": "mcp/noctusai/node/lying_loading_scan.mjs",
+                "issue": (
+                    f"Mode B (`isFetching`/`isLoading`) AST scan for `{product}` "
+                    f"could not complete — {err}. This product's files were NOT "
+                    "checked for the 2026-08-31 skeleton-over-data class in this "
+                    "run; every OTHER product's Mode-B coverage is unaffected. "
+                    "Per `KB § PATTERNS/frontend/lying-loading-state.md`."
+                ),
+                "severity": _LYING_LOADING_SEVERITY,
+            })
         for file_path, err in modeb_errors.items():
             ctx = modeb_context.get(file_path)
             issues.append({
