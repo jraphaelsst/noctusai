@@ -456,6 +456,64 @@ export function AddRoleModal() {
 """
 
 
+# ---------------------------------------------------------------------------
+# Gap 1 — renamed destructuring bindings. `const { isLoading: contaLoading }
+# = useConta();` never produces a text occurrence of the literal `isLoading`
+# identifier, so a single-hop early return on the RENAMED local was
+# invisible pre-fix. Real-world repro pulled from the dispatch brief
+# (personal-finance/pages/ContaDetalhes.tsx pre-fix shape).
+# ---------------------------------------------------------------------------
+_GAP1_POSITIVE_RENAMED_ISLOADING = """\
+export function ContaDetalhes() {
+  const { data, isLoading: contaLoading } = useConta();
+  if (contaLoading) return <Skeleton />;
+  return <Detail conta={data} />;
+}
+"""
+
+# A renamed `isFetching` (guard-aware) local, UNGUARDED at the use site —
+# MUST be flagged, and the message must attribute the `isFetching` taint
+# (not `isLoading`) since guard-awareness is inherited from the property
+# renamed FROM.
+_GAP1_POSITIVE_RENAMED_ISFETCHING_UNGUARDED = """\
+export function Panel() {
+  const { data, isFetching: loadingWa } = usePanel();
+  if (loadingWa) return <Skeleton />;
+  return <Real data={data} />;
+}
+"""
+
+# The SAME renamed `isFetching` local, but guarded `&& !data` at the use
+# site — MUST NOT be flagged. Proves the renamed-alias mechanism resolves
+# the guard at the USE site through the SAME machinery as the existing
+# `const carregando = ...` alias case, not a parallel unguarded path.
+_GAP1_NEGATIVE_RENAMED_ISFETCHING_GUARDED = """\
+export function Panel() {
+  const { data, isFetching: loadingWa } = usePanel();
+  if (loadingWa && !data) return <Skeleton />;
+  return <Real data={data} />;
+}
+"""
+
+# A hand-rolled, ARRAY-destructured `useState` local with a renamed-looking
+# name — MUST NOT be flagged. Proves the Gap-1 fix does not regress the
+# `ObjectBindingPattern`-only restriction: `findRenamedBindingLocals` walks
+# ONLY `ObjectBindingPattern` binding elements, and `useState` always
+# array-destructures, so no property-name node exists to match against at
+# all — this file has no `isLoading`/`isFetching` renamed PROPERTY, just an
+# unrelated local variable name.
+_GAP1_NEGATIVE_USESTATE_ARRAY_NOT_A_RENAME = """\
+export function AddRoleModal() {
+  const [loadingLocal, setLoadingLocal] = useState(false);
+  return (
+    <Button disabled={loadingLocal}>
+      {loadingLocal ? 'Adicionando...' : 'Adicionar'}
+    </Button>
+  );
+}
+"""
+
+
 @_modeb_only
 class TestLyingLoadingStateModeB:
     def test_positive_early_return_shipped_shape_flagged(self, tmp_path):
@@ -616,3 +674,49 @@ class TestLyingLoadingStateModeB:
         _product_file(repo, "erp-imobiliario", "components/AddRoleModal.tsx", _MODEB_NEGATIVE_SHAPE5_USESTATE_LOCAL)
         issues = check_lying_loading_state(repo_root=repo)
         assert issues == [], f"useState-local isLoading must not be flagged: {issues}"
+
+    # -----------------------------------------------------------------
+    # Gap 1 — renamed destructuring bindings.
+    # -----------------------------------------------------------------
+
+    def test_gap1_positive_renamed_isloading_flagged(self, tmp_path):
+        """The REAL `personal-finance/pages/ContaDetalhes.tsx` shape —
+        `const { isLoading: contaLoading } = useConta(); if (contaLoading)
+        return <Skeleton/>;` — MUST be flagged. Confirmed FAILING against
+        the pre-fix scanner (`[]`) before this fix landed."""
+        repo = _make_repo(tmp_path)
+        _product_file(repo, "personal-finance", "pages/ContaDetalhes.tsx", _GAP1_POSITIVE_RENAMED_ISLOADING)
+        issues = check_lying_loading_state(repo_root=repo)
+        assert issues, "renamed isLoading binding must be flagged"
+        assert any("Shape 5" in i["issue"] and "contaLoading" in i["issue"] for i in issues)
+
+    def test_gap1_positive_renamed_isfetching_unguarded_flagged(self, tmp_path):
+        """A renamed `isFetching` local, UNGUARDED at the use site — MUST be
+        flagged, tagged as the `isFetching` (guard-aware) taint, proving
+        guard-awareness is inherited from the property renamed FROM."""
+        repo = _make_repo(tmp_path)
+        _product_file(repo, "demo", "pages/Panel.tsx", _GAP1_POSITIVE_RENAMED_ISFETCHING_UNGUARDED)
+        issues = check_lying_loading_state(repo_root=repo)
+        assert issues, "renamed unguarded isFetching binding must be flagged"
+        assert any("`isFetching`" in i["issue"] and "loadingWa" in i["issue"] for i in issues)
+        assert not any("Shape 5" in i["issue"] for i in issues), "must not be mis-tagged as isLoading Shape 5"
+
+    def test_gap1_negative_renamed_isfetching_guarded_not_flagged(self, tmp_path):
+        """The SAME renamed `isFetching` local, guarded `&& !data` at the
+        use site — MUST NOT be flagged. Proves guard resolution at the use
+        site works for a renamed alias exactly as it does for the
+        `const carregando = ...` VariableDeclaration alias case."""
+        repo = _make_repo(tmp_path)
+        _product_file(repo, "demo", "pages/Panel.tsx", _GAP1_NEGATIVE_RENAMED_ISFETCHING_GUARDED)
+        issues = check_lying_loading_state(repo_root=repo)
+        assert issues == [], f"guarded renamed isFetching binding must not be flagged: {issues}"
+
+    def test_gap1_negative_usestate_array_not_a_rename_not_flagged(self, tmp_path):
+        """A `useState` ARRAY-destructured local — no `ObjectBindingPattern`
+        property to rename FROM at all — MUST NOT be flagged. Proves the
+        Gap-1 fix stays scoped to `ObjectBindingPattern` and does not
+        regress the existing useState exclusion."""
+        repo = _make_repo(tmp_path)
+        _product_file(repo, "erp-imobiliario", "components/AddRoleModal.tsx", _GAP1_NEGATIVE_USESTATE_ARRAY_NOT_A_RENAME)
+        issues = check_lying_loading_state(repo_root=repo)
+        assert issues == [], f"useState array-destructure must not be flagged: {issues}"

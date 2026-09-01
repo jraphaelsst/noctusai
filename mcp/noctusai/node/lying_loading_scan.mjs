@@ -76,6 +76,23 @@
  * scope here exactly as `check_lying_loading_state`'s own docstring says
  * for the original Mode-B gap. Recorded honestly, not silently passed.
  *
+ * GAP 1 (fixed 2026-09-01) — RENAMED DESTRUCTURING BINDINGS. `const {
+ * isLoading: contaLoading } = useConta();` never produces a text
+ * occurrence of the literal identifier `isLoading` (the property name of a
+ * renamed `BindingElement` is a NAMING position, already excluded by
+ * `isReadIdentifier`), so step 1's occurrence collector never starts for
+ * it — a single-hop early return on `contaLoading` was invisible before
+ * this fix. `findRenamedBindingLocals()` walks every `ObjectBindingPattern`
+ * `BindingElement` whose PROPERTY name is the taint name and whose LOCAL
+ * name differs, and registers the local name directly as a TAINTED LOCAL
+ * (the same map `scanTaint` already populates from the `const carregando =
+ * isPending || isFetching;` VariableDeclaration alias case) — symmetric
+ * reuse of the existing one-hop machinery, not a new dataflow mechanism.
+ * Guard-awareness is inherited from the PROPERTY the local was renamed
+ * FROM (a renamed `isFetching` alias stays guard-aware; a renamed
+ * `isLoading` alias stays guard-agnostic) because `findRenamedBindingLocals`
+ * is invoked once per `scanTaint(name, guardAware)` call, keyed by `name`.
+ *
  * Deliberately NOT flagged (by design, not omission):
  *   - bare `isPending` with no `isFetching` in the same test, and no
  *     `&& !data` companion. TanStack Query v5 defines `isPending` as
@@ -186,6 +203,41 @@ function isObjectDestructuredIdentifier(node) {
     const bindingParent = decl.getParent();
     return !!bindingParent && bindingParent.getKind() === SyntaxKind.ObjectBindingPattern;
   });
+}
+
+/** Every OBJECT-destructured `BindingElement` in `sourceFile` whose
+ * PROPERTY name is `propertyName` and whose LOCAL name is DIFFERENT — a
+ * renamed binding, `const { isLoading: contaLoading } = useConta();`. A
+ * renamed local never produces a text occurrence of the literal
+ * `propertyName` identifier (the property-name node is a naming position,
+ * excluded by `isReadIdentifier`), so this is a SEPARATE root, registered
+ * directly as a tainted-local declaration by `scanTaint` — see the module
+ * docstring's "GAP 1" section. Shorthand (`{ isLoading }`, no explicit
+ * rename) is deliberately excluded here (`getPropertyNameNode()` returns
+ * undefined for shorthand) — that shape is already covered by
+ * `findTaintOccurrences`'s direct-read path. A nested destructuring
+ * pattern as the local (`{ isLoading: { x } }`) is excluded too (the
+ * "local name" isn't a single bindable identifier); genuinely rare and out
+ * of scope, same posture as the module's other stated scope limits. */
+function findRenamedBindingLocals(sourceFile, propertyName) {
+  const out = [];
+  sourceFile.forEachDescendant((node) => {
+    if (node.getKind() !== SyntaxKind.BindingElement) return;
+    const bindingParent = node.getParent();
+    if (!bindingParent || bindingParent.getKind() !== SyntaxKind.ObjectBindingPattern) return;
+    const propNode = node.getPropertyNameNode ? node.getPropertyNameNode() : null;
+    if (!propNode || propNode.getKind() !== SyntaxKind.Identifier) return;
+    if (propNode.getText() !== propertyName) return;
+    const localNode = node.getNameNode();
+    if (!localNode || localNode.getKind() !== SyntaxKind.Identifier) return;
+    if (localNode.getText() === propertyName) return; // not actually renamed.
+    out.push({
+      nameNode: localNode,
+      varName: localNode.getText(),
+      declLine: node.getStartLineNumber(),
+    });
+  });
+  return out;
 }
 
 /** Every real read-occurrence of `.<name>` (property access) or a bare
@@ -402,6 +454,19 @@ function scanTaint(sourceFile, name, guardAware) {
         guarded: existing ? existing.guarded || result.guarded : result.guarded,
         declLine: result.declLine,
       });
+    }
+  }
+
+  // GAP 1 — renamed destructuring bindings (`const { isLoading: contaLoading
+  // } = useConta();`). No initializer expression exists at THIS declaration
+  // site to inspect for a `&& !data` sibling (a binding pattern isn't a
+  // BinaryExpression), so `guarded` starts `false` — the exact same starting
+  // state a direct (non-renamed) destructured occurrence has, since a bare
+  // destructure statement has no boolean test to guard either. See module
+  // docstring "GAP 1".
+  for (const { nameNode, varName, declLine } of findRenamedBindingLocals(sourceFile, name)) {
+    if (!taintedLocals.has(nameNode)) {
+      taintedLocals.set(nameNode, { varName, guarded: false, declLine });
     }
   }
 

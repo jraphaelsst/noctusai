@@ -323,6 +323,24 @@ binder, via `findReferencesAsNodes()`) answers it exactly — "is this the
 SAME `carregando` declared above" is a real symbol question, not a
 name-coincidence.
 
+**Renamed destructuring bindings are resolved too (fixed 2026-09-01).**
+`const { isLoading: contaLoading } = useConta(); if (contaLoading) return
+<Skeleton/>;` used to be invisible — a renamed LOCAL name never produces a
+text occurrence of the literal `isLoading`/`isFetching` identifier the
+occurrence-collector looks for. The AST scan now also walks every
+`ObjectBindingPattern` binding element whose PROPERTY name is the taint and
+whose LOCAL name differs, and registers that local as a one-hop tainted
+alias — the SAME machinery already used for `const carregando = isPending
+|| isFetching;`. Guard-awareness is inherited from the property renamed
+FROM (a renamed `isFetching` alias stays guard-aware; a renamed `isLoading`
+alias stays guard-agnostic). An ARRAY-destructured `useState` local (e.g.
+`const [isLoading, setIsLoading] = useState(false)`) has no
+`ObjectBindingPattern` property to rename FROM at all and is unaffected —
+this fix does not regress that exclusion. Real-world names caught by this:
+`contaLoading`, `loadingConfig`, `loadingInt`, `loadingWa`,
+`contextLoading`, `postsLoading`, `insightsLoading`, `feedsLoading`,
+`isLoadingProfiles`, `isLoadingRole`.
+
 **Genuinely still out of scope**, stated honestly rather than silently
 passed (the 2026-08-31 pass strengthens the case that the ORIGINAL
 "needs cross-file dataflow" caveat below was over-broad — shapes 1–3 and 5
@@ -446,5 +464,19 @@ renaming the doc alone would split those and buy nothing.
   engineers this wave filed the stale "known drift" paragraph as a live
   `drift-found` before this pass corrected it — see the historical note in
   § *The detector*.
+- **s3, 2026-09-01** — two detector gaps closed after three independent
+  engineers, in three different products, each hand-verified a "clean"
+  result and found it false: **renamed destructuring bindings** (`const {
+  isLoading: contaLoading } = useConta();` — the occurrence-collector was
+  name-hardcoded and never saw the renamed local) and **negation stopping
+  the climb** (`!isLoading && rows.length === 0 ? <Empty/> : <List/>` — no
+  `PrefixUnaryExpression` case in `climb()`). Between them the two gaps hid
+  17 confirmed real sites across social-wiring, personal-finance, adconnect,
+  and core. The five products previously marked clean by this tool
+  (`therapy-platform`, `orbity`, `igig`, `dev-team`,
+  `knowledge-extractor`) were re-scanned against the fixed tool — see
+  the fleet re-scan table this dispatch's return recorded (a live re-scan
+  was NOT re-embedded into this doc, which drifts; consult
+  `check_lying_loading_state`'s live output for current counts).
 
 → `KB § PATTERNS/common/methodology-codification-pipeline.md`
