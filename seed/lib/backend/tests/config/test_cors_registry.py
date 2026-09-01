@@ -553,3 +553,43 @@ def test_own_slug_with_no_pattern_configured_stays_localhost_only(monkeypatch):
             monkeypatch.delenv(key, raising=False)
     origins = derive_cors_origins(include_all_frontends=False, own_slug="social-wiring")
     assert not [o for o in origins if o.startswith("https://")]
+
+
+# ── native-dev opt-in (NOCTUS_NATIVE_DEV) ─────────────────────────────────
+#
+# `./start.sh native` serves each SPA from vite on `frontend_port`, so the
+# browser Origin is the vite port. The house/container model serves API + SPA
+# on `backend_port` (same origin, no preflight), which is why frontend ports
+# are NOT emitted by default. These pin both halves of that contract.
+
+def test_native_dev_off_by_default_emits_no_frontend_ports(monkeypatch):
+    monkeypatch.delenv("NOCTUS_NATIVE_DEV", raising=False)
+    origins = derive_cors_origins(include_all_frontends=True, include_prod_origins=False)
+    # 8170 is igig's vite port; 8013 is its house/backend port.
+    assert "http://localhost:8170" not in origins
+    assert "http://localhost:8013" in origins
+
+
+def test_native_dev_on_adds_frontend_ports(monkeypatch):
+    monkeypatch.setenv("NOCTUS_NATIVE_DEV", "1")
+    origins = derive_cors_origins(include_all_frontends=True, include_prod_origins=False)
+    assert "http://localhost:8170" in origins, "vite origin must be allowed in native mode"
+    # the house origin is still there — the opt-in ADDS, never replaces.
+    assert "http://localhost:8013" in origins
+
+
+def test_native_dev_respects_own_slug_scope(monkeypatch):
+    """`@registry:own:<slug>` must not leak OTHER products' vite ports."""
+    monkeypatch.setenv("NOCTUS_NATIVE_DEV", "1")
+    origins = derive_cors_origins(
+        include_all_frontends=False, own_slug="igig", include_prod_origins=False
+    )
+    assert "http://localhost:8170" in origins      # own vite port
+    assert "http://localhost:8180" not in origins  # p-studio's
+
+
+def test_native_dev_requires_exactly_1(monkeypatch):
+    """Truthy-ish values must NOT enable it — an explicit opt-in is the point."""
+    monkeypatch.setenv("NOCTUS_NATIVE_DEV", "true")
+    origins = derive_cors_origins(include_all_frontends=True, include_prod_origins=False)
+    assert "http://localhost:8170" not in origins

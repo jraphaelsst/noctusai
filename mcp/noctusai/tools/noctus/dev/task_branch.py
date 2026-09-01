@@ -458,9 +458,39 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
     dir already in the worktree). Order is deterministic: seed node_modules
     (whole-dir symlink — safe, see module doc), then per-product node_modules
     (per-entry overlay — the primary-contamination fix, see module doc) + the
-    two @noctusai re-points."""
+    two @noctusai re-points. The repo-root `.env` is planned FIRST — see
+    `_link_root_dotenv`."""
     wire: list[dict] = []
     skipped: list[dict] = []
+
+    def _link_root_dotenv() -> None:
+        """The repo-root `.env`, which every product frontend AND backend reads.
+
+        WHY THIS IS PART OF wire_env. `.env` is gitignored, so a fresh worktree
+        never has one. `createViteConfig` sets `envDir` to the TREE ROOT
+        (`seed/framework/frontend/vite.config.factory.ts`), so a product SPA
+        started from an unwired worktree gets no `VITE_SUPABASE_*` and
+        `createProductSupabase` THROWS INSIDE A MODULE — before React mounts.
+        The result is a blank white page with nothing in the console, which
+        reads as "the app is broken" rather than "the env is missing". Cost
+        ~15 min to diagnose during the igig e2e sweep (2026-09-01).
+
+        Symlinked rather than copied so a later edit to the real `.env` is
+        picked up everywhere, and because a COPY of a secrets file into a
+        worktree is a second place for it to leak from. Gitignored at both ends
+        ⇒ it can never be staged, so it cannot cause the divergence the
+        self-branching gate exists to prevent."""
+        src = os.path.join(primary_root, ".env")
+        link = os.path.join(wt_root, ".env")
+        if not fs.exists(src):
+            skipped.append({"link": link, "reason": f"primary .env absent: {src}"})
+            return
+        if fs.is_dir(link):
+            skipped.append({"link": link, "reason": "real directory at .env path"})
+            return
+        wire.append({"link": link, "target": src, "kind": "dotenv"})
+
+    _link_root_dotenv()
 
     def _link_whole_node_modules(rel_pkg: str) -> None:
         """Seed-frontend node_modules ONLY. Nothing ever nests inside these

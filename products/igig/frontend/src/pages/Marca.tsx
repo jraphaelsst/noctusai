@@ -13,7 +13,7 @@
  */
 import { useState } from "react";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
-import { Eye, KeyRound, Pencil, Plus, Save, ShieldAlert, Trash2, X } from "lucide-react";
+import { Eye, KeyRound, Pencil, Plus, Save, ShieldAlert, Trash2, Upload, X } from "lucide-react";
 
 import { RepertorioSidebar } from "@/components/RepertorioSidebar";
 import { useClientes } from "@/hooks/useClientes";
@@ -27,7 +27,9 @@ import {
   useRemoverAcesso,
   useRevelarSenha,
   type Acesso,
+  useEnviarLogo,
   type CorPaleta,
+  type Marca,
   type LinhaEditorial,
   type Marca as MarcaTipo,
   type NivelFormalidade,
@@ -301,6 +303,10 @@ export default function Marca() {
                   </div>
                 </Secao>
 
+                <Secao titulo="Identidade visual">
+                  <LogoUploader marca={marca} />
+                </Secao>
+
                 <Secao titulo="Termos proibidos">
                   <textarea
                     defaultValue={marca.termos_proibidos ?? ""}
@@ -507,6 +513,57 @@ function ListaSimples({
 }
 
 /** Palette editor. `hex` is validated server-side too — this is convenience. */
+/**
+ * Logo upload — Módulo 2's "campos de upload de logotipos (PNG, SVG)".
+ *
+ * Accept list mirrors the backend's `_LOGO_MIMES` so a rejected file is
+ * refused by the picker rather than by a 422 after the upload; the size limit
+ * is stated up front for the same reason. Backend limits stay authoritative —
+ * this only avoids a round trip to learn them.
+ */
+function LogoUploader({ marca }: { marca: Marca }) {
+  const enviar = useEnviarLogo();
+
+  return (
+    <div className="space-y-2">
+      {marca.logo_url ? (
+        <img
+          src={marca.logo_url}
+          alt={`Logo de ${marca.nome}`}
+          className="h-16 w-auto max-w-[200px] rounded border border-border bg-background object-contain p-1"
+        />
+      ) : (
+        <p className="text-sm text-muted-foreground">Nenhum logo enviado.</p>
+      )}
+
+      <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-foreground hover:bg-accent">
+        <Upload className="h-4 w-4" />
+        {enviar.isPending ? "Enviando…" : marca.logo_url ? "Trocar logo" : "Enviar logo"}
+        <input
+          type="file"
+          className="hidden"
+          accept="image/png,image/svg+xml,image/jpeg,image/webp"
+          disabled={enviar.isPending}
+          onChange={(e) => {
+            const arquivo = e.target.files?.[0];
+            if (!arquivo) return;
+            enviar.mutate({ marcaId: marca.id, arquivo });
+            // Clear so re-picking the SAME file fires change again.
+            e.target.value = "";
+          }}
+        />
+      </label>
+      <p className="text-xs text-muted-foreground">PNG, SVG, JPEG ou WebP · até 2 MB.</p>
+
+      {enviar.isError && (
+        <p className="text-sm text-destructive">
+          Não foi possível enviar o logo. Verifique o formato e o tamanho.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PaletaEditor({
   paleta,
   onChange,

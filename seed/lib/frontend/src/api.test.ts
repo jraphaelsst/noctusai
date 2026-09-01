@@ -117,3 +117,58 @@ describe('ApiError — structured status', () => {
     expect(err.message).not.toMatch(/^\[/); // no [status] prefix when there is none
   });
 });
+
+// ── upload() — multipart ───────────────────────────────────────────────────
+//
+// The failure this method exists to prevent: `post` JSON.stringify's its body,
+// and `JSON.stringify(new FormData())` === "{}". Passing FormData to `post`
+// therefore sends an empty JSON object to a multipart endpoint — silently.
+
+describe('api.upload', () => {
+  it('sends the FormData as the body, unserialised', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createApiClient({
+      getBaseUrl: () => 'http://api.test',
+      getAuthToken: async () => 'tok',
+    });
+
+    const form = new FormData();
+    form.append('arquivo', new Blob(['x'], { type: 'image/png' }), 'logo.png');
+    await client.upload('/api/marcas/m1/logo', form);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://api.test/api/marcas/m1/logo');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(form);
+    expect(init.body).toBeInstanceOf(FormData);
+  });
+
+  it('omits Content-Type so the browser can set the multipart boundary', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 201,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createApiClient({
+      getBaseUrl: () => 'http://api.test',
+      getAuthToken: async () => 'tok',
+    });
+
+    await client.upload('/api/x', new FormData());
+
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers['Content-Type']).toBeUndefined();
+    // auth must survive the deletion
+    expect(headers['Authorization']).toBe('Bearer tok');
+  });
+});

@@ -138,6 +138,34 @@ export function useAtualizarMarca() {
   });
 }
 
+/**
+ * Upload a brand logo (Módulo 2's "campos de upload de logotipos PNG/SVG").
+ *
+ * `api.upload`, never `api.post` — the latter JSON.stringify's its body, and
+ * `JSON.stringify(new FormData())` is `"{}"`, which reaches a multipart
+ * endpoint as an empty JSON object and 422s as if the backend were broken.
+ *
+ * Invalidates the repertório too: the sidebar renders the logo, so refreshing
+ * only the brand list would leave the designer looking at the old mark.
+ */
+export function useEnviarLogo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ marcaId, arquivo }: { marcaId: string; arquivo: File }) => {
+      const form = new FormData();
+      form.append("arquivo", arquivo);
+      return api.upload<{ storage_key: string; url: string | null }>(
+        `/api/marcas/${marcaId}/logo`,
+        form,
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: MARCA_QUERY_KEY });
+      qc.invalidateQueries({ queryKey: ["igig", "repertorio"] });
+    },
+  });
+}
+
 // ─── Cofre de Acessos ──────────────────────────────────────────────────
 /** Mirror of backend `AcessosOut` — the vault entries PLUS whether a new
  * password can be stored. Wrapped (rather than a flag on each `Acesso`,

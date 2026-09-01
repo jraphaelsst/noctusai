@@ -106,7 +106,37 @@ export interface ProfissionalPayload {
   nome: string;
   funcao_id?: string | null;
   custo_hora_override?: number | null;
+  /**
+   * The `public.noctus_users` id this person signs in as.
+   *
+   * LOAD-BEARING, not optional metadata. The timesheet stores apontamentos
+   * against the signed-in user, and `bi_service` maps hours to a rate via
+   * `profissional.usuario_id` — a profissional without it is SKIPPED, so their
+   * hours cost nothing. Leave it unset and the BI's custo real and the DRE's
+   * margin stay at zero no matter how carefully the rates are filled in.
+   */
+  usuario_id?: string | null;
   ativo?: boolean;
+}
+
+/** A team member, from the framework's `/api/team` — the candidates a
+ *  profissional can be bound to. */
+export interface MembroEquipe {
+  id: string;
+  nome: string;
+  email: string;
+}
+
+export function useMembrosEquipe() {
+  const query = useQuery({
+    queryKey: ["igig", "equipe", "membros"],
+    queryFn: () => api.get<{ data: MembroEquipe[] }>("/api/team"),
+  });
+  return {
+    ...query,
+    membros: query.data?.data ?? [],
+    loading: query.isPending && !query.data,
+  };
 }
 
 export function useCriarProfissional() {

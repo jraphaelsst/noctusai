@@ -11,16 +11,19 @@
  *   - a failed publication shows its `erro` inline rather than a generic
  *     "falhou", so the operator knows whether to retry or fix credentials.
  */
-import { Fragment } from "react";
-import { Badge, Button, Skeleton } from "@noctusai/lib/design-system";
+import { Fragment, useState } from "react";
+import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { AlertTriangle, Ban, Send } from "lucide-react";
+import { AlertTriangle, Ban, BarChart3, Send } from "lucide-react";
 
 import {
   useCancelarPublicacao,
   useEficiencia,
   useExecutarPublicacao,
+  useMetricas,
   usePublicacoes,
+  useRegistrarMetrica,
+  type Publicacao,
   type StatusPublicacao,
 } from "@/hooks/useDistribuicao";
 
@@ -39,6 +42,7 @@ export default function Distribuicao() {
   const { linhas, loading: carregandoBI } = useEficiencia();
   const executar = useExecutarPublicacao();
   const cancelar = useCancelarPublicacao();
+  const [metricasAbertas, setMetricasAbertas] = useState<string | null>(null);
 
   return (
     <div className="space-y-6 p-6">
@@ -163,11 +167,143 @@ export default function Distribuicao() {
                     ver post
                   </a>
                 )}
+
+                {/* Metrics only exist once something is actually live. */}
+                {pub.status === "publicada" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-expanded={metricasAbertas === pub.id}
+                    aria-label={`Métricas de ${pub.canal}`}
+                    onClick={() =>
+                      setMetricasAbertas(metricasAbertas === pub.id ? null : pub.id)
+                    }
+                  >
+                    <BarChart3 className="mr-2 h-3 w-3" />
+                    Métricas
+                  </Button>
+                )}
+                {metricasAbertas === pub.id && <PainelMetricas publicacao={pub} />}
               </li>
             ))}
           </ul>
         )}
       </section>
+    </div>
+  );
+}
+
+/**
+ * Engagement snapshots for one publication, plus manual entry.
+ *
+ * The spec wants these pulled from the platform APIs; that is blocked on
+ * per-channel tokens (`NOC-REMEDIATE[igig-publishing]`). Until then the
+ * endpoint had no consumer at all, so the BI de eficiência could never receive
+ * numbers. Manual entry is labelled as a stopgap rather than presented as if
+ * the figures arrived on their own — the alternative is a dashboard that looks
+ * automated and silently isn't.
+ *
+ * Appends, never replaces: metrics move over a post's first week and the
+ * history is the point.
+ */
+function PainelMetricas({ publicacao }: { publicacao: Publicacao }) {
+  const { metricas, loading } = useMetricas(publicacao.id);
+  const registrar = useRegistrarMetrica();
+  const [form, setForm] = useState({
+    curtidas: "",
+    comentarios: "",
+    compartilhamentos: "",
+    alcance: "",
+    cliques_bio: "",
+    visualizacoes: "",
+  });
+
+  const CAMPOS: [keyof typeof form, string][] = [
+    ["curtidas", "Curtidas"],
+    ["comentarios", "Comentários"],
+    ["compartilhamentos", "Compart."],
+    ["alcance", "Alcance"],
+    ["cliques_bio", "Cliques bio"],
+    ["visualizacoes", "Visualizações"],
+  ];
+
+  function submeter(e: React.FormEvent) {
+    e.preventDefault();
+    registrar.mutate(
+      {
+        publicacaoId: publicacao.id,
+        ...Object.fromEntries(
+          Object.entries(form).map(([k, v]) => [k, Number(v) || 0]),
+        ),
+      },
+      {
+        onSuccess: () =>
+          setForm({
+            curtidas: "",
+            comentarios: "",
+            compartilhamentos: "",
+            alcance: "",
+            cliques_bio: "",
+            visualizacoes: "",
+          }),
+      },
+    );
+  }
+
+  return (
+    <div className="mt-2 w-full rounded-md border border-border bg-background p-3">
+      {loading ? (
+        <Skeleton className="h-10 w-full" />
+      ) : metricas.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Nenhuma coleta registrada ainda.
+        </p>
+      ) : (
+        <ul className="mb-3 space-y-1 text-xs text-foreground">
+          {metricas.map((m) => (
+            <li key={m.id} className="flex flex-wrap gap-3">
+              <span className="text-muted-foreground">
+                {new Date(m.coletada_em).toLocaleString("pt-BR")}
+              </span>
+              <span>♥ {m.curtidas}</span>
+              <span>💬 {m.comentarios}</span>
+              <span>↗ {m.compartilhamentos}</span>
+              <span>alcance {m.alcance}</span>
+              <span>bio {m.cliques_bio}</span>
+              <span>views {m.visualizacoes}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <form onSubmit={submeter} className="flex flex-wrap items-end gap-2">
+        {CAMPOS.map(([chave, rotulo]) => (
+          <label key={chave} className="text-xs text-muted-foreground">
+            {rotulo}
+            <Input
+              type="number"
+              min={0}
+              className="mt-1 w-24"
+              value={form[chave]}
+              onChange={(e) => setForm({ ...form, [chave]: e.target.value })}
+            />
+          </label>
+        ))}
+        <Button type="submit" size="sm" disabled={registrar.isPending}>
+          {registrar.isPending ? "Salvando…" : "Registrar coleta"}
+        </Button>
+      </form>
+
+      <p className="mt-2 text-xs text-muted-foreground">
+        Entrada manual — a coleta automática via Meta/TikTok/LinkedIn depende
+        dos tokens de canal ainda não configurados em Integrações.
+      </p>
+
+      {registrar.isError && (
+        <p className="mt-1 text-xs text-destructive">
+          Não foi possível registrar a coleta.
+        </p>
+      )}
     </div>
   );
 }

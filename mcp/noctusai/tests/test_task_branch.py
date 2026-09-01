@@ -613,12 +613,16 @@ def test_full_lifecycle_emits_no_banned_token_and_only_dev_pushes():
 
 # ── env auto-wire (the §5a verification-env recipe) ──
 def _seed_primary(primary, *, slugs=("alpha",), with_product_nm=True,
-                  with_seed_nm=True, product_nm_entries=("react",)):
+                  with_seed_nm=True, product_nm_entries=("react",),
+                  with_dotenv=True):
     """Build a fixture PRIMARY tree under `primary` (a tmp Path): seed-frontend
     packages (+ their node_modules) and products/<slug>/frontend (+ node_modules
     seeded with `product_nm_entries` — fixture vendor packages the per-entry
     overlay should mirror in). Returns nothing — just lays out dirs for FsOps
     (real os) to read."""
+    primary.mkdir(parents=True, exist_ok=True)
+    if with_dotenv:
+        (primary / ".env").write_text("VITE_SUPABASE_URL=https://fixture.invalid\n")
     for rel in ("seed/lib/frontend", "seed/framework/frontend"):
         (primary / rel).mkdir(parents=True, exist_ok=True)
         if with_seed_nm:
@@ -666,6 +670,13 @@ def test_plan_env_wiring_lists_expected_symlink_targets(tmp_path):
     assert react_link in links and links[react_link]["kind"] == "node_modules_entry"
     assert links[react_link]["target"] == str(primary / "products/alpha/frontend/node_modules/react")
 
+    # the repo-root .env — gitignored, so a fresh worktree never has one, and
+    # without it vite's envDir yields no VITE_* and the SPA renders blank with
+    # NO console error (createProductSupabase throws inside a module).
+    env_link = str(wt_root / ".env")
+    assert env_link in links and links[env_link]["kind"] == "dotenv"
+    assert links[env_link]["target"] == str(primary / ".env")
+
     # the two @noctusai re-points (to the WORKTREE's own seed copies, never primary)
     lib_link = str(pnm / "@noctusai" / "lib")
     seed_link = str(pnm / "@noctusai" / "seed")
@@ -675,11 +686,44 @@ def test_plan_env_wiring_lists_expected_symlink_targets(tmp_path):
     assert skipped == []
 
 
+def test_plan_env_wiring_reports_missing_primary_dotenv(tmp_path):
+    """No `.env` in primary → REPORTED, never silently omitted. The silent
+    version of this is a blank page with an empty console."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "delta"
+    _seed_primary(primary, slugs=("delta",), with_dotenv=False)
+    _seed_worktree_tree(wt_root)
+
+    wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+    assert not [w for w in wire if w["kind"] == "dotenv"]
+    assert [s for s in skipped if "primary .env absent" in s["reason"]]
+
+
+def test_apply_env_wiring_creates_dotenv_symlink(tmp_path):
+    """End-to-end: the planned `.env` spec actually lands as a symlink whose
+    content resolves to the primary file."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "epsilon"
+    _seed_primary(primary, slugs=("epsilon",))
+    _seed_worktree_tree(wt_root)
+
+    wire, _ = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+    created, failed = T._apply_env_wiring(
+        [w for w in wire if w["kind"] == "dotenv"], T.FsOps()
+    )
+    assert failed == []
+    link = wt_root / ".env"
+    assert link.is_symlink()
+    assert "VITE_SUPABASE_URL" in link.read_text()
+    assert len(created) == 1
+
+
 def test_plan_env_wiring_reports_missing_primary_node_modules(tmp_path):
     # primary seed dirs exist but their node_modules are ABSENT → reported, not crashed
     primary = tmp_path / "primary"
     wt_root = primary / ".claude" / "worktrees" / "beta"
-    _seed_primary(primary, slugs=("beta",), with_seed_nm=False, with_product_nm=False)
+    _seed_primary(primary, slugs=("beta",), with_seed_nm=False, with_product_nm=False,
+                  with_dotenv=False)
     _seed_worktree_tree(wt_root)
 
     wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())

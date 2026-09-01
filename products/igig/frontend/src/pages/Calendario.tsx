@@ -14,10 +14,12 @@
  */
 import { useMemo, useState } from "react";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
-import { ChevronLeft, ChevronRight, Plus, Save, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileImage, Plus, Save, Trash2, Upload } from "lucide-react";
 
 import { useClientes } from "@/hooks/useClientes";
 import {
+  useEnviarPeca,
+  usePecas,
   FORMATOS,
   FUNIL_LABEL,
   FUNIS,
@@ -324,6 +326,11 @@ function EditorPauta({
         />
       </label>
 
+      {/* Peças — the visual the client reviews beside the legenda in the
+          Módulo 4 portal. The endpoint shipped with no consumer, so a pauta
+          could never carry its artwork. */}
+      <PecasDaPauta pauta={pauta} />
+
       <div className="flex flex-wrap items-center gap-2">
         <Button
           disabled={salvando}
@@ -338,5 +345,54 @@ function EditorPauta({
         {pauta.linha_editorial && <Badge variant="outline">{pauta.linha_editorial}</Badge>}
       </div>
     </aside>
+  );
+}
+
+/** Upload + list the visual assets attached to a pauta. */
+function PecasDaPauta({ pauta }: { pauta: Pauta }) {
+  const { pecas, loading } = usePecas(pauta.id);
+  const enviar = useEnviarPeca();
+
+  return (
+    <div className="space-y-2 rounded border border-border p-3">
+      <p className="text-xs font-medium text-muted-foreground">Peças</p>
+
+      {loading ? (
+        <Skeleton className="h-8 w-full" />
+      ) : pecas.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Nenhuma peça enviada. O cliente aprova a arte junto com a legenda.
+        </p>
+      ) : (
+        <ul className="space-y-1 text-xs text-foreground">
+          {pecas.map((p) => (
+            <li key={p.id} className="flex items-center gap-2">
+              <FileImage className="h-3 w-3 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate">{p.nome_arquivo ?? p.storage_key}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-accent">
+        <Upload className="h-3 w-3" />
+        {enviar.isPending ? "Enviando…" : "Enviar peça"}
+        <input
+          type="file"
+          className="hidden"
+          disabled={enviar.isPending}
+          onChange={(e) => {
+            const arquivo = e.target.files?.[0];
+            if (!arquivo) return;
+            enviar.mutate({ pautaId: pauta.id, arquivo });
+            e.target.value = "";  // re-picking the same file must fire again
+          }}
+        />
+      </label>
+
+      {enviar.isError && (
+        <p className="text-xs text-destructive">Não foi possível enviar a peça.</p>
+      )}
+    </div>
   );
 }

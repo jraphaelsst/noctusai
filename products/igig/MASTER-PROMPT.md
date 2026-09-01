@@ -32,6 +32,10 @@ Roadmap + promotion record: `project-history/roadmaps/igig-2026-08.md`.
 | 6 | Financeiro e contratos | `financeiro_router` | `Financeiro` |
 | — | Custo/hora (feeds 1, 5 and 6) | `custos_router` | `Custos` |
 
+Uploads (marca logo, pauta peça) go through `api.upload()` from
+`@noctusai/lib` — NEVER `api.post`, which JSON.stringify's its body and turns
+a `FormData` into the string `"{}"`.
+
 ## The custo/hora spine — read this before touching pricing
 
 `funcao` (role default) + `profissional` (per-person override), resolved by
@@ -48,6 +52,13 @@ Two invariants that are easy to break:
   neither a função nor an override comes back as `custo_hora_indefinido:
   true`, and the UI flags them. A zero that actually means "no input" reads as
   a real answer and overstates the margin on every account they touch.
+- **`profissional.usuario_id` is load-bearing, not metadata.** The timesheet
+  stores apontamentos against the SIGNED-IN USER, and `bi_service` maps hours
+  to a rate through this column — a profissional without it is skipped, so
+  their hours cost nothing however carefully the rates are filled in. The
+  Custos page flags an unlinked person for exactly this reason. The full chain
+  is: timer → apontamento(usuario_id) → profissional → custo_hora_efetivo →
+  BI custo real → DRE margem.
 
 This surface shipped its tables, RLS and repositories on 2026-08-09 but had **no
 router and no page** until 2026-09-01, so all three consumers reported R$ 0,00.

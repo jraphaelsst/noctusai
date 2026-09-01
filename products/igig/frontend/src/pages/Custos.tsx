@@ -20,6 +20,7 @@ import {
   useCriarFuncao,
   useCriarProfissional,
   useFuncoes,
+  useMembrosEquipe,
   useProfissionais,
   useRemoverFuncao,
   useRemoverProfissional,
@@ -35,6 +36,7 @@ export default function Custos() {
     loading: carregandoProfs,
     error: erroProfs,
   } = useProfissionais();
+  const { membros } = useMembrosEquipe();
 
   const criarFuncao = useCriarFuncao();
   const removerFuncao = useRemoverFuncao();
@@ -47,8 +49,14 @@ export default function Custos() {
   const [nomeProf, setNomeProf] = useState("");
   const [funcaoProf, setFuncaoProf] = useState("");
   const [overrideProf, setOverrideProf] = useState("");
+  const [usuarioProf, setUsuarioProf] = useState("");
 
   const semTaxa = profissionais.filter((p) => p.custo_hora_indefinido).length;
+  // A rate that is never reached is the same as no rate. `bi_service` maps an
+  // apontamento to a cost through `profissional.usuario_id`, so an unlinked
+  // person's hours are skipped entirely — the BI and DRE stay at zero even
+  // though this screen looks correctly filled in.
+  const semUsuario = profissionais.filter((p) => !p.usuario_id).length;
 
   function submeterFuncao(e: React.FormEvent) {
     e.preventDefault();
@@ -71,8 +79,13 @@ export default function Custos() {
         // "" means inherit the função — deliberately null, not 0. A zero rate
         // is a real answer (an intern) and must stay distinguishable.
         custo_hora_override: overrideProf === "" ? null : Number(overrideProf),
+        usuario_id: usuarioProf || null,
       },
-      { onSuccess: () => { setNomeProf(""); setFuncaoProf(""); setOverrideProf(""); } },
+      {
+        onSuccess: () => {
+          setNomeProf(""); setFuncaoProf(""); setOverrideProf(""); setUsuarioProf("");
+        },
+      },
     );
   }
 
@@ -92,6 +105,15 @@ export default function Custos() {
           {semTaxa === 1
             ? "1 profissional está sem custo/hora definido: as horas dele não entram no custo real e a margem fica superestimada."
             : `${semTaxa} profissionais estão sem custo/hora definido: as horas deles não entram no custo real e a margem fica superestimada.`}
+        </p>
+      )}
+
+      {semUsuario > 0 && (
+        <p className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          {semUsuario === 1
+            ? "1 profissional não está vinculado a um usuário: as horas que ele apontar na esteira não viram custo, mesmo com custo/hora definido."
+            : `${semUsuario} profissionais não estão vinculados a um usuário: as horas que eles apontarem na esteira não viram custo, mesmo com custo/hora definido.`}
         </p>
       )}
 
@@ -204,6 +226,22 @@ export default function Custos() {
               ))}
             </select>
           </div>
+          <div className="min-w-[170px]">
+            <label htmlFor="prof-usuario" className="mb-1 block text-xs text-muted-foreground">
+              Usuário
+            </label>
+            <select
+              id="prof-usuario"
+              value={usuarioProf}
+              onChange={(e) => setUsuarioProf(e.target.value)}
+              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
+            >
+              <option value="">Sem vínculo</option>
+              {membros.map((m) => (
+                <option key={m.id} value={m.id}>{m.nome || m.email}</option>
+              ))}
+            </select>
+          </div>
           <div className="min-w-[150px]">
             <label htmlFor="prof-override" className="mb-1 block text-xs text-muted-foreground">
               Custo/hora próprio
@@ -249,6 +287,7 @@ export default function Custos() {
                     <p className="truncate text-xs text-muted-foreground">
                       {funcao ? funcao.nome : "Sem função"}
                       {p.custo_hora_override !== null && " · custo próprio"}
+                      {!p.usuario_id && " · horas não contabilizadas"}
                     </p>
                   </div>
 
@@ -259,6 +298,20 @@ export default function Custos() {
                       {BRL.format(p.custo_hora_efetivo ?? 0)}/h
                     </span>
                   )}
+
+                  <select
+                    aria-label={`Usuário de ${p.nome}`}
+                    className="h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                    value={p.usuario_id ?? ""}
+                    onChange={(e) =>
+                      atualizarProf.mutate({ id: p.id, usuario_id: e.target.value || null })
+                    }
+                  >
+                    <option value="">Sem vínculo</option>
+                    {membros.map((m) => (
+                      <option key={m.id} value={m.id}>{m.nome || m.email}</option>
+                    ))}
+                  </select>
 
                   <Button
                     variant="outline"

@@ -58,6 +58,19 @@ export interface ApiClient {
   patch<T = any>(path: string, body?: unknown): Promise<T>;
   put<T = any>(path: string, body?: unknown): Promise<T>;
   delete<T = any>(path: string): Promise<T>;
+  /**
+   * POST `multipart/form-data`. Use for ANY endpoint taking `UploadFile`.
+   *
+   * A separate method rather than letting `post` detect FormData, because the
+   * silent-failure mode is what makes this worth a distinct name: `post`
+   * JSON.stringify's its body, and `JSON.stringify(new FormData())` is `"{}"`.
+   * So passing FormData to `post` sends an EMPTY JSON object with
+   * `Content-Type: application/json` to a multipart endpoint — no type error,
+   * no console warning, just a 422 that reads like a backend bug. Found live
+   * in `adconnect`'s two sellout uploads (2026-09-01), which had been sending
+   * `{}` this whole time.
+   */
+  upload<T = any>(path: string, form: FormData): Promise<T>;
 }
 
 export interface CreateApiClientOptions {
@@ -196,6 +209,22 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
         method: 'POST',
         headers,
         body: body ? JSON.stringify(body) : undefined,
+      });
+      return handleResponse<T>(response);
+    },
+
+    async upload<T = any>(path: string, form: FormData): Promise<T> {
+      // Auth header only — the Content-Type is DELIBERATELY omitted so the
+      // browser sets `multipart/form-data; boundary=…` itself. Setting it by
+      // hand produces a boundary-less header and the server cannot parse the
+      // parts.
+      const headers = await buildHeaders();
+      delete headers['Content-Type'];
+      const base = getBaseUrl();
+      const response = await fetchWithRetry(`${base}${path}`, {
+        method: 'POST',
+        headers,
+        body: form,
       });
       return handleResponse<T>(response);
     },

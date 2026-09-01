@@ -141,7 +141,12 @@ class FinanceiroService:
             # Un-costed hours mean the margin is OVERSTATED here — the mirror
             # image of the BI screen's warning, and worth saying in those terms.
             alvo.alertas = [
-                a.replace("custo real está SUBESTIMADO", "margem está SUPERESTIMADA")
+                # The article moves with the noun: "O custo real está
+                # SUBESTIMADO" → "A margem está SUPERESTIMADA". Replacing only
+                # the noun phrase left "o margem", which reads as a typo in a
+                # warning whose whole job is to be taken seriously.
+                a.replace("o custo real está SUBESTIMADO", "a margem está SUPERESTIMADA")
+                 .replace("custo real está SUBESTIMADO", "margem está SUPERESTIMADA")
                 for a in eficiencia.alertas
             ]
 

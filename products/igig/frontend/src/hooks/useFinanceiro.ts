@@ -25,6 +25,15 @@ export interface Fatura {
   pago_em: string | null;
 }
 
+export interface FaturaItem {
+  id: string;
+  fatura_id: string;
+  descricao: string;
+  tipo: string;
+  quantidade: number;
+  valor_unit: number;
+}
+
 export interface Excedente {
   cliente_id: string;
   cliente_nome: string;
@@ -71,6 +80,26 @@ export function useFaturas(competencia?: string) {
     placeholderData: (prev) => prev,
   });
   return { ...query, faturas: query.data ?? [], loading: query.isPending && !query.data };
+}
+
+/**
+ * The lines that make up one invoice.
+ *
+ * `GET /faturas/{id}/itens` shipped with no consumer, so an invoice showed a
+ * total with no way to see what was in it — the first question anyone asks
+ * about a charge. Enabled only when a fatura is actually selected.
+ */
+export function useFaturaItens(faturaId: string | undefined) {
+  const query = useQuery({
+    queryKey: [...FINANCEIRO_QUERY_KEY, "itens", faturaId ?? ""],
+    queryFn: () => api.get<FaturaItem[]>(`/api/financeiro/faturas/${faturaId}/itens`),
+    enabled: !!faturaId,
+  });
+  return {
+    ...query,
+    itens: query.data ?? [],
+    loading: query.isPending && !query.data,
+  };
 }
 
 export function useCriarFatura() {

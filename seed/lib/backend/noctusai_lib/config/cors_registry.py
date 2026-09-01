@@ -168,6 +168,25 @@ def _pattern_origin(slug: str) -> str:
     )
 
 
+
+#: Opt-in for the legacy native (uvicorn + vite) path. Exported by
+#: ``./start.sh native``; unset everywhere else, including every container.
+NATIVE_DEV_ENV = "NOCTUS_NATIVE_DEV"
+
+
+def _native_dev() -> bool:
+    """True only when ``NOCTUS_NATIVE_DEV=1`` — i.e. `./start.sh native`.
+
+    An EXPLICIT opt-in rather than an inferred "looks like dev" check, on
+    purpose. Inferring it (say, from the absence of ``PRODUCT_URL_*``) would
+    silently widen the allowlist in any environment that happens not to set
+    that scheme, which is precisely the dead-origin regression the
+    house-port-vs-frontend-port fixes closed. A mode that only one entry point
+    turns on cannot leak into the house or prod shape.
+    """
+    return os.environ.get(NATIVE_DEV_ENV, "") == "1"
+
+
 def derive_cors_origins(
     start_sh: Optional[Path] = None,
     include_localhost_alts: bool = True,
@@ -256,6 +275,30 @@ def derive_cors_origins(
     for entry in entries:
         if entry["slug"] in in_scope:
             _add(f"http://localhost:{entry['backend_port']}")
+
+    # localhost NATIVE-DEV origins — the vite ports, ONLY under `start.sh native`.
+    #
+    # The comment above is right that `frontend_port` is dead in the house
+    # model: one container serves API + SPA on `backend_port`, so the browser's
+    # Origin IS the backend port and no preflight crosses origins at all. But
+    # `./start.sh native` (uvicorn + vite, the documented legacy hot-reload
+    # path) is still shipped, and THERE the SPA is served by vite on
+    # `frontend_port`. Omitting it made every authed page of every product fail
+    # in that mode: the OPTIONS preflight came back 400 "Disallowed CORS
+    # origin" from both core and the product's own backend, so the UI loaded
+    # and then showed "Servidor indisponivel" everywhere. Measured on igig
+    # 2026-09-01; prod was verified unaffected (core preflight from
+    # https://igig.noctusai.com returns 200).
+    #
+    # Gated on the explicit `NOCTUS_NATIVE_DEV=1` opt-in so the house/prod
+    # shape is byte-for-byte unchanged (every existing assertion about this
+    # function still holds) and no DEAD origin is ever allow-listed in a
+    # deployed image — the regression the house-port-vs-frontend-port family
+    # fixed. Only `./start.sh native` sets it.
+    if _native_dev():
+        for entry in entries:
+            if entry["slug"] in in_scope:
+                _add(f"http://localhost:{entry['frontend_port']}")
 
     # deploy-aware prod origins. Unioned (deduped) from TWO sources so the
     # result is correct in BOTH dev and the slim prod image:

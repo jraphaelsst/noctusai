@@ -99,13 +99,55 @@ export function useCancelarPublicacao() {
   });
 }
 
+/**
+ * Record an engagement snapshot by hand.
+ *
+ * The spec wants these pulled from the platform APIs (Meta/TikTok/LinkedIn),
+ * which is blocked on tokens — `NOC-REMEDIATE[igig-publishing]`. Until then
+ * the endpoint existed with no consumer, so the BI de eficiência had no way to
+ * get numbers at all. Manual entry is explicitly a stopgap, and the UI says so
+ * rather than implying the figures arrived automatically. Appends, never
+ * overwrites: metrics move over a post's first week.
+ */
+export function useRegistrarMetrica() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ publicacaoId, ...payload }: {
+      publicacaoId: string;
+      curtidas?: number;
+      comentarios?: number;
+      compartilhamentos?: number;
+      alcance?: number;
+      cliques_bio?: number;
+      visualizacoes?: number;
+    }) => api.post<Metrica>(`/api/distribuicao/publicacoes/${publicacaoId}/metricas`, payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: DISTRIBUICAO_QUERY_KEY }),
+  });
+}
+
+/** The scheduled-publication queue (`GET /distribuicao/fila`). */
+export function useFila() {
+  const query = useQuery({
+    queryKey: [...DISTRIBUICAO_QUERY_KEY, "fila"],
+    queryFn: () => api.get<Publicacao[]>("/api/distribuicao/fila"),
+  });
+  return { ...query, fila: query.data ?? [], loading: query.isPending && !query.data };
+}
+
 export function useMetricas(publicacaoId: string | undefined) {
   const query = useQuery({
     queryKey: [...DISTRIBUICAO_QUERY_KEY, "metricas", publicacaoId],
     queryFn: () => api.get<Metrica[]>(`/api/distribuicao/publicacoes/${publicacaoId}/metricas`),
     enabled: Boolean(publicacaoId),
   });
-  return { ...query, metricas: query.data ?? [] };
+  // Two signals, never `isLoading` — an empty state gated on `isLoading`
+  // renders over data that is merely refetching after a new collection is
+  // appended. → KB § PATTERNS/frontend/lying-loading-state.md
+  return {
+    ...query,
+    metricas: query.data ?? [],
+    loading: query.isPending && !query.data,
+  };
 }
 
 export function useEficiencia() {

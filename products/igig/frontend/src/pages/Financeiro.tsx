@@ -12,14 +12,16 @@
 import { Fragment, useState } from "react";
 import { Badge, Button, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 
 import {
   useDRE,
   useExcedentes,
+  useFaturaItens,
   useFaturas,
   useInadimplentes,
   useMarcarPaga,
+  type Fatura,
   type StatusFatura,
 } from "@/hooks/useFinanceiro";
 
@@ -46,6 +48,8 @@ export default function Financeiro() {
   const { faturas, loading: carregandoFat } = useFaturas();
   const { atrasadas } = useInadimplentes();
   const marcarPaga = useMarcarPaga();
+  /** Which invoice has its lines expanded, if any. */
+  const [faturaAberta, setFaturaAberta] = useState<string | null>(null);
 
   return (
     <div className="space-y-6 p-6">
@@ -192,27 +196,14 @@ export default function Financeiro() {
         ) : (
           <ul className="divide-y divide-border">
             {faturas.map((f) => (
-              <li key={f.id} className="flex flex-wrap items-center gap-3 py-2">
-                <Badge variant={STATUS_VARIANT[f.status]}>{f.status}</Badge>
-                <span className="text-sm text-foreground">{f.competencia}</span>
-                <span className="min-w-0 flex-1 text-sm text-foreground">
-                  {BRL.format(f.valor_total)}
-                </span>
-                {f.vencimento && (
-                  <span className="text-xs text-muted-foreground">vence {f.vencimento}</span>
-                )}
-                {f.status !== "paga" && f.status !== "cancelada" && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={marcarPaga.isPending}
-                    onClick={() => marcarPaga.mutate(f.id)}
-                  >
-                    <CheckCircle2 className="mr-2 h-3 w-3" />
-                    Marcar paga
-                  </Button>
-                )}
-              </li>
+              <LinhaFatura
+                key={f.id}
+                fatura={f}
+                aberta={faturaAberta === f.id}
+                onAlternar={() => setFaturaAberta(faturaAberta === f.id ? null : f.id)}
+                onMarcarPaga={() => marcarPaga.mutate(f.id)}
+                marcandoPaga={marcarPaga.isPending}
+              />
             ))}
           </ul>
         )}
@@ -222,5 +213,99 @@ export default function Financeiro() {
         </p>
       </section>
     </div>
+  );
+}
+
+/**
+ * One invoice row, expandable to its lines.
+ *
+ * `GET /faturas/{id}/itens` had no consumer, so an invoice showed a total with
+ * no way to see what produced it — and the excedentes flow exists precisely to
+ * add lines a client will ask about. Fetched lazily (`enabled` on the id) so
+ * opening the page does not issue one request per invoice.
+ */
+function LinhaFatura({
+  fatura,
+  aberta,
+  onAlternar,
+  onMarcarPaga,
+  marcandoPaga,
+}: {
+  fatura: Fatura;
+  aberta: boolean;
+  onAlternar: () => void;
+  onMarcarPaga: () => void;
+  marcandoPaga: boolean;
+}) {
+  const { itens, loading } = useFaturaItens(aberta ? fatura.id : undefined);
+
+  return (
+    <li className="py-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <Badge variant={STATUS_VARIANT[fatura.status]}>{fatura.status}</Badge>
+        <span className="text-sm text-foreground">{fatura.competencia}</span>
+        <span className="min-w-0 flex-1 text-sm text-foreground">
+          {BRL.format(fatura.valor_total)}
+        </span>
+        {fatura.vencimento && (
+          <span className="text-xs text-muted-foreground">vence {fatura.vencimento}</span>
+        )}
+
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onAlternar}
+          aria-expanded={aberta}
+          aria-label={`${aberta ? "Ocultar" : "Ver"} itens da fatura ${fatura.competencia}`}
+        >
+          {aberta ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          Itens
+        </Button>
+
+        {fatura.status !== "paga" && fatura.status !== "cancelada" && (
+          <Button size="sm" variant="outline" disabled={marcandoPaga} onClick={onMarcarPaga}>
+            <CheckCircle2 className="mr-2 h-3 w-3" />
+            Marcar paga
+          </Button>
+        )}
+      </div>
+
+      {aberta && (
+        <div className="mt-2 rounded-md border border-border bg-background p-3">
+          {loading ? (
+            <Skeleton className="h-12 w-full" />
+          ) : itens.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Nenhum item lançado nesta fatura.
+            </p>
+          ) : (
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-muted-foreground">
+                  <th className="pb-1 font-medium">Descrição</th>
+                  <th className="pb-1 font-medium">Tipo</th>
+                  <th className="pb-1 text-right font-medium">Qtd</th>
+                  <th className="pb-1 text-right font-medium">Valor un.</th>
+                  <th className="pb-1 text-right font-medium">Total</th>
+                </tr>
+              </thead>
+              <tbody className="text-foreground">
+                {itens.map((i) => (
+                  <tr key={i.id} className="border-t border-border">
+                    <td className="py-1">{i.descricao}</td>
+                    <td className="py-1 text-muted-foreground">{i.tipo}</td>
+                    <td className="py-1 text-right">{i.quantidade}</td>
+                    <td className="py-1 text-right">{BRL.format(i.valor_unit)}</td>
+                    <td className="py-1 text-right">
+                      {BRL.format(i.quantidade * i.valor_unit)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </li>
   );
 }

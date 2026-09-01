@@ -65,7 +65,7 @@ export function useSubmitSellout() {
       formData.append("nfe_xml", data.nfe_xml);
       formData.append("periodo_inicio", data.periodo_inicio);
       formData.append("periodo_fim", data.periodo_fim);
-      const result = await api.post("/api/sellout/upload-nfe", formData);
+      const result = await api.upload("/api/sellout/upload-nfe", formData);
       return result.data as SelloutReport;
     },
     onSuccess: () => {
@@ -91,7 +91,7 @@ export function useSubmitSellout() {
       if (data.observacoes) formData.append("observacoes", data.observacoes);
       formData.append("periodo_inicio", data.periodo_inicio);
       formData.append("periodo_fim", data.periodo_fim);
-      const result = await api.post("/api/sellout/upload-attachment", formData);
+      const result = await api.upload("/api/sellout/upload-attachment", formData);
       return result.data as SelloutReport;
     },
     onSuccess: () => {

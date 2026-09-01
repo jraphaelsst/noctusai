@@ -534,6 +534,14 @@ ensure_frontend_deps() {
   fi
 }
 
+# Native mode serves each SPA from vite on its `frontend_port`, so the browser
+# Origin is the vite port — NOT the backend port the house/container model
+# publishes. `derive_cors_origins` emits vite ports only under this opt-in, so
+# without it every authed page in native mode fails its CORS preflight with
+# 400 "Disallowed CORS origin" (measured fleet-wide, 2026-09-01).
+# → seed/lib/backend/noctusai_lib/config/cors_registry.py::NATIVE_DEV_ENV
+export NOCTUS_NATIVE_DEV=1
+
 VENV="$ROOT_DIR/venv"
 if [ ! -d "$VENV" ]; then
   echo "[venv] Criando venv na raiz do repositorio..."

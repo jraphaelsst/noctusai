@@ -29,6 +29,10 @@ const Comercial = lazy(() => import("@/pages/Comercial"));
 const Custos = lazy(() => import("@/pages/Custos"));
 // PUBLIC route — the agency's client, no noc account. Token is the auth.
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
+// PUBLIC route — Módulo 1's pré-qualificação form, embedded on the agency's
+// own site. `org_id` rides in the path because there is no session to infer
+// the agency from; the endpoint is write-only and rate-limited.
+const PreQualificacao = lazy(() => import("@/pages/PreQualificacao"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
@@ -102,7 +106,10 @@ export default createProductApp({
   ],
   Layout,
   ...infra.appConfig,
-  publicRoutes: [{ path: "/aprovar/:token", component: AprovacaoPublica }],
+  publicRoutes: [
+    { path: "/aprovar/:token", component: AprovacaoPublica },
+    { path: "/pre-qualificacao/:orgId", component: PreQualificacao },
+  ],
   Landing,
   Login,
   AcceptInvite,

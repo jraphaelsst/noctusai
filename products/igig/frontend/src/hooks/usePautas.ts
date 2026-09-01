@@ -120,11 +120,36 @@ export function useRemoverPauta() {
   });
 }
 
+/**
+ * Upload the visual asset (peça) the client reviews beside the legenda.
+ *
+ * Without this, a pauta could never carry the artwork the Módulo 4 approval
+ * portal is supposed to show — the endpoint existed and had no consumer.
+ */
+export function useEnviarPeca() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pautaId, arquivo }: { pautaId: string; arquivo: File }) => {
+      const form = new FormData();
+      form.append("arquivo", arquivo);
+      return api.upload<Peca>(`/api/pautas/${pautaId}/pecas`, form);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: PAUTAS_QUERY_KEY }),
+  });
+}
+
 export function usePecas(pautaId: string | undefined) {
   const query = useQuery({
     queryKey: [...PAUTAS_QUERY_KEY, "pecas", pautaId],
     queryFn: () => api.get<Peca[]>(`/api/pautas/${pautaId}/pecas`),
     enabled: Boolean(pautaId),
   });
-  return { ...query, pecas: query.data ?? [] };
+  // Two signals, never `isLoading` — an empty state gated on `isLoading`
+  // renders over data that is merely refetching after an upload.
+  // → KB § PATTERNS/frontend/lying-loading-state.md
+  return {
+    ...query,
+    pecas: query.data ?? [],
+    loading: query.isPending && !query.data,
+  };
 }
