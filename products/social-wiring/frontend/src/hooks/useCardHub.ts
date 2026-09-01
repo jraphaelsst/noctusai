@@ -682,7 +682,27 @@ export function useRoteiroMutations(clienteId: string) {
     onSuccess: invalidate,
   });
 
-  return { create, update, remove, reorder, patchVisita };
+  // A roteiro's property list was fixed at creation: `POST /roteiros` seeds the
+  // visitas from `imoveis[]` and nothing could add or drop one afterwards,
+  // even though both routes have always existed.
+  const addVisita = useMutation({
+    mutationFn: ({ roteiroId, codigo }: { roteiroId: string; codigo: string }) =>
+      api.post<Visita>(
+        `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas`,
+        { codigo },
+      ),
+    onSuccess: invalidate,
+  });
+
+  const removeVisita = useMutation({
+    mutationFn: ({ roteiroId, visitaId }: { roteiroId: string; visitaId: string }) =>
+      api.delete(
+        `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}`,
+      ),
+    onSuccess: invalidate,
+  });
+
+  return { create, update, remove, reorder, patchVisita, addVisita, removeVisita };
 }
 
 /**

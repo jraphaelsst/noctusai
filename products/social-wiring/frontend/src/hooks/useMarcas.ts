@@ -7,6 +7,7 @@
  *
  * API contract: all endpoints return bare arrays/objects (NO envelope).
  * GET /api/marcas → Marca[]
+ * GET /api/marcas/{id} → Marca
  * POST /api/marcas { slug, name, kind?, notes? } → Marca
  * PATCH /api/marcas/{id} → Marca
  * DELETE /api/marcas/{id} → 204
@@ -44,6 +45,7 @@ export interface UpdateClientInput {
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
 const CLIENTS_KEY = ["sw", "clients"] as const;
+const MARCA_KEY = (id: string) => ["sw", "clients", "detail", id] as const;
 
 // ─── Queries ─────────────────────────────────────────────────────────────────
 
@@ -54,6 +56,14 @@ export function useMarcas() {
       const res = await api.get<Marca[]>("/api/marcas");
       return res ?? [];
     },
+  });
+}
+
+export function useMarca(id: string) {
+  return useQuery({
+    queryKey: MARCA_KEY(id),
+    queryFn: () => api.get<Marca>(`/api/marcas/${id}`),
+    enabled: !!id,
   });
 }
 
@@ -75,8 +85,9 @@ export function useUpdateMarca() {
   return useMutation({
     mutationFn: ({ id, ...payload }: UpdateClientInput & { id: string }) =>
       api.patch<Marca>(`/api/marcas/${id}`, payload),
-    onSuccess: () => {
+    onSuccess: (_res, vars) => {
       qc.invalidateQueries({ queryKey: CLIENTS_KEY });
+      qc.invalidateQueries({ queryKey: MARCA_KEY(vars.id) });
     },
   });
 }

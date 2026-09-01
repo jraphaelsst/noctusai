@@ -181,6 +181,62 @@ export function useKeysStatus() {
   return { data, loading };
 }
 
+// ─── Google Calendar connection ─────────────────────────────────────────
+/**
+ * `GET /api/calendar/status` — which adapter the factory would build today.
+ *
+ * The calendar routes shipped with no UI at all, so an operator had no way to
+ * see whether Google consent had been given, nor to give it. `adapter: "fake"`
+ * with `consent_required` means the OAuth client is configured but nobody has
+ * consented yet — exactly the state the connect button exists for.
+ */
+export interface CalendarStatus {
+  configured: boolean;
+  adapter: string;
+  account_email: string | null;
+  default_calendar_id: string | null;
+  default_timezone: string | null;
+  consent_required: boolean;
+}
+
+export function useCalendarStatus() {
+  const [data, setData] = useState<CalendarStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setData(await api.get<CalendarStatus>("/api/calendar/status"));
+    } catch (err: any) {
+      setError(err?.message ?? "Falha ao consultar o status do calendário.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { data, loading, error, refresh };
+}
+
+/**
+ * Fetch the Google consent URL without following the redirect.
+ *
+ * `redirect_to_consent=false` is what makes this usable from a SPA — the
+ * default 302 would be opaque to fetch. Returns `auth_url` for the caller to
+ * open, so the browser (not the XHR) performs the navigation.
+ */
+export async function fetchCalendarAuthUrl(): Promise<string> {
+  const res = await api.get<{ auth_url: string }>(
+    "/api/calendar/oauth/start?redirect_to_consent=false",
+  );
+  return res.auth_url;
+}
+
 // ─── Meta App credentials tab ───────────────────────────────────────────
 /**
  * useMetaAppStatus — GET /api/settings/meta-app/status.

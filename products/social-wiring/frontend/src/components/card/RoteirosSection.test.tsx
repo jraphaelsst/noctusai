@@ -76,6 +76,8 @@ function baseProps(overrides: Partial<RoteirosSectionProps> = {}): RoteirosSecti
     onRemover: vi.fn(),
     onGerarPdf: vi.fn(),
     onPatchVisita: vi.fn(),
+    onAddVisita: vi.fn(),
+    onRemoveVisita: vi.fn(),
     ...overrides,
   };
 }
@@ -84,6 +86,16 @@ async function render(props: RoteirosSectionProps) {
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
   return rtl.render(React.createElement(RoteirosSection, props));
+}
+
+/** Same as `render`, plus `fireEvent` for the interaction tests below. */
+async function renderWith(props: RoteirosSectionProps) {
+  const React = (await import("react")).default;
+  const rtl = await import("@testing-library/react");
+  return {
+    ...rtl.render(React.createElement(RoteirosSection, props)),
+    fireEvent: rtl.fireEvent,
+  };
 }
 
 describe("RoteirosSection — states", () => {
@@ -257,5 +269,47 @@ describe("RoteirosSection — owner data (D1)", () => {
     expect(texto).toContain("Proprietário");
     expect(texto).toContain("Celular");
     expect(texto).toContain("—");
+  });
+});
+
+// ── Add / remove a property on an EXISTING roteiro ──────────────────────────
+// `POST .../visitas` and `DELETE .../visitas/{id}` both shipped with the
+// backend but had no UI: a roteiro's property list was fixed at creation.
+
+describe("RoteirosSection — editing an existing roteiro's properties", () => {
+  it("adds a property by código and clears the field", async () => {
+    const onAddVisita = vi.fn();
+    const r = roteiro({ visitas: [visita("v1", "ONE9001")] });
+    const { getByTestId, fireEvent } = await renderWith(
+      baseProps({ roteiros: [r], onAddVisita }),
+    );
+    const input = getByTestId(`roteiro-add-codigo-${r.id}`) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "ap-99" } });
+    fireEvent.click(getByTestId(`roteiro-add-visita-${r.id}`));
+    // Códigos are upper-cased on the way out — the API stores them canonical.
+    expect(onAddVisita).toHaveBeenCalledWith(r.id, "AP-99");
+  });
+
+  it("does not submit an empty código", async () => {
+    const onAddVisita = vi.fn();
+    const r = roteiro({ visitas: [visita("v1", "ONE9001")] });
+    const { getByTestId, fireEvent } = await renderWith(
+      baseProps({ roteiros: [r], onAddVisita }),
+    );
+    const btn = getByTestId(`roteiro-add-visita-${r.id}`) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect(onAddVisita).not.toHaveBeenCalled();
+  });
+
+  it("removes a property from the roteiro", async () => {
+    const onRemoveVisita = vi.fn();
+    const v = visita("v1", "ONE9001");
+    const r = roteiro({ visitas: [v] });
+    const { getByTestId, fireEvent } = await renderWith(
+      baseProps({ roteiros: [r], onRemoveVisita }),
+    );
+    fireEvent.click(getByTestId(`visita-remover-${v.id}`));
+    expect(onRemoveVisita).toHaveBeenCalledWith(r.id, v.id);
   });
 });

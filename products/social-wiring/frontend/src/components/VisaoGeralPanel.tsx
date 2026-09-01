@@ -9,7 +9,7 @@
  * All data sourced from useDashboardStats, useTopVideos, useChannelTrend.
  * accountId threaded from useActiveAccountStore via each hook's default.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -31,6 +31,10 @@ import {
   YAxis,
 } from "recharts";
 
+import { Camera, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -46,7 +50,42 @@ import { useChannelTrend } from "@/hooks/useChannelTrend";
 // ─── Channel trend chart ──────────────────────────────────────────────────────
 
 function ChannelTrendChart() {
-  const { data, loading, error } = useChannelTrend(30);
+  const { data, loading, error, runSnapshot } = useChannelTrend(30);
+  const [capturing, setCapturing] = useState(false);
+
+  // `POST /api/youtube/snapshot/run` existed with no UI, so the chart could
+  // only show what the scheduler had already captured. This asks for a
+  // reading now — which is also the only way out of the empty state.
+  async function capture() {
+    setCapturing(true);
+    try {
+      await runSnapshot();
+      toast.success("Snapshot capturado.");
+    } catch (err: unknown) {
+      toast.error("Não foi possível capturar o snapshot.", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setCapturing(false);
+    }
+  }
+
+  const captureButton = (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() => void capture()}
+      disabled={capturing}
+      data-testid="channel-trend-snapshot"
+    >
+      {capturing ? (
+        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Camera className="mr-2 h-3.5 w-3.5" />
+      )}
+      Capturar agora
+    </Button>
+  );
 
   const chartData = useMemo(
     () =>
@@ -75,14 +114,17 @@ function ChannelTrendChart() {
 
   if (chartData.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground text-center px-4">
-        Sem dados de tendência ainda — sincronize para acumular snapshots.
+      <div className="flex h-64 flex-col items-center justify-center gap-3 rounded-md border border-dashed px-4 text-center text-sm text-muted-foreground">
+        Sem dados de tendência ainda — capture o primeiro snapshot.
+        {captureButton}
       </div>
     );
   }
 
   return (
-    <div className="h-64 w-full">
+    <div className="w-full">
+      <div className="mb-2 flex justify-end">{captureButton}</div>
+      <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -124,6 +166,7 @@ function ChannelTrendChart() {
           />
         </LineChart>
       </ResponsiveContainer>
+      </div>
     </div>
   );
 }

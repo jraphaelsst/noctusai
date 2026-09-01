@@ -108,6 +108,10 @@ class TestAuth:
         resp = http_client.post("/api/marcas", json={"slug": "x", "name": "X"})
         assert resp.status_code == 401
 
+    def test_get_requires_auth(self, http_client):
+        resp = http_client.get(f"/api/marcas/{uuid4()}")
+        assert resp.status_code == 401
+
     def test_update_requires_auth(self, http_client):
         resp = http_client.patch(f"/api/marcas/{uuid4()}", json={"name": "Y"})
         assert resp.status_code == 401
@@ -137,6 +141,21 @@ class TestCRUD:
         resp = http_client.get("/api/marcas", headers=_auth())
         assert resp.status_code == 200
         assert len(resp.json()) == 1
+
+    def test_get_one_returns_the_marca(self, http_client):
+        """Read-one existed on the FE (`useMarca`) long before the route did —
+        every call could only 404. This pins the route into the contract."""
+        created = _make_client(http_client)
+        resp = http_client.get(f"/api/marcas/{created['id']}", headers=_auth())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["id"] == created["id"]
+        assert body["slug"] == "agent-x"
+        assert body["name"] == "Agent X"
+
+    def test_get_nonexistent_404(self, http_client):
+        resp = http_client.get(f"/api/marcas/{uuid4()}", headers=_auth())
+        assert resp.status_code == 404
 
     def test_create_forbidden_fields_422(self, http_client):
         """extra='forbid' on the create model."""

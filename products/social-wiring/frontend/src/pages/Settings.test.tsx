@@ -97,6 +97,9 @@ const mockUseDocumentoRetencao = vi.fn();
 const mockSaveRetencao = vi.fn();
 const mockResetRetencao = vi.fn();
 
+const mockUseCalendarStatus = vi.fn();
+const mockFetchCalendarAuthUrl = vi.fn();
+
 vi.mock("@/hooks/useSettings", () => ({
   useRecipients: mockUseRecipients,
   useKeysStatus: mockUseKeysStatus,
@@ -112,6 +115,8 @@ vi.mock("@/hooks/useSettings", () => ({
   useDocumentoRetencao: mockUseDocumentoRetencao,
   useSaveDocumentoRetencao: () => ({ mutate: mockSaveRetencao, isPending: false }),
   useResetDocumentoRetencao: () => ({ mutate: mockResetRetencao, isPending: false }),
+  useCalendarStatus: mockUseCalendarStatus,
+  fetchCalendarAuthUrl: mockFetchCalendarAuthUrl,
 }));
 
 // `useMarcas` calls TanStack's `useQuery` directly, so without a
@@ -191,6 +196,21 @@ const RETENCAO_CONTRATO = {
 };
 
 beforeEach(() => {
+  mockUseCalendarStatus.mockReturnValue({
+    data: {
+      configured: false,
+      adapter: "fake",
+      account_email: null,
+      default_calendar_id: null,
+      default_timezone: "America/Sao_Paulo",
+      consent_required: true,
+    },
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+  });
+  mockFetchCalendarAuthUrl.mockReset();
+  mockFetchCalendarAuthUrl.mockResolvedValue("https://accounts.google.com/o/oauth2/auth?x=1");
   mockUseRecipients.mockReturnValue({
     data: [],
     loading: false,
@@ -712,5 +732,66 @@ describe("Settings — document retention policy", () => {
       superficie: "atendimento",
       tipo_documento: "extratos_fgts",
     });
+  });
+});
+
+// ── Google Calendar connection ──────────────────────────────────────────────
+// `/api/calendar/status` + `/oauth/start` shipped with no UI: no way to see
+// whether consent had been given, and no way to give it.
+
+describe("Settings — Google Calendar", () => {
+  it("shows the adapter and offers connect when consent is required", async () => {
+    const { getByTestId } = await renderSettingsOnKeysTab();
+    expect(getByTestId("calendar-status").textContent).toContain("fake");
+    expect(getByTestId("calendar-connect")).toBeTruthy();
+  });
+
+  it("hides the connect button once consent is not required", async () => {
+    mockUseCalendarStatus.mockReturnValue({
+      data: {
+        configured: true,
+        adapter: "oauth",
+        account_email: "agenda@exemplo.com",
+        default_calendar_id: "primary",
+        default_timezone: "America/Sao_Paulo",
+        consent_required: false,
+      },
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+    });
+    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    expect(getByTestId("calendar-status").textContent).toContain("agenda@exemplo.com");
+    expect(queryByTestId("calendar-connect")).toBeNull();
+  });
+
+  it("opens the consent URL in a new tab rather than navigating the SPA", async () => {
+    const open = vi.fn();
+    const original = window.open;
+    (window as any).open = open;
+    try {
+      const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+      fireEvent.click(getByTestId("calendar-connect"));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockFetchCalendarAuthUrl).toHaveBeenCalled();
+      expect(open).toHaveBeenCalledWith(
+        "https://accounts.google.com/o/oauth2/auth?x=1",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    } finally {
+      (window as any).open = original;
+    }
+  });
+
+  it("surfaces a status error instead of a blank card", async () => {
+    mockUseCalendarStatus.mockReturnValue({
+      data: null,
+      loading: false,
+      error: "Falha ao consultar o status do calendário.",
+      refresh: vi.fn(),
+    });
+    const { getByTestId } = await renderSettingsOnKeysTab();
+    expect(getByTestId("calendar-error")).toBeTruthy();
   });
 });

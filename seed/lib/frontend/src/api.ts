@@ -57,7 +57,16 @@ export interface ApiClient {
   post<T = any>(path: string, body?: unknown): Promise<T>;
   patch<T = any>(path: string, body?: unknown): Promise<T>;
   put<T = any>(path: string, body?: unknown): Promise<T>;
-  delete<T = any>(path: string): Promise<T>;
+  /**
+   * DELETE, optionally with a JSON body.
+   *
+   * A body on DELETE is legal HTTP and FastAPI routes do declare one — e.g.
+   * `DELETE /api/email-marketing/lists/{id}/members` takes `{contact_ids}`.
+   * Without this parameter such a route is simply unreachable from any
+   * product, which is how it went unwired. Optional and body-less by default,
+   * so every existing `api.delete(path)` call is unaffected.
+   */
+  delete<T = any>(path: string, body?: unknown): Promise<T>;
   /**
    * POST `multipart/form-data`. Use for ANY endpoint taking `UploadFile`.
    *
@@ -251,12 +260,13 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       return handleResponse<T>(response);
     },
 
-    async delete<T = any>(path: string): Promise<T> {
+    async delete<T = any>(path: string, body?: unknown): Promise<T> {
       const headers = await buildHeaders();
       const base = getBaseUrl();
       const response = await fetchWithRetry(`${base}${path}`, {
         method: 'DELETE',
         headers,
+        body: body ? JSON.stringify(body) : undefined,
       });
       return handleResponse<T>(response);
     },

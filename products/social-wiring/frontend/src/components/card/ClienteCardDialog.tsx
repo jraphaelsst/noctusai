@@ -222,6 +222,8 @@ export interface ClienteCardDialogProps {
     visitaId: string,
     body: { status?: StatusVisita; observacao?: string | null },
   ) => void;
+  onAddVisita: (roteiroId: string, codigo: string) => void;
+  onRemoveVisita: (roteiroId: string, visitaId: string) => void;
   roteiroPdfPendingId?: string | null;
 
   // Membros
@@ -653,6 +655,8 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   onRemover={props.onRemoverRoteiro}
                   onGerarPdf={props.onGerarRoteiroPdf}
                   onPatchVisita={props.onPatchVisita}
+                  onAddVisita={props.onAddVisita}
+                  onRemoveVisita={props.onRemoveVisita}
                   pdfPendingId={props.roteiroPdfPendingId}
                 />
               )}

@@ -132,6 +132,24 @@ def list_marcas(
     return [_out(m) for m in marcas]
 
 
+@router.get("/{marca_id}", response_model=MarcaOut)
+def get_marca(
+    marca_id: UUID,
+    auth: tuple = Depends(get_current_user_org),
+    svc: MarcaService = Depends(get_marca_service),
+) -> MarcaOut:
+    """Fetch one marca.
+
+    Completes the CRUD surface: list / create / update / delete all existed,
+    read-one did not, so `useMarca(id)` on the frontend could only ever 404.
+    Declared AFTER the collection routes and before the `{marca_id}` mutators
+    so the literal `""` path is never shadowed.
+    """
+    _, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    return _out(_require_marca(svc, marca_id, org_id))
+
+
 @router.post("", response_model=MarcaOut, status_code=status.HTTP_201_CREATED)
 def create_marca(
     body: MarcaCreate,

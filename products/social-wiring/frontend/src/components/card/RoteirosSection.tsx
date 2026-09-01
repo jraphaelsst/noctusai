@@ -26,6 +26,7 @@ import { useState } from "react";
 import { FileDown, Loader2, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -59,6 +60,11 @@ export interface RoteirosSectionProps {
     visitaId: string,
     body: { status?: StatusVisita; observacao?: string | null },
   ) => void;
+  /** Add one property to an EXISTING roteiro (`POST .../visitas`). The list
+   *  used to be fixed at creation even though the route always existed. */
+  onAddVisita: (roteiroId: string, codigo: string) => void;
+  /** Drop one property from a roteiro (`DELETE .../visitas/{id}`). */
+  onRemoveVisita: (roteiroId: string, visitaId: string) => void;
   pdfPendingId?: string | null;
 }
 
@@ -71,6 +77,8 @@ export function RoteirosSection({
   onRemover,
   onGerarPdf,
   onPatchVisita,
+  onAddVisita,
+  onRemoveVisita,
   pdfPendingId,
 }: RoteirosSectionProps) {
   return (
@@ -117,6 +125,8 @@ export function RoteirosSection({
               onRemover={() => onRemover(roteiro.id)}
               onGerarPdf={() => onGerarPdf(roteiro.id)}
               onPatchVisita={(visitaId, body) => onPatchVisita(roteiro.id, visitaId, body)}
+              onAddVisita={(codigo) => onAddVisita(roteiro.id, codigo)}
+              onRemoveVisita={(visitaId) => onRemoveVisita(roteiro.id, visitaId)}
               pdfPending={pdfPendingId === roteiro.id}
             />
           ))}
@@ -131,14 +141,19 @@ function RoteiroCard({
   onRemover,
   onGerarPdf,
   onPatchVisita,
+  onAddVisita,
+  onRemoveVisita,
   pdfPending,
 }: {
   roteiro: Roteiro;
   onRemover: () => void;
   onGerarPdf: () => void;
   onPatchVisita: (visitaId: string, body: { status?: StatusVisita; observacao?: string | null }) => void;
+  onAddVisita: (codigo: string) => void;
+  onRemoveVisita: (visitaId: string) => void;
   pdfPending?: boolean;
 }) {
+  const [novoCodigo, setNovoCodigo] = useState("");
   const { contagem } = roteiro;
 
   return (
@@ -197,9 +212,41 @@ function RoteiroCard({
               visita={visita}
               posicao={i + 1}
               onPatch={(body) => onPatchVisita(visita.id, body)}
+              onRemove={() => onRemoveVisita(visita.id)}
             />
           ))
         )}
+
+        {/* Add a property to a roteiro that already exists. */}
+        <form
+          className="flex items-center gap-2 pt-1"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const codigo = novoCodigo.trim().toUpperCase();
+            if (!codigo) return;
+            onAddVisita(codigo);
+            setNovoCodigo("");
+          }}
+        >
+          <Input
+            value={novoCodigo}
+            onChange={(e) => setNovoCodigo(e.target.value)}
+            placeholder="Código do imóvel"
+            className="h-8 text-sm"
+            aria-label="Código do imóvel a adicionar"
+            data-testid={`roteiro-add-codigo-${roteiro.id}`}
+          />
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            disabled={novoCodigo.trim().length === 0}
+            data-testid={`roteiro-add-visita-${roteiro.id}`}
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" />
+            Adicionar
+          </Button>
+        </form>
       </div>
     </div>
   );
@@ -209,10 +256,12 @@ function VisitaRow({
   visita,
   posicao,
   onPatch,
+  onRemove,
 }: {
   visita: Visita;
   posicao: number;
   onPatch: (body: { status?: StatusVisita; observacao?: string | null }) => void;
+  onRemove: () => void;
 }) {
   const [observacao, setObservacao] = useState(visita.observacao ?? "");
   const sujo = (visita.observacao ?? "") !== observacao;
@@ -234,6 +283,16 @@ function VisitaRow({
       )}
 
       <div className="flex flex-wrap items-center gap-1.5 pl-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0"
+          onClick={onRemove}
+          aria-label={`Remover ${visita.codigo} do roteiro`}
+          data-testid={`visita-remover-${visita.id}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
         {STATUS_OPCOES.map((opcao) => {
           const ativo = visita.status === opcao.value;
           return (

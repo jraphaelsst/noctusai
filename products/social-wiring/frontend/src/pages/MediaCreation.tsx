@@ -29,7 +29,8 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -51,6 +52,7 @@ import {
   type PostScore,
   type ReferenceKind,
   useBrandKits,
+  useBrandOwners,
   useBrandReferences,
   usePost,
   usePostGeneration,
@@ -146,6 +148,7 @@ export default function MediaCreation() {
 
         <TabsContent value="brand" className="mt-4">
           <BrandTab />
+          <BrandOwnersPanel />
         </TabsContent>
       </Tabs>
     </div>
@@ -801,6 +804,80 @@ function ComposeTab({ onCreated }: { onCreated: (id: string) => void }) {
 }
 
 // ─── Brand tab ───────────────────────────────────────────────────────
+
+/**
+ * Catálogo de marcas — `branding/owners` + `seed-catalog`.
+ *
+ * These three routes shipped with no UI at all: the curated brand catalog
+ * could only be loaded by issuing the POST by hand, which meant a fresh org
+ * had an empty catalog and no way to see it.
+ */
+function BrandOwnersPanel() {
+  const { items, loading, error, seeding, seedCatalog } = useBrandOwners();
+
+  return (
+    <Card className="mt-6" data-testid="brand-owners-panel">
+      <CardHeader>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">Catálogo de marcas</CardTitle>
+            <CardDescription>
+              Marcas curadas que a geração de mídia usa como referência.
+            </CardDescription>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void seedCatalog()}
+            disabled={seeding}
+            data-testid="brand-owners-seed"
+          >
+            {seeding ? "Carregando…" : "Carregar catálogo"}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="space-y-2" data-testid="brand-owners-loading">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
+        ) : error ? (
+          <p className="text-sm text-destructive" data-testid="brand-owners-error">
+            {error}
+          </p>
+        ) : items.length === 0 ? (
+          <p
+            className="py-6 text-center text-sm text-muted-foreground"
+            data-testid="brand-owners-empty"
+          >
+            Catálogo vazio — use "Carregar catálogo" para trazer as marcas
+            curadas do repositório.
+          </p>
+        ) : (
+          <ul className="divide-y rounded-md border" data-testid="brand-owners-rows">
+            {items.map((o) => (
+              <li
+                key={o.id}
+                className="px-3 py-2 text-sm"
+                data-testid={`brand-owner-${o.id}`}
+              >
+                <span className="font-medium">
+                  {o.nome ?? o.name ?? o.slug ?? o.id}
+                </span>
+                {o.descricao ? (
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {o.descricao}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function BrandTab() {
   const { items, loading, create, update, remove } = useBrandKits();

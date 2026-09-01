@@ -59,6 +59,12 @@ export function LLMSpendBadge({ onOpenDetail, className = '' }: LLMSpendBadgePro
   // Non-admin / unset / ok / no-data → silent.
   if (!isProductAdmin || !orgId || !data) return null;
   if (data.status === 'ok' || data.status === 'unset') return null;
+  // Defence in depth alongside the hook's own shape check: a warning nobody
+  // can read is worse than no warning. If the figures are missing there is
+  // nothing to warn ABOUT, so say nothing rather than render `IA ?% (— / —)`.
+  if (data.used_pct == null && data.spent_brl == null && data.budget_brl == null) {
+    return null;
+  }
 
   const isHard = data.status === 'hard_stop';
   const tone = isHard

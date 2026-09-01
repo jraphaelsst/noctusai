@@ -53,5 +53,21 @@ export function useChannelTrend(days = 30, accountId?: string | null) {
     void refresh();
   }, [refresh]);
 
-  return { data, loading, error, refresh };
+  /**
+   * Trigger a fresh channel snapshot, then reload the series.
+   *
+   * `POST /api/youtube/snapshot/run` has always existed but had no UI, so the
+   * trend chart could only ever show whatever the scheduler had captured —
+   * there was no way to ask for a reading now.
+   */
+  const runSnapshot = useCallback(async () => {
+    setError(null);
+    const params = new URLSearchParams();
+    if (effectiveAccountId) params.set("account_id", effectiveAccountId);
+    const qs = params.toString();
+    await api.post(`/api/youtube/snapshot/run${qs ? `?${qs}` : ""}`, {});
+    await refresh();
+  }, [effectiveAccountId, refresh]);
+
+  return { data, loading, error, refresh, runSnapshot };
 }

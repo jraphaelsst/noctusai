@@ -23,6 +23,7 @@ import {
   KeyRound,
   RotateCcw,
   ShieldCheck,
+  CalendarDays,
 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -54,6 +55,8 @@ import {
   type KeyStatusEntry,
   type Recipient,
   type RecipientCreate,
+  useCalendarStatus,
+  fetchCalendarAuthUrl,
 } from "@/hooks/useSettings";
 import { useMarcas, type Marca } from "@/hooks/useMarcas";
 import { rotuloTipo } from "@/lib/documentoTipos";
@@ -325,6 +328,123 @@ function RecipientRow({
 }
 
 // ─── API Keys tab ───────────────────────────────────────────────────────
+/**
+ * Google Calendar connection.
+ *
+ * `/api/calendar/status` + `/oauth/start` shipped with no UI: there was no way
+ * to see whether consent had been given, and no way to give it. The scheduling
+ * module writes `google_calendar_event_id` on its appointments, so this is the
+ * switch that makes those writes land somewhere real.
+ */
+function CalendarCard() {
+  const { data, loading, error, refresh } = useCalendarStatus();
+  const [connecting, setConnecting] = useState(false);
+
+  async function connect() {
+    setConnecting(true);
+    try {
+      const url = await fetchCalendarAuthUrl();
+      // The browser must do this navigation, not fetch — it is a consent
+      // screen on Google's origin.
+      window.open(url, "_blank", "noopener,noreferrer");
+      toast.info("Conclua o consentimento na aba aberta e atualize o status.");
+    } catch (err: unknown) {
+      toast.error("Não foi possível iniciar a conexão com o Google.", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  return (
+    <Card data-testid="calendar-card">
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <CalendarDays className="h-5 w-5 text-muted-foreground" />
+          <div>
+            <CardTitle>Google Calendar</CardTitle>
+            <CardDescription>
+              Conexão usada pelo agendador para gravar as visitas na agenda.
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <div
+            className="flex items-center justify-center p-6"
+            data-testid="calendar-loading"
+          >
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : error ? (
+          <p className="text-sm text-destructive" data-testid="calendar-error">
+            {error}
+          </p>
+        ) : !data ? (
+          <p
+            className="text-sm text-muted-foreground"
+            data-testid="calendar-empty"
+          >
+            Status do calendário indisponível.
+          </p>
+        ) : (
+          <div className="space-y-2 text-sm" data-testid="calendar-status">
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-muted-foreground">Adaptador</span>
+              <span className="font-medium">{data.adapter}</span>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-muted-foreground">Conectado</span>
+              <span className="font-medium">
+                {data.configured ? "Sim" : "Não"}
+              </span>
+            </div>
+            {data.account_email && (
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">Conta</span>
+                <span className="font-medium">{data.account_email}</span>
+              </div>
+            )}
+            {data.default_timezone && (
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-muted-foreground">Fuso padrão</span>
+                <span className="font-medium">{data.default_timezone}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2 pt-1">
+          {data?.consent_required && (
+            <Button
+              onClick={() => void connect()}
+              disabled={connecting}
+              data-testid="calendar-connect"
+            >
+              {connecting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <CalendarDays className="mr-2 h-4 w-4" />
+              )}
+              Conectar Google Calendar
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => void refresh()}
+            disabled={loading}
+            data-testid="calendar-refresh"
+          >
+            Atualizar status
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
   const { data, loading } = useKeysStatus();
 
@@ -349,6 +469,7 @@ function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
 
   return (
     <div className="space-y-6">
+      <CalendarCard />
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">

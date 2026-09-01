@@ -35,6 +35,8 @@ function baseProps(overrides: Partial<ClienteCardDialogProps> = {}): ClienteCard
     onRemoverRoteiro: vi.fn(),
     onGerarRoteiroPdf: vi.fn(),
     onPatchVisita: vi.fn(),
+    onAddVisita: vi.fn(),
+    onRemoveVisita: vi.fn(),
     allMembros: [],
     selectedMembros: [],
     onToggleMembro: vi.fn(),

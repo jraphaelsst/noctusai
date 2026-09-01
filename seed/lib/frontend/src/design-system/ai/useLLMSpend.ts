@@ -57,7 +57,24 @@ export function useLLMSpend(orgId: string | null | undefined, isAdmin: boolean) 
     queryKey: ['admin', 'llm-spend', orgId ?? '_none'],
     queryFn: async () => {
       try {
-        return await coreApi.get<LLMSpendResponse>(`/api/admin/llm-spend/${encodeURIComponent(orgId!)}`);
+        // Core wraps this in the seed envelope: `{"data": {...status, org_id}}`
+        // (`products/core/backend/app/routers/admin_llm_spend.py`). Reading the
+        // top level made EVERY field `undefined` — including `status`, so
+        // `<LLMSpendBadge/>`'s `status === 'ok' | 'unset'` early-return never
+        // fired and every admin saw a permanent, content-free warning chip
+        // reading `IA ?% (— / —)` on every page. Worse in the other direction:
+        // a real `hard_stop` could never render as one. Observed live on
+        // social.noctusai.com, 2026-09-01.
+        const res = await coreApi.get<LLMSpendResponse | { data: LLMSpendResponse }>(
+          `/api/admin/llm-spend/${encodeURIComponent(orgId!)}`,
+        );
+        const body =
+          res && typeof res === 'object' && 'data' in res
+            ? (res as { data: LLMSpendResponse }).data
+            : (res as LLMSpendResponse);
+        // A payload without a recognisable `status` is not a spend reading —
+        // treat it as "nothing to say" rather than rendering a blank warning.
+        return body && typeof body.status === 'string' ? body : null;
       } catch (err) {
         if (err instanceof Error && err.message.startsWith('[404]')) {
           return null;

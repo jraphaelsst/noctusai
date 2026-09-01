@@ -186,6 +186,69 @@ export interface RenderResult {
 
 // ─── Brand kits ──────────────────────────────────────────────────────
 
+/**
+ * Brand owners — the curated agent/brand catalog behind media generation.
+ *
+ *   GET  /api/media-creation/branding/owners
+ *   GET  /api/media-creation/branding/owners/{id}
+ *   POST /api/media-creation/branding/seed-catalog
+ *
+ * All three shipped with no UI, so the catalog could only be loaded by hand.
+ * `seed-catalog` is a slug-keyed upsert — safe to re-run, never duplicates.
+ *
+ * Same manual-fetch shape as `useBrandKits` below (this file predates the
+ * product's react-query adoption); kept consistent rather than mixed.
+ */
+export interface BrandOwner {
+  id: string;
+  slug?: string;
+  nome?: string;
+  name?: string;
+  descricao?: string | null;
+  [key: string]: unknown;
+}
+
+export function useBrandOwners() {
+  const [items, setItems] = useState<BrandOwner[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [seeding, setSeeding] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await api.get<Envelope<BrandOwner[]>>(
+        "/api/media-creation/branding/owners",
+      );
+      setItems(r.data ?? []);
+    } catch (err: any) {
+      setError(err?.message ?? "Falha ao carregar o catálogo de marcas");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const seedCatalog = useCallback(async () => {
+    setSeeding(true);
+    try {
+      await api.post("/api/media-creation/branding/seed-catalog", {});
+      toast.success("Catálogo de marcas carregado");
+      await refresh();
+    } catch (err: any) {
+      toast.error(err?.message ?? "Falha ao carregar o catálogo");
+    } finally {
+      setSeeding(false);
+    }
+  }, [refresh]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { items, loading, error, seeding, refresh, seedCatalog };
+}
+
 export function useBrandKits() {
   const [items, setItems] = useState<BrandKit[]>([]);
   const [loading, setLoading] = useState(true);

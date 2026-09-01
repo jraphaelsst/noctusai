@@ -70,6 +70,15 @@ export default defineConfig({
       // Bare forms last.
       { find: /^react$/, replacement: LIB_REACT },
       { find: /^react-dom$/, replacement: LIB_REACT_DOM },
+      // `@noctusai/seed/infra` is a CONSUMER-side specifier: products resolve
+      // it through their own node_modules, this package has no such link. Any
+      // organ importing it therefore failed at RESOLVE time here — before
+      // `vi.mock` could intercept — which is why `<LLMSpendBadge/>` shipped a
+      // live bug with no tests. The stub only makes resolution succeed; tests
+      // still mock the module for real behaviour.
+      { find: /^@noctusai\/seed\/infra$/, replacement: resolve(__dirname, "tests/stubs/seed-infra.ts") },
+      // Self-reference: organs import siblings via the package's public entry.
+      { find: /^@noctusai\/lib$/, replacement: resolve(__dirname, "src/index.ts") },
     ],
   },
 });

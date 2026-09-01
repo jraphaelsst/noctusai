@@ -356,6 +356,24 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
           },
         )
       }
+      onAddVisita={(roteiroId, codigo) =>
+        roteiroMutations.addVisita.mutate(
+          { roteiroId, codigo },
+          {
+            onError: (err) =>
+              toastServerError(err, "Não foi possível adicionar o imóvel ao roteiro."),
+          },
+        )
+      }
+      onRemoveVisita={(roteiroId, visitaId) =>
+        roteiroMutations.removeVisita.mutate(
+          { roteiroId, visitaId },
+          {
+            onError: (err) =>
+              toastServerError(err, "Não foi possível remover o imóvel do roteiro."),
+          },
+        )
+      }
       roteiroPdfPendingId={roteiroPdfPendingId}
       allMembros={corretores.data ?? []}
       selectedMembros={card.data?.membros ?? []}

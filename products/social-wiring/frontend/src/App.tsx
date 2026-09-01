@@ -52,6 +52,9 @@ import {
   TrendingUp,
   UserCheck,
   GitMerge,
+  CalendarClock,
+  BarChart3,
+  Globe,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -90,6 +93,14 @@ const ProcessosVenda = lazyWithReload(() => import("@/pages/funil/ProcessosVenda
 const PortalRoi = lazyWithReload(() => import("@/pages/PortalRoi"));
 const ClientesBoard = lazyWithReload(() => import("@/pages/clientes/ClientesBoard"));
 const RevisaoFila = lazyWithReload(() => import("@/pages/clientes/RevisaoFila"));
+const Agendamentos = lazyWithReload(() => import("@/pages/scheduling/Agendamentos"));
+const EmailPainel = lazyWithReload(() => import("@/pages/email/Painel"));
+const EmailCampanhasNoc = lazyWithReload(() => import("@/pages/email/Campanhas"));
+const EmailContatosNoc = lazyWithReload(() => import("@/pages/email/Contatos"));
+const EmailListasNoc = lazyWithReload(() => import("@/pages/email/Listas"));
+const EmailTemplatesNoc = lazyWithReload(() => import("@/pages/email/Templates"));
+const EmailAutomacoes = lazyWithReload(() => import("@/pages/email/Automacoes"));
+const EmailDominios = lazyWithReload(() => import("@/pages/email/Dominios"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -105,6 +116,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
       { name: "Meta", href: "/meta", icon: Instagram, route: "meta" },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone, route: "whatsapp_chat" },
+      { name: "Agendamentos", href: "/agendamentos", icon: CalendarClock, route: "agendamentos" },
       { name: "n8n", href: "/n8n", icon: Workflow, route: "n8n" },
       { name: "Imóveis", href: "/imoveis", icon: Building2, route: "imoveis" },
     ],
@@ -143,8 +155,31 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     ],
   },
   {
-    key: "email",
+    // The product's OWN mailing engine (Resend-backed, tables in
+    // social_wiring). Distinct from the Mailchimp-proxy group below — two
+    // different products in one app, named apart so neither is mistaken for
+    // the other. Shipped 2026-09-01; the module had 62 routes and no UI.
+    key: "email-noc",
     label: "Email Marketing",
+    icon: Mail,
+    defaultOpen: false,
+    items: [
+      { name: "Painel", href: "/email", icon: BarChart3, route: "email_painel" },
+      { name: "Campanhas", href: "/email/campanhas", icon: Send, route: "email_campanhas_noc" },
+      { name: "Contatos", href: "/email/contatos", icon: UserRound, route: "email_contatos_noc" },
+      { name: "Listas", href: "/email/listas", icon: List, route: "email_listas_noc" },
+      { name: "Templates", href: "/email/templates", icon: FileText, route: "email_templates_noc" },
+      { name: "Automações", href: "/email/automacoes", icon: Workflow, route: "email_automacoes_noc" },
+      { name: "Domínios", href: "/email/dominios", icon: Globe, route: "email_dominios_noc" },
+    ],
+  },
+  {
+    // Mailchimp-backed (a CONNECTED account proxied through /api/mailchimp/*).
+    // Renamed from "Email Marketing" when the own-engine group above shipped:
+    // every page here already says "sua conta Mailchimp" in its own subtitle,
+    // so the label now matches the screen. No route or page changed.
+    key: "email",
+    label: "Mailchimp",
     icon: Mail,
     defaultOpen: false,
     items: [
@@ -190,6 +225,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "YouTube", href: "/youtube", icon: Youtube },
       { name: "Meta", href: "/meta", icon: Instagram },
       { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone },
+      { name: "Agendamentos", href: "/agendamentos", icon: CalendarClock },
       { name: "n8n", href: "/n8n", icon: Workflow },
       { name: "Imóveis", href: "/imoveis", icon: Building2 },
     ],
@@ -217,8 +253,23 @@ const NAV_FALLBACK: NavGroup[] = [
     ],
   },
   {
-    key: "email",
+    key: "email-noc",
     label: "Email Marketing",
+    icon: Mail,
+    defaultOpen: false,
+    items: [
+      { name: "Painel", href: "/email", icon: BarChart3 },
+      { name: "Campanhas", href: "/email/campanhas", icon: Send },
+      { name: "Contatos", href: "/email/contatos", icon: UserRound },
+      { name: "Listas", href: "/email/listas", icon: List },
+      { name: "Templates", href: "/email/templates", icon: FileText },
+      { name: "Automações", href: "/email/automacoes", icon: Workflow },
+      { name: "Domínios", href: "/email/dominios", icon: Globe },
+    ],
+  },
+  {
+    key: "email",
+    label: "Mailchimp",
     icon: Mail,
     defaultOpen: false,
     items: [
@@ -291,6 +342,14 @@ export default createProductApp({
     { path: "/marcas", component: Marcas },
     { path: "/imoveis", component: Imoveis },
     { path: "/imoveis/:codigo", component: ImovelDetalhes },
+    { path: "/agendamentos", component: Agendamentos },
+    { path: "/email", component: EmailPainel },
+    { path: "/email/campanhas", component: EmailCampanhasNoc },
+    { path: "/email/contatos", component: EmailContatosNoc },
+    { path: "/email/listas", component: EmailListasNoc },
+    { path: "/email/templates", component: EmailTemplatesNoc },
+    { path: "/email/automacoes", component: EmailAutomacoes },
+    { path: "/email/dominios", component: EmailDominios },
     { path: "/monitor", component: Monitor },
     // WhatsApp — full dashboard (Chat + Configurações), back in nav (see header comment)
     { path: "/whatsapp-chat", component: WhatsAppChat },
