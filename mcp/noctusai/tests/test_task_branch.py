@@ -623,6 +623,8 @@ def _seed_primary(primary, *, slugs=("alpha",), with_product_nm=True,
     primary.mkdir(parents=True, exist_ok=True)
     if with_dotenv:
         (primary / ".env").write_text("VITE_SUPABASE_URL=https://fixture.invalid\n")
+    if with_toolkit_nm:
+        (primary / "mcp" / "noctusai" / "node" / "node_modules").mkdir(parents=True, exist_ok=True)
     for rel in ("seed/lib/frontend", "seed/framework/frontend"):
         (primary / rel).mkdir(parents=True, exist_ok=True)
         if with_seed_nm:
@@ -677,6 +679,13 @@ def test_plan_env_wiring_lists_expected_symlink_targets(tmp_path):
     assert env_link in links and links[env_link]["kind"] == "dotenv"
     assert links[env_link]["target"] == str(primary / ".env")
 
+    # the toolkit's ts-morph runtime — same gitignored-and-absent class as
+    # `.env`; without it the lying-loading-state Mode-B scan degrades to a
+    # WARNING that reads like a detector regression.
+    tk = str(wt_root / "mcp" / "noctusai" / "node" / "node_modules")
+    assert tk in links and links[tk]["kind"] == "node_modules"
+    assert links[tk]["target"] == str(primary / "mcp" / "noctusai" / "node" / "node_modules")
+
     # the two @noctusai re-points (to the WORKTREE's own seed copies, never primary)
     lib_link = str(pnm / "@noctusai" / "lib")
     seed_link = str(pnm / "@noctusai" / "seed")
@@ -684,6 +693,18 @@ def test_plan_env_wiring_lists_expected_symlink_targets(tmp_path):
     assert links[lib_link]["target"] == str(wt_root / "seed/lib/frontend")
     assert links[seed_link]["target"] == str(wt_root / "seed/framework/frontend")
     assert skipped == []
+
+
+def test_plan_env_wiring_reports_missing_toolkit_node_modules(tmp_path):
+    """Absent toolkit node_modules → REPORTED, not silently omitted."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "zeta"
+    _seed_primary(primary, slugs=("zeta",), with_toolkit_nm=False)
+    _seed_worktree_tree(wt_root)
+
+    wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+    assert not [w for w in wire if w["link"].endswith("mcp/noctusai/node/node_modules")]
+    assert [s for s in skipped if "primary toolkit node_modules absent" in s["reason"]]
 
 
 def test_plan_env_wiring_reports_missing_primary_dotenv(tmp_path):
@@ -723,7 +744,7 @@ def test_plan_env_wiring_reports_missing_primary_node_modules(tmp_path):
     primary = tmp_path / "primary"
     wt_root = primary / ".claude" / "worktrees" / "beta"
     _seed_primary(primary, slugs=("beta",), with_seed_nm=False, with_product_nm=False,
-                  with_dotenv=False)
+                  with_dotenv=False, with_toolkit_nm=False)
     _seed_worktree_tree(wt_root)
 
     wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())

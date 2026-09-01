@@ -565,3 +565,4 @@
 {"ts": "2026-08-31", "event": "worktree-sweep", "path": ".claude/worktrees/mcp-server-env-dotenv", "branch": "feat/mcp-server-env-dotenv", "sha": "80e37fff538eff7a4dd79083f6d22fc5f371a822", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-01T18:18:05.862200+00:00", "kind": "session-end-sweep", "worktree_count": 0, "safe_to_cleanup": [], "uncommitted": [], "ahead_of_dev": [], "remote_integrated_count": 15, "remote_unique_aged_count": 0, "pointers_healed": []}
 {"ts": "2026-09-01T18:19:09.448416+00:00", "kind": "session-end-sweep", "worktree_count": 0, "safe_to_cleanup": [], "uncommitted": [], "ahead_of_dev": [], "remote_integrated_count": 15, "remote_unique_aged_count": 0, "pointers_healed": []}
+{"ts": "2026-09-01T18:42:17.067926+00:00", "kind": "session-end-sweep", "worktree_count": 0, "safe_to_cleanup": [], "uncommitted": [], "ahead_of_dev": [], "remote_integrated_count": 15, "remote_unique_aged_count": 0, "pointers_healed": []}
