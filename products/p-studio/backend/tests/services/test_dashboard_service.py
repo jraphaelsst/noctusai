@@ -4,7 +4,9 @@
 afirmadas com valores literais. Pelas rotas isso seria impossível: um teste
 que rodasse dia 1º ou 31 veria janelas diferentes.
 """
-from datetime import date
+from datetime import date, timedelta
+
+import pytest
 
 from app.services.dashboard_service import ClienteMetricasService, DashboardService
 from tests.conftest import FakeDB, make_row
@@ -79,6 +81,38 @@ def test_captacoes_por_semana_ignora_canceladas():
     ]
     baldes = _dashboard(captacoes=captacoes)["captacoes_por_semana"]
     assert sum(b["captacoes"] for b in baldes) == 1
+
+
+@pytest.mark.parametrize(
+    "hoje",
+    [
+        date(2026, 1, 1),   # dia 1, mês de 31 dias — o caso que expôs o bug
+        date(2026, 1, 2),   # dia 2 — o outro dia de risco
+        date(2026, 1, 15),  # meio do mês
+        date(2026, 1, 31),  # último dia, mês de 31
+        date(2026, 4, 30),  # último dia, mês de 30
+        date(2026, 2, 1),   # dia 1 de fevereiro
+        date(2026, 2, 28),  # último dia de fevereiro (2026 não é bissexto)
+        date(2024, 2, 29),  # último dia de fevereiro bissexto
+    ],
+)
+def test_captacoes_mes_ignora_canceladas_em_qualquer_dia_do_mes(hoje):
+    """Mesma regra de `test_captacoes_mes_ignora_canceladas` (rota), mas
+    pelo seam `montar(hoje=...)` — relógio controlado, sem depender de
+    `date.today()`. Prova que a contagem fica certa em qualquer posição do
+    mês, inclusive no 1º e 2º dia, onde `inicio_mes + offset` cairia no
+    futuro sem o clamp em `_neste_mes`."""
+    inicio_mes = hoje.replace(day=1)
+    d0 = inicio_mes
+    d1 = min(inicio_mes + timedelta(days=1), hoje)
+    d2 = min(inicio_mes + timedelta(days=2), hoje)
+    captacoes = [
+        make_row("captacoes", org_id=ORG, data=d0.isoformat(), status="agendado"),
+        make_row("captacoes", org_id=ORG, data=d1.isoformat(), status="concluido"),
+        make_row("captacoes", org_id=ORG, data=d2.isoformat(), status="cancelado"),
+    ]
+    db = FakeDB({"negocios": [], "captacoes": captacoes, "producoes": [], "lancamentos": []})
+    assert DashboardService(db, ORG).montar(hoje=hoje)["captacoes_mes"] == 2
 
 
 def test_captacoes_mes_usa_o_mes_corrente_e_nao_os_ultimos_30_dias():

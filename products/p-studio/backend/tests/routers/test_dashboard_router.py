@@ -6,15 +6,49 @@ a regra de contagem, não só o formato.
 """
 from datetime import date, timedelta
 
+import pytest
+
 from tests.conftest import USER_ID, dias, make_row, seed_basico
 
 HOJE = date.today()
 INICIO_MES = HOJE.replace(day=1).isoformat()
 
 
-def _neste_mes(dia_offset: int = 0) -> str:
-    """Data dentro do mês corrente, segura contra virada de mês."""
-    return (HOJE.replace(day=1) + timedelta(days=dia_offset)).isoformat()
+def _neste_mes(dia_offset: int = 0, hoje: date = HOJE) -> str:
+    """Data dentro do mês corrente de `hoje`, nunca no futuro.
+
+    Ancora no dia 1 e soma `dia_offset` dias — mas nunca ultrapassa `hoje`.
+    Sem o `min(...)`, no dia 1º ou 2º do mês `dia1 + offset` cai amanhã ou
+    depois de amanhã: fora da janela `inicio_mes <= d <= hoje` que o serviço
+    usa, e `test_captacoes_mes_ignora_canceladas` falhava silenciosamente
+    nesses dois dias por mês (bug real, achado em 2026-09-01).
+    """
+    candidata = hoje.replace(day=1) + timedelta(days=dia_offset)
+    return min(candidata, hoje).isoformat()
+
+
+@pytest.mark.parametrize(
+    "hoje",
+    [
+        date(2026, 1, 1),   # dia 1, mês de 31 dias
+        date(2026, 1, 2),   # dia 2 — o outro dia de risco
+        date(2026, 1, 15),  # meio do mês
+        date(2026, 1, 31),  # último dia, mês de 31
+        date(2026, 4, 30),  # último dia, mês de 30
+        date(2026, 2, 1),   # dia 1 de fevereiro
+        date(2026, 2, 28),  # último dia de fevereiro (2026 não é bissexto)
+        date(2024, 2, 29),  # último dia de fevereiro bissexto
+    ],
+)
+@pytest.mark.parametrize("offset", [0, 1, 2])
+def test_neste_mes_nunca_cai_no_futuro_nem_fora_do_mes(hoje, offset):
+    """Prova de independência de calendário do próprio helper: para todo
+    `offset` usado pelos testes deste arquivo (0, 1, 2) e toda posição de
+    `hoje` dentro do mês — incluindo o 1º e o 2º dia, onde o bug vivia — a
+    data devolvida fica dentro do mês corrente e nunca no futuro."""
+    resultado = date.fromisoformat(_neste_mes(offset, hoje=hoje))
+    assert (resultado.year, resultado.month) == (hoje.year, hoje.month)
+    assert resultado <= hoje
 
 
 # ── /api/me ──────────────────────────────────────────────────────────────
