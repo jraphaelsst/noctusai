@@ -44,6 +44,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from noctusai_lib.config.credentials import register_credential_override
 from noctusai_seed import create_product_app
 
 from app.config import settings
@@ -234,6 +235,8 @@ from app.modules.n8n import register as _n8n
 from app.modules.pipeline import register as _pipeline
 from app.modules.portal_leads import register as _portal_leads
 from app.modules.scheduling import register as _scheduling
+from app.modules.certidoes import register as _certidoes
+from app.modules.matriculas import register as _matriculas
 from app.modules.youtube import register as _youtube
 
 # Append W2.2 (email_marketing) / W2.3 (scheduling) / W2.4 (media_creation)
@@ -270,6 +273,18 @@ MODULES = [
     _pipeline,
     _n8n,
     _portal_leads,
+    # The two workflows retired out of the ERP (the `emissoes` wave). Both sit
+    # LAST and their position is free — each owns a unique 2-segment literal
+    # prefix (`/api/matriculas`, `/api/certidoes`) and neither declares a
+    # 1-segment dynamic path at its prefix root, so neither can shadow nor be
+    # shadowed by the `clientes_router` hazard documented above.
+    #
+    # Both `register()` calls configure a stranded-extraction / stale-resultado
+    # sweep at import time, which is why they must be entries here rather than
+    # lazy imports: registration has to precede `start_scheduler()` in
+    # app/lifespan.py or the sweep silently never runs.
+    _matriculas,
+    _certidoes,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───
@@ -452,6 +467,55 @@ _MAX_BODY_PATH_OVERRIDES = {
     # blocks the module's own branch from committing at all.
     "/api/certidoes/resultados/*/upload": 25 * 1024 * 1024,  # 25 MB
 }
+
+# ─── Tier 0: the operator-entered, encrypted key store ───────────────
+#
+# `Configurações → Chaves de API` writes `openai_api_key` /
+# `infosimples_token` / `infosimples_email_envio` into
+# `social_wiring.credentials`, Fernet-encrypted. Reading them back is NOT
+# automatic: the seed chain (`org_settings` → `platform_settings` → env)
+# knows nothing about a product-local store, and the consumers do not all
+# take the same road to a key —
+#
+#   * certidões' AI analysis goes through `chat_completion`, which resolves
+#     via `LLMConfig.key_provider`;
+#   * the matrícula transcriber calls `resolve_credential` DIRECTLY
+#     (`documents/transcription.py::_get_analyze`).
+#
+# Wiring only `llm_config=` would therefore fix the first and leave the
+# second blind — and it would ALSO discard what `create_product_app` builds
+# into the default config from settings (the Redis response cache, the
+# `<schema>.llm_usage` sink, and the budget guardrails that depend on it),
+# because that parameter is an all-or-nothing replacement.
+#
+# So the override goes in at the root, where every consumer already looks.
+# Registered BEFORE `create_product_app` so no request can race it.
+#
+# 🔴 The failure this closes is a FALSE GREEN, not a missing feature: the
+# certidões pre-flight check reads the product store and passes, then the
+# real call resolves through the seed chain and finds nothing. The operator
+# would see "chave configurada" and a failed extraction at the same time.
+def _local_api_key(key: str, org_id):
+    """Tier-0 reader: this org's encrypted, operator-entered key or None.
+
+    Deliberately store-ONLY. `api_keys_store.resolve_api_key` falls back to
+    `resolve_credential`, so registering that here would recurse forever.
+    Unmanaged keys short-circuit before any client is built, keeping this
+    off the hot path for every other credential in the product.
+    """
+    from app.services.api_keys_store import (
+        build_api_key_store,
+        get_spec,
+        read_local_api_key,
+    )
+
+    if org_id is None or get_spec(key) is None:
+        return None
+    stored = read_local_api_key(build_api_key_store(), str(org_id), key)
+    return (stored.tokens or {}).get("value") if stored else None
+
+
+register_credential_override(_local_api_key)
 
 app = create_product_app(
     name="Social Wiring",

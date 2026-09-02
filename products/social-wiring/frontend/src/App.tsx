@@ -55,6 +55,9 @@ import {
   CalendarClock,
   BarChart3,
   Globe,
+  Stamp,
+  ScrollText,
+  ShieldCheck,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -101,6 +104,8 @@ const EmailListasNoc = lazyWithReload(() => import("@/pages/email/Listas"));
 const EmailTemplatesNoc = lazyWithReload(() => import("@/pages/email/Templates"));
 const EmailAutomacoes = lazyWithReload(() => import("@/pages/email/Automacoes"));
 const EmailDominios = lazyWithReload(() => import("@/pages/email/Dominios"));
+const Certidoes = lazyWithReload(() => import("@/pages/Certidoes"));
+const Matriculas = lazyWithReload(() => import("@/pages/Matriculas"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -188,6 +193,26 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Templates", href: "/email-marketing/templates", icon: FileText, route: "email_templates" },
       { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send, route: "email_campanhas" },
       { name: "Configuração", href: "/email-marketing/configuracao", icon: Settings2, route: "email_config" },
+    ],
+  },
+  {
+    // The two workflows retired out of the ERP. Grouped by what the operator
+    // is DOING — emitting or reading an official document — rather than by
+    // whose record it is: a certidão is due-diligence on a person, a matrícula
+    // on a property, and splitting them across Clientes and Imóveis would hide
+    // that they are one desk's work.
+    //
+    // Each item is nav-gated by its own `status_pagina` row (migrations 091 and
+    // 092 seed both as 'producao'). An unlisted route stays hidden rather than
+    // 404-ing — and a row seeded 'desenvolvimento' is returned to nobody but
+    // dev/owner/admin, which is why neither is.
+    key: "emissoes",
+    label: "Emissões",
+    icon: Stamp,
+    defaultOpen: true,
+    items: [
+      { name: "Certidões", href: "/certidoes", icon: ShieldCheck, route: "certidoes" },
+      { name: "Extrator de Matrículas", href: "/matriculas", icon: ScrollText, route: "matriculas" },
     ],
   },
   {
@@ -281,6 +306,26 @@ const NAV_FALLBACK: NavGroup[] = [
     ],
   },
   {
+    // The two workflows retired out of the ERP. Grouped by what the operator
+    // is DOING — emitting or reading an official document — rather than by
+    // whose record it is: a certidão is due-diligence on a person, a matrícula
+    // on a property, and splitting them across Clientes and Imóveis would hide
+    // that they are one desk's work.
+    //
+    // Each item is nav-gated by its own `status_pagina` row (migrations 091 and
+    // 092 seed both as 'producao'). An unlisted route stays hidden rather than
+    // 404-ing — and a row seeded 'desenvolvimento' is returned to nobody but
+    // dev/owner/admin, which is why neither is.
+    key: "emissoes",
+    label: "Emissões",
+    icon: Stamp,
+    defaultOpen: true,
+    items: [
+      { name: "Certidões", href: "/certidoes", icon: ShieldCheck },
+      { name: "Extrator de Matrículas", href: "/matriculas", icon: ScrollText },
+    ],
+  },
+  {
     key: "conexoes",
     label: "Conexões",
     icon: Smartphone,
@@ -323,6 +368,8 @@ export default createProductApp({
     { path: "/funil", component: FunilVendas },
     { path: "/processos-venda", component: ProcessosVenda },
     { path: "/portal-roi", component: PortalRoi },
+    { path: "/certidoes", component: Certidoes },
+    { path: "/matriculas", component: Matriculas },
     { path: "/clientes", component: ClientesBoard },
     { path: "/clientes/revisao", component: RevisaoFila },
     { path: "/email-marketing/listas", component: EmailListas },
