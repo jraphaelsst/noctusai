@@ -13,7 +13,7 @@ changed, and each one is a decision rather than a translation:
    resolves org from `public.noctus_users` FIRST and 403s when there is
    none, so the hand-rolled lookup and its 400 branch are gone — the
    incident is closed one layer down instead of re-litigated here.
-   Migration 090 additionally stamps `org_id DEFAULT public.current_org_id()`,
+   Migration 092 additionally stamps `org_id DEFAULT public.current_org_id()`,
    so the INSERT below deliberately does NOT send an org: the DB derives it
    from the same table RLS trusts, and the app cannot get it wrong.
 
@@ -145,7 +145,7 @@ async def extrair_matricula(
     if len(pdf_bytes) == 0:
         raise HTTPException(status_code=400, detail="Arquivo vazio.")
 
-    # 🔴 `org_id` is deliberately absent: migration 090 defaults the column
+    # 🔴 `org_id` is deliberately absent: migration 092 defaults the column
     # to `public.current_org_id()`, the same trusted source RLS reads. The
     # app never names the org on a write, so it can never name the wrong one.
     result = (

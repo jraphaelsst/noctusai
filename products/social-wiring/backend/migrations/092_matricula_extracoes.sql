@@ -1,4 +1,9 @@
--- 090_matricula_extracoes.sql — Extrator de Matrículas, ported from erp.
+-- 092_matricula_extracoes.sql — Extrator de Matrículas, ported from erp.
+--
+-- Renumbered 090 -> 092 before apply: a parallel branch landed
+-- `090_um_card_por_lead.sql` and that one is ALREADY APPLIED in production,
+-- so it owns 090. This file had not been applied anywhere, which is what
+-- makes renumbering it (rather than it) the safe half of the collision.
 --
 -- WHY THIS EXISTS
 -- ---------------

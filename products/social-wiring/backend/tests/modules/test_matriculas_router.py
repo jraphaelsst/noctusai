@@ -146,7 +146,7 @@ class TestExtrairMatricula:
     def test_o_insert_nao_manda_org_id(self, client):
         """🔴 The org-source-of-truth hardening, asserted where it lives.
 
-        Migration 090 defaults `org_id` to `public.current_org_id()` — the
+        Migration 092 defaults `org_id` to `public.current_org_id()` — the
         same trusted table RLS reads. If this handler ever starts sending an
         org again it is sourcing it from the request, which is the exact
         drift that 500'd ERP's uploader for freshly-provisioned users
