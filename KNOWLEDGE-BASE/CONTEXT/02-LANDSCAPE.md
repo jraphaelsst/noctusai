@@ -43,19 +43,19 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 22 | 42 | 116 | 75 | 182 | 2,669 |
+| Social Wiring | 22 | 42 | 116 | 75 | 184 | 2,698 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
-| **Total** | **218** | **236** | **427** | **268** | **638** | **8,630** |
+| **Total** | **218** | **236** | **427** | **268** | **640** | **8,659** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (13):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 462** declared across those schemas.
+- **Tables: 463** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
