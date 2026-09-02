@@ -960,3 +960,69 @@ regression protection — not for exploration (already served).
 See also:
 - `../06-AGENTS.md` — the MCP heal loop runs tests automatically
 - `../../INSTRUCTIONS/05-TESTING-EVALS.md` — eval strategy (beyond unit/integration)
+
+## No self-monkeypatching — gated at BOTH ends
+
+The rule ("patch external boundaries; never our own code") is old and the
+keeper `check_no_self_monkeypatch` has enforced it at commit/CI time for a
+long time. It worked, and it still cost us a rewrite every time, because of
+*when* it fired:
+
+    engineer writes the suite with self-patches
+      -> N green tests
+        -> commit or CI red
+          -> rewrite the suite onto real seams
+
+2026-09-02: 16 patched symbols across two certidões test files, 197 green
+tests, full rework after the slice looked finished. The owner's framing —
+"we always monkeypatch, then fix the monkeypatching afterwards" — is the
+accurate description of a backstop with no construction half.
+
+**The fix is the shape CLAUDE.md §1 already prescribes for self-branching:**
+gate at both ends. `test_seam_guard.decide` runs as a **PreToolUse hook** and
+DENIES a `Write`/`Edit`/`MultiEdit` that would introduce a self-patch into a
+test file, with a refusal naming the offending symbols *and* the remedy.
+`check_no_self_monkeypatch` stays exactly as it was — the backstop.
+
+### One predicate, two enforcement points
+
+The guard owns no detection logic. Both ends import
+`_extract_patch_target` / `_resolve_target_via_imports` /
+`_classify_patch_target` / `_build_import_map` / `_SELF_PATCH_OK_COMMENT_RE`
+from `tools/noctus/dev/self_patch_predicate.py`. Two hand-rolled predicates
+would drift, and *disagreeing* gates are worse than one gate: an agent denied
+for something the keeper permits learns to distrust both.
+
+🔴 **`self_patch_predicate.py` must stay stdlib-only.** The hook runs under
+whatever `python3` is on PATH, not the repo venv. The first version imported
+`compliance.py`, which imports pydantic at module scope; under the system
+interpreter that raised, the hook failed OPEN by design, and the guard
+silently never fired — while every unit test passed, because those run under
+the venv. `TestTheHookActuallyFiresInProduction` pins this with an isolated
+(`python -I`) import and an end-to-end hook invocation. Adding a third-party
+import to that module re-breaks the guard invisibly.
+
+### Escape hatch and overrides
+
+`# self-patch-ok: <reason>` on the patching line is honoured identically by
+both ends — write it once, accepted at both. `NOCTUS_ALLOW_SELF_PATCH=1`
+disables only the write-time half, for a deliberate bulk operation; the
+keeper is unaffected, which is the point.
+
+### Fast feedback
+
+`python mcp/noctusai/cli.py --check-no-self-monkeypatch` — ~4 seconds, with
+the SAME regression semantics as CI (exit 1 only on findings absent from
+`compliance_baseline.json`). Before it existed, the only way to run this
+detector was the ~15-minute compliance suite; that is how 56 findings
+accumulated unnoticed inside one slice.
+
+### What it bought
+
+Rewriting the certidões suite onto real seams did not just satisfy a gate —
+it raised coverage in three places, because the patches had been hiding the
+code under test: the real `_fetch_certidao` retry ladder, the CENPROT
+root-level receipt fallback, and the storage key-vs-URL branch had never
+executed. Test count went 197 → 199 and the assertions became behavioural
+("a 2-minute-old row must survive the sweep") rather than call-routing
+("was this function name invoked").

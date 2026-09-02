@@ -23,7 +23,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 - **No incomplete commits.** One real side + one placeholder side lies about maturity; "scaffolded" ≠ "complete." → `KB § 03-SEED-ARCHITECTURE.md`
 - **Product-internal-wiring.** route-exists ≠ wired; a page must show real data ∧ own its CRUD. → `KB § PATTERNS/frontend/product-internal-wiring.md` · skill `noc-wiring-audit`
 - **No quick fixes.** A fix touching N products for one reason is at the wrong level — go to the root. → `KB § 01-PHILOSOPHY.md`
-- **No workarounds / no monkey-patching (incl. tests).** Patching our own guard means the test no longer exercises it. → `KB § PATTERNS/compliance/testing.md`
+- **No workarounds / no monkey-patching (incl. tests).** Patching our own guard means the test no longer exercises it. Gated at BOTH ends — the WRITE by `test_seam_guard` (PreToolUse), the COMMIT by `check_no_self_monkeypatch`; an end-of-slice gate buys a rewrite, not a save. → `KB § PATTERNS/compliance/testing.md`
 - **Auth tests: assert strict `== 401`, never `in (401, 404|422)`.** The non-401 branch is a false-green (route-absent ∨ validation-before-auth); only static AST catches it. → `KB § PATTERNS/compliance/auth-boundary-false-green.md`
 - **Estimate off evidence, not structure.** Cross-cutting layers hide cost; open the files before sizing. → `KB § 01-PHILOSOPHY.md`
 - **Codebase is source of truth — for SOLUTIONS, not just facts.** Docs/memory/reports drift; verify against the tree first. Grep for the existing mechanism BEFORE designing one — a correct fix for a solved problem ships as a fork. → `KB § 01-PHILOSOPHY.md` · `KB § PATTERNS/common/methodology-execution-discipline.md`
@@ -69,7 +69,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 - **Hand-maintained lists drift and break the fleet — derive, don't sync by hand; gate pre-push.** Slug sets ∧ lockfile-embedded seed snapshots ∧ per-product COVERAGE lists (dependabot.yml, CI test matrices) discovered *after* promotion; keepers `check_hardcoded_product_slug_set` + `check_product_lockfile_dep_sync` + `check_tunnel_ingress_snapshot_sync` + `check_dependabot_product_coverage` + `check_ci_test_matrix_coverage`. → `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md` · `KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md`
 - **npm `overrides` must be RANGES — the lockfile is already the freeze.** An exact pin wins over every peer range, never moves, and is invisible; it froze the fleet 3× via CVE cleanups while adding no reproducibility `npm ci` lacked. Keeper `check_override_is_range`. → `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md` · skill `noc-dep-update`
 - **Per-branch green ≠ integration green — re-run gates on the MERGED tip before bless.** File-disjoint isn't effect-disjoint; derived artifacts (baselines/lockfiles/parity/barrels) couple parallel slices. → `KB § PATTERNS/common/methodology-execution-discipline.md`
-- **Verify PASS/FAIL by exit code, never a piped `tail` — `cmd | tail` returns tail's status.** A trimmed pipe converts "did it pass?" into "did tail run?" (always yes); use `pipefail` or capture `rc=$?`. → `KB § PATTERNS/common/methodology-execution-discipline.md`
+- **Verdict-channel integrity — the exit code you read must belong to what you are judging.** A pipe returns `tail`'s, a wrapper its last command's, a watcher its own; a timeout returns nothing, and silence is not a pass. Use `pipefail`/`rc=$?` or a structured runner. → `KB § PATTERNS/common/methodology-execution-discipline.md`
 
 ---
 

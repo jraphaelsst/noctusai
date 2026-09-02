@@ -87,3 +87,50 @@ They are two flywheels; the org compounds only when both spin. Always read/codif
 - `KB § PATTERNS/common/learn-before-archive.md` — the pre-delete salvage gate (close-the-loop's "salvage" leg).
 - `KB § PATTERNS/common/drift-fix-on-contact.md` · `storage-hygiene.md` · `persistent-files-absorption.md` — the hygiene rules this operationalizes.
 - Roadmap: `project-history/roadmaps/branch-hygiene-and-learn-before-archive-2026-05.md`.
+
+### 6. Verdict-channel integrity — the exit code you READ must be the one you are JUDGING
+
+Principle 4 says a green that cannot go red proves nothing. This is its
+sibling failure: the check *did* go red, and the channel carrying the verdict
+lied about it.
+
+Every one of these was a real misread, not a hypothetical:
+
+| Channel | What it reported | What was true |
+|---|---|---|
+| `cmd \| tail` | tail's status (always 0) | the command had failed |
+| `gh run watch --exit-status` | `0` | the run was `completed failure` |
+| a backgrounded compound command | the wrapper's exit (a trailing `grep`) | pytest inside had exited 1 |
+| `deploy_image` timing out (2026-08-13) | nothing — the call went quiet | prod was still serving the old image |
+| `noctus.dev.pytest` without `worktree_path` | "689 passed" | the WORKTREE's suite never ran |
+
+The shape is constant: **a messenger's status was mistaken for the subject's
+status.** A pipe, a wrapper, a watcher, a notification and a timeout are all
+messengers. Two of the five above happened in a single session (2026-09-02),
+by the same agent, an hour apart — which is what moved this from "be careful"
+to a named rule.
+
+**Silence is the sharpest case.** A call that times out or disconnects has
+reported *nothing*, and nothing is not a pass. `noc-ship` states this
+explicitly for `deploy_image` — "that is NOT success by default" — and the
+same reading applies to any tool that goes quiet.
+
+**In practice**
+- `set -o pipefail`, or capture `rc=$?` immediately, before any formatting.
+- Prefer a **structured runner** over a shell pipeline: `noctus.dev.pytest`
+  returns a verdict object with `resolved_root`, so there is no status to
+  misattribute. This is compliance-by-construction — removing the channel
+  beats reading it carefully.
+- For CI, read the **run conclusion** (`gh run view --json conclusion`), never
+  a watcher's own exit.
+- When a call goes quiet, get ground truth from an independent witness
+  (`noctus.dev.deploy_verify` exists precisely for this) before concluding
+  anything.
+
+NOC-REMEDIATE[codify]: a keeper for the statically-visible half — `<test-cmd>
+| tail|head` without `pipefail`, and `gh run watch --exit-status` used as a
+gate, in committed scripts/CI/docs. Deferred, not dropped: the live-agent half
+(a tool call in a transcript) is not reachable by a tree-walking predicate, so
+the keeper would cover the minority of instances; the structured-runner
+mechanism above addresses the majority first. Revisit when a committed-artifact
+instance actually bites. — 2026-09-02

@@ -177,6 +177,7 @@ def main():
     parser.add_argument("--check-conftest-env-setdefault", action="store_true", help="Keeper: a product conftest that defers a CREDENTIAL/ENDPOINT env key to the ambient environment via `os.environ.setdefault`. Reads as 'provide a default', means 'whatever the developer exported wins'. p-studio 2026-08-19: the platform .env carries ASAAS_WEBHOOK_TOKEN= (present, EMPTY), so setdefault no-opped and 15 of 20 webhook tests went red under a loaded .env while all 20 passed in a plain shell. The same file deferred SUPABASE_SERVICE_ROLE_KEY and PROVEDOR_COBRANCA, so the real values would have built a real service-role client and a real payment adapter. A locally-generated Fernet session key is exempt. Remedy: noctusai_lib.testing.conftest_helpers.own_test_env. Severity high. MCP keeper check_conftest_env_setdefault.")
     parser.add_argument("--check-conflict-markers", action="store_true", help="Keeper: a tracked file committed with unresolved merge-conflict markers. Flags only when an opener (7+ '<') AND a closer (7+ '>') both appear at line start, so a lone '=======' Markdown underline or section divider is not a false positive. Found on origin/dev 2026-08-04 in a RENAMED migration, where git emits the 8-char marker variant that visual scanning misses; the header sat in a comment block so every semantic gate and the live schema both looked clean. Severity high. MCP keeper check_conflict_markers.")
     parser.add_argument("--check-lying-loading-state", action="store_true", help="Keeper: TanStack Query v5 `isLoading` is FALSE during a background refetch (`isLoading === isPending && isFetching`); a `loading=`/`isLoading=` JSX prop or a hand-rolled `!X.isLoading && ... .length === 0` guard falls through to its EMPTY branch mid-refetch, rendering \"no data\" over live data. Live incident 2026-07-21/22 (social-wiring Leads, 12,177 leads / 28 brokers, fixed b0cb47b1). Scans products/*/frontend/src/**/*.tsx. Severity warning (observe-first on a brand-new detector). Escape hatch: `lying-loading-ok` comment. KB § PATTERNS/frontend/lying-loading-state.md.")
+    parser.add_argument("--check-no-self-monkeypatch", action="store_true", help="Keeper: tests that patch OUR OWN code instead of exercising it (CLAUDE.md §1). Same predicate the PreToolUse `test_seam_guard` denies writes with — one definition, two enforcement points. Exists as a TARGETED flag because the only other way to run it was the ~15-minute compliance suite, and a feedback loop that slow is how 56 findings accumulated unnoticed. Escape hatch: `# self-patch-ok: <reason>` on the patching line. KB § PATTERNS/compliance/testing.md.")
     parser.add_argument("--check-postgrest-schema-qualified-table", action="store_true", help="Keeper: a Supabase/PostgREST client is ALREADY schema-bound, so `.table(name)`/`.from_(name)` resolves RELATIVE to that schema and never parses a dot as a separator. `db.table(f\"{deps._db.schema}.invitations\")` therefore asks for `<schema>.<schema>.<table>` → 500 \"Could not find the table ... in the schema cache\" on EVERY call, phrased so it reads as a missing migration. Invisible to unit tests: MockSupabaseClient keys tables by whatever string it is handed, so a qualified fixture agrees with a qualified caller (fixture-vs-real false-green). Live incident 2026-08-06 — seed team router, all 9 products mounting it, green in CI ~3 months. Scans seed/** + products/*/backend/** *.py for the interpolated + literal shapes. Severity high. Escape hatch: `postgrest-qualified-ok` comment. KB § PATTERNS/backend/postgrest-schema-targeting.md.")
     parser.add_argument("--check-postgrest-unbounded-query", action="store_true", help="Keeper: PostgREST silently caps ANY select at `db-max-rows` (Supabase default 1 000) — no error, no warning, `response.data` just comes back short. SEVEN instances shipped to production in one session (2026-08-13/14): portal-roi reported 1 000 leads instead of 13 255, a backfill silently repointed 1 000 of 1 365 negociações, a review queue dropped 177 of 1 177 rows. A second shape: `.in_(col, values)` rides in the URL query string, so an unbatched ~1 000-item collection is a bare 400 (\"JSON could not be generated\") with no hint about length. Flags a `.select(...).execute()` chain with no `.range()`/`.single()`/`.maybe_single()`/in-cap-`.limit()`/PK-`.eq(\"id\",...)` on it (severity `info` — risk is a function of a row count this keeper cannot see), and an `.in_()` fed a collection with no provable bound and no `_batched`-style loop (severity `warning` — structurally risky regardless of table cardinality, and the shape that actually took `/clientes/revisao` down). Deliberately heuristic (no table-cardinality knowledge) — non-blocking at either tier, observe-first (promote the `.in_()`-shape to blocking once a fleet sweep shows its false-positive rate is low). Escape hatch: `postgrest-unbounded-ok: <why>` comment (must state a reason, not just cite the keeper). KB § PATTERNS/backend/postgrest-row-cap.md.")
     parser.add_argument("--check-status-pagina-role-parity", action="store_true", help="Keeper: the `dev_veem_desenvolvimento` RLS role array in every *_status_pagina_dev_visibility.sql must match the seed frontend `DEV_ROLES` const. Two halves of one gate in two languages across N+1 files, no shared source — divergence is split-brain (RLS returns a row the FE hides, or the reverse) and BOTH modes look like \"the page is just missing\". KB § PATTERNS/frontend/status-pagina-dev-visibility.md.")
@@ -1302,6 +1303,47 @@ def main():
         # Leg A blocks (undefined apply-order is already broken); Leg B is a
         # heads-up for whoever merges second and must not block them.
         sys.exit(1 if high else 0)
+
+    elif args.check_no_self_monkeypatch:
+        # REGRESSION semantics, deliberately mirroring `check_all` / CI: exit 1
+        # only on findings that are NOT in the committed baseline. The repo
+        # carries ~70 pre-existing high findings; failing on those would make
+        # this flag permanently red, and a permanently-red gate gets ignored
+        # (the same reasoning `deploy_verify` states for its catalog roster).
+        # What an engineer needs before committing is "did *I* add one", and
+        # that is exactly the question CI asks.
+        import json as _json
+
+        from tools.noctus.dev.compliance import check_no_self_monkeypatch
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "tests"))
+        from refresh_compliance_baseline import fingerprint as _fp
+
+        issues = check_no_self_monkeypatch()
+        baseline_path = Path(__file__).resolve().parent / "tests" / "compliance_baseline.json"
+        try:
+            known = set(_json.loads(baseline_path.read_text())["fingerprints"])
+        except (OSError, ValueError, KeyError) as exc:
+            # Loud, not silent: without the baseline this cannot tell new from
+            # old, and quietly reporting "clean" would be the false green.
+            print(f"  {RED}✗ cannot read compliance baseline ({exc}) — "
+                  f"refusing to report a verdict.{RESET}")
+            sys.exit(2)
+
+        new_high = [
+            i for i in issues
+            if i.get("severity") == "high" and _fp(i) not in known
+        ]
+        if not new_high:
+            print(f"  {GREEN}✓ no-self-monkeypatch: no NEW findings "
+                  f"({len(issues)} pre-existing, baselined).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(new_high)} NEW self-monkeypatch finding(s) "
+              f"(fix the seam — do NOT grow the baseline):{RESET}")
+        for i in new_high[:25]:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} — {i['issue']}")
+        if len(new_high) > 25:
+            print(f"    ... and {len(new_high) - 25} more")
+        sys.exit(1)
 
     elif args.check_lying_loading_state:
         from tools.noctus.dev.compliance import check_lying_loading_state
