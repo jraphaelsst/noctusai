@@ -25,8 +25,10 @@ from app.services.whatsapp_connection_store import (
 from app.sqlite_client import SQLiteClient
 
 _ORG = UUID("00000000-0000-4000-8000-000000000001")
+# Migration 086 moved the isolation boundary from the user to the org, so the
+# "outsider" fixture is now another ORG, not another user in the same org.
+_OTHER_ORG = UUID("00000000-0000-4000-8000-000000000002")
 _USER = UUID("00000000-0000-4000-8000-0000000000aa")
-_OTHER_USER = UUID("00000000-0000-4000-8000-0000000000bb")
 
 _SCHEMA = """
 CREATE TABLE whatsapp_connections (
@@ -95,13 +97,13 @@ class TestCreate:
 class TestGetAndDecrypt:
     def test_get_without_decrypt_hides_key(self, store):
         rec = _make(store)
-        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG)
         assert got is not None and got.api_key is None
 
     def test_get_with_decrypt_round_trips_key(self, store):
         rec = _make(store, api_key="round-trip-me")
         got = store.get_connection(
-            connection_id=rec.id, org_id=_ORG, user_id=_USER, decrypt=True
+            connection_id=rec.id, org_id=_ORG, decrypt=True
         )
         assert got is not None and got.api_key == "round-trip-me"
 
@@ -110,78 +112,91 @@ class TestGetAndDecrypt:
         other = WhatsAppConnectionStore(sqlite_db, fernet=Fernet(Fernet.generate_key()))
         with pytest.raises(CredentialStoreError):
             other.get_connection(
-                connection_id=rec.id, org_id=_ORG, user_id=_USER, decrypt=True
+                connection_id=rec.id, org_id=_ORG, decrypt=True
             )
 
 
-class TestOwnerIsolation:
-    def test_other_user_cannot_see_or_get(self, store):
-        rec = _make(store)
-        assert store.list_connections(org_id=_ORG, user_id=_OTHER_USER) == []
-        assert store.get_connection(
-            connection_id=rec.id, org_id=_ORG, user_id=_OTHER_USER
-        ) is None
+class TestOrgScope:
+    """Migration 086 — a connection is a SHARED ORG ASSET.
 
-    def test_other_user_cannot_delete(self, store):
+    These tests previously asserted the opposite (a second member of the same
+    org saw an empty list). That per-user scoping is what made the org's
+    WhatsApp line invisible to everyone but its creator, so the assertions are
+    INVERTED here rather than deleted — the isolation boundary still exists,
+    it just sits at the org rather than the user.
+    """
+
+    def test_any_member_of_the_org_sees_the_line(self, store):
+        rec = _make(store)  # created by _USER
+        # No user predicate exists any more: the org-scoped read _USER performs
+        # is the exact read every other member of the org performs.
+        assert [r.id for r in store.list_connections(org_id=_ORG)] == [rec.id]
+        assert store.get_connection(connection_id=rec.id, org_id=_ORG) is not None
+
+    def test_creator_is_still_recorded_as_provenance(self, store):
+        """`user_id` survives as "who set this up" — it just stops gating reads."""
         rec = _make(store)
-        assert store.delete_connection(
-            connection_id=rec.id, org_id=_ORG, user_id=_OTHER_USER
-        ) is False
-        # Still there for the owner.
-        assert store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        assert rec.user_id == _USER
+
+    def test_another_org_still_cannot_see_or_get(self, store):
+        """The isolation boundary moved to the org — it did not disappear."""
+        rec = _make(store)
+        assert store.list_connections(org_id=_OTHER_ORG) == []
+        assert store.get_connection(connection_id=rec.id, org_id=_OTHER_ORG) is None
+
+    def test_another_org_cannot_delete(self, store):
+        rec = _make(store)
+        assert store.delete_connection(connection_id=rec.id, org_id=_OTHER_ORG) is False
+        # Still there for the owning org.
+        assert store.get_connection(connection_id=rec.id, org_id=_ORG)
 
 
 class TestListUpdateDelete:
     def test_list_returns_owner_rows(self, store):
         _make(store, label="A")
         _make(store, label="B")
-        rows = store.list_connections(org_id=_ORG, user_id=_USER)
+        rows = store.list_connections(org_id=_ORG)
         assert {r.label for r in rows} == {"A", "B"}
         assert all(r.api_key is None for r in rows)
 
     def test_update_rotates_key_and_label(self, store):
         rec = _make(store, label="Old", api_key="old-key")
         updated = store.update_connection(
-            connection_id=rec.id, org_id=_ORG, user_id=_USER,
-            label="New", api_key="new-key",
+            connection_id=rec.id, org_id=_ORG, label="New", api_key="new-key",
         )
         assert updated is not None and updated.label == "New"
         got = store.get_connection(
-            connection_id=rec.id, org_id=_ORG, user_id=_USER, decrypt=True
+            connection_id=rec.id, org_id=_ORG, decrypt=True
         )
         assert got.api_key == "new-key"
 
     def test_update_can_set_webhook(self, store):
         rec = _make(store)
         store.update_connection(
-            connection_id=rec.id, org_id=_ORG, user_id=_USER,
-            webhook_url="https://app/webhook",
+            connection_id=rec.id, org_id=_ORG, webhook_url="https://app/webhook",
         )
-        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG)
         assert got.webhook_url == "https://app/webhook"
 
     def test_delete_is_idempotent(self, store):
         rec = _make(store)
         assert store.delete_connection(
-            connection_id=rec.id, org_id=_ORG, user_id=_USER
-        ) is True
+            connection_id=rec.id, org_id=_ORG) is True
         assert store.delete_connection(
-            connection_id=rec.id, org_id=_ORG, user_id=_USER
-        ) is False
+            connection_id=rec.id, org_id=_ORG) is False
         assert store.get_connection(
-            connection_id=rec.id, org_id=_ORG, user_id=_USER
-        ) is None
+            connection_id=rec.id, org_id=_ORG) is None
 
     def test_update_unknown_returns_none(self, store):
         assert store.update_connection(
-            connection_id=uuid4(), org_id=_ORG, user_id=_USER, label="x"
+            connection_id=uuid4(), org_id=_ORG, label="x"
         ) is None
 
 
 class TestWebhookToken:
     def test_create_stores_webhook_token(self, store):
         rec = _make(store, webhook_token="tok-abc123")
-        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG)
         assert got is not None
         assert got.webhook_token == "tok-abc123"
 
@@ -231,13 +246,12 @@ class TestConnectionSettings:
         updated = store.update_connection(
             connection_id=rec.id,
             org_id=_ORG,
-            user_id=_USER,
             authorized_numbers=["+5511999887766", "+5521988776655"],
         )
         assert updated is not None
         assert updated.authorized_numbers == ["+5511999887766", "+5521988776655"]
         # Verify persistence round-trip via fresh get.
-        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG)
         assert got is not None
         assert got.authorized_numbers == ["+5511999887766", "+5521988776655"]
 
@@ -250,12 +264,11 @@ class TestConnectionSettings:
         updated = store.update_connection(
             connection_id=rec.id,
             org_id=_ORG,
-            user_id=_USER,
             bound_chats=chats,
         )
         assert updated is not None
         assert updated.bound_chats == chats
-        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG)
         assert got is not None
         assert got.bound_chats == chats
 
@@ -265,14 +278,12 @@ class TestConnectionSettings:
         store.update_connection(
             connection_id=rec.id,
             org_id=_ORG,
-            user_id=_USER,
             authorized_numbers=["+5511999887766"],
         )
         # Now clear with explicit [].
         updated = store.update_connection(
             connection_id=rec.id,
             org_id=_ORG,
-            user_id=_USER,
             authorized_numbers=[],
         )
         assert updated is not None
@@ -284,17 +295,15 @@ class TestConnectionSettings:
         store.update_connection(
             connection_id=rec.id,
             org_id=_ORG,
-            user_id=_USER,
             authorized_numbers=["+5511999887766"],
         )
         # Patch only the label — authorized_numbers must stay.
         store.update_connection(
             connection_id=rec.id,
             org_id=_ORG,
-            user_id=_USER,
             label="Updated Label",
         )
-        got = store.get_connection(connection_id=rec.id, org_id=_ORG, user_id=_USER)
+        got = store.get_connection(connection_id=rec.id, org_id=_ORG)
         assert got is not None
         assert got.authorized_numbers == ["+5511999887766"]
         assert got.label == "Updated Label"

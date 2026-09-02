@@ -43,10 +43,11 @@ ride the seed's provider-neutral bus (``app.services.whatsapp_realtime`` +
 per connection, ownership-checked the same way every other live op is.
 
 Auth: ``Depends(get_current_user_org)`` → ``(user, token, org_id)``; every
-store call additionally scopes by the resolved ``user_id`` so lines are
-isolated per user (the canonical pattern — see
-``KB § PATTERNS/backend.md § Auth — canonical pattern``). DI seams over
-patching per ``KB § PATTERNS/di-test-seam.md``.
+store call scopes by the resolved ``org_id`` so lines are shared across the
+ORG — one WhatsApp number serving every member, not a personal integration
+(the canonical pattern — see ``KB § PATTERNS/backend.md § Auth — canonical
+pattern``). ``user_id`` is written at creation as provenance and is never a
+scoping predicate. DI seams over patching per ``KB § PATTERNS/di-test-seam.md``.
 """
 from __future__ import annotations
 
@@ -274,16 +275,14 @@ def _require_record(
     *,
     connection_id: UUID,
     org_id: UUID,
-    user_id: UUID,
     decrypt: bool = False,
 ) -> WhatsAppConnectionRecord:
-    """Fetch a line owner-scoped or 404. ``decrypt=True`` for live WAHA ops;
+    """Fetch a line ORG-scoped or 404. ``decrypt=True`` for live WAHA ops;
     a key-mismatch on decrypt surfaces as a 503 config gap."""
     try:
         record = store.get_connection(
             connection_id=connection_id,
             org_id=org_id,
-            user_id=user_id,
             decrypt=decrypt,
         )
     except CredentialStoreError as exc:
@@ -332,7 +331,6 @@ async def list_connections(
     user, _token, raw_org = auth
     records = store.list_connections(
         org_id=coerce_org_uuid(raw_org),
-        user_id=_coerce_user_uuid(user),
         marca_id=marca_id,
     )
     return [_out(r) for r in records]
@@ -462,9 +460,8 @@ async def update_connection(
 ) -> WhatsAppConnectionOut:
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    user_id = _coerce_user_uuid(user)
     # 404 early if the line isn't the caller's.
-    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+    _require_record(store, connection_id=connection_id, org_id=org_id)
 
     # Use model_fields_set to distinguish "field absent from request" (keep
     # current value) from "field supplied as []" (clear → means allow-all /
@@ -484,7 +481,6 @@ async def update_connection(
     record = store.update_connection(
         connection_id=connection_id,
         org_id=org_id,
-        user_id=user_id,
         label=body.label.strip() if body.label is not None else None,
         base_url=body.base_url.strip() if body.base_url is not None else None,
         session_name=body.session_name.strip() if body.session_name is not None else None,
@@ -509,7 +505,6 @@ async def delete_connection(
     deleted = store.delete_connection(
         connection_id=connection_id,
         org_id=coerce_org_uuid(raw_org),
-        user_id=_coerce_user_uuid(user),
     )
     if not deleted:
         raise HTTPException(
@@ -531,7 +526,6 @@ async def get_connection_status(
         store,
         connection_id=connection_id,
         org_id=coerce_org_uuid(raw_org),
-        user_id=_coerce_user_uuid(user),
         decrypt=True,
     )
     client = _waha_client(record, waha_factory)
@@ -556,7 +550,7 @@ async def reveal_connection_api_key(
     """Reveal the decrypted API key for ONE owner-scoped line.
 
     The single, deliberate place a stored secret leaves the backend — gated by
-    the same owner scope as every live op (``user_id`` + ``org_id`` filter) and
+    the same org scope as every live op (``org_id`` filter) and
     driven only by an explicit user action (the eye toggle in the connection
     modal). A decrypt failure (ENCRYPTION_KEY drift / tampered ciphertext)
     surfaces as 503 via ``_require_record(decrypt=True)``; a non-owner / missing
@@ -567,7 +561,6 @@ async def reveal_connection_api_key(
         store,
         connection_id=connection_id,
         org_id=coerce_org_uuid(raw_org),
-        user_id=_coerce_user_uuid(user),
         decrypt=True,
     )
     return WhatsAppConnectionApiKeyOut(
@@ -587,7 +580,6 @@ async def get_connection_qr(
         store,
         connection_id=connection_id,
         org_id=coerce_org_uuid(raw_org),
-        user_id=_coerce_user_uuid(user),
         decrypt=True,
     )
     client = _waha_client(record, waha_factory)
@@ -626,7 +618,6 @@ async def _session_action(
         store,
         connection_id=connection_id,
         org_id=coerce_org_uuid(raw_org),
-        user_id=_coerce_user_uuid(user),
         decrypt=True,
     )
     client = _waha_client(record, waha_factory)
@@ -707,7 +698,6 @@ async def recover_connection(
         store,
         connection_id=connection_id,
         org_id=coerce_org_uuid(raw_org),
-        user_id=_coerce_user_uuid(user),
         decrypt=True,
     )
     client = _waha_client(record, waha_factory)
@@ -749,9 +739,8 @@ async def configure_connection_webhook(
 ) -> WhatsAppWebhookResultOut:
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    user_id = _coerce_user_uuid(user)
     record = _require_record(
-        store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True
+        store, connection_id=connection_id, org_id=org_id, decrypt=True
     )
     client = _waha_client(record, waha_factory)
     url = body.url.strip()
@@ -764,7 +753,7 @@ async def configure_connection_webhook(
         ) from exc
     # Persist the last-wired webhook so the line remembers it across reloads.
     store.update_connection(
-        connection_id=connection_id, org_id=org_id, user_id=user_id, webhook_url=url
+        connection_id=connection_id, org_id=org_id, webhook_url=url
     )
     waha_status = result.get("status") if isinstance(result, dict) else None
     return WhatsAppWebhookResultOut(
@@ -914,8 +903,7 @@ async def list_chats(
     """
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    user_id = _coerce_user_uuid(user)
-    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+    _require_record(store, connection_id=connection_id, org_id=org_id)
 
     chat_store: WhatsAppChatStore = chat_store_factory(org_id)
     summaries = chat_store.list_chats(
@@ -957,9 +945,8 @@ async def mark_chat_read(
     """
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    user_id = _coerce_user_uuid(user)
     record = _require_record(
-        store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True,
+        store, connection_id=connection_id, org_id=org_id, decrypt=True,
     )
 
     chat_store: WhatsAppChatStore = chat_store_factory(org_id)
@@ -1030,8 +1017,7 @@ async def list_messages(
     """
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    user_id = _coerce_user_uuid(user)
-    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+    _require_record(store, connection_id=connection_id, org_id=org_id)
 
     reader = reader_factory(org_id)
     rows = reader.list_messages(
@@ -1072,9 +1058,8 @@ async def send_message(
 
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    user_id = _coerce_user_uuid(user)
     record = _require_record(
-        store, connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True
+        store, connection_id=connection_id, org_id=org_id, decrypt=True
     )
 
     client = _waha_client(record, waha_factory)
@@ -1177,14 +1162,12 @@ async def toggle_auto_reply(
     """
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    user_id = _coerce_user_uuid(user)
     # Ownership check — ensures the connection exists and belongs to this user.
-    _require_record(store, connection_id=connection_id, org_id=org_id, user_id=user_id)
+    _require_record(store, connection_id=connection_id, org_id=org_id)
 
     record = store.update_auto_reply(
         connection_id=connection_id,
         org_id=org_id,
-        user_id=user_id,
         enabled=body.enabled,
     )
     if record is None:
@@ -1243,7 +1226,6 @@ async def _resolve_stream_auth(
         store,
         connection_id=connection_id,
         org_id=coerce_org_uuid(raw_org),
-        user_id=_coerce_user_uuid(user),
     )
     return connection_id
 

@@ -332,13 +332,12 @@ async def run_backfill(*, cfg=None, admin_client=None) -> None:
         try:
             connection_id = UUID(str(row["id"]))
             org_id = UUID(str(row["org_id"]))
-            user_id = UUID(str(row["user_id"]))
         except (KeyError, ValueError, TypeError):
             logger.warning("whatsapp_backfill: malformed connection row %r — skipping", row)
             continue
 
         record = store.get_connection(
-            connection_id=connection_id, org_id=org_id, user_id=user_id, decrypt=True,
+            connection_id=connection_id, org_id=org_id, decrypt=True,
         )
         if record is None or not record.api_key or not record.base_url:
             logger.debug(

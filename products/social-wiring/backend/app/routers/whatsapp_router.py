@@ -720,7 +720,6 @@ async def _process_waha_body(
                 _store.get_connection(
                     connection_id=connection.id,
                     org_id=connection.org_id,
-                    user_id=connection.user_id,
                     decrypt=True,
                 )
                 if _store is not None

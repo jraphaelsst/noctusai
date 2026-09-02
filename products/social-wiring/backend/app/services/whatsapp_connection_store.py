@@ -1,11 +1,19 @@
-"""Per-user WAHA connection store — multi-session "lines" with the API key
+"""Per-ORG WAHA connection store — multi-session "lines" with the API key
 Fernet-encrypted at rest.
 
-Each row is one WhatsApp connection a user manages from the Conexão page: a
+Each row is one WhatsApp connection the org manages from the Conexão page: a
 WAHA server URL + session name + API key. The API key is the only secret and
 is encrypted with the SAME ``ENCRYPTION_KEY`` the ``credentials`` table uses
 (via the product ``credential_vault`` seam over the seed Fernet primitive).
-Rows are owner-scoped (``org_id`` + ``user_id``) — a user only sees their own.
+
+Rows are ORG-scoped (``org_id`` alone). The connection is a shared org asset —
+one WhatsApp number serving every member, i.e. a platform-wide notification
+line — not a personal per-user integration. ``user_id`` is retained as
+CREATOR PROVENANCE (who set the line up) and is NEVER a scoping predicate:
+filtering on it is what made a connection invisible to everyone but the
+person who created it. Per-user lines *within* an org are a deliberate future
+step; when that lands it needs its own explicit column/flag, not a silent
+re-narrowing of this one. → migration 086.
 
 WHY a dedicated table and NOT the seed ``CredentialStore``: that seam is
 single-row per ``(org, provider)`` with a denormalized metadata shape. These
@@ -86,8 +94,9 @@ class WhatsAppConnectionRecord:
 class WhatsAppConnectionStore:
     """CRUD over ``social_wiring.whatsapp_connections`` with field-level
     Fernet encryption of the API key. Backed by an admin/service-role
-    Supabase client; every query filters ``org_id`` + ``user_id`` explicitly
-    (defense in depth on top of the RLS policy)."""
+    Supabase client; every query filters ``org_id`` explicitly (defense in
+    depth on top of the RLS policy — the service-role client bypasses RLS, so
+    this filter is the real enforcement, not a redundancy)."""
 
     def __init__(self, client: Any, *, fernet: Fernet):
         self._client = client
@@ -137,10 +146,9 @@ class WhatsAppConnectionStore:
         self,
         *,
         org_id: UUID,
-        user_id: UUID,
         marca_id: Optional[UUID] = None,
     ) -> list[WhatsAppConnectionRecord]:
-        """All of a user's lines, newest first.  Never decrypts the API key.
+        """All of the ORG's lines, newest first.  Never decrypts the API key.
 
         ``marca_id`` (migration 017): when supplied, filters to only the
         connections owned by that cliente.  ``None`` returns all (no filter).
@@ -149,7 +157,6 @@ class WhatsAppConnectionStore:
             self._table()
             .select("*")
             .eq("org_id", str(org_id))
-            .eq("user_id", str(user_id))
         )
         if marca_id is not None:
             q = q.eq("marca_id", str(marca_id))
@@ -163,17 +170,15 @@ class WhatsAppConnectionStore:
         *,
         connection_id: UUID,
         org_id: UUID,
-        user_id: UUID,
         decrypt: bool = False,
     ) -> Optional[WhatsAppConnectionRecord]:
-        """One line by id, owner-scoped. ``decrypt=True`` populates
+        """One line by id, ORG-scoped. ``decrypt=True`` populates
         ``record.api_key`` (only for the live-WAHA-ops path)."""
         resp = (
             self._table()
             .select("*")
             .eq("id", str(connection_id))
             .eq("org_id", str(org_id))
-            .eq("user_id", str(user_id))
             .execute()
         )
         rows = list(resp.data or [])
@@ -188,7 +193,7 @@ class WhatsAppConnectionStore:
         self,
         *,
         org_id: UUID,
-        user_id: UUID,
+        user_id: UUID,  # creator provenance only — never a scoping predicate
         label: str,
         base_url: str,
         api_key: str,
@@ -243,7 +248,6 @@ class WhatsAppConnectionStore:
         *,
         connection_id: UUID,
         org_id: UUID,
-        user_id: UUID,
         label: Optional[str] = None,
         base_url: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -287,19 +291,17 @@ class WhatsAppConnectionStore:
             .update(patch)
             .eq("id", str(connection_id))
             .eq("org_id", str(org_id))
-            .eq("user_id", str(user_id))
             .execute()
         )
         rows = list(resp.data or [])
         return self._record(rows[0]) if rows else None
 
-    def delete_connection(self, *, connection_id: UUID, org_id: UUID, user_id: UUID) -> bool:
+    def delete_connection(self, *, connection_id: UUID, org_id: UUID) -> bool:
         resp = (
             self._table()
             .delete()
             .eq("id", str(connection_id))
             .eq("org_id", str(org_id))
-            .eq("user_id", str(user_id))
             .execute()
         )
         return bool(resp.data)
@@ -309,12 +311,11 @@ class WhatsAppConnectionStore:
         *,
         connection_id: UUID,
         org_id: UUID,
-        user_id: UUID,
         enabled: bool,
     ) -> Optional[WhatsAppConnectionRecord]:
         """Toggle the per-connection auto-reply gate (migration 014).
 
-        Owner-scoped (org_id + user_id) — non-owner connection returns None
+        ORG-scoped — a connection outside the caller's org returns None
         (caller maps to 404). The router intentionally separates this from
         the general update_connection path to keep the intent explicit and
         the field surface narrow.
@@ -328,7 +329,6 @@ class WhatsAppConnectionStore:
             .update(patch)
             .eq("id", str(connection_id))
             .eq("org_id", str(org_id))
-            .eq("user_id", str(user_id))
             .execute()
         )
         rows = list(resp.data or [])
