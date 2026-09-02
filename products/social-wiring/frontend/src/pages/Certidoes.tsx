@@ -368,9 +368,9 @@ export default function Certidoes() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Certidoes Negativas</h1>
+          <h1 className="text-3xl font-bold">Certidões Negativas</h1>
           <p className="text-muted-foreground">
-            Emissao automatizada de certidoes com analise por IA
+            Emissão automatizada de certidões com análise por IA
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -409,7 +409,7 @@ export default function Certidoes() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Concluidas</CardTitle>
+            <CardTitle className="text-sm font-medium">Concluídas</CardTitle>
             <CheckCircle className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
@@ -545,7 +545,7 @@ export default function Certidoes() {
           data-testid="consultas-stale-error"
         >
           <AlertCircle className="h-4 w-4 shrink-0" />
-          Nao foi possivel atualizar a lista. Exibindo os dados anteriores.
+          Não foi possível atualizar a lista. Exibindo os dados anteriores.
         </div>
       )}
 
@@ -581,7 +581,7 @@ export default function Certidoes() {
           <CardContent className="py-12 text-center text-muted-foreground">
             <ShieldCheck className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p className="text-lg">Nenhuma consulta encontrada</p>
-            <p className="text-sm mt-1">Crie uma nova consulta para emitir certidoes</p>
+            <p className="text-sm mt-1">Crie uma nova consulta para emitir certidões</p>
           </CardContent>
         </Card>
       ) : (
@@ -711,9 +711,9 @@ export default function Certidoes() {
       <Dialog open={dialogAberto} onOpenChange={setDialogAberto}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Nova Consulta de Certidoes</DialogTitle>
+            <DialogTitle>Nova Consulta de Certidões</DialogTitle>
             <DialogDescription>
-              Preencha os dados para emitir as certidoes negativas automaticamente.
+              Preencha os dados para emitir as certidões negativas automaticamente.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit(handleCreate)} className="space-y-4">
@@ -728,14 +728,14 @@ export default function Certidoes() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cpf">CPF - Pessoa Fisica</SelectItem>
-                    <SelectItem value="cnpj">CNPJ - Pessoa Juridica</SelectItem>
+                    <SelectItem value="cpf">CPF - Pessoa Física</SelectItem>
+                    <SelectItem value="cnpj">CNPJ - Pessoa Jurídica</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div>
                 <Label>Documento</Label>
-                <Input {...register("documento")} placeholder="Apenas numeros" />
+                <Input {...register("documento")} placeholder="Apenas números" />
                 {errors.documento && (
                   <p className="text-sm text-destructive mt-1">{errors.documento.message}</p>
                 )}
@@ -743,8 +743,8 @@ export default function Certidoes() {
             </div>
 
             <div>
-              <Label>Nome Completo / Razao Social</Label>
-              <Input {...register("nome")} placeholder="Nome completo ou razao social" />
+              <Label>Nome Completo / Razão Social</Label>
+              <Input {...register("nome")} placeholder="Nome completo ou razão social" />
               {errors.nome && (
                 <p className="text-sm text-destructive mt-1">{errors.nome.message}</p>
               )}
@@ -758,7 +758,7 @@ export default function Certidoes() {
                     <Input type="date" {...register("data_nascimento")} />
                   </div>
                   <div>
-                    <Label>Genero</Label>
+                    <Label>Gênero</Label>
                     <Select
                       value={watch("genero") || ""}
                       onValueChange={(v) => setValue("genero", v as "M" | "F" | "")}
@@ -775,11 +775,11 @@ export default function Certidoes() {
                 </div>
                 <div>
                   <Label>RG (opcional - melhora resultados TJSP)</Label>
-                  <Input {...register("rg")} placeholder="Numero do RG" />
+                  <Input {...register("rg")} placeholder="Número do RG" />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label>Nome da Mae</Label>
+                    <Label>Nome da Mãe</Label>
                     <Input {...register("nome_mae")} />
                   </div>
                   <div>
@@ -803,7 +803,7 @@ export default function Certidoes() {
                 ) : (
                   <>
                     <FileCheck className="h-4 w-4 mr-2" />
-                    Emitir Certidoes
+                    Emitir Certidões
                   </>
                 )}
               </Button>
@@ -887,9 +887,9 @@ export default function Certidoes() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-8">#</TableHead>
-                      <TableHead>Certidao</TableHead>
+                      <TableHead>Certidão</TableHead>
                       <TableHead className="w-24">Status</TableHead>
-                      <TableHead className="w-24">Acoes</TableHead>
+                      <TableHead className="w-24">Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1053,7 +1053,7 @@ export default function Certidoes() {
                     disabled={reprocessarMutation.isPending}
                   >
                     <RefreshCw className="h-4 w-4 mr-2" />
-                    Reprocessar Certidoes com Erro
+                    Reprocessar Certidões com Erro
                   </Button>
                 )}
               </div>
@@ -1074,7 +1074,7 @@ export default function Certidoes() {
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir Consulta</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja excluir esta consulta e todas as certidoes associadas? Esta
+              Tem certeza que deseja excluir esta consulta e todas as certidões associadas? Esta
               acao nao pode ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>

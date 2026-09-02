@@ -720,7 +720,7 @@ function ManagedApiKeysSection({ canEdit }: { canEdit: boolean }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium">Configuraveis nesta tela</p>
+        <p className="text-sm font-medium">Configuráveis nesta tela</p>
         {isRefreshing && (
           <span
             className="flex items-center gap-1 text-xs text-muted-foreground"
@@ -732,8 +732,8 @@ function ManagedApiKeysSection({ canEdit }: { canEdit: boolean }) {
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Salvas criptografadas e usadas pelas rotinas de certidoes, matriculas
-        e IA desta organizacao.
+        Salvas criptografadas e usadas pelas rotinas de certidões, matrículas
+        e IA desta organização.
         {!canEdit && " Somente owner/admin podem alterar."}
       </p>
       <div className="divide-y rounded-md border">
@@ -802,7 +802,7 @@ function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
             <div>
               <CardTitle>Chaves de API</CardTitle>
               <CardDescription>
-                Chaves da organizacao, salvas criptografadas neste produto —
+                Chaves da organização, salvas criptografadas neste produto —
                 mais o status (somente leitura) do que o ambiente carrega.
               </CardDescription>
             </div>
@@ -1219,15 +1219,15 @@ function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
                 ? "desativado"
                 : data.configured
                   ? "personalizado"
-                  : "padrao da plataforma"}
+                  : "padrão da plataforma"}
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground">
             {disabledForOrg
-              ? "A varredura automatica esta desativada para esta organizacao — nenhum cliente e marcado como inativo automaticamente."
+              ? "A varredura automática está desativada para esta organização — nenhum cliente é marcado como inativo automaticamente."
               : data.configured
                 ? `${data.threshold_days} dia(s) sem contato ate marcar como inativo.`
-                : `${data.default_threshold_days} dia(s) sem contato (padrao da plataforma — esta organizacao ainda nao personalizou este valor).`}
+                : `${data.default_threshold_days} dia(s) sem contato (padrão da plataforma — esta organização ainda não personalizou este valor).`}
           </p>
         </div>
 
@@ -1236,7 +1236,7 @@ function ClientesInactivityTab({ canEdit }: { canEdit: boolean }) {
             className="text-xs text-muted-foreground"
             data-testid="clientes-inactivity-readonly-note"
           >
-            Somente administradores da organizacao podem alterar este valor.
+            Somente administradores da organização podem alterar este valor.
           </p>
         )}
 

@@ -605,7 +605,7 @@ describe("Settings — clientes inactivity threshold", () => {
     const { getByTestId } = await renderSettingsOnKeysTab();
 
     expect(getByTestId("clientes-inactivity-status-badge").textContent).toContain(
-      "padrao da plataforma"
+      "padrão da plataforma"
     );
     expect(getByTestId("clientes-inactivity-status").textContent).toContain("365");
   });

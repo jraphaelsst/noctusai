@@ -509,15 +509,15 @@ describe("Certidoes — recovery paths", () => {
 describe("Certidoes — nova consulta form", () => {
   it("opens the form dialog from the header action", async () => {
     const { getByText, queryByText, fireEvent } = await renderCertidoes();
-    expect(queryByText("Nova Consulta de Certidoes")).toBeNull();
+    expect(queryByText("Nova Consulta de Certidões")).toBeNull();
     fireEvent.click(getByText("Nova Consulta"));
-    expect(getByText("Nova Consulta de Certidoes")).toBeTruthy();
+    expect(getByText("Nova Consulta de Certidões")).toBeTruthy();
   });
 
   it("blocks submit and shows validation messages for an empty form", async () => {
     const { getByText, fireEvent, waitFor } = await renderCertidoes();
     fireEvent.click(getByText("Nova Consulta"));
-    fireEvent.click(getByText("Emitir Certidoes"));
+    fireEvent.click(getByText("Emitir Certidões"));
     await waitFor(() => expect(getByText("Documento é obrigatório")).toBeTruthy());
     expect(getByText("Nome é obrigatório")).toBeTruthy();
     expect(mockCreate).not.toHaveBeenCalled();
@@ -526,13 +526,13 @@ describe("Certidoes — nova consulta form", () => {
   it("submits a normalised payload — blank optionals become undefined", async () => {
     const { getByText, getByPlaceholderText, fireEvent, waitFor } = await renderCertidoes();
     fireEvent.click(getByText("Nova Consulta"));
-    fireEvent.change(getByPlaceholderText("Apenas numeros"), {
+    fireEvent.change(getByPlaceholderText("Apenas números"), {
       target: { value: "12345678901" },
     });
-    fireEvent.change(getByPlaceholderText("Nome completo ou razao social"), {
+    fireEvent.change(getByPlaceholderText("Nome completo ou razão social"), {
       target: { value: "Maria Souza" },
     });
-    fireEvent.click(getByText("Emitir Certidoes"));
+    fireEvent.click(getByText("Emitir Certidões"));
 
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     const payload = mockCreate.mock.calls[0][0];
