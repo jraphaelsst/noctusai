@@ -411,6 +411,26 @@ _MAX_BODY_PATH_OVERRIDES = {
     # export without meaningfully weakening the platform-wide guard.
     "/api/leads/import/preview": 50 * 1024 * 1024,  # 50 MB
     "/api/leads/import/commit": 50 * 1024 * 1024,  # 50 MB
+    # Matrícula PDF upload (POST /api/matriculas/extrair — the `matriculas`
+    # module, ported from the ERP surface being retired). Plain prefix, no
+    # dynamic segment. The handler reads the whole file into memory
+    # (`await file.read()`) before handing the bytes to the seed transcriber,
+    # so this ceiling bounds memory, not just disk. 20 MB matches
+    # `app.modules.matriculas.router.MAX_FILE_SIZE`, which is the real
+    # business-policy limit and the number the user-facing "Máximo: 20MB"
+    # message is derived from; the middleware stays the outer safety net, not
+    # the policy. A certidão de matrícula with decades of averbações is
+    # routinely 20-40 pages of scan, which lands comfortably inside it.
+    #
+    # This key is declared BEFORE the module is appended to MODULES (the
+    # module lands in a peer branch). That is deliberate and inert: the
+    # middleware matches longest-prefix against the live route table, so
+    # until a router serves this path the entry can never fire. Declaring it
+    # first is what lets the module's own branch commit at all —
+    # `check_upload_route_body_override` is a blocking pre-commit gate and
+    # `noctusai_seed.upload_route_overrides` REFUSES TO BOOT an upload route
+    # with no ceiling, so the alternative was an engineer bypassing a keeper.
+    "/api/matriculas/extrair": 20 * 1024 * 1024,  # 20 MB
 }
 
 app = create_product_app(
