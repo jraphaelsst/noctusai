@@ -44,6 +44,28 @@ CREATE POLICY "whatsapp_connections_select_own_org" ON social_wiring.whatsapp_co
   FOR SELECT TO authenticated
   USING (org_id = current_org_id());
 
+-- ---------------------------------------------------------------------------
+-- The uniqueness rule has to move with the scope.
+--
+-- `UNIQUE (org_id, user_id, label)` still believed lines were per-user: two
+-- members of the same org could each create a line labelled "Atendimento" and
+-- both would be accepted, producing two identically-named entries in what is
+-- now ONE shared org list with no way to tell them apart. The label is the
+-- org's handle for the line, so it must be unique per org.
+--
+-- Safe to tighten: verified zero (org_id, label) duplicates on prod before
+-- applying. If a future apply hits a duplicate it will fail LOUDLY here rather
+-- than silently keeping the looser rule — which is the correct outcome.
+-- ---------------------------------------------------------------------------
+ALTER TABLE social_wiring.whatsapp_connections
+  DROP CONSTRAINT IF EXISTS whatsapp_connections_org_id_user_id_label_key;
+
+ALTER TABLE social_wiring.whatsapp_connections
+  DROP CONSTRAINT IF EXISTS whatsapp_connections_org_id_label_key;
+
+ALTER TABLE social_wiring.whatsapp_connections
+  ADD CONSTRAINT whatsapp_connections_org_id_label_key UNIQUE (org_id, label);
+
 COMMENT ON COLUMN social_wiring.whatsapp_connections.user_id IS
   'Creator provenance — who set this line up. NOT a scoping predicate: the '
   'connection is a shared org asset (migration 086). Do not filter reads on '

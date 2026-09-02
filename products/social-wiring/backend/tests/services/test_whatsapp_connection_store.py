@@ -29,6 +29,8 @@ _ORG = UUID("00000000-0000-4000-8000-000000000001")
 # "outsider" fixture is now another ORG, not another user in the same org.
 _OTHER_ORG = UUID("00000000-0000-4000-8000-000000000002")
 _USER = UUID("00000000-0000-4000-8000-0000000000aa")
+# A second member of the SAME org — shares every line with _USER.
+_SECOND_MEMBER = UUID("00000000-0000-4000-8000-0000000000bb")
 
 _SCHEMA = """
 CREATE TABLE whatsapp_connections (
@@ -46,7 +48,10 @@ CREATE TABLE whatsapp_connections (
     bound_chats TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE (org_id, user_id, label),
+    -- Mirrors migration 086: the label is the ORG's handle for the line, so
+    -- uniqueness is per (org, label) — not per user. A fixture that kept the
+    -- old 3-column rule would let a test pass that prod would reject.
+    UNIQUE (org_id, label),
     UNIQUE (webhook_token)
 );
 """
@@ -149,6 +154,37 @@ class TestOrgScope:
         assert store.delete_connection(connection_id=rec.id, org_id=_OTHER_ORG) is False
         # Still there for the owning org.
         assert store.get_connection(connection_id=rec.id, org_id=_ORG)
+
+    def test_scope_is_org_AND_product(self, store):
+        """The second half of the scope — product — is STRUCTURAL, not a column.
+
+        This store is bound to the `social_wiring` schema; ERP's WhatsApp
+        config lives in `erp.whatsapp_config`, therapy's in its own schema.
+        So one org can run a different number per product with no possibility
+        of collision, and no `product_id` column is needed (adding one would
+        fork the platform's schema-per-product model).
+
+        This test pins the half that could silently regress: the table this
+        store reaches is the product's own.
+        """
+        from app.services import whatsapp_connection_store as mod
+
+        assert (mod._SCHEMA, mod._TABLE) == ("social_wiring", "whatsapp_connections")
+
+    def test_label_is_unique_per_org_not_per_user(self, store):
+        """Two members of one org must not be able to create two lines with
+        the same label — the label is how the org tells its lines apart."""
+        _make(store, label="Atendimento")
+        with pytest.raises(Exception):
+            # Same org, same label, different creator — rejected by the
+            # (org_id, label) unique constraint from migration 086.
+            store.create_connection(
+                org_id=_ORG,
+                user_id=_SECOND_MEMBER,
+                label="Atendimento",
+                base_url="https://waha.example.com",
+                api_key="k",
+            )
 
 
 class TestListUpdateDelete:
