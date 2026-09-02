@@ -72,8 +72,29 @@ def configure_credentials(
 
 
 def _get_public_client():
-    """Lazy-init the public-schema service-role client (singleton)."""
-    if _config is None:
+    """Lazy-init the public-schema service-role client (singleton).
+
+    Returns None when there is nothing to build a client FROM — which is
+    not the same as "never configured". `create_product_app` calls
+    `configure_credentials(...)` unconditionally at boot, passing whatever
+    `settings.supabase_url` holds; with no `.env` present that is the empty
+    string. `_config` is then a dict, not None, so the old `is None` test
+    passed and `make_supabase_client("")` raised
+    `SupabaseException: supabase_url is required` — straight out through
+    `resolve_credential` to the caller.
+
+    That contradicted this module's own documented contract ("Tier 1+2
+    simply miss; Tier 3 (env) still works") and it was not hypothetical: it
+    turned every `.env`-less environment into a 500 on any code path that
+    resolves a credential, and it took CI red on
+    `test_settings_api_keys.py::TestEncryptionKeyMissing::
+    test_read_survives_a_missing_key_via_the_platform_tier` — a test whose
+    entire point is that the READ path must degrade rather than fail.
+
+    Missing URL and missing keys are both "no reachable public schema", so
+    both now MISS, exactly as the docstring always promised.
+    """
+    if not _config or not _config.get("url"):
         return None  # Tier 1+2 simply miss; Tier 3 (env) still works.
     global _public_client
     if _public_client is None:
