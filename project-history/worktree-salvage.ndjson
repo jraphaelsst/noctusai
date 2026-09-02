@@ -601,3 +601,4 @@
 {"ts": "2026-09-02", "event": "worktree-sweep", "path": ".claude/worktrees/lead-edit-reresolve", "branch": "feat/lead-edit-reresolve", "sha": "436946aa564ae16211ec39f057d67142b56cf5f9", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-02", "event": "worktree-sweep", "path": ".claude/worktrees/emissoes-table-organ", "branch": "feat/emissoes-table-organ", "sha": "9283d502b55507fcf9ae3e4445e61743f554d2c7", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-02", "event": "worktree-sweep", "path": ".claude/worktrees/org-reassign-sync-auth", "branch": "feat/org-reassign-sync-auth", "sha": "4a00b159539a0a3c89b3cf471dca91240c2c7250", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-02", "event": "worktree-sweep", "path": ".claude/worktrees/meta-ingest-sweep", "branch": "feat/meta-ingest-sweep", "sha": "4a9ef1d1a17f0879a846222e119b809f26ed3c15", "reason": "task_branch cleanup (learn-before-delete)"}
