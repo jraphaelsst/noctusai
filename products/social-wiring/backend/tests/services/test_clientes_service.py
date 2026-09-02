@@ -161,6 +161,46 @@ class TestClienteGetsItsContactData:
         assert cliente["celular"] == K1
         assert cliente["email"] == "analu@gmail.com"
 
+    def test_editing_the_lead_reaches_the_person_on_the_next_pass(self):
+        """🔴 The production race, end to end.
+
+        A lead created empty produces a nameless, keyless cliente. The
+        operator completes the lead 27 minutes later. Clustering is one-shot
+        per source — the touch is already written, so the row is skipped
+        forever after — which used to mean the correction NEVER reached the
+        person and the card stayed unworkable.
+        """
+        client = _scoped_client()
+        vazio = {
+            "id": "L1", "org_id": ORG, "cliente_nome": None,
+            "contato": None, "contato_norm": None, "contato_tipo": None,
+            "data_entrada": "2026-09-02",
+        }
+        client.set_table_data("leads", [dict(vazio)])
+        client.set_table_data("meta_ads_leads", [])
+        client.set_table_data("atendimentos", [])
+        svc.run_backfill(client, ORG)
+
+        [antes] = _clientes(client)
+        assert not antes.get("nome") and not antes.get("celular"), (
+            "precondition: the cliente is born blank from a blank lead"
+        )
+
+        # The operator completes the lead.
+        client.table("leads").update({
+            "cliente_nome": "José Roberto",
+            "contato": "+5511999978888",
+            "contato_norm": "+5511999978888",
+            "contato_tipo": "telefone",
+        }).eq("id", "L1").execute()
+
+        svc.run_backfill(client, ORG)
+
+        [depois] = _clientes(client)
+        assert depois["id"] == antes["id"], "same person, not a second cliente"
+        assert depois["nome"] == "José Roberto"
+        assert depois["celular"] == "+5511999978888"
+
     def test_a_later_touch_fills_a_blank_but_never_overwrites(self):
         """Fill-if-empty. An operator-typed value outranks anything derived
         from a lead row, so a later touch must not replace it."""

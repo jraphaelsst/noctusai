@@ -328,6 +328,21 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> Backfil
         _resolve_group(client, org_id, group_rows, report, dry_run=dry_run)
 
     if not dry_run:
+        # 🔴 SOURCES THAT ALREADY HAVE A TOUCH ARE NOT DONE WITH.
+        #
+        # Everything above deliberately skips them (`new_sources`), because
+        # identity resolution must not re-cluster a person on every pass. But
+        # the source ROW keeps changing after its touch is written — a lead
+        # created with an empty name and corrected 27 minutes later is the
+        # exact case reported from production (`José Roberto`, 2026-09-02):
+        # the cliente was created 2s after the lead, from a row that was still
+        # blank, and NOTHING ever revisited it. The correction landed on the
+        # lead and never reached the person.
+        #
+        # So contact data is refreshed from ALL sources, separately from
+        # clustering. Fill-if-empty, so this can run every pass and can never
+        # undo an operator's edit.
+        _refresh_contato_from_sources(client, org_id, sources)
         _repoint_atendimentos(client, org_id, report)
         # P1.4 completion: collapse whatever now shares a cliente_id — both
         # the sets this run just repointed AND any that already existed
@@ -475,6 +490,39 @@ def _reconcile_against_existing(
             chave_canonica=None, chave_tipo=None, identidade_incerta=True,
             members=members, report=report, dry_run=dry_run,
         )
+
+
+def _refresh_contato_from_sources(
+    client: Any, org_id: UUID, sources: list[SourceRow]
+) -> None:
+    """Re-read EVERY source and top up its cliente's blank contact columns.
+
+    This is the half that makes a lead EDIT reach the person. Clustering is
+    deliberately one-shot per source (a touch is written once and the row is
+    skipped forever after), which is right for identity — re-clustering on
+    every pass would let a person's group churn. It is wrong for CONTACT DATA,
+    which the operator keeps correcting on the lead long after the touch was
+    written.
+
+    Cheap and idempotent: one read of the org's touches, then an UPDATE only
+    for clientes that actually have a blank to fill. A steady-state pass finds
+    nothing and writes nothing.
+    """
+    touches = _select_all(
+        client, "cliente_touches", org_id, columns="cliente_id,origem_tabela,origem_id"
+    )
+    if not touches:
+        return
+
+    por_origem = {(s.origem_tabela, s.origem_id): s for s in sources}
+    membros_por_cliente: dict[str, list[SourceRow]] = {}
+    for t in touches:
+        origem = por_origem.get((t.get("origem_tabela"), t.get("origem_id")))
+        if origem is not None:
+            membros_por_cliente.setdefault(t["cliente_id"], []).append(origem)
+
+    for cliente_id, members in membros_por_cliente.items():
+        _enrich_cliente(client, cliente_id, members, dry_run=False)
 
 
 def _contato_dos_membros(members: list[SourceRow]) -> dict[str, str]:

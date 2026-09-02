@@ -317,6 +317,43 @@ class TestCreateSchedulesPersonLayerSweep:
         # sweep must have been invoked — scheduled, not merely constructed.
         assert ran == [True]
 
+    def test_update_schedules_the_sweep_too(self, http_client):
+        """🔴 The half that was missing, and it reached production.
+
+        A lead created empty gets a nameless, keyless cliente seconds later.
+        The operator then types the name and phone in — and nothing revisited
+        the person, because only CREATE scheduled the sweep. The card stayed
+        "Lead sem nome" with an empty checklist while the lead was complete
+        (`José Roberto`, 2026-09-02). An edit changes exactly the fields the
+        person layer reads, so it needs the pass as much as a create does.
+        """
+        from app.main import app
+        from app.modules.leads.routers.leads import get_person_layer_sweep
+
+        criado = http_client.post(
+            "/api/leads",
+            json={"data_entrada": "2026-07-01", "contato": "+5511999978888"},
+            headers=auth_headers(),
+        )
+        assert criado.status_code == 201, criado.text
+        lead_id = criado.json()["data"]["id"]
+
+        ran: list = []
+        app.dependency_overrides[get_person_layer_sweep] = lambda: (
+            lambda: ran.append(True)
+        )
+        try:
+            resp = http_client.patch(
+                f"/api/leads/{lead_id}",
+                json={"cliente_nome": "José Roberto"},
+                headers=auth_headers(),
+            )
+        finally:
+            app.dependency_overrides.pop(get_person_layer_sweep, None)
+
+        assert resp.status_code == 200, resp.text
+        assert ran == [True], "the edit must re-run the person-layer sweep"
+
     def test_sweep_runs_after_the_response_not_before_it(self, http_client):
         """It is a BackgroundTask on purpose: lead creation must not wait on
         an org-wide sweep. If this ever became a blocking call, the 201 would

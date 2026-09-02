@@ -133,15 +133,36 @@ def get_lead(
 def update_lead(
     lead_id: UUID,
     body: LeadUpdate,
+    background: BackgroundTasks,
     auth: tuple = Depends(get_current_user_org_unified),
     client: Any = Depends(get_leads_client),
+    sweep=Depends(get_person_layer_sweep),
 ) -> dict:
+    """Update a lead — and re-run the person-layer sweep, same as create.
+
+    🔴 THIS ROUTE USED TO NOT SCHEDULE THE SWEEP, and that is a bug that
+    reached production (`José Roberto`, 2026-09-02). A lead created with an
+    empty name got a nameless, keyless cliente 2 seconds later; the name and
+    phone were typed in 27 minutes after that, and nothing revisited the
+    person. The card stayed "Lead sem nome" and its checklist stayed empty
+    while the lead itself was complete.
+
+    Create scheduling the sweep and update not scheduling it was never a
+    decision — the create path grew the sweep when the "card exists but is not
+    workable" gap was closed, and this one was simply not updated with it. An
+    edit changes exactly the fields the person layer reads, so it needs the
+    pass at least as much as a create does.
+
+    Same lease-guarded BackgroundTask: runs after the response, and repeated
+    edits coalesce into one pass instead of piling up.
+    """
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     row = leads_service.update_lead(client, org_id, lead_id, body.model_dump(exclude_unset=True))
     if row is None:
         raise NotFoundError("lead", str(lead_id))
     refs = leads_service.build_refs(client, org_id)
+    background.add_task(sweep)
     return success_response(_out(row, refs))
 
 
