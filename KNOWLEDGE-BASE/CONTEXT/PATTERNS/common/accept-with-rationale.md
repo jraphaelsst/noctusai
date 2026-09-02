@@ -647,6 +647,26 @@ state change, not a removal.
 
 ## Entries from `schedule-recurrence-window-gap` Phase 0 (filed 2026-05-18)
 
+### 9b `claude-guard-test-seams.py` retains shell (`[carve:hook]`, 2026-09-02)
+
+- **Divergence:** a second `scripts/hooks/*.py` PreToolUse adapter, for the
+  write-time half of the no-self-monkeypatch rule.
+- **Decision `[A]`:** stays a script, same `[carve:hook]` bucket and the same
+  structural reason as 9a — the harness invokes it as a process in the
+  pre-tool path on every `Edit`/`Write`; the MCP server is not reachable
+  there and a round-trip would not fit the budget. The DECISION logic lives
+  in the toolkit (`tools/noctus/dev/test_seam_guard.py`, sharing
+  `self_patch_predicate.py` with the `check_no_self_monkeypatch` keeper), so
+  only the protocol adapter is shell-shaped.
+- **Why a SECOND adapter rather than a branch inside 9a:** branch isolation
+  and test-seam enforcement must fail independently. A crash in one must not
+  disable the other, and both fail OPEN by design — a guard that raises must
+  never become a guard that blocks all work.
+- **Scope:** the one file, carrying its `[carve:hook]` row in
+  `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** identical to 9a's (a) — a hook runner able to invoke
+  MCP directly flips this to formalize.
+
 ### Recurrence-expansion stays product-local across daily-life/erp/PF — domain-divergent, no `N≥3` unifiable contract
 
 - **Subject:** §3a seed-first audit of the daily-life recurring-events gap asked whether windowed recurrence-expansion is `N≥3`-duplicated → a seed primitive (`noctusai_lib.domain.scheduling`).
