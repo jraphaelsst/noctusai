@@ -136,6 +136,7 @@ class LeadgenWebhookService:
         ingest_fn: Any = None,
         notifier_factory: Any = None,
         publisher: Any = None,
+        sweep_fn: Any = None,
     ) -> None:
         self._admin = admin_supabase
         self._adapter_factory = adapter_factory
@@ -145,6 +146,9 @@ class LeadgenWebhookService:
         self._ingest_fn = ingest_fn
         self._notifier_factory = notifier_factory
         self._publisher = publisher
+        # DI seam, same shape as `ingest_fn`: tests assert the sweep is
+        # scheduled without running a real org-wide pass.
+        self._sweep_fn = sweep_fn
 
     # ─── inbox ─────────────────────────────────────────────────────────
     def record_event(self, event: LeadgenEvent) -> bool:
@@ -637,6 +641,51 @@ class LeadgenWebhookService:
             lead_row,
             question_types=key_types or None,
         )
+        self._sweep_person_layer()
+
+    def _sweep_person_layer(self) -> None:
+        """Run the person-layer sweep right after a campaign lead lands.
+
+        🔴 A META LEAD ARRIVES AS **TWO** CARDS AND STAYS THAT WAY UNTIL THIS
+        RUNS.
+
+        `ingest_meta_lead` writes the `meta_ads_leads` row AND the canonical
+        `leads` row, and migration 034 puts a spawn trigger on BOTH — so one
+        human produces two `atendimentos`. That is the documented P1.4 design:
+        `_collapse_atendimentos` marks the loser `substituida_por` and the
+        board hides it, and `_repoint_atendimentos` attaches the person.
+
+        But BOTH of those live in the backfill sweep, and this path never
+        scheduled one — so a campaign lead sat as two cards, each with a null
+        `cliente_id` (which also makes them open the fallback lead modal
+        instead of the person card), until the 6-hourly pass happened by.
+        Reported 2026-09-02: one lead showed two cards while an earlier lead
+        that had already been swept showed one, correctly merged — the same
+        arrival looking broken or fine depending only on when you looked.
+
+        The lead create/update routes have scheduled this for a while; the
+        campaign path — the one that produces the duplicate in the first
+        place — was the one that did not.
+
+        BEST-EFFORT ON PURPOSE, unlike the org-reassign sync: a failed sweep
+        leaves data that is merely un-merged yet, not inconsistent, and the
+        scheduled pass will still get it. Raising here would turn a cosmetic
+        delay into a 5xx that makes Meta re-deliver the whole webhook.
+        Lease-guarded, so a burst of deliveries coalesces into one pass.
+        """
+        sweep = self._sweep_fn
+        if sweep is None:
+            from app.services import clientes_backfill_job
+
+            sweep = clientes_backfill_job.run_now
+        try:
+            sweep()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "meta-leadgen: person-layer sweep failed after ingest; the lead is "
+                "stored and the scheduled pass will merge it",
+                exc_info=True,
+            )
 
     def _build_notifier(self) -> Any:
         if self._notifier_factory is not None:

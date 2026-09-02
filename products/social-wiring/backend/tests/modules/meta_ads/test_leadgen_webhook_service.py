@@ -106,6 +106,9 @@ def _service(**overrides: Any) -> LeadgenWebhookService:
         "adapter_factory": _adapter_factory,
         "leads_sync_factory": lambda **_kw: _FakeLeadsSync(),
         "org_resolver": lambda _event: ORG_ID,
+        # Default to a no-op: without it every test in this module would run
+        # the REAL org-wide person-layer sweep against a live client.
+        "sweep_fn": lambda: None,
     }
     kwargs.update(overrides)
     return LeadgenWebhookService(**kwargs)
@@ -130,6 +133,49 @@ def test_process_event_normalizes_into_the_unified_leads_base(monkeypatch):
     assert len(seen) == 1, "the lead never reached the unified base"
     assert seen[0][0] == ORG_ID
     assert seen[0][1] == LEAD_ID
+
+
+def test_ingest_schedules_the_person_layer_sweep():
+    """🔴 A META LEAD ARRIVES AS TWO CARDS UNTIL THIS RUNS.
+
+    `ingest_meta_lead` writes the `meta_ads_leads` row AND the canonical
+    `leads` row, and migration 034 spawns a card from BOTH — one human, two
+    `atendimentos`. Collapsing the duplicate and attaching the person both
+    live in the backfill sweep, and this path never scheduled one, so a
+    campaign lead sat as two cards (each opening the fallback lead modal,
+    because `cliente_id` was still null) until the 6-hourly pass.
+
+    Reported 2026-09-02: two cards for one arrival, while an already-swept
+    lead showed a single correct card — the same event looking broken or fine
+    depending only on when you looked.
+    """
+    ran: list = []
+    svc = _service(
+        ingest_fn=lambda *a, **k: {"lead": {"id": "x"}, "created": True},
+        sweep_fn=lambda: ran.append(True),
+    )
+
+    svc.process_event(_event())
+
+    assert ran == [True], "the campaign path must merge its own duplicate"
+
+
+def test_a_failing_sweep_does_not_fail_the_webhook():
+    """Best-effort ON PURPOSE, unlike the org-reassign sync: an un-merged lead
+    is merely not-yet-tidy, not inconsistent, and the scheduled pass still
+    gets it. Raising would make Meta re-deliver the whole webhook over a
+    cosmetic delay."""
+    def _boom():
+        raise RuntimeError("sweep unavailable")
+
+    svc = _service(
+        ingest_fn=lambda *a, **k: {"lead": {"id": "x"}, "created": True},
+        sweep_fn=_boom,
+    )
+
+    result = svc.process_event(_event())
+
+    assert result.status == STATUS_PROCESSED, "the lead is stored; only the merge waits"
 
 
 def test_process_event_returns_the_row_the_fan_out_needs(monkeypatch):
