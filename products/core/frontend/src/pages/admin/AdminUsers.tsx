@@ -380,6 +380,15 @@ export function AdminUsers() {
                   usuario pertence a exatamente uma organizacao — revogar e mover
                   para outra.
                 </p>
+                {editUser && editForm.org_id !== editUser.org_id && (
+                  // The org also rides on the user's token, which is only
+                  // re-minted at login. Without this warning the admin sees a
+                  // success toast and the user sees an empty board.
+                  <p className="text-xs text-warning mt-1" data-testid="org-relogin-warning">
+                    O usuario precisa sair e entrar novamente para a mudanca
+                    valer nos produtos.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1">Cargo Organizacao</label>

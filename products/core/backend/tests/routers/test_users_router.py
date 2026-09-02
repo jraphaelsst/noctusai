@@ -372,6 +372,55 @@ class TestReassignUserOrg:
         resp = client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
         assert resp.status_code == 403
 
+    def test_reassign_also_syncs_the_org_onto_the_auth_token(self, admin_client):
+        """🔴 A reassignment is TWO writes and half of it is invisible.
+
+        `noctus_users.org_id` is what RLS resolves through, but product
+        backends read the org off the JWT, populated from `user_metadata`.
+        Writing only the table moves the user for the database and leaves
+        every product serving them their OLD org — a correct-looking account
+        with an empty board. That shipped (2026-09-02) and is why this exists.
+        """
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "member"},
+            [{"id": "user-1", "org_id": ORG_B}],
+        ])
+        mock_sb.set_table_responses("organizations", [
+            {"id": ORG_B, "nome": "Target Org", "owner_id": "someone-else"},
+            {"id": ORG_A, "nome": "Source Org", "owner_id": "someone-else"},
+        ])
+
+        resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
+        assert resp.status_code == 200
+
+        mock_sb.auth.admin.update_user_by_id.assert_called_once_with(
+            "user-1", {"user_metadata": {"org_id": ORG_B}}
+        )
+
+    def test_a_failed_sync_reverts_and_502s_instead_of_reporting_success(self, admin_client):
+        """Unlike signup's best-effort sync, a failure HERE is the split-brain
+        being prevented — so the profile write is undone and the caller is
+        told, rather than getting a success toast over a half-applied move."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "member"},
+            [{"id": "user-1", "org_id": ORG_B}],
+            [{"id": "user-1", "org_id": ORG_A}],  # the revert
+        ])
+        mock_sb.set_table_responses("organizations", [
+            {"id": ORG_B, "nome": "Target Org", "owner_id": "someone-else"},
+            {"id": ORG_A, "nome": "Source Org", "owner_id": "someone-else"},
+        ])
+        mock_sb.auth.admin.update_user_by_id.side_effect = RuntimeError("auth down")
+
+        resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
+
+        assert resp.status_code == 502
+        # The last write must put the org back where it was.
+        payloads = mock_sb.table("noctus_users").updated_payloads
+        assert payloads[-1] == {"org_id": ORG_A}
+
 
 # ---------------------------------------------------------------------------
 # DELETE /api/admin/users/{user_id}

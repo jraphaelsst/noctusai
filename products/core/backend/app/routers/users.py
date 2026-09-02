@@ -150,6 +150,9 @@ async def atualizar_user(user_id: str, body: UserUpdate, authorization: Optional
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
     if moving_org:
+        # Before the audit log: a move that could not sync is REVERTED and
+        # raises, so it must never be recorded as having happened.
+        _sync_org_to_auth_metadata(db, user_id, new_org_id, revert_to=current_org_id)
         try:
             from app.services import audit_service
             await audit_service.log(
@@ -167,6 +170,59 @@ async def atualizar_user(user_id: str, body: UserUpdate, authorization: Optional
             )
 
     return success_response(result.data[0])
+
+
+def _sync_org_to_auth_metadata(db, user_id: str, new_org_id: str, *, revert_to) -> None:
+    """Mirror the new org onto the auth user's `user_metadata`.
+
+    🔴 A REASSIGNMENT IS TWO WRITES, AND HALF OF IT IS INVISIBLE.
+
+    `noctus_users.org_id` is the trusted source RLS resolves through
+    (`current_org_id()`), but PRODUCT BACKENDS read the org off the JWT, which
+    is populated from `auth.users.user_metadata`. Updating only the table moves
+    the user for the database and leaves every product still serving them their
+    OLD org — the user lands on a correct-looking account with an empty board.
+
+    That is not hypothetical: it shipped. Marina was moved to NoctusAI on
+    2026-09-02 and her Funil de Vendas said "Nenhuma etapa configurada" while
+    the org's five stages sat right there, because her token still carried
+    One Consultoria. Signup already syncs this (`auth.py`); this route did not.
+
+    UNLIKE SIGNUP, A FAILURE HERE IS NOT BEST-EFFORT. Signup can warn and move
+    on because nothing is inconsistent yet. Here, a failed sync is precisely
+    the split-brain being fixed, so the profile write is REVERTED and the
+    caller gets a 502. A half-applied move that reports success is how an admin
+    ends up debugging an empty board instead of retrying a button.
+
+    The user still has to re-authenticate for a new token to be minted — that
+    is inherent to reading org off a JWT and is stated in the API response.
+    """
+    try:
+        db.auth.admin.update_user_by_id(
+            user_id, {"user_metadata": {"org_id": new_org_id}}
+        )
+    except Exception as exc:
+        logger.error(
+            "users: auth metadata sync failed for user_id=%s org_id=%s — reverting "
+            "the profile write so the two stores cannot disagree",
+            user_id, new_org_id, exc_info=True,
+        )
+        try:
+            db.table("noctus_users").update({"org_id": revert_to}).eq("id", user_id).execute()
+        except Exception:
+            # Now genuinely split — say so loudly rather than imply a clean undo.
+            logger.critical(
+                "users: REVERT FAILED for user_id=%s — noctus_users says %s while "
+                "auth metadata says %s; needs manual repair",
+                user_id, new_org_id, revert_to, exc_info=True,
+            )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Não foi possível sincronizar a organização no login do usuário. "
+                "A alteração foi revertida — tente novamente."
+            ),
+        ) from exc
 
 
 def _guard_org_reassignment(
