@@ -232,9 +232,16 @@ export function PipelineBoard<TCard>({
           </div>
         }
         onMove={(cardId, fromStage, toStage, toIndex) => {
-          // Only cross-stage drops mutate; reordering within a column is a
-          // client-side no-op, matching the pre-organ behaviour.
-          if (fromStage === toStage) return;
+          // Same-column reordering PERSISTS. It used to early-return here, so
+          // dragging a card up its own column animated and then snapped back
+          // on the next refetch — the board looked reorderable and was not.
+          //
+          // A same-stage drop still goes through `mover-etapa`: the server
+          // treats it as a position-only change (no history row, no stage
+          // gate), so there is no second endpoint that could drift from this
+          // one. `fromStage` is now unused, and kept in the signature because
+          // it is part of the underlying board's contract.
+          void fromStage;
           moveCard.mutate({ cardId, toStageId: toStage, toIndex });
         }}
         columnClassName={columnClassName}

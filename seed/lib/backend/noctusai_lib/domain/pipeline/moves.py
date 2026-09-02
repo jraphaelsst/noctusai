@@ -15,6 +15,7 @@ reconstruct after the fact.
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Callable
 
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
@@ -31,6 +32,7 @@ def move_card(
     to_stage_id: str,
     user_id: str,
     novo_indice: int | None = None,
+    nova_posicao: Decimal | None = None,
     motivo: str | None = None,
     log_action: Callable[..., Any] | None = None,
     extra_updates: dict[str, Any] | None = None,
@@ -45,7 +47,11 @@ def move_card(
         to_stage_id: Destination stage id — an id, never a name, so a renamed
             stage keeps working.
         user_id: Who moved it; recorded as the responsible party.
-        novo_indice: Optional new `kanban_pos` within the destination column.
+        novo_indice: Optional new `kanban_pos` written verbatim — the legacy
+            integer-index form, for consumers whose column is `integer`.
+        nova_posicao: Optional FRACTIONAL position from `ordering`, for
+            consumers on a `numeric` column. Wins over `novo_indice`. Sent as
+            a string so the driver cannot round a Decimal through float.
         motivo: Optional free-text reason, surfaced in history.
         log_action: Optional product audit-log hook.
         extra_updates: Additional columns the consumer wants written in the
@@ -73,7 +79,14 @@ def move_card(
     de_etapa_id = current.get("etapa_id")
 
     updates: dict[str, Any] = {"etapa_id": to_stage_id}
-    if novo_indice is not None:
+    # `nova_posicao` wins when both are given: it is an already-computed
+    # FRACTIONAL position (see `ordering`), while `novo_indice` is the older
+    # "write the index straight into the column" form still used by consumers
+    # whose `kanban_pos` is an integer column. Silently preferring one without
+    # saying so is how a caller ends up debugging why its position is ignored.
+    if nova_posicao is not None:
+        updates["kanban_pos"] = str(nova_posicao)
+    elif novo_indice is not None:
         updates["kanban_pos"] = novo_indice
     if extra_updates:
         updates.update(extra_updates)

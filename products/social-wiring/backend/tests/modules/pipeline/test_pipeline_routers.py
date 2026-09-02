@@ -15,6 +15,8 @@ What these protect, beyond "it responds 200":
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from .conftest import (
@@ -75,57 +77,118 @@ class TestFunilBoard:
         assert cards and "coluna_interna" not in cards[0]
 
 
-class TestIntakeColumnIsNewestFirst:
-    """The first column of BOTH boards sorts newest-first by `created_at`.
+class TestReorderPersists:
+    """Dragging a card inside its own column must SAVE the new position.
 
-    It is the column every new card lands on (migration 034's trigger), so it
-    answers "what just arrived". Every OTHER column keeps the hand-arranged
-    `kanban_pos` order — that is the half a careless change would break, so it
-    is asserted here rather than assumed.
+    It used to be a client-side no-op that snapped back on the next refetch,
+    so these assert the two halves that made it real: the request reaches the
+    move handler at all, and the position it writes actually lands the card
+    where it was dropped.
     """
 
-    def test_funil_first_column_is_newest_first(self, http_client):
+    def _pos_escrito(self, http_client):
+        """The `kanban_pos` the handler wrote, as a Decimal."""
+        payloads = http_client.scoped.table("atendimentos").updated_payloads
+        assert payloads, "expected the move to update the card"
+        return Decimal(str(payloads[-1]["kanban_pos"]))
+
+    def test_same_column_reorder_writes_a_position(self, http_client):
         http_client.scoped.set_table_data("atendimentos", [
-            atendimento("neg-old", "novo", kanban_pos=0, created_at="2026-01-01T00:00:00Z"),
-            atendimento("neg-new", "novo", kanban_pos=9, created_at="2026-09-02T00:00:00Z"),
-            atendimento("neg-mid", "novo", kanban_pos=1, created_at="2026-05-01T00:00:00Z"),
+            atendimento("neg-1", "novo", kanban_pos=1),
+            atendimento("neg-2", "novo", kanban_pos=2),
+            atendimento("neg-3", "novo", kanban_pos=3),
         ])
-        r = http_client.get("/api/funil", headers=auth_headers())
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-3/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["novo"], "novo_indice": 0},
+            headers=auth_headers(),
+        )
         assert r.status_code == 200
-        primeira = r.json()["data"][0]
-        assert primeira["stage"]["slug"] == "novo"
-        # kanban_pos would order old, mid, new — recency reverses it.
-        assert [c["id"] for c in primeira["cards"]] == ["neg-new", "neg-mid", "neg-old"]
+        # Dropped on top ⇒ above the current first card (position 1).
+        assert self._pos_escrito(http_client) < Decimal(1)
 
-    def test_funil_other_columns_keep_hand_ordering(self, http_client):
+    def test_reorder_does_not_write_history(self, http_client):
+        """A position change is not a stage transition — flooding the trail
+        with non-events is what makes the real transitions unreadable."""
         http_client.scoped.set_table_data("atendimentos", [
-            atendimento("neg-a", "proposta", kanban_pos=0, created_at="2026-01-01T00:00:00Z"),
-            atendimento("neg-b", "proposta", kanban_pos=1, created_at="2026-09-02T00:00:00Z"),
+            atendimento("neg-1", "novo", kanban_pos=1),
         ])
-        r = http_client.get("/api/funil", headers=auth_headers())
-        colunas = {c["stage"]["slug"]: c for c in r.json()["data"]}
-        # `neg-b` is newer, but "proposta" is drag-ordered — position wins.
-        assert [c["id"] for c in colunas["proposta"]["cards"]] == ["neg-a", "neg-b"]
+        http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["novo"], "novo_indice": 0},
+            headers=auth_headers(),
+        )
+        movimentos = http_client.scoped.table("pipeline_movimentos").inserted_payloads
+        assert movimentos == []
 
-    def test_processos_first_column_is_newest_first(self, http_client):
-        http_client.scoped.set_table_data("processos_venda", [
-            processo("proc-old", "contrato", kanban_pos=0, created_at="2026-01-01T00:00:00Z"),
-            processo("proc-new", "contrato", kanban_pos=9, created_at="2026-09-02T00:00:00Z"),
+    def test_reorder_is_not_blocked_by_the_stage_gate(self, http_client):
+        """🔴 The gate asks "do we know who this is" before ADVANCING a card.
+
+        A reorder advances nothing, so gating it would make the incomplete
+        lead — exactly the one an operator wants to pull to the top and chase
+        — the one card that cannot be prioritised.
+        """
+        http_client.scoped.set_table_data("atendimentos", [
+            atendimento("neg-1", "novo", kanban_pos=1, cliente_id=None),
+            atendimento("neg-2", "novo", kanban_pos=2, cliente_id=None),
         ])
-        r = http_client.get("/api/processos-venda", headers=auth_headers())
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-2/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["novo"], "novo_indice": 0},
+            headers=auth_headers(),
+        )
         assert r.status_code == 200
-        primeira = r.json()["data"][0]
-        assert primeira["stage"]["slug"] == "contrato"
-        assert [c["id"] for c in primeira["cards"]] == ["proc-new", "proc-old"]
 
-    def test_processos_other_columns_keep_hand_ordering(self, http_client):
-        http_client.scoped.set_table_data("processos_venda", [
-            processo("proc-a", "execucao", kanban_pos=0, created_at="2026-01-01T00:00:00Z"),
-            processo("proc-b", "execucao", kanban_pos=1, created_at="2026-09-02T00:00:00Z"),
+    def test_moving_down_one_slot_excludes_the_card_itself(self, http_client):
+        """The off-by-one: "drop at index 1" counts the neighbours WITHOUT the
+        moved card. Counting itself lands it back where it started."""
+        http_client.scoped.set_table_data("atendimentos", [
+            atendimento("neg-1", "novo", kanban_pos=1),
+            atendimento("neg-2", "novo", kanban_pos=2),
+            atendimento("neg-3", "novo", kanban_pos=3),
         ])
-        r = http_client.get("/api/processos-venda", headers=auth_headers())
-        colunas = {c["stage"]["slug"]: c for c in r.json()["data"]}
-        assert [c["id"] for c in colunas["execucao"]["cards"]] == ["proc-a", "proc-b"]
+        http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["novo"], "novo_indice": 1},
+            headers=auth_headers(),
+        )
+        # Neighbours without neg-1 are [2, 3]; index 1 ⇒ strictly between them.
+        pos = self._pos_escrito(http_client)
+        assert Decimal(2) < pos < Decimal(3)
+
+    def test_cross_stage_move_also_carries_the_position(self, http_client):
+        """Moving between columns must land where it was dropped too — the
+        other half of the request ("moving cards between columns to actually
+        work on positioning")."""
+        http_client.scoped.set_table_data("atendimentos", [
+            atendimento("neg-1", "novo", kanban_pos=1),
+            atendimento("neg-2", "proposta", kanban_pos=5),
+            atendimento("neg-3", "proposta", kanban_pos=6),
+        ])
+        # A CROSS-stage move does pass the gate, so the card needs its person.
+        seed_titular(http_client.scoped, "neg-1")
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["proposta"], "novo_indice": 1},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 200
+        pos = self._pos_escrito(http_client)
+        assert Decimal(5) < pos < Decimal(6)
+
+    def test_move_without_an_index_leaves_the_position_alone(self, http_client):
+        """"Move to this stage", no opinion about where — must not reshuffle."""
+        http_client.scoped.set_table_data("atendimentos", [
+            atendimento("neg-1", "novo", kanban_pos=7),
+        ])
+        seed_titular(http_client.scoped, "neg-1")
+        http_client.post(
+            "/api/atendimentos-venda/neg-1/mover-etapa",
+            json={"para_etapa_id": STAGE_ID["proposta"]},
+            headers=auth_headers(),
+        )
+        payload = http_client.scoped.table("atendimentos").updated_payloads[-1]
+        assert "kanban_pos" not in payload
 
 
 class TestP14OneCardPerPerson:

@@ -26,6 +26,8 @@ from noctusai_lib.domain.pipeline import (
     group_into_colunas,
     list_stages,
     move_card,
+    position_for_index,
+    position_of,
     resolve_initial_stage,
     stage_by_role,
 )
@@ -174,21 +176,36 @@ def _valor_do_card(card: dict, valores: dict[str, float]) -> float:
 LIMITE_CARDS_PADRAO = 50
 
 
-def _intake_stage(stages: list[dict]) -> set[str]:
-    """The stage new cards land on — its column sorts newest-first.
+def _posicao_para_indice(
+    db, table: str, *, org_id: str, etapa_id: str, indice: Optional[int], card_id: str
+):
+    """Fractional `kanban_pos` that lands `card_id` at `indice` of its column.
 
-    `list_stages` returns stages already ordered by `posicao`, so the first
-    element IS the leftmost column, and migration 034's trigger drops every
-    new card there. That column answers "what just came in", so a hand-arranged
-    `kanban_pos` order is the wrong thing for it — a lead that arrived a minute
-    ago belongs on top, not wherever its position happens to fall.
+    Returns `None` when the client sent no index — an ordinary "move to this
+    stage" with no opinion about where, which must not disturb the position.
 
-    Derived from the stage list rather than hardcoded to a slug: the stages are
-    per-org rows the user renames and reorders freely ("Qualificação" is only
-    the default), so pinning a name here would silently stop matching the day
-    somebody edits it. Empty list ⇒ empty set, never an IndexError.
+    🔴 The moved card is EXCLUDED from the neighbour list. "Drop at index 3"
+    means three cards above it once it is gone; counting itself is the
+    off-by-one where dragging a card one slot down does nothing at all.
+
+    Reads only `id` + `kanban_pos`, ordered the way the board orders them, so
+    this stays cheap on the 1.850-card intake column.
     """
-    return {stages[0]["id"]} if stages else set()
+    if indice is None:
+        return None
+
+    rows = (
+        db.table(table)
+        .select("id, kanban_pos, created_at")
+        .eq("org_id", org_id)
+        .eq("etapa_id", etapa_id)
+        .execute()
+        .data
+        or []
+    )
+    vizinhos = [r for r in rows if r.get("id") != card_id]
+    vizinhos.sort(key=lambda r: (position_of(r), r.get("created_at") or ""))
+    return position_for_index(vizinhos, indice)
 
 
 @funil_router.get("")
@@ -256,12 +273,6 @@ def obter_funil(
         row_to_dto=None,
         value_of=lambda card: _valor_do_card(card, valores),
         limite_cards=limite_por_etapa,
-        # 🔴 Interacts with `limite_por_etapa` — which is why it is applied
-        # server-side. The truncation runs AFTER this sort, so the intake
-        # column's first 50 are the 50 NEWEST leads. Sorting in the browser
-        # would only reorder whichever 50 the server had already picked by
-        # `kanban_pos`, i.e. a column that claims "newest" and is not.
-        recency_first_stages=_intake_stage(stages),
     )
 
     for coluna in colunas:
@@ -339,7 +350,7 @@ def mover_atendimento(
 
     current = (
         ctx.db.table("atendimentos")
-        .select("id, status, cliente_id")
+        .select("id, status, cliente_id, etapa_id")
         .eq("id", atendimento_id)
         .eq("org_id", ctx.org_id)
         .execute()
@@ -366,12 +377,19 @@ def mover_atendimento(
     # resolves its stage up front.
     get_stage(ctx.db, PIPELINE_FUNIL, body.para_etapa_id, org_id=ctx.org_id)
 
-    # The card cannot advance while nobody knows who this is or how to reach
+    # The card cannot ADVANCE while nobody knows who this is or how to reach
     # them — see `stage_gate` for why the rule is asked of the checklist rather
     # than re-derived from columns here.
-    pendentes = stage_gate.pendencias(ctx.db, ctx.org_id, current[0].get("cliente_id"))
-    if pendentes:
-        raise ValidationError_(stage_gate.mensagem(pendentes))
+    #
+    # 🔴 Only on a real stage CHANGE. Reordering a card inside the column it is
+    # already in advances nothing, so gating it would make an incomplete lead
+    # impossible to prioritise — the exact card an operator most wants to drag
+    # to the top is the one still missing a phone number.
+    reordenando = current[0].get("etapa_id") == body.para_etapa_id
+    if not reordenando:
+        pendentes = stage_gate.pendencias(ctx.db, ctx.org_id, current[0].get("cliente_id"))
+        if pendentes:
+            raise ValidationError_(stage_gate.mensagem(pendentes))
 
     row = move_card(
         ctx.db,
@@ -379,7 +397,11 @@ def mover_atendimento(
         card_id=atendimento_id,
         to_stage_id=body.para_etapa_id,
         user_id=ctx.user_id,
-        novo_indice=body.novo_indice,
+        nova_posicao=_posicao_para_indice(
+            ctx.db, "atendimentos", org_id=ctx.org_id,
+            etapa_id=body.para_etapa_id, indice=body.novo_indice,
+            card_id=atendimento_id,
+        ),
         motivo=body.motivo,
         org_id=ctx.org_id,
     )
@@ -552,7 +574,6 @@ def obter_processos(
             stages,
             rows,
             row_to_dto=processo_to_dto,
-            recency_first_stages=_intake_stage(stages),
         )
     )
 
@@ -595,7 +616,11 @@ def mover_processo(
         card_id=processo_id,
         to_stage_id=body.para_etapa_id,
         user_id=ctx.user_id,
-        novo_indice=body.novo_indice,
+        nova_posicao=_posicao_para_indice(
+            ctx.db, "processos_venda", org_id=ctx.org_id,
+            etapa_id=body.para_etapa_id, indice=body.novo_indice,
+            card_id=processo_id,
+        ),
         org_id=ctx.org_id,
     )
     return success_response(processo_to_dto(row))

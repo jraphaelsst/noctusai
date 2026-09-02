@@ -321,67 +321,6 @@ def test_group_orders_cards_by_kanban_pos(db):
     assert [c["id"] for c in proposta["cards"]] == ["n2", "n3"]
 
 
-def test_recency_stage_sorts_newest_first_ignoring_kanban_pos():
-    """The intake column answers "what just arrived" — `kanban_pos` is not it."""
-    rows = [
-        {"id": "old", "etapa_id": "s1", "kanban_pos": 0, "created_at": "2026-01-01T00:00:00Z"},
-        {"id": "new", "etapa_id": "s1", "kanban_pos": 9, "created_at": "2026-09-02T00:00:00Z"},
-        {"id": "mid", "etapa_id": "s1", "kanban_pos": 1, "created_at": "2026-05-01T00:00:00Z"},
-    ]
-    colunas = group_into_colunas(FUNIL, DEFAULT_STAGES, rows, recency_first_stages={"s1"})
-    # kanban_pos would have said old, mid, new — recency says the reverse.
-    assert [c["id"] for c in colunas[0]["cards"]] == ["new", "mid", "old"]
-
-
-def test_recency_leaves_every_other_column_hand_ordered():
-    """Opting one stage in must not silently reorder the rest of the board."""
-    rows = [
-        {"id": "a", "etapa_id": "s3", "kanban_pos": 0, "created_at": "2026-01-01T00:00:00Z"},
-        {"id": "b", "etapa_id": "s3", "kanban_pos": 1, "created_at": "2026-09-02T00:00:00Z"},
-    ]
-    colunas = group_into_colunas(FUNIL, DEFAULT_STAGES, rows, recency_first_stages={"s1"})
-    proposta = next(c for c in colunas if c["etapa"] == "s3")
-    # Newest is `b`, but s3 is NOT a recency stage — kanban_pos still rules.
-    assert [c["id"] for c in proposta["cards"]] == ["a", "b"]
-
-
-def test_recency_is_opt_in_default_is_unchanged():
-    """No `recency_first_stages` ⇒ byte-identical to the pre-seam behaviour,
-    which is what keeps every other product consuming this organ untouched."""
-    rows = [
-        {"id": "old", "etapa_id": "s1", "kanban_pos": 0, "created_at": "2026-01-01T00:00:00Z"},
-        {"id": "new", "etapa_id": "s1", "kanban_pos": 9, "created_at": "2026-09-02T00:00:00Z"},
-    ]
-    colunas = group_into_colunas(FUNIL, DEFAULT_STAGES, rows)
-    assert [c["id"] for c in colunas[0]["cards"]] == ["old", "new"]
-
-
-def test_recency_truncation_keeps_the_newest_not_an_arbitrary_window():
-    """🔴 The reason this lives server-side: `limite_cards` cuts AFTER the
-    sort, so the first N of a recency column are the N NEWEST cards. A
-    client-side sort could only reorder whatever window the server sent."""
-    rows = [
-        {"id": f"c{i}", "etapa_id": "s1", "kanban_pos": i, "created_at": f"2026-01-{i + 1:02d}T00:00:00Z"}
-        for i in range(5)
-    ]
-    colunas = group_into_colunas(
-        FUNIL, DEFAULT_STAGES, rows, recency_first_stages={"s1"}, limite_cards=2
-    )
-    assert [c["id"] for c in colunas[0]["cards"]] == ["c4", "c3"]
-    # `total` still counts the whole column — the display limit is not a
-    # silent under-report (the invariant the docstring calls out).
-    assert colunas[0]["total"] == 5
-
-
-def test_recency_card_without_created_at_sorts_last_not_crashes():
-    rows = [
-        {"id": "sem-data", "etapa_id": "s1", "kanban_pos": 0},
-        {"id": "com-data", "etapa_id": "s1", "kanban_pos": 1, "created_at": "2026-01-01T00:00:00Z"},
-    ]
-    colunas = group_into_colunas(FUNIL, DEFAULT_STAGES, rows, recency_first_stages={"s1"})
-    assert [c["id"] for c in colunas[0]["cards"]] == ["com-data", "sem-data"]
-
-
 def test_orphan_cards_are_reported_not_silently_dropped():
     rows = [{"id": "x", "etapa_id": "deleted-stage", "valor_estimado": 1}]
     assert group_into_colunas(FUNIL, DEFAULT_STAGES, rows)[0]["total"] == 0

@@ -12,9 +12,10 @@ its last card leaves is a board that reshapes itself under the user.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Collection
+from typing import Any, Callable
 
 from .config import PipelineConfig
+from .ordering import position_of
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,6 @@ def group_into_colunas(
     row_to_dto: Callable[[dict], dict] | None = None,
     value_of: Callable[[dict], float] | None = None,
     limite_cards: int | None = None,
-    recency_first_stages: Collection[str] | None = None,
 ) -> list[dict[str, Any]]:
     """One column per configured stage, cards bucketed by `etapa_id`.
 
@@ -62,25 +62,16 @@ def group_into_colunas(
     the money for 1.070. Truncating the counts too would turn a display limit
     into a silent under-report of the pipeline.
 
-    `recency_first_stages` names the stages that sort NEWEST-FIRST by
-    `created_at` instead of by `kanban_pos` — the intake column, where what
-    matters is "what just arrived", not an order somebody arranged by hand.
-    Opt-in and empty by default: every other column, and every board that does
-    not pass it, keeps the hand-arranged `kanban_pos` order untouched.
+    Cards sort by `kanban_pos` — a HAND-ARRANGED order a person owns, so this
+    function never second-guesses it. `created_at` is only the tiebreak for
+    cards that share a position.
 
-    🔴 It interacts with `limite_cards`, and that is the reason this belongs
-    HERE and not in the frontend. The truncation happens after this sort, so a
-    recency stage's "first 50" are the 50 NEWEST cards. Sorting client-side
-    would reorder only whichever 50 the server already chose by `kanban_pos` —
-    a column that claims to show the newest while showing an arbitrary window.
-
-    A recency stage is not hand-orderable, by construction — `kanban_pos` is
-    ignored there. That costs nothing today: `PipelineBoard.onMove` already
-    early-returns on a same-column drop (`fromStage === toStage`), so a
-    within-column reorder persists nothing on ANY column and resets on the
-    next fetch. `kanban_pos` only ever changes on a CROSS-stage move, which
-    this seam does not touch. Should a caller ever make within-column
-    reordering persistent, it must exclude these stages or the drag will lie.
+    A brief earlier version of this function force-sorted the intake column by
+    `created_at` so new arrivals showed on top. That is now done by GIVING a
+    new card a position above every other card (`ordering.position_on_top`)
+    rather than by overriding the sort. Same visible result, and it does not
+    take hand-arranged order away from the operator — which force-sorting did,
+    the moment reordering became persistent.
     """
     by_stage: dict[str, list[dict]] = {s["id"]: [] for s in stages}
     for row in rows:
@@ -112,18 +103,14 @@ def group_into_colunas(
             return value_of(card)
         return float(card.get(cfg.value_field) or 0)
 
-    recency = set(recency_first_stages or ())
-
     colunas = []
     for stage in stages:
         cards = by_stage[stage["id"]]
-        if stage["id"] in recency:
-            # Newest first. `created_at` is an ISO-8601 UTC string, so a plain
-            # reverse string sort IS chronological — no parsing needed. A row
-            # with no `created_at` sorts last rather than crashing the board.
-            cards.sort(key=lambda r: r.get("created_at") or "", reverse=True)
-        else:
-            cards.sort(key=lambda r: (r.get("kanban_pos", 0), r.get("created_at") or ""))
+        # `kanban_pos` may be int (integer column) or Decimal/str (numeric
+        # column, fractional positions) depending on the consumer's schema —
+        # PostgREST returns `numeric` as a STRING to keep precision, and
+        # sorting a mixed int/str list raises. `position_of` normalises both.
+        cards.sort(key=lambda r: (position_of(r), r.get("created_at") or ""))
         # Counts and money over the WHOLE column; only the card list is cut.
         total = len(cards)
         valor_total = sum(_valor(c) for c in cards)
