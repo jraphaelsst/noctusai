@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
+from noctusai_lib.api import StrictHttpModel
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
@@ -305,3 +306,64 @@ class ClientesInactivityConfigStatus(BaseModel):
     threshold_days: int
     configured: bool
     default_threshold_days: int
+
+
+# ─── API keys tab — operator-settable, encrypted at rest ───────────────
+# The read-only `KeysStatus` above stays: it is the health view of what
+# the DEPLOYMENT carries in its .env. These shapes are the additive,
+# per-org, operator-WRITABLE half (`app/services/api_keys_store.py`).
+class ApiKeyStatus(StrictHttpModel):
+    """One managed key's state — never the secret itself.
+
+    `hint` is a display-only echo: the last 4 characters for a secret
+    (`...b3f9`), the value in full for a non-secret (an e-mail address —
+    masking it buys no security and costs the operator the ability to
+    spot a typo). `source` says WHICH tier answered, which is what makes
+    a DELETE honest: dropping the local override can leave the key still
+    configured platform-wide, and the UI has to be able to say so.
+    """
+
+    key: str
+    label: str
+    description: str
+    is_secret: bool
+    testable: bool
+    input_type: str
+    placeholder: str
+    configured: bool
+    hint: str | None = None
+    #: `local` = this product's encrypted store · `platform` = a DB tier
+    #: of `resolve_credential` · `env` = the process environment ·
+    #: `None` = configured nowhere.
+    source: Literal["local", "platform", "env"] | None = None
+    #: Only ever set for the `local` tier — the platform chain does not
+    #: report when its value was written.
+    updated_at: datetime | None = None
+
+
+class ApiKeysStatus(StrictHttpModel):
+    """Outbound shape for GET /settings/api-keys."""
+
+    items: list[ApiKeyStatus]
+    total: int
+
+
+class ApiKeyUpdate(StrictHttpModel):
+    """Inbound payload for PUT /settings/api-keys/{key}.
+
+    Write-only: the value is never echoed back in any response. Blank is
+    rejected rather than treated as "clear" — clearing is DELETE, and
+    silently reinterpreting an empty save as a delete is how an operator
+    loses a working key to a stray Enter.
+    """
+
+    value: str = Field(min_length=1, max_length=4096)
+
+
+class ApiKeyTestResult(StrictHttpModel):
+    """Outcome of a live probe against the currently-resolved value."""
+
+    key: str
+    success: bool
+    #: pt-BR, operator-facing — shown verbatim in the UI.
+    message: str

@@ -530,3 +530,164 @@ export function useSaveInstagramApp() {
 
   return { save, saving };
 }
+
+// ─── API keys tab — operator-settable, encrypted at rest ────────────────
+// Additive to `useKeysStatus` above: that one is the read-only health view
+// of the DEPLOYMENT's .env. These three keys are set by the operator here,
+// Fernet-encrypted into `social_wiring.credentials`, and read back by the
+// certidões / matrículas workflows.
+
+/** Which tier answered. `local` = this product's encrypted store. */
+export type ApiKeySource = "local" | "platform" | "env";
+
+export interface ApiKeyStatus {
+  key: string;
+  label: string;
+  description: string;
+  is_secret: boolean;
+  testable: boolean;
+  input_type: string;
+  placeholder: string;
+  configured: boolean;
+  /**
+   * Display-only. Last 4 characters for a secret (`...b3f9`); the value in
+   * full for a non-secret (an e-mail). NEVER the secret itself — the
+   * backend does not have an endpoint that returns one.
+   */
+  hint: string | null;
+  /**
+   * `null` = configured nowhere. A non-`local` source after a removal is
+   * why the UI can say "ainda ativa pela plataforma" instead of lying that
+   * the key is gone.
+   */
+  source: ApiKeySource | null;
+  /** Only ever set for the `local` tier. */
+  updated_at: string | null;
+}
+
+export interface ApiKeysStatus {
+  items: ApiKeyStatus[];
+  total: number;
+}
+
+export interface ApiKeyTestResult {
+  key: string;
+  success: boolean;
+  /** pt-BR, operator-facing — render verbatim. */
+  message: string;
+}
+
+export const API_KEYS_QUERY_KEY = ["settings", "api-keys"] as const;
+
+/**
+ * useApiKeys — GET /api/settings/api-keys.
+ *
+ * Read is open to any authenticated org member; only writes are
+ * admin-gated (the same split every other org config on this router uses).
+ *
+ * 🔴 TWO loading signals, never `isLoading` and never a bare `isFetching`:
+ * `showSkeleton` is true only on the FIRST load (nothing to show yet), and
+ * `isRefreshing` is the quiet indicator for a refetch over data that is
+ * already on screen. Gating the card on `isFetching` alone would blank a
+ * populated list every time a save invalidates it.
+ */
+export function useApiKeys() {
+  const query = useQuery({
+    queryKey: API_KEYS_QUERY_KEY,
+    queryFn: () => api.get<ApiKeysStatus>("/api/settings/api-keys"),
+  });
+  return {
+    ...query,
+    showSkeleton: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
+}
+
+export interface ApiKeySave {
+  key: string;
+  value: string;
+}
+
+/**
+ * useSaveApiKey — PUT /api/settings/api-keys/{key}.
+ *
+ * Write-only: the backend never echoes the value back, so the caller's
+ * input must be cleared on success rather than re-populated from the
+ * response. Admin-gated on the backend — callers check the role before
+ * rendering the controls (a non-admin submit would only surface a 403).
+ */
+export function useSaveApiKey() {
+  const qc = useQueryClient();
+  return useMutation<ApiKeyStatus, unknown, ApiKeySave>({
+    mutationFn: ({ key, value }) =>
+      api.put<ApiKeyStatus>(
+        `/api/settings/api-keys/${encodeURIComponent(key)}`,
+        { value }
+      ),
+    onSuccess: (data) => {
+      toast.success(`${data.label} salva com sucesso.`);
+      void qc.invalidateQueries({ queryKey: API_KEYS_QUERY_KEY });
+    },
+    onError: (err: any) => {
+      toast.error(err?.message ?? "Falha ao salvar a chave.");
+    },
+  });
+}
+
+/**
+ * useRemoveApiKey — DELETE /api/settings/api-keys/{key}.
+ *
+ * Drops this org's LOCAL override only. The response is the RE-RESOLVED
+ * status, so when the platform/env tier still answers the toast says the
+ * key is still active instead of claiming it was removed — an operator
+ * told "removida" over a live key stops looking for the real source.
+ */
+export function useRemoveApiKey() {
+  const qc = useQueryClient();
+  return useMutation<ApiKeyStatus, unknown, string>({
+    mutationFn: (key) =>
+      api.delete<ApiKeyStatus>(
+        `/api/settings/api-keys/${encodeURIComponent(key)}`
+      ),
+    onSuccess: (data) => {
+      if (data.configured) {
+        toast.success(
+          `${data.label}: override local removido — ainda configurada fora deste produto.`
+        );
+      } else {
+        toast.success(`${data.label} removida.`);
+      }
+      void qc.invalidateQueries({ queryKey: API_KEYS_QUERY_KEY });
+    },
+    onError: (err: any) => {
+      toast.error(err?.message ?? "Falha ao remover a chave.");
+    },
+  });
+}
+
+/**
+ * useTestApiKey — POST /api/settings/api-keys/{key}/test.
+ *
+ * Probes the value the WORKFLOWS would resolve (same two-tier chain), so a
+ * green result means this org's certidões run will work — not that some key
+ * somewhere is valid. A failed probe is a normal outcome, not an exception:
+ * it comes back `success: false` with a pt-BR message to render inline.
+ */
+export function useTestApiKey() {
+  return useMutation<ApiKeyTestResult, unknown, string>({
+    mutationFn: (key) =>
+      api.post<ApiKeyTestResult>(
+        `/api/settings/api-keys/${encodeURIComponent(key)}/test`,
+        {}
+      ),
+    onSuccess: (data) => {
+      if (data.success) toast.success(data.message);
+      else toast.error("Teste falhou", { description: data.message });
+    },
+    onError: (err: any) => {
+      toast.error("Teste falhou", {
+        description: err?.message ?? "Erro desconhecido.",
+      });
+    },
+  });
+}

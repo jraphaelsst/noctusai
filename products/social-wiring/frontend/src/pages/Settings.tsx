@@ -2,7 +2,9 @@
  * Settings page — multi-tab configuration cockpit.
  *
  *   Notifications tab    SMTP + WAHA status (read-only) + recipient CRUD
- *   API Keys tab         Read-only health badges from /api/settings/keys/status
+ *   API Keys tab         Org keys the operator SETS here (encrypted at rest,
+ *                         /api/settings/api-keys) + read-only health badges
+ *                         for the deployment's .env (/api/settings/keys/status)
  *   Clientes tab         Inactivity-sweep threshold (D16) — read open to any
  *                         org member, write admin-gated (see ClientesInactivityTab)
  *
@@ -21,6 +23,8 @@ import {
   Mail,
   MessageCircle,
   KeyRound,
+  Pencil,
+  Plug,
   RotateCcw,
   ShieldCheck,
   CalendarDays,
@@ -42,6 +46,13 @@ import { api } from "@/lib/api";
 import {
   useRecipients,
   useKeysStatus,
+  useApiKeys,
+  useSaveApiKey,
+  useRemoveApiKey,
+  useTestApiKey,
+  type ApiKeySource,
+  type ApiKeyStatus,
+  type ApiKeyTestResult,
   useMetaAppStatus,
   useSaveMetaApp,
   useInstagramAppStatus,
@@ -445,28 +456,342 @@ function CalendarCard() {
   );
 }
 
-function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
+// ─── API keys tab ───────────────────────────────────────────────────────
+// TWO halves in one card, on purpose:
+//   · the MANAGED keys — set here, encrypted at rest, per-org. These are
+//     what the certidões / matrículas workflows resolve.
+//   · the ENVIRONMENT health list — read-only status of what the running
+//     deployment carries in its .env. Kept, not replaced: it is the only
+//     place an operator can see that e.g. WAHA or SMTP is unwired.
+const API_KEY_SOURCE_LABEL: Record<ApiKeySource, string> = {
+  local: "salva neste produto",
+  platform: "configurada na plataforma",
+  env: "vinda do ambiente (.env)",
+};
+
+function ManagedApiKeyRow({
+  item,
+  canEdit,
+}: {
+  item: ApiKeyStatus;
+  canEdit: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [testResult, setTestResult] = useState<ApiKeyTestResult | null>(null);
+
+  const save = useSaveApiKey();
+  const remove = useRemoveApiKey();
+  const test = useTestApiKey();
+
+  const cancel = () => {
+    setEditing(false);
+    setValue("");
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!value.trim()) {
+      toast.error("Informe um valor.");
+      return;
+    }
+    try {
+      await save.mutateAsync({ key: item.key, value: value.trim() });
+      // Write-only: the backend never returns the value, so the field is
+      // cleared rather than re-populated from the response.
+      cancel();
+      setTestResult(null);
+    } catch {
+      /* toast already surfaced by the hook's onError */
+    }
+  };
+
+  const handleRemove = async () => {
+    try {
+      await remove.mutateAsync(item.key);
+      setTestResult(null);
+    } catch {
+      /* toast already surfaced by the hook's onError */
+    }
+  };
+
+  const handleTest = async () => {
+    setTestResult(null);
+    try {
+      setTestResult(await test.mutateAsync(item.key));
+    } catch (err: any) {
+      setTestResult({
+        key: item.key,
+        success: false,
+        message: err?.message ?? "Erro desconhecido.",
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-2 px-4 py-3" data-testid={`api-key-${item.key}`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <p className="font-medium text-sm">{item.label}</p>
+          <p className="text-xs text-muted-foreground">{item.description}</p>
+        </div>
+        <Badge
+          variant={item.configured ? "default" : "secondary"}
+          className="gap-1 shrink-0 text-[11px]"
+          data-testid={`api-key-badge-${item.key}`}
+        >
+          {item.configured ? (
+            <CheckCircle2 className="h-3 w-3" />
+          ) : (
+            <CircleAlert className="h-3 w-3" />
+          )}
+          {item.configured ? "configurada" : "não configurada"}
+        </Badge>
+      </div>
+
+      {item.configured && !editing && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <code
+            className="rounded bg-muted px-2 py-1 font-mono"
+            data-testid={`api-key-hint-${item.key}`}
+          >
+            {item.hint}
+          </code>
+          {item.source && (
+            <span
+              className="text-muted-foreground"
+              data-testid={`api-key-source-${item.key}`}
+            >
+              {API_KEY_SOURCE_LABEL[item.source]}
+            </span>
+          )}
+        </div>
+      )}
+
+      {!editing && (
+        <div className="flex flex-wrap items-center gap-2">
+          {canEdit && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setEditing(true)}
+              data-testid={`api-key-edit-${item.key}`}
+            >
+              <Pencil className="mr-1 h-3.5 w-3.5" />
+              {item.configured ? "Substituir" : "Configurar"}
+            </Button>
+          )}
+          {/* Removal only makes sense for a LOCAL override — a platform /
+              .env value is not this screen's to delete, and offering the
+              button would promise something the endpoint cannot do. */}
+          {canEdit && item.source === "local" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-red-600"
+              onClick={handleRemove}
+              disabled={remove.isPending}
+              data-testid={`api-key-remove-${item.key}`}
+            >
+              {remove.isPending ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="mr-1 h-3.5 w-3.5" />
+              )}
+              Remover
+            </Button>
+          )}
+          {item.testable && item.configured && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={handleTest}
+              disabled={test.isPending}
+              data-testid={`api-key-test-${item.key}`}
+            >
+              {test.isPending ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Plug className="mr-1 h-3.5 w-3.5" />
+              )}
+              {test.isPending ? "Testando..." : "Testar"}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {editing && (
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={submit}
+          data-testid={`api-key-form-${item.key}`}
+        >
+          <Input
+            autoFocus
+            type={item.input_type}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") cancel();
+            }}
+            placeholder={item.placeholder}
+            className="h-8 flex-1 min-w-[220px] text-sm"
+            data-testid={`api-key-input-${item.key}`}
+          />
+          <Button
+            type="submit"
+            size="sm"
+            className="h-8 text-xs"
+            disabled={save.isPending || !value.trim()}
+          >
+            {save.isPending ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : null}
+            {save.isPending ? "Salvando..." : "Salvar"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-8 text-xs"
+            onClick={cancel}
+          >
+            Cancelar
+          </Button>
+        </form>
+      )}
+
+      {testResult && !editing && (
+        <p
+          className={`text-xs font-medium ${
+            testResult.success ? "text-green-600" : "text-red-600"
+          }`}
+          data-testid={`api-key-test-result-${item.key}`}
+        >
+          {testResult.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ManagedApiKeysSection({ canEdit }: { canEdit: boolean }) {
+  // 🔴 Two signals, never `isLoading`: the skeleton is for the FIRST load
+  // only; a refetch over data already on screen shows a quiet indicator
+  // instead of blanking the list.
+  const { data, showSkeleton, isRefreshing, isError, refetch } = useApiKeys();
+
+  if (showSkeleton) {
+    return (
+      <div
+        className="flex items-center justify-center p-8"
+        data-testid="api-keys-skeleton"
+      >
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isError && !data) {
+    return (
+      <div className="space-y-2 p-6 text-center" data-testid="api-keys-error">
+        <p className="text-sm text-muted-foreground">
+          Nao foi possivel carregar as chaves configuraveis.
+        </p>
+        <Button variant="outline" size="sm" onClick={() => void refetch()}>
+          <RotateCcw className="mr-1 h-3.5 w-3.5" />
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
+
+  const items = data?.items ?? [];
+  if (items.length === 0) {
+    return (
+      <p className="p-6 text-center text-sm text-muted-foreground">
+        Nenhuma chave configuravel neste produto.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium">Configuraveis nesta tela</p>
+        {isRefreshing && (
+          <span
+            className="flex items-center gap-1 text-xs text-muted-foreground"
+            data-testid="api-keys-refreshing"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" />
+            atualizando
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Salvas criptografadas e usadas pelas rotinas de certidoes, matriculas
+        e IA desta organizacao.
+        {!canEdit && " Somente owner/admin podem alterar."}
+      </p>
+      <div className="divide-y rounded-md border">
+        {items.map((item) => (
+          <ManagedApiKeyRow key={item.key} item={item} canEdit={canEdit} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EnvKeysHealthList() {
   const { data, loading } = useKeysStatus();
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-12">
+      <div className="flex items-center justify-center p-8">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );
   }
   if (!data) {
     return (
-      <p className="p-12 text-center text-sm text-muted-foreground">
+      <p className="p-6 text-center text-sm text-muted-foreground">
         Nao foi possivel carregar o status das chaves.
       </p>
     );
   }
 
-  const entries: [keyof typeof data, KeyStatusEntry][] = (
-    Object.entries(data) as [keyof typeof data, KeyStatusEntry][]
-  );
+  const entries: [keyof typeof data, KeyStatusEntry][] = Object.entries(
+    data
+  ) as [keyof typeof data, KeyStatusEntry][];
 
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">Status do ambiente (.env)</p>
+      <p className="text-xs text-muted-foreground">
+        Somente leitura. Para alterar, edite o arquivo e reinicie o backend.
+      </p>
+      <div className="divide-y rounded-md border">
+        {entries.map(([key, entry]) => (
+          <div
+            key={key}
+            className="flex items-start justify-between gap-4 px-4 py-3"
+          >
+            <div className="flex flex-1 flex-col">
+              <p className="font-medium">{entry.label}</p>
+              <p className="text-xs text-muted-foreground">{entry.description}</p>
+            </div>
+            <HealthBadge entry={entry} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
   return (
     <div className="space-y-6">
       <CalendarCard />
@@ -477,27 +802,16 @@ function ApiKeysTab({ isAdminOrDev }: { isAdminOrDev: boolean }) {
             <div>
               <CardTitle>Chaves de API</CardTitle>
               <CardDescription>
-                Status (somente leitura) das credenciais lidas do .env. Para
-                alterar, edite o arquivo e reinicie o backend.
+                Chaves da organizacao, salvas criptografadas neste produto —
+                mais o status (somente leitura) do que o ambiente carrega.
               </CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="divide-y rounded-md border">
-            {entries.map(([key, entry]) => (
-              <div
-                key={key}
-                className="flex items-start justify-between gap-4 px-4 py-3"
-              >
-                <div className="flex flex-1 flex-col">
-                  <p className="font-medium">{entry.label}</p>
-                  <p className="text-xs text-muted-foreground">{entry.description}</p>
-                </div>
-                <HealthBadge entry={entry} />
-              </div>
-            ))}
-          </div>
+        <CardContent className="space-y-6">
+          <ManagedApiKeysSection canEdit={isAdminOrDev} />
+          <Separator />
+          <EnvKeysHealthList />
         </CardContent>
       </Card>
 

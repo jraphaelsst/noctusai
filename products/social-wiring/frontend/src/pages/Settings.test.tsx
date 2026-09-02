@@ -100,6 +100,14 @@ const mockResetRetencao = vi.fn();
 const mockUseCalendarStatus = vi.fn();
 const mockFetchCalendarAuthUrl = vi.fn();
 
+// The operator-settable API keys card (encrypted per-org store). Defaults
+// to "three keys, none configured" so every OTHER suite in this file renders
+// the tab without caring about it; the api-keys tests override per-case.
+const mockUseApiKeys = vi.fn();
+const mockSaveApiKey = vi.fn();
+const mockRemoveApiKey = vi.fn();
+const mockTestApiKey = vi.fn();
+
 vi.mock("@/hooks/useSettings", () => ({
   useRecipients: mockUseRecipients,
   useKeysStatus: mockUseKeysStatus,
@@ -117,6 +125,10 @@ vi.mock("@/hooks/useSettings", () => ({
   useResetDocumentoRetencao: () => ({ mutate: mockResetRetencao, isPending: false }),
   useCalendarStatus: mockUseCalendarStatus,
   fetchCalendarAuthUrl: mockFetchCalendarAuthUrl,
+  useApiKeys: mockUseApiKeys,
+  useSaveApiKey: () => ({ mutateAsync: mockSaveApiKey, isPending: false }),
+  useRemoveApiKey: () => ({ mutateAsync: mockRemoveApiKey, isPending: false }),
+  useTestApiKey: () => ({ mutateAsync: mockTestApiKey, isPending: false }),
 }));
 
 // `useMarcas` calls TanStack's `useQuery` directly, so without a
@@ -182,6 +194,36 @@ const RETENCAO_FGTS = {
   ancora_rotulo: "a partir do encerramento do atendimento",
   atualizado_em: null,
   atualizado_por: null,
+};
+
+// Managed-API-key fixtures. `apiKey(...)` starts from the unconfigured
+// shape because that is what a fresh org actually sees.
+const apiKey = (over: Partial<any> & { key: string }) => ({
+  label: over.key,
+  description: `Descrição de ${over.key}`,
+  is_secret: true,
+  testable: false,
+  input_type: "password",
+  placeholder: "...",
+  configured: false,
+  hint: null,
+  source: null,
+  updated_at: null,
+  ...over,
+});
+
+const API_KEYS_UNCONFIGURED = {
+  items: [
+    apiKey({ key: "openai_api_key", label: "OpenAI API Key", testable: true }),
+    apiKey({ key: "infosimples_token", label: "InfoSimples Token", testable: true }),
+    apiKey({
+      key: "infosimples_email_envio",
+      label: "E-mail de Envio (TJSP)",
+      is_secret: false,
+      input_type: "email",
+    }),
+  ],
+  total: 3,
 };
 
 const RETENCAO_CONTRATO = {
@@ -254,6 +296,18 @@ beforeEach(() => {
     refetch: vi.fn(),
   });
   mockSaveInactivity.mockReset();
+  mockSaveApiKey.mockReset();
+  mockSaveApiKey.mockResolvedValue(API_KEYS_UNCONFIGURED.items[0]);
+  mockRemoveApiKey.mockReset();
+  mockRemoveApiKey.mockResolvedValue(API_KEYS_UNCONFIGURED.items[0]);
+  mockTestApiKey.mockReset();
+  mockUseApiKeys.mockReturnValue({
+    data: API_KEYS_UNCONFIGURED,
+    showSkeleton: false,
+    isRefreshing: false,
+    isError: false,
+    refetch: vi.fn(),
+  });
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -793,5 +847,287 @@ describe("Settings — Google Calendar", () => {
     });
     const { getByTestId } = await renderSettingsOnKeysTab();
     expect(getByTestId("calendar-error")).toBeTruthy();
+  });
+});
+
+// ─── Managed API keys card (encrypted, per-org) ──────────────────────────
+// The half of the "Chaves de API" card the operator can WRITE. The .env
+// health list below it stays read-only and is asserted here too, because
+// the whole point of the redesign was that adding the editable half must
+// not cost the environment view.
+
+const CONFIGURED_LOCAL = {
+  items: [
+    apiKey({
+      key: "openai_api_key",
+      label: "OpenAI API Key",
+      testable: true,
+      configured: true,
+      hint: "...b3f9",
+      source: "local",
+      updated_at: "2026-09-01T12:00:00Z",
+    }),
+    apiKey({ key: "infosimples_token", label: "InfoSimples Token", testable: true }),
+    apiKey({
+      key: "infosimples_email_envio",
+      label: "E-mail de Envio (TJSP)",
+      is_secret: false,
+      input_type: "email",
+      configured: true,
+      hint: "juridico@empresa.com.br",
+      source: "local",
+    }),
+  ],
+  total: 3,
+};
+
+describe("Settings — managed API keys card", () => {
+  it("lists every managed key with an unconfigured badge", async () => {
+    setUser("owner");
+    const { getByTestId } = await renderSettingsOnKeysTab();
+    for (const key of [
+      "openai_api_key",
+      "infosimples_token",
+      "infosimples_email_envio",
+    ]) {
+      expect(getByTestId(`api-key-${key}`)).toBeTruthy();
+      expect(getByTestId(`api-key-badge-${key}`).textContent).toContain(
+        "não configurada"
+      );
+    }
+  });
+
+  it("keeps the read-only .env health view alongside the editable keys", async () => {
+    setUser("owner");
+    const { getByText } = await renderSettingsOnKeysTab();
+    expect(getByText("Status do ambiente (.env)")).toBeTruthy();
+    // A key that only exists in the .env view, not in the managed set.
+    expect(getByText("WAHA base URL")).toBeTruthy();
+  });
+
+  it("shows the masked tail and where the value came from", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: CONFIGURED_LOCAL,
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, getByText } = await renderSettingsOnKeysTab();
+    expect(getByTestId("api-key-hint-openai_api_key").textContent).toBe("...b3f9");
+    expect(getByTestId("api-key-badge-openai_api_key").textContent).toContain(
+      "configurada"
+    );
+    expect(getByTestId("api-key-source-openai_api_key").textContent).toBe(
+      "salva neste produto"
+    );
+  });
+
+  it("shows a non-secret value in full — masking an e-mail hides typos", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: CONFIGURED_LOCAL,
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId } = await renderSettingsOnKeysTab();
+    expect(getByTestId("api-key-hint-infosimples_email_envio").textContent).toBe(
+      "juridico@empresa.com.br"
+    );
+  });
+
+  it("hides every control from a non-admin but still shows the status", async () => {
+    setUser("member");
+    mockUseApiKeys.mockReturnValue({
+      data: CONFIGURED_LOCAL,
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { queryByTestId, getByTestId, getByText } =
+      await renderSettingsOnKeysTab();
+    expect(getByTestId("api-key-openai_api_key")).toBeTruthy();
+    expect(queryByTestId("api-key-edit-openai_api_key")).toBeNull();
+    expect(queryByTestId("api-key-remove-openai_api_key")).toBeNull();
+    expect(getByText(/Somente owner\/admin podem alterar/)).toBeTruthy();
+  });
+
+  it("offers removal only for a LOCAL override, never for a platform value", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: {
+        items: [
+          apiKey({
+            key: "openai_api_key",
+            label: "OpenAI API Key",
+            configured: true,
+            hint: "...b3f9",
+            source: "platform",
+          }),
+        ],
+        total: 1,
+      },
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { queryByTestId, getByTestId } = await renderSettingsOnKeysTab();
+    expect(queryByTestId("api-key-remove-openai_api_key")).toBeNull();
+    expect(getByTestId("api-key-source-openai_api_key").textContent).toBe(
+      "configurada na plataforma"
+    );
+  });
+});
+
+describe("Settings — managed API keys save flow", () => {
+  it("saves the typed value for the right key and clears the field", async () => {
+    setUser("owner");
+    const { getByTestId, queryByTestId, fireEvent } =
+      await renderSettingsOnKeysTab();
+    fireEvent.click(getByTestId("api-key-edit-infosimples_token"));
+    fireEvent.change(getByTestId("api-key-input-infosimples_token"), {
+      target: { value: "  tok-abcdef  " },
+    });
+    fireEvent.submit(getByTestId("api-key-form-infosimples_token"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSaveApiKey).toHaveBeenCalledWith({
+      key: "infosimples_token",
+      value: "tok-abcdef",
+    });
+    // Write-only: the form closes and the value is never re-rendered.
+    expect(queryByTestId("api-key-input-infosimples_token")).toBeNull();
+  });
+
+  it("does not call save when the field is empty", async () => {
+    setUser("owner");
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    fireEvent.click(getByTestId("api-key-edit-infosimples_token"));
+    fireEvent.submit(getByTestId("api-key-form-infosimples_token"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockSaveApiKey).not.toHaveBeenCalled();
+  });
+
+  it("removes the local override for the right key", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: CONFIGURED_LOCAL,
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    fireEvent.click(getByTestId("api-key-remove-openai_api_key"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockRemoveApiKey).toHaveBeenCalledWith("openai_api_key");
+  });
+});
+
+describe("Settings — managed API keys test probe", () => {
+  it("offers a probe only for a testable key that is configured", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: CONFIGURED_LOCAL,
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    expect(getByTestId("api-key-test-openai_api_key")).toBeTruthy();
+    // configured but not testable
+    expect(queryByTestId("api-key-test-infosimples_email_envio")).toBeNull();
+    // testable but not configured
+    expect(queryByTestId("api-key-test-infosimples_token")).toBeNull();
+  });
+
+  it("renders the probe's pt-BR message inline, success or failure", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: CONFIGURED_LOCAL,
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    mockTestApiKey.mockResolvedValue({
+      key: "openai_api_key",
+      success: false,
+      message: "API Key inválida ou expirada.",
+    });
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    fireEvent.click(getByTestId("api-key-test-openai_api_key"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockTestApiKey).toHaveBeenCalledWith("openai_api_key");
+    expect(
+      getByTestId("api-key-test-result-openai_api_key").textContent
+    ).toContain("API Key inválida ou expirada.");
+  });
+});
+
+describe("Settings — managed API keys loading + error states", () => {
+  it("shows a skeleton only on the FIRST load, never over existing data", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: undefined,
+      showSkeleton: true,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    expect(getByTestId("api-keys-skeleton")).toBeTruthy();
+    expect(queryByTestId("api-key-openai_api_key")).toBeNull();
+  });
+
+  it("keeps the list on screen while refetching, with a quiet indicator", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: CONFIGURED_LOCAL,
+      showSkeleton: false,
+      isRefreshing: true,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    // 🔴 The regression this guards: gating on `isFetching` alone would
+    // blank a populated list on every save-triggered invalidation.
+    expect(getByTestId("api-key-openai_api_key")).toBeTruthy();
+    expect(getByTestId("api-keys-refreshing")).toBeTruthy();
+    expect(queryByTestId("api-keys-skeleton")).toBeNull();
+  });
+
+  it("says the load failed and offers a retry", async () => {
+    setUser("owner");
+    const refetch = vi.fn();
+    mockUseApiKeys.mockReturnValue({
+      data: undefined,
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: true,
+      refetch,
+    });
+    const { getByTestId, getByText, fireEvent } = await renderSettingsOnKeysTab();
+    expect(getByTestId("api-keys-error")).toBeTruthy();
+    fireEvent.click(getByText("Tentar novamente"));
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("says so when the product manages no keys at all", async () => {
+    setUser("owner");
+    mockUseApiKeys.mockReturnValue({
+      data: { items: [], total: 0 },
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByText } = await renderSettingsOnKeysTab();
+    expect(getByText("Nenhuma chave configuravel neste produto.")).toBeTruthy();
   });
 });

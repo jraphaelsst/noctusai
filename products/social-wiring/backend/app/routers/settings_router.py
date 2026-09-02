@@ -43,6 +43,10 @@ from app.dependencies import (
     get_user_client,
 )
 from app.schemas.settings import (
+    ApiKeyStatus,
+    ApiKeyTestResult,
+    ApiKeyUpdate,
+    ApiKeysStatus,
     ClientesInactivityConfigStatus,
     DocumentoRetencaoLista,
     DocumentoRetencaoPolitica,
@@ -81,6 +85,17 @@ from noctusai_lib.integrations.vista import (
     VistaError as CRMServiceError,
     VistaNotConfigured as CRMNotConfigured,
     VistaRESTAdapter as CRMService,
+)
+from app.services.api_keys_store import (
+    API_KEY_SPECS,
+    MANAGED_API_KEYS,
+    ApiKeySpec,
+    build_api_key_store,
+    delete_api_key,
+    get_spec as get_api_key_spec,
+    mask_value as mask_api_key_value,
+    put_api_key,
+    resolve_api_key_detail,
 )
 from app.services.credential_vault import EncryptionNotConfigured
 from app.services.email_service import EmailNotConfigured, EmailService, EmailServiceError
@@ -944,3 +959,273 @@ def reset_documento_retencao(
 
 # Re-export both routers — main.py registers them via routers=[...].
 __all__ = ["router"]
+
+
+# ─── API keys tab — operator-settable, encrypted, per-org ──────────────
+# Additive to the read-only `/keys/status` health view above: those are
+# the DEPLOYMENT's .env values; these three are set by the operator in
+# the UI, Fernet-encrypted into `social_wiring.credentials`, and read
+# back by the certidões / matrículas workflows through
+# `api_keys_store.resolve_api_key`.
+#
+# Same idiom as the Meta / Instagram app-config pair: admin-gated write,
+# write-only secret (never echoed), masked "currently set" hint, and a
+# read path that survives a missing ENCRYPTION_KEY because the platform
+# tier can still answer.
+def get_api_key_store_dep():
+    """DI seam for the WRITE paths — maps a missing/malformed
+    ``ENCRYPTION_KEY`` to a 503 config-gap rather than persisting
+    plaintext. Tests override with a ``FakeCredentialStore``."""
+    try:
+        return build_api_key_store()
+    except EncryptionNotConfigured as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
+
+def get_api_key_store_optional_dep():
+    """Same store for the READ paths, ``None`` instead of raising when
+    ``ENCRYPTION_KEY`` is missing/malformed — an unconfigured Fernet key
+    is a valid state there (platform-tier-only resolution)."""
+    try:
+        return build_api_key_store()
+    except EncryptionNotConfigured:
+        return None
+
+
+def _api_key_spec_or_404(key: str) -> ApiKeySpec:
+    spec = get_api_key_spec(key)
+    if spec is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"'{key}' não é uma chave gerenciável. "
+                f"Disponíveis: {', '.join(MANAGED_API_KEYS)}."
+            ),
+        )
+    return spec
+
+
+def _api_key_status(spec: ApiKeySpec, org_id, store) -> ApiKeyStatus:
+    """Resolve one key and project it onto the wire shape — value out,
+    only a masked hint in."""
+    resolution = resolve_api_key_detail(spec.name, str(org_id), store=store)
+    return ApiKeyStatus(
+        key=spec.name,
+        label=spec.label,
+        description=spec.description,
+        is_secret=spec.is_secret,
+        testable=spec.testable,
+        input_type=spec.input_type,
+        placeholder=spec.placeholder,
+        configured=resolution.configured,
+        hint=mask_api_key_value(resolution.value, spec),
+        source=resolution.source,
+        updated_at=resolution.updated_at,
+    )
+
+
+@router.get("/api-keys", response_model=ApiKeysStatus)
+def list_api_keys(
+    auth: tuple = Depends(get_current_user_org),
+    store=Depends(get_api_key_store_optional_dep),
+) -> ApiKeysStatus:
+    """Which managed keys this org has, and from WHERE.
+
+    Read is open to any authenticated org member (same split every other
+    org config on this router uses — only the write is admin-gated).
+    Never returns a secret: `hint` is a last-4 tail for secrets, the
+    plain value only for the non-secret e-mail field.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    items = [_api_key_status(spec, org_id, store) for spec in API_KEY_SPECS]
+    return ApiKeysStatus(items=items, total=len(items))
+
+
+@router.put("/api-keys/{key}", response_model=ApiKeyStatus)
+def update_api_key(
+    key: str,
+    payload: ApiKeyUpdate,
+    auth: tuple = Depends(get_current_user_org),
+    store=Depends(get_api_key_store_dep),
+) -> ApiKeyStatus:
+    """Admin-gated write. Encrypts + upserts into
+    ``social_wiring.credentials`` under provider ``api_key:<key>``.
+
+    Write-only: the response is the recomputed status, never the value.
+    A blank value is a 422 from the schema rather than a silent delete.
+    """
+    user, _token, raw_org = auth
+    _require_admin(user, "Chaves de API")
+    spec = _api_key_spec_or_404(key)
+    org_id = coerce_org_uuid(raw_org)
+
+    value = payload.value.strip()
+    if not value:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Informe um valor. Para limpar a chave, use remover.",
+        )
+    put_api_key(store, str(org_id), spec.name, value)
+    logger.info(
+        "api_keys: %s updated for org %s by %s",
+        spec.name,
+        org_id,
+        getattr(user, "id", "unknown"),
+    )
+    return _api_key_status(spec, org_id, store)
+
+
+@router.delete("/api-keys/{key}", response_model=ApiKeyStatus)
+def remove_api_key(
+    key: str,
+    auth: tuple = Depends(get_current_user_org),
+    store=Depends(get_api_key_store_dep),
+) -> ApiKeyStatus:
+    """Admin-gated removal of this org's LOCAL override.
+
+    Returns the RE-RESOLVED status on purpose: the platform / env tier
+    may still answer, and a response that just said "removed" would tell
+    the operator the key is gone when it is still live. `configured` +
+    `source` in the body are what the UI says out loud.
+    """
+    user, _token, raw_org = auth
+    _require_admin(user, "Chaves de API")
+    spec = _api_key_spec_or_404(key)
+    org_id = coerce_org_uuid(raw_org)
+
+    removed = delete_api_key(store, str(org_id), spec.name)
+    logger.info(
+        "api_keys: %s local override %s for org %s",
+        spec.name,
+        "removed" if removed else "was already absent",
+        org_id,
+    )
+    return _api_key_status(spec, org_id, store)
+
+
+async def _test_openai_key(value: str) -> ApiKeyTestResult:
+    """Probe an OpenAI key with a one-token chat completion.
+
+    Ported from `erp-imobiliario`'s `_test_openai`, with ONE deliberate
+    difference: it calls the API directly with the value we just
+    resolved, instead of going through `noctusai_lib.integrations.llm`.
+    The seed wrapper resolves its own key via the product's
+    `LLMConfig.key_provider`, which today is the seed default
+    (`resolve_credential` alone) — so it would probe a DIFFERENT key
+    than the one the operator just saved here, and report a green test
+    for a key that is not the one under test. Chat-completions rather
+    than `/v1/models` because some scoped keys pass the latter and still
+    cannot run inference (the reason ERP moved off it).
+    """
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {value}"},
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                },
+                timeout=20.0,
+            )
+    except Exception as exc:  # noqa: BLE001 — surfaced to the operator verbatim
+        logger.warning("api_keys: OpenAI probe failed to connect (%s)", exc)
+        return ApiKeyTestResult(
+            key="openai_api_key", success=False, message=f"Erro de conexão: {exc}"
+        )
+    if resp.status_code == 401:
+        return ApiKeyTestResult(
+            key="openai_api_key",
+            success=False,
+            message="API Key inválida ou expirada.",
+        )
+    if resp.status_code >= 400:
+        return ApiKeyTestResult(
+            key="openai_api_key",
+            success=False,
+            message=f"Erro inesperado: HTTP {resp.status_code}.",
+        )
+    return ApiKeyTestResult(
+        key="openai_api_key", success=True, message="Conexão com OpenAI bem-sucedida."
+    )
+
+
+async def _test_infosimples_key(value: str) -> ApiKeyTestResult:
+    """Probe an InfoSimples token via the lightweight PGFN consulta.
+
+    Ported verbatim in behavior from `erp-imobiliario`'s
+    `_test_infosimples`: a 4xx `code` in the JSON body is InfoSimples'
+    way of reporting an auth failure (the HTTP status stays 200), so the
+    body is what decides success.
+    """
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.get(
+                "https://api.infosimples.com/api/v2/consultas/receita-federal/pgfn",
+                params={"token": value, "cpf": "00000000000", "timeout": "5"},
+                timeout=20.0,
+            )
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001 — surfaced to the operator verbatim
+        logger.warning("api_keys: InfoSimples probe failed (%s)", exc)
+        return ApiKeyTestResult(
+            key="infosimples_token", success=False, message=f"Erro de conexão: {exc}"
+        )
+    code = data.get("code") if isinstance(data, dict) else None
+    if isinstance(code, int) and 400 <= code < 500:
+        message = (
+            data.get("message")
+            or data.get("code_message")
+            or f"Erro de autenticação (code: {code})"
+        )
+        return ApiKeyTestResult(
+            key="infosimples_token", success=False, message=message
+        )
+    return ApiKeyTestResult(
+        key="infosimples_token",
+        success=True,
+        message="Conexão com InfoSimples bem-sucedida.",
+    )
+
+
+_API_KEY_TESTERS = {
+    "openai_api_key": _test_openai_key,
+    "infosimples_token": _test_infosimples_key,
+}
+
+
+@router.post("/api-keys/{key}/test", response_model=ApiKeyTestResult)
+async def test_api_key(
+    key: str,
+    auth: tuple = Depends(get_current_user_org),
+    store=Depends(get_api_key_store_optional_dep),
+) -> ApiKeyTestResult:
+    """Live probe of the value that would actually be used.
+
+    Resolves through the SAME two-tier chain the workflows use, so a
+    green result means "the value this org's certidões run will pick up
+    works" — not "some key somewhere works".
+    """
+    _user, _token, raw_org = auth
+    spec = _api_key_spec_or_404(key)
+    tester = _API_KEY_TESTERS.get(spec.name)
+    if tester is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Teste não disponível para '{spec.name}'.",
+        )
+    org_id = coerce_org_uuid(raw_org)
+    value = resolve_api_key_detail(spec.name, str(org_id), store=store).value
+    if not value:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"{spec.label} não está configurada. "
+                "Configure em Configurações → Chaves de API."
+            ),
+        )
+    return await tester(value)
