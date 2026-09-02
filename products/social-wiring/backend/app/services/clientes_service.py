@@ -462,6 +462,10 @@ def _reconcile_against_existing(
 
         if target is not None:
             _attach_touches(client, org_id, target["id"], members, report, dry_run=dry_run)
+            # An already-resolved person picks up contact data that only
+            # arrived on this later touch — fill-if-empty, so nothing an
+            # operator typed is overwritten.
+            _enrich_cliente(client, target["id"], members, dry_run=dry_run)
             continue
 
         report.stragglers_parked_for_review += 1
@@ -471,6 +475,61 @@ def _reconcile_against_existing(
             chave_canonica=None, chave_tipo=None, identidade_incerta=True,
             members=members, report=report, dry_run=dry_run,
         )
+
+
+def _contato_dos_membros(members: list[SourceRow]) -> dict[str, str]:
+    """`celular` / `email` for a cluster — first member that supplies each.
+
+    Only non-empty keys are returned, so this can be splatted into an INSERT
+    without writing NULLs, and into an UPDATE without clobbering a value an
+    operator typed. "First wins" rather than "last wins" because members are
+    the sources that resolved to one person and the earliest is the one the
+    rest were matched against.
+    """
+    out: dict[str, str] = {}
+    for m in members:
+        if "celular" not in out and m.telefone:
+            out["celular"] = m.telefone
+        if "email" not in out and m.email:
+            out["email"] = m.email
+    return out
+
+
+def _enrich_cliente(
+    client: Any, cliente_id: str, members: list[SourceRow], *, dry_run: bool
+) -> None:
+    """Fill a cliente's blank `nome` / `celular` / `email` from new touches.
+
+    🔴 FILL-IF-EMPTY, never overwrite. A cliente's columns can hold values an
+    operator typed by hand, and a later campaign touch carrying a worse
+    spelling of the same person must not silently replace them. Only a column
+    that is currently NULL/blank is written.
+
+    This is what lets an ALREADY-RESOLVED person pick up contact data that
+    arrives after their cliente row was created — the case where a keyless
+    cluster was made first and the phone only showed up on a later touch.
+    """
+    if dry_run:
+        return
+    candidatos = _contato_dos_membros(members)
+    nome = ident.longest_raw_name(members)
+    if nome:
+        candidatos["nome"] = nome
+    if not candidatos:
+        return
+
+    atual = _t(client, "clientes").select("nome, celular, email").eq("id", cliente_id).execute()
+    linha = (atual.data or [None])[0]
+    if not linha:
+        return
+
+    patch = {
+        campo: valor
+        for campo, valor in candidatos.items()
+        if not (linha.get(campo) or "").strip()
+    }
+    if patch:
+        _t(client, "clientes").update(patch).eq("id", cliente_id).execute()
 
 
 def _create_clientes_for_cluster(
@@ -498,6 +557,12 @@ def _create_clientes_for_cluster(
         "primeiro_contato_em": primeiro,
         "ultimo_contato_em": ultimo,
         "created_at": _now(),
+        # The person's CONTACT DATA, not the identity key. Without these the
+        # card showed "—" beside a lead whose phone was in the column, and the
+        # stage gate refused the move because the checklist had nothing to
+        # tick — including for KEYLESS clusters, which lose the key by
+        # definition and so used to lose the phone with it.
+        **_contato_dos_membros(members),
     }
     report.clientes_created += 1
     if not dry_run:

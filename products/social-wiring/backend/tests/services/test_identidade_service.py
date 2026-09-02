@@ -95,6 +95,59 @@ class TestLeadsRowToSource:
         assert s.chave_tipo is None
 
 
+class TestContactDataIsCarriedApartFromTheKey:
+    """🔴 The person's CONTACT DATA is not the identity KEY.
+
+    Only one contact can be canonical, so a source carrying both a phone and
+    an email loses one when resolution picks a winner — and a KEYLESS row
+    loses both, even with a phone sitting in the column. That is what shipped:
+    `clientes.celular`/`.email` were never written, so the card showed "—"
+    and `stage_gate` refused every move because the checklist had nothing to
+    tick.
+    """
+
+    def test_keyless_lead_still_carries_its_phone(self):
+        """The reported bug: a lead whose contact never normalised still has
+        the number the operator typed, and the card must show it."""
+        s = leads_row_to_source({
+            "id": "lead-3", "org_id": "org-a", "cliente_nome": "José Roberto",
+            "contato": "+5511999978888", "contato_norm": None,
+            "contato_tipo": "telefone", "data_entrada": "2026-09-02",
+        })
+        assert s.chave_canonica is None, "still keyless — that half is unchanged"
+        assert s.telefone == "+5511999978888"
+
+    def test_keyed_lead_prefers_the_normalised_value(self):
+        s = leads_row_to_source({
+            "id": "lead-4", "org_id": "org-a", "cliente_nome": "Ana",
+            "contato": "11 99457-3387", "contato_norm": "+5511994573387",
+            "contato_tipo": "telefone", "data_entrada": "2026-08-01",
+        })
+        assert s.telefone == "+5511994573387"
+        assert s.email is None
+
+    def test_email_lead_carries_email_not_phone(self):
+        s = leads_row_to_source({
+            "id": "lead-5", "org_id": "org-a", "cliente_nome": "Ana",
+            "contato": "Ana@Example.COM", "contato_norm": "ana@example.com",
+            "contato_tipo": "email", "data_entrada": "2026-08-01",
+        })
+        assert s.email == "ana@example.com"
+        assert s.telefone is None
+
+    def test_meta_lead_keeps_the_email_the_key_discarded(self):
+        """A campaign lead routinely supplies both; the phone wins the key, so
+        the email would vanish entirely if it were not carried separately."""
+        s = meta_lead_row_to_source({
+            "id": "m-1", "org_id": "org-a", "full_name": "Ana Lima",
+            "phone": "+5511996019031", "email": "Analu.Moreira@Gmail.com",
+            "created_time": "2026-08-01T00:00:00Z",
+        })
+        assert s.chave_canonica == "+5511996019031"
+        assert s.telefone == "+5511996019031"
+        assert s.email == "analu.moreira@gmail.com"
+
+
 class TestMetaLeadRowToSource:
     def test_phone_wins_over_email(self):
         s = meta_lead_row_to_source(

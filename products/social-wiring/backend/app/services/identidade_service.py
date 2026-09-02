@@ -132,6 +132,21 @@ class SourceRow:
     chave_tipo: Optional[str]  # "telefone" | "email" | None
     ocorreu_em: str  # ISO-8601, whatever precision the source column has
     origem_label: Optional[str] = None
+    # 🔴 CARRIED SEPARATELY FROM THE KEY, and that is the whole point.
+    #
+    # Only ONE contact can be the canonical key, so a source that supplies both
+    # a phone and an email loses one of them the moment identity resolution
+    # picks a winner — and a KEYLESS row (`chave_canonica is None`) loses BOTH,
+    # even though it plainly had a phone number sitting in the column.
+    #
+    # That is what shipped: `clientes.celular` and `clientes.email` were never
+    # written by the backfill at all, so the card showed "—" next to a lead
+    # whose phone was right there, and the stage gate refused to move it
+    # because the checklist had nothing to tick. These two fields are the
+    # person's CONTACT DATA; the key is an identity-resolution artefact. They
+    # are not the same question and must not share a field.
+    telefone: Optional[str] = None
+    email: Optional[str] = None
 
 
 def _clean_str(value: object) -> Optional[str]:
@@ -170,15 +185,24 @@ def leads_row_to_source(row: dict) -> SourceRow:
     key behind it.
     """
     chave = row.get("contato_norm") or None
+    tipo = row.get("contato_tipo") if chave else None
+    # The contact data, independent of whether it became the key. A lead that
+    # is keyless (unparseable `contato`) still has whatever the operator typed,
+    # and the person's card should show it.
+    contato = _clean_str(row.get("contato"))
     return SourceRow(
         origem_tabela="leads",
         origem_id=str(row["id"]),
         org_id=str(row["org_id"]),
         nome=_clean_str(row.get("cliente_nome")),
         chave_canonica=chave,
-        chave_tipo=(row.get("contato_tipo") if chave else None),
+        chave_tipo=tipo,
         ocorreu_em=_as_iso(row.get("data_entrada")),
         origem_label=_clean_str(row.get("origem_raw")),
+        # Prefer the NORMALIZED value when the type says which it is; fall back
+        # to the raw `contato` so a keyless row still carries something usable.
+        telefone=(chave if tipo == "telefone" else (contato if row.get("contato_tipo") == "telefone" else None)),
+        email=(chave.lower() if (chave and tipo == "email") else (contato.lower() if contato and row.get("contato_tipo") == "email" else None)),
     )
 
 
@@ -209,6 +233,11 @@ def meta_lead_row_to_source(row: dict) -> SourceRow:
         chave_tipo=tipo,
         ocorreu_em=_as_iso(row.get("created_time") or row.get("synced_at")),
         origem_label=_clean_str(row.get("campaign_name") or row.get("form_name")),
+        # A campaign lead routinely supplies BOTH. Only the phone becomes the
+        # key (precedence above), so the email would be dropped entirely if it
+        # were not carried here in its own right.
+        telefone=phone,
+        email=email.lower() if email else None,
     )
 
 

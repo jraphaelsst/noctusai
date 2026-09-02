@@ -107,6 +107,86 @@ def _merges(client) -> list[dict]:
     return client.table("cliente_merges").select("*").execute().data or []
 
 
+class TestClienteGetsItsContactData:
+    """🔴 The reported production bug, both halves.
+
+    The backfill wrote only the identity KEY, never `celular`/`email`. So the
+    person's card showed "—" beside a lead whose phone was on the board, and
+    `stage_gate` refused every move because the checklist had nothing to tick.
+    Worst for a KEYLESS cliente, which by definition has no key to fall back
+    on — and those are exactly the leads an operator wants to pick up.
+    """
+
+    def test_keyed_cliente_gets_celular(self):
+        client = _scoped_client()
+        client.set_table_data("leads", [_lead("L1", "Ana Silva", K1)])
+        client.set_table_data("meta_ads_leads", [])
+        client.set_table_data("atendimentos", [])
+
+        svc.run_backfill(client, ORG)
+
+        [cliente] = _clientes(client)
+        assert cliente["celular"] == K1
+
+    def test_keyless_cliente_still_gets_its_phone(self):
+        """José Roberto: a real phone the operator typed, no canonical key.
+        Before this, his cliente row was blank in every column."""
+        client = _scoped_client()
+        client.set_table_data("leads", [{
+            "id": "L1", "org_id": ORG, "cliente_nome": "José Roberto",
+            "contato": "+5511999978888", "contato_norm": None,
+            "contato_tipo": "telefone", "data_entrada": "2026-09-02",
+        }])
+        client.set_table_data("meta_ads_leads", [])
+        client.set_table_data("atendimentos", [])
+
+        svc.run_backfill(client, ORG)
+
+        [cliente] = _clientes(client)
+        assert cliente["chave_canonica"] is None, "still keyless"
+        assert cliente["celular"] == "+5511999978888"
+
+    def test_campaign_cliente_gets_both_phone_and_email(self):
+        """Ana Lima: the phone won the key, so the email used to be dropped."""
+        client = _scoped_client()
+        client.set_table_data("leads", [])
+        client.set_table_data("meta_ads_leads", [
+            _meta_lead("M1", "Ana Lima", phone=K1, email="Analu@Gmail.com"),
+        ])
+        client.set_table_data("atendimentos", [])
+
+        svc.run_backfill(client, ORG)
+
+        [cliente] = _clientes(client)
+        assert cliente["celular"] == K1
+        assert cliente["email"] == "analu@gmail.com"
+
+    def test_a_later_touch_fills_a_blank_but_never_overwrites(self):
+        """Fill-if-empty. An operator-typed value outranks anything derived
+        from a lead row, so a later touch must not replace it."""
+        client = _scoped_client()
+        client.set_table_data("leads", [_lead("L1", "Ana Silva", K1)])
+        client.set_table_data("meta_ads_leads", [])
+        client.set_table_data("atendimentos", [])
+        svc.run_backfill(client, ORG)
+        [cliente] = _clientes(client)
+
+        # The operator corrects the number by hand...
+        client.table("clientes").update(
+            {"celular": "+5511911112222"}
+        ).eq("id", cliente["id"]).execute()
+
+        # ...then a second campaign touch for the same person arrives.
+        client.set_table_data("meta_ads_leads", [
+            _meta_lead("M9", "Ana Silva", phone=K1, email="ana@example.com"),
+        ])
+        svc.run_backfill(client, ORG)
+
+        [cliente] = _clientes(client)
+        assert cliente["celular"] == "+5511911112222", "hand-typed value survives"
+        assert cliente["email"] == "ana@example.com", "the blank one is filled"
+
+
 # ─── run_backfill — the full C1-C6 + keyless + repoint scenario ─────────
 
 
