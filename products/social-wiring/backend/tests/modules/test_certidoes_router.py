@@ -14,8 +14,10 @@ as ``tests/modules/n8n/conftest.py``.
 """
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from noctusai_lib.integrations.storage import FakeStorageBackend
@@ -128,6 +130,57 @@ def certidoes_db():
     _app.dependency_overrides.pop(get_storage_backend, None)
 
 
+@pytest.fixture
+def override_service():
+    """Substitute service operations through the router's DI seam.
+
+    🔴 THIS REPLACED EVERY `patch.object(service, "...", ...)` IN THIS FILE.
+
+    The router resolves its collaborator with
+    `Depends(get_certidoes_service)`, so a test swaps the DEPENDENCY and never
+    the module. Two things follow that patching could not give us: production's
+    service object is never mutated (so nothing leaks into the next test), and
+    the operations NOT named here stay real — `dataclasses.replace` starts from
+    a fresh all-real `build_default_service()`.
+
+    Usage::
+
+        override_service(processar_consulta=AsyncMock())
+
+    → KB § PATTERNS/backend/di-test-seam.md (seam 1)
+    """
+    from app.modules.certidoes.deps import (
+        build_default_service,
+        get_certidoes_service,
+    )
+
+    prev = _app.dependency_overrides.get(get_certidoes_service)
+    chosen: dict = {}
+
+    def _apply(**ops):
+        chosen.update(ops)
+        svc = dataclasses.replace(build_default_service(), **chosen)
+        _app.dependency_overrides[get_certidoes_service] = lambda: svc
+        return svc
+
+    yield _apply
+
+    if prev is None:
+        _app.dependency_overrides.pop(get_certidoes_service, None)
+    else:
+        _app.dependency_overrides[get_certidoes_service] = prev
+
+
+def _put_blob(storage, key: str, data: bytes = b"%PDF-x") -> None:
+    """Seed a blob into the SAME `FakeStorageBackend` the route resolves.
+
+    Lets the download tests run the REAL `read_certidao_bytes` — including its
+    key-vs-URL branch — instead of stubbing it out. `asyncio.run` because these
+    are sync TestClient tests and the storage seam is async.
+    """
+    asyncio.run(storage.put(bucket=service.BUCKET, key=key, data=data))
+
+
 def _seed(db, consultas=None, resultados=None):
     db.set_table_data("certidao_consultas", consultas if consultas is not None else [])
     db.set_table_data("certidao_resultados", resultados if resultados is not None else [])
@@ -224,14 +277,17 @@ class TestListarConsultas:
         body = client.get(f"{BASE}/consultas?page=1&page_size=10").json()
         assert "total" in body or "total" in body.get("pagination", {})
 
-    def test_recupera_trabalho_encalhado_uma_vez_por_minuto(self, client, certidoes_db):
+    def test_recupera_trabalho_encalhado_uma_vez_por_minuto(
+        self, client, certidoes_db, override_service
+    ):
         """The recovery is throttled so a 3-second poll does not add a DB
         round-trip per tick. Two calls in a row must recover ONCE."""
         db, _ = certidoes_db
         _seed(db)
-        with patch.object(service, "recover_stale_processando", return_value=0) as rec:
-            client.get(f"{BASE}/consultas")
-            client.get(f"{BASE}/consultas")
+        rec = MagicMock(return_value=0)
+        override_service(recover_stale_processando=rec, schedule_tjsp_for_org=MagicMock())
+        client.get(f"{BASE}/consultas")
+        client.get(f"{BASE}/consultas")
         assert rec.call_count == 1
 
 
@@ -250,12 +306,11 @@ class TestCriarConsulta:
         body.update(overrides)
         return body
 
-    def test_cria_consulta_cpf(self, client, certidoes_db):
+    def test_cria_consulta_cpf(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db)
-        with patch(_CRED, return_value="tok"), patch.object(
-            service, "processar_consulta", new=AsyncMock()
-        ):
+        override_service(processar_consulta=AsyncMock())
+        with patch(_CRED, return_value="tok"):
             resp = client.post(f"{BASE}/consultas", json=self._payload())
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -263,23 +318,21 @@ class TestCriarConsulta:
         assert data["total_certidoes"] == 10
         assert data["org_id"] == CALLER_ORG
 
-    def test_cria_consulta_cnpj(self, client, certidoes_db):
+    def test_cria_consulta_cnpj(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db)
-        with patch(_CRED, return_value="tok"), patch.object(
-            service, "processar_consulta", new=AsyncMock()
-        ):
+        override_service(processar_consulta=AsyncMock())
+        with patch(_CRED, return_value="tok"):
             resp = client.post(f"{BASE}/consultas", json=self._payload(
                 tipo_documento="cnpj", documento="12345678000190", nome="Empresa XPTO"
             ))
         assert resp.status_code == 200
 
-    def test_fan_out_grava_um_resultado_por_tipo(self, client, certidoes_db):
+    def test_fan_out_grava_um_resultado_por_tipo(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db)
-        with patch(_CRED, return_value="tok"), patch.object(
-            service, "processar_consulta", new=AsyncMock()
-        ):
+        override_service(processar_consulta=AsyncMock())
+        with patch(_CRED, return_value="tok"):
             client.post(f"{BASE}/consultas", json=self._payload())
         # `inserted_payloads` FLATTENS a list-insert into one row per element.
         inserted = db.table("certidao_resultados").inserted_payloads
@@ -291,21 +344,20 @@ class TestCriarConsulta:
         assert all(r["org_id"] == CALLER_ORG for r in inserted)
         assert all(r["status"] == "pendente" for r in inserted)
 
-    def test_dispara_o_processamento_em_background(self, client, certidoes_db):
+    def test_dispara_o_processamento_em_background(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db)
-        with patch(_CRED, return_value="tok"), patch.object(
-            service, "processar_consulta", new=AsyncMock()
-        ) as proc:
+        proc = AsyncMock()
+        override_service(processar_consulta=proc)
+        with patch(_CRED, return_value="tok"):
             client.post(f"{BASE}/consultas", json=self._payload())
         proc.assert_awaited_once()
 
-    def test_campos_opcionais_sao_persistidos(self, client, certidoes_db):
+    def test_campos_opcionais_sao_persistidos(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db)
-        with patch(_CRED, return_value="tok"), patch.object(
-            service, "processar_consulta", new=AsyncMock()
-        ):
+        override_service(processar_consulta=AsyncMock())
+        with patch(_CRED, return_value="tok"):
             resp = client.post(f"{BASE}/consultas", json=self._payload(
                 data_nascimento="1990-01-15", genero="M", rg="123456789",
                 nome_mae="Maria", nome_pai="José",
@@ -423,30 +475,32 @@ class TestObterConsulta:
 
 
 class TestReprocessarConsulta:
-    def test_reprocessa_com_sucesso(self, client, certidoes_db):
+    def test_reprocessa_com_sucesso(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[
             _resultado(id="r1", status="erro"),
         ])
-        with patch.object(service, "processar_consulta", new=AsyncMock()), \
-                patch.object(service, "schedule_tjsp_for_org"):
-            resp = client.post(f"{BASE}/consultas/consulta-001/reprocessar")
+        override_service(
+            processar_consulta=AsyncMock(), schedule_tjsp_for_org=MagicMock()
+        )
+        resp = client.post(f"{BASE}/consultas/consulta-001/reprocessar")
         assert resp.status_code == 200
         assert "Reprocessamento" in resp.json()["message"]
 
-    def test_erro_nao_tjsp_volta_para_pendente(self, client, certidoes_db):
+    def test_erro_nao_tjsp_volta_para_pendente(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[
             _resultado(id="r1", status="erro"),
         ])
-        with patch.object(service, "processar_consulta", new=AsyncMock()), \
-                patch.object(service, "schedule_tjsp_for_org"):
-            client.post(f"{BASE}/consultas/consulta-001/reprocessar")
+        override_service(
+            processar_consulta=AsyncMock(), schedule_tjsp_for_org=MagicMock()
+        )
+        client.post(f"{BASE}/consultas/consulta-001/reprocessar")
         assert db.table("certidao_resultados").select("*").eq(
             "id", "r1"
         ).execute().data[0]["status"] == "pendente"
 
-    def test_erro_tjsp_volta_para_na_fila_nao_pendente(self, client, certidoes_db):
+    def test_erro_tjsp_volta_para_na_fila_nao_pendente(self, client, certidoes_db, override_service):
         """🔴 `pendente` would make the retry fire NOW, and a premature TJSP
         request resets their 30-minute counter — the retry would push the real
         attempt further away rather than closer."""
@@ -454,9 +508,9 @@ class TestReprocessarConsulta:
         _seed(db, consultas=[_consulta()], resultados=[
             _resultado(id="r-tjsp", tipo="tjsp", ordem=7, status="erro"),
         ])
-        with patch.object(service, "processar_consulta", new=AsyncMock()), \
-                patch.object(service, "schedule_tjsp_for_org") as sched:
-            client.post(f"{BASE}/consultas/consulta-001/reprocessar")
+        sched = MagicMock()
+        override_service(processar_consulta=AsyncMock(), schedule_tjsp_for_org=sched)
+        client.post(f"{BASE}/consultas/consulta-001/reprocessar")
         assert db.table("certidao_resultados").select("*").eq(
             "id", "r-tjsp"
         ).execute().data[0]["status"] == "na_fila"
@@ -512,7 +566,7 @@ class TestExcluirConsulta:
         assert resp.status_code == 200
         assert "excluída" in resp.json()["message"]
 
-    def test_apaga_os_arquivos_antes_das_linhas(self, client, certidoes_db):
+    def test_apaga_os_arquivos_antes_das_linhas(self, client, certidoes_db, override_service):
         """Blobs BEFORE rows: a row deleted first is a key nobody can find
         again, i.e. an orphan in the bucket. (That the seam really deletes is
         asserted at the service level — here the question is whether the route
@@ -522,22 +576,20 @@ class TestExcluirConsulta:
         _seed(db, consultas=[_consulta()], resultados=[
             _resultado(id="r1", status="sucesso", arquivo_url=key),
         ])
-        with patch.object(
-            service, "delete_storage_files", new=AsyncMock(return_value=1)
-        ) as rm:
-            resp = client.delete(f"{BASE}/consultas/consulta-001")
+        rm = AsyncMock(return_value=1)
+        override_service(delete_storage_files=rm)
+        resp = client.delete(f"{BASE}/consultas/consulta-001")
         assert resp.status_code == 200
         rows = rm.await_args.args[0]
         assert [r["arquivo_url"] for r in rows] == [key]
         assert db.table("certidao_consultas").select("*").execute().data == []
 
-    def test_nao_faz_limpeza_de_storage_no_caminho_404(self, client, certidoes_db):
+    def test_nao_faz_limpeza_de_storage_no_caminho_404(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db)
-        with patch.object(
-            service, "delete_storage_files", new=AsyncMock()
-        ) as rm:
-            assert client.delete(f"{BASE}/consultas/nao-existe").status_code == 404
+        rm = AsyncMock()
+        override_service(delete_storage_files=rm)
+        assert client.delete(f"{BASE}/consultas/nao-existe").status_code == 404
         rm.assert_not_awaited()
 
     def test_consulta_de_outra_org_e_404(self, client, certidoes_db):
@@ -557,18 +609,20 @@ class TestDownloadCertidao:
         return None
 
     def test_le_do_bucket_quando_arquivo_url_e_uma_chave(self, client, certidoes_db):
+        """End-to-end through the REAL storage seam — the blob is seeded into
+        the same `FakeStorageBackend` the route resolves, so this covers the
+        key-vs-URL branch in `read_certidao_bytes` rather than assuming it."""
         db, storage = certidoes_db
         key = f"{CALLER_ORG}/certidoes/consulta-001/cnd_federal_ab.pdf"
         _seed(db, resultados=[_resultado(id="r1", arquivo_url=key)])
-        with patch.object(
-            service, "read_certidao_bytes", new=AsyncMock(return_value=b"%PDF-x")
-        ):
-            resp = client.get(f"{BASE}/download", params={"url": key})
+        asyncio.run(storage.put(bucket=service.BUCKET, key=key, data=b"%PDF-x"))
+
+        resp = client.get(f"{BASE}/download", params={"url": key})
         assert resp.status_code == 200
         assert resp.content == b"%PDF-x"
         assert "attachment" in resp.headers["content-disposition"]
 
-    def test_url_nao_pertencente_a_org_e_404(self, client, certidoes_db):
+    def test_url_nao_pertencente_a_org_e_404(self, client, certidoes_db, override_service):
         """🔴 The ERP fetched whatever it was handed — an SSRF vector AND a
         cross-org read of any bucket key. The value has to be one this API
         gave THIS caller."""
@@ -577,20 +631,22 @@ class TestDownloadCertidao:
             _resultado(id="alheio", org_id=OTHER_ORG,
                        arquivo_url=f"{OTHER_ORG}/certidoes/c/x.pdf"),
         ])
-        with patch.object(service, "read_certidao_bytes", new=AsyncMock()) as read:
-            resp = client.get(
-                f"{BASE}/download", params={"url": f"{OTHER_ORG}/certidoes/c/x.pdf"}
-            )
+        read = AsyncMock()
+        override_service(read_certidao_bytes=read)
+        resp = client.get(
+            f"{BASE}/download", params={"url": f"{OTHER_ORG}/certidoes/c/x.pdf"}
+        )
         assert resp.status_code == 404
         read.assert_not_awaited()
 
-    def test_host_arbitrario_e_404_nunca_buscado(self, client, certidoes_db):
+    def test_host_arbitrario_e_404_nunca_buscado(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db, resultados=[])
-        with patch.object(service, "read_certidao_bytes", new=AsyncMock()) as read:
-            resp = client.get(
-                f"{BASE}/download", params={"url": "http://169.254.169.254/latest/meta-data/"}
-            )
+        read = AsyncMock()
+        override_service(read_certidao_bytes=read)
+        resp = client.get(
+            f"{BASE}/download", params={"url": "http://169.254.169.254/latest/meta-data/"}
+        )
         assert resp.status_code == 404
         read.assert_not_awaited()
 
@@ -598,12 +654,10 @@ class TestDownloadCertidao:
         db, _ = certidoes_db
         key = f"{CALLER_ORG}/certidoes/consulta-001/x.pdf"
         _seed(db, resultados=[_resultado(id="r1", arquivo_url=key)])
-        with patch.object(
-            service, "read_certidao_bytes", new=AsyncMock(return_value=None)
-        ):
-            assert client.get(
-                f"{BASE}/download", params={"url": key}
-            ).status_code == 502
+        # Nothing seeded at that key — the REAL seam answers None.
+        assert client.get(
+            f"{BASE}/download", params={"url": key}
+        ).status_code == 502
 
     def test_url_obrigatoria(self, client, certidoes_db):
         assert client.get(f"{BASE}/download").status_code == 422
@@ -615,16 +669,14 @@ class TestDownloadCertidao:
         accented `filename=` raised inside Starlette and 500'd the whole
         download — for anyone whose name has an accent. The ERP built the same
         header the same way. See `_content_disposition`."""
-        db, _ = certidoes_db
+        db, storage = certidoes_db
         key = f"{CALLER_ORG}/certidoes/consulta-001/a.pdf"
         _seed(db, resultados=[_resultado(id="r1", arquivo_url=key)])
-        with patch.object(
-            service, "read_certidao_bytes", new=AsyncMock(return_value=b"%PDF-x")
-        ):
-            resp = client.get(
-                f"{BASE}/download",
-                params={"url": key, "filename": "certidão_João.pdf"},
-            )
+        _put_blob(storage, key)
+        resp = client.get(
+            f"{BASE}/download",
+            params={"url": key, "filename": "certidão_João.pdf"},
+        )
         assert resp.status_code == 200
         disp = resp.headers["content-disposition"]
         assert 'filename="certidao_Joao.pdf"' in disp
@@ -641,7 +693,7 @@ class TestDownloadZip:
         import io
         import zipfile
 
-        db, _ = certidoes_db
+        db, storage = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[
             _resultado(id="r1", status="sucesso", arquivo_nome="cnd_federal.pdf",
                        arquivo_url=f"{CALLER_ORG}/certidoes/consulta-001/a.pdf"),
@@ -650,10 +702,9 @@ class TestDownloadZip:
                        arquivo_nome="trf3.pdf",
                        arquivo_url=f"{CALLER_ORG}/certidoes/consulta-001/b.pdf"),
         ])
-        with patch.object(
-            service, "read_certidao_bytes", new=AsyncMock(return_value=b"%PDF-x")
-        ):
-            resp = client.get(f"{BASE}/consultas/consulta-001/download-zip")
+        _put_blob(storage, f"{CALLER_ORG}/certidoes/consulta-001/a.pdf")
+        _put_blob(storage, f"{CALLER_ORG}/certidoes/consulta-001/b.pdf")
+        resp = client.get(f"{BASE}/consultas/consulta-001/download-zip")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/zip"
         names = zipfile.ZipFile(io.BytesIO(resp.content)).namelist()
@@ -663,17 +714,16 @@ class TestDownloadZip:
         import io
         import zipfile
 
-        db, _ = certidoes_db
+        db, storage = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[
             _resultado(id="r1", status="sucesso", arquivo_nome="trf3.pdf",
                        arquivo_url=f"{CALLER_ORG}/certidoes/consulta-001/a.pdf"),
             _resultado(id="r2", status="sucesso", ordem=2, arquivo_nome="trf3.pdf",
                        arquivo_url=f"{CALLER_ORG}/certidoes/consulta-001/b.pdf"),
         ])
-        with patch.object(
-            service, "read_certidao_bytes", new=AsyncMock(return_value=b"%PDF-x")
-        ):
-            resp = client.get(f"{BASE}/consultas/consulta-001/download-zip")
+        _put_blob(storage, f"{CALLER_ORG}/certidoes/consulta-001/a.pdf")
+        _put_blob(storage, f"{CALLER_ORG}/certidoes/consulta-001/b.pdf")
+        resp = client.get(f"{BASE}/consultas/consulta-001/download-zip")
         names = zipfile.ZipFile(io.BytesIO(resp.content)).namelist()
         assert len(names) == 2, "a duplicate entry silently loses one file"
 
@@ -681,18 +731,18 @@ class TestDownloadZip:
         import io
         import zipfile
 
-        db, _ = certidoes_db
+        db, storage = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[
             _resultado(id="r1", status="sucesso", arquivo_nome="a.pdf",
                        arquivo_url=f"{CALLER_ORG}/certidoes/consulta-001/a.pdf"),
             _resultado(id="r2", status="sucesso", ordem=2, arquivo_nome="b.pdf",
                        arquivo_url=f"{CALLER_ORG}/certidoes/consulta-001/b.pdf"),
         ])
-        with patch.object(
-            service, "read_certidao_bytes",
-            new=AsyncMock(side_effect=[b"%PDF-x", None]),
-        ):
-            resp = client.get(f"{BASE}/consultas/consulta-001/download-zip")
+        # Only ONE of the two blobs exists — the real seam answers None for the
+        # other, which is exactly the production shape (a file we failed to
+        # persist, or one deleted out from under us).
+        _put_blob(storage, f"{CALLER_ORG}/certidoes/consulta-001/a.pdf")
+        resp = client.get(f"{BASE}/consultas/consulta-001/download-zip")
         assert resp.status_code == 200
         assert zipfile.ZipFile(io.BytesIO(resp.content)).namelist() == ["a.pdf"]
 
@@ -711,12 +761,10 @@ class TestDownloadZip:
             _resultado(id="r1", status="sucesso", arquivo_nome="a.pdf",
                        arquivo_url=f"{CALLER_ORG}/certidoes/consulta-001/a.pdf"),
         ])
-        with patch.object(
-            service, "read_certidao_bytes", new=AsyncMock(return_value=None)
-        ):
-            assert client.get(
-                f"{BASE}/consultas/consulta-001/download-zip"
-            ).status_code == 502
+        # No blob seeded at all — every read answers None.
+        assert client.get(
+            f"{BASE}/consultas/consulta-001/download-zip"
+        ).status_code == 502
 
     def test_consulta_de_outra_org_e_404(self, client, certidoes_db):
         db, _ = certidoes_db
@@ -730,15 +778,13 @@ class TestDownloadZip:
     ):
         """🔴 REGRESSION — same defect as `/download`, reached through the
         consulta's own `nome` ("João da Silva") rather than a query param."""
-        db, _ = certidoes_db
+        db, storage = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[
             _resultado(id="r1", status="sucesso", arquivo_nome="a.pdf",
                        arquivo_url=f"{CALLER_ORG}/certidoes/consulta-001/a.pdf"),
         ])
-        with patch.object(
-            service, "read_certidao_bytes", new=AsyncMock(return_value=b"%PDF-x")
-        ):
-            resp = client.get(f"{BASE}/consultas/consulta-001/download-zip")
+        _put_blob(storage, f"{CALLER_ORG}/certidoes/consulta-001/a.pdf")
+        resp = client.get(f"{BASE}/consultas/consulta-001/download-zip")
         assert resp.status_code == 200
         disp = resp.headers["content-disposition"]
         assert 'filename="certidoes_Joao_da_Silva_12345678901.zip"' in disp
@@ -754,18 +800,25 @@ class TestUploadManual:
     def _file(self, content=b"%PDF-1.4 scan", ctype="application/pdf"):
         return {"file": ("certidao.pdf", content, ctype)}
 
-    def test_upload_roda_o_mesmo_pipeline_do_automatico(self, client, certidoes_db):
+    def test_upload_roda_o_mesmo_pipeline_do_automatico(
+        self, client, certidoes_db, override_service
+    ):
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[_resultado(id="r1")])
-        with patch.object(
-            service, "process_manual_upload",
-            new=AsyncMock(return_value={"status": "sucesso",
-                                        "arquivo_nome": "cnd_federal.pdf"}),
-        ) as proc:
-            resp = client.post(f"{BASE}/resultados/r1/upload", files=self._file())
+        proc = AsyncMock(
+            return_value={"status": "sucesso", "arquivo_nome": "cnd_federal.pdf"}
+        )
+        override_service(process_manual_upload=proc)
+        resp = client.post(f"{BASE}/resultados/r1/upload", files=self._file())
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "sucesso"
-        assert proc.await_args.kwargs["org_id"] == CALLER_ORG
+        # The route hands the pipeline the CALLER's org, the resultado's tipo
+        # and the PDF bytes — the contract the automated flow also relies on.
+        kw = proc.await_args.kwargs
+        assert kw["org_id"] == CALLER_ORG
+        assert kw["tipo"] == "cnd_federal"
+        assert kw["resultado_id"] == "r1"
+        assert kw["pdf_bytes"] == b"%PDF-1.4 scan"
 
     def test_nao_pdf_e_422(self, client, certidoes_db):
         db, _ = certidoes_db

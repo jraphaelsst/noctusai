@@ -40,7 +40,7 @@ import io
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 from noctusai_lib.integrations.llm import chat_completion
@@ -501,12 +501,22 @@ async def _process_single_certidao(
     resultado_id: str,
     http_client: httpx.AsyncClient,
     storage: StorageBackend,
+    *,
+    analyze: Optional[Callable[..., Any]] = None,
 ) -> None:
     """Process a single certificate: fetch → download → store → analyze → update.
 
     Updates the parent consulta's progress (concluidas count) after each
     certificate finishes so the frontend progress bar updates in real-time.
+
+    `analyze` is the AI-analysis seam, defaulting to `_analyze_with_ai`. It is
+    a parameter so a test can inject a stub INSTEAD of patching our own
+    `_analyze_with_ai` out of the module — the InfoSimples call itself needs no
+    such seam, because `http_client` already is one (drive the fake client and
+    the real retry / 612 / error-extraction logic runs, which is the point).
+    → KB § PATTERNS/backend/di-test-seam.md
     """
+    analyze = analyze or _analyze_with_ai
     consulta_id = consulta["id"]
     org_id = consulta.get("org_id")
 
@@ -601,7 +611,7 @@ async def _process_single_certidao(
                         summary_parts.append(f"{k}: {v}")
         if summary_parts:
             text_for_analysis = "\n".join(summary_parts)
-            analise = await _analyze_with_ai(text_for_analysis, org_id)
+            analise = await analyze(text_for_analysis, org_id)
 
     # Update resultado — always store as .pdf
     update_data = {
@@ -655,14 +665,29 @@ def _atualizar_status_consulta(consulta_id: str, org_id: Optional[str], db) -> N
 # --------------- One consulta ---------------
 
 
-async def processar_consulta(consulta_id: str, db, storage: StorageBackend) -> None:
+async def processar_consulta(
+    consulta_id: str,
+    db,
+    storage: StorageBackend,
+    *,
+    process_one: Optional[Callable[..., Any]] = None,
+    schedule_tjsp: Optional[Callable[..., Any]] = None,
+) -> None:
     """Process all certificates for a consulta (runs in background).
 
     All certificates are processed in parallel. TJSP is included if the
     cooldown has passed; otherwise it's queued ("na_fila") for the on-demand
     scheduler. A premature TJSP request RESETS the API counter, so we never
     fire before the cooldown expires.
+
+    `process_one` / `schedule_tjsp` are DI seams (default: the real
+    `_process_single_certidao` / `schedule_tjsp_for_org`) so a test can assert
+    the FAN-OUT decisions this function makes — which resultados run now, which
+    are queued — without each one firing a real pipeline.
+    → KB § PATTERNS/backend/di-test-seam.md
     """
+    process_one = process_one or _process_single_certidao
+    schedule_tjsp = schedule_tjsp or schedule_tjsp_for_org
     consulta_result = db.table(CONSULTAS).select("*").eq(
         "id", consulta_id
     ).single().execute()
@@ -738,7 +763,7 @@ async def processar_consulta(consulta_id: str, db, storage: StorageBackend) -> N
                 )
                 continue
             tasks.append(
-                _process_single_certidao(
+                process_one(
                     config, consulta, infosimples_token, db, r["id"],
                     http_client, storage,
                 )
@@ -748,7 +773,7 @@ async def processar_consulta(consulta_id: str, db, storage: StorageBackend) -> N
                 config = config_for(r["tipo"])
                 if config:
                     tasks.append(
-                        _process_single_certidao(
+                        process_one(
                             config, consulta, infosimples_token, db, r["id"],
                             http_client, storage,
                         )
@@ -774,7 +799,7 @@ async def processar_consulta(consulta_id: str, db, storage: StorageBackend) -> N
         for r in tjsp_pending:
             logger.info("TJSP resultado %s queued (na_fila) — cooldown active", r["id"])
         if org_id:
-            schedule_tjsp_for_org(org_id, db, storage)
+            schedule_tjsp(org_id, db, storage)
 
     _atualizar_status_consulta(consulta_id, org_id, db)
 
@@ -1092,9 +1117,20 @@ def _get_tjsp_remaining_cooldown(org_id: str, db) -> float:
 
 
 async def _process_single_tjsp_item(
-    resultado: dict, db, storage: StorageBackend
+    resultado: dict,
+    db,
+    storage: StorageBackend,
+    *,
+    process_one: Optional[Callable[..., Any]] = None,
 ) -> None:
-    """Process one queued TJSP resultado: fetch its consulta, call InfoSimples."""
+    """Process one queued TJSP resultado: fetch its consulta, call InfoSimples.
+
+    `process_one` is the DI seam (default `_process_single_certidao`) — the
+    guard clauses ABOVE it (consulta missing, token missing) are what this
+    function is really about, and a test must be able to reach them without
+    the happy path making a network call.
+    """
+    process_one = process_one or _process_single_certidao
     consulta_id = resultado["consulta_id"]
     org_id = resultado.get("org_id")
 
@@ -1135,7 +1171,7 @@ async def _process_single_tjsp_item(
         return
 
     async with httpx.AsyncClient() as http_client:
-        await _process_single_certidao(
+        await process_one(
             config, consulta, infosimples_token, db, resultado["id"],
             http_client, storage,
         )
@@ -1144,7 +1180,14 @@ async def _process_single_tjsp_item(
 
 
 async def _delayed_tjsp_process(
-    delay: float, resultado: dict, org_id: str, db, storage: StorageBackend
+    delay: float,
+    resultado: dict,
+    org_id: str,
+    db,
+    storage: StorageBackend,
+    *,
+    process_item: Optional[Callable[..., Any]] = None,
+    reschedule: Optional[Callable[..., Any]] = None,
 ) -> None:
     """Sleep out the remaining cooldown, process one TJSP item, chain the next.
 
@@ -1154,7 +1197,15 @@ async def _delayed_tjsp_process(
 
     On CancelledError (server shutdown / --reload) it does NOT reschedule — the
     new process's startup recovery handles that.
+
+    `process_item` / `reschedule` are DI seams (defaults `_process_single_tjsp_item`
+    / `schedule_tjsp_for_org`). What this function owns is the SEQUENCING — sleep,
+    re-check the row is still queued, process, chain the next, and specifically
+    do NOT chain on cancellation — and every one of those assertions needs the
+    two collaborators to be observable rather than real.
     """
+    process_item = process_item or _process_single_tjsp_item
+    reschedule = reschedule or schedule_tjsp_for_org
     resultado_id = resultado["id"]
     cancelled = False
     sleep_start = datetime.now(timezone.utc)
@@ -1181,7 +1232,7 @@ async def _delayed_tjsp_process(
             return
 
         logger.info("TJSP processing: resultado %s (org %s)", resultado_id, org_id)
-        await _process_single_tjsp_item(resultado, db, storage)
+        await process_item(resultado, db, storage)
 
     except asyncio.CancelledError:
         cancelled = True
@@ -1206,16 +1257,27 @@ async def _delayed_tjsp_process(
         # CancelledError (server shutdown). The new process's startup recovery
         # calls schedule_all_pending_tjsp, which handles rescheduling.
         if not cancelled:
-            schedule_tjsp_for_org(org_id, db, storage)
+            reschedule(org_id, db, storage)
 
 
-def schedule_tjsp_for_org(org_id: str, db, storage: StorageBackend) -> None:
+def schedule_tjsp_for_org(
+    org_id: str,
+    db,
+    storage: StorageBackend,
+    *,
+    delayed: Optional[Callable[..., Any]] = None,
+) -> None:
     """Schedule the next queued TJSP item for an org.
 
     Idempotent: if a task is already in flight for this org, does nothing.
     Calculates the exact delay from `api_requested_at` so the item fires
     precisely when the cooldown expires — no polling.
+
+    `delayed` is the DI seam (default `_delayed_tjsp_process`): this function's
+    job is the BOOKKEEPING — one task per org, the right delay, the right next
+    item — and a test of that must not have to wait out a 45-minute sleep.
     """
+    delayed = delayed or _delayed_tjsp_process
     existing = _tjsp_scheduled_tasks.get(org_id)
     if existing and not existing.done():
         return  # Already scheduled
@@ -1232,7 +1294,7 @@ def schedule_tjsp_for_org(org_id: str, db, storage: StorageBackend) -> None:
 
     remaining = _get_tjsp_remaining_cooldown(org_id, db)
     task = schedule_coro(
-        _delayed_tjsp_process(remaining, items[0], org_id, db, storage),
+        delayed(remaining, items[0], org_id, db, storage),
         logger=logger,
         name=f"tjsp_{org_id}",
     )
@@ -1243,12 +1305,22 @@ def schedule_tjsp_for_org(org_id: str, db, storage: StorageBackend) -> None:
     )
 
 
-def schedule_all_pending_tjsp(db, storage: StorageBackend) -> None:
+def schedule_all_pending_tjsp(
+    db,
+    storage: StorageBackend,
+    *,
+    schedule_one: Optional[Callable[..., Any]] = None,
+) -> None:
     """Scan for every queued TJSP item and schedule one task per org.
 
     Called after `recover_stuck_processando` to resume items that were waiting
     before the process restarted.
+
+    `schedule_one` is the DI seam (default `schedule_tjsp_for_org`) — what this
+    function decides is WHICH ORGS have queued work, and that is assertable
+    without creating a live asyncio task per org.
     """
+    schedule_one = schedule_one or schedule_tjsp_for_org
     def _page(start: int, end: int):
         return (
             db.table(RESULTADOS)
@@ -1267,7 +1339,7 @@ def schedule_all_pending_tjsp(db, storage: StorageBackend) -> None:
     if org_ids:
         logger.info("Scheduling pending TJSP items for %d org(s)", len(org_ids))
     for oid in org_ids:
-        schedule_tjsp_for_org(oid, db, storage)
+        schedule_one(oid, db, storage)
 
 
 def status_counts_por_consulta(

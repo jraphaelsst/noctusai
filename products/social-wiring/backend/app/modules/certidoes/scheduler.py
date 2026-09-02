@@ -50,6 +50,7 @@ the scheduler is authorised in this environment.
 from __future__ import annotations
 
 import logging
+from typing import Any, Callable, Optional
 
 from noctusai_lib.api import scheduler as seed_scheduler
 
@@ -85,15 +86,26 @@ def _clients():
     return get_scoped_admin_client(), storage_for(admin)
 
 
-async def sweep_stranded() -> None:
+async def sweep_stranded(
+    *, clients: Optional[Callable[[], tuple[Any, Any]]] = None
+) -> None:
     """Recover stale `processando` rows and re-arm the TJSP queue.
 
     Never raises: a scheduler job that throws is, in some runtimes, a job that
     silently stops being scheduled — which would remove the very safety net
     this is.
+
+    `clients` is the DI seam (default `_clients`) — it is what binds this job to
+    a live Supabase admin client, and injecting it lets a test drive the sweep
+    against a mock DB and assert on the ROWS it did or did not touch. That
+    matters more than it sounds: the whole correctness claim here is that the
+    sweep uses the STALE recovery and never the unconditional one, and the only
+    honest way to assert that is to show a freshly-started row survives it.
+    → KB § PATTERNS/backend/di-test-seam.md
     """
+    resolve = clients or _clients
     try:
-        db, storage = _clients()
+        db, storage = resolve()
         if db is None:
             return
         recovered = service.recover_stale_processando(db)
@@ -104,7 +116,9 @@ async def sweep_stranded() -> None:
         logger.error("certidoes sweep: run failed: %s", exc, exc_info=True)
 
 
-def run_startup_recovery() -> None:
+def run_startup_recovery(
+    *, clients: Optional[Callable[[], tuple[Any, Any]]] = None
+) -> None:
     """The ERP `lifespan_startup` pair, for a caller that HAS a startup hook.
 
     🔴 Correct ONLY at process start. `recover_stuck_processando` is
@@ -113,9 +127,12 @@ def run_startup_recovery() -> None:
     (`main.py`/`lifespan.py` belong to the integration step); the recurring
     `sweep_stranded` above covers the same ground within one tick, so this is an
     optional latency improvement, not a missing piece.
+
+    `clients` is the same DI seam `sweep_stranded` carries, for the same reason.
     """
+    resolve = clients or _clients
     try:
-        db, storage = _clients()
+        db, storage = resolve()
         if db is None:
             return
         service.recover_stuck_processando(db)

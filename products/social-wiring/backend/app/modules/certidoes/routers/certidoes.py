@@ -72,7 +72,12 @@ from noctusai_lib.integrations.storage import StorageBackend
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.modules.certidoes import service
-from app.modules.certidoes.deps import get_certidoes_client, get_storage_backend
+from app.modules.certidoes.deps import (
+    CertidoesService,
+    get_certidoes_client,
+    get_certidoes_service,
+    get_storage_backend,
+)
 from app.modules.certidoes.registry import (
     CERTIDOES_CONFIG,
     TJSP_TIPO,
@@ -103,7 +108,9 @@ _last_stale_check: float = 0.0
 _STALE_CHECK_INTERVAL = 60.0
 
 
-def _maybe_recover(db, storage: StorageBackend, org_id: UUID) -> None:
+def _maybe_recover(
+    db, storage: StorageBackend, org_id: UUID, svc: "CertidoesService"
+) -> None:
     """Throttled recovery of work stranded by a dead process.
 
     Two legs, both on the same throttle:
@@ -124,8 +131,8 @@ def _maybe_recover(db, storage: StorageBackend, org_id: UUID) -> None:
     if now - _last_stale_check < _STALE_CHECK_INTERVAL:
         return
     _last_stale_check = now
-    service.recover_stale_processando(db)
-    service.schedule_tjsp_for_org(str(org_id), db, storage)
+    svc.recover_stale_processando(db)
+    svc.schedule_tjsp_for_org(str(org_id), db, storage)
 
 
 def _content_disposition(filename: str) -> str:
@@ -196,12 +203,13 @@ async def listar_consultas(
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
     storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
 ):
     """List certificate consultation requests, newest first."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    _maybe_recover(db, storage, org_id)
+    _maybe_recover(db, storage, org_id, svc)
 
     validated_page, validated_page_size, offset = calculate_pagination(
         page, page_size, MAX_PAGE_SIZE
@@ -232,7 +240,7 @@ async def listar_consultas(
     # hazards live on this read — see `service.status_counts_por_consulta`,
     # which owns both.
     if consultas:
-        success_counts, erro_counts = service.status_counts_por_consulta(
+        success_counts, erro_counts = svc.status_counts_por_consulta(
             [c["id"] for c in consultas], org_id, db
         )
         for c in consultas:
@@ -249,6 +257,7 @@ async def criar_consulta(
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
     storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
 ):
     """Create a consultation, fan out one resultado per type, start processing."""
     user, _token, raw_org = auth
@@ -258,7 +267,7 @@ async def criar_consulta(
     # consulta is created, ten resultados fan out, and every one of them fails
     # a minute later with the same message — a row the user now has to delete
     # to learn something we knew before we started.
-    missing = service.check_required_credentials(str(org_id))
+    missing = svc.check_required_credentials(str(org_id))
     if missing:
         # Wording is VERBATIM the sentence `matriculas/router.py` and
         # `settings_router.py` already use — the Settings page it names is one
@@ -300,7 +309,7 @@ async def criar_consulta(
     # Background processing. Passed as an async coroutine function so it runs
     # in the MAIN event loop — required for the TJSP on-demand scheduling,
     # which needs a running loop to create its task on.
-    background_tasks.add_task(service.processar_consulta, consulta["id"], db, storage)
+    background_tasks.add_task(svc.processar_consulta, consulta["id"], db, storage)
 
     # One resultado per registry type per consulta: the fan-out in
     # `criar_consulta` inserts exactly `len(CERTIDOES_CONFIG)` of them and the
@@ -362,6 +371,7 @@ async def reprocessar_consulta(
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
     storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
 ):
     """Retry the failed certificates in a consultation."""
     _user, _token, raw_org = auth
@@ -392,11 +402,11 @@ async def reprocessar_consulta(
         "status": "processando",
     }).eq("id", consulta_id).eq("org_id", str(org_id)).execute()
 
-    background_tasks.add_task(service.processar_consulta, consulta_id, db, storage)
+    background_tasks.add_task(svc.processar_consulta, consulta_id, db, storage)
 
     # `processar_consulta` only picks up "pendente" rows, so the TJSP items we
     # just moved to "na_fila" need their own scheduling pass.
-    service.schedule_tjsp_for_org(str(org_id), db, storage)
+    svc.schedule_tjsp_for_org(str(org_id), db, storage)
 
     return ok_response("Reprocessamento iniciado")
 
@@ -406,6 +416,7 @@ async def cancelar_consulta_processamento(
     consulta_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
 ):
     """Cancel in-progress certificate processing for one consulta."""
     _user, _token, raw_org = auth
@@ -413,7 +424,7 @@ async def cancelar_consulta_processamento(
 
     _get_consulta_or_404(db, consulta_id, org_id, select="id")
 
-    result = service.cancelar_processamento(consulta_id, str(org_id), db)
+    result = svc.cancelar_processamento(consulta_id, str(org_id), db)
     return success_response(result)
 
 
@@ -423,6 +434,7 @@ async def excluir_consulta(
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
     storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
 ):
     """Delete a consultation, its results, and the files behind them."""
     _user, _token, raw_org = auth
@@ -444,7 +456,7 @@ async def excluir_consulta(
     )
     # Blobs BEFORE rows: a row we delete first is a key we can no longer find,
     # i.e. an orphan in the bucket nobody will ever look for again.
-    await service.delete_storage_files(resultados.data or [], storage)
+    await svc.delete_storage_files(resultados.data or [], storage)
 
     # CASCADE removes the resultados (migration 091's FK).
     db.table(CONSULTAS).delete().eq("id", consulta_id).eq(
@@ -461,6 +473,7 @@ async def download_certidao(
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
     storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
 ):
     """Download one certificate — from our bucket, or proxied from the source.
 
@@ -486,7 +499,7 @@ async def download_certidao(
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
 
     async with httpx.AsyncClient() as client:
-        content = await service.read_certidao_bytes(url, storage, client)
+        content = await svc.read_certidao_bytes(url, storage, client)
 
     if content is None:
         raise HTTPException(
@@ -506,6 +519,7 @@ async def download_consulta_zip(
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
     storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
 ):
     """Download every successful certificate of a consultation as one ZIP."""
     _user, _token, raw_org = auth
@@ -537,7 +551,7 @@ async def download_consulta_zip(
         )
 
     async def _fetch(client: httpx.AsyncClient, item: dict) -> Optional[tuple]:
-        content = await service.read_certidao_bytes(
+        content = await svc.read_certidao_bytes(
             item["arquivo_url"], storage, client
         )
         if content is None:
@@ -600,6 +614,7 @@ async def upload_certidao_manual(
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
     storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
 ):
     """Upload a certificate PDF by hand for a resultado the automation failed.
 
@@ -635,7 +650,7 @@ async def upload_certidao_manual(
     if not pdf_bytes:
         raise HTTPException(status_code=422, detail="Arquivo vazio.")
 
-    update_data = await service.process_manual_upload(
+    update_data = await svc.process_manual_upload(
         pdf_bytes=pdf_bytes,
         resultado_id=resultado_id,
         consulta=consulta,
@@ -653,12 +668,13 @@ async def upload_certidao_manual(
 async def status_fila_tjsp(
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
 ):
     """The TJSP queue for this org — who is waiting, and for how much longer."""
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    queued_items = service.queued_tjsp_for_org(org_id, db)
+    queued_items = svc.queued_tjsp_for_org(org_id, db)
 
     # Enrich with consulta info in batched queries (URL-length safety on
     # `.in_()`), so the queue reads as names rather than as ids.
@@ -695,7 +711,7 @@ async def status_fila_tjsp(
     return success_response({
         "items": items,
         "total_na_fila": len(items),
-        "cooldown": service.tjsp_cooldown_status(org_id, db),
+        "cooldown": svc.tjsp_cooldown_status(org_id, db),
     })
 
 

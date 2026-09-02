@@ -694,13 +694,102 @@ class TestDeleteStorageFiles:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_ok(file_url="https://x/f.pdf", data=None):
+class _FakeHttp:
+    """An `httpx.AsyncClient` stand-in answering BOTH calls the pipeline makes.
+
+    🔴 THIS REPLACED A `patch.object(service, "_fetch_certidao", ...)`.
+
+    Both the InfoSimples API call and the file download that follows it go
+    through the SAME client, so a double has to route on the URL. Doing that
+    rather than swapping our own `_fetch_certidao` out means the real retry
+    ladder, the 612 / "nada consta" branch, the CENPROT `site_receipts`
+    fallback and the error-extraction precedence all actually RUN — which is
+    the behaviour the ERP port had to preserve exactly, and which a stubbed
+    `_fetch_certidao` asserted nothing about.
+
+    `httpx` is the external boundary here; it is the only thing being faked.
+    """
+
+    def __init__(
+        self,
+        api_payload: dict,
+        *,
+        file_body: bytes = b"%PDF-1.4 real",
+        file_content_type: str = "application/pdf",
+        file_status: int = 200,
+    ):
+        self.api_payload = api_payload
+        self.file_body = file_body
+        self.file_content_type = file_content_type
+        self.file_status = file_status
+        self.api_calls: list[dict] = []
+        self.downloaded: list[str] = []
+
+    async def get(self, url, **kwargs):
+        if url.startswith(service.INFOSIMPLES_BASE_URL):
+            self.api_calls.append(kwargs.get("params") or {})
+            resp = MagicMock()
+            resp.json.return_value = self.api_payload
+            return resp
+        self.downloaded.append(url)
+        resp = MagicMock(status_code=self.file_status, content=self.file_body)
+        resp.headers = {"content-type": self.file_content_type}
+        return resp
+
+
+def _api_ok(file_url="https://x/f.pdf", data=None) -> dict:
+    """A real InfoSimples 200 envelope, as the API returns it."""
     return {
-        "success": True,
-        "file_url": file_url,
-        "raw_response": {"code": 200, "data": data or [{"situacao": "Regular"}]},
-        "error": None,
+        "code": 200,
+        "data": data or [{"site_receipt": file_url, "situacao": "Regular"}],
     }
+
+
+class _Recorder:
+    """An awaitable stand-in for `_process_single_certidao`, recording what the
+    fan-out decided to run.
+
+    Injected through `processar_consulta(process_one=...)` rather than patched
+    over the module attribute: what these tests assert is the DISPATCH decision
+    (which resultados run now, which are queued, which are skipped), and that is
+    exactly what stays observable when the collaborator is a parameter.
+    """
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    @property
+    def count(self) -> int:
+        return len(self.calls)
+
+    @property
+    def resultado_ids(self) -> list[str]:
+        return [c[4] for c in self.calls]
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append(args)
+
+
+class _SyncRecorder:
+    """`_Recorder`'s synchronous twin — `schedule_tjsp_for_org` is a plain
+    function, and awaiting a recorder that is not awaitable would be a
+    different bug than the one under test."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    @property
+    def count(self) -> int:
+        return len(self.calls)
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append(args)
+
+
+async def _noop_analyze(text, org_id=None):
+    """The `analyze=` DI seam's stand-in. The AI call is a separate concern
+    with its own tests (`TestAnalyzeWithAi`); here it must simply not fire."""
+    return "ok"
 
 
 class TestProcessSingleCertidao:
@@ -711,17 +800,12 @@ class TestProcessSingleCertidao:
             certidao_resultados=[_resultado()],
         )
         storage = FakeStorageBackend()
-        resp = MagicMock(status_code=200, content=b"%PDF-1.4 real")
-        resp.headers = {"content-type": "application/pdf"}
-        http = MagicMock(get=AsyncMock(return_value=resp))
+        http = _FakeHttp(_api_ok(), file_body=b"%PDF-1.4 real")
 
-        with patch.object(
-            service, "_fetch_certidao", new=AsyncMock(return_value=_fetch_ok())
-        ), patch.object(service, "_analyze_with_ai", new=AsyncMock(return_value="ok")):
-            await service._process_single_certidao(
-                CONFIG_FEDERAL, _consulta_row(), "tok", db,
-                "resultado-001", http, storage,
-            )
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, storage, analyze=_noop_analyze,
+        )
 
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -732,6 +816,9 @@ class TestProcessSingleCertidao:
         assert row["arquivo_nome"] == "cnd_federal.pdf"
         blob = await storage.get(bucket=service.BUCKET, key=row["arquivo_url"])
         assert blob.data == b"%PDF-1.4 real"
+        # The REAL param builder ran, against the real endpoint URL.
+        assert http.api_calls[0]["cpf"] == "12345678901"
+        assert http.downloaded == ["https://x/f.pdf"]
 
     @pytest.mark.asyncio
     async def test_html_e_convertido_antes_de_gravar(self):
@@ -740,17 +827,16 @@ class TestProcessSingleCertidao:
             certidao_resultados=[_resultado(tipo="cenprot", id="r-html")],
         )
         storage = FakeStorageBackend()
-        resp = MagicMock(status_code=200, content=b"<html><body>oi</body></html>")
-        resp.headers = {"content-type": "text/html"}
-        http = MagicMock(get=AsyncMock(return_value=resp))
+        http = _FakeHttp(
+            _api_ok(),
+            file_body=b"<html><body>oi</body></html>",
+            file_content_type="text/html",
+        )
 
-        with patch.object(
-            service, "_fetch_certidao", new=AsyncMock(return_value=_fetch_ok())
-        ), patch.object(service, "_analyze_with_ai", new=AsyncMock(return_value="ok")):
-            await service._process_single_certidao(
-                config_for("cenprot"), _consulta_row(), "tok", db,
-                "r-html", http, storage,
-            )
+        await service._process_single_certidao(
+            config_for("cenprot"), _consulta_row(), "tok", db,
+            "r-html", http, storage, analyze=_noop_analyze,
+        )
 
         row = db.table("certidao_resultados").select("*").eq(
             "id", "r-html"
@@ -759,23 +845,43 @@ class TestProcessSingleCertidao:
         assert blob.data[:5] == b"%PDF-"
 
     @pytest.mark.asyncio
+    async def test_cenprot_le_o_site_receipts_da_raiz(self):
+        """CENPROT puts the file URL at the ROOT, not in `data[0]`. Reachable
+        now that the real `_fetch_certidao` runs in this path."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="cenprot", id="r-cenprot")],
+        )
+        http = _FakeHttp(
+            {
+                "code": 200,
+                "data": [{"protestos": []}],
+                "site_receipts": ["https://x/cenprot.html"],
+            },
+            file_body=b"<html>ok</html>",
+            file_content_type="text/html",
+        )
+        await service._process_single_certidao(
+            config_for("cenprot"), _consulta_row(), "tok", db,
+            "r-cenprot", http, FakeStorageBackend(), analyze=_noop_analyze,
+        )
+        assert http.downloaded == ["https://x/cenprot.html"]
+
+    @pytest.mark.asyncio
     async def test_content_type_desconhecido_mantem_a_url_de_origem(self):
         db = _db(
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado()],
         )
         storage = FakeStorageBackend()
-        resp = MagicMock(status_code=200, content=b"\x89PNG\r\n")
-        resp.headers = {"content-type": "image/png"}
-        http = MagicMock(get=AsyncMock(return_value=resp))
+        http = _FakeHttp(
+            _api_ok(), file_body=b"\x89PNG\r\n", file_content_type="image/png"
+        )
 
-        with patch.object(
-            service, "_fetch_certidao", new=AsyncMock(return_value=_fetch_ok())
-        ), patch.object(service, "_analyze_with_ai", new=AsyncMock(return_value="ok")):
-            await service._process_single_certidao(
-                CONFIG_FEDERAL, _consulta_row(), "tok", db,
-                "resultado-001", http, storage,
-            )
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, storage, analyze=_noop_analyze,
+        )
 
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -789,20 +895,18 @@ class TestProcessSingleCertidao:
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado()],
         )
-        with patch.object(service, "_fetch_certidao", new=AsyncMock(return_value={
-            "success": True, "file_url": None, "raw_response": {"code": 612},
-            "error": None, "nada_consta": "Nada consta",
-        })):
-            await service._process_single_certidao(
-                CONFIG_FEDERAL, _consulta_row(), "tok", db,
-                "resultado-001", MagicMock(), FakeStorageBackend(),
-            )
+        http = _FakeHttp({"code": 612, "errors": ["Nada consta"]})
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, FakeStorageBackend(), analyze=_noop_analyze,
+        )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
         ).execute().data[0]
         assert row["status"] == "sucesso"
         assert row["analise_ia"] == "Nada consta"
         assert row["arquivo_url"] is None
+        assert http.downloaded == []
 
     @pytest.mark.asyncio
     async def test_falha_grava_erro_e_mensagem(self):
@@ -810,14 +914,11 @@ class TestProcessSingleCertidao:
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado()],
         )
-        with patch.object(service, "_fetch_certidao", new=AsyncMock(return_value={
-            "success": False, "file_url": None,
-            "raw_response": {"code": 400}, "error": "CPF inválido",
-        })):
-            await service._process_single_certidao(
-                CONFIG_FEDERAL, _consulta_row(), "tok", db,
-                "resultado-001", MagicMock(), FakeStorageBackend(),
-            )
+        http = _FakeHttp({"code": 400, "errors": ["CPF inválido"]})
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, FakeStorageBackend(), analyze=_noop_analyze,
+        )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
         ).execute().data[0]
@@ -833,12 +934,11 @@ class TestProcessSingleCertidao:
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado(tipo=TJSP_TIPO)],
         )
-        with patch.object(service, "_fetch_certidao", new=AsyncMock(return_value={
-            "success": False, "file_url": None, "raw_response": None, "error": "x",
-        })):
+        with patch(_REGISTRY_RESOLVE, return_value=None):
             await service._process_single_certidao(
                 config_for(TJSP_TIPO), _consulta_row(), "tok", db,
-                "resultado-001", MagicMock(), FakeStorageBackend(),
+                "resultado-001", _FakeHttp({"code": 400, "errors": ["x"]}),
+                FakeStorageBackend(), analyze=_noop_analyze,
             )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -937,16 +1037,18 @@ class TestProcessarConsulta:
                            api_requested_at=recent),
             ],
         )
-        with patch(_CRED, return_value="tok"), patch.object(
-            service, "schedule_tjsp_for_org"
-        ) as sched:
-            await service.processar_consulta("consulta-001", db, FakeStorageBackend())
+        scheduled: list[tuple] = []
+        with patch(_CRED, return_value="tok"):
+            await service.processar_consulta(
+                "consulta-001", db, FakeStorageBackend(),
+                schedule_tjsp=lambda *a: scheduled.append(a),
+            )
 
         row = db.table("certidao_resultados").select("*").eq(
             "id", "r-tjsp"
         ).execute().data[0]
         assert row["status"] == "na_fila"
-        sched.assert_called_once()
+        assert len(scheduled) == 1 and scheduled[0][0] == ORG
 
     @pytest.mark.asyncio
     async def test_tjsp_sem_historico_roda_imediatamente(self):
@@ -954,11 +1056,12 @@ class TestProcessarConsulta:
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado(id="r-tjsp", tipo=TJSP_TIPO, ordem=7)],
         )
-        with patch(_CRED, return_value="tok"), patch.object(
-            service, "_process_single_certidao", new=AsyncMock()
-        ) as proc:
-            await service.processar_consulta("consulta-001", db, FakeStorageBackend())
-        assert proc.await_count == 1
+        processed = _Recorder()
+        with patch(_CRED, return_value="tok"):
+            await service.processar_consulta(
+                "consulta-001", db, FakeStorageBackend(), process_one=processed,
+            )
+        assert processed.count == 1
 
     @pytest.mark.asyncio
     async def test_tipo_fora_do_registro_e_pulado_com_log_nao_derruba_o_resto(self):
@@ -969,11 +1072,14 @@ class TestProcessarConsulta:
                 _resultado(id="r-orfao", tipo="tipo_removido", ordem=99),
             ],
         )
-        with patch(_CRED, return_value="tok"), patch.object(
-            service, "_process_single_certidao", new=AsyncMock()
-        ) as proc:
-            await service.processar_consulta("consulta-001", db, FakeStorageBackend())
-        assert proc.await_count == 1
+        processed = _Recorder()
+        with patch(_CRED, return_value="tok"):
+            await service.processar_consulta(
+                "consulta-001", db, FakeStorageBackend(), process_one=processed,
+            )
+        assert processed.count == 1
+        # The orphan tipo is skipped, not crashed on — and the real one ran.
+        assert processed.resultado_ids == ["r-ok"]
 
     @pytest.mark.asyncio
     async def test_consulta_inexistente_nao_estoura(self):
@@ -1073,12 +1179,15 @@ class TestScheduleTjspForOrg:
         db = _db(certidao_resultados=[
             _resultado(id="r-tjsp", tipo=TJSP_TIPO, status="na_fila"),
         ])
-        with patch.object(service, "_delayed_tjsp_process", new=AsyncMock()):
-            service.schedule_tjsp_for_org(ORG, db, FakeStorageBackend())
-            task = service._tjsp_scheduled_tasks.get(ORG)
-            assert task is not None
-            await asyncio.sleep(0)
-            task.cancel()
+        delayed = _Recorder()
+        service.schedule_tjsp_for_org(ORG, db, FakeStorageBackend(), delayed=delayed)
+        task = service._tjsp_scheduled_tasks.get(ORG)
+        assert task is not None
+        await asyncio.sleep(0)
+        # It scheduled the QUEUED item, with the cooldown delay it computed.
+        assert delayed.count == 1
+        assert delayed.calls[0][1]["id"] == "r-tjsp"
+        task.cancel()
 
     @pytest.mark.asyncio
     async def test_idempotente_enquanto_a_task_esta_em_voo(self):
@@ -1091,8 +1200,10 @@ class TestScheduleTjspForOrg:
 
         in_flight = asyncio.get_running_loop().create_task(_never())
         service._tjsp_scheduled_tasks[ORG] = in_flight
-        service.schedule_tjsp_for_org(ORG, db, FakeStorageBackend())
+        delayed = _Recorder()
+        service.schedule_tjsp_for_org(ORG, db, FakeStorageBackend(), delayed=delayed)
         assert service._tjsp_scheduled_tasks[ORG] is in_flight
+        assert delayed.count == 0, "a second task was scheduled for the same org"
         in_flight.cancel()
 
     @pytest.mark.asyncio
@@ -1102,18 +1213,21 @@ class TestScheduleTjspForOrg:
             _resultado(id="b", tipo=TJSP_TIPO, status="na_fila",
                        org_id=OTHER_ORG, consulta_id="consulta-002"),
         ])
-        with patch.object(service, "_delayed_tjsp_process", new=AsyncMock()):
-            service.schedule_all_pending_tjsp(db, FakeStorageBackend())
-            assert set(service._tjsp_scheduled_tasks) == {ORG, OTHER_ORG}
-            await asyncio.sleep(0)
-            for t in service._tjsp_scheduled_tasks.values():
-                t.cancel()
+        scheduled: list[str] = []
+        service.schedule_all_pending_tjsp(
+            db, FakeStorageBackend(),
+            schedule_one=lambda oid, *_a, **_k: scheduled.append(oid),
+        )
+        assert set(scheduled) == {ORG, OTHER_ORG}
 
     @pytest.mark.asyncio
     async def test_sem_fila_nenhuma_task(self):
+        scheduled: list[str] = []
         service.schedule_all_pending_tjsp(
-            _db(certidao_resultados=[]), FakeStorageBackend()
+            _db(certidao_resultados=[]), FakeStorageBackend(),
+            schedule_one=lambda oid, *_a, **_k: scheduled.append(oid),
         )
+        assert scheduled == []
         assert service._tjsp_scheduled_tasks == {}
 
 
@@ -1123,29 +1237,32 @@ class TestDelayedTjspProcess:
         db = _db(certidao_resultados=[
             _resultado(id="r-tjsp", tipo=TJSP_TIPO, status="sucesso"),
         ])
-        with patch.object(
-            service, "_process_single_tjsp_item", new=AsyncMock()
-        ) as proc, patch.object(service, "schedule_tjsp_for_org"):
-            await service._delayed_tjsp_process(
-                0, {"id": "r-tjsp", "consulta_id": "consulta-001", "org_id": ORG},
-                ORG, db, FakeStorageBackend(),
-            )
-        proc.assert_not_awaited()
+        # `reschedule` is SYNC (`schedule_tjsp_for_org` is a plain function);
+        # handing it an async recorder produced a never-awaited-coroutine
+        # warning rather than a failure — a quiet way to test the wrong shape.
+        proc, resched = _Recorder(), _SyncRecorder()
+        await service._delayed_tjsp_process(
+            0, {"id": "r-tjsp", "consulta_id": "consulta-001", "org_id": ORG},
+            ORG, db, FakeStorageBackend(),
+            process_item=proc, reschedule=resched,
+        )
+        assert proc.count == 0
+        # It DOES still chain: the item left the queue, it was not a failure.
+        assert resched.count == 1
 
     @pytest.mark.asyncio
     async def test_item_na_fila_e_processado_e_encadeia_o_proximo(self):
         db = _db(certidao_resultados=[
             _resultado(id="r-tjsp", tipo=TJSP_TIPO, status="na_fila"),
         ])
-        with patch.object(
-            service, "_process_single_tjsp_item", new=AsyncMock()
-        ) as proc, patch.object(service, "schedule_tjsp_for_org") as sched:
-            await service._delayed_tjsp_process(
-                0, {"id": "r-tjsp", "consulta_id": "consulta-001", "org_id": ORG},
-                ORG, db, FakeStorageBackend(),
-            )
-        proc.assert_awaited_once()
-        sched.assert_called_once()
+        proc, resched = _Recorder(), _SyncRecorder()
+        await service._delayed_tjsp_process(
+            0, {"id": "r-tjsp", "consulta_id": "consulta-001", "org_id": ORG},
+            ORG, db, FakeStorageBackend(),
+            process_item=proc, reschedule=resched,
+        )
+        assert proc.count == 1
+        assert resched.count == 1
 
     @pytest.mark.asyncio
     async def test_falha_marca_erro_e_ainda_encadeia(self):
@@ -1155,20 +1272,21 @@ class TestDelayedTjspProcess:
                 _resultado(id="r-tjsp", tipo=TJSP_TIPO, status="na_fila"),
             ],
         )
-        with patch.object(
-            service, "_process_single_tjsp_item",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
-        ), patch.object(service, "schedule_tjsp_for_org") as sched:
-            await service._delayed_tjsp_process(
-                0, {"id": "r-tjsp", "consulta_id": "consulta-001", "org_id": ORG},
-                ORG, db, FakeStorageBackend(),
-            )
+        async def _boom(*_a, **_k):
+            raise RuntimeError("boom")
+
+        resched = _SyncRecorder()
+        await service._delayed_tjsp_process(
+            0, {"id": "r-tjsp", "consulta_id": "consulta-001", "org_id": ORG},
+            ORG, db, FakeStorageBackend(),
+            process_item=_boom, reschedule=resched,
+        )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "r-tjsp"
         ).execute().data[0]
         assert row["status"] == "erro"
         assert "boom" in row["erro_mensagem"]
-        sched.assert_called_once()
+        assert resched.count == 1
 
     @pytest.mark.asyncio
     async def test_cancelamento_nao_reagenda(self):
@@ -1177,14 +1295,16 @@ class TestDelayedTjspProcess:
         db = _db(certidao_resultados=[
             _resultado(id="r-tjsp", tipo=TJSP_TIPO, status="na_fila"),
         ])
-        with patch("asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)), \
-                patch.object(service, "schedule_tjsp_for_org") as sched:
+        resched = _SyncRecorder()
+        # `asyncio.sleep` is stdlib — an EXTERNAL boundary, the one kind of
+        # patch the rule allows (seam 3).
+        with patch("asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)):
             with pytest.raises(asyncio.CancelledError):
                 await service._delayed_tjsp_process(
                     10, {"id": "r-tjsp", "consulta_id": "consulta-001", "org_id": ORG},
-                    ORG, db, FakeStorageBackend(),
+                    ORG, db, FakeStorageBackend(), reschedule=resched,
                 )
-        sched.assert_not_called()
+        assert resched.count == 0
 
 
 class TestProcessSingleTjspItem:
@@ -1468,6 +1588,16 @@ class TestQueuedTjspForOrg:
 
 
 class TestScheduler:
+    """The stranded-work sweep.
+
+    🔴 THESE ASSERT BEHAVIOUR, NOT CALL-ROUTING. They used to patch
+    `service.recover_stale_processando` / `recover_stuck_processando` and assert
+    which one the sweep called — which is both a self-monkeypatch and a weaker
+    claim: it proves a name was invoked, not that a live request survived. The
+    `clients=` DI seam lets the REAL recovery run against a mock DB, so each
+    test can assert the thing that actually matters — which rows moved.
+    """
+
     def test_configure_registra_o_job_no_scheduler_do_seed(self):
         from noctusai_lib.api import scheduler as seed_scheduler
 
@@ -1486,49 +1616,104 @@ class TestScheduler:
         being scheduled — which removes the safety net this IS."""
         from app.modules.certidoes import scheduler
 
-        with patch.object(
-            scheduler, "_clients", side_effect=RuntimeError("db gone")
-        ):
-            await scheduler.sweep_stranded()
+        def _explode():
+            raise RuntimeError("db gone")
+
+        await scheduler.sweep_stranded(clients=_explode)
 
     @pytest.mark.asyncio
     async def test_sweep_sem_admin_client_e_no_op(self):
+        """`_clients` answers `(None, None)` when there is no admin client; the
+        sweep must return without touching anything."""
         from app.modules.certidoes import scheduler
 
-        with patch.object(scheduler, "get_admin_client", return_value=None), \
-                patch.object(service, "recover_stale_processando") as rec:
-            await scheduler.sweep_stranded()
-        rec.assert_not_called()
+        db = _db(certidao_resultados=[
+            _resultado(id="r1", status="processando",
+                       api_requested_at="2020-01-01T00:00:00+00:00"),
+        ])
+        await scheduler.sweep_stranded(clients=lambda: (None, None))
+        # Ancient row, and still untouched — the sweep genuinely did nothing.
+        assert db.table("certidao_resultados").select("*").eq(
+            "id", "r1"
+        ).execute().data[0]["status"] == "processando"
 
     @pytest.mark.asyncio
-    async def test_sweep_usa_a_variante_stale_e_nunca_a_incondicional(self):
-        """The unconditional reset would clobber a live request. That is the
-        whole reason the recurring job exists in the stale flavour."""
+    async def test_sweep_nao_derruba_requisicao_viva(self):
+        """🔴 THE reason the recurring job uses the STALE variant.
+
+        A row that started 2 minutes ago belongs to a request that is very
+        likely still in flight (the slowest legitimate run is ~12 min). The
+        unconditional `recover_stuck_processando` would reset it out from under
+        the live task; the stale variant, with its 15-minute floor, must not.
+        """
         from app.modules.certidoes import scheduler
 
-        db = _db(certidao_resultados=[])
-        with patch.object(scheduler, "_clients", return_value=(db, FakeStorageBackend())), \
-                patch.object(service, "recover_stale_processando", return_value=0) as stale, \
-                patch.object(service, "recover_stuck_processando") as stuck, \
-                patch.object(service, "schedule_all_pending_tjsp"):
-            await scheduler.sweep_stranded()
-        stale.assert_called_once()
-        stuck.assert_not_called()
+        fresh = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[
+                _resultado(id="viva", status="processando", api_requested_at=fresh),
+            ],
+        )
+        await scheduler.sweep_stranded(
+            clients=lambda: (db, FakeStorageBackend())
+        )
+        assert db.table("certidao_resultados").select("*").eq(
+            "id", "viva"
+        ).execute().data[0]["status"] == "processando"
 
-    def test_startup_recovery_usa_a_variante_incondicional(self):
+    @pytest.mark.asyncio
+    async def test_sweep_recupera_o_que_encalhou_de_verdade(self):
+        """The other half: a genuinely abandoned row DOES get recovered, so the
+        test above cannot pass by the sweep simply doing nothing."""
         from app.modules.certidoes import scheduler
 
-        db = _db(certidao_resultados=[])
-        with patch.object(scheduler, "_clients", return_value=(db, FakeStorageBackend())), \
-                patch.object(service, "recover_stuck_processando") as stuck, \
-                patch.object(service, "schedule_all_pending_tjsp"):
-            scheduler.run_startup_recovery()
-        stuck.assert_called_once()
+        old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[
+                _resultado(id="encalhado", status="processando",
+                           api_requested_at=old),
+            ],
+        )
+        await scheduler.sweep_stranded(
+            clients=lambda: (db, FakeStorageBackend())
+        )
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "encalhado"
+        ).execute().data[0]
+        assert row["status"] == "erro"
+        assert "reprocessar" in row["erro_mensagem"]
+
+    def test_startup_recovery_reseta_incondicionalmente(self):
+        """At process start nothing of OURS is running, so the unconditional
+        reset is correct there — and it is what makes a row abandoned by the
+        PREVIOUS process recoverable immediately rather than in 15 minutes."""
+        from app.modules.certidoes import scheduler
+
+        fresh = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[
+                _resultado(id="orfao", status="processando", api_requested_at=fresh),
+                _resultado(id="orfao-tjsp", tipo=TJSP_TIPO, ordem=7,
+                           status="processando", api_requested_at=fresh),
+            ],
+        )
+        scheduler.run_startup_recovery(clients=lambda: (db, FakeStorageBackend()))
+        rows = {
+            r["id"]: r["status"]
+            for r in db.table("certidao_resultados").select("*").execute().data
+        }
+        # Same 2-minute-old rows the sweep above deliberately leaves alone.
+        assert rows == {"orfao": "pendente", "orfao-tjsp": "na_fila"}
 
     def test_startup_recovery_nao_e_fatal(self):
         """A lifespan hook is a SIDE EFFECT, never a precondition for serving.
         → KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md"""
         from app.modules.certidoes import scheduler
 
-        with patch.object(scheduler, "_clients", side_effect=RuntimeError("x")):
-            scheduler.run_startup_recovery()
+        def _explode():
+            raise RuntimeError("x")
+
+        scheduler.run_startup_recovery(clients=_explode)

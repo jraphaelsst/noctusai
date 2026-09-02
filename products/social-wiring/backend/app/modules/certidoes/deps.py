@@ -26,7 +26,8 @@ reason `table_reads.paged_rows` takes `org_id` as a required positional.
 from __future__ import annotations
 
 import weakref
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from noctusai_lib.integrations.storage import (
     FakeStorageBackend,
@@ -93,8 +94,109 @@ def get_storage_backend() -> StorageBackend:
     return storage_for(get_admin_client())
 
 
+
+# ─── The service surface, as an injectable object ────────────────────
+#
+# 🔴 WHY THE ROUTER DOES NOT CALL `service.*` DIRECTLY
+# -----------------------------------------------------
+# It used to, and the tests then had to reach into `app.modules.certidoes.
+# service` and swap functions out with `patch.object` to stop a route from
+# firing the real InfoSimples pipeline. That is the self-monkeypatch class
+# CLAUDE.md § 1 forbids, and for a reason worth restating: a test that
+# replaces our function is no longer exercising the wiring it claims to
+# cover, and the replacement leaks to every other test in the process.
+#
+# The honest seam is the one below. The router receives its collaborator
+# instead of reaching for a module global; production always gets
+# `_DEFAULT_SERVICE` (every field the real function); a test overrides
+# `get_certidoes_service` via `app.dependency_overrides` with a
+# `dataclasses.replace(...)` of it, substituting the ONE operation under
+# test and keeping the rest real. Nothing in the production module is ever
+# mutated, so nothing leaks.
+#
+# Fields hold plain functions rather than being methods: `replace(svc,
+# processar_consulta=fake)` is then a one-liner per test, and the type of
+# each field documents the operation's shape.
+# → KB § PATTERNS/backend/di-test-seam.md (seam 1, DI kwarg/object)
+
+
+@dataclass(frozen=True)
+class CertidoesService:
+    """Every service-layer operation the HTTP layer invokes.
+
+    One object rather than eleven separate dependencies: the router needs
+    most of them per request, and a test that substitutes one wants the
+    other ten to stay real.
+    """
+
+    check_required_credentials: Callable
+    processar_consulta: Callable
+    schedule_tjsp_for_org: Callable
+    status_counts_por_consulta: Callable
+    recover_stale_processando: Callable
+    read_certidao_bytes: Callable
+    delete_storage_files: Callable
+    process_manual_upload: Callable
+    cancelar_processamento: Callable
+    queued_tjsp_for_org: Callable
+    tjsp_cooldown_status: Callable
+
+
+def _build_default_service() -> CertidoesService:
+    """The production wiring — every field the real service function.
+
+    Built lazily inside a function (not at import) so `deps` does not import
+    `service` at module scope: `service` imports `deps` for `BUCKET`/`PREFIXO`,
+    and a module-level import here would close that cycle.
+    """
+    from app.modules.certidoes import service
+
+    return CertidoesService(
+        check_required_credentials=service.check_required_credentials,
+        processar_consulta=service.processar_consulta,
+        schedule_tjsp_for_org=service.schedule_tjsp_for_org,
+        status_counts_por_consulta=service.status_counts_por_consulta,
+        recover_stale_processando=service.recover_stale_processando,
+        read_certidao_bytes=service.read_certidao_bytes,
+        delete_storage_files=service.delete_storage_files,
+        process_manual_upload=service.process_manual_upload,
+        cancelar_processamento=service.cancelar_processamento,
+        queued_tjsp_for_org=service.queued_tjsp_for_org,
+        tjsp_cooldown_status=service.tjsp_cooldown_status,
+    )
+
+
+_default_service: CertidoesService | None = None
+
+
+def get_certidoes_service() -> CertidoesService:
+    """FastAPI dependency — the service operations this router invokes.
+
+    Tests override this seam rather than patching `service.*`::
+
+        svc = dataclasses.replace(
+            build_default_service(), processar_consulta=fake
+        )
+        app.dependency_overrides[get_certidoes_service] = lambda: svc
+    """
+    global _default_service
+    if _default_service is None:
+        _default_service = _build_default_service()
+    return _default_service
+
+
+def build_default_service() -> CertidoesService:
+    """A FRESH all-real service object — the base a test calls
+    `dataclasses.replace(...)` on. Deliberately not the cached singleton, so
+    a test can never mutate what production hands out."""
+    return _build_default_service()
+
+
 __all__ = [
     "BUCKET",
+    "CertidoesService",
+    "build_default_service",
+    "get_certidoes_service",
     "PREFIXO",
     "get_certidoes_client",
     "get_storage_backend",
