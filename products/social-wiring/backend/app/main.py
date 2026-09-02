@@ -431,6 +431,26 @@ _MAX_BODY_PATH_OVERRIDES = {
     # `noctusai_seed.upload_route_overrides` REFUSES TO BOOT an upload route
     # with no ceiling, so the alternative was an engineer bypassing a keeper.
     "/api/matriculas/extrair": 20 * 1024 * 1024,  # 20 MB
+    # Manual certidão upload (POST /api/certidoes/resultados/{resultado_id}/upload
+    # — the `certidoes` module, ported from the same ERP surface). The operator
+    # uses this when automated issuance failed and they fetched the PDF by hand,
+    # so it feeds the identical post-download pipeline.
+    #
+    # `{resultado_id}` is a dynamic segment BEFORE the one needing the ceiling,
+    # so a plain prefix cannot express it: `/api/certidoes` alone would also
+    # raise the cap on every JSON route under that router (consultas, tipos,
+    # fila-tjsp), weakening the guard where it does real work. The `*` wildcard
+    # matches exactly that one segment — the same reasoning the four
+    # `/api/clientes/*/...` entries above document.
+    #
+    # `upload_certidao_manual` does `await file.read()`, so this bounds memory
+    # rather than disk. 25 MB matches ERP's ceiling for the same route and
+    # covers a multi-page scanned certidão.
+    #
+    # Declared ahead of the module for the same reason as the matrícula entry
+    # above: inert until a router serves the path, and its absence is what
+    # blocks the module's own branch from committing at all.
+    "/api/certidoes/resultados/*/upload": 25 * 1024 * 1024,  # 25 MB
 }
 
 app = create_product_app(
