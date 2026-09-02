@@ -43,8 +43,12 @@ const ATENDIMENTOS: any[] = [];
 // to do with this test.
 vi.mock("@noctusai/lib/components", async (importOriginal) => ({
   ...(await importOriginal<any>()),
-  PipelineBoard: ({ onCardClick }: any) => (
+  // `toolbar` IS rendered here — the real board renders it whenever the prop
+  // is set, and the page's "Novo lead" button lives in it. A stub that
+  // dropped it would hide the button from every test that looks for it.
+  PipelineBoard: ({ onCardClick, toolbar }: any) => (
     <div>
+      {toolbar}
       {ATENDIMENTOS.map((a) => (
         <button key={a.id} data-testid={`card-${a.id}`} onClick={() => onCardClick(a)}>
           {a.titulo}
@@ -62,17 +66,79 @@ vi.mock("@/hooks/usePipelineSeam", () => ({
 // it only has to exist as a prop.
 vi.mock("@/lib/pipelines", () => ({ funilPipeline: {} }));
 
+// "Novo lead" creates a LEAD through the shared mutation — never a card. The
+// spy lets the suite assert exactly that: the payload goes to the lead
+// endpoint's mutation and nothing on this page inserts a card.
+const mockCreateLead = vi.fn();
+vi.mock("@/hooks/useLeads", () => ({
+  useLeadMutations: () => ({
+    create: { mutate: mockCreateLead, isPending: false },
+  }),
+}));
+
+// The real dialog pulls the sources + corretores dimensions over the network;
+// this suite is about WIRING, so it is stubbed to expose just the submit path.
+vi.mock("@/pages/leads/components/LeadFormDialog", () => ({
+  LeadFormDialog: (props: any) =>
+    props.open ? (
+      <div data-testid="lead-form-dialog">
+        <button
+          data-testid="lead-form-submit"
+          onClick={() => props.onSubmit({ data_entrada: "2026-09-02", origem_id: "src-zap" })}
+        />
+      </div>
+    ) : null,
+}));
+
 async function renderFunil() {
   const { default: FunilVendas } = await import("./FunilVendas");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
-  return { ...rtl.render(React.createElement(FunilVendas)), fireEvent: rtl.fireEvent };
+  // The page now runs a mutation hook, so it needs a query client in scope —
+  // rendering it bare threw "No QueryClient set".
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return {
+    ...rtl.render(
+      React.createElement(QueryClientProvider, { client: qc }, React.createElement(FunilVendas)),
+    ),
+    fireEvent: rtl.fireEvent,
+  };
 }
 
 beforeEach(() => {
   mockClienteDetailModal.mockReset();
   mockLeadDetailModal.mockReset();
+  mockCreateLead.mockReset();
   ATENDIMENTOS.length = 0;
+});
+
+describe("FunilVendas — Novo lead", () => {
+  it("opens the shared lead form, closed until the button is pressed", async () => {
+    const { fireEvent, getByTestId, queryByTestId } = await renderFunil();
+
+    expect(queryByTestId("lead-form-dialog")).toBeNull();
+    fireEvent.click(getByTestId("funil-btn-novo-lead"));
+    expect(getByTestId("lead-form-dialog")).toBeTruthy();
+  });
+
+  it("creates a LEAD — never a card — and carries the chosen portal", async () => {
+    // The rule this page was built on: a card exists only because migration
+    // 034's trigger made one. The button must therefore go through the lead
+    // mutation, exactly like a campaign lead does. `origem_id` is the portal.
+    const { fireEvent, getByTestId } = await renderFunil();
+
+    fireEvent.click(getByTestId("funil-btn-novo-lead"));
+    fireEvent.click(getByTestId("lead-form-submit"));
+
+    expect(mockCreateLead).toHaveBeenCalledTimes(1);
+    expect(mockCreateLead.mock.calls[0][0]).toMatchObject({
+      data_entrada: "2026-09-02",
+      origem_id: "src-zap",
+    });
+  });
 });
 
 describe("FunilVendas — clicking a card opens the CARD", () => {

@@ -4,9 +4,18 @@
  * Cards are LEADS. They arrive automatically: migration 034 puts an AFTER
  * INSERT trigger on both `social_wiring.leads` and `social_wiring.meta_ads_leads`,
  * so a lead created through the API, the workbook importer, or the Meta
- * Lead-Ads sync lands on the first configured stage. There is deliberately no
- * "new card" button — creating one here would be a second way to make a card,
- * and the two would drift.
+ * Lead-Ads sync lands on the first configured stage.
+ *
+ * "Novo lead" creates a LEAD, never a card — the card is still spawned by
+ * migration 034's trigger, exactly as it is for a campaign lead. That is what
+ * keeps the original "no new-card button" rule intact: there is still only ONE
+ * way a card comes into existence. A button that inserted a card directly
+ * would be the second path that rule forbids, and the two would drift.
+ *
+ * It reuses `LeadFormDialog` and the same `useLeadMutations().create` the Base
+ * de Leads page uses, so a hand-entered lead is byte-identical in shape to one
+ * typed there — and the origem selector is what records which portal it came
+ * from (ZAP / Imóvel Web / Meta Ads all already exist as `lead_sources` rows).
  *
  * Stages are per-organization DB rows the user edits via "Configurar etapas";
  * renaming one relabels every card and every history row that references it.
@@ -14,9 +23,11 @@
  * (Qualificação → Visitas → Proposta → Atendimento → Fechado).
  */
 import { useState } from "react";
-import { Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
+import { toast } from "sonner";
 
 import { PipelineBoard } from "@noctusai/lib/components";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LeadDetailModal } from "@/components/LeadDetailModal";
@@ -24,6 +35,12 @@ import { ClienteDetailModal } from "@/components/ClienteDetailModal";
 import { formatValor } from "./formatValor";
 import { funilPipeline } from "@/lib/pipelines";
 import { useAceitarProposta } from "@/hooks/usePipelineSeam";
+import { useLeadMutations } from "@/hooks/useLeads";
+import {
+  LeadFormDialog,
+  type LeadFormValues,
+} from "@/pages/leads/components/LeadFormDialog";
+import { describeError } from "@/pages/leads/utils";
 import { AtendimentoCard } from "./components/AtendimentoCard";
 import { origemDoAtendimento, type CardOrigem } from "@/types/pipeline";
 
@@ -55,6 +72,23 @@ export default function FunilVendas() {
   const { mutate: aceitarProposta, isPending: aceitando, variables } =
     useAceitarProposta();
 
+  // "Novo lead" — the SAME mutation Base de Leads uses, so a lead entered
+  // here is indistinguishable from one entered there or one that arrived from
+  // a campaign. The board picks the new card up on the mutation's own
+  // invalidation; nothing here inserts a card.
+  const [novoLeadAberto, setNovoLeadAberto] = useState(false);
+  const { create } = useLeadMutations();
+
+  function criarLead(values: LeadFormValues) {
+    create.mutate(values, {
+      onSuccess: () => {
+        toast.success("Lead criado — o card entra na primeira etapa.");
+        setNovoLeadAberto(false);
+      },
+      onError: (err) => toast.error(describeError(err, "Erro ao criar lead.")),
+    });
+  }
+
   return (
     <div className="container mx-auto p-4 sm:p-6">
       <div className="mb-6">
@@ -73,15 +107,25 @@ export default function FunilVendas() {
         onLoadMore={() => setLimite((n) => n + CARDS_POR_ETAPA)}
         loadMoreLabel={`Carregar mais ${CARDS_POR_ETAPA} por etapa`}
         toolbar={
-          <div className="relative min-w-[240px] flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              placeholder="Buscar por nome, contato ou empreendimento..."
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-            />
-          </div>
+          <>
+            <div className="relative min-w-[240px] flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Buscar por nome, contato ou empreendimento..."
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+              />
+            </div>
+            <Button
+              onClick={() => setNovoLeadAberto(true)}
+              className="gap-2"
+              data-testid="funil-btn-novo-lead"
+            >
+              <Plus className="h-4 w-4" />
+              Novo lead
+            </Button>
+          </>
         }
         loadingState={
           <div className="flex gap-4 overflow-x-auto pb-4">
@@ -124,6 +168,15 @@ export default function FunilVendas() {
         onClose={() => setDetalhe(null)}
         leadId={detalhe?.leadId ?? null}
         campanha={detalhe?.campanha ?? null}
+      />
+
+      {/* Create — the same dialog Base de Leads uses (no `lead` prop = create
+          mode). Its "Origem" select is where the portal is chosen. */}
+      <LeadFormDialog
+        open={novoLeadAberto}
+        onOpenChange={setNovoLeadAberto}
+        onSubmit={criarLead}
+        isPending={create.isPending}
       />
     </div>
   );
