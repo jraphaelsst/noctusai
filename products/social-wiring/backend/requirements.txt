@@ -57,3 +57,11 @@ sqlalchemy>=2.0.0
 # .xlsx workbook parsing for the CONTROLE LEADS import (preview/commit).
 openpyxl>=3.1.0
 reportlab>=4.0.0
+
+# ─── Certidões module (app/modules/certidoes) ───
+# HTML→PDF conversion. Four of the ten certificate endpoints (TRF3 ×2, TRT2
+# digital, CENPROT) answer with HTML rather than a PDF, and the certidão has to
+# be filed as a PDF like every other one. `reportlab` above is xhtml2pdf's own
+# rendering backend and was already here for other reasons — this adds the
+# HTML front half.
+xhtml2pdf>=0.2.0
