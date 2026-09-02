@@ -35,7 +35,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 29 | 14 | 29 | 0 | 51 | 559 |
+| Core | 29 | 14 | 29 | 0 | 51 | 570 |
 | Erp Imobiliario | 63 | 57 | 80 | 78 | 133 | 1,868 |
 | Personal Finance | 15 | 18 | 30 | 26 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 35 | 84 | 1,140 |
@@ -48,7 +48,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
-| **Total** | **218** | **235** | **427** | **268** | **637** | **8,559** |
+| **Total** | **218** | **235** | **427** | **268** | **637** | **8,570** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

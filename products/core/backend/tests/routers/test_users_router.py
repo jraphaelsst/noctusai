@@ -12,6 +12,13 @@ from datetime import date, timedelta
 today = date.today().isoformat()
 yesterday = (date.today() - timedelta(days=1)).isoformat()
 
+ORG_A = "11111111-1111-4111-8111-111111111111"
+ORG_B = "22222222-2222-4222-8222-222222222222"
+
+# 🔴 PARITY: mirrors `ORG_ROLES` in `seed/lib/frontend/src/roles.ts` — the
+# dropdown the admin panel renders. Every one of these must PATCH cleanly.
+ORG_ROLES = ["owner", "admin", "manager", "member", "viewer", "dev", "test"]
+
 SAMPLE_USERS = [
     {
         "id": "user-1",
@@ -50,6 +57,33 @@ class TestListUsers:
         assert "pagination" in body
         assert body["pagination"]["page"] == 1
         assert body["pagination"]["page_size"] == 20
+
+    def test_list_users_attaches_organization(self, admin_client):
+        """The FE's "Org" column reads `u.organization.nome`. Before the join
+        the list never carried `organization`, so the column rendered "—" for
+        every row — org membership was invisible where an admin goes to see it."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("noctus_users", SAMPLE_USERS)
+        mock_sb.set_table_data("organizations", [
+            {"id": "org-1", "nome": "NoctusAI", "slug": "noctusai", "plano": "enterprise"},
+        ])
+
+        resp = admin_client.get("/api/admin/users")
+        assert resp.status_code == 200
+        rows = resp.json()["data"]
+        assert rows, "expected the sample users back"
+        assert all(r["organization"]["nome"] == "NoctusAI" for r in rows)
+
+    def test_list_users_organization_is_none_when_orgless(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("noctus_users", [
+            {**SAMPLE_USERS[0], "org_id": None},
+        ])
+        mock_sb.set_table_data("organizations", [])
+
+        resp = admin_client.get("/api/admin/users")
+        assert resp.status_code == 200
+        assert resp.json()["data"][0]["organization"] is None
 
     def test_list_users_with_search(self, admin_client):
         mock_sb = admin_client.mock_supabase
@@ -217,6 +251,126 @@ class TestUpdateUser:
     def test_update_user_unauthenticated(self, unauth_client):
         resp = unauth_client.patch("/api/admin/users/user-1", json={"role": "admin"})
         assert resp.status_code == 401
+
+    @pytest.mark.parametrize("org_role", ORG_ROLES)
+    def test_update_accepts_every_canonical_org_role(self, admin_client, org_role):
+        """The 7-role hierarchy in `seed/lib/frontend/src/roles.ts` is what the
+        admin panel's dropdown renders — the schema must accept all of it. The
+        prior `^(owner|admin|member)$` 422'd on the other four."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "member"},
+            [{"id": "user-1", "org_role": org_role}],
+        ])
+
+        resp = admin_client.patch("/api/admin/users/user-1", json={"org_role": org_role})
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/admin/users/{user_id} — org assign / revoke
+# ---------------------------------------------------------------------------
+
+class TestReassignUserOrg:
+    def test_reassign_moves_user_to_target_org(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "member"},
+            [{"id": "user-1", "org_id": ORG_B, "org_role": "member"}],
+        ])
+        mock_sb.set_table_responses("organizations", [
+            {"id": ORG_B, "nome": "Target Org", "owner_id": "someone-else"},   # target
+            {"id": ORG_A, "nome": "Source Org", "owner_id": "someone-else"},   # source
+        ])
+
+        resp = admin_client.patch(f"/api/admin/users/user-1", json={"org_id": ORG_B})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["org_id"] == ORG_B
+
+    def test_reassign_with_org_role_in_same_request(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "owner"},
+            [{"id": "user-1", "org_id": ORG_B, "org_role": "admin"}],
+        ])
+        mock_sb.set_table_responses("organizations", [
+            {"id": ORG_B, "nome": "Target Org", "owner_id": "someone-else"},
+            {"id": ORG_A, "nome": "Source Org", "owner_id": "someone-else"},
+        ])
+
+        resp = admin_client.patch(
+            "/api/admin/users/user-1", json={"org_id": ORG_B, "org_role": "admin"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["org_role"] == "admin"
+
+    def test_reassign_to_unknown_org_is_404(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "member"},
+        ])
+        mock_sb.set_table_responses("organizations", [[]])  # target lookup: no rows
+
+        resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
+        assert resp.status_code == 404
+
+    def test_reassign_refuses_to_orphan_the_source_org(self, admin_client):
+        """Moving an org's `owner_id` out would leave the org owned by a
+        non-member who can no longer administer it."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "owner"},
+        ])
+        mock_sb.set_table_responses("organizations", [
+            {"id": ORG_B, "nome": "Target Org", "owner_id": None},
+            {"id": ORG_A, "nome": "Source Org", "owner_id": "user-1"},  # user OWNS source
+        ])
+
+        resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
+        assert resp.status_code == 409
+        assert "proprietário" in resp.json()["error"]["message"]
+
+    def test_reassign_refuses_second_owner_in_target_org(self, admin_client):
+        """Landing as `owner` in an org that already has a different `owner_id`
+        would leave two tables disagreeing about who owns the tenant."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "owner"},
+        ])
+        mock_sb.set_table_responses("organizations", [
+            {"id": ORG_B, "nome": "Target Org", "owner_id": "other-owner"},
+            {"id": ORG_A, "nome": "Source Org", "owner_id": "someone-else"},
+        ])
+
+        # org_role carries over from the profile ("owner") when unspecified.
+        resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
+        assert resp.status_code == 409
+        assert "proprietário" in resp.json()["error"]["message"]
+
+    def test_same_org_is_a_plain_update_not_a_move(self, admin_client):
+        """Re-submitting the edit form unchanged must not trip the move guards."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [
+            {"id": "user-1", "org_id": ORG_A, "org_role": "owner"},
+            [{"id": "user-1", "org_id": ORG_A, "nome": "Alice Updated"}],
+        ])
+        # Owns the org — would 409 if this were treated as a move.
+        mock_sb.set_table_responses("organizations", [
+            {"id": ORG_A, "nome": "Source Org", "owner_id": "user-1"},
+        ])
+
+        resp = admin_client.patch(
+            "/api/admin/users/user-1", json={"org_id": ORG_A, "nome": "Alice Updated"}
+        )
+        assert resp.status_code == 200
+
+    def test_reassign_rejects_malformed_org_id(self, admin_client):
+        resp = admin_client.patch("/api/admin/users/user-1", json={"org_id": "not-a-uuid"})
+        assert resp.status_code == 422
+
+    def test_reassign_forbidden_for_non_admin(self, client):
+        resp = client.patch("/api/admin/users/user-1", json={"org_id": ORG_B})
+        assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------

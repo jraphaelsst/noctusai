@@ -15,9 +15,17 @@ interface User {
   organization?: { nome: string };
 }
 
+interface Organization {
+  id: string;
+  nome: string;
+  slug: string;
+}
+
+// Platform roles — `noctus_users.role` only ever holds these two. `manager` is
+// an ORG role (see ORG_ROLE_LABELS); listing it here offered a value the API
+// rejects with 422 and a filter that could never match a row.
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
-  manager: 'Gerente',
   user: 'Usuario',
 };
 
@@ -31,9 +39,14 @@ export function AdminUsers() {
   const pageSize = 20;
 
   const [editUser, setEditUser] = useState<User | null>(null);
-  const [editForm, setEditForm] = useState({ nome: '', role: '', org_role: '' });
+  const [editForm, setEditForm] = useState({ nome: '', role: '', org_role: '', org_id: '' });
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+
+  // Org assign/revoke needs the full org list to pick from. `noctus_users.org_id`
+  // is NOT NULL and there is no membership join table, so a user is in exactly
+  // one org — "revoke" is a move to another org, not a detach.
+  const [orgs, setOrgs] = useState<Organization[]>([]);
 
   // Create path = invite. A user account is created by inviting an e-mail
   // (POST /api/team/invite → the invitee accepts via /accept-invite and is
@@ -49,7 +62,9 @@ export function AdminUsers() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-      if (search) params.set('search', search);
+      // `busca` is the parameter the API declares; the box sent `search`, which
+      // FastAPI silently ignored — the search field was inert.
+      if (search) params.set('busca', search);
       if (roleFilter) params.set('role', roleFilter);
       const res = await api.get(`/api/admin/users?${params}`);
       setUsers(res.data || []);
@@ -61,13 +76,27 @@ export function AdminUsers() {
     }
   }
 
+  async function fetchOrgs() {
+    try {
+      const res = await api.get('/api/organizations');
+      setOrgs(res.data || []);
+    } catch {
+      setOrgs([]);
+    }
+  }
+
   useEffect(() => { fetchUsers(); }, [page, search, roleFilter]);
+  useEffect(() => { fetchOrgs(); }, []);
 
   async function handleUpdate() {
     if (!editUser) return;
     setSaving(true);
     try {
-      await api.patch(`/api/admin/users/${editUser.id}`, editForm);
+      // `org_id` is UUID-typed server-side — omit it rather than sending '' if
+      // the org list never loaded, so a failed org fetch can't 422 a name edit.
+      const { org_id, ...rest } = editForm;
+      const payload = org_id ? { ...rest, org_id } : rest;
+      await api.patch(`/api/admin/users/${editUser.id}`, payload);
       setEditUser(null);
       fetchUsers();
     } catch (err: any) {
@@ -139,7 +168,6 @@ export function AdminUsers() {
         >
           <option value="">Todos os cargos</option>
           <option value="admin">Administrador</option>
-          <option value="manager">Gerente</option>
           <option value="user">Usuário</option>
         </select>
       </div>
@@ -193,7 +221,12 @@ export function AdminUsers() {
                       <button
                         onClick={() => {
                           setEditUser(u);
-                          setEditForm({ nome: u.nome, role: u.role, org_role: u.org_role });
+                          setEditForm({
+                            nome: u.nome,
+                            role: u.role,
+                            org_role: u.org_role,
+                            org_id: u.org_id || '',
+                          });
                         }}
                         className="h-8 w-8 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                       >
@@ -322,9 +355,31 @@ export function AdminUsers() {
                   className="w-full h-10 md:h-9 rounded-md border border-border bg-background px-3 text-sm"
                 >
                   <option value="user">Usuário</option>
-                  <option value="manager">Gerente</option>
                   <option value="admin">Administrador</option>
                 </select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Acesso ao painel administrativo. Nao concede acesso a dados de
+                  produto — isso e definido pela organizacao.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Organizacao</label>
+                <select
+                  value={editForm.org_id}
+                  onChange={(e) => setEditForm({ ...editForm, org_id: e.target.value })}
+                  disabled={orgs.length === 0}
+                  className="w-full h-10 md:h-9 rounded-md border border-border bg-background px-3 text-sm disabled:opacity-50"
+                >
+                  {orgs.length === 0 && <option value="">Carregando organizacoes...</option>}
+                  {orgs.map((o) => (
+                    <option key={o.id} value={o.id}>{o.nome}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Define quais dados o usuario enxerga em todos os produtos. Um
+                  usuario pertence a exatamente uma organizacao — revogar e mover
+                  para outra.
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1">Cargo Organizacao</label>
