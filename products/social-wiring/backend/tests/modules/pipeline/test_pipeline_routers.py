@@ -75,6 +75,59 @@ class TestFunilBoard:
         assert cards and "coluna_interna" not in cards[0]
 
 
+class TestIntakeColumnIsNewestFirst:
+    """The first column of BOTH boards sorts newest-first by `created_at`.
+
+    It is the column every new card lands on (migration 034's trigger), so it
+    answers "what just arrived". Every OTHER column keeps the hand-arranged
+    `kanban_pos` order — that is the half a careless change would break, so it
+    is asserted here rather than assumed.
+    """
+
+    def test_funil_first_column_is_newest_first(self, http_client):
+        http_client.scoped.set_table_data("atendimentos", [
+            atendimento("neg-old", "novo", kanban_pos=0, created_at="2026-01-01T00:00:00Z"),
+            atendimento("neg-new", "novo", kanban_pos=9, created_at="2026-09-02T00:00:00Z"),
+            atendimento("neg-mid", "novo", kanban_pos=1, created_at="2026-05-01T00:00:00Z"),
+        ])
+        r = http_client.get("/api/funil", headers=auth_headers())
+        assert r.status_code == 200
+        primeira = r.json()["data"][0]
+        assert primeira["stage"]["slug"] == "novo"
+        # kanban_pos would order old, mid, new — recency reverses it.
+        assert [c["id"] for c in primeira["cards"]] == ["neg-new", "neg-mid", "neg-old"]
+
+    def test_funil_other_columns_keep_hand_ordering(self, http_client):
+        http_client.scoped.set_table_data("atendimentos", [
+            atendimento("neg-a", "proposta", kanban_pos=0, created_at="2026-01-01T00:00:00Z"),
+            atendimento("neg-b", "proposta", kanban_pos=1, created_at="2026-09-02T00:00:00Z"),
+        ])
+        r = http_client.get("/api/funil", headers=auth_headers())
+        colunas = {c["stage"]["slug"]: c for c in r.json()["data"]}
+        # `neg-b` is newer, but "proposta" is drag-ordered — position wins.
+        assert [c["id"] for c in colunas["proposta"]["cards"]] == ["neg-a", "neg-b"]
+
+    def test_processos_first_column_is_newest_first(self, http_client):
+        http_client.scoped.set_table_data("processos_venda", [
+            processo("proc-old", "contrato", kanban_pos=0, created_at="2026-01-01T00:00:00Z"),
+            processo("proc-new", "contrato", kanban_pos=9, created_at="2026-09-02T00:00:00Z"),
+        ])
+        r = http_client.get("/api/processos-venda", headers=auth_headers())
+        assert r.status_code == 200
+        primeira = r.json()["data"][0]
+        assert primeira["stage"]["slug"] == "contrato"
+        assert [c["id"] for c in primeira["cards"]] == ["proc-new", "proc-old"]
+
+    def test_processos_other_columns_keep_hand_ordering(self, http_client):
+        http_client.scoped.set_table_data("processos_venda", [
+            processo("proc-a", "execucao", kanban_pos=0, created_at="2026-01-01T00:00:00Z"),
+            processo("proc-b", "execucao", kanban_pos=1, created_at="2026-09-02T00:00:00Z"),
+        ])
+        r = http_client.get("/api/processos-venda", headers=auth_headers())
+        colunas = {c["stage"]["slug"]: c for c in r.json()["data"]}
+        assert [c["id"] for c in colunas["execucao"]["cards"]] == ["proc-a", "proc-b"]
+
+
 class TestP14OneCardPerPerson:
     """P1.4 completion (lead-card-hub roadmap §1/§5): a Meta lead fires
     BOTH `spawn_funil_card_on_lead` and `spawn_funil_card_on_meta_lead`, so

@@ -174,6 +174,23 @@ def _valor_do_card(card: dict, valores: dict[str, float]) -> float:
 LIMITE_CARDS_PADRAO = 50
 
 
+def _intake_stage(stages: list[dict]) -> set[str]:
+    """The stage new cards land on — its column sorts newest-first.
+
+    `list_stages` returns stages already ordered by `posicao`, so the first
+    element IS the leftmost column, and migration 034's trigger drops every
+    new card there. That column answers "what just came in", so a hand-arranged
+    `kanban_pos` order is the wrong thing for it — a lead that arrived a minute
+    ago belongs on top, not wherever its position happens to fall.
+
+    Derived from the stage list rather than hardcoded to a slug: the stages are
+    per-org rows the user renames and reorders freely ("Qualificação" is only
+    the default), so pinning a name here would silently stop matching the day
+    somebody edits it. Empty list ⇒ empty set, never an IndexError.
+    """
+    return {stages[0]["id"]} if stages else set()
+
+
 @funil_router.get("")
 def obter_funil(
     busca: Optional[str] = Query(None),
@@ -239,6 +256,12 @@ def obter_funil(
         row_to_dto=None,
         value_of=lambda card: _valor_do_card(card, valores),
         limite_cards=limite_por_etapa,
+        # 🔴 Interacts with `limite_por_etapa` — which is why it is applied
+        # server-side. The truncation runs AFTER this sort, so the intake
+        # column's first 50 are the 50 NEWEST leads. Sorting in the browser
+        # would only reorder whichever 50 the server had already picked by
+        # `kanban_pos`, i.e. a column that claims "newest" and is not.
+        recency_first_stages=_intake_stage(stages),
     )
 
     for coluna in colunas:
@@ -524,7 +547,13 @@ def obter_processos(
         rows = search_processos(rows, busca)
 
     return success_response(
-        group_into_colunas(PIPELINE_PROCESSOS, stages, rows, row_to_dto=processo_to_dto)
+        group_into_colunas(
+            PIPELINE_PROCESSOS,
+            stages,
+            rows,
+            row_to_dto=processo_to_dto,
+            recency_first_stages=_intake_stage(stages),
+        )
     )
 
 
