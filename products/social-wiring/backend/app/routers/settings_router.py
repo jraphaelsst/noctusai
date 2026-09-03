@@ -1143,6 +1143,32 @@ async def _test_openai_key(value: str) -> ApiKeyTestResult:
             success=False,
             message="API Key inválida ou expirada.",
         )
+    if resp.status_code == 429:
+        # 429 is TWO different problems wearing one status code, and they take
+        # opposite actions: "out of credit" (retrying never helps — someone has
+        # to pay a bill) vs "too many requests just now" (waiting is the whole
+        # fix). Reporting the raw status made the first look like the second —
+        # seen in prod 2026-09-03, where "Erro inesperado: HTTP 429" gave the
+        # operator no reason to check billing.
+        body = (resp.text or "").lower()
+        if any(s in body for s in ("insufficient_quota", "credit_balance_exhausted",
+                                   "no credits remaining", "exceeded your current quota")):
+            return ApiKeyTestResult(
+                key="openai_api_key",
+                success=False,
+                message=(
+                    "Sem créditos na conta OpenAI. A chave é válida, mas a conta "
+                    "não tem saldo — adicione créditos em "
+                    "platform.openai.com/settings/organization/billing. Sem isso, "
+                    "matrículas digitalizadas e a análise de certidões por IA "
+                    "não funcionam (PDFs com camada de texto continuam OK)."
+                ),
+            )
+        return ApiKeyTestResult(
+            key="openai_api_key",
+            success=False,
+            message="Limite de requisições atingido. Aguarde alguns minutos e teste novamente.",
+        )
     if resp.status_code >= 400:
         return ApiKeyTestResult(
             key="openai_api_key",

@@ -75,6 +75,20 @@ _MENSAGENS: dict[str, str] = {
         "Documento muito longo para transcrição automática. "
         "Envie a matrícula em partes menores."
     ),
+    "insufficient_quota": (
+        "Sem créditos na conta OpenAI — a transcrição de matrículas "
+        "digitalizadas está suspensa até que créditos sejam adicionados em "
+        "platform.openai.com/settings/organization/billing. PDFs com camada "
+        "de texto continuam funcionando normalmente."
+    ),
+    "rate_limited": (
+        "Limite de requisições da OpenAI atingido. Aguarde alguns minutos e "
+        "envie novamente — nada foi perdido."
+    ),
+    "invalid_credentials": (
+        "A OpenAI API Key foi recusada. Verifique a chave em "
+        "Configurações → Chaves de API."
+    ),
     "rasterize_failed": (
         "Não foi possível ler todas as páginas do PDF. "
         "Verifique se o arquivo não está corrompido."

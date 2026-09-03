@@ -84,6 +84,39 @@ OCR_PROMPT = (
 MAX_VISION_PAGES = 40
 
 
+def _classify_failure(exc: Exception) -> str:
+    """Name the failure when we can, so the consumer can say something useful.
+
+    The catch-all above exists because a background job must not die — but
+    "transcription_failed" is the same word for a corrupt PDF, an expired
+    key, and an unpaid bill, and only one of those is fixed by re-uploading.
+    A consumer can only write an actionable sentence for a cause it can
+    distinguish.
+
+    `insufficient_quota` is broken out first because it is the one an
+    operator can fix in two minutes and would otherwise never guess: the
+    provider answers HTTP 429, which reads as "too busy, try later", when it
+    actually means the account is out of credit and retrying will never
+    work. Found in prod 2026-09-03 — a scanned matrícula surfaced as
+    "Erro inesperado: HTTP 429" with no hint that billing was the cause.
+
+    Rate limiting keeps its own code: same status, opposite advice (waiting
+    DOES help).
+    """
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if any(s in text for s in (
+        "insufficient_quota", "credit_balance_exhausted", "no credits remaining",
+        "exceeded your current quota", "billing",
+    )):
+        return "insufficient_quota"
+    if "rate limit" in text or "rate_limit" in text or "429" in text:
+        return "rate_limited"
+    if any(s in text for s in ("invalid_api_key", "incorrect api key", "401", "unauthorized")):
+        return "invalid_credentials"
+    return "transcription_failed"
+
+
+
 @dataclass(frozen=True)
 class TranscribedPage:
     """One page, its text, and which rung produced it."""
@@ -211,7 +244,9 @@ class LadderDocumentTranscriber:
             return await self._transcribe(content)
         except Exception as exc:  # noqa: BLE001 - background job must not die
             logger.warning("transcription failed: %s", exc)
-            return Transcription(error="transcription_failed", error_message=str(exc))
+            return Transcription(
+                error=_classify_failure(exc), error_message=str(exc)
+            )
 
     async def _transcribe(self, content: bytes) -> Transcription:
         if not content:
