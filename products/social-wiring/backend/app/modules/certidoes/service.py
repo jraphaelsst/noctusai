@@ -433,6 +433,26 @@ async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[
         )
     except Exception as e:
         logger.error("AI analysis failed: %s", e)
+        # NOC-REMEDIATE[llm-error-actionable]: this dumps the provider's raw
+        # English error into a column a human reads on a due-diligence screen.
+        # Seen in prod 2026-09-03 on a real emission: five certificates issued
+        # correctly, each showing
+        #   "[Erro na análise IA: Erro na API Openai: Error code: 429 -
+        #    {'error': {'message': 'You have no credits remaining...'}}]"
+        # — whose actual meaning is "add credits", in a language the operator
+        # may not read, wrapped in JSON.
+        #
+        # The fix is the one already applied to the two sibling sites in
+        # b4849998 (the seed transcriber and the Chaves de API probe): classify
+        # the failure, then render a pt-BR sentence naming cause + remedy. That
+        # is now N=3, so the classifier belongs in the seed
+        # (`noctusai_lib.integrations.llm`) rather than a third copy here —
+        # a draft was started and deliberately discarded rather than committed
+        # unwired.
+        #
+        # Named destination: the next change that touches this module, or a
+        # dedicated slice. Not urgent — the certificate itself is unaffected
+        # and the message IS honest, just unreadable. — 2026-09-03
         return f"[Erro na análise IA: {e}]"
 
 
