@@ -435,12 +435,33 @@ parser misses, and the two are independent:
 | | fires at | catches | can be fooled by |
 |---|---|---|---|
 | `primary_write_guard` | the write | the mistake itself | exotic shell quoting, an interpreter one-liner |
-| `check_primary_checkout_commit` | the commit | the divergence | nothing — it reads the real staged set |
+| `check_primary_checkout_commit` | the commit | the divergence | a LEDGER-ONLY staged set — see below |
 
 When the parser cannot resolve a target but sees write intent (a `python -c`
 that opens a file for writing), it refuses against the effective cwd and **says
 so in the message**. The permissive answer is the one that lets the slip
 through; an over-refusal costs one absolute path.
+
+🔴 **The commit keeper's one blind spot, and why it stays.** That table used to
+read "can be fooled by: nothing — it reads the real staged set". It is not
+nothing. `check_primary_checkout_commit` deliberately ALLOWS a commit whose
+ENTIRE staged set lives under `project-history/`, because the MCP toolkit pushes
+its append-only ledgers (`branch_pointer`, the salvage ledger, cost logs) to
+`dev` from the primary BY DESIGN — `task_branch action=cleanup` cannot complete
+otherwise. Mixing one source file in re-blocks it, which is what stops the
+exemption being laundered.
+
+The consequence is worth naming because it is counter-intuitive: the commit an
+orchestrator makes MOST often right after a cleanup sweep — a lone salvage-ledger
+row — is exactly the one that passes silently if cwd has drifted back to the
+primary. Bit the tech-lead on 2026-09-03 in exactly that shape, and the first
+diagnosis was "the keeper has a gap", which is wrong and would have led to
+"fixing" the exemption and breaking the cleanup tool.
+
+So: for ledger commits the gate is NOT the backstop. `git -C <abs-worktree>` is
+(§ the absolute-path rule above, and memory `feedback_harness_cwd_resets_to_primary`).
+Recovery while unpushed is cheap: branch at the stray commit, cherry-pick onto the
+intended branch, `git reset --hard origin/dev` on the primary.
 
 ### Performance is a correctness property here
 
