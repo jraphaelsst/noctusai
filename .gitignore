@@ -119,6 +119,10 @@ mcp/noctusai/data/
 # Enforced by `check_gitignore_drift` in
 # `mcp/noctusai/tools/noctus/dev/compliance.py`.
 .claude/dispatcher.md
+# `.claude/dispatches/` holds engineer surface-to-tech-lead reports — same
+# transient class as dispatcher.md above. Untracked-at-root, it blocked the
+# salvage-ledger rebase in every `task_branch action=cleanup` (2026-09-04).
+.claude/dispatches/
 scripts/mole-last-sweep.log
 scripts/archive-clean-last-sweep.log
 
