@@ -63,9 +63,35 @@ class TestTestCoverage:
         assert domain_product in products
 
     def test_all_have_e2e(self):
+        """Every SEED-ARCHITECTURE product ships the e2e flow suite.
+
+        🔴 SCOPED 2026-09-04. `permutas` was absorbed as Django + DRF +
+        create-react-app, building on neither half of the seed, and has no
+        `backend/tests/integration/test_e2e_flows.py` — the seed-shaped file
+        this looks for. CI already agrees: the e2e jobs cover `core` and `erp`
+        only, never every product. Asserting it fleet-wide was stricter than
+        anything CI enforces, and it reddened the matrix for a divergence that
+        was deliberate.
+
+        The scope is DERIVED from `is_seed_architecture_product`, never a slug
+        list, so it flips on its own the day permutas adopts the seed — at
+        which point this file becomes a real requirement for it again.
+        """
         result = analyze_test_coverage()
-        for m in result["matrix"]:
+        covered = [m for m in result["matrix"] if m.get("seed_architecture", True)]
+        assert covered, "no seed-architecture products found — the predicate is wrong"
+        for m in covered:
             assert m["e2e"] is True, f"{m['product']} missing E2E tests"
+
+    def test_a_divergent_absorption_is_reported_not_hidden(self):
+        """The exemption must be visible in the matrix rather than a silent
+        omission — "why is permutas not required to have e2e?" has to be
+        answerable from the output alone."""
+        result = analyze_test_coverage()
+        assert all("seed_architecture" in m for m in result["matrix"])
+        by_slug = {m["product"]: m for m in result["matrix"]}
+        if "permutas" in by_slug:
+            assert by_slug["permutas"]["seed_architecture"] is False
 
 
 class TestCodeMetrics:

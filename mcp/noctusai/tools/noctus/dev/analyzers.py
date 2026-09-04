@@ -144,6 +144,65 @@ def _parse_requirements(content):
 
 # ── Test Coverage ──────────────────────────────────────
 
+# ── Seed-architecture detection ─────────────────────────
+#
+# 🔴 THE ONE PLACE THAT ANSWERS "IS THIS A SEED-ARCHITECTURE PRODUCT?"
+#
+# Most fleet gates assume every product is built on the seed: a FastAPI backend
+# installing `-e seed/*/backend`, a Vite frontend depending on `@noctusai/seed`.
+# That held for 13 products and then stopped holding. `permutas` was absorbed
+# 2026-09-04 as the legacy Permutas platform — Django 4.2 + DRF + Celery +
+# create-react-app — consuming neither.
+#
+# The absorption was deliberate and CI already knows: `.github/workflows/
+# test.yml` installs `products/permutas/backend/requirements.txt` separately,
+# with the comment "NOT the seed FastAPI stack, so its deps are deliberately
+# absent from the root superset", and the e2e jobs cover only `core` and `erp`.
+# What was missing was telling the KEEPERS what CI had already decided — the
+# gate↔methodology desync that reddened the whole matrix.
+#
+# 🔴 DERIVED, NEVER A SLUG LIST. A hand-listed exemption is the drift shape
+# `check_hardcoded_product_slug_set` exists to catch, and it would go stale the
+# day permutas migrates. This predicate flips on its own, because migrating IS
+# the act of adding those dependencies.
+SEED_FRONTEND_PACKAGE = "@noctusai/seed"
+SEED_BACKEND_EDITABLES = ("seed/framework/backend", "seed/lib/backend")
+
+
+def is_seed_architecture_product(product_path: Path) -> bool:
+    """Does this product build on the noc seed (either half)?
+
+    EITHER surface counts, deliberately: a product mid-migration may have
+    adopted the seed on one side only, and a gate that demanded both would
+    fire through the whole transition — exactly when it is least useful.
+
+    Unknown/unreadable → True (fail-closed). A product this cannot classify
+    keeps its full gate coverage; the exemption is never granted by accident.
+    """
+    pkg = product_path / "frontend" / "package.json"
+    if pkg.exists():
+        try:
+            data = json.loads(pkg.read_text(encoding="utf-8"))
+            deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
+            if SEED_FRONTEND_PACKAGE in deps:
+                return True
+        except Exception:  # noqa: BLE001 — unreadable manifest: fail closed below
+            return True
+
+    req = product_path / "backend" / "requirements.txt"
+    if req.exists():
+        try:
+            text = req.read_text(encoding="utf-8")
+            if any(e in text for e in SEED_BACKEND_EDITABLES):
+                return True
+        except Exception:  # noqa: BLE001 — unreadable manifest: fail closed
+            return True
+        return False
+
+    # No frontend manifest AND no backend requirements — cannot classify.
+    return not pkg.exists()
+
+
 def analyze_test_coverage():
     products = _list_products()
     issues = []
@@ -154,7 +213,8 @@ def analyze_test_coverage():
         if not tests_dir.exists():
             if (product["path"] / "backend" / "app" / "main.py").exists():
                 issues.append({"product": name, "issue": "No tests directory", "severity": "critical"})
-            matrix.append({"product": name, "routers": 0, "services": 0, "integration": 0, "e2e": False, "auth": False})
+            matrix.append({"product": name, "routers": 0, "services": 0, "integration": 0, "e2e": False, "auth": False,
+                       "seed_architecture": is_seed_architecture_product(product["path"])})
             continue
 
         rc = len(list(_find_files(tests_dir / "routers", "test_*.py")))
@@ -172,7 +232,11 @@ def analyze_test_coverage():
         if not has_e2e:
             issues.append({"product": name, "issue": "No E2E tests", "severity": "medium"})
 
-        matrix.append({"product": name, "routers": rc, "services": sc, "integration": ic, "e2e": has_e2e, "auth": has_auth})
+        matrix.append({"product": name, "routers": rc, "services": sc, "integration": ic, "e2e": has_e2e, "auth": has_auth,
+                       # Reported, never used to hide a row — the gate that
+                       # consumes this decides what to require of a
+                       # non-seed-architecture product.
+                       "seed_architecture": is_seed_architecture_product(product["path"])})
 
     return {"issues": issues, "matrix": matrix}
 

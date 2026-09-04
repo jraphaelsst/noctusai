@@ -3223,12 +3223,35 @@ class TestCheckRootRequirementsSuperset:
     (CI + predeploy install the root file). Regression for the 2026-05-31
     python-docx deploy blocker."""
 
-    def _mk(self, root_reqs: str, product_reqs: dict[str, str]) -> Path:
+    def _mk(
+        self,
+        root_reqs: str,
+        product_reqs: dict[str, str],
+        *,
+        seed_architecture: bool = True,
+    ) -> Path:
+        """Build a synthetic repo.
+
+        🔴 PRODUCTS ARE SEED-ARCHITECTURE BY DEFAULT. The keeper only covers
+        products built on the seed (2026-09-04) — its premise is that the root
+        venv runs their backend tests. A fixture without a seed marker is not
+        "a product missing a dep", it is a product the keeper does not cover,
+        and every assertion below would pass vacuously. Every test here is by
+        construction about a COVERED product; `seed_architecture=False` is the
+        divergent-absorption case.
+        """
         tmp = Path(tempfile.mkdtemp(prefix="req_superset_test_"))
+        # The seed editable goes in BOTH halves: it is the marker that makes a
+        # product covered, and the keeper would otherwise (correctly) report it
+        # as an editable present in a product but absent from root.
+        if seed_architecture and "seed/lib/backend" not in root_reqs:
+            root_reqs = "-e seed/lib/backend\n" + root_reqs
         (tmp / "requirements.txt").write_text(root_reqs)
         for slug, reqs in product_reqs.items():
             be = tmp / "products" / slug / "backend"
             be.mkdir(parents=True, exist_ok=True)
+            if seed_architecture and "seed/lib/backend" not in reqs:
+                reqs = "-e ../../seed/lib/backend\n" + reqs
             (be / "requirements.txt").write_text(reqs)
         return tmp
 
@@ -3251,6 +3274,31 @@ class TestCheckRootRequirementsSuperset:
         assert issues[0]["product"] == "ke"
         assert "python-docx" in issues[0]["issue"]
         assert issues[0]["symbol"] == "root-requirements-superset-incomplete"
+
+    def test_a_divergent_absorption_is_out_of_scope(self):
+        """🔴 The permutas case (2026-09-04).
+
+        A product that builds on neither half of the seed is not covered: this
+        keeper's premise is that the root venv runs every product's backend
+        tests, and CI discharges that separately for such a product
+        (`.github/workflows/test.yml` installs its requirements in its own
+        step, "NOT the seed FastAPI stack, so its deps are deliberately absent
+        from the root superset"). Requiring Django in the FastAPI fleet's
+        shared file would make the root venv carry a stack nothing else uses.
+        """
+        repo = self._mk(
+            "fastapi>=0.1\n",
+            {"permutas": "django==4.2.9\ncelery==5.3.6\n"},
+            seed_architecture=False,
+        )
+        assert check_root_requirements_superset(repo) == []
+
+    def test_a_seed_product_missing_the_same_dep_is_still_caught(self):
+        """The scoping must not become a hole."""
+        repo = self._mk("fastapi>=0.1\n", {"ke": "django==4.2.9\n"})
+        issues = check_root_requirements_superset(repo)
+        assert len(issues) == 1
+        assert issues[0]["product"] == "ke"
 
     def test_comment_lines_ignored_editables_matched(self):
         # comments ignored; an editable in the product that IS in root (modulo the

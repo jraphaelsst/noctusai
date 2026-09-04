@@ -14697,7 +14697,7 @@ def check_root_requirements_superset(repo_root: Path | None = None) -> list[dict
     if not root_req.exists() or not products_dir.is_dir():
         return issues
     try:
-        from .analyzers import _parse_requirements
+        from .analyzers import _parse_requirements, is_seed_architecture_product
     except Exception:  # noqa: BLE001 — defensive
         return issues
 
@@ -14733,6 +14733,22 @@ def check_root_requirements_superset(repo_root: Path | None = None) -> list[dict
     for prod_req in sorted(products_dir.glob("*/backend/requirements.txt")):
         product = prod_req.parts[-3]
         if product == "seed":
+            continue
+        # 🔴 A NON-SEED-ARCHITECTURE PRODUCT IS OUT OF SCOPE, and CI already
+        # said so first. This keeper's whole premise (see the docstring) is
+        # that the root venv runs every product's backend tests, so the root
+        # file must carry every product's deps. That premise does not hold for
+        # a divergent absorption: `.github/workflows/test.yml` installs
+        # `products/permutas/backend/requirements.txt` in its own step, with
+        # the comment "NOT the seed FastAPI stack, so its deps are
+        # deliberately absent from the root superset".
+        #
+        # So requiring Django + DRF + Celery in the FastAPI fleet's shared
+        # requirements would make the root venv carry a stack nothing else
+        # uses, to satisfy an invariant CI has already discharged another way.
+        # Teaching the keeper what the workflow knows closes a gate↔methodology
+        # desync rather than weakening the gate.
+        if not is_seed_architecture_product(prod_req.parents[1]):
             continue
         try:
             prod_text = prod_req.read_text()
