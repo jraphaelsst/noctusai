@@ -60,6 +60,56 @@ export interface Imovel {
   data_atualizacao: string | null;
   caracteristicas: string[];
   sincronizado_em: string | null;
+
+  // ── CONTRACT § 1 — the Vista field surface (29 fields; 32 minus the
+  // `lavabo`/`copa`/`escritorio` correction below) ──
+  //
+  // `Lavabo`/`Copa`/`Escritorio` are DELIBERATELY absent: measured live,
+  // Vista SHADOWS them — they are also `Caracteristicas` keys, and our sync
+  // always requests `Caracteristicas`, so Vista returns null for all three
+  // at top level whenever it does. A column that reads null in production
+  // forever is worse than not having it; the same three values are already
+  // available as amenity slugs (`lavabo`/`copa`/`escritorio` in
+  // `CARACTERISTICA_LABEL` below). `elevador`/`portaria` are NOT shadowed
+  // (verified live) and keep their columns.
+  descricao_web: string | null;
+  observacoes: string | null;
+  valor_condominio: number | null;
+  valor_iptu: number | null;
+  ano_construcao: number | null;
+  situacao: string | null;
+  ocupacao: string | null;
+  pavimentos: number | null;
+  posicao: string | null;
+  elevador: boolean | null;
+  portaria: boolean | null;
+  exclusivo: boolean | null;
+  aceita_permuta: boolean | null;
+  aceita_financiamento: boolean | null;
+  destaque_web: boolean | null;
+  super_destaque_web: boolean | null;
+  exibir_no_site: boolean | null;
+  chave: string | null;
+  zona: string | null;
+  regiao: string | null;
+  area_terreno: number | null;
+  closet: number | null;
+  frente: number | null;
+  fundos: number | null;
+  referencia: string | null;
+  /** Vista-sourced matrícula. NOT the cartório-authored `matricula` that
+   *  `social_wiring.imovel_dados` owns (migration 075) — two distinct
+   *  `origem`s in the schema, kept namespaced apart on purpose. */
+  matricula_vista: string | null;
+  inscricao_municipal: string | null;
+  video_destaque: string | null;
+  tour_360: string | null;
+
+  // ── CONTRACT § 3 — derived / presentation-only, no columns ──
+  dias_desde_atualizacao: number | null;
+  /** `Norte`/`Sul`/`Leste`/`Oeste` — split out of `caracteristicas`
+   *  server-side; not an amenity, rendered as its own group. */
+  orientacao_solar: string[];
 }
 
 export interface ImovelPage {
@@ -218,6 +268,28 @@ export function formatArea(value: number | null): string {
   return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} m²`;
 }
 
+/**
+ * Linear measurement in meters — `frente`/`fundos` are lot dimensions, not
+ * an area, so they get their own unit rather than borrowing `formatArea`'s
+ * "m²" (which would be wrong by a whole dimension).
+ */
+export function formatMetros(value: number | null): string {
+  if (value === null || value === undefined) return "—";
+  return `${value.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} m`;
+}
+
+/**
+ * "Sim"/"Não" for a nullable boolean — never the raw `true`/`false`.
+ *
+ * Returns `null` (not "—") when the value is null: per CONTRACT § 7, a null
+ * boolean means the FIELD is hidden, not shown with a dash. Callers gate the
+ * `Fact` render on this being non-null, same shape as the "não possui"
+ * disclosure logic below.
+ */
+export function formatBool(value: boolean | null): string | null {
+  return value === null || value === undefined ? null : value ? "Sim" : "Não";
+}
+
 /** Turn an amenity slug back into something readable. */
 /**
  * Human labels for the imóvel characteristic slugs.
@@ -288,6 +360,34 @@ const CARACTERISTICA_LABEL: Record<string, string> = {
   vistapanoramica: "Vista panorâmica",
   vitrine: "Vitrine",
   wcempregada: "WC de empregada",
+
+  // CONTRACT § 3 — the ~20 keys missing from the 2026-08-25 census, added
+  // 2026-09-04. Slugs derived the SAME way the backend derives them —
+  // `caracteristica_slug()` in imovel.py: fold accents, lowercase, strip
+  // all whitespace — from the raw Vista key text quoted in the contract.
+  cercaeletrica: "Cerca elétrica",
+  alarme: "Alarme",
+  antenaparabolica: "Antena parabólica",
+  aquecimentoeletrico: "Aquecimento elétrico",
+  calefacao: "Calefação",
+  porao: "Porão",
+  sotao: "Sótão",
+  patio: "Pátio",
+  gabinete: "Gabinete",
+  sala: "Sala",
+  salaestar: "Sala de estar",
+  estarintimo: "Estar íntimo",
+  banheiroauxiliar: "Banheiro auxiliar",
+  cozinhamontada: "Cozinha montada",
+  cozinhacomtanque: "Cozinha com tanque",
+  construcaoalvenaria: "Construção em alvenaria",
+  living: "Living",
+  // `dependenciadeempregada` (line above, in the original 55) already
+  // covers this — the backend's CARACTERISTICA_COLLISIONS merges the
+  // upstream-typo variant ("Dependenciade Empregada") and the correctly
+  // spelled one ("Dependencia De Empregada") into that ONE slug with an OR,
+  // so there is no second key to add here. See imovel.py's
+  // `CARACTERISTICA_COLLISIONS` for the merge.
 };
 
 /**
@@ -302,4 +402,19 @@ export function caracteristicaLabel(slug: string): string {
   const conhecido = CARACTERISTICA_LABEL[slug.toLowerCase()];
   if (conhecido) return conhecido;
   return slug.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase());
+}
+
+/**
+ * The amenity slugs this imóvel does NOT have, restricted to the known
+ * label set.
+ *
+ * The backend only retains the `"Sim"` slugs per row (`parse_caracteristicas`
+ * drops every `"Nao"` — see the normalizer), so there is no raw "has=false"
+ * list to read on the wire. This is the complement of `presentes` within
+ * `CARACTERISTICA_LABEL`'s keys instead: a slug this map doesn't recognize
+ * can't appear on either side of the split until it's added above.
+ */
+export function caracteristicasAusentes(presentes: string[]): string[] {
+  const presentesSet = new Set(presentes.map((s) => s.toLowerCase()));
+  return Object.keys(CARACTERISTICA_LABEL).filter((slug) => !presentesSet.has(slug));
 }
