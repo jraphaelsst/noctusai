@@ -945,12 +945,24 @@ async def get_card_route(
 async def list_compradores_route(
     cliente_id: UUID,
     atendimento_id: Optional[UUID] = None,
+    lado: Optional[str] = None,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
+    """Parties on one SIDE of this card's atendimento.
+
+    🔴 ONE ENDPOINT PAIR SERVES BOTH TABS, selected by `?lado=`. The Vendedor
+    tab is the Comprador tab reading different rows — same resolution, same
+    linking rules, same person model (migration 098) — so a second
+    `/vendedores` route would be the same handler twice, and the copy that
+    stopped being edited would be the bug.
+
+    The path keeps its `compradores` spelling: renaming it to `/partes` would
+    break every client for a word, and `lado` already says which side.
+    """
     _user, org_id = _auth_parts(auth)
     return compradores_svc.listar(
-        client, org_id, cliente_id, atendimento_id=atendimento_id
+        client, org_id, cliente_id, atendimento_id=atendimento_id, lado=lado
     )
 
 
@@ -971,9 +983,13 @@ async def create_comprador_route(
         parte_cliente_id=body.cliente_id,
         nome=body.nome,
         celular=body.celular,
-        papel=body.papel or compradores_svc.PAPEL_PADRAO,
+        # Left as None so the SERVICE picks the side's default — `comprador`
+        # for the buyer side, `proprietario` for the seller's. Defaulting here
+        # would hard-code the buyer's answer for both.
+        papel=body.papel,
         observacao=body.observacao,
         atendimento_id=body.atendimento_id,
+        lado=body.lado,
         user_id=getattr(user, "id", None),
     )
 

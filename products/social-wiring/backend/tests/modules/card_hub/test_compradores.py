@@ -367,7 +367,14 @@ class TestListing:
         here would break a panel that simply has nothing to show."""
         cid, _ = _titular(scoped)
         body = client.get(f"/api/clientes/{cid}/compradores", headers=_auth()).json()
-        assert body == {"items": [], "total": 0, "atendimento_id": body["atendimento_id"]}
+        assert body == {
+            "items": [],
+            "total": 0,
+            "atendimento_id": body["atendimento_id"],
+            # Echoed back since migration 098 so the caller can tell WHICH
+            # side came back empty — the Vendedor tab asks the same endpoint.
+            "lado": "comprador",
+        }
         assert body["total"] == 0
 
     def test_a_cliente_with_no_open_atendimento_lists_empty(self, client, scoped):
@@ -422,3 +429,139 @@ class TestRemoving:
             f"/api/clientes/{cid}/compradores/{uuid4()}", headers=_auth()
         )
         assert r.status_code == 404
+
+
+class TestOLadoVendedor:
+    """The seller side — migration 098's `lado` column.
+
+    🔴 WHAT THESE TESTS ARE REALLY FOR
+
+    The Vendedor tab is the Comprador tab pointed at different rows. That is
+    the design, and the risk that comes with it is leakage: one side rendering
+    the other's people. Every test here is about the boundary holding.
+    """
+
+    def test_a_vendedor_is_created_on_the_seller_side_as_proprietario(
+        self, client, scoped
+    ):
+        """The default role differs per side. "At first the vendedor is the
+        property owner" is a statement about data, and this is where it
+        lives."""
+        cid, aid = _titular(scoped)
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Carlos Eduardo Ramos", "lado": "vendedor"},
+            headers=_auth(),
+        )
+        assert r.status_code == 201
+        body = r.json()
+        assert body["lado"] == "vendedor"
+        assert body["papel"] == "proprietario"
+        assert body["atendimento_id"] == aid
+
+    def test_the_two_sides_do_not_see_each_other(self, client, scoped):
+        """🔴 The leak this whole column exists to prevent."""
+        cid, _ = _titular(scoped)
+        client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Maria Compradora"},
+            headers=_auth(),
+        )
+        client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Carlos Vendedor", "lado": "vendedor"},
+            headers=_auth(),
+        )
+
+        compradores = client.get(
+            f"/api/clientes/{cid}/compradores", headers=_auth()
+        ).json()
+        vendedores = client.get(
+            f"/api/clientes/{cid}/compradores?lado=vendedor", headers=_auth()
+        ).json()
+
+        assert [p["cliente"]["nome_completo"] for p in compradores["items"]] == [
+            "Maria Compradora"
+        ]
+        assert [p["cliente"]["nome_completo"] for p in vendedores["items"]] == [
+            "Carlos Vendedor"
+        ]
+
+    def test_omitting_lado_still_means_the_buyer_side(self, client, scoped):
+        """Every caller written before 098 meant the buyer side, and every row
+        written before it is one."""
+        cid, _ = _titular(scoped)
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Maria Mauricio"},
+            headers=_auth(),
+        )
+        assert r.json()["lado"] == "comprador"
+
+    def test_each_side_numbers_its_own_people_from_zero(self, client, scoped):
+        """Ordem is per side, so the first vendedor is 0 — not a continuation
+        of the buyer list's count."""
+        cid, _ = _titular(scoped)
+        client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Maria Compradora"},
+            headers=_auth(),
+        )
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Carlos Vendedor", "lado": "vendedor"},
+            headers=_auth(),
+        )
+        assert r.json()["ordem"] == 0
+
+    def test_a_role_from_the_other_side_is_refused(self, client, scoped):
+        """`fiador` is a buyer-side role; an estate sells but never buys, so
+        `inventariante` is the seller's. Neither crosses."""
+        cid, _ = _titular(scoped)
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Alguem", "lado": "vendedor", "papel": "fiador"},
+            headers=_auth(),
+        )
+        assert r.status_code == 400
+
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Alguem", "papel": "inventariante"},
+            headers=_auth(),
+        )
+        assert r.status_code == 400
+
+    def test_a_role_valid_on_both_sides_is_accepted_on_both(self, client, scoped):
+        """`conjuge` is the same relationship to a different principal — which
+        is exactly why `lado` is a column and not a prefix on `papel`."""
+        cid, _ = _titular(scoped)
+        for lado in ("comprador", "vendedor"):
+            r = client.post(
+                f"/api/clientes/{cid}/compradores",
+                json={"nome": f"Conjuge {lado}", "lado": lado, "papel": "conjuge"},
+                headers=_auth(),
+            )
+            assert r.status_code == 201, r.text
+            assert r.json()["papel"] == "conjuge"
+
+    def test_an_unknown_lado_is_refused_rather_than_defaulted(self, client, scoped):
+        """Silently falling back to the buyer side would file a seller under
+        the buyers."""
+        cid, _ = _titular(scoped)
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Alguem", "lado": "locatario"},
+            headers=_auth(),
+        )
+        assert r.status_code == 400
+
+    def test_the_titular_may_not_be_re_added_as_a_buyer(self, client, scoped):
+        """Buyer-side rule: `atendimentos.cliente_id` already names them."""
+        cid, _ = _titular(scoped)
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"cliente_id": cid},
+            headers=_auth(),
+        )
+        assert r.status_code == 400

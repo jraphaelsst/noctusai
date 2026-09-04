@@ -72,12 +72,44 @@ class TestDerivarIsPure:
         else; ticking it would claim work no human would accept."""
         assert svc.derivar({"nome_completo": "   "}, frozenset())["nome_completo"] is False
 
-    def test_every_item_is_covered_by_exactly_one_rule(self):
+    def test_every_item_is_covered_by_at_least_one_rule(self):
         """No item may be silently underivable — that would be a checkbox
-        nothing can ever tick except by hand."""
+        nothing can ever tick except by hand.
+
+        🔴 WAS `^` (exactly one), NOW `or` (at least one). The XOR encoded a
+        fact that was true until migration 097 rather than a rule: the two
+        ways of satisfying an item happened to be disjoint, because `rg`/`cpf`
+        were upload-only (we held the scan but never the number) and every
+        other item was column-only.
+
+        097 gave both a real column AND kept their document, so they are now
+        satisfiable either way — see `derivar`. The failure this test exists
+        to catch is an item derivable by NOTHING, and `or` still catches it;
+        the disjointness was never the point. Narrowing it back would forbid
+        the combination rather than protect anything.
+        """
         for item in svc.ITENS:
             de_cliente = ("campos" in item) or ("fontes" in item)
-            assert de_cliente ^ ("documento" in item), item["key"]
+            assert de_cliente or ("documento" in item), item["key"]
+
+    def test_rg_and_cpf_are_satisfied_by_the_number_or_by_the_scan(self):
+        """The combination 097 introduced, asserted in both directions.
+
+        A CPF typed in by hand must tick without an upload — otherwise the
+        card reads "CPF pendente" over a number that is on file.
+        """
+        so_documento = svc.derivar({}, frozenset({"cpf"}))
+        assert so_documento["cpf"] is True
+
+        so_valor = svc.derivar({"cpf": "412.954.238-98"}, frozenset())
+        assert so_valor["cpf"] is True
+
+        so_valor_rg = svc.derivar({"rg": "52.179.965-X"}, frozenset())
+        assert so_valor_rg["rg"] is True
+
+        nenhum = svc.derivar({}, frozenset())
+        assert nenhum["cpf"] is False
+        assert nenhum["rg"] is False
 
 
 class TestCelularEEmailReadTheRegistrationKey:

@@ -146,8 +146,10 @@ ITENS: tuple[dict[str, Any], ...] = (
      "campos": ("data_nascimento",)},
     {"key": "profissao", "label": "Profissão", "campos": ("profissao",)},
     {"key": "genero", "label": "Gênero", "campos": ("genero",)},
-    {"key": "rg", "label": "RG", "documento": "rg"},
-    {"key": "cpf", "label": "CPF", "documento": "cpf"},
+    # Migration 097 gave both a real column, so each now carries `campos` too
+    # and is satisfied by EITHER the number or the scan — see `derivar`.
+    {"key": "rg", "label": "RG", "campos": ("rg",), "documento": "rg"},
+    {"key": "cpf", "label": "CPF", "campos": ("cpf",), "documento": "cpf"},
 )
 
 ITEM_KEYS = tuple(item["key"] for item in ITENS)
@@ -234,9 +236,23 @@ def derivar(
     cliente = cliente or {}
     out: dict[str, bool] = {}
     for item in ITENS:
-        if "documento" in item:
-            out[item["key"]] = item["documento"] in tipos_documento_presentes
-            continue
+        # 🔴 EITHER SATISFIES, and the `or` replaced an early `continue`.
+        #
+        # Until migration 097 the two ways of satisfying an item were disjoint:
+        # `rg`/`cpf` were upload-only (we held the scan, never the number) and
+        # everything else was column-only. Now the extractor writes
+        # `clientes.cpf` / `clientes.rg` and an operator can type them, so an
+        # item can be satisfied by a value, by a document, or by both.
+        #
+        # The old `continue` would have made a document-bearing item ignore its
+        # columns entirely — so a client whose CPF was typed in by hand would
+        # show "CPF" unticked until somebody also uploaded the scan. That reads
+        # as missing paperwork when the fact is on file.
+        por_documento = (
+            "documento" in item
+            and item["documento"] in tipos_documento_presentes
+        )
+
         exige = _VALIDADORES.get(item.get("exige", ""))
         # Plain columns first, then the named readers — list order IS
         # precedence, and any one satisfying value ticks the item.
@@ -244,10 +260,12 @@ def derivar(
         valores += [
             _FONTES[fonte]["ler"](cliente) for fonte in item.get("fontes", ())
         ]
-        out[item["key"]] = any(
+        por_campos = any(
             _preenchido(valor) and (exige is None or exige(str(valor)))
             for valor in valores
         )
+
+        out[item["key"]] = por_documento or por_campos
     return out
 
 
@@ -446,8 +464,11 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     }
 
 
-#: Items whose value is TYPED rather than satisfied by uploading a document.
-#: `rg`/`cpf` are excluded by construction — they have no `campos`.
+#: Items whose value can be TYPED, whether or not a document also satisfies
+#: them. `rg`/`cpf` joined this set in migration 097: they now have `campos`,
+#: so they are editable by hand AND satisfiable by an upload. The predicate is
+#: `"campos" in item`, not `"documento" not in item` — keying it on the ABSENCE
+#: of a document would have silently kept both out of the form.
 def valores_editaveis(cliente: Optional[dict]) -> dict:
     """`item_key -> current value` for every item a human fills in by hand.
 
@@ -458,7 +479,7 @@ def valores_editaveis(cliente: Optional[dict]) -> dict:
     return {
         item["key"]: valor_de(cliente, item["key"])
         for item in ITENS
-        if "documento" not in item
+        if item.get("campos")
     }
 
 

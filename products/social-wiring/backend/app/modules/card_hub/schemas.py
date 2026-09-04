@@ -325,9 +325,14 @@ class CompradorCreateBody(StrictHttpModel):
     service, which is also where the 422 is raised, so there is one rule rather
     than a validator here and a check there.
 
-    `papel` is validated against `compradores_service.PAPEIS` — the definition
-    — rather than re-listed as a Literal here, for the same reason the
-    checklist keys are not re-listed in `DocumentoChecklistPatchBody`.
+    `papel` is validated against `compradores_service.PAPEIS_POR_LADO[lado]` —
+    the definition — rather than re-listed as a Literal here, for the same
+    reason the checklist keys are not re-listed in
+    `DocumentoChecklistPatchBody`. Omit it and the service applies the side's
+    default: `comprador` for the buyer side, `proprietario` for the seller's.
+
+    `lado` selects the side (migration 098) and defaults to `comprador`, so
+    every caller written before the Vendedor tab existed keeps its meaning.
 
     `atendimento_id` is optional and normally omitted: the service resolves the
     person's single open atendimento. It is accepted for the case that
@@ -341,6 +346,7 @@ class CompradorCreateBody(StrictHttpModel):
     papel: Optional[str] = None
     observacao: Optional[str] = Field(default=None, max_length=2000)
     atendimento_id: Optional[UUID] = None
+    lado: Optional[str] = None
 
 
 # ─── Negociação (migration 077) ──────────────────────────────────────────

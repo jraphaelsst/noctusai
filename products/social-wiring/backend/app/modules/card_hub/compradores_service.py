@@ -62,12 +62,65 @@ CLIENTES_TABLE = "clientes"
 #: offers: the user's framing is that the titular IS a comprador and adding a
 #: party adds ANOTHER comprador — a spouse who is equally a buyer, not a
 #: subordinate attached to one.
-PAPEIS: tuple[str, ...] = ("comprador", "conjuge", "fiador", "procurador", "outro")
+#:
+#: 🔴 ROLES ARE NOW PER SIDE (migration 098), and the two tuples below are not
+#: the same list twice. `conjuge` and `procurador` appear in both because they
+#: are the same relationship to a DIFFERENT principal — which is precisely why
+#: `lado` is its own column rather than a prefix on these strings; 098's header
+#: makes the full argument.
+#:
+#: What differs is the head of each list. The buyer side leads with
+#: `comprador`; the seller side leads with `proprietario`, because the person a
+#: deal is made with IS the owner — that is "the vendedor is the property
+#: owner" stated as data. `inventariante` exists only on the seller side (an
+#: estate sells, it never buys) and `fiador` only on the buyer's, for the
+#: mirror reason.
+LADOS: tuple[str, ...] = ("comprador", "vendedor")
+LADO_PADRAO = "comprador"
+
+PAPEIS_POR_LADO: dict[str, tuple[str, ...]] = {
+    "comprador": ("comprador", "conjuge", "fiador", "procurador", "outro"),
+    "vendedor": ("proprietario", "conjuge", "procurador", "inventariante", "outro"),
+}
+
+PAPEL_PADRAO_POR_LADO: dict[str, str] = {
+    "comprador": "comprador",
+    "vendedor": "proprietario",
+}
+
+#: How `clientes.vinculo_origem` records who introduced this person. Migration
+#: 074 left that column TEXT rather than a CHECK precisely so a new
+#: relationship path would need no migration; the seller side is that path
+#: arriving.
+VINCULO_ORIGEM_POR_LADO: dict[str, str] = {
+    "comprador": "comprador_atendimento",
+    "vendedor": "vendedor_atendimento",
+}
+
+#: Kept under its original name for callers that predate `lado`. It is the
+#: buyer side's tuple, so an unmigrated call behaves exactly as it always did.
+PAPEIS: tuple[str, ...] = PAPEIS_POR_LADO["comprador"]
 
 PAPEL_PADRAO = "comprador"
 
+
+def normalizar_lado(lado: Optional[str]) -> str:
+    """Validate a side, defaulting to the buyer's.
+
+    Defaulting rather than requiring, for the same reason migration 098's
+    column defaults: every caller written before the seller side existed means
+    the buyer side, and every row written before it is one.
+    """
+    valor = (lado or LADO_PADRAO).strip().lower()
+    if valor not in LADOS:
+        raise ValidationError_(
+            f"Lado inválido: {lado}. Esperado um de {', '.join(LADOS)}."
+        )
+    return valor
+
+
 _FIELDS = (
-    "id", "atendimento_id", "cliente_id", "papel", "ordem",
+    "id", "atendimento_id", "cliente_id", "lado", "papel", "ordem",
     "observacao", "created_at",
 )
 
@@ -104,8 +157,13 @@ def listar(
     cliente_id: UUID,
     *,
     atendimento_id: Optional[UUID] = None,
+    lado: Optional[str] = None,
 ) -> dict:
     """Every additional party on this card's atendimento, in display order.
+
+    `lado` selects the side — one call per panel, so the Comprador and
+    Vendedor tabs are the same code reading different rows rather than two
+    implementations that drift.
 
     Returns an EMPTY list — never an error — when the person has no atendimento
     the resolver can name. The card asks this on every open, and a 409 for "no
@@ -113,6 +171,7 @@ def listar(
     where ambiguity has to be resolved, because that is where a wrong guess
     writes something.
     """
+    lado_alvo = normalizar_lado(lado)
     ensure_cliente(client, org_id, cliente_id)
     try:
         alvo = resolve_atendimento_id(client, org_id, cliente_id, atendimento_id)
@@ -123,13 +182,14 @@ def listar(
         # also swallow a NotFoundError for an explicit `atendimento_id` that
         # belongs to someone else — turning an authorization-shaped refusal
         # into an empty list, which is the silent-fallback shape.
-        return {"items": [], "total": 0, "atendimento_id": None}
+        return {"items": [], "total": 0, "atendimento_id": None, "lado": lado_alvo}
 
     res = (
         _t(client, TABLE)
         .select("*")
         .eq("org_id", str(org_id))
         .eq("atendimento_id", alvo)
+        .eq("lado", lado_alvo)
         .execute()
     )
     rows = sorted(
@@ -138,7 +198,12 @@ def listar(
     )
     clientes = _clientes_por_id(client, org_id, [str(r["cliente_id"]) for r in rows])
     itens = [_out(r, clientes.get(str(r["cliente_id"]))) for r in rows]
-    return {"items": itens, "total": len(itens), "atendimento_id": alvo}
+    return {
+        "items": itens,
+        "total": len(itens),
+        "atendimento_id": alvo,
+        "lado": lado_alvo,
+    }
 
 
 def adicionar(
@@ -149,9 +214,10 @@ def adicionar(
     parte_cliente_id: Optional[UUID] = None,
     nome: Optional[str] = None,
     celular: Optional[str] = None,
-    papel: str = PAPEL_PADRAO,
+    papel: Optional[str] = None,
     observacao: Optional[str] = None,
     atendimento_id: Optional[UUID] = None,
+    lado: Optional[str] = None,
     user_id: Optional[UUID] = None,
 ) -> dict:
     """Attach another person to this card's atendimento.
@@ -161,9 +227,13 @@ def adicionar(
     the caller's intent unknowable when they disagree; accepting neither would
     write a party with nobody in it.
     """
-    if papel not in PAPEIS:
+    lado_alvo = normalizar_lado(lado)
+    papeis = PAPEIS_POR_LADO[lado_alvo]
+    papel = papel or PAPEL_PADRAO_POR_LADO[lado_alvo]
+    if papel not in papeis:
         raise ValidationError_(
-            f"Papel inválido: {papel}. Esperado um de {', '.join(PAPEIS)}."
+            f"Papel inválido para o lado {lado_alvo}: {papel}. "
+            f"Esperado um de {', '.join(papeis)}."
         )
     if (parte_cliente_id is None) == (nome is None):
         raise ValidationError_(
@@ -179,17 +249,29 @@ def adicionar(
         # stranger's record to this deal.
         ensure_cliente(client, org_id, parte_cliente_id)
         novo_cliente_id = str(parte_cliente_id)
-        if novo_cliente_id == str(cliente_id):
+        # 🔴 BUYER-SIDE ONLY. The titular is named by `atendimentos.cliente_id`
+        # and is a buyer by construction, so re-adding them there is a
+        # duplicate. On the SELLER side there is no titular column at all
+        # (migration 098's header explains the asymmetry) — but the same
+        # person still cannot be on both sides of one deal, and that is what
+        # `uq_sw_atendimento_partes_pessoa` enforces at the database rather
+        # than here.
+        if lado_alvo == "comprador" and novo_cliente_id == str(cliente_id):
             raise ValidationError_(
                 "O titular já é parte deste atendimento — adicione outra pessoa."
             )
         # A linked person gets the relationship recorded too, not just a
         # created one — "any link to another cliente" is the ask, and a spouse
         # who happened to already be a lead is no less related for it.
-        _vincular(client, org_id, novo_cliente_id, cliente_id)
+        _vincular(client, org_id, novo_cliente_id, cliente_id, lado_alvo)
     else:
         novo_cliente_id = _criar_cliente(
-            client, org_id, nome=nome, celular=celular, vinculado_a=cliente_id
+            client,
+            org_id,
+            nome=nome,
+            celular=celular,
+            vinculado_a=cliente_id,
+            lado=lado_alvo,
         )
 
     ja = (
@@ -206,11 +288,15 @@ def adicionar(
         # response that is not true.
         raise ConflictError("Esta pessoa já é parte deste atendimento.")
 
+    # Ordem is per SIDE: each panel numbers its own people from zero, so the
+    # first vendedor is ordem 0 (the proprietário) rather than continuing the
+    # buyer list's count.
     atual = (
         _t(client, TABLE)
         .select("ordem")
         .eq("org_id", str(org_id))
         .eq("atendimento_id", alvo)
+        .eq("lado", lado_alvo)
         .execute()
     )
     proxima_ordem = max(
@@ -222,6 +308,7 @@ def adicionar(
         "org_id": str(org_id),
         "atendimento_id": alvo,
         "cliente_id": novo_cliente_id,
+        "lado": lado_alvo,
         "papel": papel,
         "ordem": proxima_ordem,
         "observacao": observacao,
@@ -233,7 +320,13 @@ def adicionar(
     return _out(row, clientes.get(novo_cliente_id))
 
 
-def _vincular(client: Any, org_id: UUID, cliente_id: str, titular_id: UUID) -> None:
+def _vincular(
+    client: Any,
+    org_id: UUID,
+    cliente_id: str,
+    titular_id: UUID,
+    lado: str = LADO_PADRAO,
+) -> None:
     """Record who introduced this person — FIRST-WRITER-WINS (migration 074).
 
     Only written when the column is empty, so someone who was already a lead in
@@ -255,7 +348,7 @@ def _vincular(client: Any, org_id: UUID, cliente_id: str, titular_id: UUID) -> N
         return
     _t(client, CLIENTES_TABLE).update({
         "vinculado_a_cliente_id": str(titular_id),
-        "vinculo_origem": "comprador_atendimento",
+        "vinculo_origem": VINCULO_ORIGEM_POR_LADO[lado],
         "vinculado_em": _now(),
     }).eq("id", str(cliente_id)).eq("org_id", str(org_id)).execute()
 
@@ -267,6 +360,7 @@ def _criar_cliente(
     nome: Optional[str],
     celular: Optional[str],
     vinculado_a: Optional[UUID] = None,
+    lado: str = LADO_PADRAO,
 ) -> str:
     """A minimal cliente for a party who is not yet in the system.
 
@@ -297,7 +391,7 @@ def _criar_cliente(
         "identidade_incerta": False,
         "ativo": True,
         "vinculado_a_cliente_id": str(vinculado_a) if vinculado_a else None,
-        "vinculo_origem": "comprador_atendimento" if vinculado_a else None,
+        "vinculo_origem": VINCULO_ORIGEM_POR_LADO[lado] if vinculado_a else None,
         "vinculado_em": _now() if vinculado_a else None,
         "created_at": _now(),
     }

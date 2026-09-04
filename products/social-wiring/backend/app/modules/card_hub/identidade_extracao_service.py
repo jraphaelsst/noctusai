@@ -210,6 +210,30 @@ CAMPOS: tuple[CampoExtraido, ...] = (
         coluna_rotulo="extracao_genero_rotulo",
         sobrescreve=False,
     ),
+    # Migration 097 — the two the note above predicted, on exactly the terms
+    # it named. Both `sobrescreve=False`.
+    #
+    # 🔴 WHY NOT `sobrescreve=True`, when a document is the AUTHORITY on a
+    # document number? Because unlike `nome_oficial`, these have no second
+    # column holding the human's version. `nome_oficial` may be overwritten
+    # only because `nome_completo` sits beside it keeping the registration
+    # spelling; there is no `cpf_completo`. Overwriting here would destroy an
+    # operator's entry with no way back, so the newest reading loses to
+    # whatever is already there and lands as a suggestion instead.
+    CampoExtraido(
+        item_key="cpf",
+        coluna_valor="extracao_cpf",
+        coluna_confianca="extracao_cpf_confianca",
+        coluna_rotulo="extracao_cpf_rotulo",
+        sobrescreve=False,
+    ),
+    CampoExtraido(
+        item_key="rg",
+        coluna_valor="extracao_rg",
+        coluna_confianca="extracao_rg_confianca",
+        coluna_rotulo="extracao_rg_rotulo",
+        sobrescreve=False,
+    ),
 )
 
 CAMPO_POR_CHAVE: dict[str, CampoExtraido] = {c.item_key: c for c in CAMPOS}
@@ -247,6 +271,18 @@ def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional
             fields.genero_confianca.value,
             fields.genero_rotulo,
             fields.persistable_genero,
+        ),
+        "cpf": (
+            fields.cpf,
+            fields.cpf_confianca.value,
+            fields.cpf_rotulo,
+            fields.persistable_cpf,
+        ),
+        "rg": (
+            fields.rg,
+            fields.rg_confianca.value,
+            fields.rg_rotulo,
+            fields.persistable_rg,
         ),
     }
 
@@ -348,6 +384,14 @@ def _aplicar_ao_cliente(
         updates[campo.documento_id] = str(documento_id)
         updates[campo.em] = now
         aplicados[campo.item_key] = True
+
+        # 🔴 `rg_orgao_expedidor` RIDES ALONG — it is not a CAMPO and must
+        # not become one. An issuing body with no number identifies nothing,
+        # and a number without its issuer is an incomplete qualification on a
+        # contract, so the pair is written together under the RG's decision or
+        # not at all. `IdentityFields.rg_orgao` carries the same note.
+        if campo.item_key == "rg" and fields.rg_orgao:
+            updates["rg_orgao_expedidor"] = fields.rg_orgao
 
     if updates:
         updates["updated_at"] = now
