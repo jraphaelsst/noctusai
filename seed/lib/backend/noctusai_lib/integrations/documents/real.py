@@ -39,10 +39,12 @@ import logging
 from typing import Optional
 
 from noctusai_lib.integrations.documents.birthdate import find_birthdate
+from noctusai_lib.integrations.documents.cpf import find_cpf
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.name import find_name
+from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
     IdentityFields,
@@ -105,6 +107,24 @@ class LadderIdentityExtractor:
         # misreading; this field has no plausible misreadings to make.
         genero, genero_conf, genero_label = find_gender(text)
 
+        # CPF is NOT tempered by source either, and for a reason the other
+        # fields cannot claim: it verifies its own two check digits. An OCR
+        # digit confusion (0/O, 5/S, 8/B) breaks the mod-11 arithmetic, so a
+        # vision pass that misreads a CPF produces a value the parser has
+        # already demoted to `baixa` on its own. Tempering here would demote
+        # the reads that survived that gate — which are precisely the ones
+        # worth trusting.
+        cpf, cpf_conf, cpf_label = find_cpf(text)
+
+        # The RG has NO check digit anywhere in Brazil, so it gets the name's
+        # treatment: a vision-read RG is a suggestion. It has no structural
+        # self-evidence to fall back on, which makes it the weakest of the
+        # five — see `rg.py`.
+        rg, rg_conf, rg_label = find_rg(text)
+        rg_conf = self._temper_name_confidence(rg_conf, source)
+        rg_orgao, rg_orgao_conf = find_rg_orgao(text)
+        rg_orgao_conf = self._temper_name_confidence(rg_orgao_conf, source)
+
         return IdentityFields(
             kind=kind,
             data_nascimento=data,
@@ -116,12 +136,37 @@ class LadderIdentityExtractor:
             genero=genero,
             genero_confianca=ExtractionConfidence(genero_conf),
             genero_rotulo=genero_label,
+            cpf=cpf,
+            cpf_confianca=ExtractionConfidence(cpf_conf),
+            cpf_rotulo=cpf_label,
+            rg=rg,
+            rg_confianca=ExtractionConfidence(rg_conf),
+            rg_rotulo=rg_label,
+            rg_orgao=rg_orgao,
+            rg_orgao_confianca=ExtractionConfidence(rg_orgao_conf),
             source=source,
         )
 
     @staticmethod
     def _temper_name_confidence(confidence: str, source: TextSource) -> str:
-        """A name read off a vision pass is a suggestion, never a fact.
+        """A value read off a vision pass is a suggestion, never a fact.
+
+        🔴 THE NAME IS NO LONGER ITS ONLY CALLER — it now also guards `rg`
+        and `rg_orgao`. The method keeps its original name deliberately:
+        it is referenced from `matricula_extractor.py` and from
+        social-wiring's `identidade_extracao_service.py`, so renaming it
+        would ripple across a documented seam to buy nothing but a tidier
+        word. What generalised is the RULE, stated below; `nome` is simply
+        the field that discovered it.
+
+        The rule: **a field with no structural self-evidence may not be
+        written unattended off a transcription.** `nome` qualifies because
+        free text has no checkable shape. `rg` qualifies for a stronger
+        reason — there is no national RG format and no check digit
+        anywhere in Brazil, so a misread RG is indistinguishable from a
+        real one. `cpf` does NOT qualify and is deliberately not passed
+        through here: its check digits fail under OCR damage, so its own
+        parser has already demoted a mangled read.
 
         🔴 THIS IS THE GATE ON AN OVERWRITE, WHICH IS WHY IT IS STRICTER
         THAN THE BIRTHDATE'S.

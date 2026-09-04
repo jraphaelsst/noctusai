@@ -77,6 +77,18 @@ class FakeIdentityExtractor:
             genero="Masculino",
             genero_confianca=ExtractionConfidence.ALTA,
             genero_rotulo="SEXO",
+            # A REAL, checksum-valid CPF. A Fake that returned an
+            # arithmetically invalid one would let a consumer ship code
+            # that never exercises the validating path, and the first
+            # document the Real adapter read would behave differently.
+            cpf="412.954.238-98",
+            cpf_confianca=ExtractionConfidence.ALTA,
+            cpf_rotulo="CPF",
+            rg="52.179.965-X",
+            rg_confianca=ExtractionConfidence.ALTA,
+            rg_rotulo="REGISTRO GERAL",
+            rg_orgao="SSP/SP",
+            rg_orgao_confianca=ExtractionConfidence.ALTA,
             source=TextSource.TEXT_LAYER,
         )
 

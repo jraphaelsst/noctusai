@@ -53,7 +53,9 @@ consumer must honour both:
 """
 from noctusai_lib.integrations.documents.birthdate import find_birthdate, normalize
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
+from noctusai_lib.integrations.documents.cpf import find_cpf
 from noctusai_lib.integrations.documents.gender import find_gender
+from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao
 from noctusai_lib.integrations.documents.ladder import (
     DocumentTextLadder,
     looks_like_pdf,
@@ -136,9 +138,12 @@ __all__ = [
     "Transcription",
     "classify_kind",
     "find_birthdate",
+    "find_cpf",
     "find_gender",
     "find_matricula",
     "find_name",
+    "find_rg",
+    "find_rg_orgao",
     "looks_like_a_name",
     "looks_like_pdf",
     "make_document_transcriber",

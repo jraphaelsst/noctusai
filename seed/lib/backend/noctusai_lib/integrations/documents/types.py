@@ -72,7 +72,7 @@ class TextSource(str, Enum):
 #: product's `CampoExtraido` table mirrors it, and adding a field means adding
 #: one entry here plus its three attributes below. Hand-written per-field
 #: predicates were what this replaced — see the class docstring's N=3 note.
-CAMPOS: tuple[str, ...] = ("data_nascimento", "nome", "genero")
+CAMPOS: tuple[str, ...] = ("data_nascimento", "nome", "genero", "cpf", "rg")
 
 
 @dataclass(frozen=True)
@@ -120,6 +120,21 @@ class IdentityFields:
     no consumer had to change. Adding a fourth field (RG number and CPF
     number remain the obvious next ones) means: one `CAMPOS` entry, one
     triple of attributes, and nothing else.
+
+    **AND THAT PREDICTION HELD — `cpf` AND `rg` ARRIVED, AT EXACTLY THAT
+    COST.** Both landed for the contract-generation work (social-wiring
+    migration 093): one `CAMPOS` entry each, one triple of attributes
+    each, two aliases each, and no change to `presente` / `persistable` /
+    `sugestao`. Recorded because a design note that predicted its own
+    next change is worth more once it has been tested than it was as a
+    prediction — the derivation is now load-bearing at five fields, and
+    the next one costs the same.
+
+    The one thing five fields DID teach: not every extracted value is a
+    CAMPO. `rg_orgao` is an attribute here and deliberately absent from
+    `CAMPOS`, because it is not independently persistable — see its own
+    comment below. A future field should ask that question before adding
+    its tuple entry.
     """
 
     kind: IdentityDocumentKind = IdentityDocumentKind.UNKNOWN
@@ -146,6 +161,35 @@ class IdentityFields:
     genero: Optional[str] = None
     genero_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
     genero_rotulo: Optional[str] = None
+
+    # ─── CPF ──────────────────────────────────────────────────────────
+    #: Always the canonical `412.954.238-98` form, whatever punctuation the
+    #: document used — `cpf.find_cpf` normalises, so no consumer has to.
+    #: Unlike every other field here, its confidence is driven by a CHECK
+    #: DIGIT as much as by a label; see `cpf.py`.
+    cpf: Optional[str] = None
+    cpf_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    cpf_rotulo: Optional[str] = None
+
+    # ─── RG ───────────────────────────────────────────────────────────
+    #: Verbatim as printed (`52.179.965-X`) — there is no national RG format
+    #: to normalise to, so imposing one would invent punctuation. Compare via
+    #: `rg.only_alnum`.
+    rg: Optional[str] = None
+    rg_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    rg_rotulo: Optional[str] = None
+
+    #: 🔴 The issuing body, and deliberately NOT a member of :data:`CAMPOS`.
+    #:
+    #: `CAMPOS` enumerates fields that are independently persistable — each
+    #: gets its own `persistable()` decision. The issuer is not one: an
+    #: `SSP/SP` with no RG number beside it identifies nothing, and an RG
+    #: number stored without its issuer is an incomplete qualification on a
+    #: contract. So it TRAVELS WITH `rg` — a consumer writes both or neither,
+    #: under the `rg` field's decision. Making it a CAMPO would offer a
+    #: `persistable_rg_orgao` that no correct consumer should ever consult.
+    rg_orgao: Optional[str] = None
+    rg_orgao_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
 
     # ─── Provenance, shared by every field on this result ─────────────
     source: TextSource = TextSource.NENHUMA
@@ -211,6 +255,14 @@ class IdentityFields:
         return self.persistable("genero")
 
     @property
+    def persistable_cpf(self) -> bool:
+        return self.persistable("cpf")
+
+    @property
+    def persistable_rg(self) -> bool:
+        return self.persistable("rg")
+
+    @property
     def sugestao_data_nascimento(self) -> bool:
         return self.sugestao("data_nascimento")
 
@@ -221,6 +273,14 @@ class IdentityFields:
     @property
     def sugestao_genero(self) -> bool:
         return self.sugestao("genero")
+
+    @property
+    def sugestao_cpf(self) -> bool:
+        return self.sugestao("cpf")
+
+    @property
+    def sugestao_rg(self) -> bool:
+        return self.sugestao("rg")
 
 
 @runtime_checkable

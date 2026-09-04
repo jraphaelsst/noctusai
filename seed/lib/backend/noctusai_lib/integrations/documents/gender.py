@@ -34,6 +34,8 @@ import re
 import unicodedata
 from typing import Optional
 
+from noctusai_lib.integrations.documents.labels import Achado, label_before
+
 MASCULINO = "Masculino"
 FEMININO = "Feminino"
 
@@ -56,7 +58,12 @@ _SEX_LABELS = (
 #: `FILIACAO` is the important one: a parent's name block is where a stray
 #: initial is most likely to be found, and attributing a parent's anything to
 #: the holder is the error this whole module family is built to avoid.
-_DECOY_LABELS = (
+#: 🔴 ALL of these are BLOCK OPENERS, not value-type decoys — see `labels.py`.
+#: That distinction was invisible while this module owned its own window, and
+#: it was wrong here: `FILIACAO MARIA DE TAL SEXO: F` returned Feminino at
+#: HIGH confidence, attributing a parent's sex to the holder and writing it
+#: unattended. It now demotes to `baixa` and lands in the confirm queue.
+_BLOCO_LABELS = (
     "FILIACAO",
     "PAI",
     "MAE",
@@ -98,26 +105,15 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", stripped.upper())
 
 
-def _label_before(haystack: str, at: int) -> tuple[Optional[str], bool]:
-    """The nearest sex label preceding `at`, and whether it is a decoy.
-
-    Returns `(label, is_decoy)`. A decoy wins over a real label when it is
-    closer, because proximity is what actually binds a value to a field on
-    these layouts.
-    """
-    window = haystack[max(0, at - _LABEL_WINDOW) : at]
-    melhor: Optional[str] = None
-    melhor_pos = -1
-    decoy = False
-    for rotulo in _SEX_LABELS + _DECOY_LABELS:
-        pos = window.rfind(rotulo)
-        if pos > melhor_pos:
-            melhor_pos = pos
-            melhor = rotulo
-            decoy = rotulo in _DECOY_LABELS
-    if melhor is None or melhor_pos < 0:
-        return (None, False)
-    return (melhor, decoy)
+def _label_before(haystack: str, at: int) -> Achado:
+    """Delegate to the shared label window — see `labels.py`."""
+    return label_before(
+        haystack,
+        at,
+        labels=_SEX_LABELS,
+        blocos=_BLOCO_LABELS,
+        window=_LABEL_WINDOW,
+    )
 
 
 def find_gender(text: str) -> tuple[Optional[str], str, Optional[str]]:
@@ -146,11 +142,14 @@ def find_gender(text: str) -> tuple[Optional[str], str, Optional[str]]:
     # Whole words — valid anywhere, better when labelled.
     for m in _PALAVRA_RE.finditer(norm):
         valor = _PALAVRAS[m.group(1)]
-        rotulo, decoy = _label_before(norm, m.start())
-        if decoy:
+        achado = _label_before(norm, m.start())
+        if achado.rejeitado:
             continue
-        if rotulo:
-            rotulados.append((valor, rotulo))
+        # A sex label inside a filiação block may be the holder's (the block
+        # ended) or a parent's. Ambiguous from text, so it joins the
+        # low-confidence pile rather than the trusted one.
+        if achado.rotulo and not achado.rebaixado:
+            rotulados.append((valor, achado.rotulo))
         else:
             soltos.append(valor)
 
@@ -158,10 +157,13 @@ def find_gender(text: str) -> tuple[Optional[str], str, Optional[str]]:
     # docstring: an unlabelled `M` is far more likely to be a state code or an
     # initial than the holder's sex.
     for m in _LETRA_RE.finditer(norm):
-        rotulo, decoy = _label_before(norm, m.start())
-        if decoy or not rotulo:
+        achado = _label_before(norm, m.start())
+        if achado.rejeitado or not achado.rotulo:
             continue
-        rotulados.append((_LETRAS[m.group(1)], rotulo))
+        if achado.rebaixado:
+            soltos.append(_LETRAS[m.group(1)])
+        else:
+            rotulados.append((_LETRAS[m.group(1)], achado.rotulo))
 
     if rotulados:
         distintos = {v for v, _ in rotulados}
