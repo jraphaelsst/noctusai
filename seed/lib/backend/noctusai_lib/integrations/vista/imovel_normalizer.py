@@ -133,8 +133,9 @@ def vista_to_imovel(
         data_atualizacao_dias=parse_count(payload.get("DataAtualizacaoDias")),
         caracteristicas=parse_caracteristicas(payload.get("Caracteristicas")),
         caracteristicas_raw=payload.get("Caracteristicas") or {},
-        # ── the 32-field expansion (CONTRACT `imoveis-vista-field-surface`
-        # § 1). Each Vista key runs through the coercion class its
+        # ── the 29-field expansion (CONTRACT `imoveis-vista-field-surface`
+        # § 1, 32 minus the `Lavabo`/`Copa`/`Escritorio` shadowing
+        # correction below). Each Vista key runs through the coercion class its
         # CONTRACT row names — text (`clean_text`), money/measure-float
         # (`parse_money` / `parse_area`, both "0"→None), measure-int
         # (`parse_measure_int`, "0"→None, int-typed), count (`parse_count`,
@@ -148,10 +149,12 @@ def vista_to_imovel(
         area_terreno=parse_area(payload.get("AreaTerreno")),
         frente=parse_area(payload.get("Frente")),
         fundos=parse_area(payload.get("Fundos")),
-        lavabo=parse_sim_nao(payload.get("Lavabo")),
+        # No `lavabo` / `copa` / `escritorio` mapping — Vista shadows these
+        # three to null whenever `Caracteristicas` is in the same request
+        # (our sync always requests it). See
+        # `calibration.py::CANDIDATE_IMOVEL_DETAIL_FIELDS` for the measured
+        # probe. Read them via `imovel.tem_caracteristica("Lavabo")` etc.
         closet=parse_count(payload.get("Closet")),
-        copa=parse_sim_nao(payload.get("Copa")),
-        escritorio=parse_sim_nao(payload.get("Escritorio")),
         ano_construcao=parse_measure_int(payload.get("AnoConstrucao")),
         situacao=clean_text(payload.get("Situacao")),
         ocupacao=clean_text(payload.get("Ocupacao")),

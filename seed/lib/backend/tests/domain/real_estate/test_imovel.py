@@ -428,7 +428,7 @@ def test_endereco_completo_composes_the_split_parts():
     assert imovel.endereco_completo == "Fernando Nobre, 4000, 389"
 
 
-# ─── The 32-field expansion (CONTRACT `imoveis-vista-field-surface` § 1) ──
+# ─── The 29-field expansion (CONTRACT `imoveis-vista-field-surface` § 1) ──
 #
 # Every field below runs through one of four coercion classes: bool
 # ("Sim"→True / "Nao"→False / ""→None), money/measure ("0"→None), count
@@ -542,7 +542,7 @@ def test_field_expansion_inscricao_municipal_stores_city_noise_verbatim(payloads
 
 
 def test_field_expansion_full_payload_round_trip(payloads):
-    """Every one of the 32 new fields must survive `vista_to_imovel`
+    """Every one of the 29 new fields must survive `vista_to_imovel`
     without raising, with the coercion rule from CONTRACT §1 applied."""
     listing = payloads["detalhes_listar_row"]
     codigo, detalhes = next(iter(payloads["detalhes"].items()))
@@ -569,10 +569,10 @@ def test_field_expansion_full_payload_round_trip(payloads):
     assert imovel.zona == "Zona Oest"
     assert imovel.regiao is None
     assert imovel.area_terreno is None
-    assert imovel.lavabo is False
     assert imovel.closet == 0
-    assert imovel.copa is True
-    assert imovel.escritorio is False
+    assert not hasattr(imovel, "lavabo")
+    assert not hasattr(imovel, "copa")
+    assert not hasattr(imovel, "escritorio")
     assert imovel.frente is None
     assert imovel.fundos is None
     assert imovel.referencia == codigo
@@ -591,3 +591,45 @@ def test_field_expansion_fotos_stays_empty_and_foto_destaque_is_the_only_photo(p
     imovel = vista_to_imovel(listing=listing, detalhes=detalhes)
     assert imovel.fotos == []
     assert imovel.foto_destaque
+
+
+# ─── CONTRACT correction 2026-09-04 — `Lavabo`/`Copa`/`Escritorio` shadowing ──
+
+
+def test_lavabo_copa_escritorio_have_no_top_level_column(payloads):
+    """`Lavabo`/`Copa`/`Escritorio` are no longer `Imovel` fields.
+
+    Measured live: Vista shadows these three to `null` at the top level
+    whenever `Caracteristicas` rides in the same `fields` request (our
+    sync always requests it), even though a request WITHOUT
+    `Caracteristicas` returns real "Sim"/"Nao" values for them. Adding
+    columns that can only ever be NULL in our real call shape would ship
+    dead data — the fact already lives in `caracteristicas`/
+    `caracteristicas_raw`, which this test proves is still reachable.
+    """
+    for attr in ("lavabo", "copa", "escritorio"):
+        assert attr not in Imovel.model_fields
+
+    _, detalhes = next(iter(payloads["detalhes"].items()))
+    imovel = vista_to_imovel(listing=payloads["detalhes_listar_row"], detalhes=detalhes)
+    # The same fact is still readable — from the amenity list, not a column.
+    assert detalhes["Caracteristicas"]["Escritorio"] in {"Sim", "Nao"}
+    assert imovel.tem_caracteristica("Escritorio") is (
+        detalhes["Caracteristicas"]["Escritorio"] == "Sim"
+    )
+
+
+def test_candidate_detail_fields_does_not_request_the_shadowed_trio():
+    """The calibrator must not even ASK for these three — requesting them
+    alongside `Caracteristicas` (our real call shape) can only return
+    null, so listing them is pure noise."""
+    from noctusai_lib.integrations.vista.calibration import (
+        CANDIDATE_IMOVEL_DETAIL_FIELDS,
+    )
+
+    assert "Caracteristicas" in CANDIDATE_IMOVEL_DETAIL_FIELDS
+    for shadowed in ("Lavabo", "Copa", "Escritorio"):
+        assert shadowed not in CANDIDATE_IMOVEL_DETAIL_FIELDS
+    # Elevador/Portaria are NOT shadowed (verified live) — must stay.
+    assert "Elevador" in CANDIDATE_IMOVEL_DETAIL_FIELDS
+    assert "Portaria" in CANDIDATE_IMOVEL_DETAIL_FIELDS

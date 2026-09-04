@@ -4,7 +4,7 @@
     "captured": "2026-08-03",
     "source": "full-catalog census (1919 listar rows + 75 stratified detalhes)",
     "note": "Real payloads, verbatim. Each listar row is chosen to exercise a specific documented quirk (see `quirk` key). Do not hand-edit — regenerate from a fresh census if the tenant shape changes.",
-    "field_expansion_2026_09_04": "CONTRACT `imoveis-vista-field-surface` §1 32-field expansion, added 2026-09-04 to the pre-existing AP0617 detalhes fixture. Values marked with a literal quote in CONTRACT §1 (Situacao/Ocupacao/Posicao/Chave/Referencia/ExibirNoSite/Zona-truncation/InscricaoMunicipal-city-noise) reproduce that literal. Fields with no cited literal in the CONTRACT (exact ValorCondominio/ValorIptu amounts, Matricula number, Tour360 URL, DescricaoWeb prose) are representative test data sized/shaped to the CONTRACT's measured constraints (e.g. DescricaoWeb length 463-1648 chars) rather than a verbatim live capture — unlike the rest of this fixture, `oneconsu-rest` was not re-queried for this specific row."
+    "field_expansion_2026_09_04": "CONTRACT `imoveis-vista-field-surface` §1 32-field expansion, added 2026-09-04 to the pre-existing AP0617 detalhes fixture. Values marked with a literal quote in CONTRACT §1 (Situacao/Ocupacao/Posicao/Chave/Referencia/ExibirNoSite/Zona-truncation/InscricaoMunicipal-city-noise) reproduce that literal. Fields with no cited literal in the CONTRACT (exact ValorCondominio/ValorIptu amounts, Matricula number, Tour360 URL, DescricaoWeb prose) are representative test data sized/shaped to the CONTRACT's measured constraints (e.g. DescricaoWeb length 463-1648 chars) rather than a verbatim live capture — unlike the rest of this fixture, `oneconsu-rest` was not re-queried for this specific row. CORRECTION same day: `Lavabo`/`Copa`/`Escritorio` were removed again after live verification showed Vista shadows them to null whenever `Caracteristicas` rides in the same request (our sync always requests it) — see CONTRACT `imoveis-vista-field-surface` §1 correction block and `calibration.py::CANDIDATE_IMOVEL_DETAIL_FIELDS` for the measured probe. They remain present as amenity keys inside `detalhes.AP0617.Caracteristicas`, which is the real source now."
   },
   "listar": [
     {
@@ -547,10 +547,7 @@
       "Zona": "Zona Oest",
       "Regiao": "",
       "AreaTerreno": "0",
-      "Lavabo": "Nao",
       "Closet": "0",
-      "Copa": "Sim",
-      "Escritorio": "Nao",
       "Frente": "0",
       "Fundos": "0",
       "Referencia": "AP0617",

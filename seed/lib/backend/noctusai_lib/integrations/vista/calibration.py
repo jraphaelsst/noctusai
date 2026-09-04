@@ -106,13 +106,28 @@ CANDIDATE_IMOVEL_DETAIL_FIELDS: list[Any] = [
     # `FotoGrande`/`FotoMedia`/`FotoPequena`/`Planta`) were probed too and
     # ALL rejected by this tenant — see `imovel_normalizer.py::_photo_list`
     # for the full finding; they are deliberately NOT added here.
+    #
+    # 🔴 `Lavabo` / `Copa` / `Escritorio` deliberately NOT added — CONTRACT
+    # `imoveis-vista-field-surface` correction 2026-09-04. Vista SHADOWS
+    # these three at top level whenever `Caracteristicas` rides in the same
+    # `fields` request (our sync always requests it), and they are also
+    # keys inside `Caracteristicas` itself. Measured live on ONE10107:
+    #   fields=[Codigo,Escritorio,Lavabo,Copa]                 -> "Sim"/"Sim"/"Nao"
+    #   fields=[Codigo,Escritorio,Lavabo,Copa,Caracteristicas] -> null /null /null
+    #   fields=[Codigo,Escritorio,Lavabo,Copa,ValorIptu,...]   -> "Sim"/"Sim"/"Nao"
+    #   Caracteristicas{Escritorio,Lavabo,Copa}                -> "Sim"/"Sim"/"Nao"
+    # Requesting them alongside `Caracteristicas` (our real call shape) can
+    # only ever return null, so they'd be permanently NULL columns while
+    # the same fact already lives in `caracteristicas_raw`. Source them
+    # from the amenity list. `Elevador`/`Portaria` are NOT shadowed
+    # (verified live) and keep their columns.
     "DescricaoWeb", "Observacoes",
     "ValorCondominio", "ValorIptu",
     "AnoConstrucao", "Situacao", "Ocupacao", "Pavimentos", "Posicao",
     "Elevador", "Portaria", "Exclusivo", "AceitaPermuta", "AceitaFinanciamento",
     "DestaqueWeb", "SuperDestaqueWeb", "ExibirNoSite",
     "Chave", "Zona", "Regiao",
-    "AreaTerreno", "Lavabo", "Closet", "Copa", "Escritorio",
+    "AreaTerreno", "Closet",
     "Frente", "Fundos",
     "Referencia", "Matricula", "InscricaoMunicipal",
     "VideoDestaque", "Tour360",

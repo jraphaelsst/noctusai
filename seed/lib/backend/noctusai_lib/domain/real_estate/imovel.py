@@ -473,10 +473,14 @@ class Imovel(BaseModel):
     banheiro_social: Optional[bool] = Field(
         None, description="A flag, not a count. The only bathroom signal this tenant exposes."
     )
-    lavabo: Optional[bool] = None
     closet: Optional[int] = Field(None, description="Count — a real 0 (no closet) survives, unlike money/area.")
-    copa: Optional[bool] = None
-    escritorio: Optional[bool] = None
+    # 🔴 No `lavabo` / `copa` / `escritorio` columns — CONTRACT
+    # `imoveis-vista-field-surface` correction 2026-09-04. Vista shadows
+    # these three to null whenever `Caracteristicas` rides in the same
+    # request (our sync always requests it) — see
+    # `calibration.py::CANDIDATE_IMOVEL_DETAIL_FIELDS` for the measured
+    # probe. They already exist as amenity keys inside `caracteristicas`/
+    # `caracteristicas_raw`; read them from there.
 
     # Construção e estado
     ano_construcao: Optional[int] = Field(None, description="'0' means unknown, not year zero — same rule as money/area.")
