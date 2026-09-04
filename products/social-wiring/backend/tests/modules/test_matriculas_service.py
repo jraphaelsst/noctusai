@@ -203,7 +203,11 @@ class TestSeedErrorCodesReachUsersAsPortuguese:
         [
             ("no_pages", "sem páginas"),
             ("empty_document", "vazio"),
-            ("missing_credentials", "OpenAI API Key"),
+            # Provider-agnostic since the manual OpenAI ↔ Anthropic switch
+            # (2026-09-04): which key is missing depends on the org's
+            # selection, so the sentence points at the screen that shows
+            # BOTH the keys and the switch instead of naming one vendor.
+            ("missing_credentials", "Chaves de API"),
             ("too_many_vision_pages", "muito longo"),
             ("rasterize_failed", "todas as páginas"),
         ],
@@ -383,20 +387,43 @@ class TestTheRecoverySweep:
 
 
 class TestCheckRequiredCredentials:
-    def test_sem_openai_retorna_mensagem(self):
+    """🔴 Checks the SELECTED provider's key, not OpenAI's unconditionally.
+
+    Since the manual switch landed (2026-09-04) an org can run on Anthropic.
+    Warning it forever about an OpenAI key it deliberately does not use is
+    how a settings panel trains its operators to ignore it — and it hides
+    the warning that matters when the key that IS used goes missing.
+    """
+
+    #: The org's stored choice. Patched rather than reached for: resolving
+    #: it for real builds the encrypted store, which needs a Supabase client
+    #: these unit tests deliberately do not have.
+    _NO_PROVEDOR = "app.services.api_keys_store.resolve_vision_provider"
+
+    def test_sem_a_chave_do_provedor_selecionado_retorna_mensagem(self):
         with patch(
             "app.modules.matriculas.service.resolve_credential", return_value=None
-        ):
+        ), patch(self._NO_PROVEDOR, return_value="openai"):
             missing = check_required_credentials(_ORG)
         assert len(missing) == 1
         assert "OpenAI" in missing[0]
 
-    def test_com_openai_retorna_vazio(self):
+    def test_com_a_chave_retorna_vazio(self):
         with patch(
             "app.modules.matriculas.service.resolve_credential", return_value="sk-test"
-        ):
+        ), patch(self._NO_PROVEDOR, return_value="openai"):
             missing = check_required_credentials(_ORG)
         assert missing == []
+
+    def test_um_org_no_anthropic_e_avisado_sobre_a_chave_anthropic(self):
+        """The whole point of the switch: the warning follows the choice."""
+        with patch(
+            "app.modules.matriculas.service.resolve_credential", return_value=None
+        ), patch(self._NO_PROVEDOR, return_value="anthropic"):
+            missing = check_required_credentials(_ORG)
+        assert len(missing) == 1
+        assert "Anthropic" in missing[0]
+        assert "OpenAI" not in missing[0]
 
 
 class TestTheSweepIsActuallyScheduled:

@@ -55,10 +55,34 @@ logger = logging.getLogger(__name__)
 #: dense small print. Override per-consumer only with a reason.
 RENDER_DPI = 200
 
-#: Pinned OCR model, separate from any chat-model pin a product carries.
-#: Tuned for page throughput at transcription quality; tune here, not at the
-#: call site.
-OCR_MODEL = "gpt-4.1-mini"
+#: Which vendor's vision model reads a scanned page, when the consumer does
+#: not say. OpenAI stays the default so no existing consumer changes
+#: behaviour by upgrading.
+DEFAULT_VISION_PROVIDER = "openai"
+
+#: Pinned OCR model PER PROVIDER, separate from any chat-model pin a product
+#: carries. Tuned for page throughput at transcription quality; tune here,
+#: not at the call site.
+#:
+#: 🔴 THE MODEL IS NOT PORTABLE ACROSS PROVIDERS — that is why this is a
+#: mapping and not a string. `gpt-4.1-mini` sent to Anthropic is a 404, and
+#: a consumer that switches provider without switching model gets a failure
+#: that reads like a broken key. Selecting a provider MUST select its model
+#: unless the caller overrides both.
+OCR_MODELS: dict[str, str] = {
+    "openai": "gpt-4.1-mini",
+    # Registry documents are dense small print where a misread digit names a
+    # DIFFERENT PROPERTY (see `matricula_extractor`'s header), so the
+    # Anthropic side is pinned to the strongest current model rather than
+    # the cheapest. A 3-page matrícula costs on the order of cents.
+    # `claude-sonnet-5` / `claude-haiku-4-5` are the cheaper current-
+    # generation swaps if a consumer decides the tradeoff differently.
+    "anthropic": "claude-opus-5",
+}
+
+#: Back-compat alias for the OpenAI pin. Consumers that imported this before
+#: provider selection existed keep working unchanged.
+OCR_MODEL = OCR_MODELS["openai"]
 
 #: Deliberately anti-helpful. A transcription prompt that invites the model
 #: to tidy anything gets a tidied document, and a matrícula that has been
@@ -218,14 +242,21 @@ class LadderDocumentTranscriber:
         self,
         *,
         org_id: Optional[str] = None,
-        ocr_model: str = OCR_MODEL,
+        provider: Optional[str] = None,
+        ocr_model: Optional[str] = None,
         ocr_prompt: str = OCR_PROMPT,
         render_dpi: int = RENDER_DPI,
         max_vision_pages: int = MAX_VISION_PAGES,
         analyze=None,
     ) -> None:
         self._org_id = org_id
-        self._ocr_model = ocr_model
+        self._provider = provider or DEFAULT_VISION_PROVIDER
+        # Model follows provider unless the caller pinned one explicitly —
+        # see `OCR_MODELS`. Defaulting the parameter to a string instead
+        # would silently send OpenAI's model name to Anthropic.
+        self._ocr_model = ocr_model or OCR_MODELS.get(
+            self._provider, OCR_MODELS[DEFAULT_VISION_PROVIDER]
+        )
         self._ocr_prompt = ocr_prompt
         self._render_dpi = render_dpi
         self._max_vision_pages = max_vision_pages
@@ -319,8 +350,12 @@ class LadderDocumentTranscriber:
             return Transcription(
                 num_paginas=num_paginas,
                 error="missing_credentials",
+                # Names the provider: with a manual switch in front of this,
+                # "no credential" is ambiguous until you know WHICH vendor
+                # was selected — the operator may have configured the other.
                 error_message=(
-                    "no LLM credential resolved; scanned pages need a vision call"
+                    f"no {self._provider} credential resolved; scanned pages "
+                    "need a vision call"
                 ),
             )
 
@@ -339,6 +374,7 @@ class LadderDocumentTranscriber:
                 img,
                 self._ocr_prompt,
                 model=self._ocr_model,
+                provider=self._provider,
                 org_id=self._org_id,
                 max_tokens=4096,
             )
@@ -362,12 +398,19 @@ class LadderDocumentTranscriber:
 
         Returning None rather than raising is what lets `missing_credentials`
         reach the consumer as a value it can render.
+
+        The key checked is the SELECTED provider's (`anthropic_api_key` when
+        the operator switched to Claude), through the same
+        `f"{provider}_api_key"` naming `LLMConfig.key_provider` uses — so
+        one saved credential satisfies both this pre-check and the call
+        itself. Checking OpenAI's key regardless of provider would refuse
+        work the configured vendor can do.
         """
         if self._analyze is not None:
             return self._analyze
         from noctusai_lib.config.credentials import resolve_credential
 
-        if not resolve_credential("openai_api_key", self._org_id):
+        if not resolve_credential(f"{self._provider}_api_key", self._org_id):
             return None
         from noctusai_lib.integrations.llm import analyze_image
 
@@ -436,7 +479,8 @@ def make_document_transcriber(
     *,
     real: bool = False,
     org_id: Optional[str] = None,
-    ocr_model: str = OCR_MODEL,
+    provider: Optional[str] = None,
+    ocr_model: Optional[str] = None,
     ocr_prompt: str = OCR_PROMPT,
     render_dpi: int = RENDER_DPI,
     max_vision_pages: int = MAX_VISION_PAGES,
@@ -453,9 +497,16 @@ def make_document_transcriber(
             PyMuPDF or the LLM stack.
         org_id: Forwarded to the LLM entry points for per-org key resolution
             and budget accounting.
+        provider: Which vendor reads the scanned pages (`"openai"` /
+            `"anthropic"`). `None` keeps `DEFAULT_VISION_PROVIDER`. This is a
+            MANUAL selection — nothing here fails over to the other vendor,
+            because a silent switch would change which model transcribed a
+            legal document without anyone being told.
         ocr_model / ocr_prompt / render_dpi: Vision-rung overrides. The
             defaults are the canonical answer for dense registry documents,
-            not one consumer's preference.
+            not one consumer's preference. Leave `ocr_model` as `None` unless
+            you are pinning a model deliberately — it then follows `provider`
+            through `OCR_MODELS`, which is what keeps the two in step.
         max_vision_pages: Cap on vision calls for a single document.
     """
     if not real:
@@ -463,6 +514,7 @@ def make_document_transcriber(
 
     return LadderDocumentTranscriber(
         org_id=org_id,
+        provider=provider,
         ocr_model=ocr_model,
         ocr_prompt=ocr_prompt,
         render_dpi=render_dpi,
@@ -471,11 +523,13 @@ def make_document_transcriber(
 
 
 __all__ = [
+    "DEFAULT_VISION_PROVIDER",
     "DocumentTranscriber",
     "FakeDocumentTranscriber",
     "LadderDocumentTranscriber",
     "MAX_VISION_PAGES",
     "OCR_MODEL",
+    "OCR_MODELS",
     "OCR_PROMPT",
     "RENDER_DPI",
     "TranscribedPage",

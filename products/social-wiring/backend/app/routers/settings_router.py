@@ -43,6 +43,7 @@ from app.dependencies import (
     get_user_client,
 )
 from app.schemas.settings import (
+    ApiKeyOptionOut,
     ApiKeyStatus,
     ApiKeyTestResult,
     ApiKeyUpdate,
@@ -1020,6 +1021,15 @@ def _api_key_status(spec: ApiKeySpec, org_id, store) -> ApiKeyStatus:
         input_type=spec.input_type,
         placeholder=spec.placeholder,
         configured=resolution.configured,
+        options=[
+            ApiKeyOptionOut(
+                value=option.value,
+                label=option.label,
+                description=option.description,
+            )
+            for option in spec.options
+        ],
+        default=spec.default,
         hint=mask_api_key_value(resolution.value, spec),
         source=resolution.source,
         updated_at=resolution.updated_at,
@@ -1067,6 +1077,18 @@ def update_api_key(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Informe um valor. Para limpar a chave, use remover.",
+        )
+    # A CHOICE setting is validated HERE, not only in the UI. The stored
+    # value is handed to `make_document_transcriber(provider=...)`; an
+    # unroutable one would surface much later as "no credential resolved",
+    # which reads like a missing key rather than a bad setting.
+    if spec.options and value not in spec.allowed_values:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"'{value}' não é uma opção válida para {spec.label}. "
+                f"Use uma de: {', '.join(spec.allowed_values)}."
+            ),
         )
     put_api_key(store, str(org_id), spec.name, value)
     logger.info(
@@ -1180,6 +1202,82 @@ async def _test_openai_key(value: str) -> ApiKeyTestResult:
     )
 
 
+async def _test_anthropic_key(value: str) -> ApiKeyTestResult:
+    """Probe an Anthropic key with a one-token Messages call.
+
+    Same shape and same reasoning as `_test_openai_key`: call the API
+    directly with the value we just resolved rather than through
+    `noctusai_lib.integrations.llm`, so the probe tests THE key the
+    operator configured here instead of whatever the chain would resolve.
+
+    Anthropic separates the two meanings OpenAI collapses into 429 —
+    `authentication_error` (401) for a bad key, and a distinct
+    `credit_balance_too_low` / 429 for an unpaid account — but the operator
+    needs the same two sentences either way, so they are told apart here
+    exactly as they are for OpenAI. `max_tokens` is 1 and the model is the
+    cheapest current one: this is a liveness check, not a transcription.
+    """
+    modelo_de_teste = "claude-haiku-4-5"
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": value,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": modelo_de_teste,
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "ping"}],
+                },
+                timeout=20.0,
+            )
+    except Exception as exc:  # noqa: BLE001 — surfaced to the operator verbatim
+        logger.warning("api_keys: Anthropic probe failed to connect (%s)", exc)
+        return ApiKeyTestResult(
+            key="anthropic_api_key", success=False, message=f"Erro de conexão: {exc}"
+        )
+
+    corpo = (resp.text or "").lower()
+    if resp.status_code == 401:
+        return ApiKeyTestResult(
+            key="anthropic_api_key",
+            success=False,
+            message="API Key inválida ou expirada.",
+        )
+    if resp.status_code in (400, 429) and any(
+        s in corpo for s in ("credit_balance_too_low", "insufficient", "quota")
+    ):
+        return ApiKeyTestResult(
+            key="anthropic_api_key",
+            success=False,
+            message=(
+                "Sem créditos na conta Anthropic. A chave é válida, mas a conta "
+                "não tem saldo — adicione créditos em "
+                "console.anthropic.com/settings/billing."
+            ),
+        )
+    if resp.status_code == 429:
+        return ApiKeyTestResult(
+            key="anthropic_api_key",
+            success=False,
+            message="Limite de requisições atingido. Aguarde alguns minutos e teste novamente.",
+        )
+    if resp.status_code >= 400:
+        return ApiKeyTestResult(
+            key="anthropic_api_key",
+            success=False,
+            message=f"Erro inesperado: HTTP {resp.status_code}.",
+        )
+    return ApiKeyTestResult(
+        key="anthropic_api_key",
+        success=True,
+        message="Conexão com a Anthropic bem-sucedida.",
+    )
+
+
 async def _test_infosimples_key(value: str) -> ApiKeyTestResult:
     """Probe an InfoSimples token via the lightweight PGFN consulta.
 
@@ -1220,6 +1318,7 @@ async def _test_infosimples_key(value: str) -> ApiKeyTestResult:
 
 _API_KEY_TESTERS = {
     "openai_api_key": _test_openai_key,
+    "anthropic_api_key": _test_anthropic_key,
     "infosimples_token": _test_infosimples_key,
 }
 

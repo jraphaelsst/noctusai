@@ -69,6 +69,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "API_KEY_SPECS",
+    "ApiKeyOption",
+    "VISION_PROVIDER_KEY",
+    "resolve_vision_provider",
     "MANAGED_API_KEYS",
     "PROVIDER_PREFIX",
     "ApiKeyResolution",
@@ -101,21 +104,45 @@ PROVIDER_PREFIX = "api_key:"
 
 
 @dataclass(frozen=True)
+class ApiKeyOption:
+    """One allowed value of a CHOICE setting, and how the UI labels it."""
+
+    value: str
+    label: str
+    description: str = ""
+
+
+@dataclass(frozen=True)
 class ApiKeySpec:
     """One operator-settable key: its identity + how the UI renders it."""
 
     name: str
     label: str
     description: str
-    #: ``False`` for values that are not secrets (an e-mail address). A
-    #: non-secret is shown in full rather than masked — hiding it buys no
-    #: security and costs the operator the ability to spot a typo.
+    #: ``False`` for values that are not secrets (an e-mail address, a
+    #: provider choice). A non-secret is shown in full rather than masked —
+    #: hiding it buys no security and costs the operator the ability to
+    #: spot a typo.
     is_secret: bool = True
     #: Whether ``POST /api/settings/api-keys/{key}/test`` can probe it live.
     testable: bool = False
     #: HTML input type hint for the frontend.
     input_type: str = "text"
     placeholder: str = ""
+    #: Non-empty makes this a CHOICE rather than a free-text value: the UI
+    #: renders a switch over these options, and the write path REFUSES
+    #: anything outside them. Both halves are required — a client-side-only
+    #: constraint is a suggestion, and a value the consumer cannot map to a
+    #: provider is a silent failure at extraction time, far from here.
+    options: tuple[ApiKeyOption, ...] = ()
+    #: What the product behaves as when this setting has never been saved.
+    #: Stated so the UI can show the effective value instead of an empty
+    #: control that implies nothing is chosen.
+    default: Optional[str] = None
+
+    @property
+    def allowed_values(self) -> tuple[str, ...]:
+        return tuple(option.value for option in self.options)
 
 
 API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
@@ -130,6 +157,54 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         testable=True,
         input_type="password",
         placeholder="sk-...",
+    ),
+    ApiKeySpec(
+        name="anthropic_api_key",
+        label="Anthropic (Claude) API Key",
+        description=(
+            "Alternativa à OpenAI para leitura de documentos digitalizados "
+            "(matrículas e certidões escaneadas). Escolha qual provedor usar "
+            "no seletor abaixo."
+        ),
+        is_secret=True,
+        testable=True,
+        input_type="password",
+        placeholder="sk-ant-...",
+    ),
+    #: 🔴 A MANUAL SWITCH, NOT A FALLBACK.
+    #:
+    #: Nothing in this product fails over from one vendor to the other. A
+    #: silent switch would change which model transcribed a legal document
+    #: without anyone being told, and "why does this matrícula read
+    #: differently from last month's" is not a question the logs could
+    #: answer afterwards. The operator picks, and the pick is visible.
+    ApiKeySpec(
+        name="llm_vision_provider",
+        label="Provedor de leitura de documentos",
+        description=(
+            "Qual IA transcreve páginas digitalizadas (matrículas e "
+            "certidões escaneadas). Troque para a Anthropic quando a conta "
+            "OpenAI estiver sem créditos. A chave do provedor escolhido "
+            "precisa estar configurada acima."
+        ),
+        is_secret=False,
+        testable=False,
+        input_type="select",
+        options=(
+            ApiKeyOption(
+                value="openai",
+                label="OpenAI",
+                description="Usa a OpenAI API Key (modelo gpt-4.1-mini).",
+            ),
+            ApiKeyOption(
+                value="anthropic",
+                label="Anthropic (Claude)",
+                description=(
+                    "Usa a Anthropic API Key (modelo claude-opus-5)."
+                ),
+            ),
+        ),
+        default="openai",
     ),
     ApiKeySpec(
         name="infosimples_token",
@@ -332,6 +407,56 @@ def resolve_api_key(name: str, org_id: Optional[str]) -> Optional[str]:
             )
     """
     return resolve_api_key_detail(name, org_id).value
+
+
+#: The managed key that holds the manual provider choice.
+VISION_PROVIDER_KEY = "llm_vision_provider"
+
+
+def resolve_vision_provider(
+    org_id: Optional[str],
+    *,
+    store: Any = _UNSET,
+    resolver: Callable[[str, Optional[str]], Optional[str]] = resolve_credential,
+) -> str:
+    """Which vendor this org transcribes scanned documents with.
+
+    THE consume seam for the manual switch. Always returns a value from the
+    spec's own option list, so a caller can hand it straight to
+    `make_document_transcriber(provider=...)` without re-validating.
+
+    `store` / `resolver` are the same two DI seams `resolve_api_key_detail`
+    exposes, forwarded rather than re-invented: `resolver` is a BOUND
+    DEFAULT there, so a test that monkeypatched this module's
+    `resolve_credential` attribute would silently keep hitting the real
+    chain and pass for the wrong reason.
+
+    Falls back to the spec default when the setting was never saved OR when
+    the stored value is not a known option. The second case can only happen
+    if the row was written outside this product's write path (which
+    validates) or if an option was RETIRED from the spec while an org still
+    pointed at it — and in that case the honest move is to run on the
+    documented default and say so in the log, not to hand an unroutable
+    provider name to the LLM stack and fail one layer down with a message
+    about a missing key.
+    """
+    spec = _SPECS_BY_NAME[VISION_PROVIDER_KEY]
+    default = spec.default or "openai"
+    escolhido = (
+        resolve_api_key_detail(
+            VISION_PROVIDER_KEY, org_id, store=store, resolver=resolver
+        ).value
+        or ""
+    ).strip()
+    if not escolhido:
+        return default
+    if escolhido not in spec.allowed_values:
+        logger.warning(
+            "api_keys: %s=%r is not a known option %s — using %r",
+            VISION_PROVIDER_KEY, escolhido, spec.allowed_values, default,
+        )
+        return default
+    return escolhido
 
 
 def llm_key_provider(provider: str, org_id: Optional[str] = None) -> Optional[str]:

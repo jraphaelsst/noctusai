@@ -17,6 +17,8 @@ from noctusai_lib.integrations.documents import (
     make_document_transcriber,
 )
 from noctusai_lib.integrations.documents.transcription import (
+    DEFAULT_VISION_PROVIDER,
+    OCR_MODELS,
     LadderDocumentTranscriber,
 )
 from noctusai_lib.integrations.media import PdfPage, PdfTextLayer
@@ -40,16 +42,25 @@ def _camada(*paginas: tuple[str, bool]) -> PdfTextLayer:
 
 
 class _Vision:
-    """Stands in for the vision rung, recording which pages it was billed for."""
+    """Stands in for the vision rung, recording which pages it was billed for.
+
+    Also records the `(provider, model)` it was called with: those two must
+    travel together, and a stub that swallowed them would let the pair drift
+    apart unnoticed.
+    """
 
     def __init__(self, texto=lambda n: f"OCR PAGINA {n}"):
         self.pages: list[int] = []
+        self.calls: list[tuple[str | None, str | None]] = []
         self._texto = texto
         self._next = 0
 
-    async def __call__(self, image, prompt, *, model=None, org_id=None, max_tokens=None):
+    async def __call__(
+        self, image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None
+    ):
         self._next += 1
         self.pages.append(self._next)
+        self.calls.append((provider, model))
         return self._texto(self._next)
 
 
@@ -305,3 +316,137 @@ class TestTheProtocolShape:
         )
         out = await t.transcribe(b"%PDF")
         assert [p.source for p in out.pages] == [TextSource.TEXT_LAYER, TextSource.OCR]
+
+
+# ---------------------------------------------------------------------------
+# The manual provider switch
+# ---------------------------------------------------------------------------
+#
+# Added 2026-09-04 so an operator whose OpenAI account runs out of credit can
+# keep transcribing by pointing the vision rung at Anthropic. It is a MANUAL
+# switch by explicit decision: nothing here fails over, because a silent
+# vendor change would alter which model transcribed a legal document with no
+# record that it happened.
+
+
+class TestTheVisionProviderIsSelectable:
+    @pytest.mark.asyncio
+    async def test_openai_stays_the_default(self, monkeypatch) -> None:
+        """An existing consumer that passes nothing must not move vendors."""
+        vision = _Vision()
+        t = _transcriber(
+            monkeypatch, _camada(("", False)), num_paginas=1, vision=vision
+        )
+        await t.transcribe(b"%PDF")
+
+        assert vision.calls == [("openai", "gpt-4.1-mini")]
+
+    @pytest.mark.asyncio
+    async def test_selecting_anthropic_selects_its_model_too(
+        self, monkeypatch
+    ) -> None:
+        """🔴 The pair must travel together.
+
+        `gpt-4.1-mini` sent to Anthropic is a 404 that reads like a broken
+        key. Selecting the provider has to select the model, or the switch
+        ships a failure mode instead of a feature.
+        """
+        vision = _Vision()
+        t = _transcriber(
+            monkeypatch,
+            _camada(("", False)),
+            num_paginas=1,
+            vision=vision,
+            provider="anthropic",
+        )
+        await t.transcribe(b"%PDF")
+
+        assert vision.calls == [("anthropic", "claude-opus-5")]
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_model_still_wins(self, monkeypatch) -> None:
+        """The pairing is a default, not a lock — a consumer may pin one."""
+        vision = _Vision()
+        t = _transcriber(
+            monkeypatch,
+            _camada(("", False)),
+            num_paginas=1,
+            vision=vision,
+            provider="anthropic",
+            ocr_model="claude-haiku-4-5",
+        )
+        await t.transcribe(b"%PDF")
+
+        assert vision.calls == [("anthropic", "claude-haiku-4-5")]
+
+    def test_every_provider_in_the_map_has_a_model(self) -> None:
+        """A provider without a pinned model would fall back to OpenAI's,
+        which is the exact cross-vendor mismatch this map exists to stop."""
+        assert OCR_MODELS
+        assert all(model for model in OCR_MODELS.values())
+        assert DEFAULT_VISION_PROVIDER in OCR_MODELS
+
+    @pytest.mark.asyncio
+    async def test_the_selected_providers_key_is_the_one_checked(
+        self, monkeypatch
+    ) -> None:
+        """🔴 NOT OpenAI's key regardless of selection.
+
+        Checking the wrong vendor's credential would refuse work the
+        configured vendor can do — and report it as `missing_credentials`,
+        sending the operator to fix a key that was never going to be used.
+        """
+        pedidos: list[str] = []
+
+        def _resolve(key, org_id=None):
+            pedidos.append(key)
+            return "sk-ant-live" if key == "anthropic_api_key" else None
+
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential", _resolve
+        )
+        monkeypatch.setattr(
+            "noctusai_lib.integrations.llm.analyze_image",
+            _Vision(),
+            raising=False,
+        )
+        t = _transcriber(
+            monkeypatch,
+            _camada(("", False)),
+            num_paginas=1,
+            provider="anthropic",
+        )
+        t._analyze = None  # force the lazy resolution path under test
+
+        out = await t.transcribe(b"%PDF")
+
+        assert pedidos == ["anthropic_api_key"]
+        assert out.ok, out.error_message
+
+    @pytest.mark.asyncio
+    async def test_a_missing_key_names_the_provider(self, monkeypatch) -> None:
+        """With a switch in front of it, "no credential" is ambiguous until
+        the message says WHICH vendor was selected."""
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential",
+            lambda key, org_id=None: None,
+        )
+        t = _transcriber(
+            monkeypatch,
+            _camada(("", False)),
+            num_paginas=1,
+            provider="anthropic",
+        )
+        t._analyze = None
+
+        out = await t.transcribe(b"%PDF")
+
+        assert out.ok is False
+        assert out.error == "missing_credentials"
+        assert "anthropic" in (out.error_message or "")
+
+    def test_the_factory_forwards_the_selection(self) -> None:
+        t = make_document_transcriber(real=True, provider="anthropic")
+        assert isinstance(t, LadderDocumentTranscriber)
+        assert t._provider == "anthropic"
+        assert t._ocr_model == OCR_MODELS["anthropic"]

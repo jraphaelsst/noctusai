@@ -540,6 +540,12 @@ export function useSaveInstagramApp() {
 /** Which tier answered. `local` = this product's encrypted store. */
 export type ApiKeySource = "local" | "platform" | "env";
 
+export interface ApiKeyOption {
+  value: string;
+  label: string;
+  description: string;
+}
+
 export interface ApiKeyStatus {
   key: string;
   label: string;
@@ -549,6 +555,23 @@ export interface ApiKeyStatus {
   input_type: string;
   placeholder: string;
   configured: boolean;
+  /**
+   * Non-empty makes this a CHOICE, not a free-text key: render a switch
+   * over these instead of an input. Empty for every ordinary key, so this
+   * array alone is the branch.
+   *
+   * Optional because a deploy is not atomic: a cached SPA bundle can talk
+   * to an older API (or the reverse) for a few minutes, and a hard read of
+   * `.length` there takes down the whole Settings page. Read it through
+   * `apiKeyOptions()`.
+   */
+  options?: ApiKeyOption[];
+  /**
+   * What the product behaves as when the setting was never saved — what
+   * the switch shows as selected in that case, so an unconfigured control
+   * still reflects what will actually happen.
+   */
+  default?: string | null;
   /**
    * Display-only. Last 4 characters for a secret (`...b3f9`); the value in
    * full for a non-secret (an e-mail). NEVER the secret itself — the

@@ -24,6 +24,7 @@ from noctusai_lib.integrations.documents import (
 )
 
 from app.dependencies import get_admin_client, get_scoped_admin_client
+from app.services.api_keys_store import resolve_vision_provider
 
 #: `(org_id | None) -> DocumentTranscriber`.
 TranscriberFactory = Callable[[Optional[str]], DocumentTranscriber]
@@ -52,6 +53,29 @@ def get_background_client() -> Any:
     return get_admin_client()
 
 
+def _build_transcriber(org_id: Optional[str]) -> DocumentTranscriber:
+    """One org's transcriber, with ITS manually-selected vision provider.
+
+    🔴 THE PROVIDER IS RESOLVED PER EXTRACTION, NOT PER PROCESS.
+    `resolve_vision_provider` is called here — inside the factory — so a
+    switch flipped in Settings takes effect on the very next upload. Reading
+    it at import time, or at app start, would leave the running container on
+    the old vendor until someone redeployed, and the operator flipping the
+    switch because OpenAI ran out of credit is precisely the person who
+    cannot wait for a deploy.
+
+    There is NO fallback: if the selected vendor's key is missing or its
+    account is empty, the extraction fails saying so. Silently borrowing the
+    other vendor would change which model transcribed a legal document
+    without telling anyone.
+    """
+    return make_document_transcriber(
+        real=True,
+        org_id=org_id,
+        provider=resolve_vision_provider(org_id),
+    )
+
+
 def get_transcriber_factory() -> TranscriberFactory:
     """FastAPI dependency — builds the seed transcriber for one org.
 
@@ -59,7 +83,7 @@ def get_transcriber_factory() -> TranscriberFactory:
     model: an un-overridden test would either hit a provider or fail on a
     missing key, and neither is the behaviour under test.
     """
-    return lambda org_id: make_document_transcriber(real=True, org_id=org_id)
+    return _build_transcriber
 
 
 __all__ = [

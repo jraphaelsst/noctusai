@@ -50,6 +50,7 @@ import {
   useSaveApiKey,
   useRemoveApiKey,
   useTestApiKey,
+  type ApiKeyOption,
   type ApiKeySource,
   type ApiKeyStatus,
   type ApiKeyTestResult,
@@ -469,6 +470,110 @@ const API_KEY_SOURCE_LABEL: Record<ApiKeySource, string> = {
   env: "vinda do ambiente (.env)",
 };
 
+/**
+ * A managed setting whose value is a CHOICE, rendered as a switch.
+ *
+ * 🔴 Separate from `ManagedApiKeyRow` rather than a branch inside it: that
+ * component is built around a write-only secret — edit/reveal-nothing/
+ * replace/remove — and none of those verbs apply here. The value is not a
+ * secret, there is nothing to mask, and "remover" would mean "go back to
+ * the default" rather than "delete a credential". Sharing the component
+ * would mean four `item.options.length` branches through its body.
+ *
+ * Saving is immediate on click: a two-step select-then-save on a two-option
+ * switch is a step that exists only to be forgotten, and the row already
+ * shows which value is live.
+ */
+/**
+ * The options of a managed key, tolerating an API that predates them.
+ *
+ * Deploys are not atomic: a cached SPA bundle can talk to an older API for
+ * a few minutes, and a hard `item.options.length` there takes down the
+ * whole Settings page rather than one row.
+ *
+ * Lives here rather than in `@/hooks/useSettings` because `Settings.test`
+ * mocks that module wholesale — every export in it has to be something a
+ * test means to stub, and a pure projection is not.
+ */
+function apiKeyOptions(item: ApiKeyStatus): ApiKeyOption[] {
+  return item.options ?? [];
+}
+
+function ManagedApiChoiceRow({
+  item,
+  canEdit,
+}: {
+  item: ApiKeyStatus;
+  canEdit: boolean;
+}) {
+  const save = useSaveApiKey();
+
+  const options = apiKeyOptions(item);
+  // `hint` carries the stored value in full for a non-secret. Falling back
+  // to `default` is what makes an unsaved setting show what the product
+  // will ACTUALLY do, instead of an empty control implying no choice.
+  const selected = item.hint ?? item.default ?? "";
+  const saved = item.configured;
+
+  const choose = async (value: string) => {
+    if (value === selected) return;
+    try {
+      await save.mutateAsync({ key: item.key, value });
+    } catch {
+      /* toast already surfaced by the hook's onError */
+    }
+  };
+
+  return (
+    <div className="space-y-2 px-4 py-3" data-testid={`api-key-${item.key}`}>
+      <div className="flex-1 min-w-0">
+        <p className="font-medium text-sm">{item.label}</p>
+        <p className="text-xs text-muted-foreground">{item.description}</p>
+      </div>
+
+      <div
+        className="inline-flex flex-wrap gap-1 rounded-md border p-1"
+        role="radiogroup"
+        aria-label={item.label}
+        data-testid={`api-key-choice-${item.key}`}
+      >
+        {options.map((option) => {
+          const active = option.value === selected;
+          return (
+            <Button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              size="sm"
+              variant={active ? "default" : "ghost"}
+              className="h-7 text-xs"
+              disabled={!canEdit || save.isPending}
+              onClick={() => choose(option.value)}
+              title={option.description}
+              data-testid={`api-key-choice-${item.key}-${option.value}`}
+            >
+              {save.isPending && !active ? (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              ) : null}
+              {option.label}
+            </Button>
+          );
+        })}
+      </div>
+
+      <p
+        className="text-xs text-muted-foreground"
+        data-testid={`api-key-choice-detail-${item.key}`}
+      >
+        {options.find((o) => o.value === selected)?.description ??
+          "Nenhuma opção selecionada."}
+        {!saved && item.default ? " (padrão — nada salvo ainda)" : null}
+      </p>
+    </div>
+  );
+}
+
 function ManagedApiKeyRow({
   item,
   canEdit,
@@ -738,7 +843,15 @@ function ManagedApiKeysSection({ canEdit }: { canEdit: boolean }) {
       </p>
       <div className="divide-y rounded-md border">
         {items.map((item) => (
-          <ManagedApiKeyRow key={item.key} item={item} canEdit={canEdit} />
+          apiKeyOptions(item).length > 0 ? (
+            <ManagedApiChoiceRow
+              key={item.key}
+              item={item}
+              canEdit={canEdit}
+            />
+          ) : (
+            <ManagedApiKeyRow key={item.key} item={item} canEdit={canEdit} />
+          )
         ))}
       </div>
     </div>

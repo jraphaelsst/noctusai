@@ -312,6 +312,14 @@ class ClientesInactivityConfigStatus(BaseModel):
 # The read-only `KeysStatus` above stays: it is the health view of what
 # the DEPLOYMENT carries in its .env. These shapes are the additive,
 # per-org, operator-WRITABLE half (`app/services/api_keys_store.py`).
+class ApiKeyOptionOut(StrictHttpModel):
+    """One allowed value of a CHOICE setting, as the UI should label it."""
+
+    value: str
+    label: str
+    description: str = ""
+
+
 class ApiKeyStatus(StrictHttpModel):
     """One managed key's state — never the secret itself.
 
@@ -331,6 +339,14 @@ class ApiKeyStatus(StrictHttpModel):
     input_type: str
     placeholder: str
     configured: bool
+    #: Non-empty makes this a CHOICE, not a free-text field: the UI renders
+    #: a switch over these and the write path refuses anything else. Empty
+    #: for every ordinary key, so the frontend can branch on it alone.
+    options: list[ApiKeyOptionOut] = []
+    #: What the product behaves as when this setting was never saved —
+    #: what the switch should show as selected in that case, so an
+    #: unconfigured control still reflects reality.
+    default: str | None = None
     hint: str | None = None
     #: `local` = this product's encrypted store · `platform` = a DB tier
     #: of `resolve_credential` · `env` = the process environment ·

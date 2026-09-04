@@ -67,19 +67,31 @@ MENSAGEM_ORFA = (
 _MENSAGENS: dict[str, str] = {
     "no_pages": "PDF sem páginas — verifique se o arquivo não está corrompido.",
     "empty_document": "Arquivo vazio — envie o PDF da matrícula novamente.",
+    # Deliberately does NOT name a vendor: with the manual switch in
+    # Settings, which key is missing depends on which provider this org
+    # selected, and a message hard-coded to "OpenAI" would send the
+    # operator to fix a key that was never going to be used. The seed's
+    # `error_message` names the provider for the log; the operator is sent
+    # to the one screen that shows both the keys and the switch.
     "missing_credentials": (
-        "OpenAI API Key não configurada. "
-        "Configure em Configurações → Chaves de API."
+        "A chave do provedor de IA selecionado não está configurada. "
+        "Verifique em Configurações → Chaves de API qual provedor está "
+        "escolhido e se a chave dele foi salva."
     ),
     "too_many_vision_pages": (
         "Documento muito longo para transcrição automática. "
         "Envie a matrícula em partes menores."
     ),
+    # Names both billing pages rather than guessing: the switch means the
+    # empty account could be either one, and sending the operator to the
+    # wrong console is the same dead end as saying nothing.
     "insufficient_quota": (
-        "Sem créditos na conta OpenAI — a transcrição de matrículas "
-        "digitalizadas está suspensa até que créditos sejam adicionados em "
-        "platform.openai.com/settings/organization/billing. PDFs com camada "
-        "de texto continuam funcionando normalmente."
+        "Sem créditos na conta do provedor de IA selecionado — a transcrição "
+        "de matrículas digitalizadas fica suspensa até que créditos sejam "
+        "adicionados (OpenAI: platform.openai.com/settings/organization/"
+        "billing · Anthropic: console.anthropic.com/settings/billing). Você "
+        "também pode trocar de provedor em Configurações → Chaves de API. "
+        "PDFs com camada de texto continuam funcionando normalmente."
     ),
     "rate_limited": (
         "Limite de requisições da OpenAI atingido. Aguarde alguns minutos e "
@@ -288,19 +300,27 @@ def check_required_credentials(org_id: Optional[str] = None) -> list[str]:
     rung 1 landed, a digitally-issued PDF will extract without it — so this is
     a warning about what may fail, not a hard precondition for every document.
     """
+    # Checks the SELECTED provider's key, not OpenAI's unconditionally —
+    # otherwise an org running on Anthropic would be warned forever about a
+    # key it deliberately does not use, which trains operators to ignore
+    # this panel.
+    #
+    # `resolve_credential` (not `api_keys_store.resolve_api_key`) is correct
+    # here: `main.py` registers the product's encrypted store as tier 0 of
+    # that same chain, so a key saved in the UI is already visible through
+    # it. That closes NOC-REMEDIATE[matriculas-api-key-store] — the marker's
+    # concern was that the store was invisible, and it no longer is.
+    from app.services.api_keys_store import get_spec, resolve_vision_provider
+
     missing = []
-    # NOC-REMEDIATE[matriculas-api-key-store]: read through the product-local
-    # encrypted store first — `app.services.api_keys_store.resolve_api_key(
-    # "openai_api_key", org_id)`, which tries that store then falls back to
-    # `resolve_credential`, so the swap is a one-line, non-regressing change.
-    # NOT done here because that module is not on origin/dev yet (it is on the
-    # peer API-keys slice); importing it now would make this module unimportable
-    # and take the whole app's boot with it. Swap at integration once the peer
-    # branch lands. — 2026-09-02
-    if not resolve_credential("openai_api_key", org_id):
+    provider = resolve_vision_provider(org_id)
+    spec = get_spec(f"{provider}_api_key")
+    rotulo = spec.label if spec else f"{provider}_api_key"
+    if not resolve_credential(f"{provider}_api_key", org_id):
         missing.append(
-            "OpenAI API Key não configurada — necessária para extração de "
-            "matrículas digitalizadas (PDFs com camada de texto não precisam)."
+            f"{rotulo} não configurada — é o provedor selecionado para "
+            "extração de matrículas digitalizadas (PDFs com camada de texto "
+            "não precisam)."
         )
     return missing
 

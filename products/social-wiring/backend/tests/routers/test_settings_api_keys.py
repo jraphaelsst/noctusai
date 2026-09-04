@@ -637,3 +637,97 @@ class TestLlmKeyProvider:
         finally:
             api_keys_store.resolve_api_key_detail = original
         assert seen == ["openai_api_key"]
+
+
+class TestTheProviderChoice:
+    """The `llm_vision_provider` switch — a managed setting whose value is
+    constrained to a list rather than free text.
+
+    Added 2026-09-04 with the manual OpenAI ↔ Anthropic switch.
+    """
+
+    def test_the_options_and_default_reach_the_client(
+        self, admin_client, store_override, no_platform_tier
+    ):
+        """The frontend renders a switch iff `options` is non-empty and
+        shows `default` as selected while nothing is saved — without both
+        fields on the wire it would render an empty text box for a setting
+        that has no free-text form."""
+        resp = admin_client.get("/api/settings/api-keys", headers=_auth_header())
+        entry = next(
+            i for i in resp.json()["items"] if i["key"] == "llm_vision_provider"
+        )
+        assert [o["value"] for o in entry["options"]] == ["openai", "anthropic"]
+        assert all(o["label"] for o in entry["options"])
+        assert entry["default"] == "openai"
+        assert entry["is_secret"] is False
+
+    def test_an_ordinary_key_carries_no_options(
+        self, admin_client, store_override, no_platform_tier
+    ):
+        """Guards the frontend's branch from the other side."""
+        resp = admin_client.get("/api/settings/api-keys", headers=_auth_header())
+        entry = next(
+            i for i in resp.json()["items"] if i["key"] == "anthropic_api_key"
+        )
+        assert entry["options"] == []
+        assert entry["default"] is None
+
+    def test_a_valid_option_is_saved_and_shown_in_full(
+        self, admin_client, store_override, no_platform_tier
+    ):
+        resp = admin_client.put(
+            "/api/settings/api-keys/llm_vision_provider",
+            json={"value": "anthropic"},
+            headers=_auth_header(),
+        )
+        assert resp.status_code == 200, resp.text
+
+        listed = admin_client.get("/api/settings/api-keys", headers=_auth_header())
+        entry = next(
+            i for i in listed.json()["items"] if i["key"] == "llm_vision_provider"
+        )
+        assert entry["configured"] is True
+        # Not masked: this screen exists to tell the operator which vendor
+        # is live, and `...ropic` would defeat that.
+        assert entry["hint"] == "anthropic"
+
+    def test_a_value_outside_the_options_is_refused(
+        self, admin_client, store_override, no_platform_tier
+    ):
+        """🔴 Server-side, not just in the UI.
+
+        The stored value is handed to `make_document_transcriber(
+        provider=...)`. An unroutable one would surface much later as "no
+        credential resolved" — which reads like a missing key rather than a
+        bad setting, sending the operator to fix the wrong thing.
+        """
+        resp = admin_client.put(
+            "/api/settings/api-keys/llm_vision_provider",
+            json={"value": "cohere"},
+            headers=_auth_header(),
+        )
+        assert resp.status_code == 422, resp.text
+        # The seed wraps HTTPException detail as `error.message`.
+        mensagem = resp.json()["error"]["message"]
+        assert "cohere" in mensagem
+        # The operator is told what IS valid, not just what was not.
+        assert "openai" in mensagem and "anthropic" in mensagem
+
+    def test_a_refused_value_is_not_persisted(
+        self, admin_client, store_override, no_platform_tier
+    ):
+        """A 422 that still wrote the row would be worse than no validation
+        at all — the error would say "rejected" and the extraction would
+        then run on the rejected value."""
+        admin_client.put(
+            "/api/settings/api-keys/llm_vision_provider",
+            json={"value": "cohere"},
+            headers=_auth_header(),
+        )
+        listed = admin_client.get("/api/settings/api-keys", headers=_auth_header())
+        entry = next(
+            i for i in listed.json()["items"] if i["key"] == "llm_vision_provider"
+        )
+        assert entry["configured"] is False
+        assert entry["hint"] is None
