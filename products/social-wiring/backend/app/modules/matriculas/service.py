@@ -93,12 +93,15 @@ _MENSAGENS: dict[str, str] = {
         "também pode trocar de provedor em Configurações → Chaves de API. "
         "PDFs com camada de texto continuam funcionando normalmente."
     ),
+    # These two named OpenAI as well, for the same reason and with the same
+    # cost: an org running on Anthropic would be told to check a key it does
+    # not use.
     "rate_limited": (
-        "Limite de requisições da OpenAI atingido. Aguarde alguns minutos e "
-        "envie novamente — nada foi perdido."
+        "Limite de requisições do provedor de IA atingido. Aguarde alguns "
+        "minutos e envie novamente — nada foi perdido."
     ),
     "invalid_credentials": (
-        "A OpenAI API Key foi recusada. Verifique a chave em "
+        "A chave do provedor de IA selecionado foi recusada. Verifique-a em "
         "Configurações → Chaves de API."
     ),
     "rasterize_failed": (

@@ -450,3 +450,52 @@ class TestTheVisionProviderIsSelectable:
         assert isinstance(t, LadderDocumentTranscriber)
         assert t._provider == "anthropic"
         assert t._ocr_model == OCR_MODELS["anthropic"]
+
+
+class TestVendorFailureMarkers:
+    """Every provider's "out of credit" must reach the user as billing.
+
+    🔴 THE ONE THAT ALMOST SHIPPED. `_classify_failure`'s markers were
+    written for OpenAI. Anthropic says `credit_balance_too_low` instead, so
+    adding the vendor without adding its marker would have re-created the
+    2026-09-03 defect on the other side — an unpaid account surfacing as
+    "Erro inesperado" with no hint that someone has to pay a bill.
+
+    Parametrised over BOTH vendors' real wire strings so adding a third
+    provider without its marker fails here, not in prod.
+    """
+
+    @pytest.mark.parametrize(
+        "mensagem,esperado",
+        [
+            # OpenAI, verbatim from the 2026-09-04 live probe.
+            (
+                "Error code: 429 - {'error': {'message': 'You have no credits "
+                "remaining.', 'type': 'insufficient_quota', 'code': "
+                "'credit_balance_exhausted'}}",
+                "insufficient_quota",
+            ),
+            # Anthropic, verbatim shape from its Messages API.
+            (
+                "Error code: 400 - {'type': 'error', 'error': {'type': "
+                "'invalid_request_error', 'message': 'Your credit balance is "
+                "too low to access the Anthropic API.'}}",
+                "insufficient_quota",
+            ),
+            ("Error code: 400 - credit_balance_too_low", "insufficient_quota"),
+            # Auth — same code for both vendors.
+            (
+                "Error code: 401 - {'type': 'error', 'error': {'type': "
+                "'authentication_error', 'message': 'API key is invalid.'}}",
+                "invalid_credentials",
+            ),
+            # Rate limiting keeps its own code: waiting actually helps.
+            ("Error code: 429 - rate_limit_error, please slow down", "rate_limited"),
+        ],
+    )
+    def test_the_operator_is_told_what_to_fix(self, mensagem, esperado) -> None:
+        from noctusai_lib.integrations.documents.transcription import (
+            _classify_failure,
+        )
+
+        assert _classify_failure(RuntimeError(mensagem)) == esperado

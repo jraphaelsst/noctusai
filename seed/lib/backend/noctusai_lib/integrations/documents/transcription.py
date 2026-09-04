@@ -126,11 +126,24 @@ def _classify_failure(exc: Exception) -> str:
 
     Rate limiting keeps its own code: same status, opposite advice (waiting
     DOES help).
+
+    🔴 THE MARKERS ARE PER-VENDOR AND MUST GROW WITH THE PROVIDER LIST.
+    Anthropic does not say `insufficient_quota`; it answers HTTP 400 with
+    `credit_balance_too_low` / "credit balance is too low". Adding the
+    provider without adding its marker would have re-created the exact 2026-
+    09-03 defect on the other vendor — an unpaid account surfacing as a
+    generic "Erro inesperado" with no mention of billing. Caught 2026-09-04
+    by asserting the mapping directly rather than by waiting for prod.
     """
     text = f"{type(exc).__name__}: {exc}".lower()
     if any(s in text for s in (
+        # OpenAI
         "insufficient_quota", "credit_balance_exhausted", "no credits remaining",
-        "exceeded your current quota", "billing",
+        "exceeded your current quota",
+        # Anthropic
+        "credit_balance_too_low", "credit balance is too low",
+        # both
+        "billing",
     )):
         return "insufficient_quota"
     if "rate limit" in text or "rate_limit" in text or "429" in text:
