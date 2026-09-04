@@ -5,13 +5,16 @@
  * synced 404s rather than silently falling back to a live Vista call, so the
  * page never disagrees with the catalog it was reached from.
  *
+ * CONTRACT § 5 — the 13-section display, in order. Everything past the
+ * header is a small presentational component under `components/imovel/`,
+ * each deciding for itself whether it has ≥1 non-null field to show.
+ *
  * Rendering decisions that encode measured wire facts:
- *   · The map block only renders when both coordinates exist — 36.8% of the
- *     catalog has none, so a fallback is the common path, not the edge case.
  *   · Counts use formatCount so a genuine 0 (terreno) reads "0", while
  *     unknown reads "—".
  *   · ALL corretores are listed; 13.1% of imóveis have 2-3.
- *   · `area_construida` is omitted when null, which is 99.9% of this tenant.
+ *   · Every boolean is Sim/Não, never true/false, and null hides the field
+ *     entirely (formatBool) — not a "—" placeholder, per CONTRACT § 7.
  */
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -19,15 +22,9 @@ import {
   AlertCircle,
   ArrowLeft,
   Megaphone,
-  Bath,
-  BedDouble,
-  Building2,
-  Car,
-  ExternalLink,
   Mail,
-  MapPin,
-  Ruler,
-  Sofa,
+  Star,
+  Sparkles,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -35,8 +32,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
+import EditPlaceholderButton from "@/components/imovel/EditPlaceholderButton";
+import ImovelAreasSection from "@/components/imovel/ImovelAreasSection";
 import ImovelCartorioCard from "@/components/imovel/ImovelCartorioCard";
+import ImovelComodidadesSection from "@/components/imovel/ImovelComodidadesSection";
+import ImovelComodosSection from "@/components/imovel/ImovelComodosSection";
+import ImovelCondicoesComerciaisSection from "@/components/imovel/ImovelCondicoesComerciaisSection";
+import ImovelConstrucaoSection from "@/components/imovel/ImovelConstrucaoSection";
+import ImovelDescricaoSection from "@/components/imovel/ImovelDescricaoSection";
 import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
+import ImovelLocalizacaoSection from "@/components/imovel/ImovelLocalizacaoSection";
+import ImovelMetadadosSection from "@/components/imovel/ImovelMetadadosSection";
+import ImovelMidiaSection from "@/components/imovel/ImovelMidiaSection";
+import ImovelRegistroSection from "@/components/imovel/ImovelRegistroSection";
+import ImovelValoresSection from "@/components/imovel/ImovelValoresSection";
 import {
   useSolicitacaoDoImovel,
   useSolicitarCampanha,
@@ -48,13 +57,7 @@ import {
   useImovelDocumentos,
 } from "@/hooks/useImovelDados";
 import { useTeamMembers } from "@/hooks/useTeam";
-import {
-  caracteristicaLabel,
-  formatArea,
-  formatCount,
-  formatValor,
-  useImovel,
-} from "@/hooks/useImoveis";
+import { formatValor, useImovel } from "@/hooks/useImoveis";
 
 export default function ImovelDetalhes() {
   const { codigo } = useParams<{ codigo: string }>();
@@ -116,7 +119,6 @@ export default function ImovelDetalhes() {
   const endereco = [imovel.logradouro, imovel.numero, imovel.complemento]
     .filter(Boolean)
     .join(", ");
-  const temGeo = imovel.latitude !== null && imovel.longitude !== null;
   const jaSolicitado = Boolean(solicitacao.data?.id);
   const carregandoSolicitacao =
     solicitacao.isPending || solicitacao.isFetching;
@@ -130,20 +132,34 @@ export default function ImovelDetalhes() {
         </Link>
       </Button>
 
-      {/* ── Header ── */}
+      {/* ── § 5.1 Cabeçalho ── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary">{imovel.codigo}</Badge>
             {imovel.status && <Badge>{imovel.status}</Badge>}
             {imovel.categoria && <Badge variant="outline">{imovel.categoria}</Badge>}
+            {imovel.exclusivo && <Badge variant="outline">Exclusivo</Badge>}
+            {imovel.destaque_web && (
+              <Badge variant="outline" className="gap-1">
+                <Star className="h-3 w-3" />
+                Destaque
+              </Badge>
+            )}
+            {imovel.super_destaque_web && (
+              <Badge variant="outline" className="gap-1">
+                <Sparkles className="h-3 w-3" />
+                Super destaque
+              </Badge>
+            )}
+            {imovel.tour_360 && <Badge variant="outline">Tour 360°</Badge>}
+            <EditPlaceholderButton label="Editar cabeçalho" />
           </div>
           <h1 className="max-w-3xl text-2xl font-semibold tracking-tight">
             {imovel.titulo ?? imovel.categoria ?? imovel.codigo}
           </h1>
           {(endereco || imovel.bairro || imovel.cidade) && (
             <p className="flex items-center gap-1 text-sm text-muted-foreground">
-              <MapPin className="h-4 w-4 shrink-0" />
               {[endereco, imovel.bairro, imovel.cidade, imovel.uf]
                 .filter(Boolean)
                 .join(" · ")}
@@ -215,63 +231,129 @@ export default function ImovelDetalhes() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
-          {/* ── Ficha ── */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Ficha técnica</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-              <Fact icon={<BedDouble className="h-4 w-4" />} label="Dormitórios" value={formatCount(imovel.dormitorios)} />
-              <Fact icon={<Sofa className="h-4 w-4" />} label="Suítes" value={formatCount(imovel.suites)} />
-              <Fact icon={<Car className="h-4 w-4" />} label="Vagas" value={formatCount(imovel.vagas)} />
-              <Fact
-                icon={<Bath className="h-4 w-4" />}
-                label="Banheiro social"
-                value={
-                  imovel.banheiro_social === null
-                    ? "—"
-                    : imovel.banheiro_social
-                      ? "Sim"
-                      : "Não"
-                }
-              />
-              <Fact icon={<Ruler className="h-4 w-4" />} label="Área total" value={formatArea(imovel.area_total)} />
-              <Fact icon={<Ruler className="h-4 w-4" />} label="Área privativa" value={formatArea(imovel.area_privativa)} />
-              {/* Omitted rather than shown as "—": null on 99.9% of this
-                  tenant's catalog, so a permanent dash is just noise. */}
-              {imovel.area_construida !== null && (
-                <Fact icon={<Ruler className="h-4 w-4" />} label="Área construída" value={formatArea(imovel.area_construida)} />
-              )}
-              {imovel.empreendimento && (
-                <Fact icon={<Building2 className="h-4 w-4" />} label="Empreendimento" value={imovel.empreendimento} />
-              )}
-              {imovel.construtora && (
-                <Fact icon={<Building2 className="h-4 w-4" />} label="Construtora" value={imovel.construtora} />
-              )}
-            </CardContent>
-          </Card>
+          {/* § 5.2 Descrição */}
+          <ImovelDescricaoSection descricaoWeb={imovel.descricao_web} />
 
-          {/* ── Características ── */}
-          {imovel.caracteristicas.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Características ({imovel.caracteristicas.length})
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-wrap gap-2">
-                {imovel.caracteristicas.map((slug) => (
-                  <Badge key={slug} variant="secondary">
-                    {caracteristicaLabel(slug)}
-                  </Badge>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+          {/* § 5.3 Valores e custos */}
+          <ImovelValoresSection
+            valorVenda={imovel.valor_venda}
+            valorLocacao={imovel.valor_locacao}
+            valorCondominio={imovel.valor_condominio}
+            valorIptu={imovel.valor_iptu}
+          />
+
+          {/* § 5.4 Cômodos */}
+          <ImovelComodosSection
+            dormitorios={imovel.dormitorios}
+            suites={imovel.suites}
+            vagas={imovel.vagas}
+            banheiroSocial={imovel.banheiro_social}
+            closet={imovel.closet}
+          />
+
+          {/* § 5.5 Áreas */}
+          <ImovelAreasSection
+            areaTotal={imovel.area_total}
+            areaPrivativa={imovel.area_privativa}
+            areaConstruida={imovel.area_construida}
+            areaTerreno={imovel.area_terreno}
+            frente={imovel.frente}
+            fundos={imovel.fundos}
+          />
+
+          {/* § 5.6 Construção e estado */}
+          <ImovelConstrucaoSection
+            anoConstrucao={imovel.ano_construcao}
+            situacao={imovel.situacao}
+            ocupacao={imovel.ocupacao}
+            pavimentos={imovel.pavimentos}
+            posicao={imovel.posicao}
+            elevador={imovel.elevador}
+            portaria={imovel.portaria}
+          />
+
+          {/* § 5.7 Condições comerciais */}
+          <ImovelCondicoesComerciaisSection
+            aceitaPermuta={imovel.aceita_permuta}
+            aceitaFinanciamento={imovel.aceita_financiamento}
+            exclusivo={imovel.exclusivo}
+            chave={imovel.chave}
+            finalidades={imovel.finalidades}
+            exibirNoSite={imovel.exibir_no_site}
+            destaqueWeb={imovel.destaque_web}
+            superDestaqueWeb={imovel.super_destaque_web}
+          />
+
+          {/* § 5.8 Comodidades */}
+          <ImovelComodidadesSection
+            caracteristicas={imovel.caracteristicas}
+            orientacaoSolar={imovel.orientacao_solar}
+          />
+
+          {/* § 5.9 Mídia */}
+          <ImovelMidiaSection
+            fotoDestaque={imovel.foto_destaque}
+            tour360={imovel.tour_360}
+            videoDestaque={imovel.video_destaque}
+          />
         </div>
 
         {/* ── Sidebar ── */}
         <div className="space-y-6">
+          {/* § 5.10 Localização */}
+          <ImovelLocalizacaoSection
+            endereco={endereco}
+            cep={imovel.cep}
+            bairro={imovel.bairro}
+            cidade={imovel.cidade}
+            uf={imovel.uf}
+            zona={imovel.zona}
+            regiao={imovel.regiao}
+            empreendimento={imovel.empreendimento}
+            construtora={imovel.construtora}
+            latitude={imovel.latitude}
+            longitude={imovel.longitude}
+          />
+
+          {/* § 5.11 Corretores — existing block, unchanged. */}
+          {imovel.corretores.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  {imovel.corretores.length > 1 ? "Corretores" : "Corretor"}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {imovel.corretores.map((c, i) => (
+                  <div key={c.codigo ?? i} className="space-y-1">
+                    <p className="text-sm font-medium">{c.nome ?? "—"}</p>
+                    {c.email && (
+                      <a
+                        href={`mailto:${c.email}`}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:underline"
+                      >
+                        <Mail className="h-3 w-3" />
+                        {c.email}
+                      </a>
+                    )}
+                    {c.fone && <p className="text-xs text-muted-foreground">{c.fone}</p>}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* § 5.12 Registro, then the existing ImovelCartorioCard beneath
+              it — the cartório-authored record stays a separate, real
+              (non-placeholder) editor; only the Vista-sourced facts above
+              it get the display-only Pencil. */}
+          <ImovelRegistroSection
+            matriculaVista={imovel.matricula_vista}
+            inscricaoMunicipal={imovel.inscricao_municipal}
+            codigoImobiliaria={imovel.codigo_imobiliaria}
+            referencia={imovel.referencia}
+          />
+
           {/* What WE author about this property — never the Vista mirror.
               See migration 075 for why the two are separate. */}
           <ImovelCartorioCard
@@ -306,100 +388,15 @@ export default function ImovelDetalhes() {
             }}
           />
 
-          {/* ALL corretores — 13.1% of imóveis have more than one. */}
-          {imovel.corretores.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  {imovel.corretores.length > 1 ? "Corretores" : "Corretor"}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {imovel.corretores.map((c, i) => (
-                  <div key={c.codigo ?? i} className="space-y-1">
-                    <p className="text-sm font-medium">{c.nome ?? "—"}</p>
-                    {c.email && (
-                      <a
-                        href={`mailto:${c.email}`}
-                        className="flex items-center gap-1 text-xs text-muted-foreground hover:underline"
-                      >
-                        <Mail className="h-3 w-3" />
-                        {c.email}
-                      </a>
-                    )}
-                    {c.fone && <p className="text-xs text-muted-foreground">{c.fone}</p>}
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Localização</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {imovel.cep && <p className="text-muted-foreground">CEP {imovel.cep}</p>}
-              {temGeo ? (
-                <Button asChild variant="outline" size="sm" className="w-full">
-                  <a
-                    href={`https://www.google.com/maps/search/?api=1&query=${imovel.latitude},${imovel.longitude}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <MapPin className="mr-2 h-4 w-4" />
-                    Ver no mapa
-                    <ExternalLink className="ml-2 h-3 w-3" />
-                  </a>
-                </Button>
-              ) : (
-                // The common case, not an error — 36.8% have no coordinates.
-                <p className="text-xs text-muted-foreground">
-                  Sem coordenadas cadastradas no Vista.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Registro</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1 text-xs text-muted-foreground">
-              {imovel.codigo_imobiliaria && <p>Imobiliária: {imovel.codigo_imobiliaria}</p>}
-              {imovel.data_cadastro && (
-                <p>Cadastrado em {new Date(imovel.data_cadastro).toLocaleDateString("pt-BR")}</p>
-              )}
-              {imovel.data_atualizacao && (
-                <p>Atualizado em {new Date(imovel.data_atualizacao).toLocaleDateString("pt-BR")}</p>
-              )}
-              {imovel.sincronizado_em && (
-                <p>Sincronizado em {new Date(imovel.sincronizado_em).toLocaleString("pt-BR")}</p>
-              )}
-            </CardContent>
-          </Card>
+          {/* § 5.13 Metadados */}
+          <ImovelMetadadosSection
+            dataCadastro={imovel.data_cadastro}
+            dataAtualizacao={imovel.data_atualizacao}
+            diasDesdeAtualizacao={imovel.dias_desde_atualizacao}
+            sincronizadoEm={imovel.sincronizado_em}
+          />
         </div>
       </div>
-    </div>
-  );
-}
-
-function Fact({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="space-y-1">
-      <p className="flex items-center gap-1 text-xs text-muted-foreground">
-        {icon}
-        {label}
-      </p>
-      <p className="text-sm font-medium">{value}</p>
     </div>
   );
 }

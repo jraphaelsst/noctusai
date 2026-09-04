@@ -36,6 +36,7 @@ from noctusai_lib.domain.real_estate.imovel import (
     parse_corretores,
     parse_count,
     parse_date,
+    parse_measure_int,
     parse_money,
     parse_sim_nao,
 )
@@ -132,6 +133,50 @@ def vista_to_imovel(
         data_atualizacao_dias=parse_count(payload.get("DataAtualizacaoDias")),
         caracteristicas=parse_caracteristicas(payload.get("Caracteristicas")),
         caracteristicas_raw=payload.get("Caracteristicas") or {},
+        # ── the 29-field expansion (CONTRACT `imoveis-vista-field-surface`
+        # § 1, 32 minus the `Lavabo`/`Copa`/`Escritorio` shadowing
+        # correction below). Each Vista key runs through the coercion class its
+        # CONTRACT row names — text (`clean_text`), money/measure-float
+        # (`parse_money` / `parse_area`, both "0"→None), measure-int
+        # (`parse_measure_int`, "0"→None, int-typed), count (`parse_count`,
+        # "0"→0 preserved), bool (`parse_sim_nao`, "Sim"/"Nao"/""→None).
+        descricao_web=clean_text(payload.get("DescricaoWeb")),
+        observacoes=clean_text(payload.get("Observacoes")),
+        zona=clean_text(payload.get("Zona")),
+        regiao=clean_text(payload.get("Regiao")),
+        valor_condominio=parse_money(payload.get("ValorCondominio")),
+        valor_iptu=parse_money(payload.get("ValorIptu")),
+        area_terreno=parse_area(payload.get("AreaTerreno")),
+        frente=parse_area(payload.get("Frente")),
+        fundos=parse_area(payload.get("Fundos")),
+        # No `lavabo` / `copa` / `escritorio` mapping — Vista shadows these
+        # three to null whenever `Caracteristicas` is in the same request
+        # (our sync always requests it). See
+        # `calibration.py::CANDIDATE_IMOVEL_DETAIL_FIELDS` for the measured
+        # probe. Read them via `imovel.tem_caracteristica("Lavabo")` etc.
+        closet=parse_count(payload.get("Closet")),
+        ano_construcao=parse_measure_int(payload.get("AnoConstrucao")),
+        situacao=clean_text(payload.get("Situacao")),
+        ocupacao=clean_text(payload.get("Ocupacao")),
+        pavimentos=parse_count(payload.get("Pavimentos")),
+        posicao=clean_text(payload.get("Posicao")),
+        elevador=parse_sim_nao(payload.get("Elevador")),
+        portaria=parse_sim_nao(payload.get("Portaria")),
+        exclusivo=parse_sim_nao(payload.get("Exclusivo")),
+        aceita_permuta=parse_sim_nao(payload.get("AceitaPermuta")),
+        aceita_financiamento=parse_sim_nao(payload.get("AceitaFinanciamento")),
+        chave=clean_text(payload.get("Chave")),
+        exibir_no_site=parse_sim_nao(payload.get("ExibirNoSite")),
+        destaque_web=parse_sim_nao(payload.get("DestaqueWeb")),
+        super_destaque_web=parse_sim_nao(payload.get("SuperDestaqueWeb")),
+        video_destaque=clean_text(payload.get("VideoDestaque")),
+        tour_360=clean_text(payload.get("Tour360")),
+        referencia=clean_text(payload.get("Referencia")),
+        # 🔴 `matricula_vista`, NOT `matricula` — the product schema already
+        # owns a cartório-authored `matricula` (migration 075). See the
+        # `Imovel.matricula_vista` field docstring.
+        matricula_vista=clean_text(payload.get("Matricula")),
+        inscricao_municipal=clean_text(payload.get("InscricaoMunicipal")),
         vista_raw=payload,
     )
 
@@ -152,7 +197,21 @@ def _coord(value: Any) -> Optional[float]:
 
 
 def _photo_list(value: Any) -> list[str]:
-    """Normalize Vista's photo collection, which is dict-keyed like `Corretor`."""
+    """Normalize Vista's photo collection, which is dict-keyed like `Corretor`.
+
+    🔴 **Structurally empty on `oneconsu-rest` — do NOT "fix" by deleting or
+    faking this field.** `payload.get("Fotos")` reads a key this tenant
+    never sends, which is why `fotos` is empty on all 2057 live rows —
+    confirmed by direct probe, not by absence of data. Every photo-array
+    candidate name was probed against `/imoveis/detalhes` 2026-09-04 and
+    rejected with `400 "Campo X não está disponível"`: `Fotos`, `Foto`,
+    `Imagens`, `Galeria`, `FotoGrande`, `FotoMedia`, `FotoPequena`,
+    `Planta`. `/imoveis/fotos` is write-only (`405` on `GET`). The ONLY
+    photo this tenant exposes is `FotoDestaque` (single URL, mapped to
+    `Imovel.foto_destaque` above). See CONTRACT
+    `imoveis-vista-field-surface` § 2 — this comment is the durable record
+    so nobody re-investigates.
+    """
     if isinstance(value, dict):
         entries: Any = value.values()
     elif isinstance(value, list):

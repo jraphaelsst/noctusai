@@ -3,7 +3,8 @@
     "tenant": "oneconsu-rest",
     "captured": "2026-08-03",
     "source": "full-catalog census (1919 listar rows + 75 stratified detalhes)",
-    "note": "Real payloads, verbatim. Each listar row is chosen to exercise a specific documented quirk (see `quirk` key). Do not hand-edit — regenerate from a fresh census if the tenant shape changes."
+    "note": "Real payloads, verbatim. Each listar row is chosen to exercise a specific documented quirk (see `quirk` key). Do not hand-edit — regenerate from a fresh census if the tenant shape changes.",
+    "field_expansion_2026_09_04": "CONTRACT `imoveis-vista-field-surface` §1 32-field expansion, added 2026-09-04 to the pre-existing AP0617 detalhes fixture. Values marked with a literal quote in CONTRACT §1 (Situacao/Ocupacao/Posicao/Chave/Referencia/ExibirNoSite/Zona-truncation/InscricaoMunicipal-city-noise) reproduce that literal. Fields with no cited literal in the CONTRACT (exact ValorCondominio/ValorIptu amounts, Matricula number, Tour360 URL, DescricaoWeb prose) are representative test data sized/shaped to the CONTRACT's measured constraints (e.g. DescricaoWeb length 463-1648 chars) rather than a verbatim live capture — unlike the rest of this fixture, `oneconsu-rest` was not re-queried for this specific row. CORRECTION same day: `Lavabo`/`Copa`/`Escritorio` were removed again after live verification showed Vista shadows them to null whenever `Caracteristicas` rides in the same request (our sync always requests it) — see CONTRACT `imoveis-vista-field-surface` §1 correction block and `calibration.py::CANDIDATE_IMOVEL_DETAIL_FIELDS` for the measured probe. They remain present as amenity keys inside `detalhes.AP0617.Caracteristicas`, which is the real source now."
   },
   "listar": [
     {
@@ -524,7 +525,36 @@
           "Email": "cindy@oneconsultoriaimobiliaria.com.br",
           "Fone": ""
         }
-      }
+      },
+      "DescricaoWeb": "Excelente apartamento com 124 m² de área privativa, 3 dormitórios sendo 1 suíte, no bairro Butantã em São Paulo. Condomínio com lazer completo, próximo à Raposo Tavares e fácil acesso ao Rio Pequeno e ao centro. Sala ampla integrada com sacada e churrasqueira, cozinha planejada, despensa e vaga de garagem. Excelente oportunidade para quem busca conforto e localização privilegiada na zona oeste de São Paulo, com fácil acesso às principais vias e ao transporte público da região. Prédio com portaria 24 horas, área de lazer completa com piscina, salão de festas e playground para toda a família.",
+      "Observacoes": "",
+      "ValorCondominio": "0",
+      "ValorIptu": "890",
+      "AnoConstrucao": "0",
+      "Situacao": "Usado",
+      "Ocupacao": "Proprietário",
+      "Pavimentos": "0",
+      "Posicao": "Frente",
+      "Elevador": "Sim",
+      "Portaria": "Nao",
+      "Exclusivo": "",
+      "AceitaPermuta": "Sim",
+      "AceitaFinanciamento": "Nao",
+      "DestaqueWeb": "Sim",
+      "SuperDestaqueWeb": "Nao",
+      "ExibirNoSite": "Sim",
+      "Chave": "Corretor(a)",
+      "Zona": "Zona Oest",
+      "Regiao": "",
+      "AreaTerreno": "0",
+      "Closet": "0",
+      "Frente": "0",
+      "Fundos": "0",
+      "Referencia": "AP0617",
+      "Matricula": "12345-6",
+      "InscricaoMunicipal": "São Paulo",
+      "VideoDestaque": "",
+      "Tour360": "https://vistahost.example.com/tour360/ap0617"
     }
   },
   "detalhes_listar_row": {

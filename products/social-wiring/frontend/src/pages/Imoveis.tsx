@@ -25,8 +25,12 @@ import {
   Loader2,
   MapPin,
   RefreshCw,
+  Repeat,
   Ruler,
   Search,
+  Sparkles,
+  Star,
+  Video,
   X,
 } from "lucide-react";
 
@@ -43,6 +47,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 
+import EditPlaceholderButton from "@/components/imovel/EditPlaceholderButton";
 import {
   caracteristicaLabel,
   formatArea,
@@ -333,9 +338,32 @@ function ImovelCard({ imovel }: { imovel: Imovel }) {
         ? `${formatValor(imovel.valor_locacao)}/mês`
         : "Sob consulta";
 
+  // CONTRACT § 6: badges only when true — keep the card scannable, not a
+  // spec sheet.
+  const badges: { key: string; label: string; icon: React.ReactNode }[] = [];
+  if (imovel.exclusivo) {
+    badges.push({ key: "exclusivo", label: "Exclusivo", icon: <Star className="h-3 w-3" /> });
+  }
+  if (imovel.destaque_web) {
+    badges.push({ key: "destaque", label: "Destaque", icon: <Sparkles className="h-3 w-3" /> });
+  }
+  if (imovel.aceita_permuta) {
+    badges.push({ key: "permuta", label: "Aceita permuta", icon: <Repeat className="h-3 w-3" /> });
+  }
+  if (imovel.aceita_financiamento) {
+    badges.push({
+      key: "financiamento",
+      label: "Aceita financiamento",
+      icon: <Building2 className="h-3 w-3" />,
+    });
+  }
+  if (imovel.tour_360) {
+    badges.push({ key: "tour360", label: "Tour 360°", icon: <Video className="h-3 w-3" /> });
+  }
+
   return (
-    <Link to={`/imoveis/${imovel.codigo}`} className="group">
-      <Card className="h-full overflow-hidden transition-shadow hover:shadow-md">
+    <Card className="group h-full overflow-hidden transition-shadow hover:shadow-md">
+      <Link to={`/imoveis/${imovel.codigo}`}>
         <div className="relative aspect-[4/3] w-full overflow-hidden bg-muted">
           {imovel.foto_destaque ? (
             <img
@@ -356,12 +384,34 @@ function ImovelCard({ imovel }: { imovel: Imovel }) {
             <Badge className="absolute right-2 top-2">{imovel.status}</Badge>
           )}
         </div>
+      </Link>
 
-        <CardContent className="space-y-2 p-4">
-          <p className="line-clamp-2 text-sm font-medium leading-snug">
-            {imovel.titulo ?? imovel.categoria ?? imovel.codigo}
-          </p>
+      <CardContent className="space-y-2 p-4">
+        <div className="flex items-start justify-between gap-2">
+          <Link to={`/imoveis/${imovel.codigo}`} className="min-w-0 flex-1">
+            <p className="line-clamp-2 text-sm font-medium leading-snug">
+              {imovel.titulo ?? imovel.categoria ?? imovel.codigo}
+            </p>
+          </Link>
+          <EditPlaceholderButton label={`Editar ${imovel.codigo}`} />
+        </div>
+
+        <Link to={`/imoveis/${imovel.codigo}`} className="block space-y-2">
           <p className="text-lg font-semibold">{preco}</p>
+
+          {/* CONTRACT § 6: condomínio + IPTU compactly on the card. */}
+          {(imovel.valor_condominio !== null || imovel.valor_iptu !== null) && (
+            <p className="text-xs text-muted-foreground">
+              {[
+                imovel.valor_condominio !== null
+                  ? `Cond. ${formatValor(imovel.valor_condominio)}`
+                  : null,
+                imovel.valor_iptu !== null ? `IPTU ${formatValor(imovel.valor_iptu)}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
 
           {(imovel.bairro || imovel.cidade) && (
             <p className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -386,9 +436,20 @@ function ImovelCard({ imovel }: { imovel: Imovel }) {
               <Metric icon={<Ruler className="h-3.5 w-3.5" />} value={formatArea(imovel.area_total)} />
             )}
           </div>
-        </CardContent>
-      </Card>
-    </Link>
+
+          {badges.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {badges.map((b) => (
+                <Badge key={b.key} variant="outline" className="gap-1 text-[10px]">
+                  {b.icon}
+                  {b.label}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </Link>
+      </CardContent>
+    </Card>
   );
 }
 

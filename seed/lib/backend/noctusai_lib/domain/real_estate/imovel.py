@@ -95,6 +95,18 @@ def _area(value: Any) -> Optional[float]:
     return None if amount == 0 else amount
 
 
+def _measure_int(value: Any) -> Optional[int]:
+    """An INT field under the *measure* rule — ``"0"`` means unknown, not zero.
+
+    Same semantics as `_area` (CONTRACT `imoveis-vista-field-surface` § 1:
+    "money/measure": ``"0"`` → NULL), just int-typed. The only current user
+    is ``AnoConstrucao`` — a construction year of 0 doesn't exist, so this
+    is deliberately NOT `_count` (which preserves a real 0).
+    """
+    amount = _area(value)
+    return None if amount is None else int(amount)
+
+
 def _count(value: Any) -> Optional[int]:
     """Room/space counts, where ``0`` is a REAL value and must survive.
 
@@ -418,6 +430,10 @@ class Imovel(BaseModel):
         description="Derived transaction set: {'venda'}, {'aluguel'} or both.",
     )
 
+    # Descrição
+    descricao_web: Optional[str] = Field(None, description="463–1648 chars, 20/20 sampled populated.")
+    observacoes: Optional[str] = Field(None, description="Internal note field. Empty on 0/20 sampled — kept for tenants that use it.")
+
     # Localização
     cep: Optional[str] = None
     logradouro: Optional[str] = Field(None, description="Unprefixed — 'Fernando Nobre', no 'Rua'.")
@@ -426,6 +442,8 @@ class Imovel(BaseModel):
     bairro: Optional[str] = None
     cidade: Optional[str] = None
     uf: Optional[str] = None
+    zona: Optional[str] = Field(None, description="Upstream-truncated to ~10 chars on this tenant.")
+    regiao: Optional[str] = None
     empreendimento: Optional[str] = Field(
         None, description="May duplicate `bairro` — don't render both blindly."
     )
@@ -435,6 +453,8 @@ class Imovel(BaseModel):
     # Comercial
     valor_venda: Optional[float] = None
     valor_locacao: Optional[float] = None
+    valor_condominio: Optional[float] = None
+    valor_iptu: Optional[float] = None
 
     # Dimensões
     area_total: Optional[float] = None
@@ -442,6 +462,9 @@ class Imovel(BaseModel):
     area_construida: Optional[float] = Field(
         None, description="'0' on 99.9% of this tenant's catalog — effectively unpopulated."
     )
+    area_terreno: Optional[float] = None
+    frente: Optional[float] = None
+    fundos: Optional[float] = None
 
     # Cômodos
     dormitorios: Optional[int] = None
@@ -450,10 +473,45 @@ class Imovel(BaseModel):
     banheiro_social: Optional[bool] = Field(
         None, description="A flag, not a count. The only bathroom signal this tenant exposes."
     )
+    closet: Optional[int] = Field(None, description="Count — a real 0 (no closet) survives, unlike money/area.")
+    # 🔴 No `lavabo` / `copa` / `escritorio` columns — CONTRACT
+    # `imoveis-vista-field-surface` correction 2026-09-04. Vista shadows
+    # these three to null whenever `Caracteristicas` rides in the same
+    # request (our sync always requests it) — see
+    # `calibration.py::CANDIDATE_IMOVEL_DETAIL_FIELDS` for the measured
+    # probe. They already exist as amenity keys inside `caracteristicas`/
+    # `caracteristicas_raw`; read them from there.
+
+    # Construção e estado
+    ano_construcao: Optional[int] = Field(None, description="'0' means unknown, not year zero — same rule as money/area.")
+    situacao: Optional[str] = Field(None, description="e.g. 'Usado'.")
+    ocupacao: Optional[str] = Field(None, description="e.g. 'Proprietário', 'Desocupado'.")
+    pavimentos: Optional[int] = Field(None, description="Count — a real 0 survives.")
+    posicao: Optional[str] = Field(None, description="e.g. 'Frente'.")
+    elevador: Optional[bool] = None
+    portaria: Optional[bool] = None
+
+    # Condições comerciais
+    exclusivo: Optional[bool] = None
+    aceita_permuta: Optional[bool] = None
+    aceita_financiamento: Optional[bool] = None
+    chave: Optional[str] = Field(None, description="e.g. 'Corretor(a)', 'Agendar'.")
+    exibir_no_site: Optional[bool] = None
+    destaque_web: Optional[bool] = None
+    super_destaque_web: Optional[bool] = None
 
     # Mídia
     foto_destaque: Optional[str] = None
-    fotos: list[str] = Field(default_factory=list)
+    fotos: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Structurally always empty on `oneconsu-rest` — see "
+            "`imovel_normalizer.py::_photo_list` for the measured cause. "
+            "`foto_destaque` is the only photo this tenant exposes."
+        ),
+    )
+    video_destaque: Optional[str] = None
+    tour_360: Optional[str] = Field(None, description="Real 360° tour URL where present (3/20 sampled).")
 
     # Atribuição
     corretores: list[Corretor] = Field(default_factory=list)
@@ -464,6 +522,20 @@ class Imovel(BaseModel):
     data_atualizacao: Optional[date] = None
     data_atualizacao_dias: Optional[int] = Field(
         None, description="Detalhes-only; the sole int on the wire. Derived — display, don't key on it."
+    )
+
+    # Registro
+    referencia: Optional[str] = Field(None, description="20/20 sampled — always equal to `codigo` on this tenant.")
+    matricula_vista: Optional[str] = Field(
+        None,
+        description=(
+            "Vista's `Matricula`, deliberately NOT `matricula` — the product schema "
+            "already owns a cartório-authored `matricula` (migration 075); this is the "
+            "Vista-sourced twin, kept namespaced and distinct."
+        ),
+    )
+    inscricao_municipal: Optional[str] = Field(
+        None, description="Holds a CITY name on this tenant's one populated row — data-entry noise, stored verbatim."
     )
 
     # Características
@@ -538,6 +610,7 @@ class ImovelPage(BaseModel):
 clean_text = _clean
 parse_money = _money
 parse_area = _area
+parse_measure_int = _measure_int
 parse_count = _count
 parse_sim_nao = _sim_nao
 parse_date = _to_date
@@ -560,6 +633,7 @@ __all__ = [
     "parse_corretores",
     "parse_count",
     "parse_date",
+    "parse_measure_int",
     "parse_money",
     "parse_sim_nao",
 ]
