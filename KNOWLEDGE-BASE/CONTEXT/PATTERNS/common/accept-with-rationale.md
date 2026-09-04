@@ -93,6 +93,51 @@ shape just changes when the decision moves.
 
 ## Active decisions
 
+### permutas compliance findings baselined pre-migration (110 fingerprints)
+
+- **Subject:** `products/permutas/**` — the legacy Permutas platform absorbed
+  2026-09-04 (`05ce788e`). `check_all_products()` reports 110 NEW high/critical
+  findings for it against `mcp/noctusai/tests/compliance_baseline.json`,
+  dropping the platform's informational score from ~90 to 63.
+- **Decision:** baseline all 110 rather than fix them or revert the
+  absorption. The baseline grows, cited per its own README rule ("a NEW
+  pre-existing class is triaged-and-accepted ... a refresh that GROWS the
+  baseline must cite the triage decision in the commit msg").
+- **Reason:** all 110 are ONE fact wearing four costumes — permutas is a
+  create-react-app + Django REST Framework platform that consumes neither
+  `@noctusai/seed` nor `@noctusai/lib`, and the detectors assume every product
+  does:
+    * 2 × `Missing -e seed/framework/backend` / `-e seed/lib/backend` — it has
+      no seed dependency to declare.
+    * ~85 × "FE calls `X` but no backend route matches" — the wiring detector
+      reads FastAPI decorators. DRF registers routes at runtime through
+      `DefaultRouter`, so it sees zero backend routes and reports every single
+      frontend call as dangling. These are detector false positives, not
+      broken wiring.
+    * ~20 × "'permutas' backend requires `<django-dep>` but it is MISSING from
+      the root requirements.txt" — the root file pins the FastAPI fleet's
+      shared deps; Django/Celery belong to permutas alone.
+    * 4 × "local declaration of canonical organ" (`AppShell`, `TableSkeleton`,
+      `KanbanBoard`, `Header`) — it cannot import organs it has no dependency
+      on.
+  Fixing them individually would mean either porting permutas onto the seed
+  framework (a project, not a fix) or teaching four detectors about Django (a
+  fleet change for one product). Reverting was the alternative considered and
+  declined by the user — permutas is deployed nowhere (no VPS container, not
+  on `prod`), so leaving it on `dev` is operationally free.
+- **Scope:** `products/permutas/**` only. No other product's fingerprints
+  change; the refresh was verified to grow by exactly these 110 and shrink by
+  none.
+- **Revisit trigger:** permutas' frontend/backend actually adopts the seed
+  (`@noctusai/seed` in its `package.json`, `-e seed/*/backend` in its
+  requirements) — at which point these findings become REAL and the baseline
+  must shrink back. Also fires if a SECOND Django product is absorbed: N=2
+  means the detectors should learn DRF rather than the exception being
+  re-baselined.
+- **Recorded by:** tech-lead, session_01PVCjij6WdjEbwSdvXWRzGS, 2026-09-04 —
+  triaged and accepted by the user after the absorption reddened four fleet
+  gates and blocked bless for four unrelated green slices.
+
 ### ERP `contratos.parcelas` mixed nested/flat path shape (Pattern G)
 - **Subject:** `products/erp-imobiliario/backend/app/routers/contratos.py` exposes the parcela sub-entity through TWO path shapes — **nested** for collection-scoped operations (`GET /api/contratos/{contrato_id}/parcelas` at line 257, `POST /api/contratos/{contrato_id}/parcelas` at line 273) and **flat-by-id** for the single-row update (`PATCH /api/contratos/parcelas/{parcela_id}` at line 310). The frontend (`useContratos.ts:172`) calls the flat shape correctly.
 - **Decision:** keep the mixed shape; do NOT normalize to consistently-nested (`PATCH /api/contratos/{contrato_id}/parcelas/{parcela_id}`).
