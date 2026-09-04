@@ -5,6 +5,7 @@ a 422 naming it rather than a silently-ignored value.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
@@ -23,6 +24,15 @@ class ImovelDadosPatchBody(StrictHttpModel):
     """
 
     numero_matricula: Optional[str] = Field(default=None, max_length=64)
+    #: Migration 099. Free TEXT rather than a Literal over
+    #: `dados_service.SITUACOES_ONUS`: the rules that consume this are
+    #: deliberately not decided yet, and pinning the vocabulary at the HTTP
+    #: boundary would make the first new value a schema change in two places.
+    #: The UI offers the tuple; this accepts what the UI sends.
+    situacao_onus: Optional[str] = Field(default=None, max_length=64)
+    onus_observacoes: Optional[str] = Field(default=None, max_length=4000)
+    onus_certidao_em: Optional[date] = None
+    onus_documento_id: Optional[UUID] = None
     numero_registro_imoveis: Optional[str] = Field(default=None, max_length=64)
     prefeitura_cadastro_imobiliario: Optional[str] = Field(
         default=None, max_length=200

@@ -59,6 +59,35 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
     "numero_registro_imoveis",
     "prefeitura_cadastro_imobiliario",
     "captador_user_id",
+    # Migration 099 — situação de ônus. The first clause of every promessa de
+    # compra e venda asserts the property is sold "livre e desembaraçado de
+    # quaisquer ônus reais"; until now nothing in the schema could back that
+    # sentence. `atendimento_financiamento` records the BUYER's financing,
+    # which is the opposite side of the transaction from the SELLER's debt.
+    #
+    # 🔴 NO RULES ATTACHED, on purpose. The vocabulary below is what the UI
+    # offers; nothing refuses to emit a document on a stale certidão and
+    # nothing ties these fields to each other. The user asked for the field
+    # now and the rules later, and a gate written before its policy is decided
+    # is a gate that gets worked around.
+    "situacao_onus",
+    "onus_observacoes",
+    "onus_certidao_em",
+    "onus_documento_id",
+)
+
+#: What the UI offers for `situacao_onus`. Here rather than as a schema CHECK
+#: for the reason migration 099 gives: the vocabulary is a product decision and
+#: freezing a guessed enum in the database makes each addition a migration.
+#: NOT enforced as a whitelist — see `atualizar`.
+SITUACOES_ONUS: tuple[str, ...] = (
+    "livre",
+    "hipoteca",
+    "alienacao_fiduciaria",
+    "penhora",
+    "usufruto",
+    "indisponibilidade",
+    "outro",
 )
 
 #: Provenance columns — stamped, never accepted from a body. Listed so the
@@ -137,6 +166,18 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
         "numero_registro_imoveis": row.get("numero_registro_imoveis"),
         "prefeitura_cadastro_imobiliario": row.get("prefeitura_cadastro_imobiliario"),
         "captador": table_reads.actor(resolved, row.get("captador_user_id")),
+        "situacao_onus": row.get("situacao_onus"),
+        "onus_observacoes": row.get("onus_observacoes"),
+        # The date printed ON the certidão, not when it was uploaded — a
+        # certidão's validity runs from its own emission, so the upload
+        # timestamp answers a different question.
+        "onus_certidao_em": row.get("onus_certidao_em"),
+        "onus_documento_id": row.get("onus_documento_id"),
+        "onus_registrado_por": table_reads.actor(
+            resolved, row.get("onus_registrado_por")
+        ),
+        "onus_registrado_em": row.get("onus_registrado_em"),
+        "situacoes_onus": list(SITUACOES_ONUS),
         "updated_at": row.get("updated_at"),
     }
 
@@ -147,6 +188,7 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
     ids = {
         (row or {}).get("captador_user_id"),
         (row or {}).get("numero_matricula_confirmado_por"),
+        (row or {}).get("onus_registrado_por"),
     }
     return _saida(codigo, row, table_reads.resolve_actors(ids))
 

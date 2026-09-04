@@ -25,11 +25,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import Field
+
+from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.integrations.whatsapp import chat_id_for_phone, get_whatsapp_client
 
 from app.config import SocialWiringSettings, settings
@@ -1354,3 +1357,135 @@ async def test_api_key(
             ),
         )
     return await tester(value)
+
+
+# ─── Dados da imobiliária (migration 100) ────────────────────────────────────
+#
+# The agency's OWN qualification: razão social, CNPJ, CRECI PJ, address. Every
+# generated instrument needs it twice — in the header naming who intermediated,
+# and in the corretagem clause naming who is owed the commission — and until
+# migration 100 there was nowhere in this product to put it.
+#
+# 🔴 ONE ROW PER ORG, UPSERTED. There is no "create" and no 404: an org that
+# has never opened this tab reads as every field null, exactly the way
+# `imovel_hub.dados_service` treats an imóvel with no cartório row. A caller
+# that had to tell "no row" from "row with nothing in it" would branch on it at
+# every call site, and the two mean the same thing to a person looking at a
+# settings form.
+#
+# 🔴 EVERY FIELD NULLABLE, and the save never refuses a partial form. This is a
+# form someone fills in over several sittings; rejecting it until complete
+# would discard whatever they had typed. Completeness is the document
+# generator's problem, at the moment it actually needs a value.
+
+_IMOBILIARIA_TABLE = "org_dados_cadastrais"
+
+#: Columns a caller may set. `org_id` and the audit columns are derived from
+#: the token, never accepted — an accepted `org_id` is a cross-tenant write
+#: waiting for its first bug.
+_IMOBILIARIA_CAMPOS: tuple[str, ...] = (
+    "razao_social",
+    "nome_fantasia",
+    "cnpj",
+    "creci_pj",
+    "responsavel_nome",
+    "responsavel_creci",
+    "telefone",
+    "email",
+    "endereco_cep",
+    "endereco_logradouro",
+    "endereco_numero",
+    "endereco_complemento",
+    "endereco_bairro",
+    "endereco_cidade",
+    "endereco_uf",
+)
+
+
+class DadosImobiliariaBody(StrictHttpModel):
+    """The agency's cadastral data. Every field optional — see the note above.
+
+    `creci_pj` is the field that keeps this table product-local rather than on
+    the shared `public.organizations` row: a brokerage licence is meaningless
+    to the other twelve products on this platform. Migration 100's header
+    carries the full accept-with-rationale.
+    """
+
+    razao_social: Optional[str] = Field(default=None, max_length=255)
+    nome_fantasia: Optional[str] = Field(default=None, max_length=255)
+    cnpj: Optional[str] = Field(default=None, max_length=32)
+    creci_pj: Optional[str] = Field(default=None, max_length=64)
+    responsavel_nome: Optional[str] = Field(default=None, max_length=255)
+    responsavel_creci: Optional[str] = Field(default=None, max_length=64)
+    telefone: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[str] = Field(default=None, max_length=255)
+    endereco_cep: Optional[str] = Field(default=None, max_length=16)
+    endereco_logradouro: Optional[str] = Field(default=None, max_length=255)
+    endereco_numero: Optional[str] = Field(default=None, max_length=32)
+    endereco_complemento: Optional[str] = Field(default=None, max_length=120)
+    endereco_bairro: Optional[str] = Field(default=None, max_length=120)
+    endereco_cidade: Optional[str] = Field(default=None, max_length=120)
+    endereco_uf: Optional[str] = Field(default=None, max_length=2)
+
+
+def _imobiliaria_out(row: dict | None) -> dict:
+    row = row or {}
+    saida = {campo: row.get(campo) for campo in _IMOBILIARIA_CAMPOS}
+    saida["updated_at"] = row.get("updated_at")
+    return saida
+
+
+@router.get("/imobiliaria")
+def get_dados_imobiliaria(
+    auth: tuple = Depends(get_current_user_org),
+) -> dict:
+    """The agency's cadastral data. Never 404s — see the section note."""
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    supabase = get_user_client(token)
+    rows = (
+        supabase
+        .schema("social_wiring")
+        .table(_IMOBILIARIA_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return _imobiliaria_out(rows[0] if rows else None)
+
+
+@router.put("/imobiliaria")
+def update_dados_imobiliaria(
+    body: DadosImobiliariaBody,
+    auth: tuple = Depends(get_current_user_org),
+) -> dict:
+    """Save the agency's cadastral data.
+
+    PUT with `exclude_unset`, not PATCH, and the distinction is deliberate:
+    the UI submits the whole form, so an omitted key means the client is on an
+    older build rather than "clear this". Honouring absence as a clear would
+    let a stale tab wipe fields it does not know about.
+
+    Upsert on `org_id` — the primary key — so first save and every later one
+    are the same call. A read-then-insert-or-update here would race two tabs
+    into a duplicate-key error on a settings form.
+    """
+    user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    supabase = get_user_client(token)
+
+    valores = body.model_dump(exclude_unset=True)
+    linha = {campo: valores[campo] for campo in _IMOBILIARIA_CAMPOS if campo in valores}
+    linha["org_id"] = str(org_id)
+    if getattr(user, "id", None):
+        linha["updated_por"] = str(user.id)
+
+    (
+        supabase
+        .schema("social_wiring")
+        .table(_IMOBILIARIA_TABLE)
+        .upsert(linha, on_conflict="org_id")
+        .execute()
+    )
+    return get_dados_imobiliaria(auth)
