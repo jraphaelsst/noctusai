@@ -43,6 +43,18 @@ router = APIRouter(prefix="/api/imoveis", tags=["imoveis"])
 
 
 class ImovelPageOut(BaseModel):
+    """`items` is deliberately `list[dict]`, not a per-field imóvel schema.
+
+    The service already selects `*` and returns rows straight through, now
+    including the 29 fields + the two presentation-only derived values
+    (`orientacao_solar`, `dias_desde_atualizacao`) from CONTRACT §1/§3
+    (`imoveis-vista-field-surface`). A hand-maintained field allowlist here
+    would have to grow in lockstep with every future Vista column and would
+    silently drop one the moment it didn't — the exact "hand-maintained
+    list drifts" failure mode CLAUDE.md §1 calls out. Nothing narrows the
+    row between the service and the client.
+    """
+
     items: list[dict] = Field(default_factory=list)
     total: int = 0
     page: int = 1
@@ -183,6 +195,14 @@ async def sync_imoveis(
 # Declared LAST: `/{codigo}` would otherwise shadow `/filtros`,
 # `/caracteristicas` and `/sync`, since FastAPI matches in declaration order
 # and a bare path segment is a valid `codigo`.
+#
+# `-> dict`, no `response_model`, DELIBERATELY — same reasoning as
+# `ImovelPageOut.items` above: `ImoveisService.get` already returns every
+# column plus the derived `orientacao_solar`/`dias_desde_atualizacao`
+# (CONTRACT §3), and a typed schema here would just be a second field list
+# to keep in sync with the first. DISPLAY ONLY: no PATCH/PUT route exists on
+# this router and none should be added — Vista rejects writes on this key
+# (`/imoveis/alterar` → 404 on this tenant, CONTRACT §"Scope").
 @router.get("/{codigo}")
 async def get_imovel(
     codigo: str,

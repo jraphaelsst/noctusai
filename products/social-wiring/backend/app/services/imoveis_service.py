@@ -85,6 +85,67 @@ VISTA_RATE_BUCKET = "vista"
 # normalizer already owns.
 _PLACE_NAME_WIRE_KEYS = {"cidade": "Cidade", "empreendimento": "Empreendimento"}
 
+# Contract §3: `caracteristicas_raw` mixes the four solar-orientation flags
+# in with real amenities — Vista sends them as just another Sim/Nao key, but
+# a compass direction is not something an imóvel HAS the way a piscina is.
+# Slugged the same way `caracteristica_slug` would fold them (lowercase,
+# whitespace-collapsed) since they carry no internal whitespace to begin
+# with — `caracteristica_slug("Norte") == "norte"`.
+_ORIENTACAO_SOLAR_SLUGS = frozenset({"norte", "sul", "leste", "oeste"})
+
+
+def _split_orientacao_solar(caracteristicas: Optional[list]) -> tuple[list[str], list[str]]:
+    """Split the four solar-orientation slugs out of the amenity list.
+
+    Returns `(amenidades_sem_orientacao, orientacao_solar)`, both sorted so
+    the split is stable across re-reads of the same row.
+    """
+    values = caracteristicas or []
+    orientacao = sorted(v for v in values if v in _ORIENTACAO_SOLAR_SLUGS)
+    amenidades = sorted(v for v in values if v not in _ORIENTACAO_SOLAR_SLUGS)
+    return amenidades, orientacao
+
+
+def _dias_desde_atualizacao(vista_raw: Any) -> Optional[int]:
+    """`DataAtualizacaoDias` — already stored inside `vista_raw` on every
+    row (detalhes-only on the wire), never surfaced until CONTRACT §3.
+
+    Coerced defensively: this is a display nicety, not a value anything
+    downstream keys on, so a missing/malformed source value yields `None`
+    rather than raising — never an exception for a stale-but-cosmetic field.
+    """
+    if not isinstance(vista_raw, dict):
+        return None
+    raw = vista_raw.get("DataAtualizacaoDias")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _augment_row_derived(row: dict) -> dict:
+    """Add the presentation-only derived fields from CONTRACT §3 to a row
+    as `SELECT *` returned it: split `orientacao_solar` out of
+    `caracteristicas`, and expose `dias_desde_atualizacao`. Neither is a
+    stored column — both are computed at read time from columns the row
+    already carries (`caracteristicas`, `vista_raw`).
+
+    Safe to run on the result of `ImoveisService.get`, whose OTHER consumer
+    (`get_property_data` → `Imovel(**row)`) never reads `caracteristicas`
+    (see `noctusai_lib.domain.real_estate.metadata.imovel_to_property_data`)
+    and silently ignores unrecognized extra keys (pydantic's default
+    `extra='ignore'`) — so augmenting unconditionally here, rather than
+    forking a display-only variant of `get`, does not change that path's
+    behaviour.
+    """
+    amenidades, orientacao = _split_orientacao_solar(row.get("caracteristicas"))
+    row["caracteristicas"] = amenidades
+    row["orientacao_solar"] = orientacao
+    row["dias_desde_atualizacao"] = _dias_desde_atualizacao(row.get("vista_raw"))
+    return row
+
 
 @dataclass
 class SyncReport:
@@ -191,6 +252,57 @@ def _imovel_to_row(imovel: Imovel, org_id: UUID, synced_at: str) -> dict:
         "caracteristicas_raw": imovel.caracteristicas_raw,
         "vista_raw": imovel.vista_raw,
         "sincronizado_em": synced_at,
+        # ── the 29 fields from CONTRACT §1 (imoveis-vista-field-surface) ──
+        # `getattr(..., None)` rather than direct attribute access,
+        # DELIBERATELY: this module's `Imovel` import resolves against
+        # whatever `noctusai_lib.domain.real_estate` this worktree/venv has
+        # installed. A sibling engineer's branch adds these attributes to
+        # `Imovel` itself (this slice owns storage+API only, not the seed
+        # dataclass — see the dispatch brief). Until the two branches merge,
+        # this worktree's copy of `Imovel` does not carry them, and a direct
+        # `imovel.descricao_web` would raise `AttributeError` on every row
+        # write — not just new-field writes, the whole sync. `getattr` with
+        # a `None` default degrades gracefully pre-merge (columns land NULL,
+        # same as any other Vista field this tenant doesn't populate) and
+        # picks up real values automatically post-merge, with no further
+        # code change here. Column order mirrors CONTRACT §1's table.
+        #
+        # 🔴 CORRECTION 2026-09-04: `lavabo`/`copa`/`escritorio` are
+        # DELIBERATELY absent — Vista shadows all three (returns `null` at
+        # the top level) whenever `Caracteristicas` rides in the same
+        # request, which our sync always does. The values are correct and
+        # already present in `caracteristicas`/`caracteristicas_raw` — a
+        # column here would just be permanently NULL. `elevador`/`portaria`
+        # were checked against the same collision and are NOT shadowed.
+        "descricao_web": getattr(imovel, "descricao_web", None),
+        "observacoes": getattr(imovel, "observacoes", None),
+        "valor_condominio": getattr(imovel, "valor_condominio", None),
+        "valor_iptu": getattr(imovel, "valor_iptu", None),
+        "ano_construcao": getattr(imovel, "ano_construcao", None),
+        "situacao": getattr(imovel, "situacao", None),
+        "ocupacao": getattr(imovel, "ocupacao", None),
+        "pavimentos": getattr(imovel, "pavimentos", None),
+        "posicao": getattr(imovel, "posicao", None),
+        "elevador": getattr(imovel, "elevador", None),
+        "portaria": getattr(imovel, "portaria", None),
+        "exclusivo": getattr(imovel, "exclusivo", None),
+        "aceita_permuta": getattr(imovel, "aceita_permuta", None),
+        "aceita_financiamento": getattr(imovel, "aceita_financiamento", None),
+        "destaque_web": getattr(imovel, "destaque_web", None),
+        "super_destaque_web": getattr(imovel, "super_destaque_web", None),
+        "exibir_no_site": getattr(imovel, "exibir_no_site", None),
+        "chave": getattr(imovel, "chave", None),
+        "zona": getattr(imovel, "zona", None),
+        "regiao": getattr(imovel, "regiao", None),
+        "area_terreno": getattr(imovel, "area_terreno", None),
+        "closet": getattr(imovel, "closet", None),
+        "frente": getattr(imovel, "frente", None),
+        "fundos": getattr(imovel, "fundos", None),
+        "referencia": getattr(imovel, "referencia", None),
+        "matricula_vista": getattr(imovel, "matricula_vista", None),
+        "inscricao_municipal": getattr(imovel, "inscricao_municipal", None),
+        "video_destaque": getattr(imovel, "video_destaque", None),
+        "tour_360": getattr(imovel, "tour_360", None),
     }
 
 
@@ -283,7 +395,7 @@ class ImoveisService:
             .range(start, start + page_size - 1)
             .execute()
         )
-        rows = result.data or []
+        rows = [_augment_row_derived(row) for row in (result.data or [])]
         total = getattr(result, "count", None)
         total = len(rows) if total is None else total
         pages = max(1, (total + page_size - 1) // page_size)
@@ -308,7 +420,7 @@ class ImoveisService:
             .execute()
         )
         rows = result.data or []
-        return rows[0] if rows else None
+        return _augment_row_derived(rows[0]) if rows else None
 
     def get_property_data(self, org_id: UUID, codigo: str) -> Optional[PropertyData]:
         """Resolve `codigo` against the local mirror, shaped as
@@ -403,10 +515,17 @@ class ImoveisService:
         tenant keys are never `Sim` — surfacing them would be 28 filters
         that always return nothing, so the UI orders by this and drops the
         zeroes.
+
+        Excludes the four solar-orientation slugs (CONTRACT §3) — `norte`/
+        `sul`/`leste`/`oeste` are not amenities and must not appear in the
+        amenity-filter counts, the same split `_augment_row_derived` applies
+        to a single row's `caracteristicas`.
         """
         counts: dict[str, int] = {}
         for row in self._select_all("caracteristicas", org_id):
             for slug in row.get("caracteristicas") or []:
+                if slug in _ORIENTACAO_SOLAR_SLUGS:
+                    continue
                 counts[slug] = counts.get(slug, 0) + 1
         return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
