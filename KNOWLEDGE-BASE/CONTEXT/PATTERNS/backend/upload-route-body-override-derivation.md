@@ -228,3 +228,31 @@ family this pattern joins) · `KB § PATTERNS/common/gate-methodology-sync.md`
 (the mechanism-ships-with-the-gate discipline this pattern follows) ·
 `noctusai_lib.api.middleware.MaxBodySizeMiddleware` (the enforcement point
 this pattern keeps honest).
+
+## Dispatch-brief implication — a brief that forbids `app/main.py` is unsatisfiable for an upload slice
+
+**Evidence: N=2, same day, independently.** On 2026-09-02 two dispatched engineers
+(`emissoes-certidoes-be`, `emissoes-matriculas-be`) both stopped and filed a
+`surface-to-tech-lead` rather than commit. Both briefs said 🔴 DO NOT EDIT `main.py`;
+both slices added an `UploadFile` route. The keeper resolves the override map from
+`app/main.py` **and nowhere else**, and it checks for KEY PRESENCE — so it cannot be
+satisfied from inside the module, by an exported constant, or by a rationale comment.
+There is no allowlist and no per-file opt-out.
+
+The two constraints are therefore jointly unsatisfiable, and every escape is a
+catalogued bypass shape: splitting the commit to keep the staged set empty is
+staging-shaped gate evasion; dropping `UploadFile` for a raw `Request.body()` read
+defeats the guard AND removes the runtime mechanism, so the 1 MB default would
+silently 413 in production — the exact defect the gate exists to prevent.
+
+**Both engineers were right to stop.** The gate firing was the methodology working.
+
+**When authoring the brief:** if a slice adds an upload route, the brief MUST
+pre-authorize the `_MAX_BODY_PATH_OVERRIDES` entry — name the path, the ceiling, and
+the one-line rationale — or hand `app/main.py` to that engineer outright. A file-disjoint
+decomposition that routes an upload route away from `main.py` has not removed the
+coupling, only hidden it until commit time.
+
+> Provenance: `.claude/dispatches/emissoes-{certidoes,matriculas}-be/surface-*.md`,
+> both resolved by `5605c5a6` (Emissões mounted end to end). Absorbed here 2026-09-04
+> under drift-fix-on-contact; the surface artifacts were cleared after absorption.
