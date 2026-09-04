@@ -546,7 +546,12 @@ def _default_run_check(
     noctus.dev.vite_build / pytest); framework_deps composes the existing
     audit. Returns (ok, combined_output)."""
     if check == "framework_deps":
-        drift, _missing, _ok = _cfd._audit(root)
+        # 4-tuple since check_framework_deps gained `skipped_non_consumers`
+        # (2026-09-04). A product OUT of the audit's scope simply never
+        # appears in `drift`, so this gate passes it — which is correct: a
+        # frontend that does not build against the seed framework cannot be
+        # missing the deps that framework forces.
+        drift, _missing, _ok, _skipped = _cfd._audit(root)
         prod_drift = {p: deps for p, deps in (drift or {}).items() if p == product and deps}
         if prod_drift:
             return False, f"framework-dep drift for {product}: {prod_drift}"
@@ -676,7 +681,7 @@ def _default_fix_framework_deps(root: pathlib.Path, product: str) -> bool:
     """Compose the existing check_framework_deps fixer for the one safely
     code-fixable class. Returns True iff a fix was applied. Injectable in
     predeploy_check so the orchestration is testable without touching disk."""
-    drift, _m, _o = _cfd._audit(root)
+    drift, _m, _o, _skipped = _cfd._audit(root)
     prod_drift = {p: d for p, d in (drift or {}).items() if p == product and d}
     if not prod_drift:
         return False
