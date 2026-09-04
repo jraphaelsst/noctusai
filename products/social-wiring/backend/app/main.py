@@ -235,6 +235,7 @@ from app.modules.n8n import register as _n8n
 from app.modules.pipeline import register as _pipeline
 from app.modules.portal_leads import register as _portal_leads
 from app.modules.scheduling import register as _scheduling
+from app.modules.agentes_financeiros import register as _agentes_financeiros
 from app.modules.certidoes import register as _certidoes
 from app.modules.matriculas import register as _matriculas
 from app.modules.youtube import register as _youtube
@@ -285,6 +286,13 @@ MODULES = [
     # app/lifespan.py or the sweep silently never runs.
     _matriculas,
     _certidoes,
+    # Position is free for the same reason the two above are: a unique
+    # 2-segment literal prefix (`/api/agentes-financeiros`) with no 1-segment
+    # dynamic path at its root, so it can neither shadow nor be shadowed by
+    # the `clientes_router` hazard documented above. Declares no upload route,
+    # so unlike `_matriculas` it needs no `_MAX_BODY_PATH_OVERRIDES` entry,
+    # and schedules no sweep.
+    _agentes_financeiros,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───

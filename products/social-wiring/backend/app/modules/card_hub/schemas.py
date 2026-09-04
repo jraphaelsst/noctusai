@@ -411,3 +411,10 @@ class FinanciamentoPatchBody(StrictHttpModel):
     situacao_motivo: Optional[str] = Field(default=None, max_length=2000)
     fgts: Optional[bool] = None
     observacoes: Optional[str] = Field(default=None, max_length=4000)
+    #: Which registered agent is financing this deal (migration 100). An
+    #: explicit null clears the selection — "we have not decided yet" is a
+    #: real state and must be reachable after one has been chosen.
+    agente_financeiro_id: Optional[UUID] = None
+    #: Proposal/contract number at the bank. Free text: every agent formats it
+    #: differently and none of them ask us to validate it.
+    numero_proposta: Optional[str] = Field(default=None, max_length=120)

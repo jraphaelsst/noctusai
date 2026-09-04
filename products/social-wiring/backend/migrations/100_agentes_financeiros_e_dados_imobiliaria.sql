@@ -127,6 +127,22 @@ CREATE POLICY "agentes_financeiros_select_own_org"
     FOR SELECT TO authenticated
     USING (org_id = public.current_org_id());
 
+-- 🔴 A WRITE POLICY FOR `authenticated`, unlike most tables in this schema.
+--
+-- The prevailing shape here is select-only for users with every write going
+-- through the service role. That is right for rows the SYSTEM writes — leads
+-- arriving, cards spawned by a trigger, extraction results. This is a registry
+-- a person maintains on its own page, so the write is a user action and RLS —
+-- not application code — should be what scopes it. Same call
+-- `matricula_extracoes` (migration 092) made, for the same reason.
+DROP POLICY IF EXISTS "agentes_financeiros_write_own_org"
+    ON social_wiring.agentes_financeiros;
+CREATE POLICY "agentes_financeiros_write_own_org"
+    ON social_wiring.agentes_financeiros
+    FOR ALL TO authenticated
+    USING (org_id = public.current_org_id())
+    WITH CHECK (org_id = public.current_org_id());
+
 DROP POLICY IF EXISTS "agentes_financeiros_service_role"
     ON social_wiring.agentes_financeiros;
 CREATE POLICY "agentes_financeiros_service_role"
@@ -233,6 +249,16 @@ CREATE POLICY "org_dados_cadastrais_select_own_org"
     ON social_wiring.org_dados_cadastrais
     FOR SELECT TO authenticated
     USING (org_id = public.current_org_id());
+
+-- Same reasoning as `agentes_financeiros` above: this is a settings form a
+-- person fills in, so the write is theirs and RLS scopes it.
+DROP POLICY IF EXISTS "org_dados_cadastrais_write_own_org"
+    ON social_wiring.org_dados_cadastrais;
+CREATE POLICY "org_dados_cadastrais_write_own_org"
+    ON social_wiring.org_dados_cadastrais
+    FOR ALL TO authenticated
+    USING (org_id = public.current_org_id())
+    WITH CHECK (org_id = public.current_org_id());
 
 DROP POLICY IF EXISTS "org_dados_cadastrais_service_role"
     ON social_wiring.org_dados_cadastrais;

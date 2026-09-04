@@ -82,7 +82,18 @@ STORE = DocumentoStore(
     acessos_table="atendimento_documento_acessos",
 )
 
-CAMPOS_EDITAVEIS: tuple[str, ...] = ("situacao", "situacao_motivo", "fgts", "observacoes")
+CAMPOS_EDITAVEIS: tuple[str, ...] = (
+    "situacao",
+    "situacao_motivo",
+    "fgts",
+    "observacoes",
+    # Migration 100. Which bank, chosen from the org's registry rather than
+    # typed — see `app/modules/agentes_financeiros` for why that is a table.
+    # NULLABLE and editable at any time: `pendente` is exactly the state where
+    # the agent has not been decided yet.
+    "agente_financeiro_id",
+    "numero_proposta",
+)
 
 
 def _t(client: Any, name: str):
@@ -110,7 +121,12 @@ def _documento_out(row: dict, resolved: dict) -> dict:
     }
 
 
-def _saida(row: Optional[dict], atendimento_id: UUID, documentos: list[dict]) -> dict:
+def _saida(
+    row: Optional[dict],
+    atendimento_id: UUID,
+    documentos: list[dict],
+    agente: Optional[dict] = None,
+) -> dict:
     """An atendimento with no financiamento row reads as `pendente`, empty.
 
     Not a 404: no financing recorded is the normal state of a deal that has
@@ -123,6 +139,8 @@ def _saida(row: Optional[dict], atendimento_id: UUID, documentos: list[dict]) ->
         "situacao_motivo": None,
         "fgts": False,
         "observacoes": None,
+        "agente_financeiro_id": None,
+        "numero_proposta": None,
         "created_at": None,
         "updated_at": None,
     }
@@ -133,6 +151,14 @@ def _saida(row: Optional[dict], atendimento_id: UUID, documentos: list[dict]) ->
         "situacao_motivo": base.get("situacao_motivo"),
         "fgts": bool(base.get("fgts")),
         "observacoes": base.get("observacoes"),
+        "agente_financeiro_id": base.get("agente_financeiro_id"),
+        # 🔴 The RESOLVED agent rides along, and is resolved WITHOUT the
+        # `ativo` filter the dropdown uses. A bank retired after it financed
+        # this deal must keep rendering here — otherwise the panel would blank
+        # the name of the institution on a signed contract because somebody
+        # tidied a settings list. See migration 100's RESTRICT note.
+        "agente_financeiro": agente,
+        "numero_proposta": base.get("numero_proposta"),
         "created_at": base.get("created_at"),
         "updated_at": base.get("updated_at"),
         "existe": row is not None,
@@ -146,6 +172,40 @@ def _saida(row: Optional[dict], atendimento_id: UUID, documentos: list[dict]) ->
     }
 
 
+#: Columns of the financing agent the panel renders beside the dropdown. A
+#: subset of the registry's own `FIELDS` — the card shows who the bank is, not
+#: its full contact sheet, which lives on the management page.
+_AGENTE_RESUMO = ("id", "nome", "codigo_banco", "agencia", "ativo")
+
+
+def _agente(client: Any, org_id: UUID, row: Optional[dict]) -> Optional[dict]:
+    """Resolve this deal's financing agent, INCLUDING a retired one.
+
+    🔴 NO `ativo` FILTER, deliberately. The dropdown must not offer a retired
+    bank, but a deal that already went through one must keep naming it — the
+    two are different questions and only the dropdown asks the first. Filtering
+    here would blank the institution on a signed contract because somebody
+    tidied a settings list, which is the exact loss migration 100's ON DELETE
+    RESTRICT exists to prevent.
+
+    `ativo` is returned so the UI can mark a retired agent rather than pretend
+    it is still selectable.
+    """
+    agente_id = (row or {}).get("agente_financeiro_id")
+    if not agente_id:
+        return None
+    rows = (
+        client.schema("social_wiring")
+        .table("agentes_financeiros")
+        .select(",".join(_AGENTE_RESUMO))
+        .eq("org_id", str(org_id))
+        .eq("id", str(agente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return {k: rows[0].get(k) for k in _AGENTE_RESUMO} if rows else None
+
+
 def obter(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     row = _linha(client, org_id, atendimento_id)
@@ -154,7 +214,7 @@ def obter(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         {r["enviado_por"] for r in linhas if r.get("enviado_por")}
     )
     documentos = [_documento_out(r, resolved) for r in linhas]
-    return _saida(row, atendimento_id, documentos)
+    return _saida(row, atendimento_id, documentos, _agente(client, org_id, row))
 
 
 def atualizar(
