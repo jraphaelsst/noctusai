@@ -609,7 +609,22 @@ re-synced yet).
 | `main` / `prod` | **untouched at `4444932`** |
 | VPS containers | **untouched** |
 
-`origin/dev` tip at handoff: **`edbab1b7`**.
+**Do not trust a pinned tip sha — run `noctus.dev.release stage=status` for the live one.**
+`origin/dev` was `edbab1b7` when the deploy was aborted and `a183736e` after this
+session's teardown; other sessions are actively pushing to `dev`, so it will have moved
+again. The commits that matter are stable:
+
+| | |
+|---|---|
+| `803786f2` | seed learns the Vista field surface |
+| `77190147` | seed drops the shadowed trio |
+| `6117090f` | backend — migration 093 + service |
+| `d7776c4a` | frontend — sectioned display |
+| `bf08548d` | drops the getattr bridge (last feature commit) |
+| `dbc2d67a` | this handoff |
+
+Everything after `dbc2d67a` on `dev` is bookkeeping (salvage-ledger rows, a
+`.gitignore` fix) or another session's work.
 
 Gates, run on the MERGED tip (not per-branch):
 
