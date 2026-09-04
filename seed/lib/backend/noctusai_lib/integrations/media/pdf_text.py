@@ -33,6 +33,8 @@ False when both libs are absent so a consumer can distinguish
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 from dataclasses import dataclass
 from io import BytesIO
 
@@ -144,6 +146,36 @@ def _extract_pdf_text_with_signal(pdf_bytes: bytes) -> tuple[str, bool]:
 # unbounded (a longer disclaimer defeats any threshold you pick), so the
 # primary signal here is STRUCTURAL — a page whose raster images cover the
 # page area *is* a rendered scan, however chatty its stamp.
+#
+# 🔴 AND THE CHARACTER FLOOR IS NOT A BACKSTOP — IT IS THE HOLE ITSELF.
+# ---------------------------------------------------------------------
+# The structural signal was added on 2026-08-25 but `MIN_CHARS_PER_PAGE`
+# stayed underneath it as a fallback, so a stamp still passes on any page
+# the coverage rule does not reach. Measured on the documents this platform
+# has actually been fed (2026-09-04):
+#
+#   file                                  stamp chars/page   coverage
+#   CERTIDÃO DE MATRÍCULA - EUROVILLE          137            1.005
+#   MATRICULA CANTAGALO (ONR certidão)  p1     137            0.562  ← passes
+#   Visualização de Matrícula - Quebec          83            2.389
+#   VISUALIZAÇÃO MATRICULA APTO 17 HARMONIA     83            1.443
+#
+# CANTAGALO page 1 is one scanned image inset at 446×632pt on a 595×842pt
+# page. It is a scan by any reading, its whole content is in the JPEG, and
+# it clears both rules: 0.562 < 0.80 coverage, 137 >= 100 chars. The page
+# was silently transcribed as its own validation link.
+#
+# The same table explains the defect the user reported: a certidão failed
+# where a visualização worked, and the ONLY difference between the two file
+# types is that their provenance stamps land on opposite sides of the
+# hard-coded 100. That is not a property of the documents — it is an
+# accident of where the threshold was put.
+#
+# So the count that gets compared to a threshold must be a count of REAL
+# characters. `strip_provenance_stamps` removes the known cartório stamps
+# first; what remains is what the page actually says. A stamp-only page
+# then measures 0 and fails every threshold, no matter how long the stamp
+# grows or how little of the page its scan happens to cover.
 
 
 #: A page whose images cover at least this fraction of the page area is a
@@ -151,6 +183,11 @@ def _extract_pdf_text_with_signal(pdf_bytes: bytes) -> tuple[str, bool]:
 #: a letterhead and signature glyphs), so this is a floor, not a ratio to
 #: normalize. Measured: 1.01 on the ONR certidão, 2.39 on the Quebec
 #: visualização — while a digitally-typeset PDF carries a logo at most.
+#:
+#: It is a SUFFICIENT condition, never a necessary one: CANTAGALO page 1 is
+#: a full scan at 0.56. Lowering the number would only move the same
+#: accident somewhere else, which is why the fix is the stamp stripper
+#: above and not a re-tuned constant.
 SCAN_IMAGE_COVERAGE_RATIO = 0.80
 
 #: Characters on a single page that make it unmistakably real content,
@@ -163,7 +200,72 @@ TEXT_RICH_CHARS_PER_PAGE = 800
 
 #: Floor for a page that is neither text-rich nor a rendered scan — catches
 #: a near-blank page whose handful of characters is not worth trusting.
+#: Applied to the count AFTER `strip_provenance_stamps`, so it can no longer
+#: be cleared by boilerplate alone.
 MIN_CHARS_PER_PAGE = 100
+
+
+#: The provenance stamps Brazilian registries print over a scan, verbatim
+#: from documents this platform has ingested. Each one identifies WHO asked
+#: for the document and HOW to verify it; none of them says anything about
+#: the property, which is why removing them cannot remove content.
+#:
+#: Matched line-wise against a case-folded, accent-stripped copy of the
+#: page, so a stamp that re-wraps or loses its accents in extraction still
+#: matches. Anchored to the stamp's own opening words rather than to a
+#: fragment that could occur mid-sentence — `find_matricula` and friends
+#: read whatever survives this pass, so a pattern that ate real prose would
+#: be a far worse defect than the one being fixed.
+_PROVENANCE_STAMP_PATTERNS: tuple[str, ...] = (
+    # ONR certidão (assinador-web) — the 137-char stamp from the 2026-08-25
+    # ERP defect and from CERTIDÃO DE MATRÍCULA - EUROVILLE / CANTAGALO.
+    r"^valide\s+est[ea]\s+documento\b.*$",
+    r"^valide\s+aqui$",
+    r"^este\s+documento$",
+    # ONR "Visualização de Matrícula" — the 83-char requester stamp from
+    # Quebec Casa 78 and APTO 17 HARMONIA.
+    r"^solicitado\s+por\s*:.*$",
+    # The vertical watermark the same ONR pipeline prints down the margin.
+    r"^documento\s+gerado\s+oficialmente\s+pelo\b.*$",
+    r"^registro\s+de\s+im[o0]veis\s+via\s+www\.[^\s]+$",
+    r"^todos\s+os\s+registros\s+de\s+im[o0]veis$",
+    r"^do\s+brasil\s+em\s+um\s+s[o0]\s+lugar$",
+    # Bare verification URLs, which survive on their own when the sentence
+    # around them lands on a different line.
+    r"^https?://(assinador-web|[\w.-]*\.)?onr\.org\.br/\S*$",
+    r"^https?://selodigital\.tjsp\.jus\.br/?\S*$",
+    r"^www\.ridigital\.org\.br$",
+)
+
+
+def strip_provenance_stamps(text: str) -> str:
+    """Drop the registry provenance boilerplate, keep everything else.
+
+    Used to decide whether a page SAYS anything — not to rewrite what the
+    caller receives. `PdfPage.text` keeps the page verbatim, because a page
+    that is genuine content should be transcribed faithfully, stamp and all.
+
+    Returns the surviving lines joined by newlines; a page that was nothing
+    but boilerplate returns `""`.
+    """
+    if not text:
+        return ""
+
+    kept: list[str] = []
+    for line in text.splitlines():
+        limpo = line.strip()
+        if not limpo:
+            continue
+        # Accent-strip + case-fold for MATCHING only; `line` is what we keep.
+        chave = "".join(
+            c
+            for c in unicodedata.normalize("NFD", limpo.casefold())
+            if unicodedata.category(c) != "Mn"
+        )
+        if any(re.match(p, chave) for p in _PROVENANCE_STAMP_PATTERNS):
+            continue
+        kept.append(limpo)
+    return "\n".join(kept)
 
 
 @dataclass(frozen=True)
@@ -217,8 +319,22 @@ class PdfTextLayer:
         return tuple(p.number for p in self.pages if not p.is_substantive)
 
 
-def _classify_page(chars: int, image_coverage: float) -> tuple[bool, str]:
-    """Decide one page. Order matters — text-rich wins over coverage."""
+def _classify_page(text: str, image_coverage: float) -> tuple[bool, str]:
+    """Decide one page. Order matters.
+
+    Takes the page TEXT rather than a character count on purpose: every
+    threshold below must be compared against real characters, and a caller
+    that had to remember to strip the stamps first would eventually forget
+    — which is the whole history of this module.
+    """
+    conteudo = strip_provenance_stamps(text)
+    chars = len(conteudo)
+
+    # A page that carried text and has none left said nothing: it is a scan
+    # with a verification stamp printed on it. Decided FIRST because it is
+    # the only certain verdict here — the rest are thresholds.
+    if text.strip() and not conteudo:
+        return (False, "provenance stamp only")
     if chars >= TEXT_RICH_CHARS_PER_PAGE:
         return (True, "text-rich")
     if image_coverage >= SCAN_IMAGE_COVERAGE_RATIO:
@@ -300,7 +416,7 @@ def classify_pdf_text_layer(pdf_bytes: bytes) -> PdfTextLayer:
             except Exception:
                 logger.debug("PyMuPDF: get_text failed on page %d", index + 1, exc_info=True)
                 text = ""
-            substantive, reason = _classify_page(len(text), _page_image_coverage(page))
+            substantive, reason = _classify_page(text, _page_image_coverage(page))
             pages.append(
                 PdfPage(
                     number=index + 1,
@@ -323,7 +439,7 @@ def _classify_without_pymupdf(pdf_bytes: bytes) -> PdfTextLayer:
     limpo = (text or "").strip()
     if not limpo:
         return PdfTextLayer(pages=(), tooling_available=tooling)
-    substantive, reason = _classify_page(len(limpo), 0.0)
+    substantive, reason = _classify_page(limpo, 0.0)
     return PdfTextLayer(
         pages=(PdfPage(number=1, text=limpo, is_substantive=substantive, reason=reason),),
         tooling_available=tooling,
@@ -336,4 +452,5 @@ __all__ = [
     "classify_pdf_text_layer",
     "extract_pdf_text",
     "pdf_text_tooling_available",
+    "strip_provenance_stamps",
 ]

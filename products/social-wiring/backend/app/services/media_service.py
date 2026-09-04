@@ -413,7 +413,27 @@ class MediaService:
         extracted_text = ""
         try:
             if mimetype == "application/pdf":
-                extracted_text = _extract_pdf_text(doc_bytes)
+                # 🔴 STRIPPED, NOT RAW — the `< 200` threshold below has to
+                # count characters the document actually SAYS.
+                #
+                # A cartório scan's text layer is a verification stamp
+                # printed over the image, and it is long enough to clear
+                # that threshold on its own: a 3-page ONR certidão carries
+                # 137 chars/page (411 total) and a "Visualização de
+                # Matrícula" 83 (249 total). Both would skip rasterize and
+                # then be summarised — so the bot would answer with the
+                # document's own validation link as its contents while the
+                # scan was never read. Same defect as the matrícula
+                # extractor's, same file, different threshold.
+                #
+                # `strip_provenance_stamps` leaves genuine prose untouched,
+                # so a digitally-issued PDF still takes the free tier-1
+                # path exactly as before.
+                from noctusai_lib.integrations.media import strip_provenance_stamps
+
+                extracted_text = strip_provenance_stamps(
+                    _extract_pdf_text(doc_bytes)
+                )
         except Exception:
             logger.exception("document resolve: pdf text extraction failed")
 

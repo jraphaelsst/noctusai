@@ -41,6 +41,7 @@ from noctusai_lib.integrations.media.pdf_text import (
     classify_pdf_text_layer,
     extract_pdf_text,
     pdf_text_tooling_available,
+    strip_provenance_stamps,
 )
 from noctusai_lib.integrations.media.types import (
     InboundMedia,
@@ -101,4 +102,5 @@ __all__ = [
     "extract_pdf_text",
     "get_media_resolver",
     "pdf_text_tooling_available",
+    "strip_provenance_stamps",
 ]

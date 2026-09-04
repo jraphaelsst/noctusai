@@ -10,6 +10,7 @@ import pytest
 
 from noctusai_lib.integrations.media import (
     classify_pdf_text_layer,
+    strip_provenance_stamps,
     extract_pdf_text,
     pdf_text_tooling_available,
 )
@@ -92,11 +93,68 @@ def _pdf(pages: list[tuple[str, bool]]) -> bytes:
 
 #: The real stamp from the 2026-08-25 ERP defect — 137 characters that
 #: cleared every "does this PDF have a text layer?" check on the platform.
+#: Verbatim from `CERTIDÃO DE MATRÍCULA - EUROVILLE.pdf` and
+#: `MATRICULA CANTAGALO.pdf`, both ingested by this platform.
 ONR_STAMP = (
     "Valide este documento clicando no link a seguir: "
     "https://assinador-web.onr.org.br/docs/7JX9U-HLZEA-9LJWT-PM2QS\n"
     "Valide aqui\neste documento"
 )
+
+#: The OTHER ONR stamp — 83 characters, printed on a "Visualização de
+#: Matrícula" instead of a "Certidão". Verbatim from
+#: `Visualização de Matrícula - Quebec - Casa 78.pdf`.
+#:
+#: 🔴 THE TWO STAMPS ARE WHY THIS FILE HAS A REGRESSION TEST.
+#: 137 and 83 sit on opposite sides of `MIN_CHARS_PER_PAGE` (100), so the
+#: character floor accepted one document type and rejected the other — a
+#: certidão silently transcribed as its own validation link while a
+#: visualização went to vision and came back whole. The difference was
+#: never a property of the documents.
+ONR_VISUALIZACAO_STAMP = (
+    "SOLICITADO POR: GILSON JUNIOR - CPF/CNPJ: ***.751.658-** "
+    "DATA:  25/08/2026 10:23:01"
+)
+
+
+class TestStripProvenanceStamps:
+    """The stamps carry provenance, never content — so removing them can
+    never remove anything the document says."""
+
+    def test_both_real_onr_stamps_strip_to_nothing(self) -> None:
+        assert strip_provenance_stamps(ONR_STAMP) == ""
+        assert strip_provenance_stamps(ONR_VISUALIZACAO_STAMP) == ""
+
+    def test_the_stamps_straddle_the_char_floor(self) -> None:
+        """The measurement that explains the whole defect, pinned so it
+        cannot be re-derived wrongly: 137 > 100 >= 83."""
+        assert len(ONR_STAMP) == 137
+        assert len(ONR_VISUALIZACAO_STAMP) == 83
+
+    def test_real_prose_survives_untouched(self) -> None:
+        """A pattern that ate content would be far worse than the defect
+        it fixes — `find_matricula` reads whatever survives this pass."""
+        corpo = (
+            "CERTIFICO E DOU FÉ que esta certidão foi extraída em inteiro teor,\n"
+            "do imóvel da matrícula n.º 124.086, e que nos arquivos desta\n"
+            "Serventia não há registro de quaisquer ALIENAÇÕES."
+        )
+        assert strip_provenance_stamps(corpo) == corpo
+
+    def test_a_stamp_wrapped_into_content_only_loses_the_stamp(self) -> None:
+        misto = f"{ONR_STAMP}\nIMÓVEL: Terreno situado na Alameda Alemanha."
+        assert strip_provenance_stamps(misto) == (
+            "IMÓVEL: Terreno situado na Alameda Alemanha."
+        )
+
+    def test_accents_and_case_do_not_defeat_the_match(self) -> None:
+        """Extraction drops accents and re-cases text often enough that
+        matching on the literal would be a coin flip."""
+        assert strip_provenance_stamps("VALIDE ESTE DOCUMENTO CLICANDO NO LINK") == ""
+        assert strip_provenance_stamps("Solicitado por: FULANO - CPF: x") == ""
+
+    def test_empty_input_is_empty_output(self) -> None:
+        assert strip_provenance_stamps("") == ""
 
 
 class TestClassifyPdfTextLayer:
@@ -112,7 +170,7 @@ class TestClassifyPdfTextLayer:
         assert layer.is_substantive is False
         assert layer.scanned_page_numbers == (1, 2, 3)
         assert layer.text == "", "stamp text must never reach the caller"
-        assert all(p.reason == "rendered scan" for p in layer.pages)
+        assert all(p.reason == "provenance stamp only" for p in layer.pages)
 
         # ...while the raw helper happily hands it over — the contrast is
         # the entire point of the new entry point.
@@ -148,6 +206,60 @@ class TestClassifyPdfTextLayer:
         # between them does not.
         assert layer.text == f"{layer.pages[0].text}\n{layer.pages[2].text}"
         assert "assinador-web" not in layer.text
+
+    def test_a_visualizacao_stamp_is_not_a_text_layer(self) -> None:
+        """The 83-char sibling of `ONR_STAMP`. It already failed the char
+        floor by accident; now it fails for the right reason, which is what
+        makes the two document types behave the same."""
+        layer = classify_pdf_text_layer(
+            _pdf([(ONR_VISUALIZACAO_STAMP, True)] * 7)
+        )
+
+        assert layer.is_substantive is False
+        assert layer.scanned_page_numbers == (1, 2, 3, 4, 5, 6, 7)
+        assert layer.text == ""
+        assert all(p.reason == "provenance stamp only" for p in layer.pages)
+
+    def test_a_stamped_scan_that_covers_half_the_page_is_still_a_scan(self) -> None:
+        """\U0001f534 THE HOLE THE COVERAGE RULE LEFT OPEN.
+
+        `MATRICULA CANTAGALO.pdf` page 1 is one scanned image inset at
+        446x632pt on a 595x842pt page - 0.56 coverage, under the 0.80 floor
+        - carrying the 137-char `ONR_STAMP`. Under the coverage-plus-char-
+        floor rules it classified `above char floor`, and the page's entire
+        content was silently replaced by its own validation link while the
+        document reported success.
+        """
+        fitz = pytest.importorskip("fitz")
+
+        doc = fitz.open()
+        page = doc.new_page()  # 595x842 by default
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 280))
+        pix.set_rect(pix.irect, (128, 128, 128))
+        # Inset, NOT page-sized: this is what puts coverage under the floor.
+        page.insert_image(fitz.Rect(85, 21, 531, 653), pixmap=pix)
+        page.insert_textbox(
+            fitz.Rect(20, 700, 575, 820), ONR_STAMP, fontsize=6
+        )
+        pdf = doc.tobytes()
+        doc.close()
+
+        layer = classify_pdf_text_layer(pdf)
+
+        assert layer.pages[0].is_substantive is False
+        assert layer.pages[0].reason == "provenance stamp only"
+        assert layer.text == "", "the stamp must never stand in for the page"
+
+    def test_a_short_typeset_page_still_passes_the_char_floor(self) -> None:
+        """The floor is narrowed, not removed. A brief but genuine page -
+        under 800 chars, no scan under it - is still read for free rather
+        than sent to vision."""
+        corpo = "IMOVEL: Terreno na Alameda Alemanha, lote 14 quadra D. " * 4
+        assert 100 <= len(corpo) < 800
+        layer = classify_pdf_text_layer(_pdf([(corpo, False)]))
+
+        assert layer.is_substantive is True
+        assert layer.pages[0].reason == "above char floor"
 
     def test_a_blank_page_is_not_substantive(self) -> None:
         layer = classify_pdf_text_layer(_pdf([("ok", False)]))
