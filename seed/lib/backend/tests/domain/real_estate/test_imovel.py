@@ -29,6 +29,7 @@ from noctusai_lib.domain.real_estate.imovel import (
     parse_corretores,
     parse_area,
     parse_count,
+    parse_measure_int,
     parse_money,
     parse_sim_nao,
 )
@@ -425,3 +426,168 @@ def test_parse_sim_nao(raw, expected):
 def test_endereco_completo_composes_the_split_parts():
     imovel = Imovel(codigo="ONE1", logradouro="Fernando Nobre", numero="4000", complemento="389")
     assert imovel.endereco_completo == "Fernando Nobre, 4000, 389"
+
+
+# ─── The 32-field expansion (CONTRACT `imoveis-vista-field-surface` § 1) ──
+#
+# Every field below runs through one of four coercion classes: bool
+# ("Sim"→True / "Nao"→False / ""→None), money/measure ("0"→None), count
+# ("0"→0 preserved), text (""→None). The fixture values reproduce the
+# CONTRACT's cited literals (`Situacao`, `Ocupacao`, `Posicao`, `Chave`,
+# `Referencia`, `ExibirNoSite`, the `Zona` truncation, the
+# `InscricaoMunicipal` city-name noise) — see
+# `_provenance.field_expansion_2026_09_04` in the fixture file for exactly
+# which values are CONTRACT-literal vs. representative test data.
+
+
+def test_field_expansion_bool_sim_nao_empty(payloads):
+    """`Elevador`/`Portaria`/`Exclusivo` on the AP0617 fixture cover all
+    three bool wire states: "Sim", "Nao", and "" (unpopulated)."""
+    _, detalhes = next(iter(payloads["detalhes"].items()))
+    assert detalhes["Elevador"] == "Sim"
+    assert detalhes["Portaria"] == "Nao"
+    assert detalhes["Exclusivo"] == ""
+
+    imovel = vista_to_imovel(listing=payloads["detalhes_listar_row"], detalhes=detalhes)
+    assert imovel.elevador is True
+    assert imovel.portaria is False
+    assert imovel.exclusivo is None
+
+
+def test_field_expansion_money_zero_means_none(payloads):
+    """`ValorCondominio: "0"` → None, same "0" = not-applicable rule as
+    `valor_venda`/`valor_locacao` — never 0.0."""
+    _, detalhes = next(iter(payloads["detalhes"].items()))
+    assert detalhes["ValorCondominio"] == "0"
+    imovel = vista_to_imovel(listing=payloads["detalhes_listar_row"], detalhes=detalhes)
+    assert imovel.valor_condominio is None
+    # ValorIptu is the populated counterpart on the same row.
+    assert imovel.valor_iptu is not None and imovel.valor_iptu > 0
+
+
+def test_field_expansion_count_zero_survives(payloads):
+    """`Pavimentos`/`Closet`: "0" is a real value (a térreo genuinely has
+    0 pavimentos above the ground floor) and must NOT collapse to None —
+    same rule as `dormitorios`/`suites`/`vagas`."""
+    _, detalhes = next(iter(payloads["detalhes"].items()))
+    assert detalhes["Pavimentos"] == "0"
+    assert detalhes["Closet"] == "0"
+    imovel = vista_to_imovel(listing=payloads["detalhes_listar_row"], detalhes=detalhes)
+    assert imovel.pavimentos == 0
+    assert imovel.pavimentos is not None
+    assert imovel.closet == 0
+    assert imovel.closet is not None
+
+
+def test_field_expansion_text_empty_means_none(payloads):
+    """`Observacoes`/`Regiao`/`VideoDestaque`: "" → None, same rule as every
+    other text field on the wire."""
+    _, detalhes = next(iter(payloads["detalhes"].items()))
+    assert detalhes["Observacoes"] == ""
+    assert detalhes["Regiao"] == ""
+    assert detalhes["VideoDestaque"] == ""
+    imovel = vista_to_imovel(listing=payloads["detalhes_listar_row"], detalhes=detalhes)
+    assert imovel.observacoes is None
+    assert imovel.regiao is None
+    assert imovel.video_destaque is None
+    # DescricaoWeb is the populated counterpart on the same row.
+    assert imovel.descricao_web
+
+
+def test_field_expansion_measure_int_zero_means_none_not_year_zero():
+    """`AnoConstrucao` is INT-typed but follows the money/measure rule, NOT
+    the count rule — a construction year of 0 does not exist. This is the
+    one NEW coercion class this expansion introduces (`parse_measure_int`),
+    distinct from `parse_count` which would wrongly preserve the 0."""
+    assert parse_measure_int("0") is None
+    assert parse_measure_int("") is None
+    assert parse_measure_int(None) is None
+    assert parse_measure_int("1998") == 1998
+
+
+def test_field_expansion_referencia_matches_codigo(payloads):
+    """`Referencia` is 20/20 == `Codigo` on the measured sample."""
+    codigo, detalhes = next(iter(payloads["detalhes"].items()))
+    assert detalhes["Referencia"] == codigo
+    imovel = vista_to_imovel(listing=payloads["detalhes_listar_row"], detalhes=detalhes)
+    assert imovel.referencia == imovel.codigo
+
+
+def test_field_expansion_matricula_maps_to_matricula_vista_not_matricula(payloads):
+    """🔴 Vista's `Matricula` maps to `matricula_vista`, never `matricula`
+    — the product schema already owns a cartório-authored `matricula`
+    (migration 075). Two `matricula`s in one schema would collide."""
+    _, detalhes = next(iter(payloads["detalhes"].items()))
+    imovel = vista_to_imovel(listing=payloads["detalhes_listar_row"], detalhes=detalhes)
+    assert imovel.matricula_vista == detalhes["Matricula"]
+    assert not hasattr(imovel, "matricula")
+
+
+def test_field_expansion_zona_stores_the_truncated_value_verbatim(payloads):
+    """`Zona` is upstream-truncated to ~10 chars on this tenant — stored
+    as-is, not padded or "fixed"."""
+    _, detalhes = next(iter(payloads["detalhes"].items()))
+    imovel = vista_to_imovel(listing=payloads["detalhes_listar_row"], detalhes=detalhes)
+    assert imovel.zona == detalhes["Zona"]
+    assert len(imovel.zona) <= 12
+
+
+def test_field_expansion_inscricao_municipal_stores_city_noise_verbatim(payloads):
+    """`InscricaoMunicipal` holds a CITY name on this tenant's one
+    populated row — tenant data-entry noise, stored verbatim rather than
+    dropped or reinterpreted."""
+    _, detalhes = next(iter(payloads["detalhes"].items()))
+    imovel = vista_to_imovel(listing=payloads["detalhes_listar_row"], detalhes=detalhes)
+    assert imovel.inscricao_municipal == detalhes["InscricaoMunicipal"]
+
+
+def test_field_expansion_full_payload_round_trip(payloads):
+    """Every one of the 32 new fields must survive `vista_to_imovel`
+    without raising, with the coercion rule from CONTRACT §1 applied."""
+    listing = payloads["detalhes_listar_row"]
+    codigo, detalhes = next(iter(payloads["detalhes"].items()))
+    imovel = vista_to_imovel(listing=listing, detalhes=detalhes)
+
+    assert imovel.descricao_web == detalhes["DescricaoWeb"]
+    assert imovel.observacoes is None
+    assert imovel.valor_condominio is None
+    assert imovel.valor_iptu == 890.0
+    assert imovel.ano_construcao is None
+    assert imovel.situacao == "Usado"
+    assert imovel.ocupacao == "Proprietário"
+    assert imovel.pavimentos == 0
+    assert imovel.posicao == "Frente"
+    assert imovel.elevador is True
+    assert imovel.portaria is False
+    assert imovel.exclusivo is None
+    assert imovel.aceita_permuta is True
+    assert imovel.aceita_financiamento is False
+    assert imovel.destaque_web is True
+    assert imovel.super_destaque_web is False
+    assert imovel.exibir_no_site is True
+    assert imovel.chave == "Corretor(a)"
+    assert imovel.zona == "Zona Oest"
+    assert imovel.regiao is None
+    assert imovel.area_terreno is None
+    assert imovel.lavabo is False
+    assert imovel.closet == 0
+    assert imovel.copa is True
+    assert imovel.escritorio is False
+    assert imovel.frente is None
+    assert imovel.fundos is None
+    assert imovel.referencia == codigo
+    assert imovel.matricula_vista == "12345-6"
+    assert imovel.inscricao_municipal == "São Paulo"
+    assert imovel.video_destaque is None
+    assert imovel.tour_360 == "https://vistahost.example.com/tour360/ap0617"
+
+
+def test_field_expansion_fotos_stays_empty_and_foto_destaque_is_the_only_photo(payloads):
+    """CONTRACT § 2 — every photo-array candidate is rejected by this
+    tenant, so `fotos` must remain empty even on a fully-merged imóvel;
+    `foto_destaque` is the sole photo signal."""
+    listing = payloads["detalhes_listar_row"]
+    codigo, detalhes = next(iter(payloads["detalhes"].items()))
+    imovel = vista_to_imovel(listing=listing, detalhes=detalhes)
+    assert imovel.fotos == []
+    assert imovel.foto_destaque

@@ -94,6 +94,28 @@ CANDIDATE_IMOVEL_DETAIL_FIELDS: list[Any] = [
     "Caracteristicas",
     "Empreendimento", "Construtora",
     {"Corretor": ["Nome", "Email", "Fone"]},
+    # ── the 32-field expansion (CONTRACT `imoveis-vista-field-surface`,
+    # `KB § INTEGRATIONS/vista.md`) ───────────────────────────────────────
+    # Measured live 2026-09-04 against tenant `oneconsu-rest`: 107
+    # candidate field names probed on `/imoveis/detalhes` (Vista answers
+    # `400 "Campo X não está disponível"` for every one it rejects), 32
+    # accepted and re-probed across 20 imóveis spanning all 20 categorias.
+    # Additive by construction — the calibrator drops any of these a given
+    # tenant rejects, so listing them here can never break a stricter
+    # tenant. Photo-array candidates (`Fotos`/`Foto`/`Imagens`/`Galeria`/
+    # `FotoGrande`/`FotoMedia`/`FotoPequena`/`Planta`) were probed too and
+    # ALL rejected by this tenant — see `imovel_normalizer.py::_photo_list`
+    # for the full finding; they are deliberately NOT added here.
+    "DescricaoWeb", "Observacoes",
+    "ValorCondominio", "ValorIptu",
+    "AnoConstrucao", "Situacao", "Ocupacao", "Pavimentos", "Posicao",
+    "Elevador", "Portaria", "Exclusivo", "AceitaPermuta", "AceitaFinanciamento",
+    "DestaqueWeb", "SuperDestaqueWeb", "ExibirNoSite",
+    "Chave", "Zona", "Regiao",
+    "AreaTerreno", "Lavabo", "Closet", "Copa", "Escritorio",
+    "Frente", "Fundos",
+    "Referencia", "Matricula", "InscricaoMunicipal",
+    "VideoDestaque", "Tour360",
 ]
 
 CANDIDATE_USUARIO_FIELDS: list[str] = [
