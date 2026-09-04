@@ -29,9 +29,29 @@ from tools.noctus.dev.check_framework_deps import (
 )
 
 
-def _write_pkg(root: Path, slug: str, deps: dict, dev_deps: dict | None = None) -> None:
+def _write_pkg(
+    root: Path,
+    slug: str,
+    deps: dict,
+    dev_deps: dict | None = None,
+    *,
+    consumes_framework: bool = True,
+) -> None:
+    """Write one product frontend package.json.
+
+    🔴 `@noctusai/seed` IS ADDED BY DEFAULT, and that is not a convenience.
+    The audit only applies to frontends that build against the seed framework
+    (see `_consumes_framework`), so a fixture without it is not "a product
+    missing its deps" — it is a product the gate does not cover, and every
+    drift assertion below would pass vacuously. Every test here that asserts
+    drift is, by construction, about a CONSUMER; making that explicit is the
+    point. Pass `consumes_framework=False` for the non-consumer case.
+    """
     pdir = root / "products" / slug / "frontend"
     pdir.mkdir(parents=True)
+    deps = dict(deps)
+    if consumes_framework:
+        deps.setdefault("@noctusai/seed", "*")
     payload = {"name": slug, "dependencies": deps}
     if dev_deps is not None:
         payload["devDependencies"] = dev_deps
@@ -295,3 +315,85 @@ class TestMcpRegistration:
         s = FastMCP(name="t")
         register(s)
         assert "noctus.dev.check_framework_deps" in s._tool_manager._tools
+
+
+class TestNonConsumersAreOutOfScope:
+    """A product frontend that does not build against the seed framework.
+
+    🔴 THE INCIDENT THIS ENCODES (2026-09-04).
+    `permutas` was absorbed as a create-react-app + Redux + styled-components
+    platform importing neither `@noctusai/seed` nor `@noctusai/lib`. The audit
+    reported 12 "missing" FRAMEWORK_DEPS for it — and because this check runs
+    inside EVERY product's CI job, one absorbed product turned the entire
+    matrix red, `core` included, whose own test suite had passed 619/9-skip.
+    Bless refuses on red CI, so four unrelated and fully-green feature slices
+    could not reach main or prod.
+
+    The tempting "fix" was to add the 12 deps. That would have bloated a CRA
+    bundle with libraries it never imports so that a gate would assert
+    something false — working around the gate rather than correcting its
+    scope. FRAMEWORK_DEPS exists because `vite.config.factory.ts` forces those
+    packages; a frontend that never runs that factory cannot be missing them.
+
+    The scope is DERIVED from `@noctusai/seed` being declared, never from a
+    slug list: a hand-listed exemption is the drift shape
+    `check_hardcoded_product_slug_set` exists to catch, and it would go stale
+    the moment permutas is migrated. This predicate flips on its own, because
+    the migration IS the act of adding that dependency.
+    """
+
+    def test_a_non_consumer_is_skipped_not_flagged(self, tmp_path):
+        _write_pkg(tmp_path, "erp-imobiliario", _full_deps())
+        _write_pkg(tmp_path, "permutas", {"react": "18.0.0", "redux": "5.0.0"},
+                   consumes_framework=False)
+        result = check_framework_deps(repo_root=tmp_path)
+        assert result["status"] == "clean"
+        assert result["exit_code"] == 0
+        assert result["drift"] == {}
+        assert result["total_missing"] == 0
+
+    def test_the_skip_is_reported_never_silent(self, tmp_path):
+        """A product leaving a gate's scope without saying so is the
+        silent-error shape this codebase forbids — "why is permutas not
+        audited?" must be answerable from the output alone."""
+        _write_pkg(tmp_path, "erp-imobiliario", _full_deps())
+        _write_pkg(tmp_path, "permutas", {"react": "18.0.0"},
+                   consumes_framework=False)
+        result = check_framework_deps(repo_root=tmp_path)
+        assert result["skipped_non_consumers"] == ["permutas"]
+        assert result["products_audited"] == 1
+
+    def test_a_consumer_missing_deps_is_still_caught(self, tmp_path):
+        """🔴 The scoping must not become a hole. A product that DOES declare
+        `@noctusai/seed` is audited exactly as before."""
+        _write_pkg(tmp_path, "erp-imobiliario", _full_deps())
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS[:-2]}
+        _write_pkg(tmp_path, "social-wiring", partial)
+        result = check_framework_deps(repo_root=tmp_path)
+        assert result["status"] == "drift"
+        assert result["exit_code"] == 1
+        assert "social-wiring" in result["drift"]
+        assert result["skipped_non_consumers"] == []
+
+    def test_declaring_the_framework_in_devDependencies_also_counts(self, tmp_path):
+        """Consumership is about building against it, and a build-time-only
+        dependency is a real way to spell that."""
+        _write_pkg(tmp_path, "erp-imobiliario", _full_deps())
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS[:-1]}
+        _write_pkg(tmp_path, "a-prod", partial, {"@noctusai/seed": "*"},
+                   consumes_framework=False)
+        result = check_framework_deps(repo_root=tmp_path)
+        assert result["skipped_non_consumers"] == []
+        assert "a-prod" in result["drift"]
+
+    def test_fix_never_touches_a_non_consumer(self, tmp_path):
+        """--fix borrows deps from the donor. It must not write them into a
+        product the audit deliberately does not cover."""
+        _write_pkg(tmp_path, "erp-imobiliario", _full_deps())
+        _write_pkg(tmp_path, "permutas", {"react": "18.0.0"},
+                   consumes_framework=False)
+        check_framework_deps(repo_root=tmp_path, fix=True)
+        pkg = json.loads(
+            (tmp_path / "products" / "permutas" / "frontend" / "package.json").read_text()
+        )
+        assert pkg["dependencies"] == {"react": "18.0.0"}

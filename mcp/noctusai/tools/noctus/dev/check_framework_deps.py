@@ -173,8 +173,47 @@ def _required_deps(root: Path) -> tuple[list[str], list[str]]:
     return list(FRAMEWORK_DEPS) + extras, organ_transitive
 
 
-def _audit(root: Path) -> tuple[dict[str, list[str]], int, int]:
-    """Return ({slug: [missing_deps]}, total_missing, product_count).
+#: The dependency whose PRESENCE makes a product frontend a framework
+#: consumer. Deriving the audit's scope from this — rather than from a
+#: hand-listed set of slugs — is deliberate: a slug list is exactly the
+#: hand-maintained list this codebase gates against elsewhere
+#: (`check_hardcoded_product_slug_set`), and it would go stale the first time
+#: a product was absorbed or migrated.
+_FRAMEWORK_PACKAGE = "@noctusai/seed"
+
+
+def _consumes_framework(pkg: dict) -> bool:
+    """Does this product's frontend build against the seed framework?
+
+    🔴 WHY THE AUDIT IS SCOPED AT ALL.
+    ``FRAMEWORK_DEPS`` exists because ``vite.config.factory.ts`` forces those
+    packages into the bundle — see this module's header. A frontend that never
+    depends on ``@noctusai/seed`` never runs that factory, so none of those
+    packages are forced, and none of them are missing. Auditing it asserts a
+    requirement that does not apply to it.
+
+    This is not hypothetical. ``permutas`` was absorbed on 2026-09-04 as a
+    create-react-app + Redux + styled-components platform importing neither
+    ``@noctusai/seed`` nor ``@noctusai/lib``; the audit reported 12 "missing"
+    deps for it, and because this check runs inside every product's CI job it
+    turned the whole matrix red — including ``core``, whose own tests passed.
+    "Fixing" it by adding the 12 would have bloated a CRA bundle with
+    libraries it never imports, to make a gate assert something false.
+
+    A divergent-architecture absorption is therefore OUT of scope until its
+    frontend is actually migrated onto the framework — and the day it is, this
+    predicate flips on its own, because the migration is precisely the act of
+    adding ``@noctusai/seed`` to its dependencies. There is nothing to
+    remember to update.
+    """
+    return _FRAMEWORK_PACKAGE in {
+        **pkg.get("dependencies", {}),
+        **pkg.get("devDependencies", {}),
+    }
+
+
+def _audit(root: Path) -> tuple[dict[str, list[str]], int, int, list[str]]:
+    """Return ({slug: [missing_deps]}, total_missing, audited_count, skipped).
 
     Same shape as the original ``audit()``: iterate sorted
     ``products/*/frontend/package.json``, union ``dependencies`` +
@@ -182,14 +221,26 @@ def _audit(root: Path) -> tuple[dict[str, list[str]], int, int]:
     set is ``FRAMEWORK_DEPS`` UNIONED with the derived seed-organ
     transitive deps (``_required_deps``) — a superset, so existing
     FRAMEWORK_DEPS-only callers see a strict widening, never a narrowing.
+
+    Non-consumers are SKIPPED and RETURNED, never silently dropped: a product
+    vanishing from a gate's scope without saying so is the silent-error shape
+    this codebase forbids. The caller surfaces them as
+    ``skipped_non_consumers`` so "why is permutas not audited?" is answerable
+    from the output alone.
     """
     required, _organ_transitive = _required_deps(root)
     drift: dict[str, list[str]] = {}
     total = 0
+    audited = 0
+    skipped: list[str] = []
     pkg_paths = sorted(root.glob("products/*/frontend/package.json"))
     for pkg_path in pkg_paths:
         slug = pkg_path.parent.parent.name
         pkg = json.loads(pkg_path.read_text())
+        if not _consumes_framework(pkg):
+            skipped.append(slug)
+            continue
+        audited += 1
         all_deps = {
             **pkg.get("dependencies", {}),
             **pkg.get("devDependencies", {}),
@@ -198,7 +249,7 @@ def _audit(root: Path) -> tuple[dict[str, list[str]], int, int]:
         if missing:
             drift[slug] = missing
             total += len(missing)
-    return drift, total, len(pkg_paths)
+    return drift, total, audited, sorted(skipped)
 
 
 def _fix(root: Path, drift: dict[str, list[str]]) -> int:
@@ -280,14 +331,24 @@ def check_framework_deps(
     else:
         root = REPO_ROOT
 
-    drift, total, count = _audit(root)
+    drift, total, count, skipped_non_consumers = _audit(root)
     organ_transitive_deps = _derive_organ_transitive_deps(root)
     manual_only_scope = ["seed/framework/frontend/src (@noctusai/seed)"]
 
+    if skipped_non_consumers:
+        # Surfaced at INFO on every run, clean or not: a product silently
+        # leaving a gate's scope is how a real gap hides behind a green tick.
+        logger.info(
+            "check_framework_deps: %d product frontend(s) do not depend on %s "
+            "and are OUT of scope (not framework consumers): %s",
+            len(skipped_non_consumers), _FRAMEWORK_PACKAGE,
+            ", ".join(skipped_non_consumers),
+        )
+
     if not drift:
         logger.info(
-            "check_framework_deps: all %d products list every FRAMEWORK_DEP "
-            "+ derived organ-transitive dep",
+            "check_framework_deps: all %d audited product(s) list every "
+            "FRAMEWORK_DEP + derived organ-transitive dep",
             count,
         )
         return {
@@ -299,6 +360,7 @@ def check_framework_deps(
             "exit_code": 0,
             "organ_transitive_deps": organ_transitive_deps,
             "manual_only_scope": manual_only_scope,
+            "skipped_non_consumers": skipped_non_consumers,
         }
 
     fixed = 0
@@ -317,6 +379,7 @@ def check_framework_deps(
             "exit_code": 0,
             "organ_transitive_deps": organ_transitive_deps,
             "manual_only_scope": manual_only_scope,
+            "skipped_non_consumers": skipped_non_consumers,
         }
 
     logger.warning(
@@ -333,6 +396,7 @@ def check_framework_deps(
         "exit_code": 1,
         "organ_transitive_deps": organ_transitive_deps,
         "manual_only_scope": manual_only_scope,
+        "skipped_non_consumers": skipped_non_consumers,
     }
 
 
