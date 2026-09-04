@@ -253,19 +253,15 @@ def _imovel_to_row(imovel: Imovel, org_id: UUID, synced_at: str) -> dict:
         "vista_raw": imovel.vista_raw,
         "sincronizado_em": synced_at,
         # ── the 29 fields from CONTRACT §1 (imoveis-vista-field-surface) ──
-        # `getattr(..., None)` rather than direct attribute access,
-        # DELIBERATELY: this module's `Imovel` import resolves against
-        # whatever `noctusai_lib.domain.real_estate` this worktree/venv has
-        # installed. A sibling engineer's branch adds these attributes to
-        # `Imovel` itself (this slice owns storage+API only, not the seed
-        # dataclass — see the dispatch brief). Until the two branches merge,
-        # this worktree's copy of `Imovel` does not carry them, and a direct
-        # `imovel.descricao_web` would raise `AttributeError` on every row
-        # write — not just new-field writes, the whole sync. `getattr` with
-        # a `None` default degrades gracefully pre-merge (columns land NULL,
-        # same as any other Vista field this tenant doesn't populate) and
-        # picks up real values automatically post-merge, with no further
-        # code change here. Column order mirrors CONTRACT §1's table.
+        # Direct attribute access, NOT `getattr(..., None)`. The dispatch
+        # that wrote this slice used a `getattr` bridge because the seed
+        # `Imovel` dataclass was still landing on a sibling branch; both are
+        # merged now, so the bridge is gone. It had to go: a `None` default
+        # turns a typo'd or removed field name into a silently-NULL column,
+        # which reads downstream as "Vista does not populate this" — exactly
+        # the silent-error shape the amenity/photo investigation had to
+        # untangle by hand. Direct access fails loudly at the first row
+        # instead. Column order mirrors CONTRACT §1's table.
         #
         # 🔴 CORRECTION 2026-09-04: `lavabo`/`copa`/`escritorio` are
         # DELIBERATELY absent — Vista shadows all three (returns `null` at
@@ -274,35 +270,35 @@ def _imovel_to_row(imovel: Imovel, org_id: UUID, synced_at: str) -> dict:
         # already present in `caracteristicas`/`caracteristicas_raw` — a
         # column here would just be permanently NULL. `elevador`/`portaria`
         # were checked against the same collision and are NOT shadowed.
-        "descricao_web": getattr(imovel, "descricao_web", None),
-        "observacoes": getattr(imovel, "observacoes", None),
-        "valor_condominio": getattr(imovel, "valor_condominio", None),
-        "valor_iptu": getattr(imovel, "valor_iptu", None),
-        "ano_construcao": getattr(imovel, "ano_construcao", None),
-        "situacao": getattr(imovel, "situacao", None),
-        "ocupacao": getattr(imovel, "ocupacao", None),
-        "pavimentos": getattr(imovel, "pavimentos", None),
-        "posicao": getattr(imovel, "posicao", None),
-        "elevador": getattr(imovel, "elevador", None),
-        "portaria": getattr(imovel, "portaria", None),
-        "exclusivo": getattr(imovel, "exclusivo", None),
-        "aceita_permuta": getattr(imovel, "aceita_permuta", None),
-        "aceita_financiamento": getattr(imovel, "aceita_financiamento", None),
-        "destaque_web": getattr(imovel, "destaque_web", None),
-        "super_destaque_web": getattr(imovel, "super_destaque_web", None),
-        "exibir_no_site": getattr(imovel, "exibir_no_site", None),
-        "chave": getattr(imovel, "chave", None),
-        "zona": getattr(imovel, "zona", None),
-        "regiao": getattr(imovel, "regiao", None),
-        "area_terreno": getattr(imovel, "area_terreno", None),
-        "closet": getattr(imovel, "closet", None),
-        "frente": getattr(imovel, "frente", None),
-        "fundos": getattr(imovel, "fundos", None),
-        "referencia": getattr(imovel, "referencia", None),
-        "matricula_vista": getattr(imovel, "matricula_vista", None),
-        "inscricao_municipal": getattr(imovel, "inscricao_municipal", None),
-        "video_destaque": getattr(imovel, "video_destaque", None),
-        "tour_360": getattr(imovel, "tour_360", None),
+        "descricao_web": imovel.descricao_web,
+        "observacoes": imovel.observacoes,
+        "valor_condominio": imovel.valor_condominio,
+        "valor_iptu": imovel.valor_iptu,
+        "ano_construcao": imovel.ano_construcao,
+        "situacao": imovel.situacao,
+        "ocupacao": imovel.ocupacao,
+        "pavimentos": imovel.pavimentos,
+        "posicao": imovel.posicao,
+        "elevador": imovel.elevador,
+        "portaria": imovel.portaria,
+        "exclusivo": imovel.exclusivo,
+        "aceita_permuta": imovel.aceita_permuta,
+        "aceita_financiamento": imovel.aceita_financiamento,
+        "destaque_web": imovel.destaque_web,
+        "super_destaque_web": imovel.super_destaque_web,
+        "exibir_no_site": imovel.exibir_no_site,
+        "chave": imovel.chave,
+        "zona": imovel.zona,
+        "regiao": imovel.regiao,
+        "area_terreno": imovel.area_terreno,
+        "closet": imovel.closet,
+        "frente": imovel.frente,
+        "fundos": imovel.fundos,
+        "referencia": imovel.referencia,
+        "matricula_vista": imovel.matricula_vista,
+        "inscricao_municipal": imovel.inscricao_municipal,
+        "video_destaque": imovel.video_destaque,
+        "tour_360": imovel.tour_360,
     }
 
 
