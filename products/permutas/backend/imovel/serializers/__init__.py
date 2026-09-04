@@ -1,0 +1,3 @@
+from .imovel_serializer import ImovelSerializer, ImovelListSerializer
+from .interesse_imovel_serializer import InteresseImovelSerializer
+from .interesse_automovel_serializer import InteresseAutomovelSerializer

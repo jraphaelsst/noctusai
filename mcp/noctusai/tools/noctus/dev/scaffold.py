@@ -456,6 +456,15 @@ RESERVED_RANGES: list[tuple[int, str]] = [
     (8150, "knowledge-extractor"),  # KE frontend (native-dev only; house = 8012)
     (8160, "social-wiring"),       # Social Wiring frontend
     (8170, "igig"),                # IgIg frontend
+    # Backfilled 2026-09-04 (permutas absorption): p-studio shipped
+    # 8014/8180 into the LANDSCAPE roster without registering them here,
+    # so the table under-reported live allocations — the exact failure the
+    # 2026-08-09 igig backfill above documents. Re-issuing 8014 to a future
+    # scaffold would have collided with a running product.
+    (8014, "p-studio"),
+    (8180, "p-studio"),            # P Studio frontend
+    (8015, "permutas"),
+    (8190, "permutas"),            # Permutas frontend
 ]
 
 

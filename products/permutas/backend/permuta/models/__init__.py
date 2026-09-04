@@ -1,0 +1,5 @@
+from .permuta_imovel_model import PermutaImovel
+from .permuta_automovel_model import PermutaAutomovel
+from .match_model import Match
+from .interesse_permuta_imovel_model import InteressePermutaImovel
+from .interesse_permuta_automovel_model import InteressePermutaAutomovel

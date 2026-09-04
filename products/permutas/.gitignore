@@ -1,0 +1,11 @@
+# The upstream repo committed all of these; they must never enter noc.
+# db.sqlite3 in particular held real proprietario PII (LGPD) and was public.
+db.sqlite3
+venv/
+staticfiles/
+frontend_build/
+build/
+node_modules/
+__pycache__/
+*.pyc
+.env

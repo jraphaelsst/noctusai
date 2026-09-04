@@ -1,0 +1,5 @@
+from .permuta_imovel_viewset import PermutaImovelViewSet
+from .permuta_automovel_viewset import PermutaAutomovelViewSet
+from .match_viewset import MatchViewSet
+from .interesse_permuta_imovel_viewset import InteressePermutaImovelViewSet
+from .interesse_permuta_automovel_viewset import InteressePermutaAutomovelViewSet

@@ -1,0 +1,3 @@
+from .imovel_viewset import ImovelViewSet
+from .interesse_imovel_viewset import InteresseImovelViewSet
+from .interesse_automovel_viewset import InteresseAutomovelViewSet
