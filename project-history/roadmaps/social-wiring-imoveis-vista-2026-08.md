@@ -572,3 +572,164 @@ on the strength of green tests and correct SQL would be exactly the
 
 To finish: deploy social-wiring, load `/imoveis`, confirm real rows and a
 visible nav link, then flip.
+
+---
+
+# 🔴 HANDOFF 2026-09-04 — code is MERGED, migration is APPLIED, DEPLOY IS NOT DONE
+
+> **Read this whole block before touching anything.** The user stopped deliberately
+> at the deploy gate ("abort mission… leave things for next agent to deploy"). Nothing
+> is broken. But production is in a **deliberate half-state** and the next step is not
+> the obvious one.
+
+## The one thing that will surprise you
+
+**Migration 093 is ALREADY APPLIED to the production database. The code that fills
+those columns is NOT deployed.**
+
+```
+prod DB   social_wiring.imoveis  →  29 new columns, all NULL      (applied 2026-09-04)
+prod CODE                        →  4444932, predates every one of them
+```
+
+This is safe and was the correct order — additive `ADD COLUMN` cannot disturb the
+running image, and the columns had to exist before code that writes them ships. Do
+**not** "fix" it by rolling the migration back. Verified after applying: 2057 rows
+intact, no data touched, `descricao_web` populated on 0 rows (expected — nothing has
+re-synced yet).
+
+## What is done
+
+| Layer | State |
+|---|---|
+| Seed Vista adapter (29 fields, coercions, calibration) | merged to `dev` |
+| Product backend (migration 093, service mapping, derived fields) | merged to `dev` |
+| Frontend (13 sections, amenity labels, icon-buttons) | merged to `dev` |
+| Migration 093 | **APPLIED to prod DB** |
+| `main` / `prod` | **untouched at `4444932`** |
+| VPS containers | **untouched** |
+
+`origin/dev` tip at handoff: **`edbab1b7`**.
+
+Gates, run on the MERGED tip (not per-branch):
+
+```
+social-wiring backend      488 passed, 5 skipped
+seed vista + domain        142 passed
+frontend vitest           1140 passed / 95 files
+tsc --noEmit              clean
+vite build                clean
+predeploy_check           ready (7/7)
+prod-exposure-consent     clean
+CI on edbab1b7            NOT confirmed — see below
+```
+
+## To finish the deploy
+
+1. **`noctus.dev.release stage=status`** — confirm CI is green on the dev tip. CI was
+   still queued when work stopped and the watcher was cancelled, so **CI green is
+   unverified**. `stage=bless` refuses on anything but green, so it will tell you.
+2. **Get the user's explicit go for `bless`.** 🔴 Their earlier "yes please run both"
+   is SPENT — it was consumed by the migration, and they then aborted the deploy. It
+   is not standing authorization. Ask again.
+3. **Tell them what rides along** (see next section) before they answer.
+4. `stage=bless` → `stage=promote` → `noctus.dev.deploy_image social-wiring`.
+5. `noctus.dev.deploy_verify` + `noctus.vps.health` + `noctus.dev.spa_smoke`.
+6. **Then trigger a full Vista pull** — `POST /api/imoveis/sync?with_detalhes=true`,
+   or the "Sincronizar" button. **Until this runs, every new field renders empty and
+   the feature looks broken.** ~7 min for 2057 imóveis at concurrency 6. A green
+   health check is NOT evidence this feature works; a populated `descricao_web` is.
+
+### Post-sync acceptance query
+
+```sql
+SELECT count(*) FILTER (WHERE descricao_web IS NOT NULL)     AS com_descricao,
+       count(*) FILTER (WHERE valor_condominio IS NOT NULL)  AS com_condominio,
+       count(*) FILTER (WHERE tour_360 IS NOT NULL)          AS com_tour,
+       count(*)                                              AS total
+FROM social_wiring.imoveis;
+```
+Expect `com_descricao` ≈ total (20/20 sampled imóveis had it), `com_tour` ≈ 15% of
+total. `com_descricao = 0` after a completed sync means the calibrator did not pick
+up the widened field set — check `CANDIDATE_IMOVEL_DETAIL_FIELDS`.
+
+## 🔴 The bless carries someone else's work
+
+`origin/dev` is **14 commits** ahead of `main`, and two of them are not this feature:
+
+- `f9e93df5 fix(pdf): a provenance stamp is never a text layer, at any character count`
+- `942e60ea Merge origin/dev into fix/pdf-provenance-stamp-classification`
+
+A parallel session pushed `fix/pdf-provenance-stamp-classification` into `origin/dev`
+mid-flight and its merge is now dev's tip. Same product, real work, well documented —
+but it is NOT what this session built and the user was told about it and has NOT
+approved it. `main` tracks whole-repo state, so imóveis cannot be promoted without
+it. **Surface this explicitly before bless.** The worktree `.claude/worktrees/pdf-provenance-stamp`
+still exists; that session may not be finished.
+
+## Loose ends this session did NOT do (deliberately, not forgotten)
+
+1. **`@noctusai` symlinks in the PRIMARY checkout are still broken.** A subagent
+   deleted `products/social-wiring/frontend/node_modules/@noctusai/{lib,seed}` through
+   a stray symlink. Only social-wiring is affected (erp/core/orbity/igig verified
+   intact); nothing tracked was touched; worktrees and CI are unaffected. The
+   self-branching write guard blocks an agent from repairing it, and rephrasing the
+   command to get past the guard is a catalogued bypass shape — so it needs the user:
+   ```
+   cd products/social-wiring/frontend/node_modules/@noctusai \
+     && ln -sfn ../../../../../seed/lib/frontend lib \
+     && ln -sfn ../../../../../seed/framework/frontend seed
+   ```
+2. **`.claude/dispatches/` (untracked, 2 files)** — resolved-but-unfiled surface
+   reports from 2026-09-02. Their lesson IS absorbed (see
+   `KB § PATTERNS/backend/upload-route-body-override-derivation.md`, new final
+   section). The files are safe to delete; left in place rather than deleting the
+   user's files unasked.
+3. **No edit mechanism, by explicit user decision.** The `Pencil` icon-buttons are
+   placeholders that fire a toast. See "Why there is no CRUD" below.
+
+## Why there is no CRUD (do not "finish" it)
+
+The user originally asked for full imóveis CRUD. It was cut on evidence, not scope fear:
+
+- **Vista rejects writes on this key.** Probed non-destructively 2026-09-04:
+  `/imoveis/alterar`, `/imoveis/cadastrar`, `/imoveis/excluir` → `404 "No route found"`.
+- Edits therefore could not reach Vista, and the 00:05 sync upserts the mirror nightly,
+  so local edits would vanish within 24h.
+- User's decision, verbatim: *"skip the editing part. add the icon as if we could edit,
+  but dont create the editing mechanism yet… only when we leave Vista and use only our
+  own system."*
+
+The buttons render normally and fire
+`toast.info("Edição via plataforma ainda não disponível — o Vista não expõe rota de escrita…")`.
+A button that silently does nothing is a silent no-op; the toast is what makes the
+placeholder honest. **Do not wire a mutation to them** until the platform leaves Vista.
+
+## Two live Vista quirks worth not rediscovering
+
+1. **No photo gallery is obtainable on this tenant.** Every photo-array field name
+   (`Fotos`/`Foto`/`Imagens`/`Galeria`/`FotoGrande`/`FotoMedia`/`FotoPequena`/`Planta`)
+   is rejected with `400 "Campo X não está disponível"`, and `/imoveis/fotos` is
+   write-only (405 on GET). Only `FotoDestaque` — one URL — exists. `imovel_normalizer`
+   read `payload.get("Fotos")`, a key Vista never sends, which is why `fotos` has been
+   empty on all 2057 rows since August. The empty array is now documented in code, not
+   faked. A gallery needs either a Vista support grant or our own uploads.
+2. **`Lavabo`/`Copa`/`Escritorio` are shadowed.** They are also `Caracteristicas` keys,
+   and Vista returns `null` for them at top level whenever `Caracteristicas` is in the
+   same `fields` request — which our sync always does:
+   ```
+   fields=[Codigo,Escritorio,Lavabo,Copa]                 -> "Sim" / "Sim" / "Nao"
+   fields=[Codigo,Escritorio,Lavabo,Copa,Caracteristicas] -> null  / null  / null
+   ```
+   They were dropped (32 → 29 fields) and are sourced from the amenity list instead.
+   Negative tests pin this. `Elevador`/`Portaria` were checked and are NOT shadowed.
+
+## The design record
+
+`projects/imoveis-vista-field-surface-CONTRACT.md` (committed) carries the full
+measured field table, coercion rules, and both corrections. Read it before changing
+any imóveis field mapping.
+
+> Provenance: session `dfd5f93c`, 2026-09-04. Field set measured live against tenant
+> `oneconsu-rest` — 107 candidate names probed, accepted set re-probed across 20
+> imóveis spanning all 20 categorias. Nothing in the contract is guessed.
