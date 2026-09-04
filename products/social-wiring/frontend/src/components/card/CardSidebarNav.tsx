@@ -48,6 +48,7 @@ import {
   Landmark,
   Megaphone,
   Route,
+  Store,
   User,
 } from "lucide-react";
 
@@ -57,6 +58,7 @@ import { cn } from "@/lib/utils";
 export type CardSubpageKey =
   | "geral"
   | "cliente"
+  | "vendedor"
   | "agendamentos"
   | "roteiros"
   | "financiamento"
@@ -94,6 +96,11 @@ export const RAIL_LARGURA_FECHADA = "3.25rem";
 export const CARD_SUBPAGES: readonly SubpageDef[] = [
   { key: "geral", label: "Geral", icon: ClipboardList },
   { key: "cliente", label: "Dados do cliente", icon: User },
+  // Migration 098. Sits DIRECTLY under "Dados do cliente" because it is the
+  // same job for the other side of the table — who the counterparty is —
+  // rather than a step in the funnel. Reading the rail top-to-bottom now gives
+  // both parties to the deal before anything about the deal itself.
+  { key: "vendedor", label: "Vendedor", icon: Store },
   { key: "agendamentos", label: "Agendamentos", icon: CalendarClock },
   { key: "roteiros", label: "Roteiros", icon: Route },
   { key: "financiamento", label: "Financiamento/Escritura", icon: Landmark },

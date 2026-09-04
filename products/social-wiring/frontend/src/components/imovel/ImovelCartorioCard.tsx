@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -51,7 +52,37 @@ interface Draft {
   numero_registro_imoveis: string;
   prefeitura_cadastro_imobiliario: string;
   captador_user_id: string;
+  situacao_onus: string;
+  onus_observacoes: string;
+  onus_certidao_em: string;
 }
+
+/** Sentinel for "not assessed" — Radix treats `value=""` as uncontrolled, so
+ *  the absence needs a real token, mapped back to null on save. */
+const SEM_ONUS = "__sem_onus__";
+
+/** Fallback vocabulary, used only if the server sends none. The list's real
+ *  home is `dados_service.SITUACOES_ONUS`; duplicating it here would be two
+ *  places to update, so this exists purely so the control is never empty. */
+const SITUACOES_ONUS_PADRAO = [
+  "livre",
+  "hipoteca",
+  "alienacao_fiduciaria",
+  "penhora",
+  "usufruto",
+  "indisponibilidade",
+  "outro",
+] as const;
+
+const ONUS_LABEL: Record<string, string> = {
+  livre: "Livre e desembaraçado",
+  hipoteca: "Hipoteca",
+  alienacao_fiduciaria: "Alienação fiduciária",
+  penhora: "Penhora",
+  usufruto: "Usufruto",
+  indisponibilidade: "Indisponibilidade",
+  outro: "Outro",
+};
 
 function toDraft(dados: ImovelDados | undefined): Draft {
   return {
@@ -59,6 +90,9 @@ function toDraft(dados: ImovelDados | undefined): Draft {
     numero_registro_imoveis: dados?.numero_registro_imoveis ?? "",
     prefeitura_cadastro_imobiliario: dados?.prefeitura_cadastro_imobiliario ?? "",
     captador_user_id: dados?.captador?.id ?? SEM_CAPTADOR,
+    situacao_onus: dados?.situacao_onus ?? SEM_ONUS,
+    onus_observacoes: dados?.onus_observacoes ?? "",
+    onus_certidao_em: dados?.onus_certidao_em ?? "",
   };
 }
 
@@ -83,6 +117,9 @@ export default function ImovelCartorioCard({
     dados?.numero_registro_imoveis,
     dados?.prefeitura_cadastro_imobiliario,
     dados?.captador?.id,
+    dados?.situacao_onus,
+    dados?.onus_observacoes,
+    dados?.onus_certidao_em,
   ]);
 
   const set = (k: keyof Draft) => (v: string) =>
@@ -99,6 +136,10 @@ export default function ImovelCartorioCard({
       prefeitura_cadastro_imobiliario: blank(draft.prefeitura_cadastro_imobiliario),
       captador_user_id:
         draft.captador_user_id === SEM_CAPTADOR ? null : draft.captador_user_id,
+      situacao_onus:
+        draft.situacao_onus === SEM_ONUS ? null : draft.situacao_onus,
+      onus_observacoes: blank(draft.onus_observacoes),
+      onus_certidao_em: blank(draft.onus_certidao_em),
     });
   }
 
@@ -185,6 +226,68 @@ export default function ImovelCartorioCard({
           <p className="text-xs text-muted-foreground">
             Recebe 5% da comissão nas negociações deste imóvel.
           </p>
+        </div>
+
+        {/* ─── Situação de ônus (migration 099) ──────────────────────────
+            What a contract's first clause asserts about this property. The
+            field exists; the RULES that consume it deliberately do not yet —
+            nothing here refuses anything on a stale certidão, because the
+            policy is still the user's to decide. */}
+        <div className="space-y-1.5 border-t pt-4">
+          <Label htmlFor="imovel-onus">Situação de ônus</Label>
+          <Select
+            value={draft.situacao_onus}
+            onValueChange={set("situacao_onus")}
+            disabled={loading || saving}
+          >
+            <SelectTrigger id="imovel-onus" data-testid="imovel-onus">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={SEM_ONUS}>Não verificado</SelectItem>
+              {(dados?.situacoes_onus?.length
+                ? dados.situacoes_onus
+                : [...SITUACOES_ONUS_PADRAO]
+              ).map((v) => (
+                <SelectItem key={v} value={v}>
+                  {ONUS_LABEL[v] ?? v}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Conforme a Certidão de Ônus Reais.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="imovel-onus-data">Data da certidão</Label>
+          <Input
+            id="imovel-onus-data"
+            type="date"
+            value={draft.onus_certidao_em}
+            onChange={(e) => set("onus_certidao_em")(e.target.value)}
+            disabled={loading || saving}
+            data-testid="imovel-onus-data"
+          />
+          {/* Spelled out because the distinction is the whole reason the
+              column exists separately from the upload timestamp. */}
+          <p className="text-xs text-muted-foreground">
+            A data impressa na certidão — não a data do upload.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="imovel-onus-obs">Observações sobre o ônus</Label>
+          <Textarea
+            id="imovel-onus-obs"
+            rows={2}
+            value={draft.onus_observacoes}
+            onChange={(e) => set("onus_observacoes")(e.target.value)}
+            disabled={loading || saving}
+            placeholder="Credor, valor, número do registro do gravame…"
+            data-testid="imovel-onus-obs"
+          />
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}

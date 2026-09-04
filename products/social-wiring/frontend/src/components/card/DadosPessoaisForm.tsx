@@ -59,7 +59,62 @@ export interface DadosPessoais {
   data_nascimento?: string | null;
   profissao?: string | null;
   genero?: string | null;
+
+  // ─── Qualificação civil (migration 097) ────────────────────────────────
+  //
+  // What an "Instrumento Particular de Promessa de Compra e Venda" needs to
+  // NAME a party: nome, nacionalidade, estado civil (with regime de bens),
+  // profissão, CPF, RG with issuing body, endereço. Of those seven this form
+  // used to collect two.
+  cpf?: string | null;
+  rg?: string | null;
+  /** Issuing body and UF as printed — "SSP/SP". Travels with `rg`: a number
+   *  without its issuer is an incomplete qualification. */
+  rg_orgao_expedidor?: string | null;
+  /** 🔴 Decides whether a spouse must sign. Not a preference field. */
+  estado_civil?: string | null;
+  regime_bens?: string | null;
+  nacionalidade?: string | null;
+  endereco_cep?: string | null;
+  endereco_logradouro?: string | null;
+  endereco_numero?: string | null;
+  endereco_complemento?: string | null;
+  endereco_bairro?: string | null;
+  endereco_cidade?: string | null;
+  endereco_uf?: string | null;
 }
+
+/**
+ * Offered for `estado_civil`. Unconstrained TEXT in the database on purpose
+ * (migration 097) — the taxonomy is a product decision, so it lives here
+ * beside the dropdown rather than as a CHECK that makes each addition a
+ * migration.
+ */
+export const ESTADOS_CIVIS = [
+  "Solteiro(a)",
+  "Casado(a)",
+  "Divorciado(a)",
+  "Viúvo(a)",
+  "Separado(a)",
+  "União estável",
+] as const;
+
+/** Regimes de bens. Only meaningful alongside a married state — the form
+ *  shows the field regardless rather than hiding it, because an operator
+ *  filling a card top-to-bottom should not have a field appear and disappear
+ *  under the cursor. */
+export const REGIMES_BENS = [
+  "Comunhão parcial de bens",
+  "Comunhão universal de bens",
+  "Separação total de bens",
+  "Separação obrigatória de bens",
+  "Participação final nos aquestos",
+] as const;
+
+/** Sentinel for "not set" in a Select. Radix treats `value=""` as
+ *  uncontrolled, so a real token is needed and is mapped back to null on
+ *  save. */
+const NAO_INFORMADO = "__nao_informado__";
 
 export interface DadosPessoaisFormProps {
   valores: DadosPessoais;
@@ -95,6 +150,21 @@ export function DadosPessoaisForm({
     valores.data_nascimento,
     valores.profissao,
     valores.genero,
+    // 097's fields re-seed on the same terms: an extraction that confirms a
+    // CPF writes the column, and a stale draft would overwrite it on Save.
+    valores.cpf,
+    valores.rg,
+    valores.rg_orgao_expedidor,
+    valores.estado_civil,
+    valores.regime_bens,
+    valores.nacionalidade,
+    valores.endereco_cep,
+    valores.endereco_logradouro,
+    valores.endereco_numero,
+    valores.endereco_complemento,
+    valores.endereco_bairro,
+    valores.endereco_cidade,
+    valores.endereco_uf,
   ]);
 
   function campo<K extends keyof DadosPessoais>(k: K, v: string) {
@@ -196,6 +266,184 @@ export function DadosPessoaisForm({
           </SelectContent>
         </Select>
       </Campo>
+
+      {/* ─── Qualificação civil (migration 097) ────────────────────────────
+          The block a contract needs and a CRM never did. Grouped and labelled
+          as such so it reads as one job — "qualify this person" — rather than
+          seven more boxes appended to the contact details above. */}
+      <p className="pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Qualificação
+      </p>
+
+      <Campo rotulo="CPF" htmlFor={`${testId}-cpf`}>
+        <Input
+          id={`${testId}-cpf`}
+          value={texto(draft.cpf)}
+          onChange={(e) => campo("cpf", e.target.value)}
+          placeholder="412.954.238-98"
+          data-testid={`${testId}-cpf`}
+        />
+      </Campo>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Campo rotulo="RG" htmlFor={`${testId}-rg`}>
+          <Input
+            id={`${testId}-rg`}
+            value={texto(draft.rg)}
+            onChange={(e) => campo("rg", e.target.value)}
+            placeholder="52.179.965-X"
+            data-testid={`${testId}-rg`}
+          />
+        </Campo>
+        {/* Side by side with the number because the two are one fact: an RG
+            without its issuer does not identify a document. */}
+        <Campo rotulo="Órgão expedidor" htmlFor={`${testId}-rg-orgao`}>
+          <Input
+            id={`${testId}-rg-orgao`}
+            value={texto(draft.rg_orgao_expedidor)}
+            onChange={(e) => campo("rg_orgao_expedidor", e.target.value)}
+            placeholder="SSP/SP"
+            data-testid={`${testId}-rg-orgao`}
+          />
+        </Campo>
+      </div>
+
+      <Campo rotulo="Nacionalidade" htmlFor={`${testId}-nacionalidade`}>
+        <Input
+          id={`${testId}-nacionalidade`}
+          value={texto(draft.nacionalidade)}
+          onChange={(e) => campo("nacionalidade", e.target.value)}
+          placeholder="brasileiro(a)"
+          data-testid={`${testId}-nacionalidade`}
+        />
+      </Campo>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Campo rotulo="Estado civil" htmlFor={`${testId}-estado-civil`}>
+          <Select
+            value={draft.estado_civil ?? NAO_INFORMADO}
+            onValueChange={(v) =>
+              campo("estado_civil", v === NAO_INFORMADO ? "" : v)
+            }
+          >
+            <SelectTrigger
+              id={`${testId}-estado-civil`}
+              data-testid={`${testId}-estado-civil`}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NAO_INFORMADO}>Não informado</SelectItem>
+              {ESTADOS_CIVIS.map((e) => (
+                <SelectItem key={e} value={e}>
+                  {e}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Campo>
+        {/* Always rendered, never conditional on `estado_civil`. A field that
+            appears and disappears as the box above changes moves the form
+            under the cursor of somebody filling it top-to-bottom — and the
+            database deliberately does not tie the two either (097). */}
+        <Campo rotulo="Regime de bens" htmlFor={`${testId}-regime-bens`}>
+          <Select
+            value={draft.regime_bens ?? NAO_INFORMADO}
+            onValueChange={(v) =>
+              campo("regime_bens", v === NAO_INFORMADO ? "" : v)
+            }
+          >
+            <SelectTrigger
+              id={`${testId}-regime-bens`}
+              data-testid={`${testId}-regime-bens`}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NAO_INFORMADO}>Não informado</SelectItem>
+              {REGIMES_BENS.map((r) => (
+                <SelectItem key={r} value={r}>
+                  {r}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Campo>
+      </div>
+
+      <p className="pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Endereço
+      </p>
+
+      <div className="grid grid-cols-3 gap-2">
+        <Campo rotulo="CEP" htmlFor={`${testId}-cep`}>
+          <Input
+            id={`${testId}-cep`}
+            value={texto(draft.endereco_cep)}
+            onChange={(e) => campo("endereco_cep", e.target.value)}
+            placeholder="05407-002"
+            data-testid={`${testId}-cep`}
+          />
+        </Campo>
+        <div className="col-span-2">
+          <Campo rotulo="Logradouro" htmlFor={`${testId}-logradouro`}>
+            <Input
+              id={`${testId}-logradouro`}
+              value={texto(draft.endereco_logradouro)}
+              onChange={(e) => campo("endereco_logradouro", e.target.value)}
+              data-testid={`${testId}-logradouro`}
+            />
+          </Campo>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Campo rotulo="Número" htmlFor={`${testId}-numero`}>
+          <Input
+            id={`${testId}-numero`}
+            value={texto(draft.endereco_numero)}
+            onChange={(e) => campo("endereco_numero", e.target.value)}
+            data-testid={`${testId}-numero`}
+          />
+        </Campo>
+        <Campo rotulo="Complemento" htmlFor={`${testId}-complemento`}>
+          <Input
+            id={`${testId}-complemento`}
+            value={texto(draft.endereco_complemento)}
+            onChange={(e) => campo("endereco_complemento", e.target.value)}
+            data-testid={`${testId}-complemento`}
+          />
+        </Campo>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        <Campo rotulo="Bairro" htmlFor={`${testId}-bairro`}>
+          <Input
+            id={`${testId}-bairro`}
+            value={texto(draft.endereco_bairro)}
+            onChange={(e) => campo("endereco_bairro", e.target.value)}
+            data-testid={`${testId}-bairro`}
+          />
+        </Campo>
+        <Campo rotulo="Cidade" htmlFor={`${testId}-cidade`}>
+          <Input
+            id={`${testId}-cidade`}
+            value={texto(draft.endereco_cidade)}
+            onChange={(e) => campo("endereco_cidade", e.target.value)}
+            data-testid={`${testId}-cidade`}
+          />
+        </Campo>
+        <Campo rotulo="UF" htmlFor={`${testId}-uf`}>
+          <Input
+            id={`${testId}-uf`}
+            value={texto(draft.endereco_uf)}
+            onChange={(e) => campo("endereco_uf", e.target.value.toUpperCase())}
+            maxLength={2}
+            placeholder="SP"
+            data-testid={`${testId}-uf`}
+          />
+        </Campo>
+      </div>
 
       <div className="flex gap-1">
         <TooltipIconButton

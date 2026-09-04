@@ -90,6 +90,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   // session-local UI state rather than inventing a field.
   const [colorBlindMode, setColorBlindMode] = useState(false);
   const [compradorDialogOpen, setCompradorDialogOpen] = useState(false);
+  const [vendedorDialogOpen, setVendedorDialogOpen] = useState(false);
   const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
   // Which roteiro's PDF is being generated. Per-id, not a boolean: with two
   // roteiros on screen a shared flag spins BOTH buttons and tells the user the
@@ -154,6 +155,14 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
   const sugestaoMutation = useExtracaoSugestaoMutation(id ?? "__none__");
   const compradores = useCompradores(id);
+  // Migration 098 — the other side of the table. A second query rather than
+  // one filtered client-side: they render on different subpages and the
+  // server already scopes by `lado`, so filtering here would mean fetching
+  // people this panel is not going to show.
+  const vendedores = useCompradores(id, "vendedor");
+  // ONE mutation pair for both sides. `adicionar` takes `lado` in its body and
+  // `remover` needs only a parte id, so a second hook would be the same
+  // object twice.
   const compradorMutations = useCompradorMutations(id ?? "__none__");
   const dadosPessoaisMutation = useDadosPessoaisMutation(id ?? "__none__");
 
@@ -245,6 +254,18 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       // away and read as a network failure.
       onError: (err) => toastServerError(err, "Não foi possível adicionar."),
     });
+  }
+
+  /** Same call, `lado: "vendedor"` — the server picks `proprietario` as the
+   *  default role for that side, so this does not name one. */
+  function handleAdicionarVendedor(values: { nome: string; celular?: string }) {
+    compradorMutations.adicionar.mutate(
+      { ...values, lado: "vendedor" },
+      {
+        onSuccess: () => setVendedorDialogOpen(false),
+        onError: (err) => toastServerError(err, "Não foi possível adicionar."),
+      },
+    );
   }
 
   function handleOpenDocumento(documentoId: string) {
@@ -558,6 +579,15 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
             toastServerError(err, "Não foi possível remover o comprador."),
         })
       }
+      vendedores={vendedores.data?.items ?? []}
+      vendedoresLoading={vendedores.isPending || vendedores.isFetching}
+      onAdicionarVendedor={() => setVendedorDialogOpen(true)}
+      onRemoverVendedor={(parteId) =>
+        compradorMutations.remover.mutate(parteId, {
+          onError: (err) =>
+            toastServerError(err, "Não foi possível remover o vendedor."),
+        })
+      }
       // Each party's panel fetches its OWN checklist and documents, keyed by
       // THEIR cliente_id. Passed as a render prop because `ClienteCardDialog`
       // is presentational and must stay renderable without a query client.
@@ -606,6 +636,17 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       open={compradorDialogOpen}
       onOpenChange={setCompradorDialogOpen}
       onCreate={handleAdicionarComprador}
+      saving={compradorMutations.adicionar.isPending}
+    />
+
+    {/* The same dialog, seller-side copy. Sibling of the card for the reason
+        above — a Dialog nested in another Dialog's content fights the outer
+        focus trap. */}
+    <AdicionarCompradorDialog
+      lado="vendedor"
+      open={vendedorDialogOpen}
+      onOpenChange={setVendedorDialogOpen}
+      onCreate={handleAdicionarVendedor}
       saving={compradorMutations.adicionar.isPending}
     />
 

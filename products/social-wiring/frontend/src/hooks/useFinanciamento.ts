@@ -34,6 +34,17 @@ export interface FinanciamentoDocumento {
   created_at: string;
 }
 
+/** The agent as the card renders it — a subset of the registry's own row.
+ *  `ativo` is present so the panel can MARK a retired bank rather than
+ *  pretend it is still selectable. */
+export interface AgenteFinanceiroResumo {
+  id: string;
+  nome: string;
+  codigo_banco: string | null;
+  agencia: string | null;
+  ativo: boolean;
+}
+
 export interface Financiamento {
   atendimento_id: string;
   situacao: SituacaoFinanciamento;
@@ -41,6 +52,15 @@ export interface Financiamento {
   situacao_motivo: string | null;
   fgts: boolean;
   observacoes: string | null;
+  agente_financeiro_id: string | null;
+  /**
+   * 🔴 Resolved WITHOUT the `ativo` filter the dropdown uses. A bank retired
+   * after it financed this deal keeps rendering here — otherwise the panel
+   * would blank the institution named on a signed contract because somebody
+   * tidied a settings list.
+   */
+  agente_financeiro: AgenteFinanceiroResumo | null;
+  numero_proposta: string | null;
   created_at: string | null;
   updated_at: string | null;
   existe: boolean;
@@ -55,6 +75,10 @@ export interface FinanciamentoPatch {
   situacao_motivo?: string | null;
   fgts?: boolean;
   observacoes?: string | null;
+  /** An explicit null clears the selection — "not decided yet" is a real
+   *  state and must stay reachable after one has been chosen. */
+  agente_financeiro_id?: string | null;
+  numero_proposta?: string | null;
 }
 
 export interface Acesso {

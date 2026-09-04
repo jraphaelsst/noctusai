@@ -318,11 +318,36 @@ function setUser(orgRole: string | null) {
   });
 }
 
+/**
+ * 🔴 WRAPPED IN A `QueryClientProvider` since the Imobiliária tab landed.
+ *
+ * That tab is the first thing on this page to use TanStack Query, so a bare
+ * `render(<Settings/>)` now throws "No QueryClient set" before any assertion
+ * runs. The provider is NOT a test convenience: `createProductApp` mounts one
+ * at the root, so every real render of this page already has it — the harness
+ * was simply under-provisioned relative to the tree it stands in for, and
+ * these 50 tests were passing only because nothing here had needed it yet.
+ *
+ * `retry: false` so a failing query surfaces immediately instead of being
+ * retried three times inside a test's timeout.
+ */
 async function renderSettingsOnKeysTab() {
   const { default: Settings } = await import("./Settings");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
-  const utils = rtl.render(React.createElement(Settings));
+  const { QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  );
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const utils = rtl.render(
+    React.createElement(
+      QueryClientProvider,
+      { client: qc },
+      React.createElement(Settings),
+    ),
+  );
   return { ...utils, fireEvent: rtl.fireEvent };
 }
 

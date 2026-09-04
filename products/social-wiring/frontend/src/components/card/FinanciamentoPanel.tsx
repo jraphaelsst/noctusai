@@ -33,9 +33,19 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+
+import type { AgenteFinanceiro } from "@/hooks/useAgentesFinanceiros";
 
 import type {
   Financiamento,
@@ -45,7 +55,14 @@ import type {
 } from "@/hooks/useFinanciamento";
 import { SITUACAO_LABEL, TIPO_LABEL, formatBytes } from "@/hooks/useFinanciamento";
 
+/** Radix treats `value=""` as uncontrolled, so "no agent" needs a real
+ *  token, mapped back to null on save. */
+const SEM_AGENTE = "__sem_agente__";
+
 interface Props {
+  /** Active agents from the org registry — what the dropdown may offer. */
+  agentes?: AgenteFinanceiro[];
+  agentesLoading?: boolean;
   financiamento: Financiamento | undefined;
   loading: boolean;
   saving: boolean;
@@ -75,11 +92,26 @@ export default function FinanciamentoPanel({
   onUpload,
   onRemove,
   onOpen,
+  agentes = [],
+  agentesLoading,
 }: Props) {
   const [observacoes, setObservacoes] = useState<string | null>(null);
+  const [proposta, setProposta] = useState<string | null>(null);
 
   const f = financiamento;
   const situacao = f?.situacao ?? "pendente";
+
+  // 🔴 The deal's own agent is APPENDED when it is not among the active ones,
+  // never dropped. `agentes` holds only active banks (that is what the
+  // dropdown may offer); a deal financed by one since retired must still name
+  // it, or selecting anything else would be the only way to make the control
+  // agree with the record.
+  const opcoesAgente: Array<AgenteFinanceiro | { id: string; nome: string; codigo_banco: string | null; ativo: boolean }> =
+    (() => {
+      const atual = f?.agente_financeiro;
+      if (!atual || agentes.some((a) => a.id === atual.id)) return agentes;
+      return [...agentes, { ...atual }];
+    })();
   const docsPorTipo = new Map<string, FinanciamentoDocumento>();
   (f?.documentos ?? []).forEach((d) => {
     // Newest first from the server, so the first one wins — a re-uploaded
@@ -128,6 +160,72 @@ export default function FinanciamentoPanel({
               {new Date(f.situacao_em).toLocaleString("pt-BR")}
             </p>
           )}
+
+          {/* ─── Agente financeiro (migration 100) ────────────────────────
+              Chosen from the org's registry, never typed. An agency works
+              with the same four or five banks repeatedly, and typed per deal
+              "Caixa Econômica Federal" becomes three spellings inside a
+              month — at which point "how many deals went through Caixa"
+              stops having an answer.
+
+              🔴 A RETIRED AGENT STILL RENDERS. The dropdown lists only active
+              ones, but a deal financed by a bank the agency has since stopped
+              working with must keep naming it. When this deal's agent is not
+              in the active list, it is appended and marked — never dropped,
+              which would silently blank the institution on a signed
+              contract. */}
+          <div className="space-y-1.5">
+            <Label htmlFor="financiamento-agente">Agente financeiro</Label>
+            <Select
+              value={f?.agente_financeiro_id ?? SEM_AGENTE}
+              onValueChange={(v) =>
+                onSave({ agente_financeiro_id: v === SEM_AGENTE ? null : v })
+              }
+              disabled={loading || saving}
+            >
+              <SelectTrigger
+                id="financiamento-agente"
+                data-testid="financiamento-agente"
+              >
+                <SelectValue placeholder="Selecione o banco" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SEM_AGENTE}>Não definido</SelectItem>
+                {opcoesAgente.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.nome}
+                    {a.codigo_banco ? ` (${a.codigo_banco})` : ""}
+                    {a.ativo === false ? " — inativo" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {agentes.length === 0 && !agentesLoading && (
+              <p className="text-xs text-muted-foreground">
+                Nenhum agente cadastrado. Cadastre em Emissões → Agentes
+                Financeiros.
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="financiamento-proposta">Número da proposta</Label>
+            <Input
+              id="financiamento-proposta"
+              value={proposta ?? f?.numero_proposta ?? ""}
+              onChange={(e) => setProposta(e.target.value)}
+              onBlur={() => {
+                if (
+                  proposta !== null &&
+                  proposta !== (f?.numero_proposta ?? "")
+                ) {
+                  onSave({ numero_proposta: proposta.trim() || null });
+                }
+              }}
+              disabled={loading}
+              data-testid="financiamento-proposta"
+            />
+          </div>
 
           <div className="flex items-center justify-between rounded-md border p-3">
             <Label htmlFor="fgts-financiamento" className="cursor-pointer">

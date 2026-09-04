@@ -32,6 +32,33 @@ export interface ImovelDados {
   numero_registro_imoveis: string | null;
   prefeitura_cadastro_imobiliario: string | null;
   captador: Ator | null;
+
+  // ─── Situação de ônus (migration 099) ──────────────────────────────────
+  //
+  // The first clause of every promessa de compra e venda asserts the property
+  // is sold "livre e desembaraçado de quaisquer ônus reais". Until 099 nothing
+  // in the schema could back that sentence: `atendimento_financiamento`
+  // records the BUYER's financing, which is the opposite side of the
+  // transaction from the SELLER's outstanding debt.
+  //
+  // 🔴 NO RULES ATTACHED YET, on purpose. Nothing refuses to emit a document
+  // on a stale certidão and nothing ties these fields to each other — the
+  // policy is still the user's to decide, and a gate written before its policy
+  // is a gate that gets worked around.
+  situacao_onus: string | null;
+  onus_observacoes: string | null;
+  /** The date printed ON the certidão — NOT the upload timestamp. A certidão's
+   *  validity runs from its own emission, so the upload date answers a
+   *  different question. */
+  onus_certidao_em: string | null;
+  onus_documento_id: string | null;
+  onus_registrado_por: Ator | null;
+  onus_registrado_em: string | null;
+  /** The vocabulary the server offers. Sent by the API rather than hard-coded
+   *  here so the list has ONE home — it lives in `dados_service`, beside the
+   *  column it fills. */
+  situacoes_onus: string[];
+
   updated_at: string | null;
 }
 
@@ -47,6 +74,10 @@ export interface ImovelDadosPatch {
   numero_registro_imoveis?: string | null;
   prefeitura_cadastro_imobiliario?: string | null;
   captador_user_id?: string | null;
+  situacao_onus?: string | null;
+  onus_observacoes?: string | null;
+  onus_certidao_em?: string | null;
+  onus_documento_id?: string | null;
 }
 
 export type ExtracaoStatus =

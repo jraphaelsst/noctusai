@@ -275,6 +275,43 @@ class ClientePatchBody(StrictHttpModel):
     celular: Optional[str] = None
     profissao: Optional[str] = None
 
+    # Migration 097 — qualificação civil, the fields an instrument needs to
+    # name a party. `cpf` and `rg` are checklist items on the same terms as
+    # everything above: filling one here IS how its tick happens.
+    #
+    # `cpf_origem` / `rg_origem` are NOT accepted, exactly like
+    # `data_nascimento_origem` and `genero_origem` — both numbers are now read
+    # off identity documents too, so their provenance is the server's to stamp.
+    # A caller able to assert `origem='rg'` could make a typed value look like
+    # a document reading, or the reverse.
+    cpf: Optional[str] = None
+    rg: Optional[str] = None
+    #: Issuing body and UF as printed — "SSP/SP". A contract qualifies a party
+    #: by the number AND its issuer; the number alone does not identify the
+    #: document.
+    rg_orgao_expedidor: Optional[str] = None
+
+    #: 🔴 The one that changes how many people sign. A sale of real property by
+    #: a married person without the other spouse's outorga is voidable
+    #: (CC art. 1.647), so this is not a preference field.
+    estado_civil: Optional[str] = None
+    regime_bens: Optional[str] = None
+    #: The spouse's OWN clientes row, so they get the same checklist, uploads
+    #: and extraction as any other signatory. A name in TEXT signs nothing.
+    conjuge_cliente_id: Optional[UUID] = None
+    nacionalidade: Optional[str] = None
+
+    # Residential address of the PERSON — not of any imóvel. Structured rather
+    # than one line, matching `imoveis`: a contract prints the parts separately
+    # and a CEP lookup fills them separately.
+    endereco_cep: Optional[str] = None
+    endereco_logradouro: Optional[str] = None
+    endereco_numero: Optional[str] = None
+    endereco_complemento: Optional[str] = None
+    endereco_bairro: Optional[str] = None
+    endereco_cidade: Optional[str] = None
+    endereco_uf: Optional[str] = None
+
 
 class MergeGrupoBody(StrictHttpModel):
     cliente_id_sobrevivente: UUID

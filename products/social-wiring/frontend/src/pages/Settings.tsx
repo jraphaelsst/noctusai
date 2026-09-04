@@ -31,6 +31,12 @@ import {
 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+import {
+  DadosImobiliariaPatch,
+  useDadosImobiliaria,
+  useSalvarDadosImobiliaria,
+} from "@/hooks/useDadosImobiliaria";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,6 +107,247 @@ const EMPTY_RECIPIENT: RecipientCreate = {
  *  absence of a client is given an explicit value rather than being inferred
  *  from an empty string. */
 const ORG_WIDE = "__org__";
+
+
+// ─── Dados da imobiliária (migration 100) ────────────────────────────────────
+
+/**
+ * The agency's OWN qualification — razão social, CNPJ, CRECI PJ, address.
+ *
+ * Every generated instrument needs it twice: in the header naming who
+ * intermediated, and in the corretagem clause naming who is owed the
+ * commission. Until migration 100 there was nowhere in this product to put it.
+ *
+ * 🔴 A PARTLY-FILLED FORM SAVES. Nobody sits down and fills this in one
+ * sitting, and refusing until it is complete would discard what they had
+ * typed. Completeness is the document generator's problem, at the moment it
+ * actually needs a value — not this form's.
+ */
+function DadosImobiliariaTab() {
+  const query = useDadosImobiliaria();
+  const salvar = useSalvarDadosImobiliaria();
+  const [draft, setDraft] = useState<DadosImobiliariaPatch>({});
+
+  // Seeded from the server, and re-seeded when it changes underneath. Local
+  // edits win while they exist: `draft` holds only the keys actually touched,
+  // so a field nobody typed in reads straight from the record.
+  const valor = (k: keyof DadosImobiliariaPatch): string =>
+    (k in draft ? draft[k] : query.data?.[k]) ?? "";
+
+  function campo(k: keyof DadosImobiliariaPatch, v: string) {
+    setDraft((d) => ({ ...d, [k]: v }));
+  }
+
+  function submit() {
+    // Empty strings become null — a blank box means "not recorded", and ""
+    // would make every "do we have a CNPJ?" check answer yes.
+    const payload: DadosImobiliariaPatch = {};
+    (Object.keys(draft) as Array<keyof DadosImobiliariaPatch>).forEach((k) => {
+      const v = (draft[k] ?? "").trim();
+      payload[k] = v || null;
+    });
+    salvar.mutate(payload, {
+      onSuccess: () => {
+        setDraft({});
+        toast.success("Dados da imobiliária salvos.");
+      },
+      onError: (err) =>
+        toast.error(
+          (err as { message?: string })?.message ??
+            "Não foi possível salvar os dados.",
+        ),
+    });
+  }
+
+  const sujo = Object.keys(draft).length > 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Dados da imobiliária</CardTitle>
+        <CardDescription>
+          Usados nos documentos gerados — no cabeçalho que identifica quem
+          intermediou e na cláusula de corretagem.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* 🔴 Two signals, never `isLoading`: a skeleton only while there is
+            genuinely nothing yet, so saving does not blank the form.
+            → KB § PATTERNS/frontend/lying-loading-state.md */}
+        {query.isPending && !query.data ? (
+          <p className="text-sm text-muted-foreground">Carregando…</p>
+        ) : query.isError ? (
+          <p className="text-sm text-destructive">
+            Não foi possível carregar os dados da imobiliária.
+          </p>
+        ) : (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-razao">Razão social</Label>
+                <Input
+                  id="imob-razao"
+                  value={valor("razao_social")}
+                  onChange={(e) => campo("razao_social", e.target.value)}
+                  data-testid="imob-razao"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-fantasia">Nome fantasia</Label>
+                <Input
+                  id="imob-fantasia"
+                  value={valor("nome_fantasia")}
+                  onChange={(e) => campo("nome_fantasia", e.target.value)}
+                  data-testid="imob-fantasia"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-cnpj">CNPJ</Label>
+                <Input
+                  id="imob-cnpj"
+                  value={valor("cnpj")}
+                  onChange={(e) => campo("cnpj", e.target.value)}
+                  placeholder="12.345.678/0001-90"
+                  data-testid="imob-cnpj"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-creci">CRECI PJ</Label>
+                <Input
+                  id="imob-creci"
+                  value={valor("creci_pj")}
+                  onChange={(e) => campo("creci_pj", e.target.value)}
+                  placeholder="CRECI/SP J-12345"
+                  data-testid="imob-creci"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-resp">Responsável técnico</Label>
+                <Input
+                  id="imob-resp"
+                  value={valor("responsavel_nome")}
+                  onChange={(e) => campo("responsavel_nome", e.target.value)}
+                  data-testid="imob-responsavel"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-resp-creci">CRECI do responsável</Label>
+                <Input
+                  id="imob-resp-creci"
+                  value={valor("responsavel_creci")}
+                  onChange={(e) => campo("responsavel_creci", e.target.value)}
+                  data-testid="imob-responsavel-creci"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-tel">Telefone</Label>
+                <Input
+                  id="imob-tel"
+                  value={valor("telefone")}
+                  onChange={(e) => campo("telefone", e.target.value)}
+                  data-testid="imob-telefone"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-email">E-mail</Label>
+                <Input
+                  id="imob-email"
+                  value={valor("email")}
+                  onChange={(e) => campo("email", e.target.value)}
+                  data-testid="imob-email"
+                />
+              </div>
+            </div>
+
+            <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Endereço
+            </p>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-cep">CEP</Label>
+                <Input
+                  id="imob-cep"
+                  value={valor("endereco_cep")}
+                  onChange={(e) => campo("endereco_cep", e.target.value)}
+                  data-testid="imob-cep"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="imob-logradouro">Logradouro</Label>
+                <Input
+                  id="imob-logradouro"
+                  value={valor("endereco_logradouro")}
+                  onChange={(e) => campo("endereco_logradouro", e.target.value)}
+                  data-testid="imob-logradouro"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-numero">Número</Label>
+                <Input
+                  id="imob-numero"
+                  value={valor("endereco_numero")}
+                  onChange={(e) => campo("endereco_numero", e.target.value)}
+                  data-testid="imob-numero"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-compl">Complemento</Label>
+                <Input
+                  id="imob-compl"
+                  value={valor("endereco_complemento")}
+                  onChange={(e) =>
+                    campo("endereco_complemento", e.target.value)
+                  }
+                  data-testid="imob-complemento"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-bairro">Bairro</Label>
+                <Input
+                  id="imob-bairro"
+                  value={valor("endereco_bairro")}
+                  onChange={(e) => campo("endereco_bairro", e.target.value)}
+                  data-testid="imob-bairro"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-cidade">Cidade</Label>
+                <Input
+                  id="imob-cidade"
+                  value={valor("endereco_cidade")}
+                  onChange={(e) => campo("endereco_cidade", e.target.value)}
+                  data-testid="imob-cidade"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-uf">UF</Label>
+                <Input
+                  id="imob-uf"
+                  maxLength={2}
+                  value={valor("endereco_uf")}
+                  onChange={(e) =>
+                    campo("endereco_uf", e.target.value.toUpperCase())
+                  }
+                  data-testid="imob-uf"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <Button
+                onClick={submit}
+                disabled={!sujo || salvar.isPending}
+                data-testid="imob-salvar"
+              >
+                {salvar.isPending ? "Salvando…" : "Salvar"}
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function NotificationsTab() {
   const { data, loading, create, update, remove } = useRecipients();
@@ -1701,9 +1948,10 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
       <Tabs defaultValue="notifications" className="w-full">
         <TabsList
           className={`grid w-full ${
-            isAdminOrDev ? "grid-cols-5 sm:max-w-2xl" : "grid-cols-4 sm:max-w-lg"
+            isAdminOrDev ? "grid-cols-6 sm:max-w-3xl" : "grid-cols-5 sm:max-w-2xl"
           }`}
         >
+          <TabsTrigger value="imobiliaria">Imobiliária</TabsTrigger>
           <TabsTrigger value="notifications">Notificações</TabsTrigger>
           <TabsTrigger value="keys">Chaves API</TabsTrigger>
           <TabsTrigger value="clientes">Clientes</TabsTrigger>
@@ -1713,6 +1961,12 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
           )}
         </TabsList>
 
+        {/* First tab: it is the org's own identity, and everything else here
+            configures behaviour rather than saying who we are. Also the block
+            a generated contract needs before it can name the intermediary. */}
+        <TabsContent value="imobiliaria" className="mt-6">
+          <DadosImobiliariaTab />
+        </TabsContent>
         <TabsContent value="notifications" className="mt-6">
           <NotificationsTab />
         </TabsContent>

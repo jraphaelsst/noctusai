@@ -56,6 +56,7 @@ import {
   BarChart3,
   Globe,
   Stamp,
+  Landmark,
   ScrollText,
   ShieldCheck,
 } from "lucide-react";
@@ -106,6 +107,9 @@ const EmailAutomacoes = lazyWithReload(() => import("@/pages/email/Automacoes"))
 const EmailDominios = lazyWithReload(() => import("@/pages/email/Dominios"));
 const Certidoes = lazyWithReload(() => import("@/pages/Certidoes"));
 const Matriculas = lazyWithReload(() => import("@/pages/Matriculas"));
+const AgentesFinanceiros = lazyWithReload(
+  () => import("@/pages/AgentesFinanceiros"),
+);
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -213,6 +217,10 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Certidões", href: "/certidoes", icon: ShieldCheck, route: "certidoes" },
       { name: "Extrator de Matrículas", href: "/matriculas", icon: ScrollText, route: "matriculas" },
+      // Migration 100 seeds `agentes_financeiros` as 'producao', same as the
+      // two above. It sits in Emissões because it is the same desk's work:
+      // the registry behind the financing a certidão or a matrícula supports.
+      { name: "Agentes Financeiros", href: "/agentes-financeiros", icon: Landmark, route: "agentes_financeiros" },
     ],
   },
   {
@@ -323,6 +331,7 @@ const NAV_FALLBACK: NavGroup[] = [
     items: [
       { name: "Certidões", href: "/certidoes", icon: ShieldCheck },
       { name: "Extrator de Matrículas", href: "/matriculas", icon: ScrollText },
+      { name: "Agentes Financeiros", href: "/agentes-financeiros", icon: Landmark },
     ],
   },
   {
@@ -370,6 +379,7 @@ export default createProductApp({
     { path: "/portal-roi", component: PortalRoi },
     { path: "/certidoes", component: Certidoes },
     { path: "/matriculas", component: Matriculas },
+    { path: "/agentes-financeiros", component: AgentesFinanceiros },
     { path: "/clientes", component: ClientesBoard },
     { path: "/clientes/revisao", component: RevisaoFila },
     { path: "/email-marketing/listas", component: EmailListas },

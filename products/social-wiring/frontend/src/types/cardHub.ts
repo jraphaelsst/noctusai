@@ -702,6 +702,15 @@ export interface Comprador {
   id: string;
   atendimento_id: string;
   cliente_id: string;
+  /**
+   * Which SIDE of the negotiation (migration 098). `"comprador"` | `"vendedor"`.
+   *
+   * 🔴 Independent of `papel`, which says what this person is TO that side.
+   * `conjuge` and `procurador` are valid on both sides because they are the
+   * same relationship to a different principal — which is exactly why the two
+   * are separate fields and not one prefixed string.
+   */
+  lado: LadoParte;
   papel: string;
   ordem: number;
   observacao: string | null;
@@ -709,7 +718,26 @@ export interface Comprador {
   cliente: CompradorPessoa | null;
 }
 
+/** The two sides of a negotiation. */
+export type LadoParte = "comprador" | "vendedor";
+
+/**
+ * The roles each side offers, mirroring `compradores_service.PAPEIS_POR_LADO`.
+ *
+ * The buyer side leads with `comprador`; the seller side leads with
+ * `proprietario`, because the person a deal is made with IS the owner — "the
+ * vendedor is the property owner", stated as data. `inventariante` is
+ * seller-only (an estate sells, it never buys) and `fiador` buyer-only.
+ */
+export const PAPEIS_POR_LADO: Record<LadoParte, readonly string[]> = {
+  comprador: ["comprador", "conjuge", "fiador", "procurador", "outro"],
+  vendedor: ["proprietario", "conjuge", "procurador", "inventariante", "outro"],
+} as const;
+
 export interface CompradoresResponse {
+  /** Echoed back by the server so a caller can tell WHICH side came back
+   *  empty — both tabs hit the same endpoint. */
+  lado?: LadoParte;
   items: Comprador[];
   total: number;
   /** Null when the person has no single open atendimento to attach to. */

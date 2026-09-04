@@ -37,6 +37,13 @@ describe("DadosPessoaisForm", () => {
       l.textContent?.trim(),
     );
     // The sequence an operator actually collects details in — not alphabetical.
+    //
+    // 🔴 THE FIRST SIX ARE STILL THE CHECKLIST'S ORDER, and that is what this
+    // test is for. Migration 097 appended the qualification block a contract
+    // needs — CPF/RG (which ARE checklist items) and the civil-status and
+    // address fields (which are not) — AFTER them, deliberately: the operator
+    // still collects contact details first, and inserting a CPF box between
+    // "Celular" and "Email" would reorder a form somebody uses daily.
     expect(rotulos).toEqual([
       "Nome Completo",
       "Celular",
@@ -44,7 +51,53 @@ describe("DadosPessoaisForm", () => {
       "Data de Nascimento",
       "Profissão",
       "Gênero",
+      // Qualificação (097)
+      "CPF",
+      "RG",
+      "Órgão expedidor",
+      "Nacionalidade",
+      "Estado civil",
+      "Regime de bens",
+      // Endereço (097)
+      "CEP",
+      "Logradouro",
+      "Número",
+      "Complemento",
+      "Bairro",
+      "Cidade",
+      "UF",
     ]);
+  });
+
+  it("🔴 sends the qualification fields Save was given", async () => {
+    const { onSave, fireEvent, screen } = await abrir();
+    fireEvent.change(screen.getByTestId("dados-pessoais-cpf"), {
+      target: { value: "412.954.238-98" },
+    });
+    fireEvent.change(screen.getByTestId("dados-pessoais-rg-orgao"), {
+      target: { value: "SSP/SP" },
+    });
+    fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cpf: "412.954.238-98",
+        rg_orgao_expedidor: "SSP/SP",
+      }),
+    );
+  });
+
+  it("uppercases the UF as it is typed", async () => {
+    /* A two-letter state code is printed upper-case on every document this
+       feeds, and normalising at the keystroke means the value stored matches
+       the value compared. */
+    const { onSave, fireEvent, screen } = await abrir();
+    fireEvent.change(screen.getByTestId("dados-pessoais-uf"), {
+      target: { value: "sp" },
+    });
+    fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ endereco_uf: "SP" }),
+    );
   });
 
   it("🔴 writes nothing until Save is pressed", async () => {

@@ -51,6 +51,11 @@ function financiamento(over: Partial<Financiamento> = {}): Financiamento {
     situacao_motivo: null,
     fgts: false,
     observacoes: null,
+    // Migration 100 — no agent chosen is the ordinary state of a deal that
+    // has not reached a bank yet, so that is what the fixture defaults to.
+    agente_financeiro_id: null,
+    agente_financeiro: null,
+    numero_proposta: null,
     created_at: null,
     updated_at: null,
     existe: false,

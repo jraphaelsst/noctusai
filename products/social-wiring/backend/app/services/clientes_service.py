@@ -1104,6 +1104,15 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
         "nome_completo", "email", "data_nascimento", "genero",
         # 073 — the two the checklist grew, same rule.
         "celular", "profissao",
+        # 097 — qualificação civil. `cpf`/`rg` are checklist items like the
+        # above; the rest are not, and are editable for a different reason:
+        # a contract cannot qualify a party without them, and nothing else
+        # in this product collects them.
+        "cpf", "rg", "rg_orgao_expedidor",
+        "estado_civil", "regime_bens", "conjuge_cliente_id", "nacionalidade",
+        "endereco_cep", "endereco_logradouro", "endereco_numero",
+        "endereco_complemento", "endereco_bairro", "endereco_cidade",
+        "endereco_uf",
     }
     payload = {k: v for k, v in updates.items() if k in allowed}
     if not payload:
@@ -1127,6 +1136,22 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
         payload["genero_origem"] = "manual" if payload["genero"] else None
         payload["genero_documento_id"] = None
         payload["genero_em"] = _now() if payload["genero"] else None
+
+    # 🔴 Identical treatment for `cpf` and `rg` (migration 097), and the rule
+    # generalises rather than being written twice more: a typed document number
+    # must outrank every later extraction, and that is only safe while the
+    # SERVER decides a value was typed. Clearing one clears its origin too — an
+    # origin pointing at a value that no longer exists is a lie the extractor
+    # would then honour.
+    #
+    # `rg_orgao_expedidor` is NOT stamped: it has no provenance quintet of its
+    # own because it is not independently persistable. It travels with `rg`,
+    # exactly as `IdentityFields.rg_orgao` does.
+    for campo in ("cpf", "rg"):
+        if campo in payload:
+            payload[f"{campo}_origem"] = "manual" if payload[campo] else None
+            payload[f"{campo}_documento_id"] = None
+            payload[f"{campo}_em"] = _now() if payload[campo] else None
 
     payload["updated_at"] = _now()
     resp = (

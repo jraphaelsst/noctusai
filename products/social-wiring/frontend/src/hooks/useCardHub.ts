@@ -55,6 +55,7 @@ import type {
   ChecklistExtrasResponse,
   Comprador,
   CompradoresResponse,
+  LadoParte,
   ImovelBusca,
   Roteiro,
   RoteiroCreateBody,
@@ -84,8 +85,10 @@ const IMOVEIS_BUSCA_KEY = (termo: string) => [...ROOT_KEY, "imoveisBusca", termo
 const DOCUMENTOS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "documentos"] as const;
 const ACESSOS_KEY = (clienteId: string, documentoId: string) =>
   [...FAMILY_KEY(clienteId), "documentos", documentoId, "acessos"] as const;
-const COMPRADORES_KEY = (clienteId: string) =>
-  [...FAMILY_KEY(clienteId), "compradores"] as const;
+/** 🔴 The SIDE is part of the key. Both tabs hit the same endpoint, so a
+ *  shared cache entry would render the vendedores under Compradores. */
+const COMPRADORES_KEY = (clienteId: string, lado: LadoParte = "comprador") =>
+  [...FAMILY_KEY(clienteId), "compradores", lado] as const;
 const TAGS_KEY = [...ROOT_KEY, "tags"] as const;
 const TIPOS_DOC_KEY = [...ROOT_KEY, "tiposDocumento"] as const;
 
@@ -1084,11 +1087,16 @@ export function useChecklistExtraMutations(clienteId: string) {
  * and an error state for "nothing to show" would be noise on every card that
  * has one buyer, which is most of them.
  */
-export function useCompradores(clienteId: string | null) {
+export function useCompradores(
+  clienteId: string | null,
+  lado: LadoParte = "comprador",
+) {
   return useQuery({
-    queryKey: COMPRADORES_KEY(clienteId ?? "__none__"),
+    queryKey: COMPRADORES_KEY(clienteId ?? "__none__", lado),
     queryFn: () =>
-      api.get<CompradoresResponse>(`${clienteBase(clienteId as string)}/compradores`),
+      api.get<CompradoresResponse>(
+        `${clienteBase(clienteId as string)}/compradores?lado=${lado}`,
+      ),
     enabled: !!clienteId,
   });
 }
@@ -1108,9 +1116,15 @@ export function useCompradores(clienteId: string | null) {
  */
 export function useCompradorMutations(clienteId: string) {
   const qc = useQueryClient();
+  // Invalidates BOTH sides, not just the one written. `remover` is not told
+  // which side the party was on, and a person moved between sides would
+  // otherwise linger in the stale list — cheap to over-invalidate, expensive
+  // to render a vendedor under Compradores.
   const invalidate = () =>
     Promise.all([
-      qc.invalidateQueries({ queryKey: COMPRADORES_KEY(clienteId) }),
+      qc.invalidateQueries({
+        queryKey: [...FAMILY_KEY(clienteId), "compradores"],
+      }),
       qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
     ]);
 
@@ -1122,6 +1136,7 @@ export function useCompradorMutations(clienteId: string) {
       papel?: string;
       observacao?: string;
       atendimento_id?: string;
+      lado?: LadoParte;
     }) => api.post<Comprador>(`${clienteBase(clienteId)}/compradores`, body),
     onSuccess: invalidate,
   });

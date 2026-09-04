@@ -149,6 +149,23 @@ export interface ClienteCardDialogProps {
   compradoresLoading?: boolean;
   onAdicionarComprador?: () => void;
   onRemoverComprador?: (parteId: string) => void;
+
+  // ─── Vendedores — the other side of the table (migration 098) ──────────
+  /**
+   * Who is SELLING. Structurally identical to `compradores` — same person
+   * model, same checklist, same uploads — and deliberately a separate prop
+   * rather than one list filtered by `lado`: the two render on different
+   * subpages, and a single list would make every consumer filter it correctly
+   * at each site.
+   *
+   * Unlike Compradores, an empty list here is NOT the ordinary case and the
+   * panel does NOT hide itself. A deal with no seller recorded is a gap worth
+   * showing, because the contract cannot name a party nobody entered.
+   */
+  vendedores?: Comprador[];
+  vendedoresLoading?: boolean;
+  onAdicionarVendedor?: () => void;
+  onRemoverVendedor?: (parteId: string) => void;
   /**
    * Renders one party's OWN checklist + documents panel.
    *
@@ -362,6 +379,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   );
 
   const compradores = props.compradores ?? [];
+  const vendedores = props.vendedores ?? [];
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -697,6 +715,76 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 />
               )}
 
+              {subpage === "vendedor" && (
+                <div data-testid="card-subpage-vendedor" className="space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">Vendedor</h3>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Quem está vendendo o imóvel. O primeiro é o
+                        proprietário; cônjuge e procurador entram aqui também.
+                      </p>
+                    </div>
+                    {props.onAdicionarVendedor && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={props.onAdicionarVendedor}
+                        data-testid="adicionar-vendedor-btn"
+                      >
+                        <Plus className="mr-1 h-4 w-4" />
+                        Adicionar vendedor
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* 🔴 Two signals, never `isLoading`. A skeleton shows only
+                      while there is genuinely nothing yet; a refetch over
+                      existing rows must not unmount them.
+                      → KB § PATTERNS/frontend/lying-loading-state.md */}
+                  {props.vendedoresLoading && vendedores.length === 0 ? (
+                    <p
+                      className="text-sm text-muted-foreground"
+                      data-testid="card-subpage-vendedor-loading"
+                    >
+                      Carregando…
+                    </p>
+                  ) : vendedores.length === 0 ? (
+                    /* Deliberately NOT hidden when empty, unlike Compradores:
+                       a deal with no seller recorded is a gap, and a contract
+                       cannot name a party nobody entered. */
+                    <p
+                      className="text-sm text-muted-foreground"
+                      data-testid="card-subpage-vendedor-empty"
+                    >
+                      Nenhum vendedor cadastrado neste atendimento.
+                    </p>
+                  ) : (
+                    vendedores.map((parte) => (
+                      <PessoaDocumentosSection
+                        key={parte.id}
+                        nome={nomeDaParte(parte)}
+                        papel={PAPEL_LABEL[parte.papel] ?? parte.papel}
+                        testId={`vendedor-${parte.id}`}
+                        acao={
+                          props.onRemoverVendedor && (
+                            <TooltipIconButton
+                              label={`Remover ${nomeDaParte(parte)} deste atendimento`}
+                              icon={Trash2}
+                              testId={`vendedor-remover-${parte.id}`}
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              onClick={() => props.onRemoverVendedor?.(parte.id)}
+                            />
+                          )
+                        }
+                      >
+                        {() => props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
+                      </PessoaDocumentosSection>
+                    ))
+                  )}
+                </div>
+              )}
+
               {(subpage === "cliente" || subpage === "campanha") && (
                 <RecordSubpage sections={record[subpage]} subpage={subpage} />
               )}
@@ -742,6 +830,11 @@ const PAPEL_LABEL: Record<string, string> = {
   fiador: "Fiador",
   procurador: "Procurador",
   outro: "Outro",
+  // Seller-side roles (migration 098). One flat map rather than one per side:
+  // `conjuge` and `procurador` render identically on both, and splitting the
+  // map would duplicate them so that a label fix could land on one side only.
+  proprietario: "Proprietário",
+  inventariante: "Inventariante",
 };
 
 /**

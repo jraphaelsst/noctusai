@@ -7,6 +7,7 @@
 import { toast } from "sonner";
 
 import FinanciamentoPanel from "@/components/card/FinanciamentoPanel";
+import { useAgentesFinanceiros } from "@/hooks/useAgentesFinanceiros";
 import {
   useFinanciamento,
   useFinanciamentoDocumentoMutations,
@@ -17,6 +18,11 @@ export function FinanciamentoContainer({ clienteId }: { clienteId: string }) {
   const query = useFinanciamento(clienteId);
   const mutation = useFinanciamentoMutation(clienteId);
   const docs = useFinanciamentoDocumentoMutations(clienteId);
+  // ACTIVE agents only — the dropdown must not offer a bank the agency has
+  // retired. The deal's own agent is resolved separately by the server and
+  // appended by the panel when it is not in this list, so a retired one still
+  // renders on the deals it financed.
+  const agentes = useAgentesFinanceiros(false);
 
   return (
     <FinanciamentoPanel
@@ -31,6 +37,8 @@ export function FinanciamentoContainer({ clienteId }: { clienteId: string }) {
         docs.remove.error?.message ??
         null
       }
+      agentes={agentes.data ?? []}
+      agentesLoading={agentes.isPending}
       onSave={(patch) => mutation.mutate(patch)}
       onUpload={(file, tipoDocumento) =>
         docs.upload.mutate({ file, tipoDocumento })

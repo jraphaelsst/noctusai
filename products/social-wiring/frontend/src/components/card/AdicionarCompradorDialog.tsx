@@ -16,8 +16,17 @@
  * Name is required for a reason worth stating: this creates a PERSON record.
  * A party with no name is a row nobody can identify later, and the contract
  * this exists to support is a legal document naming both buyers.
+ *
+ * 🔴 ONE DIALOG, BOTH SIDES (migration 098). `lado` changes the copy and the
+ * default role and nothing else, because nothing else differs: a vendedor is a
+ * `clientes` row with the same checklist, the same uploads and the same
+ * extraction as a comprador. A separate `AdicionarVendedorDialog` would have
+ * been this file with three strings changed, and the copy that stopped being
+ * edited would be the bug.
  */
 import { useEffect, useState } from "react";
+
+import type { LadoParte } from "@/types/cardHub";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,14 +43,40 @@ export interface AdicionarCompradorDialogProps {
   onOpenChange: (open: boolean) => void;
   onCreate: (values: { nome: string; celular?: string }) => void;
   saving?: boolean;
+  /** Which side this dialog is adding to. Copy only — the container owns the
+   *  request and sends `lado` itself. Defaults to the buyer side so every
+   *  existing call site keeps its meaning. */
+  lado?: LadoParte;
 }
+
+/** Copy per side. The seller-side description names the OWNER, because that
+ *  is what the first vendedor on a deal is. */
+const COPY: Record<LadoParte, { titulo: string; descricao: string; placeholder: string }> = {
+  comprador: {
+    titulo: "Adicionar comprador",
+    descricao:
+      "Outra pessoa envolvida nesta negociação — um cônjuge, por exemplo. " +
+      "Ela terá o mesmo checklist e os mesmos documentos do titular.",
+    placeholder: "Maria Mauricio",
+  },
+  vendedor: {
+    titulo: "Adicionar vendedor",
+    descricao:
+      "Quem está vendendo o imóvel — o proprietário, seu cônjuge ou um " +
+      "procurador. Terá o mesmo checklist e os mesmos documentos de qualquer " +
+      "outra parte.",
+    placeholder: "Carlos Eduardo Ramos",
+  },
+};
 
 export function AdicionarCompradorDialog({
   open,
   onOpenChange,
   onCreate,
   saving,
+  lado = "comprador",
 }: AdicionarCompradorDialogProps) {
+  const copy = COPY[lado];
   const [nome, setNome] = useState("");
   const [celular, setCelular] = useState("");
 
@@ -66,13 +101,13 @@ export function AdicionarCompradorDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md" data-testid="adicionar-comprador-dialog">
+      <DialogContent
+        className="max-w-md"
+        data-testid={`adicionar-${lado}-dialog`}
+      >
         <DialogHeader>
-          <DialogTitle>Adicionar comprador</DialogTitle>
-          <DialogDescription>
-            Outra pessoa envolvida nesta negociação — um cônjuge, por exemplo.
-            Ela terá o mesmo checklist e os mesmos documentos do titular.
-          </DialogDescription>
+          <DialogTitle>{copy.titulo}</DialogTitle>
+          <DialogDescription>{copy.descricao}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
@@ -90,7 +125,7 @@ export function AdicionarCompradorDialog({
               onKeyDown={(e) => {
                 if (e.key === "Enter") submit();
               }}
-              placeholder="Maria Mauricio"
+              placeholder={copy.placeholder}
               autoFocus
               data-testid="comprador-nome-input"
             />
