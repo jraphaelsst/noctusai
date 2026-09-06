@@ -463,8 +463,6 @@ RESERVED_RANGES: list[tuple[int, str]] = [
     # scaffold would have collided with a running product.
     (8014, "p-studio"),
     (8180, "p-studio"),            # P Studio frontend
-    (8015, "permutas"),
-    (8190, "permutas"),            # Permutas frontend
 ]
 
 

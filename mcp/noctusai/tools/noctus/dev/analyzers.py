@@ -154,12 +154,21 @@ def _parse_requirements(content):
 # 2026-09-04 as the legacy Permutas platform — Django 4.2 + DRF + Celery +
 # create-react-app — consuming neither.
 #
-# The absorption was deliberate and CI already knows: `.github/workflows/
-# test.yml` installs `products/permutas/backend/requirements.txt` separately,
-# with the comment "NOT the seed FastAPI stack, so its deps are deliberately
-# absent from the root superset", and the e2e jobs cover only `core` and `erp`.
-# What was missing was telling the KEEPERS what CI had already decided — the
-# gate↔methodology desync that reddened the whole matrix.
+# The absorption was deliberate and CI knew it: `.github/workflows/test.yml`
+# installed that product's requirements in its own step ("NOT the seed FastAPI
+# stack, so its deps are deliberately absent from the root superset"), and the
+# e2e jobs cover only `core` and `erp`. What was missing was telling the
+# KEEPERS what CI had already decided — the gate↔methodology desync that
+# reddened the whole matrix.
+#
+# 🔴 permutas itself was REVERTED off `dev` on 2026-09-06 (100 open
+# HIGH/CRITICAL CVEs, 4 of them critical), so this predicate currently exempts
+# NOTHING — every product is seed-architecture and `skipped_non_consumers` is
+# empty. It is kept deliberately: it is correct on its own terms, it fails
+# CLOSED, its negative cases are covered by tests, and the absorption is
+# expected to return remediated. Deleting it would mean re-deriving the same
+# rule under the same time pressure. Verify with
+# `--check-framework-deps` — an empty skip list is the healthy state.
 #
 # 🔴 DERIVED, NEVER A SLUG LIST. A hand-listed exemption is the drift shape
 # `check_hardcoded_product_slug_set` exists to catch, and it would go stale the

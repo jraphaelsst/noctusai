@@ -68,7 +68,6 @@ jobs:
           - orbity
           - seed
           - p-studio
-          - permutas
 
     steps:
       - uses: actions/checkout@v7
@@ -90,16 +89,6 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pytest pytest-asyncio
-
-      - name: Install product requirements (permutas — Django stack)
-        # permutas is the absorbed legacy Permutas platform: Django 4.2 + DRF +
-        # Celery, NOT the seed FastAPI stack, so its deps are deliberately absent
-        # from the root superset. Its suite runs against in-memory SQLite
-        # (backend.settings_test) and needs no external database.
-        if: ${{ matrix.product == 'permutas' }}
-        run: |
-          pip install -r products/permutas/backend/requirements.txt
-          pip install "Pillow>=10.0"
 
       - name: Run tests
         working-directory: products/${{ matrix.product }}/backend

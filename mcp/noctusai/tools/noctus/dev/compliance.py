@@ -14738,10 +14738,13 @@ def check_root_requirements_superset(repo_root: Path | None = None) -> list[dict
         # said so first. This keeper's whole premise (see the docstring) is
         # that the root venv runs every product's backend tests, so the root
         # file must carry every product's deps. That premise does not hold for
-        # a divergent absorption: `.github/workflows/test.yml` installs
-        # `products/permutas/backend/requirements.txt` in its own step, with
-        # the comment "NOT the seed FastAPI stack, so its deps are
-        # deliberately absent from the root superset".
+        # a divergent absorption: CI installed such a product's requirements in
+        # its own step ("NOT the seed FastAPI stack, so its deps are
+        # deliberately absent from the root superset").
+        #
+        # 🔴 The product that prompted this (permutas) was REVERTED off `dev`
+        # 2026-09-06, so this branch currently skips nothing. Kept because it
+        # fails CLOSED and the absorption is expected to return.
         #
         # So requiring Django + DRF + Celery in the FastAPI fleet's shared
         # requirements would make the root venv carry a stack nothing else

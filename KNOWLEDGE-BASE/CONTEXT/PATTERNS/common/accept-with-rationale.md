@@ -93,7 +93,7 @@ shape just changes when the decision moves.
 
 ## Active decisions
 
-### permutas compliance findings baselined pre-migration (110 fingerprints)
+### permutas compliance findings baselined pre-migration — **REVERTED 2026-09-06**
 
 - **Subject:** `products/permutas/**` — the legacy Permutas platform absorbed
   2026-09-04 (`05ce788e`). `check_all_products()` reports 110 NEW high/critical
@@ -137,6 +137,23 @@ shape just changes when the decision moves.
 - **Recorded by:** tech-lead, session_01PVCjij6WdjEbwSdvXWRzGS, 2026-09-04 —
   triaged and accepted by the user after the absorption reddened four fleet
   gates and blocked bless for four unrelated green slices.
+- **🔴 REVERTED 2026-09-06, same session.** Kept as historical context per this
+  catalog's own rule (an entry whose trigger fires is flipped, never deleted).
+  The accept did not survive contact with the rest of the evidence: continuing
+  to chase green surfaced a FIFTH gate (house container model — `runtime-watch`
+  target, `SERVE_SPA_DIR` seam and `docker-compose.yml` all absent, which
+  `CLAUDE.md` says explicitly must NOT be carved out for a divergent
+  absorption) and then the decisive one — **100 open HIGH/CRITICAL Trivy
+  alerts, every single one permutas**: 58 in its `yarn.lock`, 36 in its
+  `package-lock.json`, 6 in its backend requirements, including 4 CRITICAL
+  (`CVE-2026-1615` jsonpath arbitrary code execution, `CVE-2026-54466`
+  websocket-driver). Trivy already suppresses dev dependencies, so these are
+  RUNTIME deps, and `ignore-unfixed: true` means every one of them has a fix
+  available. `bless` fast-forwards `main` to the `dev` tip, so accepting would
+  have put an RCE on the production branch to unblock four unrelated slices.
+  The user reverted the absorption off `dev` instead; the `permutas` Supabase
+  schema and its migrated data are deliberately preserved. The baseline was
+  regenerated back down, so these 110 fingerprints are NOT carried on `main`.
 
 ### ERP `contratos.parcelas` mixed nested/flat path shape (Pattern G)
 - **Subject:** `products/erp-imobiliario/backend/app/routers/contratos.py` exposes the parcela sub-entity through TWO path shapes — **nested** for collection-scoped operations (`GET /api/contratos/{contrato_id}/parcelas` at line 257, `POST /api/contratos/{contrato_id}/parcelas` at line 273) and **flat-by-id** for the single-row update (`PATCH /api/contratos/parcelas/{parcela_id}` at line 310). The frontend (`useContratos.ts:172`) calls the flat shape correctly.

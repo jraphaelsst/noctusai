@@ -54,8 +54,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas DECLARED in migrations (14):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `p_studio` + `permutas` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 494** declared across those schemas.
+- **Schemas DECLARED in migrations (13):** `public` + `adconnect` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
+- **Tables: 467** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
