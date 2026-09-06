@@ -280,6 +280,29 @@ def listar_ativos_para_scorer(
     return saida, nao_resolvidos
 
 
+def como_oferta(ativo_scorer: dict) -> dict:
+    """The same ativo seen as swap currency rather than as a listing.
+
+    🔴 THIS IS THE PAIRING THE BUSINESS ACTUALLY RUNS ON, and erp's model does
+    not have it. In the legacy corpus **77 of 82 matches are imóvel × imóvel**
+    — two catalog listings whose owners each accept a swap, trading with each
+    other. Only 5 pair a listing against a separately-registered permuta.
+
+    erp only ever scores `imovel` against `permuta_*`, because in erp a
+    permuta is a distinct thing a client brings. Here a listing marked "aceita
+    permuta" is BOTH at once: a property someone could take, and currency
+    someone is offering. The two roles are one row read from two directions.
+
+    Flipping `natureza` is what lets the shared scorer see the second
+    direction: `calcular_compatibilidade_specs` and `passa_filtros_minimos`
+    both branch on the RIGHT-hand side's natureza, and with `imovel` there
+    they fall through — specs score 0 for every pair and the region gate never
+    applies. The property's own fields are already populated from the catalog,
+    so relabelling is all that is needed; nothing is fabricated.
+    """
+    return {**ativo_scorer, "natureza": "permuta_imovel"}
+
+
 def texto_para_embedding(ativo_scorer: dict) -> str:
     """The prose that represents what this ativo IS.
 
@@ -373,6 +396,7 @@ __all__ = [
     "IMOVEL_FIELDS",
     "INTERESSE_FIELDS",
     "ativo_para_scorer",
+    "como_oferta",
     "interesse_para_scorer",
     "listar_ativos_para_scorer",
     "texto_interesses_para_embedding",

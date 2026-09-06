@@ -45,6 +45,7 @@ import {
   List,
   FileText,
   Send,
+  ArrowLeftRight,
   Building2,
   Target,
   KanbanSquare,
@@ -71,6 +72,7 @@ const ForgotPassword = lazyWithReload(() => import("@/pages/ForgotPassword"));
 const Chat = lazyWithReload(() => import("@/pages/Chat"));
 const Dashboard = lazyWithReload(() => import("@/pages/Dashboard"));
 const Equipe = lazyWithReload(() => import("@/pages/Equipe"));
+const Permutas = lazyWithReload(() => import("@/pages/Permutas"));
 const Settings = lazyWithReload(() => import("@/pages/Settings"));
 const YouTube = lazyWithReload(() => import("@/pages/YouTube"));
 const N8n = lazyWithReload(() => import("@/pages/N8n"));
@@ -128,6 +130,10 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Agendamentos", href: "/agendamentos", icon: CalendarClock, route: "agendamentos" },
       { name: "n8n", href: "/n8n", icon: Workflow, route: "n8n" },
       { name: "Imóveis", href: "/imoveis", icon: Building2, route: "imoveis" },
+      // Sits beside Imóveis because a permuta IS an imóvel wearing a second
+      // hat — 77 of the 82 legacy matches paired two catalog listings with
+      // each other. Nav-gated by its own `status_pagina` row (migration 101).
+      { name: "Permutas", href: "/permutas", icon: ArrowLeftRight, route: "permutas" },
     ],
   },
   {
@@ -261,6 +267,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Agendamentos", href: "/agendamentos", icon: CalendarClock },
       { name: "n8n", href: "/n8n", icon: Workflow },
       { name: "Imóveis", href: "/imoveis", icon: Building2 },
+      { name: "Permutas", href: "/permutas", icon: ArrowLeftRight },
     ],
   },
   {
@@ -399,6 +406,7 @@ export default createProductApp({
     { path: "/marcas", component: Marcas },
     { path: "/imoveis", component: Imoveis },
     { path: "/imoveis/:codigo", component: ImovelDetalhes },
+    { path: "/permutas", component: Permutas },
     { path: "/agendamentos", component: Agendamentos },
     { path: "/email", component: EmailPainel },
     { path: "/email/campanhas", component: EmailCampanhasNoc },

@@ -253,9 +253,8 @@ def gerar_matches(
 ) -> dict:
     """Run the engine and persist what it finds.
 
-    With no `ativo_id` this is a full scan: every registered `imovel` intent
-    against every registered `permuta_*`. With one, it is that ativo against
-    the opposite side only.
+    With no `ativo_id` this is a full scan. With one, it is that ativo against
+    everything it could pair with.
 
     Returns counts AND `sem_semantica` — how many scored pairs ran without
     embeddings. See the note on the return for why that number is reported
@@ -266,27 +265,73 @@ def gerar_matches(
     imoveis = [a for a in todos if a["natureza"] == "imovel"]
     permutas = [a for a in todos if a["natureza"] != "imovel"]
 
+    # Narrowing to one ativo has to narrow the CORRECT side, and for a
+    # registered permuta that means keeping every imóvel as a driver while
+    # letting nothing else into the candidate pool. Leaving the imóvel list
+    # whole without also emptying the offer-views would score every unrelated
+    # imóvel×imóvel pair under the guise of "matches for this permuta".
+    alvo_e_permuta = False
     if ativo_id:
         alvo = str(ativo_id)
         if any(a["id"] == alvo for a in imoveis):
             imoveis = [a for a in imoveis if a["id"] == alvo]
         elif any(a["id"] == alvo for a in permutas):
             permutas = [a for a in permutas if a["id"] == alvo]
+            alvo_e_permuta = True
         else:
             raise NotFoundError("Permuta não encontrada ou sem imóvel no catálogo.")
 
+    # ── Build the ordered pair list, then score each pair exactly once ──
+    #
+    # 🔴 TWO MATCH SHAPES, and the second is 94% of the real corpus.
+    #
+    #   imóvel × permuta   a listing against a property someone brought as
+    #                      currency. The ONLY shape erp models — 5 of the 82
+    #                      legacy matches.
+    #   imóvel × imóvel    two listings whose owners each accept a swap,
+    #                      trading with each other. 77 of 82. Pairing only
+    #                      against the first pool would silently return 6% of
+    #                      the answer: no error, just far fewer matches.
+    #
+    # `como_oferta` relabels the right-hand side's `natureza` so the scorer's
+    # specs comparison and region gate actually engage (see its docstring).
+    #
+    # 🔴 ONE CANONICAL ORIENTATION PER PAIR: origem is always the
+    # lexicographically smaller id. A→B and B→A are NOT the same match —
+    # `calcular_qualidade_anuncio` scores the ORIGEM side only — so without a
+    # fixed rule the unique index turns the second into an upsert that
+    # overwrites the first with the reverse score, and a legacy human decision
+    # imported under the other orientation stops protecting the pair.
+    pares: list[tuple[dict, dict]] = []
+    for imovel in imoveis:
+        for permuta in permutas:
+            pares.append((imovel, permuta))
+
+    if not alvo_e_permuta:
+        por_ordem = sorted(imoveis, key=lambda a: a["id"])
+        for i, a in enumerate(por_ordem):
+            for b in por_ordem[i + 1:]:
+                pares.append((a, b))
+        if ativo_id:
+            # Narrowed to one imóvel: keep only the pairs it belongs to. The
+            # canonical orientation still holds — the target may end up as
+            # destino, which is correct, and is what makes this run write rows
+            # identical to the ones a full scan would.
+            alvo = str(ativo_id)
+            pares = [p for p in pares if alvo in (p[0]["id"], p[1]["id"])]
+
     matches: list[dict] = []
     sem_semantica = 0
-    for imovel in imoveis:
-        # Always iterate from the imóvel side. The lib emits origem=imóvel,
-        # destino=permuta whichever entry point is used, and driving from one
-        # side keeps that orientation obviously true rather than incidentally.
-        encontrados = gerar_matches_para_imovel(imovel, permutas, score_minimo)
+    for origem, destino in pares:
+        candidato = (
+            destino if destino["natureza"] != "imovel" else adapter.como_oferta(destino)
+        )
+        encontrados = gerar_matches_para_imovel(origem, [candidato], score_minimo)
+        if not encontrados:
+            continue
         matches.extend(encontrados)
-        for m in encontrados:
-            destino = next((p for p in permutas if p["id"] == m["ativo_destino_id"]), None)
-            if destino is not None and falta_vetor_bilateral(imovel, destino):
-                sem_semantica += 1
+        if falta_vetor_bilateral(origem, candidato):
+            sem_semantica += 1
 
     gravados = _upsert_matches(client, org_id, matches)
 

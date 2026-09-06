@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAuthStore } from '@noctusai/seed/infra';
 import { toast } from "sonner";
 import { Users, UserPlus, Trash2, Loader2, Mail, X } from "lucide-react";
-import { resolveSSOContext } from "@noctusai/lib";
+import { ORG_ROLE_LABELS, resolveSSOContext } from "@noctusai/lib";
 import {
   type Member,
   useCancelInvitation,
@@ -12,11 +12,13 @@ import {
   useTeamMembers,
 } from "@/hooks/useTeam";
 
-const ROLE_LABELS: Record<string, string> = {
-  admin: "Administrador",
-  member: "Membro",
-  owner: "Proprietario",
-};
+// 🔴 CONSUMED, NOT RE-DECLARED. This was a local map of three roles against
+// a canonical set of eight, so `manager`, `viewer`, `dev` and `test` already
+// rendered as raw slugs here — and `corretor` (added with the permutas
+// absorption, where 17 brokers join this org) would have been the fifth.
+// A product-local copy of a seed constant drifts the moment the seed moves.
+// → KB § PATTERNS/architect/products-consume-canonical-organs.md
+const ROLE_LABELS: Record<string, string> = ORG_ROLE_LABELS;
 
 export default function Equipe() {
   const { user } = useAuthStore();

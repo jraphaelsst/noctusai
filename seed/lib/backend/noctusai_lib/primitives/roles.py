@@ -1,13 +1,23 @@
 """
 Shared role constants for the NoctusAI platform.
 
-Defines the 7-role org hierarchy used across Core and all products.
+Defines the 8-role org hierarchy used across Core and all products.
 Products consume these constants in dependencies.py, routers, and SSO logic.
+
+🔴 THIS FILE AND `seed/lib/frontend/src/roles.ts` ARE ONE SET IN TWO
+LANGUAGES. A role added to one and not the other is a split brain: the API
+accepts a value the UI renders as a raw slug, or the UI offers a value the API
+rejects. Change both, same commit.
 """
 from __future__ import annotations
 
 # All valid org_role values (noctus_users.org_role)
-ORG_ROLES = ("owner", "admin", "manager", "member", "viewer", "dev", "test")
+# `corretor` is a real business role, not a permission tier: it carries
+# EXACTLY member-level rights (it appears in none of the grant tuples below)
+# and exists so an agency's brokers are identifiable as brokers on the team
+# page and attachable to their listings. The alternative was a product-local
+# role set in social-wiring, which is the fork this constant exists to prevent.
+ORG_ROLES = ("owner", "admin", "manager", "member", "viewer", "dev", "test", "corretor")
 
 # Roles that grant team/billing management (can invite, remove, change roles)
 ADMIN_ROLES = ("owner", "admin")
@@ -31,6 +41,7 @@ ORG_ROLE_LABELS = {
     "viewer": "Visualizador",
     "dev": "Desenvolvedor",
     "test": "Teste",
+    "corretor": "Corretor",
 }
 
 

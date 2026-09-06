@@ -1,12 +1,21 @@
 /**
  * Shared role constants for the NoctusAI platform.
  *
- * Defines the 7-role org hierarchy used across Core and all products.
+ * Defines the 8-role org hierarchy used across Core and all products.
  * Products consume these in Layout.tsx, admin pages, and invite forms.
+ *
+ * 🔴 THIS FILE AND `noctusai_lib/primitives/roles.py` ARE ONE SET IN TWO
+ * LANGUAGES. A role added to one and not the other is a split brain: the API
+ * accepts a value the UI renders as a raw slug, or the UI offers a value the
+ * API rejects. Change both, same commit.
  */
 
+// `corretor` is a real business role, not a permission tier: it carries
+// EXACTLY member-level rights (it appears in none of the grant arrays below)
+// and exists so an agency's brokers are identifiable as brokers on the team
+// page and attachable to their listings.
 export const ORG_ROLES = [
-  'owner', 'admin', 'manager', 'member', 'viewer', 'dev', 'test',
+  'owner', 'admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor',
 ] as const;
 
 export type OrgRole = (typeof ORG_ROLES)[number];
@@ -38,10 +47,11 @@ export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
   viewer: 'Visualizador',
   dev: 'Desenvolvedor',
   test: 'Teste',
+  corretor: 'Corretor',
 };
 
 /** Assignable roles (cannot assign "owner" — that's the org creator only) */
-export const ASSIGNABLE_ROLES: OrgRole[] = ['admin', 'manager', 'member', 'viewer', 'dev', 'test'];
+export const ASSIGNABLE_ROLES: OrgRole[] = ['admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor'];
 
 /**
  * Check if user can see in-development pages (dev / owner / admin).
