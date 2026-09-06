@@ -236,6 +236,7 @@ from app.modules.pipeline import register as _pipeline
 from app.modules.portal_leads import register as _portal_leads
 from app.modules.scheduling import register as _scheduling
 from app.modules.agentes_financeiros import register as _agentes_financeiros
+from app.modules.permutas import register as _permutas
 from app.modules.certidoes import register as _certidoes
 from app.modules.matriculas import register as _matriculas
 from app.modules.youtube import register as _youtube
@@ -293,6 +294,10 @@ MODULES = [
     # so unlike `_matriculas` it needs no `_MAX_BODY_PATH_OVERRIDES` entry,
     # and schedules no sweep.
     _agentes_financeiros,
+    # Same reasoning again: `/api/permutas` is a unique 2-segment literal
+    # prefix. Its OWN internal order matters and is handled inside its router
+    # (`/matches` and `/gerar` are declared before `/{ativo_id}`), not here.
+    _permutas,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───

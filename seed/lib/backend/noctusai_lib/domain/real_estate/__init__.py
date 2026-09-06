@@ -38,6 +38,13 @@ from noctusai_lib.domain.real_estate.imovel import (
     parse_money,
     parse_sim_nao,
 )
+from noctusai_lib.domain.real_estate.matching import (
+    SCORE_MINIMO_PADRAO,
+    calcular_score_total,
+    falta_vetor_bilateral,
+    gerar_matches_para_imovel,
+    gerar_matches_para_permuta,
+)
 from noctusai_lib.domain.real_estate.metadata import (
     build_youtube_metadata,
     imovel_to_property_data,
@@ -73,6 +80,16 @@ __all__ = [
     "parse_date",
     "parse_money",
     "parse_sim_nao",
+    # Property-swap scoring. Pure functions over two dicts — the full surface
+    # (the individual `calcular_compatibilidade_*` scorers, the gate, the
+    # thresholds) lives in `.matching`; only the entry points are re-exported
+    # here, because a consumer that needs the internals is testing the scorer
+    # rather than using it.
+    "SCORE_MINIMO_PADRAO",
+    "calcular_score_total",
+    "falta_vetor_bilateral",
+    "gerar_matches_para_imovel",
+    "gerar_matches_para_permuta",
     "build_youtube_metadata",
     "imovel_to_property_data",
     "extract_product_code",
