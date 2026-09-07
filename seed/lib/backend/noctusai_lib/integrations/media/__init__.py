@@ -58,6 +58,7 @@ def get_media_resolver(
     document_prompt: str | None = None,
     scene_prompt: str | None = None,
     org_id: str | None = None,
+    max_pages: int | None = -1,
 ) -> MediaResolver:
     """Return a media resolver.
 
@@ -74,6 +75,11 @@ def get_media_resolver(
         scene_prompt: Video scene-description prompt override. Real only.
         org_id: Forwarded to the seed LLM entry points for per-org key
             resolution + budget accounting. Real only.
+        max_pages: Page cap for rasterize→vision on a PDF. Omit for the
+            adapter's default (3); pass `None` for EVERY page, which is what
+            a document whose later pages can reverse its meaning needs — a
+            certidão's averbação, for instance. The sentinel `-1` means
+            "not specified" so `None` can keep its own meaning. Real only.
     """
     if not real:
         return FakeMediaResolver()
@@ -82,11 +88,14 @@ def get_media_resolver(
     # where ffmpeg / PyMuPDF are absent (mirrors google_calendar factory).
     from noctusai_lib.integrations.media.real_adapter import OpenAIMediaResolver
 
-    return OpenAIMediaResolver(
-        document_prompt=document_prompt,
-        scene_prompt=scene_prompt,
-        org_id=org_id,
-    )
+    kwargs = {
+        "document_prompt": document_prompt,
+        "scene_prompt": scene_prompt,
+        "org_id": org_id,
+    }
+    if max_pages != -1:
+        kwargs["max_pages"] = max_pages
+    return OpenAIMediaResolver(**kwargs)
 
 
 __all__ = [

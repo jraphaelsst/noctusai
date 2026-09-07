@@ -72,6 +72,17 @@ _DEFAULT_SCENE_PROMPT = (
 )
 
 _KEYFRAME_FRACTIONS = (0.10, 0.30, 0.60, 0.90)
+
+#: Default page cap for rasterize→vision. Three is right for the documents
+#: this resolver was built for (an ID card, a one-page comprovante): it bounds
+#: the vision bill on a long PDF nobody meant to send.
+#:
+#: 🔴 IT IS WRONG FOR ANY DOCUMENT WHOSE CORRECTION LIVES AT THE END.
+#: A certidão de casamento states the marriage on page 1 and its AVERBAÇÃO —
+#: the divorce, the name change — on a later page. Truncating such a document
+#: does not lose detail; it inverts the answer, and reads as a confident
+#: "casado, comunhão parcial" for someone who has been divorced for years.
+#: Callers that read those pass `max_pages=None` for no cap.
 _RASTERIZE_MAX_PAGES = 3
 _RASTERIZE_TARGET_PX = 1024
 
@@ -95,10 +106,15 @@ class OpenAIMediaResolver:
         document_prompt: Optional[str] = None,
         scene_prompt: Optional[str] = None,
         org_id: Optional[str] = None,
+        max_pages: Optional[int] = _RASTERIZE_MAX_PAGES,
     ) -> None:
         self._doc_prompt = document_prompt or _DEFAULT_DOCUMENT_PROMPT
         self._scene_prompt = scene_prompt or _DEFAULT_SCENE_PROMPT
         self._org_id = org_id
+        # `None` = every page. Explicitly distinct from the default, so a
+        # caller reading averbações opts IN to the bill rather than inheriting
+        # a truncation it cannot see.
+        self._max_pages = max_pages
 
     async def resolve(self, media: InboundMedia) -> ResolvedMedia:
         kind = classify_media_kind(media.mimetype, media.filename)
@@ -322,7 +338,7 @@ class OpenAIMediaResolver:
                 error_message="neither PyMuPDF nor pdfminer importable",
             )
         page_images = await asyncio.to_thread(
-            self._pdf_rasterize, media.content
+            self._pdf_rasterize, media.content, self._max_pages
         )
         if not page_images:
             return ResolvedMedia(
@@ -359,8 +375,14 @@ class OpenAIMediaResolver:
         return classify_pdf_text_layer(content)
 
     @staticmethod
-    def _pdf_rasterize(content: bytes) -> list[bytes]:
-        """Rasterize pages 1-`_RASTERIZE_MAX_PAGES` at ~1024px → PNG bytes."""
+    def _pdf_rasterize(
+        content: bytes, max_pages: Optional[int] = _RASTERIZE_MAX_PAGES
+    ) -> list[bytes]:
+        """Rasterize the first `max_pages` pages at ~1024px → PNG bytes.
+
+        `max_pages=None` rasterizes EVERY page — for documents whose meaning
+        can be reversed by a later page (see `_RASTERIZE_MAX_PAGES`).
+        """
         try:
             import fitz  # type: ignore
 

@@ -86,8 +86,11 @@ def _documento(scoped, did) -> dict:
 
 class TestWhichTypesAreRead:
     @pytest.mark.parametrize("tipo,expected", [
-        ("rg", True), ("cpf", True), ("cnh", True),
+        ("rg", True), ("cpf", True), ("cnh", True), ("certidao_casamento", True),
         ("contrato", False), ("foto_imovel", False), ("comprovante_endereco", False),
+        # `outro` is where the three certidões this org holds were actually
+        # filed, which is why none of them was ever read (migration 103).
+        ("outro", False),
     ])
     def test_only_identity_documents_are_read(self, tipo, expected):
         assert svc.deve_extrair(tipo) is expected
@@ -367,3 +370,61 @@ class TestGeneroIsTheThirdExtractedField:
         )
         depois = checklist_svc.listar(scoped, ORG_UUID, UUID(cid))
         assert {i["key"]: i["concluido"] for i in depois["items"]}["genero"] is True
+
+
+class TestUmaCertidaoEhLidaPorInteiro:
+    """The page cap is a property of the document TYPE.
+
+    🔴 TRUNCATION HERE INVERTS THE ANSWER, it does not degrade it. A certidão
+    de casamento states the marriage on page 1 as a LABELLED form ("regime de
+    bens: comunhão parcial") and carries the AVERBAÇÃO that dissolved it —
+    the divorce, the name reversion — as prose further in. On the three
+    certidões this org holds (2026-09-07) ALL THREE parties are divorced and
+    ALL THREE documents read "casado" on their first page.
+
+    So this rule is the precondition for `certidao_casamento` being
+    extractable at all: registering the type without it would start writing
+    confident wrong estado-civil values where today the document is simply
+    never read.
+    """
+
+    def test_a_certidao_asks_for_every_page(self):
+        assert svc.paginas_maximas("certidao_casamento") is None
+
+    @pytest.mark.parametrize("tipo", ["rg", "cpf", "cnh", "contrato"])
+    def test_everything_else_leaves_the_default_to_the_adapter(self, tipo):
+        # The sentinel, NOT the literal 3: the cost trade-off is owned by the
+        # seed adapter, and copying its default here would diverge silently
+        # the day it changes.
+        assert svc.paginas_maximas(tipo) == -1
+
+    def test_the_two_sets_agree(self):
+        """A type that must be read whole but is not extractable would be a
+        rule nothing consults."""
+        assert svc.TIPOS_LEITURA_INTEGRAL <= svc.TIPOS_EXTRAIVEIS
+
+    @pytest.mark.asyncio
+    async def test_the_cap_reaches_the_extractor_factory(self, client, scoped, monkeypatch):
+        """The wiring, not just the mapping.
+
+        A correct `paginas_maximas` still truncates every certidão if nobody
+        threads it into the factory — and that failure is invisible, because
+        the run succeeds and simply reads three pages.
+        """
+        visto: dict = {}
+        import app.modules.card_hub.identidade_extracao_service as mod
+
+        def _fabrica(**kw):
+            visto.update(kw)
+            return FakeIdentityExtractor(_alta())
+
+        # self-patch-ok: substitutes the SEED factory at this module's import
+        # site (a third-party-shaped boundary), not this module's own logic —
+        # `extrair_identidade` builds the extractor internally and takes no
+        # factory seam to pass instead.
+        monkeypatch.setattr(mod, "make_identity_extractor", _fabrica)
+
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        await svc.extrair_identidade(scoped, storage, ORG_UUID, UUID(cid), UUID(did))
+
+        assert visto.get("max_pages") is None, "a certidão must be read whole"

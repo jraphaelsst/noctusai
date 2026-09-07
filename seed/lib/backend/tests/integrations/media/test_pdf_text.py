@@ -14,7 +14,11 @@ from noctusai_lib.integrations.media import (
     extract_pdf_text,
     pdf_text_tooling_available,
 )
-from noctusai_lib.integrations.media.pdf_text import _extract_pdf_text_with_signal
+from noctusai_lib.integrations.media.pdf_text import (
+    MIN_CHARS_PER_PAGE,
+    _classify_page,
+    _extract_pdf_text_with_signal,
+)
 
 
 class TestExtractPdfTextDegraded:
@@ -305,3 +309,63 @@ class TestClassifyPdfTextLayer:
 
         assert layer.pages == ()
         assert layer.tooling_available is False
+
+
+class TestSerproCnhEletronica:
+    """The CNH-e text layer is the signature block, and it used to pass.
+
+    🔴 VERBATIM from a real CNH-e in this platform's corpus (2026-09-07), and
+    reproduced here because the exact wrapping is the point: the ICP-Brasil
+    sentence breaks across six lines, so a pattern anchored on the paragraph
+    would match none of them.
+
+    The card's every field — nome, CPF, RG, nascimento, the MRZ band — lives
+    in the embedded raster. The text layer says nothing about the holder. It
+    measured 445 characters, cleared `MIN_CHARS_PER_PAGE`, and the page was
+    classified `above char floor`, so the document was "read" as its own
+    signature disclaimer and the row settled on `extracao_status='sem_dados'`
+    without ever escalating to vision. A silent no-op, not an error.
+    """
+
+    LAYER = "\n".join([
+        "QR-CODE",
+        "Documento assinado com certificado digital em conformidade",
+        "com a Medida Provisória nº 2200-2/2001. Sua validade poderá",
+        "ser confirmada por meio do programa Assinador Serpro.",
+        "As orientações para instalar o Assinador Serpro e realizar a",
+        "validação do documento digital estão disponíveis em:",
+        "https://www.serpro.gov.br/assinador-digital.",
+        "REPÚBLICA FEDERATIVA DO BRASIL",
+        "MINISTÉRIO DOS TRANSPORTES",
+        "SECRETARIA NACIONAL DE TRÂNSITO - SENATRAN",
+    ])
+
+    def test_the_whole_layer_strips_to_nothing(self):
+        assert strip_provenance_stamps(self.LAYER) == ""
+
+    def test_the_page_takes_the_certain_verdict_not_a_threshold(self):
+        """`provenance stamp only` — decided by emptiness, not by a count.
+
+        Strip only the signature block and the ministry masthead left behind
+        measures exactly 100 characters, landing precisely ON
+        `MIN_CHARS_PER_PAGE`. Passing on that coin-flip is the same "accident
+        of where the threshold was put" this module's header condemns, so the
+        masthead is stripped too and the page measures 0.
+        """
+        substantive, reason = _classify_page(self.LAYER, image_coverage=0.0)
+        assert substantive is False
+        assert reason == "provenance stamp only"
+
+    def test_the_masthead_alone_would_have_sat_on_the_threshold(self):
+        """Documents the coin-flip this fix removes — if MIN_CHARS_PER_PAGE
+        ever moves, this is the test that explains why the masthead is in the
+        pattern list."""
+        masthead = "\n".join(self.LAYER.splitlines()[7:])
+        assert len(masthead) == MIN_CHARS_PER_PAGE
+
+    def test_a_real_document_carrying_the_same_masthead_still_passes(self):
+        """🔴 The paired negative: stripping boilerplate must never silence a
+        page that actually says something. A CRLV with the same federal
+        letterhead AND real content stays substantive."""
+        pagina = self.LAYER + "\n" + ("VEICULO PLACA ABC1D23 RENAVAM 00123456789 " * 30)
+        assert _classify_page(pagina, image_coverage=0.0)[0] is True

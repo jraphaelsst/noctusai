@@ -17,6 +17,7 @@ def make_identity_extractor(
     real: bool = False,
     org_id: Optional[str] = None,
     document_prompt: Optional[str] = None,
+    max_pages: int | None = -1,
 ) -> IdentityExtractor:
     """Return an identity extractor.
 
@@ -27,13 +28,22 @@ def make_identity_extractor(
         org_id: Forwarded to the LLM entry points for per-org key
             resolution and budget accounting.
         document_prompt: Product-specific framing for the vision rung.
+        max_pages: Page cap for the vision rung. Omit for the adapter's
+            default (3 pages — right for an ID card); pass `None` to read
+            EVERY page, which a document whose later pages can reverse its
+            meaning requires. A certidão de casamento is the canonical case:
+            the marriage is on page 1 and the AVERBAÇÃO that dissolved it is
+            further in, so a truncated read does not lose detail — it returns
+            the opposite answer.
     """
     if not real:
         return FakeIdentityExtractor()
 
     from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 
-    return LadderIdentityExtractor(org_id=org_id, document_prompt=document_prompt)
+    return LadderIdentityExtractor(
+        org_id=org_id, document_prompt=document_prompt, max_pages=max_pages
+    )
 
 
 __all__ = ["make_identity_extractor"]

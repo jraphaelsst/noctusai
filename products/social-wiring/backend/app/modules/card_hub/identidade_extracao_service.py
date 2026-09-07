@@ -112,7 +112,24 @@ CLIENTES_TABLE = "clientes"
 #: is unreachable today. It is here because the extractor already classifies and
 #: reads one — adding the type later is then a data change, not a code change.
 #: Stated rather than left to be discovered as a puzzling dead branch.
-TIPOS_EXTRAIVEIS = frozenset({"rg", "cpf", "cnh"})
+TIPOS_EXTRAIVEIS = frozenset({"rg", "cpf", "cnh", "certidao_casamento"})
+
+#: Types whose vision rung must receive EVERY page, not the adapter's
+#: 3-page default.
+#:
+#: 🔴 TRUNCATING ONE OF THESE INVERTS THE ANSWER — it does not merely lose
+#: detail. A certidão de casamento states the marriage on page 1 as a
+#: LABELLED form ("regime de bens: comunhão parcial") and records the
+#: AVERBAÇÃO that dissolved it — the divorce, the name reversion — as prose
+#: further in. Measured on the three certidões this org holds (2026-09-07):
+#: all three parties are divorced, and all three documents read "casado,
+#: comunhão parcial" on their first page.
+#:
+#: So this is not an optimisation knob. It is the reason `certidao_casamento`
+#: is safe to make extractable at all: registering the type without it would
+#: start writing confident wrong estado-civil values where today the document
+#: is simply never read.
+TIPOS_LEITURA_INTEGRAL = frozenset({"certidao_casamento"})
 
 #: How many times one document may be STARTED before the sweep gives up.
 #: Bounds the vision bill on a deterministically-broken document — see
@@ -245,6 +262,18 @@ CAMPO_POR_ITEM: dict[str, str] = {c.item_key: c.coluna_valor for c in CAMPOS}
 def deve_extrair(tipo_documento: str) -> bool:
     """Is this a document we read fields from?"""
     return tipo_documento in TIPOS_EXTRAIVEIS
+
+
+def paginas_maximas(tipo_documento: str) -> int | None:
+    """Page cap for this type's vision rung.
+
+    `None` = every page (see `TIPOS_LEITURA_INTEGRAL`); `-1` = "not
+    specified", which lets the seed adapter apply its own default. Returning
+    the sentinel rather than the literal 3 keeps the default in ONE place —
+    the adapter that owns the cost trade-off — instead of copying it here
+    where it would silently diverge the day it changes.
+    """
+    return None if tipo_documento in TIPOS_LEITURA_INTEGRAL else -1
 
 
 def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional[str], bool]]:
@@ -469,7 +498,15 @@ async def extrair_identidade(
     # not an access log.
     _log_acesso_extracao(client, org_id, documento_id)
 
-    extractor = extractor or make_identity_extractor(real=True, org_id=str(org_id))
+    # 🔴 The page cap is chosen from the document's TYPE, not from a global
+    # default — see `TIPOS_LEITURA_INTEGRAL`. A certidão de casamento must be
+    # read whole or its averbação (the divorce) never reaches the model, and
+    # the answer flips rather than degrades.
+    extractor = extractor or make_identity_extractor(
+        real=True,
+        org_id=str(org_id),
+        max_pages=paginas_maximas(str(doc.get("tipo_documento") or "")),
+    )
     fields: IdentityFields = await extractor.extract(
         blob.data,
         mimetype=doc.get("mime_type"),

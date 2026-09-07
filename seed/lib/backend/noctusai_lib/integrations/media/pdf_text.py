@@ -235,6 +235,38 @@ _PROVENANCE_STAMP_PATTERNS: tuple[str, ...] = (
     r"^https?://(assinador-web|[\w.-]*\.)?onr\.org\.br/\S*$",
     r"^https?://selodigital\.tjsp\.jus\.br/?\S*$",
     r"^www\.ridigital\.org\.br$",
+    # ── Serpro / SENATRAN digital documents (CNH-e, CRLV-e) ─────────────
+    # Added 2026-09-07 from a real CNH-e in this platform's own corpus. The
+    # card's every field lives in the embedded raster; the text layer is
+    # ONLY the ICP-Brasil signature block plus the ministry masthead —
+    # 445 characters of it, which sailed past `MIN_CHARS_PER_PAGE` and made
+    # the page read as `above char floor`. The document was therefore
+    # transcribed as its own signature disclaimer, the parsers found no
+    # identity in it, and the row settled on `extracao_status='sem_dados'`
+    # WITHOUT ever escalating to vision. A silent no-op, not an error.
+    #
+    # The signature sentence is WRAPPED across six lines, so each line is
+    # anchored on its own opening words rather than the paragraph's.
+    r"^qr-?code$",
+    r"^documento\s+assinado\s+com\s+certificado\s+digital\b.*$",
+    r"^com\s+a\s+medida\s+provisoria\s+n[ºo°]?\s*2200-2/2001\b.*$",
+    r"^ser\s+confirmada\s+por\s+meio\s+do\s+programa\s+assinador\s+serpro\b.*$",
+    r"^as\s+orientacoes\s+para\s+instalar\s+o\s+assinador\s+serpro\b.*$",
+    r"^validacao\s+do\s+documento\s+digital\s+estao\s+disponiveis\s+em:?$",
+    r"^https?://(www\.)?serpro\.gov\.br/\S*$",
+    # 🔴 THE MASTHEAD GOES TOO, AND NOT AS AN AFTERTHOUGHT.
+    # Strip only the signature block and this CNH-e leaves exactly 100
+    # characters of ministry letterhead — landing precisely ON
+    # `MIN_CHARS_PER_PAGE` and passing. That is the same "accident of where
+    # the threshold was put" this module's header condemns, reproduced one
+    # document later. A masthead identifies the ISSUER: it is byte-identical
+    # on every instance of the document type and carries zero per-document
+    # information, so removing it cannot remove content. With it gone the
+    # page measures 0 and takes the CERTAIN verdict ("provenance stamp
+    # only") instead of a threshold comparison.
+    r"^republica\s+federativa\s+do\s+brasil$",
+    r"^ministerio\s+dos\s+transportes$",
+    r"^secretaria\s+nacional\s+de\s+transito\s*-?\s*senatran$",
 )
 
 
