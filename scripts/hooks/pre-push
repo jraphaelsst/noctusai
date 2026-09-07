@@ -282,9 +282,37 @@ fi
 # `cache_settle` — the last step that can dirty one. `auto-improvement.ndjson`
 # had no such stage for ~4 months; the rows were hand-drained 4+ times because
 # every investigation looked for an ordering bug instead of a missing stage.
+#
+# 🔴 TWO SHELL HAZARDS THIS BLOCK HAD TO SURVIVE, both silent:
+#
+#  1. `set -euo pipefail` (line 27) — a BARE `var="$(cmd)"` whose command
+#     exits non-zero terminates the hook THERE. The `if [[ $? -ne 0 ]]` after
+#     it never runs, so the push is refused with the keeper's name printed and
+#     no reason. `|| _rc=$?` makes the assignment a TESTED command, which is
+#     what exempts it. (Verdict-channel integrity: read the status of the
+#     thing you are judging.)
+#  2. `PY_PP` is derived from `git rev-parse --show-toplevel`, which inside a
+#     WORKTREE is the worktree — and a worktree has no `mcp/noctusai/.venv`.
+#     Every other block here is guarded by `-x "$PY_PP"` and therefore just
+#     skips; a HARD-BLOCK keeper that skips in the one place work actually
+#     happens is not a gate. So fall back to the PRIMARY checkout's
+#     interpreter (derived from `--git-common-dir`, never hand-built) while
+#     still running the WORKTREE's `cli.py`, so what gets checked is the code
+#     being pushed rather than the primary's copy of it.
+_ld_py="$PY_PP"
+if [[ ! -x "$_ld_py" ]]; then
+    _ld_primary="$(cd "$(git rev-parse --git-common-dir)/.." 2>/dev/null && pwd || true)"
+    _ld_py="$_ld_primary/mcp/noctusai/.venv/bin/python"
+fi
+if [[ ! -x "$_ld_py" || ! -f "$CLI_PP" ]]; then
+    # No interpreter anywhere — say so. A gate that cannot run must not read
+    # as a gate that passed.
+    echo "[pre-push] ledger-drain: SKIPPED (no interpreter at $_ld_py)" >&2
+else
 echo "[pre-push] ledger-drain keeper..."
-_ld_out="$("$PY_PP" "$CLI_PP" --check-ledger-drain-after-settle 2>&1)"
-if [[ $? -ne 0 ]]; then
+_ld_rc=0
+_ld_out="$("$_ld_py" "$CLI_PP" --check-ledger-drain-after-settle 2>&1)" || _ld_rc=$?
+if [[ $_ld_rc -ne 0 ]]; then
     echo "" >&2
     echo "🔴 pre-push: ledger-drain keeper BLOCKED the push." >&2
     echo "$_ld_out" >&2
@@ -295,6 +323,7 @@ if [[ $? -ne 0 ]]; then
     blocked=1
 else
     echo "[pre-push] ledger-drain: $( echo "$_ld_out" | tail -1 | sed 's/^[[:space:]]*//' )"
+fi
 fi
 
 # ─── branch protection (reads the captured push lines) ──────────────────
