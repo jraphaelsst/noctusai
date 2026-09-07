@@ -174,6 +174,17 @@ MODELS: Tuple[ModelEntry, ...] = (
         description="Google embedding model — 768 dims.",
         cost_per_1m_input_tokens=0.0,
     ),
+    ModelEntry(
+        id="gemini-embedding-001",
+        label="gemini-embedding-001",
+        provider="gemini",
+        kind="embedding",
+        # Matryoshka: natively 3072, truncatable to 1536 / 768 via
+        # `outputDimensionality`. The permutas layer asks for 1536 because
+        # that is the column width.
+        description="Google embedding model — 3072 dims, truncatable (1536/768).",
+        cost_per_1m_input_tokens=0.15,
+    ),
 )
 
 

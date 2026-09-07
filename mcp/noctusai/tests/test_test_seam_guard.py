@@ -222,3 +222,57 @@ class TestTheHookActuallyFiresInProduction:
         settings = _json.loads((REPO_ROOT / ".claude" / "settings.json").read_text())
         wired = _json.dumps(settings.get("hooks", {}).get("PreToolUse", []))
         assert "claude-guard-test-seams.py" in wired
+
+
+class TestSysModulesSetitemIsTheSameViolation:
+    """`monkeypatch.setitem(sys.modules, "<ours>", stub)` — the whole-module form.
+
+    🔴 THIS SLIPPED THROUGH FOR REAL. The predicate matched `setattr` only, so
+    replacing an ENTIRE module of ours in `sys.modules` — strictly broader than
+    rebinding one of its names, and quieter, because no attribute is mentioned
+    — read as clean. It was used to stub
+    `noctusai_lib.integrations.llm.usage` for a whole test file in the same
+    slice that got that module's token accounting wrong; the stub is exactly
+    what made the bug unobservable, and both gates said the file was fine.
+
+    Paired per `KB § PATTERNS/common/methodology-execution-discipline.md`
+    principle 4: the guard must DENY ours and stay silent on a third party's.
+    """
+
+    OURS = (
+        "import sys\n"
+        "import types\n"
+        "\n"
+        "\n"
+        "def test_a(monkeypatch):\n"
+        "    stub = types.ModuleType('noctusai_lib.integrations.llm.usage')\n"
+        "    monkeypatch.setitem(sys.modules, 'noctusai_lib.integrations.llm.usage', stub)\n"
+    )
+
+    THIRD_PARTY = (
+        "import sys\n"
+        "import types\n"
+        "\n"
+        "\n"
+        "def test_a(monkeypatch):\n"
+        "    monkeypatch.setitem(sys.modules, 'httpx', types.ModuleType('httpx'))\n"
+    )
+
+    def test_replacing_one_of_our_modules_is_refused(self):
+        assert guard.find_self_patches(self.OURS, TEST_PATH), (
+            "swapping our own module out of sys.modules is a self-patch"
+        )
+
+    def test_replacing_a_third_party_module_is_allowed(self):
+        assert guard.find_self_patches(self.THIRD_PARTY, TEST_PATH) == [], (
+            "stubbing a vendor import is a legitimate seam, not our logic"
+        )
+
+    def test_setitem_on_something_other_than_sys_modules_is_ignored(self):
+        """`monkeypatch.setitem` on a plain dict is ordinary fixture work."""
+        src = (
+            "def test_a(monkeypatch):\n"
+            "    cfg = {'a': 1}\n"
+            "    monkeypatch.setitem(cfg, 'a', 2)\n"
+        )
+        assert guard.find_self_patches(src, TEST_PATH) == []

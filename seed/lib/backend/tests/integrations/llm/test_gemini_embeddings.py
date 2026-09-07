@@ -11,13 +11,24 @@ had no batch method at all), and both fail silently if wrong:
 """
 from __future__ import annotations
 
-import sys
 import types
 
 import pytest
 
+from noctusai_lib.integrations.llm import (
+    InMemoryUsageSink,
+    LLMConfig,
+    configure_llm,
+)
+from noctusai_lib.integrations.llm import client as _llm_client
 from noctusai_lib.integrations.llm.exceptions import LLMAPIError
 from noctusai_lib.integrations.llm.providers.gemini_provider import GeminiProvider
+
+
+def _reset_llm_config() -> None:
+    """Uninstall the config this file installed, so it cannot leak into a
+    sibling test file that expects none."""
+    _llm_client._active_config = None
 
 
 class _FakeEmbedding:
@@ -25,28 +36,52 @@ class _FakeEmbedding:
 
 
 class _FakeResponse:
-    def __init__(self, vectors): self.embeddings = [_FakeEmbedding(v) for v in vectors]
+    def __init__(self, vectors, usage=None):
+        self.embeddings = [_FakeEmbedding(v) for v in vectors]
+        # The vendor's own token count rides on the RESPONSE, which is where
+        # the provider reads it from. `None` models a vendor reply that
+        # carries no accounting at all.
+        self.usage_metadata = usage
 
 
 class _FakeModels:
-    def __init__(self, vectors): self._vectors = vectors; self.seen = {}
+    def __init__(self, vectors):
+        self._vectors = vectors
+        self.seen = {}
+        self.usage_metadata = None
     async def embed_content(self, *, model, contents, config=None):
         self.seen = {"model": model, "contents": contents, "config": config}
-        return _FakeResponse(self._vectors)
+        return _FakeResponse(self._vectors, self.usage_metadata)
 
 
 class _FakeClient:
     def __init__(self, vectors): self.aio = types.SimpleNamespace(models=_FakeModels(vectors))
 
 
-@pytest.fixture(autouse=True)
-def _no_usage_sink(monkeypatch):
-    """`record_usage` is imported inside the methods; stub the module it comes
-    from so these stay pure unit tests with no accounting side-effects."""
-    mod = types.ModuleType("noctusai_lib.integrations.llm.usage")
-    async def _noop(**kw): return None
-    mod.record_usage = _noop
-    monkeypatch.setitem(sys.modules, "noctusai_lib.integrations.llm.usage", mod)
+@pytest.fixture
+def sink():
+    """A REAL `InMemoryUsageSink`, installed through `configure_llm`.
+
+    🔴 THIS REPLACES A `monkeypatch.setitem(sys.modules, ...)` THAT STUBBED
+    OUT `noctusai_lib.integrations.llm.usage` FOR THIS WHOLE FILE. That is a
+    self-monkeypatch of our own module (CLAUDE.md §1), and it bought nothing:
+    `record_usage` already returns early when no config is installed and never
+    raises. What it DID buy was a hole — it silenced the accounting call in
+    the same slice that got the accounting wrong, so no test in this file
+    could observe that the embed paths were reporting zero tokens. The keeper
+    missed it because `check_no_self_monkeypatch` matches `setattr`, not
+    `setitem` on `sys.modules`.
+
+    Installing the sanctioned seam instead means the accounting is now
+    ASSERTED rather than suppressed — see `TestUsageAccounting`.
+    """
+    s = InMemoryUsageSink()
+    # `key_provider` is required by the dataclass but never consulted here:
+    # these tests hand the provider its `api_key=` directly and stub the
+    # client, so nothing ever resolves a key.
+    configure_llm(LLMConfig(key_provider=lambda _p, _o=None: None, usage_sink=s))
+    yield s
+    _reset_llm_config()
 
 
 def _provider(vectors):
@@ -104,3 +139,52 @@ class TestBatch:
         p, c = _provider([])
         assert await p.generate_embeddings_batch([], model="m", api_key="k") == []
         assert c.aio.models.seen == {}
+
+
+class TestUsageAccounting:
+    """The accounting the old stub made unobservable.
+
+    🔴 WHY THIS MATTERS MORE THAN IT LOOKS: the reason an operator switches to
+    Gemini is that the OpenAI account ran out of credit — so Gemini is the
+    vendor carrying the load exactly when `enforce_budget` most needs to see
+    it. `record_usage` computes cost as `prompt_tokens or 0`, so passing None
+    lands every row at 0.00 and the spend guardrail goes blind on the one
+    provider still spending.
+    """
+
+    @pytest.mark.asyncio
+    async def test_single_embed_reports_the_vendor_token_count(self, sink):
+        p, c = _provider([[0.0] * 1536])
+        c.aio.models.usage_metadata = types.SimpleNamespace(total_token_count=42)
+        await p.generate_embedding("x", model="gemini-embedding-001", api_key="k")
+
+        assert len(sink.events) == 1
+        evento = sink.events[0]
+        assert evento.provider == "gemini"
+        assert evento.operation == "embedding"
+        assert evento.total_tokens == 42
+        # The field cost is computed from — None here is the silent-zero bug.
+        assert evento.prompt_tokens == 42
+
+    @pytest.mark.asyncio
+    async def test_batch_embed_reports_the_vendor_token_count(self, sink):
+        p, c = _provider([[0.0] * 1536, [0.0] * 1536])
+        c.aio.models.usage_metadata = types.SimpleNamespace(total_token_count=99)
+        await p.generate_embeddings_batch(
+            ["a", "b"], model="gemini-embedding-001", api_key="k"
+        )
+
+        assert len(sink.events) == 1
+        assert sink.events[0].total_tokens == 99
+        assert sink.events[0].prompt_tokens == 99
+
+    @pytest.mark.asyncio
+    async def test_a_vendor_that_reports_nothing_is_recorded_as_unknown(self, sink):
+        """No `usage_metadata` must still record the CALL — a missing count is
+        not a missing request, and dropping the row would hide the call from
+        the ledger entirely."""
+        p, _ = _provider([[0.0] * 1536])
+        await p.generate_embedding("x", model="gemini-embedding-001", api_key="k")
+
+        assert len(sink.events) == 1
+        assert sink.events[0].total_tokens is None

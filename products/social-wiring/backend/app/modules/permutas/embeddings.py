@@ -93,6 +93,27 @@ def _conferir_dimensoes(vetores: list[list[float]], provedor: str, modelo: str) 
         )
 
 
+def _ja_embutido(linha: dict, provedor: str, modelo: str) -> bool:
+    """Is this row already embedded IN THE SPACE WE ARE ABOUT TO USE?
+
+    🔴 "HAS A VECTOR" IS NOT THE QUESTION. Both providers write into the same
+    `vector(1536)` column, so a row embedded under OpenAI looks identical to
+    one embedded under Gemini — and comparing the two is noise, not a weaker
+    signal. Skipping on the presence of a vector alone is what lets one corpus
+    hold two spaces, and nothing downstream can detect it afterwards.
+
+    A row carrying NO provenance is treated as stale rather than as matching:
+    those are rows written before these columns existed, and re-embedding them
+    is cheap next to leaving an unidentifiable vector in the corpus forever.
+    """
+    if not (linha.get("embedding") and linha.get("embedding_interesses")):
+        return False
+    return (
+        linha.get("embedding_provider") == provedor
+        and linha.get("embedding_modelo") == modelo
+    )
+
+
 async def embutir_ativos(
     client: Any,
     org_id: UUID,
@@ -123,7 +144,10 @@ async def embutir_ativos(
     q = (
         client.schema(SCHEMA)
         .table(ATIVOS)
-        .select("id,observacoes,embedding,embedding_interesses")
+        .select(
+            "id,observacoes,embedding,embedding_interesses,"
+            "embedding_provider,embedding_modelo"
+        )
         .eq("org_id", str(org_id))
         .eq("status", "ativo")
     )
@@ -142,10 +166,31 @@ async def embutir_ativos(
     for row in interesses_rows:
         interesses_por_ativo.setdefault(row["ativo_id"], []).append(row)
 
+    # 🔴 RESOLVED BEFORE THE FILTER, not after — the filter depends on it.
+    # A row is only "done" relative to a PROVIDER, so deciding what to skip
+    # requires knowing which vendor we are about to embed with. Resolved ONCE
+    # per run either way: a setting changed mid-run would embed half the
+    # corpus in one space and half in another.
+    provedor = provider_resolver(str(org_id))
+    modelo = MODELOS.get(provedor)
+    if modelo is None:
+        raise ValueError(
+            f"Provedor de embeddings {provedor!r} não tem modelo mapeado em "
+            f"MODELOS ({sorted(MODELOS)})."
+        )
+
     pendentes: list[tuple[str, str, str]] = []  # (id, texto_perfil, texto_interesses)
+    reembutidos = 0
     for linha in linhas:
-        if apenas_pendentes and linha.get("embedding") and linha.get("embedding_interesses"):
+        if apenas_pendentes and _ja_embutido(linha, provedor, modelo):
             continue
+        # A row that HAS both vectors but under another vendor is not new work
+        # the operator asked for — it is the corpus converging on one space
+        # after a provider switch. Counted where the row is actually QUEUED,
+        # not here: a row dropped below for being unresolvable or textless is
+        # not being re-embedded, and counting it here would report work that
+        # never happens.
+        ja_tinha = bool(linha.get("embedding") and linha.get("embedding_interesses"))
         projetado = por_id.get(linha["id"])
         if projetado is None:
             # Unresolvable against the catalog — already reported by the
@@ -159,25 +204,21 @@ async def embutir_ativos(
         if not perfil or not desejo:
             continue
         pendentes.append((linha["id"], perfil, desejo))
+        if ja_tinha:
+            reembutidos += 1
 
     if not pendentes:
         return {
+            "provedor": provedor,
+            "modelo": modelo,
+            "dimensoes": DIMENSOES,
             "processados": 0,
+            "reembutidos": 0,
             "pendentes": 0,
             "sem_texto": len(linhas),
             "nao_resolvidos": len(nao_resolvidos),
         }
 
-    # The operator's manual pick. Resolved ONCE per run, not per batch: a
-    # setting changed mid-run would embed half the corpus in one space and
-    # half in another, and the two halves would never be comparable again.
-    provedor = provider_resolver(str(org_id))
-    modelo = MODELOS.get(provedor)
-    if modelo is None:
-        raise ValueError(
-            f"Provedor de embeddings {provedor!r} não tem modelo mapeado em "
-            f"MODELOS ({sorted(MODELOS)})."
-        )
     extra = {"output_dimensionality": DIMENSOES} if provedor in _PRECISA_DIMENSAO else {}
     logger.info(
         "permutas.embutir_ativos org=%s provedor=%s modelo=%s dims=%d candidatos=%d",
@@ -207,6 +248,12 @@ async def embutir_ativos(
                     "embedding": perfil_vec,
                     "embedding_interesses": desejo_vec,
                     "embedding_atualizado_em": agora,
+                    # Written in the SAME statement as the vectors. A separate
+                    # update could fail on its own and leave a vector whose
+                    # space nothing records — the exact state these columns
+                    # exist to make impossible.
+                    "embedding_provider": provedor,
+                    "embedding_modelo": modelo,
                 })
                 .eq("org_id", str(org_id))
                 .eq("id", ativo_id)
@@ -226,10 +273,14 @@ async def embutir_ativos(
         "modelo": modelo,
         "dimensoes": DIMENSOES,
         "processados": processados,
+        # How many of `processados` were re-done because the provider changed.
+        # Surfaced so a switch is visible as an event rather than as a run
+        # that mysteriously took longer.
+        "reembutidos": reembutidos,
         "pendentes": len(pendentes) - processados,
         "sem_texto": len(linhas) - len(pendentes),
         "nao_resolvidos": len(nao_resolvidos),
     }
 
 
-__all__ = ["LOTE", "MODELO", "embutir_ativos"]
+__all__ = ["DIMENSOES", "LOTE", "MODELOS", "embutir_ativos"]

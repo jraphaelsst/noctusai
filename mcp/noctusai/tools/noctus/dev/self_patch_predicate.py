@@ -347,6 +347,37 @@ def _extract_patch_target(node: ast.AST) -> str | None:
                 v = node.args[1].value
                 if isinstance(v, str):
                     attr_name = v
+    # Pattern 1b: monkeypatch.setitem(sys.modules, "<dotted.module>", stub)
+    #
+    # 🔴 THE SAME VIOLATION ONE LEVEL UP, AND IT SLIPPED THROUGH FOR REAL.
+    # Replacing an entry in `sys.modules` swaps a WHOLE module out for every
+    # test in the file — strictly broader than `setattr` on one of its names,
+    # and it reads as innocuous because no attribute is mentioned. It was used
+    # to stub `noctusai_lib.integrations.llm.usage` in a slice that, in the
+    # same commit, got that module's accounting wrong; the stub is what made
+    # the bug unobservable, and this predicate said the file was clean.
+    #
+    # Only OUR modules are reported — the ownership filter downstream handles
+    # that, so a test stubbing a third-party import is unaffected.
+    if isinstance(func, ast.Attribute) and func.attr == "setitem":
+        if isinstance(func.value, ast.Name) and func.value.id == "monkeypatch":
+            alvo = node.args[0] if node.args else None
+            aponta_sys_modules = (
+                isinstance(alvo, ast.Attribute)
+                and alvo.attr == "modules"
+                and isinstance(alvo.value, ast.Name)
+                and alvo.value.id == "sys"
+            )
+            if (
+                aponta_sys_modules
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
+                # The dotted module path IS the target — there is no attribute
+                # to append, because the whole module is what got replaced.
+                return node.args[1].value
+
     # Pattern 2: mock.patch.object(<target>, "attr", ...) / patch.object(...)
     if isinstance(func, ast.Attribute) and func.attr == "object":
         is_patch_object = False

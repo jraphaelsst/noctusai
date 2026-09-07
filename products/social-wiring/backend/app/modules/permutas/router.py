@@ -17,7 +17,9 @@ from __future__ import annotations
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from noctusai_lib.integrations.llm.exceptions import LLMNotConfigured
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_user_client
 from app.modules.permutas import embeddings as emb
@@ -95,12 +97,35 @@ async def embutir_route(
     handlers async would only move the block onto the event loop.
     """
     _user, client, org_id = _parts(auth)
-    return await emb.embutir_ativos(
-        client,
-        org_id,
-        apenas_pendentes=body.apenas_pendentes,
-        ativo_ids=body.ativo_ids,
-    )
+    try:
+        return await emb.embutir_ativos(
+            client,
+            org_id,
+            apenas_pendentes=body.apenas_pendentes,
+            ativo_ids=body.ativo_ids,
+        )
+    except LLMNotConfigured as exc:
+        # 🔴 THE TWO FAILURES THE OPERATOR CAUSES, AND THEY ARE NOT 500s.
+        # Picking Gemini in Configurações before saving a Gemini key is
+        # reachable in one click: `_resolve_provider_choice` validates the
+        # OPTION, never that a key exists behind it. `api_keys_store
+        # .resolve_api_key` states in its own docstring that raising this is
+        # the store's job and answering it is the CALLER's — the mailing
+        # siblings honour that; this route did not, so the one mistake an
+        # operator can actually make came back as an opaque server error.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{exc} Configure a chave em Configurações → Chaves de API, ou "
+                f"troque o provedor dos vetores semânticos."
+            ),
+        ) from exc
+    except ValueError as exc:
+        # The width guard in `_conferir_dimensoes` and the unmapped-provider
+        # guard. Both already carry an operator-readable message naming the
+        # provider, the width and what to do — passed through verbatim rather
+        # than replaced with a generic one.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # ── Registry ────────────────────────────────────────────────────────────────

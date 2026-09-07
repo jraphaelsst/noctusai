@@ -247,3 +247,175 @@ class TestTheSwitchReachesTheProviderCall:
         sig = inspect.signature(emb.embutir_ativos)
         assert sig.parameters["provider_resolver"].default is emb.resolve_embedding_provider
         assert sig.parameters["embedder"].default is emb.generate_embeddings_batch
+
+
+class TestProvenanceStopsCrossSpaceMixing:
+    """The other half of the width hazard, and the one that was left open.
+
+    🔴 THE WIDTH GUARD DOES NOT COVER THIS. Both providers write into the same
+    `vector(1536)` column, so an OpenAI vector and a Gemini vector are
+    indistinguishable once stored — `_conferir_dimensoes` passes both. The way
+    a corpus ends up holding two spaces is the ORDINARY path: embed under
+    OpenAI, run out of credit, switch provider (which is exactly what the
+    settings UI advises), embed the rest under Gemini. `apenas_pendentes`
+    defaults to True and skipped anything that already had vectors, so the
+    switch produced a silently mixed corpus with nothing recording which row
+    was which.
+
+    The consumer makes the consequence worse than "weaker matches":
+    `noctusai_lib.domain.real_estate.matching` takes the COMPOSITE branch
+    whenever similarity > 0, and a cross-space cosine is near-zero but not
+    exactly zero — so the pair keeps 40% of its weight collapsed instead of
+    falling back to the rule score.
+    """
+
+    @staticmethod
+    def _cliente_gravando(ativos, interesses, gravacoes):
+        """Like `_cliente`, but REMEMBERS what was written.
+
+        The other harness returns `self` from `update()` and drops the
+        payload, which is fine for asserting what reached the provider and
+        useless for asserting what reached the row. Provenance is only
+        observable in the payload.
+        """
+        class _Q:
+            def __init__(self, dados): self._d = list(dados)
+            def select(self, *a, **k): return self
+            def eq(self, *a, **k): return self
+            def in_(self, *a, **k): return self
+            def order(self, *a, **k): return self
+            def limit(self, *a, **k): return self
+            def update(self, payload, *a, **k):
+                gravacoes.append(payload)
+                return self
+            def execute(self): return type("R", (), {"data": self._d})()
+
+        tabelas = {"permuta_ativos": ativos, "permuta_interesses": interesses, "imoveis": []}
+
+        class _C:
+            def schema(self, _nome): return self
+            def table(self, nome): return _Q(tabelas.get(nome, []))
+        return _C()
+
+    @staticmethod
+    async def _embedder(texts, **_kw):
+        return [[0.0] * 1536 for _ in texts]
+
+    def _ativo(self, **over):
+        return {**TestTheSwitchReachesTheProviderCall.ATIVO, **over}
+
+    ORG = "6dd73140-74a4-41c6-aeff-bc94b5312b53"
+
+    @pytest.mark.asyncio
+    async def test_the_write_records_which_space_the_vectors_are_in(self):
+        gravacoes: list[dict] = []
+        cliente = self._cliente_gravando(
+            [self._ativo()], [TestTheSwitchReachesTheProviderCall.INTERESSE], gravacoes
+        )
+
+        await emb.embutir_ativos(
+            cliente, self.ORG,
+            provider_resolver=lambda _org: "gemini",
+            embedder=self._embedder,
+        )
+
+        assert len(gravacoes) == 1
+        # Same statement as the vectors — a separate update could fail alone
+        # and leave a vector whose space nothing records.
+        assert gravacoes[0]["embedding_provider"] == "gemini"
+        assert gravacoes[0]["embedding_modelo"] == "gemini-embedding-001"
+        assert "embedding" in gravacoes[0]
+
+    @pytest.mark.asyncio
+    async def test_switching_provider_re_embeds_instead_of_mixing(self):
+        """🔴 THE REGRESSION THIS CLASS EXISTS FOR."""
+        gravacoes: list[dict] = []
+        ja_openai = self._ativo(
+            embedding=[0.0] * 1536,
+            embedding_interesses=[0.0] * 1536,
+            embedding_provider="openai",
+            embedding_modelo="text-embedding-3-small",
+        )
+        cliente = self._cliente_gravando(
+            [ja_openai], [TestTheSwitchReachesTheProviderCall.INTERESSE], gravacoes
+        )
+
+        r = await emb.embutir_ativos(
+            cliente, self.ORG,
+            provider_resolver=lambda _org: "gemini",
+            embedder=self._embedder,
+        )
+
+        assert r["processados"] == 1, "a row from another space is NOT done"
+        assert r["reembutidos"] == 1, "and the run says the switch caused it"
+        assert gravacoes[0]["embedding_provider"] == "gemini"
+
+    @pytest.mark.asyncio
+    async def test_same_provider_still_skips_the_already_done(self):
+        """The re-embed must be caused by the SWITCH, not by every run."""
+        gravacoes: list[dict] = []
+        ja_gemini = self._ativo(
+            embedding=[0.0] * 1536,
+            embedding_interesses=[0.0] * 1536,
+            embedding_provider="gemini",
+            embedding_modelo="gemini-embedding-001",
+        )
+        cliente = self._cliente_gravando(
+            [ja_gemini], [TestTheSwitchReachesTheProviderCall.INTERESSE], gravacoes
+        )
+
+        r = await emb.embutir_ativos(
+            cliente, self.ORG,
+            provider_resolver=lambda _org: "gemini",
+            embedder=self._embedder,
+        )
+
+        assert r["processados"] == 0
+        assert r["reembutidos"] == 0
+        assert gravacoes == []
+        # The early return must still name the space, or the page cannot say
+        # which vendor the layer belongs to.
+        assert r["provedor"] == "gemini"
+
+    @pytest.mark.asyncio
+    async def test_a_vector_with_no_provenance_is_treated_as_stale(self):
+        """Rows written before these columns existed are unidentifiable, and
+        re-embedding one is cheap next to leaving it in the corpus forever."""
+        gravacoes: list[dict] = []
+        legado = self._ativo(
+            embedding=[0.0] * 1536, embedding_interesses=[0.0] * 1536,
+        )
+        cliente = self._cliente_gravando(
+            [legado], [TestTheSwitchReachesTheProviderCall.INTERESSE], gravacoes
+        )
+
+        r = await emb.embutir_ativos(
+            cliente, self.ORG,
+            provider_resolver=lambda _org: "openai",
+            embedder=self._embedder,
+        )
+
+        assert r["processados"] == 1
+        assert gravacoes[0]["embedding_provider"] == "openai"
+
+    @pytest.mark.asyncio
+    async def test_a_row_dropped_for_having_no_text_is_not_counted_as_re_embedded(self):
+        """`reembutidos` counts rows actually QUEUED. Counting at the filter
+        would report work that never happens."""
+        gravacoes: list[dict] = []
+        sem_texto = self._ativo(
+            id="a2", observacoes=None, natureza="permuta_imovel",
+            imovel_codigo=None, tipo_imovel=None, cidade=None, uf=None, valor=None,
+            embedding=[0.0] * 1536, embedding_interesses=[0.0] * 1536,
+            embedding_provider="openai", embedding_modelo="text-embedding-3-small",
+        )
+        cliente = self._cliente_gravando([sem_texto], [], gravacoes)
+
+        r = await emb.embutir_ativos(
+            cliente, self.ORG,
+            provider_resolver=lambda _org: "gemini",
+            embedder=self._embedder,
+        )
+
+        assert r["processados"] == 0
+        assert r["reembutidos"] == 0

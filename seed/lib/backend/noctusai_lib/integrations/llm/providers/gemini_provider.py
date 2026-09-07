@@ -160,7 +160,10 @@ class GeminiProvider:
     ) -> list[float]:
         from ..usage import record_usage
 
+        from noctusai_lib.integrations import rate_limit
+
         client = self._get_client(api_key)
+        await rate_limit.acquire_async("gemini_embed")
         try:
             response = await client.aio.models.embed_content(
                 model=model,
@@ -168,14 +171,22 @@ class GeminiProvider:
                 config=self._embed_config(output_dimensionality),
             )
             embedding = response.embeddings[0].values
+            # 🔴 READ THE VENDOR'S OWN COUNT. `record_usage` does
+            # `prompt_tokens or 0`, so passing None costs 0.00 — and the whole
+            # reason to switch to this provider is that the OTHER account ran
+            # out of credit, which is precisely when `enforce_budget` must not
+            # be blind. The chat paths in this file already read this field;
+            # the embed paths were the ones that did not.
+            usage = getattr(response, "usage_metadata", None)
+            total = getattr(usage, "total_token_count", None)
             await record_usage(
                 provider="gemini",
                 model=model,
                 operation="embedding",
                 org_id=org_id,
-                prompt_tokens=None,
+                prompt_tokens=total,
                 completion_tokens=None,
-                total_tokens=None,
+                total_tokens=total,
             )
             return list(embedding)
         except Exception as exc:
@@ -208,7 +219,15 @@ class GeminiProvider:
         if not texts:
             return []
 
+        from noctusai_lib.integrations import rate_limit
+
         client = self._get_client(api_key)
+        # ONE pacing token for the WHOLE batch, exactly like the OpenAI peer.
+        # The 429 branch in this product's key probe shows quota exhaustion is
+        # an expected outcome on this vendor, and the docstring above cites the
+        # retry storm as the reason this method exists — without this line it
+        # named the hazard and omitted the mechanism.
+        await rate_limit.acquire_async("gemini_embed")
         try:
             response = await client.aio.models.embed_content(
                 model=model,
@@ -226,14 +245,22 @@ class GeminiProvider:
                     f"enviados ({len(texts)}) — lote recusado para não "
                     f"desalinhar os vetores.",
                 )
+            # 🔴 READ THE VENDOR'S OWN COUNT. `record_usage` does
+            # `prompt_tokens or 0`, so passing None costs 0.00 — and the whole
+            # reason to switch to this provider is that the OTHER account ran
+            # out of credit, which is precisely when `enforce_budget` must not
+            # be blind. The chat paths in this file already read this field;
+            # the embed paths were the ones that did not.
+            usage = getattr(response, "usage_metadata", None)
+            total = getattr(usage, "total_token_count", None)
             await record_usage(
                 provider="gemini",
                 model=model,
                 operation="embedding",
                 org_id=org_id,
-                prompt_tokens=None,
+                prompt_tokens=total,
                 completion_tokens=None,
-                total_tokens=None,
+                total_tokens=total,
             )
             return vetores
         except LLMAPIError:

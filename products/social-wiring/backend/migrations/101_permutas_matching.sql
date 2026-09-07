@@ -244,6 +244,29 @@ CREATE TABLE IF NOT EXISTS social_wiring.permuta_ativos (
     embedding_interesses  extensions.vector(1536),
     embedding_atualizado_em TIMESTAMPTZ,
 
+    -- 🔴 WHICH VECTOR SPACE THESE VECTORS ARE IN — and it is not optional.
+    -- The width is pinned at 1536 above, so an OpenAI vector and a Gemini
+    -- vector FIT THE SAME COLUMN while being mutually meaningless: a cosine
+    -- across two embedding spaces is noise, not a weaker signal. Without
+    -- these two columns nothing can tell one from the other, and the only
+    -- way to produce a mixed corpus is the ordinary one — embed under
+    -- OpenAI, switch provider when the credits run out (which is exactly
+    -- what the settings UI advises), embed the new rows under Gemini.
+    --
+    -- The consumer makes that worse than "degraded matches":
+    -- `noctusai_lib.domain.real_estate.matching` takes the COMPOSITE branch
+    -- whenever similarity > 0, and a cross-space cosine is near-zero but not
+    -- exactly zero — so the pair keeps 40% of its weight collapsed instead of
+    -- falling back to the rule score. Ranking silently becomes "were these
+    -- two embedded by the same vendor".
+    --
+    -- Recorded per row rather than per org because a switch mid-corpus is
+    -- precisely the case that must be detectable: `embutir_ativos` treats a
+    -- row whose provider/model differs from the current pick as PENDING and
+    -- re-embeds it, so the corpus converges on one space by itself.
+    embedding_provider    TEXT,
+    embedding_modelo      TEXT,
+
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_por    UUID,
     updated_at     TIMESTAMPTZ,
