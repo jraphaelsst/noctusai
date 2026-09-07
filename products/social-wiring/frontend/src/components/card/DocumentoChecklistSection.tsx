@@ -93,8 +93,29 @@ export interface DocumentoChecklistSectionProps {
   onVisualizarDocumento?: (documentoId: string) => void;
   /** Downloads a checklist document under its original filename. */
   onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
+  /** Suppresses this section's own title row — for a caller that already
+   *  renders the heading. On the card the wrapping collapsible carries both
+   *  the words "Dados obrigatórios" AND the progress readout, because a fold
+   *  whose header does not say how much is left is a fold nobody opens.
+   *  Default `false`, so `PessoaDocumentosPanel` is untouched. */
+  hideHeader?: boolean;
   /** Disambiguates testids when several people's checklists are on screen. */
   testIdPrefix?: string;
+}
+
+/**
+ * The progress readout, exported so the collapsible that hides this section's
+ * header can render the SAME numbers in its own. Derived from `items` here
+ * rather than passed in, so the two can never disagree about what is done.
+ */
+export function progressoChecklist(items: DocumentoChecklistItem[]): {
+  done: number;
+  total: number;
+  pct: number;
+} {
+  const done = items.filter((i) => i.concluido).length;
+  const total = items.length;
+  return { done, total, pct: total ? Math.round((done / total) * 100) : 0 };
 }
 
 export function DocumentoChecklistSection({
@@ -115,6 +136,7 @@ export function DocumentoChecklistSection({
   uploading,
   onVisualizarDocumento,
   onBaixarDocumento,
+  hideHeader = false,
   testIdPrefix = "documento-checklist",
 }: DocumentoChecklistSectionProps) {
   // `items.length === 0` is the second half of the guard: even a caller that
@@ -128,27 +150,34 @@ export function DocumentoChecklistSection({
     );
   }
 
-  const done = items.filter((i) => i.concluido).length;
-  const pct = items.length ? Math.round((done / items.length) * 100) : 0;
+  const { done, pct } = progressoChecklist(items);
 
   return (
     <div className="mb-5" data-testid={`${testIdPrefix}-section`}>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Dados obrigatórios
-        </p>
-        <div className="flex items-center gap-1.5">
-          {refreshing && (
-            <Loader2
-              className="h-3 w-3 animate-spin text-muted-foreground"
-              data-testid={`${testIdPrefix}-refreshing`}
-            />
-          )}
-          <span className="text-xs text-muted-foreground" data-testid={`${testIdPrefix}-progresso`}>
-            {done}/{items.length}
-          </span>
+      {/* Hidden when a wrapping collapsible already carries the title and the
+          progress count — see `hideHeader`. The bar itself stays either way:
+          it is the shape of the answer, not a duplicate of the number. */}
+      {!hideHeader && (
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Dados obrigatórios
+          </p>
+          <div className="flex items-center gap-1.5">
+            {refreshing && (
+              <Loader2
+                className="h-3 w-3 animate-spin text-muted-foreground"
+                data-testid={`${testIdPrefix}-refreshing`}
+              />
+            )}
+            <span
+              className="text-xs text-muted-foreground"
+              data-testid={`${testIdPrefix}-progresso`}
+            >
+              {done}/{items.length}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
       <Progress value={pct} className="mb-2 h-1.5" />
       {items.length === 0 ? (
         <p

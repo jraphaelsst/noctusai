@@ -31,11 +31,23 @@
  * the full form uses, with only the edited field in the body.
  *
  * A document item (`rg`, `cpf`) is satisfied by UPLOADING, so it carries an
- * upload icon and — only once a file exists — a trash that DISCARDS THE FILE
- * AND KEEPS THE ROW. The row itself is not deletable: the list is the same
- * for every client by definition, defined server-side. That asymmetry is
+ * upload icon — and, once a file exists, it carries that icon NO LONGER. What
+ * a filled row offers instead is view, download, and a trash that DISCARDS THE
+ * FILE AND KEEPS THE ROW. The row itself is not deletable: the list is the
+ * same for every client by definition, defined server-side. That asymmetry is
  * deliberate and is what separates these rows from the extras below, which
  * the operator creates and can therefore destroy.
+ *
+ * 🔴 WHY UPLOAD DISAPPEARS ONCE THERE IS A FILE
+ * ----------------------------------------------
+ * It used to stay, relabelled "Substituir". So the control that silently
+ * overwrites an answered row was the most prominent thing on it, sitting where
+ * the eye had already learned to find "the button for this row" — and a
+ * replacement is destructive in a way the label does not convey: the displaced
+ * document is soft-deleted, and the operator finds out afterwards. Replacing a
+ * file is now the deliberate two-step it always should have been (discard,
+ * then upload), and a row carrying its document reads as ANSWERED rather than
+ * as still asking.
  *
  * Presentational only (`card/**`): props in, callbacks out.
  */
@@ -322,14 +334,22 @@ export function ChecklistItemRow({
               e.target.value = "";
             }}
           />
-          <TooltipIconButton
-            label={item.documento ? `Substituir ${item.label}` : `Enviar ${item.label}`}
-            icon={Upload}
-            testId={`${tid}-upload`}
-            className="h-7 w-7"
-            disabled={uploading}
-            onClick={() => inputArquivo.current?.click()}
-          />
+          {/* Only while the row is still ASKING. Once it holds a file the
+              answer is in, and the control that would overwrite it is not the
+              one to lead with — see the file docblock. The hidden input above
+              stays mounted either way: it is addressed by ref, and a row that
+              has just had its file discarded must be able to accept the next
+              one without waiting for a remount. */}
+          {!item.documento && (
+            <TooltipIconButton
+              label={`Enviar ${item.label}`}
+              icon={Upload}
+              testId={`${tid}-upload`}
+              className="h-7 w-7"
+              disabled={uploading}
+              onClick={() => inputArquivo.current?.click()}
+            />
+          )}
         </>
       )}
 

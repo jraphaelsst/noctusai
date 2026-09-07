@@ -103,3 +103,67 @@ describe("ChecklistItemRow — gênero inline editor", () => {
     expect(onSaveCampo).toHaveBeenCalledWith({ profissao: null });
   });
 });
+
+describe("um documento já entregue não oferece mais o upload", () => {
+  const DOC = {
+    id: "doc-1",
+    nome_original: "rg-frente.pdf",
+    mime_type: "application/pdf",
+    tamanho_bytes: 1024,
+    created_at: "2026-09-01T10:00:00Z",
+  };
+
+  it("🔴 an ANSWERED document row drops the upload button entirely", async () => {
+    // It used to stay, relabelled "Substituir" — so the control that silently
+    // overwrites the answer sat where the eye had learned to find "the button
+    // for this row", and the displaced file is soft-deleted without saying so.
+    // Replacing is the deliberate two-step now: discard, then upload.
+    const { queryByTestId } = await renderRow({
+      item: item("rg", "RG", { documento: DOC }),
+      onUploadDocumento: vi.fn(),
+    });
+    expect(queryByTestId("documento-checklist-rg-upload")).toBeNull();
+  });
+
+  it("a row still ASKING keeps its upload button", async () => {
+    const { getByTestId } = await renderRow({
+      item: item("rg", "RG"),
+      onUploadDocumento: vi.fn(),
+    });
+    const btn = getByTestId("documento-checklist-rg-upload");
+    expect(btn.getAttribute("aria-label")).toBe("Enviar RG");
+  });
+
+  it("🔴 keeps its own file input mounted even while answered", async () => {
+    // Addressed by ref, and a row whose file was just discarded must accept
+    // the next one without waiting for a remount.
+    const { getByTestId } = await renderRow({
+      item: item("rg", "RG", { documento: DOC }),
+      onUploadDocumento: vi.fn(),
+    });
+    expect(getByTestId("documento-checklist-rg-arquivo-input")).toBeTruthy();
+  });
+
+  it("an answered row offers view, download and discard instead", async () => {
+    const onVisualizarDocumento = vi.fn();
+    const onBaixarDocumento = vi.fn();
+    const onRemoverDocumento = vi.fn();
+    const rtl = await import("@testing-library/react");
+    const { getByTestId } = await renderRow({
+      item: item("rg", "RG", { documento: DOC }),
+      onUploadDocumento: vi.fn(),
+      onVisualizarDocumento,
+      onBaixarDocumento,
+      onRemoverDocumento,
+    });
+
+    rtl.fireEvent.click(getByTestId("documento-checklist-rg-visualizar"));
+    expect(onVisualizarDocumento).toHaveBeenCalledWith("doc-1");
+
+    rtl.fireEvent.click(getByTestId("documento-checklist-rg-baixar"));
+    expect(onBaixarDocumento).toHaveBeenCalledWith("doc-1", "rg-frente.pdf");
+
+    rtl.fireEvent.click(getByTestId("documento-checklist-rg-descartar-arquivo"));
+    expect(onRemoverDocumento).toHaveBeenCalled();
+  });
+});

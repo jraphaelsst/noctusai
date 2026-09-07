@@ -486,6 +486,13 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       // second "open a signed URL" implementation.
       onVisualizarDocumentoChecklist={handleOpenDocumento}
       onBaixarDocumentoChecklist={handleBaixarDocumento}
+      // The SAME two handlers. An extras row's file is filed through
+      // `documentos_service.upload_documento` like every other upload, so it
+      // is an ordinary `cliente_documentos` row reached by the same
+      // `GET .../documentos/{id}/url` — these take a documentoId and are
+      // agnostic about which row asked for it.
+      onVisualizarDocumentoChecklistExtra={handleOpenDocumento}
+      onBaixarDocumentoChecklistExtra={handleBaixarDocumento}
       checklistExtras={checklistExtras.data ?? []}
       // Same two-signal split as `documentoChecklist` above: `isPending &&
       // !data` is the genuine first load; a background refetch while rows

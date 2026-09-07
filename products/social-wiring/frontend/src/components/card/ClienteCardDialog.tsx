@@ -56,6 +56,7 @@ import {
   ChevronDown,
   ChevronUp,
   FileText,
+  Loader2,
   Mail,
   MoreHorizontal,
   Pencil,
@@ -120,7 +121,11 @@ import { EtiquetasPopover } from "./popovers/EtiquetasPopover";
 import { MembrosPopover } from "./popovers/MembrosPopover";
 import { AnexosSection } from "./AnexosSection";
 import { ChecklistExtrasSection } from "./ChecklistExtrasSection";
-import { DocumentoChecklistSection } from "./DocumentoChecklistSection";
+import { CollapsibleSection } from "./CollapsibleSection";
+import {
+  DocumentoChecklistSection,
+  progressoChecklist,
+} from "./DocumentoChecklistSection";
 import { TokenCheckbox } from "./TokenCheckbox";
 import { TooltipIconButton } from "./TooltipIconButton";
 
@@ -281,6 +286,15 @@ export interface ClienteCardDialogProps {
   onVisualizarDocumentoChecklist?: (documentoId: string) => void;
   /** Downloads a checklist document under its original filename. */
   onBaixarDocumentoChecklist?: (documentoId: string, nomeArquivo: string) => void;
+  /** Opens an EXTRAS row's file. Same `documentoId` space as the mandatory
+   *  rows — an extra's upload goes through the same `documentos_service`, so
+   *  the caller hands over the very same handler. */
+  onVisualizarDocumentoChecklistExtra?: (documentoId: string) => void;
+  /** Downloads an EXTRAS row's file under its original filename. */
+  onBaixarDocumentoChecklistExtra?: (
+    documentoId: string,
+    nomeArquivo: string,
+  ) => void;
   onResolverSugestao?: (
     documentoId: string,
     acao: "confirmar" | "descartar",
@@ -539,46 +553,118 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     saving={props.descricaoSaving}
                   />
 
-                  {/* d. The mandatory checklist, as unified one-line rows. */}
-                  <DocumentoChecklistSection
-                    items={props.documentoChecklist ?? []}
-                    loading={props.documentoChecklistLoading}
-                    refreshing={props.documentoChecklistRefreshing}
-                    onToggle={props.onToggleDocumentoChecklist}
-                    onResolverSugestao={props.onResolverSugestao}
-                    sugestaoSaving={props.sugestaoSaving}
-                    sugestoesExtras={props.sugestoesExtras}
-                    nomeOficial={props.nomeOficial}
-                    nomeRegistro={props.nomeRegistro}
-                    valores={props.dadosPessoais}
-                    onSaveCampo={props.onSaveDadosPessoais}
-                    savingCampo={props.dadosPessoaisSaving}
-                    onUploadDocumento={props.onUploadDocumentoChecklist}
-                    onRemoverDocumento={props.onRemoverDocumentoChecklist}
-                    uploading={props.uploadingDocumento}
-                    onVisualizarDocumento={props.onVisualizarDocumentoChecklist}
-                    onBaixarDocumento={props.onBaixarDocumentoChecklist}
-                  />
+                  {/* d. + e. The client's paperwork, folded away by default.
+                         🔴 ONE fold, TWO levels. The mandatory checklist and
+                         the operator's own rows are the tallest thing on this
+                         card and are read once — when the deal is being put
+                         together — not on every open. So "Dados obrigatórios"
+                         collapses as a whole, and "Outros dados" is its own
+                         collapsible NESTED inside it, because the extras are
+                         consulted less often still.
 
-                  {/* e. The operator's own rows. */}
-                  {props.onCriarChecklistExtra && (
-                    <ChecklistExtrasSection
-                      items={props.checklistExtras ?? []}
-                      loading={props.checklistExtrasLoading}
-                      refreshing={props.checklistExtrasRefreshing}
-                      error={props.checklistExtrasError}
-                      onCriar={props.onCriarChecklistExtra}
-                      criando={props.checklistExtrasSaving}
-                      onRenomear={props.onRenomearChecklistExtra ?? (() => {})}
-                      onSalvarTexto={props.onSalvarTextoChecklistExtra ?? (() => {})}
-                      onRemover={props.onRemoverChecklistExtra ?? (() => {})}
-                      onUploadDocumento={props.onUploadChecklistExtra ?? (() => {})}
-                      onRemoverDocumento={
-                        props.onRemoverDocumentoChecklistExtra ?? (() => {})
-                      }
-                      salvando={props.checklistExtrasSaving}
-                    />
-                  )}
+                         The outer header keeps the progress count. A fold that
+                         hides how much is left is a fold nobody opens, and the
+                         count is the one thing an operator scans for without
+                         intending to act on it. */}
+                  <CollapsibleSection
+                    testId="dados-obrigatorios"
+                    titulo={
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Dados obrigatórios
+                      </span>
+                    }
+                    resumo={
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {props.documentoChecklistRefreshing && (
+                          <Loader2
+                            className="h-3 w-3 animate-spin text-muted-foreground"
+                            data-testid="documento-checklist-refreshing"
+                          />
+                        )}
+                        <span
+                          className="text-xs text-muted-foreground"
+                          data-testid="documento-checklist-progresso"
+                        >
+                          {progressoChecklist(props.documentoChecklist ?? []).done}/
+                          {progressoChecklist(props.documentoChecklist ?? []).total}
+                        </span>
+                      </span>
+                    }
+                  >
+                    {() => (
+                      <>
+                        <DocumentoChecklistSection
+                          hideHeader
+                          items={props.documentoChecklist ?? []}
+                          loading={props.documentoChecklistLoading}
+                          refreshing={props.documentoChecklistRefreshing}
+                          onToggle={props.onToggleDocumentoChecklist}
+                          onResolverSugestao={props.onResolverSugestao}
+                          sugestaoSaving={props.sugestaoSaving}
+                          sugestoesExtras={props.sugestoesExtras}
+                          nomeOficial={props.nomeOficial}
+                          nomeRegistro={props.nomeRegistro}
+                          valores={props.dadosPessoais}
+                          onSaveCampo={props.onSaveDadosPessoais}
+                          savingCampo={props.dadosPessoaisSaving}
+                          onUploadDocumento={props.onUploadDocumentoChecklist}
+                          onRemoverDocumento={props.onRemoverDocumentoChecklist}
+                          uploading={props.uploadingDocumento}
+                          onVisualizarDocumento={props.onVisualizarDocumentoChecklist}
+                          onBaixarDocumento={props.onBaixarDocumentoChecklist}
+                        />
+
+                        {props.onCriarChecklistExtra && (
+                          <CollapsibleSection
+                            testId="outros-dados"
+                            titulo={
+                              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Outros dados
+                              </span>
+                            }
+                            resumo={
+                              props.checklistExtrasRefreshing ? (
+                                <Loader2
+                                  className="h-3 w-3 shrink-0 animate-spin text-muted-foreground"
+                                  data-testid="checklist-extras-refreshing"
+                                />
+                              ) : undefined
+                            }
+                          >
+                            {() => (
+                              <ChecklistExtrasSection
+                                hideHeader
+                                items={props.checklistExtras ?? []}
+                                loading={props.checklistExtrasLoading}
+                                refreshing={props.checklistExtrasRefreshing}
+                                error={props.checklistExtrasError}
+                                onCriar={props.onCriarChecklistExtra!}
+                                criando={props.checklistExtrasSaving}
+                                onRenomear={props.onRenomearChecklistExtra ?? (() => {})}
+                                onSalvarTexto={
+                                  props.onSalvarTextoChecklistExtra ?? (() => {})
+                                }
+                                onRemover={props.onRemoverChecklistExtra ?? (() => {})}
+                                onUploadDocumento={
+                                  props.onUploadChecklistExtra ?? (() => {})
+                                }
+                                onRemoverDocumento={
+                                  props.onRemoverDocumentoChecklistExtra ?? (() => {})
+                                }
+                                onVisualizarDocumento={
+                                  props.onVisualizarDocumentoChecklistExtra
+                                }
+                                onBaixarDocumento={
+                                  props.onBaixarDocumentoChecklistExtra
+                                }
+                                salvando={props.checklistExtrasSaving}
+                              />
+                            )}
+                          </CollapsibleSection>
+                        )}
+                      </>
+                    )}
+                  </CollapsibleSection>
 
                   {/* f. Everyone ELSE's paperwork, then this person's files.
                          🔴 ONE PANEL PER PERSON, and the titular is not one of
@@ -998,11 +1084,18 @@ function ContatoResumo({
 /**
  * One person's collapsible block of checklist + documents.
  *
- * 🔴 The children are rendered ONLY while open, and that is load-bearing
- * rather than cosmetic: a party's panel runs its own queries against their
- * `cliente_id`, so mounting three collapsed panels would fire three checklist
- * fetches and three document fetches for panels nobody is looking at. Opening
- * is what asks for the data.
+ * The fold itself is `CollapsibleSection` — this composes the header ONE party
+ * needs (their name, then their role as a badge) and hands the rest over. The
+ * chrome moved out when the card grew a second thing worth folding (the
+ * Dados obrigatórios / Outros dados pair above): two hand-rolled chevron
+ * headers would have been two places for the keyboard semantics to drift.
+ *
+ * 🔴 The children stay a THUNK, and that is load-bearing rather than
+ * cosmetic: a party's panel runs its own queries against their `cliente_id`,
+ * so mounting three collapsed panels would fire three checklist fetches and
+ * three document fetches for panels nobody is looking at. Opening is what asks
+ * for the data. `CollapsibleSection` preserves that contract — see its
+ * docblock before changing either.
  */
 function PessoaDocumentosSection({
   nome,
@@ -1019,48 +1112,25 @@ function PessoaDocumentosSection({
   /** Rendered in the header, beside the role badge — today the detach button.
    *  Outside the toggle so clicking it does not also expand the panel. */
   acao?: ReactNode;
-  /**
-   * A FUNCTION, not a node. JSX children are evaluated by the caller before
-   * this component ever runs, so `{open && children}` would still have built
-   * every collapsed party's subtree. Taking a thunk means a closed section
-   * costs literally nothing — which is the point, since each party's panel
-   * opens its own queries.
-   */
+  /** A FUNCTION, not a node — see the docblock above. */
   children: () => ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
-
   return (
-    <div
-      className="mb-2 rounded-lg border"
-      data-testid={`pessoa-documentos-${testId}`}
-    >
-      <div className="flex items-center gap-2 pr-2">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/50"
-          data-testid={`pessoa-documentos-toggle-${testId}`}
-        >
-          {open ? (
-            <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-          )}
+    <CollapsibleSection
+      testId={`pessoa-documentos-${testId}`}
+      defaultOpen={defaultOpen}
+      acao={acao}
+      titulo={
+        <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-semibold">{nome}</span>
           <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
             {papel}
           </span>
-        </button>
-        {acao}
-      </div>
-      {open && (
-        <div className="border-t px-3 pb-3 pt-3" data-testid={`pessoa-documentos-corpo-${testId}`}>
-          {children()}
-        </div>
-      )}
-    </div>
+        </span>
+      }
+    >
+      {children}
+    </CollapsibleSection>
   );
 }
 

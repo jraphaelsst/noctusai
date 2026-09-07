@@ -125,3 +125,23 @@ describe("DocumentoChecklistSection — progress + rows", () => {
     expect(getByTestId("documento-checklist-empty")).toBeTruthy();
   });
 });
+
+describe("hideHeader — quando um bloco dobrável já nomeia a seção", () => {
+  it("drops the title and the progress count, keeping the rows and the bar", async () => {
+    // The card wraps this in a collapsible that carries BOTH the words and
+    // the count in its own header (so the count stays legible while closed).
+    // Rendering them again one line below would be the same heading twice.
+    const { getByTestId, queryByTestId, queryByText } = await renderSection(
+      baseProps({ items: ITENS, hideHeader: true }),
+    );
+    expect(queryByText("Dados obrigatórios")).toBeNull();
+    expect(queryByTestId("documento-checklist-progresso")).toBeNull();
+    expect(getByTestId("documento-checklist-rg-row")).toBeTruthy();
+  });
+
+  it("keeps its own header by default — PessoaDocumentosPanel renders it flat", async () => {
+    const { getByTestId, getByText } = await renderSection(baseProps({ items: ITENS }));
+    expect(getByText("Dados obrigatórios")).toBeTruthy();
+    expect(getByTestId("documento-checklist-progresso").textContent).toBe("1/3");
+  });
+});

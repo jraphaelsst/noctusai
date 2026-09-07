@@ -79,10 +79,52 @@ function item(key: string, label: string, over: Record<string, unknown> = {}) {
   };
 }
 
-async function render(props: ClienteCardDialogProps) {
+/**
+ * Renders the card AND opens the two folds the client's paperwork now lives
+ * behind ("Dados obrigatórios", and "Outros dados" nested inside it).
+ *
+ * 🔴 Expanding by DEFAULT is deliberate. Almost every assertion in this file
+ * is about what those sections render, not about the fold — making each one
+ * click its way in would bury the thing under test in setup, and a suite that
+ * is 90% setup stops being read. The fold itself is exercised on purpose by
+ * the tests that pass `{ dobrado: true }`, which is the only way to observe a
+ * closed section.
+ */
+/**
+ * Opens the two folds the client's paperwork lives behind — "Dados
+ * obrigatórios", and "Outros dados" nested inside it. No-ops on a subpage or
+ * a card state that has neither, so it is safe to call after any render.
+ *
+ * 🔴 Almost every assertion in this file is about what those sections RENDER,
+ * not about the fold. Making each one click its way in would bury the thing
+ * under test in setup. The fold itself is exercised deliberately, by the
+ * tests that render WITHOUT calling this — the only way to observe a closed
+ * section.
+ */
+async function abrirPapelada() {
+  const { fireEvent, screen } = await import("@testing-library/react");
+  const obrigatorios = screen.queryByTestId("dados-obrigatorios-toggle");
+  if (obrigatorios) fireEvent.click(obrigatorios);
+  const outros = screen.queryByTestId("outros-dados-toggle");
+  if (outros) fireEvent.click(outros);
+}
+
+async function render(
+  props: ClienteCardDialogProps,
+  { dobrado = false }: { dobrado?: boolean } = {},
+) {
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
-  return rtl.render(React.createElement(ClienteCardDialog, props));
+  const result = rtl.render(React.createElement(ClienteCardDialog, props));
+  if (!dobrado) {
+    // Absent on the non-Geral subpages and on the loading/error/notFound
+    // states, where there is no fold to open and nothing to assert inside it.
+    const obrigatorios = result.queryByTestId("dados-obrigatorios-toggle");
+    if (obrigatorios) rtl.fireEvent.click(obrigatorios);
+    const outros = result.queryByTestId("outros-dados-toggle");
+    if (outros) rtl.fireEvent.click(outros);
+  }
+  return result;
 }
 
 describe("ClienteCardDialog — four states", () => {
@@ -184,6 +226,7 @@ describe("ClienteCardDialog — Anexos empty state", () => {
         })}
       />,
     );
+    await abrirPapelada();
     // Queried off `document` rather than the render container: the card is a
     // Radix Dialog and renders through a portal, so the container is empty.
     const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
@@ -454,6 +497,7 @@ describe("ordem das seções", () => {
   it("🔴 Geral reads in the order the work happens", async () => {
     const { render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...full()} />);
+    await abrirPapelada();
 
     // Etiquetas → contato → descrição → dados obrigatórios → extras →
     // anexos → checklists de trabalho. Collecting a document is not a separate
@@ -476,6 +520,7 @@ describe("ordem das seções", () => {
     // preserved after the tab was absorbed.
     const { render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...full()} />);
+    await abrirPapelada();
 
     const order = orderOf(screen, ["documento-checklist-section", "anexos-section"]);
     expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -516,6 +561,7 @@ describe("dados obrigatórios (checklist permanente)", () => {
   async function openDocumentos(overrides = {}) {
     const { fireEvent, render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...baseProps({ documentoChecklist: ITENS, ...overrides })} />);
+    await abrirPapelada();
     return { fireEvent, screen };
   }
 
@@ -764,6 +810,10 @@ describe("dados obrigatórios (checklist permanente)", () => {
     // opens to. The tab it named no longer exists at all.
     const { render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...baseProps({ documentoChecklist: ITENS })} />);
+    // On Geral, though folded now — the fold is on this subpage and nowhere
+    // else, which is what this assertion has always been about.
+    expect(screen.getByTestId("dados-obrigatorios")).toBeTruthy();
+    await abrirPapelada();
     expect(screen.getByTestId("documento-checklist-section")).toBeTruthy();
     expect(screen.queryByTestId("card-subpage-tab-documentos")).toBeNull();
   });
@@ -987,10 +1037,13 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
         })}
       />,
     );
-    // The titular's checklist is Geral's own section, not a collapsible named
-    // after them. Wrapping it would have hidden the card's own paperwork
-    // behind a click on the screen the card opens to.
+    // The titular's checklist folds under what it CONTAINS ("Dados
+    // obrigatórios"), never under WHO it belongs to. That distinction is the
+    // point: a panel named after the titular would say the card is about one
+    // party among several, when the card IS that party.
     expect(screen.queryByTestId("pessoa-documentos-titular")).toBeNull();
+    expect(screen.getByTestId("dados-obrigatorios")).toBeTruthy();
+    await abrirPapelada();
     expect(screen.getByTestId("documento-checklist-section")).toBeTruthy();
     // Everyone ELSE keeps a panel apiece.
     expect(screen.getByTestId("pessoa-documentos-comprador-parte-1")).toBeTruthy();
@@ -1013,7 +1066,7 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
     expect(renderPanel).not.toHaveBeenCalled();
     expect(screen.queryByTestId("painel-da-parte")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("pessoa-documentos-toggle-comprador-parte-1"));
+    fireEvent.click(screen.getByTestId("pessoa-documentos-comprador-parte-1-toggle"));
     expect(renderPanel).toHaveBeenCalledWith("cli-esposa");
     expect(screen.getByTestId("painel-da-parte")).toBeTruthy();
   });
@@ -1133,6 +1186,7 @@ describe("a linha unificada de um dado obrigatório", () => {
         })}
       />,
     );
+    await abrirPapelada();
     return { fireEvent, screen };
   }
 
@@ -1300,6 +1354,7 @@ describe("a listagem de dados extras", () => {
         })}
       />,
     );
+    await abrirPapelada();
     return { fireEvent, screen };
   }
 
@@ -1605,6 +1660,7 @@ describe("legendas nos botões (ícone + tooltip)", () => {
         })}
       />,
     );
+    await abrirPapelada();
     // Two bare glyphs here would be confirmed by reflex, which is the exact
     // failure the low-confidence path exists to prevent. Anything that looks
     // already-applied gets accepted without being read.
@@ -1833,5 +1889,92 @@ describe("o resumo de contato no topo do Geral", () => {
     // email-keyed lead must not tick "Celular" with an email address.
     expect(screen.getByTestId("contato-email").textContent).toContain("ana@example.com");
     expect(screen.getByTestId("contato-celular").textContent).toContain("—");
+  });
+});
+
+describe("a papelada do cliente dobra em dois níveis", () => {
+  const ITENS = [item("rg", "RG"), item("email", "Email")];
+  const props = () =>
+    baseProps({
+      documentoChecklist: ITENS,
+      onCriarChecklistExtra: vi.fn(),
+      checklistExtras: [
+        {
+          id: "ex-1",
+          label: "Certidão de casamento",
+          tipo: "arquivo" as const,
+          valor_texto: null,
+          documento: null,
+          concluido: false,
+          ordem: 0,
+        },
+      ],
+    });
+
+  it("🔴 both folds start CLOSED — the card is tall and this is read once, not on every open", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...props()} />);
+
+    expect(screen.getByTestId("dados-obrigatorios")).toBeTruthy();
+    expect(screen.queryByTestId("documento-checklist-section")).toBeNull();
+    // Nested one level down, so it is not even in the tree yet.
+    expect(screen.queryByTestId("outros-dados")).toBeNull();
+    expect(screen.queryByTestId("checklist-extras-section")).toBeNull();
+  });
+
+  it("🔴 the progress count stays legible while closed", async () => {
+    // A fold that hides how much is left is a fold nobody opens. The count is
+    // the one thing an operator scans for without intending to act on it.
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          documentoChecklist: [item("rg", "RG", { concluido: true }), item("email", "Email")],
+        })}
+      />,
+    );
+    expect(screen.queryByTestId("documento-checklist-section")).toBeNull();
+    expect(screen.getByTestId("documento-checklist-progresso").textContent).toBe("1/2");
+  });
+
+  it("🔴 Outros dados is its OWN fold, nested — two clicks, separately", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...props()} />);
+
+    fireEvent.click(screen.getByTestId("dados-obrigatorios-toggle"));
+    // The mandatory rows are here; the extras are one more click away.
+    expect(screen.getByTestId("documento-checklist-section")).toBeTruthy();
+    expect(screen.getByTestId("outros-dados")).toBeTruthy();
+    expect(screen.queryByTestId("checklist-extras-section")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("outros-dados-toggle"));
+    expect(screen.getByTestId("checklist-extras-section")).toBeTruthy();
+  });
+
+  it("🔴 neither heading is rendered twice", async () => {
+    // Both sections carry their own title for `PessoaDocumentosPanel`, which
+    // renders them flat. Nested here, the fold owns the words — and the
+    // section must not repeat them one line below.
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...props()} />);
+    fireEvent.click(screen.getByTestId("dados-obrigatorios-toggle"));
+    fireEvent.click(screen.getByTestId("outros-dados-toggle"));
+
+    expect(screen.getAllByText("Dados obrigatórios")).toHaveLength(1);
+    expect(screen.getAllByText("Outros dados")).toHaveLength(1);
+  });
+
+  it("closes again, and the rows go with it", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...props()} />);
+    const toggle = screen.getByTestId("dados-obrigatorios-toggle");
+
+    fireEvent.click(toggle);
+    expect(screen.getByTestId("documento-checklist-section")).toBeTruthy();
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("documento-checklist-section")).toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 });

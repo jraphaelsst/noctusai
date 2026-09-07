@@ -21,6 +21,19 @@
  * the ROW, because the operator created it. The file-only discard is a second,
  * separate affordance on file rows — same distinction, one level down.
  *
+ * 🔴 A FILE ROW OFFERS THE SAME FIVE THINGS THE MANDATORY ROWS DO
+ * ---------------------------------------------------------------
+ * View and download were missing here for no reason anyone chose: the
+ * mandatory rows got them (`ChecklistItemRow`) and these did not, so an
+ * operator could attach "certidão de casamento" and then have no way to look
+ * at it without leaving for the Anexos list. An extra's file goes through
+ * `documentos_service.upload_documento` like every other upload, so it is an
+ * ordinary `cliente_documentos` row and the SAME `GET .../documentos/{id}/url`
+ * round trip opens it. There was never a second id space to bridge.
+ *
+ * Upload, symmetrically, is gone once a file exists — the reasoning is in
+ * `ChecklistItemRow`'s docblock and applies here unchanged.
+ *
  * 🔴 THE TICK IS A READOUT, NOT A CONTROL
  * ---------------------------------------
  * `concluido` arrives derived and the PATCH contract has no field for it, so
@@ -40,6 +53,8 @@
 import { useRef, useState } from "react";
 import {
   Check,
+  Download,
+  ExternalLink,
   FileText,
   FileUp,
   FileX,
@@ -82,7 +97,22 @@ export interface ChecklistExtrasSectionProps {
   /** Discards the FILE and keeps the row — the same rule the mandatory rows
    *  follow, so "delete" never means two different things on one screen. */
   onRemoverDocumento: (extraId: string) => void;
+  /** Opens the file INLINE in a new tab — same `cliente_documentos` id space
+   *  and same `GET .../documentos/{id}/url` round trip the mandatory rows and
+   *  Anexos already use. */
+  onVisualizarDocumento?: (documentoId: string) => void;
+  /** Downloads the file, saved under its ORIGINAL filename. */
+  onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
   salvando?: boolean;
+  /** Suppresses this section's own TITLE — for a caller that already renders
+   *  the heading (the collapsible that wraps it on the card), so the words
+   *  "Outros dados" do not appear twice, one above the other.
+   *
+   *  It hides the title and the refresh spinner ONLY. The add-a-row buttons
+   *  stay, because the create flow's draft state (`novoTipo` / `novoLabel`)
+   *  lives in here — moving the buttons out would mean lifting that state to
+   *  every caller, and the second caller would get it subtly wrong. */
+  hideHeader?: boolean;
   testIdPrefix?: string;
 }
 
@@ -98,7 +128,10 @@ export function ChecklistExtrasSection({
   onRemover,
   onUploadDocumento,
   onRemoverDocumento,
+  onVisualizarDocumento,
+  onBaixarDocumento,
   salvando,
+  hideHeader = false,
   testIdPrefix = "checklist-extras",
 }: ChecklistExtrasSectionProps) {
   // `null` = not creating. Otherwise it holds the KIND being created, so the
@@ -117,17 +150,23 @@ export function ChecklistExtrasSection({
   return (
     <div className="mb-5" data-testid={`${testIdPrefix}-section`}>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Outros dados
-          </p>
-          {refreshing && (
-            <Loader2
-              className="h-3 w-3 animate-spin text-muted-foreground"
-              data-testid={`${testIdPrefix}-refreshing`}
-            />
-          )}
-        </div>
+        {/* Hidden when a wrapping collapsible already names this section —
+            the buttons on the right stay either way (see `hideHeader`). */}
+        {hideHeader ? (
+          <span />
+        ) : (
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Outros dados
+            </p>
+            {refreshing && (
+              <Loader2
+                className="h-3 w-3 animate-spin text-muted-foreground"
+                data-testid={`${testIdPrefix}-refreshing`}
+              />
+            )}
+          </div>
+        )}
         <div className="flex items-center gap-1">
           <TooltipIconButton
             label="Adicionar dado de texto"
@@ -221,6 +260,8 @@ export function ChecklistExtrasSection({
               onRemover={onRemover}
               onUploadDocumento={onUploadDocumento}
               onRemoverDocumento={onRemoverDocumento}
+              onVisualizarDocumento={onVisualizarDocumento}
+              onBaixarDocumento={onBaixarDocumento}
               salvando={salvando}
               testIdPrefix={testIdPrefix}
             />
@@ -238,6 +279,8 @@ function ChecklistExtraRow({
   onRemover,
   onUploadDocumento,
   onRemoverDocumento,
+  onVisualizarDocumento,
+  onBaixarDocumento,
   salvando,
   testIdPrefix,
 }: {
@@ -247,6 +290,8 @@ function ChecklistExtraRow({
   onRemover: (extraId: string) => void;
   onUploadDocumento: (extraId: string, file: File) => void;
   onRemoverDocumento: (extraId: string) => void;
+  onVisualizarDocumento?: (documentoId: string) => void;
+  onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
   salvando?: boolean;
   testIdPrefix: string;
 }) {
@@ -385,16 +430,42 @@ function ChecklistExtraRow({
                   e.target.value = "";
                 }}
               />
-              <TooltipIconButton
-                label={
-                  extra.documento ? `Substituir ${extra.label}` : `Enviar ${extra.label}`
-                }
-                icon={Upload}
-                testId={`${tid}-upload`}
-                className="h-7 w-7"
-                disabled={salvando}
-                onClick={() => inputArquivo.current?.click()}
-              />
+              {/* Only while the row is still ASKING — see the file docblock.
+                  The hidden input above stays mounted regardless, so a row
+                  whose file was just discarded accepts the next one at once. */}
+              {!extra.documento && (
+                <TooltipIconButton
+                  label={`Enviar ${extra.label}`}
+                  icon={Upload}
+                  testId={`${tid}-upload`}
+                  className="h-7 w-7"
+                  disabled={salvando}
+                  onClick={() => inputArquivo.current?.click()}
+                />
+              )}
+              {extra.documento && onVisualizarDocumento && (
+                <TooltipIconButton
+                  label={`Visualizar ${extra.label}`}
+                  icon={ExternalLink}
+                  testId={`${tid}-visualizar`}
+                  className="h-7 w-7"
+                  onClick={() => onVisualizarDocumento(extra.documento!.id)}
+                />
+              )}
+              {extra.documento && onBaixarDocumento && (
+                <TooltipIconButton
+                  label={`Baixar ${extra.label}`}
+                  icon={Download}
+                  testId={`${tid}-baixar`}
+                  className="h-7 w-7"
+                  onClick={() =>
+                    onBaixarDocumento(
+                      extra.documento!.id,
+                      extra.documento!.nome_original,
+                    )
+                  }
+                />
+              )}
               {extra.documento && (
                 <TooltipIconButton
                   label={`Descartar o arquivo de ${extra.label}`}
