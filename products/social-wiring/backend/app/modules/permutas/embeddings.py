@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 from noctusai_lib.integrations.llm import generate_embeddings_batch
@@ -99,8 +99,19 @@ async def embutir_ativos(
     *,
     apenas_pendentes: bool = True,
     ativo_ids: Optional[list[UUID]] = None,
+    provider_resolver: Callable[[str], str] = resolve_embedding_provider,
+    embedder: Callable[..., Any] = generate_embeddings_batch,
 ) -> dict:
     """Generate and store both vectors for the org's ativos.
+
+    🔴 `provider_resolver` / `embedder` ARE DI SEAMS, NOT TEST SUGAR.
+    They exist so a test can substitute the operator's pick and the provider
+    call by PASSING them, rather than reaching into this module and rebinding
+    its globals. Monkeypatching our own attributes would mean the test no
+    longer exercises the wiring it claims to cover — the real call path stays
+    untested while the assertions pass. (`KB § PATTERNS/compliance/testing.md`;
+    same shape as `resolve_vision_provider`'s `store`/`resolver` seams.)
+    Production callers pass neither and get the real chain.
 
     `apenas_pendentes` (the default) skips rows that already have both — an
     edit clears them (see `service.atualizar_ativo`), so "pending" genuinely
@@ -160,7 +171,7 @@ async def embutir_ativos(
     # The operator's manual pick. Resolved ONCE per run, not per batch: a
     # setting changed mid-run would embed half the corpus in one space and
     # half in another, and the two halves would never be comparable again.
-    provedor = resolve_embedding_provider(str(org_id))
+    provedor = provider_resolver(str(org_id))
     modelo = MODELOS.get(provedor)
     if modelo is None:
         raise ValueError(
@@ -181,7 +192,7 @@ async def embutir_ativos(
         # endpoint takes an array, and a per-text loop is what turns a few
         # hundred rows into a few hundred HTTP requests and a rate-limit storm.
         textos = [t for _, perfil, desejo in fatia for t in (perfil, desejo)]
-        vetores = await generate_embeddings_batch(
+        vetores = await embedder(
             textos, model=modelo, provider=provedor, org_id=str(org_id), **extra
         )
         _conferir_dimensoes(vetores, provedor, modelo)

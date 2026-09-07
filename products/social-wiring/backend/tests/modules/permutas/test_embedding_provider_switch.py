@@ -107,105 +107,143 @@ class TestTheSwitchReachesTheProviderCall:
     correct resolver and a correct model map still produce an OpenAI call if
     nobody threads the choice through — and that failure is invisible, because
     the run succeeds and simply embeds with the wrong vendor.
+
+    🔴 DI SEAMS, NOT MONKEYPATCH. `embutir_ativos` takes `provider_resolver`
+    and `embedder`; the substitutes are PASSED. Rebinding this module's own
+    globals would leave the real call path untested while these assertions
+    went green — the failure mode `KB § PATTERNS/compliance/testing.md` names.
+    The adapter is NOT stubbed either: the fake client below answers the three
+    real queries it makes, so the projection under test is the production one.
     """
 
     @staticmethod
-    def _cliente_falso(ativos: list[dict], interesses: list[dict]):
+    def _cliente(ativos, interesses, imoveis=()):
+        """A Supabase-shaped fake that answers the adapter's real queries.
+
+        Complete enough that `listar_ativos_para_scorer` runs unmodified —
+        which is the point: stubbing it would hide a broken projection.
+        """
         class _Q:
-            def __init__(self, dados): self._d = dados
+            def __init__(self, dados): self._d = list(dados)
             def select(self, *a, **k): return self
             def eq(self, *a, **k): return self
             def in_(self, *a, **k): return self
+            def order(self, *a, **k): return self
+            def limit(self, *a, **k): return self
             def update(self, *a, **k): return self
             def execute(self): return type("R", (), {"data": self._d})()
 
+        tabelas = {
+            "permuta_ativos": ativos,
+            "permuta_interesses": interesses,
+            "imoveis": imoveis,
+        }
+
         class _C:
-            def schema(self, _): return self
-            def table(self, nome):
-                return _Q(ativos if nome == "permuta_ativos" else interesses)
+            def schema(self, _nome): return self
+            def table(self, nome): return _Q(tabelas.get(nome, []))
         return _C()
 
+    #: One `permuta_imovel` — it carries its own snapshot, so no catalog row
+    #: is needed and the adapter resolves it without an `imoveis` join.
+    ATIVO = {
+        "id": "a1",
+        "natureza": "permuta_imovel",
+        "imovel_codigo": None,
+        "status": "ativo",
+        "tipo_imovel": "Casa",
+        "cidade": "Cotia",
+        "uf": "SP",
+        "valor": 900000.0,
+        "regiao_preferida": [],
+        "observacoes": "estuda permuta de 30% a 50%, casa sem escada",
+        "embedding": None,
+        "embedding_interesses": None,
+    }
+    INTERESSE = {
+        "id": "i1", "ativo_id": "a1", "tipo": "imovel",
+        "tipo_imovel": "Casa", "valor_maximo": 800000,
+        "observacoes": "quintal amplo",
+    }
+
+    def _cliente_padrao(self):
+        return self._cliente([self.ATIVO], [self.INTERESSE])
+
     @pytest.mark.asyncio
-    async def test_gemini_pick_sends_its_model_and_the_1536_truncation(
-        self, monkeypatch
-    ):
+    async def test_gemini_pick_sends_its_model_and_the_1536_truncation(self):
         visto: dict = {}
 
-        async def fake_batch(texts, **kw):
-            visto.update(kw)
-            visto["n"] = len(texts)
+        async def embedder(texts, **kw):
+            visto.update(kw); visto["n"] = len(texts)
             return [[0.0] * 1536 for _ in texts]
 
-        monkeypatch.setattr(emb, "generate_embeddings_batch", fake_batch)
-        monkeypatch.setattr(emb, "resolve_embedding_provider", lambda _org: "gemini")
-        monkeypatch.setattr(
-            emb.adapter, "listar_ativos_para_scorer",
-            lambda *a, **k: ([{"id": "a1", "natureza": "permuta_imovel",
-                               "tipo_imovel": "Casa", "cidade": "Cotia",
-                               "valor": 900000.0, "interesses": []}], []),
+        r = await emb.embutir_ativos(
+            self._cliente_padrao(), "6dd73140-74a4-41c6-aeff-bc94b5312b53",
+            provider_resolver=lambda _org: "gemini",
+            embedder=embedder,
         )
-        cliente = self._cliente_falso(
-            [{"id": "a1", "observacoes": "casa sem escada",
-              "embedding": None, "embedding_interesses": None}],
-            [{"ativo_id": "a1", "tipo": "imovel", "observacoes": "quintal amplo"}],
-        )
-
-        r = await emb.embutir_ativos(cliente, "6dd73140-74a4-41c6-aeff-bc94b5312b53")
 
         assert visto["provider"] == "gemini"
         assert visto["model"] == "gemini-embedding-001"
         assert visto["output_dimensionality"] == 1536
+        assert visto["n"] == 2, "perfil + interesses, um par por ativo"
         assert r["provedor"] == "gemini"
         assert r["dimensoes"] == 1536
+        assert r["processados"] == 1
 
     @pytest.mark.asyncio
-    async def test_openai_pick_never_sends_geminis_kwarg(self, monkeypatch):
+    async def test_openai_pick_never_sends_geminis_kwarg(self):
+        """OpenAI's parameter is `dimensions`; Gemini's spelling would reach
+        that SDK as an unknown kwarg."""
         visto: dict = {}
 
-        async def fake_batch(texts, **kw):
+        async def embedder(texts, **kw):
             visto.update(kw)
             return [[0.0] * 1536 for _ in texts]
 
-        monkeypatch.setattr(emb, "generate_embeddings_batch", fake_batch)
-        monkeypatch.setattr(emb, "resolve_embedding_provider", lambda _org: "openai")
-        monkeypatch.setattr(
-            emb.adapter, "listar_ativos_para_scorer",
-            lambda *a, **k: ([{"id": "a1", "natureza": "permuta_imovel",
-                               "tipo_imovel": "Casa", "cidade": "Cotia",
-                               "valor": 900000.0, "interesses": []}], []),
+        await emb.embutir_ativos(
+            self._cliente_padrao(), "6dd73140-74a4-41c6-aeff-bc94b5312b53",
+            provider_resolver=lambda _org: "openai",
+            embedder=embedder,
         )
-        cliente = self._cliente_falso(
-            [{"id": "a1", "observacoes": "casa sem escada",
-              "embedding": None, "embedding_interesses": None}],
-            [{"ativo_id": "a1", "tipo": "imovel", "observacoes": "quintal amplo"}],
-        )
-
-        await emb.embutir_ativos(cliente, "6dd73140-74a4-41c6-aeff-bc94b5312b53")
 
         assert visto["provider"] == "openai"
         assert visto["model"] == "text-embedding-3-small"
         assert "output_dimensionality" not in visto
 
     @pytest.mark.asyncio
-    async def test_a_wrong_width_response_writes_nothing(self, monkeypatch):
+    async def test_a_wrong_width_response_writes_nothing(self):
         """🔴 The guard fires BEFORE the update loop, so a misconfigured
         provider cannot leave a half-embedded corpus behind."""
-        async def fake_batch(texts, **kw):
+        async def embedder(texts, **kw):
             return [[0.0] * 3072 for _ in texts]   # Gemini's real default
 
-        monkeypatch.setattr(emb, "generate_embeddings_batch", fake_batch)
-        monkeypatch.setattr(emb, "resolve_embedding_provider", lambda _org: "gemini")
-        monkeypatch.setattr(
-            emb.adapter, "listar_ativos_para_scorer",
-            lambda *a, **k: ([{"id": "a1", "natureza": "permuta_imovel",
-                               "tipo_imovel": "Casa", "cidade": "Cotia",
-                               "valor": 900000.0, "interesses": []}], []),
-        )
-        cliente = self._cliente_falso(
-            [{"id": "a1", "observacoes": "casa sem escada",
-              "embedding": None, "embedding_interesses": None}],
-            [{"ativo_id": "a1", "tipo": "imovel", "observacoes": "quintal amplo"}],
-        )
-
         with pytest.raises(ValueError, match="3072 dimensões"):
-            await emb.embutir_ativos(cliente, "6dd73140-74a4-41c6-aeff-bc94b5312b53")
+            await emb.embutir_ativos(
+                self._cliente_padrao(), "6dd73140-74a4-41c6-aeff-bc94b5312b53",
+                provider_resolver=lambda _org: "gemini",
+                embedder=embedder,
+            )
+
+    @pytest.mark.asyncio
+    async def test_an_unmapped_provider_fails_before_calling_anything(self):
+        """A switch option with no model must not reach the LLM stack, where
+        it would surface as a missing-credential error naming the wrong thing."""
+        async def embedder(texts, **kw):  # pragma: no cover - must not run
+            raise AssertionError("o embedder não deveria ser chamado")
+
+        with pytest.raises(ValueError, match="não tem modelo mapeado"):
+            await emb.embutir_ativos(
+                self._cliente_padrao(), "6dd73140-74a4-41c6-aeff-bc94b5312b53",
+                provider_resolver=lambda _org: "cohere",
+                embedder=embedder,
+            )
+
+    @pytest.mark.asyncio
+    async def test_production_callers_get_the_real_chain(self):
+        """The seams DEFAULT to the real functions — a test-only parameter
+        that production silently bypasses would prove nothing."""
+        import inspect
+        sig = inspect.signature(emb.embutir_ativos)
+        assert sig.parameters["provider_resolver"].default is emb.resolve_embedding_provider
+        assert sig.parameters["embedder"].default is emb.generate_embeddings_batch
