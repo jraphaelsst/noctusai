@@ -533,8 +533,20 @@ def test_cleanup_salvage_push_failure_is_best_effort():
     assert res["status"] == "cleaned"                # teardown completed anyway
     assert res["worktree_removed"] is True and res["branch_deleted"] is True
     assert res["salvage_pushed"] is False            # surfaced, best-effort
-    # the single retry path was exercised (two push attempts on the race)
-    assert sum(1 for o in order if "git -C /repo push origin HEAD:dev" in o) == 2
+    # 4 = TWO legs x (push + its single non-FF retry). Leg 2b pushes the salvage
+    # row; the post-settle ledger drain then pushes whatever is still dirty. Each
+    # leg independently exercises the single-retry-on-non-FF path, which is what
+    # this assertion has always been pinning — now for both.
+    #
+    # In production the drain does NOT re-push the salvage row: Leg 2b commits it,
+    # so it is no longer dirty and `_dirty_ledger_rel_paths` cannot see it. This
+    # fake's `status --porcelain` reports it dirty unconditionally, which is why
+    # both legs fire here. The redundancy is an artifact of the fake, not of the
+    # code — and the drain failing loudly rather than silently is the point.
+    assert sum(1 for o in order if "git -C /repo push origin HEAD:dev" in o) == 4
+    # Both legs surface their failure; neither is swallowed (no-silent-errors).
+    assert res["ledger_drain"]["pushed"] is False
+    assert res["ledger_drain"]["ledgers"]
 
 
 def test_branch_for_path_keys_on_dir_not_slug():
@@ -1912,3 +1924,134 @@ class TestDefaultMigrationCollisionCheck:
         (mig / "050_a.sql").write_text("SELECT 1;\n")
 
         assert T._default_migration_collision_check(str(tmp_path)) == []
+
+
+# ── ledger drain: the stranded-row recurrence (4+ incidents, ~4 months) ──────
+#
+# `worktree-salvage.ndjson` always had a commit+push leg; `auto-improvement.ndjson`
+# had NONE — `log()` appends, `refresh()` only reads it back — so every logged row
+# sat uncommitted in the primary checkout until a human hand-drained it. Every
+# previous investigation hunted an ORDERING bug and found nothing, because the
+# stage was missing entirely.
+
+
+class TestDirtyLedgerRelPaths:
+    """The drain set is DERIVED from git, never a hand-kept filename list."""
+
+    @staticmethod
+    def _runner(porcelain: str, rc: int = 0):
+        return lambda argv: (rc, porcelain, "")
+
+    def test_picks_up_every_dirty_ndjson_ledger(self):
+        from tools.noctus.dev.task_branch import _dirty_ledger_rel_paths
+        out = (
+            " M project-history/auto-improvement.ndjson\n"
+            " M project-history/worktree-salvage.ndjson\n"
+            " M project-history/vector-costs.ndjson\n"
+        )
+        assert _dirty_ledger_rel_paths(self._runner(out), "/repo") == [
+            "project-history/auto-improvement.ndjson",
+            "project-history/vector-costs.ndjson",
+            "project-history/worktree-salvage.ndjson",
+        ]
+
+    def test_covers_a_ledger_added_tomorrow(self):
+        """🔴 The whole point: no per-filename entry is required.
+
+        The recurrence class is "a new ledger was added and nobody updated the
+        list". A file this code has never heard of must be drained on arrival.
+        """
+        from tools.noctus.dev.task_branch import _dirty_ledger_rel_paths
+        out = " M project-history/a-ledger-invented-later.ndjson\n"
+        assert _dirty_ledger_rel_paths(self._runner(out), "/repo") == [
+            "project-history/a-ledger-invented-later.ndjson"
+        ]
+
+    def test_ignores_non_ledger_and_non_ndjson_paths(self):
+        """Real work must NEVER be swept onto dev by the drain."""
+        from tools.noctus.dev.task_branch import _dirty_ledger_rel_paths
+        out = (
+            " M project-history/PROJECT-HISTORY.md\n"
+            " M products/social-wiring/backend/app/main.py\n"
+            " M project-history/auto-improvement.ndjson\n"
+        )
+        assert _dirty_ledger_rel_paths(self._runner(out), "/repo") == [
+            "project-history/auto-improvement.ndjson"
+        ]
+
+    def test_git_failure_is_empty_not_a_crash(self):
+        from tools.noctus.dev.task_branch import _dirty_ledger_rel_paths
+        assert _dirty_ledger_rel_paths(self._runner("", rc=128), "/repo") == []
+
+    def test_clean_tree_yields_nothing_to_drain(self):
+        from tools.noctus.dev.task_branch import _dirty_ledger_rel_paths
+        assert _dirty_ledger_rel_paths(self._runner(""), "/repo") == []
+
+
+class TestDrainLedgersFromPrimary:
+    def test_clean_tree_short_circuits_without_touching_git(self):
+        from tools.noctus.dev.task_branch import _drain_ledgers_from_primary
+        r = _drain_ledgers_from_primary(
+            lambda argv: (0, "", ""), root="/repo", dev_branch="dev")
+        assert r["status"] == "already_clean"
+        assert r["pushed"] is False
+        assert r["ledgers"] == []
+
+    def test_passes_every_dirty_ledger_to_the_shared_push_helper(self, monkeypatch):
+        """One commit ships them ALL — the fix is a widened `rel_paths`, not a
+        second bespoke push leg."""
+        import tools.noctus.dev._ledger_push as lp
+        from tools.noctus.dev import task_branch as tb
+
+        seen = {}
+
+        def fake_push(**kw):
+            seen.update(kw)
+            return {"ok": True, "status": "pushed", "pushed": True}
+
+        monkeypatch.setattr(lp, "commit_and_ff_push_ledger", fake_push)
+        out = (
+            " M project-history/auto-improvement.ndjson\n"
+            " M project-history/worktree-salvage.ndjson\n"
+        )
+        r = tb._drain_ledgers_from_primary(
+            lambda argv: (0, out, ""), root="/repo", dev_branch="dev")
+
+        assert r["pushed"] is True
+        assert seen["rel_paths"] == [
+            "project-history/auto-improvement.ndjson",
+            "project-history/worktree-salvage.ndjson",
+        ]
+        assert seen["dev_branch"] == "dev"
+
+    def test_push_failure_is_surfaced_never_swallowed(self, monkeypatch):
+        import tools.noctus.dev._ledger_push as lp
+        from tools.noctus.dev import task_branch as tb
+
+        monkeypatch.setattr(
+            lp, "commit_and_ff_push_ledger",
+            lambda **kw: {"ok": False, "status": "dirty_blocked",
+                          "pushed": False, "error": "nope"})
+        r = tb._drain_ledgers_from_primary(
+            lambda argv: (0, " M project-history/auto-improvement.ndjson\n", ""),
+            root="/repo", dev_branch="dev")
+        assert r["pushed"] is False
+        assert r["error"] == "nope"
+        assert r["ledgers"] == ["project-history/auto-improvement.ndjson"]
+
+
+class TestResolvePrimaryRoot:
+    def test_injected_root_wins(self):
+        from tools.noctus.dev.task_branch import _resolve_primary_root
+        assert _resolve_primary_root("/injected") == "/injected"
+
+    def test_none_never_becomes_the_literal_string_none(self):
+        """🔴 The scoping bug this helper was extracted to kill.
+
+        `cleanup` resolved the root only inside `if head:` and `integrate` never
+        bound it, so `str(root)` could produce the literal path "None" — which
+        git reports as a missing directory rather than as the programming error
+        it is.
+        """
+        from tools.noctus.dev.task_branch import _resolve_primary_root
+        assert _resolve_primary_root(None) != "None"

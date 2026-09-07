@@ -3988,3 +3988,70 @@ class TestCheckSettingsDiRegression:
     def test_the_real_router_is_clean(self):
         """The live file this ratchet was created for."""
         assert check_settings_di_regression(PRODUCTS_DIR / "social-wiring") == []
+
+
+class TestLedgerDrainAfterSettle:
+    """The gate for the stranded-ledger-row recurrence.
+
+    Verified BOTH ways on purpose: a keeper only proven to pass on the fixed
+    tree is a keeper nobody has shown can fail.
+    """
+
+    def _write(self, tmp_path, body: str):
+        src = tmp_path / "mcp" / "noctusai" / "tools" / "noctus" / "dev"
+        src.mkdir(parents=True, exist_ok=True)
+        (src / "task_branch.py").write_text(body, encoding="utf-8")
+        return tmp_path
+
+    def test_clean_when_both_sites_drain_after_settle(self, tmp_path):
+        from tools.noctus.dev.compliance import check_ledger_drain_after_settle
+        root = self._write(tmp_path, (
+            "def task_branch():\n"
+            "    result['cache_settle'] = settle_fn()\n"
+            "    result['ledger_drain'] = _drain_ledgers_from_primary()\n"
+            "    result['cache_settle'] = settle_fn()\n"
+            "    result['ledger_drain'] = _drain_ledgers_from_primary()\n"
+        ))
+        assert check_ledger_drain_after_settle(root) == []
+
+    def test_blocks_when_only_one_site_drains(self, tmp_path):
+        """The exact shape that let this survive: cleanup shipped the salvage
+        row and looked fixed while every auto-improvement row leaked."""
+        from tools.noctus.dev.compliance import check_ledger_drain_after_settle
+        root = self._write(tmp_path, (
+            "def task_branch():\n"
+            "    result['cache_settle'] = settle_fn()\n"
+            "    result['cache_settle'] = settle_fn()\n"
+            "    result['ledger_drain'] = _drain_ledgers_from_primary()\n"
+        ))
+        kinds = [i["kind"] for i in check_ledger_drain_after_settle(root)]
+        assert "ledger-drain-missing-site" in kinds
+
+    def test_blocks_when_the_drain_runs_before_the_settle(self, tmp_path):
+        """Ordering IS the property: the settle is the last step that can
+        dirty a ledger, so a drain before it cannot ship what it writes."""
+        from tools.noctus.dev.compliance import check_ledger_drain_after_settle
+        root = self._write(tmp_path, (
+            "def task_branch():\n"
+            "    result['ledger_drain'] = _drain_ledgers_from_primary()\n"
+            "    result['ledger_drain'] = _drain_ledgers_from_primary()\n"
+            "    result['cache_settle'] = settle_fn()\n"
+        ))
+        kinds = [i["kind"] for i in check_ledger_drain_after_settle(root)]
+        assert "ledger-drain-before-settle" in kinds
+
+    def test_a_commented_out_drain_does_not_satisfy_the_gate(self, tmp_path):
+        """AST, never regex."""
+        from tools.noctus.dev.compliance import check_ledger_drain_after_settle
+        root = self._write(tmp_path, (
+            "def task_branch():\n"
+            "    result['cache_settle'] = settle_fn()\n"
+            "    # result['ledger_drain'] = _drain_ledgers_from_primary()\n"
+            "    # result['ledger_drain'] = _drain_ledgers_from_primary()\n"
+        ))
+        assert check_ledger_drain_after_settle(root) != []
+
+    def test_missing_source_file_is_a_finding_not_a_silent_pass(self, tmp_path):
+        from tools.noctus.dev.compliance import check_ledger_drain_after_settle
+        kinds = [i["kind"] for i in check_ledger_drain_after_settle(tmp_path)]
+        assert kinds == ["ledger-drain-source-missing"]

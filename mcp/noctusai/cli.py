@@ -187,6 +187,7 @@ def main():
     parser.add_argument("--check-dependabot-product-coverage", action="store_true", help="Keeper: .github/dependabot.yml must carry an npm block for every products/<slug>/frontend with a package.json, no block may point at a directory whose package.json no longer exists, and every npm block must carry the 8-entry fleet-major `ignore:` guard (unguarded/partially-guarded is the actual hole). 2026-08-13 incident: igig (live since 2026-08-09), orbity, and products/seed had ZERO Dependabot coverage — nothing was watching those directories. Fix: --refresh-dependabot-coverage. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-ci-test-matrix-coverage", action="store_true", help="Keeper: .github/workflows/test.yml's product-backend-tests / product-frontend-tests `matrix: product:` lists must include every product that QUALIFIES (has real test files for that suite) — a missing entry means that product's tests silently never run in CI. 2026-08-13: igig/orbity/seed backend suites + orbity's frontend suite were never collected. Fix: --refresh-ci-matrix-coverage. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-upload-route-body-override", action="store_true", help="Keeper: every UploadFile-declaring route under products/<slug>/backend/app/ (any annotation shape — UploadFile, list[UploadFile]/List[UploadFile], UploadFile | None, Optional[UploadFile], Annotated[UploadFile, File(...)]) must have a matching entry in that product's max_body_path_overrides map — a real byte ceiling, or the explicit noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY opt-out. A forgotten entry silently caps the route at the 1 MB webhook-DoS default and 413s in production on any realistically-sized upload, before the handler that would have accepted it ever runs. 2026-08-31: only social-wiring had ANY entries (and was missing 3 of its own routes); erp-imobiliario/igig/adconnect/therapy-platform had zero. STATIC backstop for the exhaustive runtime refusal in create_product_app / noctusai_seed.upload_route_overrides — see that module's docstring for this keeper's narrower static-resolution scope. No auto-fix (the ceiling is a per-route judgment call). Severity high. KB § PATTERNS/backend/upload-route-body-override-derivation.md.")
+    parser.add_argument("--check-ledger-drain-after-settle", action="store_true", help="Keeper (pre-push HARD-BLOCK): every append-only project-history ledger written during a task_branch run must have a stage that SHIPS it — the drain leg must exist in BOTH the integrate and cleanup result paths AND run AFTER cache_settle. Closes the 4+-incident stranded-ledger-row recurrence. Severity high. KB § PATTERNS/common/self-branching-mode.md.")
     parser.add_argument("--check-branch-tree-mirror", metavar="BRANCH", nargs="?", const="__all__", help="Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severity high. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
     parser.add_argument("--check-dangling-remote-branches", action="store_true", help="Keeper: flag origin/* branches with unique content older than 7 days. Squash-aware (git-cherry + subject-on-dev). Advisory-only (severity warning); never a commit-blocker. Surfaces in review + session-end sweep. KB § CONTEXT/PATTERNS/common/learn-before-archive.md.")
     parser.add_argument("--check-eight-way-sync", action="store_true", help="Keeper: the 8-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/ / .claude/cache/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index + all_cache_freshness sub-keepers. Severity high. KB § PATTERNS/common/eight-way-sync.md.")
@@ -1478,6 +1479,17 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
         blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
         sys.exit(1 if blocking else 0)
+
+    elif args.check_ledger_drain_after_settle:
+        from tools.noctus.dev.compliance import check_ledger_drain_after_settle
+        issues = check_ledger_drain_after_settle()
+        if not issues:
+            print(f"  {GREEN}✓ ledger-drain: every ledger written in a run has a stage that ships it.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} ledger-drain issue(s) (HARD-BLOCK):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
 
     elif args.check_branch_tree_mirror is not None:
         from tools.noctus.dev.compliance import check_branch_tree_mirror

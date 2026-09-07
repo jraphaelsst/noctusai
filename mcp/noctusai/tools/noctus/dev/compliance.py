@@ -16707,3 +16707,108 @@ def register(server) -> None:
     )
     def _validate_product(slug: str) -> dict:
         return validate_one_product(slug)
+
+
+def check_ledger_drain_after_settle(repo_root: Path | None = None) -> list[dict]:
+    """Every append-only ledger written during a run must have a stage that SHIPS it.
+
+    🔴 THE RECURRENCE THIS GUARDS (4+ incidents across ~4 months, hand-drained
+    each time — see `a615d761 chore(ledger): drain the rows stranded on the
+    primary checkout`, 2026-08-22, which diagnosed it correctly and shipped a
+    drain instead of a fix).
+
+    `project-history/*.ndjson` ledgers are written to the PRIMARY checkout by
+    tooling. `worktree-salvage.ndjson` always had a commit+push leg;
+    `auto-improvement.ndjson` had NONE — `auto_improvement.log()` appends and
+    `refresh()` only reads it back into sqlite — so every logged row sat
+    uncommitted until a human noticed. Every previous investigation hunted an
+    ORDERING bug and found nothing, because the stage was missing entirely.
+
+    TWO invariants, both violated by the original code:
+
+    1. **BOTH** `task_branch` result paths (integrate AND cleanup) run the
+       drain. One site having it is how this survived: `cleanup` shipped the
+       salvage row and looked fixed, while every auto-improvement row leaked.
+    2. The drain runs **AFTER** the `cache_settle` assignment at each site.
+       `_settle_structural_caches` is the last thing that can dirty a ledger;
+       a drain placed before it cannot ship what it writes. Today's settle legs
+       only read, so this is currently latent — which is exactly why it needs a
+       gate rather than a comment: the next writer added there would re-open
+       the leak with no symptom until someone reads `git status` weeks later.
+
+    Source-ORDER is the right check, not call-order-at-runtime: both are
+    straight-line statements in the same block, and the ordering is the whole
+    property. AST, never regex — a `#`-commented call must not satisfy the gate.
+
+    Severity: ``high``. Fast: parses one file, no git/network/OpenAI.
+
+    KB § PATTERNS/common/self-branching-mode.md
+    """
+    import ast as _ast
+
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    rel = "mcp/noctusai/tools/noctus/dev/task_branch.py"
+    src = root / rel
+    if not src.exists():
+        return [{
+            "product": "<platform>", "file": rel, "line": 0, "severity": "high",
+            "kind": "ledger-drain-source-missing",
+            "issue": f"{rel} not found — the ledger-drain invariant cannot be verified.",
+        }]
+
+    tree = _ast.parse(src.read_text(encoding="utf-8"))
+
+    def _assign_lines(key: str) -> list[int]:
+        """Line numbers of every `result[<key>] = ...` assignment."""
+        found: list[int] = []
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Assign):
+                continue
+            for target in node.targets:
+                if (
+                    isinstance(target, _ast.Subscript)
+                    and isinstance(target.value, _ast.Name)
+                    and target.value.id == "result"
+                    and isinstance(target.slice, _ast.Constant)
+                    and target.slice.value == key
+                ):
+                    found.append(node.lineno)
+        return sorted(found)
+
+    settle_lines = _assign_lines("cache_settle")
+    drain_lines = _assign_lines("ledger_drain")
+
+    # Each site assigns the key twice (the try body + its except fallback), so
+    # two sites == two DISTINCT clusters. Comparing the minimum line of each
+    # cluster is what makes "after" meaningful.
+    if len(drain_lines) < 2:
+        issues.append({
+            "product": "<platform>", "file": rel,
+            "line": drain_lines[0] if drain_lines else 0, "severity": "high",
+            "kind": "ledger-drain-missing-site",
+            "issue": (
+                "`result['ledger_drain'] = _drain_ledgers_from_primary(...)` must "
+                "appear in BOTH task_branch result paths (integrate AND cleanup); "
+                f"found {len(drain_lines)}. A ledger row written during a run that "
+                "no stage commits sits uncommitted in the primary checkout until a "
+                "human hand-drains it — the 4+-incident recurrence this gate closes."
+            ),
+        })
+
+    # Pair each settle site with the next drain that follows it.
+    for settle_line in settle_lines:
+        if not any(d > settle_line for d in drain_lines):
+            issues.append({
+                "product": "<platform>", "file": rel, "line": settle_line,
+                "severity": "high", "kind": "ledger-drain-before-settle",
+                "issue": (
+                    f"`cache_settle` is assigned at line {settle_line} with no "
+                    "`ledger_drain` after it. The drain MUST follow the settle: "
+                    "`_settle_structural_caches` is the last step that can dirty a "
+                    "ledger, so a drain placed before it can never ship what the "
+                    "settle writes."
+                ),
+            })
+
+    return issues

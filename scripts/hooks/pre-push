@@ -273,6 +273,30 @@ if [[ -z "${NOCTUS_SKIP_BRANCH_TREE_CHECK:-}" && -x "$PY_PP" && -f "$CLI_PP" ]];
     done <<< "$PUSH_LINES"
 fi
 
+# ── ledger-drain keeper ─────────────────────────────────────────────────────
+# Branch-independent (it inspects task_branch.py's own structure, not the ref
+# being pushed), so it runs ONCE outside the per-ref loop rather than per-ref.
+#
+# What it defends: every append-only `project-history/*.ndjson` ledger written
+# during a run must have a stage that SHIPS it, and that stage must sit AFTER
+# `cache_settle` — the last step that can dirty one. `auto-improvement.ndjson`
+# had no such stage for ~4 months; the rows were hand-drained 4+ times because
+# every investigation looked for an ordering bug instead of a missing stage.
+echo "[pre-push] ledger-drain keeper..."
+_ld_out="$("$PY_PP" "$CLI_PP" --check-ledger-drain-after-settle 2>&1)"
+if [[ $? -ne 0 ]]; then
+    echo "" >&2
+    echo "🔴 pre-push: ledger-drain keeper BLOCKED the push." >&2
+    echo "$_ld_out" >&2
+    echo "" >&2
+    echo "   A ledger row written during a run that nothing commits sits" >&2
+    echo "   uncommitted in the primary checkout until someone hand-drains it." >&2
+    echo "   KB § PATTERNS/common/self-branching-mode.md" >&2
+    blocked=1
+else
+    echo "[pre-push] ledger-drain: $( echo "$_ld_out" | tail -1 | sed 's/^[[:space:]]*//' )"
+fi
+
 # ─── branch protection (reads the captured push lines) ──────────────────
 while read -r local_ref local_oid remote_ref remote_oid; do
     [[ -z "${remote_ref:-}" ]] && continue

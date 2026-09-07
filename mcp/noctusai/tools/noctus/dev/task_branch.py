@@ -83,6 +83,11 @@ from tools.noctus.dev._benign_stash import (
     classify_dirty as _shared_classify_dirty,
     pop_stash as _shared_pop_stash,
     stash_benign as _shared_stash_benign,
+    # Reused by `_dirty_ledger_rel_paths`: porcelain lines must be parsed by the
+    # ONE parser that already handles the rename form and the malformed-line
+    # fallback — a second local parser is how a path gets silently truncated
+    # into a different path.
+    strip_status_code as _strip_status_code,
 )
 
 logger = logging.getLogger(__name__)
@@ -349,6 +354,129 @@ def _push_salvage_ledger_from_primary(
         already_committed=False,
         _log_prefix="task_branch.cleanup",
     )
+
+
+def _resolve_primary_root(primary_root: str | None) -> str:
+    """The PRIMARY checkout root — injected in tests, `REPO_ROOT` in production.
+
+    Extracted because THREE call sites needed it and two of them had a subtly
+    different guard: `cleanup` resolved it only inside `if head:`, so a
+    head-less teardown left it `None`, and `integrate` never bound it at all.
+    A `None` reaching `str()` becomes the literal path "None", which git then
+    reports as a missing directory rather than as the programming error it is.
+    """
+    if primary_root is not None:
+        return primary_root
+    from settings import REPO_ROOT  # lazy: keeps the injected test path settings-free
+    return str(REPO_ROOT)
+
+
+def _dirty_ledger_rel_paths(runner, root: str) -> list[str]:
+    """Every DIRTY append-only ledger under ``project-history/``, derived.
+
+    🔴 DERIVED FROM GIT + THE GLOB, NEVER A HAND-KEPT FILENAME LIST. The whole
+    class of bug this function closes is "a new ledger was added and nobody
+    updated the list" — the exact anti-pattern CLAUDE.md §1 names for
+    hand-maintained coverage. ``project-history/*.ndjson`` is already the
+    invariant (``.gitattributes`` carries `merge=union` for the same glob,
+    because every ledger there is an append-only structured log written by an
+    MCP tool and never hand-edited), so asking git which of them are dirty
+    covers a ledger added tomorrow with no edit here.
+    """
+    rc, out, _err = runner(
+        ["git", "-C", root, "status", "--porcelain", "--", "project-history"]
+    )
+    if rc != 0:
+        return []
+    paths: list[str] = []
+    for raw in (out or "").splitlines():
+        if not raw.strip():
+            continue
+        path = _strip_status_code(raw)
+        if path.startswith("project-history/") and path.endswith(".ndjson"):
+            paths.append(path)
+    return sorted(set(paths))
+
+
+def _drain_ledgers_from_primary(
+    runner,
+    *,
+    root: str,
+    dev_branch: str,
+    remote: str = "origin",
+    verbose: bool = False,
+) -> dict[str, Any]:
+    """Ship every dirty ``project-history/*.ndjson`` from the PRIMARY checkout.
+
+    🔴 WHY THIS EXISTS — THE RECURRENCE THIS CLOSES (4+ incidents, ~4 months).
+    Two append-only ledgers are written to the primary tree by tooling, and
+    until now only ONE of them had a way to reach the repo:
+
+        worktree-salvage.ndjson  cleanup Leg 2b commits + FF-pushes it
+        auto-improvement.ndjson  `log()` appends … and NOTHING ever commits it
+
+    `auto_improvement.refresh()` only READS the ndjson into its sqlite mirror,
+    so every `auto_improvement_log` call left permanent dirt in the primary
+    checkout until a human noticed and hand-drained it (see
+    `a615d761 chore(ledger): drain the rows stranded on the primary checkout`,
+    which diagnosed this correctly on 2026-08-22 and shipped a drain rather
+    than the fix). Every previous attempt looked for an ORDERING bug; there was
+    none to find, because the stage was missing entirely.
+
+    🔴 AND IT RUNS **AFTER** ``cache_settle``, WHICH IS THE OTHER HALF.
+    `_settle_structural_caches` is the LAST thing both integrate and cleanup
+    do — after their only commit. Today its two legs only read, so nothing
+    leaks; but any future leg that writes would be dirt by construction with no
+    stage left behind it. Draining after the settle removes that trap instead
+    of leaving it armed for the next person.
+
+    Best-effort by construction: a failure NEVER fails a completed
+    integrate/cleanup — the rows are on disk, append-only and idempotent, so
+    the next run ships them. `status` says which outcome happened rather than
+    collapsing to a silent bool (no-silent-errors).
+    """
+    from tools.noctus.dev._ledger_push import commit_and_ff_push_ledger  # lazy
+
+    rel_paths = _dirty_ledger_rel_paths(runner, root)
+    if not rel_paths:
+        return {"ok": True, "status": "already_clean", "pushed": False, "ledgers": []}
+
+    if verbose:
+        logger.debug("task_branch: draining %d dirty ledger(s) from primary %s: %s",
+                     len(rel_paths), root, rel_paths)
+
+    msg = (
+        "chore(ledger): ship the append-only ledger rows written this run\n\n"
+        + "\n".join(f"  {p}" for p in rel_paths)
+        + "\n\nDrained from the PRIMARY checkout after the structural-cache "
+        "settle, so rows the settle itself writes are shipped too. Derived from "
+        "`git status -- project-history` + the *.ndjson glob, never a "
+        "hand-kept filename list — a ledger added later is covered on arrival."
+    )
+    result = commit_and_ff_push_ledger(
+        runner=runner,
+        root=root,
+        rel_paths=rel_paths,
+        dev_branch=dev_branch,
+        remote=remote,
+        commit_msg=msg,
+        already_committed=False,
+        _log_prefix="task_branch.drain",
+    )
+    result["ledgers"] = rel_paths
+    # 🔴 NORMALISE `pushed` — `commit_and_ff_push_ledger` sets it on the success
+    # and already_clean paths but OMITS it on every failure path (see its own
+    # result table), so a caller doing `result["pushed"]` KeyErrors exactly when
+    # something went wrong. This helper guarantees the key is always present and
+    # boolean, so "did the rows ship?" is answerable without knowing which
+    # internal branch produced the dict.
+    result["pushed"] = bool(result.get("pushed"))
+    if not result["pushed"]:
+        logger.warning(
+            "task_branch.drain: ledger rows NOT pushed (%s) — they stay on disk "
+            "and ship next run: %s",
+            result.get("error") or result.get("status"), rel_paths)
+    return result
 
 
 def _stash_benign_artifacts(
@@ -1010,6 +1138,15 @@ def task_branch(
                         result["cache_settle"] = settle_fn()
                     except Exception as e:  # best-effort — never fail a clean integrate
                         result["cache_settle"] = {"ok": False, "error": str(e)}
+                # 🔴 AFTER the settle, deliberately — see `_drain_ledgers_from_primary`.
+                # The settle is the last thing that can dirty a ledger, so a drain
+                # placed before it can never ship what it writes.
+                try:
+                    result["ledger_drain"] = _drain_ledgers_from_primary(
+                        runner, root=_resolve_primary_root(primary_root),
+                        dev_branch=dev_branch, remote=remote, verbose=verbose)
+                except Exception as e:  # best-effort — never fail a clean integrate
+                    result["ledger_drain"] = {"ok": False, "error": str(e)}
                 return result
             # non-FF: a peer pushed between rebase and push → loop, re-fetch+rebase
             if verbose:
@@ -1178,6 +1315,16 @@ def task_branch(
             result["cache_settle"] = settle_fn()
         except Exception as e:  # best-effort — never fail a completed teardown
             result["cache_settle"] = {"ok": False, "error": str(e)}
+    # 🔴 AFTER the settle, deliberately — see `_drain_ledgers_from_primary`.
+    # Leg 2b above already shipped the salvage row; this ships everything ELSE
+    # that is dirty (auto-improvement rows logged during the session, and
+    # anything the settle just wrote), which is the half that had no stage.
+    try:
+        result["ledger_drain"] = _drain_ledgers_from_primary(
+            runner, root=_resolve_primary_root(primary_root),
+            dev_branch=dev_branch, remote=remote, verbose=verbose)
+    except Exception as e:  # best-effort — never fail a completed teardown
+        result["ledger_drain"] = {"ok": False, "error": str(e)}
     return result
 
 
