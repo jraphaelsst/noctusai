@@ -70,7 +70,9 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "API_KEY_SPECS",
     "ApiKeyOption",
+    "EMBEDDING_PROVIDER_KEY",
     "VISION_PROVIDER_KEY",
+    "resolve_embedding_provider",
     "resolve_vision_provider",
     "MANAGED_API_KEYS",
     "PROVIDER_PREFIX",
@@ -171,6 +173,20 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         input_type="password",
         placeholder="sk-ant-...",
     ),
+    ApiKeySpec(
+        name="gemini_api_key",
+        label="Google Gemini API Key",
+        description=(
+            "Usada para gerar os vetores semânticos do matching de permutas "
+            "(camada de IA que lê o texto livre das intenções). Também serve "
+            "como alternativa à OpenAI para leitura de documentos. Escolha "
+            "onde usá-la nos seletores abaixo."
+        ),
+        is_secret=True,
+        testable=True,
+        input_type="password",
+        placeholder="AIza...",
+    ),
     #: 🔴 A MANUAL SWITCH, NOT A FALLBACK.
     #:
     #: Nothing in this product fails over from one vendor to the other. A
@@ -201,6 +217,56 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
                 label="Anthropic (Claude)",
                 description=(
                     "Usa a Anthropic API Key (modelo claude-opus-5)."
+                ),
+            ),
+            ApiKeyOption(
+                value="gemini",
+                label="Google Gemini",
+                description="Usa a Gemini API Key (modelo gemini-2.0-flash).",
+            ),
+        ),
+        default="openai",
+    ),
+    #: 🔴 A SECOND, SEPARATE SWITCH — AND IT CANNOT OFFER ANTHROPIC.
+    #:
+    #: Reading a document and embedding a sentence are different capabilities,
+    #: and the vendors do not overlap the same way: **the Anthropic API has no
+    #: embeddings endpoint at all** (`anthropic_provider.generate_embedding`
+    #: raises `ProviderNotImplemented` saying exactly that). Folding embeddings
+    #: into the vision switch would therefore offer an option that cannot work,
+    #: and the failure would surface as an unexplained empty semantic layer
+    #: rather than as "that vendor does not do this".
+    #:
+    #: Same manual-not-automatic reasoning as the vision switch: nothing fails
+    #: over. Re-embedding a corpus under a different model silently would make
+    #: old and new vectors incomparable — cosine similarity across two
+    #: embedding spaces is noise, not a weaker signal — so the operator picks.
+    ApiKeySpec(
+        name="llm_embedding_provider",
+        label="Provedor dos vetores semânticos (permutas)",
+        description=(
+            "Qual IA gera os vetores que o matching de permutas usa para ler "
+            "o texto livre das intenções (\"casa sem escada\", \"permuta de "
+            "30% a 50%\"). Troque para o Gemini quando a conta OpenAI estiver "
+            "sem créditos. A chave do provedor escolhido precisa estar "
+            "configurada acima. A Anthropic não aparece aqui porque a API "
+            "dela não oferece embeddings."
+        ),
+        is_secret=False,
+        testable=False,
+        input_type="select",
+        options=(
+            ApiKeyOption(
+                value="openai",
+                label="OpenAI",
+                description="Usa a OpenAI API Key (text-embedding-3-small, 1536d).",
+            ),
+            ApiKeyOption(
+                value="gemini",
+                label="Google Gemini",
+                description=(
+                    "Usa a Gemini API Key (gemini-embedding-001 truncado "
+                    "para 1536d, a largura das colunas de vetor)."
                 ),
             ),
         ),
@@ -409,8 +475,64 @@ def resolve_api_key(name: str, org_id: Optional[str]) -> Optional[str]:
     return resolve_api_key_detail(name, org_id).value
 
 
-#: The managed key that holds the manual provider choice.
+#: The managed keys that hold a manual provider choice.
 VISION_PROVIDER_KEY = "llm_vision_provider"
+EMBEDDING_PROVIDER_KEY = "llm_embedding_provider"
+
+
+def _resolve_provider_choice(
+    key: str,
+    org_id: Optional[str],
+    *,
+    store: Any = _UNSET,
+    resolver: Callable[[str, Optional[str]], Optional[str]] = resolve_credential,
+) -> str:
+    """Which vendor this org picked for `key`. Always a valid option.
+
+    The N=2 lift: `resolve_vision_provider` was the first manual switch and
+    `resolve_embedding_provider` is the second, with identical semantics —
+    read the setting, fall back to the spec default when unset OR unknown,
+    and never hand an unroutable vendor name to the LLM stack. Copying it
+    would have meant two places to fix the day a third switch appears.
+
+    Falls back on an unknown stored value rather than raising: that can only
+    happen if the row was written outside this product's validating write
+    path, or if an option was RETIRED from the spec while an org still
+    pointed at it. In both cases running on the documented default and
+    SAYING SO in the log beats failing one layer down with a message about a
+    missing key that was never the real problem.
+    """
+    spec = _SPECS_BY_NAME[key]
+    default = spec.default or "openai"
+    escolhido = (
+        resolve_api_key_detail(key, org_id, store=store, resolver=resolver).value or ""
+    ).strip()
+    if not escolhido:
+        return default
+    if escolhido not in spec.allowed_values:
+        logger.warning(
+            "api_keys: %s=%r is not a known option %s — using %r",
+            key, escolhido, spec.allowed_values, default,
+        )
+        return default
+    return escolhido
+
+
+def resolve_embedding_provider(
+    org_id: Optional[str],
+    *,
+    store: Any = _UNSET,
+    resolver: Callable[[str, Optional[str]], Optional[str]] = resolve_credential,
+) -> str:
+    """Which vendor generates this org's semantic vectors.
+
+    THE consume seam for the embeddings switch. Never returns "anthropic" —
+    it is not an option on this spec, because that API has no embeddings
+    endpoint (see the spec's own note).
+    """
+    return _resolve_provider_choice(
+        EMBEDDING_PROVIDER_KEY, org_id, store=store, resolver=resolver
+    )
 
 
 def resolve_vision_provider(
@@ -440,23 +562,9 @@ def resolve_vision_provider(
     provider name to the LLM stack and fail one layer down with a message
     about a missing key.
     """
-    spec = _SPECS_BY_NAME[VISION_PROVIDER_KEY]
-    default = spec.default or "openai"
-    escolhido = (
-        resolve_api_key_detail(
-            VISION_PROVIDER_KEY, org_id, store=store, resolver=resolver
-        ).value
-        or ""
-    ).strip()
-    if not escolhido:
-        return default
-    if escolhido not in spec.allowed_values:
-        logger.warning(
-            "api_keys: %s=%r is not a known option %s — using %r",
-            VISION_PROVIDER_KEY, escolhido, spec.allowed_values, default,
-        )
-        return default
-    return escolhido
+    return _resolve_provider_choice(
+        VISION_PROVIDER_KEY, org_id, store=store, resolver=resolver
+    )
 
 
 def llm_key_provider(provider: str, org_id: Optional[str] = None) -> Optional[str]:

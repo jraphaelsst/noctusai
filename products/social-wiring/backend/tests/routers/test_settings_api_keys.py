@@ -640,10 +640,11 @@ class TestLlmKeyProvider:
 
 
 class TestTheProviderChoice:
-    """The `llm_vision_provider` switch — a managed setting whose value is
-    constrained to a list rather than free text.
+    """The provider switches — managed settings whose value is constrained to
+    a list rather than free text.
 
-    Added 2026-09-04 with the manual OpenAI ↔ Anthropic switch.
+    Added 2026-09-04 with the manual OpenAI ↔ Anthropic vision switch;
+    Gemini joined it and a SECOND switch (embeddings) landed 2026-09-07.
     """
 
     def test_the_options_and_default_reach_the_client(
@@ -657,10 +658,49 @@ class TestTheProviderChoice:
         entry = next(
             i for i in resp.json()["items"] if i["key"] == "llm_vision_provider"
         )
-        assert [o["value"] for o in entry["options"]] == ["openai", "anthropic"]
+        assert [o["value"] for o in entry["options"]] == [
+            "openai", "anthropic", "gemini",
+        ]
         assert all(o["label"] for o in entry["options"])
         assert entry["default"] == "openai"
         assert entry["is_secret"] is False
+
+    def test_the_embedding_switch_also_reaches_the_client(
+        self, admin_client, store_override, no_platform_tier
+    ):
+        """The permutas semantic layer's vendor pick.
+
+        🔴 NO ANTHROPIC HERE, and that is not an oversight: the Anthropic API
+        has no embeddings endpoint, so offering it would put an option in the
+        dropdown that can only ever fail — and it would fail as an empty
+        semantic layer, not as a message naming the vendor.
+        """
+        resp = admin_client.get("/api/settings/api-keys", headers=_auth_header())
+        entry = next(
+            i for i in resp.json()["items"] if i["key"] == "llm_embedding_provider"
+        )
+        assert [o["value"] for o in entry["options"]] == ["openai", "gemini"]
+        assert "anthropic" not in [o["value"] for o in entry["options"]]
+        assert entry["default"] == "openai"
+        assert entry["is_secret"] is False
+
+    def test_the_gemini_key_is_offered_as_a_secret(
+        self, admin_client, store_override, no_platform_tier
+    ):
+        resp = admin_client.get("/api/settings/api-keys", headers=_auth_header())
+        entry = next(i for i in resp.json()["items"] if i["key"] == "gemini_api_key")
+        assert entry["is_secret"] is True
+        assert entry["options"] == []
+
+    def test_the_anthropic_key_is_still_offered(
+        self, admin_client, store_override, no_platform_tier
+    ):
+        """🔴 Explicitly retained. It is not an embeddings vendor, but it IS
+        a vision one, and the key stays configurable for future use."""
+        chaves = [i["key"] for i in
+                  admin_client.get("/api/settings/api-keys",
+                                   headers=_auth_header()).json()["items"]]
+        assert "anthropic_api_key" in chaves
 
     def test_an_ordinary_key_carries_no_options(
         self, admin_client, store_override, no_platform_tier

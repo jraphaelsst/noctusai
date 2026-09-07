@@ -83,12 +83,30 @@ class TestTheSwitchIsWiredEndToEnd:
         spec = get_spec(VISION_PROVIDER_KEY)
         assert spec.is_secret is False
 
-    def test_only_this_one_spec_is_a_choice(self) -> None:
+    def test_only_the_deliberate_switches_are_choices(self) -> None:
         """Guards the frontend's branch: it renders a switch iff `options`
         is non-empty, so an API key that grew options would silently lose
-        its write-only input."""
-        com_opcoes = [s.name for s in API_KEY_SPECS if s.options]
-        assert com_opcoes == [VISION_PROVIDER_KEY]
+        its write-only input.
+
+        Two switches now, both deliberate and both non-secret: the vision
+        one (which vendor transcribes documents) and the embedding one
+        (which vendor generates the permutas semantic vectors). They are
+        separate specs because the vendors do not overlap — the Anthropic
+        API has no embeddings endpoint, so folding them into one control
+        would offer an option that cannot work.
+        """
+        com_opcoes = sorted(s.name for s in API_KEY_SPECS if s.options)
+        assert com_opcoes == ["llm_embedding_provider", "llm_vision_provider"]
+
+    def test_no_secret_key_is_ever_a_choice(self) -> None:
+        """The invariant the test above actually exists to protect, stated
+        directly: a `is_secret` spec that grew options would be rendered as a
+        dropdown and lose its password input entirely."""
+        for spec in API_KEY_SPECS:
+            assert not (spec.is_secret and spec.options), (
+                f"{spec.name} é secreta E tem opções — a UI renderiza um "
+                f"seletor e o campo de senha desaparece."
+            )
 
 
 class TestResolveVisionProvider:

@@ -125,6 +125,29 @@ class GeminiProvider:
             logger.error("Gemini chat_completion failed: %s", exc)
             raise LLMAPIError("gemini", str(exc)) from exc
 
+    @staticmethod
+    def _embed_config(output_dimensionality: Optional[int]):
+        """`EmbedContentConfig` for an explicit output width, else None.
+
+        🔴 WITHOUT THIS, GEMINI EMBEDDINGS ARE UNUSABLE AGAINST A FIXED-WIDTH
+        COLUMN. `gemini-embedding-001` returns **3072** dimensions by default.
+        A consumer whose storage is `vector(1536)` — as every pgvector column
+        in this platform is, because they were sized for
+        `text-embedding-3-small` — cannot write that, and the failure lands at
+        the INSERT, far from the call that chose the model. Gemini supports
+        Matryoshka truncation via `output_dimensionality`, so the width is a
+        parameter; it just was not plumbed through.
+
+        Returns None when unspecified so the provider default is untouched for
+        callers that do not care.
+        """
+        if not output_dimensionality:
+            return None
+        from google.genai import types as _genai_types
+        return _genai_types.EmbedContentConfig(
+            output_dimensionality=output_dimensionality
+        )
+
     async def generate_embedding(
         self,
         text: str,
@@ -132,6 +155,7 @@ class GeminiProvider:
         model: str,
         api_key: str,
         org_id: Optional[str] = None,
+        output_dimensionality: Optional[int] = None,
         **kwargs: Any,
     ) -> list[float]:
         from ..usage import record_usage
@@ -141,6 +165,7 @@ class GeminiProvider:
             response = await client.aio.models.embed_content(
                 model=model,
                 contents=text,
+                config=self._embed_config(output_dimensionality),
             )
             embedding = response.embeddings[0].values
             await record_usage(
@@ -155,6 +180,69 @@ class GeminiProvider:
             return list(embedding)
         except Exception as exc:
             logger.error("Gemini generate_embedding failed: %s", exc)
+            raise LLMAPIError("gemini", str(exc)) from exc
+
+    async def generate_embeddings_batch(
+        self,
+        texts: list[str],
+        *,
+        model: str,
+        api_key: str,
+        org_id: Optional[str] = None,
+        output_dimensionality: Optional[int] = None,
+        **kwargs: Any,
+    ) -> list[list[float]]:
+        """One request for the whole list — `contents` accepts a sequence.
+
+        Without this method the shared `generate_embeddings_batch` degrades to
+        one HTTP call per text (it says so, and that degradation is
+        deliberate). For the corpus this was added for that is 226 requests
+        instead of a handful, which is exactly the retry-storm shape the batch
+        helper exists to prevent.
+
+        Order-preserving, like every other implementation of this method:
+        `result[i]` is the embedding for `texts[i]`.
+        """
+        from ..usage import record_usage
+
+        if not texts:
+            return []
+
+        client = self._get_client(api_key)
+        try:
+            response = await client.aio.models.embed_content(
+                model=model,
+                contents=texts,
+                config=self._embed_config(output_dimensionality),
+            )
+            vetores = [list(e.values) for e in response.embeddings]
+            if len(vetores) != len(texts):
+                # A short response would silently MISALIGN every embedding
+                # after the gap — text i would be stored against ativo i+1.
+                # There is no recovering the pairing afterwards, so refuse.
+                raise LLMAPIError(
+                    "gemini",
+                    f"embeddings retornados ({len(vetores)}) != textos "
+                    f"enviados ({len(texts)}) — lote recusado para não "
+                    f"desalinhar os vetores.",
+                )
+            await record_usage(
+                provider="gemini",
+                model=model,
+                operation="embedding",
+                org_id=org_id,
+                prompt_tokens=None,
+                completion_tokens=None,
+                total_tokens=None,
+            )
+            return vetores
+        except LLMAPIError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Gemini generate_embeddings_batch failed (%d texts): %s",
+                len(texts), exc,
+            )
             raise LLMAPIError("gemini", str(exc)) from exc
 
     async def transcribe_audio(

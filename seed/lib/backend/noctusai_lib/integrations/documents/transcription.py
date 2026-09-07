@@ -78,6 +78,12 @@ OCR_MODELS: dict[str, str] = {
     # `claude-sonnet-5` / `claude-haiku-4-5` are the cheaper current-
     # generation swaps if a consumer decides the tradeoff differently.
     "anthropic": "claude-opus-5",
+    # Gemini's flash tier reads registry pages well and is the cheapest of the
+    # three; it earns its place as a THIRD fallback rather than a replacement,
+    # because an agency that runs out of credit at one vendor should not be
+    # left with a single alternative. Same reasoning as the Anthropic pin: the
+    # model is chosen WITH the provider, never inherited across one.
+    "gemini": "gemini-2.0-flash",
 }
 
 #: Back-compat alias for the OpenAI pin. Consumers that imported this before

@@ -1281,6 +1281,93 @@ async def _test_anthropic_key(value: str) -> ApiKeyTestResult:
     )
 
 
+async def _test_gemini_key(value: str) -> ApiKeyTestResult:
+    """Probe a Gemini key against the EMBEDDINGS endpoint, not chat.
+
+    🔴 DELIBERATELY THE EMBEDDINGS ENDPOINT. This key's primary job here is
+    the permutas semantic layer, and a key can be valid for chat while the
+    Generative Language API is not enabled on the project — a "success" from
+    a chat probe would then be followed by every embedding call failing. The
+    probe asks for the SAME model and the SAME 1536-dim truncation the real
+    run uses, so a green test means the real path works, not merely that the
+    string is well-formed.
+    """
+    modelo_de_teste = "gemini-embedding-001"
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{modelo_de_teste}:embedContent",
+                headers={"content-type": "application/json", "x-goog-api-key": value},
+                json={
+                    "model": f"models/{modelo_de_teste}",
+                    "content": {"parts": [{"text": "ping"}]},
+                    "outputDimensionality": 1536,
+                },
+                timeout=20.0,
+            )
+    except Exception as exc:  # noqa: BLE001 — surfaced to the operator verbatim
+        logger.warning("api_keys: Gemini probe failed to connect (%s)", exc)
+        return ApiKeyTestResult(
+            key="gemini_api_key", success=False, message=f"Erro de conexão: {exc}"
+        )
+
+    corpo = (resp.text or "").lower()
+    if resp.status_code in (400, 401, 403) and any(
+        s in corpo for s in ("api key not valid", "api_key_invalid", "unauthenticated")
+    ):
+        return ApiKeyTestResult(
+            key="gemini_api_key", success=False, message="API Key inválida ou expirada."
+        )
+    if resp.status_code == 403 and "has not been used" in corpo:
+        # The distinct failure a chat-only probe would have missed entirely.
+        return ApiKeyTestResult(
+            key="gemini_api_key",
+            success=False,
+            message=(
+                "A Generative Language API não está habilitada neste projeto "
+                "Google Cloud. Habilite-a no console e teste novamente."
+            ),
+        )
+    if resp.status_code == 429:
+        return ApiKeyTestResult(
+            key="gemini_api_key",
+            success=False,
+            message=(
+                "Cota do Gemini excedida. A chave é válida, mas o projeto "
+                "atingiu o limite — revise a cota/faturamento no Google Cloud."
+            ),
+        )
+    if resp.status_code >= 400:
+        return ApiKeyTestResult(
+            key="gemini_api_key",
+            success=False,
+            message=f"Erro inesperado: HTTP {resp.status_code}.",
+        )
+
+    # A 200 whose vector is the wrong width would break every write later, so
+    # the probe checks the thing that actually matters, not just the status.
+    try:
+        largura = len((resp.json().get("embedding") or {}).get("values") or [])
+    except Exception:  # noqa: BLE001 — a shape we cannot read is not a pass
+        largura = 0
+    if largura != 1536:
+        return ApiKeyTestResult(
+            key="gemini_api_key",
+            success=False,
+            message=(
+                f"A conexão funcionou, mas o modelo devolveu {largura} dimensões "
+                f"em vez de 1536 — as colunas de vetor não comportam esse "
+                f"formato. Não use este provedor para os vetores até ajustar."
+            ),
+        )
+    return ApiKeyTestResult(
+        key="gemini_api_key",
+        success=True,
+        message="Conexão com o Gemini bem-sucedida (embeddings, 1536 dimensões).",
+    )
+
+
 async def _test_infosimples_key(value: str) -> ApiKeyTestResult:
     """Probe an InfoSimples token via the lightweight PGFN consulta.
 
@@ -1322,6 +1409,7 @@ async def _test_infosimples_key(value: str) -> ApiKeyTestResult:
 _API_KEY_TESTERS = {
     "openai_api_key": _test_openai_key,
     "anthropic_api_key": _test_anthropic_key,
+    "gemini_api_key": _test_gemini_key,
     "infosimples_token": _test_infosimples_key,
 }
 
