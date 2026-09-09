@@ -36,6 +36,7 @@ from noctusai_lib.integrations.olx import (
     resolve_portal_source_slug,
 )
 
+from app.modules.imovel_hub.dados_service import registrar_imovel
 from app.modules.leads.services import dimensions_service, leads_service
 from app.modules.leads.services.query import backfill_generated_columns
 
@@ -163,6 +164,18 @@ def ingest_olx_lead(
     attribution = resolve_portal_source_slug(lead, rules=portal_rules)
     source = get_or_create_olx_source(client, org_id, attribution.slug)
     payload = olx_lead_to_lead_payload(lead, origem_source_id=source["id"])
+    # 🔴 The listing this lead names may be one the Vista catalog has never
+    # shown us — 063 measured 1019 such códigos — and until it has a registry
+    # identity every registry-keyed feature (matrícula, roteiro, negociação)
+    # 404s the imóvel the lead is literally about. `registrar_imovel` is
+    # idempotent and leaves `ativo_no_vista` FALSE; the nightly Vista sync's
+    # own `ON CONFLICT DO NOTHING` never rewrites it.
+    #
+    # Deliberately NOT wrapped in a try/except: the lossless ledger row is
+    # already written above, so a failure here is re-runnable through the
+    # backfill rather than lost, and swallowing it would be the silent-error
+    # shape this codebase forbids.
+    registrar_imovel(client, org_id, payload.get("codigo_imovel") or "", origem="lead")
     created = leads_service.create_lead(client, org_id, payload)
     return {"lead": created, "created": True, "source_slug": attribution.slug}
 

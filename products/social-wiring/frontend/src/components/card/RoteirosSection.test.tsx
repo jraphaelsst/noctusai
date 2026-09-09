@@ -47,6 +47,12 @@ function visita(id: string, codigo: string, over: Partial<Visita> = {}): Visita 
     feedback_em: null,
     created_at: "2026-08-25T12:00:00+00:00",
     imovel: imovel(codigo),
+    // The proposta axis (migration 104) — orthogonal to `status`, so a
+    // pendente visita with no offer is all four of these null.
+    proposta_em: null,
+    proposta_por: null,
+    proposta_aceita_em: null,
+    proposta_aceita_por: null,
     ...over,
   };
 }
@@ -78,6 +84,7 @@ function baseProps(overrides: Partial<RoteirosSectionProps> = {}): RoteirosSecti
     onPatchVisita: vi.fn(),
     onAddVisita: vi.fn(),
     onRemoveVisita: vi.fn(),
+    onPatchProposta: vi.fn(),
     ...overrides,
   };
 }
@@ -311,5 +318,164 @@ describe("RoteirosSection — editing an existing roteiro's properties", () => {
     );
     fireEvent.click(getByTestId(`visita-remover-${v.id}`));
     expect(onRemoveVisita).toHaveBeenCalledWith(r.id, v.id);
+  });
+});
+
+/**
+ * 🔴 THE PROPOSTA AXIS (migration 104) — orthogonal to `status`, and visible.
+ *
+ * A roteiro is a list of CANDIDATES. One generates a proposta; the accepted
+ * proposta is the property the contract will be about. Two things are pinned
+ * here: that recording a proposta never touches the did-it-happen fact the
+ * contabilização is built on, and that the accepted visita is unmistakable
+ * among six.
+ */
+describe("RoteirosSection — visita → proposta → o imóvel do negócio", () => {
+  it("offers the proposta buttons as a row of their own, not as status pills", async () => {
+    const { getByTestId, getAllByTestId, queryByTestId } = await render(
+      baseProps({ roteiros: [roteiro({ visitas: [visita("v1", "ONE9001")] })] }),
+    );
+
+    expect(getByTestId("visita-proposta-v1")).toBeTruthy();
+    expect(getByTestId("visita-proposta-aceita-v1")).toBeTruthy();
+    // The three status pills are untouched — three, still, not four.
+    expect(getByTestId("visita-status-realizada-v1")).toBeTruthy();
+    expect(getByTestId("visita-status-nao_realizada-v1")).toBeTruthy();
+    expect(getByTestId("visita-status-pendente-v1")).toBeTruthy();
+  });
+
+  it("records a proposta through its own callback", async () => {
+    const onPatchProposta = vi.fn();
+    const { getByTestId, fireEvent } = await renderWith(
+      baseProps({
+        roteiros: [roteiro({ visitas: [visita("v1", "ONE9001")] })],
+        onPatchProposta,
+      }),
+    );
+
+    fireEvent.click(getByTestId("visita-proposta-v1"));
+
+    expect(onPatchProposta).toHaveBeenCalledWith("r1", "v1", { proposta: true });
+  });
+
+  it("accepting also asserts the proposta, so the server's CHECK cannot be tripped", async () => {
+    const onPatchProposta = vi.fn();
+    const { getByTestId, fireEvent } = await renderWith(
+      baseProps({
+        roteiros: [roteiro({ visitas: [visita("v1", "ONE9001")] })],
+        onPatchProposta,
+      }),
+    );
+
+    fireEvent.click(getByTestId("visita-proposta-aceita-v1"));
+
+    // `proposta_aceita_em IS NULL OR proposta_em IS NOT NULL` — an acceptance
+    // with no offer is refused, so the one-click path sends both.
+    expect(onPatchProposta).toHaveBeenCalledWith("r1", "v1", {
+      proposta: true,
+      aceita: true,
+    });
+  });
+
+  it("undoes an acceptance rather than re-sending it", async () => {
+    const onPatchProposta = vi.fn();
+    const { getByTestId, fireEvent } = await renderWith(
+      baseProps({
+        roteiros: [
+          roteiro({
+            visitas: [
+              visita("v1", "ONE9001", {
+                proposta_em: "2026-09-01T00:00:00+00:00",
+                proposta_aceita_em: "2026-09-02T00:00:00+00:00",
+              }),
+            ],
+          }),
+        ],
+        onPatchProposta,
+      }),
+    );
+
+    fireEvent.click(getByTestId("visita-proposta-aceita-v1"));
+
+    expect(onPatchProposta).toHaveBeenCalledWith("r1", "v1", {
+      proposta: true,
+      aceita: false,
+    });
+  });
+
+  it("makes the accepted visita unmistakable among several", async () => {
+    const { getByTestId, getAllByTestId, queryByTestId } = await render(
+      baseProps({
+        roteiros: [
+          roteiro({
+            visitas: [
+              visita("v1", "ONE9001"),
+              visita("v2", "ONE9002", {
+                proposta_em: "2026-09-01T00:00:00+00:00",
+                proposta_aceita_em: "2026-09-02T00:00:00+00:00",
+              }),
+              visita("v3", "ONE9003"),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    // The badge is on the accepted card and nowhere else.
+    const badges = getAllByTestId("imovel-proposta-aceita");
+    expect(badges).toHaveLength(1);
+    // And the roteiro header names it, so it is answerable without scrolling.
+    expect(getByTestId("roteiro-contagem").textContent).toContain(
+      "proposta aceita: ONE9002",
+    );
+  });
+
+  it("distinguishes an offer that was made from one that was accepted", async () => {
+    const { getByTestId, getAllByTestId, queryByTestId } = await render(
+      baseProps({
+        roteiros: [
+          roteiro({
+            visitas: [
+              visita("v1", "ONE9001", {
+                proposta_em: "2026-09-01T00:00:00+00:00",
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(getByTestId("imovel-proposta-feita")).toBeTruthy();
+    expect(queryByTestId("imovel-proposta-aceita")).toBeNull();
+    // An OFFER is not a sale — the header claims nothing yet.
+    expect(getByTestId("roteiro-contagem").textContent).not.toContain(
+      "proposta aceita",
+    );
+  });
+
+  it("leaves the contabilização alone — a proposta is not a status", async () => {
+    const { getByTestId, getAllByTestId, queryByTestId } = await render(
+      baseProps({
+        roteiros: [
+          roteiro({
+            visitas: [
+              visita("v1", "ONE9001", {
+                status: "realizada",
+                proposta_em: "2026-09-01T00:00:00+00:00",
+                proposta_aceita_em: "2026-09-02T00:00:00+00:00",
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    // The visit still HAPPENED, and the count still says so.
+    expect(getByTestId("roteiro-contagem").textContent).toContain(
+      "1 realizadas",
+    );
+    expect(
+      getByTestId("visita-status-realizada-v1").getAttribute("aria-pressed"),
+    ).toBe("true");
   });
 });

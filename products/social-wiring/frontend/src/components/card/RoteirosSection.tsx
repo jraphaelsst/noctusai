@@ -9,6 +9,20 @@
  *
  * "Gerar Roteiro" downloads the PDF cronograma, one imóvel per page.
  *
+ * 🔴 AND ONE VISITA MAY BE THE DEAL (migration 104)
+ * -------------------------------------------------
+ * A roteiro is a list of CANDIDATES. One of them generates a proposta; the
+ * proposta that is accepted is the property the contract will be about, and
+ * the server writes its código onto `atendimento_negociacao.imovel_codigo`
+ * when the operator says so here.
+ *
+ * That axis is rendered SEPARATELY from `status` and never as a fourth status
+ * pill, mirroring the schema: "did the visit happen" and "did it produce an
+ * accepted offer" are different questions, and a visita that produced one is
+ * still a visita that happened. The accepted one gets a ring and a badge
+ * rather than another chip in the row — at a glance, out of six properties,
+ * which one is the sale.
+ *
  * 🔴 LOADING NEVER UNMOUNTS ROTEIROS THAT EXIST
  * ------------------------------------------------
  * `loading` only skeletons while `roteiros` is genuinely empty — a stale
@@ -23,14 +37,14 @@
  * callbacks out. The dialog and the mutations belong to the smart wrapper.
  */
 import { useState } from "react";
-import { FileDown, Loader2, Plus, Trash2 } from "lucide-react";
+import { FileDown, Handshake, Loader2, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-import type { Roteiro, StatusVisita, Visita } from "@/types/cardHub";
+import type { Roteiro, StatusVisita, Visita, VisitaPropostaBody } from "@/types/cardHub";
 
 import { ImovelVisitaCard } from "./ImovelVisitaCard";
 
@@ -65,6 +79,14 @@ export interface RoteirosSectionProps {
   onAddVisita: (roteiroId: string, codigo: string) => void;
   /** Drop one property from a roteiro (`DELETE .../visitas/{id}`). */
   onRemoveVisita: (roteiroId: string, visitaId: string) => void;
+  /** Record / undo a proposta and its acceptance
+   *  (`PATCH .../visitas/{id}/proposta`). Its OWN callback, not a field on
+   *  `onPatchVisita` — see the file docblock. */
+  onPatchProposta: (
+    roteiroId: string,
+    visitaId: string,
+    body: VisitaPropostaBody,
+  ) => void;
   pdfPendingId?: string | null;
 }
 
@@ -79,6 +101,7 @@ export function RoteirosSection({
   onPatchVisita,
   onAddVisita,
   onRemoveVisita,
+  onPatchProposta,
   pdfPendingId,
 }: RoteirosSectionProps) {
   return (
@@ -127,6 +150,9 @@ export function RoteirosSection({
               onPatchVisita={(visitaId, body) => onPatchVisita(roteiro.id, visitaId, body)}
               onAddVisita={(codigo) => onAddVisita(roteiro.id, codigo)}
               onRemoveVisita={(visitaId) => onRemoveVisita(roteiro.id, visitaId)}
+              onPatchProposta={(visitaId, body) =>
+                onPatchProposta(roteiro.id, visitaId, body)
+              }
               pdfPending={pdfPendingId === roteiro.id}
             />
           ))}
@@ -143,6 +169,7 @@ function RoteiroCard({
   onPatchVisita,
   onAddVisita,
   onRemoveVisita,
+  onPatchProposta,
   pdfPending,
 }: {
   roteiro: Roteiro;
@@ -151,10 +178,14 @@ function RoteiroCard({
   onPatchVisita: (visitaId: string, body: { status?: StatusVisita; observacao?: string | null }) => void;
   onAddVisita: (codigo: string) => void;
   onRemoveVisita: (visitaId: string) => void;
+  onPatchProposta: (visitaId: string, body: VisitaPropostaBody) => void;
   pdfPending?: boolean;
 }) {
   const [novoCodigo, setNovoCodigo] = useState("");
   const { contagem } = roteiro;
+  // At most one per ATENDIMENTO — the server refuses a second, across
+  // roteiros. `find` here is the display of that fact, never its enforcement.
+  const aceita = roteiro.visitas.find((v) => v.proposta_aceita_em);
 
   return (
     <div className="rounded-lg border" data-testid={`roteiro-${roteiro.id}`}>
@@ -167,6 +198,13 @@ function RoteiroCard({
             <Chip tom="ok">{contagem.realizadas} realizadas</Chip>
             <Chip tom="ruim">{contagem.nao_realizadas} não realizadas</Chip>
             <Chip tom="neutro">{contagem.pendentes} pendentes</Chip>
+            {aceita && (
+              // The one fact somebody scanning this card is looking for.
+              <Chip tom="ok">
+                <Handshake className="mr-1 inline h-3 w-3" aria-hidden />
+                proposta aceita: {aceita.codigo}
+              </Chip>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -213,6 +251,7 @@ function RoteiroCard({
               posicao={i + 1}
               onPatch={(body) => onPatchVisita(visita.id, body)}
               onRemove={() => onRemoveVisita(visita.id)}
+              onPatchProposta={(body) => onPatchProposta(visita.id, body)}
             />
           ))
         )}
@@ -257,14 +296,18 @@ function VisitaRow({
   posicao,
   onPatch,
   onRemove,
+  onPatchProposta,
 }: {
   visita: Visita;
   posicao: number;
   onPatch: (body: { status?: StatusVisita; observacao?: string | null }) => void;
   onRemove: () => void;
+  onPatchProposta: (body: VisitaPropostaBody) => void;
 }) {
   const [observacao, setObservacao] = useState(visita.observacao ?? "");
   const sujo = (visita.observacao ?? "") !== observacao;
+  const temProposta = !!visita.proposta_em;
+  const aceita = !!visita.proposta_aceita_em;
 
   return (
     <div className="space-y-2" data-testid={`visita-${visita.id}`}>
@@ -277,6 +320,8 @@ function VisitaRow({
           // A sort handle on a route already being walked would invite
           // reshuffling history.
           sortable={false}
+          propostaFeita={temProposta}
+          propostaAceita={aceita}
         />
       ) : (
         <p className="rounded-lg border p-3 text-sm">{visita.codigo}</p>
@@ -314,6 +359,45 @@ function VisitaRow({
         {visita.feedback_em && (
           <span className="text-xs text-muted-foreground">
             em {formatDate(visita.feedback_em, true)}
+          </span>
+        )}
+      </div>
+
+      {/* ── The proposta axis. A SEPARATE row from the status pills, because
+          it answers a different question — see the file docblock. ── */}
+      <div className="flex flex-wrap items-center gap-1.5 pl-1">
+        <button
+          type="button"
+          onClick={() => onPatchProposta({ proposta: !temProposta })}
+          aria-pressed={temProposta}
+          className={cn(
+            "rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+            temProposta
+              ? "bg-sky-600 text-white"
+              : "bg-muted/50 text-muted-foreground hover:bg-muted",
+          )}
+          data-testid={`visita-proposta-${visita.id}`}
+        >
+          Proposta enviada
+        </button>
+        <button
+          type="button"
+          onClick={() => onPatchProposta({ proposta: true, aceita: !aceita })}
+          aria-pressed={aceita}
+          className={cn(
+            "flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+            aceita
+              ? "bg-emerald-600 text-white"
+              : "bg-muted/50 text-muted-foreground hover:bg-muted",
+          )}
+          data-testid={`visita-proposta-aceita-${visita.id}`}
+        >
+          <Handshake className="h-3 w-3" aria-hidden />
+          Proposta aceita
+        </button>
+        {aceita && (
+          <span className="text-xs text-emerald-700 dark:text-emerald-300">
+            este é o imóvel da negociação
           </span>
         )}
       </div>

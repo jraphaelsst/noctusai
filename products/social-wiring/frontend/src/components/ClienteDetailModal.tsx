@@ -395,6 +395,21 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
           },
         )
       }
+      onPatchProposta={(roteiroId, visitaId, body) =>
+        roteiroMutations.patchProposta.mutate(
+          { roteiroId, visitaId, body },
+          {
+            // 🔴 The server REFUSES rather than guessing in two cases the
+            // operator must see: a second accepted proposta on the same
+            // atendimento, and an acceptance that would change an imóvel
+            // somebody already set on the negociação by hand. Both come back
+            // as a named 400, so the toast carries the server's sentence
+            // rather than a generic failure.
+            onError: (err) =>
+              toastServerError(err, "Não foi possível registrar a proposta."),
+          },
+        )
+      }
       roteiroPdfPendingId={roteiroPdfPendingId}
       allMembros={corretores.data ?? []}
       selectedMembros={card.data?.membros ?? []}

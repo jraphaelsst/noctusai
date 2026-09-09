@@ -3,8 +3,10 @@
  *
  * 🔴 THE LOAD-BEARING TEST is `typing ONE9 queries with that term`: the user
  * described this flow precisely — "Once i type 'ONE9' i want to see on this
- * listing all ONE9xxxx refs that we have automatically" — and it works by
- * reusing `GET /api/imoveis?search=`, which already `ilike`s `codigo`.
+ * listing all ONE9xxxx refs that we have automatically" — and it now works
+ * over `GET /api/imoveis/busca`, the REGISTRY-backed search. The previous
+ * endpoint read the Vista mirror, so a third of the ONE9xxxx refs "that we
+ * have" were not offered at all: the sold ones.
  *
  * WHAT THIS FILE DOES NOT SIMULATE, STATED RATHER THAN IMPLIED: the drag
  * gesture itself. dnd-kit's pointer/keyboard sensors need a real layout to
@@ -31,14 +33,28 @@ afterEach(async () => {
 import { CriarRoteiroDialog } from "./CriarRoteiroDialog";
 import type { ImovelBusca } from "@/types/cardHub";
 
+/** 🔴 THE FULL ENRICHED SHAPE, because that is what `GET /api/imoveis/busca`
+ *  returns — `ImovelBusca` IS `ImovelVisita` now. The dialog no longer widens
+ *  a narrow mirror row by assuming `ativo_no_vista: true`, so a fixture that
+ *  still omitted these fields would be testing a shape the server never
+ *  sends. */
 function hit(codigo: string, over: Partial<ImovelBusca> = {}): ImovelBusca {
   return {
     codigo,
     titulo: `Apartamento ${codigo}`,
     empreendimento: "Edifício Aurora",
+    logradouro: null,
+    numero: null,
+    complemento: null,
     bairro: "Centro",
     cidade: "Florianópolis",
+    uf: null,
+    cep: null,
     foto_destaque: null,
+    captacao: null,
+    corretores: [],
+    ativo_no_vista: true,
+    fonte: "imoveis",
     ...over,
   };
 }

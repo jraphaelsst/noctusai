@@ -37,6 +37,7 @@ function baseProps(overrides: Partial<ClienteCardDialogProps> = {}): ClienteCard
     onPatchVisita: vi.fn(),
     onAddVisita: vi.fn(),
     onRemoveVisita: vi.fn(),
+    onPatchProposta: vi.fn(),
     allMembros: [],
     selectedMembros: [],
     onToggleMembro: vi.fn(),

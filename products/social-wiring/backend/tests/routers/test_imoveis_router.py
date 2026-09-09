@@ -35,6 +35,7 @@ from tests.conftest import (  # type: ignore[attr-defined]
 
 UNAUTHENTICATED_ROUTES = [
     ("get", "/api/imoveis"),
+    ("get", "/api/imoveis/busca"),
     ("get", "/api/imoveis/filtros"),
     ("get", "/api/imoveis/caracteristicas"),
     ("get", "/api/imoveis/ONE10640"),
@@ -81,6 +82,7 @@ def test_router_is_mounted(anon_client):
 
     paths = {getattr(r, "path", "") for r in app.routes}
     assert "/api/imoveis" in paths
+    assert "/api/imoveis/busca" in paths
     assert "/api/imoveis/sync" in paths
     assert "/api/imoveis/{codigo}" in paths
 
@@ -98,7 +100,12 @@ def test_static_routes_are_declared_before_the_catch_all():
     # `router.routes` carries the full prefixed path, e.g. `/api/imoveis/sync`.
     paths = [getattr(r, "path", "") for r in router.routes]
     catch_all = next(i for i, p in enumerate(paths) if "{codigo}" in p)
-    for static in ("/api/imoveis/filtros", "/api/imoveis/caracteristicas", "/api/imoveis/sync"):
+    for static in (
+        "/api/imoveis/busca",
+        "/api/imoveis/filtros",
+        "/api/imoveis/caracteristicas",
+        "/api/imoveis/sync",
+    ):
         assert static in paths, f"{static} is not declared at all"
         assert paths.index(static) < catch_all, (
             f"{static} is declared after /{{codigo}} and will be shadowed"

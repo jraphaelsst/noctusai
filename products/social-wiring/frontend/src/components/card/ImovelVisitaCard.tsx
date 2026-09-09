@@ -15,7 +15,7 @@
  * Presentational only (S3, same contract as the rest of `card/**`): props in,
  * callbacks out, zero data fetching and zero `@/pages/**` imports.
  */
-import { GripVertical, ImageOff, X } from "lucide-react";
+import { GripVertical, Handshake, ImageOff, X } from "lucide-react";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 
@@ -33,6 +33,13 @@ export interface ImovelVisitaCardProps {
   onRemove?: () => void;
   /** Off while the list is read-only (a saved roteiro's summary). */
   sortable?: boolean;
+  /** 🔴 This visita's proposta was ACCEPTED — so this is the property the
+   *  whole contract will be about. Rendered as a ring around the entire card
+   *  plus a badge, because "which of the six did they buy" must be answerable
+   *  at a glance rather than by reading four status pills. */
+  propostaAceita?: boolean;
+  /** A proposta was generated from this visita but not (yet) accepted. */
+  propostaFeita?: boolean;
 }
 
 export function enderecoDoImovel(imovel: ImovelVisita): string | null {
@@ -59,6 +66,8 @@ export function ImovelVisitaCard({
   posicao,
   onRemove,
   sortable = true,
+  propostaAceita,
+  propostaFeita,
 }: ImovelVisitaCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
@@ -75,6 +84,8 @@ export function ImovelVisitaCard({
       className={cn(
         "flex gap-3 rounded-lg border bg-background p-3",
         isDragging && "z-10 opacity-80 shadow-lg",
+        propostaAceita &&
+          "border-emerald-500 ring-2 ring-emerald-500/40 dark:border-emerald-400",
       )}
       data-testid={`imovel-visita-${imovel.codigo}`}
     >
@@ -113,6 +124,23 @@ export function ImovelVisitaCard({
             {posicao}
           </span>
           <span className="truncate text-sm font-semibold">{imovel.codigo}</span>
+          {propostaAceita && (
+            <span
+              className="flex items-center gap-1 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white"
+              data-testid="imovel-proposta-aceita"
+            >
+              <Handshake className="h-3 w-3" aria-hidden />
+              proposta aceita
+            </span>
+          )}
+          {propostaFeita && !propostaAceita && (
+            <span
+              className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-900 dark:bg-sky-950 dark:text-sky-200"
+              data-testid="imovel-proposta-feita"
+            >
+              proposta enviada
+            </span>
+          )}
           {!imovel.ativo_no_vista && (
             // A corretor about to drive there needs to know the listing is
             // gone. `fonte: "registry"` rows also legitimately carry no

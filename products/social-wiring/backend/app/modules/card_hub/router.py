@@ -82,6 +82,7 @@ from app.modules.card_hub.schemas import (
     TagUpdateBody,
     VisitaCreateBody,
     VisitaPatchBody,
+    VisitaPropostaBody,
 )
 
 router = APIRouter(prefix="/api/clientes", tags=["card_hub"])
@@ -650,6 +651,41 @@ async def patch_visita_route(
         visita_id,
         status=updates.get("status", ...),
         observacao=updates.get("observacao", ...),
+    )
+
+
+@router.patch("/{cliente_id}/roteiros/{roteiro_id}/visitas/{visita_id}/proposta")
+async def patch_visita_proposta_route(
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    visita_id: UUID,
+    body: VisitaPropostaBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Record a proposta on a visita, and its acceptance.
+
+    🔴 A SEPARATE ROUTE FROM THE VISITA PATCH, matching migration 104's
+    separation of the two axes. Accepting here is what writes
+    `atendimento_negociacao.imovel_codigo` — the property the contract
+    automation is about — so it refuses rather than guesses when the deal
+    already names a different imóvel, and unwinds the deal when an acceptance
+    is undone. `roteiros_service.registrar_proposta` carries the rules.
+
+    `model_dump(exclude_unset=True)` and the `...` sentinel: `false` is a real
+    value (undo), so ABSENCE is the only thing that can mean "leave alone".
+    """
+    user, org_id = _auth_parts(auth)
+    updates = body.model_dump(exclude_unset=True)
+    return roteiros_svc.registrar_proposta(
+        client,
+        org_id,
+        cliente_id,
+        roteiro_id,
+        visita_id,
+        proposta=updates.get("proposta", ...),
+        aceita=updates.get("aceita", ...),
+        usuario_id=getattr(user, "id", None),
     )
 
 

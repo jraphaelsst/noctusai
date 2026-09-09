@@ -62,6 +62,7 @@ import type {
   RoteiroPatchBody,
   Visita,
   VisitaPatchBody,
+  VisitaPropostaBody,
 } from "@/types/cardHub";
 import type { DadosPessoais } from "@/components/card/DadosPessoaisForm";
 
@@ -575,16 +576,26 @@ export function useRoteiros(clienteId: string | null) {
 }
 
 /**
- * The live property search behind "Criar Roteiro".
+ * The live property search behind every imóvel picker — "Criar Roteiro", and
+ * the Negociação panel's deal property.
  *
- * Reuses `GET /api/imoveis?search=` — that endpoint ALREADY `ilike`s `codigo`
- * (see `imoveis_service.list`), so typing `ONE9` returns every `ONE9xxxx` we
- * hold with no new route. Building a second search endpoint for this would
- * have been a fork of a solved problem.
+ * 🔴 IT USED TO CALL `GET /api/imoveis?search=`, AND THAT WAS THE BUG.
+ * That endpoint reads `social_wiring.imoveis`, the Vista MIRROR, which holds
+ * only what the catalog lists TODAY. On prod (2026-08-25) the registry held
+ * 3017 imóveis against the mirror's 2008 — so 35% of everything the schema
+ * would accept could not be typed into any picker. And it was the wrong 35%:
+ * an imóvel leaves the Vista catalog when it is SOLD, i.e. exactly when its
+ * matrícula, its negociação and its contract are being handled.
+ *
+ * `GET /api/imoveis/busca` searches the REGISTRY ∪ the mirror and labels each
+ * hit with its `fonte` and `ativo_no_vista`. The catalog browser keeps the old
+ * endpoint — a person browsing what is FOR SALE does not want sold properties
+ * in the grid, so the two are separate on purpose.
  *
  * `enabled` gates on two characters: a one-character term matches most of the
  * catalog, and paying a round trip to render a list nobody can use is worse
- * than showing the hint.
+ * than showing the hint. The server refuses a shorter term (422) rather than
+ * answering an empty list, so the gate and the backstop agree.
  *
  * `placeholderData: keepPreviousData` — the queryKey is the DEBOUNCED term,
  * so every keystroke's settle is a brand-new key with no cache of its own.
@@ -600,7 +611,7 @@ export function useImoveisBusca(termo: string) {
     queryKey: IMOVEIS_BUSCA_KEY(limpo),
     queryFn: () =>
       api.get<{ items: ImovelBusca[] }>(
-        `/api/imoveis?search=${encodeURIComponent(limpo)}&page_size=10`,
+        `/api/imoveis/busca?q=${encodeURIComponent(limpo)}&limit=10`,
       ),
     enabled: limpo.length >= 2,
     placeholderData: keepPreviousData,
@@ -705,7 +716,47 @@ export function useRoteiroMutations(clienteId: string) {
     onSuccess: invalidate,
   });
 
-  return { create, update, remove, reorder, patchVisita, addVisita, removeVisita };
+  // 🔴 ITS OWN ROUTE, not a field on `patchVisita` — migration 104 keeps
+  // "did the visit happen" and "did it produce an accepted offer" as separate
+  // axes, and one body carrying both invites a client that cannot say which
+  // of the two it meant to change.
+  //
+  // Invalidates the NEGOCIAÇÃO too: accepting writes
+  // `atendimento_negociacao.imovel_codigo`, so leaving that query stale would
+  // show the Negociação panel contradicting the roteiro in the next tab.
+  const patchProposta = useMutation({
+    mutationFn: ({
+      roteiroId,
+      visitaId,
+      body,
+    }: {
+      roteiroId: string;
+      visitaId: string;
+      body: VisitaPropostaBody;
+    }) =>
+      api.patch<Visita>(
+        `${base}/roteiros/${encodeURIComponent(roteiroId)}/visitas/${encodeURIComponent(visitaId)}/proposta`,
+        body,
+      ),
+    onSuccess: () =>
+      Promise.all([
+        invalidate(),
+        qc.invalidateQueries({
+          queryKey: ["sw", "clientes", clienteId, "negociacao"],
+        }),
+      ]),
+  });
+
+  return {
+    create,
+    update,
+    remove,
+    reorder,
+    patchVisita,
+    patchProposta,
+    addVisita,
+    removeVisita,
+  };
 }
 
 /**

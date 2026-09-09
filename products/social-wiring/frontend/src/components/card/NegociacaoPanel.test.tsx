@@ -34,6 +34,9 @@ function negociacao(over: Partial<Negociacao> = {}): Negociacao {
     created_at: null,
     updated_at: null,
     existe: true,
+    // No lead behind this card — the origin affordance renders nothing.
+    // `TestTheLeadOriginIsNeverTheDeal` below supplies one where it matters.
+    lead_imovel: null,
     calculo: {
       calculavel: true,
       motivo: null,
@@ -252,5 +255,139 @@ describe("NegociacaoPanel — o dinheiro na tela", () => {
     });
 
     expect(getByTestId("negociacao-previa")).toBeTruthy();
+  });
+});
+
+/**
+ * 🔴 THE DEAL IS NOT THE ANÚNCIO — and the shortcut does not blur that.
+ *
+ * `leads.codigo_imovel` is the listing the person ENQUIRED about;
+ * `atendimento_negociacao.imovel_codigo` is the property being SOLD. The
+ * owner: "not necessarily that ref is the one that will have the proposta."
+ *
+ * It CAN be the same property and often is, so the origin sits beside the
+ * picker with a one-click "Usar este imóvel". The distinction preserved is WHO
+ * ASSERTED IT: the system offering a shortcut is fine, the system deciding on
+ * the operator's behalf is not. These tests hold both halves — that nothing is
+ * prefilled, and that one click does fill it.
+ *
+ * The other half of the pair lives in the backend suite
+ * (`test_negociacao.py::TestTheLeadOriginIsNeverTheDeal`).
+ */
+function origem(codigo = "ONE10337", over: Record<string, unknown> = {}) {
+  return {
+    codigo,
+    titulo: "Apartamento",
+    empreendimento: null,
+    logradouro: null,
+    numero: null,
+    complemento: null,
+    bairro: "Pinheiros",
+    cidade: "São Paulo",
+    uf: null,
+    cep: null,
+    foto_destaque: null,
+    captacao: null,
+    corretores: [],
+    ativo_no_vista: true,
+    fonte: "imoveis" as const,
+    ...over,
+  };
+}
+
+describe("NegociacaoPanel — o imóvel do negócio vs o anúncio de origem", () => {
+  it("does NOT prefill the deal's imóvel from the lead's origin", async () => {
+    const { screen } = await render({
+      imovel_codigo: null,
+      lead_imovel: origem(),
+    });
+
+    // The picker is degraded to the plain input here (no `renderImovelPicker`
+    // in this test's render helper) — which is the same field, writing through
+    // the same endpoint.
+    const campo = screen.getByTestId("negociacao-imovel-input") as HTMLInputElement;
+    expect(campo.value).toBe("");
+  });
+
+  it("shows the origin as labelled context beside it", async () => {
+    const { screen } = await render({
+      imovel_codigo: null,
+      lead_imovel: origem(),
+    });
+
+    const bloco = screen.getByTestId("negociacao-imovel-origem");
+    expect(bloco.textContent).toContain("Veio do anúncio");
+    expect(bloco.textContent).toContain("ONE10337");
+    expect(bloco.textContent).toContain("Pinheiros");
+  });
+
+  it("fills the picker on one click, and only then", async () => {
+    const { screen, fireEvent } = await render({
+      imovel_codigo: null,
+      lead_imovel: origem(),
+    });
+
+    const campo = screen.getByTestId("negociacao-imovel-input") as HTMLInputElement;
+    expect(campo.value).toBe("");
+
+    fireEvent.click(screen.getByTestId("negociacao-imovel-origem-usar"));
+
+    expect(
+      (screen.getByTestId("negociacao-imovel-input") as HTMLInputElement).value,
+    ).toBe("ONE10337");
+  });
+
+  it("saves the código the click put there", async () => {
+    const { screen, fireEvent, onSave } = await render({
+      imovel_codigo: null,
+      lead_imovel: origem(),
+    });
+
+    fireEvent.click(screen.getByTestId("negociacao-imovel-origem-usar"));
+    fireEvent.click(screen.getByTestId("negociacao-salvar"));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].imovel_codigo).toBe("ONE10337");
+  });
+
+  it("renders nothing there when the lead has no origin código", async () => {
+    const { screen } = await render({ imovel_codigo: null, lead_imovel: null });
+
+    // An affordance for a value that does not exist is a control that does
+    // nothing.
+    expect(screen.queryByTestId("negociacao-imovel-origem")).toBeNull();
+  });
+
+  it("says so instead of offering the button when they are the same imóvel", async () => {
+    const { screen } = await render({
+      imovel_codigo: "ONE10337",
+      lead_imovel: origem(),
+    });
+
+    expect(screen.getByTestId("negociacao-imovel-origem-em-uso")).toBeTruthy();
+    expect(screen.queryByTestId("negociacao-imovel-origem-usar")).toBeNull();
+  });
+
+  it("keeps a deal imóvel that differs from the origin, and still offers the swap", async () => {
+    const { screen } = await render({
+      imovel_codigo: "ONE9002",
+      lead_imovel: origem(),
+    });
+
+    expect(
+      (screen.getByTestId("negociacao-imovel-input") as HTMLInputElement).value,
+    ).toBe("ONE9002");
+    expect(screen.getByTestId("negociacao-imovel-origem-usar")).toBeTruthy();
+  });
+
+  it("marks an origin that has left the Vista catalog", async () => {
+    const { screen } = await render({
+      imovel_codigo: null,
+      lead_imovel: origem("ONE4770", { ativo_no_vista: false, fonte: "registry" }),
+    });
+
+    expect(screen.getByTestId("negociacao-imovel-origem").textContent).toContain(
+      "fora do catálogo",
+    );
   });
 });

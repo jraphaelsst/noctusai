@@ -17,11 +17,33 @@
  * captador still owes the captação 5%. Both are rendered as amounts owed to
  * somebody not yet named, rather than quietly folded into the agency's share.
  * Hiding them would make the columns add up on screen while being wrong.
+ *
+ * 🔴 THE IMÓVEL: THE DEAL IS NOT THE ANÚNCIO
+ * -------------------------------------------
+ * Two facts, side by side, and never merged:
+ *
+ *   `imovel_codigo` — the property being SOLD. Empty until a person says so.
+ *   `lead_imovel`   — the anúncio the LEAD came from. Read-only context.
+ *
+ * A portal lead always carries the listing the person enquired about, and the
+ * owner was explicit that it is "not necessarily the one that will have the
+ * proposta". So the picker is NEVER prefilled from it: a prefilled value is a
+ * claim nobody made, and on screen it is indistinguishable from one somebody
+ * verified.
+ *
+ * It *can* be the same property, and often is — so the origin sits beside the
+ * picker with a "Usar este imóvel" button. One click fills the picker exactly
+ * as if the operator had typed it, and the save that follows is an ordinary
+ * validated write. The distinction preserved is WHO ASSERTED IT: offering a
+ * shortcut is fine, deciding on the operator's behalf is not.
+ *
+ * With no origin código, nothing renders there — an empty affordance would be
+ * a control that does nothing.
  */
 import { useEffect, useState } from "react";
 
 import { preverCalculo } from "@/lib/negociacaoPreview";
-import { AlertCircle, Handshake, Loader2, Users } from "lucide-react";
+import { AlertCircle, Building2, Handshake, Loader2, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +54,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 import type { Negociacao, NegociacaoPatch } from "@/hooks/useNegociacao";
+import type { ImovelVisita } from "@/types/cardHub";
 import { formatBRL, formatPct } from "@/hooks/useNegociacao";
 
 interface Props {
@@ -40,9 +63,24 @@ interface Props {
   saving: boolean;
   error?: string | null;
   onSave: (patch: NegociacaoPatch) => void;
+  /** The registry-backed imóvel typeahead, injected.
+   *
+   * A render prop for the same reason `ClienteCardDialog` takes
+   * `renderNegociacao`: this panel must stay renderable in a test with plain
+   * objects and no query client, and the picker fetches. `NegociacaoContainer`
+   * supplies the real one; without it the field degrades to a plain código
+   * input, which still writes through the same validated endpoint. */
+  renderImovelPicker?: (props: {
+    value: string | null;
+    onChange: (codigo: string | null) => void;
+    disabled?: boolean;
+  }) => React.ReactNode;
 }
 
 interface Draft {
+  /** 🔴 THE DEAL's property. Never seeded from `lead_imovel` — see the file
+   *  docblock. `""` means "nobody has said", and submits as `null`. */
+  imovel_codigo: string;
   valor_negociado: string;
   pct_comissao: string;
   tem_parceria: boolean;
@@ -118,6 +156,9 @@ function lerMoeda(entrada: string): string {
 
 function toDraft(n: Negociacao | undefined): Draft {
   return {
+    // 🔴 `n?.imovel_codigo`, and deliberately NOT `?? n?.lead_imovel?.codigo`.
+    // That fallback is the whole bug this panel is built to avoid.
+    imovel_codigo: text(n?.imovel_codigo),
     valor_negociado: semZerosSobrando(n?.valor_negociado),
     pct_comissao: semZerosSobrando(n?.pct_comissao),
     tem_parceria: n?.tem_parceria ?? false,
@@ -139,6 +180,7 @@ export default function NegociacaoPanel({
   saving,
   error,
   onSave,
+  renderImovelPicker,
 }: Props) {
   const [draft, setDraft] = useState<Draft>(() => toDraft(negociacao));
   // The money field shows `850.000,00` at rest and the raw digits while it has
@@ -167,6 +209,7 @@ export default function NegociacaoPanel({
       return t === "" ? null : t;
     };
     onSave({
+      imovel_codigo: blank(draft.imovel_codigo),
       valor_negociado: blank(draft.valor_negociado),
       pct_comissao: blank(draft.pct_comissao),
       tem_parceria: draft.tem_parceria,
@@ -220,6 +263,35 @@ export default function NegociacaoPanel({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* ── The imóvel of the DEAL, and the anúncio it is not ── */}
+          <div className="space-y-1.5">
+            <Label htmlFor="negociacao-imovel">Imóvel da negociação</Label>
+            {renderImovelPicker ? (
+              renderImovelPicker({
+                value: draft.imovel_codigo || null,
+                onChange: (codigo) => set("imovel_codigo")(codigo ?? ""),
+                disabled: loading,
+              })
+            ) : (
+              <Input
+                id="negociacao-imovel"
+                value={draft.imovel_codigo}
+                onChange={(e) =>
+                  set("imovel_codigo")(e.target.value.toUpperCase())
+                }
+                placeholder="ONE10337"
+                disabled={loading}
+                data-testid="negociacao-imovel-input"
+              />
+            )}
+            <ImovelDeOrigem
+              origem={negociacao?.lead_imovel ?? null}
+              jaEscolhido={draft.imovel_codigo}
+              disabled={loading}
+              onUsar={(codigo) => set("imovel_codigo")(codigo)}
+            />
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="valor-negociado">Valor negociado (R$)</Label>
@@ -512,6 +584,75 @@ function Linha({
       <span className={destaque ? "text-sm font-semibold" : "text-sm"}>
         {formatBRL(valor)}
       </span>
+    </div>
+  );
+}
+
+
+/**
+ * "Veio do anúncio ONE10337 — Apartamento, Pinheiros   [Usar este imóvel]"
+ *
+ * 🔴 THE BUTTON IS THE WHOLE DESIGN. The origin is not prefilled and is not
+ * merely read-only text either: "the deal is the listing they enquired about"
+ * is a COMMON case, so making the operator retype a código they can see would
+ * push them toward copy-paste and typos. One click fills the picker exactly as
+ * typing would, and the save that follows is an ordinary validated write.
+ *
+ * What the button does NOT do is decide. Not clicking leaves the field empty,
+ * and an empty field is the honest state of a deal whose property nobody has
+ * named yet.
+ *
+ * Renders nothing when the card has no origin código — an affordance for a
+ * value that does not exist is a control that does nothing.
+ */
+function ImovelDeOrigem({
+  origem,
+  jaEscolhido,
+  disabled,
+  onUsar,
+}: {
+  origem: ImovelVisita | null;
+  jaEscolhido: string;
+  disabled?: boolean;
+  onUsar: (codigo: string) => void;
+}) {
+  if (!origem?.codigo) return null;
+
+  const descricao = [origem.titulo, origem.bairro].filter(Boolean).join(", ");
+  const mesmoImovel =
+    jaEscolhido.trim().toUpperCase() === origem.codigo.toUpperCase();
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground"
+      data-testid="negociacao-imovel-origem"
+    >
+      <Building2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1">
+        Veio do anúncio{" "}
+        <span className="font-semibold text-foreground tabular-nums">
+          {origem.codigo}
+        </span>
+        {descricao && ` — ${descricao}`}
+        {!origem.ativo_no_vista && " (fora do catálogo)"}
+      </span>
+      {mesmoImovel ? (
+        <span data-testid="negociacao-imovel-origem-em-uso">
+          é o imóvel da negociação
+        </span>
+      ) : (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 shrink-0"
+          disabled={disabled}
+          onClick={() => onUsar(origem.codigo)}
+          data-testid="negociacao-imovel-origem-usar"
+        >
+          Usar este imóvel
+        </Button>
+      )}
     </div>
   );
 }

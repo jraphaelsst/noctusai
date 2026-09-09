@@ -349,6 +349,19 @@ export interface Visita {
   feedback_em: string | null;
   created_at: string | null;
   imovel: ImovelVisita | null;
+
+  /* ── The proposta axis (migration 104) ───────────────────────────────
+   * 🔴 ORTHOGONAL to `status`, never a fourth value of it. A visita that
+   * produced an offer is still a visita that HAPPENED, and folding the two
+   * would destroy the contabilização `contagem` reports. */
+
+  /** A proposta was generated from this visita. `null` = none. */
+  proposta_em: string | null;
+  proposta_por: string | null;
+  /** That proposta was ACCEPTED — THIS is the imóvel of the deal, and the
+   *  server writes its código onto `atendimento_negociacao.imovel_codigo`. */
+  proposta_aceita_em: string | null;
+  proposta_aceita_por: string | null;
 }
 
 export interface ContagemVisitas {
@@ -388,15 +401,24 @@ export interface VisitaPatchBody {
   observacao?: string | null;
 }
 
-/** One row of the live property search — a slice of `GET /api/imoveis`. */
-export interface ImovelBusca {
-  codigo: string;
-  titulo: string | null;
-  empreendimento: string | null;
-  bairro: string | null;
-  cidade: string | null;
-  foto_destaque: string | null;
+/** `PATCH .../visitas/{id}/proposta` — its OWN route, matching migration
+ *  104's separation of the two axes. Absent = leave alone; `false` is a real
+ *  value (undo), which is why neither field defaults. */
+export interface VisitaPropostaBody {
+  proposta?: boolean;
+  aceita?: boolean;
 }
+
+/** One row of the live property search — a slice of `GET /api/imoveis`. */
+/** A hit from `GET /api/imoveis/busca`.
+ *
+ * 🔴 IDENTICAL to `ImovelVisita` because it comes off the same server-side
+ * enrichment (`imovel_hub.busca_service.enriquecer`). That is what lets a
+ * search hit become a visita card with no invented fields: before this, the
+ * search returned a narrow mirror row and the dialog had to widen it by
+ * ASSUMING `ativo_no_vista: true` — an assumption that was only ever right
+ * because the mirror could not return a sold imóvel in the first place. */
+export type ImovelBusca = ImovelVisita;
 
 // ─── Timeline (D9 — one thread) ────────────────────────────────────────────
 

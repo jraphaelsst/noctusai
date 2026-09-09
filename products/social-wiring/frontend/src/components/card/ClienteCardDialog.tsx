@@ -109,6 +109,7 @@ import type {
   Tag,
   TimelineEntry,
   TipoDocumento,
+  VisitaPropostaBody,
 } from "@/types/cardHub";
 
 import { Timeline } from "./Timeline";
@@ -246,6 +247,13 @@ export interface ClienteCardDialogProps {
   ) => void;
   onAddVisita: (roteiroId: string, codigo: string) => void;
   onRemoveVisita: (roteiroId: string, visitaId: string) => void;
+  /** Record / undo a proposta and its acceptance on one visita. Accepting is
+   *  what names the imóvel of the deal (migration 104). */
+  onPatchProposta: (
+    roteiroId: string,
+    visitaId: string,
+    body: VisitaPropostaBody,
+  ) => void;
   roteiroPdfPendingId?: string | null;
 
   // Membros
@@ -761,6 +769,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   onPatchVisita={props.onPatchVisita}
                   onAddVisita={props.onAddVisita}
                   onRemoveVisita={props.onRemoveVisita}
+                  onPatchProposta={props.onPatchProposta}
                   pdfPendingId={props.roteiroPdfPendingId}
                 />
               )}

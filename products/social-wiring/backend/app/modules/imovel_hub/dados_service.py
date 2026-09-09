@@ -135,6 +135,86 @@ def ensure_imovel(client: Any, org_id: UUID, codigo: str) -> dict:
     return rows[0]
 
 
+def registrar_imovel(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    *,
+    origem: str,
+) -> Optional[str]:
+    """Give a código we have never seen a registry identity. Idempotent.
+
+    🔴 WHY ANYTHING NEEDS THIS AT ALL
+    ---------------------------------
+    Until now exactly two things created `imovel_registry` rows: the nightly
+    Vista sync (`imoveis_service._upsert_registry`) and migration 063's
+    one-off backfill. So a portal lead arriving for a listing the catalog has
+    never shown us produced a `leads.codigo_imovel` that no FK in this schema
+    would accept — the lead saved fine (that column is free text), and every
+    downstream feature keyed to the registry then 404'd the imóvel the lead
+    was literally about.
+
+    That is not a rare shape. 063 measured 1019 distinct well-formed códigos
+    on leads that resolve against nothing in the mirror; a portal lead names
+    the listing it came from by definition.
+
+    WHY `origem_descoberta='lead'` NEEDS NO MIGRATION
+    -------------------------------------------------
+    063's CHECK already spells the vocabulary
+    `('vista_sync', 'lead', 'venda', 'intake', 'manual', 'desconhecida')`.
+    The slot was reserved when the table was designed and never filled. This
+    fills it.
+
+    🔴 READ-THEN-INSERT, NOT `upsert()`
+    -----------------------------------
+    `MockRequestBuilder.upsert()` is a documented NO-OP (see
+    `noctusai_lib/testing/mocks.py`: conflict-target tracking is deferred), so
+    an upsert-based path tests green and duplicates live. This is the same
+    reasoning `olx_ingest_service` records for its own dedup check, and the
+    unique constraint `uq_imovel_registry_org_codigo` is the real backstop.
+
+    `ativo_no_vista` stays FALSE and `ultimo_visto_no_vista_em` stays NULL:
+    063's default is FALSE precisely because a row born from a LEAD has never
+    been seen in the catalog, and claiming otherwise would make the delist
+    sweep "delist" something it never listed. When the nightly sync later
+    meets the same código its `ON CONFLICT DO NOTHING` leaves
+    `origem_descoberta` alone — how we LEARNED a código exists does not change
+    because the catalog caught up.
+
+    Returns the canonical código, or `None` when there was nothing to record.
+    """
+    canonico = (codigo or "").strip().upper()
+    if not canonico:
+        return None
+
+    existing = (
+        _t(client, REGISTRY_TABLE)
+        .select(REGISTRY_CODIGO)
+        .eq("org_id", str(org_id))
+        .eq(REGISTRY_CODIGO, canonico)
+        .limit(1)
+        .execute()
+    ).data or []
+    if existing:
+        return canonico
+
+    _t(client, REGISTRY_TABLE).insert(
+        {
+            "org_id": str(org_id),
+            "codigo_canonical": canonico,
+            # The spelling we actually received, kept for tracing. 063 keeps
+            # it for display and never matches on it.
+            "codigo_display": (codigo or "").strip(),
+            "ativo_no_vista": False,
+            "origem_descoberta": origem,
+            "primeiro_visto_em": _now(),
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+    ).execute()
+    return canonico
+
+
 def _linha(client: Any, org_id: UUID, codigo: str) -> Optional[dict]:
     rows = (
         _t(client, TABLE)

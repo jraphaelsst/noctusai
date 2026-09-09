@@ -169,7 +169,7 @@ def _pagina(
     # DESTINATION: `social_wiring.imovel_dados` (migration 075) — the table
     # that already holds what WE author about a property. Add
     # `proprietario_nome` / `proprietario_celular` there, surface them through
-    # `roteiros_service._imovel_out`, and delete this marker.
+    # `imovel_hub.busca_service._imovel_out`, and delete this marker.
     y = _campo(c, "Proprietário", None, y)
     y = _campo(c, "Celular", None, y)
 

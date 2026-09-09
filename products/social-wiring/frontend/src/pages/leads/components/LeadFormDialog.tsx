@@ -40,6 +40,7 @@ function emptyForm(): LeadFormValues {
   return {
     data_entrada: new Date().toISOString().slice(0, 10),
     codigo_raw: "",
+    codigo_imovel: "",
     empreendimento: "",
     regiao: "",
     origem_id: null,
@@ -59,6 +60,7 @@ function fromLead(lead: Lead): LeadFormValues {
   return {
     data_entrada: lead.data_entrada,
     codigo_raw: lead.codigo_raw ?? "",
+    codigo_imovel: lead.codigo_imovel ?? lead.codigo_raw ?? "",
     empreendimento: lead.empreendimento ?? "",
     regiao: lead.regiao ?? "",
     origem_id: lead.origem_id,
@@ -91,6 +93,7 @@ function cleanFormValues(values: LeadFormValues): LeadFormValues {
   return {
     ...values,
     codigo_raw: emptyToNull(values.codigo_raw),
+    codigo_imovel: emptyToNull(values.codigo_imovel),
     empreendimento: emptyToNull(values.empreendimento),
     regiao: emptyToNull(values.regiao),
     cliente_nome: emptyToNull(values.cliente_nome),
@@ -284,7 +287,26 @@ export function LeadFormDialog({
             <Input
               id="lead-codigo"
               value={form.codigo_raw ?? ""}
-              onChange={(e) => setForm({ ...form, codigo_raw: e.target.value })}
+              // 🔴 ONE FIELD, TWO COLUMNS — and it used to write only the
+              // first. `codigo_raw` keeps the spelling; `codigo_imovel` is
+              // what migration 062's trigger canonicalises into
+              // `codigo_imovel_norm`, which is what every imóvel-side join
+              // and every registry FK matches on. Sending only `codigo_raw`
+              // meant a manually-entered lead's código was recorded and then
+              // joined to nothing — invisible to the imóvel's lead count, to
+              // the ROI view, and to the card's origin affordance.
+              //
+              // No `.toUpperCase()` here: canonicalisation is the trigger's
+              // job (server-side, for EVERY write path including the portal
+              // webhooks), and doing it in the browser too would be a second
+              // definition of the same rule to keep in step.
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  codigo_raw: e.target.value,
+                  codigo_imovel: e.target.value,
+                })
+              }
               disabled={isPending}
               data-testid="lead-form-codigo"
             />

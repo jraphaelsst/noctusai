@@ -143,7 +143,21 @@ export interface LeadCorretorAlias {
 
 export interface LeadCreateInput {
   data_entrada: string;
+  /** The spelling as it was typed / as the portal sent it. Kept verbatim. */
   codigo_raw?: string | null;
+  /** 🔴 THE ONE THE REST OF THE SCHEMA JOINS ON, and it was missing here.
+   *
+   *  The form has had a "Código do imóvel" input since it shipped, bound to
+   *  `codigo_raw` alone — so a manually-entered lead's código never reached
+   *  `leads.codigo_imovel`, the column migration 062's trigger canonicalises
+   *  into `codigo_imovel_norm` and every imóvel-side join uses. The backend
+   *  has accepted this field on create AND update the whole time
+   *  (`leads/schemas.py`); only the request body dropped it.
+   *
+   *  Both are sent, deliberately: `codigo_raw` records what a person actually
+   *  typed and `codigo_imovel` is what the system matches on. Collapsing them
+   *  would lose the ability to show a lead back the way it arrived. */
+  codigo_imovel?: string | null;
   empreendimento?: string | null;
   regiao?: string | null;
   origem_id?: string | null;

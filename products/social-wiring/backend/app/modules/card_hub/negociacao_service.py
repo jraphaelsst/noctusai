@@ -24,6 +24,24 @@ largest-remainder method: each share is floored to the centavo, and the
 leftover centavos are handed out one at a time to the largest remainders. The
 result is exact by construction — `sum(parts) == total`, always, and a test
 pins it on a deliberately awkward number.
+
+🔴 `imovel_codigo` IS THE DEAL. `leads.codigo_imovel` IS THE ORIGIN.
+--------------------------------------------------------------------
+Two different facts, two different columns, and nothing copies one into the
+other automatically. The owner stated it directly: a portal lead always names
+the listing the person enquired about, and "not necessarily that ref is the
+one that will have the proposta" — the deal's imóvel is the one that generated
+the proposta that was ACCEPTED.
+
+It *can* be the same property, and often is. That is why `obter` returns the
+lead's origin código as `lead_imovel`, clearly labelled and separate: the UI
+offers it as a one-click shortcut an operator can take. What no code here does
+is take it FOR them. A prefilled deal property is a claim nobody made, and it
+would be indistinguishable on screen from one somebody verified.
+
+The single legitimate auto-write is the opposite case — see
+`definir_imovel_do_atendimento`, which records an acceptance a human just
+asserted.
 """
 from __future__ import annotations
 
@@ -35,6 +53,8 @@ from uuid import UUID
 from noctusai_lib.primitives.exceptions import ValidationError_
 
 from app.modules.card_hub import services as svc
+from app.modules.imovel_hub import busca_service as imovel_busca
+from app.modules.imovel_hub.dados_service import ensure_imovel
 from app.services import table_reads
 
 TABLE = "atendimento_negociacao"
@@ -285,6 +305,7 @@ def _saida(
     defaults: dict,
     membros: list[dict],
     captador: Optional[dict],
+    lead_imovel: Optional[dict] = None,
 ) -> dict:
     """An atendimento with no negociação row yet reads as the DEFAULTS, empty.
 
@@ -353,6 +374,11 @@ def _saida(
         valor = row.get(campo)
         out[campo] = None if valor is None else str(valor)
 
+    # 🔴 A SIBLING OF `imovel_codigo`, NEVER A FALLBACK FOR IT. The frontend
+    # renders this as labelled read-only context with a "usar este imóvel"
+    # button; nothing here or downstream reads it when `imovel_codigo` is
+    # null. See the module docstring for why that separation is load-bearing.
+    out["lead_imovel"] = lead_imovel
     out["calculo"] = calcular(row, membros=membros, captador=captador)
     return out
 
@@ -374,7 +400,55 @@ def obter(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         defaults=defaults,
         membros=membros,
         captador=captador,
+        lead_imovel=_imovel_de_origem(client, org_id, UUID(str(atendimento_id))),
     )
+
+
+def _imovel_de_origem(
+    client: Any, org_id: UUID, atendimento_id: UUID
+) -> Optional[dict]:
+    """The listing the LEAD came from — context, never the answer.
+
+    🔴 Returned under its own key (`lead_imovel`) and never merged into
+    `imovel_codigo`. A portal lead names the anúncio the person enquired about;
+    the deal is whatever property the accepted proposta was for, and the two
+    coincide often enough to offer as a shortcut and rarely enough that
+    assuming it would be wrong in a way nobody could see afterwards.
+
+    `None` for a manually-created card, for a lead with no código, and for a
+    lead row that has since been deleted — all three mean the same thing to the
+    UI ("there is no anúncio to offer") and it renders nothing rather than an
+    empty affordance.
+    """
+    atendimentos = (
+        _t(client, "atendimentos")
+        .select("lead_id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(atendimento_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    lead_id = (atendimentos[0] if atendimentos else {}).get("lead_id")
+    if not lead_id:
+        return None
+
+    leads = (
+        _t(client, "leads")
+        .select("codigo_imovel")
+        .eq("org_id", str(org_id))
+        .eq("id", str(lead_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    bruto = (leads[0] if leads else {}).get("codigo_imovel")
+    codigo = imovel_busca.canonical(str(bruto or ""))
+    if not codigo:
+        return None
+
+    # Enriched through the SAME path the picker uses, so "veio do anúncio
+    # ONE10337 — Apartamento, Pinheiros" reads identically to the row the
+    # operator would have picked by hand, including `ativo_no_vista`.
+    return imovel_busca.enriquecer(client, org_id, [codigo]).get(codigo)
 
 
 def atualizar(
@@ -394,7 +468,6 @@ def atualizar(
             f"Campos não editáveis: {', '.join(recusados)}", field=recusados[0]
         )
 
-    atual = _linha(client, org_id, atendimento_id)
     patch = {k: v for k, v in valores.items() if k in CAMPOS_EDITAVEIS}
 
     # Decimals cross the wire as strings so PostgREST stores them exactly.
@@ -402,6 +475,58 @@ def atualizar(
         if campo in patch and patch[campo] is not None:
             patch[campo] = str(_dec(patch[campo]))
 
+    if "imovel_codigo" in patch:
+        patch["imovel_codigo"] = _canonizar_imovel(client, org_id, patch["imovel_codigo"])
+
+    _gravar(client, org_id, atendimento_id, patch, usuario_id=usuario_id)
+    return obter(client, org_id, cliente_id)
+
+
+def _canonizar_imovel(client: Any, org_id: UUID, valor: Any) -> Optional[str]:
+    """Canonicalise the deal's código and PROVE it is one we know.
+
+    🔴 Neither of these happened before, and both are the same bug wearing two
+    hats. `imovel_codigo` is FK'd to `imovel_registry (org_id,
+    codigo_canonical)` (077) — an uppercase-only column. A lowercase `one4770`
+    and a typo'd `ONE4771` were both handed straight to PostgREST, which
+    answered with a raw foreign-key violation; the driver surfaced that as a
+    500 and the operator saw "erro ao salvar" with no mention of the código
+    they had just typed.
+
+    `roteiros_service._validar_codigos` already made exactly this argument for
+    `visitas` — "a raw FK violation would surface as a 500 from the driver and
+    tell the caller nothing" — and reached for the same `ensure_imovel`. This
+    is that decision applied to the sibling column that was still missing it.
+
+    An empty string is `None`, not `''`: clearing which property a deal is
+    about is a real operation, and `''` is not a código the registry can hold.
+    """
+    if valor is None:
+        return None
+    codigo = imovel_busca.canonical(str(valor))
+    if not codigo:
+        return None
+    # 404 naming the código, never a driver-level 500 naming a constraint.
+    ensure_imovel(client, org_id, codigo)
+    return codigo
+
+
+def _gravar(
+    client: Any,
+    org_id: UUID,
+    atendimento_id: UUID,
+    patch: dict,
+    *,
+    usuario_id: Optional[UUID],
+) -> None:
+    """Insert-with-defaults or update, whichever this atendimento needs.
+
+    Extracted from `atualizar` when `definir_imovel_do_atendimento` became a
+    second writer: both have to know that a first write materialises the org's
+    split rule onto the row, and a copy of that would be the place the two
+    quietly diverge.
+    """
+    atual = _linha(client, org_id, atendimento_id)
     if atual is None:
         # 🔴 The one moment the org defaults are read for this row. From here
         # on the percentages are this agreement's own, and swapping the org
@@ -425,15 +550,60 @@ def atualizar(
         linha = {**base, **patch}
         _validar_split(linha)
         _t(client, TABLE).insert(linha).execute()
-    else:
-        _validar_split({**atual, **patch})
-        patch["updated_at"] = _now()
-        patch["updated_por"] = str(usuario_id) if usuario_id else None
-        _t(client, TABLE).update(patch).eq("org_id", str(org_id)).eq(
-            "atendimento_id", str(atendimento_id)
-        ).execute()
+        return
 
-    return obter(client, org_id, cliente_id)
+    _validar_split({**atual, **patch})
+    patch = {
+        **patch,
+        "updated_at": _now(),
+        "updated_por": str(usuario_id) if usuario_id else None,
+    }
+    _t(client, TABLE).update(patch).eq("org_id", str(org_id)).eq(
+        "atendimento_id", str(atendimento_id)
+    ).execute()
+
+
+def imovel_do_atendimento(
+    client: Any, org_id: UUID, atendimento_id: UUID
+) -> Optional[str]:
+    """Which property this deal is about, or `None` if nobody has said yet."""
+    return (_linha(client, org_id, atendimento_id) or {}).get("imovel_codigo")
+
+
+def definir_imovel_do_atendimento(
+    client: Any,
+    org_id: UUID,
+    atendimento_id: UUID,
+    codigo: Optional[str],
+    *,
+    usuario_id: Optional[UUID],
+) -> Optional[str]:
+    """Record the property of a deal, keyed on the ATENDIMENTO.
+
+    🔴 THIS IS THE ONE AUTO-WRITE OF `imovel_codigo` THAT IS CORRECT, and it
+    looks like the one the module docstring forbids. The difference is WHO
+    ASSERTED IT.
+
+    The lead's origin código must never be copied here, because no human said
+    "this is the property being sold" — a portal supplied it, and the
+    enquiry-to-purchase mapping is only usually the identity. An ACCEPTED
+    PROPOSTA is the exact opposite: an operator has just explicitly recorded
+    that this property, on this deal, had its offer accepted. Copying that into
+    the deal is not an inference, it is the recording of a decision that has
+    already been made — and NOT copying it would mean asking the same person to
+    type the same fact a second time, which is how the two drift apart.
+
+    Do not "fix" one of these two rules to match the other. They disagree on
+    purpose.
+
+    Returns the código now stored.
+    """
+    canonico = _canonizar_imovel(client, org_id, codigo)
+    _gravar(
+        client, org_id, atendimento_id, {"imovel_codigo": canonico},
+        usuario_id=usuario_id,
+    )
+    return canonico
 
 
 def _validar_split(linha: dict) -> None:

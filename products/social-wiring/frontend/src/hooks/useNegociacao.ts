@@ -14,6 +14,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
+import type { ImovelVisita } from "@/types/cardHub";
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface AgenteSlice {
@@ -40,6 +42,8 @@ export interface NegociacaoCalculo {
 
 export interface Negociacao {
   atendimento_id: string;
+  /** 🔴 THE DEAL — the property actually being sold. Set by a human, or by
+   *  accepting a proposta on a visita. NEVER derived from `lead_imovel`. */
   imovel_codigo: string | null;
   valor_negociado: string | null;
   pct_comissao: string | null;
@@ -58,6 +62,20 @@ export interface Negociacao {
   /** False when no terms have been recorded yet — the row is the org defaults. */
   existe: boolean;
   calculo: NegociacaoCalculo;
+
+  /** 🔴 THE ORIGIN — the anúncio the LEAD came from (`leads.codigo_imovel`),
+   *  enriched through the same path the picker uses. A SIBLING of
+   *  `imovel_codigo`, never a fallback for it.
+   *
+   *  The owner: a portal lead always names the listing the person enquired
+   *  about, and "not necessarily that ref is the one that will have the
+   *  proposta". It often IS the same property — which is why the UI offers it
+   *  as a one-click shortcut — but offering and deciding are different acts,
+   *  and only a person may do the second.
+   *
+   *  `null` for a manually-created card and for a lead with no código: the UI
+   *  renders nothing there rather than an empty affordance. */
+  lead_imovel: ImovelVisita | null;
 }
 
 export interface NegociacaoPatch {

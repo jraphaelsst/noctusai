@@ -414,3 +414,183 @@ class TestFinanciamentoFlags:
         )
         assert r.json()["formas_pagamento"] == "entrada 100k + financiamento"
         assert r.json()["parcelas"] == "36x via banco"
+
+
+# ─── The deal's imóvel (and the lead's, which is NOT it) ──────────────────
+
+
+def _registry(*codigos, ativo=True) -> list[dict]:
+    return [
+        {
+            "id": str(uuid4()),
+            "org_id": ORG_ID,
+            "codigo_canonical": c,
+            "codigo_display": c,
+            "ativo_no_vista": ativo,
+            "origem_descoberta": "vista_sync",
+            "snap_titulo": None,
+            "snap_bairro": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        for c in codigos
+    ]
+
+
+def _seed_imovel(scoped, *codigos, ativo=True, mirror=None):
+    scoped.set_table_data("imovel_registry", _registry(*codigos, ativo=ativo))
+    scoped.set_table_data("imoveis", mirror or [])
+
+
+class TestOImovelDoNegocio:
+    """🔴 `imovel_codigo` is FK'd to `imovel_registry (org_id,
+    codigo_canonical)` — an uppercase-only column (062/076). Before this,
+    `atualizar` neither canonicalised nor checked it, so a lowercase spelling
+    and a typo were both handed straight to PostgREST and came back as a raw
+    foreign-key violation: a 500 that named a constraint and not the código the
+    operator had just typed. `roteiros_service._validar_codigos` had already
+    made exactly this argument for `visitas`."""
+
+    def test_a_lowercase_codigo_is_canonicalised(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        _seed_imovel(scoped, "ONE4770")
+
+        r = client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"imovel_codigo": "  one4770 "},
+            headers=_auth(),
+        )
+
+        assert r.status_code == 200, r.text
+        assert r.json()["imovel_codigo"] == "ONE4770"
+
+    def test_an_unknown_codigo_is_a_404_naming_it_not_a_500(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        _seed_imovel(scoped, "ONE4770")
+
+        r = client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"imovel_codigo": "ONE4771"},
+            headers=_auth(),
+        )
+
+        assert r.status_code == 404, r.text
+        assert "ONE4771" in r.text
+
+    def test_a_sold_imovel_is_accepted(self, client, scoped):
+        """The whole point of keying to the registry: an imóvel leaves the
+        Vista catalog BECAUSE it was sold, which is exactly when its
+        negociação is being written."""
+        cid, _aid = _seed(scoped)
+        _seed_imovel(scoped, "ONE4770", ativo=False)
+
+        r = client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"imovel_codigo": "ONE4770"},
+            headers=_auth(),
+        )
+
+        assert r.status_code == 200, r.text
+        assert r.json()["imovel_codigo"] == "ONE4770"
+
+    def test_it_can_be_cleared(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        _seed_imovel(scoped, "ONE4770")
+        client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"imovel_codigo": "ONE4770"},
+            headers=_auth(),
+        )
+
+        r = client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"imovel_codigo": None},
+            headers=_auth(),
+        )
+
+        assert r.status_code == 200, r.text
+        assert r.json()["imovel_codigo"] is None
+
+
+class TestTheLeadOriginIsNeverTheDeal:
+    """🔴 THE LOAD-BEARING DISTINCTION, and half of a pair — the other half is
+    `test_visita_proposta.py::TestTheDealFollowsTheAcceptance`.
+
+    `leads.codigo_imovel` is the ORIGIN: the listing the person enquired about.
+    `atendimento_negociacao.imovel_codigo` is the DEAL: the property actually
+    being sold. The owner: "not necessarily that ref is the one that will have
+    the proposta."
+
+    It CAN be the same property and often is — which is why the origin comes
+    back, clearly labelled and separate, for the UI to offer as a one-click
+    shortcut. What no code does is take it on the operator's behalf. A
+    prefilled deal property is a claim nobody made and it is indistinguishable
+    on screen from one somebody verified.
+    """
+
+    def _seed_com_lead(self, scoped, *, codigo_imovel="ONE10337"):
+        cid, aid = str(uuid4()), str(uuid4())
+        lead_id = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Luciano")])
+        scoped.set_table_data(
+            "atendimentos", [_atendimento(aid, cid, lead_id=lead_id)]
+        )
+        scoped.set_table_data(
+            "leads",
+            [{"id": lead_id, "org_id": ORG_ID, "codigo_imovel": codigo_imovel}],
+        )
+        scoped.set_table_data("cliente_membros", [])
+        scoped.set_table_data("lead_corretores", [])
+        scoped.set_table_data("atendimento_negociacao", [])
+        scoped.set_table_data("negociacao_defaults", [])
+        scoped.set_table_data("imovel_dados", [])
+        _seed_imovel(scoped, "ONE10337", "ONE9002")
+        return cid, aid
+
+    def test_the_deal_starts_empty_even_when_the_lead_names_a_listing(
+        self, client, scoped
+    ):
+        cid, _aid = self._seed_com_lead(scoped)
+
+        neg = client.get(f"/api/clientes/{cid}/negociacao", headers=_auth()).json()
+
+        assert neg["imovel_codigo"] is None
+
+    def test_the_origin_comes_back_under_its_own_key(self, client, scoped):
+        cid, _aid = self._seed_com_lead(scoped)
+
+        neg = client.get(f"/api/clientes/{cid}/negociacao", headers=_auth()).json()
+
+        assert neg["lead_imovel"]["codigo"] == "ONE10337"
+        # Enriched through the same path the picker uses, so the UI can render
+        # "veio do anúncio ONE10337 — ..." identically to a picked row.
+        assert "ativo_no_vista" in neg["lead_imovel"]
+
+    def test_setting_the_deal_to_something_else_does_not_disturb_the_origin(
+        self, client, scoped
+    ):
+        cid, _aid = self._seed_com_lead(scoped)
+
+        neg = client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"imovel_codigo": "ONE9002"},
+            headers=_auth(),
+        ).json()
+
+        assert neg["imovel_codigo"] == "ONE9002"
+        assert neg["lead_imovel"]["codigo"] == "ONE10337"
+
+    def test_a_card_with_no_lead_reports_no_origin(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        _seed_imovel(scoped, "ONE9002")
+
+        neg = client.get(f"/api/clientes/{cid}/negociacao", headers=_auth()).json()
+
+        assert neg["lead_imovel"] is None
+
+    def test_a_lead_with_a_blank_codigo_reports_no_origin(self, client, scoped):
+        """Renders nothing rather than an empty affordance."""
+        cid, _aid = self._seed_com_lead(scoped, codigo_imovel="")
+
+        neg = client.get(f"/api/clientes/{cid}/negociacao", headers=_auth()).json()
+
+        assert neg["lead_imovel"] is None

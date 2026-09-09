@@ -30,9 +30,29 @@ the catalog because it was SOLD, i.e. exactly when its visit history matters.
 Enrichment PREFERS the mirror for display fields and falls back to the
 registry's `snap_*`, but membership is always the registry's answer.
 
+That enrichment was written here and now lives in
+`imovel_hub.busca_service` — the registry-backed imóvel picker needs exactly
+the same "render this código" answer, and a second consumer is where a copy
+stops being a judgement call. Nothing about it changed in the move; this
+module imports `canonical` / `enriquecer` and is otherwise as it was.
+
 Existence is checked through `imovel_hub.dados_service.ensure_imovel` rather
 than re-derived here — it is the canonical registry check and it raises a 404
 the caller can act on, where a raw FK violation would surface as a 500.
+
+🔴 VISITA → PROPOSTA → THE DEAL (migration 104)
+-----------------------------------------------
+A roteiro carries N candidate imóveis; one of them generates a proposta; the
+proposta that is ACCEPTED is the property the atendimento is about and the one
+the contract automation consumes. `registrar_proposta` is that hinge, and it
+owns the two rules a constraint cannot:
+
+  · at most ONE accepted proposta per ATENDIMENTO (the scope is two joins away
+    from these rows, so no partial unique index can reach it); and
+  · accepting WRITES `atendimento_negociacao.imovel_codigo`, which is the only
+    legitimate auto-write of that column — see
+    `negociacao_service.definir_imovel_do_atendimento` for why it does not
+    contradict the rule that a lead's origin código never lands there.
 """
 from __future__ import annotations
 
@@ -42,12 +62,14 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
+from app.modules.card_hub import negociacao_service
 from app.modules.card_hub.services import (
     _atendimentos_do_cliente,
     _t,
     ensure_cliente,
     resolve_atendimento_id,
 )
+from app.modules.imovel_hub.busca_service import canonical, enriquecer
 from app.modules.imovel_hub.dados_service import ensure_imovel
 from app.services import table_reads
 
@@ -63,40 +85,14 @@ _ROTEIRO_FIELDS = ("id", "atendimento_id", "titulo", "created_at")
 _VISITA_FIELDS = (
     "id", "roteiro_id", "codigo", "ordem", "status",
     "observacao", "feedback_em", "created_at",
+    # Migration 104 — the proposta axis. Deliberately NOT folded into
+    # `status`: see that migration's header and `registrar_proposta` below.
+    "proposta_em", "proposta_por", "proposta_aceita_em", "proposta_aceita_por",
 )
-
-#: Display fields read off the mirror when it still holds the imóvel.
-_MIRROR_FIELDS = (
-    "titulo", "empreendimento", "logradouro", "numero", "complemento",
-    "bairro", "cidade", "uf", "cep", "foto_destaque",
-)
-
-#: The registry's delist-time snapshot. It is deliberately NARROWER than the
-#: mirror — 063 snapshots what a history row needs to stay legible, not the
-#: whole listing — so `logradouro`/`numero`/`cep`/`empreendimento` are simply
-#: absent for a delisted imóvel and come back null. That is the honest answer,
-#: not a gap to paper over.
-_SNAP_MAP = {
-    "titulo": "snap_titulo",
-    "bairro": "snap_bairro",
-    "cidade": "snap_cidade",
-    "uf": "snap_uf",
-    "foto_destaque": "snap_foto_destaque",
-}
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def canonical(codigo: str) -> str:
-    """Migration 062's one expression for this schema, in Python.
-
-    `imovel_dados` normalises the same way for the same FK, and 076 verified on
-    prod that `imovel_registry.codigo_canonical` and `imoveis.codigo` are both
-    already uppercase everywhere (0 exceptions).
-    """
-    return codigo.strip().upper()
 
 
 # ── reads ──────────────────────────────────────────────────────────────────
@@ -165,7 +161,7 @@ def _montar(client: Any, org_id: UUID, roteiros: list[dict]) -> list[dict]:
     if not roteiros:
         return []
     visitas = _visitas_de(client, org_id, [str(r["id"]) for r in roteiros])
-    imoveis = _enriquecer(client, org_id, [v["codigo"] for v in visitas])
+    imoveis = enriquecer(client, org_id, [v["codigo"] for v in visitas])
 
     por_roteiro: dict[str, list[dict]] = {}
     for v in visitas:
@@ -201,85 +197,6 @@ def _visita_out(row: dict, imoveis: dict[str, dict]) -> dict:
     out = {k: row.get(k) for k in _VISITA_FIELDS}
     out["imovel"] = imoveis.get(canonical(str(row.get("codigo") or "")))
     return out
-
-
-def _enriquecer(client: Any, org_id: UUID, codigos: list[str]) -> dict[str, dict]:
-    """`codigo -> imóvel`, one batched read per source.
-
-    Registry first because the FK guarantees it exists — so `imovel` is never
-    null and `ativo_no_vista` is always answerable. The mirror is PREFERRED for
-    display fields when it still holds the imóvel; otherwise the registry's
-    delist-time snapshot answers. There is deliberately NO live Vista call:
-    roadmap `social-wiring-imoveis-vista-2026-08` P2.5 rules that a clean miss
-    is a real, actionable fact, never a fallback.
-    """
-    unicos = sorted({canonical(c) for c in codigos if c})
-    if not unicos:
-        return {}
-
-    registry = {
-        str(r["codigo_canonical"]): r
-        for r in table_reads.in_batched_rows(
-            client, "imovel_registry", org_id, "codigo_canonical", unicos,
-            order_col="codigo_canonical",
-        )
-    }
-    mirror = {
-        str(r["codigo"]): r
-        for r in table_reads.in_batched_rows(
-            client, "imoveis", org_id, "codigo_norm", unicos, order_col="codigo",
-        )
-    }
-    dados = {
-        str(r["codigo"]): r
-        for r in table_reads.in_batched_rows(
-            client, "imovel_dados", org_id, "codigo", unicos, order_col="codigo",
-        )
-    }
-    atores = table_reads.resolve_actors(
-        {d["captador_user_id"] for d in dados.values() if d.get("captador_user_id")}
-    )
-
-    return {
-        codigo: _imovel_out(
-            codigo, registry.get(codigo), mirror.get(codigo), dados.get(codigo), atores
-        )
-        for codigo in unicos
-    }
-
-
-def _imovel_out(
-    codigo: str,
-    reg: Optional[dict],
-    esp: Optional[dict],
-    dad: Optional[dict],
-    atores: dict,
-) -> dict:
-    if esp is not None:
-        campos = {k: esp.get(k) for k in _MIRROR_FIELDS}
-        campos["corretores"] = esp.get("corretores") or []
-        fonte = "imoveis"
-    else:
-        campos = {k: None for k in _MIRROR_FIELDS}
-        campos["corretores"] = []
-        if reg is not None:
-            campos.update({k: reg.get(snap) for k, snap in _SNAP_MAP.items()})
-        fonte = "registry"
-
-    return {
-        "codigo": codigo,
-        **campos,
-        # 🔴 The canonical model for "corretor responsável pela captação"
-        # (migration 075): a USER, not a name. The commission slice is
-        # attributed to it, and two spellings of a free-text name become two
-        # people. NULL is the honest state for an imóvel with no recorded
-        # captador — never silently reassigned to the agency.
-        "captacao": table_reads.actor(atores, (dad or {}).get("captador_user_id")),
-        # Real information, not bookkeeping: a corretor routing a visit to a
-        # property that has left the catalog needs to know before driving there.
-        "ativo_no_vista": bool((reg or {}).get("ativo_no_vista")),
-        "fonte": fonte,
-    }
 
 
 # ── writes ─────────────────────────────────────────────────────────────────
@@ -437,7 +354,7 @@ def adicionar_visita(
         "created_at": _now(),
     }
     _t(client, VISITAS_TABLE).insert(row).execute()
-    return _visita_out(row, _enriquecer(client, org_id, [alvo]))
+    return _visita_out(row, enriquecer(client, org_id, [alvo]))
 
 
 def atualizar_visita(
@@ -473,7 +390,168 @@ def atualizar_visita(
         _t(client, VISITAS_TABLE).update(updates).eq("id", str(visita_id)).execute()
 
     atualizado = {**atual, **updates}
-    return _visita_out(atualizado, _enriquecer(client, org_id, [str(atual["codigo"])]))
+    return _visita_out(atualizado, enriquecer(client, org_id, [str(atual["codigo"])]))
+
+
+def registrar_proposta(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    visita_id: UUID,
+    *,
+    proposta: Optional[bool] = ...,
+    aceita: Optional[bool] = ...,
+    usuario_id: Optional[UUID] = None,
+) -> dict:
+    """Record that a visita produced a proposta, and that it was accepted.
+
+    `...` sentinels an unset flag, matching `atualizar_visita`. Separate from
+    that function on purpose: `status` answers "did the visit happen" and this
+    answers "did it produce an offer", and migration 104's header is the long
+    version of why merging the two axes destroys the contabilização 082 exists
+    for.
+
+    THE FOUR RULES, ALL OF THEM HERE RATHER THAN IN THE SCHEMA
+    ----------------------------------------------------------
+    1. An acceptance needs an offer. The DB CHECK says so too; this raises a
+       named 400 instead of a driver-level 500, same division of labour as
+       `_validar_split`.
+    2. At most ONE accepted proposta per ATENDIMENTO. `atendimento_negociacao`
+       is keyed on `atendimento_id` and holds exactly one `imovel_codigo`, so
+       two accepted propostas would be two answers to "what is being sold".
+       🔴 This is NOT enforceable by a unique index: the scope is the
+       atendimento, these rows are keyed to a ROTEIRO, and the join
+       `visitas → roteiros → atendimentos` is two hops a partial index cannot
+       traverse. It lives here because that is the only place it can — not
+       because anyone forgot.
+    3. Accepting writes the deal's `imovel_codigo`. See
+       `negociacao_service.definir_imovel_do_atendimento`.
+    4. Nothing is silently overwritten and nothing is silently left behind —
+       see the two branches below.
+    """
+    atual = _obter_visita(client, org_id, cliente_id, roteiro_id, visita_id)
+    roteiro = _obter(client, org_id, cliente_id, roteiro_id)
+    atendimento_id = UUID(str(roteiro["atendimento_id"]))
+    codigo = canonical(str(atual["codigo"]))
+
+    updates: dict = {}
+    tinha_proposta = atual.get("proposta_em") is not None
+    tinha_aceite = atual.get("proposta_aceita_em") is not None
+
+    if proposta is not ...:
+        if proposta:
+            if not tinha_proposta:
+                updates["proposta_em"] = _now()
+                updates["proposta_por"] = str(usuario_id) if usuario_id else None
+        elif tinha_proposta:
+            # Withdrawing the offer withdraws the acceptance with it: the CHECK
+            # forbids an acceptance with no offer, so leaving `proposta_aceita_em`
+            # behind would be a constraint violation surfacing as a 500. The
+            # deal's imóvel is unwound below by the same rule an explicit
+            # un-accept follows.
+            updates["proposta_em"] = None
+            updates["proposta_por"] = None
+            if tinha_aceite:
+                aceita = False
+
+    quer_aceitar = aceita is True
+    quer_desaceitar = aceita is False and tinha_aceite
+
+    if quer_aceitar and not tinha_aceite:
+        if not (tinha_proposta or updates.get("proposta_em")):
+            raise ValidationError_(
+                "não é possível aceitar uma proposta que não foi registrada — "
+                "marque a proposta nesta visita primeiro",
+                field="aceita",
+            )
+        _recusar_segundo_aceite(client, org_id, cliente_id, atendimento_id, visita_id)
+        updates["proposta_aceita_em"] = _now()
+        updates["proposta_aceita_por"] = str(usuario_id) if usuario_id else None
+
+    if quer_desaceitar:
+        updates["proposta_aceita_em"] = None
+        updates["proposta_aceita_por"] = None
+
+    if updates:
+        _t(client, VISITAS_TABLE).update(updates).eq("id", str(visita_id)).execute()
+
+    # 🔴 THE DEAL FOLLOWS THE ACCEPTANCE, in both directions, and says so.
+    if updates.get("proposta_aceita_em"):
+        atual_deal = negociacao_service.imovel_do_atendimento(
+            client, org_id, atendimento_id
+        )
+        if atual_deal and canonical(str(atual_deal)) != codigo:
+            # The operator is changing WHICH property this deal is about.
+            # That is a real decision and it deserves to be a visible act
+            # rather than a side effect of clicking "aceita" on a second
+            # visita — so it is refused here and re-made deliberately.
+            raise ValidationError_(
+                f"a negociação já está no imóvel {atual_deal}; aceitar a proposta "
+                f"de {codigo} mudaria o imóvel do negócio — altere o imóvel da "
+                "negociação explicitamente antes de aceitar",
+                field="aceita",
+            )
+        negociacao_service.definir_imovel_do_atendimento(
+            client, org_id, atendimento_id, codigo, usuario_id=usuario_id
+        )
+    elif "proposta_aceita_em" in updates:
+        # Un-accepting. Clearing the deal's imóvel is the honest move ONLY
+        # when it is still this visita's — leaving it would keep a closed-deal
+        # property on a deal nobody has agreed, which is the stale answer the
+        # brief refuses. When it is somebody else's código the operator set it
+        # by hand and this un-accept has nothing to say about it, so it stands.
+        atual_deal = negociacao_service.imovel_do_atendimento(
+            client, org_id, atendimento_id
+        )
+        if atual_deal and canonical(str(atual_deal)) == codigo:
+            negociacao_service.definir_imovel_do_atendimento(
+                client, org_id, atendimento_id, None, usuario_id=usuario_id
+            )
+
+    atualizado = {**atual, **updates}
+    return _visita_out(atualizado, enriquecer(client, org_id, [codigo]))
+
+
+def _recusar_segundo_aceite(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    atendimento_id: UUID,
+    visita_id: UUID,
+) -> None:
+    """One accepted proposta per atendimento — checked across the join.
+
+    Reads every roteiro of THIS atendimento (not of the cliente: a person
+    accumulates deals over time per 061/D17, and an acceptance on a 2024
+    purchase says nothing about a live negotiation) and refuses if another
+    visita already carries an acceptance.
+
+    Read-then-write, so two concurrent accepts could in principle both pass.
+    That is accepted deliberately: this is a single operator clicking a button
+    on one card, the losing write is recoverable by un-accepting, and the
+    alternative — an advisory lock or a trigger — would be machinery for a
+    race nobody can produce. The FK'd `imovel_codigo` still holds the deal to
+    exactly one property regardless.
+    """
+    roteiros = [
+        r
+        for r in table_reads.in_batched_rows(
+            client, TABLE, org_id, "atendimento_id", [str(atendimento_id)]
+        )
+        if r.get("deleted_at") is None
+    ]
+    if not roteiros:
+        return
+    for v in _visitas_de(client, org_id, [str(r["id"]) for r in roteiros]):
+        if str(v["id"]) == str(visita_id):
+            continue
+        if v.get("proposta_aceita_em"):
+            raise ValidationError_(
+                f"este atendimento já tem uma proposta aceita, no imóvel "
+                f"{v.get('codigo')} — desfaça aquela antes de aceitar outra",
+                field="aceita",
+            )
 
 
 def remover_visita(

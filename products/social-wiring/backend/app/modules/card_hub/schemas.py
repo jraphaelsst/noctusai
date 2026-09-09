@@ -197,6 +197,25 @@ class VisitaPatchBody(StrictHttpModel):
         return v
 
 
+class VisitaPropostaBody(StrictHttpModel):
+    """The proposta axis (migration 104) — deliberately its own body.
+
+    Not folded into `VisitaPatchBody` for the same reason 104 does not fold
+    these into `status`: "did the visit happen" and "did it produce an offer
+    that was accepted" are orthogonal facts, and one body carrying both invites
+    a client that sends `status` and `aceita` together and cannot say which of
+    the two it meant to change.
+
+    Both fields are tri-state via `exclude_unset`: absent = leave alone,
+    `true` = record, `false` = undo. `false` is a real operation here, not a
+    default — undoing an acceptance is what the service unwinds the deal's
+    `imovel_codigo` for.
+    """
+
+    proposta: Optional[bool] = None
+    aceita: Optional[bool] = None
+
+
 # ─── Checklists ─────────────────────────────────────────────────────────
 
 

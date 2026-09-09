@@ -2,6 +2,7 @@
 
 Endpoints:
     GET  /api/imoveis                  → paginated rows from the local mirror
+    GET  /api/imoveis/busca            → typeahead over the REGISTRY ∪ mirror
     GET  /api/imoveis/filtros          → distinct filter values (derived)
     GET  /api/imoveis/caracteristicas  → amenity slug → count, usage-ordered
     GET  /api/imoveis/{codigo}         → one imóvel
@@ -29,6 +30,8 @@ from app.dependencies import (
     get_admin_client,
     get_current_user_org,
 )
+from app.modules.imovel_hub import busca_service as busca_svc
+from app.modules.imovel_hub.deps import get_imovel_hub_client
 from app.services.imoveis_service import (
     build_imoveis_service,
     build_sync_service,
@@ -121,6 +124,39 @@ async def list_imoveis(
         caracteristicas=caracteristicas,
     )
     return ImovelPageOut(**result)
+
+
+@router.get("/busca")
+async def buscar_imoveis(
+    q: str = Query(..., min_length=busca_svc.TERMO_MINIMO),
+    limit: int = Query(
+        busca_svc.LIMITE_PADRAO, ge=1, le=busca_svc.LIMITE_MAXIMO
+    ),
+    auth=Depends(get_current_user_org),
+    db=Depends(get_imovel_hub_client),
+) -> dict:
+    """Typeahead over the REGISTRY ∪ the mirror — every imóvel we have ever
+    seen, not only the ones Vista lists today.
+
+    🔴 SEPARATE FROM `GET /api/imoveis?search=`, and not a replacement for it.
+    That route is the catalog browser: paginated, filterable, mirror-only, and
+    correct for what it does — a person browsing what is FOR SALE does not want
+    sold properties in the grid. This one answers "which imóvel do you mean?"
+    for a picker whose every downstream FK points at `imovel_registry`, where
+    35% of rows (prod, 2026-08-25) are absent from the mirror precisely because
+    they SOLD. Collapsing the two would break one of them.
+
+    Response is `{"items": [...], "total": n}` per the house envelope, where
+    `total` is the length of `items` — see `busca_service.buscar` for why this
+    endpoint deliberately does not report a catalog count.
+
+    Declared BEFORE `/{codigo}`: `busca` is a perfectly valid código and
+    FastAPI matches in declaration order. `test_static_routes_are_declared_
+    before_the_catch_all` holds this shut.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    return busca_svc.buscar(db, org_id, termo=q, limite=limit)
 
 
 @router.get("/filtros", response_model=FiltrosOut)

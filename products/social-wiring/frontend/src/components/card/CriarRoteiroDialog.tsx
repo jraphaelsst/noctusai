@@ -6,11 +6,13 @@
  * list is drag-and-drop, because the order IS the plan — "first this property,
  * then that one, and last this one".
  *
- * THE SEARCH REUSES `GET /api/imoveis?search=`
- * --------------------------------------------
- * That endpoint already `ilike`s `codigo` (`imoveis_service.list`), so `ONE9`
- * returns every `ONE9xxxx` with no new route. Checked before building: adding
- * a second search endpoint would have been a fork of a solved problem.
+ * 🔴 THE SEARCH IS REGISTRY-BACKED (`GET /api/imoveis/busca`)
+ * -----------------------------------------------------------
+ * It used to call `GET /api/imoveis?search=`, which reads the Vista MIRROR.
+ * That made 35% of registered imóveis untypeable here (prod, 2026-08-25:
+ * 3017 in the registry, 2008 in the mirror) — and precisely the sold ones,
+ * which `visitas` has always been able to hold because its FK points at
+ * `imovel_registry`. See `useImoveisBusca`.
  *
  * NOT the seed's `MultiSelectPopover` (`noc-organ-consume-check`, run first).
  * That organ is a fixed-option multi-select over a list it already holds; this
@@ -55,30 +57,18 @@ import type { ImovelBusca, ImovelVisita, RoteiroCreateBody } from "@/types/cardH
 
 import { ImovelVisitaCard } from "./ImovelVisitaCard";
 
-/** A search hit, widened to the card's shape. The search endpoint returns the
- *  mirror row, which is by definition a listed imóvel — so `ativo_no_vista` is
- *  true and `fonte` is the mirror. The fields the card shows and the search
- *  does not return (captação, complemento) come back on the real `Visita`
- *  after the POST; here they are honestly null rather than guessed. */
-function paraVisita(row: ImovelBusca): ImovelVisita {
-  return {
-    codigo: row.codigo,
-    titulo: row.titulo ?? null,
-    empreendimento: row.empreendimento ?? null,
-    logradouro: null,
-    numero: null,
-    complemento: null,
-    bairro: row.bairro ?? null,
-    cidade: row.cidade ?? null,
-    uf: null,
-    cep: null,
-    foto_destaque: row.foto_destaque ?? null,
-    captacao: null,
-    corretores: [],
-    ativo_no_vista: true,
-    fonte: "imoveis",
-  };
-}
+/* 🔴 THE WIDENING FUNCTION IS GONE, and its absence is the point.
+ *
+ * A search hit used to be a narrow mirror row that this file widened into an
+ * `ImovelVisita` by ASSUMING `ativo_no_vista: true` and `fonte: "imoveis"`.
+ * That assumption was only ever right because the mirror could not return a
+ * sold imóvel at all — so the moment the search learned to, the card would
+ * have rendered every delisted property as if it were still listed, and the
+ * "fora do catálogo" badge that exists for exactly this would never have
+ * shown. `GET /api/imoveis/busca` returns the full enriched shape (the same
+ * `busca_service.enriquecer` a saved visita renders from), so the row IS the
+ * card's shape and nothing is guessed.
+ */
 
 export interface CriarRoteiroDialogProps {
   open: boolean;
@@ -125,7 +115,7 @@ export function CriarRoteiroDialog({
 
   function adicionar(row: ImovelBusca) {
     if (jaNoRoteiro.has(row.codigo.toUpperCase())) return;
-    setEscolhidos((atual) => [...atual, paraVisita(row)]);
+    setEscolhidos((atual) => [...atual, row]);
     // The field clears but the popover stays open: a corretor adding three
     // properties types three refs in a row, and closing between them would
     // cost a click each time.
