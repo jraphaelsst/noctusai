@@ -567,6 +567,43 @@ class TestAnalyzeWithAi:
         assert kwargs["model"] == "gpt-4.1-mini"
 
     @pytest.mark.asyncio
+    async def test_o_provedor_selecionado_roteia_chamada_e_modelo(self):
+        """🔴 The provider and the model move together or not at all.
+
+        `gpt-4.1-mini` sent to Anthropic is a 404, and the operator who just
+        flipped the switch would read that as a broken key. This asserts the
+        pair, not just the provider.
+        """
+        with patch(_CRED, return_value="sk-ant-x"), patch(
+            "app.services.api_keys_store.resolve_chat_provider",
+            return_value="anthropic",
+        ), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value="Consta débito."),
+        ) as chat:
+            out = await service._analyze_with_ai("texto", ORG)
+        assert out == "Consta débito."
+        kwargs = chat.await_args.kwargs
+        assert kwargs["provider"] == "anthropic"
+        assert kwargs["model"] == "claude-opus-5"
+
+    @pytest.mark.asyncio
+    async def test_a_chave_conferida_e_a_do_provedor_escolhido(self):
+        """An org running on Anthropic must not be told its OpenAI key is
+        missing. Checking OpenAI's key regardless of the selection refuses
+        work the configured vendor can do — and trains the operator to
+        ignore the one message that panel exists to show.
+        """
+        with patch(_CRED, return_value=None) as cred, patch(
+            "app.services.api_keys_store.resolve_chat_provider",
+            return_value="anthropic",
+        ):
+            out = await service._analyze_with_ai("texto", ORG)
+        assert cred.call_args.args[0] == "anthropic_api_key"
+        assert "Anthropic" in out
+        assert "OpenAI" not in out
+
+    @pytest.mark.asyncio
     async def test_falha_do_provedor_vira_marcador_nao_excecao(self):
         with patch(_CRED, return_value="sk-x"), patch(
             "app.modules.certidoes.service.chat_completion",

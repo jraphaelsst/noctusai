@@ -83,6 +83,29 @@ MODELS: Tuple[ModelEntry, ...] = (
         description="3072-dim embeddings, higher retrieval accuracy.",
         cost_per_1m_input_tokens=0.13,
     ),
+    #: The OCR pin for the `openai` rung (`documents/transcription.py::
+    #: OCR_MODELS`). It was reachable in production while unpriced, which is
+    #: the same silent-zero the Anthropic block below documents — found by
+    #: `tests/integrations/llm/test_model_catalog_pricing.py`, not by anyone
+    #: noticing a suspiciously cheap month.
+    ModelEntry(
+        id="gpt-4.1-mini",
+        label="GPT-4.1 mini",
+        provider="openai",
+        kind="chat",
+        description="OpenAI cost-tier — the document-transcription pin.",
+        cost_per_1m_input_tokens=0.40,
+        cost_per_1m_output_tokens=1.60,
+    ),
+    ModelEntry(
+        id="gpt-4.1-mini",
+        label="GPT-4.1 mini (Vision)",
+        provider="openai",
+        kind="vision",
+        description="Multi-modal — reads rasterized document pages.",
+        cost_per_1m_input_tokens=0.40,
+        cost_per_1m_output_tokens=1.60,
+    ),
     ModelEntry(
         id="whisper-1",
         label="Whisper v1",
@@ -92,6 +115,59 @@ MODELS: Tuple[ModelEntry, ...] = (
     ),
 
     # ── Anthropic (real — Phase 13) ──────────────────────────────────
+    #: 🔴 REGISTERED BECAUSE AN UNREGISTERED MODEL COSTS ZERO, SILENTLY.
+    #:
+    #: `usage.estimate_cost_usd` looks the model up here and returns 0.0 when
+    #: it finds nothing — so a model the fleet actually calls but never
+    #: registered writes `cost_estimate_usd=0` on every row, and
+    #: `budget.compute_spend_usd` (which sums exactly that column) reports an
+    #: org as having spent nothing. The budget guardrail then never fires.
+    #: That is not a missing feature, it is a disabled safety net that still
+    #: looks armed.
+    #:
+    #: `claude-opus-5` is the model `documents/transcription.py::OCR_MODELS`
+    #: pins for the `anthropic` rung, so it was already reachable in
+    #: production before it was priced here.
+    ModelEntry(
+        id="claude-opus-5",
+        label="Claude Opus 5",
+        provider="anthropic",
+        kind="chat",
+        description="Anthropic flagship — highest accuracy, 1M context.",
+        cost_per_1m_input_tokens=5.00,
+        cost_per_1m_output_tokens=25.00,
+    ),
+    ModelEntry(
+        id="claude-opus-5",
+        label="Claude Opus 5 (Vision)",
+        provider="anthropic",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=5.00,
+        cost_per_1m_output_tokens=25.00,
+    ),
+    #: Registered for the same reason, one step down: `OCR_MODELS`' own
+    #: comment names `claude-sonnet-5` as the cheaper current-generation swap,
+    #: so a consumer taking that documented advice must not land on the
+    #: zero-cost path either.
+    ModelEntry(
+        id="claude-sonnet-5",
+        label="Claude Sonnet 5",
+        provider="anthropic",
+        kind="chat",
+        description="Anthropic mid-tier — balanced accuracy and cost, 1M context.",
+        cost_per_1m_input_tokens=2.00,
+        cost_per_1m_output_tokens=10.00,
+    ),
+    ModelEntry(
+        id="claude-sonnet-5",
+        label="Claude Sonnet 5 (Vision)",
+        provider="anthropic",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=2.00,
+        cost_per_1m_output_tokens=10.00,
+    ),
     ModelEntry(
         id="claude-opus-4-7",
         label="Claude Opus 4.7",

@@ -88,15 +88,25 @@ class TestTheSwitchIsWiredEndToEnd:
         is non-empty, so an API key that grew options would silently lose
         its write-only input.
 
-        Two switches now, both deliberate and both non-secret: the vision
-        one (which vendor transcribes documents) and the embedding one
-        (which vendor generates the permutas semantic vectors). They are
-        separate specs because the vendors do not overlap — the Anthropic
-        API has no embeddings endpoint, so folding them into one control
-        would offer an option that cannot work.
+        Three switches now, all deliberate and all non-secret: the vision
+        one (which vendor transcribes scanned pages), the chat one (which
+        vendor writes the certidão analysis) and the embedding one (which
+        vendor generates the permutas semantic vectors).
+
+        They are separate specs because the capabilities do not line up
+        across vendors OR across documents. The Anthropic API has no
+        embeddings endpoint, so folding embeddings in would offer an option
+        that cannot work. And a digitally-issued certidão has a text layer,
+        so it is analysed without any page being transcribed — routing its
+        analysis by the transcription switch would let a control that did no
+        work decide where the work went.
         """
         com_opcoes = sorted(s.name for s in API_KEY_SPECS if s.options)
-        assert com_opcoes == ["llm_embedding_provider", "llm_vision_provider"]
+        assert com_opcoes == [
+            "llm_chat_provider",
+            "llm_embedding_provider",
+            "llm_vision_provider",
+        ]
 
     def test_no_secret_key_is_ever_a_choice(self) -> None:
         """The invariant the test above actually exists to protect, stated
@@ -136,3 +146,70 @@ class TestResolveVisionProvider:
         """The transcriber factory is also reachable from paths with no org
         (a sweep, a CLI); it must get a routable provider, not a crash."""
         assert _resolvido_como(None)(None) == "openai"
+
+
+# ---------------------------------------------------------------------------
+# The chat switch — who WRITES the analysis, as opposed to who READS the page
+# ---------------------------------------------------------------------------
+
+
+def _chat_resolvido_como(valor):
+    """`resolve_chat_provider` with both tiers stubbed through its own DI
+    seams — same reasoning as `_resolvido_como` above, including why the
+    resolver is passed rather than monkeypatched."""
+    from app.services.api_keys_store import resolve_chat_provider
+
+    return lambda org_id: resolve_chat_provider(
+        org_id, store=None, resolver=lambda name, org=None: valor
+    )
+
+
+class TestTheChatSwitchIsWiredEndToEnd:
+    def test_every_option_names_a_provider_certidoes_can_route(self) -> None:
+        """🔴 The UI's options and the analysis model map must not drift.
+
+        Identical hazard to the vision switch's version of this test, one
+        layer over: an option with no entry in `ANALYSIS_MODELS` falls back
+        to OpenAI's model id under a non-OpenAI provider, which the API
+        answers with a 404 that reads like a broken key.
+        """
+        from app.modules.certidoes.service import ANALYSIS_MODELS
+        from app.services.api_keys_store import CHAT_PROVIDER_KEY
+
+        spec = get_spec(CHAT_PROVIDER_KEY)
+        assert spec.allowed_values, "a choice with no options is not a choice"
+        for provider in spec.allowed_values:
+            assert provider in ANALYSIS_MODELS, provider
+            assert get_spec(f"{provider}_api_key") is not None, provider
+
+    def test_the_default_matches_the_code_default(self) -> None:
+        """Two defaults exist — the spec's and the module's — and they answer
+        different callers. If they disagree, an org that never opened Settings
+        is analysed by one vendor while the pre-flight checks the other's key.
+        """
+        from app.modules.certidoes.service import DEFAULT_ANALYSIS_PROVIDER
+        from app.services.api_keys_store import CHAT_PROVIDER_KEY
+
+        assert get_spec(CHAT_PROVIDER_KEY).default == DEFAULT_ANALYSIS_PROVIDER
+
+    def test_unset_falls_back_to_the_documented_default(self) -> None:
+        assert _chat_resolvido_como(None)(ORG) == "openai"
+
+    def test_a_saved_choice_is_honoured(self) -> None:
+        assert _chat_resolvido_como("anthropic")(ORG) == "anthropic"
+
+    def test_an_unknown_value_falls_back_rather_than_being_forwarded(self) -> None:
+        """A retired or hand-written value must not reach the LLM stack: it
+        would fail one layer down as a missing credential for a vendor that
+        does not exist, instead of running on the documented default."""
+        assert _chat_resolvido_como("mistral")(ORG) == "openai"
+
+    def test_it_is_a_separate_setting_from_the_vision_switch(self) -> None:
+        """The whole point of the third spec. If these ever became one key,
+        an org could no longer read pages with the cheap vendor and write
+        summaries with the strong one — and, worse, the switch would appear
+        to govern certidões that never pass through transcription at all.
+        """
+        from app.services.api_keys_store import CHAT_PROVIDER_KEY
+
+        assert CHAT_PROVIDER_KEY != VISION_PROVIDER_KEY

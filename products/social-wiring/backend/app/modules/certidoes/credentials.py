@@ -55,6 +55,22 @@ INFOSIMPLES_EMAIL_ENVIO = "infosimples_email_envio"
 OPENAI_API_KEY = "openai_api_key"
 
 
+def provider_api_key(provider: str) -> str:
+    """The credential name holding `provider`'s key.
+
+    `openai_api_key` / `anthropic_api_key` / `gemini_api_key` — the same
+    `f"{provider}_api_key"` naming `LLMConfig.key_provider` resolves through,
+    so ONE key saved in Settings satisfies both the pre-flight check here and
+    the call the LLM stack makes afterwards. Built here rather than
+    interpolated at the call site because this module's whole contract is that
+    credential NAMES are declared in one place. `OPENAI_API_KEY` above stays
+    as the declared name for that one key — `provider_api_key("openai")`
+    returns the same string, and the constant is what the managed-key
+    coverage test asserts against.
+    """
+    return f"{provider}_api_key"
+
+
 def resolve_key(name: str, org_id: Optional[str] = None) -> Optional[str]:
     """Resolve one credential for an org. `None` when it is not configured.
 
@@ -69,5 +85,6 @@ __all__ = [
     "INFOSIMPLES_EMAIL_ENVIO",
     "INFOSIMPLES_TOKEN",
     "OPENAI_API_KEY",
+    "provider_api_key",
     "resolve_key",
 ]

@@ -70,8 +70,10 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "API_KEY_SPECS",
     "ApiKeyOption",
+    "CHAT_PROVIDER_KEY",
     "EMBEDDING_PROVIDER_KEY",
     "VISION_PROVIDER_KEY",
+    "resolve_chat_provider",
     "resolve_embedding_provider",
     "resolve_vision_provider",
     "MANAGED_API_KEYS",
@@ -268,6 +270,55 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
                     "Usa a Gemini API Key (gemini-embedding-001 truncado "
                     "para 1536d, a largura das colunas de vetor)."
                 ),
+            ),
+        ),
+        default="openai",
+    ),
+    #: 🔴 A THIRD SWITCH — READING A PAGE AND REASONING ABOUT IT ARE NOT THE
+    #: SAME PURCHASE.
+    #:
+    #: The vision switch above answers "who TRANSCRIBES a scanned page"; this
+    #: one answers "who ANALYSES the resulting text". Folding the second into
+    #: the first would look tidier and be wrong in both directions: a digitally
+    #: -issued certidão has a text layer and never calls a vision model at all,
+    #: so its analysis would be routed by a switch that had no say in
+    #: producing its input; and an org that wants the cheap vendor reading
+    #: dense small print but the strong one writing the legal summary could not
+    #: express that. The vendors also price the two capabilities differently
+    #: enough that one control cannot be tuned for both.
+    #:
+    #: All three vendors are offered because all three do chat — unlike the
+    #: embeddings switch, which cannot offer Anthropic. Same
+    #: manual-not-automatic rule as its two siblings: nothing fails over, the
+    #: operator picks, and the pick is visible.
+    ApiKeySpec(
+        name="llm_chat_provider",
+        label="Provedor de análise de documentos",
+        description=(
+            "Qual IA lê o texto de uma certidão e escreve o resumo jurídico "
+            "(débitos, pendências, restrições). Independente do provedor de "
+            "transcrição acima: uma certidão digital nunca passa pela "
+            "transcrição, mas sempre passa por aqui. A chave do provedor "
+            "escolhido precisa estar configurada acima."
+        ),
+        is_secret=False,
+        testable=False,
+        input_type="select",
+        options=(
+            ApiKeyOption(
+                value="openai",
+                label="OpenAI",
+                description="Usa a OpenAI API Key (modelo gpt-4.1-mini).",
+            ),
+            ApiKeyOption(
+                value="anthropic",
+                label="Anthropic (Claude)",
+                description="Usa a Anthropic API Key (modelo claude-opus-5).",
+            ),
+            ApiKeyOption(
+                value="gemini",
+                label="Google Gemini",
+                description="Usa a Gemini API Key (modelo gemini-2.0-flash).",
             ),
         ),
         default="openai",
@@ -478,6 +529,7 @@ def resolve_api_key(name: str, org_id: Optional[str]) -> Optional[str]:
 #: The managed keys that hold a manual provider choice.
 VISION_PROVIDER_KEY = "llm_vision_provider"
 EMBEDDING_PROVIDER_KEY = "llm_embedding_provider"
+CHAT_PROVIDER_KEY = "llm_chat_provider"
 
 
 def _resolve_provider_choice(
@@ -564,6 +616,26 @@ def resolve_vision_provider(
     """
     return _resolve_provider_choice(
         VISION_PROVIDER_KEY, org_id, store=store, resolver=resolver
+    )
+
+
+def resolve_chat_provider(
+    org_id: Optional[str],
+    *,
+    store: Any = _UNSET,
+    resolver: Callable[[str, Optional[str]], Optional[str]] = resolve_credential,
+) -> str:
+    """Which vendor writes this org's certidão analyses.
+
+    THE consume seam for the analysis switch, and deliberately NOT the same
+    call as `resolve_vision_provider`: a certidão with a real text layer is
+    analysed without any page ever being transcribed, so routing the analysis
+    by the transcription switch would let a setting that did no work decide
+    where the work went. Third caller of `_resolve_provider_choice`, which was
+    generalised at N=2 for exactly this.
+    """
+    return _resolve_provider_choice(
+        CHAT_PROVIDER_KEY, org_id, store=store, resolver=resolver
     )
 
 

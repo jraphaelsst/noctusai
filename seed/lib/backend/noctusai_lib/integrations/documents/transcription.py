@@ -516,8 +516,9 @@ def make_document_transcriber(
             PyMuPDF or the LLM stack.
         org_id: Forwarded to the LLM entry points for per-org key resolution
             and budget accounting.
-        provider: Which vendor reads the scanned pages (`"openai"` /
-            `"anthropic"`). `None` keeps `DEFAULT_VISION_PROVIDER`. This is a
+        provider: Which vendor reads the scanned pages — any key of
+            `OCR_MODELS` (`"openai"` / `"anthropic"` / `"gemini"`).
+            `None` keeps `DEFAULT_VISION_PROVIDER`. This is a
             MANUAL selection — nothing here fails over to the other vendor,
             because a silent switch would change which model transcribed a
             legal document without anyone being told.

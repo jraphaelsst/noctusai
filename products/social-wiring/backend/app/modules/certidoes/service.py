@@ -51,7 +51,7 @@ from xhtml2pdf import pisa
 
 from app.modules.certidoes.credentials import (
     INFOSIMPLES_TOKEN,
-    OPENAI_API_KEY,
+    provider_api_key,
     resolve_key,
 )
 from app.modules.certidoes.deps import BUCKET, PREFIXO
@@ -394,6 +394,30 @@ async def delete_storage_files(
 
 # --------------- AI analysis ---------------
 
+#: Which model writes the analysis, PER PROVIDER.
+#:
+#: 🔴 A MAP, NOT A STRING — for the same reason
+#: `documents/transcription.py::OCR_MODELS` is one: the model id is not
+#: portable across vendors. `gpt-4.1-mini` sent to Anthropic is a 404, and the
+#: operator who flipped the provider would read that as a broken key rather
+#: than a mismatched pin. Selecting a provider selects its model.
+#:
+#: These are analysis models, deliberately separate from the OCR pins: this
+#: call reasons about a legal document and writes the summary a human acts on,
+#: where the transcription rung only has to copy characters faithfully. Tune
+#: here, not at the call site.
+ANALYSIS_MODELS: dict[str, str] = {
+    "openai": "gpt-4.1-mini",
+    "anthropic": "claude-opus-5",
+    "gemini": "gemini-2.0-flash",
+}
+
+#: The provider assumed when the org never chose — must match the
+#: `llm_chat_provider` spec's own default, or an org that never opened
+#: Settings would be analysed by one vendor and billed against another's
+#: pre-flight check.
+DEFAULT_ANALYSIS_PROVIDER = "openai"
+
 
 async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[str]:
     """Send document text/summary to the seed `chat_completion` wrapper.
@@ -405,11 +429,26 @@ async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[
     that: without it the call raises `LLMNotConfigured` and the operator sees a
     stack-trace-shaped error on a certidão that actually succeeded.
     """
-    api_key = resolve_key(OPENAI_API_KEY, org_id)
+    from app.services.api_keys_store import get_spec, resolve_chat_provider
+
+    # Checks the SELECTED provider's key, never OpenAI's unconditionally —
+    # same reasoning as `matriculas.check_required_credentials`: an org
+    # running on Anthropic that is told forever about a missing OpenAI key
+    # learns to ignore this message, and the one time it means something it
+    # is invisible.
+    provider = resolve_chat_provider(org_id)
+    modelo = ANALYSIS_MODELS.get(provider, ANALYSIS_MODELS[DEFAULT_ANALYSIS_PROVIDER])
+    api_key = resolve_key(provider_api_key(provider), org_id)
     if not api_key:
-        logger.warning("AI analysis skipped — openai_api_key not configured")
+        logger.warning(
+            "AI analysis skipped — %s not configured (selected provider)",
+            provider_api_key(provider),
+        )
+        spec = get_spec(provider_api_key(provider))
+        rotulo = spec.label if spec else provider_api_key(provider)
         return (
-            "[Análise IA não disponível — OpenAI API Key não configurada. "
+            f"[Análise IA não disponível — {rotulo} não configurada. "
+            "É o provedor selecionado para análise de documentos. "
             "Configure em Configurações → Chaves de API]"
         )
 
@@ -427,7 +466,8 @@ async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[
                 },
                 {"role": "user", "content": text},
             ],
-            model="gpt-4.1-mini",
+            model=modelo,
+            provider=provider,
             org_id=org_id,
             max_tokens=1000,
         )
@@ -481,8 +521,19 @@ async def _extract_pdf_text(
     try:
         from noctusai_lib.integrations.documents import make_document_transcriber
 
+        from app.services.api_keys_store import resolve_vision_provider
+
+        # `max_vision_pages=0` means no page reaches a vision model today, so
+        # this argument buys nothing at runtime — it is here so that the day
+        # that cap is raised, the rung starts at the vendor the operator
+        # picked instead of silently at the seed default. The alternative is a
+        # provider switch that governs matrículas and quietly does not govern
+        # certidões, which is the harder bug to see.
         transcriber = make_document_transcriber(
-            real=True, org_id=org_id, max_vision_pages=0
+            real=True,
+            org_id=org_id,
+            max_vision_pages=0,
+            provider=resolve_vision_provider(org_id),
         )
         resultado = await transcriber.transcribe(
             pdf_bytes, mimetype="application/pdf"
