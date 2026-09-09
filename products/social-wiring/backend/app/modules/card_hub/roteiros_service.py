@@ -141,13 +141,24 @@ def _obter(client: Any, org_id: UUID, cliente_id: UUID, roteiro_id: UUID) -> dic
     return row
 
 
-def _visitas_de(client: Any, org_id: UUID, roteiro_ids: list[str]) -> list[dict]:
+def _visitas_de(
+    client: Any,
+    org_id: UUID,
+    roteiro_ids: list[str],
+    *,
+    incluir_removidos: bool = False,
+) -> list[dict]:
+    """Live visitas of these roteiros; `incluir_removidos` keeps the dead ones.
+
+    The display path wants the live set. The one-accepted-proposta guard wants
+    EVERYTHING — see `_recusar_segundo_aceite`.
+    """
     return [
         v
         for v in table_reads.in_batched_rows(
             client, VISITAS_TABLE, org_id, "roteiro_id", roteiro_ids
         )
-        if v.get("deleted_at") is None
+        if incluir_removidos or v.get("deleted_at") is None
     ]
 
 
@@ -289,12 +300,33 @@ def atualizar(
     return obter(client, org_id, cliente_id, roteiro_id)
 
 
-def remover(client: Any, org_id: UUID, cliente_id: UUID, roteiro_id: UUID) -> None:
+def remover(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    roteiro_id: UUID,
+    *,
+    usuario_id: Optional[UUID] = None,
+) -> None:
     """Soft delete, per D3's reversibility bar. The visitas' own rows are left
     alone — undoing this is one UPDATE rather than a resurrection — and both
     the card read and `vw_imovel_visita_contagem` exclude them via the
-    roteiro's `deleted_at`."""
-    _obter(client, org_id, cliente_id, roteiro_id)
+    roteiro's `deleted_at`.
+
+    An ACCEPTANCE on one of those visitas is the exception: it is withdrawn
+    here rather than left dangling, because the deal it drives lives on
+    another table that this delete would otherwise not touch. See
+    `_desfazer_aceite_removido`.
+    """
+    roteiro = _obter(client, org_id, cliente_id, roteiro_id)
+    atendimento_id = UUID(str(roteiro["atendimento_id"]))
+    _desfazer_aceite_removido(
+        client,
+        org_id,
+        atendimento_id,
+        _visitas_de(client, org_id, [str(roteiro_id)]),
+        usuario_id,
+    )
     _t(client, TABLE).update({"deleted_at": _now()}).eq("id", str(roteiro_id)).execute()
 
 
@@ -466,18 +498,18 @@ def registrar_proposta(
                 field="aceita",
             )
         _recusar_segundo_aceite(client, org_id, cliente_id, atendimento_id, visita_id)
-        updates["proposta_aceita_em"] = _now()
-        updates["proposta_aceita_por"] = str(usuario_id) if usuario_id else None
-
-    if quer_desaceitar:
-        updates["proposta_aceita_em"] = None
-        updates["proposta_aceita_por"] = None
-
-    if updates:
-        _t(client, VISITAS_TABLE).update(updates).eq("id", str(visita_id)).execute()
-
-    # 🔴 THE DEAL FOLLOWS THE ACCEPTANCE, in both directions, and says so.
-    if updates.get("proposta_aceita_em"):
+        # 🔴 EVERY REFUSAL HAPPENS BEFORE THE WRITE, AND THAT ORDERING IS THE
+        # WHOLE GUARANTEE. `card_hub` has no transaction: each `.execute()` is
+        # its own PostgREST request, so a guard that raises AFTER the visita
+        # UPDATE cannot roll it back. Until this moved up, refusing a second
+        # acceptance still recorded it — the operator saw a red toast while the
+        # row said accepted, and the card rendered "este é o imóvel da
+        # negociação" on a property the deal does not name. Two answers to
+        # "what is being sold", which is exactly what migration 104's header
+        # says this rule exists to prevent.
+        #
+        # So: decide first, write once. Anything that can refuse belongs above
+        # this line.
         atual_deal = negociacao_service.imovel_do_atendimento(
             client, org_id, atendimento_id
         )
@@ -492,6 +524,20 @@ def registrar_proposta(
                 "negociação explicitamente antes de aceitar",
                 field="aceita",
             )
+        updates["proposta_aceita_em"] = _now()
+        updates["proposta_aceita_por"] = str(usuario_id) if usuario_id else None
+
+    if quer_desaceitar:
+        updates["proposta_aceita_em"] = None
+        updates["proposta_aceita_por"] = None
+
+    if updates:
+        _t(client, VISITAS_TABLE).update(updates).eq("id", str(visita_id)).execute()
+
+    # 🔴 THE DEAL FOLLOWS THE ACCEPTANCE, in both directions, and says so.
+    # Nothing here can refuse — every guard ran above, before the write. This
+    # block only propagates a decision already taken.
+    if updates.get("proposta_aceita_em"):
         negociacao_service.definir_imovel_do_atendimento(
             client, org_id, atendimento_id, codigo, usuario_id=usuario_id
         )
@@ -513,6 +559,44 @@ def registrar_proposta(
     return _visita_out(atualizado, enriquecer(client, org_id, [codigo]))
 
 
+def _desfazer_aceite_removido(
+    client: Any,
+    org_id: UUID,
+    atendimento_id: UUID,
+    visitas: list[dict],
+    usuario_id: Optional[UUID],
+) -> None:
+    """Deleting an accepted visita withdraws the acceptance WITH it.
+
+    🔴 THE DEAL MUST NOT OUTLIVE ITS EVIDENCE. `registrar_proposta`'s explicit
+    un-accept path already clears `atendimento_negociacao.imovel_codigo` when
+    the deal still names this visita's imóvel. Deleting used to skip that, so
+    the two paths disagreed and the silent one was delete: the contract would
+    have named a property whose acceptance no longer existed anywhere — a
+    stale answer with nothing left to check it against.
+
+    Clearing is conditional on the deal STILL naming this código, exactly as
+    the un-accept path is: if the operator has since pointed the negotiation
+    somewhere else by hand, this removal has nothing to say about it.
+    """
+    aceitas = [v for v in visitas if v.get("proposta_aceita_em")]
+    if not aceitas:
+        return
+    _t(client, VISITAS_TABLE).update(
+        {"proposta_aceita_em": None, "proposta_aceita_por": None}
+    ).in_("id", [str(v["id"]) for v in aceitas]).execute()
+
+    atual_deal = negociacao_service.imovel_do_atendimento(
+        client, org_id, atendimento_id
+    )
+    if not atual_deal:
+        return
+    if canonical(str(atual_deal)) in {canonical(str(v["codigo"])) for v in aceitas}:
+        negociacao_service.definir_imovel_do_atendimento(
+            client, org_id, atendimento_id, None, usuario_id=usuario_id
+        )
+
+
 def _recusar_segundo_aceite(
     client: Any,
     org_id: UUID,
@@ -527,6 +611,19 @@ def _recusar_segundo_aceite(
     purchase says nothing about a live negotiation) and refuses if another
     visita already carries an acceptance.
 
+    🔴 SOFT-DELETED ROTEIROS AND VISITAS COUNT HERE, AND THAT IS THE POINT.
+    This guard used to skip them, so the rule was defeated by an ordinary
+    sequence with no concurrency at all: accept on roteiro A, delete roteiro A
+    (a stale route — routine), accept on roteiro B. Both acceptances stood,
+    HTTP 200, no error, and the partial index this migration ships returned
+    two rows for one atendimento. Whoever reads the accepted proposta to build
+    the contract would get the wrong property half the time.
+
+    `remover` / `remover_visita` now unwind an acceptance as they delete, so in
+    normal operation a dead row carries none and this filter never fires. It
+    stays as the backstop for rows deleted BEFORE that unwind existed: a
+    lingering acceptance should refuse loudly, not be silently ignored.
+
     Read-then-write, so two concurrent accepts could in principle both pass.
     That is accepted deliberately: this is a single operator clicking a button
     on one card, the losing write is recoverable by un-accepting, and the
@@ -534,16 +631,19 @@ def _recusar_segundo_aceite(
     race nobody can produce. The FK'd `imovel_codigo` still holds the deal to
     exactly one property regardless.
     """
-    roteiros = [
-        r
-        for r in table_reads.in_batched_rows(
+    roteiros = list(
+        table_reads.in_batched_rows(
             client, TABLE, org_id, "atendimento_id", [str(atendimento_id)]
         )
-        if r.get("deleted_at") is None
-    ]
+    )
     if not roteiros:
         return
-    for v in _visitas_de(client, org_id, [str(r["id"]) for r in roteiros]):
+    for v in _visitas_de(
+        client,
+        org_id,
+        [str(r["id"]) for r in roteiros],
+        incluir_removidos=True,
+    ):
         if str(v["id"]) == str(visita_id):
             continue
         if v.get("proposta_aceita_em"):
@@ -560,8 +660,21 @@ def remover_visita(
     cliente_id: UUID,
     roteiro_id: UUID,
     visita_id: UUID,
+    *,
+    usuario_id: Optional[UUID] = None,
 ) -> None:
-    _obter_visita(client, org_id, cliente_id, roteiro_id, visita_id)
+    """Soft-delete one visita — withdrawing its acceptance if it carried one.
+
+    See `_desfazer_aceite_removido`: the deal lives on another table, so a
+    delete that ignored it would leave the negotiation naming a property whose
+    acceptance no longer exists.
+    """
+    atual = _obter_visita(client, org_id, cliente_id, roteiro_id, visita_id)
+    # `_obter_visita` already proved the roteiro belongs to this cliente; this
+    # re-read is for its `atendimento_id`, which the visita row does not carry.
+    roteiro = _obter(client, org_id, cliente_id, roteiro_id)
+    atendimento_id = UUID(str(roteiro["atendimento_id"]))
+    _desfazer_aceite_removido(client, org_id, atendimento_id, [atual], usuario_id)
     _t(client, VISITAS_TABLE).update({"deleted_at": _now()}).eq(
         "id", str(visita_id)
     ).execute()

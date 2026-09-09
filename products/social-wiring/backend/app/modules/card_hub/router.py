@@ -571,8 +571,13 @@ async def delete_roteiro_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ):
-    _user, org_id = _auth_parts(auth)
-    roteiros_svc.remover(client, org_id, cliente_id, roteiro_id)
+    user, org_id = _auth_parts(auth)
+    # `usuario_id` is threaded because deleting a roteiro can WITHDRAW an
+    # accepted proposta and clear the deal's imóvel — a provenance-bearing
+    # write, not a bare tombstone.
+    roteiros_svc.remover(
+        client, org_id, cliente_id, roteiro_id, usuario_id=getattr(user, "id", None)
+    )
 
 
 @router.put("/{cliente_id}/roteiros/{roteiro_id}/ordem")
@@ -699,8 +704,15 @@ async def delete_visita_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ):
-    _user, org_id = _auth_parts(auth)
-    roteiros_svc.remover_visita(client, org_id, cliente_id, roteiro_id, visita_id)
+    user, org_id = _auth_parts(auth)
+    roteiros_svc.remover_visita(
+        client,
+        org_id,
+        cliente_id,
+        roteiro_id,
+        visita_id,
+        usuario_id=getattr(user, "id", None),
+    )
 
 
 # ─── Checklists ─────────────────────────────────────────────────────────

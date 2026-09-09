@@ -166,7 +166,14 @@ def _imovel_out(
         campos["corretores"] = []
         if reg is not None:
             campos.update({k: reg.get(snap) for k, snap in _SNAP_MAP.items()})
-        fonte = "registry"
+        # 🔴 "registry" ONLY when the registry actually has it. A código in
+        # neither source used to come back claiming `fonte: "registry"` and
+        # `ativo_no_vista: False` — byte-identical to a genuinely registered
+        # property that has left the catalog. The UI then rendered "fora do
+        # catálogo", which asserts we know the imóvel and it sold, and offered
+        # a button whose save 404s on the FK. `nenhuma` is the honest third
+        # answer, and `registrado` is what callers branch on.
+        fonte = "registry" if reg is not None else "nenhuma"
 
     return {
         "codigo": codigo,
@@ -182,6 +189,11 @@ def _imovel_out(
         # there, and an operator naming the imóvel of a CLOSED deal needs to
         # know the opposite — that "not in the catalog" is the expected state.
         "ativo_no_vista": bool((reg or {}).get("ativo_no_vista")),
+        # Does this código have a registry identity? Every FK in this schema
+        # points at `imovel_registry`, so this is precisely "can it be SAVED".
+        # A caller offering the código as a choice must consult it first —
+        # otherwise it offers something the save path will refuse.
+        "registrado": reg is not None,
         "fonte": fonte,
     }
 

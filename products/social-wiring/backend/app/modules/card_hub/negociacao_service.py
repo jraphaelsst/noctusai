@@ -415,10 +415,19 @@ def _imovel_de_origem(
     coincide often enough to offer as a shortcut and rarely enough that
     assuming it would be wrong in a way nobody could see afterwards.
 
-    `None` for a manually-created card, for a lead with no código, and for a
-    lead row that has since been deleted — all three mean the same thing to the
-    UI ("there is no anúncio to offer") and it renders nothing rather than an
-    empty affordance.
+    `None` for a manually-created card, for a lead with no código, for a lead
+    row that has since been deleted, and — 🔴 — for a código with no registry
+    identity. All mean the same thing to the UI ("there is no anúncio to
+    offer") and it renders nothing rather than an empty affordance.
+
+    That last case is not hypothetical: `leads.codigo_imovel` is free text with
+    no FK, while `imovel_codigo` is FK'd to `imovel_registry`, so a código the
+    registry has never seen is offerable and unsaveable at the same time.
+    Migration 063 measured 1019 distinct such códigos. Offering one produced a
+    working-looking shortcut whose save 404s — and labelled it "fora do
+    catálogo", which claims we know the property and it sold. `registrar_imovel`
+    now gives every NEW portal lead an identity; this guard is what keeps the
+    backlog from surfacing a dead button.
     """
     atendimentos = (
         _t(client, "atendimentos")
@@ -448,7 +457,13 @@ def _imovel_de_origem(
     # Enriched through the SAME path the picker uses, so "veio do anúncio
     # ONE10337 — Apartamento, Pinheiros" reads identically to the row the
     # operator would have picked by hand, including `ativo_no_vista`.
-    return imovel_busca.enriquecer(client, org_id, [codigo]).get(codigo)
+    imovel = imovel_busca.enriquecer(client, org_id, [codigo]).get(codigo)
+    # 🔴 Only offer what the save path would ACCEPT. `imovel_codigo` is FK'd to
+    # `imovel_registry`; a código with no registry identity would render a
+    # shortcut that 404s on Save. See the docstring.
+    if not imovel or not imovel.get("registrado"):
+        return None
+    return imovel
 
 
 def atualizar(

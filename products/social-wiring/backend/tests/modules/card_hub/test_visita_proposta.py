@@ -69,6 +69,19 @@ def _proposta(client, cid, rid, vid, **body):
     )
 
 
+def _visita(scoped, vid) -> dict:
+    """The stored row — not the API's view of it.
+
+    Every guard in this file must be provable against what was WRITTEN; a
+    response body cannot show a write that happened before a raise.
+    """
+    rows = (
+        scoped.table("visitas").select("*").eq("org_id", ORG_ID).eq("id", vid).execute()
+    ).data or []
+    assert rows, f"visita {vid} not found"
+    return rows[0]
+
+
 def _deal(scoped, aid) -> object:
     rows = (
         scoped.table("atendimento_negociacao")
@@ -317,6 +330,14 @@ class TestTheDealFollowsTheAcceptance:
         assert out.status_code == 400, out.text
         assert "ONE9001" in out.text and "ONE9002" in out.text
         assert _deal(scoped, aid) == "ONE9001"
+        # 🔴 AND THE VISITA MUST BE UNTOUCHED. Without this line the test was
+        # green while the refused acceptance was already committed: `card_hub`
+        # has no transaction, so a guard that raises AFTER the UPDATE cannot
+        # undo it. The operator saw a red toast and the row said accepted.
+        # `.get`, not `[...]`: a never-accepted row may not carry the key at
+        # all, and "absent" and "None" mean the same thing here. The KeyError
+        # this replaces was itself the proof — the column was never written.
+        assert _visita(scoped, roteiro["visitas"][1]["id"]).get("proposta_aceita_em") is None
 
 
 class TestUndoing:
@@ -376,3 +397,81 @@ class TestUndoing:
         _proposta(client, cid, rid, vid, aceita=False)
 
         assert _deal(scoped, aid) == "ONE9002"
+
+
+
+class TestUmDeleteNaoDeixaOAceiteParaTras:
+    """Soft-deleting must withdraw an acceptance, not orphan it.
+
+    🔴 BOTH HALVES WERE BROKEN AND EACH ONE ALONE IS ENOUGH TO PUT THE WRONG
+    HOUSE IN A CONTRACT. The guard skipped soft-deleted roteiros, so an
+    ordinary sequence with no concurrency — accept on a route, delete the stale
+    route, accept on the current one — left TWO accepted propostas on one
+    atendimento, HTTP 200, no error. And deleting the accepted visita left
+    `atendimento_negociacao.imovel_codigo` pointing at a property whose
+    acceptance no longer existed anywhere.
+    """
+
+    def test_deleting_the_accepted_visita_clears_the_deal(self, client, scoped):
+        cid, aid = _seed(scoped)
+        roteiro = _criar_roteiro(client, cid, ["ONE9001"])
+        vid = roteiro["visitas"][0]["id"]
+        assert _proposta(client, cid, roteiro["id"], vid,
+                         proposta=True, aceita=True).status_code == 200
+        assert _deal(scoped, aid) == "ONE9001"
+
+        assert client.delete(
+            f"/api/clientes/{cid}/roteiros/{roteiro['id']}/visitas/{vid}",
+            headers=_auth(),
+        ).status_code == 204
+        # The explicit un-accept path already did this; delete used to be the
+        # silent half that disagreed with it.
+        assert _deal(scoped, aid) is None
+        assert _visita(scoped, vid).get("proposta_aceita_em") is None
+
+    def test_deleting_the_roteiro_clears_the_deal(self, client, scoped):
+        cid, aid = _seed(scoped)
+        roteiro = _criar_roteiro(client, cid, ["ONE9001"])
+        assert _proposta(client, cid, roteiro["id"], roteiro["visitas"][0]["id"],
+                         proposta=True, aceita=True).status_code == 200
+
+        assert client.delete(
+            f"/api/clientes/{cid}/roteiros/{roteiro['id']}", headers=_auth()
+        ).status_code == 204
+        assert _deal(scoped, aid) is None
+
+    def test_a_deleted_route_cannot_hide_a_legacy_acceptance_from_the_guard(
+        self, client, scoped
+    ):
+        """The BACKSTOP, for rows deleted before the unwind above existed.
+
+        `remover` now withdraws an acceptance as it deletes, so a dead row
+        carries none and the guard's reach over deleted rows never fires in
+        normal operation. It matters for history: any roteiro soft-deleted
+        BEFORE this commit still holds its `proposta_aceita_em`, and the guard
+        used to skip exactly those. Seeded directly here because that state can
+        no longer be produced through the API — which is the point.
+        """
+        cid, aid = _seed(scoped)
+        rid_morto, vid_morto = str(uuid4()), str(uuid4())
+        scoped.set_table_data("roteiros", [{
+            "id": rid_morto, "org_id": ORG_ID, "atendimento_id": aid,
+            "titulo": "rota antiga", "created_at": "2026-08-01T10:00:00+00:00",
+            "deleted_at": "2026-08-02T10:00:00+00:00",
+        }])
+        scoped.set_table_data("visitas", [{
+            "id": vid_morto, "org_id": ORG_ID, "roteiro_id": rid_morto,
+            "codigo": "ONE9001", "ordem": 0, "status": "realizada",
+            "observacao": None, "feedback_em": None, "deleted_at": None,
+            "created_at": "2026-08-01T10:00:00+00:00",
+            "proposta_em": "2026-08-01T11:00:00+00:00",
+            "proposta_aceita_em": "2026-08-01T12:00:00+00:00",
+            "proposta_aceita_por": None, "proposta_por": None,
+        }])
+
+        r2 = _criar_roteiro(client, cid, ["ONE9002"])
+        out = _proposta(client, cid, r2["id"], r2["visitas"][0]["id"],
+                        proposta=True, aceita=True)
+
+        assert out.status_code == 400, out.text
+        assert "já tem uma proposta aceita" in out.text
