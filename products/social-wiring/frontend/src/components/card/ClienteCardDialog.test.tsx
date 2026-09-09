@@ -1979,3 +1979,199 @@ describe("a papelada do cliente dobra em dois níveis", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 });
+
+// ─── O papel da parte é editável no lugar (o badge vira o controle) ─────────
+//
+// WHY THIS BLOCK EXISTS
+// ---------------------
+// `papel` was API-reachable and UI-unreachable. `AdicionarCompradorDialog`
+// asks nome + celular (the two `stage_gate.CAMPOS_OBRIGATORIOS` fields) and
+// never sent a role, so the side's default was permanent: every buyer a
+// `comprador`, every seller a `proprietario`. No party could ever be marked
+// `conjuge` — and a sale by a married owner needs the spouse's consent
+// (CC art. 1.647), which a contract cannot ask for if no row names them.
+//
+// The fix adds nothing to the screen: the badge you were already reading
+// became the thing you click.
+
+describe("ClienteCardDialog — o papel da parte é editável no lugar", () => {
+  const parte = (over: Record<string, unknown> = {}) => ({
+    id: "parte-1",
+    atendimento_id: "atd-1",
+    cliente_id: "cli-esposa",
+    lado: "comprador",
+    papel: "comprador",
+    ordem: 0,
+    observacao: null,
+    created_at: "2026-08-24T00:00:00Z",
+    cliente: {
+      id: "cli-esposa",
+      nome: "Maria",
+      nome_completo: "Maria Mauricio",
+      celular: null,
+      email: null,
+    },
+    ...over,
+  }) as any;
+
+  async function abrirVendedor(props: Partial<ClienteCardDialogProps>) {
+    const rtl = await import("@testing-library/react");
+    rtl.render(<ClienteCardDialog {...baseProps(props)} />);
+    rtl.fireEvent.click(rtl.screen.getByTestId("card-subpage-tab-vendedor"));
+    return rtl;
+  }
+
+  it("stays a read-only badge when no handler is wired", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ compradores: [parte()] })} />);
+    expect(screen.getByTestId("papel-badge-comprador-parte-1").textContent).toBe(
+      "Comprador",
+    );
+    expect(screen.queryByTestId("papel-select-comprador-parte-1")).toBeNull();
+  });
+
+  it("🔴 becomes a select over THIS side's roles once the handler is wired", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [parte()],
+          onAlterarPapelComprador: vi.fn(),
+        })}
+      />,
+    );
+    const select = screen.getByTestId(
+      "papel-select-comprador-parte-1",
+    ) as HTMLSelectElement;
+    // The buyer side's vocabulary, not a flat list of every role that exists:
+    // `inventariante` is seller-only (an estate sells, it never buys).
+    expect([...select.options].map((o) => o.value)).toEqual([
+      "comprador",
+      "conjuge",
+      "fiador",
+      "procurador",
+      "outro",
+    ]);
+    expect(select.value).toBe("comprador");
+  });
+
+  it("fires with the PARTE id and the raw role value", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const onAlterar = vi.fn();
+    render(
+      <ClienteCardDialog
+        {...baseProps({ compradores: [parte()], onAlterarPapelComprador: onAlterar })}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("papel-select-comprador-parte-1"), {
+      target: { value: "conjuge" },
+    });
+    // The parte id (this deal's edge), never `cliente_id` — and the API's own
+    // word, never the label.
+    expect(onAlterar).toHaveBeenCalledWith("parte-1", "conjuge");
+  });
+
+  it("🔴 does NOT expand the panel — the control lives outside the toggle", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderPanel = vi.fn(() => <div data-testid="painel-da-parte" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [parte()],
+          onAlterarPapelComprador: vi.fn(),
+          renderDocumentosDePessoa: renderPanel,
+        })}
+      />,
+    );
+    // 🔴 A CLICK, not a `change`. `change` does not bubble a click, so it
+    // passes whichever slot the control sits in — this exact assertion was a
+    // false green until it fired the event that actually reaches the fold.
+    // Opening a `<select>` IS a click on it, and `CollapsibleSection` renders
+    // `titulo` INSIDE the toggle `<button>`; from there this would both unfold
+    // the panel and fire its checklist + documents queries.
+    fireEvent.click(screen.getByTestId("papel-select-comprador-parte-1"));
+    expect(renderPanel).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("painel-da-parte")).toBeNull();
+
+    // And the fold still works from the header itself — the control did not
+    // swallow the toggle it sits beside.
+    fireEvent.click(screen.getByTestId("pessoa-documentos-comprador-parte-1-toggle"));
+    expect(screen.getByTestId("painel-da-parte")).toBeTruthy();
+  });
+
+  it("disables only the party being saved, not every select on the card", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [parte(), parte({ id: "parte-2", cliente_id: "cli-fiador" })],
+          onAlterarPapelComprador: vi.fn(),
+          papelSalvandoParteId: "parte-1",
+        })}
+      />,
+    );
+    // Both sides share one mutation; a boolean would freeze the whole card.
+    expect(
+      (screen.getByTestId("papel-select-comprador-parte-1") as HTMLSelectElement)
+        .disabled,
+    ).toBe(true);
+    expect(
+      (screen.getByTestId("papel-select-comprador-parte-2") as HTMLSelectElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("offers the SELLER side its own vocabulary", async () => {
+    const { screen } = await abrirVendedor({
+      vendedores: [
+        parte({ id: "v-1", lado: "vendedor", papel: "proprietario" }),
+      ],
+      onAlterarPapelVendedor: vi.fn(),
+    });
+    const select = screen.getByTestId("papel-select-vendedor-v-1") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual([
+      "proprietario",
+      "conjuge",
+      "procurador",
+      "inventariante",
+      "outro",
+    ]);
+  });
+
+  it("🔴 every role BOTH sides offer has a label — checked against the source", async () => {
+    const { PAPEIS_POR_LADO } = await import("@/types/cardHub");
+    const { rotuloDePapel } = await import("./ClienteCardDialog");
+    // Pinned against `PAPEIS_POR_LADO` itself, not a second hand-written list:
+    // a role added there without a label would otherwise ship as a lowercase
+    // code in a badge nobody wrote.
+    for (const lado of ["comprador", "vendedor"] as const) {
+      for (const papel of PAPEIS_POR_LADO[lado]) {
+        expect(rotuloDePapel(papel)).not.toBe(papel);
+        expect(rotuloDePapel(papel).length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("🔴 renders an UNMAPPED role as itself rather than blank", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    const { rotuloDePapel } = await import("./ClienteCardDialog");
+    expect(rotuloDePapel("anuente")).toBe("anuente");
+
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [parte({ papel: "anuente" })],
+          onAlterarPapelComprador: vi.fn(),
+        })}
+      />,
+    );
+    // A `<select>` whose value matches no option renders EMPTY, which reads as
+    // "this person has no role" rather than "an unexpected one". The unknown
+    // value is prepended so the badge still says something.
+    const select = screen.getByTestId(
+      "papel-select-comprador-parte-1",
+    ) as HTMLSelectElement;
+    expect(select.value).toBe("anuente");
+    expect([...select.options].map((o) => o.value)).toContain("anuente");
+  });
+});

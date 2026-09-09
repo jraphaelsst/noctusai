@@ -738,6 +738,18 @@ export interface Comprador {
   observacao: string | null;
   created_at: string | null;
   cliente: CompradorPessoa | null;
+  /**
+   * Only on the PATCH response, and only about `papel: "conjuge"`.
+   *
+   * 🔴 Setting a party's role to `conjuge` also LINKS the spouse on both
+   * `clientes` rows (`conjuge_cliente_id`, migration 097) — which is what makes
+   * "who must sign?" answerable rather than merely labelled (CC art. 1.647).
+   * The server refuses to guess when more than one person on that side could
+   * be the principal, and says so by returning `null` here with the `papel`
+   * still applied. Absent on the list endpoint: it belongs to the two PEOPLE,
+   * not to this edge row.
+   */
+  conjuge_cliente_id?: string | null;
 }
 
 /** The two sides of a negotiation. */

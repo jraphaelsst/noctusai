@@ -101,6 +101,7 @@ import {
   flattenTimeline,
   useCardResumo,
   useChecklistMutations,
+  useCompradorMutations,
   useDocumentoMutations,
   useNotaMutations,
   useSetClienteTagsMutation,
@@ -282,5 +283,46 @@ describe("useNotaMutations — tipo discriminator (descricao vs. comentario)", (
     await expect((create as any).mutateAsync({ corpo: "desc", tipo: "descricao" })).rejects.toThrow(
       "já possui uma descrição",
     );
+  });
+});
+
+describe("useCompradorMutations.atualizarPapel — o papel da parte", () => {
+  it("PATCHes the parte and sends ONLY the papel", async () => {
+    mockPatch.mockResolvedValue({ id: "p1", papel: "conjuge", conjuge_cliente_id: "cl1" });
+    const { atualizarPapel } = useCompradorMutations("cl1");
+    await (atualizarPapel as any).mutateAsync({ parteId: "p1", papel: "conjuge" });
+
+    // 🔴 No `lado` in the body. `lado` decides which vocabulary validates
+    // `papel` (`PAPEIS_POR_LADO`), so a client able to name it could call a
+    // vendedor a `fiador`; the server reads the side off the stored row.
+    expect(mockPatch).toHaveBeenCalledWith("/api/clientes/cl1/compradores/p1", {
+      papel: "conjuge",
+    });
+  });
+
+  it("invalidates BOTH sides, not just the one written", async () => {
+    mockPatch.mockResolvedValue({ id: "p1", papel: "conjuge" });
+    const { atualizarPapel } = useCompradorMutations("cl1");
+    await (atualizarPapel as any).mutateAsync({ parteId: "p1", papel: "conjuge" });
+
+    // The key stops at "compradores" — no `lado` segment — because setting
+    // `conjuge` can also write `clientes.conjuge_cliente_id` on two people,
+    // so the card is no longer only about this one list.
+    const keys = invalidateQueriesMock.mock.calls.map(([arg]: any[]) =>
+      JSON.stringify(arg.queryKey),
+    );
+    expect(keys).toContain(JSON.stringify(["sw", "cardHub", "cl1", "compradores"]));
+    expect(keys).toContain(JSON.stringify(["sw", "cardHub", "cl1", "card"]));
+  });
+
+  it("propagates the 409 the spouse guard raises, message intact", async () => {
+    mockPatch.mockRejectedValue(
+      new Error("[409] Esta pessoa já tem outro cônjuge vinculado — corrija o cadastro dela antes de marcar este vínculo."),
+    );
+    const { atualizarPapel } = useCompradorMutations("cl1");
+    // Swallowing it would drop the ONE instruction the refusal carries.
+    await expect(
+      (atualizarPapel as any).mutateAsync({ parteId: "p1", papel: "conjuge" }),
+    ).rejects.toThrow("outro cônjuge vinculado");
   });
 });

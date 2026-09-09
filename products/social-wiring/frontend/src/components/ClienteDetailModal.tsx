@@ -268,6 +268,26 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
     );
   }
 
+  /**
+   * Correct a party's role from the badge on their panel.
+   *
+   * 🔴 The server's message is surfaced verbatim, and here that matters more
+   * than usual: its 409 means "this person already has a DIFFERENT spouse
+   * linked", which the operator fixes on that person's own record. Replacing
+   * it with "não foi possível" would hide the one instruction the refusal
+   * carries. `lado` is not sent — the server reads it off the row, because
+   * `lado` is what decides which vocabulary validates `papel`.
+   */
+  function handleAlterarPapel(parteId: string, papel: string) {
+    compradorMutations.atualizarPapel.mutate(
+      { parteId, papel },
+      {
+        onError: (err) =>
+          toastServerError(err, "Não foi possível alterar o papel."),
+      },
+    );
+  }
+
   function handleOpenDocumento(documentoId: string) {
     documentoMutations.getUrl.mutate(
       { documentoId, intent: "view" },
@@ -601,6 +621,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
             toastServerError(err, "Não foi possível remover o comprador."),
         })
       }
+      onAlterarPapelComprador={handleAlterarPapel}
       vendedores={vendedores.data?.items ?? []}
       vendedoresLoading={vendedores.isPending || vendedores.isFetching}
       onAdicionarVendedor={() => setVendedorDialogOpen(true)}
@@ -609,6 +630,15 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
           onError: (err) =>
             toastServerError(err, "Não foi possível remover o vendedor."),
         })
+      }
+      onAlterarPapelVendedor={handleAlterarPapel}
+      // 🔴 The PARTE being saved, not a boolean. Both sides share one
+      // mutation, so `isPending` alone would disable every role select on the
+      // card while any one of them was in flight.
+      papelSalvandoParteId={
+        compradorMutations.atualizarPapel.isPending
+          ? compradorMutations.atualizarPapel.variables?.parteId ?? null
+          : null
       }
       // Each party's panel fetches its OWN checklist and documents, keyed by
       // THEIR cliente_id. Passed as a render prop because `ClienteCardDialog`

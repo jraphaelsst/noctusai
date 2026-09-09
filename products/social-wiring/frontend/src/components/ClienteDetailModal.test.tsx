@@ -82,6 +82,10 @@ vi.mock("@/hooks/useCardHub", () => ({
   useCompradorMutations: () => ({
     adicionar: { mutate: vi.fn(), isPending: false },
     remover: { mutate: vi.fn(), isPending: false },
+    // `variables` is part of the contract this modal reads, not decoration:
+    // it derives `papelSalvandoParteId` from it so ONE role select is
+    // disabled while it saves, rather than every one on the card.
+    atualizarPapel: { mutate: vi.fn(), isPending: false, variables: undefined },
   }),
   useDadosPessoaisMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useNotaMutations: () => ({ create: mockCreate, update: mockUpdate, remove: { mutate: vi.fn() } }),

@@ -1200,7 +1200,28 @@ export function useCompradorMutations(clienteId: string) {
     onSuccess: invalidate,
   });
 
-  return { adicionar, remover };
+  /**
+   * Correct what a party IS to their side.
+   *
+   * 🔴 `lado` is deliberately absent from the body — the server reads it off
+   * the stored row, because `lado` decides which vocabulary validates `papel`
+   * and a client able to name it could call a vendedor a `fiador`.
+   *
+   * Shares `invalidate` with the other two, which re-reads BOTH sides. That is
+   * over-invalidation on purpose here as well: setting `conjuge` can also
+   * write `clientes.conjuge_cliente_id` on two people, so the card summary is
+   * no longer only about this list.
+   */
+  const atualizarPapel = useMutation({
+    mutationFn: ({ parteId, papel }: { parteId: string; papel: string }) =>
+      api.patch<Comprador>(
+        `${clienteBase(clienteId)}/compradores/${encodeURIComponent(parteId)}`,
+        { papel },
+      ),
+    onSuccess: invalidate,
+  });
+
+  return { adicionar, remover, atualizarPapel };
 }
 
 

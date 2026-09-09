@@ -565,3 +565,241 @@ class TestOLadoVendedor:
             headers=_auth(),
         )
         assert r.status_code == 400
+
+
+# ─── Corrigindo o papel depois (o badge vira o controle) ─────────────────────
+#
+# WHY THIS BLOCK EXISTS
+# ---------------------
+# `papel` was API-reachable and UI-unreachable. `AdicionarCompradorDialog` asks
+# for nome + celular — the two `stage_gate.CAMPOS_OBRIGATORIOS` fields — and
+# nothing ever sent a `papel`, so the side's default was permanent: every
+# buyer-side party a `comprador`, every seller-side one a `proprietario`.
+#
+# That blocked a legal requirement rather than a nicety. A married seller's
+# spouse must consent to the sale (CC art. 1.647; migration 097's header states
+# it), and a contract cannot ask who has to sign if no row can say `conjuge`.
+
+
+def _cliente_row(scoped, cliente_id: str) -> dict:
+    """Read a `clientes` row back THROUGH the same scoped mock the routes
+    write to — a second `.schema()` call would be a second data store (see the
+    conftest header), and the assertion would pass against nothing."""
+    rows = (
+        scoped.table("clientes").select("*").eq("id", str(cliente_id)).execute().data
+        or []
+    )
+    assert rows, f"cliente {cliente_id} não está no mock"
+    return rows[0]
+
+
+def _add(client, cid: str, nome: str, **body) -> dict:
+    r = client.post(
+        f"/api/clientes/{cid}/compradores",
+        json={"nome": nome, **body},
+        headers=_auth(),
+    )
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _patch_papel(client, cid: str, parte_id: str, papel: str):
+    return client.patch(
+        f"/api/clientes/{cid}/compradores/{parte_id}",
+        json={"papel": papel},
+        headers=_auth(),
+    )
+
+
+class TestCorrigindoOPapelDaParte:
+    def test_the_side_default_is_no_longer_the_last_word(self, client, scoped):
+        """The whole gap in one assertion: added as the side's default, then
+        corrected — which nothing could do before."""
+        cid, _ = _titular(scoped)
+        parte = _add(client, cid, "Maria Mauricio")
+        assert parte["papel"] == "comprador"
+
+        r = _patch_papel(client, cid, parte["id"], "conjuge")
+        assert r.status_code == 200, r.text
+        assert r.json()["papel"] == "conjuge"
+
+        # And it PERSISTED — a response echoing the request would pass a
+        # weaker version of this test while writing nothing.
+        listagem = client.get(
+            f"/api/clientes/{cid}/compradores", headers=_auth()
+        ).json()
+        assert [p["papel"] for p in listagem["items"]] == ["conjuge"]
+
+    def test_a_role_from_the_other_side_is_refused_here_too(self, client, scoped):
+        """Same vocabulary, same refusal as `adicionar` — one definition
+        checked at both doors, not a second list that drifts."""
+        cid, _ = _titular(scoped)
+        comprador = _add(client, cid, "Maria")
+        vendedor = _add(client, cid, "Carlos", lado="vendedor")
+
+        assert _patch_papel(client, cid, comprador["id"], "inventariante").status_code == 400
+        assert _patch_papel(client, cid, vendedor["id"], "fiador").status_code == 400
+        assert _patch_papel(client, cid, comprador["id"], "socio").status_code == 400
+
+    def test_the_caller_may_not_name_the_side(self, client, scoped):
+        """🔴 `lado` decides which vocabulary validates `papel`, so a caller
+        allowed to send it could call a vendedor a `fiador` by claiming the
+        buyer side. `StrictHttpModel` refuses the field outright."""
+        cid, _ = _titular(scoped)
+        vendedor = _add(client, cid, "Carlos", lado="vendedor")
+        r = client.patch(
+            f"/api/clientes/{cid}/compradores/{vendedor['id']}",
+            json={"papel": "fiador", "lado": "comprador"},
+            headers=_auth(),
+        )
+        assert r.status_code == 422
+
+    def test_an_unknown_parte_is_404_not_a_silent_no_op(self, client, scoped):
+        cid, _ = _titular(scoped)
+        assert _patch_papel(client, cid, str(uuid4()), "conjuge").status_code == 404
+
+
+class TestVinculandoOConjuge:
+    """🔴 `papel='conjuge'` is the one role that is not merely a label.
+
+    It asserts a fact about two PEOPLE, and `clientes.conjuge_cliente_id`
+    (migration 097) is what turns "who must sign?" from a question about a
+    badge into one the record can answer. Labelling without linking would ship
+    the word and none of the meaning.
+    """
+
+    def test_the_buyer_side_links_to_the_titular(self, client, scoped):
+        """The buyer-side principal is `atendimentos.cliente_id` — the titular
+        is NOT a row in this table (migration 073), so the link cannot be found
+        by reading `atendimento_partes` alone."""
+        cid, _ = _titular(scoped)
+        parte = _add(client, cid, "Maria Mauricio")
+
+        r = _patch_papel(client, cid, parte["id"], "conjuge")
+        assert r.status_code == 200, r.text
+        esposa_id = parte["cliente_id"]
+        assert r.json()["conjuge_cliente_id"] == cid
+
+        # BOTH directions — a marriage is symmetric, and the question is asked
+        # from the titular's card at least as often as from the spouse's.
+        assert _cliente_row(scoped, esposa_id)["conjuge_cliente_id"] == cid
+        assert _cliente_row(scoped, cid)["conjuge_cliente_id"] == esposa_id
+
+    def test_the_seller_side_links_to_the_proprietario(self, client, scoped):
+        """The asymmetry migration 098 documents: the seller's principal IS a
+        row here, because the seller never arrives as a lead."""
+        cid, _ = _titular(scoped)
+        dono = _add(client, cid, "Carlos Eduardo Ramos", lado="vendedor")
+        assert dono["papel"] == "proprietario"
+        esposa = _add(client, cid, "Beatriz Ramos", lado="vendedor")
+
+        r = _patch_papel(client, cid, esposa["id"], "conjuge")
+        assert r.status_code == 200, r.text
+        assert r.json()["conjuge_cliente_id"] == dono["cliente_id"]
+        assert (
+            _cliente_row(scoped, esposa["cliente_id"])["conjuge_cliente_id"]
+            == dono["cliente_id"]
+        )
+        assert (
+            _cliente_row(scoped, dono["cliente_id"])["conjuge_cliente_id"]
+            == esposa["cliente_id"]
+        )
+
+    def test_two_co_buyers_make_it_ambiguous_so_nothing_is_linked(
+        self, client, scoped
+    ):
+        """🔴 Ambiguity is not an error — but guessing is. Two people could be
+        this spouse's principal, and picking the titular because they are
+        easiest to find would put a name on a signature line for no reason."""
+        cid, _ = _titular(scoped)
+        irmao = _add(client, cid, "Irmão Comprador")
+        esposa = _add(client, cid, "Maria Mauricio")
+
+        r = _patch_papel(client, cid, esposa["id"], "conjuge")
+        assert r.status_code == 200, r.text
+        assert r.json()["papel"] == "conjuge"
+        assert r.json()["conjuge_cliente_id"] is None
+        for pessoa in (cid, irmao["cliente_id"], esposa["cliente_id"]):
+            assert _cliente_row(scoped, pessoa).get("conjuge_cliente_id") is None
+
+    def test_two_proprietarios_make_it_ambiguous_too(self, client, scoped):
+        """Co-owners selling together — the same refusal, on the side whose
+        principal lives in this table."""
+        cid, _ = _titular(scoped)
+        a = _add(client, cid, "Carlos Ramos", lado="vendedor")
+        b = _add(client, cid, "Regina Ramos", lado="vendedor")
+        _patch_papel(client, cid, b["id"], "proprietario")
+        terceiro = _add(client, cid, "Alguém Ramos", lado="vendedor")
+
+        r = _patch_papel(client, cid, terceiro["id"], "conjuge")
+        assert r.status_code == 200, r.text
+        assert r.json()["conjuge_cliente_id"] is None
+        assert _cliente_row(scoped, a["cliente_id"]).get("conjuge_cliente_id") is None
+        assert _cliente_row(scoped, b["cliente_id"]).get("conjuge_cliente_id") is None
+
+    def test_no_candidate_at_all_still_sets_the_papel(self, client, scoped):
+        """A lone seller-side party relabelled `conjuge`: nobody is left to be
+        the principal. Zero candidates and two get the same treatment, because
+        in both cases nothing here knows the answer."""
+        cid, _ = _titular(scoped)
+        sozinha = _add(client, cid, "Beatriz Ramos", lado="vendedor")
+
+        r = _patch_papel(client, cid, sozinha["id"], "conjuge")
+        assert r.status_code == 200, r.text
+        assert r.json()["papel"] == "conjuge"
+        assert r.json()["conjuge_cliente_id"] is None
+
+    def test_an_existing_spouse_is_never_clobbered(self, client, scoped):
+        """🔴 Surface, do not overwrite. A `conjuge_cliente_id` naming somebody
+        else is either an earlier deal's correct answer or a mistake a human
+        has to look at; silently moving a signature requirement onto a
+        different person from a dropdown is the silent-error shape."""
+        cid, aid = str(uuid4()), str(uuid4())
+        outra = str(uuid4())
+        _seed(
+            scoped,
+            clientes=[
+                cliente_row(cid, nome="Luciano", conjuge_cliente_id=outra),
+                cliente_row(outra, nome="Primeira Esposa"),
+            ],
+            atendimentos=[_atendimento(aid, cid)],
+        )
+        parte = _add(client, cid, "Maria Mauricio")
+
+        r = _patch_papel(client, cid, parte["id"], "conjuge")
+        assert r.status_code == 409, r.text
+        # 🔴 Refused BEFORE anything was written — a 409 whose party had
+        # already been relabelled would be a lie about what the request did.
+        assert _cliente_row(scoped, cid)["conjuge_cliente_id"] == outra
+        assert _cliente_row(scoped, parte["cliente_id"]).get("conjuge_cliente_id") is None
+        listagem = client.get(
+            f"/api/clientes/{cid}/compradores", headers=_auth()
+        ).json()
+        assert [p["papel"] for p in listagem["items"]] == ["comprador"]
+
+    def test_re_marking_an_already_linked_spouse_is_a_no_op_not_a_409(
+        self, client, scoped
+    ):
+        """The guard refuses a DIFFERENT spouse, not the same one — otherwise
+        the dropdown would refuse the value it is already showing."""
+        cid, _ = _titular(scoped)
+        parte = _add(client, cid, "Maria Mauricio")
+        assert _patch_papel(client, cid, parte["id"], "conjuge").status_code == 200
+
+        r = _patch_papel(client, cid, parte["id"], "conjuge")
+        assert r.status_code == 200, r.text
+        assert r.json()["conjuge_cliente_id"] == cid
+
+    def test_moving_off_conjuge_does_not_unlink_the_marriage(self, client, scoped):
+        """A marriage is a fact about two people, not about how this deal
+        labels one of them. A mis-click on a dropdown must not erase it —
+        clearing a wrong spouse is an edit on the person's own record."""
+        cid, _ = _titular(scoped)
+        parte = _add(client, cid, "Maria Mauricio")
+        _patch_papel(client, cid, parte["id"], "conjuge")
+
+        r = _patch_papel(client, cid, parte["id"], "procurador")
+        assert r.status_code == 200, r.text
+        assert r.json()["papel"] == "procurador"
+        assert _cliente_row(scoped, parte["cliente_id"])["conjuge_cliente_id"] == cid
+        assert _cliente_row(scoped, cid)["conjuge_cliente_id"] == parte["cliente_id"]

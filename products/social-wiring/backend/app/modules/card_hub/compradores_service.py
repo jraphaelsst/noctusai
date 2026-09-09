@@ -52,6 +52,14 @@ from app.modules.card_hub.services import (
 
 TABLE = "atendimento_partes"
 CLIENTES_TABLE = "clientes"
+ATENDIMENTOS_TABLE = "atendimentos"
+
+#: The one `papel` that is not merely a label. Every other role describes what
+#: a person does on this deal; `conjuge` asserts a fact about two people that
+#: outlives it — and CC art. 1.647 makes it decide who has to sign. Named
+#: rather than spelled inline so the link rule below and the vocabularies above
+#: cannot drift apart on a typo.
+PAPEL_CONJUGE = "conjuge"
 
 #: The roles a party can hold, as code rather than a schema CHECK — same
 #: reasoning as `documento_checklist_service.ITENS`. The business learns new
@@ -320,6 +328,202 @@ def adicionar(
     return _out(row, clientes.get(novo_cliente_id))
 
 
+def atualizar_papel(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    parte_id: UUID,
+    *,
+    papel: str,
+) -> dict:
+    """Change what a party IS to their side — and, for a spouse, WHO to.
+
+    🔴 WHY THIS EXISTS AT ALL, WHEN `adicionar` ALREADY TAKES A `papel`
+    -------------------------------------------------------------------
+    Because nothing ever sent one. `AdicionarCompradorDialog` asks for the two
+    fields `pipeline.stage_gate.CAMPOS_OBRIGATORIOS` requires and nothing else,
+    on purpose — the moment a party is added is the moment the operator knows
+    LEAST about them. So the side's default was applied and could never be
+    corrected: every buyer-side party was a `comprador` and every seller-side
+    one a `proprietario`, forever, through an API that had listed five roles
+    per side since migration 098.
+
+    That is not a cosmetic gap. A married seller's spouse must consent to the
+    sale (CC art. 1.647, and migration 097's header states the consequence): a
+    contract cannot ask who has to sign if no row can say `conjuge`.
+
+    🔴 THE SIDE IS READ OFF THE ROW, NEVER TAKEN FROM THE CALLER
+    -------------------------------------------------------------
+    `PAPEIS_POR_LADO` is the whole validation, so whoever names the `lado`
+    names the vocabulary. A caller allowed to claim "this is the buyer side"
+    could call a vendedor a `fiador` and this function would agree with them.
+    The row already knows which side it is on; that is the answer used.
+
+    🔴 SETTING `conjuge` ALSO LINKS THE SPOUSE — see `_principal_do_conjuge`
+    ------------------------------------------------------------------------
+    A `papel` of `conjuge` says "married to the principal" and the principal is
+    usually derivable, so deriving it is what turns a label into an answerable
+    question. When it is NOT derivable the label still lands and the link does
+    not — ambiguity is not an error, but guessing which of two co-buyers a
+    spouse belongs to would put the wrong name on a contract.
+
+    Moving a party OFF `conjuge` deliberately does NOT unlink: the marriage is
+    a fact about two people, not about how this deal labels one of them, and a
+    mis-click on a dropdown must not silently erase it. Clearing a wrong spouse
+    is `PATCH /api/clientes/{id}` on the person's own record — the same place it
+    is set by hand.
+    """
+    ensure_cliente(client, org_id, cliente_id)
+    rows = (
+        _t(client, TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("id", str(parte_id))
+        .execute()
+    ).data or []
+    if not rows:
+        raise NotFoundError(TABLE, str(parte_id))
+    row = dict(rows[0])
+
+    lado_alvo = normalizar_lado(row.get("lado"))
+    papeis = PAPEIS_POR_LADO[lado_alvo]
+    if papel not in papeis:
+        # Same refusal `adicionar` already gives an unknown role, from the same
+        # tuple — one vocabulary, checked the same way at both doors.
+        raise ValidationError_(
+            f"Papel inválido para o lado {lado_alvo}: {papel}. "
+            f"Esperado um de {', '.join(papeis)}."
+        )
+
+    parte_cliente_id = str(row["cliente_id"])
+    principal_id: Optional[str] = None
+    if papel == PAPEL_CONJUGE:
+        principal_id = _principal_do_conjuge(client, org_id, row, lado_alvo)
+        if principal_id is not None:
+            # Checked BEFORE the papel is written, so a refusal leaves nothing
+            # half-applied. A 409 whose party had already been relabelled would
+            # be a lie about what the request did.
+            _recusar_conjuge_ocupado(client, org_id, parte_cliente_id, principal_id)
+
+    _t(client, TABLE).update({"papel": papel}).eq("id", str(parte_id)).eq(
+        "org_id", str(org_id)
+    ).execute()
+    row["papel"] = papel
+
+    if principal_id is not None:
+        _casar(client, org_id, parte_cliente_id, principal_id)
+
+    clientes = _clientes_por_id(client, org_id, [parte_cliente_id])
+    out = _out(row, clientes.get(parte_cliente_id))
+    #: Not part of `_FIELDS` — it belongs to the two PEOPLE, not to the edge
+    #: row. Returned anyway so the caller can tell the ambiguous case (papel
+    #: set, `null` here) from the linked one without a second round-trip.
+    out["conjuge_cliente_id"] = principal_id
+    return out
+
+
+def _principal_do_conjuge(
+    client: Any, org_id: UUID, parte: dict, lado: str
+) -> Optional[str]:
+    """Whose spouse is this? — or `None` when only a guess could answer.
+
+    🔴 THE TWO SIDES ASK IT DIFFERENTLY, AND THE ASYMMETRY IS REAL
+    ---------------------------------------------------------------
+    On the SELLER side the principal is a row in this table: the
+    `proprietario` (migration 098 — the seller does not arrive as a lead, so
+    every seller-side party lives here, the first one being the owner).
+
+    On the BUYER side the principal is `atendimentos.cliente_id`, the titular,
+    who is deliberately NOT a row here (migration 073: a second row asserting
+    what the atendimento already says is a second truth, and the two disagree
+    the first time either moves).
+
+    🔴 A SECOND CO-BUYER MAKES THE QUESTION AMBIGUOUS, NOT HARDER
+    --------------------------------------------------------------
+    So other buyer-side `comprador` parties count as candidates alongside the
+    titular. Luciano and his brother both buying, plus a spouse: "whose?" has
+    two defensible answers, and picking the titular because they are easiest to
+    find would put a name on a signature line for no reason at all. Zero
+    candidates and two candidates get the same treatment — no link — because in
+    both cases nothing here knows the answer.
+    """
+    atendimento_id = str(parte["atendimento_id"])
+    eu = str(parte["cliente_id"])
+    partes = (
+        _t(client, TABLE)
+        .select("cliente_id,papel,lado")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", atendimento_id)
+        .eq("lado", lado)
+        .execute()
+    ).data or []
+    candidatos = [
+        str(r["cliente_id"])
+        for r in partes
+        if r.get("papel") == PAPEL_PADRAO_POR_LADO[lado]
+        and str(r["cliente_id"]) != eu
+    ]
+    if lado == "comprador":
+        atd = (
+            _t(client, ATENDIMENTOS_TABLE)
+            .select("id,cliente_id")
+            .eq("org_id", str(org_id))
+            .eq("id", atendimento_id)
+            .execute()
+        ).data or []
+        titular = str(atd[0]["cliente_id"]) if atd and atd[0].get("cliente_id") else None
+        if titular and titular != eu:
+            candidatos.append(titular)
+    unicos = sorted(set(candidatos))
+    return unicos[0] if len(unicos) == 1 else None
+
+
+def _conjuge_atual(client: Any, org_id: UUID, cliente_id: str) -> Optional[str]:
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select("id,conjuge_cliente_id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .execute()
+    ).data or []
+    valor = rows[0].get("conjuge_cliente_id") if rows else None
+    return str(valor) if valor else None
+
+
+def _recusar_conjuge_ocupado(
+    client: Any, org_id: UUID, a_id: str, b_id: str
+) -> None:
+    """Refuse rather than clobber a spouse who is already named.
+
+    A `conjuge_cliente_id` pointing at somebody else is not stale data to be
+    corrected in passing — it is either an earlier deal's correct answer or a
+    mistake somebody has to look at. Overwriting it from a dropdown would move
+    a signature requirement onto a different person with no trace, which is
+    precisely the silent-error shape. Idempotent when the two already name each
+    other, so re-picking `conjuge` on a linked party is a no-op, not a 409.
+    """
+    for um, outro in ((a_id, b_id), (b_id, a_id)):
+        atual = _conjuge_atual(client, org_id, um)
+        if atual is not None and atual != str(outro):
+            raise ConflictError(
+                "Esta pessoa já tem outro cônjuge vinculado — corrija o "
+                "cadastro dela antes de marcar este vínculo."
+            )
+
+
+def _casar(client: Any, org_id: UUID, a_id: str, b_id: str) -> None:
+    """Write the link in BOTH directions — a marriage is symmetric.
+
+    One-directional would make "who must sign with this owner?" answerable from
+    the spouse's card and unanswerable from the owner's, which is the card the
+    question is actually asked from.
+    """
+    for um, outro in ((a_id, b_id), (b_id, a_id)):
+        _t(client, CLIENTES_TABLE).update(
+            {"conjuge_cliente_id": str(outro)}
+        ).eq("id", str(um)).eq("org_id", str(org_id)).execute()
+
+
 def _vincular(
     client: Any,
     org_id: UUID,
@@ -425,9 +629,12 @@ def remover(client: Any, org_id: UUID, cliente_id: UUID, parte_id: UUID) -> None
 
 __all__ = [
     "PAPEIS",
+    "PAPEIS_POR_LADO",
+    "PAPEL_CONJUGE",
     "PAPEL_PADRAO",
     "TABLE",
     "adicionar",
+    "atualizar_papel",
     "listar",
     "remover",
 ]

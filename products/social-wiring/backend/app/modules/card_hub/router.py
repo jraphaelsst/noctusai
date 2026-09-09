@@ -75,6 +75,7 @@ from app.modules.card_hub.schemas import (
     MembrosSetBody,
     NotaCreateBody,
     NotaUpdateBody,
+    PartePapelPatchBody,
     RoteiroCreateBody,
     RoteiroOrdemBody,
     RoteiroPatchBody,
@@ -1039,6 +1040,33 @@ async def create_comprador_route(
         atendimento_id=body.atendimento_id,
         lado=body.lado,
         user_id=getattr(user, "id", None),
+    )
+
+
+@router.patch("/{cliente_id}/compradores/{parte_id}")
+async def patch_comprador_route(
+    cliente_id: UUID,
+    parte_id: UUID,
+    body: PartePapelPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Correct a party's role — the only field on this edge worth changing.
+
+    🔴 THE MISSING THIRD VERB. This block had `listar / adicionar / remover` and
+    the add-dialog sends neither `papel` nor `lado`, so the side's default was
+    the first and last word on every party ever created. The UI now edits the
+    badge it was already showing.
+
+    A 409 here is the spouse link refusing to overwrite a different spouse
+    (`_recusar_conjuge_ocupado`), NOT a duplicate-party conflict — and it is
+    raised before anything is written, so a refused request changed nothing.
+
+    No `lado` in the body, on purpose: see `PartePapelPatchBody`.
+    """
+    _user, org_id = _auth_parts(auth)
+    return compradores_svc.atualizar_papel(
+        client, org_id, cliente_id, parte_id, papel=body.papel
     )
 
 

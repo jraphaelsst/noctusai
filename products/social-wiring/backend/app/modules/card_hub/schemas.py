@@ -368,6 +368,29 @@ class CompradorCreateBody(StrictHttpModel):
     lado: Optional[str] = None
 
 
+class PartePapelPatchBody(StrictHttpModel):
+    """Correct what a party IS to their side.
+
+    🔴 `lado` IS DELIBERATELY NOT ACCEPTED. The validation this drives is
+    `PAPEIS_POR_LADO[lado]`, so a caller able to name the side would be naming
+    its own vocabulary — a vendedor could be made a `fiador` by claiming the
+    buyer side. The stored row already knows which side it is on, and that is
+    what the service reads.
+
+    `papel` is REQUIRED rather than Optional-means-leave-alone (the convention
+    `NegociacaoPatchBody` follows). That convention exists to let one form save
+    many fields without asserting the ones it did not touch; this endpoint has
+    exactly one field and is driven by picking a value from a list, so an
+    omitted `papel` is a request that means nothing.
+
+    Not validated as a `Literal` here for the same reason `CompradorCreateBody`
+    is not: the per-side vocabulary lives in `compradores_service`, next to the
+    dropdown that offers it, and a second copy is a second thing to forget.
+    """
+
+    papel: str = Field(min_length=1, max_length=64)
+
+
 # ─── Negociação (migration 077) ──────────────────────────────────────────
 
 

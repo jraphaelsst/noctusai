@@ -111,6 +111,11 @@ import type {
   TipoDocumento,
   VisitaPropostaBody,
 } from "@/types/cardHub";
+// A VALUE, not a type — the two role vocabularies mirror
+// `compradores_service.PAPEIS_POR_LADO`, and the select offers exactly what
+// the API will accept. Re-listing them here would be the second copy that
+// drifts.
+import { PAPEIS_POR_LADO } from "@/types/cardHub";
 
 import { Timeline } from "./Timeline";
 import { ChecklistDialog } from "./popovers/ChecklistDialog";
@@ -155,6 +160,20 @@ export interface ClienteCardDialogProps {
   compradoresLoading?: boolean;
   onAdicionarComprador?: () => void;
   onRemoverComprador?: (parteId: string) => void;
+  /**
+   * Correct a buyer-side party's role, from the badge that already showed it.
+   *
+   * 🔴 The add-dialog deliberately does NOT ask for a role (it asks the two
+   * `stage_gate.CAMPOS_OBRIGATORIOS` fields and nothing else), so the side
+   * default used to be permanent. Until this existed, no party could ever be
+   * marked `conjuge` — and a sale by a married owner needs the spouse's
+   * consent (CC art. 1.647), which a contract cannot ask for if no row says
+   * who the spouse is.
+   *
+   * Absent ⇒ the badge stays a read-only badge. Mirrors `onRemoverComprador`'s
+   * shape: the PARTE id, never the person's.
+   */
+  onAlterarPapelComprador?: (parteId: string, papel: string) => void;
 
   // ─── Vendedores — the other side of the table (migration 098) ──────────
   /**
@@ -172,6 +191,16 @@ export interface ClienteCardDialogProps {
   vendedoresLoading?: boolean;
   onAdicionarVendedor?: () => void;
   onRemoverVendedor?: (parteId: string) => void;
+  /** Same control on the seller side, over `PAPEIS_POR_LADO.vendedor`. Two
+   *  props rather than one for the same reason the two lists are two props:
+   *  the sides render on different subpages and each owns its own copy. */
+  onAlterarPapelVendedor?: (parteId: string, papel: string) => void;
+  /**
+   * The party whose role is being saved right now — that ONE select is
+   * disabled, not every one of them. A single boolean would freeze the whole
+   * card because both sides share one mutation.
+   */
+  papelSalvandoParteId?: string | null;
   /**
    * Renders one party's OWN checklist + documents panel.
    *
@@ -693,7 +722,14 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                         <PessoaDocumentosSection
                           key={parte.id}
                           nome={nomeDaParte(parte)}
-                          papel={PAPEL_LABEL[parte.papel] ?? parte.papel}
+                          papel={parte.papel}
+                          papeisDisponiveis={PAPEIS_POR_LADO.comprador}
+                          onPapelChange={
+                            props.onAlterarPapelComprador &&
+                            ((papel) =>
+                              props.onAlterarPapelComprador?.(parte.id, papel))
+                          }
+                          papelSalvando={props.papelSalvandoParteId === parte.id}
                           testId={`comprador-${parte.id}`}
                           acao={
                             props.onRemoverComprador && (
@@ -859,7 +895,14 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                       <PessoaDocumentosSection
                         key={parte.id}
                         nome={nomeDaParte(parte)}
-                        papel={PAPEL_LABEL[parte.papel] ?? parte.papel}
+                        papel={parte.papel}
+                        papeisDisponiveis={PAPEIS_POR_LADO.vendedor}
+                        onPapelChange={
+                          props.onAlterarPapelVendedor &&
+                          ((papel) =>
+                            props.onAlterarPapelVendedor?.(parte.id, papel))
+                        }
+                        papelSalvando={props.papelSalvandoParteId === parte.id}
                         testId={`vendedor-${parte.id}`}
                         acao={
                           props.onRemoverVendedor && (
@@ -915,9 +958,14 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
 
 /**
  * How a party's role reads on screen. Keys mirror
- * `compradores_service.PAPEIS`; an unmapped value falls through to the raw
- * string rather than rendering blank, so a role added on the server shows up
- * as itself until someone gives it a label.
+ * `compradores_service.PAPEIS_POR_LADO` — EVERY value of BOTH tuples has an
+ * entry, which `ClienteCardDialog.test.tsx` pins against `PAPEIS_POR_LADO`
+ * itself rather than against a second hand-written list.
+ *
+ * An unmapped value falls through to the raw string rather than rendering
+ * blank (`rotuloDePapel`), so a role added on the server shows up as itself
+ * until someone gives it a label. That fallback matters more now that the
+ * badge is a `<select>`: a blank option is indistinguishable from "no role".
  */
 const PAPEL_LABEL: Record<string, string> = {
   comprador: "Comprador",
@@ -931,6 +979,12 @@ const PAPEL_LABEL: Record<string, string> = {
   proprietario: "Proprietário",
   inventariante: "Inventariante",
 };
+
+/** The ONE place a role becomes words. Exported for the test that pins every
+ *  `PAPEIS_POR_LADO` value against it. */
+export function rotuloDePapel(papel: string): string {
+  return PAPEL_LABEL[papel] ?? papel;
+}
 
 /**
  * The best name we hold for a party.
@@ -1109,13 +1163,24 @@ function ContatoResumo({
 function PessoaDocumentosSection({
   nome,
   papel,
+  papeisDisponiveis,
+  onPapelChange,
+  papelSalvando = false,
   defaultOpen = false,
   testId,
   acao,
   children,
 }: {
   nome: string;
+  /** 🔴 The RAW value (`conjuge`), not a label. Labelling happens here so the
+   *  fallback for an unmapped role lives in ONE place, and so the select's
+   *  option values are the vocabulary the API validates. */
   papel: string;
+  /** The roles this party's SIDE offers — `PAPEIS_POR_LADO[lado]`. Absent (or
+   *  without `onPapelChange`) leaves the badge read-only. */
+  papeisDisponiveis?: readonly string[];
+  onPapelChange?: (papel: string) => void;
+  papelSalvando?: boolean;
   defaultOpen?: boolean;
   testId: string;
   /** Rendered in the header, beside the role badge — today the detach button.
@@ -1124,22 +1189,107 @@ function PessoaDocumentosSection({
   /** A FUNCTION, not a node — see the docblock above. */
   children: () => ReactNode;
 }) {
+  const editavel = !!onPapelChange && !!papeisDisponiveis?.length;
+
   return (
     <CollapsibleSection
       testId={`pessoa-documentos-${testId}`}
       defaultOpen={defaultOpen}
-      acao={acao}
+      acao={
+        <>
+          {editavel ? (
+            <PapelSelect
+              papel={papel}
+              opcoes={papeisDisponiveis!}
+              onChange={onPapelChange!}
+              salvando={papelSalvando}
+              testId={testId}
+              nome={nome}
+            />
+          ) : (
+            <span
+              className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+              data-testid={`papel-badge-${testId}`}
+            >
+              {rotuloDePapel(papel)}
+            </span>
+          )}
+          {acao}
+        </>
+      }
       titulo={
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-semibold">{nome}</span>
-          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-            {papel}
-          </span>
         </span>
       }
     >
       {children}
     </CollapsibleSection>
+  );
+}
+
+/**
+ * The role badge, which IS the control.
+ *
+ * 🔴 NOTHING NEW APPEARS ON SCREEN. `papel` was API-reachable and
+ * UI-unreachable: `AdicionarCompradorDialog` asks for the two
+ * `stage_gate.CAMPOS_OBRIGATORIOS` fields and never sent a role, so the side's
+ * default was permanent — every buyer a `comprador`, every seller a
+ * `proprietario`, and no `conjuge` for the spouse whose signature a sale by a
+ * married owner legally requires (CC art. 1.647). Rather than grow the one
+ * frictionless flow with a dropdown asked at the moment the operator knows
+ * LEAST about the person, the label already on screen became the thing you
+ * click. The common case still costs zero clicks: the side default is right
+ * until it isn't, and you touch this only for the exceptions — which is
+ * exactly when you know.
+ *
+ * 🔴 IT LIVES IN `acao`, NOT IN `titulo`. `CollapsibleSection` renders `titulo`
+ * INSIDE the fold's `<button>`; a control there would both fold the panel on
+ * every click and nest interactive content inside a button. `acao` is the slot
+ * kept outside the toggle for exactly this — see that component's docblock.
+ *
+ * A native `<select>` rather than the Radix `Select` `ChecklistItemRow` uses:
+ * five options with no search, no grouping and no custom rendering, inside a
+ * Dialog that already portals — and `AgendamentoPopover` set that precedent.
+ * The plain element is also the one a test can actually change.
+ */
+function PapelSelect({
+  papel,
+  opcoes,
+  onChange,
+  salvando,
+  testId,
+  nome,
+}: {
+  papel: string;
+  opcoes: readonly string[];
+  onChange: (papel: string) => void;
+  salvando: boolean;
+  testId: string;
+  nome: string;
+}) {
+  // A role the server sent that this side's list does not offer still has to
+  // be SHOWN — a select whose value matches no option renders blank, which
+  // would read as "this person has no role" rather than "an unexpected one".
+  const valores = opcoes.includes(papel) ? opcoes : [papel, ...opcoes];
+
+  return (
+    <select
+      value={papel}
+      disabled={salvando}
+      aria-label={`Papel de ${nome}`}
+      onChange={(e) => {
+        if (e.target.value !== papel) onChange(e.target.value);
+      }}
+      className="h-6 shrink-0 rounded bg-muted px-1 text-[10px] uppercase tracking-wide text-muted-foreground disabled:opacity-50"
+      data-testid={`papel-select-${testId}`}
+    >
+      {valores.map((p) => (
+        <option key={p} value={p}>
+          {rotuloDePapel(p)}
+        </option>
+      ))}
+    </select>
   );
 }
 
