@@ -436,7 +436,35 @@ async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[
     # running on Anthropic that is told forever about a missing OpenAI key
     # learns to ignore this message, and the one time it means something it
     # is invisible.
-    provider = resolve_chat_provider(org_id)
+    # 🔴 AN UNREADABLE SETTING MUST NOT PICK A VENDOR, AND MUST NOT CRASH.
+    #
+    # This runs detached from the request that triggered it, so an exception
+    # here surfaces NOWHERE and leaves the certidão with no analysis and no
+    # reason — the failure this module's header forbids ("every path ends in
+    # a recorded status"). `resolve_api_key_detail` catches only
+    # `EncryptionNotConfigured`; an unconfigured Supabase raises
+    # `SupabaseException: supabase_url is required` straight through it.
+    #
+    # And the recovery is deliberately NOT "assume OpenAI". Defaulting here
+    # would run an org that chose Anthropic on the other vendor, with nothing
+    # said — the exact silent switch the manual-switch design exists to
+    # prevent. Refusing with a stated reason is the only honest answer: the
+    # certificate itself is already issued and valid, only the summary is
+    # missing, and the operator can retry once the setting reads.
+    try:
+        provider = resolve_chat_provider(org_id)
+    except Exception as exc:  # noqa: BLE001 — background job must not die
+        logger.error(
+            "AI analysis skipped — could not read the analysis-provider "
+            "setting for org=%s: %s",
+            org_id, exc,
+        )
+        return (
+            "[Análise IA não disponível — não foi possível ler a configuração "
+            "de provedor de análise. A certidão em si é válida; tente "
+            "novamente ou verifique Configurações → Chaves de API]"
+        )
+
     modelo = ANALYSIS_MODELS.get(provider, ANALYSIS_MODELS[DEFAULT_ANALYSIS_PROVIDER])
     api_key = resolve_key(provider_api_key(provider), org_id)
     if not api_key:

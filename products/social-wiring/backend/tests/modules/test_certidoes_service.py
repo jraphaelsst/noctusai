@@ -544,12 +544,22 @@ class TestConvertHtmlToPdf:
 # ---------------------------------------------------------------------------
 
 
+#: The analysis provider is now an INPUT to `_analyze_with_ai`, so every
+#: test states it. Leaving it ambient made three tests pass locally (where a
+#: root `.env` configures Supabase) and fail in CI (where nothing does, and
+#: the read raised `supabase_url is required`) — a false green that only the
+#: pipeline could see.
+_CHAT_PROVIDER = "app.services.api_keys_store.resolve_chat_provider"
+
+
 class TestAnalyzeWithAi:
     @pytest.mark.asyncio
     async def test_sem_chave_retorna_marcador_em_portugues(self):
         """Not None: an empty column reads as a broken feature. The marker says
         WHICH setting is missing, in the language the operator reads."""
-        with patch(_CRED, return_value=None):
+        with patch(_CRED, return_value=None), patch(
+            _CHAT_PROVIDER, return_value="openai"
+        ):
             out = await service._analyze_with_ai("texto", ORG)
         assert "Análise IA não disponível" in out
         assert "OpenAI API Key" in out
@@ -557,6 +567,8 @@ class TestAnalyzeWithAi:
     @pytest.mark.asyncio
     async def test_com_chave_chama_seed_chat_completion(self):
         with patch(_CRED, return_value="sk-x"), patch(
+            _CHAT_PROVIDER, return_value="openai"
+        ), patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value="Tudo regular."),
         ) as chat:
@@ -595,8 +607,7 @@ class TestAnalyzeWithAi:
         ignore the one message that panel exists to show.
         """
         with patch(_CRED, return_value=None) as cred, patch(
-            "app.services.api_keys_store.resolve_chat_provider",
-            return_value="anthropic",
+            _CHAT_PROVIDER, return_value="anthropic",
         ):
             out = await service._analyze_with_ai("texto", ORG)
         assert cred.call_args.args[0] == "anthropic_api_key"
@@ -604,8 +615,33 @@ class TestAnalyzeWithAi:
         assert "OpenAI" not in out
 
     @pytest.mark.asyncio
+    async def test_setting_ilegivel_nao_derruba_o_job_nem_escolhe_vendor(self):
+        """🔴 The regression CI caught, pinned.
+
+        `resolve_api_key_detail` catches only `EncryptionNotConfigured`, so an
+        unconfigured Supabase raises `supabase_url is required` right through
+        it. This runs detached from a request, so that exception surfaced
+        nowhere and left the certidão with no analysis and no reason.
+
+        Two assertions, and the second is the one with teeth: it must not
+        crash, AND it must not quietly fall back to a vendor. Defaulting to
+        OpenAI here would run an org that chose Anthropic on the other vendor
+        with nothing said — the silent switch the whole design forbids.
+        """
+        with patch(
+            _CHAT_PROVIDER, side_effect=RuntimeError("supabase_url is required")
+        ), patch(
+            "app.modules.certidoes.service.chat_completion", new=AsyncMock()
+        ) as chat:
+            out = await service._analyze_with_ai("texto", ORG)
+        assert "Análise IA não disponível" in out
+        chat.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_falha_do_provedor_vira_marcador_nao_excecao(self):
         with patch(_CRED, return_value="sk-x"), patch(
+            _CHAT_PROVIDER, return_value="openai"
+        ), patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(side_effect=RuntimeError("429")),
         ):
