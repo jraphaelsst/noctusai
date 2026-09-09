@@ -40,6 +40,7 @@ import subprocess
 import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -9852,6 +9853,204 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
                     f"migration number {number} is claimed by {len(by_name)} DIFFERENT "
                     f"files in {directory}/ across local branches ({detail}) — whichever "
                     "merges SECOND must renumber the file and every reference to it."
+                ),
+                "severity": "warning",
+            })
+
+    return findings
+
+
+def check_migration_applied_ledger_drift(
+    repo_root: Path | None = None,
+    *,
+    executor: Any | None = None,
+) -> list[dict]:
+    """Flag a migration file applied through a path that never recorded it.
+
+    **The failure.** ``noctus.dev.migrate_product`` used to derive its target
+    schema by ``slug.replace("-", "_")`` unconditionally. For
+    ``erp-imobiliario`` / ``therapy-platform`` / ``personal-finance`` that
+    naive transform is WRONG (their real schemas are ``erp`` / ``therapy`` /
+    ``personal-finance``), so the tool's own tracking rows landed in an empty
+    phantom schema for months — the migration DDL itself always landed
+    correctly (each file's own ``SET search_path`` routes it), only the
+    bookkeeping went to the wrong address. ``erp_imobiliario.schema_migrations``
+    claimed ``043_api_tokens.sql`` applied while
+    ``to_regclass('erp_imobiliario.api_tokens')`` was NULL — the table was at
+    ``erp.api_tokens`` the whole time. ``check_migration_number_collision``
+    (the closest sibling in this file) is purely static — it never opens a
+    file or touches a DB — which is exactly why a ledger silently pointed at
+    the wrong schema passed it clean.
+
+    **Why a keeper, not a one-off fix.** The bug is fixed (``_resolve_schema``
+    derives the real schema from ``create_product_app(schema=...)`` in
+    ``app/main.py``), and ``repair_schema_migrations_ledger`` moves the
+    stranded rows — but nothing stops a FUTURE gap between "applied" and
+    "recorded": a migration run via the Supabase Management API's
+    ``apply_migration`` path (which records into the Supabase-managed
+    ``supabase_migrations.schema_migrations`` catalog, NOT this product's own
+    tracking table) is exactly that gap again, under a different cause. This
+    detector is mechanism-agnostic — it flags the SYMPTOM (a file the product
+    ledger doesn't know about that Supabase's own catalog does), regardless
+    of what caused it.
+
+    **What it checks, per product with a migrations directory.** Migration
+    files on disk MINUS the filenames recorded in
+    ``<real schema>.schema_migrations`` = files the product ledger doesn't
+    know about. Of those, any file whose name (stem, sans ``.sql``) appears
+    as a substring of a ``name`` value in ``supabase_migrations.schema_migrations``
+    (or vice versa — the Management API's caller supplies that ``name``, so
+    the exact shape isn't fixed) is flagged: it was applied through the
+    non-recording path.
+
+    **DB round-trip — the honesty contract.** This is the first DB-touching
+    detector in this file. It requires an injected ``executor`` (the
+    ``SqlExecutor`` seam from ``migrate_product``, resolved via
+    ``make_sql_executor`` when the caller passes none) — REAL credentials, not
+    a fixture. When no executor resolves, this returns a single ``skipped``
+    finding rather than an empty list: an empty ``[]`` reads as "checked,
+    clean" everywhere else in this file, and a DB check that silently no-ops
+    on missing credentials must never look like a pass (`CLAUDE.md` §1
+    no-silent-errors). Callers filter ``severity == "skipped"`` out of the
+    pass/fail decision explicitly.
+
+    Severity: ``warning`` (observe-first — new detector, large pre-existing
+    backlog; not a hard-block). Wired into ``scripts/hooks/pre-push`` (needs a
+    DB round-trip → pre-push, never pre-commit), NOT ``check_all_products()``
+    / ``review.py::_detect()`` (same posture as ``check_migration_number_collision``
+    — a repo-level git/DB keeper, not a per-product static seed-compliance
+    check).
+    """
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+
+    products_root = root / "products"
+    if not products_root.exists():
+        return findings
+
+    candidates = [
+        p for p in sorted(products_root.glob("*"))
+        if (p / "backend" / "migrations").is_dir()
+    ]
+    if not candidates:
+        return findings
+
+    if executor is None:
+        try:
+            from tools.noctus.dev.migrate_product import make_sql_executor
+            executor = make_sql_executor()
+        except Exception as exc:  # pragma: no cover — defensive import guard
+            logger.debug(
+                "check_migration_applied_ledger_drift: could not resolve executor: %s",
+                exc,
+            )
+            executor = None
+    if executor is None:
+        return [{
+            "product": "*",
+            "file": "*",
+            "issue": (
+                "DB unreachable: no supabase_access_token resolved — this "
+                "detector was SKIPPED, not run clean. NOC-REMEDIATE[credentials]: "
+                "store platform_settings['supabase_access_token'] or set env "
+                "SUPABASE_ACCESS_TOKEN."
+            ),
+            "severity": "skipped",
+        }]
+
+    from tools.noctus.dev.migrate_product import (
+        _fetch_applied_sql,
+        _resolve_schema,
+        _schema_migrations_exists_sql,
+        _sorted_migrations,
+    )
+
+    supabase_names: list[str] | None = None  # lazy-fetched, shared across products
+
+    def _fetch_supabase_migration_names() -> list[str]:
+        result = executor.execute(
+            "SELECT name FROM supabase_migrations.schema_migrations ORDER BY name;"
+        )
+        if not result.get("ok"):
+            logger.debug(
+                "check_migration_applied_ledger_drift: could not query "
+                "supabase_migrations.schema_migrations: %s",
+                result.get("error"),
+            )
+            return []
+        names: list[str] = []
+        for row in result.get("rows") or []:
+            if isinstance(row, dict):
+                n = row.get("name")
+                if n:
+                    names.append(n)
+        return names
+
+    for product_dir in candidates:
+        slug = product_dir.name
+        mig_dir = product_dir / "backend" / "migrations"
+        disk_files = _sorted_migrations(mig_dir)
+        if not disk_files:
+            continue
+
+        schema, _source = _resolve_schema(slug, None, products_root)
+
+        exists_result = executor.execute(_schema_migrations_exists_sql(schema))
+        if not exists_result.get("ok"):
+            logger.debug(
+                "check_migration_applied_ledger_drift: could not probe %s: %s",
+                schema,
+                exists_result.get("error"),
+            )
+            continue
+        exists_rows = exists_result.get("rows") or []
+        ledger_exists = bool(exists_rows) and bool(
+            exists_rows[0].get("exists_") if isinstance(exists_rows[0], dict) else False
+        )
+        applied_in_ledger: set[str] = set()
+        if ledger_exists:
+            fetch_result = executor.execute(_fetch_applied_sql(schema))
+            if not fetch_result.get("ok"):
+                logger.debug(
+                    "check_migration_applied_ledger_drift: could not fetch %s.schema_migrations: %s",
+                    schema,
+                    fetch_result.get("error"),
+                )
+                continue
+            for row in fetch_result.get("rows") or []:
+                if isinstance(row, dict):
+                    fn = row.get("filename")
+                    if fn:
+                        applied_in_ledger.add(fn)
+
+        missing = [f.name for f in disk_files if f.name not in applied_in_ledger]
+        if not missing:
+            continue
+
+        if supabase_names is None:
+            supabase_names = _fetch_supabase_migration_names()
+        if not supabase_names:
+            continue
+
+        for filename in missing:
+            stem = filename[:-4] if filename.endswith(".sql") else filename
+            hit = next(
+                (n for n in supabase_names if stem in n or n in stem),
+                None,
+            )
+            if hit is None:
+                continue
+            findings.append({
+                "product": slug,
+                "file": f"products/{slug}/backend/migrations/{filename}",
+                "issue": (
+                    f"{filename} was applied via the non-recording path — it "
+                    f"appears in supabase_migrations.schema_migrations (name={hit!r}) "
+                    f"but is absent from {schema}.schema_migrations, the product's own "
+                    f"ledger. Run noctus.dev.migrate_product(schema={schema!r}) or "
+                    "noctus.dev.repair_migration_ledger to reconcile."
                 ),
                 "severity": "warning",
             })

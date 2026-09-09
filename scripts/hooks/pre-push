@@ -326,6 +326,28 @@ else
 fi
 fi
 
+# ── migration-applied-ledger-drift keeper (warning-only, needs a DB round-trip) ─
+# The 2026-09 phantom-schema incident: migrate_product used to derive the
+# tracking schema by a naive slug transform, so erp-imobiliario / therapy-platform
+# / personal-finance's ledgers under-reported for months while the migrations
+# themselves landed fine. This is the backstop for that CLASS of gap (applied
+# ≠ recorded), not just that one cause — reuses `_ld_py` resolved above (a
+# worktree has no mcp/noctusai/.venv; fall back to the primary's interpreter,
+# still running THIS tree's cli.py). Needs live Supabase credentials, so a
+# missing token SKIPS loudly rather than reading as a pass — see the keeper's
+# own dispatcher in cli.py. Observe-first: warning severity, NEVER blocks.
+if [[ -x "$_ld_py" && -f "$CLI_PP" ]]; then
+    echo "[pre-push] migration-applied-ledger-drift keeper..."
+    _mld_rc=0
+    _mld_out="$("$_ld_py" "$CLI_PP" --check-migration-applied-ledger-drift 2>&1)" || _mld_rc=$?
+    echo "$_mld_out" | tail -5 | sed 's/^/[pre-push] /'
+    if [[ $_mld_rc -ne 0 ]]; then
+        echo "[pre-push] migration-applied-ledger-drift: unexpected non-zero exit ($_mld_rc) — non-blocking (warning-only), continuing." >&2
+    fi
+else
+    echo "[pre-push] migration-applied-ledger-drift: SKIPPED (no interpreter at $_ld_py)" >&2
+fi
+
 # ─── branch protection (reads the captured push lines) ──────────────────
 while read -r local_ref local_oid remote_ref remote_oid; do
     [[ -z "${remote_ref:-}" ]] && continue

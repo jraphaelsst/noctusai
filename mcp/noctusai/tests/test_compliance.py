@@ -16,6 +16,7 @@ from tools.noctus.dev.compliance import (
     check_clean_folder_violations,
     check_conflict_markers,
     check_detector_has_regression_test,
+    check_migration_applied_ledger_drift,
     check_migration_number_collision,
     check_postgrest_schema_qualified_table,
     check_postgrest_unbounded_query,
@@ -33,6 +34,7 @@ from tools.noctus.dev.compliance import (
     check_auth_session_mutation_on_shared_client,
     check_product_service_worker,
 )
+from tools.noctus.dev.migrate_product import FakeSqlExecutor
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
@@ -2624,6 +2626,102 @@ class TestCheckMigrationNumberCollision:
         repo = self._mk("core", ["040_a.sql", "040_b.sql"])  # not a git repo
         issues = check_migration_number_collision(repo)
         assert any(i["severity"] == "high" for i in issues), issues
+
+
+class TestCheckMigrationAppliedLedgerDrift:
+    """A migration file applied through a path that never recorded it.
+
+    Origin 2026-09: `migrate_product` used to write its tracking rows to a
+    naive slug-transform schema (e.g. `erp_imobiliario`) regardless of the
+    product's REAL schema (`erp`) — the DDL always landed correctly (each
+    file's own `SET search_path` routes it), only the bookkeeping went to a
+    phantom schema. `check_migration_number_collision` (the closest sibling)
+    is purely static and never opens a file or touches a DB, which is exactly
+    why a ledger silently pointing at the wrong schema passed it clean.
+    """
+
+    def _mk(self, product: str, files: list[str], main_py_schema: str | None = None) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="ledger_drift_test_"))
+        mig = tmp / "products" / product / "backend" / "migrations"
+        mig.mkdir(parents=True, exist_ok=True)
+        for n in files:
+            (mig / n).write_text("SELECT 1;\n")
+        if main_py_schema is not None:
+            app_dir = tmp / "products" / product / "backend" / "app"
+            app_dir.mkdir(parents=True, exist_ok=True)
+            (app_dir / "main.py").write_text(
+                f'app = create_product_app(name="X", schema="{main_py_schema}", '
+                f'settings=settings, routers=[])\n'
+            )
+        return tmp
+
+    # ── Honesty contract: no DB access must SKIP, never read as a pass ──────
+    def test_no_credentials_returns_skipped_not_empty(self, monkeypatch):
+        """A DB check that cannot reach the DB must SAY it was skipped — an
+        empty `[]` reads as "checked, clean" everywhere else in this file,
+        so silently degrading to `[]` here would be a false green."""
+        repo = self._mk("erp-imobiliario", ["043_api_tokens.sql"], main_py_schema="erp")
+        monkeypatch.delenv("SUPABASE_ACCESS_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential",
+            lambda *a, **k: None,
+        )
+
+        issues = check_migration_applied_ledger_drift(repo, executor=None)
+
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "skipped"
+        assert "DB unreachable" in issues[0]["issue"]
+        assert "NOC-REMEDIATE" in issues[0]["issue"]
+
+    # ── The real regression: erp-imobiliario's phantom schema ──────────────
+    def test_flags_file_applied_via_non_recording_path(self):
+        repo = self._mk("erp-imobiliario", ["043_api_tokens.sql"], main_py_schema="erp")
+        fake = FakeSqlExecutor(preset_rows={
+            "to_regclass": [{"exists_": True}],
+            '"erp".schema_migrations': [],  # nothing recorded in the real ledger
+            "supabase_migrations.schema_migrations": [{"name": "043_api_tokens"}],
+        })
+
+        issues = check_migration_applied_ledger_drift(repo, executor=fake)
+
+        assert len(issues) == 1, issues
+        assert issues[0]["product"] == "erp-imobiliario"
+        assert issues[0]["severity"] == "warning"
+        assert "043_api_tokens.sql" in issues[0]["issue"]
+        assert "erp.schema_migrations" in issues[0]["issue"]
+
+    # ── False-positive guards ────────────────────────────────────────────
+    def test_clean_when_file_already_recorded(self):
+        """The common case — nothing to flag once the ledger has the row."""
+        repo = self._mk("erp-imobiliario", ["043_api_tokens.sql"], main_py_schema="erp")
+        fake = FakeSqlExecutor(preset_rows={
+            "to_regclass": [{"exists_": True}],
+            '"erp".schema_migrations': [{"filename": "043_api_tokens.sql"}],
+        })
+        assert check_migration_applied_ledger_drift(repo, executor=fake) == []
+
+    def test_clean_when_missing_file_has_no_supabase_catalog_match(self):
+        """A file that's simply never been applied at all (normal pending
+        state) must NOT be flagged — this detector's signal is specifically
+        "applied via the non-recording path", not "not yet applied"."""
+        repo = self._mk("erp-imobiliario", ["999_never_applied.sql"], main_py_schema="erp")
+        fake = FakeSqlExecutor(preset_rows={
+            "to_regclass": [{"exists_": True}],
+            '"erp".schema_migrations': [],
+            "supabase_migrations.schema_migrations": [],
+        })
+        assert check_migration_applied_ledger_drift(repo, executor=fake) == []
+
+    def test_no_migrations_directory_returns_clean(self):
+        tmp = Path(tempfile.mkdtemp(prefix="ledger_drift_test_"))
+        (tmp / "products").mkdir()
+        assert check_migration_applied_ledger_drift(tmp, executor=FakeSqlExecutor()) == []
+
+    def test_missing_repo_root_returns_clean(self):
+        assert check_migration_applied_ledger_drift(
+            Path("/no/such/root"), executor=FakeSqlExecutor()
+        ) == []
 
 
 class TestCheckPrimaryCheckoutCommit:

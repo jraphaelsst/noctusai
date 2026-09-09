@@ -172,6 +172,7 @@ def main():
     parser.add_argument("--check-consent-routes", action="store_true", help="Keeper: seed consent routes (/consent, /consent/privacy-policy, /consent/terms-of-use) must stay mounted in seed/framework/frontend/src/app.tsx + exported from index.ts; no product may shadow them with a local re-declaration. Severity high. KB § PATTERNS/frontend/consent-routes-mandate.md.")
     parser.add_argument("--check-hashlib-usedforsecurity", action="store_true", help="Keeper: a weak-hash call (hashlib.md5/sha1/new(\"md5\"|\"sha1\", ...)) in the Bandit scope (products/*/backend/app + seed/lib/backend/noctusai_lib) used for a non-security purpose MUST pass usedforsecurity=False, or Bandit B324 (High) hard-fails CI. AST-based; a `# noqa: S324` does NOT satisfy it. Severity error (baseline 0). KB § PATTERNS/backend/backend.md § Recurring CI-hygiene standards.")
     parser.add_argument("--check-migration-number-collision", action="store_true", help="Keeper: two migrations claiming the same numeric prefix. Leg A (high) = duplicate ON DISK in one product — apply-order is undefined. Leg B (warning) = the same number used by DIFFERENT files across local branches; whichever merges second must renumber. Catches the class `ls migrations/` and `git log origin/dev` both miss, because an unpushed sibling branch is invisible to both. MCP keeper check_migration_number_collision.")
+    parser.add_argument("--check-migration-applied-ledger-drift", action="store_true", help="Keeper (pre-push, DB round-trip, warning-only): per product, migration files on disk MINUS rows recorded in <real schema>.schema_migrations, intersected with names present in supabase_migrations.schema_migrations — the set applied through a path that never recorded it (the 2026-09 erp-imobiliario/personal-finance/therapy-platform phantom-schema incident, and any future gap of the same shape, e.g. the Supabase Management API's apply_migration path). Requires a resolvable supabase_access_token; when none resolves this SKIPS loudly (prints SKIPPED, never reads as a pass) rather than returning a silent empty result. MCP keeper check_migration_applied_ledger_drift.")
     parser.add_argument("--paths", default="", help="Comma-separated repo-relative paths to narrow a keeper's sweep (currently --check-conflict-markers). Omitted, the keeper scans its full default scope.")
     parser.add_argument("--check-primary-checkout-commit", action="store_true", help="Keeper: refuse a WORK commit on a shared branch (dev/main/prod) in the PRIMARY checkout — the self-branching rule that CLAUDE.md has mandated since inception and that was violated in essentially every session, because nothing fails at commit time and the cost lands later as a non-fast-forward at integrate/deploy. Ledger-only commits (project-history/) pass; escape hatch NOCTUS_ALLOW_PRIMARY_COMMIT=1. Severity high. MCP keeper check_primary_checkout_commit.")
     parser.add_argument("--check-conftest-env-setdefault", action="store_true", help="Keeper: a product conftest that defers a CREDENTIAL/ENDPOINT env key to the ambient environment via `os.environ.setdefault`. Reads as 'provide a default', means 'whatever the developer exported wins'. p-studio 2026-08-19: the platform .env carries ASAAS_WEBHOOK_TOKEN= (present, EMPTY), so setdefault no-opped and 15 of 20 webhook tests went red under a loaded .env while all 20 passed in a plain shell. The same file deferred SUPABASE_SERVICE_ROLE_KEY and PROVEDOR_COBRANCA, so the real values would have built a real service-role client and a real payment adapter. A locally-generated Fernet session key is exempt. Remedy: noctusai_lib.testing.conftest_helpers.own_test_env. Severity high. MCP keeper check_conftest_env_setdefault.")
@@ -1304,6 +1305,27 @@ def main():
         # Leg A blocks (undefined apply-order is already broken); Leg B is a
         # heads-up for whoever merges second and must not block them.
         sys.exit(1 if high else 0)
+
+    elif args.check_migration_applied_ledger_drift:
+        from tools.noctus.dev.compliance import check_migration_applied_ledger_drift
+        issues = check_migration_applied_ledger_drift()
+        skipped = [i for i in issues if i.get("severity") == "skipped"]
+        real = [i for i in issues if i.get("severity") != "skipped"]
+        if skipped:
+            # A skip must never read as a pass — printed distinctly, exit 0
+            # (this keeper is observe-first; it cannot block on "couldn't check").
+            for i in skipped:
+                print(f"  {YELLOW}⚠ migration-applied-ledger-drift: SKIPPED — {i['issue']}{RESET}")
+            sys.exit(0)
+        if not real:
+            print(f"  {GREEN}✓ migration-applied-ledger-drift: clean (every applied file is recorded in its product's own ledger).{RESET}")
+            sys.exit(0)
+        print(f"  {YELLOW}⚠ {len(real)} migration-applied-ledger-drift finding(s):{RESET}")
+        for i in real:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i.get('product','?')} — {i['issue']}")
+        # Warning-only (observe-first cadence on a new detector against a
+        # large pre-existing backlog) — never blocks the push.
+        sys.exit(0)
 
     elif args.check_no_self_monkeypatch:
         # REGRESSION semantics, deliberately mirroring `check_all` / CI: exit 1
