@@ -419,7 +419,12 @@ ANALYSIS_MODELS: dict[str, str] = {
 DEFAULT_ANALYSIS_PROVIDER = "openai"
 
 
-async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[str]:
+async def _analyze_with_ai(
+    text: str,
+    org_id: Optional[str] = None,
+    *,
+    resolve_provider: Optional[Callable[[Optional[str]], str]] = None,
+) -> Optional[str]:
     """Send document text/summary to the seed `chat_completion` wrapper.
 
     Returns a user-facing marker string if the OpenAI key is not configured —
@@ -430,6 +435,15 @@ async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[
     stack-trace-shaped error on a certidão that actually succeeded.
     """
     from app.services.api_keys_store import get_spec, resolve_chat_provider
+
+    # `resolve_provider` is the Class-B DI seam (KB § PATTERNS/backend/
+    # di-test-seam.md), the same shape `_process_single_certidao` already
+    # exposes for `analyze`. It exists because the alternative a test would
+    # otherwise reach for — patching
+    # `api_keys_store.resolve_chat_provider` — is monkeypatching OUR OWN
+    # code: the test would then assert against the patch instead of the
+    # seam, and the compliance keeper flags it high, correctly.
+    resolver = resolve_provider or resolve_chat_provider
 
     # Checks the SELECTED provider's key, never OpenAI's unconditionally —
     # same reasoning as `matriculas.check_required_credentials`: an org
@@ -452,7 +466,7 @@ async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[
     # certificate itself is already issued and valid, only the summary is
     # missing, and the operator can retry once the setting reads.
     try:
-        provider = resolve_chat_provider(org_id)
+        provider = resolver(org_id)
     except Exception as exc:  # noqa: BLE001 — background job must not die
         logger.error(
             "AI analysis skipped — could not read the analysis-provider "

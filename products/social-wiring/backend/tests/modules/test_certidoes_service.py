@@ -544,12 +544,28 @@ class TestConvertHtmlToPdf:
 # ---------------------------------------------------------------------------
 
 
-#: The analysis provider is now an INPUT to `_analyze_with_ai`, so every
-#: test states it. Leaving it ambient made three tests pass locally (where a
-#: root `.env` configures Supabase) and fail in CI (where nothing does, and
-#: the read raised `supabase_url is required`) — a false green that only the
-#: pipeline could see.
-_CHAT_PROVIDER = "app.services.api_keys_store.resolve_chat_provider"
+#: The analysis provider is an INPUT to `_analyze_with_ai`, so every test
+#: states it — PASSED through the `resolve_provider` DI seam, never
+#: monkeypatched onto `api_keys_store`.
+#:
+#: Both halves of that are load-bearing. Leaving it ambient made three tests
+#: pass locally (where a root `.env` configures Supabase) and fail in CI
+#: (where nothing does, and the read raised `supabase_url is required`) — a
+#: false green only the pipeline could see. And patching our own module
+#: attribute instead would trade that for a worse one: the test would assert
+#: against the patch rather than the seam, which the compliance keeper flags
+#: high and this codebase forbids outright.
+def _provider(valor):
+    """A `resolve_provider` stub declaring what this org chose."""
+    return lambda _org_id: valor
+
+
+def _provider_raising(exc):
+    """A `resolve_provider` stub whose read fails, as an unconfigured
+    Supabase does in CI."""
+    def _boom(_org_id):
+        raise exc
+    return _boom
 
 
 class TestAnalyzeWithAi:
@@ -557,22 +573,22 @@ class TestAnalyzeWithAi:
     async def test_sem_chave_retorna_marcador_em_portugues(self):
         """Not None: an empty column reads as a broken feature. The marker says
         WHICH setting is missing, in the language the operator reads."""
-        with patch(_CRED, return_value=None), patch(
-            _CHAT_PROVIDER, return_value="openai"
-        ):
-            out = await service._analyze_with_ai("texto", ORG)
+        with patch(_CRED, return_value=None):
+            out = await service._analyze_with_ai(
+                "texto", ORG, resolve_provider=_provider("openai")
+            )
         assert "Análise IA não disponível" in out
         assert "OpenAI API Key" in out
 
     @pytest.mark.asyncio
     async def test_com_chave_chama_seed_chat_completion(self):
         with patch(_CRED, return_value="sk-x"), patch(
-            _CHAT_PROVIDER, return_value="openai"
-        ), patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value="Tudo regular."),
         ) as chat:
-            out = await service._analyze_with_ai("texto", ORG)
+            out = await service._analyze_with_ai(
+                "texto", ORG, resolve_provider=_provider("openai")
+            )
         assert out == "Tudo regular."
         kwargs = chat.await_args.kwargs
         assert kwargs["org_id"] == ORG
@@ -587,13 +603,12 @@ class TestAnalyzeWithAi:
         pair, not just the provider.
         """
         with patch(_CRED, return_value="sk-ant-x"), patch(
-            "app.services.api_keys_store.resolve_chat_provider",
-            return_value="anthropic",
-        ), patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value="Consta débito."),
         ) as chat:
-            out = await service._analyze_with_ai("texto", ORG)
+            out = await service._analyze_with_ai(
+                "texto", ORG, resolve_provider=_provider("anthropic")
+            )
         assert out == "Consta débito."
         kwargs = chat.await_args.kwargs
         assert kwargs["provider"] == "anthropic"
@@ -606,10 +621,10 @@ class TestAnalyzeWithAi:
         work the configured vendor can do — and trains the operator to
         ignore the one message that panel exists to show.
         """
-        with patch(_CRED, return_value=None) as cred, patch(
-            _CHAT_PROVIDER, return_value="anthropic",
-        ):
-            out = await service._analyze_with_ai("texto", ORG)
+        with patch(_CRED, return_value=None) as cred:
+            out = await service._analyze_with_ai(
+                "texto", ORG, resolve_provider=_provider("anthropic")
+            )
         assert cred.call_args.args[0] == "anthropic_api_key"
         assert "Anthropic" in out
         assert "OpenAI" not in out
@@ -629,23 +644,27 @@ class TestAnalyzeWithAi:
         with nothing said — the silent switch the whole design forbids.
         """
         with patch(
-            _CHAT_PROVIDER, side_effect=RuntimeError("supabase_url is required")
-        ), patch(
             "app.modules.certidoes.service.chat_completion", new=AsyncMock()
         ) as chat:
-            out = await service._analyze_with_ai("texto", ORG)
+            out = await service._analyze_with_ai(
+                "texto",
+                ORG,
+                resolve_provider=_provider_raising(
+                    RuntimeError("supabase_url is required")
+                ),
+            )
         assert "Análise IA não disponível" in out
         chat.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_falha_do_provedor_vira_marcador_nao_excecao(self):
         with patch(_CRED, return_value="sk-x"), patch(
-            _CHAT_PROVIDER, return_value="openai"
-        ), patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(side_effect=RuntimeError("429")),
         ):
-            out = await service._analyze_with_ai("texto", ORG)
+            out = await service._analyze_with_ai(
+                "texto", ORG, resolve_provider=_provider("openai")
+            )
         assert "Erro na análise IA" in out
 
 
