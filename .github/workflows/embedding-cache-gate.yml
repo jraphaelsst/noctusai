@@ -71,6 +71,19 @@ jobs:
         # pycairo / weasyprint / psycopg2-binary build deps — same set as test.yml
         # to keep the env shape uniform across CI jobs.
         run: |
+          # 🔴 DROP THE CHROME APT SOURCE FIRST — nothing here comes from it.
+          # The GitHub runner image ships /etc/apt/sources.list.d/google-chrome.list,
+          # so `apt-get update` contacts dl.google.com even for a build that only
+          # wants cairo/pango/libpq/ffi. On 2026-09-09 that index served a corrupt
+          # "Hash Sum mismatch" for hours and `apt-get update` exits 100 on ANY
+          # failing source — which took down every backend-test and E2E job in the
+          # matrix, on a diff that touches none of it, and blocked `release
+          # stage='bless'` (which correctly refuses a red tip).
+          #
+          # Removing a third-party source no job installs from is not a weakened
+          # gate: it deletes a dependency that was never intended. Chromium itself
+          # still arrives through Playwright's own download, not through apt.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libcairo2-dev libgirepository1.0-dev libpango1.0-dev \

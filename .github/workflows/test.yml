@@ -80,6 +80,19 @@ jobs:
 
       - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
         run: |
+          # 🔴 DROP THE CHROME APT SOURCE FIRST — nothing here comes from it.
+          # The GitHub runner image ships /etc/apt/sources.list.d/google-chrome.list,
+          # so `apt-get update` contacts dl.google.com even for a build that only
+          # wants cairo/pango/libpq/ffi. On 2026-09-09 that index served a corrupt
+          # "Hash Sum mismatch" for hours and `apt-get update` exits 100 on ANY
+          # failing source — which took down every backend-test and E2E job in the
+          # matrix, on a diff that touches none of it, and blocked `release
+          # stage='bless'` (which correctly refuses a red tip).
+          #
+          # Removing a third-party source no job installs from is not a weakened
+          # gate: it deletes a dependency that was never intended. Chromium itself
+          # still arrives through Playwright's own download, not through apt.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
@@ -267,7 +280,12 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: products/core/frontend
-        run: npx playwright install --with-deps chromium
+        run: |
+          # `--with-deps` shells out to apt-get, which hits the same corrupt
+          # Chrome source described above. Playwright downloads its own browser
+          # binaries; only the system libs come from apt.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          npx playwright install --with-deps chromium
 
       - name: Run E2E tests
         working-directory: products/core/frontend
@@ -306,7 +324,12 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: products/erp-imobiliario/frontend
-        run: npx playwright install --with-deps chromium
+        run: |
+          # `--with-deps` shells out to apt-get, which hits the same corrupt
+          # Chrome source described above. Playwright downloads its own browser
+          # binaries; only the system libs come from apt.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          npx playwright install --with-deps chromium
 
       - name: Run E2E tests
         working-directory: products/erp-imobiliario/frontend
@@ -561,6 +584,19 @@ jobs:
 
       - name: Install system build deps (libpq for psycopg; ffi for cffi)
         run: |
+          # 🔴 DROP THE CHROME APT SOURCE FIRST — nothing here comes from it.
+          # The GitHub runner image ships /etc/apt/sources.list.d/google-chrome.list,
+          # so `apt-get update` contacts dl.google.com even for a build that only
+          # wants cairo/pango/libpq/ffi. On 2026-09-09 that index served a corrupt
+          # "Hash Sum mismatch" for hours and `apt-get update` exits 100 on ANY
+          # failing source — which took down every backend-test and E2E job in the
+          # matrix, on a diff that touches none of it, and blocked `release
+          # stage='bless'` (which correctly refuses a red tip).
+          #
+          # Removing a third-party source no job installs from is not a weakened
+          # gate: it deletes a dependency that was never intended. Chromium itself
+          # still arrives through Playwright's own download, not through apt.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libffi-dev libpq-dev pkg-config
 
