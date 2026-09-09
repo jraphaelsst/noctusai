@@ -44,6 +44,7 @@ from noctusai_lib.primitives.exceptions import (
 
 from app.modules.card_hub.services import (
     AmbiguousAtendimento,
+    _atendimentos_do_cliente,
     _now,
     _t,
     ensure_cliente,
@@ -373,17 +374,7 @@ def atualizar_papel(
     is `PATCH /api/clientes/{id}` on the person's own record — the same place it
     is set by hand.
     """
-    ensure_cliente(client, org_id, cliente_id)
-    rows = (
-        _t(client, TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("id", str(parte_id))
-        .execute()
-    ).data or []
-    if not rows:
-        raise NotFoundError(TABLE, str(parte_id))
-    row = dict(rows[0])
+    row = dict(_parte_do_cliente(client, org_id, cliente_id, parte_id))
 
     lado_alvo = normalizar_lado(row.get("lado"))
     papeis = PAPEIS_POR_LADO[lado_alvo]
@@ -603,6 +594,50 @@ def _criar_cliente(
     return row["id"]
 
 
+def _parte_do_cliente(
+    client: Any, org_id: UUID, cliente_id: UUID, parte_id: UUID
+) -> dict:
+    """The parte row, proven to hang off an atendimento of THIS cliente.
+
+    🔴 THE OWNERSHIP CHECK IS THE AUTHORISATION. `ensure_cliente` proves the
+    cliente exists in the org; it says nothing about whether this PARTE belongs
+    to them. Scoping the lookup by `org_id + parte_id` alone — which `remover`
+    did, and which `atualizar_papel` copied — means any parte in the org is
+    reachable through any cliente's URL: `DELETE /clientes/<A>/compradores/
+    <parte-of-B>` succeeded and detached B's spouse from B's deal.
+
+    Org is still the tenancy boundary, so this was never a cross-tenant leak.
+    Within an org it is an authorisation hole all the same, and the correct
+    shape already exists next door: `roteiros_service._obter` refuses a route
+    reached through someone else's id, for the reason it states — "an id alone
+    must never be enough to read or edit someone else's route."
+
+    `listar` and `adicionar` were already correct (both go through
+    `resolve_atendimento_id` and filter on `atendimento_id`). This is the same
+    guarantee for the two verbs that lacked it.
+    """
+    ensure_cliente(client, org_id, cliente_id)
+    rows = (
+        _t(client, TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("id", str(parte_id))
+        .execute()
+    ).data or []
+    row = rows[0] if rows else None
+    if row is None:
+        raise NotFoundError(TABLE, str(parte_id))
+    permitidos = {
+        str(r["id"]) for r in _atendimentos_do_cliente(client, org_id, cliente_id)
+    }
+    if str(row.get("atendimento_id")) not in permitidos:
+        # Indistinguishable from "does not exist", deliberately: telling a
+        # caller that a parte exists but belongs to someone else is itself a
+        # disclosure.
+        raise NotFoundError(TABLE, str(parte_id))
+    return row
+
+
 def remover(client: Any, org_id: UUID, cliente_id: UUID, parte_id: UUID) -> None:
     """Detach a party. The PERSON is not deleted.
 
@@ -612,16 +647,7 @@ def remover(client: Any, org_id: UUID, cliente_id: UUID, parte_id: UUID) -> None
     retain (`cliente_documento_tipos.retencao_dias`), on a click that reads as
     "they're not part of this purchase after all".
     """
-    ensure_cliente(client, org_id, cliente_id)
-    rows = (
-        _t(client, TABLE)
-        .select("id")
-        .eq("org_id", str(org_id))
-        .eq("id", str(parte_id))
-        .execute()
-    ).data or []
-    if not rows:
-        raise NotFoundError(TABLE, str(parte_id))
+    _parte_do_cliente(client, org_id, cliente_id, parte_id)
     _t(client, TABLE).delete().eq("id", str(parte_id)).eq(
         "org_id", str(org_id)
     ).execute()

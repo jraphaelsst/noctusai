@@ -803,3 +803,90 @@ class TestVinculandoOConjuge:
         assert r.json()["papel"] == "procurador"
         assert _cliente_row(scoped, parte["cliente_id"])["conjuge_cliente_id"] == cid
         assert _cliente_row(scoped, cid)["conjuge_cliente_id"] == parte["cliente_id"]
+
+
+class TestUmaParteSoEAlcancavelPeloSeuProprioCliente:
+    """A parte is reachable ONLY through the cliente whose deal it is on.
+
+    🔴 PRE-EXISTING HOLE, FOUND WHILE ADDING `atualizar_papel`. `remover`
+    called `ensure_cliente` — which proves the CLIENTE exists in the org — and
+    then looked the parte up by `org_id + parte_id` alone. So any parte in the
+    org was reachable through any cliente's URL: detaching B's spouse from B's
+    deal by calling A's endpoint returned 204.
+
+    Org remained the tenancy boundary, so this was never a cross-tenant leak.
+    Within an org it is an authorisation hole all the same, and the correct
+    shape was already next door in `roteiros_service._obter`.
+
+    Both verbs are covered here because tightening one and leaving its sibling
+    loose is how this kind of gap survives a review.
+    """
+
+    def _dois_clientes(self, scoped):
+        a_cid, a_aid = str(uuid4()), str(uuid4())
+        b_cid, b_aid = str(uuid4()), str(uuid4())
+        parte_id, parte_cid = str(uuid4()), str(uuid4())
+        _seed(
+            scoped,
+            clientes=[
+                cliente_row(a_cid, nome="Cliente A"),
+                cliente_row(b_cid, nome="Cliente B"),
+                cliente_row(parte_cid, nome="Esposa de B"),
+            ],
+            atendimentos=[_atendimento(a_aid, a_cid), _atendimento(b_aid, b_cid)],
+            partes=[{
+                "id": parte_id, "org_id": ORG_ID, "atendimento_id": b_aid,
+                "cliente_id": parte_cid, "lado": "comprador", "papel": "comprador",
+                "ordem": 0, "observacao": None,
+                "created_at": "2026-09-01T10:00:00+00:00", "created_by": None,
+                "updated_at": None,
+            }],
+        )
+        return a_cid, b_cid, parte_id
+
+    def test_removing_through_the_wrong_clientes_url_is_refused(self, client, scoped):
+        a_cid, b_cid, parte_id = self._dois_clientes(scoped)
+
+        out = client.delete(
+            f"/api/clientes/{a_cid}/compradores/{parte_id}", headers=_auth()
+        )
+
+        # 404, not 403: telling a caller a parte exists but belongs to someone
+        # else is itself a disclosure.
+        assert out.status_code == 404, out.text
+        # And it is still attached to the deal it actually belongs to.
+        restante = (
+            scoped.table("atendimento_partes").select("*").eq("org_id", ORG_ID).execute()
+        ).data or []
+        assert [r["id"] for r in restante] == [parte_id]
+
+    def test_repapelling_through_the_wrong_clientes_url_is_refused(
+        self, client, scoped
+    ):
+        a_cid, b_cid, parte_id = self._dois_clientes(scoped)
+
+        out = client.patch(
+            f"/api/clientes/{a_cid}/compradores/{parte_id}",
+            json={"papel": "conjuge"},
+            headers=_auth(),
+        )
+
+        assert out.status_code == 404, out.text
+        row = (
+            scoped.table("atendimento_partes")
+            .select("*").eq("org_id", ORG_ID).eq("id", parte_id).execute()
+        ).data[0]
+        assert row["papel"] == "comprador"
+
+    def test_the_rightful_cliente_still_reaches_it(self, client, scoped):
+        """The counter-check: the guard must not lock out the real owner."""
+        a_cid, b_cid, parte_id = self._dois_clientes(scoped)
+
+        out = client.patch(
+            f"/api/clientes/{b_cid}/compradores/{parte_id}",
+            json={"papel": "conjuge"},
+            headers=_auth(),
+        )
+
+        assert out.status_code == 200, out.text
+        assert out.json()["papel"] == "conjuge"
