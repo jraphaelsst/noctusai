@@ -1,5 +1,23 @@
 """Every model the fleet actually calls must carry a price.
 
+🔴 WHY THIS SEED-LIB INVARIANT LIVES IN THE TOOLKIT TESTS
+----------------------------------------------------------
+It asserts about `noctusai_lib`, so `seed/lib/backend/tests/` is where it
+looks like it belongs — and that is exactly where it would never run. NO
+workflow executes that tree: `.github/workflows/test.yml` has precisely two
+pytest invocations, one per PRODUCT (`products/<slug>/backend`) and one for
+`mcp/noctusai/tests/`. The seed lib is installed there as an editable dep and
+scanned by bandit, but its own 165 test files are never executed by CI.
+
+A guard that never runs is not a guard. Putting this file in its "natural"
+home would have reproduced, one level up, the precise failure it exists to
+catch: something that looks armed and silently is not. This directory already
+hosts repo-wide invariant checks of the same character (`test_compliance.py`
+scans every product), so it is the right home, not merely an expedient one.
+
+🔴 Do NOT "tidy" this back into `seed/lib/backend/tests/` without first
+adding a CI job that runs that tree. The systemic gap is still open.
+
 🔴 WHY THIS IS A TEST AND NOT A COMMENT
 ---------------------------------------
 `usage.estimate_cost_usd` looks a model up in `MODELS` and returns `0.0`

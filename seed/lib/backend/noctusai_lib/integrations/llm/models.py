@@ -86,8 +86,10 @@ MODELS: Tuple[ModelEntry, ...] = (
     #: The OCR pin for the `openai` rung (`documents/transcription.py::
     #: OCR_MODELS`). It was reachable in production while unpriced, which is
     #: the same silent-zero the Anthropic block below documents — found by
-    #: `tests/integrations/llm/test_model_catalog_pricing.py`, not by anyone
-    #: noticing a suspiciously cheap month.
+    #: `mcp/noctusai/tests/test_model_catalog_pricing.py`, not by anyone
+    #: noticing a suspiciously cheap month. (That guard lives in the toolkit
+    #: tests rather than beside the lib because CI runs no pytest over
+    #: `seed/lib/backend/tests/` at all — its own header explains why.)
     ModelEntry(
         id="gpt-4.1-mini",
         label="GPT-4.1 mini",
