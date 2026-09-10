@@ -5783,6 +5783,216 @@ def check_ci_test_matrix_coverage(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_seed_test_root_ci_coverage` — the SAME "a test suite silently never
+# runs in CI" class as `check_ci_test_matrix_coverage` above, one directory
+# level out, where that keeper structurally cannot look.
+#
+# 🔴 WHY A SECOND KEEPER RATHER THAN A WIDER PREDICATE ON THE FIRST.
+# `check_ci_test_matrix_coverage` derives its required set from
+# `_on_disk_products()` — `products/*`. `seed/lib` and `seed/framework` are
+# not products, so no predicate change inside that keeper's domain could ever
+# have reached them. Its required-set is also slug-shaped (`matrix: product:`
+# entries), while these roots are path-shaped. A gate whose DOMAIN excludes
+# the gap is indistinguishable from no gate at all — and this one had three
+# live instances on 2026-09-09:
+#
+#   seed/lib/backend        3637 tests   NO job     (`noctusai_lib`)
+#   seed/framework/backend   203 tests   NO job     (`noctusai_seed`)
+#   seed/lib/frontend        375 tests   NO job     (`@noctusai/lib`)
+#
+# Every product backend imports the first two and every product frontend
+# renders the third, so these are the highest-blast-radius suites in the
+# repo — and the only ones with no gate. All three passed on first run, which
+# is the point: they were never red, they were never *asked*.
+#
+# 🔴 THE PREDICATE MATCHES ON THE RUN COMMAND, NOT ON `working-directory:`.
+# `seed-typecheck.yml` already had two steps whose working-directory IS
+# `seed/lib/frontend` — it runs `npm run check` (tsc --noEmit). Coverage
+# measured by "does CI visit this directory" would have called that root
+# gated and stayed green over 375 uncollected tests. What makes a suite
+# covered is a step that RUNS it.
+#
+# Required-set predicate, per root (mirrors the product keeper exactly):
+#   <root>/backend   → has `tests/**/test_*.py`     ⇒ needs a `pytest` step
+#   <root>/frontend  → has `src/**/*.test.ts(x)`    ⇒ needs a `vitest` step
+# "has ≥1 test file", never "exists on disk" — `vitest run` hard-fails on
+# "no test files found", so a root joins the gate the commit it gets its
+# first spec (this is why `seed/framework/frontend`, 0 specs, is correctly
+# absent today).
+#
+# Severity: `high` — same as the sibling. This is not a style nit.
+# ---------------------------------------------------------------------------
+
+#: Steps whose `run:` body indicates the suite is actually EXECUTED, keyed by
+#: the kind of root they satisfy. Substring match on the run block.
+_SEED_RUNNER_MARKERS: dict[str, tuple[str, ...]] = {
+    "backend": ("pytest",),
+    "frontend": ("vitest", "npm test", "npm run test"),
+}
+
+_MATRIX_REF_RE = re.compile(r"\$\{\{\s*matrix\.([A-Za-z_][A-Za-z0-9_-]*)\s*\}\}")
+
+
+def _seed_required_test_roots(root: Path) -> dict[str, str]:
+    """`{"seed/lib/backend": "backend", ...}` — every seed test root that has
+    real test files today. Derived from disk; never hand-listed."""
+    required: dict[str, str] = {}
+    seed_dir = root / "seed"
+    if not seed_dir.is_dir():
+        return required
+    for layer in sorted(p for p in seed_dir.iterdir() if p.is_dir()):
+        be_tests = layer / "backend" / "tests"
+        if be_tests.is_dir() and any(be_tests.rglob("test_*.py")):
+            required[f"seed/{layer.name}/backend"] = "backend"
+        fe_src = layer / "frontend" / "src"
+        if fe_src.is_dir() and (
+            any(fe_src.rglob("*.test.ts")) or any(fe_src.rglob("*.test.tsx"))
+        ):
+            required[f"seed/{layer.name}/frontend"] = "frontend"
+    return required
+
+
+def _ci_executed_roots(root: Path) -> dict[str, set[str]]:
+    """`{"seed/lib/backend": {"pytest"}, ...}` — for every workflow step that
+    RUNS a suite, the directory it runs it in and which marker matched.
+
+    Reads EVERY workflow, not just `test.yml`: a suite is covered wherever it
+    actually runs, and pinning the search to one file would turn a legitimate
+    move into a false finding. `${{ matrix.<key> }}` in a `working-directory`
+    is expanded against that job's own matrix, since that is exactly how the
+    seed jobs address their roots.
+    """
+    executed: dict[str, set[str]] = {}
+    wf_dir = root / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        return executed
+    try:
+        import yaml  # PyYAML — available in the venv (used by sibling keepers)
+    except ImportError:  # pragma: no cover — surfaced, never silently skipped
+        logger.warning(
+            "compliance: PyYAML missing — check_seed_test_root_ci_coverage "
+            "cannot read workflows; install it to restore the gate"
+        )
+        return executed
+
+    for wf in sorted(wf_dir.glob("*.yml")) + sorted(wf_dir.glob("*.yaml")):
+        try:
+            doc = yaml.safe_load(wf.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+            logger.debug("compliance: cannot parse %s (%s)", wf, exc)
+            continue
+        if not isinstance(doc, dict):
+            continue
+        for job in (doc.get("jobs") or {}).values():
+            if not isinstance(job, dict):
+                continue
+            matrix = ((job.get("strategy") or {}).get("matrix") or {})
+            if not isinstance(matrix, dict):
+                matrix = {}
+            job_wd = job.get("defaults", {}).get("run", {}).get("working-directory")
+            for step in job.get("steps") or []:
+                if not isinstance(step, dict):
+                    continue
+                run = step.get("run")
+                if not isinstance(run, str):
+                    continue
+                markers = {
+                    kind
+                    for kind, needles in _SEED_RUNNER_MARKERS.items()
+                    for needle in needles
+                    if needle in run
+                }
+                if not markers:
+                    continue
+                wd = step.get("working-directory") or job_wd
+                if not isinstance(wd, str):
+                    continue
+                for resolved in _expand_matrix_refs(wd, matrix):
+                    executed.setdefault(resolved.strip("/"), set()).update(markers)
+    return executed
+
+
+def _expand_matrix_refs(value: str, matrix: dict) -> list[str]:
+    """Every concrete path `value` can take, substituting `${{ matrix.k }}`
+    against `matrix`. An unresolvable ref yields nothing — a path we cannot
+    pin down must not be counted as covering anything."""
+    refs = _MATRIX_REF_RE.findall(value)
+    if not refs:
+        return [value]
+    out = [value]
+    for key in refs:
+        options = matrix.get(key)
+        if not isinstance(options, list) or not options:
+            return []
+        token = _MATRIX_REF_RE.pattern
+        out = [
+            _MATRIX_REF_RE.sub(
+                lambda m, _o=opt, _k=key: str(_o) if m.group(1) == _k else m.group(0),
+                candidate,
+            )
+            for candidate in out
+            for opt in options
+        ]
+    return [c for c in out if not _MATRIX_REF_RE.search(c)]
+
+
+def check_seed_test_root_ci_coverage(repo_root: Path | None = None) -> list[dict]:
+    """Every `seed/*/backend` with pytest files and every `seed/*/frontend`
+    with vitest specs must have a workflow step that RUNS that suite.
+
+    The shared library and framework are imported by every product in the
+    fleet, so an uncollected suite here is fleet-wide blindness — and it was
+    the live state until 2026-09-09 (3637 + 203 + 375 tests, no job). See the
+    header above for why this cannot be folded into
+    `check_ci_test_matrix_coverage`.
+    """
+    root = repo_root or REPO_ROOT
+    required = _seed_required_test_roots(root)
+    if not required:
+        return []
+    executed = _ci_executed_roots(root)
+
+    issues: list[dict] = []
+    for rel, kind in sorted(required.items()):
+        if kind in executed.get(rel, set()):
+            continue
+        runner = "pytest" if kind == "backend" else "vitest (`npm test`)"
+        issues.append({
+            "product": "seed",
+            "file": rel,
+            "issue": (
+                f"{rel} has real test files but NO workflow step runs "
+                f"{runner} there — its tests never execute in CI, silently, "
+                f"indistinguishable from always-green. Every product imports "
+                f"this package, so the blast radius is the whole fleet. Fix: "
+                f"add the root to the `seed-{kind}-tests` matrix in "
+                f".github/workflows/test.yml. (A step that merely VISITS the "
+                f"directory does not count — `seed-typecheck.yml` type-checked "
+                f"seed/lib/frontend for months while its 375 tests never ran.)"
+            ),
+            "severity": "high",
+        })
+
+    for rel, kinds in sorted(executed.items()):
+        if not rel.startswith("seed/") or rel in required:
+            continue
+        issues.append({
+            "product": "seed",
+            "file": rel,
+            "issue": (
+                f"a workflow runs a test suite in {rel}, but it has no "
+                f"qualifying test files — the job will fail loudly on the "
+                f"next run (`vitest run` refuses \"no test files found\"), so "
+                f"this is lower-urgency than the missing case, but it is the "
+                f"same list-drift class. Remove the stale matrix entry."
+            ),
+            "severity": "high",
+        })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_upload_route_body_override` — the STATIC BACKSTOP for the
 # `max_body_path_overrides` hand-maintained-list-drift class (sibling of
 # `check_dependabot_product_coverage` / `check_ci_test_matrix_coverage`
@@ -11391,6 +11601,7 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-13 sibling (found while building the dependabot fix — same
     # class, second surface): test.yml's per-product CI matrices.
     all_issues.extend(check_ci_test_matrix_coverage())
+    all_issues.extend(check_seed_test_root_ci_coverage())
     # 2026-08-31 THIRD surface of the same hand-maintained-list-drift
     # class: a product's `max_body_path_overrides` map. Only social-wiring
     # had ANY entries, and even it was missing 3 of its own upload routes;

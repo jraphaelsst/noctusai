@@ -121,6 +121,75 @@ jobs:
         if: ${{ matrix.product == 'core' }}
         run: python mcp/noctusai/cli.py --check-framework-deps
 
+  seed-backend-tests:
+    # The SHARED-LIBRARY half of the backend suite — `noctusai_lib`
+    # (seed/lib/backend, 3637 tests) and `noctusai_seed`
+    # (seed/framework/backend, 203 tests).
+    #
+    # 🔴 WHY THIS JOB EXISTS (2026-09-09). It did not, and nothing noticed.
+    # Every product backend imports these two packages; a regression here
+    # breaks the whole fleet at once. Yet `working-directory` across this
+    # whole workflow reached `seed/lib/frontend` and `seed/framework/frontend`
+    # and never their backend siblings — the seed's FRONTEND halves were
+    # gated, its BACKEND halves were not. Nobody chose that: the FE jobs were
+    # added by hand and the BE ones simply never were.
+    #
+    # `check_ci_test_matrix_coverage` — the keeper built precisely to stop a
+    # test suite from silently never running — could not see it either: its
+    # domain is `_on_disk_products()`, i.e. `products/*`, and `seed/lib` is
+    # not a product. A gate whose DOMAIN excludes the gap is indistinguishable
+    # from no gate at all, which is why `check_seed_test_root_ci_coverage`
+    # ships in the same commit as this job: it derives the seed's test roots
+    # from disk and asserts each one is actually run here.
+    #
+    # Sized before landing rather than after: both suites run green from a
+    # scrubbed `env -i` (no `.env`, no SUPABASE_*) in ~12s total, so this goes
+    # in BLOCKING on day one — a `continue-on-error` warm-up period would only
+    # have re-answered a question a local run already answered.
+    name: Seed Backend Tests (pytest)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root:
+          - seed/lib/backend
+          - seed/framework/backend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
+        run: |
+          # Same third-party-apt-source guard as `product-backend-tests` above —
+          # see that job for the full rationale (dl.google.com served a corrupt
+          # index on 2026-09-09 and took the whole matrix down).
+          sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
+            | sudo xargs -r rm -f
+          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
+          sudo apt-get update || true
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
+            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+
+      - name: Install dependencies (root superset)
+        # The root requirements.txt already carries `-e seed/lib/backend` and
+        # `-e seed/framework/backend`, so both packages install editable and
+        # import under their real names — the same resolution every product
+        # backend job gets.
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run tests
+        working-directory: ${{ matrix.root }}
+        run: pytest --tb=short -q
+
   erp-frontend-build:
     name: ERP Frontend Build
     runs-on: ubuntu-latest
@@ -236,6 +305,55 @@ jobs:
 
       - name: Run FE tests (vitest)
         working-directory: products/${{ matrix.product }}/frontend
+        run: npm test
+
+  seed-frontend-tests:
+    # The SHARED-LIBRARY half of the FE suite — `@noctusai/lib`
+    # (seed/lib/frontend: 32 spec files, 375 tests).
+    #
+    # 🔴 Found 2026-09-09 while closing the backend half above, and it is the
+    # WORSE of the two: `seed-typecheck.yml` already visits this exact
+    # directory, so the seed FE looked gated. It runs `npm run check` — `tsc
+    # --noEmit` only. The `test` script (`vitest run`) was never invoked by
+    # any workflow, so 375 tests over the components EVERY product renders
+    # had been silently uncollected. A directory appearing in CI is not the
+    # same as its tests running in CI, which is precisely why
+    # `check_seed_test_root_ci_coverage` matches on the RUN COMMAND, not on
+    # the presence of a `working-directory:`.
+    #
+    # `seed/framework/frontend` is legitimately absent: zero `*.test.ts(x)`
+    # files, and `vitest run` hard-fails on "no test files found" — the same
+    # "has ≥1 spec file" required-set predicate `product-frontend-tests` uses.
+    # It joins the matrix the commit it gets its first spec (the keeper says so).
+    name: Seed Frontend Tests (vitest)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root:
+          - seed/lib/frontend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ${{ matrix.root }}/package-lock.json
+
+      - name: Install seed frontend deps (both packages — they cross-import)
+        # lib's vitest config path-maps `@noctusai/seed/*` at the sibling
+        # framework package, so the sibling must be installed for lib's own
+        # specs to resolve — the same cross-package coupling `seed-typecheck.yml`
+        # documents for tsc.
+        run: |
+          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
+          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+
+      - name: Run FE tests (vitest)
+        working-directory: ${{ matrix.root }}
         run: npm test
 
   pf-frontend-build:

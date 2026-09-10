@@ -395,9 +395,85 @@ mechanism:
   reads it), auto-appended by `noctus.dev.scaffold_product`. It is not itself
   a drifting mirror.
 - **`.github/workflows/build-and-push.yml`**, **`deploy-prod.yml`**,
-  **`seed-typecheck.yml`**, **`embedding-cache-gate.yml`** — no hardcoded
-  per-product list; they already derive from `build-scope.txt` or run
-  product-agnostically.
+  **`embedding-cache-gate.yml`** — no hardcoded per-product list; they already
+  derive from `build-scope.txt` or run product-agnostically.
+- **`.github/workflows/seed-typecheck.yml`** — also no per-product list, but
+  it was listed here as "fine" and that reading was too generous: it type-checks
+  `seed/lib/frontend` and never runs that package's 375 tests, which is exactly
+  what made the seed FE gap look covered. See the Sixth axis.
 - **`KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`'s product roster** — already
   gated: the pre-commit hook (`CLAUDE.md` § 4) blocks a commit that adds
   `products/<slug>/` without a matching roster row.
+
+## Sixth axis — the gate's DOMAIN, not its predicate, was the hole (2026-09-09)
+
+The first five axes are about a list going stale. This one is about the
+**keeper built to stop that** having a domain that structurally excluded the
+worst instance — which is a different and nastier failure, because from the
+outside it is indistinguishable from coverage.
+
+**The state.** Three test suites had **no CI job at all**:
+
+| root | tests | what imports it |
+|---|---:|---|
+| `seed/lib/backend` | 3637 | every product backend (`noctusai_lib`) |
+| `seed/framework/backend` | 203 | every product backend (`noctusai_seed`) |
+| `seed/lib/frontend` | 375 | every product frontend (`@noctusai/lib`) |
+
+These are the highest-blast-radius suites in the repo — a regression in any of
+them breaks the whole fleet at once — and they were the only ones with no
+gate. Every product's own suite was matrixed; the shared code they all sit on
+was not. All three passed on their first run, which is the point: they were
+never red, they were never *asked*.
+
+**Why the Fifth-axis keeper could not see it.**
+`check_ci_test_matrix_coverage` derives its required set from
+`_on_disk_products()` — `products/*`. `seed/lib` is not a product, so no
+predicate change *inside that keeper's domain* could ever have reached it. Its
+required set is also slug-shaped (`matrix: product:` entries) while these
+roots are path-shaped. **A gate whose domain excludes the gap is
+indistinguishable from no gate at all** — and it is worse than no gate,
+because its green reads as an answer.
+
+The generalisation for the next one: when a keeper closes a class, ask what
+its *domain* is, separately from what its *predicate* is. The predicate here
+was right. The domain was `products/*` because that is where the first two
+instances happened to live.
+
+### 🔴 Visiting a directory is not running its tests
+
+`seed-typecheck.yml` already had two steps whose `working-directory` was
+`seed/lib/frontend`. It runs `npm run check` — `tsc --noEmit`. A coverage
+predicate keyed on *"does a workflow visit this directory"* would have called
+that root gated and stayed green over 375 uncollected tests.
+
+So `check_seed_test_root_ci_coverage` matches on the **run command**
+(`pytest` / `vitest` / `npm test`), per kind, across **every** workflow (a
+suite is covered wherever it actually runs; pinning the search to `test.yml`
+would turn a legitimate move into a false finding), expanding
+`${{ matrix.<key> }}` in a `working-directory` against that job's own matrix.
+The assertion that encodes this is
+`test_a_typecheck_only_step_does_not_count_as_coverage` — if it ever passes,
+the keeper has silently reverted to the shape that missed the bug.
+
+### Sized before landing, not after
+
+The obvious-looking sequence for adopting a never-run suite is *land it
+`continue-on-error`, triage the fallout, then make it blocking*. That is the
+right call when the fallout is genuinely unknown. It was not here: both
+backend suites run green from a scrubbed `env -i` (no `.env`, no `SUPABASE_*`
+— the environment CI actually has) in ~12s, and the FE suite in 5s. The
+warm-up period would only have re-asked a question one local run had already
+answered, and a `continue-on-error` job that nobody revisits is the same
+silent debt one layer up. **Size it, then land it blocking.**
+
+Jobs: `seed-backend-tests` (matrix over the two backend roots) and
+`seed-frontend-tests` (`seed/lib/frontend`) in `.github/workflows/test.yml`.
+`seed/framework/frontend` is legitimately absent — zero `*.test.ts(x)` files,
+and `vitest run` hard-fails on "no test files found", so it joins the matrix
+the commit it gets its first spec. Same "has ≥1 test file" required-set
+predicate as the Fifth axis; never "exists on disk".
+
+Keeper: `check_seed_test_root_ci_coverage`
+(`--check-seed-test-root-ci-coverage`, in the `run_all` aggregate),
+`mcp/noctusai/tests/test_check_seed_test_root_ci_coverage.py`.
