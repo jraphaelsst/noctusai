@@ -343,14 +343,21 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ matrix.root }}/package-lock.json
 
-      - name: Install seed frontend deps (both packages — they cross-import)
+      - name: Install seed deps (both packages — they cross-import)
         # lib's vitest config path-maps `@noctusai/seed/*` at the sibling
         # framework package, so the sibling must be installed for lib's own
         # specs to resolve — the same cross-package coupling `seed-typecheck.yml`
-        # documents for tsc.
+        # documents for tsc, and the same `npm ci` pair it already runs green.
+        #
+        # `npm ci`, not `npm install`: the lockfile IS the freeze
+        # (KB § PATTERNS/devops/product-lockfile-and-slug-drift.md). The
+        # `product-frontend-tests` job installs these two with `npm install`
+        # because there they are a file:-linked DEPENDENCY of the product being
+        # tested; here they are the subject, and a test suite that floats its own
+        # dependency graph run-to-run cannot pin a regression.
         run: |
-          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
-          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+          (cd seed/framework/frontend && npm ci --no-audit --no-fund)
+          (cd seed/lib/frontend && npm ci --no-audit --no-fund)
 
       - name: Run FE tests (vitest)
         working-directory: ${{ matrix.root }}
