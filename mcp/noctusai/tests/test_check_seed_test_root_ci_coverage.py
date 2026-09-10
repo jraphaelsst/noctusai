@@ -114,7 +114,12 @@ def _write_seed_frontend_spec(root: Path, layer: str) -> None:
     (d / "foo.test.ts").write_text("test('x', () => {});\n")
 
 
-class TestUncollectedSeedSuite:
+class TestCheckSeedTestRootCiCoverage:
+    """The canonical `Test<detector>` name — `check_detector_has_regression_test`
+    matches detectors to tests by class name, so this is the class that makes
+    the keeper discoverable. It carries the true-positive shapes; the classes
+    below pin the specific traps."""
+
     def test_flags_a_backend_root_with_tests_and_no_job(self, tmp_path):
         _write_workflow(tmp_path, _COVERED_WORKFLOW.replace("          - seed/lib/backend\n", ""))
         _write_seed_backend_tests(tmp_path, "lib")
