@@ -5993,6 +5993,241 @@ def check_seed_test_root_ci_coverage(repo_root: Path | None = None) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# `check_seed_declared_imports` — every RUNTIME import in a seed package must
+# be declared in THAT package's own `pyproject.toml`.
+#
+# 🔴 WHY (2026-09-10, the generalisation of the `bcrypt` incident one day old).
+# `noctusai_seed.apply_sqlite_migrations` did `import bcrypt` and `bcrypt` was
+# declared in NO manifest anywhere. It resolved for years because something
+# else in whatever environment happened to drag it in; on a clean CI runner it
+# did not, and 3 tests died on `ModuleNotFoundError`. The seed-test CI jobs
+# (`check_seed_test_root_ci_coverage`) now catch that class — but ONLY where a
+# test exercises the import. An undeclared import on a path no test covers is
+# still invisible, and `noctusai_lib` is imported by every product backend in
+# the fleet, so "invisible" means "breaks a product image at boot, in prod".
+#
+# This keeper closes the remaining half STATICALLY: it never imports anything,
+# never consults the installed environment (which is the very thing that lies),
+# and answers purely from the AST + the manifest.
+#
+# WHAT IT FOUND ON ITS FIRST RUN — both the exact bcrypt shape:
+#   `apscheduler` — MODULE-LEVEL in `noctusai_lib/api/scheduler.py`, undeclared.
+#       Resolved only because the ROOT `requirements.txt` happens to list it.
+#       Any consumer installing `noctusai-lib` alone (a sibling workspace, a
+#       product with its own requirements) gets ModuleNotFoundError at import.
+#   `starlette` — imported directly by `noctusai_seed.app`, declared only in
+#       seed/lib. Resolved transitively through fastapi. seed/lib declares it
+#       EXPLICITLY with a comment about why the version bounds matter — the
+#       framework had the same import and none of the protection.
+#
+# 🔴 WHAT IS DELIBERATELY NOT A FINDING, and why each is principled rather than
+# convenient — an exemption list that grows by convenience becomes the baseline
+# that hid the problem:
+#   • try/except ImportError  — a guarded import WITH a fallback is an OPTIONAL
+#     dependency correctly expressed. `networkx` (louvain clustering, falls back
+#     to product-grouping), `resend` (falls back to logging emails), `postgrest`
+#     (skips registering one exception handler, warns). Each degrades loudly.
+#     An unguarded import cannot degrade at all — it raises at import time.
+#   • `if TYPE_CHECKING:` — never executed at runtime, so it can never raise
+#     ModuleNotFoundError. `sqlalchemy` in `domain/ai/tool_audit.py`.
+#   • relative imports and the package's own name — first-party.
+#   • CONSUMER-provided modules (`app`, `main`) — `noctusai_lib.testing.fixtures`
+#     imports `app.rate_limit` INSIDE a fixture body, on purpose, documented: it
+#     only executes in a test session that has the product app on its path. The
+#     seed cannot declare a dependency on its own consumer.
+#
+# Import name != distribution name often enough that a bare string compare
+# would produce mostly false positives (`fitz` is PyMuPDF, `jwt` is PyJWT,
+# `googleapiclient` is google-api-python-client). `_IMPORT_TO_DIST` maps the
+# ones in play. It is deliberately an ALLOW-map, not a skip-list: an unmapped
+# third-party import is a FINDING, so a new alias must be added consciously.
+#
+# Severity: `high` — this is a prod-boot failure mode, not a style nit.
+# ---------------------------------------------------------------------------
+
+#: The stdlib, resolved from the RUNNING interpreter rather than hand-listed —
+#: a hand-listed stdlib is its own drifting-list bug, and `sys.stdlib_module_names`
+#: is exactly the authority (3.10+). Anything here can never need declaring.
+STDLIB_MODULE_NAMES = frozenset(__import__("sys").stdlib_module_names) | frozenset({
+    # Not in `stdlib_module_names` but never a distribution either.
+    "__future__",
+})
+
+#: Seed packages this keeper governs: `<pyproject dir>` → `<import package>`.
+#: Derived from disk in `_seed_python_packages` below; this is only the shape.
+_SEED_PKG_GLOB = ("lib", "framework")
+
+#: `import <name>` → the DISTRIBUTION that provides it, where the two differ.
+#: Allow-map, never a skip-list — an unmapped third-party import is a finding,
+#: so adding an alias is a deliberate act with a reviewer attached.
+_IMPORT_TO_DIST: dict[str, tuple[str, ...]] = {
+    "fitz": ("pymupdf",),                       # PyMuPDF's import name
+    "jwt": ("pyjwt",),
+    "pdfminer": ("pdfminer.six",),
+    "googleapiclient": ("google-api-python-client",),
+    "google": ("google-genai", "google-auth", "google-api-python-client"),
+    "dotenv": ("python-dotenv",),
+    "yaml": ("pyyaml",),
+    "PIL": ("pillow",),
+    "dateutil": ("python-dateutil",),
+    "apscheduler": ("apscheduler",),            # case-only difference (APScheduler)
+}
+
+#: Modules a seed package may import that belong to its CONSUMER, not to it.
+#: The seed cannot declare a dependency on the product that installs it.
+_CONSUMER_PROVIDED = frozenset({"app", "main"})
+
+#: First-party across the seed workspace.
+_SEED_FIRST_PARTY = frozenset({"noctusai_lib", "noctusai_seed", "noctusai"})
+
+
+def _normalize_dist(name: str) -> str:
+    """PEP 503-ish normalisation so `PyJWT`, `pyjwt` and `Py_JWT` compare equal."""
+    return re.sub(r"[-_.]+", "-", name).strip().lower()
+
+
+def _declared_distributions(pyproject: Path) -> set[str]:
+    """Every distribution named in `[project] dependencies` OR any
+    `[project.optional-dependencies]` group.
+
+    Optional groups COUNT: a test-support module that imports `pytest` is
+    honestly declared by a `testing` extra, and forcing pytest into every
+    product image to satisfy this gate would be the gate distorting the
+    design instead of describing it.
+    """
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover — py<3.11, surfaced not swallowed
+        logger.warning("compliance: tomllib unavailable; check_seed_declared_imports cannot read %s", pyproject)
+        return set()
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        logger.debug("compliance: cannot parse %s (%s)", pyproject, exc)
+        return set()
+
+    project = data.get("project") or {}
+    specs: list[str] = list(project.get("dependencies") or [])
+    for group in (project.get("optional-dependencies") or {}).values():
+        specs.extend(group or [])
+
+    out: set[str] = set()
+    for spec in specs:
+        name = spec.split(";", 1)[0].strip()
+        name = re.split(r"[\[<>=!~ ]", name, maxsplit=1)[0]
+        if name:
+            out.add(_normalize_dist(name))
+    return out
+
+
+def _runtime_imports(pkg_root: Path) -> dict[str, tuple[str, int]]:
+    """`{top-level module: (first file, lineno)}` for every import that can
+    actually raise at runtime.
+
+    Excluded, per the header: bodies of `try:` (guarded/optional) and of
+    `if TYPE_CHECKING:` (never executed). Relative imports are first-party.
+    """
+    found: dict[str, tuple[str, int]] = {}
+    for path in sorted(pkg_root.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+            logger.debug("compliance: cannot parse %s (%s)", path, exc)
+            continue
+
+        exempt: set[int] = set()
+        for node in ast.walk(tree):
+            guarded = isinstance(node, ast.Try) or (
+                isinstance(node, ast.If) and "TYPE_CHECKING" in ast.dump(node.test)
+            )
+            if guarded:
+                for sub in ast.walk(node):
+                    exempt.add(id(sub))
+
+        for node in ast.walk(tree):
+            if id(node) in exempt:
+                continue
+            if isinstance(node, ast.Import):
+                mods = [a.name.split(".", 1)[0] for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:  # relative → first-party
+                    continue
+                mods = [node.module.split(".", 1)[0]] if node.module else []
+            else:
+                continue
+            for mod in mods:
+                found.setdefault(mod, (str(path), node.lineno))
+    return found
+
+
+def _seed_python_packages(root: Path) -> list[tuple[str, Path, Path]]:
+    """`[(rel label, pyproject path, import-package dir)]` — derived from disk."""
+    out: list[tuple[str, Path, Path]] = []
+    for layer in _SEED_PKG_GLOB:
+        backend = root / "seed" / layer / "backend"
+        pyproject = backend / "pyproject.toml"
+        if not pyproject.is_file():
+            continue
+        for child in sorted(backend.iterdir()):
+            if child.is_dir() and (child / "__init__.py").is_file():
+                out.append((f"seed/{layer}/backend", pyproject, child))
+                break
+    return out
+
+
+def check_seed_declared_imports(repo_root: Path | None = None) -> list[dict]:
+    """Every runtime third-party import in `seed/*/backend/<pkg>/` must name a
+    distribution declared in that package's own `pyproject.toml`.
+
+    Static by construction — the installed environment is never consulted,
+    because an environment that happens to satisfy an undeclared import is
+    exactly how `bcrypt` stayed invisible. See the header for the full
+    rationale and for what is deliberately exempt.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+
+    for label, pyproject, pkg_dir in _seed_python_packages(root):
+        declared = _declared_distributions(pyproject)
+        for mod, (path, lineno) in sorted(_runtime_imports(pkg_dir).items()):
+            if mod in STDLIB_MODULE_NAMES or mod in _SEED_FIRST_PARTY:
+                continue
+            if mod in _CONSUMER_PROVIDED:
+                continue
+            if mod == pkg_dir.name:
+                continue
+            candidates = _IMPORT_TO_DIST.get(mod, (mod,))
+            if any(_normalize_dist(c) in declared for c in candidates):
+                continue
+            try:
+                rel = str(Path(path).relative_to(root))
+            except ValueError:
+                rel = path
+            issues.append({
+                "product": "seed",
+                "file": rel,
+                "issue": (
+                    f"`{rel}:{lineno}` imports `{mod}` at runtime, but "
+                    f"{label}/pyproject.toml declares no distribution providing "
+                    f"it. It resolves today only where something else in the "
+                    f"environment happens to supply it — the exact way `bcrypt` "
+                    f"stayed invisible until a clean CI runner refused it. Every "
+                    f"product backend installs this package, so an undeclared "
+                    f"import is a prod-boot failure waiting for the first image "
+                    f"built without the accidental provider. Fix: add it to "
+                    f"`[project] dependencies` (or an `[project."
+                    f"optional-dependencies]` group if it is genuinely optional, "
+                    f"in which case the import must ALSO be try/except-guarded "
+                    f"with a real fallback). If `{mod}`'s distribution has a "
+                    f"different name, map it in `_IMPORT_TO_DIST`."
+                ),
+                "severity": "high",
+            })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_upload_route_body_override` — the STATIC BACKSTOP for the
 # `max_body_path_overrides` hand-maintained-list-drift class (sibling of
 # `check_dependabot_product_coverage` / `check_ci_test_matrix_coverage`
@@ -11602,6 +11837,7 @@ def check_all_products() -> tuple[int, list]:
     # class, second surface): test.yml's per-product CI matrices.
     all_issues.extend(check_ci_test_matrix_coverage())
     all_issues.extend(check_seed_test_root_ci_coverage())
+    all_issues.extend(check_seed_declared_imports())
     # 2026-08-31 THIRD surface of the same hand-maintained-list-drift
     # class: a product's `max_body_path_overrides` map. Only social-wiring
     # had ANY entries, and even it was missing 3 of its own upload routes;

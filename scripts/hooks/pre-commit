@@ -475,6 +475,28 @@ if [[ -n "$STAGED_CI_MATRIX" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-sexies. Seed declared-imports gate (blocking, only when seed ───────
+# python or a seed manifest changed) ───────────────────────────────────────
+# Keeper `check_seed_declared_imports` + `KB § PATTERNS/devops/
+# product-lockfile-and-slug-drift.md` § Seventh axis. Every RUNTIME import in
+# `seed/*/backend/<pkg>/` must name a distribution that package's own
+# pyproject declares. The 2026-09-09 `bcrypt` incident is the shape: imported,
+# declared nowhere, resolved for years off whatever the environment happened
+# to supply, and died on the first clean CI runner. The seed-test jobs catch
+# that only where a TEST touches the import; this catches the rest, and it is
+# a static AST+TOML read that answers in milliseconds — so it belongs at the
+# edit, not 20 minutes later in CI. Fires on a staged manifest too: removing a
+# dependency is exactly the commit that orphans an import.
+STAGED_SEED_IMPORTS=$(git diff --cached --name-only 2>/dev/null | grep -E '^seed/[^/]+/backend/.*\.(py|toml)$' || true)
+if [[ -n "$STAGED_SEED_IMPORTS" ]] && have_py; then
+    echo "[pre-commit] seed backend python/manifest staged — checking declared imports..."
+    if ! "$PY" "$CLI" --check-seed-declared-imports --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] SEED-DECLARED-IMPORTS check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Add the distribution to that package's pyproject [project] dependencies (or an [project.optional-dependencies] group IF the import is genuinely optional — in which case it must ALSO be try/except-ImportError-guarded with a real fallback). If the import name differs from the distribution name, map it in _IMPORT_TO_DIST. See KB § PATTERNS/devops/product-lockfile-and-slug-drift.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-quinquies. Upload-route body-override gate (blocking, only when a ─
 # product backend .py file changed) ────────────────────────────────────────
 # Keeper `check_upload_route_body_override` + `KB § PATTERNS/backend/

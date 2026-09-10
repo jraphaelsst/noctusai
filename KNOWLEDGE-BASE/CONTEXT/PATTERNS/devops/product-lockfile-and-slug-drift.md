@@ -477,3 +477,89 @@ predicate as the Fifth axis; never "exists on disk".
 Keeper: `check_seed_test_root_ci_coverage`
 (`--check-seed-test-root-ci-coverage`, in the `run_all` aggregate),
 `mcp/noctusai/tests/test_check_seed_test_root_ci_coverage.py`.
+
+## Seventh axis — an undeclared IMPORT is a manifest that lies (2026-09-10)
+
+The Sixth axis closed "a suite never runs". This one closes the half that
+survives even when every suite runs: **an import that no test exercises.**
+
+**The seed for it.** `noctusai_seed.apply_sqlite_migrations` did
+`import bcrypt`; `bcrypt` appeared in no manifest anywhere — not that package's
+`pyproject.toml`, not `seed/lib`'s, not the root superset. It resolved for as
+long as it existed because *something else in whatever environment* dragged it
+in. On a clean CI runner it did not, and three tests died on
+`ModuleNotFoundError` the first time the seed suites ran.
+
+The Sixth-axis jobs catch that — **but only where a test touches the import.**
+`noctusai_lib` and `noctusai_seed` are installed into every product image, so
+an undeclared import on an untested path is a prod-boot failure waiting for the
+first image built without the accidental provider. Tests cannot close this;
+only a static read of the source against the manifest can.
+
+**What `check_seed_declared_imports` found on its first run — four, two of them
+the bcrypt shape verbatim:**
+
+| import | site | why it resolved anyway |
+|---|---|---|
+| `apscheduler` | module-level, `noctusai_lib/api/scheduler.py` | the ROOT `requirements.txt` happens to list it |
+| `starlette` | direct, `noctusai_seed/app.py` | transitively through `fastapi` |
+| `postgrest` | module-level, `noctusai_lib/testing/mocks.py` | transitively through `supabase` |
+| `pytest` | module-level, `noctusai_lib/testing/` | always present in a test env |
+
+`apscheduler` is the sharpest: a consumer installing `noctusai-lib` **alone** —
+a sibling workspace, a product with its own requirements — got
+`ModuleNotFoundError` at import, because the root superset that rescued it is
+not part of the package's contract. `postgrest` is the one with a precedent
+already in the same file: `gotrue` is declared explicitly there, with a comment
+about the 2026-07-12 erp outage caused by relying on supabase's transitive pin.
+The lesson had been learned and written down one dependency over.
+
+### 🔴 The predicate: an import is mandatory when it cannot degrade
+
+Not "is it at module level" — a lazy `import bcrypt` inside a function is every
+bit as mandatory, it just fails later, on whichever path first reaches it.
+What makes an import *optional* is a guard with a real fallback:
+
+- **`try/except ImportError` with a fallback** — exempt. `networkx` falls back
+  to product-grouping, `resend` to logging emails, `postgrest` in
+  `app_factory` to skipping one exception handler with a warning. Each
+  degrades loudly and on purpose.
+- **`if TYPE_CHECKING:`** — exempt. Never executed, so it can never raise.
+- **relative / own-package imports** — first-party.
+- **consumer-provided modules** (`app`, `main`) — `noctusai_lib.testing.fixtures`
+  imports `app.rate_limit` inside a fixture body, documented, and only runs in a
+  session that has the product app importable. **The seed cannot declare a
+  dependency on its own consumer.**
+
+Both halves are pinned as a PAIR
+(`test_a_try_guarded_import_is_not_a_finding` /
+`test_an_unguarded_import_of_the_same_module_IS_a_finding`). If the first
+fails, the keeper has begun flagging correct code and will be silenced by
+exemptions until it catches nothing; if the second passes, it has stopped
+catching the bug it exists for.
+
+### Static by construction — never ask the environment
+
+The keeper reads the AST and the TOML. It never imports anything and never
+consults `importlib.metadata`, because **the installed environment is precisely
+the thing that lies**: every one of the four findings above resolves fine in a
+working venv. A gate that asks "can I import this?" would have reported clean
+on all four.
+
+Import name ≠ distribution name often enough that a bare string compare is
+mostly false positives (`fitz` is PyMuPDF, `jwt` is PyJWT, `googleapiclient` is
+google-api-python-client). `_IMPORT_TO_DIST` maps those, and is deliberately an
+**allow-map, not a skip-list**: an unmapped third-party import is a FINDING, so
+a new alias is a conscious act with a reviewer attached, never a silent pass.
+
+Optional-dependency groups count as declared — `pytest` belongs in a `testing`
+extra, and forcing it into every product image to satisfy the gate would be the
+gate distorting the design rather than describing it.
+
+### Where it runs
+
+`--check-seed-declared-imports`, in the `run_all` aggregate, **and bound in the
+pre-commit hook on any staged `seed/**/*.py` or seed `pyproject.toml`** — the
+answer takes milliseconds, so the feedback belongs at the edit, not 20 minutes
+later in CI. Regression suite:
+`mcp/noctusai/tests/test_check_seed_declared_imports.py`.
