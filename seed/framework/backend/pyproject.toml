@@ -16,6 +16,19 @@ dependencies = [
     "PyJWT>=2.9.0",
     "httpx>=0.27.0",
     "slowapi>=0.1.9",
+    # `noctusai_seed.apply_sqlite_migrations._bcrypt_hash` imports it to seed the
+    # local-dev SQLite user row (mirrors `auth.users.encrypted_password` so the
+    # row shape is faithful). Declared HERE, at the importer, for the same reason
+    # `defusedxml` is declared in seed/lib's pyproject: a product-only pin leaves
+    # THIS package's own import unsatisfied in any consumer that does not happen
+    # to have it — which was the live state until 2026-09-09. bcrypt was declared
+    # NOWHERE (not here, not seed/lib, not the root superset) and the import
+    # worked only where something else had dragged it in transitively; the very
+    # first CI run of this suite failed 8 tests on `ModuleNotFoundError: No
+    # module named 'bcrypt'`. A hard dep, not an optional extra, matching the
+    # monolithic-install choice seed/lib documents for the three LLM SDKs:
+    # simpler ops, and bcrypt ships wheels so the image cost is negligible.
+    "bcrypt>=4.0.0",
 ]
 
 [tool.setuptools.packages.find]
