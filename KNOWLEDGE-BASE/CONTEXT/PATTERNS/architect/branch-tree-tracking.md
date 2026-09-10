@@ -122,3 +122,72 @@ Consolidate the scattered branching surfaces into ONE methodology with this doc 
 - Keeper sync: `check_branch_tree_mirror` joins the eight-way-sync keeper family; keeper-pattern-cache refresh.
 
 > Throughout: this is additive to — and the enforcement layer for — the existing self-branch + dispatch-branch rules; nothing in the current methodology is weakened, only made globally observable and code-enforced.
+
+## 7 · 🔴 The stash stack is shared — a positional `pop` is a cross-worktree swap (2026-09-09)
+
+**The incident.** Rebasing `feat/model-pricing-test-into-ci` failed with
+`cannot rebase: Your index contains uncommitted changes`. The three dirty
+files were `project-history/branch-tree.ndjson`, its `.mirror`, and
+`worktree-salvage.ndjson` — and the added rows **were not that session's**.
+They carried session `034951b2`'s `feat/papel-da-parte-editavel` `shipped`
+pointer and its `session-end-sweep` row, both stamped 22:32:43, and
+`git show origin/dev:<each>` matched none of them. Another session's ledger
+rows were sitting uncommitted in a third session's worktree, on no branch.
+
+**The mechanism.** `.git/refs/stash` is **ONE stack for the whole repository** —
+the primary checkout and every worktree share it. Both ledger writers stashed
+their benign artifacts before rebasing and restored afterwards with a bare
+`git stash pop`, i.e. `stash@{0}`, applied into *their own* tree. `stash@{0}`
+does not mean "mine"; it means "whatever anyone pushed most recently". So:
+
+```
+A: stash push   → stash@{0} = A's rows
+B: stash push   → stash@{0} = B's rows, A's slid to stash@{1}
+A: stash pop    → A applies B's rows into A's tree, and DROPS them
+B: stash pop    → B gets whatever is on top now
+```
+
+Each session ends up holding rows it never wrote, in a tree that is not on the
+branch those rows belong to.
+
+**Why it is worse than the sibling ledger-drift entries.** Those are about a
+row *stranded on the primary* — committed, merely unpushed, and recoverable by
+anyone who looks. Here the rows are **uncommitted in a tree their author
+neither created nor will revisit**, and every natural unblocking move destroys
+them without trace: `git checkout -- project-history/`, a reset to let the
+rebase proceed, or `rebase.autoStash` (which would have buried the collision
+so thoroughly that nothing would ever have surfaced it). The rebase failure
+was the only reason anyone saw it at all.
+
+**The fix — address the entry by SHA, never by position.**
+`_benign_stash.stash_benign` now returns the created stash's **commit SHA**
+(resolved with `rev-parse stash@{0}` immediately after the push, while it is
+still ours), and `pop_stash` takes that SHA: `git stash apply <sha>`, then
+re-resolves the positional name from `git stash list --format='%H %gd'` to
+drop **exactly that** entry — re-resolved because a peer may have shifted it
+down the stack in between. Failure modes are asymmetric on purpose:
+
+- apply fails → **do not drop.** Losing a restore is recoverable; dropping
+  someone else's rows is not.
+- the SHA cannot be resolved → return `None`, log at ERROR with the stash
+  message to grep for, and restore nothing. Never fall back to `stash@{0}`.
+- no handle at the call site → restore nothing, deliberately.
+
+**The generalisable lesson.** The carve-out that allowed `git stash` here
+(`task_branch._stash_benign_artifacts`: *"an intentional, controlled carve-out
+for known-safe paths only"*) reasoned carefully about **which paths** were safe
+to stash and not at all about the **stack being shared**. The paths were fine.
+The namespace was global. When you allowlist an operation, check whether its
+*addressing* is per-tree or repo-wide — `stash@{n}`, `refs/stash`, and the
+index are all repo-wide in a worktree layout.
+
+Regression pins: `TestSharedStackIsNotOurs` in
+`mcp/noctusai/tests/test_benign_stash.py` (six cases, including "a peer pushed
+on top → drop must target `stash@{1}`"), plus the `stash apply <sha>` / no-`pop`
+assertions in `test_ledger_push.py` and `test_task_branch.py`.
+
+**Still open (not fixed here):** the ledger append is not atomic — a row is
+written to the working tree first and committed later, so the window where it
+exists only as an uncommitted modification is what made it stashable at all.
+Making the append a write → commit → push unit would remove the class rather
+than make it survivable. Logged, not attempted.

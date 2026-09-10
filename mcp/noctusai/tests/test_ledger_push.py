@@ -76,6 +76,7 @@ class FakeRunner:
         self.ledger_rel = ledger_rel
         self.calls: list[list[str]] = []
         self._push_i = 0
+        self.stash_sha = "f" * 40
 
     def __call__(self, cmd: list[str], cwd: str | None = None) -> tuple[int, str, str]:
         self.calls.append(list(cmd))
@@ -102,6 +103,15 @@ class FakeRunner:
             rc = self.push_rcs[min(self._push_i, len(self.push_rcs) - 1)]
             self._push_i += 1
             return rc, "", ("" if rc == 0 else "non-fast-forward")
+        # The stash contract is SHA-addressed (the stack is shared with every
+        # worktree — see `_benign_stash.stash_benign`), so the fake has to answer
+        # the two reads that resolve our own entry. A fake that returns "" here
+        # silently models "we stashed but cannot address it", and the restore
+        # correctly refuses — which is how this fake first went out of date.
+        if sub == "rev-parse" and "stash@{0}" in cmd:
+            return 0, self.stash_sha + "\n", ""
+        if sub == "stash" and "list" in cmd:
+            return 0, f"{self.stash_sha} stash@{{0}}\n", ""
         return 0, "", ""
 
     # ── assertion helpers ──
@@ -370,10 +380,14 @@ class TestBenignStashUnblocksTheRebase:
         subs = r.subs()
         assert "stash" in subs, "benign artifact must be stashed before the rebase"
         assert "rebase" in subs, "the rebase must actually run"
-        # stash push precedes the rebase; stash pop restores afterwards.
+        # stash push precedes the rebase; the restore afterwards is an
+        # apply-BY-SHA, never a positional pop (shared stash stack).
         stashes = [c for c in r.calls if _sub(c) == "stash"]
         assert any("push" in c for c in stashes), stashes
-        assert any("pop" in c for c in stashes), "the artifact must be restored"
+        assert any("apply" in c and r.stash_sha in c for c in stashes), \
+            "the artifact must be restored by its own SHA"
+        assert not any("pop" in c for c in stashes), \
+            "a positional pop can restore a PEER worktree's rows"
         assert subs.index("stash") < subs.index("rebase")
 
     def test_real_dirty_work_blocks_loudly_and_names_the_files(self):
@@ -408,7 +422,8 @@ class TestBenignStashUnblocksTheRebase:
         )
         assert res["ok"] is False
         stashes = [c for c in r.calls if _sub(c) == "stash"]
-        assert any("pop" in c for c in stashes), f"stash never popped: {r.subs()}"
+        assert any("apply" in c and r.stash_sha in c for c in stashes), \
+            f"stash never restored: {r.subs()}"
 
     def test_no_force_or_autostash_shortcut_is_ever_issued(self):
         """The fix must not smuggle in a force/`-X`/config override — it stashes

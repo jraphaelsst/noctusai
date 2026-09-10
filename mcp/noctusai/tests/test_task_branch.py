@@ -24,6 +24,13 @@ import pytest  # noqa: E402
 from tools.noctus.dev import task_branch as T  # noqa: E402
 
 
+#: The SHA every fake stash entry resolves to. `_benign_stash` restores BY
+#: SHA because `.git/refs/stash` is one stack shared by every worktree —
+#: a fake that cannot answer `rev-parse stash@{0}` models "stashed but
+#: unaddressable", and the restore then correctly refuses.
+STASH_SHA = "5" * 40
+
+
 class FakeGit:
     """Scripts git IO. `refs` maps ref→sha. A push (when its scripted rc is 0)
     advances the dst ref to `head_sha` (the worktree HEAD), simulating the FF.
@@ -64,7 +71,14 @@ class FakeGit:
         if sub == "fetch":
             return (0, "", "")
         if sub == "rev-parse":
-            sha = self.refs.get(cmd[2])
+            # `git [-C <wt>] rev-parse <ref>` — the ref is the LAST positional.
+            ref = cmd[-1]
+            if ref == "stash@{0}":
+                # The stash contract is SHA-addressed: the stack is shared with
+                # every worktree, so the restore must name its OWN entry rather
+                # than whatever is on top (`_benign_stash.stash_benign`).
+                return (0, STASH_SHA + "\n", "")
+            sha = self.refs.get(ref)
             return (0, sha + "\n", "") if sha else (1, "", "bad ref")
         if sub == "merge-base":  # merge-base --is-ancestor a b
             return (0 if self.anc(cmd[3], cmd[4]) else 1, "", "")
@@ -81,7 +95,9 @@ class FakeGit:
                 return (0, self.porcelain, "")
             return (0, "", "")  # add / remove / prune
         if sub == "stash":
-            if "pop" in cmd:
+            if "list" in cmd:
+                return (0, f"{STASH_SHA} stash@{{0}}\n", "")
+            if "apply" in cmd or "drop" in cmd or "pop" in cmd:
                 return (0, "", "")
             return (self.stash_rc, "", "stash-error" if self.stash_rc else "")
         if sub == "rebase":
@@ -1161,9 +1177,16 @@ def test_integrate_after_push_race_retries_once():
         if sub == "-C":
             inner_sub = cmd[3] if len(cmd) > 3 else ""
             if inner_sub == "stash":
-                op = "pop" if "pop" in cmd else "push"
+                if "list" in cmd:
+                    return (0, f"{STASH_SHA} stash@{{0}}\n", "")
+                op = ("apply" if "apply" in cmd
+                      else "drop" if "drop" in cmd
+                      else "pop" if "pop" in cmd
+                      else "push")
                 stash_ops.append(op)
                 return (0, "", "")
+            if inner_sub == "rev-parse" and cmd[-1] == "stash@{0}":
+                return (0, STASH_SHA + "\n", "")
             return (0, "", "")
         return fake(cmd, cwd)
 
@@ -1181,7 +1204,8 @@ def test_integrate_after_push_race_retries_once():
     assert res["attempts"] == 2
     # Stash pushed once before the loop, popped once after final success
     assert stash_ops.count("push") == 1, "should stash exactly once before the retry loop"
-    assert stash_ops.count("pop") == 1, "should pop exactly once after success"
+    assert stash_ops.count("apply") == 1, "should restore exactly once after success"
+    assert stash_ops.count("pop") == 0, "a positional pop can take a peer worktree's entry"
 
 
 def test_cleanup_idempotent_under_concurrent_call():
@@ -1895,8 +1919,12 @@ def test_migration_collision_blocks_before_stash_leaves_worktree_clean():
     # — "stash" sits at cmd[3], not cmd[1].
     stash_calls = [c for c, _cwd in fake.calls if "stash" in c]
     assert stash_calls, f"expected at least one stash call; calls={fake.calls}"
-    assert any("pop" in c for c in stash_calls), (
-        f"stash must be popped before returning blocked; stash_calls={stash_calls}"
+    assert any("apply" in c and STASH_SHA in c for c in stash_calls), (
+        f"stash must be restored (by SHA) before returning blocked; "
+        f"stash_calls={stash_calls}"
+    )
+    assert not any("pop" in c for c in stash_calls), (
+        "a positional pop restores whatever another worktree pushed last"
     )
 
 

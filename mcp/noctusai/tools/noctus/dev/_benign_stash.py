@@ -212,15 +212,34 @@ def stash_benign(
     benign: list[str],
     *,
     log_prefix: str = "benign_stash",
-) -> bool:
+) -> str | None:
     """Stash the known-benign artifacts so the tree is clean enough to rebase.
 
-    Returns True if the stash succeeded OR there was nothing to stash; False on
-    failure (the caller then proceeds unstashed and lets the rebase surface it,
-    rather than pretending the tree is clean).
+    Returns the created stash's COMMIT SHA — the handle :func:`pop_stash` needs
+    to restore *this* entry rather than whatever currently sits on top of the
+    stack. ``None`` when there was nothing to stash, when the stash failed (the
+    caller then proceeds unstashed and lets the rebase surface it, rather than
+    pretending the tree is clean), or when the entry could not be addressed.
+
+    🔴 WHY A SHA AND NOT A BOOL (2026-09-09 — a real cross-session data-loss
+    incident). ``.git/refs/stash`` is ONE stack shared by the primary checkout
+    and every worktree of the repository. This helper used to return a bool and
+    :func:`pop_stash` used to run a bare ``git stash pop``, i.e. ``stash@{0}``.
+    ``stash@{0}`` is not a stable handle: it means "whatever was pushed most
+    recently, by anyone". Two sessions whose ledger pushes interleave —
+    A pushes, B pushes, A pops — leave A holding B's rows and B holding A's,
+    each applied into a tree that never authored them and is not on their
+    branch. That is exactly what happened: three `project-history/*.ndjson`
+    files carrying session 034951b2's rows materialised as uncommitted
+    modifications inside a THIRD session's worktree, and were only noticed
+    because they happened to block a rebase. The obvious unblocking move
+    (`git checkout -- project-history/`) would have destroyed them silently.
+
+    The path allowlist was never the weak part — those paths are genuinely
+    benign. The *stack* was shared, and nothing here modelled that.
     """
     if not benign:
-        return True
+        return None
     logger.debug("%s: auto-stashing %d benign artifact(s): %s",
                  log_prefix, len(benign), benign)
     rc, _out, err = run_git(
@@ -229,18 +248,79 @@ def stash_benign(
     if rc != 0:
         logger.warning("%s: auto-stash failed (%s); proceeding without stash — "
                        "the rebase may be refused", log_prefix, (err or "").strip())
-        return False
-    return True
+        return None
+
+    rc, out, err = run_git("rev-parse", "stash@{0}")
+    sha = (out or "").strip().splitlines()[0].strip() if (out or "").strip() else ""
+    if rc != 0 or not sha:
+        # We DID stash — the rows are safe in the stack, just not addressable by
+        # us. Say so at ERROR with the message to grep for; never fall back to a
+        # positional ref, which is the bug this whole contract exists to prevent.
+        logger.error(
+            "%s: stashed the benign artifacts but could not resolve their SHA "
+            "(%s). They are NOT lost: find them with `git stash list | grep %r` "
+            "and restore with `git stash apply <sha>`. Refusing to pop "
+            "positionally — stash@{0} may belong to another worktree.",
+            log_prefix, (err or "").strip(), STASH_MESSAGE,
+        )
+        return None
+    return sha
 
 
-def pop_stash(run_git: RunGit, *, log_prefix: str = "benign_stash") -> None:
-    """Pop the auto-stash. Best-effort: a failure is logged, never raised —
-    the surrounding operation has already completed one way or the other."""
-    rc, _out, err = run_git("stash", "pop")
+def pop_stash(
+    run_git: RunGit,
+    ref: str | None = None,
+    *,
+    log_prefix: str = "benign_stash",
+) -> None:
+    """Restore the stash entry :func:`stash_benign` created, by SHA.
+
+    ``apply`` + a targeted ``drop`` rather than ``pop``: ``pop`` is positional,
+    and the stack is shared with every other worktree (see :func:`stash_benign`).
+    A failed apply leaves the entry in place — losing the restore is recoverable,
+    dropping someone else's rows is not.
+
+    Best-effort: a failure is logged, never raised — the surrounding operation
+    has already completed one way or the other.
+    """
+    if not ref:
+        # No handle ⇒ nothing this call can safely restore. A bare pop here is
+        # precisely the cross-worktree swap; refuse instead.
+        logger.debug("%s: no stash ref to restore", log_prefix)
+        return
+
+    rc, _out, err = run_git("stash", "apply", ref)
     if rc != 0:
-        logger.warning("%s: stash pop failed (%s); the benign artifacts remain "
-                       "stashed — run `git stash pop` to restore them",
-                       log_prefix, (err or "").strip())
+        logger.warning("%s: stash apply %s failed (%s); the benign artifacts "
+                       "remain stashed — restore with `git stash apply %s`",
+                       log_prefix, ref, (err or "").strip(), ref)
+        return
+
+    # Drop needs the POSITIONAL name, which is why we resolve it fresh here
+    # instead of remembering one: a peer push may have shifted our entry down
+    # the stack between the stash and this call.
+    rc, out, _err = run_git("stash", "list", "--format=%H %gd")
+    if rc != 0:
+        logger.warning("%s: applied %s but could not list the stash to drop it; "
+                       "a stale entry remains (harmless, but `git stash drop` it)",
+                       log_prefix, ref)
+        return
+    positional = next(
+        (
+            line.split(None, 1)[1].strip()
+            for line in (out or "").splitlines()
+            if line.strip() and line.split(None, 1)[0].strip() == ref and len(line.split(None, 1)) == 2
+        ),
+        None,
+    )
+    if positional is None:
+        logger.warning("%s: applied %s but it is no longer in the stash list; "
+                       "not dropping anything", log_prefix, ref)
+        return
+    rc, _out, err = run_git("stash", "drop", positional)
+    if rc != 0:
+        logger.warning("%s: applied %s but could not drop %s (%s); a stale "
+                       "entry remains", log_prefix, ref, positional, (err or "").strip())
 
 
 def dirty_blocked_result(real: list[str], dev_ref: str) -> dict[str, Any]:

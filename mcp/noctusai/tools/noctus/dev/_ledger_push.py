@@ -165,7 +165,9 @@ def commit_and_ff_push_ledger(
         logger.warning("%s: real dirty file(s) block the rebase onto %s: %s",
                        _log_prefix, dev_ref, real)
         return dirty_blocked_result(real, dev_ref)
-    benign_stashed = stash_benign(g, benign, log_prefix=_log_prefix) and bool(benign)
+    # The SHA, not a bool: the stash stack is shared with every other worktree,
+    # so the entry we push is not necessarily the one on top when we restore.
+    benign_stash_ref = stash_benign(g, benign, log_prefix=_log_prefix)
 
     try:
         return _push_leg(
@@ -175,8 +177,8 @@ def commit_and_ff_push_ledger(
     finally:
         # Restore the benign artifacts whatever happened, so the tree is left as
         # we found it (a stashed-and-forgotten ledger row is its own drift).
-        if benign_stashed:
-            pop_stash(g, log_prefix=_log_prefix)
+        if benign_stash_ref:
+            pop_stash(g, benign_stash_ref, log_prefix=_log_prefix)
 
 
 def _push_leg(

@@ -65,30 +65,104 @@ class TestClassification:
         assert benign == [] and real == ["<git-status-failed>"]
 
 
+SHA_A = "a" * 40   # "our" stash entry
+SHA_B = "b" * 40   # a peer worktree's entry, pushed after ours
+
+
+def _fake_git(calls, *, rev_parse=SHA_A, list_out=None, fail=()):
+    """A git runner that records calls and answers the three verbs the stash
+    contract uses. `fail` names verbs (as "stash push" / "stash apply" / ...)
+    that should return a non-zero rc."""
+    def run(*a):
+        calls.append(a)
+        verb = " ".join(a[:2])
+        if verb in fail:
+            return 1, "", "boom"
+        if a[0] == "rev-parse":
+            return 0, rev_parse + "\n", ""
+        if verb == "stash list":
+            return 0, (list_out if list_out is not None else f"{SHA_A} stash@{{0}}\n"), ""
+        return 0, "", ""
+    return run
+
+
 class TestStashLegs:
-    def test_nothing_to_stash_is_a_success(self):
+    def test_nothing_to_stash_returns_no_handle(self):
         calls = []
-        assert BS.stash_benign(lambda *a: calls.append(a) or (0, "", ""), []) is True
+        assert BS.stash_benign(lambda *a: calls.append(a) or (0, "", ""), []) is None
         assert calls == [], "must not issue a stash for an empty set"
 
-    def test_stash_targets_only_the_named_paths(self):
+    def test_stash_targets_only_the_named_paths_and_returns_the_sha(self):
         calls = []
+        got = BS.stash_benign(_fake_git(calls), ["project-history/vector-costs.ndjson"])
+        assert got == SHA_A, "the caller needs a stable handle, not a bool"
+        push = calls[0]
+        assert push[0] == "stash" and push[1] == "push"
+        assert "--" in push and push[-1] == "project-history/vector-costs.ndjson"
+        assert calls[1][0] == "rev-parse", "must resolve the entry it just created"
 
-        def run(*a):
-            calls.append(a)
-            return 0, "", ""
-
-        assert BS.stash_benign(run, ["project-history/vector-costs.ndjson"]) is True
-        (args,) = calls
-        assert args[0] == "stash" and args[1] == "push"
-        assert "--" in args and args[-1] == "project-history/vector-costs.ndjson"
-
-    def test_stash_failure_reports_false_rather_than_pretending(self):
+    def test_stash_failure_reports_no_handle_rather_than_pretending(self):
         assert BS.stash_benign(lambda *a: (1, "", "nope"),
-                               ["project-history/vector-costs.ndjson"]) is False
+                               ["project-history/vector-costs.ndjson"]) is None
 
     def test_pop_failure_never_raises(self):
-        BS.pop_stash(lambda *a: (1, "", "conflict"))  # must not raise
+        BS.pop_stash(lambda *a: (1, "", "conflict"), SHA_A)  # must not raise
+
+
+class TestSharedStackIsNotOurs:
+    """🔴 The 2026-09-09 cross-session near-loss. `.git/refs/stash` is ONE stack
+    shared by the primary checkout and every worktree, so `stash@{0}` means
+    "whatever anyone pushed most recently". Two interleaved ledger pushes
+    (A push, B push, A restore) used to leave each session holding the OTHER's
+    uncommitted rows, applied into a tree that never authored them and is on no
+    branch — visible only because it happened to block a rebase, and destroyed
+    without trace by the obvious unblocking move."""
+
+    def test_restore_addresses_our_sha_never_a_positional_ref(self):
+        calls = []
+        BS.pop_stash(_fake_git(calls), SHA_A)
+        applies = [c for c in calls if c[:2] == ("stash", "apply")]
+        assert applies == [("stash", "apply", SHA_A)], calls
+        assert not any(c[:2] == ("stash", "pop") for c in calls), (
+            "a positional `git stash pop` is the bug itself"
+        )
+
+    def test_drop_targets_our_entry_after_a_peer_pushed_on_top(self):
+        """Our entry has slid to stash@{1}; dropping stash@{0} would delete the
+        peer's rows. The positional name must be re-resolved from the SHA."""
+        calls = []
+        run = _fake_git(calls, list_out=f"{SHA_B} stash@{{0}}\n{SHA_A} stash@{{1}}\n")
+        BS.pop_stash(run, SHA_A)
+        drops = [c for c in calls if c[:2] == ("stash", "drop")]
+        assert drops == [("stash", "drop", "stash@{1}")], calls
+
+    def test_no_handle_restores_nothing(self):
+        """A missing ref must NOT degrade to a positional pop — that is the
+        exact swap. Losing a restore is recoverable; taking a peer's rows is not."""
+        calls = []
+        BS.pop_stash(_fake_git(calls), None)
+        assert calls == [], calls
+
+    def test_a_failed_apply_leaves_the_entry_in_place(self):
+        calls = []
+        run = _fake_git(calls, fail=("stash apply",))
+        BS.pop_stash(run, SHA_A)
+        assert not any(c[:2] == ("stash", "drop") for c in calls), (
+            "dropping an entry we failed to apply destroys it"
+        )
+
+    def test_an_entry_that_vanished_from_the_list_is_not_dropped_blindly(self):
+        calls = []
+        run = _fake_git(calls, list_out=f"{SHA_B} stash@{{0}}\n")
+        BS.pop_stash(run, SHA_A)
+        assert not any(c[:2] == ("stash", "drop") for c in calls), calls
+
+    def test_an_unresolvable_sha_yields_no_handle_rather_than_stash_zero(self):
+        """If we cannot address what we stashed, the rows stay in the stack and
+        we say so — we never fall back to `stash@{0}`."""
+        calls = []
+        run = _fake_git(calls, rev_parse="")
+        assert BS.stash_benign(run, ["project-history/vector-costs.ndjson"]) is None
 
 
 class TestDirtyBlockedResult:

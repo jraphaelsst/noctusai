@@ -481,14 +481,17 @@ def _drain_ledgers_from_primary(
 
 def _stash_benign_artifacts(
     runner, wt_path: str, benign: list[str], verbose: bool = False
-) -> bool:
+) -> str | None:
     """Stash the known-benign refresh artifacts before a rebase so the worktree
     is clean. Uses ``git stash push -- <paths>`` (bypasses ``_git()`` since stash
     is not on the safe allowlist — this is an intentional, controlled carve-out
     for known-safe paths only, mirroring the force-remove carve-out in cleanup).
 
-    Returns True if the stash succeeded (or there was nothing to stash), False on
-    failure (caller falls back to surfacing the files as blocking).
+    Returns the stash entry's COMMIT SHA, or None if there was nothing to stash
+    or the stash failed (caller falls back to surfacing the files as blocking).
+    The SHA — not a flag — because `.git/refs/stash` is one stack shared by every
+    worktree, so `stash@{0}` at restore time may be a PEER's entry (see
+    `_benign_stash.stash_benign`; it cost a cross-session near-loss on 2026-09-09).
     """
     return _shared_stash_benign(
         lambda *a: runner(["git", "-C", wt_path, *a]),
@@ -497,11 +500,14 @@ def _stash_benign_artifacts(
     )
 
 
-def _pop_stash(runner, wt_path: str, verbose: bool = False) -> None:
-    """Pop the auto-stash created by ``_stash_benign_artifacts``. Best-effort:
-    a pop failure is logged but never raises (the integrate already completed)."""
+def _pop_stash(runner, wt_path: str, ref: str | None, verbose: bool = False) -> None:
+    """Restore the auto-stash created by ``_stash_benign_artifacts``, BY SHA.
+    Best-effort: a failure is logged but never raises (the integrate already
+    completed). A falsy ``ref`` restores nothing — deliberately: a positional
+    pop here is the cross-worktree swap this contract exists to prevent."""
     _shared_pop_stash(
         lambda *a: runner(["git", "-C", wt_path, *a]),
+        ref,
         log_prefix="task_branch.integrate",
     )
 
@@ -1023,7 +1029,7 @@ def task_branch(
                     git("rebase", "--abort", cwd=wt_path)
                 # Restore the stash even on failure so the worktree is clean.
                 if benign_stashed:
-                    _pop_stash(runner, wt_path, verbose)
+                    _pop_stash(runner, wt_path, benign_stashed, verbose)
                     benign_stashed = False
                 # Re-classify after the abort (or refused) to give accurate diagnostics.
                 _, real_after = _classify_dirty_files(runner, wt_path)
@@ -1102,7 +1108,7 @@ def task_branch(
                 ]
                 if relevant:
                     if benign_stashed:
-                        _pop_stash(runner, wt_path, verbose)
+                        _pop_stash(runner, wt_path, benign_stashed, verbose)
                         benign_stashed = False
                     return {**plan, "status": "blocked", "exit_code": 1,
                             "introduced_migrations": introduced_migrations,
@@ -1125,7 +1131,7 @@ def task_branch(
                 # Pop stash AFTER the push so the worktree ends clean (the benign
                 # files reappear but that's fine — they're tracked + committed elsewhere).
                 if benign_stashed:
-                    _pop_stash(runner, wt_path, verbose)
+                    _pop_stash(runner, wt_path, benign_stashed, verbose)
                     benign_stashed = False
                 new_dev = _resolve(git, f"{remote}/{dev_branch}")
                 new_head = _resolve(git, branch)
@@ -1154,7 +1160,7 @@ def task_branch(
                              "on attempt %d — re-fetching + rebasing", attempt)
         # All attempts exhausted — restore stash so we don't leave the worktree stashed.
         if benign_stashed:
-            _pop_stash(runner, wt_path, verbose)
+            _pop_stash(runner, wt_path, benign_stashed, verbose)
         return {**plan, "status": "error", "exit_code": 1,
                 "error": f"could not FF-push to {dev_branch} after {max_retries} attempts "
                          "(persistent concurrent pushes). Retry integrate."}
