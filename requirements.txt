@@ -107,3 +107,12 @@ pytest-timeout>=2.3.0           # social-wiring test suite
 # missing from the superset is just as invisible, and skips are quieter than
 # errors. Found by the wrap-up survey 2026-08-18.
 pglast>=6.0                     # social-wiring (migration DDL parse tests)
+
+# AST-first is a §1 rule ("edit it via libcst/ts-morph, never regex"), and
+# `scripts/codemods/*.py` imports libcst directly — yet it was declared in NO
+# manifest anywhere in this repo. It worked only because it happened to be
+# installed in local venvs by hand; the very first CI run of `tooling-tests`
+# failed on `ModuleNotFoundError: No module named 'libcst'` in two suites.
+# Same class as the 2026-09-09 `bcrypt` incident, one directory over — and
+# invisible to `check_seed_declared_imports`, whose domain is seed/* only.
+libcst>=1.1.0
