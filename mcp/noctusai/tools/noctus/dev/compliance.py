@@ -5844,9 +5844,18 @@ def _seed_required_test_roots(root: Path) -> dict[str, str]:
         be_tests = layer / "backend" / "tests"
         if be_tests.is_dir() and any(be_tests.rglob("test_*.py")):
             required[f"seed/{layer.name}/backend"] = "backend"
-        fe_src = layer / "frontend" / "src"
-        if fe_src.is_dir() and (
-            any(fe_src.rglob("*.test.ts")) or any(fe_src.rglob("*.test.tsx"))
+        # 🔴 BOTH `src/` AND `tests/`. Looking only at `src/` was a real bug
+        # (shipped 2026-09-09, caught 2026-09-10 by the open-world keeper):
+        # `seed/framework/frontend` keeps all 8 of its spec files under
+        # `tests/`, so the predicate returned "no specs" and the root was
+        # written off as legitimately ungated — in the job comment AND in the
+        # KB. 55 tests. A predicate that only looks where it expects to find
+        # things reports the absence it assumed.
+        fe = layer / "frontend"
+        spec_dirs = [fe / "src", fe / "tests"]
+        if any(
+            d.is_dir() and (any(d.rglob("*.test.ts")) or any(d.rglob("*.test.tsx")))
+            for d in spec_dirs
         ):
             required[f"seed/{layer.name}/frontend"] = "frontend"
     return required
@@ -6223,6 +6232,147 @@ def check_seed_declared_imports(repo_root: Path | None = None) -> list[dict]:
                 ),
                 "severity": "high",
             })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_every_test_file_is_gated` — no tracked test file may live outside an
+# area some workflow actually runs.
+#
+# 🔴 WHY A THIRD KEEPER IN THIS FAMILY IS THE RIGHT SHAPE, not sprawl.
+# The two existing ones answer "is this KNOWN root in its matrix?":
+#   `check_ci_test_matrix_coverage`      domain: products/*
+#   `check_seed_test_root_ci_coverage`   domain: seed/*
+# Both are closed-world — they can only police roots they already know about,
+# which is precisely how each gap in this family was found by ACCIDENT rather
+# than by a gate. This one is open-world and asks the inverse question: given
+# every test file git tracks, is there anywhere it could hide? That is the only
+# form that catches the NEXT root, in a directory nobody has thought of yet.
+#
+# The history it closes, all found by consequence rather than by a gate:
+#   2026-08-13  igig/orbity/seed product suites — never in the matrix
+#   2026-09-09  seed/lib+framework backend, seed/lib frontend — 4215 tests, no job
+#   2026-09-10  dev_team, 14 MCP connectors, codemods, product-seed template
+#               — 714 tests, no job
+#
+# GATED_PREFIXES is a DECLARATION, not a discovery: a workflow that derives its
+# own targets at runtime (the `tooling-tests` job enumerates connectors with
+# `git ls-files`) cannot be read statically, so the areas it covers are named
+# here instead. That is a deliberate trade — the alternative is a keeper that
+# parses shell, which would be guessing. Adding a prefix is therefore a
+# conscious act: it means "a workflow really does run this", and the reviewer
+# is the check on that claim.
+#
+# Severity: `high` — a suite nobody runs is indistinguishable from a suite that
+# always passes.
+# ---------------------------------------------------------------------------
+
+#: Path prefixes whose test files ARE executed by some workflow, each with the
+#: job that runs them. Keep the job name accurate — it is what makes a wrong
+#: entry reviewable rather than merely present.
+_GATED_PREFIXES: dict[str, str] = {
+    "products/": "product-backend-tests / product-frontend-tests",
+    "seed/lib/backend/tests/": "seed-backend-tests",
+    "seed/framework/backend/tests/": "seed-backend-tests",
+    "seed/lib/frontend/src/": "seed-frontend-tests",
+    "seed/framework/frontend/tests/": "seed-frontend-tests",
+    "mcp/noctusai/tests/": "mcp-toolkit-tests",
+    "dev_team/tests/": "tooling-tests",
+    "scripts/codemods/": "tooling-tests",
+    "templates/product-seed/backend/tests/": "tooling-tests",
+}
+
+#: `mcp/<connector>/tests/` is covered by `tooling-tests`, which derives the
+#: connector list at runtime from `git ls-files`. Matched by pattern because the
+#: set is intentionally not hand-maintained anywhere.
+_GATED_PATTERNS: tuple[tuple[re.Pattern, str], ...] = (
+    (re.compile(r"^mcp/[^/]+/tests/"), "tooling-tests (git-derived connector list)"),
+)
+
+#: Directories that never hold OUR tests — vendored, generated or third-party.
+_NOT_OURS = ("node_modules/", "/.venv/", "venv/", "site-packages/", "archive/")
+
+#: SOURCE areas that happen to contain a file named `test_*.py` which is not a
+#: suite. `mcp/noctusai/tools/noctus/dev/test_seam_guard.py` is the PreToolUse
+#: hook IMPLEMENTATION — production code whose subject is tests, so it is named
+#: for its subject and trips a basename rule. Genuinely confusing naming; the
+#: exemption is narrow and names the file rather than the whole toolkit.
+_SOURCE_NOT_SUITES = (
+    "mcp/noctusai/tools/",
+)
+
+
+def _tracked_test_files(root: Path) -> list[str]:
+    """Every test file git TRACKS, as repo-relative posix paths.
+
+    Uses git rather than a filesystem walk on purpose: a walk sees vendored
+    third-party suites inside `.venv/` and `node_modules/`, which is how a
+    `dev_team` count of "158 test files" was once reported for a suite that
+    actually has 7.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--", "*test_*.py", "*.test.ts", "*.test.tsx"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("compliance: cannot list tracked test files (%s)", exc)
+        return []
+    if out.returncode != 0:
+        logger.warning("compliance: git ls-files failed: %s", (out.stderr or "").strip())
+        return []
+    files = []
+    for line in out.stdout.splitlines():
+        rel = line.strip()
+        if not rel or any(seg in rel for seg in _NOT_OURS):
+            continue
+        base = rel.rsplit("/", 1)[-1]
+        if base.startswith("test_") or base.endswith((".test.ts", ".test.tsx")):
+            files.append(rel)
+    return files
+
+
+def check_every_test_file_is_gated(repo_root: Path | None = None) -> list[dict]:
+    """Every tracked test file must sit under an area a workflow runs.
+
+    Open-world sibling of `check_ci_test_matrix_coverage` (products) and
+    `check_seed_test_root_ci_coverage` (seed): those verify known roots are
+    wired; this one catches a root nobody has thought about yet. See the header
+    for the three incidents that were each found by accident instead.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    ungated: dict[str, list[str]] = {}
+
+    for rel in _tracked_test_files(root):
+        if any(rel.startswith(p) for p in _SOURCE_NOT_SUITES):
+            continue
+        if any(rel.startswith(p) for p in _GATED_PREFIXES):
+            continue
+        if any(pat.match(rel) for pat, _ in _GATED_PATTERNS):
+            continue
+        area = rel.rsplit("/", 1)[0]
+        ungated.setdefault(area, []).append(rel)
+
+    for area, files in sorted(ungated.items()):
+        issues.append({
+            "product": "<repo>",
+            "file": area,
+            "issue": (
+                f"`{area}` holds {len(files)} tracked test file(s) that NO "
+                f"workflow runs — e.g. `{files[0]}`. A suite nobody runs is "
+                f"indistinguishable from a suite that always passes, and every "
+                f"gap in this family so far was found by consequence rather "
+                f"than by a gate (products 2026-08-13, seed 2026-09-09, "
+                f"tooling 2026-09-10). Fix: add the suite to a workflow, then "
+                f"declare its prefix in `_GATED_PREFIXES` with the job name. "
+                f"If these tests are deliberately not run, DELETE them — a "
+                f"test kept but never executed is worse than no test, because "
+                f"it reads as coverage."
+            ),
+            "severity": "high",
+        })
 
     return issues
 
@@ -11838,6 +11988,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_ci_test_matrix_coverage())
     all_issues.extend(check_seed_test_root_ci_coverage())
     all_issues.extend(check_seed_declared_imports())
+    all_issues.extend(check_every_test_file_is_gated())
     # 2026-08-31 THIRD surface of the same hand-maintained-list-drift
     # class: a product's `max_body_path_overrides` map. Only social-wiring
     # had ANY entries, and even it was missing 3 of its own upload routes;

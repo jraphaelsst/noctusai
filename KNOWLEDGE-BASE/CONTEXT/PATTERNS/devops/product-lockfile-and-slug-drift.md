@@ -563,3 +563,64 @@ pre-commit hook on any staged `seed/**/*.py` or seed `pyproject.toml`** — the
 answer takes milliseconds, so the feedback belongs at the edit, not 20 minutes
 later in CI. Regression suite:
 `mcp/noctusai/tests/test_check_seed_declared_imports.py`.
+
+## Eighth axis — closed-world gates only police what they already know (2026-09-10)
+
+Three rounds of this family, each closing a gap the previous gate could not see:
+
+| found | what | how it was found |
+|---|---|---|
+| 2026-08-13 | igig/orbity/seed product suites | by accident, building the dependabot gate |
+| 2026-09-09 | seed backend ×2 + `seed/lib` FE — 4215 tests | by accident, chasing an OCR provider switch |
+| 2026-09-10 | `dev_team`, 14 MCP connectors, codemods, product-seed template — 714 tests | by accident, a wrap-up flag |
+
+Every one of those was found by **consequence**, never by a gate — while two
+keepers built for exactly this class sat green. Both are **closed-world**: they
+enumerate a known domain (`products/*`, `seed/*`) and ask "is this root wired?".
+A root in a directory nobody listed is invisible to them by construction.
+
+`check_every_test_file_is_gated` asks the inverse, **open-world** question:
+*given every test file git tracks, is there anywhere it could hide?* It takes
+the tracked set and subtracts the areas a workflow runs; whatever is left is a
+finding. That form cannot miss a new root, because it never enumerates roots.
+
+### 🔴 What it found in its first five seconds
+
+Two areas that three rounds of deliberate manual auditing had missed — and one
+of them was a root **this doc had positively written off**:
+
+- `mcp/noctusai/tools/noctus/dev/test_seam_guard.py` — a FALSE positive worth
+  keeping visible: production code (the PreToolUse hook) named for its subject.
+  Narrowly exempted by path, naming the file and the reason.
+- **`seed/framework/frontend/tests/` — 8 spec files, 55 tests, never run.**
+  `check_seed_test_root_ci_coverage` had globbed only `frontend/src/`, found
+  nothing, and the Sixth axis above recorded "legitimately absent: zero
+  `*.test.ts(x)` files". The predicate and the prose agreed with each other and
+  were both wrong, because the prose is what the predicate was modelled on.
+
+  **A required-set predicate that only looks where it expects reports the
+  absence it assumed.** And a keeper agreeing with a comment is not independent
+  evidence when the comment is its own source. Fixed: the predicate now globs
+  `frontend/src/` *and* `frontend/tests/`, `seed/framework/frontend` joined the
+  `seed-frontend-tests` matrix, and the Sixth-axis claim is corrected in the
+  workflow comment.
+
+### The declaration boundary, and why it is honest
+
+`_GATED_PREFIXES` maps a path prefix to the job that runs it. It is a
+DECLARATION, not a discovery, because `tooling-tests` derives its own targets at
+runtime (`git ls-files 'mcp/*/tests/*'`) and no static reader can follow that.
+The alternative — parsing shell — would be guessing. So adding a prefix is a
+deliberate claim ("a workflow really does run this") with a reviewer attached,
+and `mcp/*/tests/` is matched by PATTERN so a new connector is covered the
+moment it exists, with no list to update.
+
+### The tooling job's own floor
+
+`tooling-tests` derives its connector list at runtime, so it can silently derive
+NOTHING and then report green over an empty loop — the very failure it exists to
+prevent, one level up. It therefore refuses below 10 connectors, and uses a
+portable `while read` rather than `mapfile` (bash 4+; on a bash 3.2 host mapfile
+fails silently and leaves an empty array — observed locally before landing).
+Verified both ways: 14 discovered → exit 0; 0 discovered → exit 1 with an error.
+

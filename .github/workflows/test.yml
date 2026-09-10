@@ -321,10 +321,15 @@ jobs:
     # `check_seed_test_root_ci_coverage` matches on the RUN COMMAND, not on
     # the presence of a `working-directory:`.
     #
-    # `seed/framework/frontend` is legitimately absent: zero `*.test.ts(x)`
-    # files, and `vitest run` hard-fails on "no test files found" — the same
-    # "has ≥1 spec file" required-set predicate `product-frontend-tests` uses.
-    # It joins the matrix the commit it gets its first spec (the keeper says so).
+    # 🔴 CORRECTION (2026-09-10). This comment used to say
+    # `seed/framework/frontend` was "legitimately absent: zero `*.test.ts(x)`
+    # files". That was WRONG, and the keeper agreed with it for a day because
+    # its predicate only globbed `frontend/src/`. All 8 of that package's spec
+    # files live under `frontend/tests/` — 55 tests, never run. Both the
+    # predicate and this matrix are fixed. The lesson: a required-set predicate
+    # that only looks where it expects reports the absence it assumed, and a
+    # keeper agreeing with a comment is not evidence when the comment is what
+    # the predicate was modelled on.
     name: Seed Frontend Tests (vitest)
     runs-on: ubuntu-latest
     strategy:
@@ -332,6 +337,7 @@ jobs:
       matrix:
         root:
           - seed/lib/frontend
+          - seed/framework/frontend
 
     steps:
       - uses: actions/checkout@v7
