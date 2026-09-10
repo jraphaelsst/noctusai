@@ -955,7 +955,7 @@ class TestCheckNoSelfMonkeypatch:
 # namespace IS "ours" (patches to connector business logic flag), while the
 # per-connector HTTP/subprocess/env-config BOUNDARY accessors stay allowed
 # (the sanctioned "mock the network, not our logic" pattern every connector
-# docstring documents) — and the `mcp/supabase` / `mcp/google` collision
+# docstring documents) — and the `mcp/supabase` / `mcp/google_workspace` collision
 # with the real external SDK top-level names is deliberately NOT swept in.
 # ---------------------------------------------------------------------------
 

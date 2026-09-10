@@ -1,11 +1,11 @@
 """Google connector MCP server — stdio entry point.
 
 Run:
-    python mcp/google/server.py
+    python mcp/google_workspace/server.py
 
 Reads GOOGLE_API_KEY / GOOGLE_MAPS_API_KEY / GOOGLE_OAUTH_CLIENT_ID /
 GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REFRESH_TOKEN from env or
-`mcp/google/.env`. The deferred-config rule (settings.py) means the
+`mcp/google_workspace/.env`. The deferred-config rule (settings.py) means the
 server starts cleanly with NO creds — read tools then resolve against
 the seed-lib Fakes, OAuth-only write tools return a typed error.
 
@@ -25,7 +25,7 @@ from pathlib import Path
 #    connector kit). The PyPI `mcp` package shadows our `mcp/` dir as a
 #    namespace; importing `_kit` as a top-level package sidesteps that
 #    (same trick as mcp/vista/server.py).
-# 2. `mcp/google/` — so the connector's own `tools` / `settings` /
+# 2. `mcp/google_workspace/` — so the connector's own `tools` / `settings` /
 #    `types` resolve as TOP-LEVEL modules. Unlike vista, the package
 #    name `google` collides with the PyPI `google.*` namespace package
 #    (shipped by google-api-python-client / google-auth), so this
@@ -49,7 +49,7 @@ sys.path.insert(0, str(_HERE.parents[1]))   # mcp/   → _kit
 from _kit.seed_pin import pin_in_tree_seed
 
 pin_in_tree_seed(_HERE)
-sys.path.insert(0, str(_HERE.parent))       # mcp/google/ → tools/settings/types
+sys.path.insert(0, str(_HERE.parent))       # mcp/google_workspace/ → tools/settings/types
 
 from _kit.bootstrap import configure_stderr_logging, run_stdio_server
 

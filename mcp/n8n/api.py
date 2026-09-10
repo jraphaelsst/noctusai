@@ -38,7 +38,7 @@ What genuinely stays connector-side (the real, narrow boundary):
 `configure_client(HttpxN8nClient(..., transport=httpx.MockTransport(...)))`
 lets a test exercise the REAL handler path — confirm-gate + client call
 + error mapping + MCP Out shaping — without a network round-trip.
-Mirrors `mcp/google/tools/youtube.py`'s `configure_upload_client`
+Mirrors `mcp/google_workspace/tools/youtube.py`'s `configure_upload_client`
 (`:76-94`). `mcp/n8n/api.py`'s OWN symbols (`N8nApiError`,
 `require_configured`, `map_seed_error`) are never patched — they are
 plain functions/classes exercised for real by every test.

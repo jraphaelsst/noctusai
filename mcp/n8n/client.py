@@ -21,7 +21,7 @@ docstring for the full rationale.
 `configure_client(HttpxN8nClient(..., transport=httpx.MockTransport(...)))`
 lets a test exercise the REAL handler path — confirm-gate + client call
 + typed-error mapping + MCP Out shaping — without a network round-trip.
-Mirrors `mcp/google/tools/youtube.py`'s `configure_upload_client`
+Mirrors `mcp/google_workspace/tools/youtube.py`'s `configure_upload_client`
 (`:76-94`, which lets a test "exercise the REAL handler path — gate +
 OAuth-check + audit + shaping").
 """

@@ -208,15 +208,15 @@ def _discover_connector_module_prefixes(root: Path) -> tuple[str, ...]:
     Two exclusions, both deliberate:
     - `_MCP_NON_CONNECTOR_DIR_NAMES` (the platform toolkit itself).
     - any dir name that collides with a known EXTERNAL SDK top-level
-      import name in `_EXTERNAL_LIB_NAMES` — e.g. `mcp/google` and
+      import name in `_EXTERNAL_LIB_NAMES` — e.g. `mcp/google_workspace` and
       `mcp/supabase` share their vendor's REAL PyPI top-level import name
       (`google.*` / `supabase.*`). Classifying those as "ours" would
       misroute genuine external-SDK patches (the real `supabase-py` /
       `google-auth` clients used all over `products/*/backend`) into
       false-positive self-monkeypatch flags — the exact over-flagging
-      failure mode this fix must avoid. `mcp/google` already dodges the
+      failure mode this fix must avoid. `mcp/google_workspace` already dodges the
       collision itself (imports its own modules as bare `tools`/
-      `settings`, never `google.*` — see `mcp/google/conftest.py`);
+      `settings`, never `google.*` — see `mcp/google_workspace/conftest.py`);
       `mcp/supabase`'s tests DO use `supabase.tools.*.get_settings`
       (covered anyway via the `get_settings` boundary-accessor exemption
       above, so excluding the prefix costs no real coverage today) —

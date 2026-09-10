@@ -35,4 +35,4 @@ sys.path.insert(0, str(_HERE.parent))  # mcp/   → _kit
 from _kit.seed_pin import pin_in_tree_seed
 
 pin_in_tree_seed(_HERE)
-sys.path.insert(0, str(_HERE))          # mcp/google/ → tools/settings/schemas
+sys.path.insert(0, str(_HERE))          # mcp/google_workspace/ → tools/settings/schemas

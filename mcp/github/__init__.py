@@ -1,7 +1,7 @@
 """`mcp/github` — GitHub connector MCP (methodology surface).
 
 A connector-MCP server (composes `mcp/_kit`, same shape as
-`mcp/vista` / `mcp/meta` / `mcp/google`) that exposes the **GitHub
+`mcp/vista` / `mcp/meta` / `mcp/google_workspace`) that exposes the **GitHub
 platform facilities the team's methodology relies on** — PR lifecycle,
 CI-check visibility, repo/branch introspection — as LLM-callable
 `github.<service>.<action>` tools.

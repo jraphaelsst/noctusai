@@ -9,7 +9,7 @@ connector by `_kit`).
 Resolution order (machinery in `_kit.settings`, identical to vista):
   1. Explicit constructor args to `GoogleConnectorSettings(...)`
   2. Environment variables
-  3. A co-located `mcp/google/.env` file (dev convenience) — env wins
+  3. A co-located `mcp/google_workspace/.env` file (dev convenience) — env wins
 
 Five fields, each optional at __init__ (lenient construction — the
 deferred-config rule means the server starts cleanly with no creds and

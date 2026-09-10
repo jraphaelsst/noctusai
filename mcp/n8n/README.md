@@ -14,7 +14,7 @@ It talks to the n8n **public REST API** (`/api/v1`, header
 `X-N8N-API-KEY`) through `noctusai_lib.integrations.n8n`'s `N8nClient`
 Protocol
 (`seed/lib/backend/noctusai_lib/integrations/n8n/`; Protocol + Fake +
-Real + factory, the `mcp/google/tools/youtube.py` / `mcp/meta/tools
+Real + factory, the `mcp/google_workspace/tools/youtube.py` / `mcp/meta/tools
 /ads.py` "thin connector over the seed adapter" pattern). Every tool
 in `mcp/n8n/tools/` builds its client through `mcp/n8n/client
 .get_client()` — a settings-resolved DI seam, 424-gated when

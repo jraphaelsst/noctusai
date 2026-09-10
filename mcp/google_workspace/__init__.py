@@ -8,7 +8,7 @@ seed lib. This package only composes `_kit` plumbing + the lib factories.
 
 Package shape (mirrors mcp/vista; flat-imported, NOT a `google.`
 package — the name collides with the PyPI `google.*` namespace so
-modules resolve top-level via `mcp/google/` on sys.path, like
+modules resolve top-level via `mcp/google_workspace/` on sys.path, like
 mcp/noctusai):
 - settings.py      — GoogleConnectorSettings (5 env/.env fields)
 - schemas.py       — Pydantic In/Out per tool (named `schemas`, not

@@ -1,7 +1,7 @@
 """n8n.workflow.* tools — list / inspect / activate / deactivate / …
 
 Thin MCP In/Out shaping over `noctusai_lib.integrations.n8n`'s
-`N8nClient` — the `mcp/google/tools/youtube.py:1` / `mcp/meta/tools
+`N8nClient` — the `mcp/google_workspace/tools/youtube.py:1` / `mcp/meta/tools
 /ads.py:31` pattern. NO connector-side HTTP, no connector-side error
 taxonomy, no connector-side raw→VO mapping: `client.get_client()`
 (`mcp/n8n/client.py`) returns an `N8nClient` (real or the seed's

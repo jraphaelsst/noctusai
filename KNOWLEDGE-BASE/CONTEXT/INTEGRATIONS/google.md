@@ -206,7 +206,7 @@ family. `noctusai_lib.integrations.email` is the **Resend**-backed
 digest/invitation module (NOT Gmail) — a product needing "send from
 the user's Gmail" or "read the user's inbox" now consumes from here
 instead of forking. The consume-side MCP wrapper at
-`mcp/google/tools/gmail.py` is the first in-tree adopter.
+`mcp/google_workspace/tools/gmail.py` is the first in-tree adopter.
 
 **Protocol surface** (`GmailClient`):
 - `async send_message(*, to, subject, body_text, body_html=None,
@@ -270,7 +270,7 @@ or `None`. The OAuth dance itself is the generic
 explicitly (consent must have been granted for it — the seed cannot
 widen a scope the user never approved).
 
-**Consume recipe** (cited consumer `mcp/google/tools/gmail.py:48`):
+**Consume recipe** (cited consumer `mcp/google_workspace/tools/gmail.py:48`):
 ```python
 from noctusai_lib.integrations.gmail import (
     GmailClient,
@@ -291,7 +291,7 @@ result = await client.send_message(
 ```
 
 **Consumer status**: seed-ahead — no in-tree `products/*` consumer
-yet (N=0); `mcp/google/tools/gmail.py` is the first thin MCP-tool
+yet (N=0); `mcp/google_workspace/tools/gmail.py` is the first thin MCP-tool
 wrapper. The next product needing per-user email-send wires
 `GmailCredentialResolver` against the seed `CredentialStore` (same
 shape as the existing Calendar/Drive resolvers — pattern at

@@ -5,7 +5,7 @@ No network: every handler is exercised via dependency injection —
 `FakeN8nClient` (deterministic in-memory) or a small local test double,
 never a network call. This is NOT monkeypatching: `n8n.client.py`'s
 override slot is a first-class DI seam (mirrors
-`mcp/google/tools/youtube.py`'s `configure_upload_client`), and every
+`mcp/google_workspace/tools/youtube.py`'s `configure_upload_client`), and every
 connector symbol involved (`api.N8nApiError`, `api.require_configured`,
 `api.map_seed_error`, the tool handlers themselves) runs for real —
 nothing about OUR code is neutered. `n8n.settings.get_settings` /

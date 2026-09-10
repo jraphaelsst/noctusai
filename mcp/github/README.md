@@ -6,7 +6,7 @@ A connector-MCP server that exposes the **GitHub platform facilities the
 team's methodology relies on** — PR lifecycle, CI-check visibility,
 repo/branch introspection — as LLM-callable `github.<service>.<action>`
 tools. It **composes `mcp/_kit`** (same shape as `mcp/vista` /
-`mcp/meta` / `mcp/google`): bootstrap, settings, registry, error
+`mcp/meta` / `mcp/google_workspace`): bootstrap, settings, registry, error
 envelope, in-tree seed pin — all inherited, ~0 boilerplate re-derived.
 
 It wraps the operator's **authenticated `gh` CLI** (`gh auth` owns

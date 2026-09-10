@@ -1,4 +1,4 @@
-# `mcp/google` — Google connector MCP server
+# `mcp/google_workspace` — Google connector MCP server
 
 Thin connector MCP exposing the four seed Google integration libs as
 `google.<service>.<action>` tools. Composes `mcp/_kit` (shared
@@ -14,7 +14,7 @@ enforces the confirm-gate + audit log on writes, (4) shapes the output.
 ## Package shape
 
 ```
-mcp/google/
+mcp/google_workspace/
   server.py        # _kit.bootstrap composition (stdio entry point)
   settings.py      # GoogleConnectorSettings(ConnectorSettings) — 5 env/.env fields
   schemas.py       # Pydantic In/Out per tool (named `schemas`, NOT `types` — see below)
@@ -39,7 +39,7 @@ Unlike `vista`, the directory name `google` collides with the PyPI
 exactly like `mcp/noctusai` — it puts its own dir on `sys.path` and
 imports `tools` / `settings` / `schemas` as **top-level** modules.
 `server.py` inserts two paths (order matters): `mcp/` (for `_kit`) then
-`mcp/google/` (for the flat modules). Tests get the same wiring from
+`mcp/google_workspace/` (for the flat modules). Tests get the same wiring from
 `conftest.py` + `--import-mode=importlib` (via `pytest.ini`'s `addopts`,
 consumed before conftest collection).
 
@@ -49,7 +49,7 @@ under this flat-import strategy.
 
 ## Settings
 
-Five fields, env or co-located `mcp/google/.env` (env wins; `.env`
+Five fields, env or co-located `mcp/google_workspace/.env` (env wins; `.env`
 gitignored — see `.env.example`):
 
 | Field | Env var | Used by |
@@ -140,6 +140,6 @@ connector must run/test against the seed in its own tree.
 ## Run
 
 ```
-python mcp/google/server.py                 # stdio server
-python -m pytest mcp/google/tests/ -q       # 27 tests, deterministic, no network
+python mcp/google_workspace/server.py                 # stdio server
+python -m pytest mcp/google_workspace/tests/ -q       # 27 tests, deterministic, no network
 ```

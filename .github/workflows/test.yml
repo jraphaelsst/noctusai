@@ -675,6 +675,122 @@ jobs:
           # known-safe public values (Supabase demo JWT, etc.).
           config-path: .gitleaks.toml
 
+  tooling-tests:
+    # The TOOLING half of the repo — everything with a real suite that is
+    # neither a product nor the seed: `dev_team` (167), the 14 MCP connectors
+    # (482), `scripts/codemods` (15) and the `templates/product-seed` scaffold
+    # (50). 714 tests that no workflow ran.
+    #
+    # 🔴 WHY EACH SUITE GETS ITS OWN pytest INVOCATION, rather than one call
+    # with every path. 13 of the 14 connectors ship a file literally named
+    # `tests/test_smoke.py`. Collected together they resolve to colliding
+    # module names, and the result is not a clean error — it is two tests
+    # reported under `mcp/google/test_smoke.py` whose traceback executes
+    # entirely inside `mcp/imovelweb/tests/test_smoke.py`. Same total collected
+    # (482 either way), so the COUNT does not betray it; only the attribution
+    # is wrong, which is the worst way for a suite to be wrong. Per-suite
+    # invocation makes the collision structurally impossible.
+    #
+    # 🔴 WHY `continue-on-error` IS ABSENT AND THE LOOP ACCUMULATES INSTEAD.
+    # `set -e` would stop at the first red suite and hide the rest on the very
+    # first run — exactly when you most want the whole picture. The loop records
+    # each failure, prints a summary, and exits non-zero at the end.
+    #
+    # Sized before landing (the discipline from the Sixth axis): all four roots
+    # run green from a scrubbed `env -i` (no `.env`, no SUPABASE_*) on 3.11 with
+    # this exact dependency set, in ~8s total. Blocking from day one.
+    name: Tooling Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install system build deps (cairo/pango/gdk + libpq/ffi)
+        run: |
+          # Same third-party-apt-source guard as `product-backend-tests` — see
+          # that job for the incident it exists for.
+          sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
+            | sudo xargs -r rm -f
+          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
+          sudo apt-get update || true
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
+            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+
+      - name: Install dependencies (root superset + the MCP toolkit set)
+        # The connectors import the `mcp` SDK and `scripts/codemods` imports
+        # `libcst`; neither is in the root superset, both are in the toolkit
+        # requirements. Installed from `mcp/noctusai` because that file carries
+        # `-e ../../seed/lib/backend` as a CWD-relative path (see the
+        # mcp-toolkit-tests job for the incident that taught us this).
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+          (cd mcp/noctusai && pip install -r requirements.txt)
+
+      - name: Run tooling suites (each in its own invocation)
+        run: |
+          # Derive the connector suites from git rather than a hand-written
+          # list — the drift class this repo keeps re-learning
+          # (KB § PATTERNS/devops/product-lockfile-and-slug-drift.md).
+          # `mcp/noctusai` is excluded: it has its own dedicated job.
+          # `while read`, not `mapfile`: mapfile is bash 4+, and on a bash 3.2
+          # host it fails SILENTLY leaving an empty array — the loop then runs
+          # nothing and the job reports green. That is the exact unenforced-gate
+          # shape this job exists to close, so it is not left to luck.
+          CONNECTORS=()
+          while IFS= read -r line; do
+            [ -n "$line" ] && CONNECTORS+=("$line")
+          done < <(
+            git ls-files 'mcp/*/tests/*' \
+              | grep -E 'test_.*\.py$' \
+              | sed 's|/[^/]*$||' \
+              | sort -u \
+              | grep -v '^mcp/noctusai/'
+          )
+          echo "connector suites: ${#CONNECTORS[@]}"
+
+          # 🔴 FLOOR. A derived list that silently comes back empty is how a
+          # gate dies without anyone noticing. There are 14 connector suites
+          # today; refuse outright below 10 rather than "pass" over nothing.
+          # If connectors are legitimately removed, lower this deliberately.
+          if [ "${#CONNECTORS[@]}" -lt 10 ]; then
+            echo "::error::only ${#CONNECTORS[@]} connector suite(s) discovered (expected >=10) — the derivation is broken, refusing to report green over nothing"
+            exit 1
+          fi
+
+          failed=()
+          run_suite() {  # run_suite <label> <dir-to-cd-into> [pytest args...]
+            local label="$1"; shift
+            local dir="$1"; shift
+            echo "::group::$label"
+            if ( cd "$dir" && python -m pytest "$@" --tb=short -q ); then
+              echo "  OK $label"
+            else
+              echo "::error::$label FAILED"
+              failed+=("$label")
+            fi
+            echo "::endgroup::"
+          }
+
+          for d in "${CONNECTORS[@]}"; do
+            run_suite "$d" . "$d"
+          done
+          run_suite "dev_team"                     dev_team
+          run_suite "scripts/codemods"             .          scripts/codemods
+          run_suite "templates/product-seed"       templates/product-seed/backend
+
+          if [ ${#failed[@]} -ne 0 ]; then
+            echo "::error::${#failed[@]} tooling suite(s) failed: ${failed[*]}"
+            exit 1
+          fi
+          echo "all tooling suites green"
+
   mcp-toolkit-tests:
     # The dev toolkit's OWN suite (mcp/noctusai/tests/, ~2.6k tests): the MCP
     # tools, compliance keepers, cache infra, the embed funnel. Born 2026-05-31

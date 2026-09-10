@@ -6,7 +6,7 @@ libs' Fakes (`FakeCalendarAdapter`, `StaticRoutingAdapter`,
 factories with no creds configured. Mirrors `mcp/vista/tests/`.
 
 Path setup mirrors mcp/noctusai's self-dir strategy: `mcp/` for `_kit`,
-`mcp/google/` for the flat connector modules (the package name `google`
+`mcp/google_workspace/` for the flat connector modules (the package name `google`
 collides with the PyPI `google.*` namespace, so we never import it as a
 `google.` package).
 """
@@ -16,7 +16,7 @@ import asyncio
 
 import pytest
 
-# sys.path wiring (mcp/ for _kit, mcp/google/ for the flat connector
+# sys.path wiring (mcp/ for _kit, mcp/google_workspace/ for the flat connector
 # modules) is owned by ../conftest.py — it runs before collection so the
 # `from tools import ...` below resolves. See conftest.py for why the
 # package isn't imported as a `google.` package.

@@ -3,7 +3,7 @@
 ## What this is
 
 The platform's **connector MCP servers** — `mcp/vista` today, `mcp/meta`
-and `mcp/google` next — all share the same stdio bootstrap, per-tenant
+and `mcp/google_workspace` next — all share the same stdio bootstrap, per-tenant
 settings pattern, tool-registry aggregation, and error envelope. Three
 connectors sharing one boilerplate is N=3 ⇒ formalized here (DRY
 recurrence rule) so the 3rd connector **composes the kit** instead of
@@ -237,7 +237,7 @@ finders are consulted **before** `sys.path`, a plain
 imports silently resolve against the wrong tree and fail on
 freshly-added symbols.
 
-This was hand-rolled independently by two connectors (`mcp/google`'s
+This was hand-rolled independently by two connectors (`mcp/google_workspace`'s
 `conftest.py` + `server.py`; `mcp/meta`'s `tests/test_smoke.py`).
 **N=2 → DRY recurrence rule → formalized** as `_kit.seed_pin` so vista
 and every future connector inherit the fix by construction.
@@ -266,7 +266,7 @@ a mis-pointed package *locator* (the "codebase is source of truth" rule
 applied to import resolution).
 
 > **Cleanup wave — DONE (branch `seed-pin-dedup`, 2026-05-18).** The
-> per-connector hand-rolled copies in `mcp/google/{server.py,conftest.py}`
+> per-connector hand-rolled copies in `mcp/google_workspace/{server.py,conftest.py}`
 > and `mcp/meta/tests/test_smoke.py` are **removed**; all three sites now
 > compose `from _kit.seed_pin import pin_in_tree_seed`. No connector
 > retains a local copy of this logic. (Triage flipped `[A]→[F]` in
@@ -279,11 +279,11 @@ package shadowing our `mcp/` dir — solved by the single bare
 `sys.path.insert(0, .../mcp)` so the connector imports as a clean
 top-level package (`vista`, `meta`).
 
-`mcp/google` hit a **second** collision: the dir name `google` collides
+`mcp/google_workspace` hit a **second** collision: the dir name `google` collides
 with the PyPI `google.*` **namespace package** (shipped by
 `google-api-python-client` / `google-auth`). When a `mcp/<vendor>` dir
 name collides with an installed top-level OR namespace package, follow
-the `mcp/google` recipe:
+the `mcp/google_workspace` recipe:
 
 1. **Dual `sys.path` inserts** — `mcp/` (for `_kit`) **and** `mcp/<vendor>/`
    (so the connector's own `tools` / `settings` / `schemas` resolve as
@@ -298,11 +298,11 @@ the `mcp/google` recipe:
 4. **Avoid stdlib-shadowing module names** — never name a connector
    module `types.py` / `json.py` / etc. when it sits on `sys.path[0]` as
    a flat top-level dir (it would shadow the stdlib for the whole
-   process). `mcp/google` uses `schemas.py`, not `types.py`, for exactly
+   process). `mcp/google_workspace` uses `schemas.py`, not `types.py`, for exactly
    this reason (contrast `mcp/vista/types.py`, safe because vista is
    imported as the `vista.` package, not flat).
 
-`mcp/google/conftest.py` + `pytest.ini` are the reference implementation.
+`mcp/google_workspace/conftest.py` + `pytest.ini` are the reference implementation.
 
 ## Tests
 

@@ -1,7 +1,7 @@
 """`mcp/_kit` — shared connector-MCP boilerplate.
 
 The platform's connector MCP servers (`mcp/vista`, and the upcoming
-`mcp/meta` / `mcp/google`) share the same stdio bootstrap, settings
+`mcp/meta` / `mcp/google_workspace`) share the same stdio bootstrap, settings
 pattern, tool-registry aggregation, and error envelope. N=3 recurrence
 ⇒ formalized here (per the DRY recurrence rule) so the 3rd connector
 composes the kit instead of copy-pasting vista.

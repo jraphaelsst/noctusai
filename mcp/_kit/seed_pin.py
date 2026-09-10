@@ -13,7 +13,7 @@ a post-absorption package (e.g. `noctusai_lib.integrations.meta`). Because
 imports silently resolve against the wrong tree and fail on freshly-added
 symbols.
 
-Two connectors independently hand-rolled the same fix (`mcp/google`'s
+Two connectors independently hand-rolled the same fix (`mcp/google_workspace`'s
 `conftest.py` + `server.py`; `mcp/meta`'s `tests/test_smoke.py`). N=2 →
 the DRY recurrence rule → formalized here so vista and every future
 connector inherits the pin by construction via `_kit.bootstrap` instead
