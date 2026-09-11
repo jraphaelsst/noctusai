@@ -548,8 +548,10 @@ already-solved for two months.
 **§12's fix was real and correct — and did not close the loop.** Hours after the stash
 lift shipped, a `task_branch cleanup` returned a bare `salvage_pushed: false` and left
 the primary `8 behind / 1 ahead` of `origin/dev`. §12's own regression tests all still
-passed; the incident happened anyway. Two claims in §12 (and in
-`projects/prod-fleet-swap-handoff/PROJECT.md` §7, corrected alongside this entry) need
+passed; the incident happened anyway. Two claims in §12 (and in the `prod-fleet-swap-handoff`
+project's §7, corrected alongside this entry — that project was archived 2026-09-11 once this
+fix was confirmed; its residue lives in
+`project-history/roadmaps/prod-fleet-swap-residue-2026-09.md`) need
 retraction: **the primary-write guard was never involved** — the salvage commit is made
 *deliberately* on the primary by `task_branch._push_salvage_ledger_from_primary`, and
 that commit **succeeds**; and the failure this time was **not** the rebase refusing on

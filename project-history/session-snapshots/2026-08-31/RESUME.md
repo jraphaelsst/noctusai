@@ -1,8 +1,32 @@
 # RESUME — 2026-08-31 session 3, snapshot taken mid-flight
 
-> Taken because the owner needed to disconnect while three engineers were still
-> running. **Subagents live inside the session process: when that session ended,
-> they died.** Everything below is what survived, and how to pick it up.
+> 🟢 **CLOSED 2026-09-11 — every branch below LANDED. Nothing here is resumable
+> work any more; it is kept as the record of how the wave was recovered.**
+>
+> All three branches were verified file-by-file against `origin/dev`: every code
+> change they carry is present. They still *look* unmerged to `git cherry`
+> (1–2 "unique" commits each) because the work was re-authored by later sessions
+> rather than cherry-picked, so the patch-ids differ. The only content that does
+> NOT reverse-apply is a stale row counter in `KB § CONTEXT/02-LANDSCAPE.md`.
+>
+> The two `*.uncommitted.patch` captures were **deleted** in the same commit as
+> this note: `shape5-remaining-products.uncommitted.patch` reverse-applied cleanly
+> against `dev` (fully landed), and 33 of 35 files in
+> `shape5-social-wiring.uncommitted.patch` did too — the 2 that did not are the
+> LANDSCAPE counter and `EmailCampanhas.test.tsx`, whose `isPending` mock rename
+> is already on `dev` verbatim (lines 183/211/217); it failed only on surrounding
+> context drift from 246 intervening commits. The `.status.txt` files stay.
+>
+> **§2b survived and mattered.** Both detector blind spots it root-caused are FIXED
+> in `mcp/noctusai/node/lying_loading_scan.mjs` (2026-09-01) — `findRenamedBindingLocals()`
+> closes Gap 1, a `PrefixUnaryExpression` case in `climb()` closes Gap 2 — and the
+> reasoning is preserved in that file's header, which is the durable home.
+>
+> ---
+>
+> *Original note:* Taken because the owner needed to disconnect while three engineers
+> were still running. **Subagents live inside the session process: when that session
+> ended, they died.** Everything below is what survived, and how to pick it up.
 >
 > Read `HANDOFF-NEXT-SESSION.md` first for the full session record. This file
 > covers ONLY the in-flight work at snapshot time.
@@ -11,14 +35,14 @@
 
 ## 1 · What is safe on `origin` (travels to any machine)
 
-| branch | state | commits ahead of `dev` |
+| branch | state at snapshot | outcome (verified 2026-09-11) |
 |---|---|---|
-| `feat/cat-c-erp-hooks` | ✅ **COMPLETE + pushed** | 20 |
-| `feat/shape5-remaining-products` | ⚠️ **PARTIAL + pushed** | 2 (p-studio, adconnect) |
-| `feat/shape5-social-wiring` | ❌ **NOT pushed — zero commits existed** | 0 |
+| `feat/cat-c-erp-hooks` | ✅ **COMPLETE + pushed**, 20 commits | ✅ landed on `dev`; branch deleted |
+| `feat/shape5-remaining-products` | ⚠️ **PARTIAL + pushed**, 2 (p-studio, adconnect) | ✅ landed on `dev`; branch deleted |
+| `feat/shape5-social-wiring` | ❌ **NOT pushed — zero commits existed** | ✅ landed on `dev`; branch deleted |
 
-All three worktrees also still exist on the original machine under
-`.claude/worktrees/<slug>/`, but that does NOT travel. Only the pushed branches do.
+The worktrees these ran in are gone (reaped via `task_branch action=cleanup`, recovery
+pointers in `project-history/worktree-salvage.ndjson`). Nothing is left to pick up.
 
 ---
 
