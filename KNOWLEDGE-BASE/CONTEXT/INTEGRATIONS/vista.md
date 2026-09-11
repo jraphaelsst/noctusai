@@ -343,17 +343,17 @@ the request.
 | List | GET | `/imoveis/listar` | — | ✅ | 📖 | ~1,783 properties on this tenant 2026-05-03 (count fluctuates as listings come and go). |
 | Detail | GET | `/imoveis/detalhes` | `?imovel=` | ✅ | 📖 | `Foto` field NOT available on detalhes — use `FotoDestaque` from listar instead. |
 | List enum content | GET | `/imoveis/listarConteudo` | — | ✅ | ❓ | Returns enum values for fields like `Status`, `Categoria`, `Cidade`, `Bairro`. Drives filter dropdowns. |
-| Photos | GET | `/imoveis/fotos` | `?imovel=` | ❌ | 📖 | Re-probed 2026-05-03: live tenant returns 404 ("No route found"), NOT 401 — the endpoint isn't enabled for this subscription tier. Workaround: `FotoDestaque` field in `/imoveis/listar`. |
+| Photos | GET | `/imoveis/fotos` | `?imovel=` | ⚠️ **405** | 📖 | **Corrected 2026-09-11: this row said 404/"not enabled for this tier". It is 405** — `Method Not Allowed (Allow: POST, PUT, DELETE)`, i.e. the route EXISTS and is **write-only**, which is what the prose in § 4.2 said all along. There is no GET read for photos (workaround stands: `FotoDestaque` from `/imoveis/listar`), but treating it as "absent" understated the surface — it is write-capable, `DELETE` included. |
 | Documents | GET | `/imoveis/anexos` | `?imovel=` | ❓ | 📖 | Not probed. |
 | History | GET | `/imoveis/historicos` | `?imovel=` | ❓ | 📖 | Public-doc spelling is `historicos`; we also tried `historico` → 404. |
 | Available fields | GET | `/imoveis/campos` | — | ❓ | 📖 | Returns field-name reference. Not probed. |
-| Create | POST | `/imoveis/cadastrar` | — | ❓ | 📖 | Out of scope (read-only v1). |
-| Update | PUT | `/imoveis/alterar` | `?imovel=` | ❓ | 📖 | Out of scope. |
-| Add photo | POST | `/imoveis/cadfoto` | `?imovel=` | ❓ | 📖 | Out of scope. |
-| Add doc | POST | `/imoveis/caddoc` | `?imovel=` | ❓ | 📖 | Out of scope. |
-| Add history | POST | `/imoveis/cadhis` | `?imovel=` | ❓ | 📖 | Out of scope. |
-| Register owner | POST | `/imoveis/cadprop` | `?imovel=` | ❓ | 📖 | Out of scope. |
-| Assign broker | POST | `/imoveis/cadcor` | `?imovel=` | ❓ | 📖 | Out of scope. |
+| Create | POST | `/imoveis/cadastrar` | — | ❌ 404 | 📖 | Probed 2026-09-11 — also 404 under the documented `/imoveis/cadastrar`. Absent. |
+| Update | PUT | ~~`/imoveis/alterar`~~ → `/imoveis/update` | `?imovel=` | ❌ 404 | 📖 | **`alterar` was OUR name, never Vista's** — the docs say `/imoveis/update`. Both 404 (2026-09-11). |
+| Add photo | POST | `/imoveis/fotos` | `?imovel=` | ✅ **405 = exists** | 📖 | **Not `cadfoto` (404) nor `/imoveis/fotos/cadastrar` (404).** The live route is the flat resource with `POST/PUT/DELETE`. Permission untested. |
+| Add doc | POST | ~~`/imoveis/caddoc`~~ | `?imovel=` | ❌ 404 | 📖 | Also 404 as `/imoveis/documentos` and `/imoveis/documentos/cadastrar`. |
+| Add history | POST | ~~`/imoveis/cadhis`~~ | `?imovel=` | ❌ 404 | 📖 | Also 404 as `/imoveis/historico` and `/imoveis/historico/cadastrar`. |
+| Register owner | POST | ~~`/imoveis/cadprop`~~ | `?imovel=` | ❌ 404 | 📖 | Also 404 as `/imoveis/proprietario` and `/imoveis/proprietario/cadastrar`. |
+| Assign broker | POST | ~~`/imoveis/cadcor`~~ | `?imovel=` | ❌ 404 | 📖 | Also 404 as `/imoveis/corretor` and `/imoveis/corretor/cadastrar`. |
 | Search variants | GET | `/imoveis/buscar`, `/imoveis/pesquisar`, `/imoveis/proximos`, `/imoveis/destaque` | — | ❌ | — | Not on this tenant; not in public docs. |
 
 #### Confirmed `/imoveis/listar` field set (this tenant) — **calibrated 2026-05-02, re-verified 2026-05-03**
@@ -519,7 +519,9 @@ row is still 404 after the same grant.
 | Update | PUT | `/clientes/update` | `?cliente=` | ❌ 404 | 📖 |
 | Add history | POST | `/clientes/cadhis` | `?cliente=` | ❌ 404 | 📖 |
 | Assign broker | POST | `/clientes/cadcor` | `?cliente=` | ❌ 404 | 📖 |
-| Submit lead | POST | `/clientes/lead` | — | ❌ 404 | 📖 |
+| ~~Submit lead~~ | ~~POST~~ | ~~`/clientes/lead`~~ | — | ❌ 404 | 📖 | **Wrong name — see `/lead` below.** |
+| **Submit lead** | **POST** | **`/lead`** (top-level) | — | ✅ **405 = exists, write-only** | 📖 | Confirmed 2026-09-11 by GET → `405 (Allow: POST)`. **Permission NOT tested** — no write was sent. |
+| **Add attachment** | **POST** | **`/clientes/anexos`** | — | ✅ **405 = exists, write-only** | — | Confirmed 2026-09-11 by GET → `405 (Allow: POST)`. Permission not tested. |
 
 > **🔴 Two route names in the pre-2026-08-21 table were OUR typos, not
 > Vista's routes.** `/clientes/pesquisar` is not a documented Vista method at
@@ -545,10 +547,40 @@ they are genuinely absent, not merely method-mismatched.
 **What a permission grant would and would not buy.** Granting
 `clientes/listar` + `clientes/detalhes` yields the client roster and
 per-client detail. It does **not** yield history (`historicos`),
-broker↔client assignment (`porcorretor`/`cadcor`), favourites, or lead
-submission (`lead`) — those routes are absent regardless of permission.
-Notably there is therefore **no API path to write a captured lead back into
-Vista** on this tenant; an inbound-lead flow terminates in our own database.
+broker↔client assignment (`porcorretor`/`cadcor`), or favourites — those
+routes are absent regardless of permission.
+
+> **🔴 RETRACTED 2026-09-11 — this paragraph used to end: *"there is therefore
+> no API path to write a captured lead back into Vista on this tenant; an
+> inbound-lead flow terminates in our own database."* That is FALSE.**
+>
+> **`/lead` exists** and answers a GET with `405 (Allow: POST)`. The original
+> conclusion came from probing **`/clientes/lead`** — which really is 404 —
+> and generalising from one wrong name. Lead submission is namespaced at the
+> **top level**, not under `/clientes`.
+>
+> This is the third instance of the same error, and the section directly above
+> already states the rule it breaks: *"probe the vendor's published method
+> names, and treat a 404 on a name you cannot cite in their docs as untested,
+> not absent."* The generalisation the earlier note missed: a route can also
+> be **at a different level of the path** than its siblings. A 404 under the
+> namespace you expected is not evidence of absence anywhere else.
+>
+> **Do not build on "we cannot push leads to Vista" without re-probing.**
+> What is still unknown is whether our key is *permitted* to POST there — 405
+> proves the route exists and the verb routes, not that auth passes. No write
+> has been sent (live-CRM write-probe rule, § 9).
+
+**The full write surface on this tenant** (mapped 2026-09-11, GET-only):
+`/lead` (POST) · `/imoveis/fotos` (POST, PUT, **DELETE**) · `/clientes/anexos`
+(POST). Everything else is genuinely absent under all three naming
+conventions tried — our abbreviated forms (`cadfoto`/`caddoc`/`cadhis`/
+`cadprop`/`cadcor`/`alterar`), the vendor's documented nested forms
+(`/imoveis/fotos/cadastrar`, `/imoveis/update`, …), and the flat resource
+names. **This tenant routes by verb on the resource**, not by a `/cadastrar`
+sub-path — which is why both our table and the public docs missed all three.
+`/imoveis/fotos` accepting `DELETE` is the sharp edge: a third-party key with
+write permission there can delete production listing photos.
 
 #### Field set — ✅ CONFIRMED live 2026-08-21 (11 of 32 candidates), on BOTH routes
 
