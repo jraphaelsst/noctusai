@@ -106,6 +106,7 @@ import {
   useCertidaoConsultas,
   useCreateConsulta,
   useDeleteConsulta,
+  useMintResultadoUrl,
   useReprocessarConsulta,
   useTjspFila,
 } from "@/hooks/useCertidoes";
@@ -308,6 +309,16 @@ export default function Certidoes() {
   };
 
   const handleDownload = (url: string, filename: string) => downloadFile(url, filename);
+
+  // `arquivo_url` is an opaque handle — usually a bucket KEY, not a URL — so an
+  // `<a href>` to it resolved against this SPA and answered "Not Found". Viewing
+  // goes through the same signed-URL mint (LGPD-logged) the per-parte panel uses.
+  const mintUrl = useMintResultadoUrl();
+  const handleVisualizar = (resultadoId: string) =>
+    mintUrl.mutate(
+      { resultadoId, intent: "view" },
+      { onSuccess: (res) => window.open(res.url, "_blank", "noopener,noreferrer") },
+    );
 
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
@@ -970,14 +981,15 @@ export default function Certidoes() {
                                 )}
                                 {resultado.arquivo_url && (
                                   <>
-                                    <Button size="sm" variant="ghost" asChild title="Abrir em nova guia">
-                                      <a
-                                        href={resultado.arquivo_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                      >
-                                        <ExternalLink className="h-3 w-3" />
-                                      </a>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      title="Abrir em nova guia"
+                                      aria-label={`Visualizar ${resultado.nome_display}`}
+                                      disabled={mintUrl.isPending}
+                                      onClick={() => handleVisualizar(resultado.id)}
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
                                     </Button>
                                     <Button
                                       size="sm"

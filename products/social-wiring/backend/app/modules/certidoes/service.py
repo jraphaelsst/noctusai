@@ -155,9 +155,14 @@ async def _fetch_certidao(
             # nada consta (no debts/protests/issues found), which is a valid result.
             if api_code == 612:
                 detail = (data.get("errors", []) or ["Nada consta"])[0]
+                # The source still hands back a receipt for a "nada consta" —
+                # CENPROT's is a synthesized one at the ROOT `site_receipts`,
+                # and it is the ONLY document of the lookup. Dropping it left
+                # a successful row with nothing to view or download.
+                site_receipts = data.get("site_receipts") or []
                 return {
                     "success": True,
-                    "file_url": None,
+                    "file_url": site_receipts[0] if site_receipts else None,
                     "raw_response": data,
                     "error": None,
                     "nada_consta": detail,
@@ -862,23 +867,6 @@ async def _process_single_certidao(
         _atualizar_status_consulta(consulta_id, org_id, db)
         return
 
-    # "Nada consta" result (e.g., no protests found) — success without PDF
-    if result.get("nada_consta"):
-        update_data = {
-            "status": "sucesso",
-            "analise_ia": result["nada_consta"],
-            "api_response": result["raw_response"],
-            "erro_mensagem": None,
-        }
-        update_data.update(await _derive_estrutura(
-            config=config, result=result, texto_para_ia=None,
-            nome_display=nome_display, org_id=org_id, travado=travado,
-            analyze_estrutura=analyze_estrutura,
-        ))
-        db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
-        _atualizar_status_consulta(consulta_id, org_id, db)
-        return
-
     file_url = result["file_url"]
     arquivo_url = file_url
     is_html = config["response_format"] == "html"
@@ -925,6 +913,29 @@ async def _process_single_certidao(
                 "Failed to download file for %s from %s, keeping original URL",
                 config["tipo"], file_url,
             )
+
+    # "Nada consta" (e.g., no protests found) — success with NO AI call: the
+    # verdict is the source's own. Deliberately AFTER the download block: the
+    # source's receipt, when it sent one (CENPROT always does), is stored like
+    # any other document so the row can be viewed and downloaded.
+    if result.get("nada_consta"):
+        update_data = {
+            "status": "sucesso",
+            "analise_ia": result["nada_consta"],
+            "api_response": result["raw_response"],
+            "erro_mensagem": None,
+        }
+        if arquivo_url:
+            update_data["arquivo_url"] = arquivo_url
+            update_data["arquivo_nome"] = f"{config['tipo']}.pdf"
+        update_data.update(await _derive_estrutura(
+            config=config, result=result, texto_para_ia=None,
+            nome_display=nome_display, org_id=org_id, travado=travado,
+            analyze_estrutura=analyze_estrutura,
+        ))
+        db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
+        _atualizar_status_consulta(consulta_id, org_id, db)
+        return
 
     # AI analysis (use raw response summary as text input)
     analise = None

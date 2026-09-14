@@ -39,8 +39,10 @@ const mockCreate = vi.fn();
 const mockReprocessar = vi.fn();
 const mockDelete = vi.fn();
 const mockCancelar = vi.fn();
+const mockMintUrl = vi.fn();
 
 vi.mock("@/hooks/useCertidoes", () => ({
+  useMintResultadoUrl: () => ({ mutate: mockMintUrl, isPending: false }),
   useCertidaoConsultas: (...a: any[]) => mockUseCertidaoConsultas(...a),
   useCertidaoConsulta: (...a: any[]) => mockUseCertidaoConsulta(...a),
   useTjspFila: (...a: any[]) => mockUseTjspFila(...a),
@@ -397,6 +399,42 @@ describe("Certidoes — retrieval", () => {
     fireEvent.click(getByText("Detalhes"));
     fireEvent.click(getByLabelText("Download Certidao TJSP"));
     expect(mockDownloadFile).toHaveBeenCalledWith("https://tjsp.jus.br/certidao.pdf", "tjsp.pdf");
+  });
+
+  it("views a file through a freshly minted URL, never the raw arquivo_url handle", async () => {
+    // `arquivo_url` is usually a bucket KEY — an `<a href>` to it resolved
+    // against the SPA and answered {"detail":"Not Found"}.
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    mockMintUrl.mockImplementation((_vars: unknown, opts: { onSuccess: (r: unknown) => void }) =>
+      opts.onSuccess({ url: "https://signed.example/tjsp.pdf", expires_at: null }),
+    );
+    mockUseCertidaoConsultas.mockReturnValue(queryStub({ data: [makeConsulta()] }));
+    mockUseCertidaoConsulta.mockReturnValue(
+      queryStub({
+        data: makeConsulta({
+          resultados: [
+            makeResultado({
+              arquivo_url: "org-1/certidoes/consulta-1/tjsp_ab12.pdf",
+              arquivo_nome: "tjsp.pdf",
+            }),
+          ],
+        }),
+      }),
+    );
+    const { getByText, getByLabelText, container, fireEvent } = await renderCertidoes();
+    fireEvent.click(getByText("Detalhes"));
+    expect(container.querySelector('a[href*="certidoes/consulta-1"]')).toBeNull();
+    fireEvent.click(getByLabelText("Visualizar Certidao TJSP"));
+    expect(mockMintUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "view" }),
+      expect.anything(),
+    );
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://signed.example/tjsp.pdf",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openSpy.mockRestore();
   });
 
   it("downloads the whole consulta as a ZIP", async () => {

@@ -1019,7 +1019,7 @@ class TestProcessSingleCertidao:
         assert await storage.list_keys(bucket=service.BUCKET) == []
 
     @pytest.mark.asyncio
-    async def test_nada_consta_e_sucesso_sem_arquivo(self):
+    async def test_nada_consta_sem_recibo_e_sucesso_sem_arquivo(self):
         db = _db(
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado()],
@@ -1036,6 +1036,42 @@ class TestProcessSingleCertidao:
         assert row["analise_ia"] == "Nada consta"
         assert row["arquivo_url"] is None
         assert http.downloaded == []
+
+    @pytest.mark.asyncio
+    async def test_nada_consta_com_recibo_grava_o_recibo(self):
+        """CENPROT answers a clean search with 612 + a synthesized receipt at
+        the ROOT `site_receipts` — the only document the lookup has. It must
+        land in our bucket (as PDF) so the row can be viewed and downloaded;
+        before, the row was `sucesso` with no file and no icons."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="cenprot", id="r-cenprot")],
+        )
+        storage = FakeStorageBackend()
+        http = _FakeHttp(
+            {
+                "code": 612,
+                "errors": ["Não constam protestos"],
+                "data": [],
+                "site_receipts": ["https://x/cenprot.html"],
+            },
+            file_body=b"<html><body>Nao constam protestos</body></html>",
+            file_content_type="text/html",
+        )
+        await service._process_single_certidao(
+            config_for("cenprot"), _consulta_row(), "tok", db,
+            "r-cenprot", http, storage, analyze=_noop_analyze,
+        )
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "r-cenprot"
+        ).execute().data[0]
+        assert row["status"] == "sucesso"
+        assert row["analise_ia"] == "Não constam protestos"
+        assert http.downloaded == ["https://x/cenprot.html"]
+        assert service.is_storage_key(row["arquivo_url"])
+        assert row["arquivo_nome"] == "cenprot.pdf"
+        blob = await storage.get(bucket=service.BUCKET, key=row["arquivo_url"])
+        assert blob.data[:5] == b"%PDF-"
 
     @pytest.mark.asyncio
     async def test_falha_grava_erro_e_mensagem(self):
