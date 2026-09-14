@@ -1,0 +1,38 @@
+#!/bin/sh
+# julia-cli-exec — the `env -i` wrapper the Claude Agent SDK spawns as its
+# `cli_path` (contract §E.5, SEC-C).
+#
+# WHY THIS IS MANDATORY (not a hardening nice-to-have): the SDK builds the
+# CLI subprocess's environment as
+#   {**os.environ (minus CLAUDECODE), CLAUDE_CODE_ENTRYPOINT, **options.env,
+#    CLAUDE_AGENT_SDK_VERSION}
+# (verified live, `_internal/transport/subprocess_cli.py:809-815`, SDK
+# 0.2.152). `options.env` can only ADD keys, never remove an inherited one —
+# so without this wrapper, EVERY control-plane secret (ACADEMIA_API_TOKEN,
+# SOCIAL_WIRING_API_TOKEN, APPROVAL_ASSERTION_SECRETS, the database key,
+# ANTHROPIC_API_KEY is the one exception that's meant to reach it) would be
+# visible to the Julia CLI subprocess and, transitively, to Bash/WebFetch it
+# might run. `env -i` starts the child from a BLANK slate; only the five
+# names below are re-added, and HOME/PATH are fixed literals, never
+# re-exported from the parent (the parent's own PATH could carry things
+# this process has no business handing to a subprocess that talks to an
+# LLM).
+#
+# The binary to exec is resolved via `JULIA_CLAUDE_BIN` — read from the
+# WRAPPER's own (still-full) environment BEFORE `env -i` wipes it for the
+# child. This is the test seam: tests point `JULIA_CLAUDE_BIN` at a stub
+# script; the real image points it at the installed `claude` binary.
+#
+# POSIX `sh`, not bash — this only needs to be portable to whatever base
+# image the product container ships; no bash-only features are used.
+set -eu
+
+: "${JULIA_CLAUDE_BIN:?JULIA_CLAUDE_BIN must be set to the Claude CLI binary path}"
+
+exec env -i \
+  HOME=/tmp/julia-home \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+  CLAUDE_CODE_ENTRYPOINT="${CLAUDE_CODE_ENTRYPOINT:-}" \
+  CLAUDE_AGENT_SDK_VERSION="${CLAUDE_AGENT_SDK_VERSION:-}" \
+  "$JULIA_CLAUDE_BIN" "$@"
