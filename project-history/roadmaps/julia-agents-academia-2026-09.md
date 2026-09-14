@@ -210,6 +210,34 @@ The decision log keeps every step.
   **Wave 1b is complete.** All of M1–M3's build slices are on `dev`, and no migration has been applied. Next: D1 devops (containers, wiring for the `/app/bin` wrapper, a stable `AGENTS_INSTANCE_ID`, secrets), the SEC-C isolation suite, and the §G E2E checks.
 
   G4's two branch-pointer rows were set aside during its rebase. They are republished once the `noctusai` MCP server reconnects, together with the pending pointer updates and cleanups.
+- **2026-09-14 (wave 3 opens; prod state changed outside this roadmap)**:
+  - **Seed `ApiError.code` reads the flat `{detail, code}` shape** `1c8c307a`. The nested `{error: {code}}` shape still wins when both are present. The agents and academia `errors.ts` now map by `code`, so the N=2 text-matching triage is closed. The tech-lead re-gated the pushed tip:
+    - seed lib: 397 tests, plus check
+    - agents: 43 tests
+    - academia: 45 tests
+    - tsc and build for agents, academia, core and social-wiring
+  - **Follow-up:** the seed `require_scopes` still returns English `detail` text ("Insufficient role"). Both UIs mask it by `code`, but any other consumer would show English. Queued as a small seed slice.
+  - **Prod state, from another session.**
+    - A second session applied social-wiring migrations 105–112 to prod, owner-approved (recorded in `products/social-wiring/backend/migrations/APPLIED.md`). It then promoted `dev` → `main`/`prod` at `c5edb64d` (16:24). That release includes SEED-1.
+    - The mandatory §F order holds for social-wiring: prod has `api_tokens.expires_at` and `api_token_audit`.
+    - **erp-imobiliario `046` is NOT applied.** A read-only prod probe found that `erp.api_tokens` lacks `expires_at`, `principal_agent_id` and the other new columns, and that `erp.api_token_audit` is absent.
+    - Impact: erp mounts the seed `/api/settings/api-tokens` routes, and `POST` (mint) now inserts those columns, so it returns 500 in prod. `GET` and `DELETE` still work. Erp runs only `FakeApiTokenResolver`, so bearer resolution is unaffected.
+    - Reach: erp has 0 tokens, and no frontend calls the route.
+    - Fix: apply `046` to prod, a write that needs owner approval. It is surfaced to the user and not applied.
+  - **"No migration applied" above is superseded for social-wiring `105`.** Academia `006`–`009`, agents `006`–`008` and erp `046` remain held.
+  - **D1 containers is held on its branch after tech-lead review.**
+    - **The `julia-cli` uid switch could not work.** The image ran `USER noctus` with `cap_add` SETUID/SETGID under `no-new-privileges`, and Docker drops those caps before a non-root exec (moby#45491, PR#36587). Every Julia turn would have raised PermissionError.
+      - Rework: start as root, then `setpriv` into `noctus` with only ambient SETUID/SETGID. The wrapper drops every cap before `env -i`, because ambient caps survive the 1000→1001 switch.
+    - **The `curl | bash` Claude CLI install is removed.** The claude-agent-sdk 0.2.152 manylinux wheels (x86_64 and aarch64) already bundle a CLI matched to the pin.
+    - **Real-image proof is now required.** Docker Desktop is running (arm64 host). Prod is linux/amd64, so an amd64 build check is included.
+    - **A security advisor is reviewing the design in parallel.**
+    - **Build scope unchanged.** Both slugs were correctly left out of `deploy/fleet/build-scope.txt`: `build-and-push.yml` refuses a listed slug that is missing from `docker-compose.prod.yml`, and both catalog rows are `deploy_scope='dev'`.
+  - **M6 cutover checklist, grown from D1:**
+    - tunnel ingress and a `docker-compose.prod.yml` entry (consent-gated)
+    - `deploy_scope` → `live`
+    - secrets: `APPROVAL_ASSERTION_SECRETS`, `PRIMARY_SOURCE_ALLOWLIST`, `ACADEMIA_API_TOKEN`, `JULIA_AGENT_ID`, `SOCIAL_WIRING_API_TOKEN`
+    - **`JULIA_ANTHROPIC_API_KEY`**, mapped onto the agents service's `ANTHROPIC_API_KEY` in the prod compose. The bare name is the shared root `.env` key that dev-team already reads (`docker-compose.prod.yml:240`), and §E.5 requires Julia's key to be unshared.
+    - the §F migration order
 
 ## Retrospective (filled at first trigger fire)
 
