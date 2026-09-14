@@ -111,11 +111,15 @@ class HttpAcademiaApi:
         url = f"{(self.settings.api_url or '').rstrip('/')}{path}"
         headers = {"Authorization": f"Bearer {self.settings.api_token}"}
         timeout = self.settings.timeout_seconds or DEFAULT_TIMEOUT_SECONDS
+        # httpx serializes a `None` param as an EMPTY query value
+        # (`?a=`), not an omitted one — drop them here so every tool
+        # module can pass its full optional-filter dict unfiltered.
+        clean_params = {k: v for k, v in (params or {}).items() if v is not None} or None
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as http_client:
                 resp = await http_client.request(
-                    method.upper(), url, params=params, json=json_body, headers=headers,
+                    method.upper(), url, params=clean_params, json=json_body, headers=headers,
                 )
         except httpx.TimeoutException:
             logger.warning("academia API %s %s timed out after %ss", method.upper(), path, timeout)
