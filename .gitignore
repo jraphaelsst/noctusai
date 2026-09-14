@@ -177,3 +177,11 @@ project-history/.vector-costs-spool.ndjson
 # `olx.contract.diff_observed`; it must never enter git history, where it
 # cannot be deleted on request. Keep the directory, drop the contents.
 mcp/olx/fixtures/observed/*.json
+
+# Real signed purchase-and-sale contracts dropped in as reference samples
+# (products/<slug>/contracts/*.docx) carry CPF, RG, bank accounts and home
+# addresses of named parties — LGPD personal data, and this repo is PUBLIC.
+# They are LOCAL study material for the contract template; the template itself
+# lives in code, anonymized. Never commit the samples: git history cannot
+# honor a deletion request.
+products/*/contracts/
