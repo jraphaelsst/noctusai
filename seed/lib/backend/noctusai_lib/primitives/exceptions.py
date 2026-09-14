@@ -150,7 +150,32 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
 
 
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    """Handle FastAPI HTTPException and return standardized error response."""
+    """Handle FastAPI HTTPException and return standardized error response.
+
+    Two shapes, disambiguated by `exc.detail`'s type:
+
+    - `exc.detail` is a `dict` with BOTH `"detail"` and `"code"` keys —
+      the "seed error shape" a growing set of callers (`noctusai_lib.
+      api.auth.session.scopes.require_scopes`, and any product route
+      that raises `HTTPException(detail={"detail": "<msg>", "code":
+      "<machine_code>"})` for a machine-readable error, e.g. contract
+      §0 of `julia-agents-academia-2026-09`) already construct on
+      purpose. Passed through VERBATIM (flat) — the machine `code` this
+      shape exists for would otherwise be silently discarded by the
+      legacy envelope below, which only derives a generic per-status
+      code (`FORBIDDEN`, `NOT_FOUND`, …) and stringifies the whole dict
+      into `message` (found 2026-09-14 wiring `require_scopes` into
+      academia's first live route — the seed's OWN existing unit tests
+      never caught this because they assert on the raised exception
+      object directly, never through a live TestClient round-trip).
+    - Anything else (the historical case — a plain string `detail`, or
+      no detail at all): UNCHANGED legacy `{"error": {"code",
+      "message"}}` envelope, so every existing product's tests (which
+      assert THIS shape) keep passing.
+    """
+    if isinstance(exc.detail, dict) and "detail" in exc.detail and "code" in exc.detail:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+
     code = "HTTP_ERROR"
     if exc.status_code == 404:
         code = "NOT_FOUND"

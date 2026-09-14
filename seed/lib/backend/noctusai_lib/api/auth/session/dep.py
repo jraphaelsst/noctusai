@@ -18,13 +18,22 @@ Wave 2 consumer projects pass real adapters; Wave 1 dev/test wiring
 passes ``FakeSessionStore`` + ``FakeApiTokenResolver``. The factory
 itself is identical in both paths — adapter swap is the entire
 "go to production" change.
+
+SEED-1 (``julia-agents-academia-2026-09``, contract §B.0): the resolved
+``AuthContext`` is stashed on ``request.state.auth_context`` on every
+successful resolution — the ONLY channel an ASGI middleware (which runs
+outside FastAPI's dependency graph) has to learn who the caller was,
+after the response status is known. See
+``noctusai_lib.api.auth.session.audit_middleware`` — its sole consumer
+today. Purely additive: the return value and every existing
+``Depends(get_auth_context)`` call site are unchanged.
 """
 
 from __future__ import annotations
 
 from typing import Awaitable, Callable
 
-from fastapi import Cookie, Header, HTTPException
+from fastapi import Cookie, Header, HTTPException, Request
 
 from noctusai_lib.api.auth.session.api_tokens import ApiTokenResolver
 from noctusai_lib.api.auth.session.store import SessionStore
@@ -72,6 +81,7 @@ def make_get_auth_context(
     """
 
     async def get_auth_context(
+        request: Request,
         authorization: str | None = Header(None),
         session_cookie: str | None = Cookie(None, alias=session_cookie_name),
     ) -> AuthContext:
@@ -79,6 +89,7 @@ def make_get_auth_context(
         if session_cookie:
             ctx = await session_store.lookup(session_cookie)
             if ctx is not None:
+                request.state.auth_context = ctx
                 return ctx
             # Cookie present but unrecognised/expired → 401 with a
             # session-specific detail so the SPA can drop the stale
@@ -96,6 +107,7 @@ def make_get_auth_context(
             if token.startswith("pk_"):
                 ctx = await api_token_resolver.resolve(token)
                 if ctx is not None:
+                    request.state.auth_context = ctx
                     return ctx
                 raise HTTPException(
                     status_code=401,
@@ -107,6 +119,7 @@ def make_get_auth_context(
             if legacy_jwt_resolver is not None:
                 ctx = await legacy_jwt_resolver(token)
                 if ctx is not None:
+                    request.state.auth_context = ctx
                     return ctx
             raise HTTPException(
                 status_code=401,

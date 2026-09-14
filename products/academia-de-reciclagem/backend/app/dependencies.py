@@ -10,10 +10,22 @@ positional ``user`` / ``token`` args become required query parameters.
 
 See ``KB § PATTERNS/backend.md § Auth — canonical pattern`` for the
 full why and the deprecation warning that fires on the broken shape.
+
+SEED-1 (``project-history/roadmaps/julia-agents-academia-2026-09.md``,
+contract §B.0) replaces the JWT-only auth surface with the unified
+``AuthContext`` composition: ``get_auth_context`` resolves a cookie
+session, a ``pk_*`` product token (the REAL ``SupabaseApiTokenResolver``
+— never the Fake), or a legacy JWT bearer (the bridge below, so
+``get_current_user_org`` callers are unaffected). Mirrors
+``products/social-wiring/backend/app/dependencies.py`` — see that
+module's docstring for the lazy-proxy / race-avoidance rationale this
+one repeats verbatim.
 """
 from __future__ import annotations
 
+import logging
 import uuid as _uuid
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -28,7 +40,20 @@ from noctusai_lib.api.auth import (
     make_get_current_user_org,
     resolve_sso_role,  # noqa: F401 — re-exported for product imports
 )
+from noctusai_lib.api.auth.session import (
+    AuthContext,
+    SupabaseApiTokenResolver,
+    make_api_token_audit_writer,
+    make_get_auth_context,
+    require_scopes,
+)
+from noctusai_seed.auth_router import get_session_store as _seed_get_session_store
+
+from app.auth.roles import ADMIN, READ, WRITE
 from app.config import settings
+from app.knowledge import KnowledgeStore, get_knowledge_store
+
+logger = logging.getLogger(__name__)
 
 _db = create_database_module(settings, schema="academia_de_reciclagem")
 _deps = create_dependencies(_db)
@@ -76,6 +101,18 @@ def get_admin_client():
     return _db.get_admin_client()
 
 
+def get_core_client():
+    """``public``-schema-scoped client — ``noctus_users`` lives there,
+    NOT this product's own schema (see the module docstring above)."""
+    return _db.get_core_client()
+
+
+auth_router_deps = SimpleNamespace(
+    get_admin_client=get_admin_client,
+    get_core_client=get_core_client,
+)
+
+
 def coerce_org_uuid(raw_org: Any) -> UUID:
     """Coerce the auth-side org_id into a UUID.
 
@@ -94,3 +131,252 @@ def coerce_org_uuid(raw_org: Any) -> UUID:
         return UUID(str(raw_org))
     except (ValueError, TypeError):
         return _uuid.uuid5(_uuid.NAMESPACE_OID, str(raw_org))
+
+
+# ─── SEED-1 unified auth-context composition (contract §B.0) ────────────
+#
+# Real ``ApiTokenResolver`` + a legacy-JWT bridge so the pre-existing
+# ``get_current_user_org`` callers (and the ``AuthClient`` test fixture,
+# which sends a bearer JWT) keep working unchanged through the SAME
+# resolver. Lazy proxies avoid resolving the Real adapter's
+# ``get_admin_client()`` at MODULE-IMPORT time — the test conftest only
+# patches ``_db.get_admin_client`` AFTER ``app.main`` starts importing
+# (mirrors ``products/social-wiring/backend/app/dependencies.py``).
+
+
+def _get_session_store():
+    """Delegates to the SAME process-local singleton the seed's
+    ``create_auth_router`` composition uses (keyed by ``id(settings)``)
+    — see social-wiring's ``dependencies.py`` for why sharing matters
+    for the in-memory Fake (a second instance is a separate empty dict)."""
+    return _seed_get_session_store(settings)
+
+
+_api_token_resolver: SupabaseApiTokenResolver | None = None
+
+
+def _get_api_token_resolver() -> SupabaseApiTokenResolver:
+    global _api_token_resolver
+    if _api_token_resolver is None:
+        _api_token_resolver = SupabaseApiTokenResolver(
+            get_admin_client(), schema="academia_de_reciclagem"
+        )
+    return _api_token_resolver
+
+
+async def _legacy_jwt_resolver(token: str) -> AuthContext | None:
+    """Bridge a raw Supabase JWT to an ``AuthContext`` (``caller_kind="user"``).
+
+    The dep's contract is that this is called ONLY when the bearer is
+    NOT ``pk_*`` (i.e. a JWT-shaped legacy token). Synthesizes an
+    ``Authorization: Bearer <token>`` header, runs it through the
+    existing JWT-verifying ``get_current_user`` machinery, then projects
+    the resulting user into an ``AuthContext``. Returns ``None`` on any
+    failure so the dep returns 401 — never raises out.
+    """
+    try:
+        result = await get_current_user(authorization=f"Bearer {token}")
+    except Exception:
+        # The legacy verifier raises HTTPException(401) on bad JWTs;
+        # the bridge must return None so the dep can produce its own
+        # 401 (consistent shape with the new auth scheme).
+        return None
+    if result is None:
+        return None
+    # ``make_get_current_user`` returns ``(user, token)``.
+    user = result[0] if isinstance(result, tuple) else result
+    if user is None:
+        return None
+    raw_org = (getattr(user, "user_metadata", None) or {}).get("org_id")
+    if not raw_org:
+        return None
+    try:
+        org_id = coerce_org_uuid(raw_org)
+    except Exception:
+        logger.warning("legacy_jwt_org_coerce_failed raw=%r", raw_org)
+        return None
+    try:
+        user_id = UUID(str(user.id))
+    except (ValueError, TypeError):
+        # Local-dev/test fixtures may use opaque ids; derive a stable UUID.
+        user_id = _uuid.uuid5(_uuid.NAMESPACE_OID, str(user.id))
+    return AuthContext(
+        org_id=org_id,
+        caller_kind="user",
+        user_id=user_id,
+        scopes=[],
+        raw_token=token,  # JWT — preserves the bearer for legacy callers
+        api_token_id=None,
+    )
+
+
+class _LazyApiTokenResolver:
+    """Defers to ``_get_api_token_resolver()`` on first resolve call."""
+
+    async def resolve(self, token_secret):
+        return await _get_api_token_resolver().resolve(token_secret)
+
+
+class _LazySessionStore:
+    """Defers to ``_get_session_store()`` on first method call."""
+
+    async def create(self, **kwargs):
+        return await _get_session_store().create(**kwargs)
+
+    async def lookup(self, session_id):
+        return await _get_session_store().lookup(session_id)
+
+    async def refresh_ttl(self, session_id, ttl_seconds=86400):
+        return await _get_session_store().refresh_ttl(session_id, ttl_seconds)
+
+    async def delete(self, session_id):
+        return await _get_session_store().delete(session_id)
+
+
+_audit_writer = None
+
+
+def _get_audit_writer():
+    """Lazy singleton — same race-avoidance rationale as
+    ``_get_api_token_resolver`` (``get_admin_client()`` must not
+    resolve before a test conftest's post-import patch lands)."""
+    global _audit_writer
+    if _audit_writer is None:
+        _audit_writer = make_api_token_audit_writer(
+            get_admin_client(), schema="academia_de_reciclagem"
+        )
+    return _audit_writer
+
+
+class _LazyAuditWriter:
+    """`ApiTokenAuditWriter` proxy for `app.main`'s
+    `ApiTokenAuditMiddleware` wiring — defers to `_get_audit_writer()`
+    on the first `.record()` call."""
+
+    async def record(self, **kwargs):
+        return await _get_audit_writer().record(**kwargs)
+
+
+get_auth_context = make_get_auth_context(
+    session_store=_LazySessionStore(),
+    api_token_resolver=_LazyApiTokenResolver(),
+    legacy_jwt_resolver=_legacy_jwt_resolver,
+    session_cookie_name="nai_session",
+)
+
+
+# ─── Scope/role gates — contract §B.0 ────────────────────────────────────
+#
+# Every GET needs READ; every write below needs its domain's WRITE scope
+# (product callers) / the WRITE role set (SSO users); `/api/import`
+# (A2, not this slice) needs ADMIN. Bound ONCE at module load — every
+# router ``Depends(require_kb_write)`` etc. shares the same dependency
+# object, matching the ``get_current_user_org``-factory pattern above.
+#
+# NOTE (contract gap, flagged in this slice's delivery note): §B.0 lists
+# 6 write scopes for 7 write-domains — no ``academia:timeline:write``
+# exists. Timeline (`POST /api/timeline`, §B.5) is grouped with content
+# under `academia:content:write` here; sources keeps its own scope
+# because it accepts an external URL (a materially different risk).
+require_read = require_scopes(
+    "academia:read",
+    user_roles=READ,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
+require_kb_write = require_scopes(
+    "academia:kb:write",
+    user_roles=WRITE,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
+require_decisions_write = require_scopes(
+    "academia:decisions:write",
+    user_roles=WRITE,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
+require_questions_write = require_scopes(
+    "academia:questions:write",
+    user_roles=WRITE,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
+require_roadmap_write = require_scopes(
+    "academia:roadmap:write",
+    user_roles=WRITE,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
+require_content_write = require_scopes(
+    "academia:content:write",
+    user_roles=WRITE,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
+require_sources_write = require_scopes(
+    "academia:sources:write",
+    user_roles=WRITE,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
+require_import_admin = require_scopes(
+    "academia:import",
+    user_roles=ADMIN,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
+
+
+# ─── Knowledge store seam (contract §A.11) ───────────────────────────────
+
+
+def get_approval_assertion_keys() -> list[str]:
+    """FastAPI dependency returning `settings.approval_assertion_secrets_list`
+    (contract §D). An explicit seam — routers `Depends(...)` this and pass
+    the result to `app.auth.provenance.build_write_provenance(keys=...)` —
+    so a test overrides `app.dependency_overrides[get_approval_assertion_keys]`
+    instead of `monkeypatch.setattr(settings, "approval_assertion_secrets",
+    ...)`, which trips `check_no_self_monkeypatch` (CLAUDE.md §1: no
+    monkey-patching our own code, incl. tests)."""
+    return settings.approval_assertion_secrets_list
+
+
+def get_store() -> KnowledgeStore:
+    """FastAPI dependency returning the configured `KnowledgeStore`.
+
+    A seam on purpose — tests override this (`app.dependency_overrides
+    [get_store] = lambda: shared_fake_instance`) with a single shared
+    `FakeKnowledgeStore()` instance so state persists across the
+    multiple requests one test typically issues. In prod/dev this calls
+    the real `get_knowledge_store(settings)` factory (§A.11), which is
+    stateless per call for `PgKnowledgeStore` (a thin Postgres wrapper).
+    """
+    return get_knowledge_store(settings)
+
+
+__all__ = [
+    "AuthContext",
+    "auth_router_deps",
+    "coerce_org_uuid",
+    "first_or_none",
+    "get_admin_client",
+    "get_approval_assertion_keys",
+    "get_auth_context",
+    "get_core_client",
+    "get_current_user",
+    "get_current_user_org",
+    "get_org_id",
+    "get_store",
+    "get_user_client",
+    "get_user_role",
+    "require_content_write",
+    "require_decisions_write",
+    "require_import_admin",
+    "require_kb_write",
+    "require_questions_write",
+    "require_read",
+    "require_roadmap_write",
+    "require_sources_write",
+    "resolve_sso_role",
+]

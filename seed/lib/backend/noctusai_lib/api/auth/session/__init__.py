@@ -40,6 +40,9 @@ from noctusai_lib.api.auth.session.audit import (
     SupabaseApiTokenAuditWriter,
     make_api_token_audit_writer,
 )
+from noctusai_lib.api.auth.session.audit_middleware import (
+    ApiTokenAuditMiddleware,
+)
 from noctusai_lib.api.auth.session.dep import (
     LegacyJwtResolver,
     make_get_auth_context,
@@ -85,6 +88,7 @@ from noctusai_lib.api.auth.session.types import (
 )
 
 __all__ = [
+    "ApiTokenAuditMiddleware",
     "ApiTokenAuditWriter",
     "ApiTokenResolver",
     "AuthContext",
