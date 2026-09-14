@@ -151,6 +151,7 @@ The decision log keeps every step.
   - single-use signed approval assertions across products (H2)
   - token expiry, principal checks and audit (H3)
   - import bundle outside the repo, with a secret scan (H4)
+- **2026-09-14 (wave 1a integration)**: SEED-2 (ChatWindow seams) and G1 (agents data layer) are on `dev`. G1's review caught a SECURITY DEFINER function executable by PUBLIC; it was fixed before integration and logged as a keeper candidate. A2 (importer) is verified and waits for A1. SEED-1 (token scopes) is integrating, and it wrote migrations social-wiring 105 and erp-imobiliario 046, which carry a mandatory deploy order (contract §F).
 
 ## Retrospective (filled at first trigger fire)
 

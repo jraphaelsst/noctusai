@@ -568,14 +568,100 @@ The audit of the sibling router, topics, 10 `ar-*` skills and 2 agents found no 
 - Sibling rules that no longer apply are dropped: the read-only `../noctusai`, the vendored `_kit`, the files-as-truth rule, the git-status reads, and WhatsApp.
 - `.github/CODEOWNERS` lists `products/agents/backend/app/agents/**`. **This is advisory only.** As of 2026-09-14 `dev` has no branch protection, so CODEOWNERS only requests review on pull requests; direct pushes bypass it. Making Julia's prompt and skills enforce-reviewed needs branch protection with required code-owner review. That is a repository-settings decision for the user (roadmap open question Q4) and is NOT assumed here.
 
+### E.9 The runtime seam between the agents routes (G1b) and the runtime + gate (G2)
+
+The routes call the runtime and the broker. G2 implements them. Neither side guesses. Everything below lives in `products/agents/backend/app/runtime/`.
+
+```python
+# types.py
+@dataclass(frozen=True)
+class TurnContext:
+    org_id: UUID
+    conversation_id: UUID
+    requested_by: UUID                 # the conversation owner (E.2)
+    instance_id: str                   # this process; stored on approvals + turn lock
+    sdk_session_id: str | None         # conversations.sdk_session_id, for resume
+
+@dataclass(frozen=True)
+class AgentSpec:
+    key: Literal["julia"]
+    model: str                         # from the active persona, already allowlist-checked
+    effort: Literal["low", "medium", "high", "xhigh", "max"]
+    prompt_append: str                 # JULIA.md + persona fields, composed by build_julia_spec()
+    skills: tuple[str, ...]            # explicit ar-* list (E.5)
+    tools: tuple[str, ...]             # exactly the E.4 leitura + escrita names
+    max_turns: int                     # default 40
+
+AgentEvent = TypedDict("AgentEvent", {"event": str, "payload": dict})
+# `event` is exactly one of the E.3 names. `payload` has exactly the E.3 shape.
+
+@dataclass(frozen=True)
+class ApprovalDecision:
+    aprovada: bool
+    approval_id: UUID
+    approved_by: UUID | None           # None when not decided by a human
+    via: Literal["web", "timeout", "restart"]
+
+class ApprovalBroker(Protocol):
+    # runtime side, called by G2's can_use_tool for every `escrita` tool
+    async def request(self, ctx: TurnContext, *, tool_name: str, tool_input: dict,
+                      resumo: str, diff: dict | None) -> ApprovalDecision
+    # route side, called by G1b's POST /api/approvals/{id}/decision
+    async def resolve(self, org_id: UUID, approval_id: UUID, *, aprovada: bool,
+                      decided_by: UUID) -> dict        # the updated approvals row
+    # raises stores.errors.AlreadyDecided → 409 already_decided
+    # raises runtime.errors.Orphaned      → 409 orphaned
+    # raises stores.errors.NotFound       → 404
+    async def expire_orphans_on_startup(self) -> int   # only rows with this instance_id
+
+class AgentRuntime(Protocol):
+    def run_turn(self, spec: AgentSpec, ctx: TurnContext, prompt: str,
+                 broker: ApprovalBroker) -> AsyncIterator[AgentEvent]
+```
+
+**Factories** (`runtime/__init__.py`):
+- `get_agent_runtime(settings) -> AgentRuntime`. Returns `ClaudeAgentSdkRuntime` when `ANTHROPIC_API_KEY` is configured, and `FakeAgentRuntime` in tests and dev. In prod, an unconfigured key raises at startup. There is no silent Fake in prod.
+- `get_approval_broker(settings) -> ApprovalBroker`, a process singleton. Its Fake variant resolves in-process with no timeout drift.
+- `build_julia_spec(persona_row) -> AgentSpec`.
+
+**What the routes must do with a turn (G1b owns this, and it is the only consumer):**
+1. `POST /api/conversations/{id}/messages` persists the user message, then `try_acquire_turn`. On failure it returns 409 `turn_in_progress`.
+2. It starts a background task (reference kept alive on `app.state`) that iterates `run_turn(...)`.
+3. For each event, the task persists it where E.3 implies:
+   - `message.new` → a `messages` row
+   - `tool.*` → appended into the current assistant message's `blocks`
+   - `approval.*` → an `approval` block
+
+   Then it publishes the event on scope `agents:julia:conv:<id>`.
+4. `message.delta` is published only, never persisted.
+5. When the iterator finishes, the task persists the `sdk_session_id` carried by the final `session.status` payload (`{"status": "ociosa", "sdk_session_id": "..."}`) and calls `release_turn`.
+6. If the iterator raises, the task persists a `system` message ("O turno falhou." — generic, no exception text, per security finding 8), publishes `session.status` with `{"status": "erro"}`, and calls `release_turn`.
+
+**What the runtime must guarantee (G2):**
+- **Tool events are paired.** Every `tool.started` has exactly one `tool.finished` with the same `tool_use_id`.
+- **Escrita tools follow a fixed sequence:** `approval.requested` → `approval.resolved`, then a `tool.finished` whose `resultado` is `"negada"` when not approved.
+- **The last event is always `session.status`**, whether the turn succeeds or fails.
+- **The runtime never writes to the database.** It only yields events and calls the broker. The broker owns `approvals` rows via `stores.approvals`.
+
+**`FakeAgentRuntime`** is scriptable: `FakeAgentRuntime(script: list[AgentEvent | ("escrita", tool_name, tool_input)])`. A tuple entry calls `broker.request(...)` and emits the approval and tool events exactly as the real runtime would. G1b's route tests use it, so they exercise the real broker without an LLM.
+
 ## F · Reserved migration numbers
 
 | Product | Numbers | Owner |
 |---|---|---|
 | academia-de-reciclagem | `006_knowledge.sql` (A.1–A.9), `007_revisions.sql` (A.10 + triggers), `008_api_tokens.sql` (B.0 token table + audit) | A1 |
 | agents | `006_agents.sql` (E.1), `007_api_tokens.sql` (B.0 token table + audit) | G1 |
-| social-wiring | the next free number at SW1 time: `api_tokens` gets `expires_at` / `principal_agent_id` / `issuer` + backfill, plus `api_token_audit` | SW1 (`task_branch integrate` re-checks collisions after rebase) |
-| erp-imobiliario | same shape as social-wiring | SEED-1 |
+| social-wiring | `105_api_tokens_scopes_and_audit.sql`: `api_tokens` gains `expires_at` / `principal_agent_id` / `issuer` / `human_personal` / `minted_by` plus backfill, and `api_token_audit` is created | SEED-1 (moved from SW1 at dispatch: the resolver change needs the columns in the same slice). SW1 now only adds the bridge route. |
+| erp-imobiliario | `046_api_tokens_scopes_and_audit.sql`, same shape as social-wiring | SEED-1 |
+
+**Deploy order is mandatory for 105 and 046.** Apply both migrations to the database BEFORE any social-wiring or erp-imobiliario image containing the SEED-1 resolver is deployed. The resolver selects `expires_at`, so the reverse order breaks every live product token.
+
+**Not built by SEED-1, with named destinations:**
+- **Audit-writer call-site wiring.** The writer (Protocol + Fake + Real + factory) needs the response status, which only an ASGI middleware sees. It is wired by the first routes that accept product tokens: wave 1b academia API and the SW1 bridge.
+- **30-day token-expiry alert.** This belongs to a monitoring/cron concern, slice D1.
+- **erp-imobiliario token routes have zero tests.** This predates SEED-1, but those routes now require `expires_at`, so the minimum 401/422/201 tests land in wave 1b alongside SW1.
+
+No frontend in any product calls the token-mint route (checked 2026-09-14), so requiring `expires_at` breaks no UI. Direct API callers must now send it.
 | core | none | — |
 
 ## G · E2E-shape checks (closing gate, one per contract edge)
