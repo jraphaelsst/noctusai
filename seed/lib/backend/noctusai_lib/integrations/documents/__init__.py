@@ -67,6 +67,12 @@ from noctusai_lib.integrations.documents.ladder import (
     looks_like_pdf,
 )
 from noctusai_lib.integrations.documents.matricula import find_matricula
+from noctusai_lib.integrations.documents.matricula_atos import (
+    AtoKind,
+    MatriculaAto,
+    ato_hint_span,
+    segment_matricula_atos,
+)
 from noctusai_lib.integrations.documents.matricula_extractor import (
     FakeMatriculaExtractor,
     MatriculaExtractor,
@@ -125,6 +131,7 @@ def __getattr__(name: str):  # pragma: no cover - lazy proxy
 
 
 __all__ = [
+    "AtoKind",
     "DocumentTextLadder",
     "DocumentTranscriber",
     "ESTADO_CIVIL_VALORES",
@@ -138,12 +145,14 @@ __all__ = [
     "LadderDocumentTranscriber",
     "LadderIdentityExtractor",
     "LadderMatriculaExtractor",
+    "MatriculaAto",
     "MatriculaExtractor",
     "MatriculaFields",
     "REGIME_BENS_VALORES",
     "TextSource",
     "TranscribedPage",
     "Transcription",
+    "ato_hint_span",
     "classify_kind",
     "find_birthdate",
     "find_cpf",
@@ -162,5 +171,6 @@ __all__ = [
     "make_matricula_extractor",
     "normalize",
     "normalize_lines",
+    "segment_matricula_atos",
     "strip_accents_upper",
 ]
