@@ -289,7 +289,12 @@ describe("useJuliaSendAdapter", () => {
 
   it("maps a 409 turn_in_progress rejection to the PT-BR composer message", async () => {
     const { ApiError } = await import("@/lib/errors");
-    mockPost.mockRejectedValue(new ApiError(409, "Já existe um turno em andamento."));
+    mockPost.mockRejectedValue(
+      new ApiError(409, "Já existe um turno em andamento.", {
+        detail: "Já existe um turno em andamento.",
+        code: "turn_in_progress",
+      }),
+    );
     const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
     const qc = newClient();
     const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
@@ -301,7 +306,12 @@ describe("useJuliaSendAdapter", () => {
 
   it("maps a 409 agent_off rejection to the PT-BR composer message", async () => {
     const { ApiError } = await import("@/lib/errors");
-    mockPost.mockRejectedValue(new ApiError(409, "O agente Julia está desligado."));
+    mockPost.mockRejectedValue(
+      new ApiError(409, "O agente Julia está desligado.", {
+        detail: "O agente Julia está desligado.",
+        code: "agent_off",
+      }),
+    );
     const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
     const qc = newClient();
     const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });

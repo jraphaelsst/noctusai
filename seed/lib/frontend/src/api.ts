@@ -56,10 +56,17 @@ export class ApiError extends Error {
     Object.setPrototypeOf(this, ApiError.prototype);
   }
 
-  /** `error.code` from a `{error: {code, ...}}` body, or `null`. */
+  /**
+   * `error.code` from a `{error: {code, ...}}` body (nested shape), or `code`
+   * from a `{detail, code}` body (flat shape) — or `null` if neither is a
+   * string. Nested wins when a body somehow carries both.
+   */
   get code(): string | null {
-    const code = (this.body as { error?: { code?: unknown } } | undefined)?.error?.code;
-    return typeof code === 'string' ? code : null;
+    const body = this.body as { error?: { code?: unknown }; code?: unknown } | undefined;
+    const nested = body?.error?.code;
+    if (typeof nested === 'string') return nested;
+    const flat = body?.code;
+    return typeof flat === 'string' ? flat : null;
   }
 
   /** `error.details` from a `{error: {details, ...}}` body, or `null`. */

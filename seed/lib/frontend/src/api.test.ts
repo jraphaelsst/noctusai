@@ -143,6 +143,46 @@ describe('ApiError — structured status', () => {
     expect(err.details).toBeNull();
     expect(err.body).toEqual({ detail: 'invalido' });
   });
+
+  it('reads .code from a flat {detail, code} body (the julia-agents-academia contract shape)', async () => {
+    const body = { detail: 'Escopo ausente na tentativa.', code: 'scope_missing' };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(403, body));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.code).toBe('scope_missing');
+  });
+
+  it('still reads .code from the nested {error: {code}} body (existing consumers unaffected)', async () => {
+    const body = { error: { code: 'CONTRATO_INCOMPLETO', message: 'Faltam dados.' } };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(400, body));
+    const { client } = make();
+    const err = await client.post('/api/x', {}).catch((e) => e);
+    expect(err.code).toBe('CONTRATO_INCOMPLETO');
+  });
+
+  it('prefers the nested code over a top-level flat code when a body somehow carries both', async () => {
+    const body = { detail: 'flat detail', code: 'flat_code', error: { code: 'nested_code' } };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(409, body));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    expect(err.code).toBe('nested_code');
+  });
+
+  it('ignores a non-string flat code', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(422, { detail: 'invalido', code: 123 }));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    expect(err.code).toBeNull();
+  });
+
+  it('reports null code for a transport failure with no body at all', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    expect(err.body).toBeUndefined();
+    expect(err.code).toBeNull();
+  });
 });
 
 // ── upload() — multipart ───────────────────────────────────────────────────
