@@ -42,6 +42,7 @@ from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.modules.card_hub import agendamentos_service as agenda_svc
 from app.modules.card_hub import checklist_extras_service as extras_svc
 from app.modules.card_hub import compradores_service as compradores_svc
+from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
 from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import financiamento_service as financiamento_svc
@@ -58,6 +59,7 @@ from app.modules.card_hub.deps import (
 )
 from app.modules.card_hub.schemas import (
     CompradorCreateBody,
+    ContratoPatchBody,
     FinanciamentoPatchBody,
     NegociacaoDefaultsPatchBody,
     NegociacaoPatchBody,
@@ -1206,6 +1208,139 @@ async def delete_financiamento_documento_route(
     user, org_id = _auth_parts(auth)
     financiamento_svc.remover(
         client, org_id, cliente_id, documento_id, motivo=motivo,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+# ─── Contratos (migration 106) ───────────────────────────────────────────
+
+
+@router.get("/{cliente_id}/contratos")
+async def list_contratos_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return contratos_svc.listar(client, org_id, cliente_id)
+
+
+@router.post("/{cliente_id}/contratos", status_code=201)
+async def create_contrato_route(
+    cliente_id: UUID,
+    file: UploadFile = File(...),
+    titulo: str = Form(..., min_length=1, max_length=200),
+    modelo: str = Form("compra_venda"),
+    rotulo: Optional[str] = Form(None, max_length=120),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    data = await file.read()
+    return await contratos_svc.criar(
+        client,
+        storage,
+        org_id,
+        cliente_id,
+        titulo=titulo,
+        modelo=modelo,
+        rotulo=rotulo,
+        filename=file.filename or "arquivo",
+        content_type=file.content_type or "application/octet-stream",
+        data=data,
+        criado_por=getattr(user, "id", None),
+    )
+
+
+@router.post("/{cliente_id}/contratos/{contrato_id}/versoes", status_code=201)
+async def create_contrato_versao_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    file: UploadFile = File(...),
+    rotulo: Optional[str] = Form(None, max_length=120),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    data = await file.read()
+    return await contratos_svc.nova_versao(
+        client,
+        storage,
+        org_id,
+        cliente_id,
+        contrato_id,
+        filename=file.filename or "arquivo",
+        content_type=file.content_type or "application/octet-stream",
+        data=data,
+        rotulo=rotulo,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.patch("/{cliente_id}/contratos/{contrato_id}")
+async def patch_contrato_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    body: ContratoPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return contratos_svc.atualizar(
+        client, org_id, cliente_id, contrato_id, valores=valores,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.get("/{cliente_id}/contratos/{contrato_id}/versoes/{versao_id}/url")
+async def get_contrato_versao_url_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    versao_id: UUID,
+    intent: str = Query("view"),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    return await contratos_svc.url_versao(
+        client, storage, org_id, cliente_id, contrato_id, versao_id,
+        usuario_id=getattr(user, "id", None), intent=intent,
+    )
+
+
+@router.delete(
+    "/{cliente_id}/contratos/{contrato_id}/versoes/{versao_id}", status_code=204
+)
+async def delete_contrato_versao_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    versao_id: UUID,
+    motivo: str = Query(..., min_length=1, max_length=500),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    user, org_id = _auth_parts(auth)
+    contratos_svc.remover_versao(
+        client, org_id, cliente_id, contrato_id, versao_id, motivo=motivo,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.delete("/{cliente_id}/contratos/{contrato_id}", status_code=204)
+async def delete_contrato_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    motivo: str = Query(..., min_length=1, max_length=500),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+):
+    user, org_id = _auth_parts(auth)
+    contratos_svc.remover_contrato(
+        client, org_id, cliente_id, contrato_id, motivo=motivo,
         usuario_id=getattr(user, "id", None),
     )
 

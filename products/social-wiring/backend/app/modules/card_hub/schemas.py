@@ -460,3 +460,36 @@ class FinanciamentoPatchBody(StrictHttpModel):
     #: Proposal/contract number at the bank. Free text: every agent formats it
     #: differently and none of them ask us to validate it.
     numero_proposta: Optional[str] = Field(default=None, max_length=120)
+
+
+# ─── Contratos (migration 106) ────────────────────────────────────────────
+
+
+class ContratoPatchBody(StrictHttpModel):
+    """Title, model and status — a contract's editable metadata.
+
+    A `status` change alone (no `titulo`/`modelo`) is the common case, but
+    all three are independently optional: `model_fields_set` is what the
+    service reads, so this mirrors `FinanciamentoPatchBody`'s "absence means
+    leave alone" contract. Any status-to-any-status transition is allowed —
+    operators fix mistakes.
+    """
+
+    titulo: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    modelo: Optional[
+        Literal[
+            "compra_venda",
+            "compra_venda_permuta",
+            "compra_venda_a_vista",
+            "outro",
+        ]
+    ] = None
+    status: Optional[
+        Literal[
+            "rascunho",
+            "em_revisao",
+            "enviado_assinatura",
+            "assinado",
+            "cancelado",
+        ]
+    ] = None

@@ -54,6 +54,11 @@ Routes
     DELETE                  /api/clientes/{id}/documentos/{did}
     GET                     /api/clientes/{id}/documentos/{did}/acessos
     GET                     /api/clientes/{id}/card
+    GET/POST                /api/clientes/{id}/contratos
+    PATCH/DELETE            /api/clientes/{id}/contratos/{cid}
+    POST                    /api/clientes/{id}/contratos/{cid}/versoes
+    GET                     /api/clientes/{id}/contratos/{cid}/versoes/{vid}/url
+    DELETE                  /api/clientes/{id}/contratos/{cid}/versoes/{vid}
 """
 from __future__ import annotations
 

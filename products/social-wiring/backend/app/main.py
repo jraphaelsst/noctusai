@@ -384,6 +384,17 @@ _MAX_BODY_PATH_OVERRIDES = {
     # 30 MB, same as the clientes path: `financiamento_service`'s own
     # MAX_UPLOAD_BYTES (25 MB) is the business-policy limit and stays under it.
     "/api/clientes/*/financiamento/documentos": 30 * 1024 * 1024,  # 30 MB
+    # Contrato upload — create (POST /api/clientes/{cliente_id}/contratos)
+    # and new version (POST /api/clientes/{cliente_id}/contratos/{contrato_id}
+    # /versoes — migration 106). Two entries, one dynamic-segment-count each,
+    # for the same reason the financiamento entry above is separate from the
+    # plain clientes path: pattern keys match on exact segment shape.
+    #
+    # 30 MB, same as the other card_hub document surfaces:
+    # `contratos_service.MAX_UPLOAD_BYTES` (25 MB) is the business-policy
+    # limit and stays under this outer bound.
+    "/api/clientes/*/contratos": 30 * 1024 * 1024,  # 30 MB
+    "/api/clientes/*/contratos/*/versoes": 30 * 1024 * 1024,  # 30 MB
     # Checklist-extra upload (POST
     # /api/clientes/{cliente_id}/checklist-extras/{extra_id}/documento —
     # card_hub, migration 083). A THIRD `/api/clientes` entry, for the same

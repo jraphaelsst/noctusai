@@ -20,6 +20,16 @@ _EXTRA_ID = str(uuid4())
 _PARTE_ID = str(uuid4())
 _ROTEIRO_ID = str(uuid4())
 _VISITA_ID = str(uuid4())
+_CONTRATO_ID = str(uuid4())
+_VERSAO_ID = str(uuid4())
+
+#: Multipart-upload routes — their last path segment is a literal (no
+#: trailing id), same shape `.../financiamento/documentos` and
+#: `.../documentos` already have. A JSON body sent here would target the
+#: wrong content-type for a route expecting `File(...)`/`Form(...)`; auth
+#: fires first regardless (see the loop below), but matching the real
+#: request shape keeps this test honest about what each route expects.
+_MULTIPART_UPLOAD_LAST_SEGMENTS = {"documentos", "contratos", "versoes"}
 
 
 def test_every_card_hub_route_requires_auth(anon_client):
@@ -48,9 +58,21 @@ def test_every_card_hub_route_requires_auth(anon_client):
             .replace("{parte_id}", _PARTE_ID)
             .replace("{roteiro_id}", _ROTEIRO_ID)
             .replace("{visita_id}", _VISITA_ID)
+            .replace("{contrato_id}", _CONTRATO_ID)
+            .replace("{versao_id}", _VERSAO_ID)
         )
         kwargs = {}
-        if method in ("post", "patch", "put") and "documentos" not in concrete.split("/")[-2:]:
+        # Checked on the LAST segment only (not the last two, which is what
+        # the original single-string "documentos" check did): a multipart
+        # upload route always TERMINATES in its literal segment name (no
+        # trailing id), while e.g. `PATCH .../contratos/{contrato_id}` has
+        # "contratos" as its second-to-last segment and must still get a
+        # JSON body.
+        last_segment = concrete.rstrip("/").split("/")[-1]
+        if (
+            method in ("post", "patch", "put")
+            and last_segment not in _MULTIPART_UPLOAD_LAST_SEGMENTS
+        ):
             kwargs["json"] = {}
         resp = getattr(anon_client, method)(concrete, **kwargs)
         assert resp.status_code == 401, (
