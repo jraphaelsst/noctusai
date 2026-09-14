@@ -36,9 +36,12 @@ the behaviour a live user depends on.
 from __future__ import annotations
 
 import asyncio
+import html
 import io
 import json
 import logging
+import re
+import urllib.parse as urlparse
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -64,6 +67,7 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.tasks import schedule_coro
 from xhtml2pdf import pisa
+from xhtml2pdf.config.resources import ResourceAccessPolicy
 
 from app.modules.certidoes.credentials import (
     INFOSIMPLES_TOKEN,
@@ -270,11 +274,110 @@ async def _download_file(
         return None
 
 
+def _cenprot_protocolo_consulta(raw_response: Optional[dict]) -> Optional[str]:
+    """`data[0].protocolo_consulta` from a CENPROT 200 ("protests found")
+    response, when present.
+
+    Per InfoSimples docs for `cenprot-sp/protestos` (read 2026-09-14): a code
+    612 ("nada consta") response has `data: []` and no protocol anywhere,
+    including in its synthesized `site_receipts[0]` receipt — so this
+    naturally returns `None` for a 612, without checking `code` directly.
+    """
+    if not raw_response:
+        return None
+    data = raw_response.get("data") or []
+    if not data or not isinstance(data[0], dict):
+        return None
+    protocolo = data[0].get("protocolo_consulta")
+    return protocolo if isinstance(protocolo, str) and protocolo else None
+
+
+def _with_protocolo_stamp(html_bytes: bytes, protocolo: str) -> bytes:
+    """Insert an HTML-escaped `Protocolo da consulta` line right after the
+    opening `<body>` tag (or prepend one, if the receipt has none) — a
+    CENPROT receipt never prints its own consulta protocol."""
+    stamp = (
+        f"<p><b>Protocolo da consulta:</b> {html.escape(protocolo)}</p>"
+    ).encode("utf-8")
+    lower = html_bytes.lower()
+    body_start = lower.find(b"<body")
+    if body_start == -1:
+        return stamp + b"\n" + html_bytes
+    tag_end = html_bytes.find(b">", body_start)
+    if tag_end == -1:
+        return stamp + b"\n" + html_bytes
+    insert_at = tag_end + 1
+    return html_bytes[:insert_at] + stamp + html_bytes[insert_at:]
+
+
+#: A `<base href="...">` tag — InfoSimples' TRF3 receipt snapshots declare
+#: their own origin this way (they are a saved copy of a real page). xhtml2pdf
+#: has no special handling for `<base>` (no `pisaTagBASE` in `xhtml2pdf.tags`);
+#: reading it ourselves is what lets `_convert_html_to_pdf` tell xhtml2pdf
+#: where the document came from.
+_BASE_HREF_RE = re.compile(
+    rb'<base\s[^>]*\bhref\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE
+)
+
+
+def _base_href(html_bytes: bytes) -> Optional[str]:
+    """The value of a `<base href="...">` tag, if the document declares one."""
+    match = _BASE_HREF_RE.search(html_bytes)
+    if not match:
+        return None
+    return match.group(1).decode("ascii", errors="replace")
+
+
 def _convert_html_to_pdf(html_bytes: bytes) -> Optional[bytes]:
-    """Convert HTML content to PDF using xhtml2pdf."""
+    """Convert HTML content to PDF using xhtml2pdf.
+
+    Prod logs, verbatim, converting a TRF3 receipt: "Blocked by the resource
+    policy: '/certidao-regional/imagens/trf3logo2.png' is outside the
+    directories this document may read (/app/products/social-wiring/backend)"
+    — same for its CSS files. The cause is that `pisa.CreatePDF` was called
+    with no `path=`, so `xhtml2pdf.context.pisaContext` had no document
+    origin, and a root-relative reference like that one is resolved as a
+    LOCAL FILE PATH (checked against the process's own cwd) rather than a
+    same-origin fetch — confirmed against `xhtml2pdf==0.2.19` source:
+    `xhtml2pdf/files.py` `FileNetworkManager.get_manager` picks the fetcher
+    by the SCHEME OF `basepath` (`context.pathDirectory`, itself `path`
+    unchanged when `path` has a scheme — `xhtml2pdf/context.py`
+    `getDirName`) when the reference itself has none; with no `path`, that
+    basepath is a bare filesystem directory, so `get_manager` falls through
+    to `LocalFileURI` instead of `NetworkFileUri`.
+
+    When the receipt declares an https `<base href="https://host/...">`, this
+    passes that as `path=` — `xhtml2pdf.document.pisaDocument`'s own documented
+    way of telling it the document's origin — so `xhtml2pdf.files` resolves
+    every relative AND root-relative reference against it via
+    `urllib.parse.urljoin`, exactly the browser behaviour a `<base>` tag asks
+    for. A `ResourceAccessPolicy` (`xhtml2pdf.config.resources`, new in
+    0.2.19) scoped to ONLY that host is put in force for the duration of the
+    build, so the receipt cannot be made to fetch anything else — no local
+    reads either (`base_dir=None`). Without an https `<base href>`, this is
+    UNCHANGED from before: no `path`, no scoped policy, xhtml2pdf's own
+    default (any non-internal http/https host; local reads confined to the
+    process cwd).
+    """
     try:
+        path = ""
+        resource_policy = None
+        base_href = _base_href(html_bytes)
+        if base_href:
+            parsed = urlparse.urlsplit(base_href)
+            if parsed.scheme == "https" and parsed.hostname:
+                path = base_href
+                resource_policy = ResourceAccessPolicy(
+                    allowed_hosts=frozenset({parsed.hostname.lower()}),
+                    base_dir=None,
+                )
         pdf_buffer = io.BytesIO()
-        pisa_status = pisa.CreatePDF(io.BytesIO(html_bytes), dest=pdf_buffer)
+        pisa_status = pisa.CreatePDF(
+            io.BytesIO(html_bytes),
+            dest=pdf_buffer,
+            path=path,
+            resource_policy=resource_policy,
+        )
         if pisa_status.err:
             logger.error("xhtml2pdf conversion error count: %d", pisa_status.err)
             return None
@@ -471,6 +574,11 @@ async def _analyze_with_ai(
     analysis box is empty. The pre-flight credential check exists for exactly
     that: without it the call raises `LLMNotConfigured` and the operator sees a
     stack-trace-shaped error on a certidão that actually succeeded.
+
+    Returns `None` — never the vendor's raw exception text — if the
+    configured call itself fails (rate limit, bad kwarg, timeout, ...); the
+    failure is logged instead. `analise_ia` is a due-diligence read surface,
+    not an error channel.
     """
     from app.services.api_keys_store import get_spec, resolve_chat_provider
 
@@ -552,28 +660,20 @@ async def _analyze_with_ai(
             max_tokens=1000,
         )
     except Exception as e:
-        logger.error("AI analysis failed: %s", e)
-        # NOC-REMEDIATE[llm-error-actionable]: this dumps the provider's raw
-        # English error into a column a human reads on a due-diligence screen.
-        # Seen in prod 2026-09-03 on a real emission: five certificates issued
-        # correctly, each showing
-        #   "[Erro na análise IA: Erro na API Openai: Error code: 429 -
-        #    {'error': {'message': 'You have no credits remaining...'}}]"
-        # — whose actual meaning is "add credits", in a language the operator
-        # may not read, wrapped in JSON.
-        #
-        # The fix is the one already applied to the two sibling sites in
-        # b4849998 (the seed transcriber and the Chaves de API probe): classify
-        # the failure, then render a pt-BR sentence naming cause + remedy. That
-        # is now N=3, so the classifier belongs in the seed
-        # (`noctusai_lib.integrations.llm`) rather than a third copy here —
-        # a draft was started and deliberately discarded rather than committed
-        # unwired.
-        #
-        # Named destination: the next change that touches this module, or a
-        # dedicated slice. Not urgent — the certificate itself is unaffected
-        # and the message IS honest, just unreadable. — 2026-09-03
-        return f"[Erro na análise IA: {e}]"
+        # The vendor's raw exception (often English, sometimes JSON-shaped —
+        # e.g. `AsyncMessages.create() got an unexpected keyword argument
+        # 'temperature'`, seen in prod on every non-612 certidão since
+        # 2026-09-10) must never land in `analise_ia`: a due-diligence
+        # operator reads that column as the document's content, not as an
+        # error channel. NULL + a logged error is the honest answer — the
+        # certificate itself is unaffected, only the summary is missing, and
+        # the log line (not the column) is where an operator/on-call looks
+        # for WHY.
+        logger.error(
+            "AI analysis failed for org=%s, provider=%s: %s",
+            org_id, provider, e,
+        )
+        return None
 
 
 def _is_iso_date(value: str) -> bool:
@@ -965,7 +1065,12 @@ async def _process_single_certidao(
             elif is_html or "text/html" in content_type:
                 # HTML content (either from config or detected via content-type)
                 # → convert to PDF
-                pdf_bytes = _convert_html_to_pdf(raw_bytes)
+                html_to_convert = raw_bytes
+                if config["tipo"] == "cenprot":
+                    protocolo = _cenprot_protocolo_consulta(result.get("raw_response"))
+                    if protocolo:
+                        html_to_convert = _with_protocolo_stamp(raw_bytes, protocolo)
+                pdf_bytes = _convert_html_to_pdf(html_to_convert)
                 if not pdf_bytes:
                     logger.warning(
                         "HTML→PDF conversion failed for %s, keeping original URL",
