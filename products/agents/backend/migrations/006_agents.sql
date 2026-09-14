@@ -42,6 +42,21 @@
 -- call is one HTTP request = one transaction, unlike two separate
 -- `.update()` / `.insert()` calls from the admin client which would each
 -- open their own transaction and could interleave under concurrent writes.
+--
+-- SECURITY DEFINER EXECUTE LOCKDOWN (H1, tech-lead review 2026-09-14):
+-- every SECURITY DEFINER function below (`set_updated_at`,
+-- `create_persona_version`) is immediately followed by a
+-- `REVOKE ALL ... FROM PUBLIC, anon, authenticated` + `GRANT EXECUTE ...
+-- TO service_role` pair. Postgres grants EXECUTE on a new function to
+-- PUBLIC by default, and SECURITY DEFINER makes that a privilege
+-- escalation the moment the schema is reachable via PostgREST — anon or
+-- authenticated could otherwise plant an active persona (prompt injection
+-- via `system_prompt_append`) for ANY org, bypassing the admin-only
+-- persona rule (contract §E.2). Revoking EXECUTE does not stop the
+-- `updated_at` triggers from firing — trigger invocation is not a role's
+-- direct EXECUTE call. `tests/stores/test_migration_006_shape.py`'s
+-- `TestSecurityDefinerExecuteGrants` enforces this pair for every
+-- SECURITY DEFINER function in this file, present or future.
 -- ============================================================================
 
 SET search_path = agents, public;
@@ -79,6 +94,14 @@ CREATE OR REPLACE FUNCTION agents.set_updated_at()
 RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = agents, public
 AS $$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $$;
+
+-- SECURITY DEFINER functions default to PUBLIC-executable in Postgres.
+-- Lock EXECUTE to service_role — the only role that ever calls it directly
+-- (triggers fire regardless of EXECUTE privilege, so this cannot break
+-- the updated_at triggers below). Same H1 finding as
+-- `create_persona_version` further down this file.
+REVOKE ALL ON FUNCTION agents.set_updated_at() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION agents.set_updated_at() TO service_role;
 
 CREATE OR REPLACE TRIGGER set_updated_at_agents
     BEFORE UPDATE ON agents.agents
@@ -176,6 +199,17 @@ BEGIN
     RETURN v_row;
 END;
 $$;
+
+-- H1 (tech-lead review, 2026-09-14): SECURITY DEFINER + the Postgres
+-- default PUBLIC-executable grant means anon/authenticated could call
+-- `/rpc/create_persona_version` for ANY org if this schema is ever
+-- exposed via PostgREST — planting an active persona with an attacker
+-- `system_prompt_append` (prompt injection into Julia), bypassing the
+-- admin-only persona rule (contract §E.2). The store only ever calls this
+-- through the service-role admin client, so service_role is the only
+-- legitimate caller.
+REVOKE ALL ON FUNCTION agents.create_persona_version(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION agents.create_persona_version(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, UUID) TO service_role;
 
 
 -- ────────────────────────────────────────────────────────────────────────

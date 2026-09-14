@@ -89,6 +89,82 @@ class TestPersonaVersioning:
         assert deactivate_idx < insert_idx
 
 
+class TestSecurityDefinerExecuteGrants:
+    """Every SECURITY DEFINER function in 006 must lock EXECUTE down to
+    service_role only.
+
+    Postgres grants EXECUTE on a new function to PUBLIC by default.
+    Combined with SECURITY DEFINER, that is a privilege escalation the
+    moment the schema is reachable via PostgREST — exactly how
+    `create_persona_version` could have let anon/authenticated plant an
+    active persona (prompt injection via `system_prompt_append`) for ANY
+    org, bypassing the admin-only persona rule (H1, tech-lead review
+    2026-09-14, contract §E.2). This walks the SQL generically — it does
+    NOT hardcode `create_persona_version` / `set_updated_at` by name, so a
+    third SECURITY DEFINER function added later is covered without anyone
+    remembering to extend this test.
+    """
+
+    @staticmethod
+    def _security_definer_function_names(sql: str) -> list[str]:
+        names: list[str] = []
+        for match in re.finditer(
+            r"CREATE OR REPLACE FUNCTION\s+(agents\.\w+)\s*\(", sql
+        ):
+            name = match.group(1)
+            body_start = match.end()
+            next_fn = sql.find("CREATE OR REPLACE FUNCTION", body_start)
+            body_end = next_fn if next_fn != -1 else len(sql)
+            body = sql[body_start:body_end]
+            if "SECURITY DEFINER" in body:
+                names.append(name)
+        return names
+
+    def test_at_least_one_security_definer_function_exists(self, sql):
+        # Guards the guard: if a future edit drops SECURITY DEFINER from
+        # every function, the parametrized test below would silently
+        # collect zero names and pass on nothing.
+        assert self._security_definer_function_names(sql), (
+            "expected at least one SECURITY DEFINER function in 006_agents.sql"
+        )
+
+    def test_every_security_definer_function_revokes_from_public_anon_authenticated(
+        self, sql
+    ):
+        for fname in self._security_definer_function_names(sql):
+            match = re.search(
+                rf"REVOKE ALL ON FUNCTION {re.escape(fname)}\b[^;]*FROM([^;]*);",
+                sql,
+            )
+            assert match, (
+                f"{fname} is SECURITY DEFINER but has no matching "
+                f"`REVOKE ALL ON FUNCTION {fname} ... FROM ...` statement"
+            )
+            revoked_from = match.group(1).upper()
+            for required_role in ("PUBLIC", "ANON", "AUTHENTICATED"):
+                assert required_role in revoked_from, (
+                    f"{fname}'s REVOKE must name {required_role} — "
+                    f"got: FROM{match.group(1)}"
+                )
+
+    def test_every_security_definer_function_grants_execute_to_service_role_only(
+        self, sql
+    ):
+        for fname in self._security_definer_function_names(sql):
+            match = re.search(
+                rf"GRANT EXECUTE ON FUNCTION {re.escape(fname)}\b[^;]*TO([^;]*);",
+                sql,
+            )
+            assert match, (
+                f"{fname} is SECURITY DEFINER but has no matching "
+                f"`GRANT EXECUTE ON FUNCTION {fname} ... TO service_role` statement"
+            )
+            granted_to = [role.strip() for role in match.group(1).split(",")]
+            assert granted_to == ["service_role"], (
+                f"{fname}'s GRANT must name ONLY service_role — got {granted_to}"
+            )
+
+
 class TestTurnLock:
     def test_conversations_carries_the_lock_columns(self, sql):
         block = _table_block(sql, "conversations")
