@@ -35,10 +35,21 @@
  * provider-blind.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, ChevronLeft, Loader2, MessageCircle, Send, User } from "lucide-react";
+import {
+  AlertCircle,
+  Ban,
+  CheckCircle2,
+  ChevronLeft,
+  Loader2,
+  MessageCircle,
+  Send,
+  User,
+  Wrench,
+  XCircle,
+} from "lucide-react";
 
 import { cn } from "../../utils";
-import { Badge } from "../ui/Badge";
+import { Badge, type BadgeVariant } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 
@@ -56,6 +67,31 @@ export interface ChatThread {
   unreadCount?: number;
 }
 
+/**
+ * Structured content rendered below a message's body — Julia's tool cards
+ * and approval requests (`KB § PATTERNS/frontend/inbox-chat-surface.md`,
+ * contract §E.7). Purely additive: a message with no `blocks` renders
+ * exactly as before.
+ */
+export type ChatBlock =
+  | {
+      kind: "tool";
+      toolUseId: string;
+      name: string;
+      status: "running" | "ok" | "erro" | "negada";
+      resumo?: string;
+    }
+  | {
+      kind: "approval";
+      approvalId: string;
+      resumo: string;
+      diff?: { antes: string | null; depois: string };
+      decision: "pendente" | "aprovada" | "negada" | "expirada";
+    };
+
+type ChatToolBlock = Extract<ChatBlock, { kind: "tool" }>;
+type ChatApprovalBlock = Extract<ChatBlock, { kind: "approval" }>;
+
 /** Message rendered in the right-pane thread. */
 export interface ChatMessage {
   id: string;
@@ -64,6 +100,18 @@ export interface ChatMessage {
   body: string;
   /** ISO datetime string. */
   created_at: string;
+  /**
+   * Streaming placeholder — set while the assistant is still composing this
+   * message (SSE `message.delta`, contract §E.3). Renders a subtle
+   * typing/streaming indicator after the body. Omit ⇒ unchanged rendering.
+   */
+  pending?: boolean;
+  /**
+   * Tool-call and approval-request cards to render below the body. Omit or
+   * empty ⇒ unchanged rendering (the byte-identical guarantee this seam is
+   * built on).
+   */
+  blocks?: ChatBlock[];
 }
 
 interface ChatAsyncResult<T> {
@@ -120,6 +168,19 @@ export interface ChatAutoReplyResult {
   onToggle: (enabled: boolean) => void;
 }
 
+/**
+ * Approval-decision seam (contract §E.7 / §E.2). One hook call per open
+ * thread serves every `approval` block rendered in it — `decide` takes the
+ * target `approvalId` explicitly, so a thread with several pending
+ * approvals shares one `isPending` (all decision buttons disable together
+ * while any decision is in flight, matching the single in-flight-turn
+ * model in §E.2).
+ */
+export interface ChatApprovalActionResult {
+  decide: (approvalId: string, aprovada: boolean) => Promise<void>;
+  isPending: boolean;
+}
+
 export interface ChatWindowAdapter {
   /** Thread list for the given scope (WhatsApp connectionId / Meta accountId / ...). */
   useThreads: (scopeId: string | null) => ChatAsyncResult<ChatThread[]>;
@@ -144,6 +205,12 @@ export interface ChatWindowAdapter {
    * shows only what `useMessages` returned, with no "load older" affordance.
    */
   useLoadMore?: (scopeId: string | null, threadId: string | null) => ChatLoadMoreResult;
+  /**
+   * Optional approval-decision seam. Omit ⇒ `approval` blocks render
+   * read-only (resumo + diff + decision badge) with no Aprovar/Negar
+   * buttons, even when `decision === "pendente"`.
+   */
+  useApprovalAction?: (scopeId: string | null) => ChatApprovalActionResult;
 }
 
 export interface ChatWindowProps {
@@ -294,9 +361,171 @@ function ThreadListItem({
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+// ─── Block seams (tool chips + approval cards, contract §E.7) ────────────────
+
+const TOOL_STATUS_LABEL: Record<ChatToolBlock["status"], string> = {
+  running: "Executando",
+  ok: "Concluído",
+  erro: "Erro",
+  negada: "Negada",
+};
+
+const TOOL_STATUS_VARIANT: Record<ChatToolBlock["status"], BadgeVariant> = {
+  running: "muted",
+  ok: "default",
+  erro: "destructive",
+  negada: "outline",
+};
+
+const TOOL_STATUS_ICON: Record<ChatToolBlock["status"], typeof Loader2> = {
+  running: Loader2,
+  ok: CheckCircle2,
+  erro: XCircle,
+  negada: Ban,
+};
+
+/** Compact chip: tool name + status + optional resumo (contract §E.7). */
+function ToolChip({ block }: { block: ChatToolBlock }) {
+  const StatusIcon = TOOL_STATUS_ICON[block.status];
+  return (
+    <div
+      className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs"
+      data-testid={`chat-tool-${block.toolUseId}`}
+    >
+      <Wrench className="h-3 w-3 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="truncate font-medium text-foreground">{block.name}</span>
+      <Badge variant={TOOL_STATUS_VARIANT[block.status]} className="flex-shrink-0 gap-1 px-1.5 py-0 text-[10px]">
+        <StatusIcon className={cn("h-2.5 w-2.5", block.status === "running" && "animate-spin")} aria-hidden="true" />
+        {TOOL_STATUS_LABEL[block.status]}
+      </Badge>
+      {block.resumo && <span className="truncate text-muted-foreground">— {block.resumo}</span>}
+    </div>
+  );
+}
+
+const APPROVAL_DECISION_LABEL: Record<ChatApprovalBlock["decision"], string> = {
+  pendente: "Pendente",
+  aprovada: "Aprovada",
+  negada: "Negada",
+  expirada: "Expirada",
+};
+
+const APPROVAL_DECISION_VARIANT: Record<ChatApprovalBlock["decision"], BadgeVariant> = {
+  pendente: "muted",
+  aprovada: "default",
+  negada: "destructive",
+  expirada: "outline",
+};
+
+/**
+ * Approval card: resumo + collapsible diff + decision badge. Aprovar/Negar
+ * only render when `decision === "pendente"` AND the adapter supplies
+ * `useApprovalAction` (contract §E.7) — omit either and the card is
+ * read-only, matching `decision !== "pendente"` on an already-settled row.
+ */
+function ApprovalCard({
+  block,
+  approvalAction,
+}: {
+  block: ChatApprovalBlock;
+  approvalAction?: ChatApprovalActionResult;
+}) {
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const showActions = block.decision === "pendente" && !!approvalAction;
+
+  async function handleDecide(aprovada: boolean) {
+    if (!approvalAction) return;
+    setActionError(null);
+    try {
+      await approvalAction.decide(block.approvalId, aprovada);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Erro ao registrar decisão.");
+    }
+  }
+
+  return (
+    <div
+      className="rounded-md border border-border bg-card p-2.5 text-xs"
+      data-testid={`chat-approval-${block.approvalId}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <p className="flex-1 text-foreground">{block.resumo}</p>
+        <Badge variant={APPROVAL_DECISION_VARIANT[block.decision]} className="flex-shrink-0 text-[10px]">
+          {APPROVAL_DECISION_LABEL[block.decision]}
+        </Badge>
+      </div>
+
+      {block.diff && (
+        <div className="mt-1.5">
+          <button
+            type="button"
+            onClick={() => setDiffOpen((v) => !v)}
+            className="text-[10px] font-medium text-primary underline-offset-2 hover:underline"
+            data-testid={`chat-approval-diff-toggle-${block.approvalId}`}
+          >
+            {diffOpen ? "Ocultar diff" : "Ver diff"}
+          </button>
+          {diffOpen && (
+            <div
+              className="mt-1 space-y-1 rounded-md bg-muted p-2 font-mono text-[10px]"
+              data-testid={`chat-approval-diff-${block.approvalId}`}
+            >
+              <p className="whitespace-pre-wrap text-destructive">
+                <span className="font-semibold">- Antes: </span>
+                {block.diff.antes ?? "(vazio)"}
+              </p>
+              <p className="whitespace-pre-wrap text-primary">
+                <span className="font-semibold">+ Depois: </span>
+                {block.diff.depois}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showActions && (
+        <div className="mt-2 flex items-center gap-2">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => handleDecide(true)}
+            disabled={approvalAction!.isPending}
+            data-testid={`chat-approval-aprovar-${block.approvalId}`}
+          >
+            Aprovar
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => handleDecide(false)}
+            disabled={approvalAction!.isPending}
+            data-testid={`chat-approval-negar-${block.approvalId}`}
+          >
+            Negar
+          </Button>
+        </div>
+      )}
+      {actionError && (
+        <p className="mt-1 text-[10px] text-destructive" data-testid={`chat-approval-error-${block.approvalId}`}>
+          {actionError}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function MessageBubble({
+  message,
+  approvalAction,
+}: {
+  message: ChatMessage;
+  /** Threaded down from ThreadPanel — see `adapter.useApprovalAction` above. */
+  approvalAction?: ChatApprovalActionResult;
+}) {
   const isOutbound = message.direction === "outbound";
   const bodyText = message.body || "[mensagem vazia]";
+  const hasBlocks = !!message.blocks && message.blocks.length > 0;
   return (
     <div className={cn("mb-2 flex", isOutbound ? "justify-end" : "justify-start")}>
       <div
@@ -307,7 +536,31 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             : "rounded-bl-md bg-muted text-foreground",
         )}
       >
-        <p>{bodyText}</p>
+        <p>
+          {bodyText}
+          {message.pending && (
+            <span
+              className="ml-1.5 inline-flex items-center gap-0.5 align-middle"
+              data-testid="chat-message-pending"
+              aria-label="Digitando"
+            >
+              <span className="h-1 w-1 animate-bounce rounded-full bg-current opacity-70 [animation-delay:-0.3s]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-current opacity-70 [animation-delay:-0.15s]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-current opacity-70" />
+            </span>
+          )}
+        </p>
+        {hasBlocks && (
+          <div className="mt-2 space-y-1.5" data-testid="chat-message-blocks">
+            {message.blocks!.map((block) =>
+              block.kind === "tool" ? (
+                <ToolChip key={block.toolUseId} block={block} />
+              ) : (
+                <ApprovalCard key={block.approvalId} block={block} approvalAction={approvalAction} />
+              ),
+            )}
+          </div>
+        )}
         <p className={cn("mt-1 text-[10px]", isOutbound ? "text-primary-foreground/70" : "text-muted-foreground")}>
           {formatMessageTime(message.created_at)}
         </p>
@@ -339,6 +592,7 @@ function ThreadPanel({
   const autoReply = adapter.useAutoReply?.(scopeId);
   const readState = adapter.useReadState?.(scopeId);
   const pagination = adapter.useLoadMore?.(scopeId, thread.id);
+  const approvalAction = adapter.useApprovalAction?.(scopeId);
 
   // Mark read exactly once per opened thread. ChatWindow mounts ThreadPanel
   // with key={thread.id}, so this effect runs on open and never again for the
@@ -469,7 +723,7 @@ function ThreadPanel({
               </div>
             )}
             {messages.map((m) => (
-              <MessageBubble key={m.id} message={m} />
+              <MessageBubble key={m.id} message={m} approvalAction={approvalAction} />
             ))}
             {sendMutation.isPending && (
               <div className="mb-2 flex justify-end">

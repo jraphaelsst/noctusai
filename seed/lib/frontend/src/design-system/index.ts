@@ -173,8 +173,10 @@ export type {
   ChatWindowAdapter,
   ChatThread,
   ChatMessage,
+  ChatBlock,
   ChatSendResult,
   ChatAutoReplyResult,
+  ChatApprovalActionResult,
 } from "./chat";
 
 // Chart / KPI / filter organs — seed-canonical (N=3 recurrence rule, see

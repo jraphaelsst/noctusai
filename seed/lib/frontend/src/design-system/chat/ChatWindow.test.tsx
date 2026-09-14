@@ -22,7 +22,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 
 import { ChatWindow } from "./ChatWindow";
-import type { ChatWindowAdapter, ChatMessage, ChatThread } from "./ChatWindow";
+import type { ChatBlock, ChatWindowAdapter, ChatMessage, ChatThread } from "./ChatWindow";
 
 afterEach(cleanup);
 
@@ -46,8 +46,13 @@ const threadB: ChatThread = {
   unreadCount: 0,
 };
 
-function makeMessage(id: string, direction: "inbound" | "outbound", body: string): ChatMessage {
-  return { id, direction, body, created_at: new Date().toISOString() };
+function makeMessage(
+  id: string,
+  direction: "inbound" | "outbound",
+  body: string,
+  extra: Partial<ChatMessage> = {},
+): ChatMessage {
+  return { id, direction, body, created_at: new Date().toISOString(), ...extra };
 }
 
 function makeAdapter(overrides: Partial<ChatWindowAdapter> = {}): ChatWindowAdapter {
@@ -356,5 +361,233 @@ describe("ChatWindow — empty thread with older history", () => {
     const btn = await screen.findByTestId("chat-load-more");
     fireEvent.click(btn);
     expect(loadMore).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── SEED-2 additive seams (contract §E.7 — tool chips + approval cards) ────
+//
+// Every test below is scoped to prove ONE thing: `pending` and `blocks` are
+// purely additive. `ChatMessage`/`ChatWindowAdapter` gain optional fields;
+// omitting them must render exactly what shipped before this slice.
+describe("ChatWindow — no-blocks rendering is byte-identical to pre-seam (contract §E.7)", () => {
+  it("adds zero seam markup and keeps the pre-seam 2-child bubble shape when blocks/pending are absent", () => {
+    const { container } = render(
+      <ChatWindow
+        scopeId="scope-1"
+        adapter={makeAdapter({
+          useMessages: () => ({
+            data: [makeMessage("m1", "inbound", "Bom dia!")],
+            isLoading: false,
+            isError: false,
+          }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+
+    // The two new testids introduced by this slice must never appear on a
+    // message that carries neither field — the additive-only guarantee.
+    expect(screen.queryByTestId("chat-message-pending")).toBeNull();
+    expect(screen.queryByTestId("chat-message-blocks")).toBeNull();
+
+    // Structural pin: the bubble's content div has exactly the two <p>
+    // children it had before this slice (body, timestamp). A regression
+    // that always renders a blocks/pending wrapper would add a 3rd child.
+    const messagesRoot = container.querySelector('[data-testid="chat-messages"]');
+    const bubbleOuter = messagesRoot?.querySelector<HTMLElement>(":scope > div");
+    const bubbleContent = bubbleOuter?.firstElementChild as HTMLElement | undefined;
+    expect(bubbleContent).toBeTruthy();
+    expect(bubbleContent!.children.length).toBe(2);
+    expect(bubbleContent!.children[0].tagName).toBe("P");
+    expect(bubbleContent!.children[0].textContent).toBe("Bom dia!");
+    expect(bubbleContent!.children[1].tagName).toBe("P");
+  });
+
+  it("shows a pending indicator only on messages with pending=true", () => {
+    render(
+      <ChatWindow
+        scopeId="scope-1"
+        adapter={makeAdapter({
+          useMessages: () => ({
+            data: [
+              makeMessage("m1", "outbound", "Escrevendo", { pending: true }),
+              makeMessage("m2", "inbound", "Mensagem normal"),
+            ],
+            isLoading: false,
+            isError: false,
+          }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+
+    expect(screen.getByTestId("chat-message-pending")).toBeTruthy();
+    expect(screen.getAllByTestId("chat-message-pending")).toHaveLength(1);
+  });
+});
+
+describe("ChatWindow — tool block chips (contract §E.7)", () => {
+  it("renders a tool block as a compact chip: name + status + resumo", () => {
+    const toolBlock: ChatBlock = {
+      kind: "tool",
+      toolUseId: "tu1",
+      name: "mcp__academia__kb_buscar",
+      status: "ok",
+      resumo: "3 resultados encontrados",
+    };
+    render(
+      <ChatWindow
+        scopeId="scope-1"
+        adapter={makeAdapter({
+          useMessages: () => ({
+            data: [makeMessage("m1", "inbound", "Buscando na KB...", { blocks: [toolBlock] })],
+            isLoading: false,
+            isError: false,
+          }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+
+    expect(screen.getByTestId("chat-tool-tu1")).toBeTruthy();
+    expect(screen.getByText("mcp__academia__kb_buscar")).toBeTruthy();
+    expect(screen.getByText("Concluído")).toBeTruthy();
+    expect(screen.getByText("— 3 resultados encontrados")).toBeTruthy();
+  });
+
+  it("renders a running tool with no resumo (optional field omitted)", () => {
+    const toolBlock: ChatBlock = {
+      kind: "tool",
+      toolUseId: "tu2",
+      name: "kb_ler",
+      status: "running",
+    };
+    render(
+      <ChatWindow
+        scopeId="scope-1"
+        adapter={makeAdapter({
+          useMessages: () => ({
+            data: [makeMessage("m1", "inbound", "Lendo...", { blocks: [toolBlock] })],
+            isLoading: false,
+            isError: false,
+          }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+
+    expect(screen.getByTestId("chat-tool-tu2")).toBeTruthy();
+    expect(screen.getByText("Executando")).toBeTruthy();
+  });
+});
+
+const APPROVAL_LABELS: Record<"pendente" | "aprovada" | "negada" | "expirada", string> = {
+  pendente: "Pendente",
+  aprovada: "Aprovada",
+  negada: "Negada",
+  expirada: "Expirada",
+};
+
+describe("ChatWindow — approval block cards (contract §E.7 / §E.2)", () => {
+  function renderWithApproval(
+    decision: "pendente" | "aprovada" | "negada" | "expirada",
+    opts: { withApprovalAction?: boolean; isPending?: boolean; diff?: { antes: string | null; depois: string } } = {},
+  ) {
+    const decide = vi.fn().mockResolvedValue(undefined);
+    const approvalBlock: ChatBlock = {
+      kind: "approval",
+      approvalId: "ap1",
+      resumo: "Escrever decisão de arquitetura",
+      decision,
+      ...(opts.diff ? { diff: opts.diff } : {}),
+    };
+    render(
+      <ChatWindow
+        scopeId="scope-1"
+        adapter={makeAdapter({
+          useMessages: () => ({
+            data: [makeMessage("m1", "inbound", "Posso escrever isso?", { blocks: [approvalBlock] })],
+            isLoading: false,
+            isError: false,
+          }),
+          ...(opts.withApprovalAction === false
+            ? {}
+            : { useApprovalAction: () => ({ decide, isPending: opts.isPending ?? false }) }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+    return { decide };
+  }
+
+  it("shows resumo + decision badge, and Aprovar/Negar when pendente AND the adapter provides useApprovalAction", () => {
+    renderWithApproval("pendente");
+
+    expect(screen.getByTestId("chat-approval-ap1")).toBeTruthy();
+    expect(screen.getByText("Escrever decisão de arquitetura")).toBeTruthy();
+    expect(screen.getByText("Pendente")).toBeTruthy();
+    expect(screen.getByTestId("chat-approval-aprovar-ap1")).toBeTruthy();
+    expect(screen.getByTestId("chat-approval-negar-ap1")).toBeTruthy();
+  });
+
+  it("clicking Aprovar calls decide(approvalId, true)", async () => {
+    const { decide } = renderWithApproval("pendente");
+    fireEvent.click(screen.getByTestId("chat-approval-aprovar-ap1"));
+    await waitFor(() => expect(decide).toHaveBeenCalledWith("ap1", true));
+  });
+
+  it("clicking Negar calls decide(approvalId, false)", async () => {
+    const { decide } = renderWithApproval("pendente");
+    fireEvent.click(screen.getByTestId("chat-approval-negar-ap1"));
+    await waitFor(() => expect(decide).toHaveBeenCalledWith("ap1", false));
+  });
+
+  it("disables both buttons while the adapter reports isPending (shared across the thread's approvals)", () => {
+    renderWithApproval("pendente", { isPending: true });
+    expect((screen.getByTestId("chat-approval-aprovar-ap1") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("chat-approval-negar-ap1") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it.each(["aprovada", "negada", "expirada"] as const)(
+    "hides Aprovar/Negar once decision is %s, even with useApprovalAction present",
+    (decision) => {
+      renderWithApproval(decision);
+      expect(screen.getByTestId("chat-approval-ap1")).toBeTruthy();
+      expect(screen.getByText(APPROVAL_LABELS[decision])).toBeTruthy();
+      expect(screen.queryByTestId("chat-approval-aprovar-ap1")).toBeNull();
+      expect(screen.queryByTestId("chat-approval-negar-ap1")).toBeNull();
+    },
+  );
+
+  it("hides Aprovar/Negar when pendente but the adapter omits useApprovalAction (read-only card)", () => {
+    renderWithApproval("pendente", { withApprovalAction: false });
+    expect(screen.getByTestId("chat-approval-ap1")).toBeTruthy();
+    expect(screen.queryByTestId("chat-approval-aprovar-ap1")).toBeNull();
+    expect(screen.queryByTestId("chat-approval-negar-ap1")).toBeNull();
+  });
+
+  it("diff is collapsed by default and toggles open/closed on click", () => {
+    renderWithApproval("pendente", { diff: { antes: "texto antigo", depois: "texto novo" } });
+
+    expect(screen.queryByTestId("chat-approval-diff-ap1")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("chat-approval-diff-toggle-ap1"));
+    const diffEl = screen.getByTestId("chat-approval-diff-ap1");
+    expect(diffEl.textContent).toContain("texto antigo");
+    expect(diffEl.textContent).toContain("texto novo");
+
+    fireEvent.click(screen.getByTestId("chat-approval-diff-toggle-ap1"));
+    expect(screen.queryByTestId("chat-approval-diff-ap1")).toBeNull();
+  });
+
+  it("renders '(vazio)' when diff.antes is null (a new KB entry, contract §D.1)", () => {
+    renderWithApproval("pendente", { diff: { antes: null, depois: "conteúdo novo" } });
+    fireEvent.click(screen.getByTestId("chat-approval-diff-toggle-ap1"));
+    expect(screen.getByTestId("chat-approval-diff-ap1").textContent).toContain("(vazio)");
+  });
+
+  it("omits the diff toggle entirely when the block carries no diff", () => {
+    renderWithApproval("pendente");
+    expect(screen.queryByTestId("chat-approval-diff-toggle-ap1")).toBeNull();
   });
 });

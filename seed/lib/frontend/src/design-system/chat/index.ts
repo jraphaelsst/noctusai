@@ -11,8 +11,10 @@ export type {
   ChatWindowAdapter,
   ChatThread,
   ChatMessage,
+  ChatBlock,
   ChatSendResult,
   ChatAutoReplyResult,
   ChatReadStateResult,
   ChatLoadMoreResult,
+  ChatApprovalActionResult,
 } from "./ChatWindow";
