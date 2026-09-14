@@ -176,6 +176,8 @@ export type {
   ChatBlock,
   ChatSendResult,
   ChatAutoReplyResult,
+  ChatReadStateResult,
+  ChatLoadMoreResult,
   ChatApprovalActionResult,
 } from "./chat";
 
