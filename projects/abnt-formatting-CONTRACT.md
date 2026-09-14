@@ -32,7 +32,7 @@ File scope: `seed/lib/backend/noctusai_lib/integrations/documents/transcription.
 
 ## 3 · Slice S2 — seed ABNT renderers
 
-File scope: new `seed/lib/backend/noctusai_lib/integrations/documents/abnt.py` + tests, `documents/__init__.py` exports, `seed/lib/backend/pyproject.toml` (declare `reportlab`).
+File scope: new `seed/lib/backend/noctusai_lib/integrations/documents/abnt.py` + tests, `documents/__init__.py` exports, `seed/lib/backend/pyproject.toml` (declare `xhtml2pdf` + `reportlab`).
 
 ```python
 def paragraphs_from_text(text: str, formatting: Sequence[FormatRange] = (), *,
@@ -45,20 +45,31 @@ def render_abnt_pdf(doc: FormattedDocument) -> bytes
 def render_word_html(doc: FormattedDocument) -> str
 ```
 
+*Amended 2026-09-14 (owner request: "Use xhtml2pdf on all PDFs to style and
+create a UI for documents"): `render_abnt_pdf` now builds one HTML document
+(ABNT stylesheet + the same run/paragraph markup `render_word_html` emits)
+and renders it via `xhtml2pdf.pisa.CreatePDF` instead of reportlab
+platypus directly — the public signatures above are unchanged.
+`render_abnt_pdf` also gained a "document UI" running header showing
+`doc.title` (top-left, every page) alongside the page-number row below —
+see `abnt.py`'s module docstring for the xhtml2pdf mechanics
+(`@page`/`@frame`/`<pdf:nexttemplate>`) and the CSS features verified
+against actual rendered output.*
+
 **ABNT rules (NBR 14724), fixed by construction and not configurable per call:**
 
 | | |
 |---|---|
 | Page | A4; margins top 3 cm, left 3 cm, bottom 2 cm, right 2 cm |
-| Font | Times (PDF core `Times-Roman`/`Times-Bold`, no embedding) 12 pt; Word HTML: `"Times New Roman", Times, serif` |
+| Font | Times (PDF core `Times-Roman`/`Times-Bold`, no embedding) 12 pt; Word HTML: `"Times New Roman", Times, serif`. Same font/encoding after the 2026-09-14 xhtml2pdf switch — `font-family: Times, serif` resolves to the same core fonts through xhtml2pdf/reportlab; no `@font-face` vendoring was needed. |
 | BODY | justified, first-line indent 1.25 cm, line spacing 1.5, no extra space between paragraphs beyond one line |
 | TITLE | centered, bold, 12 pt, followed by one blank line |
 | HEADING | left, bold, no indent, line spacing 1.5 |
 | QUOTE | left indent 4 cm, 10 pt, single spacing, justified |
-| Page numbers | top right, 10 pt, from page 2 onward |
+| Page numbers | top right, 10 pt, from page 2 onward. Mechanism (2026-09-14): xhtml2pdf has no `@page :first` — a second named `@page` plus `<pdf:nexttemplate>` (not `<pdf:nextpage>`, which forces a page break) defers the page-number frame to reportlab's own next natural page break, so a one-page document shows no number at all. |
 | Inline | `Run.bold` → bold, `Run.underline` → underline, both combinable; a `\n` inside a Run is a line break |
 
-Output must be deterministic for the same input (fixed metadata / invariant mode). HTML is a self-contained fragment with inline styles only (Word ignores `<style>` blocks on paste), with all text HTML-escaped.
+Output must be deterministic for the same input (fixed metadata / invariant mode — still holds after the 2026-09-14 xhtml2pdf switch, verified by rendering identical input twice and diffing bytes). HTML is a self-contained fragment with inline styles only (Word ignores `<style>` blocks on paste), with all text HTML-escaped.
 
 ## 4 · Slice S3 — social-wiring backend: transcripts (matrículas + certidões)
 
