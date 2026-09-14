@@ -24,6 +24,7 @@ import {
   Sprout,
   Box,
   Palette,
+  Recycle,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -39,6 +40,7 @@ const ICONS: Record<string, LucideIcon> = {
   Sprout, // seed (reference) product
   Box, // scaffolder default for freshly-created products
   Palette, // igig — communication agency ERP
+  Recycle, // academia-de-reciclagem — knowledge workspace of the recycling-education project
 };
 
 // Size presets so the same component fits both the dashboard cards (md) and
