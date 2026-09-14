@@ -33,39 +33,6 @@ logger = logging.getLogger(__name__)
 # OpenAI which defaults). Pick a reasonable upper bound per the chat context.
 _DEFAULT_MAX_TOKENS = 4096
 
-# The current `anthropic` SDK (1.x, resolved by our `anthropic>=0.40.0` pin)
-# removed sampling-temperature control from the Messages API entirely:
-# `AsyncMessages.create` and `AsyncMessages.stream` accept neither
-# `temperature` nor `top_p` — sending either raises `TypeError` before any
-# request goes out (confirmed against anthropic 1.5.0, the version prod
-# resolves; see the contract test below). The provider keeps ACCEPTING
-# `temperature` in its own signature so the provider contract and every
-# caller (email marketing, media creation, digest, certidões, ...) stay
-# unchanged; it just never forwards it. Determinism is left to the model —
-# that's a correct-behaviour change, not a silent error, so it's logged.
-_UNSUPPORTED_SAMPLING_KWARGS = ("temperature", "top_p")
-
-
-def _drop_unsupported_sampling_kwargs(
-    kwargs: dict[str, Any], temperature: float
-) -> dict[str, Any]:
-    """Strip `temperature`/`top_p` before forwarding kwargs to the SDK.
-
-    A caller's explicit `temperature=` argument is handled by the caller
-    (never forwarded at all); this only guards the case where a caller
-    smuggles `temperature` or `top_p` through `**kwargs` instead.
-    """
-    dropped_via_kwargs = [k for k in _UNSUPPORTED_SAMPLING_KWARGS if k in kwargs]
-    if dropped_via_kwargs or temperature != 1.0:
-        logger.debug(
-            "anthropic provider: dropping sampling kwargs %s (temperature=%s) — "
-            "the current SDK's messages.create/stream has no temperature/top_p "
-            "parameter; determinism is left to the model.",
-            dropped_via_kwargs or ["temperature"],
-            temperature,
-        )
-    return {k: v for k, v in kwargs.items() if k not in _UNSUPPORTED_SAMPLING_KWARGS}
-
 
 def _split_system_and_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     """Anthropic expects `system` as a top-level parameter, not a role.
@@ -145,7 +112,9 @@ class AnthropicProvider:
                 system=system_prompt or "",
                 messages=conversation,
                 max_tokens=max_tokens or _DEFAULT_MAX_TOKENS,
-                **_drop_unsupported_sampling_kwargs(kwargs, temperature),
+                # No `temperature`: the anthropic SDK 1.x removed it from
+                # messages.create() (TypeError) and current models reject it.
+                **kwargs,
             )
             # Anthropic returns a list of content blocks; we concatenate text.
             parts: list[str] = []
@@ -299,7 +268,8 @@ class AnthropicProvider:
                 system=system_prompt or "",
                 messages=conversation,
                 max_tokens=max_tokens or _DEFAULT_MAX_TOKENS,
-                **_drop_unsupported_sampling_kwargs(kwargs, temperature),
+                # No `temperature`: removed from messages.stream() in SDK 1.x.
+                **kwargs,
             ) as stream:
                 async for text_chunk in stream.text_stream:
                     if text_chunk:
