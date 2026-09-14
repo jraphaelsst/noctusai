@@ -164,6 +164,21 @@ The decision log keeps every step.
   Wave 1b is dispatched: SW1 bridge, G1b agents API, G2 runtime + gate + launch, and A1b academia API. The import route is added when A1b integrates.
 
   Several engineer sessions stalled at the 600 s watchdog (A2, M1, A3, G4), and G2's dispatch twice hit an unavailable permission classifier. The tech-lead finished A2's store swap inline, and M1 / A3 / G4 are re-dispatched at lower concurrency.
+- **2026-09-14 (wave 1b, part 1)**: three wave-1b slices are on `dev`, each re-gated on its rebased tip before push.
+  - **A1b academia API** `c3481720`: §B.0–B.5 routes, §D assertion verification, and the seed `ApiTokenAuditMiddleware`. It also changed the seed `http_exception_handler` so the flat `{detail, code}` error shape passes through verbatim. That change was gated against the core, social-wiring and erp-imobiliario suites. A concurrent sweep's false `shipped` pointer rows were removed from its commit.
+  - **G2 runtime + gate + launch** `64e2a30f`:
+    - It found a load-bearing contract bug: `allowed_tools` auto-approves before `can_use_tool`, so escrita tools there would have bypassed the approval gate. §E.5 is corrected, with a regression test.
+    - It required `uvicorn` 0.31.1 in the agents and root requirements. `claude-agent-sdk` → `mcp` needs ≥0.31.1, and without the bump `pip install -r` could not resolve for the agents image or CI.
+    - The other products keep 0.30.6. Aligning the fleet is a follow-up, not a hidden divergence.
+  - **SW1 social-wiring bridge** `27dd3a0b`: the scoped One Chat toggle route plus erp token-route tests. At integration the tech-lead switched the bridge tests to the flat error shape and wired the audit middleware, so the bridge is now audited.
+
+  Still in flight: G1b (agents API), M1 (academia MCP client), A3 (academia UI), G4 (Agents UI).
+
+  Blocked while the `noctusai` MCP server is disconnected: branch-pointer updates and worktree cleanups for A1b, G2 and SW1.
+
+  Found out-of-band:
+  - The dev toolkit's OpenAI account has no credits, so embedding cache refreshes fail at push. Prod impact on One Chat is unverified: no chatbot traffic appeared in the recent log window.
+  - A peer session's client contracts folder is now git-ignored (`products/*/contracts/`).
 
 ## Retrospective (filled at first trigger fire)
 
