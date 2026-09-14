@@ -16,7 +16,10 @@
 
 # Core dependencies (shared by all backends)
 fastapi==0.121.0
-uvicorn[standard]==0.30.6
+# uvicorn >= 0.31.1 is required by mcp (pulled in by claude-agent-sdk==0.2.152:
+# every mcp release it accepts, 1.23.0-1.27.x, declares uvicorn>=0.31.1). 0.30.6
+# made `pip install -r` ResolutionImpossible (verified 2026-09-14). Minimal bump.
+uvicorn[standard]==0.31.1
 pydantic==2.13.4
 pydantic-settings==2.5.2
 supabase==2.9.1
