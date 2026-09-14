@@ -566,6 +566,14 @@ export interface ExtracaoSugestao {
   valor_atual?: string | null;
   /** True when accepting this would replace `valor_atual` rather than fill a blank. */
   substitui?: boolean;
+  /**
+   * Migration 110 — why a high-confidence read is sitting here unapplied
+   * instead of already being on the record. Today only `"rg_igual_cpf"`
+   * (the extracted RG collapses onto the CPF already on file, `rg.py::
+   * is_same_as_cpf`) and only ever set on the `rg` field's suggestion.
+   * `null`/absent for every ordinary pending suggestion.
+   */
+  aviso?: "rg_igual_cpf" | null;
 }
 
 export interface DocumentoChecklistItem {
@@ -699,9 +707,15 @@ export interface DocumentoChecklist {
 /**
  * The person behind a party row, as much of them as the list needs.
  *
- * A deliberately thin projection of `clientes`: the panel shows who they are
- * and how to reach them, and everything else about them is reached by opening
- * their own card. Widening this widens what a party list leaks.
+ * Widened by migration 097/110 (`compradores_service._CLIENTE_RESUMO`): the
+ * qualificação civil a CONTRACT needs from a party — nome oficial,
+ * nacionalidade, profissão, estado civil/regime, RG (with órgão), CPF,
+ * endereço and the cônjuge link — rides on this same row so the
+ * Compradores/Vendedores panel (and `QualificacaoCompletudePanel`) can render
+ * or gate a party's qualification without a second round-trip per person,
+ * the same reasoning the original five columns were picked for. Still a
+ * projection, not the full `clientes` row: anything not needed by a party
+ * list or its qualification stays reached by opening the person's own card.
  */
 export interface CompradorPessoa {
   id: string;
@@ -709,6 +723,22 @@ export interface CompradorPessoa {
   nome_completo: string | null;
   celular: string | null;
   email: string | null;
+  nome_oficial: string | null;
+  nacionalidade: string | null;
+  profissao: string | null;
+  estado_civil: string | null;
+  regime_bens: string | null;
+  conjuge_cliente_id: string | null;
+  cpf: string | null;
+  rg: string | null;
+  rg_orgao_expedidor: string | null;
+  endereco_cep: string | null;
+  endereco_logradouro: string | null;
+  endereco_numero: string | null;
+  endereco_complemento: string | null;
+  endereco_bairro: string | null;
+  endereco_cidade: string | null;
+  endereco_uf: string | null;
 }
 
 /**

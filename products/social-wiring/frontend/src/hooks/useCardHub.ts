@@ -64,6 +64,7 @@ import type {
   VisitaPatchBody,
   VisitaPropostaBody,
 } from "@/types/cardHub";
+import type { QualificacaoCompletude } from "@/types/qualificacaoCompletude";
 import type { DadosPessoais } from "@/components/card/DadosPessoaisForm";
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
@@ -77,6 +78,17 @@ const MEMBROS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "membros"]
 const CHECKLISTS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "checklists"] as const;
 const DOC_CHECKLIST_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "documento-checklist"] as const;
+/**
+ * 🔴 NOT nested under `FAMILY_KEY`. `FAMILY_KEY(clienteId)` is scoped to the
+ * CARD's own titular; qualificação-completude is fetched per PARTY
+ * (`parte.cliente_id`), which is routinely a different person's id than the
+ * card that is open. Rooting it here instead of under the titular's family
+ * means invalidating it from `useCompradorMutations` (which knows only the
+ * titular's id) still reaches every party's cached entry.
+ */
+const QUALIFICACAO_ROOT_KEY = [...ROOT_KEY, "qualificacao"] as const;
+const QUALIFICACAO_KEY = (clienteId: string) =>
+  [...QUALIFICACAO_ROOT_KEY, clienteId] as const;
 const CHECKLIST_EXTRAS_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "checklist-extras"] as const;
 const AGENDAMENTOS_KEY = (clienteId: string) =>
@@ -951,7 +963,11 @@ export function useDocumentoChecklist(clienteId: string | null) {
  * the server agreed would be the one moment a wrong value looks confirmed.
  *
  * Invalidates the checklist (the tick and the prompt both change) AND the
- * documents list (the discard flag lives on a document row).
+ * documents list (the discard flag lives on a document row). Migration 110 —
+ * ALSO the qualificação-completude family: applying a suggested `estado_civil`
+ * / `regime_bens` / `rg` / `cpf` moves this exact endpoint's answer, and this
+ * mutation is the other write path into those columns besides
+ * `useDadosPessoaisMutation` below.
  */
 export function useExtracaoSugestaoMutation(clienteId: string) {
   const qc = useQueryClient();
@@ -977,6 +993,7 @@ export function useExtracaoSugestaoMutation(clienteId: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });
       void qc.invalidateQueries({ queryKey: DOCUMENTOS_KEY(clienteId) });
+      void qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY });
     },
   });
 }
@@ -1023,6 +1040,28 @@ export function useDocumentoChecklistMutation(clienteId: string) {
   });
 }
 
+
+// ─── Qualificação civil completude (migration 110) ────────────────────────
+
+/**
+ * One party's contract-readiness (`documento_checklist_service.
+ * completude_contratual`) — a stricter, SEPARATE question from
+ * `useDocumentoChecklist`'s "has something plausible been collected".
+ *
+ * Keyed by `clienteId`, never by a parte id: this is a fact about the
+ * PERSON, so the titular's own card and every comprador/vendedor panel read
+ * it off the same route by handing it their own `cliente_id`.
+ */
+export function useQualificacaoCompletude(clienteId: string | null) {
+  return useQuery({
+    queryKey: QUALIFICACAO_KEY(clienteId ?? "__none__"),
+    queryFn: () =>
+      api.get<QualificacaoCompletude>(
+        `${clienteBase(clienteId as string)}/qualificacao-completude`,
+      ),
+    enabled: !!clienteId,
+  });
+}
 
 // ─── Checklist extras (operator-created rows) ─────────────────────────────
 
@@ -1163,7 +1202,11 @@ export function useCompradores(
  *
  * Invalidates the party list AND the card summary: the Geral tab's Compradores
  * section appears the moment the first one is added, so the card's own shape
- * changed.
+ * changed. Migration 110 — ALSO every party's qualificação-completude: adding
+ * or removing a party changes who is ON the deal, and `atualizarPapel` can set
+ * `papel: "conjuge"` (writing `conjuge_cliente_id` on TWO people, neither of
+ * which is necessarily this card's own titular) — over-invalidating the whole
+ * `qualificacao` root is cheap next to rendering a stale "cônjuge pendente".
  */
 export function useCompradorMutations(clienteId: string) {
   const qc = useQueryClient();
@@ -1177,6 +1220,7 @@ export function useCompradorMutations(clienteId: string) {
         queryKey: [...FAMILY_KEY(clienteId), "compradores"],
       }),
       qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+      qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY }),
     ]);
 
   const adicionar = useMutation({
@@ -1255,6 +1299,13 @@ export function useCompradorMutations(clienteId: string) {
  *     edit, just routed through the clientes API).
  *   - `["sw", "clientes"]` — a SEPARATE root (the clientes list/board), kept
  *     as-is: that surface shows `nome`/`email` outside this card entirely.
+ *   - the `qualificacao` root (migration 110) — `estado_civil`, `regime_bens`,
+ *     `cpf`, `rg`, `rg_orgao_expedidor`, `nacionalidade` and every endereço
+ *     column this form writes are exactly what `completude_contratual` reads;
+ *     the ROOT, not `QUALIFICACAO_KEY(clienteId)` alone, because this same
+ *     mutation is instantiated per PARTY (`PessoaDocumentosPanel`), and a
+ *     married party's PATCH can also change what a LINKED cônjuge's own
+ *     completude reports (the pair fact `completude_contratual` composes).
  *
  * Not optimistic: this writes to a person's record, and a checklist item
  * flipping green before the server agreed is the one moment a rejected save
@@ -1275,6 +1326,7 @@ export function useDadosPessoaisMutation(clienteId: string) {
         qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
         qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
         qc.invalidateQueries({ queryKey: ["sw", "clientes"] }),
+        qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY }),
       ]),
   });
 }

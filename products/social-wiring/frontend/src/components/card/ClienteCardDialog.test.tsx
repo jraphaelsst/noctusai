@@ -1093,6 +1093,28 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
     expect(screen.getByTestId("certidoes-da-parte")).toBeTruthy();
   });
 
+  it("🔴 renders a party's qualificação civil by CLIENTE id, only once expanded (migration 110)", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderQualificacao = vi.fn(() => <div data-testid="qualificacao-da-parte" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [parte()],
+          renderQualificacaoDaParte: renderQualificacao,
+        })}
+      />,
+    );
+    // Same lazy contract as the documents panel — the completude query must
+    // not fire for a collapsed party.
+    expect(renderQualificacao).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("pessoa-documentos-comprador-parte-1-toggle"));
+    // The CLIENTE id, not the parte id — qualificação is a fact about the
+    // person, not their role in this deal (unlike certidões above).
+    expect(renderQualificacao).toHaveBeenCalledWith("cli-esposa", expect.any(String));
+    expect(screen.getByTestId("qualificacao-da-parte")).toBeTruthy();
+  });
+
   it("falls back to a visible placeholder when a party has no name", async () => {
     const { render, screen } = await import("@testing-library/react");
     render(
@@ -1815,6 +1837,43 @@ describe("a aba Dados do cliente ganhou um editor", () => {
     render(<ClienteCardDialog {...baseProps({ ...COM_REGISTRO })} />);
     fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
     expect(screen.queryByTestId("dados-pessoais-editar-btn")).toBeNull();
+  });
+
+  it("🔴 mounts the titular's own qualificação panel beside the editor (migration 110)", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderQualificacao = vi.fn(() => <div data-testid="qualificacao-do-titular" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          ...COM_REGISTRO,
+          onSaveDadosPessoais: vi.fn(),
+          renderQualificacaoDoTitular: renderQualificacao,
+        })}
+      />,
+    );
+    // Same tab-scoped-fetching discipline as every other subpage: no query
+    // for a tab nobody opened.
+    expect(renderQualificacao).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+    expect(renderQualificacao).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("qualificacao-do-titular")).toBeTruthy();
+  });
+
+  it("surfaces the server's message when a save is rejected", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          ...COM_REGISTRO,
+          onSaveDadosPessoais: vi.fn(),
+          dadosPessoaisError: "[400] RG não pode ser igual ao CPF.",
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+    expect(screen.getByTestId("dados-pessoais-erro").textContent).toContain(
+      "RG não pode ser igual ao CPF.",
+    );
   });
 });
 

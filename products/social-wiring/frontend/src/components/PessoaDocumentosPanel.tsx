@@ -75,6 +75,9 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         testId={`dados-pessoais-${clienteId}`}
         valores={checklist.data?.valores ?? {}}
         saving={dados.isPending}
+        // The RG==CPF 400 (migration 110) surfaced inline, same reasoning as
+        // the titular's own form in `ClienteDetailModal`.
+        saveError={dados.isError ? erro(dados.error, "Não foi possível salvar os dados.") : null}
         onSave={(valores) =>
           dados.mutate(valores, {
             onError: (e) =>

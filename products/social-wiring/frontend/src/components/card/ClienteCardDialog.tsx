@@ -218,6 +218,23 @@ export interface ClienteCardDialogProps {
    * a certidão is linked to the person's role in this deal, not to the person.
    */
   renderCertidoesDaParte?: (parteId: string, nome: string) => ReactNode;
+  /**
+   * Renders one party's contract qualification completeness (migration 110)
+   * — same render-prop reasoning as `renderDocumentosDePessoa`, and keyed
+   * the SAME way (by `cliente_id`, not the parte id): qualificação is a fact
+   * about the PERSON, not their role in this deal, exactly like the
+   * documents panel above it.
+   */
+  renderQualificacaoDaParte?: (clienteId: string, nome: string) => ReactNode;
+  /**
+   * The TITULAR's own qualificação completeness, mounted beside
+   * `DadosPessoaisForm` on the "Dados do cliente" tab. A thunk, not
+   * `(clienteId, nome) => ReactNode`: this component is never handed the
+   * titular's raw id (only their `nome`, for the header), the same reason
+   * `renderNegociacao`/`renderFinanciamento`/`renderContratos` below are
+   * thunks — the container already knows its own id.
+   */
+  renderQualificacaoDoTitular?: () => ReactNode;
 
   /**
    * The Negociação and Financiamento/Escritura subpages.
@@ -237,6 +254,9 @@ export interface ClienteCardDialogProps {
   dadosPessoais?: DadosPessoais;
   onSaveDadosPessoais?: (valores: DadosPessoais) => void;
   dadosPessoaisSaving?: boolean;
+  /** The server's own message from the titular's last rejected save (the
+   *  RG==CPF 400, migration 110) — see `DadosPessoaisFormProps.saveError`. */
+  dadosPessoaisError?: string | null;
   /**
    * The person's atendimentos, each with its ORIGIN record embedded. The card
    * renders the lead's own data from these — `clientes` holds identity and card
@@ -756,6 +776,10 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                             <>
                               {props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
                               {props.renderCertidoesDaParte?.(parte.id, nomeDaParte(parte)) ?? null}
+                              {props.renderQualificacaoDaParte?.(
+                                parte.cliente_id,
+                                nomeDaParte(parte),
+                              ) ?? null}
                             </>
                           )}
                         </PessoaDocumentosSection>
@@ -863,11 +887,15 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   columns would be two ways to write the same value, and one
                   of them would be wrong first. */}
               {subpage === "cliente" && props.onSaveDadosPessoais && (
-                <DadosPessoaisForm
-                  valores={props.dadosPessoais ?? {}}
-                  onSave={props.onSaveDadosPessoais}
-                  saving={props.dadosPessoaisSaving}
-                />
+                <>
+                  <DadosPessoaisForm
+                    valores={props.dadosPessoais ?? {}}
+                    onSave={props.onSaveDadosPessoais}
+                    saving={props.dadosPessoaisSaving}
+                    saveError={props.dadosPessoaisError}
+                  />
+                  {props.renderQualificacaoDoTitular?.() ?? null}
+                </>
               )}
 
               {subpage === "vendedor" && (
@@ -944,6 +972,10 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                           <>
                             {props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
                             {props.renderCertidoesDaParte?.(parte.id, nomeDaParte(parte)) ?? null}
+                            {props.renderQualificacaoDaParte?.(
+                              parte.cliente_id,
+                              nomeDaParte(parte),
+                            ) ?? null}
                           </>
                         )}
                       </PessoaDocumentosSection>

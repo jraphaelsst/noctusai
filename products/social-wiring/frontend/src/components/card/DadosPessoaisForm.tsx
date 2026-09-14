@@ -42,6 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { rgIgualAoCpf } from "@/types/qualificacaoCompletude";
 
 import { TooltipIconButton } from "./TooltipIconButton";
 
@@ -120,6 +121,16 @@ export interface DadosPessoaisFormProps {
   valores: DadosPessoais;
   onSave: (valores: DadosPessoais) => void;
   saving?: boolean;
+  /**
+   * The server's own message from the last rejected save (migration 110's
+   * `PATCH /api/clientes/{id}` 400 when RG collapses onto CPF, e.g.) — the
+   * container reads it off its mutation's `error` and hands it back here.
+   * Rendered in BOTH the open and the collapsed state, because `submit()`
+   * closes the editor immediately (optimistic-looking, though the mutation
+   * itself is not) and the async rejection lands after that — a caller that
+   * only showed it while open would show it to nobody.
+   */
+  saveError?: string | null;
   /** Disambiguates the testids when several of these are on screen at once —
    *  one per party on the Documentos tab. */
   testId?: string;
@@ -133,6 +144,7 @@ export function DadosPessoaisForm({
   valores,
   onSave,
   saving,
+  saveError,
   testId = "dados-pessoais",
 }: DadosPessoaisFormProps) {
   const [aberto, setAberto] = useState(false);
@@ -182,7 +194,12 @@ export function DadosPessoaisForm({
 
   if (!aberto) {
     return (
-      <div className="mb-4">
+      <div className="mb-4 space-y-1">
+        {saveError && (
+          <p className="text-xs text-destructive" data-testid={`${testId}-erro`}>
+            {saveError}
+          </p>
+        )}
         {/* Icon-only, caption on hover — and the SAME string on `aria-label`,
             because a hover caption is invisible to a screen reader. */}
         <TooltipIconButton
@@ -199,8 +216,18 @@ export function DadosPessoaisForm({
     );
   }
 
+  const rgIgualCpf = rgIgualAoCpf(draft.rg, draft.cpf);
+
   return (
     <div className="mb-4 space-y-3 rounded-md border p-3" data-testid={testId}>
+      {saveError && (
+        <p
+          className="rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive"
+          data-testid={`${testId}-erro`}
+        >
+          {saveError}
+        </p>
+      )}
       <Campo rotulo="Nome Completo" htmlFor={`${testId}-nome`}>
         <Input
           id={`${testId}-nome`}
@@ -294,6 +321,18 @@ export function DadosPessoaisForm({
             placeholder="52.179.965-X"
             data-testid={`${testId}-rg`}
           />
+          {/* Advisory only — the server's own 400 (`_validar_rg_diferente_cpf`)
+              is what actually refuses the write. This is the client-side
+              mirror of the SAME comparison, shown while typing so the
+              operator catches a copy-paste mistake before Save round-trips. */}
+          {rgIgualCpf && (
+            <p
+              className="mt-1 text-xs text-destructive"
+              data-testid={`${testId}-rg-igual-cpf`}
+            >
+              RG não pode ser igual ao CPF.
+            </p>
+          )}
         </Campo>
         {/* Side by side with the number because the two are one fact: an RG
             without its issuer does not identify a document. */}

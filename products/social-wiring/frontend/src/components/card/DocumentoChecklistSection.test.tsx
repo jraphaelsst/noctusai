@@ -126,6 +126,106 @@ describe("DocumentoChecklistSection — progress + rows", () => {
   });
 });
 
+describe("sugestão de RG idêntico ao CPF (migration 110)", () => {
+  it("🔴 mostra o aviso quando a sugestão de RG carrega aviso=rg_igual_cpf", async () => {
+    const rgComAviso = item("rg", "RG", {
+      sugestao: {
+        valor: "41295423898",
+        documento_id: "doc-1",
+        documento_nome: "rg.pdf",
+        tipo_documento: "rg",
+        confianca: "alta",
+        fonte: "ocr",
+        rotulo: "RG",
+        valor_atual: null,
+        aviso: "rg_igual_cpf",
+      },
+    });
+    const { getByTestId } = await renderSection(
+      baseProps({ items: [rgComAviso], onResolverSugestao: vi.fn() }),
+    );
+    expect(getByTestId("documento-checklist-rg-sugestao-aviso-rg-cpf")).toBeTruthy();
+  });
+
+  it("não mostra o aviso para uma sugestão comum de RG", async () => {
+    const rgSemAviso = item("rg", "RG", {
+      sugestao: {
+        valor: "12345678900",
+        documento_id: "doc-1",
+        documento_nome: "rg.pdf",
+        tipo_documento: "rg",
+        confianca: "alta",
+        fonte: "ocr",
+        rotulo: "RG",
+        valor_atual: null,
+        aviso: null,
+      },
+    });
+    const { queryByTestId } = await renderSection(
+      baseProps({ items: [rgSemAviso], onResolverSugestao: vi.fn() }),
+    );
+    expect(queryByTestId("documento-checklist-rg-sugestao-aviso-rg-cpf")).toBeNull();
+  });
+});
+
+describe("sugestões de estado civil / regime de bens (migration 110)", () => {
+  it("oferece a sugestão de estado civil com rótulo em pt-BR", async () => {
+    const { getByTestId } = await renderSection(
+      baseProps({
+        items: [],
+        onResolverSugestao: vi.fn(),
+        sugestoesExtras: {
+          estado_civil: {
+            valor: "casado",
+            documento_id: "doc-2",
+            documento_nome: "certidao.pdf",
+            tipo_documento: "certidao_casamento",
+            confianca: "alta",
+            fonte: "texto",
+            rotulo: "ESTADO CIVIL",
+            valor_atual: null,
+          },
+        },
+      }),
+    );
+    expect(
+      getByTestId("documento-checklist-estado_civil-sugestao-valor").textContent,
+    ).toContain("Casado(a)");
+  });
+
+  it("oferece a sugestão de regime de bens com rótulo em pt-BR", async () => {
+    const { getByTestId } = await renderSection(
+      baseProps({
+        items: [],
+        onResolverSugestao: vi.fn(),
+        sugestoesExtras: {
+          regime_bens: {
+            valor: "comunhao_parcial",
+            documento_id: "doc-2",
+            documento_nome: "certidao.pdf",
+            tipo_documento: "certidao_casamento",
+            confianca: "alta",
+            fonte: "texto",
+            rotulo: "comunhão parcial",
+            valor_atual: null,
+          },
+        },
+      }),
+    );
+    expect(
+      getByTestId("documento-checklist-regime_bens-sugestao-valor").textContent,
+    ).toContain("Comunhão parcial de bens");
+  });
+
+  it("não oferece nada quando não há sugestões extras de qualificação", async () => {
+    const { queryByTestId } = await renderSection(
+      baseProps({ items: [], onResolverSugestao: vi.fn() }),
+    );
+    expect(queryByTestId("documento-checklist-estado_civil-sugestao-valor")).toBeNull();
+    expect(queryByTestId("documento-checklist-regime_bens-sugestao-valor")).toBeNull();
+  });
+});
+
 describe("hideHeader — quando um bloco dobrável já nomeia a seção", () => {
   it("drops the title and the progress count, keeping the rows and the bar", async () => {
     // The card wraps this in a collapsible that carries BOTH the words and

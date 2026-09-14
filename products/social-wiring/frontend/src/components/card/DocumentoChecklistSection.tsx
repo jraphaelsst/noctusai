@@ -47,7 +47,7 @@
  *     have data" — visible, but it never changes this section's height or
  *     removes a row.
  */
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -55,10 +55,24 @@ import type {
   DocumentoChecklistItem,
   ExtracaoSugestao,
 } from "@/types/cardHub";
+import { rotuloEstadoCivil, rotuloRegimeBens } from "@/types/qualificacaoCompletude";
 
 import { ChecklistItemRow } from "./ChecklistItemRow";
 import type { DadosPessoais } from "./DadosPessoaisForm";
 import { formatarDataISO } from "./format";
+
+/**
+ * `sugestoes_extras` entries beyond `nome_oficial` (migration 110) — pt-BR
+ * label plus a formatter for the raw value, since `estado_civil` arrives as
+ * the extractor's canonical snake_case token (`"casado"`), never prose.
+ */
+const EXTRAS_QUALIFICACAO: Record<
+  string,
+  { label: string; formatar: (valor: string) => string }
+> = {
+  estado_civil: { label: "Estado civil", formatar: rotuloEstadoCivil },
+  regime_bens: { label: "Regime de bens", formatar: rotuloRegimeBens },
+};
 
 export interface DocumentoChecklistSectionProps {
   items: DocumentoChecklistItem[];
@@ -232,6 +246,27 @@ export function DocumentoChecklistSection({
         saving={sugestaoSaving}
         testIdPrefix={testIdPrefix}
       />
+
+      {/* Migration 110 — estado civil / regime de bens suggestions. Same
+          "question, not an answer" treatment as `nome_oficial` above: a
+          machine-read civil status is offered, never applied silently. */}
+      {onResolverSugestao &&
+        Object.entries(EXTRAS_QUALIFICACAO).map(([key, { label, formatar }]) => {
+          const sugestao = sugestoesExtras?.[key];
+          if (!sugestao) return null;
+          return (
+            <SugestaoExtraida
+              key={key}
+              itemKey={key}
+              label={label}
+              sugestao={sugestao}
+              onResolver={onResolverSugestao}
+              saving={sugestaoSaving}
+              formatarValor={formatar}
+              testIdPrefix={testIdPrefix}
+            />
+          );
+        })}
     </div>
   );
 }
@@ -406,6 +441,20 @@ function SugestaoExtraida({
       )}
       {s.rotulo && (
         <p className="text-xs text-muted-foreground">Campo lido: “{s.rotulo}”</p>
+      )}
+      {/* Migration 110 — an extracted RG that collapses onto the CPF already
+          on file. The server keeps it as a SUGGESTION rather than refusing it
+          outright (unlike a manual PATCH's 400): confirming it here still
+          hits the same guard on `PATCH /clientes/{id}` and would be rejected
+          there too, so this warns rather than silently applying it. */}
+      {s.aviso === "rg_igual_cpf" && (
+        <p
+          className="mt-1 flex items-center gap-1 text-xs font-medium text-destructive"
+          data-testid={`${tid}-aviso-rg-cpf`}
+        >
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          RG idêntico ao CPF já cadastrado — confirmar vai falhar até um dos dois mudar.
+        </p>
       )}
       <div className="mt-2 flex gap-2">
         <Button

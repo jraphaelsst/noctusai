@@ -158,3 +158,78 @@ describe("DadosPessoaisForm", () => {
     ).toBe("+5511999998888");
   });
 });
+
+describe("DadosPessoaisForm — RG não pode ser igual ao CPF (migration 110)", () => {
+  it("🔴 mostra o aviso ao vivo quando RG e CPF colapsam no mesmo documento", async () => {
+    const { fireEvent, screen } = await abrir();
+    fireEvent.change(screen.getByTestId("dados-pessoais-cpf"), {
+      target: { value: "412.954.238-98" },
+    });
+    expect(screen.queryByTestId("dados-pessoais-rg-igual-cpf")).toBeNull();
+    fireEvent.change(screen.getByTestId("dados-pessoais-rg"), {
+      // Same digits, different punctuation — the comparison is
+      // punctuation-blind on both sides.
+      target: { value: "412.954.238-98" },
+    });
+    expect(screen.getByTestId("dados-pessoais-rg-igual-cpf")).toBeTruthy();
+  });
+
+  it("não bloqueia o envio — é consultivo, quem recusa é o servidor", async () => {
+    const { onSave, fireEvent, screen } = await abrir();
+    fireEvent.change(screen.getByTestId("dados-pessoais-cpf"), {
+      target: { value: "41295423898" },
+    });
+    fireEvent.change(screen.getByTestId("dados-pessoais-rg"), {
+      target: { value: "41295423898" },
+    });
+    fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("some quando um dos dois deixa de bater", async () => {
+    const { fireEvent, screen } = await abrir();
+    fireEvent.change(screen.getByTestId("dados-pessoais-cpf"), {
+      target: { value: "41295423898" },
+    });
+    fireEvent.change(screen.getByTestId("dados-pessoais-rg"), {
+      target: { value: "41295423898" },
+    });
+    expect(screen.getByTestId("dados-pessoais-rg-igual-cpf")).toBeTruthy();
+    fireEvent.change(screen.getByTestId("dados-pessoais-rg"), {
+      target: { value: "52.179.965-X" },
+    });
+    expect(screen.queryByTestId("dados-pessoais-rg-igual-cpf")).toBeNull();
+  });
+});
+
+describe("DadosPessoaisForm — surfacing a rejected save (migration 110)", () => {
+  it("🔴 mostra a mensagem do servidor mesmo depois do editor fechar", async () => {
+    // `submit()` fecha o editor de imediato; a rejeição chega DEPOIS,
+    // assíncrona — um caller que só mostrasse `saveError` enquanto aberto não
+    // mostraria a ninguém.
+    const { render, screen } = await import("@testing-library/react");
+    const onSave = vi.fn();
+    render(
+      <DadosPessoaisForm
+        valores={{}}
+        onSave={onSave}
+        saveError="[400] RG não pode ser igual ao CPF."
+      />,
+    );
+    expect(screen.getByTestId("dados-pessoais-erro").textContent).toContain(
+      "RG não pode ser igual ao CPF.",
+    );
+  });
+
+  it("mostra o erro também enquanto o editor está aberto", async () => {
+    const { screen } = await abrir({ saveError: "Não foi possível salvar os dados." });
+    expect(screen.getByTestId("dados-pessoais-erro").textContent).toBe(
+      "Não foi possível salvar os dados.",
+    );
+  });
+
+  it("não mostra nada quando não há erro", async () => {
+    const { screen } = await abrir();
+    expect(screen.queryByTestId("dados-pessoais-erro")).toBeNull();
+  });
+});

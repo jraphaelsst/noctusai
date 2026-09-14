@@ -70,6 +70,7 @@ import { NegociacaoContainer } from "@/components/NegociacaoContainer";
 import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
 import { ContratosContainer } from "@/components/ContratosContainer";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
+import { QualificacaoCompletudePanel } from "@/components/QualificacaoCompletudePanel";
 import { useContratoMutations } from "@/hooks/useContratos";
 
 export interface ClienteDetailModalProps {
@@ -99,6 +100,15 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   // Sibling of `roteiroDialogOpen` for the same reason: a Dialog nested inside
   // `ClienteCardDialog`'s own Dialog content fights the outer focus trap.
   const [contratoDialogOpen, setContratoDialogOpen] = useState(false);
+  // Migration 110 — "Ver cadastro" on a linked cônjuge opens a SECOND card,
+  // for the exact same focus-trap reason every other dialog here is a
+  // sibling of `ClienteCardDialog` rather than nested inside it: this state
+  // renders a second, independent `<ClienteDetailModal/>` instance beside
+  // this one instead of nesting its Dialog inside this card's own content.
+  const [conjugeAberto, setConjugeAberto] = useState<{
+    clienteId: string;
+    nome: string | null;
+  } | null>(null);
   // Which roteiro's PDF is being generated. Per-id, not a boolean: with two
   // roteiros on screen a shared flag spins BOTH buttons and tells the user the
   // wrong one is working.
@@ -617,6 +627,17 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       uploadingDocumento={documentoMutations.upload.isPending}
       dadosPessoais={documentoChecklist.data?.valores ?? {}}
       dadosPessoaisSaving={dadosPessoaisMutation.isPending}
+      // The server's own message from the last rejected save (the RG==CPF
+      // 400, migration 110) — `useMutation`'s `error` persists until the next
+      // `mutate()` call, so this stays visible past the toast that also fires
+      // below.
+      dadosPessoaisError={
+        dadosPessoaisMutation.isError
+          ? dadosPessoaisMutation.error instanceof Error
+            ? dadosPessoaisMutation.error.message
+            : "Não foi possível salvar os dados."
+          : null
+      }
       onSaveDadosPessoais={(valores) =>
         dadosPessoaisMutation.mutate(valores, {
           onError: (err) =>
@@ -662,6 +683,28 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       renderCertidoesDaParte={(parteId, nome) => (
         <CertidoesPartePanel atendimentoParteId={parteId} nomeParte={nome} />
       )}
+      // Keyed by cliente_id — migration 110's qualificação is a fact about
+      // the PERSON, same reasoning as `renderDocumentosDePessoa` above it.
+      renderQualificacaoDaParte={(pessoaId, nome) => (
+        <QualificacaoCompletudePanel
+          clienteId={pessoaId}
+          nome={nome}
+          onAbrirConjuge={(clienteId, nomeConjuge) =>
+            setConjugeAberto({ clienteId, nome: nomeConjuge })
+          }
+        />
+      )}
+      renderQualificacaoDoTitular={() =>
+        id && (
+          <QualificacaoCompletudePanel
+            clienteId={id}
+            nome={card.data?.cliente.nome ?? undefined}
+            onAbrirConjuge={(clienteId, nomeConjuge) =>
+              setConjugeAberto({ clienteId, nome: nomeConjuge })
+            }
+          />
+        )
+      }
       // Thunks, not elements: a subpage nobody has opened costs no query.
       onSubpageChange={(aba) =>
         setAbasVisitadas((prev) =>
@@ -755,6 +798,20 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       }
       saving={contratoMutations.create.isPending}
     />
+
+    {/* Migration 110 — "Ver cadastro" on a linked cônjuge. A SECOND, fully
+        independent `ClienteDetailModal`, sibling of this one — the same
+        nested-Dialog focus-trap reason every other dialog above is a sibling
+        rather than a child. Recursion bottoms out naturally: the spouse's own
+        qualificação panel points back at THIS person, but nothing auto-opens
+        a third level — each click is a deliberate "Ver cadastro". */}
+    {conjugeAberto && (
+      <ClienteDetailModal
+        clienteId={conjugeAberto.clienteId}
+        open
+        onClose={() => setConjugeAberto(null)}
+      />
+    )}
     </>
   );
 }
