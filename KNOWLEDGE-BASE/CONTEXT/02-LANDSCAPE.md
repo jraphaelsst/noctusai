@@ -45,14 +45,14 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 22 | 41 | 126 | 81 | 199 | 3,062 |
+| Social Wiring | 22 | 41 | 126 | 82 | 199 | 3,062 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 8 | 0 | 8 | 1 | 17 | 135 |
 | Agents | 2 | 1 | 8 | 1 | 12 | 79 |
-| **Total** | **228** | **236** | **453** | **276** | **684** | **9,237** |
+| **Total** | **228** | **236** | **453** | **277** | **684** | **9,237** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
