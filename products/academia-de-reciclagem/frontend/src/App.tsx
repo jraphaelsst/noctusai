@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Recycle, Boxes } from "lucide-react";
+import { LayoutDashboard, Users, Home, Recycle, BookOpen, Scale, HelpCircle, ListTodo } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -20,10 +20,12 @@ const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
-// Placeholder domain page — rename + replace per
-// `products/seed/frontend/src/pages/Example.tsx`. Backend mirror at
-// `app/routers/example_router.py`.
-const Example = lazy(() => import("@/pages/Example"));
+// Domain pages — contract `projects/julia-agents-academia-CONTRACT.md` §B.1-B.4.
+const Kb = lazy(() => import("@/pages/Kb"));
+const KbDetail = lazy(() => import("@/pages/KbDetail"));
+const Decisoes = lazy(() => import("@/pages/Decisoes"));
+const Perguntas = lazy(() => import("@/pages/Perguntas"));
+const Roadmap = lazy(() => import("@/pages/Roadmap"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -34,7 +36,10 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Example", href: "/example", icon: Boxes, route: "example" },
+      { name: "Base de conhecimento", href: "/kb", icon: BookOpen, route: "kb" },
+      { name: "Decisões", href: "/decisoes", icon: Scale, route: "decisoes" },
+      { name: "Perguntas abertas", href: "/perguntas", icon: HelpCircle, route: "perguntas" },
+      { name: "Roadmap e tarefas", href: "/roadmap", icon: ListTodo, route: "roadmap" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
   },
@@ -48,7 +53,10 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Example", href: "/example", icon: Boxes },
+      { name: "Base de conhecimento", href: "/kb", icon: BookOpen },
+      { name: "Decisões", href: "/decisoes", icon: Scale },
+      { name: "Perguntas abertas", href: "/perguntas", icon: HelpCircle },
+      { name: "Roadmap e tarefas", href: "/roadmap", icon: ListTodo },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
   },
@@ -66,7 +74,11 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
-    { path: "/example", component: Example },
+    { path: "/kb", component: Kb },
+    { path: "/kb/:slug", component: KbDetail },
+    { path: "/decisoes", component: Decisoes },
+    { path: "/perguntas", component: Perguntas },
+    { path: "/roadmap", component: Roadmap },
     { path: "/equipe", component: Equipe },
   ],
   Layout,

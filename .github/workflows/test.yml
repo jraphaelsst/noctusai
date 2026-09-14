@@ -285,6 +285,7 @@ jobs:
           - orbity
           - p-studio
           - igig
+          - academia-de-reciclagem
 
     steps:
       - uses: actions/checkout@v7
