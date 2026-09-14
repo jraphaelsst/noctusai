@@ -25,6 +25,8 @@ from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.documents.formatting import ranges_from_json
+
 from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as checklist_svc
@@ -218,7 +220,10 @@ def carregar(
         compradores=compradores,
         imovel=imovel,
         matricula=Matricula(
-            codigo=selecao.get("codigo"), texto=selecao.get("texto") or "", num_atos=len(selecao.get("atos") or [])
+            codigo=selecao.get("codigo"),
+            texto=selecao.get("texto") or "",
+            num_atos=len(selecao.get("atos") or []),
+            formatacao=ranges_from_json(selecao.get("formatacao")),
         ),
         valor_negociado=_dec(estruturada.get("valor_negociado")),
         pct_comissao=_dec(negociacao.get("pct_comissao")),

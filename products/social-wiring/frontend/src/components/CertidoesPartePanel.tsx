@@ -24,8 +24,11 @@
 import { useState } from "react";
 import {
   AlertTriangle,
+  Check,
+  Copy,
   Download,
   Eye,
+  FileDown,
   FileText,
   Link2,
   Loader2,
@@ -65,6 +68,8 @@ import {
 import {
   useCertidaoConsultas,
   useConfirmarResultado,
+  useCopiarTranscricao,
+  useDownloadTranscricaoPdf,
   useMintResultadoUrl,
   useResultadosPorParte,
   useUploadResultadoManual,
@@ -113,11 +118,24 @@ export function CertidoesPartePanel({ atendimentoParteId, nomeParte }: Certidoes
   const confirmar = useConfirmarResultado(atendimentoParteId);
   const upload = useUploadResultadoManual(atendimentoParteId);
   const mintUrl = useMintResultadoUrl();
+  // ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6) —
+  // shared with `pages/Certidoes.tsx`'s own detail table so the fetch +
+  // clipboard sequence is written once.
+  const downloadTranscricaoPdf = useDownloadTranscricaoPdf();
+  const { copiar: copiarTranscricao, activeId: copiandoId } = useCopiarTranscricao();
 
   const [vincularAberto, setVincularAberto] = useState(false);
   const [consultaEscolhida, setConsultaEscolhida] = useState("");
   const [editando, setEditando] = useState<CertidaoResultado | null>(null);
   const [uploadAlvo, setUploadAlvo] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const handleCopiarTranscricao = (resultadoId: string) => {
+    copiarTranscricao(resultadoId, () => {
+      setCopiedId(resultadoId);
+      setTimeout(() => setCopiedId((current) => (current === resultadoId ? null : current)), 2000);
+    });
+  };
 
   // Two signals off `data`, never `isLoading` — the query's key includes
   // `atendimentoParteId` and carries `placeholderData`, so switching parties
@@ -352,6 +370,47 @@ export function CertidoesPartePanel({ atendimentoParteId, nomeParte }: Certidoes
                               }
                             >
                               <Download className="h-3 w-3" />
+                            </Button>
+                          </>
+                        )}
+                        {resultado.tem_transcricao === true && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title="Transcrição PDF"
+                              aria-label={`Transcrição PDF ${resultado.nome_display}`}
+                              disabled={
+                                downloadTranscricaoPdf.isPending &&
+                                downloadTranscricaoPdf.variables?.resultadoId === resultado.id
+                              }
+                              onClick={() =>
+                                downloadTranscricaoPdf.mutate({
+                                  resultadoId: resultado.id,
+                                  filename: `${resultado.tipo}_transcricao.pdf`,
+                                })
+                              }
+                            >
+                              {downloadTranscricaoPdf.isPending &&
+                              downloadTranscricaoPdf.variables?.resultadoId === resultado.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <FileDown className="h-3 w-3" />
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title="Copiar transcrição"
+                              aria-label={`Copiar transcrição ${resultado.nome_display}`}
+                              disabled={copiandoId === resultado.id}
+                              onClick={() => handleCopiarTranscricao(resultado.id)}
+                            >
+                              {copiedId === resultado.id ? (
+                                <Check className="h-3 w-3" />
+                              ) : (
+                                <Copy className="h-3 w-3" />
+                              )}
                             </Button>
                           </>
                         )}

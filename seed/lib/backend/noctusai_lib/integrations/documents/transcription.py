@@ -43,9 +43,11 @@ mid-pipeline. Every failure is returned as a value.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
 
+from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.documents.types import TextSource
 
 logger = logging.getLogger(__name__)
@@ -93,10 +95,21 @@ OCR_MODEL = OCR_MODELS["openai"]
 #: Deliberately anti-helpful. A transcription prompt that invites the model
 #: to tidy anything gets a tidied document, and a matrícula that has been
 #: silently corrected is worse than one that is visibly hard to read.
+#:
+#: Asks for two markers ON TOP of the verbatim text, not instead of it —
+#: `**bold**` and `<u>underline</u>`, combinable in either order. `parse_markup`
+#: is this prompt's sole consumer: any change to the markers here must change
+#: it too, or a scanned page starts rendering literal asterisks.
 OCR_PROMPT = (
     "Extract the exact text from the provided image. "
     "Return only the text content exactly as it appears in the document, "
-    "without corrections, formatting changes, or any modifications."
+    "without corrections, formatting changes, or any modifications. "
+    "In addition, mark bold text by wrapping it in double asterisks "
+    "(**like this**) and underlined text by wrapping it in <u></u> tags "
+    "(<u>like this</u>); text that is both bold and underlined may combine "
+    "the two markers in either order (for example **<u>like this</u>**). "
+    "Do not use any other markup, and do not mark text that is neither bold "
+    "nor underlined."
 )
 
 #: Cap on vision calls for one document. A runaway PDF (a 400-page bundle
@@ -167,6 +180,12 @@ class TranscribedPage:
     number: int  # 1-based, matches what a human sees in a PDF reader
     text: str
     source: TextSource
+    #: Bold/underline ranges into THIS page's `text` — `()` when the page
+    #: carries no formatting, or a span could not be aligned (rung 1; see
+    #: `_extract_text_layer_formatting`). A `FormatRange` here never implies
+    #: `text` changed: that invariant is what lets existing consumers keep
+    #: their offsets into it (matrícula acts, migration 109).
+    formatting: tuple[FormatRange, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -191,6 +210,35 @@ class Transcription:
     def text(self) -> str:
         """The document, page order, blank pages dropped."""
         return "\n\n".join(p.text for p in self.pages if p.text)
+
+    @property
+    def formatting(self) -> tuple[FormatRange, ...]:
+        """Document-level ranges, re-based onto `text`.
+
+        Uses the EXACT join `text` uses above — "\\n\\n" between pages,
+        blank pages dropped — so an offset from here is valid against `text`
+        without the caller re-deriving how the pages were joined.
+        """
+        ranges: list[FormatRange] = []
+        offset = 0
+        primeira = True
+        for page in self.pages:
+            if not page.text:
+                continue
+            if not primeira:
+                offset += 2  # the "\n\n" join
+            for r in page.formatting:
+                ranges.append(
+                    FormatRange(
+                        start=r.start + offset,
+                        end=r.end + offset,
+                        bold=r.bold,
+                        underline=r.underline,
+                    )
+                )
+            offset += len(page.text)
+            primeira = False
+        return tuple(ranges)
 
     @property
     def paginas_por_visao(self) -> tuple[int, ...]:
@@ -323,11 +371,21 @@ class LadderDocumentTranscriber:
         textos = _texto_confiavel_por_pagina(camada, num_paginas)
         paginas_para_visao = [n for n in range(1, num_paginas + 1) if n not in textos]
 
+        # Bold/underline for the free pages, from the PDF's own spans and
+        # drawings — never from re-deriving `textos`, which stays untouched
+        # (rung-1 invariant: `page.text` is byte-identical either way).
+        formatacao_camada = _extrair_formatacao_camada_texto(
+            content, textos, sorted(textos)
+        )
+
         if not paginas_para_visao:
             return Transcription(
                 pages=tuple(
                     TranscribedPage(
-                        number=n, text=textos[n], source=TextSource.TEXT_LAYER
+                        number=n,
+                        text=textos[n],
+                        source=TextSource.TEXT_LAYER,
+                        formatting=formatacao_camada.get(n, ()),
                     )
                     for n in sorted(textos)
                 ),
@@ -342,7 +400,10 @@ class LadderDocumentTranscriber:
             return Transcription(
                 pages=tuple(
                     TranscribedPage(
-                        number=n, text=textos[n], source=TextSource.TEXT_LAYER
+                        number=n,
+                        text=textos[n],
+                        source=TextSource.TEXT_LAYER,
+                        formatting=formatacao_camada.get(n, ()),
                     )
                     for n in sorted(textos)
                 ),
@@ -379,6 +440,7 @@ class LadderDocumentTranscriber:
             )
 
         images = _pdf_to_images(content, paginas_para_visao, self._render_dpi)
+        formatacao_visao: dict[int, tuple[FormatRange, ...]] = {}
         for numero in paginas_para_visao:
             img = images.get(numero)
             if img is None:
@@ -389,7 +451,7 @@ class LadderDocumentTranscriber:
                     error="rasterize_failed",
                     error_message=f"could not rasterize page {numero} of {num_paginas}",
                 )
-            textos[numero] = await analyze(
+            marcado = await analyze(
                 img,
                 self._ocr_prompt,
                 model=self._ocr_model,
@@ -397,6 +459,13 @@ class LadderDocumentTranscriber:
                 org_id=self._org_id,
                 max_tokens=4096,
             )
+            # The vision reply carries `**bold**` / `<u>underline</u>` markers
+            # per `OCR_PROMPT` — `textos[numero]` is the STRIPPED text (the
+            # page's `text`, same as every other rung), and the ranges are
+            # kept alongside it, exactly like rung 1.
+            texto, ranges = parse_markup(marcado)
+            textos[numero] = texto
+            formatacao_visao[numero] = ranges
             logger.info("transcription: page %d/%d done", numero, num_paginas)
 
         por_visao = set(paginas_para_visao)
@@ -406,6 +475,11 @@ class LadderDocumentTranscriber:
                     number=n,
                     text=textos[n],
                     source=TextSource.OCR if n in por_visao else TextSource.TEXT_LAYER,
+                    formatting=(
+                        formatacao_visao.get(n, ())
+                        if n in por_visao
+                        else formatacao_camada.get(n, ())
+                    ),
                 )
                 for n in sorted(textos)
             ),
@@ -494,6 +568,450 @@ def _pdf_to_images(
     return images
 
 
+# ── Rung 1: bold/underline from the PDF's own spans and drawings ─────────
+#
+# Thresholds validated 2026-09-14 against ~180 real text-layer PDFs stored
+# in prod (social-wiring certidões + client/imóvel documents + the ERP
+# certidões bucket) — see `formatting-samples.md` (not committed: it quotes
+# short excerpts of real documents). Two findings from that pass:
+#
+# - Bold: `flags & 16` and a bold-family font name NEVER disagreed across
+#   the whole corpus. Either signal alone would have been enough; both are
+#   kept because they cost nothing extra.
+# - Underline geometry alone produced 36 FALSE positives on one certidão
+#   template (`trt2_fisico`): a table/box rule 82-229x wider than the text
+#   it ran through, which also satisfied the old overlap+baseline check.
+#   `_UNDERLINE_MAX_LINE_WIDTH_RATIO` below is the fix — a real underline is
+#   comparable in length to the text it underlines; a table rule is not.
+#
+# 🔴 NOC-REMEDIATE[transcricao-underline-charflags]: the sample corpus also
+# recommends PyMuPDF's per-CHARACTER style bits (`get_text("dict", flags=
+# TEXTFLAGS_DICT | TEXT_COLLECT_STYLES)`, then `span["char_flags"] & 2`) as
+# the PRIMARY underline signal, confirmed by geometry — 18/26 were the
+# observed values on real hyperlink underlines. This module does NOT wire
+# that signal in: probed locally against the installed PyMuPDF (1.27.2.2,
+# vs. prod's 1.28.2), that build's own exposed constants
+# (`TEXT_FONT_ITALIC = 2`) show bit 2 is documented as ITALIC at the
+# `flags`/font-style level, and an HTML-authored `<u>`/`<s>` decoration
+# produced no distinct `char_flags` bit at all on this build — so an
+# unqualified `char_flags & 2` risks reading "italic" as "underlined" here.
+# Every real underline this pass found was a hyperlink decoration; there is
+# still no real matrícula PDF in prod to validate a hand-drawn underline
+# against (2026-09-14). Geometry (now with the width-ratio guard) is kept
+# as the sole signal until `char_flags`'s meaning is confirmed against the
+# EXACT PyMuPDF build this module runs under — 2026-09-14.
+#
+# 2026-09-14 also confirmed a DIFFERENT existing defect worth flagging for
+# the backfill (not this slice): 5 of 8 `matricula_extracoes.texto_extraido`
+# rows already contain literal `**bold**` markdown from the current vision
+# model (despite the plain-verbatim prompt in production today) — exactly
+# the shape `parse_markup` below is built to read, which is a point in
+# favour of this design, but those existing rows predate `formatacao` and
+# still carry the raw asterisks IN `texto_extraido` itself.
+
+#: Font-name substrings (case-insensitive) that mark a bold family even when
+#: PyMuPDF's own `flags & 16` bit is unset — happens with some embedded or
+#: subsetted fonts whose weight lives only in the PostScript name.
+_BOLD_FONT_NAME_MARKERS = ("bold", "black", "heavy", "semibold")
+
+#: A drawn stroke/rect thicker than this is a rule or a table border, not an
+#: underline.
+_UNDERLINE_MAX_THICKNESS = 2.5
+
+#: A stroke shorter than this (points) is noise — a serif terminal, a dot on
+#: an "i", a stray hairline — not a deliberate underline.
+_UNDERLINE_MIN_LENGTH = 3.0
+
+#: A stroke up to this far ABOVE a span's baseline still counts (the artist
+#: does not always draw exactly on the baseline). Real underlines observed
+#: sat 1.05-1.41pt BELOW the baseline, comfortably inside this window.
+_UNDERLINE_BASELINE_TOLERANCE = 1.0
+
+#: ...and up to this fraction of the font size BELOW the baseline.
+_UNDERLINE_BASELINE_BELOW_RATIO = 0.35
+
+#: The stroke must cover at least this fraction of the span's width to count
+#: as underlining that span (as opposed to, say, the next word's underline
+#: brushing its edge).
+_UNDERLINE_MIN_OVERLAP_RATIO = 0.5
+
+#: 🔴 A stroke longer than this multiple of its LINE's own text width is a
+#: table/box rule, not an underline — the `trt2_fisico` false-positive fix.
+#: A real underline is comparable in length to the text it marks; a rule
+#: crossing a whole table cell or page width is not, even when it happens
+#: to overlap a short span by more than `_UNDERLINE_MIN_OVERLAP_RATIO`.
+_UNDERLINE_MAX_LINE_WIDTH_RATIO = 1.5
+
+
+def _is_bold_span(span: dict) -> bool:
+    """PyMuPDF's bold bit, OR a bold-family font name.
+
+    `flags & 16` is PyMuPDF's own bold flag; checked first because it needs
+    no string matching. Some scanned-then-reflowed text layers carry a bold
+    FONT without that bit set, which is what the font-name fallback catches.
+    Validated against ~180 real text-layer PDFs 2026-09-14: the two signals
+    never disagreed.
+    """
+    if bool(span.get("flags", 0) & 16):
+        return True
+    fonte = (span.get("font") or "").lower()
+    return any(marcador in fonte for marcador in _BOLD_FONT_NAME_MARKERS)
+
+
+def _page_text_spans(page) -> list[tuple[dict, float]]:
+    """Every text span on the page, paired with its LINE's own text width —
+    the denominator `_has_underline`'s width-ratio guard needs to tell a
+    real underline from a table rule — in the order PyMuPDF's dict mode
+    returns them (the same reading order `page.get_text()`, used for
+    `page.text`, reconstructs its output from)."""
+    spans: list[tuple[dict, float]] = []
+    d = page.get_text("dict")
+    for block in d.get("blocks", ()):
+        for line in block.get("lines", ()):
+            bbox = line.get("bbox") or (0.0, 0.0, 0.0, 0.0)
+            largura_linha = bbox[2] - bbox[0]
+            for span in line.get("spans", ()):
+                spans.append((span, largura_linha))
+    return spans
+
+
+def _underline_segments(page) -> list[tuple[float, float, float]]:
+    """Thin, roughly-horizontal vector strokes on the page, as
+    `(x0, x1, y)` — a straight line or a thin filled rectangle, the two
+    shapes a registry actually draws an underline with. Never raises: a page
+    whose drawings cannot be read contributes no segments, which can only
+    ever under-detect underline, never invent text.
+    """
+    segmentos: list[tuple[float, float, float]] = []
+    try:
+        desenhos = page.get_drawings()
+    except Exception:
+        logger.debug("transcription: get_drawings failed", exc_info=True)
+        return segmentos
+    for desenho in desenhos:
+        for item in desenho.get("items", ()):
+            tipo = item[0]
+            if tipo == "l":
+                p1, p2 = item[1], item[2]
+                if (
+                    abs(p1.y - p2.y) <= 1.0
+                    and abs(p1.x - p2.x) >= _UNDERLINE_MIN_LENGTH
+                ):
+                    segmentos.append(
+                        (min(p1.x, p2.x), max(p1.x, p2.x), (p1.y + p2.y) / 2)
+                    )
+            elif tipo == "re":
+                rect = item[1]
+                if (
+                    rect.height <= _UNDERLINE_MAX_THICKNESS
+                    and rect.width >= _UNDERLINE_MIN_LENGTH
+                ):
+                    segmentos.append((rect.x0, rect.x1, (rect.y0 + rect.y1) / 2))
+    return segmentos
+
+
+def _has_underline(
+    span: dict,
+    line_width: float,
+    segmentos: list[tuple[float, float, float]],
+) -> bool:
+    """Does any drawn segment sit under THIS span, per the thresholds above.
+
+    `line_width` gates a segment far longer than the text it runs
+    through — a table/box rule, not an underline (`trt2_fisico`, 36 false
+    positives on the geometry-only check; see the module comment above).
+    """
+    x0, y0, x1, y1 = span["bbox"]
+    origem = span.get("origin") or (x0, y1)
+    baseline = origem[1]
+    tamanho = span.get("size", 0.0) or 0.0
+    largura = max(x1 - x0, 1e-3)
+    largura_linha = max(line_width, largura)
+    limite_inferior = baseline - _UNDERLINE_BASELINE_TOLERANCE
+    limite_superior = (
+        baseline
+        + _UNDERLINE_BASELINE_BELOW_RATIO * tamanho
+        + _UNDERLINE_BASELINE_TOLERANCE
+    )
+    for sx0, sx1, sy in segmentos:
+        largura_segmento = sx1 - sx0
+        if largura_segmento > _UNDERLINE_MAX_LINE_WIDTH_RATIO * largura_linha:
+            continue  # a table/box rule spanning far more than the line
+        sobreposicao = min(x1, sx1) - max(x0, sx0)
+        if sobreposicao < _UNDERLINE_MIN_OVERLAP_RATIO * largura:
+            continue
+        if limite_inferior <= sy <= limite_superior:
+            return True
+    return False
+
+
+def _merge_adjacent_ranges(ranges: list[FormatRange]) -> tuple[FormatRange, ...]:
+    """Merge same-formatting ranges that touch with no gap between them.
+
+    PyMuPDF sometimes splits one visually-continuous bold or underlined run
+    into two spans (a font-metric quirk, or two words joined by a single
+    drawn underline stroke); a caller re-rendering `formatting` should see
+    ONE range for that run, not two it has to notice are adjacent.
+    """
+    ordenados = sorted(ranges, key=lambda r: (r.start, r.end))
+    mesclados: list[FormatRange] = []
+    for r in ordenados:
+        if (
+            mesclados
+            and mesclados[-1].end == r.start
+            and mesclados[-1].bold == r.bold
+            and mesclados[-1].underline == r.underline
+        ):
+            anterior = mesclados.pop()
+            mesclados.append(
+                FormatRange(
+                    start=anterior.start,
+                    end=r.end,
+                    bold=anterior.bold,
+                    underline=anterior.underline,
+                )
+            )
+        else:
+            mesclados.append(r)
+    return tuple(mesclados)
+
+
+def _extract_text_layer_formatting(page, text: str) -> tuple[FormatRange, ...]:
+    """Bold + underline ranges for one text-layer page, aligned onto `text`.
+
+    `text` is the SAME string `classify_pdf_text_layer` already trusts
+    (`page.get_text().strip()` — see that module) — never re-derived here,
+    so `page.text` cannot shift by a single character because of this
+    function. A span whose text cannot be located inside `text` is dropped
+    and logged at debug: dropping a formatting range loses styling, dropping
+    nothing ever loses or moves TEXT, which is the one invariant this whole
+    feature is not allowed to break.
+    """
+    try:
+        spans = _page_text_spans(page)
+    except Exception:
+        logger.debug("transcription: get_text(dict) failed", exc_info=True)
+        return ()
+
+    segmentos = _underline_segments(page)
+
+    ranges: list[FormatRange] = []
+    cursor = 0
+    for span, largura_linha in spans:
+        bruto = span.get("text", "")
+        recortado = bruto.strip()
+        if not recortado:
+            continue
+        negrito = _is_bold_span(span)
+        sublinhado = _has_underline(span, largura_linha, segmentos)
+        if not (negrito or sublinhado):
+            continue
+        # Search forward from the last match first (keeps spans in order and
+        # handles a repeated word correctly); fall back to a global search
+        # for the rare case a span is not encountered in reading order.
+        idx = text.find(recortado, cursor)
+        if idx == -1:
+            idx = text.find(recortado)
+        if idx == -1:
+            logger.debug(
+                "transcription: could not align span %r onto page text", recortado
+            )
+            continue
+        fim = idx + len(recortado)
+        if fim > cursor:
+            cursor = fim
+        ranges.append(FormatRange(start=idx, end=fim, bold=negrito, underline=sublinhado))
+
+    return _merge_adjacent_ranges(ranges)
+
+
+def _extrair_formatacao_camada_texto(
+    pdf_bytes: bytes, textos: dict[int, str], paginas: list[int]
+) -> dict[int, tuple[FormatRange, ...]]:
+    """Bold/underline for the text-layer pages, keyed by 1-based page number.
+
+    Opens its OWN `fitz.Document` — deliberately separate from
+    `classify_pdf_text_layer`'s (this module does not own that function and
+    must not change it to add formatting extraction). Never raises: a
+    document or a page whose formatting cannot be read comes back with `()`
+    for that page, and `textos` — the trusted text — is never touched here.
+    """
+    resultado: dict[int, tuple[FormatRange, ...]] = {n: () for n in paginas}
+    if not paginas:
+        return resultado
+    try:
+        import fitz  # type: ignore  # PyMuPDF
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        logger.debug(
+            "transcription: could not reopen PDF for formatting", exc_info=True
+        )
+        return resultado
+    try:
+        alvo = set(paginas)
+        for index in range(doc.page_count):
+            numero = index + 1
+            if numero not in alvo:
+                continue
+            texto = textos.get(numero, "")
+            if not texto:
+                continue
+            try:
+                resultado[numero] = _extract_text_layer_formatting(doc[index], texto)
+            except Exception:
+                logger.debug(
+                    "transcription: formatting extraction failed on page %d",
+                    numero,
+                    exc_info=True,
+                )
+    finally:
+        doc.close()
+    return resultado
+
+
+# ── Rung 2: the vision markup parser ──────────────────────────────────────
+
+#: Recognises exactly the three markers `OCR_PROMPT` asks the model for.
+#: A change to the prompt's marker syntax must change this together with it.
+_MARKUP_TOKEN_RE = re.compile(r"\*\*|<u>|</u>", re.IGNORECASE)
+
+#: Any OTHER angle-bracket tag — logged (never acted on) so an unexpected
+#: marker shows up in the logs instead of silently vanishing into the text.
+_UNKNOWN_TAG_RE = re.compile(r"</?(?!u\b)[a-zA-Z][^>]*>", re.IGNORECASE)
+
+
+def _unmatched_toggle_index(tokens: list[tuple[str, int, int]], kind: str) -> set[int]:
+    """`**` toggles bold on each occurrence; an ODD total means the LAST one
+    never found its pair. That one token index is returned so the caller
+    renders it as two literal asterisks instead of toggling — an unbalanced
+    marker is not a formatting instruction, it is a typo in the model's
+    reply."""
+    indices = [i for i, t in enumerate(tokens) if t[0] == kind]
+    if len(indices) % 2 == 0:
+        return set()
+    return {indices[-1]}
+
+
+def _unmatched_pair_indices(
+    tokens: list[tuple[str, int, int]], open_kind: str, close_kind: str
+) -> tuple[set[int], set[int]]:
+    """Stack-match `<u>`/`</u>`. A `</u>` with nothing open is stray; any
+    `<u>` still open at the end never closed. Both come back as literal."""
+    abertos: list[int] = []
+    fechamentos_invalidos: set[int] = set()
+    for i, t in enumerate(tokens):
+        if t[0] == open_kind:
+            abertos.append(i)
+        elif t[0] == close_kind:
+            if abertos:
+                abertos.pop()
+            else:
+                fechamentos_invalidos.add(i)
+    return set(abertos), fechamentos_invalidos
+
+
+def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
+    """OCR markup (`**bold**`, `<u>underline</u>`, combined/nested freely) →
+    `(plain text, format ranges)`.
+
+    Strips the markers and returns offsets into the STRIPPED text, so the
+    result slots directly into `TranscribedPage.text` / `.formatting`.
+
+    Never raises. An unbalanced `**`, a stray or unclosed `<u>`/`</u>`, or
+    any other bracketed marker the model was not asked for is kept as
+    LITERAL text (and logged) rather than guessed at — a malformed vision
+    reply must still produce a document, and a formatting range built from a
+    guess would be worse than none.
+    """
+    tokens: list[tuple[str, int, int]] = []
+    pos = 0
+    for m in _MARKUP_TOKEN_RE.finditer(markup):
+        if m.start() > pos:
+            tokens.append(("text", pos, m.start()))
+        bruto = m.group()
+        if bruto == "**":
+            kind = "bold"
+        elif bruto.lower() == "<u>":
+            kind = "u_open"
+        else:
+            kind = "u_close"
+        tokens.append((kind, m.start(), m.end()))
+        pos = m.end()
+    if pos < len(markup):
+        tokens.append(("text", pos, len(markup)))
+
+    for m in _UNKNOWN_TAG_RE.finditer(markup):
+        logger.warning(
+            "transcription: unrecognised markup tag %r in vision reply — kept literal",
+            m.group(),
+        )
+
+    bold_invalido = _unmatched_toggle_index(tokens, "bold")
+    if bold_invalido:
+        logger.warning(
+            "transcription: unbalanced ** marker in vision reply — kept literal"
+        )
+    u_abertos_invalidos, u_fechamentos_invalidos = _unmatched_pair_indices(
+        tokens, "u_open", "u_close"
+    )
+    if u_abertos_invalidos or u_fechamentos_invalidos:
+        logger.warning(
+            "transcription: unbalanced <u>/</u> marker in vision reply — kept literal"
+        )
+
+    saida: list[str] = []
+    comprimento = 0
+    ranges: list[FormatRange] = []
+    negrito = False
+    profundidade_sublinhado = 0
+    inicio_trecho = 0
+    trecho_negrito = False
+    trecho_sublinhado = False
+
+    def fechar_trecho(fim: int) -> None:
+        nonlocal inicio_trecho
+        if fim > inicio_trecho and (trecho_negrito or trecho_sublinhado):
+            ranges.append(
+                FormatRange(
+                    start=inicio_trecho,
+                    end=fim,
+                    bold=trecho_negrito,
+                    underline=trecho_sublinhado,
+                )
+            )
+        inicio_trecho = fim
+
+    for i, (kind, s, e) in enumerate(tokens):
+        bruto = markup[s:e]
+        if kind == "text":
+            saida.append(bruto)
+            comprimento += len(bruto)
+            continue
+        if kind == "bold" and i not in bold_invalido:
+            fechar_trecho(comprimento)
+            negrito = not negrito
+            trecho_negrito, trecho_sublinhado = negrito, profundidade_sublinhado > 0
+            continue
+        if kind == "u_open" and i not in u_abertos_invalidos:
+            fechar_trecho(comprimento)
+            profundidade_sublinhado += 1
+            trecho_negrito, trecho_sublinhado = negrito, profundidade_sublinhado > 0
+            continue
+        if kind == "u_close" and i not in u_fechamentos_invalidos:
+            fechar_trecho(comprimento)
+            profundidade_sublinhado -= 1
+            trecho_negrito, trecho_sublinhado = negrito, profundidade_sublinhado > 0
+            continue
+        # Unbalanced/stray marker — kept as literal text.
+        saida.append(bruto)
+        comprimento += len(bruto)
+
+    fechar_trecho(comprimento)
+    texto = "".join(saida)
+    return texto, _merge_adjacent_ranges(ranges)
+
+
 def make_document_transcriber(
     *,
     real: bool = False,
@@ -555,4 +1073,5 @@ __all__ = [
     "TranscribedPage",
     "Transcription",
     "make_document_transcriber",
+    "parse_markup",
 ]

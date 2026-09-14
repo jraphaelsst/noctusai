@@ -73,6 +73,15 @@ ALLOWED_MIME_TYPES = frozenset(
     }
 )
 
+#: `_guardar_versao`'s `filename=None` fallback (a GENERATED version has no
+#: upload name) names the file from this — an unrecognized `content_type`
+#: is a defect elsewhere (`VERSOES_STORE.validar` already refused it before
+#: this is ever consulted), never silently mis-extensioned.
+_EXTENSAO_GERADA: dict[str, str] = {
+    "application/pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+}
+
 #: 🔴 `acessos_table` is SET — LGPD-logged, same posture as
 #: `financiamento_service.STORE`.
 VERSOES_STORE = DocumentoStore(
@@ -329,7 +338,7 @@ async def _guardar_versao(
         storage,
         org_id,
         owner,
-        filename=filename or f"contrato-gerado-v{numero}.docx",
+        filename=filename or f"contrato-gerado-v{numero}.{_EXTENSAO_GERADA.get(content_type, 'bin')}",
         content_type=content_type,
         data=data,
         tipo_documento=TIPO_VERSAO,

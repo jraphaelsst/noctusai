@@ -19,6 +19,8 @@ from noctusai_lib.domain.texto_ptbr import (
     dias_por_extenso,
     percentual_por_extenso,
 )
+from noctusai_lib.integrations.documents.abnt import clip_ranges, runs_from_ranges
+from noctusai_lib.integrations.docx_render import DocxRenderAdapter
 
 from app.modules.card_hub.contrato_gerador import frases
 from app.modules.card_hub.contrato_gerador.concordancia import lado, normalizar_genero
@@ -65,12 +67,28 @@ def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C) -> str:
     )
 
 
+def _descricao_matricula_rica(d: DadosContrato, adapter: DocxRenderAdapter) -> Any:
+    """The matrícula quote as a docxtpl `{{r ... }}` context value (contract
+    §5): bold/underline PER RUN, built from `d.matricula.formatacao`
+    (already re-based onto `d.matricula.texto` by `obter_selecao`) —
+    `[]` renders the quote plain, exactly as before this feature existed.
+
+    `.rstrip()` matches the plain-string behaviour it replaces; ranges are
+    re-clipped to the (possibly shortened) stripped length so a range
+    touching only the stripped trailing whitespace never overflows it.
+    """
+    texto = d.matricula.texto.rstrip()
+    ranges = clip_ranges(d.matricula.formatacao, 0, len(texto))
+    return adapter.rich_text(runs_from_ranges(texto, ranges))
+
+
 def montar_contexto(
     d: DadosContrato,
     sw: dict[str, bool],
     politica: Politica,
     assinatura: date,
     par: ContadorParagrafos,
+    adapter: DocxRenderAdapter,
 ) -> dict[str, Any]:
     cl = numerar_clausulas(sw)
     vend, comp_pessoas = signatarios(d.vendedores), signatarios(d.compradores)
@@ -136,7 +154,7 @@ def montar_contexto(
         "titulo_curto": titulo_curto,
         "cidade": e.cidade,
         "uf": (e.uf or "").upper(),
-        "descricao_matricula": d.matricula.texto.rstrip(),
+        "descricao_matricula": _descricao_matricula_rica(d, adapter),
         "inscricao_municipal": im.inscricao_municipal,
         "matricula_numero": frases.matricula_numero(im.numero_matricula),
         "cartorio": im.numero_registro_imoveis,

@@ -114,6 +114,29 @@ class TestTheStatusLifecycle:
         assert [u.get("status") for u in db.updates] == ["processando", "concluida"]
         assert db.last["texto_extraido"] == "P1\n\nP2"
         assert db.last["num_paginas"] == 2
+        # No formatting on this transcription -> the empty-ranges default.
+        assert db.last["formatacao"] == []
+
+    @pytest.mark.asyncio
+    async def test_formatacao_e_persistida_junto_com_o_texto(self):
+        """Migration 113: `resultado.formatting` rides the SAME write that
+        lands `texto_extraido` — never a separate UPDATE."""
+        from noctusai_lib.integrations.documents.formatting import FormatRange
+
+        pagina = TranscribedPage(
+            number=1, text="Bold word here", source=TextSource.OCR,
+            formatting=(FormatRange(start=0, end=4, bold=True),),
+        )
+        resultado = Transcription(pages=(pagina,), num_paginas=1)
+        db = _RecordingDB()
+        await processar_extracao(
+            "e3", b"%PDF", _ORG, db, transcriber=_StubTranscriber(resultado)
+        )
+
+        assert db.last["texto_extraido"] == "Bold word here"
+        assert db.last["formatacao"] == [
+            {"start": 0, "end": 4, "bold": True, "underline": False}
+        ]
 
     @pytest.mark.asyncio
     async def test_the_row_is_marked_processando_before_any_work(self):
