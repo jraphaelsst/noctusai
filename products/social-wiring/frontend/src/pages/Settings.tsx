@@ -37,6 +37,7 @@ import {
   useDadosImobiliaria,
   useSalvarDadosImobiliaria,
 } from "@/hooks/useDadosImobiliaria";
+import { TestemunhasSection } from "@/components/settings/TestemunhasSection";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1964,8 +1965,9 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
         {/* First tab: it is the org's own identity, and everything else here
             configures behaviour rather than saying who we are. Also the block
             a generated contract needs before it can name the intermediary. */}
-        <TabsContent value="imobiliaria" className="mt-6">
+        <TabsContent value="imobiliaria" className="mt-6 space-y-6">
           <DadosImobiliariaTab />
+          <TestemunhasSection />
         </TabsContent>
         <TabsContent value="notifications" className="mt-6">
           <NotificationsTab />
