@@ -91,7 +91,7 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
         return FakeAgentRuntime([])
 
     from app.runtime.academia_api import make_academia_api
-    from app.runtime.claude_runtime import ClaudeAgentSdkRuntime
+    from app.runtime.claude_runtime import DEFAULT_CLI_PATH, ClaudeAgentSdkRuntime
     from app.stores.approvals import get_approval_store
     from noctusai_lib.config.product_urls import resolve_product_url
 
@@ -115,6 +115,9 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
         approval_use_window_seconds=int(
             getattr(settings, "approval_use_window_seconds", 120) or 120
         ),
+        # Config-wired (roadmap D1) — see `SeedSettings.julia_cli_path`'s
+        # docstring for why this must not be a second hardcoded literal.
+        cli_path=getattr(settings, "julia_cli_path", "") or DEFAULT_CLI_PATH,
     )
 
 

@@ -88,6 +88,27 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    # D1 hardening (roadmap julia-agents-academia-2026-09, row D1).
+    # Prod is first contact for this image (dev fleet dormant — KB §
+    # PATTERNS/devops/dev-fleet-dormant.md), so the deploy shape carries
+    # this from day one rather than bolting it on at cutover.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    # /tmp only, and only because it is genuinely needed: Starlette's
+    # multipart parser (POST /api/import, contract §B.6) spools any
+    # part over 1MB to a tempfile.SpooledTemporaryFile under the
+    # process's tmp dir (verified live against the installed starlette
+    # 0.49.3: formparsers.MultiPartParser.spool_max_size == 1024*1024),
+    # and the contract caps a bundle at 20MB — every real import
+    # spills to disk. mode=1777 mirrors standard /tmp semantics
+    # (world-writable + sticky bit) so the `noctus` app user can
+    # create its own spill files without a broader writable root.
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    mem_limit: 512m
 
   academia-de-reciclagem-tunnel:
     # Cloudflare quick-tunnel → ephemeral *.trycloudflare.com pointing at

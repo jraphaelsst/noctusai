@@ -88,6 +88,49 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    # D1 hardening (roadmap julia-agents-academia-2026-09, row D1).
+    # Prod is first contact for this image (dev fleet dormant — KB §
+    # PATTERNS/devops/dev-fleet-dormant.md).
+    cap_drop:
+      - ALL
+    # SETUID/SETGID ONLY: contract §E.5 spawns the Julia CLI subprocess
+    # under a DIFFERENT, dedicated uid (`user="julia-cli"` on
+    # ClaudeAgentOptions). Verified live against the installed SDK:
+    # subprocess_cli.py passes `user=` through to `anyio.open_process`
+    # -> `subprocess.Popen(user=...)`, whose POSIX exec path needs
+    # CAP_SETUID (+ CAP_SETGID for the implicit initgroups() call when
+    # no explicit `group=` is given) in the PARENT app process's
+    # capability set to drop from `noctus` into `julia-cli`. Dropping
+    # ALL caps without adding these back would silently break every
+    # Julia turn the first time the SDK tries to spawn the CLI
+    # (PermissionError) — exactly the silent-regression shape this
+    # hardening slice must not introduce.
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    # /tmp only: the julia-cli-exec wrapper (contract §E.5) sets
+    # HOME=/tmp/julia-home for the CLI subprocess. mode=1777 (standard
+    # /tmp semantics) lets the `julia-cli` uid create that directory
+    # itself on first use, without granting it — or `noctus` — any
+    # broader writable root.
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    mem_limit: 1g
+    # AGENTS_INSTANCE_ID (contract §E.9, roadmap D1) is deliberately
+    # left UNSET here, not baked as a fixed literal: `app/runtime/
+    # __init__.py::_resolve_instance_id` already prefers an explicit
+    # env override and falls back to `HOSTNAME`, which Docker sets to
+    # this container's own id. That id is stable across a `docker
+    # restart` of THIS container (satisfying "stable across restarts
+    # of the same container") and changes only when a genuinely NEW
+    # container is created on redeploy — which is correctly a new
+    # instance for the startup orphan-sweep (contract §E.2 security
+    # finding 5), not a bug. Set AGENTS_INSTANCE_ID explicitly only if
+    # a future orchestrator stops giving the container a stable
+    # hostname (e.g. Swarm/K8s pod churn).
 
   agents-tunnel:
     # Cloudflare quick-tunnel → ephemeral *.trycloudflare.com pointing at

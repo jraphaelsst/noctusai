@@ -67,7 +67,42 @@ COPY products/agents/backend/requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \
     && pip install -r /tmp/req.clean.txt
-# (no product extras)
+# agents: Julia's dedicated non-login uid + the CLI she is launched
+# through (contract §E.5, SEC-A/SEC-C; roadmap D1). `--no-create-home`:
+# there is no home dir to protect (nothing is ever baked there) — the
+# wrapper points HOME at an ephemeral tmpfs path instead (compose
+# `tmpfs: [/tmp]`). A distinct uid from `noctus` is what lets the
+# container drop capabilities down to CAP_SETUID/CAP_SETGID only
+# (compose `cap_add`) while still giving the SDK's `user="julia-cli"`
+# subprocess spawn a real uid boundary — /proc/<julia-cli-pid>/environ
+# is unreadable to any other uid in the container, kernel-enforced,
+# never app code.
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin \
+        --uid 1001 --user-group julia-cli
+
+# Native Claude Code CLI install — deliberately NOT
+# `npm install -g @anthropic-ai/claude-code`: the slim deploy
+# `runtime` target ships no Node (node is `runtime-watch`-only, see
+# below), and the native installer is a self-contained binary with no
+# Node runtime dependency. UNVERIFIED against a real network build —
+# this worktree has no docker daemon (see the D1 report); confirm this
+# exact invocation the first time this image is actually built, before
+# it ships (NOC-REMEDIATE[cli-install-verify], closed by SEC-C's
+# real-image proof).
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && install -o root -g root -m 0755 \
+         "$(find /root/.local/bin /root/.claude/local -maxdepth 1 -name claude -print -quit)" \
+         /usr/local/bin/claude
+ENV JULIA_CLAUDE_BIN=/usr/local/bin/claude
+
+# The env -i wrapper itself (contract §E.5) — placed here (root context,
+# before USER noctus below) so a plain COPY lands it root:root by
+# Docker's default. Its FINAL ownership/mode is reasserted after the
+# canonical `chown -R noctus:noctus /app` a few lines down — that
+# recursive chown would otherwise flip this one file to `noctus`,
+# silently undoing "root-owned, not app-writable" (see the
+# `_D_POST_CHOWN_EXTRA` hook below).
+COPY products/agents/backend/bin/julia-cli-exec /app/bin/julia-cli-exec
 
 # Product backend code + the built SPA.
 COPY products/agents/backend/ ./products/agents/backend/
@@ -82,7 +117,9 @@ ENV SERVE_SPA_DIR=/app/products/agents/frontend/dist
 # layer (measured 2026-05-19) — defeating base sharing for zero benefit
 # (venv is world-readable from `python -m venv`; noctus only needs read+exec).
 # Anti-pattern: never `chown -R` a large inherited base path. ~2.5GB fleet.
-RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app
+RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app \
+    && chown root:root /app/bin/julia-cli-exec \
+    && chmod 0755 /app/bin/julia-cli-exec
 USER noctus
 
 EXPOSE 8016
@@ -91,7 +128,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # Default CMD = plain uvicorn over the BAKED dist → this image is a
 # self-contained, shippable artifact (deploy/CI run it as-is).
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \
-     "--port", "8016", "--app-dir", "products/agents/backend"]
+     "--port", "8016", "--app-dir", "products/agents/backend", \
+     "--workers", "1"]
 
 # ── runtime-watch: SAME single container, local live-rebuild ────────────
 # ONE container, ONE shape, ONE command (`./start.sh`). The local

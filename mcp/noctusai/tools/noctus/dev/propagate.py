@@ -114,6 +114,91 @@ _C_CORE_DOCKER_SOCK = (
 _C_VOLUME_EXTRA: dict[str, str] = {"core": _C_CORE_DOCKER_SOCK}
 
 
+# ── per-product compose hardening extras (roadmap julia-agents-academia-
+# 2026-09, row D1) — injected after the healthcheck's `start_period` line,
+# before the tunnel service. Scoped to the two D1 slugs deliberately (N=2,
+# triage-not-formalize per KB § PATTERNS/architect/project-execution.md):
+# `read_only`+`tmpfs` need a per-product proof of every genuine write path
+# (§B.6's multipart import spool for academia; the Julia CLI's HOME for
+# agents), which the rest of the fleet has not been individually audited
+# for yet. Fleet-wide hardening is a separate, larger decision (architect),
+# not something this slice extends to by default. Mirrors the `_C_VOLUME_EXTRA`
+# hook shape exactly — a blanket re-propagate can never silently strip this.
+_C_HARDENING_ANCHOR_TPL = "      start_period: 20s\n\n  {slug}-tunnel:\n"
+_C_HARDENING_ACADEMIA = (
+    "    # D1 hardening (roadmap julia-agents-academia-2026-09, row D1).\n"
+    "    # Prod is first contact for this image (dev fleet dormant — KB §\n"
+    "    # PATTERNS/devops/dev-fleet-dormant.md), so the deploy shape carries\n"
+    "    # this from day one rather than bolting it on at cutover.\n"
+    "    cap_drop:\n"
+    "      - ALL\n"
+    "    security_opt:\n"
+    "      - no-new-privileges:true\n"
+    "    read_only: true\n"
+    "    # /tmp only, and only because it is genuinely needed: Starlette's\n"
+    "    # multipart parser (POST /api/import, contract §B.6) spools any\n"
+    "    # part over 1MB to a tempfile.SpooledTemporaryFile under the\n"
+    "    # process's tmp dir (verified live against the installed starlette\n"
+    "    # 0.49.3: formparsers.MultiPartParser.spool_max_size == 1024*1024),\n"
+    "    # and the contract caps a bundle at 20MB — every real import\n"
+    "    # spills to disk. mode=1777 mirrors standard /tmp semantics\n"
+    "    # (world-writable + sticky bit) so the `noctus` app user can\n"
+    "    # create its own spill files without a broader writable root.\n"
+    "    tmpfs:\n"
+    "      - /tmp:mode=1777,size=64m\n"
+    "    mem_limit: 512m\n"
+)
+_C_HARDENING_AGENTS = (
+    "    # D1 hardening (roadmap julia-agents-academia-2026-09, row D1).\n"
+    "    # Prod is first contact for this image (dev fleet dormant — KB §\n"
+    "    # PATTERNS/devops/dev-fleet-dormant.md).\n"
+    "    cap_drop:\n"
+    "      - ALL\n"
+    "    # SETUID/SETGID ONLY: contract §E.5 spawns the Julia CLI subprocess\n"
+    "    # under a DIFFERENT, dedicated uid (`user=\"julia-cli\"` on\n"
+    "    # ClaudeAgentOptions). Verified live against the installed SDK:\n"
+    "    # subprocess_cli.py passes `user=` through to `anyio.open_process`\n"
+    "    # -> `subprocess.Popen(user=...)`, whose POSIX exec path needs\n"
+    "    # CAP_SETUID (+ CAP_SETGID for the implicit initgroups() call when\n"
+    "    # no explicit `group=` is given) in the PARENT app process's\n"
+    "    # capability set to drop from `noctus` into `julia-cli`. Dropping\n"
+    "    # ALL caps without adding these back would silently break every\n"
+    "    # Julia turn the first time the SDK tries to spawn the CLI\n"
+    "    # (PermissionError) — exactly the silent-regression shape this\n"
+    "    # hardening slice must not introduce.\n"
+    "    cap_add:\n"
+    "      - SETUID\n"
+    "      - SETGID\n"
+    "    security_opt:\n"
+    "      - no-new-privileges:true\n"
+    "    read_only: true\n"
+    "    # /tmp only: the julia-cli-exec wrapper (contract §E.5) sets\n"
+    "    # HOME=/tmp/julia-home for the CLI subprocess. mode=1777 (standard\n"
+    "    # /tmp semantics) lets the `julia-cli` uid create that directory\n"
+    "    # itself on first use, without granting it — or `noctus` — any\n"
+    "    # broader writable root.\n"
+    "    tmpfs:\n"
+    "      - /tmp:mode=1777,size=64m\n"
+    "    mem_limit: 1g\n"
+    "    # AGENTS_INSTANCE_ID (contract §E.9, roadmap D1) is deliberately\n"
+    "    # left UNSET here, not baked as a fixed literal: `app/runtime/\n"
+    "    # __init__.py::_resolve_instance_id` already prefers an explicit\n"
+    "    # env override and falls back to `HOSTNAME`, which Docker sets to\n"
+    "    # this container's own id. That id is stable across a `docker\n"
+    "    # restart` of THIS container (satisfying \"stable across restarts\n"
+    "    # of the same container\") and changes only when a genuinely NEW\n"
+    "    # container is created on redeploy — which is correctly a new\n"
+    "    # instance for the startup orphan-sweep (contract §E.2 security\n"
+    "    # finding 5), not a bug. Set AGENTS_INSTANCE_ID explicitly only if\n"
+    "    # a future orchestrator stops giving the container a stable\n"
+    "    # hostname (e.g. Swarm/K8s pod churn).\n"
+)
+_C_HARDENING_EXTRA: dict[str, str] = {
+    "academia-de-reciclagem": _C_HARDENING_ACADEMIA,
+    "agents": _C_HARDENING_AGENTS,
+}
+
+
 def _render_compose(canon: str, slug: str, port: str) -> str:
     """Reproduce propagate-composes.sh substitutions EXACTLY, in order."""
     s = canon
@@ -144,6 +229,13 @@ def _render_compose(canon: str, slug: str, port: str) -> str:
     extra = _C_VOLUME_EXTRA.get(slug)
     if extra:
         s = s.replace(_C_VOLUME_ANCHOR, _C_VOLUME_ANCHOR + extra, 1)
+    # per-product compose hardening extras (roadmap D1) — anchor built with
+    # the ALREADY-substituted slug since the seed/{slug}-tunnel rename above
+    # has already run by this point.
+    hardening = _C_HARDENING_EXTRA.get(slug)
+    if hardening:
+        anchor = _C_HARDENING_ANCHOR_TPL.format(slug=slug)
+        s = s.replace(anchor, f"      start_period: 20s\n{hardening}\n  {slug}-tunnel:\n", 1)
     return s
 
 
@@ -186,11 +278,77 @@ _D_KE_EXTRA = (
     "    && apt-get install -y --no-install-recommends ffmpeg \\\n"
     "    && rm -rf /var/lib/apt/lists/*\n"
 )
+# agents: Julia's dedicated non-login uid + the CLI she is launched through
+# (contract projects/julia-agents-academia-CONTRACT.md §E.5, SEC-A/SEC-C;
+# roadmap D1). Injected as root, before the non-root-user step below.
+_D_AGENTS_EXTRA = (
+    "# agents: Julia's dedicated non-login uid + the CLI she is launched\n"
+    "# through (contract §E.5, SEC-A/SEC-C; roadmap D1). `--no-create-home`:\n"
+    "# there is no home dir to protect (nothing is ever baked there) — the\n"
+    "# wrapper points HOME at an ephemeral tmpfs path instead (compose\n"
+    "# `tmpfs: [/tmp]`). A distinct uid from `noctus` is what lets the\n"
+    "# container drop capabilities down to CAP_SETUID/CAP_SETGID only\n"
+    "# (compose `cap_add`) while still giving the SDK's `user=\"julia-cli\"`\n"
+    "# subprocess spawn a real uid boundary — /proc/<julia-cli-pid>/environ\n"
+    "# is unreadable to any other uid in the container, kernel-enforced,\n"
+    "# never app code.\n"
+    "RUN useradd --system --no-create-home --shell /usr/sbin/nologin \\\n"
+    "        --uid 1001 --user-group julia-cli\n"
+    "\n"
+    "# Native Claude Code CLI install — deliberately NOT\n"
+    "# `npm install -g @anthropic-ai/claude-code`: the slim deploy\n"
+    "# `runtime` target ships no Node (node is `runtime-watch`-only, see\n"
+    "# below), and the native installer is a self-contained binary with no\n"
+    "# Node runtime dependency. UNVERIFIED against a real network build —\n"
+    "# this worktree has no docker daemon (see the D1 report); confirm this\n"
+    "# exact invocation the first time this image is actually built, before\n"
+    "# it ships (NOC-REMEDIATE[cli-install-verify], closed by SEC-C's\n"
+    "# real-image proof).\n"
+    "RUN curl -fsSL https://claude.ai/install.sh | bash \\\n"
+    "    && install -o root -g root -m 0755 \\\n"
+    "         \"$(find /root/.local/bin /root/.claude/local -maxdepth 1 -name claude -print -quit)\" \\\n"
+    "         /usr/local/bin/claude\n"
+    "ENV JULIA_CLAUDE_BIN=/usr/local/bin/claude\n"
+    "\n"
+    "# The env -i wrapper itself (contract §E.5) — placed here (root context,\n"
+    "# before USER noctus below) so a plain COPY lands it root:root by\n"
+    "# Docker's default. Its FINAL ownership/mode is reasserted after the\n"
+    "# canonical `chown -R noctus:noctus /app` a few lines down — that\n"
+    "# recursive chown would otherwise flip this one file to `noctus`,\n"
+    "# silently undoing \"root-owned, not app-writable\" (see the\n"
+    "# `_D_POST_CHOWN_EXTRA` hook below).\n"
+    "COPY products/agents/backend/bin/julia-cli-exec /app/bin/julia-cli-exec\n"
+)
 # slug → backend-stage extra injected at the seed's {{BACKEND_EXTRA}} marker.
 _D_EXTRA: dict[str, str] = {
     "dev-team": _D_DEVTEAM_EXTRA,
     "knowledge-extractor": _D_KE_EXTRA,
+    "agents": _D_AGENTS_EXTRA,
 }
+# slug → CMD extra arg pair appended to the seed's plain-uvicorn CMD list.
+# agents ONLY: contract §E.9 approval wake-up is in-process (a pending
+# `approvals` row is resolved by the SAME worker that is awaiting it); a
+# second uvicorn worker would split conversations across processes with no
+# shared wake-up channel, silently orphaning approvals (roadmap trigger T6
+# tracks lifting this). Roadmap D1.
+_D_WORKERS_1: frozenset[str] = frozenset({"agents"})
+
+# The canonical non-root-user step (`useradd -m -u 1000 noctus && chown -R
+# noctus:noctus /app`) is a RECURSIVE chown that runs AFTER `_D_EXTRA`'s
+# injection point — so it silently flips ANY file `_D_EXTRA` placed under
+# /app back to `noctus`. agents needs one exception (the julia-cli-exec
+# wrapper must end up root-owned, not noctus-owned), so this hook appends
+# a re-assertion to the SAME `RUN` as the canonical chown, immediately
+# after it, in the SAME layer (no extra layer, no window where the wrapper
+# is transiently noctus-owned).
+_D_POST_CHOWN_ANCHOR = "RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app\nUSER noctus\n"
+_D_AGENTS_POST_CHOWN = (
+    "RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app \\\n"
+    "    && chown root:root /app/bin/julia-cli-exec \\\n"
+    "    && chmod 0755 /app/bin/julia-cli-exec\n"
+    "USER noctus\n"
+)
+_D_POST_CHOWN_EXTRA: dict[str, str] = {"agents": _D_AGENTS_POST_CHOWN}
 _D_PIP_RUN_SEED = (
     "RUN --mount=type=cache,target=/root/.cache/pip \\\n"
     "    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \\\n"
@@ -225,6 +383,26 @@ def _render_dockerfile(canon: str, slug: str, port: str) -> str:
         f"products/seed/backend/Dockerfile; edit there + re-propagate).",
     )
     s = s.replace('title="noctus-seed"', f'title="noctus-{slug}"')
+    # per-product post-chown ownership fixups (roadmap D1) — see
+    # `_D_POST_CHOWN_EXTRA`'s docstring for why this can't just live in
+    # `_D_EXTRA` above.
+    post_chown = _D_POST_CHOWN_EXTRA.get(slug)
+    if post_chown:
+        s = s.replace(_D_POST_CHOWN_ANCHOR, post_chown, 1)
+    # per-product deploy-CMD extras (roadmap D1) — `--workers 1`, built
+    # against the ALREADY-substituted port/slug (every earlier substitution
+    # has run by this point).
+    if slug in _D_WORKERS_1:
+        anchor = (
+            'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \\\n'
+            f'     "--port", "{port}", "--app-dir", "products/{slug}/backend"]\n'
+        )
+        replacement = (
+            'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \\\n'
+            f'     "--port", "{port}", "--app-dir", "products/{slug}/backend", \\\n'
+            '     "--workers", "1"]\n'
+        )
+        s = s.replace(anchor, replacement, 1)
     return s
 
 

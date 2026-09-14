@@ -81,5 +81,19 @@ class SeedSettings(ProductSettings):
     # (contract §E "Rate limit ... per user with the product limiter").
     messages_rate_limit: str = "20/minute"
 
+    # ── Julia CLI path (contract §E.5, roadmap D1) ──────────────────────
+    # Where the `env -i` wrapper (`bin/julia-cli-exec`) lands inside the
+    # image. Was a bare Python literal duplicated in two places with no
+    # link between them — `app/runtime/claude_runtime.py::DEFAULT_CLI_PATH`
+    # and the Dockerfile's `COPY ... /app/bin/julia-cli-exec` — so the two
+    # could silently drift (a Dockerfile relocation with no matching code
+    # change would fail every real Julia turn at subprocess-spawn time,
+    # never at build or test time). This field is now the single
+    # deploy-configurable source of truth: `get_agent_runtime` reads it
+    # and passes it to `ClaudeAgentSdkRuntime`, so the code default and
+    # the image layout only need to agree ONCE (here), and an operator
+    # can still override via `JULIA_CLI_PATH` if the image layout ever
+    # changes without a code change.
+    julia_cli_path: str = "/app/bin/julia-cli-exec"
 
 settings = SeedSettings()
