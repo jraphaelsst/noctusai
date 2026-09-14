@@ -1671,6 +1671,7 @@ export default function Settings() {
 const SUPERFICIE_ROTULOS: Record<string, string> = {
   cliente: "Documentos do cliente",
   atendimento: "Documentos do atendimento (negociação)",
+  imovel: "Documentos do imóvel",
 };
 
 /** `null` is "manter indefinidamente" — a real policy, never a blank. */
@@ -1870,7 +1871,7 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
     );
   }
 
-  const grupos = ["atendimento", "cliente"].filter((s) =>
+  const grupos = ["atendimento", "cliente", "imovel"].filter((s) =>
     data.items.some((p) => p.superficie === s)
   );
 

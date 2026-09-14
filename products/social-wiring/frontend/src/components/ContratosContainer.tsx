@@ -19,6 +19,7 @@
  */
 import { toast } from "sonner";
 
+import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
 import { MatriculaAtosContainer } from "@/components/MatriculaAtosContainer";
 import ContratosPanel from "@/components/card/ContratosPanel";
 import { useContratoMutations, useContratos } from "@/hooks/useContratos";
@@ -123,6 +124,9 @@ export function ContratosContainer({
       }}
       renderMatriculaAtos={(contratoId) => (
         <MatriculaAtosContainer contratoId={contratoId} codigo={imovelCodigo} />
+      )}
+      renderGeradorContrato={(contratoId, aberto) => (
+        <GeradorContratoContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
       )}
     />
   );

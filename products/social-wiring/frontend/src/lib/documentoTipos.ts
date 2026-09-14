@@ -42,13 +42,27 @@ export const TIPO_LABEL_CLIENTE: Record<string, string> = {
   certidao_nascimento: "Certidão de nascimento",
 };
 
+/** `imovel_documentos` — the property's own file (migration 075, retention
+ *  joined in 111). Keys mirror `documento_retencao_politicas`' seeded
+ *  platform rows for `superficie = 'imovel'`. */
+export const TIPO_LABEL_IMOVEL: Record<string, string> = {
+  matricula: "Matrícula do imóvel",
+  guia_iptu: "Guia de IPTU",
+  texto_extraido: "Texto transcrito da matrícula",
+};
+
 /**
  * The label for one type on one surface, falling back to the slug.
  *
  * `superficie` is the same value the retention API uses, so a caller never has
- * to know which of the two maps to reach for.
+ * to know which of the three maps to reach for.
  */
 export function rotuloTipo(superficie: string, tipo: string): string {
-  const map = superficie === "cliente" ? TIPO_LABEL_CLIENTE : TIPO_LABEL;
+  const map =
+    superficie === "cliente"
+      ? TIPO_LABEL_CLIENTE
+      : superficie === "imovel"
+        ? TIPO_LABEL_IMOVEL
+        : TIPO_LABEL;
   return map[tipo] ?? tipo;
 }

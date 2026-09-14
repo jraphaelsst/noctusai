@@ -371,10 +371,11 @@ export function useSaveClientesInactivityConfig() {
 // ─── Document retention policy tab (migration 079) ──────────────────────
 /** One document type's retention policy for this org. */
 export interface DocumentoRetencaoPolitica {
-  /** Which document surface this type belongs to. `imovel` is absent on
-   * purpose — `imovel_documentos` has no retention clock (a matrícula is a
-   * public registry document about a property, not personal data). */
-  superficie: "cliente" | "atendimento";
+  /** Which document surface this type belongs to. `imovel` joined in
+   * migration 111 — `imovel_documento_acessos` (109) gave the surface an
+   * access log, closing the reason 079 originally excluded it (a retention
+   * control with nothing logging its use would be a lying UI). */
+  superficie: "cliente" | "atendimento" | "imovel";
   tipo_documento: string;
   /** The EFFECTIVE value. `null` means "manter indefinidamente" — a real
    * policy, not a missing value, and it must never render as a blank field. */
@@ -418,7 +419,7 @@ export function useDocumentoRetencao() {
 }
 
 export interface DocumentoRetencaoSave {
-  superficie: "cliente" | "atendimento";
+  superficie: "cliente" | "atendimento" | "imovel";
   tipo_documento: string;
   retencao_dias: number | null;
   motivo?: string | null;

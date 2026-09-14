@@ -302,6 +302,51 @@ describe("ContratosPanel", () => {
     expect(screen.getByTestId("matricula-stub").textContent).toBe("c1");
   });
 
+  // ─── F5 — "Gerar contrato" render prop ─────────────────────────────────
+  it("omits the gerador-contrato section entirely when renderGeradorContrato is not wired", async () => {
+    const { screen } = await render({ contratos: [contrato()] });
+    expect(screen.queryByTestId("contrato-gerador-toggle-c1")).toBeNull();
+  });
+
+  it("🔴 'Gerar contrato' is a RENDER PROP that also carries the open state, so the caller can gate its lazy fetch on it", async () => {
+    const renderGeradorContrato = vi.fn((contratoId: string, aberto: boolean) => (
+      <div data-testid="gerador-stub">{`${contratoId}:${aberto}`}</div>
+    ));
+    const { screen, fireEvent } = await render({
+      contratos: [contrato()],
+      renderGeradorContrato,
+    });
+    // Called on first render too (Radix mounts collapsible content up front) —
+    // the caller is the one deciding what "closed" means for its fetch.
+    expect(renderGeradorContrato).toHaveBeenCalledWith("c1", false);
+
+    fireEvent.click(screen.getByTestId("contrato-gerador-toggle-c1"));
+    expect(renderGeradorContrato).toHaveBeenCalledWith("c1", true);
+    expect(screen.getByTestId("gerador-stub").textContent).toBe("c1:true");
+  });
+
+  it("🔴 a generated VERSION (not just a generated contract) is marked on the current-version block", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v9", origem: "gerado" }) })],
+    });
+    expect(screen.getByText("Gerado automaticamente")).toBeTruthy();
+  });
+
+  it("🔴 a generated VERSION is marked in the history list too", async () => {
+    const v1 = versao({ id: "v1", numero: 1, origem: "upload" });
+    const v2 = versao({ id: "v2", numero: 2, origem: "gerado" });
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ versao_atual: v2, versoes: [v1, v2] })],
+    });
+    fireEvent.click(screen.getByTestId("contrato-historico-toggle-c1"));
+    expect(screen.getByTestId("contrato-versao-v2").textContent).toContain(
+      "gerado automaticamente",
+    );
+    expect(screen.getByTestId("contrato-versao-v1").textContent).not.toContain(
+      "gerado automaticamente",
+    );
+  });
+
   it("clicking Abrir / Baixar calls back with the current version id", async () => {
     const onOpen = vi.fn();
     const onDownload = vi.fn();

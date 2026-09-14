@@ -78,6 +78,97 @@ export interface ContratoPatch {
   status?: ContratoStatus;
 }
 
+// ─── Contract generation (F5) ────────────────────────────────────────────
+// GET/.../geracao is a READINESS CHECK, not a mutation — the corretor opens
+// the section to see what is missing before anything is written. POST
+// /.../gerar is the one write, producing a new VERSAO with `origem: "gerado"`
+// in the SAME list `useContratos` already renders (see the module header:
+// a generated contract is not a second surface).
+
+export type GeracaoModelo = Extract<
+  ContratoModelo,
+  "compra_venda" | "compra_venda_a_vista" | "compra_venda_permuta"
+>;
+
+/** Where a missing field lives — drives the pt-BR group headers on the
+ *  "Gerar contrato" section so "falta X" always says where to go fill it. */
+export type GeracaoOnde =
+  | "partes"
+  | "certidoes"
+  | "imovel"
+  | "matricula"
+  | "negociacao"
+  | "financiamento"
+  | "imobiliaria"
+  | "contrato";
+
+export interface GeracaoFaltando {
+  campo: string;
+  rotulo: string;
+  onde: GeracaoOnde;
+  parte_id: string | null;
+}
+
+export interface GeracaoBloqueio {
+  codigo: string;
+  mensagem: string;
+}
+
+export interface GeracaoAviso {
+  codigo: string;
+  mensagem: string;
+}
+
+export interface ContratoGeracaoStatus {
+  contrato_id: string;
+  pronto: boolean;
+  modelo_derivado: GeracaoModelo;
+  /** `false` = the derived model disagrees with the contract's own `modelo`
+   *  — shown as a flag, never silently overridden. */
+  modelo_confere: boolean;
+  switches: Record<string, boolean>;
+  faltando: GeracaoFaltando[];
+  bloqueios: GeracaoBloqueio[];
+  avisos: GeracaoAviso[];
+}
+
+export interface GerarContratoInput {
+  /** `YYYY-MM-DD`. Absent = the backend's own default. */
+  assinatura_data?: string;
+}
+
+export interface GerarContratoResult {
+  /** Same version-row shape the contratos list returns, `origem: "gerado"`. */
+  versao: VersaoOut;
+  avisos: GeracaoAviso[];
+}
+
+interface ContratoIncompletoDetails {
+  faltando: GeracaoFaltando[];
+  bloqueios: GeracaoBloqueio[];
+}
+
+/**
+ * Thrown by `useContratoMutations().gerar` on the 400 `CONTRATO_INCOMPLETO`
+ * shape. `ApiError` (the seed `api` client's error type) only carries
+ * `status` + a flattened message string — it discards the response body, and
+ * this 400's `error.details.{faltando,bloqueios}` is exactly what the panel
+ * needs to show without a second round trip. Bypasses `api.post` the same
+ * way `postMultipart` bypasses it, for the same reason.
+ */
+export class ContratoGeracaoError extends Error {
+  readonly code: string;
+  readonly details: ContratoIncompletoDetails | null;
+  constructor(code: string, message: string, details: ContratoIncompletoDetails | null) {
+    super(message);
+    this.name = "ContratoGeracaoError";
+    this.code = code;
+    this.details = details;
+    // Restore prototype chain, same discipline as the seed `ApiError`.
+    Object.setPrototypeOf(this, ContratoGeracaoError.prototype);
+  }
+}
+
 export const STATUS_LABEL: Record<ContratoStatus, string> = {
   rascunho: "Rascunho",
   em_revisao: "Em revisão",
@@ -134,6 +225,9 @@ export { formatBytes };
 
 const KEY = (clienteId: string) => ["sw", "clientes", clienteId, "contratos"] as const;
 
+const GERACAO_KEY = (clienteId: string, contratoId: string) =>
+  [...KEY(clienteId), contratoId, "geracao"] as const;
+
 const base = (clienteId: string) =>
   `/api/clientes/${encodeURIComponent(clienteId)}/contratos`;
 
@@ -147,6 +241,30 @@ export function useContratos(clienteId: string | null) {
       return res?.contratos ?? [];
     },
     enabled: !!clienteId,
+  });
+}
+
+/**
+ * useContratoGeracao — GET .../geracao.
+ *
+ * 🔴 `enabled` IS THE LAZY GATE, not just `!!contratoId`. Unlike the acts
+ * selection matrícula section, this readiness check is opt-in per the F5
+ * brief: the caller passes `aberto` (whether the "Gerar contrato" collapsible
+ * is open) so the check fires only once a corretor actually looks, not for
+ * every contract on the card the moment it renders.
+ */
+export function useContratoGeracao(
+  clienteId: string | null,
+  contratoId: string | null,
+  aberto: boolean,
+) {
+  return useQuery({
+    queryKey: GERACAO_KEY(clienteId ?? "__none__", contratoId ?? "__none__"),
+    queryFn: () =>
+      api.get<ContratoGeracaoStatus>(
+        `${base(clienteId as string)}/${encodeURIComponent(contratoId as string)}/geracao`,
+      ),
+    enabled: aberto && !!clienteId && !!contratoId,
   });
 }
 
@@ -195,6 +313,33 @@ async function extractDetailMessage(response: Response): Promise<string> {
     if (joined) return joined;
   }
   return `Erro HTTP ${response.status}`;
+}
+
+/**
+ * POST JSON, reading the FULL `{error: {code, message, details}}` body on a
+ * non-2xx — `api.post` (seed client) throws `ApiError` with only a flattened
+ * message, and `CONTRATO_INCOMPLETO`'s `details.{faltando,bloqueios}` is
+ * exactly what the readiness section needs to show. See
+ * `ContratoGeracaoError`'s header note.
+ */
+async function postGerarContrato(
+  url: string,
+  body: GerarContratoInput,
+): Promise<GerarContratoResult> {
+  const headers = { ...(await getAuthHeader()), "Content-Type": "application/json" };
+  const response = await fetch(apiUrl(url), {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    const code = data?.error?.code ?? "erro_desconhecido";
+    const message = data?.error?.message ?? `Erro HTTP ${response.status}`;
+    const details = data?.error?.details ?? null;
+    throw new ContratoGeracaoError(code, message, details);
+  }
+  return (await response.json()) as GerarContratoResult;
 }
 
 export function useContratoMutations(clienteId: string) {
@@ -291,5 +436,28 @@ export function useContratoMutations(clienteId: string) {
       ),
   });
 
-  return { create, addVersao, patch, deleteVersao, deleteContrato, getUrl };
+  /**
+   * `gerar` — POST .../gerar. On success invalidates BOTH the contratos list
+   * (the new `origem: "gerado"` version has to show up where every other
+   * version does) and this contract's `geracao` query (a fresh check after
+   * the write, not the stale pre-generation one).
+   */
+  const gerar = useMutation({
+    mutationFn: ({
+      contratoId,
+      assinaturaData,
+    }: {
+      contratoId: string;
+      assinaturaData?: string;
+    }) =>
+      postGerarContrato(`${base(clienteId)}/${encodeURIComponent(contratoId)}/gerar`, {
+        assinatura_data: assinaturaData,
+      }),
+    onSuccess: (_data, variables) => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: GERACAO_KEY(clienteId, variables.contratoId) });
+    },
+  });
+
+  return { create, addVersao, patch, deleteVersao, deleteContrato, getUrl, gerar };
 }

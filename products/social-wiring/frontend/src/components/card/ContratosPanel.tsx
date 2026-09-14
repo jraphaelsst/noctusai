@@ -91,6 +91,13 @@ interface Props {
    *  Optional — omitted entirely (not even the collapsible header) while the
    *  caller has not wired it, so this panel never breaks when nobody has. */
   renderMatriculaAtos?: (contratoId: string) => ReactNode;
+  /** Renders the "Gerar contrato" section (F5) for one contract. `aberto` is
+   *  whether THIS card's collapsible is open — the caller (`GeradorContratoContainer`)
+   *  uses it to gate the readiness fetch, since Radix mounts collapsible
+   *  content up front (see the container's header note); it is not implied
+   *  by this callback being invoked at all. Same optional-omission discipline
+   *  as `renderMatriculaAtos`. */
+  renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
 }
 
 export default function ContratosPanel({
@@ -112,6 +119,7 @@ export default function ContratosPanel({
   onOpen,
   onDownload,
   renderMatriculaAtos,
+  renderGeradorContrato,
 }: Props) {
   const lista = contratos ?? [];
 
@@ -181,6 +189,7 @@ export default function ContratosPanel({
               onOpen={(versaoId) => onOpen(contrato.id, versaoId)}
               onDownload={(versaoId) => onDownload(contrato.id, versaoId)}
               renderMatriculaAtos={renderMatriculaAtos}
+              renderGeradorContrato={renderGeradorContrato}
             />
           ))}
         </div>
@@ -202,6 +211,7 @@ function ContratoCard({
   onOpen,
   onDownload,
   renderMatriculaAtos,
+  renderGeradorContrato,
 }: {
   contrato: ContratoOut;
   addingVersao: boolean;
@@ -215,11 +225,13 @@ function ContratoCard({
   onOpen: (versaoId: string) => void;
   onDownload: (versaoId: string) => void;
   renderMatriculaAtos?: (contratoId: string) => ReactNode;
+  renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [historicoAberto, setHistoricoAberto] = useState(false);
   const [matriculaAberta, setMatriculaAberta] = useState(false);
+  const [geradorAberto, setGeradorAberto] = useState(false);
 
   const atual = contrato.versao_atual;
   // numero DESC — the newest revision reads first.
@@ -425,6 +437,26 @@ function ContratoCard({
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
               {renderMatriculaAtos(contrato.id)}
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {renderGeradorContrato && (
+          <Collapsible open={geradorAberto} onOpenChange={setGeradorAberto}>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                data-testid={`contrato-gerador-toggle-${contrato.id}`}
+              >
+                <ChevronDown
+                  className={`h-3 w-3 transition-transform ${geradorAberto ? "rotate-180" : ""}`}
+                />
+                Gerar contrato
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              {renderGeradorContrato(contrato.id, geradorAberto)}
             </CollapsibleContent>
           </Collapsible>
         )}

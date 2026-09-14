@@ -237,6 +237,20 @@ const RETENCAO_CONTRATO = {
   ancora_rotulo: "a partir do envio do documento",
 };
 
+// Migration 111 — `imovel` joined the retention surfaces. Same anchor
+// ("envio") as `cliente`: a property has no single close date to anchor to.
+const RETENCAO_MATRICULA = {
+  ...RETENCAO_FGTS,
+  superficie: "imovel" as const,
+  tipo_documento: "matricula",
+  retencao_dias: null,
+  padrao_dias: null,
+  personalizado: false,
+  padrao_motivo: "Documento de registro público — mantido indefinidamente.",
+  ancora: "envio" as const,
+  ancora_rotulo: "a partir do envio do documento",
+};
+
 beforeEach(() => {
   mockUseCalendarStatus.mockReturnValue({
     data: {
@@ -810,6 +824,37 @@ describe("Settings — document retention policy", () => {
     expect(mockResetRetencao).toHaveBeenCalledWith({
       superficie: "atendimento",
       tipo_documento: "extratos_fgts",
+    });
+  });
+
+  // ─── `imovel` surface (migration 111) ───────────────────────────────────
+  it("🔴 renders the imóvel surface alongside cliente/atendimento, with its own group and pt-BR label", async () => {
+    setUser("owner");
+    stubRetencao([RETENCAO_FGTS, RETENCAO_CONTRATO, RETENCAO_MATRICULA]);
+    const { getByText, getByTestId } = await renderSettingsOnKeysTab();
+
+    expect(getByText("Documentos do imóvel")).toBeTruthy();
+    const linha = getByTestId("retencao-row-imovel-matricula");
+    expect(linha.textContent).toContain("Matrícula do imóvel");
+    expect(linha.textContent).toContain("matricula");
+    expect(linha.textContent).toContain("a partir do envio do documento");
+  });
+
+  it("saves an imóvel-surface override with the right superficie", async () => {
+    setUser("owner");
+    stubRetencao([RETENCAO_MATRICULA]);
+    const { getByTestId, getByLabelText, fireEvent } = await renderSettingsOnKeysTab();
+
+    fireEvent.click(getByTestId("retencao-alterar-matricula"));
+    fireEvent.change(getByLabelText(/Retenção em dias para Matrícula do imóvel/), {
+      target: { value: "3650" },
+    });
+    fireEvent.click(getByTestId("retencao-salvar-matricula"));
+
+    expect(mockSaveRetencao.mock.calls[0][0]).toEqual({
+      superficie: "imovel",
+      tipo_documento: "matricula",
+      retencao_dias: 3650,
     });
   });
 });
