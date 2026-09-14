@@ -211,6 +211,13 @@ export interface ClienteCardDialogProps {
    * order people appear in.
    */
   renderDocumentosDePessoa?: (clienteId: string) => ReactNode;
+  /**
+   * Renders one party's structured certidões (número, emissão, validade,
+   * resultado) under their documents panel — same render-prop reasoning as
+   * `renderDocumentosDePessoa`, but keyed by the atendimento PARTE id, because
+   * a certidão is linked to the person's role in this deal, not to the person.
+   */
+  renderCertidoesDaParte?: (parteId: string, nome: string) => ReactNode;
 
   /**
    * The Negociação and Financiamento/Escritura subpages.
@@ -745,7 +752,12 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                             )
                           }
                         >
-                          {() => props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
+                          {() => (
+                            <>
+                              {props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
+                              {props.renderCertidoesDaParte?.(parte.id, nomeDaParte(parte)) ?? null}
+                            </>
+                          )}
                         </PessoaDocumentosSection>
                       ))}
                     </div>
@@ -928,7 +940,12 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                           )
                         }
                       >
-                        {() => props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
+                        {() => (
+                          <>
+                            {props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
+                            {props.renderCertidoesDaParte?.(parte.id, nomeDaParte(parte)) ?? null}
+                          </>
+                        )}
                       </PessoaDocumentosSection>
                     ))
                   )}

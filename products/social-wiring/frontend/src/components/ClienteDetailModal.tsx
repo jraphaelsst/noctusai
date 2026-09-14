@@ -69,6 +69,7 @@ import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
 import { NegociacaoContainer } from "@/components/NegociacaoContainer";
 import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
 import { ContratosContainer } from "@/components/ContratosContainer";
+import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import { useContratoMutations } from "@/hooks/useContratos";
 
 export interface ClienteDetailModalProps {
@@ -655,6 +656,11 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       // is presentational and must stay renderable without a query client.
       renderDocumentosDePessoa={(pessoaId) => (
         <PessoaDocumentosPanel clienteId={pessoaId} />
+      )}
+      // Keyed by the atendimento PARTE id: certidões are linked to the
+      // person's role in this deal (migration 107), not to the person.
+      renderCertidoesDaParte={(parteId, nome) => (
+        <CertidoesPartePanel atendimentoParteId={parteId} nomeParte={nome} />
       )}
       // Thunks, not elements: a subpage nobody has opened costs no query.
       onSubpageChange={(aba) =>

@@ -1072,6 +1072,27 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
     expect(screen.getByTestId("painel-da-parte")).toBeTruthy();
   });
 
+  it("🔴 renders a party's certidões by PARTE id, only once expanded", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderCertidoes = vi.fn(() => <div data-testid="certidoes-da-parte" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [parte()],
+          renderCertidoesDaParte: renderCertidoes,
+        })}
+      />,
+    );
+    // Same lazy contract as the documents panel: the certidões query must not
+    // fire for a collapsed party.
+    expect(renderCertidoes).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("pessoa-documentos-comprador-parte-1-toggle"));
+    // The PARTE id, not the cliente_id — certidões hang off the role in the deal.
+    expect(renderCertidoes).toHaveBeenCalledWith("parte-1", expect.any(String));
+    expect(screen.getByTestId("certidoes-da-parte")).toBeTruthy();
+  });
+
   it("falls back to a visible placeholder when a party has no name", async () => {
     const { render, screen } = await import("@testing-library/react");
     render(
