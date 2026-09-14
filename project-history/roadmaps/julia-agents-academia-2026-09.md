@@ -238,6 +238,34 @@ The decision log keeps every step.
     - secrets: `APPROVAL_ASSERTION_SECRETS`, `PRIMARY_SOURCE_ALLOWLIST`, `ACADEMIA_API_TOKEN`, `JULIA_AGENT_ID`, `SOCIAL_WIRING_API_TOKEN`
     - **`JULIA_ANTHROPIC_API_KEY`**, mapped onto the agents service's `ANTHROPIC_API_KEY` in the prod compose. The bare name is the shared root `.env` key that dev-team already reads (`docker-compose.prod.yml:240`), and §E.5 requires Julia's key to be unshared.
     - the §F migration order
+- **2026-09-14 (user decisions + security review)**:
+  - **User: erp-imobiliario `046` waits for cutover.** erp's `POST /api/settings/api-tokens` keeps returning 500 in prod until then (0 tokens, no UI caller). Added to the M6 checklist; it stays unapplied.
+  - **User: fix the Julia chat event defects now.**
+    - The contract revision is on `dev` at `340c56b7`:
+      - §E.3: `approval.requested` carries the real id; `message.updated`; `message_id` on tool and approval events; placeholder `message.new`; the frontend rendering rule.
+      - §E.9: `broker.request(..., on_created)`; the escrita event order; `_approval` carries only the id; non-silent resume after a restart.
+      - §E.10: approval integrity.
+      - The canonical stream fixture: `products/agents/contract-fixtures/escrita-turn.events.json`.
+    - Two slices are dispatched in parallel against it: `feat/julia-approval-integrity-be` and `feat/julia-events-fe`.
+    - Root cause of the frontend miss: its test mocked an `approval.requested` id the backend never sent. Both sides now replay one fixture.
+  - **Security advisor review of SEC-C: ACCEPT-WITH-CHANGES.** The advisor built the design and measured it on Docker 29.4.3 / linuxkit 6.12.
+    - **Folded into D1 (in rework):**
+      - no `--bounding-set` (needs CAP_SETPCAP, so the container would not boot)
+      - the uid/gid/groups switch moved into the wrapper, which also covers the SDK's `-v` spawn that runs without `user=`
+      - a fail-closed root entrypoint
+      - `cap_add` KILL plus `init: true`, because uvicorn otherwise cannot reap the CLI
+      - setuid bits stripped
+      - a dedicated `/run/julia` tmpfs, the app `/tmp` at 1770, `umask 077`
+      - absolute paths and the bundled CLI path in the wrapper
+      - `DISABLE_AUTOUPDATER` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` in the allowlist
+    - **Folded into the backend slice:** §E.10. The escrita handler minted assertions from CLI-supplied `_approval`, allowing forged approvers, body swaps and replay.
+    - **Deferred, each with a named destination:**
+      - **Per-conversation HOME and cross-org transcript isolation** (all turns share uid 1001 and one HOME). Destination: SEC-C follow-up after D1 and the backend slice land. The choice is a per-turn uid pool or an accept-with-rationale ("requires CLI RCE; Julia has no code-executing tools"); it needs an LGPD flag and is the user's decision.
+      - **uid 0 reachable from a compromised app** (CAP_SETUID). Destination: record an accept-with-rationale in the contract at M6. Ask the owner about userns-remap on the prod daemon, and keep read-write volumes out of prod.
+      - **CLI network egress** reaching `127.0.0.1` and `noctus-net` services. Destination: SEC-C proof that every internal service returns 401 to an unauthenticated uid-1001 caller. An `iptables` owner-match rule stays optional.
+      - **Wheel supply chain** (the bundled CLI now arrives inside the pip wheel). Destination: a hash-pinning follow-up for `products/agents/backend/requirements.txt`.
+      - **Prod compose parity:** the security block is generated from one propagate source and reused by the M6 `docker-compose.prod.yml` entry, with a keeper parity check.
+      - **SEC-C kill tests** must assert via `os.kill` plus `/proc` liveness, because `Popen.terminate()` gives a false pass after a reap.
 
 ## Retrospective (filled at first trigger fire)
 
