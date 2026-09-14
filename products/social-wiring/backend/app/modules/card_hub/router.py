@@ -48,6 +48,9 @@ from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import financiamento_service as financiamento_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub import negociacao_service as negociacao_svc
+from app.modules.card_hub.negociacao_estruturada_router import (
+    router as negociacao_estruturada_router,
+)
 from app.modules.card_hub import roteiro_pdf_service as roteiro_pdf_svc
 from app.modules.card_hub import roteiros_service as roteiros_svc
 from app.modules.card_hub import services as svc
@@ -89,6 +92,13 @@ from app.modules.card_hub.schemas import (
 )
 
 router = APIRouter(prefix="/api/clientes", tags=["card_hub"])
+
+# 🔴 THE ONE INCLUDE LINE — migration 108's parcelas/favorecidos/
+# intermediários routes. See `negociacao_estruturada_router.py`'s own
+# docstring for why they live in a separate file rather than growing this
+# already-1300-line one, and why this is additive (no other line in this
+# file changes for it).
+router.include_router(negociacao_estruturada_router)
 
 
 def _auth_parts(auth):

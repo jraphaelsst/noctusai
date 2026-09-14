@@ -422,6 +422,17 @@ class NegociacaoPatchBody(StrictHttpModel):
     #: no financing at all, so the rule is not frozen into the contract.
     fgts: Optional[bool] = None
     observacoes: Optional[str] = Field(default=None, max_length=4000)
+    #: Possession terms (migration 108). `posse_data` is a date STRING
+    #: ("YYYY-MM-DD"), matching every other date field on this module's
+    #: bodies (`DatasPatchBody`, `AgendamentoCreateBody`'s `quando`) — never a
+    #: Pydantic `date`, so PostgREST's own string round-trip is the only
+    #: coercion in play.
+    posse_data: Optional[str] = Field(default=None, max_length=10)
+    posse_condicoes: Optional[str] = Field(default=None, max_length=2000)
+    #: Which permuta_ativos (101) row is the swap component of this deal, if
+    #: any. An explicit null clears it — see `imovel_codigo`'s identical
+    #: contract just above.
+    permuta_ativo_id: Optional[UUID] = None
 
 
 class NegociacaoDefaultsPatchBody(StrictHttpModel):
@@ -493,3 +504,99 @@ class ContratoPatchBody(StrictHttpModel):
             "cancelado",
         ]
     ] = None
+
+
+# ─── Negociação estruturada (migration 108) ──────────────────────────────
+
+
+class ParcelaCreateBody(StrictHttpModel):
+    """One structured installment. `favorecido_id` is validated in the
+    service against THIS atendimento — see migration 108's header for why
+    that is not a DB-level composite FK."""
+
+    tipo: Literal[
+        "sinal", "intermediaria", "financiamento", "fgts", "saldo", "direta"
+    ]
+    valor: Decimal = Field(ge=0)
+    vencimento: Optional[str] = Field(default=None, max_length=10)
+    evento: Optional[str] = Field(default=None, max_length=200)
+    forma_pagamento: Optional[str] = Field(default=None, max_length=50)
+    favorecido_id: Optional[UUID] = None
+    confissao_divida: bool = False
+    ordem: int = 0
+
+
+class ParcelaPatchBody(StrictHttpModel):
+    """Every field optional; absence means "leave alone" — same
+    `model_fields_set` contract `NegociacaoPatchBody` uses."""
+
+    tipo: Optional[
+        Literal[
+            "sinal", "intermediaria", "financiamento", "fgts", "saldo", "direta"
+        ]
+    ] = None
+    valor: Optional[Decimal] = Field(default=None, ge=0)
+    vencimento: Optional[str] = Field(default=None, max_length=10)
+    evento: Optional[str] = Field(default=None, max_length=200)
+    forma_pagamento: Optional[str] = Field(default=None, max_length=50)
+    favorecido_id: Optional[UUID] = None
+    confissao_divida: Optional[bool] = None
+    ordem: Optional[int] = None
+
+
+class ParcelasDividirBody(StrictHttpModel):
+    """Auto-suggest an even split of the current `saldo_nao_alocado` across
+    `num_parcelas` — a starting point the operator edits afterward, never a
+    save that blocks on completeness (see migration 108's header and
+    `noctusai_lib.domain.real_estate.parcelamento`)."""
+
+    num_parcelas: int = Field(ge=1, le=360)
+    tipo: Literal[
+        "sinal", "intermediaria", "financiamento", "fgts", "saldo", "direta"
+    ] = "direta"
+    forma_pagamento: Optional[str] = Field(default=None, max_length=50)
+    favorecido_id: Optional[UUID] = None
+    #: First due date; each subsequent parcela lands one month later. `None`
+    #: leaves every generated parcela's `vencimento` unset — the split is
+    #: about the AMOUNTS, a due-date schedule is a separate decision.
+    vencimento_inicial: Optional[str] = Field(default=None, max_length=10)
+
+
+class FavorecidoCreateBody(StrictHttpModel):
+    """Financial PII (migration 108) — RLS org-scoped, never logged."""
+
+    nome: str = Field(min_length=1, max_length=255)
+    cpf_cnpj: Optional[str] = Field(default=None, max_length=32)
+    banco: Optional[str] = Field(default=None, max_length=120)
+    agencia: Optional[str] = Field(default=None, max_length=32)
+    conta: Optional[str] = Field(default=None, max_length=32)
+    pix: Optional[str] = Field(default=None, max_length=140)
+
+
+class FavorecidoPatchBody(StrictHttpModel):
+    nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    cpf_cnpj: Optional[str] = Field(default=None, max_length=32)
+    banco: Optional[str] = Field(default=None, max_length=120)
+    agencia: Optional[str] = Field(default=None, max_length=32)
+    conta: Optional[str] = Field(default=None, max_length=32)
+    pix: Optional[str] = Field(default=None, max_length=140)
+
+
+class IntermediarioCreateBody(StrictHttpModel):
+    """`nome`/`creci` are always accepted directly — `corretor_id` is an
+    optional pointer into `lead_corretores` when the intermediary happens to
+    be in-house (migration 108's header)."""
+
+    corretor_id: Optional[UUID] = None
+    nome: str = Field(min_length=1, max_length=255)
+    creci: Optional[str] = Field(default=None, max_length=64)
+    tipo: Literal["percentual", "valor_fixo"] = "percentual"
+    valor: Optional[Decimal] = Field(default=None, ge=0)
+
+
+class IntermediarioPatchBody(StrictHttpModel):
+    corretor_id: Optional[UUID] = None
+    nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    creci: Optional[str] = Field(default=None, max_length=64)
+    tipo: Optional[Literal["percentual", "valor_fixo"]] = None
+    valor: Optional[Decimal] = Field(default=None, ge=0)

@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -1577,3 +1577,173 @@ def update_dados_imobiliaria(
         .execute()
     )
     return get_dados_imobiliaria(auth)
+
+
+# ─── Testemunhas (migration 108) ──────────────────────────────────────────
+#
+# The org's standing signature witnesses — usually the same two people
+# (office staff) reused across every contract, unlike `atendimento_
+# favorecidos`/`atendimento_intermediarios` (card_hub, per-deal). Same RLS
+# shape as `_IMOBILIARIA_TABLE` just above: `authenticated` writes its own
+# org's rows directly, no service-role gate.
+#
+# 🔴 MAX 2, CHECKED HERE FIRST. `org_testemunhas`'s `BEFORE INSERT` trigger
+# (migration 108) is the backstop; this check exists so a 3rd testemunha is a
+# named 409 ("máximo de 2") rather than a bare Postgres exception surfacing as
+# a 500 with no hint what was violated — same posture `negociacao_service.
+# _validar_split` takes for its own DB-mirrored CHECK.
+
+_TESTEMUNHAS_TABLE = "org_testemunhas"
+_TESTEMUNHAS_MAX = 2
+_TESTEMUNHAS_CAMPOS: tuple[str, ...] = ("nome", "cpf", "rg")
+
+
+class TestemunhaCreateBody(StrictHttpModel):
+    nome: str = Field(min_length=1, max_length=255)
+    cpf: Optional[str] = Field(default=None, max_length=32)
+    rg: Optional[str] = Field(default=None, max_length=32)
+
+
+class TestemunhaPatchBody(StrictHttpModel):
+    nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    cpf: Optional[str] = Field(default=None, max_length=32)
+    rg: Optional[str] = Field(default=None, max_length=32)
+
+
+def _testemunha_out(row: dict) -> dict:
+    saida = {campo: row.get(campo) for campo in _TESTEMUNHAS_CAMPOS}
+    saida["id"] = row.get("id")
+    saida["created_at"] = row.get("created_at")
+    saida["updated_at"] = row.get("updated_at")
+    return saida
+
+
+@router.get("/imobiliaria/testemunhas")
+def list_testemunhas(auth: tuple = Depends(get_current_user_org)) -> dict:
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    supabase = get_user_client(token)
+    rows = (
+        supabase
+        .schema("social_wiring")
+        .table(_TESTEMUNHAS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .order("created_at")
+        .execute()
+    ).data or []
+    return {"items": [_testemunha_out(r) for r in rows], "total": len(rows)}
+
+
+@router.post("/imobiliaria/testemunhas", status_code=201)
+def create_testemunha(
+    body: TestemunhaCreateBody,
+    auth: tuple = Depends(get_current_user_org),
+) -> dict:
+    user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    supabase = get_user_client(token)
+
+    existentes = (
+        supabase
+        .schema("social_wiring")
+        .table(_TESTEMUNHAS_TABLE)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if len(existentes) >= _TESTEMUNHAS_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"máximo de {_TESTEMUNHAS_MAX} testemunhas por organização",
+        )
+
+    linha = {
+        "id": str(uuid4()),
+        "org_id": str(org_id),
+        "nome": body.nome,
+        "cpf": body.cpf,
+        "rg": body.rg,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if getattr(user, "id", None):
+        linha["created_por"] = str(user.id)
+
+    response = (
+        supabase
+        .schema("social_wiring")
+        .table(_TESTEMUNHAS_TABLE)
+        .insert(linha)
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="testemunha insert returned no rows",
+        )
+    return _testemunha_out(response.data[0])
+
+
+@router.patch("/imobiliaria/testemunhas/{testemunha_id}")
+def update_testemunha(
+    testemunha_id: UUID,
+    body: TestemunhaPatchBody,
+    auth: tuple = Depends(get_current_user_org),
+) -> dict:
+    user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    supabase = get_user_client(token)
+
+    patch = body.model_dump(exclude_unset=True)
+    if not patch:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="no fields to update",
+        )
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if getattr(user, "id", None):
+        patch["updated_por"] = str(user.id)
+
+    response = (
+        supabase
+        .schema("social_wiring")
+        .table(_TESTEMUNHAS_TABLE)
+        .update(patch)
+        .eq("id", str(testemunha_id))
+        .eq("org_id", str(org_id))
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="testemunha not found",
+        )
+    return _testemunha_out(response.data[0])
+
+
+@router.delete(
+    "/imobiliaria/testemunhas/{testemunha_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+def delete_testemunha(
+    testemunha_id: UUID,
+    auth: tuple = Depends(get_current_user_org),
+) -> None:
+    _user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    supabase = get_user_client(token)
+    response = (
+        supabase
+        .schema("social_wiring")
+        .table(_TESTEMUNHAS_TABLE)
+        .delete()
+        .eq("id", str(testemunha_id))
+        .eq("org_id", str(org_id))
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="testemunha not found",
+        )

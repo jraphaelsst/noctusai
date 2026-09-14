@@ -49,6 +49,7 @@ from noctusai_lib.domain.real_estate.metadata import (
     build_youtube_metadata,
     imovel_to_property_data,
 )
+from noctusai_lib.domain.real_estate.parcelamento import dividir_em_parcelas_iguais
 from noctusai_lib.domain.real_estate.types import PropertyData
 from noctusai_lib.domain.real_estate.validators import (
     PRODUCT_CODE_PATTERN,
@@ -92,6 +93,8 @@ __all__ = [
     "gerar_matches_para_permuta",
     "build_youtube_metadata",
     "imovel_to_property_data",
+    # Even installment split (contract-terms drafting) — Decimal-exact.
+    "dividir_em_parcelas_iguais",
     "extract_product_code",
     "find_product_codes",
     "validate_product_code",

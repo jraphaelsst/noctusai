@@ -1,0 +1,428 @@
+"""Negociação estruturada — parcelas, favorecidos, intermediários (108).
+
+THE TWO CLAIMS WORTH DEFENDING
+------------------------------
+1. **`saldo_nao_alocado` and `completude` never block a save.** A parcela
+   schedule that does not yet cover `valor_negociado` is reported, not
+   refused — terms are drafted over several sittings.
+2. **A favorecido must belong to the SAME atendimento as the parcela.** Cross-
+   atendimento is a 404 naming the id, never a raw FK violation.
+
+Auth is not re-tested here — `test_auth_boundary.py` (generic sweep) and
+`test_auth_boundary_negociacao_estruturada.py` (this migration's routes)
+both assert a strict 401 on every mounted route.
+"""
+from __future__ import annotations
+
+from decimal import Decimal
+from uuid import uuid4
+
+from tests.modules.card_hub.conftest import ORG_ID, cliente_row
+
+
+def _auth() -> dict:
+    return {"Authorization": "Bearer test-token"}
+
+
+def _atendimento(aid: str, cliente_id: str, **over) -> dict:
+    row = {
+        "id": aid,
+        "org_id": ORG_ID,
+        "cliente_id": cliente_id,
+        "lead_id": None,
+        "meta_ads_lead_id": None,
+        "status": "aberta",
+        "substituida_por": None,
+        "arquivado": False,
+        "titulo": "Compra do apto",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "closed_at": None,
+    }
+    row.update(over)
+    return row
+
+
+def _seed(scoped, *, com_negociacao=False, negociacao_over=None, parcelas=None,
+          favorecidos=None, intermediarios=None):
+    """`com_negociacao=True` seeds `atendimento_negociacao` with
+    `_negociacao_row(aid)` — `aid` cannot be known to the CALLER before this
+    function generates it, so the row is built INSIDE, not passed in."""
+    cid, aid = str(uuid4()), str(uuid4())
+    scoped.set_table_data("clientes", [cliente_row(cid, nome="Luciano")])
+    scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+    scoped.set_table_data("cliente_membros", [])
+    scoped.set_table_data("lead_corretores", [])
+    negociacoes = (
+        [_negociacao_row(aid, **(negociacao_over or {}))] if com_negociacao else []
+    )
+    scoped.set_table_data("atendimento_negociacao", negociacoes)
+    scoped.set_table_data("negociacao_defaults", [])
+    scoped.set_table_data("imovel_dados", [])
+    scoped.set_table_data("atendimento_negociacao_parcelas", parcelas or [])
+    scoped.set_table_data("atendimento_favorecidos", favorecidos or [])
+    scoped.set_table_data("atendimento_intermediarios", intermediarios or [])
+    return cid, aid
+
+
+def _negociacao_row(aid: str, **over) -> dict:
+    row = {
+        "atendimento_id": aid,
+        "org_id": ORG_ID,
+        "imovel_codigo": None,
+        "valor_negociado": "500000.00",
+        "pct_comissao": "6",
+        "tem_parceria": False,
+        "pct_parceria": "50",
+        "pct_agencia": "50",
+        "pct_agentes": "45",
+        "pct_captador": "5",
+        "formas_pagamento": None,
+        "parcelas": None,
+        "financiamento": False,
+        "fgts": False,
+        "observacoes": None,
+        "posse_data": None,
+        "posse_condicoes": None,
+        "permuta_ativo_id": None,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": None,
+    }
+    row.update(over)
+    return row
+
+
+class TestTheAggregateView:
+    def test_a_deal_with_no_terms_reports_no_saldo_and_missing_valor(
+        self, client, scoped
+    ):
+        cid, aid = _seed(scoped)
+        r = client.get(
+            f"/api/clientes/{cid}/negociacao/estruturada", headers=_auth()
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["saldo_nao_alocado"] is None
+        assert body["parcelas"] == []
+        assert "valor_negociado" in body["completude"]["faltando"]
+        assert body["completude"]["completo"] is False
+
+    def test_a_valor_with_no_parcelas_is_the_full_saldo_unallocated(
+        self, client, scoped
+    ):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        body = client.get(
+            f"/api/clientes/{cid}/negociacao/estruturada", headers=_auth()
+        ).json()
+        assert body["saldo_nao_alocado"] == "500000.00"
+        assert "parcelas" in body["completude"]["faltando"]
+
+
+class TestParcelasDoNotBlockAPartialSave:
+    def test_a_single_parcela_short_of_the_total_reports_the_remainder(
+        self, client, scoped
+    ):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "sinal", "valor": "100000.00"},
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert len(body["parcelas"]) == 1
+        assert body["saldo_nao_alocado"] == "400000.00"
+        # Not refused — a partial schedule is a normal draft state.
+        assert body["completude"]["completo"] is False
+        assert "parcelas_nao_cobrem_valor_negociado" in body["completude"]["faltando"]
+
+    def test_parcelas_covering_the_full_valor_are_complete_on_that_axis(
+        self, client, scoped
+    ):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "sinal", "valor": "200000.00"},
+            headers=_auth(),
+        )
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "saldo", "valor": "300000.00"},
+            headers=_auth(),
+        )
+        body = r.json()
+        assert body["saldo_nao_alocado"] == "0.00" or body["saldo_nao_alocado"] == "0"
+        assert "parcelas_nao_cobrem_valor_negociado" not in body["completude"]["faltando"]
+
+    def test_over_allocating_is_reported_not_refused(self, client, scoped):
+        """🔴 `saldo_nao_alocado` can go negative — the service never blocks a
+        write on it."""
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "direta", "valor": "600000.00"},
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+        assert Decimal(r.json()["saldo_nao_alocado"]) == Decimal("-100000.00")
+
+    def test_a_parcela_can_be_updated_and_removed(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        created = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "sinal", "valor": "100000.00"},
+            headers=_auth(),
+        ).json()
+        parcela_id = created["parcelas"][0]["id"]
+
+        patched = client.patch(
+            f"/api/clientes/{cid}/negociacao/parcelas/{parcela_id}",
+            json={"valor": "150000.00", "confissao_divida": True},
+            headers=_auth(),
+        )
+        assert patched.status_code == 200, patched.text
+        assert patched.json()["parcelas"][0]["valor"] == "150000.00"
+        assert patched.json()["parcelas"][0]["confissao_divida"] is True
+
+        removed = client.delete(
+            f"/api/clientes/{cid}/negociacao/parcelas/{parcela_id}",
+            headers=_auth(),
+        )
+        assert removed.status_code == 204
+        depois = client.get(
+            f"/api/clientes/{cid}/negociacao/estruturada", headers=_auth()
+        ).json()
+        assert depois["parcelas"] == []
+
+    def test_an_unknown_parcela_is_a_404(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.patch(
+            f"/api/clientes/{cid}/negociacao/parcelas/{uuid4()}",
+            json={"valor": "1.00"},
+            headers=_auth(),
+        )
+        assert r.status_code == 404
+
+
+class TestFavorecidoScoping:
+    """🔴 A parcela's favorecido must belong to the SAME atendimento."""
+
+    def test_creating_a_favorecido_and_pointing_a_parcela_at_it(
+        self, client, scoped
+    ):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        fav = client.post(
+            f"/api/clientes/{cid}/negociacao/favorecidos",
+            json={"nome": "Maria Vendedora", "cpf_cnpj": "111.222.333-44",
+                  "banco": "104", "agencia": "1234", "conta": "56789-0",
+                  "pix": "maria@example.com"},
+            headers=_auth(),
+        )
+        assert fav.status_code == 201, fav.text
+        favorecido_id = fav.json()["favorecidos"][0]["id"]
+
+        parcela = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "saldo", "valor": "500000.00",
+                  "favorecido_id": favorecido_id},
+            headers=_auth(),
+        )
+        assert parcela.status_code == 201, parcela.text
+        assert parcela.json()["parcelas"][0]["favorecido_id"] == favorecido_id
+
+    def test_a_favorecido_from_another_atendimento_is_a_404_not_a_500(
+        self, client, scoped
+    ):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        outro_aid = str(uuid4())
+        estranho_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_favorecidos",
+            [{
+                "id": estranho_id, "org_id": ORG_ID,
+                "atendimento_id": outro_aid, "nome": "De outro card",
+                "cpf_cnpj": None, "banco": None, "agencia": None,
+                "conta": None, "pix": None,
+                "created_at": "2026-01-01T00:00:00+00:00", "created_por": None,
+                "updated_at": None, "updated_por": None,
+            }],
+        )
+
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "saldo", "valor": "500000.00",
+                  "favorecido_id": estranho_id},
+            headers=_auth(),
+        )
+        assert r.status_code == 404, r.text
+
+    def test_a_favorecido_can_be_updated_and_removed(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        fav = client.post(
+            f"/api/clientes/{cid}/negociacao/favorecidos",
+            json={"nome": "Maria"},
+            headers=_auth(),
+        ).json()
+        favorecido_id = fav["favorecidos"][0]["id"]
+
+        patched = client.patch(
+            f"/api/clientes/{cid}/negociacao/favorecidos/{favorecido_id}",
+            json={"pix": "novo-pix@example.com"},
+            headers=_auth(),
+        )
+        assert patched.status_code == 200, patched.text
+        assert patched.json()["favorecidos"][0]["pix"] == "novo-pix@example.com"
+
+        removed = client.delete(
+            f"/api/clientes/{cid}/negociacao/favorecidos/{favorecido_id}",
+            headers=_auth(),
+        )
+        assert removed.status_code == 204
+
+
+class TestIntermediarios:
+    def test_a_percentual_intermediario_round_trips(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={"nome": "Corretor Parceiro", "creci": "12345-F",
+                  "tipo": "percentual", "valor": "10"},
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+        item = r.json()["intermediarios"][0]
+        assert item["nome"] == "Corretor Parceiro"
+        assert item["valor"] == "10"
+
+    def test_a_percentual_over_100_is_refused(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={"nome": "X", "tipo": "percentual", "valor": "150"},
+            headers=_auth(),
+        )
+        assert r.status_code == 400
+        assert "0 e 100" in r.text
+
+    def test_a_valor_fixo_intermediario_round_trips(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={"nome": "X", "tipo": "valor_fixo", "valor": "5000.00"},
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["intermediarios"][0]["valor"] == "5000.00"
+
+    def test_remover_an_intermediario(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        created = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={"nome": "X"},
+            headers=_auth(),
+        ).json()
+        iid = created["intermediarios"][0]["id"]
+        removed = client.delete(
+            f"/api/clientes/{cid}/negociacao/intermediarios/{iid}",
+            headers=_auth(),
+        )
+        assert removed.status_code == 204
+
+
+class TestDividirSaldo:
+    """The pure split helper (`noctusai_lib.domain.real_estate.
+    parcelamento`), wired into a convenience endpoint."""
+
+    def test_divides_the_current_saldo_evenly_remainder_on_the_last(
+        self, client, scoped
+    ):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas/dividir-saldo",
+            json={"num_parcelas": 3},
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        valores = sorted(Decimal(p["valor"]) for p in body["parcelas"])
+        assert sum(valores) == Decimal("500000.00")
+        assert len(body["parcelas"]) == 3
+        assert body["saldo_nao_alocado"] == "0.00" or Decimal(body["saldo_nao_alocado"]) == 0
+
+    def test_dividing_with_no_valor_negociado_is_refused_by_name(
+        self, client, scoped
+    ):
+        cid, aid = _seed(scoped)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas/dividir-saldo",
+            json={"num_parcelas": 3},
+            headers=_auth(),
+        )
+        assert r.status_code == 400
+        assert "valor negociado" in r.text
+
+    def test_dividing_with_no_remaining_saldo_is_refused(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "direta", "valor": "500000.00"},
+            headers=_auth(),
+        )
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas/dividir-saldo",
+            json={"num_parcelas": 2},
+            headers=_auth(),
+        )
+        assert r.status_code == 400
+
+    def test_monthly_due_dates_when_a_starting_date_is_given(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas/dividir-saldo",
+            json={"num_parcelas": 3, "vencimento_inicial": "2026-01-31"},
+            headers=_auth(),
+        )
+        vencimentos = sorted(p["vencimento"] for p in r.json()["parcelas"])
+        assert vencimentos == ["2026-01-31", "2026-02-28", "2026-03-31"]
+
+
+class TestPosseAndPermutaOnNegociacao:
+    """migration 108's three new columns on `atendimento_negociacao` itself."""
+
+    def test_posse_data_and_condicoes_round_trip(self, client, scoped):
+        cid, aid = _seed(scoped)
+        r = client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"posse_data": "2026-06-01",
+                  "posse_condicoes": "na assinatura"},
+            headers=_auth(),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["posse_data"] == "2026-06-01"
+        assert r.json()["posse_condicoes"] == "na assinatura"
+
+    def test_an_unknown_permuta_ativo_is_a_404_naming_it(self, client, scoped):
+        cid, aid = _seed(scoped)
+        scoped.set_table_data("permuta_ativos", [])
+        estranho = str(uuid4())
+        r = client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"permuta_ativo_id": estranho},
+            headers=_auth(),
+        )
+        assert r.status_code == 404
+        assert estranho in r.text
+
+    def test_a_known_permuta_ativo_is_accepted(self, client, scoped):
+        cid, aid = _seed(scoped)
+        ativo_id = str(uuid4())
+        scoped.set_table_data(
+            "permuta_ativos",
+            [{"id": ativo_id, "org_id": ORG_ID}],
+        )
+        r = client.patch(
+            f"/api/clientes/{cid}/negociacao",
+            json={"permuta_ativo_id": ativo_id},
+            headers=_auth(),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["permuta_ativo_id"] == ativo_id

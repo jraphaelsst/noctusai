@@ -59,6 +59,15 @@ Routes
     POST                    /api/clientes/{id}/contratos/{cid}/versoes
     GET                     /api/clientes/{id}/contratos/{cid}/versoes/{vid}/url
     DELETE                  /api/clientes/{id}/contratos/{cid}/versoes/{vid}
+    GET                     /api/clientes/{id}/negociacao/estruturada
+    POST/PATCH/DELETE       /api/clientes/{id}/negociacao/parcelas[/{pid}]
+    POST                    /api/clientes/{id}/negociacao/parcelas/dividir-saldo
+    POST/PATCH/DELETE       /api/clientes/{id}/negociacao/favorecidos[/{fid}]
+    POST/PATCH/DELETE       /api/clientes/{id}/negociacao/intermediarios[/{iid}]
+
+(The last five rows — migration 108 — are mounted via
+`negociacao_estruturada_router.router`, `include_router`'d into `router`
+inside `router.py`; still one file, one `ModuleRegistration` below.)
 """
 from __future__ import annotations
 

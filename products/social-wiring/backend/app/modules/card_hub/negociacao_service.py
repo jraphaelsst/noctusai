@@ -50,7 +50,7 @@ from decimal import ROUND_DOWN, Decimal
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.primitives.exceptions import ValidationError_
+from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub import services as svc
 from app.modules.imovel_hub import busca_service as imovel_busca
@@ -95,6 +95,9 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
     "financiamento",
     "fgts",
     "observacoes",
+    "posse_data",
+    "posse_condicoes",
+    "permuta_ativo_id",
 )
 
 _PERCENTUAIS_INTERNOS = ("pct_agencia", "pct_agentes", "pct_captador")
@@ -332,6 +335,9 @@ def _saida(
             "financiamento": False,
             "fgts": False,
             "observacoes": None,
+            "posse_data": None,
+            "posse_condicoes": None,
+            "permuta_ativo_id": None,
             "created_at": None,
             "updated_at": None,
             "existe": False,
@@ -350,6 +356,9 @@ def _saida(
             "financiamento",
             "fgts",
             "observacoes",
+            "posse_data",
+            "posse_condicoes",
+            "permuta_ativo_id",
             "created_at",
             "updated_at",
             "existe",
@@ -493,8 +502,34 @@ def atualizar(
     if "imovel_codigo" in patch:
         patch["imovel_codigo"] = _canonizar_imovel(client, org_id, patch["imovel_codigo"])
 
+    if "permuta_ativo_id" in patch:
+        patch["permuta_ativo_id"] = _validar_permuta_ativo(
+            client, org_id, patch["permuta_ativo_id"]
+        )
+
     _gravar(client, org_id, atendimento_id, patch, usuario_id=usuario_id)
     return obter(client, org_id, cliente_id)
+
+
+def _validar_permuta_ativo(
+    client: Any, org_id: UUID, valor: Optional[Any]
+) -> Optional[str]:
+    """A 404 naming the id, never a raw FK violation — same argument
+    `_canonizar_imovel` makes for `imovel_codigo`, applied to the sibling
+    column migration 108 adds."""
+    if valor is None:
+        return None
+    rows = (
+        _t(client, "permuta_ativos")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(valor))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise NotFoundError("permuta_ativos", str(valor))
+    return str(valor)
 
 
 def _canonizar_imovel(client: Any, org_id: UUID, valor: Any) -> Optional[str]:
