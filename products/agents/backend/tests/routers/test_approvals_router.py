@@ -1,11 +1,26 @@
-"""Tests for ``/api/approvals`` (contract §E.2)."""
+"""Tests for ``/api/approvals`` (contract §E.2, §E.9).
+
+``TestDecideApproval`` drives G2's REAL ``StoreApprovalBroker`` — a
+successful decision needs a LIVE ``broker.request()`` future, which only
+exists once a real turn (via ``install_runtime`` + ``POST .../messages``)
+has actually reached the escrita branch and is blocked awaiting it. A row
+created directly on the store (bypassing ``broker.request()``) has no such
+future — deciding it is the ``orphaned`` case, not a stand-in limitation.
+"""
 from __future__ import annotations
 
 from uuid import uuid4
 
-from app.dependencies import get_approval_broker_dep
-from tests._runtime_standin import InProcessApprovalBroker
-from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, bind_user, seed_org_role
+from tests.routers.conftest import (
+    DEFAULT_ORG_ID,
+    DEFAULT_USER_ID,
+    bind_user,
+    install_runtime,
+    seed_active_agent_and_persona,
+    seed_org_role,
+    wait_for_pending_approval,
+    wait_turn_released,
+)
 
 
 def _seed_conversation(agents_client, *, owner_user_id=DEFAULT_USER_ID):
@@ -14,17 +29,32 @@ def _seed_conversation(agents_client, *, owner_user_id=DEFAULT_USER_ID):
     return agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, owner_user_id)
 
 
-def _install_broker(agents_client, *, auto_decide=None):
-    from app.main import app
+def _seed_live_pending_approval(agents_client, *, owner_user_id=DEFAULT_USER_ID):
+    """Drive a REAL turn through the escrita branch so G2's
+    ``StoreApprovalBroker`` has a live ``request()`` future waiting —
+    the only way ``resolve()`` succeeds rather than raising ``Orphaned``.
 
-    broker = InProcessApprovalBroker(
-        agents_client.stores.approvals,
-        agents_client.stores.conversations,
-        instance_id="test-instance",
-        auto_decide=auto_decide,
+    Contract §E.2: ``POST .../messages`` is owner-only (never an admin
+    bypass) — the caller identity MUST be re-bound to ``owner_user_id``
+    for the POST itself when a caller wants to decide as a DIFFERENT
+    (e.g. admin) identity afterward."""
+    agent = seed_active_agent_and_persona(agents_client)
+    conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, owner_user_id)
+    if owner_user_id != DEFAULT_USER_ID:
+        bind_user(agents_client, user_id=owner_user_id)
+        agents_client.mock_supabase.set_table_data(
+            "noctus_users",
+            [{"id": str(owner_user_id), "org_id": str(DEFAULT_ORG_ID), "org_role": "member"}],
+        )
+    install_runtime(
+        agents_client, [("escrita", "mcp__academia__kb_escrever", {"slug": "x"})]
     )
-    app.dependency_overrides[get_approval_broker_dep] = lambda: broker
-    return broker
+    resp = agents_client.post(
+        f"/api/conversations/{conv.id}/messages", json={"texto": "registre isso"}
+    )
+    assert resp.status_code == 202, resp.text
+    approval = wait_for_pending_approval(agents_client.stores.approvals, DEFAULT_ORG_ID)
+    return conv, approval
 
 
 class TestAuthBoundary:
@@ -92,21 +122,18 @@ class TestListApprovals:
 class TestDecideApproval:
     def test_requester_can_decide(self, agents_client):
         seed_org_role(agents_client, role="member")
-        broker = _install_broker(agents_client)
-        conversation = _seed_conversation(agents_client)
-        approval = agents_client.stores.approvals.create_pending(
-            DEFAULT_ORG_ID, conversation.id, "mcp__academia__kb_escrever", {"slug": "x"},
-            "Escrever x", "instance-a", DEFAULT_USER_ID,
-        )
+        conversation, approval = _seed_live_pending_approval(agents_client)
         resp = agents_client.post(
             f"/api/approvals/{approval.id}/decision", json={"aprovada": True}
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["decision"] == "aprovada"
+        wait_turn_released(agents_client.stores.conversations, DEFAULT_ORG_ID, conversation.id)
 
     def test_other_member_forbidden(self, agents_client):
+        # The requester-or-admin check runs BEFORE `broker.resolve` —
+        # a store-direct pending row (no live future) is sufficient here.
         seed_org_role(agents_client, role="member")
-        _install_broker(agents_client)
         owner_user = uuid4()
         conversation = _seed_conversation(agents_client, owner_user_id=owner_user)
         approval = agents_client.stores.approvals.create_pending(
@@ -120,28 +147,23 @@ class TestDecideApproval:
         assert resp.json()["code"] == "not_allowed"
 
     def test_admin_can_decide_someone_elses(self, agents_client):
-        seed_org_role(agents_client, role="owner")
-        _install_broker(agents_client)
         owner_user = uuid4()
-        conversation = _seed_conversation(agents_client, owner_user_id=owner_user)
-        approval = agents_client.stores.approvals.create_pending(
-            DEFAULT_ORG_ID, conversation.id, "mcp__academia__kb_escrever", {"slug": "x"},
-            "Escrever x", "instance-a", owner_user,
-        )
+        conversation, approval = _seed_live_pending_approval(agents_client, owner_user_id=owner_user)
+        # Switch back to the admin identity for the decision — the POST
+        # above ran AS `owner_user` (contract §E.2: POST .../messages is
+        # owner-only, never an admin bypass).
+        bind_user(agents_client, user_id=DEFAULT_USER_ID)
+        seed_org_role(agents_client, user_id=DEFAULT_USER_ID, role="owner")
         resp = agents_client.post(
             f"/api/approvals/{approval.id}/decision", json={"aprovada": False}
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["decision"] == "negada"
+        wait_turn_released(agents_client.stores.conversations, DEFAULT_ORG_ID, conversation.id)
 
     def test_deciding_twice_conflicts(self, agents_client):
         seed_org_role(agents_client, role="member")
-        _install_broker(agents_client)
-        conversation = _seed_conversation(agents_client)
-        approval = agents_client.stores.approvals.create_pending(
-            DEFAULT_ORG_ID, conversation.id, "mcp__academia__kb_escrever", {"slug": "x"},
-            "Escrever x", "instance-a", DEFAULT_USER_ID,
-        )
+        conversation, approval = _seed_live_pending_approval(agents_client)
         first = agents_client.post(
             f"/api/approvals/{approval.id}/decision", json={"aprovada": True}
         )
@@ -151,11 +173,28 @@ class TestDecideApproval:
         )
         assert second.status_code == 409, second.text
         assert second.json()["code"] == "already_decided"
+        wait_turn_released(agents_client.stores.conversations, DEFAULT_ORG_ID, conversation.id)
 
     def test_unknown_approval_404(self, agents_client):
         seed_org_role(agents_client, role="member")
-        _install_broker(agents_client)
         resp = agents_client.post(
             f"/api/approvals/{uuid4()}/decision", json={"aprovada": True}
         )
         assert resp.status_code == 404
+
+    def test_orphaned_approval_returns_409_not_500(self, agents_client):
+        """A `pendente` row with NO live `broker.request()` future waiting
+        on it (the process that created it restarted, or — as here — it
+        was never requested through the broker at all) is `orphaned`
+        (contract §E.9), through G2's REAL `StoreApprovalBroker`."""
+        seed_org_role(agents_client, role="member")
+        conversation = _seed_conversation(agents_client)
+        approval = agents_client.stores.approvals.create_pending(
+            DEFAULT_ORG_ID, conversation.id, "mcp__academia__kb_escrever", {"slug": "x"},
+            "Escrever x", "instance-a", DEFAULT_USER_ID,
+        )
+        resp = agents_client.post(
+            f"/api/approvals/{approval.id}/decision", json={"aprovada": True}
+        )
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["code"] == "orphaned"

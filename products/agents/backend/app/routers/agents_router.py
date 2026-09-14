@@ -91,6 +91,12 @@ async def toggle_agent(
         ) from exc
 
     if key == "one-chat":
+        # Contract §E.2: "one-chat: calls E.6, and the response reflects
+        # social-wiring's returned state." The local `agents.ativo` column
+        # is NEVER written for this key — one-chat's on/off truth lives
+        # entirely in social-wiring's `auto_reply_enabled`; this response's
+        # `ativo` mirrors THAT value (see `ativo_override` below), not a
+        # local write. Tech-lead-accepted interpretation, 2026-09-14.
         connection_id = (record.external_ref or {}).get("connection_id") if record.external_ref else None
         if not connection_id:
             raise HTTPException(

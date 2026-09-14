@@ -8,20 +8,21 @@ registry entry has no seam for this product's real ``SupabaseApiTokenResolver``
 documented reason) plus the four G1b routers (agents / persona /
 conversations+SSE / approvals).
 
-``app/runtime/`` (G2) is NOT imported here — every route that needs it
-resolves the runtime/broker lazily via ``app/dependencies.py``'s
-``get_agent_runtime_dep`` / ``get_approval_broker_dep`` /
-``get_build_julia_spec_dep``. The one exception is the startup hook below,
-which needs the broker to expire orphaned approvals (contract §E.2
-"Startup") — wrapped so a missing ``app.runtime`` degrades to a logged
-warning, never a boot failure (``KB § PATTERNS/backend/
-startup-hook-must-not-be-fatal.md``).
+``app/runtime/`` (G2) is a hard dependency of the routers (``TurnContext``
+/ ``Orphaned`` are imported at module level — both are lightweight,
+``claude_agent_sdk``-free). The runtime/broker/spec-builder INSTANCES are
+still resolved lazily via ``app/dependencies.py``'s ``get_agent_runtime_dep``
+/ ``get_approval_broker_dep`` / ``get_build_julia_spec_dep`` — deferring
+the real runtime's conditional SDK import to first use, not because the
+package might be absent. The startup hook below (contract §E.2 "Startup")
+is wrapped by the seed's own ``lifespan_startup`` contract so a hook
+failure degrades to a logged warning, never a boot failure
+(``KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md``).
 """
 from __future__ import annotations
 
 import logging
 
-from fastapi import HTTPException
 from noctusai_seed import create_product_app
 from noctusai_seed.auth_router import create_auth_router
 
@@ -31,7 +32,6 @@ from app.dependencies import (
     _legacy_jwt_resolver,
     auth_router_deps,
 )
-from app.exceptions import agents_http_exception_handler
 from app.rate_limit import limiter
 from app.routers.agents_router import router as agents_router
 from app.routers.approvals_router import router as approvals_router
@@ -57,18 +57,10 @@ _auth_router = create_auth_router(
 async def on_startup() -> None:
     """Contract §E.2 "Startup": every `pendente` approval row whose
     `instance_id` equals THIS instance becomes `expirada` — never other
-    instances' rows (security finding 5). No-op with a loud warning when
-    `app.runtime` (G2) hasn't landed yet."""
-    try:
-        from app.dependencies import get_approval_broker_dep
+    instances' rows (security finding 5)."""
+    from app.dependencies import get_approval_broker_dep
 
-        broker = get_approval_broker_dep()
-    except ModuleNotFoundError:
-        logger.warning(
-            "agents.startup.runtime_not_available — app.runtime is not built yet "
-            "(G2); skipping the orphaned-approval expiry sweep this boot."
-        )
-        return
+    broker = get_approval_broker_dep()
     expired = await broker.expire_orphans_on_startup()
     logger.info("agents.startup.expired_orphan_approvals count=%s", expired)
 
@@ -95,10 +87,3 @@ app = create_product_app(
     # product boot with no way to reach social-wiring's One Chat bridge.
     required_prod_config=["APPROVAL_ASSERTION_SECRETS", "SOCIAL_WIRING_API_TOKEN"],
 )
-
-# Contract §0 error envelope — see app/exceptions.py's module docstring for
-# the seed-defect this closes (structured HTTPException.detail dicts, e.g.
-# require_scopes's scope_missing/role_missing, were silently flattened by
-# the seed's generic handler). Registered AFTER create_product_app so it
-# replaces (not stacks on) the seed's default HTTPException handler.
-app.add_exception_handler(HTTPException, agents_http_exception_handler)

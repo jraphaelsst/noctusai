@@ -34,19 +34,3 @@ class AlreadyDecided(StoreError):
 
 class TurnInProgress(StoreError):
     """A conversation turn is already running; the caller must wait or reject."""
-
-
-class Orphaned(StoreError):
-    """G1b addition (contract §E.9 ``ApprovalBroker.resolve``: "raises
-    ``runtime.errors.Orphaned`` -> 409 ``orphaned``"). Declared HERE
-    (``app.stores.errors``), not in the not-yet-built ``app/runtime/``,
-    so ``app/routers/approvals_router.py`` has a stable, always-importable
-    exception type to catch regardless of whether G2 has landed —
-    ``app/routers/agents_router.py``'s lazy-import discipline only covers
-    obtaining the runtime/broker INSTANCES (contract §E.9), not naming an
-    exception TYPE the router's own ``except`` clause needs at every call,
-    including in this slice's own tests (which inject the E.9 stand-in
-    broker, never a real ``app.runtime``). **Contract note for G2**: the
-    real ``ApprovalBroker.resolve`` must raise THIS class (or a subclass)
-    for "no live turn is waiting" — flagged to the tech-lead as a
-    contract coordination point, not a silent assumption."""

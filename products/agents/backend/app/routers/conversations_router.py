@@ -2,11 +2,13 @@
 (contract §E.2, §E.3, §E.9, ``projects/julia-agents-academia-CONTRACT.md``).
 
 The turn loop (``_run_turn_background``) is the sole consumer of the E.9
-runtime seam. It obtains the runtime + broker via the lazy dependency
-functions in ``app/dependencies.py`` (never importing ``app.runtime`` at
-THIS module's top level — that package is G2's slice and does not exist on
-this branch's base) and drives exactly the sequence contract §E.9 "What the
-routes must do with a turn" describes.
+runtime seam. It imports the STABLE, dependency-free ``TurnContext``
+directly from ``app.runtime.types`` (G2's slice), but still obtains the
+runtime/broker/spec-builder INSTANCES via the lazy dependency functions in
+``app/dependencies.py`` — ``get_agent_runtime``'s real branch conditionally
+imports ``claude_agent_sdk``, a cost worth deferring to the first request
+that actually needs it. Drives exactly the sequence contract §E.9 "What
+the routes must do with a turn" describes.
 """
 # NOTE: deliberately NO `from __future__ import annotations` here — this
 # router has `@limiter.limit(...)`-decorated routes, and with postponed
@@ -52,7 +54,7 @@ from app.schemas.agents import (
 from app.stores.conversations import ConversationRecord
 from app.stores.errors import NotFound
 from app.stores.messages import MessageRecord
-from app.turn_context import TurnContext
+from app.runtime.types import TurnContext
 from noctusai_lib.api.auth.session import AuthContext, resolve_org_role
 from noctusai_lib.realtime import create_sse_router
 
@@ -322,23 +324,34 @@ def _apply_approval_event(
     blocks: list[dict[str, Any]], kind: str, payload: dict[str, Any]
 ) -> list[dict[str, Any]]:
     """Contract §E.7 ``ChatBlock`` (approval variant): ``{kind:"approval",
-    approvalId, resumo, diff?, decision}``."""
+    approvalId, resumo, diff?, decision}``.
+
+    G2's real runtime (``app/runtime/claude_runtime.py``) and its
+    ``FakeAgentRuntime`` both emit ``approval.requested`` WITHOUT an id
+    (the approval row doesn't exist yet at that instant — it's created
+    inside ``broker.request()``, which the runtime awaits AFTER emitting
+    this event) — only ``approval.resolved`` carries ``approval_id``.
+    Correlation is therefore by POSITION, not id: since escrita calls
+    within one script/turn are sequential (never interleaved — contract
+    §E.9 "Tool events are paired"), ``approval.resolved`` always closes
+    the MOST RECENT still-``pendente`` approval block."""
     blocks = list(blocks)
-    approval_id = payload.get("id") or payload.get("approval_id")
     if kind == "approval.requested":
         blocks.append(
             {
                 "kind": "approval",
-                "approvalId": approval_id,
+                "approvalId": None,
                 "resumo": payload.get("resumo"),
                 "diff": payload.get("diff"),
                 "decision": "pendente",
             }
         )
         return blocks
+    approval_id = payload.get("approval_id")
     decision = payload.get("decision", "pendente")
-    for block in blocks:
-        if block.get("kind") == "approval" and block.get("approvalId") == approval_id:
+    for block in reversed(blocks):
+        if block.get("kind") == "approval" and block.get("decision") == "pendente":
+            block["approvalId"] = approval_id
             block["decision"] = decision
             return blocks
     blocks.append(
@@ -373,10 +386,10 @@ async def _run_turn_background(
     Every collaborator (``runtime`` / ``broker`` / ``build_spec`` / the
     three stores) is resolved by the caller (the route handler) via
     FastAPI ``Depends(...)`` and passed in explicitly — this function
-    never calls a store factory or imports ``app.runtime`` itself, so it
-    works identically against the real runtime (once G2 lands) and
-    against the ``tests/_runtime_standin.py`` stand-in with a shared,
-    stateful Fake store."""
+    never calls a store factory itself, so it works identically against
+    the real runtime (``app.runtime.claude_runtime.ClaudeAgentSdkRuntime``)
+    and against G2's ``app.runtime.fake_runtime.FakeAgentRuntime`` over a
+    test's own shared, stateful Fake store."""
     current_message_id: UUID | None = None
     current_blocks: list[dict[str, Any]] = []
 

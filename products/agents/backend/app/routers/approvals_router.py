@@ -4,8 +4,12 @@
 The requester-or-admin check happens in THIS router, before calling
 ``broker.resolve`` — the broker's own error surface (``AlreadyDecided`` /
 ``Orphaned`` / ``NotFound``) doesn't express "may this caller decide".
-See ``app/stores/errors.py::Orphaned`` for why that exception is imported
-from ``app.stores.errors`` rather than the not-yet-built ``app.runtime.errors``.
+``Orphaned`` is ``app.runtime.errors.Orphaned`` — the canonical contract
+§E.9 location, raised by G2's real ``StoreApprovalBroker.resolve``.
+``app.runtime.errors`` has no heavy dependencies (no ``claude_agent_sdk``
+import at module scope — that only happens inside ``get_agent_runtime``'s
+real-runtime branch), so importing it here at module level never requires
+the SDK to be installed.
 """
 from __future__ import annotations
 
@@ -20,9 +24,10 @@ from app.dependencies import (
     get_core_client,
     require_member,
 )
+from app.runtime.errors import Orphaned
 from app.schemas.agents import ApprovalDecisionRequest, ApprovalListOut, ApprovalOut
 from app.stores.approvals import ApprovalRecord
-from app.stores.errors import AlreadyDecided, NotFound, Orphaned
+from app.stores.errors import AlreadyDecided, NotFound
 from noctusai_lib.api.auth.session import AuthContext, resolve_org_role
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])

@@ -226,13 +226,17 @@ require_member = require_scopes(
 
 # ── Runtime seam (contract §E.9) ────────────────────────────────────────────
 #
-# `app/runtime/` is G2's slice and does NOT exist on this branch's base —
-# these two dependency functions do the `from app.runtime import ...`
-# LAZILY, inside the function body, so importing `app.dependencies` (and
-# therefore every router that does `Depends(get_agent_runtime_dep)`) never
-# fails before G2 lands. Tests inject the E.9 stand-in
-# (`tests/_runtime_standin.py`) via `app.dependency_overrides[...]` — a
-# dependency seam, never monkeypatching.
+# `app/runtime/` is G2's slice (`get_agent_runtime` / `get_approval_broker`
+# / `build_julia_spec`). These three dependency functions still do the
+# `from app.runtime import ...` LAZILY, inside the function body — not
+# because the package might be absent any more (G2 shipped it), but
+# because `get_agent_runtime`'s real branch conditionally pulls in
+# `claude_agent_sdk`, and deferring the import keeps that cost out of
+# every request that never needs it. Tests override
+# `app.dependency_overrides[get_agent_runtime_dep | get_approval_broker_dep
+# | get_build_julia_spec_dep]` with G2's `FakeAgentRuntime` /
+# `StoreApprovalBroker` (over the shared test stores) / `build_julia_spec`
+# — a dependency seam, never monkeypatching.
 def get_agent_runtime_dep():
     from app.runtime import get_agent_runtime
 

@@ -1,94 +1,29 @@
 """Tests for ``/api/conversations`` — CRUD, the turn loop, SSE auth
-(contract §E.2, §E.3, §E.9)."""
+(contract §E.2, §E.3, §E.9).
+
+The turn-loop tests drive G2's REAL runtime/broker
+(``app.runtime.fake_runtime.FakeAgentRuntime`` /
+``app.runtime.broker.StoreApprovalBroker``) via ``install_runtime`` —
+never a G1b-local stand-in. An escrita script entry blocks on a real
+``asyncio.Future`` inside the broker until the test decides it through
+the ACTUAL ``POST /api/approvals/{id}/decision`` endpoint, exactly as a
+human approver would.
+"""
 from __future__ import annotations
 
 from uuid import uuid4
 
-from app.dependencies import (
-    get_agent_runtime_dep,
-    get_approval_broker_dep,
-    get_build_julia_spec_dep,
+from app.dependencies import get_agent_runtime_dep, get_approval_broker_dep
+from app.runtime.broker import StoreApprovalBroker
+from tests.routers.conftest import (
+    DEFAULT_ORG_ID,
+    DEFAULT_USER_ID,
+    install_runtime,
+    seed_active_agent_and_persona,
+    seed_org_role,
+    wait_for_pending_approval,
+    wait_turn_released,
 )
-from tests._runtime_standin import (
-    FakeAgentRuntime,
-    InProcessApprovalBroker,
-    fake_build_julia_spec,
-)
-from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, bind_user, seed_org_role
-
-
-def _install_runtime(agents_client, script, *, auto_decide=True):
-    from app.main import app
-
-    runtime = FakeAgentRuntime(script)
-    broker = InProcessApprovalBroker(
-        agents_client.stores.approvals,
-        agents_client.stores.conversations,
-        instance_id="test-instance",
-        auto_decide=auto_decide,
-    )
-    app.dependency_overrides[get_agent_runtime_dep] = lambda: runtime
-    app.dependency_overrides[get_approval_broker_dep] = lambda: broker
-    app.dependency_overrides[get_build_julia_spec_dep] = lambda: fake_build_julia_spec
-    return runtime, broker
-
-
-def _seed_active_agent_and_persona(agents_client, *, ativo: bool = True):
-    agents_client.stores.agents.ensure_default_agents(DEFAULT_ORG_ID)
-    agent = agents_client.stores.agents.set_active(DEFAULT_ORG_ID, "julia", ativo)
-    from app.stores.personas import PersonaInput
-
-    agents_client.stores.personas.create_version(
-        DEFAULT_ORG_ID,
-        agent.id,
-        PersonaInput(nome="Julia", papel="assistente", model="claude-sonnet-5", effort="medium"),
-        created_by=DEFAULT_USER_ID,
-    )
-    return agent
-
-
-def _wait_until(predicate, *, timeout_s: float = 10.0, interval_s: float = 0.01) -> bool:
-    """Poll ``predicate()`` from the test's (main) thread. Starlette's
-    ``TestClient`` runs the whole ASGI app on a background-thread event
-    loop that stays alive for the client's lifetime — a
-    ``asyncio.create_task(...)`` spawned inside a request handler keeps
-    running on that loop AFTER the response returns, exactly like
-    production. There is no cross-thread ``await``, so polling (not
-    ``asyncio.sleep``, which would run on the WRONG loop) is the correct
-    synchronization primitive here."""
-    import time
-
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(interval_s)
-    return predicate()
-
-
-def _wait_turn_released(conv_store, org_id, conversation_id) -> bool:
-    """Block until the given conversation's turn lock is free — i.e. the
-    background task's `finally: release_turn(...)` has run (contract
-    §E.9 points 5/6). MUST be called by every test that lets a
-    `POST .../messages` call reach the point of spawning a background
-    task, even one whose assertions don't care about the turn's outcome
-    — an un-joined task can still be mid-flight when the NEXT test's
-    fixture resets `app.dependency_overrides`, and since dependency
-    resolution for THAT task already completed (its `runtime`/`broker`
-    closures are fixed), the risk isn't cross-contamination of ITS OWN
-    run — it's wall-clock contention: the lingering task keeps running
-    on the SAME shared TestClient portal thread the next test's requests
-    also drive, competing for that thread's GIL slices and making
-    otherwise-generous polling windows unreliable. Uses a synthetic
-    probe instance id — never the real `INSTANCE_ID` — so it can never
-    accidentally satisfy (or corrupt) the real lock."""
-    probe_instance = "test-poll-probe"
-    acquired = _wait_until(
-        lambda: conv_store.try_acquire_turn(org_id, conversation_id, probe_instance, 1)
-    )
-    if acquired:
-        conv_store.release_turn(org_id, conversation_id, probe_instance)
-    return acquired
 
 
 class TestAuthBoundary:
@@ -122,7 +57,7 @@ class TestAuthBoundary:
 class TestCreateAndList:
     def test_create_and_get(self, agents_client):
         seed_org_role(agents_client, role="member")
-        _seed_active_agent_and_persona(agents_client)
+        seed_active_agent_and_persona(agents_client)
         resp = agents_client.post("/api/conversations", json={"titulo": "Primeira"})
         assert resp.status_code == 201, resp.text
         conv_id = resp.json()["id"]
@@ -133,7 +68,7 @@ class TestCreateAndList:
 
     def test_list_only_own(self, agents_client):
         seed_org_role(agents_client, role="member")
-        _seed_active_agent_and_persona(agents_client)
+        seed_active_agent_and_persona(agents_client)
         agents_client.post("/api/conversations", json={})
         resp = agents_client.get("/api/conversations")
         assert resp.status_code == 200, resp.text
@@ -143,7 +78,7 @@ class TestCreateAndList:
 class TestConversationOwnershipBoundary:
     def test_get_another_users_conversation_404(self, agents_client):
         seed_org_role(agents_client, role="member")
-        _seed_active_agent_and_persona(agents_client)
+        seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
         agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
@@ -153,7 +88,7 @@ class TestConversationOwnershipBoundary:
 
     def test_admin_can_read_another_users_conversation(self, agents_client):
         seed_org_role(agents_client, role="owner")
-        _seed_active_agent_and_persona(agents_client)
+        seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
         agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
@@ -163,7 +98,7 @@ class TestConversationOwnershipBoundary:
 
     def test_post_message_to_another_users_conversation_404(self, agents_client):
         seed_org_role(agents_client, role="owner")  # even admins may not POST
-        _seed_active_agent_and_persona(agents_client)
+        seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
         agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
@@ -175,7 +110,7 @@ class TestConversationOwnershipBoundary:
 
     def test_messages_get_another_users_conversation_404(self, agents_client):
         seed_org_role(agents_client, role="member")
-        _seed_active_agent_and_persona(agents_client)
+        seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
         agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
@@ -187,7 +122,7 @@ class TestConversationOwnershipBoundary:
 class TestPostMessage:
     def test_agent_off_409(self, agents_client):
         seed_org_role(agents_client, role="member")
-        _seed_active_agent_and_persona(agents_client, ativo=False)
+        seed_active_agent_and_persona(agents_client, ativo=False)
         conv = agents_client.stores.conversations.create(
             DEFAULT_ORG_ID,
             agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia").id,
@@ -201,9 +136,9 @@ class TestPostMessage:
 
     def test_turn_in_progress_409(self, agents_client):
         seed_org_role(agents_client, role="member")
-        agent = _seed_active_agent_and_persona(agents_client)
+        agent = seed_active_agent_and_persona(agents_client)
         conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
-        _install_runtime(agents_client, [{"event": "session.status", "payload": {"status": "ociosa"}}])
+        install_runtime(agents_client, [])
 
         # Simulate an already-held lock (another in-flight turn).
         agents_client.stores.conversations.try_acquire_turn(
@@ -217,21 +152,19 @@ class TestPostMessage:
 
     def test_empty_texto_rejected_422(self, agents_client):
         seed_org_role(agents_client, role="member")
-        agent = _seed_active_agent_and_persona(agents_client)
+        agent = seed_active_agent_and_persona(agents_client)
         conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
         resp = agents_client.post(f"/api/conversations/{conv.id}/messages", json={"texto": ""})
         assert resp.status_code == 422
 
     def test_rate_limited_after_threshold(self, agents_client, monkeypatch):
         seed_org_role(agents_client, role="member")
-        agent = _seed_active_agent_and_persona(agents_client)
+        agent = seed_active_agent_and_persona(agents_client)
         conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
         monkeypatch.setattr(
             "app.routers.conversations_router.settings.messages_rate_limit", "2/minute"
         )
-        _install_runtime(
-            agents_client, [{"event": "session.status", "payload": {"status": "ociosa"}}]
-        )
+        install_runtime(agents_client, [])
         statuses = []
         for _ in range(4):
             resp = agents_client.post(
@@ -244,26 +177,22 @@ class TestPostMessage:
                 # contention (rather than the rate limit itself) would
                 # mask the boundary this test exists to check, and an
                 # un-joined task must never be left running into the next
-                # test (see `_wait_turn_released`'s docstring).
-                _wait_turn_released(agents_client.stores.conversations, DEFAULT_ORG_ID, conv.id)
+                # test (see `wait_turn_released`'s docstring).
+                wait_turn_released(agents_client.stores.conversations, DEFAULT_ORG_ID, conv.id)
         assert 429 in statuses, statuses
 
 
 class TestFullScriptedTurn:
     def test_full_turn_persists_and_publishes_in_order(self, agents_client):
         seed_org_role(agents_client, role="member")
-        agent = _seed_active_agent_and_persona(agents_client)
+        agent = seed_active_agent_and_persona(agents_client)
         conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
 
         script = [
             {"event": "message.new", "payload": {"texto": "Vou verificar a KB."}},
             ("escrita", "mcp__academia__kb_escrever", {"slug": "x", "corpo_md": "y"}),
-            {
-                "event": "session.status",
-                "payload": {"status": "ociosa", "sdk_session_id": "sdk-session-1"},
-            },
         ]
-        _install_runtime(agents_client, script, auto_decide=True)
+        install_runtime(agents_client, script)
 
         resp = agents_client.post(
             f"/api/conversations/{conv.id}/messages", json={"texto": "Registre uma decisão"}
@@ -277,10 +206,21 @@ class TestFullScriptedTurn:
         msg_store = agents_client.stores.messages
         conv_store = agents_client.stores.conversations
 
+        # The escrita entry blocks the background task inside a REAL
+        # `broker.request()` future — decide it through the actual HTTP
+        # endpoint, exactly like a human approver would.
+        approval = wait_for_pending_approval(agents_client.stores.approvals, DEFAULT_ORG_ID)
+        decide_resp = agents_client.post(
+            f"/api/approvals/{approval.id}/decision", json={"aprovada": True}
+        )
+        assert decide_resp.status_code == 200, decide_resp.text
+
         # The turn is done once the lock is released (contract §E.9 point
         # 5/6 — `release_turn` is the LAST thing either the success or the
-        # failure branch does).
-        turn_finished = _wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
+        # failure branch does). G2's `FakeAgentRuntime` always appends a
+        # final `session.status` with a generated `sdk_session_id` once
+        # the script is exhausted.
+        turn_finished = wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
         assert turn_finished, "turn never released the lock within the timeout"
 
         messages = msg_store.list(DEFAULT_ORG_ID, conv.id, limite=50)
@@ -299,13 +239,14 @@ class TestFullScriptedTurn:
         assert tool_blocks[0]["status"] == "ok"
         assert len(approval_blocks) == 1
         assert approval_blocks[0]["decision"] == "aprovada"
+        assert approval_blocks[0]["approvalId"] == str(approval.id)
 
         conversation = conv_store.get_owned(DEFAULT_ORG_ID, conv.id, DEFAULT_USER_ID)
-        assert conversation.sdk_session_id == "sdk-session-1"
+        assert conversation.sdk_session_id, "session.status must carry a sdk_session_id"
 
     def test_exception_turn_yields_generic_system_message(self, agents_client):
         seed_org_role(agents_client, role="member")
-        agent = _seed_active_agent_and_persona(agents_client)
+        agent = seed_active_agent_and_persona(agents_client)
         conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
 
         class _ExplodingRuntime:
@@ -316,11 +257,9 @@ class TestFullScriptedTurn:
         from app.main import app
 
         app.dependency_overrides[get_agent_runtime_dep] = lambda: _ExplodingRuntime()
-        app.dependency_overrides[get_approval_broker_dep] = lambda: InProcessApprovalBroker(
-            agents_client.stores.approvals, agents_client.stores.conversations,
-            instance_id="test-instance",
+        app.dependency_overrides[get_approval_broker_dep] = lambda: StoreApprovalBroker(
+            agents_client.stores.approvals, timeout_seconds=5, instance_id="test-instance"
         )
-        app.dependency_overrides[get_build_julia_spec_dep] = lambda: fake_build_julia_spec
 
         resp = agents_client.post(
             f"/api/conversations/{conv.id}/messages", json={"texto": "vai falhar"}
@@ -328,7 +267,7 @@ class TestFullScriptedTurn:
         assert resp.status_code == 202, resp.text
 
         conv_store = agents_client.stores.conversations
-        turn_finished = _wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
+        turn_finished = wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
         assert turn_finished
 
         messages = agents_client.stores.messages.list(DEFAULT_ORG_ID, conv.id, limite=50)
@@ -350,7 +289,7 @@ class TestSSEStreamAuth:
 
     def test_non_owner_gets_404(self, agents_client):
         seed_org_role(agents_client, role="member")
-        agent = _seed_active_agent_and_persona(agents_client)
+        agent = seed_active_agent_and_persona(agents_client)
         other_user = uuid4()
         other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
         resp = agents_client.raw().get(
