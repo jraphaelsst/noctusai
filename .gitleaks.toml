@@ -159,6 +159,19 @@ regexes = [
   '''abcdef[0-9]{6,}''',
   '''supersecret''',
 
+  # ── Verified false positives, triaged 2026-09-14 ──────────────────────────
+  # The secret-scanner's OWN tests (`mcp/noctusai/tests/test_seed_secrets_scan.py`,
+  # hoisted to `noctusai_lib.security` in d8f280bf) and the academia import
+  # route's secret-refusal test (`test_import_router.py`, ac5eedf7) must feed
+  # secret-SHAPED strings to prove detection. Each value below was checked by
+  # eye: counting sequences / alphabet runs / hand-typed noise, never issued by
+  # any provider. Allowlisted BY EXACT VALUE (never by path), per the rule above.
+  '''pk_live_ABCDEFGHIJ1234567890abcdefgh''',
+  '''ghp_1234567890abcdefghijklmnopqrstuvwx''',
+  '''AKIAABCDEFGHIJKLMNOP''',
+  '''x9J2kLmQ8pZ7vN4rT1sW6yU3bH0dF5gA7cE1nR6''',
+  '''3f9a1c2e7b8d4f6a0c5e2b9d7f1a4c8e6b3d0f9a2c7e5b1d8f4a6c0e3b7d9f2a''',
+
   # n8n env-pointer form in workflow JSON — the CORRECT safe replacement.
   # Pattern: ={{ $env.VAR_NAME }} — resolves at runtime from container env.
   # This allowlist entry covers the global scan (both custom rules above
