@@ -70,6 +70,16 @@ class ApprovalRecord:
 
 
 class ApprovalStore(Protocol):
+    def get(self, org_id: UUID, id: UUID) -> ApprovalRecord:
+        """Read-only fetch by id, scoped to ``org_id``. Raises
+        :class:`~app.stores.errors.NotFound` if unknown or another org —
+        added for ``app.runtime.broker.StoreApprovalBroker.resolve``'s
+        NotFound-before-AlreadyDecided-before-Orphaned classification
+        (contract §E.9), which needs to read the row's current
+        ``decision`` WITHOUT mutating it before deciding whether to call
+        :meth:`decide` at all."""
+        ...
+
     def create_pending(
         self,
         org_id: UUID,
@@ -122,6 +132,12 @@ class FakeApprovalStore:
 
     def __init__(self) -> None:
         self._rows: dict[UUID, dict[str, Any]] = {}
+
+    def get(self, org_id: UUID, id: UUID) -> ApprovalRecord:
+        row = self._rows.get(id)
+        if row is None or row["org_id"] != org_id:
+            raise NotFound(f"approval {id} not found for org {org_id}")
+        return self._to_record(row)
 
     def create_pending(
         self,
@@ -225,6 +241,19 @@ class SupabaseApprovalStore:
 
     def _table(self):
         return self._client.schema(_SCHEMA).table(_TABLE)
+
+    def get(self, org_id: UUID, id: UUID) -> ApprovalRecord:
+        resp = (
+            self._table()
+            .select("*")
+            .eq("id", str(id))
+            .eq("org_id", str(org_id))
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise NotFound(f"approval {id} not found for org {org_id}")
+        return self._record(rows[0])
 
     def create_pending(
         self,
