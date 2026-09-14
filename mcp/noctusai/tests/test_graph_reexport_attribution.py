@@ -125,16 +125,36 @@ class TestRealGraphConsumerCounts:
             f"Expected ≥3 consumers of ResourceManager; got {max_consumers}"
         )
 
+    def test_page_skeleton_attributes_to_academia_pages(self, cc_by_target):
+        """PageSkeleton LEFT the shelfware set on 2026-09-14: academia-de-reciclagem's
+        pages import it through the canonical ``@noctusai/lib/design-system``
+        barrel. The zero-consumer assertion it used to carry had become false,
+        not the attribution — so it is now pinned positively, which keeps the
+        barrel-resolution coverage the shelfware check gave."""
+        consumers = [
+            src
+            for tid, sources in cc_by_target.items()
+            if "PageSkeleton" in tid and "seed/lib/frontend" in tid
+            for src in sources
+            if src.startswith("code:products/academia-de-reciclagem/")
+        ]
+        assert consumers, (
+            "Expected academia-de-reciclagem pages to consume PageSkeleton via "
+            "the design-system barrel. Targets with PageSkeleton: "
+            + str([t for t in cc_by_target if "PageSkeleton" in t])
+        )
+
 
 # ── 2. Zero-consumer shelfware ────────────────────────────────────────────────
 
 class TestShelfwareHasZeroConsumers:
     """Shelfware components must have zero consumes_component edges FROM product files.
 
-    ``PageSkeleton``, ``LLMSpendBadge``, ``FakeModeBadge``, ``ErrorBoundary``
-    are declared in the design-system barrel but not consumed directly by
-    products (they're used internally by the seed framework shell or not yet
-    used at all).
+    ``LLMSpendBadge``, ``FakeModeBadge``, ``ErrorBoundary`` are declared in the
+    design-system barrel but not consumed directly by products (they're used
+    internally by the seed framework shell or not yet used at all).
+    ``PageSkeleton`` was in this set until academia-de-reciclagem adopted it —
+    see ``TestRealGraphConsumerCounts.test_page_skeleton_attributes_to_academia_pages``.
 
     Checking "zero PRODUCT consumers" (source contains a product path), not
     zero edges total — seed-internal references between barrel siblings are
@@ -151,12 +171,6 @@ class TestShelfwareHasZeroConsumers:
                     if src.startswith("code:products/"):
                         result.append(src)
         return result
-
-    def test_page_skeleton_zero_product_consumers(self, cc_by_target):
-        consumers = self._product_consumers(cc_by_target, "PageSkeleton")
-        assert consumers == [], (
-            f"PageSkeleton has unexpected direct product consumers: {consumers}"
-        )
 
     def test_llm_spend_badge_zero_product_consumers(self, cc_by_target):
         consumers = self._product_consumers(cc_by_target, "LLMSpendBadge")
