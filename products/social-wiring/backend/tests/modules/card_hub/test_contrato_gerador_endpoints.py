@@ -9,12 +9,16 @@ WHAT THESE PIN
   faltando the GET reported — nothing rendered, nothing saved;
 - a fully-seeded card (complementos injected through the DI seam) is read
   through the real services and saved as a version with origem='gerado' and a
-  64-hex `contexto_sha256`, and the matrícula text read is access-logged.
+  64-hex `contexto_sha256`, and the matrícula text read is access-logged;
+- the SAVED version is a real PDF (`%PDF-` magic bytes), `mime_type
+  application/pdf`, a `.pdf` filename — the `.docx` the generator builds
+  internally never reaches storage (contract §5).
 
 All data is synthetic (see `contrato_gerador_fixtures`).
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from uuid import uuid4
 
@@ -22,6 +26,7 @@ import pytest
 
 from app.modules.card_hub.contrato_gerador.deps import get_complementos_contrato
 from app.modules.card_hub.contrato_gerador.frases import CERTIDOES
+from app.modules.card_hub.deps import BUCKET
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
@@ -295,8 +300,36 @@ class TestGerar:
         assert len(versoes) == 1 and versoes[0]["origem"] == "gerado"
         assert re.fullmatch(r"[0-9a-f]{64}", versoes[0]["contexto_sha256"])
         assert versoes[0]["tamanho_bytes"] > 0
-        assert versoes[0]["mime_type"].endswith("wordprocessingml.document")
+        # The user never receives the internal `.docx` — the stored version
+        # is a real PDF, never `.docx` mime/extension (contract §5).
+        assert versoes[0]["mime_type"] == "application/pdf"
+        assert versoes[0]["nome_original"].endswith(".pdf")
+        assert not versoes[0]["mime_type"].endswith("wordprocessingml.document")
+        assert not versoes[0]["nome_original"].endswith(".docx")
+        blob = asyncio.run(fake_storage.get(bucket=BUCKET, key=versoes[0]["storage_path"]))
+        assert blob is not None and blob.data[:5] == b"%PDF-"
+        assert body["versao"]["mime_type"] == "application/pdf"
+        assert body["versao"]["nome_original"].endswith(".pdf")
         assert any(a["acao"] == "text_view" for a in _rows(scoped,"imovel_documento_acessos"))
 
         listagem = client.get(f"/api/clientes/{ids['cliente']}/contratos", headers=_auth()).json()
         assert listagem["contratos"][0]["versao_atual"]["origem"] == "gerado"
+
+    def test_a_character_the_pdf_font_cannot_represent_is_a_refusal_not_a_500(
+        self, client, scoped, fake_storage, complementos_injetados
+    ):
+        # `render_abnt_pdf` (seed) raises `UnsupportedGlyphError` for a
+        # character the core Times font's WinAnsiEncoding cannot represent;
+        # `service.gerar` maps it to `ContratoPdfNaoGerado` (422) — never a
+        # silent 500 (contract §5).
+        ids = _seed_completo(scoped)
+        complementos_injetados(ids["intermediario"], ids["fav_org"])
+        testemunhas = _rows(scoped, "org_testemunhas")
+        testemunhas[0] = {**testemunhas[0], "nome": "Testemunha 🏠 Um"}
+        scoped.set_table_data("org_testemunhas", testemunhas)
+
+        r = client.post(_url(ids, "gerar"), json={"assinatura_data": "2026-09-14"}, headers=_auth())
+
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "CONTRATO_PDF_NAO_GERADO"
+        assert _rows(scoped, "atendimento_contrato_versoes") == []

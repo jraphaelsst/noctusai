@@ -51,6 +51,12 @@ from noctusai_lib.integrations.documents import (
     normalize,
     segment_matricula_atos,
 )
+from noctusai_lib.integrations.documents.abnt import clip_ranges
+from noctusai_lib.integrations.documents.formatting import (
+    FormatRange,
+    ranges_from_json,
+    ranges_to_json,
+)
 from noctusai_lib.primitives.exceptions import (
     ConflictError,
     NotFoundError,
@@ -694,6 +700,39 @@ def _exigir_contrato(client: Any, org_id: UUID, contrato_id: UUID) -> dict:
     return rows[0]
 
 
+def _rebase_formatacao_da_selecao(
+    atos: list[dict], formatacao_extracao: tuple[FormatRange, ...]
+) -> tuple[FormatRange, ...]:
+    """The extraction's DOCUMENT-level `formatacao` (offsets into the whole
+    `texto_extraido`, migration 113) -> ranges local to `atos`' own
+    concatenated output text (`"".join(a["texto"] for a in atos)`),
+    contract §5's "re-based onto the selected text".
+
+    Each act is `[char_inicio, char_fim)` of `texto_extraido`; a range is
+    clipped PER act (a range crossing an act boundary is split, same rule
+    `abnt.paragraphs_from_text` applies at paragraph boundaries — reused
+    via `clip_ranges`, not re-derived), then shifted from "0 inside this
+    act" to its position in the OUTPUT text by the cumulative length of
+    the acts already emitted. Acts are walked in `atos`' own (contract)
+    order, not extraction order, matching how `texto` itself is built.
+    """
+    out: list[FormatRange] = []
+    deslocamento = 0
+    for ato in atos:
+        inicio, fim = ato["char_inicio"], ato["char_fim"]
+        for r in clip_ranges(formatacao_extracao, inicio, fim):
+            out.append(
+                FormatRange(
+                    start=r.start + deslocamento,
+                    end=r.end + deslocamento,
+                    bold=r.bold,
+                    underline=r.underline,
+                )
+            )
+        deslocamento += fim - inicio
+    return tuple(out)
+
+
 def obter_selecao(
     client: Any, org_id: UUID, contrato_id: UUID, *, usuario_id: Optional[Any] = None
 ) -> dict:
@@ -702,7 +741,10 @@ def obter_selecao(
     `texto` is the plain concatenation of the slices — no separator is added,
     because the segmenter's spans already carry their own line breaks.
     Selecting every act in matrícula order therefore yields `texto_extraido`
-    byte for byte.
+    byte for byte. `formatacao` is `texto`'s own bold/underline ranges,
+    re-based from the extraction's document-level ranges (contract
+    `projects/abnt-formatting-CONTRACT.md` §5) — `[]` for a selection made
+    before the source carried formatting at all.
     """
     _exigir_contrato(client, org_id, contrato_id)
     selecao = sorted(
@@ -718,6 +760,7 @@ def obter_selecao(
             "codigo": None,
             "atos": [],
             "texto": "",
+            "formatacao": [],
             "selecionado_por": None,
             "selecionado_em": None,
         }
@@ -754,6 +797,10 @@ def obter_selecao(
             }
         )
 
+    formatacao = _rebase_formatacao_da_selecao(
+        atos, ranges_from_json(extracao.get("formatacao"))
+    )
+
     resolved = table_reads.resolve_actors(
         {selecao[0].get("selecionado_por")} - {None}
     )
@@ -763,6 +810,7 @@ def obter_selecao(
         "codigo": extracao.get("codigo"),
         "atos": atos,
         "texto": "".join(a["texto"] for a in atos),
+        "formatacao": ranges_to_json(formatacao),
         "selecionado_por": table_reads.actor(resolved, selecao[0].get("selecionado_por")),
         "selecionado_em": selecao[0].get("created_at"),
     }

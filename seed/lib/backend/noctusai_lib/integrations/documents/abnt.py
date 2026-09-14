@@ -64,10 +64,12 @@ from noctusai_lib.integrations.documents.formatting import (
 
 __all__ = [
     "UnsupportedGlyphError",
+    "clip_ranges",
     "paragraphs_from_text",
     "paragraphs_from_docx",
     "render_abnt_pdf",
     "render_word_html",
+    "runs_from_ranges",
 ]
 
 
@@ -153,11 +155,14 @@ def _paragraph_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def _clip_ranges(ranges: Sequence[FormatRange], start: int, end: int) -> list[FormatRange]:
+def clip_ranges(ranges: Sequence[FormatRange], start: int, end: int) -> list[FormatRange]:
     """`ranges` overlapping `[start, end)`, clipped to it and re-based to
-    a `0` origin. A range crossing a paragraph boundary is clipped PER
-    paragraph, per contract — the part outside `[start, end)` is simply
-    not represented in this paragraph's output."""
+    a `0` origin. A range crossing a boundary is clipped PER slice — the
+    part outside `[start, end)` is simply not represented in this slice's
+    output. Public: used both by `paragraphs_from_text` (per paragraph)
+    and by a caller re-basing document-level ranges onto a SUB-slice of
+    the owning text (e.g. a matrícula quote's selected acts, contract
+    `projects/abnt-formatting-CONTRACT.md` §5)."""
     out: list[FormatRange] = []
     for r in ranges:
         lo, hi = max(r.start, start), min(r.end, end)
@@ -166,13 +171,19 @@ def _clip_ranges(ranges: Sequence[FormatRange], start: int, end: int) -> list[Fo
     return out
 
 
-def _runs_from_ranges(paragraph_text: str, ranges: Sequence[FormatRange]) -> tuple[Run, ...]:
+def runs_from_ranges(paragraph_text: str, ranges: Sequence[FormatRange]) -> tuple[Run, ...]:
     """Split `paragraph_text` into `Run`s at every `FormatRange` boundary.
-    Between two CONSECUTIVE breakpoints, every range either fully covers
-    the segment or is fully outside it (breakpoints are exactly the set
-    of range starts/ends, so a range boundary strictly inside a segment
-    cannot exist) — so `bold`/`underline` for a segment is simply the OR
-    over ranges covering it. Overlapping ranges therefore compose."""
+    `ranges` must already be LOCAL (0-origin) to `paragraph_text` — clip
+    with `clip_ranges` first if they are not. Between two CONSECUTIVE
+    breakpoints, every range either fully covers the segment or is fully
+    outside it (breakpoints are exactly the set of range starts/ends, so
+    a range boundary strictly inside a segment cannot exist) — so
+    `bold`/`underline` for a segment is simply the OR over ranges
+    covering it. Overlapping ranges therefore compose. Public: the
+    flat (non-paragraph-split) building block a caller building a single
+    docxtpl `RichText` context value from `(text, ranges)` needs directly
+    — `paragraphs_from_text` is the paragraph-splitting caller of this
+    same primitive."""
     if not paragraph_text:
         return ()
     breakpoints = sorted({0, len(paragraph_text), *(r.start for r in ranges), *(r.end for r in ranges)})
@@ -200,8 +211,8 @@ def paragraphs_from_text(
     for start, end in _paragraph_spans(text):
         if end <= start:
             continue
-        local_ranges = _clip_ranges(formatting, start, end)
-        runs = _runs_from_ranges(text[start:end], local_ranges)
+        local_ranges = clip_ranges(formatting, start, end)
+        runs = runs_from_ranges(text[start:end], local_ranges)
         if runs:
             out.append(Paragraph(runs=runs, kind=kind))
     return tuple(out)
