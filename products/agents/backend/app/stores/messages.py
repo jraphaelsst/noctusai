@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from app.stores._util import utcnow
+from app.stores.errors import NotFound
 
 __all__ = [
     "ROLES",
@@ -68,6 +69,22 @@ class MessageStore(Protocol):
         that message, still oldest-first."""
         ...
 
+    def update_blocks(
+        self,
+        org_id: UUID,
+        conversation_id: UUID,
+        message_id: UUID,
+        blocks: list[dict[str, Any]],
+    ) -> MessageRecord:
+        """G1b addition (contract §E.9 "tool.* -> appended into the current
+        assistant message's blocks" / "approval.* -> an approval block").
+        Overwrites ``blocks`` wholesale — the turn-loop caller reads the
+        current in-memory accumulator, appends the new block, and writes
+        the whole list back; there is no partial-append at the store layer.
+        Raises :class:`~app.stores.errors.NotFound` if the message doesn't
+        exist for this org/conversation."""
+        ...
+
 
 class FakeMessageStore:
     """In-memory :class:`MessageStore`."""
@@ -121,6 +138,21 @@ class FakeMessageStore:
             candidates = rows
         page = candidates[-limite:] if limite > 0 else []
         return [self._to_record(r) for r in page]
+
+    def update_blocks(
+        self,
+        org_id: UUID,
+        conversation_id: UUID,
+        message_id: UUID,
+        blocks: list[dict[str, Any]],
+    ) -> MessageRecord:
+        rows = self._rows.get((org_id, conversation_id), [])
+        for row in rows:
+            if row["id"] == message_id:
+                row["blocks"] = list(blocks)
+                row["updated_at"] = utcnow()
+                return self._to_record(row)
+        raise NotFound(f"message {message_id} not found for conversation {conversation_id}")
 
     @staticmethod
     def _to_record(row: dict[str, Any]) -> MessageRecord:
@@ -187,6 +219,28 @@ class SupabaseMessageStore:
         rows = list(resp.data or [])
         rows.reverse()  # newest-last within the page
         return [self._record(row) for row in rows]
+
+    def update_blocks(
+        self,
+        org_id: UUID,
+        conversation_id: UUID,
+        message_id: UUID,
+        blocks: list[dict[str, Any]],
+    ) -> MessageRecord:
+        resp = (
+            self._table()
+            .update({"blocks": list(blocks)})
+            .eq("id", str(message_id))
+            .eq("org_id", str(org_id))
+            .eq("conversation_id", str(conversation_id))
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise NotFound(
+                f"message {message_id} not found for conversation {conversation_id}"
+            )
+        return self._record(rows[0])
 
     @staticmethod
     def _record(row: dict[str, Any]) -> MessageRecord:

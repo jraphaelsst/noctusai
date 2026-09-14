@@ -67,6 +67,15 @@ class ConversationStore(Protocol):
     ) -> list[ConversationRecord]:
         ...
 
+    def get(self, org_id: UUID, id: UUID) -> ConversationRecord:
+        """G1b addition — NO owner check (unlike :meth:`get_owned`), for
+        the admin-may-read paths (contract §E.2 "404 unless the caller
+        owns the conversation; admins may read"). Callers MUST perform
+        the role check themselves before falling back to this method —
+        it is not itself an authorization boundary. Raises
+        :class:`~app.stores.errors.NotFound` if unknown/other-org."""
+        ...
+
     def try_acquire_turn(
         self, org_id: UUID, id: UUID, instance_id: str, ttl_seconds: int
     ) -> bool:
@@ -80,6 +89,15 @@ class ConversationStore(Protocol):
         """Clear the lock, ONLY if ``instance_id`` is the current holder.
         A stale/foreign instance releasing a lock it doesn't hold is a
         silent no-op — it must never clear another instance's live lock."""
+        ...
+
+    def set_sdk_session_id(
+        self, org_id: UUID, id: UUID, sdk_session_id: str | None
+    ) -> ConversationRecord:
+        """G1b addition (contract §E.9 point 5: "persists the
+        ``sdk_session_id`` carried by the final ``session.status`` payload").
+        Raises :class:`~app.stores.errors.NotFound` on an unknown/other-org
+        id."""
         ...
 
 
@@ -132,6 +150,12 @@ class FakeConversationStore:
             if row["org_id"] == org_id and row["owner_user_id"] == user_id
         ]
 
+    def get(self, org_id: UUID, id: UUID) -> ConversationRecord:
+        row = self._rows.get(id)
+        if row is None or row["org_id"] != org_id:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        return self._to_record(row)
+
     def try_acquire_turn(
         self, org_id: UUID, id: UUID, instance_id: str, ttl_seconds: int
     ) -> bool:
@@ -156,6 +180,16 @@ class FakeConversationStore:
         row["_turn_lock_until"] = None
         row["_turn_lock_instance_id"] = None
         row["updated_at"] = utcnow()
+
+    def set_sdk_session_id(
+        self, org_id: UUID, id: UUID, sdk_session_id: str | None
+    ) -> ConversationRecord:
+        row = self._rows.get(id)
+        if row is None or row["org_id"] != org_id:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        row["sdk_session_id"] = sdk_session_id
+        row["updated_at"] = utcnow()
+        return self._to_record(row)
 
     @staticmethod
     def _to_record(row: dict[str, Any]) -> ConversationRecord:
@@ -225,6 +259,19 @@ class SupabaseConversationStore:
         )
         return [self._record(row) for row in (resp.data or [])]
 
+    def get(self, org_id: UUID, id: UUID) -> ConversationRecord:
+        resp = (
+            self._table()
+            .select("*")
+            .eq("id", str(id))
+            .eq("org_id", str(org_id))
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        return self._record(rows[0])
+
     def try_acquire_turn(
         self, org_id: UUID, id: UUID, instance_id: str, ttl_seconds: int
     ) -> bool:
@@ -272,6 +319,23 @@ class SupabaseConversationStore:
         ).eq("id", str(id)).eq("org_id", str(org_id)).eq(
             "turn_lock_instance_id", instance_id
         ).execute()
+
+    def set_sdk_session_id(
+        self, org_id: UUID, id: UUID, sdk_session_id: str | None
+    ) -> ConversationRecord:
+        resp = (
+            self._table()
+            .update(
+                {"sdk_session_id": sdk_session_id, "updated_at": utcnow_iso()}
+            )
+            .eq("id", str(id))
+            .eq("org_id", str(org_id))
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        return self._record(rows[0])
 
     @staticmethod
     def _record(row: dict[str, Any]) -> ConversationRecord:

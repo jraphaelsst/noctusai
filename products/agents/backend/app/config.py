@@ -1,18 +1,11 @@
 """
 Agentes configuration.
 
-Extends the framework's ProductSettings — minimal additions to support
-the inherited skeletons (webhook receiver, etc.), plus the G2 runtime +
-gate fields per contract §E.9 / §E.5 / §D
-(``projects/julia-agents-academia-CONTRACT.md``).
-
-NOC-REMEDIATE[config-merge]: ``approval_assertion_secrets`` /
-``approval_timeout_seconds`` / ``anthropic_api_key`` are ALSO declared by
-G1b's in-flight ``feat/agents-api-routes`` branch (routes need them too —
-same settings object, two parallel slices). Field names/types/defaults
-below were mirrored from that branch's uncommitted diff to keep the merge
-a no-op on these fields; the tech-lead reconciles the two diffs at
-integration. — 2026-09-14.
+Extends the framework's ProductSettings with the G1b (agents API + SSE)
+and G2 (runtime + gate) fields per contract §E / §E.5 / §E.9 / §D / §F
+(``projects/julia-agents-academia-CONTRACT.md``). Both slices needed the
+same settings object; reconciled here at integration into one declaration
+per field (``NOC-REMEDIATE[config-merge]`` closed).
 """
 from __future__ import annotations
 
@@ -26,26 +19,24 @@ class SeedSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:agents"
 
-    # ── Webhook receiver (consumed by app/routers/webhook_router.py) ──
-    # Empty by default → ``webhook_endpoint(bypass_when_unset=True)``
-    # accepts unsigned payloads with a WARNING (early-dev only). Set in
-    # ``.env`` (``EXAMPLE_WEBHOOK_SECRET=…``) to enforce verification.
-    # Rename per vendor (``resend_webhook_secret`` / ``meta_webhook_secret`` / etc.).
-    example_webhook_secret: str = ""
+    # ── social-wiring bridge client (contract §E.6) ────────────────────
+    # Token held by the agents product to call social-wiring's
+    # `agents-bridge` routes (`social-wiring:one-chat:read` +
+    # `:toggle` scopes only). Never logged.
+    social_wiring_api_token: str = ""
 
-    # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
-    webhook_rate_limit: str = "60/minute"
-
-    # ── Approvals (contract §E.2 / §D) ─────────────────────────────────
+    # ── Approvals (contract §E.2 / §D) ──────────────────────────────────
     # An unanswered approval request becomes `expirada` after this many
     # seconds; the waiting tool call is then denied (app/runtime/broker.py).
     approval_timeout_seconds: int = 900
 
-    # `X-Approval-Assertion` HS256 signing keys (contract §D). Comma-separated
-    # in the env var. `agents` SIGNS with element [0] (app/runtime/assertion.py).
-    # Empty/missing → the product refuses to start in a deploy context
-    # (`required_prod_config` at app boot); never exposed to the Julia CLI
-    # subprocess (contract §E.5 — the `env -i` wrapper strips it either way).
+    # `X-Approval-Assertion` HS256 signing/verification keys (contract §D).
+    # Comma-separated in the env var — `agents` SIGNS with element [0]
+    # (app/runtime/assertion.py); an academia-side product would ACCEPT any
+    # element (not this product's concern). Empty/missing → the product
+    # refuses to start in a deploy context (`required_prod_config` at app
+    # boot); the key is never exposed to the Julia CLI subprocess (contract
+    # §E.5 — the `env -i` wrapper strips it either way).
     approval_assertion_secrets: list[str] = []
 
     @field_validator("approval_assertion_secrets", mode="before")
@@ -78,6 +69,10 @@ class SeedSettings(ProductSettings):
     # academia side fails. Set alongside `ACADEMIA_API_TOKEN` at deploy
     # time (same secret-provisioning step, never guessed at runtime).
     julia_agent_id: str = ""
+
+    # Per-user rate limit on `POST /api/conversations/{id}/messages`
+    # (contract §E "Rate limit ... per user with the product limiter").
+    messages_rate_limit: str = "20/minute"
 
 
 settings = SeedSettings()
