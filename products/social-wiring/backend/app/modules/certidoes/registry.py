@@ -49,7 +49,7 @@ CERTIDOES_CONFIG = [
     },
     {
         "tipo": "trf3_sp",
-        "nome": "Certidão TRF3 (São Paulo)",
+        "nome": "Certidão TRF3 Cível — São Paulo (1ª instância)",
         "endpoint": "tribunal/trf3/certidao-distr",
         "ordem": 2,
         "params_fn": "trf3_sp",
@@ -58,7 +58,7 @@ CERTIDOES_CONFIG = [
     },
     {
         "tipo": "trf3",
-        "nome": "Certidão TRF3 (Regional)",
+        "nome": "Certidão TRF3 Cível — Tribunal Regional (2ª instância)",
         "endpoint": "tribunal/trf3/certidao-distr",
         "ordem": 3,
         "params_fn": "trf3",
@@ -177,26 +177,44 @@ def _build_params_cnd_federal(consulta: dict, token: str) -> dict:
     return params
 
 
-def _build_params_trf3_sp(consulta: dict, token: str) -> dict:
-    """TRF3 São Paulo: same endpoint as Regional but tipo=2."""
+# `tribunal/trf3/certidao-distr` codes, verbatim from the InfoSimples docs
+# (API v2.2.39):
+#   tipo:        1 = Cível · 2 = Criminal · 3 = Eleitoral
+#   abrangencia: 1 = Regional · 2 = Seção Judiciária de São Paulo ·
+#                3 = Tribunal Regional Federal da 3ª Região ·
+#                4 = Seção Judiciária de Mato Grosso do Sul
+# Both TRF3 entries are the Cível certidão; they differ ONLY in abrangência —
+# 1ª instância (SJSP + JEF) vs 2ª instância (the Tribunal itself).
+TRF3_TIPO_CIVEL = "1"
+TRF3_ABRANGENCIA_SAO_PAULO = "2"
+TRF3_ABRANGENCIA_TRIBUNAL_REGIONAL = "3"
+
+
+def _build_params_trf3_civel(consulta: dict, token: str, abrangencia: str) -> dict:
+    """TRF3 Cível at one `abrangencia`: token + cpf/cnpj + tipo + abrangencia
+    (+ nome_social for CPF).
+
+    Deliberately NOT sent: `tipo_documento` is this endpoint's
+    supplementary-ID type (1=não informado, 2=RG, 3=Passaporte), not CPF/CNPJ;
+    `nome`/`razao_social` switch the search to by-name; `nome_social` is
+    CPF-only per the docs.
+    """
     params = _token_and_doc(consulta, token)
-    params["tipo"] = "2"
-    params["tipo_documento"] = "1" if consulta["tipo_documento"] == "cpf" else "2"
-    if consulta.get("nome"):
+    params["tipo"] = TRF3_TIPO_CIVEL
+    params["abrangencia"] = abrangencia
+    if consulta["tipo_documento"] == "cpf" and consulta.get("nome"):
         params["nome_social"] = consulta["nome"]
-    params["abrangencia"] = "1"
     return params
+
+
+def _build_params_trf3_sp(consulta: dict, token: str) -> dict:
+    """TRF3 1ª instância: Cível, Seção Judiciária e JEF de São Paulo."""
+    return _build_params_trf3_civel(consulta, token, TRF3_ABRANGENCIA_SAO_PAULO)
 
 
 def _build_params_trf3(consulta: dict, token: str) -> dict:
-    """TRF3 Regional: token + tipo + tipo_documento + cpf/cnpj + nome_social + abrangencia."""
-    params = _token_and_doc(consulta, token)
-    params["tipo"] = "1"
-    params["tipo_documento"] = "1" if consulta["tipo_documento"] == "cpf" else "2"
-    if consulta.get("nome"):
-        params["nome_social"] = consulta["nome"]
-    params["abrangencia"] = "1"
-    return params
+    """TRF3 2ª instância: Cível, Tribunal Regional Federal da 3ª Região."""
+    return _build_params_trf3_civel(consulta, token, TRF3_ABRANGENCIA_TRIBUNAL_REGIONAL)
 
 
 def _build_params_trt2_digital(consulta: dict, token: str) -> dict:

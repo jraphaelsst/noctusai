@@ -297,40 +297,64 @@ class TestBuildParamsCndFederal:
 
 
 class TestBuildParamsTrf3:
-    def test_inclui_tipo_abrangencia_tipo_documento(self):
-        params = _build_params_trf3(CONSULTA_CPF, "tok")
-        assert params["tipo"] == "1"
-        assert params["abrangencia"] == "1"
-        assert params["tipo_documento"] == "1"
+    """2ª instância — Cível at the Tribunal Regional Federal da 3ª Região
+    (InfoSimples `tipo=1`, `abrangencia=3`)."""
 
-    def test_cnpj_tipo_documento_2(self):
-        assert _build_params_trf3(CONSULTA_CNPJ, "tok")["tipo_documento"] == "2"
+    def test_cpf_payload_exato(self):
+        assert _build_params_trf3(CONSULTA_CPF, "tok") == {
+            "token": "tok",
+            "cpf": "12345678901",
+            "tipo": "1",
+            "abrangencia": "3",
+            "nome_social": "João da Silva",
+        }
 
-    def test_usa_nome_social(self):
-        assert _build_params_trf3(CONSULTA_CPF, "tok")["nome_social"] == "João da Silva"
+    def test_cnpj_so_documento_sem_nome_social(self):
+        """`nome_social` is CPF-only per the endpoint docs."""
+        assert _build_params_trf3(CONSULTA_CNPJ, "tok") == {
+            "token": "tok",
+            "cnpj": "12345678000190",
+            "tipo": "1",
+            "abrangencia": "3",
+        }
 
 
 class TestBuildParamsTrf3Sp:
-    def test_tipo_2_abrangencia_1(self):
-        params = _build_params_trf3_sp(CONSULTA_CPF, "tok")
-        assert params["tipo"] == "2"
-        assert params["abrangencia"] == "1"
+    """1ª instância — Cível at the Seção Judiciária e JEF de São Paulo
+    (InfoSimples `tipo=1`, `abrangencia=2`)."""
 
-    def test_cpf_tipo_documento_1(self):
-        assert _build_params_trf3_sp(CONSULTA_CPF, "tok")["tipo_documento"] == "1"
+    def test_cpf_payload_exato(self):
+        assert _build_params_trf3_sp(CONSULTA_CPF, "tok") == {
+            "token": "tok",
+            "cpf": "12345678901",
+            "tipo": "1",
+            "abrangencia": "2",
+            "nome_social": "João da Silva",
+        }
 
-    def test_cnpj_tipo_documento_2(self):
-        assert _build_params_trf3_sp(CONSULTA_CNPJ, "tok")["tipo_documento"] == "2"
+    def test_cnpj_so_documento_sem_nome_social(self):
+        assert _build_params_trf3_sp(CONSULTA_CNPJ, "tok") == {
+            "token": "tok",
+            "cnpj": "12345678000190",
+            "tipo": "1",
+            "abrangencia": "2",
+        }
 
-    def test_mesmo_endpoint_do_regional_difere_so_no_tipo(self):
-        """The two TRF3 entries share an endpoint — `tipo` is the whole
-        difference, which is why dropping one looks harmless and is not."""
+    def test_mesmo_endpoint_do_regional_difere_so_na_abrangencia(self):
+        """The two TRF3 entries share an endpoint and are both Cível —
+        `abrangencia` (1ª vs 2ª instância) is the whole difference, which is
+        why dropping one looks harmless and is not."""
         sp = _build_params_trf3_sp(CONSULTA_CPF, "tok")
         regional = _build_params_trf3(CONSULTA_CPF, "tok")
-        assert sp["tipo"] != regional["tipo"]
-        assert {k: v for k, v in sp.items() if k != "tipo"} == {
-            k: v for k, v in regional.items() if k != "tipo"
+        assert sp["abrangencia"] != regional["abrangencia"]
+        assert {k: v for k, v in sp.items() if k != "abrangencia"} == {
+            k: v for k, v in regional.items() if k != "abrangencia"
         }
+
+    def test_nomes_identificam_regiao_e_instancia(self):
+        nomes = {c["tipo"]: c["nome"] for c in CERTIDOES_CONFIG}
+        assert "São Paulo" in nomes["trf3_sp"] and "1ª instância" in nomes["trf3_sp"]
+        assert "Tribunal Regional" in nomes["trf3"] and "2ª instância" in nomes["trf3"]
 
 
 class TestBuildParamsTrt2Digital:
