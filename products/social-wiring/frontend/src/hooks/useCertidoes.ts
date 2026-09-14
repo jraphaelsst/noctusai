@@ -25,6 +25,11 @@ import { toast } from "sonner";
 import { useAuthStore } from "@noctusai/seed/infra";
 
 import { api } from "@/lib/api";
+import type {
+  ResultadoOrigem,
+  ResultadoPatchInput,
+  ResultadoValor,
+} from "@/types/certidoesEstruturadas";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -47,6 +52,25 @@ export interface CertidaoResultado {
   arquivo_nome?: string;
   erro_mensagem?: string;
   created_at: string;
+  /**
+   * Contract automation F1 (migration 107) — structured fields + provenance,
+   * present on EVERY resultado read (`select("*")` on both the per-consulta
+   * detail endpoint and the per-parte endpoint below), not just the ones
+   * fetched through `useResultadosPorParte`. See
+   * `@/types/certidoesEstruturadas` for the value vocabularies.
+   */
+  numero?: string | null;
+  emitida_em?: string | null; // YYYY-MM-DD
+  validade_ate?: string | null; // YYYY-MM-DD
+  resultado?: ResultadoValor | null;
+  resultado_origem?: ResultadoOrigem | null;
+  confirmado_por?: string | null;
+  confirmado_em?: string | null;
+  /** Only populated by `GET /partes/{id}/resultados` — the consulta this
+   * resultado's row belongs to, denormalized so the per-parte panel does not
+   * need a second fetch to label its own list. `null`/absent elsewhere. */
+  consulta_nome?: string | null;
+  consulta_documento?: string | null;
 }
 
 export interface TjspFilaItem {
@@ -85,6 +109,11 @@ export interface CertidaoConsulta {
   erros: number;
   created_at: string;
   resultados?: CertidaoResultado[];
+  /** Contract automation F1 (migration 107) — nullable linkage to a party of
+   * an atendimento, set together by `POST /consultas/{id}/vincular-parte`.
+   * `null` for ad-hoc consultas not tied to any deal. */
+  cliente_id?: string | null;
+  atendimento_parte_id?: string | null;
 }
 
 export interface ConsultaCreateData {
@@ -246,6 +275,147 @@ export function useCancelarProcessamento() {
     },
     onError: (error: Error) => {
       toast.error("Erro ao cancelar processamento", { description: error.message });
+    },
+  });
+}
+
+// ─── Contract automation F1 — per-parte structured certidões (migration 107) ─
+//
+// `CertidoesPartePanel`'s data layer: every certidão result linked to one
+// party of an atendimento, plus the three actions that mutate a resultado
+// from that panel (link a consulta, confirm/correct, mint a viewing URL).
+// The existing upload endpoint is reused as-is — see `useUploadResultadoManual`.
+
+export function useResultadosPorParte(atendimentoParteId?: string) {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["certidao-resultados-parte", atendimentoParteId],
+    queryFn: async () => {
+      const result = await api.get(`/api/certidoes/partes/${atendimentoParteId}/resultados`);
+      return (result.data || []) as CertidaoResultado[];
+    },
+    enabled: !!user && !!atendimentoParteId,
+    staleTime: 5 * 1000,
+    // Mirrors `useCertidaoConsulta`'s own polling: a resultado fanned out by
+    // `vincular_parte` (or still being scraped by the original consulta) can
+    // land after this panel is already open.
+    refetchInterval: (query) => {
+      const data = query.state.data as CertidaoResultado[] | undefined;
+      if (data?.some((r) => r.status === "pendente" || r.status === "processando")) {
+        return 3000;
+      }
+      return false;
+    },
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useVincularParte() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      consultaId,
+      atendimentoParteId,
+    }: {
+      consultaId: string;
+      atendimentoParteId: string;
+    }) => {
+      const result = await api.post(`/api/certidoes/consultas/${consultaId}/vincular-parte`, {
+        atendimento_parte_id: atendimentoParteId,
+      });
+      return result.data as CertidaoConsulta;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["certidao-resultados-parte", variables.atendimentoParteId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+      toast.success("Consulta vinculada à parte!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao vincular consulta", { description: error.message });
+    },
+  });
+}
+
+/** `atendimentoParteId` scopes cache invalidation only — the mutation itself
+ * targets a resultado id, not a parte. */
+export function useConfirmarResultado(atendimentoParteId?: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      resultadoId,
+      patch,
+    }: {
+      resultadoId: string;
+      patch: ResultadoPatchInput;
+    }) => {
+      const result = await api.patch(`/api/certidoes/resultados/${resultadoId}`, patch);
+      return result.data as CertidaoResultado;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["certidao-resultados-parte", atendimentoParteId],
+      });
+      toast.success("Resultado confirmado!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao confirmar resultado", { description: error.message });
+    },
+  });
+}
+
+/** Same `/resultados/{id}/upload` endpoint `pages/Certidoes.tsx` calls
+ * directly — wrapped here so the per-parte panel gets the same PDF-only
+ * guard + toast + cache-invalidation as a mutation, instead of a second
+ * hand-rolled `handleFileSelected`. */
+export function useUploadResultadoManual(atendimentoParteId?: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ resultadoId, file }: { resultadoId: string; file: File }) => {
+      if (file.type !== "application/pdf") {
+        throw new Error("Apenas arquivos PDF são aceitos.");
+      }
+      const formData = new FormData();
+      formData.append("file", file);
+      // `api.upload`, not a hand-rolled multipart fetch — same seam
+      // `pages/Certidoes.tsx::handleFileSelected` uses, for the same reason.
+      await api.upload(`/api/certidoes/resultados/${resultadoId}/upload`, formData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["certidao-resultados-parte", atendimentoParteId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["certidao-consulta"] });
+      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+      toast.success("Certidão enviada com sucesso!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao enviar certidão", { description: error.message });
+    },
+  });
+}
+
+/** A short-TTL signed URL for one resultado's file — action-triggered
+ * (view/download click), not cached, hence a mutation rather than a query. */
+export function useMintResultadoUrl() {
+  return useMutation({
+    mutationFn: async ({
+      resultadoId,
+      intent,
+    }: {
+      resultadoId: string;
+      intent: "view" | "download";
+    }) => {
+      const result = await api.get(`/api/certidoes/resultados/${resultadoId}/url`, { intent });
+      return result.data as { url: string; expires_at: string | null };
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao obter arquivo", { description: error.message });
     },
   });
 }

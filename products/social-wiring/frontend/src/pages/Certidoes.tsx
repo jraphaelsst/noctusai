@@ -114,6 +114,7 @@ import { api } from "@/lib/api";
 import { apiUrl } from "@/lib/apiBase";
 import { authenticatedFetch, downloadFile, triggerBlobDownload } from "@/lib/file-download";
 import { formatDate } from "@/lib/utils";
+import { RESULTADO_VALOR_LABELS, RESULTADO_VALOR_VARIANT } from "@/types/certidoesEstruturadas";
 
 // --------------- Constants ---------------
 
@@ -912,6 +913,33 @@ export default function Certidoes() {
                                 <p className="text-xs text-destructive mt-1">
                                   {resultado.erro_mensagem}
                                 </p>
+                              )}
+                              {/* Structured fields (contract automation F1,
+                                  migration 107) — read-only here; editing and
+                                  confirming lives in `CertidoesPartePanel`,
+                                  the per-parte surface this page's consultas
+                                  can be linked to via `vincular-parte`. */}
+                              {(resultado.resultado || resultado.numero || resultado.validade_ate) && (
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                  {resultado.resultado && (
+                                    <Badge
+                                      variant={RESULTADO_VALOR_VARIANT[resultado.resultado]}
+                                      className="text-[10px]"
+                                    >
+                                      {RESULTADO_VALOR_LABELS[resultado.resultado]}
+                                    </Badge>
+                                  )}
+                                  {resultado.numero && (
+                                    <span className="text-xs text-muted-foreground">
+                                      Nº {resultado.numero}
+                                    </span>
+                                  )}
+                                  {resultado.validade_ate && (
+                                    <span className="text-xs text-muted-foreground">
+                                      Válida até {formatDate(resultado.validade_ate)}
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </TableCell>
                             <TableCell>
