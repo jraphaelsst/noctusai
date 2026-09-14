@@ -119,7 +119,73 @@ Every table has these columns: `id uuid pk`, `org_id uuid not null` with RLS via
 
 **Grants and trigger.** UPDATE and DELETE are revoked from every role, and a trigger raises on both.
 
-**Invariant.** Every write to A.1–A.8 inserts exactly one `kb_revisions` row in the same transaction. A write without one is a bug, and the tests assert it.
+**Invariant.** Every write to A.1–A.8 inserts exactly one `kb_revisions` row in the same transaction. A write without one is a bug, and the tests assert it. The one exception is `supersede`, which writes two revisions (one per entity).
+
+### A.11 `KnowledgeStore` Protocol — the seam shared by A1 (implements) and A2/B-routes (consume)
+
+Location: `products/academia-de-reciclagem/backend/app/knowledge/store.py`. `FakeKnowledgeStore` (in-memory, same invariants) and `PgKnowledgeStore` sit beside it, with factory `get_knowledge_store(settings) -> KnowledgeStore`. Every method is `async`. Every method takes `org_id: UUID` first and a `prov: Provenance` on writes.
+
+```python
+@dataclass(frozen=True)
+class Provenance:
+    author_kind: Literal["human", "agent", "import"]
+    user_id: UUID | None = None
+    agent_id: UUID | None = None
+    approval_id: UUID | None = None          # consumed via approval_consumptions BEFORE any write
+    channel: str | None = None
+    conversation_id: UUID | None = None
+    motivo: str | None = None
+    git_sha: str | None = None
+    git_author_raw: str | None = None
+    git_committed_at: datetime | None = None
+    git_message: str | None = None
+
+class KnowledgeStore(Protocol):
+    # kb entries
+    async def search_kb(self, org_id, *, consulta: str | None, categoria: str | None,
+                        subcategoria: str | None, tag: str | None, limite: int, offset: int) -> tuple[list[dict], int]
+    async def get_kb(self, org_id, slug: str) -> dict            # raises NotFound
+    async def create_kb(self, org_id, data: dict, prov: Provenance) -> dict        # raises Conflict
+    async def update_kb(self, org_id, slug: str, changes: dict, prov: Provenance) -> dict  # novo_slug inside changes; raises NotFound/Conflict
+    async def archive_kb(self, org_id, slug: str, prov: Provenance) -> dict
+    async def list_revisions(self, org_id, entity_type: str, entity_id: UUID) -> list[dict]
+    # decisions
+    async def list_decisions(self, org_id, *, estado: str | None) -> list[dict]
+    async def get_decision(self, org_id, codigo: str) -> dict
+    async def create_decision(self, org_id, data: dict, prov: Provenance) -> dict
+    async def supersede_decision(self, org_id, codigo: str, data: dict, prov: Provenance) -> tuple[dict, dict]  # (nova, substituida); raises Conflict if already superseded
+    # open questions
+    async def list_questions(self, org_id, *, estado: Literal["aberta", "respondida", "todas"]) -> list[dict]
+    async def create_question(self, org_id, data: dict, prov: Provenance) -> dict
+    async def answer_question(self, org_id, codigo: str, resposta: str, prov: Provenance) -> dict  # raises Conflict if answered
+    # roadmap + tasks
+    async def list_phases(self, org_id) -> list[dict]
+    async def update_phase(self, org_id, codigo: str, changes: dict, prov: Provenance) -> dict
+    async def list_tasks(self, org_id, *, fase: str | None, estado: str | None) -> list[dict]
+    async def create_task(self, org_id, data: dict, prov: Provenance) -> dict       # raises Invalid if fase unknown
+    async def update_task(self, org_id, codigo: str, changes: dict, prov: Provenance) -> dict
+    async def session_prep(self, org_id) -> dict
+    # content / timeline / sources
+    async def list_content(self, org_id, *, tipo: str | None) -> list[dict]
+    async def get_content(self, org_id, codigo: str) -> dict
+    async def create_content(self, org_id, data: dict, prov: Provenance) -> dict
+    async def list_timeline(self, org_id, *, limite: int) -> list[dict]
+    async def create_timeline_event(self, org_id, data: dict, prov: Provenance) -> dict
+    async def create_source(self, org_id, data: dict, prov: Provenance) -> dict     # raises NotFound if kb_slug unknown
+    # import (A2)
+    async def import_entity(self, org_id, entity_type: str, natural_key: str, snapshot: dict,
+                            prov: Provenance) -> dict   # upsert-by-natural-key + one 'import' revision; idempotent on (git_sha, natural_key)
+    async def seed_counters(self, org_id, counters: dict[str, int]) -> None           # sets code_counters to max(current, given)
+```
+
+- **Errors:** `NotFound`, `Conflict` and `Invalid` are defined in `app/knowledge/errors.py`. B-routes map them to 404, 409 and 422. `approval_consumptions` duplicates raise `AssertionUsed`, which maps to 409 `assertion_used`.
+- **Natural keys for `import_entity`:**
+  - `kb_entry`: `slug`
+  - `decision`, `open_question`, `task`, `content_draft`: `codigo`
+  - `roadmap_phase`: `codigo`
+  - `timeline_event`: `data|titulo`
+  - `research_source`: `url|kb_slug`
+- **Transactions:** a single import transaction is opened by the caller. `PgKnowledgeStore` exposes `async with store.transaction():`, and the Fake mirrors it with an in-memory snapshot and rollback.
 
 ---
 
