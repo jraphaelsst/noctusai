@@ -87,6 +87,7 @@ import {
 import {
   Upload,
   FileText,
+  FileDown,
   Loader2,
   CheckCircle,
   XCircle,
@@ -100,7 +101,10 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { TableSkeleton } from '@noctusai/lib/design-system';
+import { copyRichText } from '@noctusai/lib/clipboard';
 import { formatDate } from '@/lib/utils';
+import { apiUrl } from '@/lib/apiBase';
+import { authenticatedFetch, triggerBlobDownload } from '@/lib/file-download';
 import { toast } from 'sonner';
 
 // --------------- Constants ---------------
@@ -119,6 +123,7 @@ export default function Matriculas() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [baixandoPdf, setBaixandoPdf] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [codigoUpload, setCodigoUpload] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -182,12 +187,53 @@ export default function Matriculas() {
     setIsDragOver(false);
   }, []);
 
+  // ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6):
+  // the seed's `copyRichText` carries bold/underline into the clipboard via
+  // `ClipboardItem`; `texto_html` is `null` for rows transcribed before this
+  // feature shipped (§ 4's backfill note), so those copy plain text and say
+  // so — never a silent downgrade to an unformatted paste.
   const handleCopy = useCallback(async () => {
     if (!selected?.texto_extraido) return;
-    await navigator.clipboard.writeText(selected.texto_extraido);
-    setCopied(true);
-    toast.success('Texto copiado!');
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      if (selected.texto_html) {
+        const result = await copyRichText(selected.texto_html, selected.texto_extraido);
+        toast.success(result.rich ? 'Texto copiado!' : 'Texto copiado (sem formatação).');
+      } else {
+        await navigator.clipboard.writeText(selected.texto_extraido);
+        toast.success('Texto copiado (sem formatação).');
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Não foi possível copiar o texto.');
+    }
+  }, [selected]);
+
+  // `[Baixar PDF]` — GET .../pdf → blob → save with the server's own
+  // filename (`Content-Disposition`), falling back to a client-derived name
+  // only when that header is missing/unparseable. Raw fetch, not the JSON
+  // `api` client — the response body is a PDF.
+  const handleBaixarPdf = useCallback(async () => {
+    if (!selected) return;
+    setBaixandoPdf(true);
+    try {
+      const url = apiUrl(`/api/matriculas/extracoes/${selected.id}/pdf`);
+      const resp = await authenticatedFetch(url);
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => null);
+        throw new Error(body?.detail || 'Erro ao baixar PDF');
+      }
+      const disposition = resp.headers.get('Content-Disposition') || '';
+      const match = /filename="?([^"]+)"?/.exec(disposition);
+      const filename = match?.[1] || `${selected.nome_arquivo}_transcricao.pdf`;
+      const blob = await resp.blob();
+      triggerBlobDownload(blob, filename);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao baixar PDF';
+      toast.error(msg);
+    } finally {
+      setBaixandoPdf(false);
+    }
   }, [selected]);
 
   const handleDelete = () => {
@@ -318,11 +364,31 @@ export default function Matriculas() {
               <CardTitle className="text-lg">Texto Extraído</CardTitle>
               {isComplete && (
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={handleCopy}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleBaixarPdf}
+                    disabled={baixandoPdf || !selected?.texto_extraido}
+                    aria-label="Baixar PDF da transcrição"
+                  >
+                    {baixandoPdf ? (
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    ) : (
+                      <FileDown className="h-3 w-3 mr-1" />
+                    )}
+                    Baixar PDF
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopy}
+                    disabled={!selected?.texto_extraido}
+                    aria-label="Copiar transcrição"
+                  >
                     {copied ? (
                       <><Check className="h-3 w-3 mr-1" />Copiado</>
                     ) : (
-                      <><Copy className="h-3 w-3 mr-1" />Copiar Texto</>
+                      <><Copy className="h-3 w-3 mr-1" />Copiar</>
                     )}
                   </Button>
                   <Button size="sm" variant="outline" onClick={handleNewExtraction}>
