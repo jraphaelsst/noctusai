@@ -11,6 +11,7 @@ process-local — covered by the seed's own ``test_session.py``.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +21,11 @@ from noctusai_lib.testing import MockUser, MockUserResponse
 
 _ORG = "00000000-0000-4000-8000-0000000000aa"
 _USER = "00000000-0000-4000-8000-0000000000bb"
+
+
+def _expires_soon() -> str:
+    """A valid ``expires_at`` (SEED-1: required, <= 90 days ahead)."""
+    return (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
 
 
 class TestMe:
@@ -94,7 +100,11 @@ class TestApiTokensCreate:
         )
         resp = client.post(
             "/api/settings/api-tokens",
-            json={"label": "n8n webhook", "scopes": ["publish"]},
+            json={
+                "label": "n8n webhook",
+                "scopes": ["publish"],
+                "expires_at": _expires_soon(),
+            },
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
@@ -102,6 +112,9 @@ class TestApiTokensCreate:
         assert body["token"].startswith("pk_")
         assert body["prefix"].startswith("pk_")
         assert body["scopes"] == ["publish"]
+        assert body["expires_at"]
+        assert body["human_personal"] is False
+        assert body["principal_agent_id"] is None
 
     def test_non_admin_role_rejected(self, client):
         client.mock_supabase.auth.get_user = MagicMock(
@@ -115,9 +128,45 @@ class TestApiTokensCreate:
         )
         resp = client.post(
             "/api/settings/api-tokens",
-            json={"label": "trying", "scopes": []},
+            json={"label": "trying", "scopes": [], "expires_at": _expires_soon()},
         )
         assert resp.status_code == 403
+
+    def test_missing_expires_at_rejected(self, client):
+        """SEED-1 (contract §B.0): ``expires_at`` is required — a token
+        with no expiry is the class of finding this field closes."""
+        client.mock_supabase.auth.get_user = MagicMock(
+            return_value=MockUserResponse(
+                MockUser(id=_USER, org_id=_ORG, org_role="owner")
+            )
+        )
+        client.mock_supabase.set_table_data(
+            "noctus_users",
+            [{"id": _USER, "org_id": _ORG, "org_role": "owner"}],
+        )
+        resp = client.post(
+            "/api/settings/api-tokens",
+            json={"label": "n8n webhook", "scopes": ["publish"]},
+        )
+        assert resp.status_code == 422
+
+    def test_expires_at_too_far_ahead_rejected(self, client):
+        """> 90 days ahead → 422 (contract §B.0)."""
+        client.mock_supabase.auth.get_user = MagicMock(
+            return_value=MockUserResponse(
+                MockUser(id=_USER, org_id=_ORG, org_role="owner")
+            )
+        )
+        client.mock_supabase.set_table_data(
+            "noctus_users",
+            [{"id": _USER, "org_id": _ORG, "org_role": "owner"}],
+        )
+        too_far = (datetime.now(timezone.utc) + timedelta(days=91)).isoformat()
+        resp = client.post(
+            "/api/settings/api-tokens",
+            json={"label": "n8n webhook", "scopes": ["publish"], "expires_at": too_far},
+        )
+        assert resp.status_code == 422
 
     def test_label_required(self, client):
         client.mock_supabase.auth.get_user = MagicMock(
@@ -131,7 +180,7 @@ class TestApiTokensCreate:
         )
         resp = client.post(
             "/api/settings/api-tokens",
-            json={"label": "", "scopes": []},
+            json={"label": "", "scopes": [], "expires_at": _expires_soon()},
         )
         # Pydantic min_length=1 → 422.
         assert resp.status_code == 422

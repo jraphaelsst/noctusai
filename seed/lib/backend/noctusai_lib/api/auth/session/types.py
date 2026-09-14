@@ -18,6 +18,7 @@ Real + factory shape mirrored from ``integrations/google_calendar``).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, NamedTuple
 from uuid import UUID
 
@@ -63,6 +64,37 @@ class AuthContext(NamedTuple):
             ``caller_kind == "product"`` and ``None`` for user
             sessions. Lets handlers join against ``api_tokens`` for
             rate-limit / scope-policy lookups without re-resolving.
+        principal_agent_id: SEED-1 (Julia/academia auth posture). For a
+            ``caller_kind == "product"`` token minted on behalf of an
+            automation principal (e.g. an ``agents`` product agent
+            acting through a product token), the agent's id — carried
+            through so a write can attribute ``kb_revisions.agent_id``
+            without a second lookup. ``None`` for user sessions and for
+            product tokens with no bound principal (e.g. a plain n8n/
+            MCP integration token). Defaulted so every existing
+            constructor call keeps working unchanged.
+        expires_at: SEED-1. The token row's expiry (product tokens
+            only); ``None`` for user sessions, which expire via the
+            session TTL instead. Carried onto the resolved context for
+            callers that want to warn/display remaining lifetime
+            without a second DB round-trip. The RESOLVER is what
+            refuses an already-expired token (returns ``None`` → 401);
+            this field is a read-only echo of that check, never
+            re-validated by consumers.
+        human_personal: SEED-1. ``True`` for a product token flagged at
+            mint time as a human's PERSONAL automation token (e.g.
+            terminal-Julia's own token) rather than a control-plane
+            token acting on behalf of an agent. A write from a
+            ``human_personal`` token needs no ``X-Approval-Assertion``
+            (contract §B.0) and records ``kb_revisions.user_id =
+            minted_by`` instead of an agent attribution. ``False`` by
+            default for both user sessions and ordinary product
+            tokens.
+        minted_by: SEED-1. The Supabase user id of the human who minted
+            this token (``ApiTokenCreateRequest`` → ``ctx.user_id`` at
+            mint time). ``None`` for user sessions (irrelevant — the
+            session already carries ``user_id``) and for any token
+            minted before this field existed.
     """
 
     org_id: UUID
@@ -71,6 +103,10 @@ class AuthContext(NamedTuple):
     scopes: list[str]
     raw_token: str
     api_token_id: UUID | None
+    principal_agent_id: UUID | None = None
+    expires_at: datetime | None = None
+    human_personal: bool = False
+    minted_by: UUID | None = None
 
 
 class SessionTokens(NamedTuple):

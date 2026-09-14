@@ -43,6 +43,7 @@ from noctusai_lib.api.auth import (
 from noctusai_lib.api.auth.session import (
     AuthContext,
     FakeApiTokenResolver,
+    SupabaseApiTokenResolver,
     make_get_auth_context,
 )
 from noctusai_seed import make_get_settings
@@ -254,17 +255,21 @@ def _get_session_store():
 
 def _get_api_token_resolver():
     """Lazy singleton — Supabase-backed in production, ``FakeApiTokenResolver``
-    under sqlite/dev (no DB to look up against)."""
+    under sqlite/dev (no DB to look up against).
+
+    SEED-1 (``julia-agents-academia-2026-09``): the product-local
+    ``app.services.api_token_resolver.SupabaseApiTokenResolver`` fork
+    was promoted into the seed (``noctusai_lib.api.auth.session``) —
+    behaviour-preserving, ``schema="social_wiring"`` replaces the old
+    module-level constant."""
     global _api_token_resolver
     if _api_token_resolver is None:
         if _use_sqlite:
             _api_token_resolver = FakeApiTokenResolver()
         else:
-            # Local import to avoid the resolver pulling its
-            # noctusai_lib chain into the test-collection path before
-            # the conftest patches DatabaseModule.get_admin_client.
-            from app.services.api_token_resolver import SupabaseApiTokenResolver
-            _api_token_resolver = SupabaseApiTokenResolver(get_admin_client())
+            _api_token_resolver = SupabaseApiTokenResolver(
+                get_admin_client(), schema="social_wiring"
+            )
     return _api_token_resolver
 
 

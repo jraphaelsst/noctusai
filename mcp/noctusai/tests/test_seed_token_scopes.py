@@ -1,0 +1,390 @@
+"""CI-gating coverage for SEED-1 (project-history/roadmaps/
+julia-agents-academia-2026-09.md, contract §B.0).
+
+``seed/lib/backend/tests/`` is NOT run by CI (open drift, 2026-09-09) —
+this file is the CI-gating leg for the seed-lib changes SEED-1 makes:
+
+  - ``AuthContext`` gains 4 new defaulted fields; the OLD constructor
+    call shape (only the original 6 fields) must keep working.
+  - ``SupabaseApiTokenResolver`` (promoted from social-wiring) refuses
+    a revoked OR expired token, and populates the new
+    ``principal_agent_id`` / ``human_personal`` / ``minted_by`` fields
+    on a valid resolve — exercised against a Fake admin client
+    (``noctusai_lib.testing.MockSupabaseClient``).
+  - ``require_scopes``'s 401/403 matrix: product-without-scope,
+    user-outside-role-set, the ``product_only`` restriction on a user
+    caller, and the missing-credential-is-exactly-401 case (the auth
+    boundary must never fall through to 403/404/422 —
+    ``KB § PATTERNS/compliance/auth-boundary-false-green.md``).
+
+This is a Python-import-level suite (no FastAPI app / TestClient) —
+each dependency closure is invoked directly with an explicit ``ctx=``
+argument, bypassing FastAPI's ``Depends(...)`` resolution machinery on
+purpose (the closures accept a plain keyword override).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
+
+import pytest
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.testclient import TestClient
+
+from noctusai_lib.api.auth.session import (
+    AuthContext,
+    SupabaseApiTokenResolver,
+    require_scopes,
+)
+from noctusai_lib.testing import MockSupabaseClient
+
+
+def _run(coro):
+    return asyncio.new_event_loop().run_until_complete(coro)
+
+
+_ORG = UUID("00000000-0000-4000-8000-0000000000aa")
+_TOKEN_ID = UUID("00000000-0000-4000-8000-0000000000bb")
+_AGENT = UUID("00000000-0000-4000-8000-0000000000cc")
+_MINTER = UUID("00000000-0000-4000-8000-0000000000dd")
+_USER = UUID("00000000-0000-4000-8000-0000000000ee")
+
+
+class TestAuthContextBackCompat:
+    """The 4 new fields default so every pre-SEED-1 constructor call
+    (positional or keyword, only the original 6 fields) keeps working
+    unchanged."""
+
+    def test_old_positional_construction_still_works(self):
+        ctx = AuthContext(
+            _ORG,
+            "user",
+            _USER,
+            [],
+            "raw-token",
+            None,
+        )
+        assert ctx.org_id == _ORG
+        assert ctx.caller_kind == "user"
+        assert ctx.principal_agent_id is None
+        assert ctx.expires_at is None
+        assert ctx.human_personal is False
+        assert ctx.minted_by is None
+
+    def test_old_keyword_construction_still_works(self):
+        ctx = AuthContext(
+            org_id=_ORG,
+            caller_kind="product",
+            user_id=None,
+            scopes=["read"],
+            raw_token=str(_TOKEN_ID),
+            api_token_id=_TOKEN_ID,
+        )
+        assert ctx.scopes == ["read"]
+        assert ctx.principal_agent_id is None
+        assert ctx.human_personal is False
+
+    def test_new_fields_are_settable(self):
+        ctx = AuthContext(
+            org_id=_ORG,
+            caller_kind="product",
+            user_id=None,
+            scopes=["academia:read"],
+            raw_token=str(_TOKEN_ID),
+            api_token_id=_TOKEN_ID,
+            principal_agent_id=_AGENT,
+            human_personal=True,
+            minted_by=_MINTER,
+        )
+        assert ctx.principal_agent_id == _AGENT
+        assert ctx.human_personal is True
+        assert ctx.minted_by == _MINTER
+
+
+def _token_row(
+    secret_hash: str,
+    *,
+    revoked_at: str | None = None,
+    expires_at: str | None = None,
+    principal_agent_id: str | None = None,
+    human_personal: bool = False,
+    minted_by: str | None = None,
+    scopes: list[str] | None = None,
+) -> dict:
+    return {
+        "id": str(_TOKEN_ID),
+        "org_id": str(_ORG),
+        "scopes": list(scopes or []),
+        "revoked_at": revoked_at,
+        "expires_at": expires_at,
+        "principal_agent_id": principal_agent_id,
+        "human_personal": human_personal,
+        "minted_by": minted_by,
+        "token_hash": secret_hash,
+    }
+
+
+class TestSupabaseApiTokenResolver:
+    """Resolver behaviour against a Fake admin client
+    (``MockSupabaseClient``) — revoked/expired refuse, valid populates
+    the new fields."""
+
+    def _client(self, rows: list[dict]) -> MockSupabaseClient:
+        return MockSupabaseClient(rows, validate_schema=False)
+
+    def test_revoked_token_returns_none(self):
+        from noctusai_lib.api.auth.session import hash_token
+
+        secret = "pk_" + "a" * 32
+        row = _token_row(
+            hash_token(secret), revoked_at="2026-01-01T00:00:00+00:00"
+        )
+        resolver = SupabaseApiTokenResolver(
+            self._client([row]), schema="academia_de_reciclagem"
+        )
+
+        ctx = _run(resolver.resolve(secret))
+
+        assert ctx is None
+
+    def test_expired_token_returns_none(self):
+        from noctusai_lib.api.auth.session import hash_token
+
+        secret = "pk_" + "b" * 32
+        past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        row = _token_row(hash_token(secret), expires_at=past)
+        resolver = SupabaseApiTokenResolver(
+            self._client([row]), schema="academia_de_reciclagem"
+        )
+
+        ctx = _run(resolver.resolve(secret))
+
+        assert ctx is None
+
+    def test_valid_token_populates_new_fields(self):
+        from noctusai_lib.api.auth.session import hash_token
+
+        secret = "pk_" + "c" * 32
+        future = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+        row = _token_row(
+            hash_token(secret),
+            expires_at=future,
+            principal_agent_id=str(_AGENT),
+            human_personal=True,
+            minted_by=str(_MINTER),
+            scopes=["academia:read"],
+        )
+        resolver = SupabaseApiTokenResolver(
+            self._client([row]), schema="academia_de_reciclagem"
+        )
+
+        ctx = _run(resolver.resolve(secret))
+
+        assert ctx is not None
+        assert ctx.caller_kind == "product"
+        assert ctx.org_id == _ORG
+        assert ctx.principal_agent_id == _AGENT
+        assert ctx.human_personal is True
+        assert ctx.minted_by == _MINTER
+        assert ctx.scopes == ["academia:read"]
+
+    def test_unknown_token_returns_none(self):
+        resolver = SupabaseApiTokenResolver(
+            self._client([]), schema="academia_de_reciclagem"
+        )
+
+        ctx = _run(resolver.resolve("pk_" + "d" * 32))
+
+        assert ctx is None
+
+
+class _FakeCoreClient:
+    """Minimal stand-in for ``deps.get_core_client()`` — a
+    ``public``-scoped Supabase-shaped client exposing ``.from_(...)``.
+    Backed by ``MockSupabaseClient`` (the platform's canonical Fake for
+    this shape), not a bespoke mock."""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self._sb = MockSupabaseClient(rows, validate_schema=False, schema="public")
+
+    def from_(self, name: str):
+        return self._sb.from_(name)
+
+
+async def _always_401() -> AuthContext:
+    """Stand-in ``get_auth_context`` dep for the "missing credential"
+    case — mirrors ``make_get_auth_context``'s own behaviour (raises
+    401, never falls through to 403/404/422 —
+    ``KB § PATTERNS/compliance/auth-boundary-false-green.md``). A
+    no-arg signature — FastAPI introspects a dependency callable's
+    signature to build its own sub-parameters, and ``*args, **kwargs``
+    is read as two REQUIRED query params (``args``/``kwargs``), which
+    would 422 before this body ever runs."""
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
+async def _ctx_dep(ctx: AuthContext):
+    return ctx
+
+
+class TestRequireScopes:
+    """The 401/403 matrix. Each dependency closure is invoked directly
+    with an explicit ``ctx=`` kwarg — bypassing FastAPI's
+    ``Depends(...)`` resolution on purpose (unit-testing the branch
+    logic, not the ASGI wiring)."""
+
+    def test_product_caller_missing_scope_is_403_scope_missing(self):
+        ctx = AuthContext(
+            org_id=_ORG,
+            caller_kind="product",
+            user_id=None,
+            scopes=["academia:read"],
+            raw_token=str(_TOKEN_ID),
+            api_token_id=_TOKEN_ID,
+        )
+        dep = require_scopes(
+            "academia:kb:write",
+            get_auth_context=lambda: _ctx_dep(ctx),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(dep(ctx=ctx))
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "scope_missing"
+
+    def test_product_caller_with_every_scope_passes(self):
+        ctx = AuthContext(
+            org_id=_ORG,
+            caller_kind="product",
+            user_id=None,
+            scopes=["academia:read", "academia:kb:write"],
+            raw_token=str(_TOKEN_ID),
+            api_token_id=_TOKEN_ID,
+        )
+        dep = require_scopes(
+            "academia:kb:write",
+            get_auth_context=lambda: _ctx_dep(ctx),
+        )
+
+        result = _run(dep(ctx=ctx))
+
+        assert result is ctx
+
+    def test_user_caller_outside_role_set_is_403_role_missing(self):
+        ctx = AuthContext(
+            org_id=_ORG,
+            caller_kind="user",
+            user_id=_USER,
+            scopes=[],
+            raw_token="session-id",
+            api_token_id=None,
+        )
+        core_client = _FakeCoreClient(
+            [{"id": str(_USER), "org_role": "viewer"}]
+        )
+        dep = require_scopes(
+            user_roles=frozenset({"owner", "admin"}),
+            get_auth_context=lambda: _ctx_dep(ctx),
+            get_core_client=lambda: core_client,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(dep(ctx=ctx))
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "role_missing"
+
+    def test_user_caller_with_role_in_set_passes(self):
+        ctx = AuthContext(
+            org_id=_ORG,
+            caller_kind="user",
+            user_id=_USER,
+            scopes=[],
+            raw_token="session-id",
+            api_token_id=None,
+        )
+        core_client = _FakeCoreClient(
+            [{"id": str(_USER), "org_role": "owner"}]
+        )
+        dep = require_scopes(
+            user_roles=frozenset({"owner", "admin"}),
+            get_auth_context=lambda: _ctx_dep(ctx),
+            get_core_client=lambda: core_client,
+        )
+
+        result = _run(dep(ctx=ctx))
+
+        assert result is ctx
+
+    def test_product_only_restriction_rejects_user_caller(self):
+        ctx = AuthContext(
+            org_id=_ORG,
+            caller_kind="user",
+            user_id=_USER,
+            scopes=[],
+            raw_token="session-id",
+            api_token_id=None,
+        )
+        dep = require_scopes(
+            "social-wiring:one-chat:read",
+            get_auth_context=lambda: _ctx_dep(ctx),
+            restrict="product_only",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(dep(ctx=ctx))
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "product_required"
+
+    def test_user_only_restriction_rejects_product_caller(self):
+        ctx = AuthContext(
+            org_id=_ORG,
+            caller_kind="product",
+            user_id=None,
+            scopes=[],
+            raw_token=str(_TOKEN_ID),
+            api_token_id=_TOKEN_ID,
+        )
+        dep = require_scopes(
+            user_roles=frozenset({"owner", "admin", "member"}),
+            get_auth_context=lambda: _ctx_dep(ctx),
+            get_core_client=lambda: _FakeCoreClient([]),
+            restrict="user_only",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(dep(ctx=ctx))
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "user_required"
+
+    def test_missing_credential_is_exactly_401_never_403_or_404_or_422(self):
+        """Auth-boundary false-green guard: composed on top of a
+        ``get_auth_context`` that raises 401 for "no credential", the
+        wrapping ``require_scopes`` dependency must never intercept
+        that into a 403/404/422. Driven through a REAL FastAPI
+        ``Depends(...)`` resolution (a tiny app + ``TestClient``) so
+        this exercises the actual ASGI wiring, not just the branch
+        logic below the upstream dep — the upstream 401 must
+        propagate untouched, never falling through to
+        ``KB § PATTERNS/compliance/auth-boundary-false-green.md``'s
+        non-401 shape."""
+        dep = require_scopes(
+            "academia:read",
+            get_auth_context=_always_401,
+        )
+
+        app = FastAPI()
+
+        @app.get("/protected")
+        async def protected(ctx: AuthContext = Depends(dep)):
+            return {"org_id": str(ctx.org_id)}
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/protected")
+
+        assert resp.status_code == 401, resp.text

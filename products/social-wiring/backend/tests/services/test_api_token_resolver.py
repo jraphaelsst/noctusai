@@ -1,25 +1,34 @@
-"""Tests for ``SupabaseApiTokenResolver`` — DB-backed ``pk_*`` lookup.
+"""Tests for the seed's ``SupabaseApiTokenResolver`` — DB-backed ``pk_*``
+lookup, as consumed by social-wiring (SEED-1 promotion).
 
 Exercises the resolver against ``MockSupabaseClient`` seeded with rows
 matching the real ``social_wiring.api_tokens`` schema (the same shape
-the W2 migration creates). No monkey-patching of internals — we inject
-the mock client through the constructor (DI seam).
+the W2 migration + the SEED-1 ``105_api_tokens_scopes_and_audit.sql``
+column-add create). No monkey-patching of internals — we inject the
+mock client through the constructor (DI seam).
+
+SEED-1 (``project-history/roadmaps/julia-agents-academia-2026-09.md``):
+the product-local ``app.services.api_token_resolver.SupabaseApiTokenResolver``
+is retired — this suite now targets the promoted seed adapter
+(``noctusai_lib.api.auth.session.SupabaseApiTokenResolver``), which
+takes ``schema`` as an explicit keyword instead of a module constant.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
 
-from noctusai_lib.api.auth.session import hash_token
+from noctusai_lib.api.auth.session import SupabaseApiTokenResolver, hash_token
 from noctusai_lib.testing import MockSupabaseClient
-
-from app.services.api_token_resolver import SupabaseApiTokenResolver
 
 
 _ORG = UUID("00000000-0000-4000-8000-0000000000aa")
 _TOKEN_ID = UUID("00000000-0000-4000-8000-0000000000bb")
+_AGENT = UUID("00000000-0000-4000-8000-0000000000cc")
+_MINTER = UUID("00000000-0000-4000-8000-0000000000dd")
 
 
 def _row(
@@ -29,6 +38,10 @@ def _row(
     org_id: UUID = _ORG,
     scopes: list[str] | None = None,
     revoked: bool = False,
+    expires_at: str | None = None,
+    principal_agent_id: str | None = None,
+    human_personal: bool = False,
+    minted_by: str | None = None,
 ) -> dict:
     """Build a fixture row matching the ``api_tokens`` insert shape."""
     return {
@@ -42,6 +55,10 @@ def _row(
         "created_at": "2026-05-20T00:00:00+00:00",
         "last_used_at": None,
         "revoked_at": "2026-05-20T01:00:00+00:00" if revoked else None,
+        "expires_at": expires_at,
+        "principal_agent_id": principal_agent_id,
+        "human_personal": human_personal,
+        "minted_by": minted_by,
     }
 
 
@@ -60,7 +77,7 @@ class TestResolveSuccess:
     async def test_resolves_active_token_to_auth_context(self):
         secret = "pk_" + "a" * 32
         client = _client_with([_row(secret, scopes=["publish", "read"])])
-        resolver = SupabaseApiTokenResolver(client)
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
 
         ctx = await resolver.resolve(secret)
 
@@ -103,7 +120,7 @@ class TestResolveSuccess:
             def from_(self, name):
                 return self.table(name)
 
-        resolver = SupabaseApiTokenResolver(_CaptureClient(client))
+        resolver = SupabaseApiTokenResolver(_CaptureClient(client), schema="social_wiring")
 
         await resolver.resolve(secret)
 
@@ -125,7 +142,7 @@ class TestResolveMisses:
     async def test_returns_none_for_unknown_token(self):
         # No rows at all → unknown token.
         client = _client_with([])
-        resolver = SupabaseApiTokenResolver(client)
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
 
         ctx = await resolver.resolve("pk_" + "x" * 32)
 
@@ -140,7 +157,7 @@ class TestResolveMisses:
         # revoked token would be a security regression.
         secret = "pk_" + "c" * 32
         client = _client_with([_row(secret, revoked=True)])
-        resolver = SupabaseApiTokenResolver(client)
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
 
         ctx = await resolver.resolve(secret)
 
@@ -149,7 +166,7 @@ class TestResolveMisses:
     @pytest.mark.asyncio
     async def test_returns_none_for_malformed_non_pk_token(self):
         client = _client_with([])
-        resolver = SupabaseApiTokenResolver(client)
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
 
         # Cheap pre-filter: bearer not starting with `pk_` rejected
         # without a DB round-trip.
@@ -160,7 +177,7 @@ class TestResolveMisses:
     @pytest.mark.asyncio
     async def test_returns_none_for_empty_token(self):
         client = _client_with([])
-        resolver = SupabaseApiTokenResolver(client)
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
 
         ctx = await resolver.resolve("")
 
@@ -178,10 +195,92 @@ class TestHashIsolation:
         good = "pk_" + "e" * 32
         bad = "pk_" + "f" * 32  # different secret → different hash
         client = _client_with([_row(good)])
-        resolver = SupabaseApiTokenResolver(client)
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
 
         ctx_good = await resolver.resolve(good)
         ctx_bad = await resolver.resolve(bad)
 
         assert ctx_good is not None
         assert ctx_bad is None
+
+
+class TestSeed1TokenScopes:
+    """SEED-1 (``julia-agents-academia-2026-09``): expiry enforcement +
+    the new ``principal_agent_id`` / ``human_personal`` / ``minted_by``
+    fields populated onto the resolved ``AuthContext``."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_expired_token(self):
+        secret = "pk_" + "g" * 32
+        past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        client = _client_with([_row(secret, expires_at=past)])
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
+
+        ctx = await resolver.resolve(secret)
+
+        assert ctx is None
+
+    @pytest.mark.asyncio
+    async def test_resolves_unexpired_token_with_future_expires_at(self):
+        secret = "pk_" + "h" * 32
+        future = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+        client = _client_with([_row(secret, expires_at=future)])
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
+
+        ctx = await resolver.resolve(secret)
+
+        assert ctx is not None
+        assert ctx.expires_at is not None
+
+    @pytest.mark.asyncio
+    async def test_resolves_token_with_no_expires_at_set(self):
+        """A pre-SEED-1 row (``expires_at IS NULL``, the backfill's
+        pending state before the migration's UPDATE runs) still
+        resolves — absence of an expiry is never treated as
+        already-expired."""
+        secret = "pk_" + "i" * 32
+        client = _client_with([_row(secret, expires_at=None)])
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
+
+        ctx = await resolver.resolve(secret)
+
+        assert ctx is not None
+        assert ctx.expires_at is None
+
+    @pytest.mark.asyncio
+    async def test_populates_principal_agent_id_human_personal_minted_by(self):
+        secret = "pk_" + "j" * 32
+        client = _client_with(
+            [
+                _row(
+                    secret,
+                    principal_agent_id=str(_AGENT),
+                    human_personal=True,
+                    minted_by=str(_MINTER),
+                )
+            ]
+        )
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
+
+        ctx = await resolver.resolve(secret)
+
+        assert ctx is not None
+        assert ctx.principal_agent_id == _AGENT
+        assert ctx.human_personal is True
+        assert ctx.minted_by == _MINTER
+
+    @pytest.mark.asyncio
+    async def test_defaults_when_new_columns_absent(self):
+        """A row with no ``principal_agent_id`` / ``human_personal`` /
+        ``minted_by`` set resolves with the ``AuthContext`` defaults —
+        the back-compat case for every token minted before SEED-1."""
+        secret = "pk_" + "k" * 32
+        client = _client_with([_row(secret)])
+        resolver = SupabaseApiTokenResolver(client, schema="social_wiring")
+
+        ctx = await resolver.resolve(secret)
+
+        assert ctx is not None
+        assert ctx.principal_agent_id is None
+        assert ctx.human_personal is False
+        assert ctx.minted_by is None

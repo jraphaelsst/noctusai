@@ -50,12 +50,12 @@ from __future__ import annotations
 
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from noctusai_lib.api.auth.session import (
     ApiTokenResolver,
@@ -68,7 +68,10 @@ from noctusai_lib.api.auth.session import (
     make_get_auth_context,
     make_session_revoker,
     make_session_store,
+    resolve_org_role,
 )
+
+_API_TOKEN_MAX_EXPIRY_DAYS = 90
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +176,38 @@ class MeResponse(BaseModel):
 class ApiTokenCreateRequest(BaseModel):
     label: str = Field(min_length=1, max_length=120)
     scopes: list[str] = Field(default_factory=list)
+    # SEED-1 (contract §B.0): required — a product token with no expiry
+    # is the class of finding that motivated this field. Validated
+    # against "now + 90 days" in `create_api_token` (a Pydantic Field
+    # constraint can't see the current time at declaration time).
+    expires_at: datetime
+    # SEED-1: the automation principal this token acts on behalf of
+    # (e.g. an `agents` product agent id) — `None` for an ordinary
+    # integration token with no bound principal.
+    principal_agent_id: Optional[UUID] = None
+    # SEED-1: flags a human's PERSONAL automation token (contract §B.0
+    # — needs no `X-Approval-Assertion`, writes attribute to the human
+    # via `minted_by`) rather than a control-plane token acting for an
+    # agent. Defaults False (an ordinary integration/agent token).
+    human_personal: bool = False
+
+    @field_validator("expires_at")
+    @classmethod
+    def _expires_at_within_90_days(cls, value: datetime) -> datetime:
+        limit = datetime.now(timezone.utc) + timedelta(
+            days=_API_TOKEN_MAX_EXPIRY_DAYS
+        )
+        # A naive `value` (no tzinfo) compares unsafely against the
+        # aware `limit` — coerce to UTC rather than raise, matching the
+        # platform's general laissez-faire treatment of naive
+        # timestamps from client JSON.
+        compare = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        if compare > limit:
+            raise ValueError(
+                f"expires_at must be at most {_API_TOKEN_MAX_EXPIRY_DAYS} days "
+                "from now"
+            )
+        return value
 
 
 class ApiTokenCreatedDTO(BaseModel):
@@ -184,6 +219,9 @@ class ApiTokenCreatedDTO(BaseModel):
     prefix: str
     scopes: list[str]
     created_at: str
+    expires_at: str
+    principal_agent_id: str | None = None
+    human_personal: bool = False
 
 
 class ApiTokenListItem(BaseModel):
@@ -248,15 +286,13 @@ def _require_org_admin(core_client: Any, ctx: AuthContext) -> None:
     PGRST205 (see ``feedback_product_client_schema_scoping_public_tables``
     memory entry).
     """
-    lookup = (
-        core_client.from_("noctus_users")
-        .select("org_role")
-        .eq("id", str(ctx.user_id))
-        .limit(1)
-        .execute()
-    )
-    rows = lookup.data or []
-    if not rows or rows[0].get("org_role") not in ("owner", "admin"):
+    # SEED-1: delegates the trusted-DB query itself to the seed's shared
+    # ``resolve_org_role`` (same table, same shape) rather than
+    # re-inlining it — the N=2 the 2026-07-06 entry already flagged is
+    # now N=1 sharing one implementation with ``require_scopes``'s
+    # user-role branch.
+    role = resolve_org_role(core_client, ctx.user_id)
+    if role not in ("owner", "admin"):
         raise HTTPException(
             status_code=403,
             detail="API-token management restricted to owner/admin roles",
@@ -471,6 +507,8 @@ def create_auth_router(
         raw_secret, prefix = _mint_secret()
         token_id = uuid4()
         now_iso = datetime.now(timezone.utc).isoformat()
+        expires_at_iso = body.expires_at.isoformat()
+        minted_by = str(ctx.user_id) if ctx.user_id else None
 
         sb = deps.get_admin_client()
         insert_payload = {
@@ -480,10 +518,20 @@ def create_auth_router(
             "token_hash": hash_token(raw_secret),
             "token_prefix": prefix,
             "scopes": list(body.scopes or []),
-            "created_by": str(ctx.user_id) if ctx.user_id else None,
+            "created_by": minted_by,
             "created_at": now_iso,
             "last_used_at": None,
             "revoked_at": None,
+            # SEED-1 (contract §B.0) — every new token gets an expiry;
+            # `minted_by` records the human who minted it regardless of
+            # whether the token is later used for `human_personal` or
+            # agent-principal writes.
+            "expires_at": expires_at_iso,
+            "principal_agent_id": (
+                str(body.principal_agent_id) if body.principal_agent_id else None
+            ),
+            "human_personal": body.human_personal,
+            "minted_by": minted_by,
         }
         try:
             sb.table(_TOKENS_TABLE).insert(insert_payload).execute()
@@ -500,6 +548,11 @@ def create_auth_router(
             prefix=prefix,
             scopes=list(body.scopes or []),
             created_at=now_iso,
+            expires_at=expires_at_iso,
+            principal_agent_id=(
+                str(body.principal_agent_id) if body.principal_agent_id else None
+            ),
+            human_personal=body.human_personal,
         )
 
     @api_tokens_router.get("", response_model=list[ApiTokenListItem])
