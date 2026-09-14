@@ -26,7 +26,10 @@ from noctusai_lib.testing import MockSupabaseClient
 from app.modules.certidoes import service
 from app.modules.certidoes.registry import (
     CERTIDOES_CONFIG,
+    MANUAL_TIPOS_CONFIG,
     PARAM_BUILDERS,
+    PARSE_BUILDERS,
+    RESULTADO_VALUES,
     TJSP_COOLDOWN_SECONDS,
     TJSP_TIPO,
     _build_params_cnd_federal,
@@ -38,6 +41,9 @@ from app.modules.certidoes.registry import (
     _build_params_trt2_fisico,
     config_for,
     get_certidoes_tipos,
+    get_manual_tipos,
+    manual_config_for,
+    parse_resultado,
 )
 
 #: The module's single credential-resolution point. Substituting HERE (not
@@ -108,6 +114,13 @@ def _resultado(**overrides) -> dict:
         "api_response": None,
         "erro_mensagem": None,
         "api_requested_at": None,
+        "numero": None,
+        "emitida_em": None,
+        "validade_ate": None,
+        "resultado": None,
+        "resultado_origem": None,
+        "confirmado_por": None,
+        "confirmado_em": None,
         "created_at": "2026-03-05T10:00:00+00:00",
         "updated_at": "2026-03-05T10:00:00+00:00",
     }
@@ -1809,3 +1822,612 @@ class TestScheduler:
             raise RuntimeError("x")
 
         scheduler.run_startup_recovery(clients=_explode)
+
+
+# ---------------------------------------------------------------------------
+# Registry — structured-field vocabulary + manual-only types (migration 107)
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryEstruturado:
+    def test_todos_os_dez_tipos_tem_parse_fn(self):
+        for config in CERTIDOES_CONFIG:
+            assert config["parse_fn"] in PARSE_BUILDERS, config["tipo"]
+
+    def test_resultado_values_bate_com_o_check_da_migracao_107(self):
+        assert RESULTADO_VALUES == {
+            "negativa", "positiva", "positiva_com_efeito_de_negativa",
+            "nao_emitida",
+        }
+
+    def test_manual_tipos_tem_tres_itens_sem_endpoint(self):
+        assert len(MANUAL_TIPOS_CONFIG) == 3
+        assert {c["tipo"] for c in MANUAL_TIPOS_CONFIG} == {
+            "serasa", "tjsp_esaj", "tjsp_eproc",
+        }
+        for config in MANUAL_TIPOS_CONFIG:
+            assert "endpoint" not in config
+            assert "params_fn" not in config
+
+    def test_manual_tipos_nao_aparecem_em_get_certidoes_tipos(self):
+        """🔴 `criar_consulta`'s fan-out iterates `CERTIDOES_CONFIG` — the ten
+        automated types stay pinned at ten, unaffected by this migration."""
+        tipos = {c["tipo"] for c in get_certidoes_tipos()}
+        assert tipos.isdisjoint({"serasa", "tjsp_esaj", "tjsp_eproc"})
+        assert len(get_certidoes_tipos()) == 10
+
+    def test_get_manual_tipos_retorna_tipo_nome_ordem(self):
+        for item in get_manual_tipos():
+            assert set(item) == {"tipo", "nome", "ordem"}
+        assert [c["ordem"] for c in get_manual_tipos()] == [11, 12, 13]
+
+    def test_manual_config_for_desconhecido_retorna_none(self):
+        assert manual_config_for("nao_existe") is None
+        assert manual_config_for("serasa")["nome"] == "Serasa"
+
+    def test_config_for_nao_enxerga_tipos_manuais(self):
+        """`config_for` answers "is there an API call to make" — a manual
+        type correctly has none."""
+        assert config_for("serasa") is None
+
+
+# ---------------------------------------------------------------------------
+# parse_resultado — structured fields straight off the API response
+# ---------------------------------------------------------------------------
+
+
+class TestParseResultado:
+    def test_nada_consta_e_sempre_negativa(self):
+        assert parse_resultado(CONFIG_FEDERAL, {"nada_consta": "Nada consta"}) == {
+            "resultado": "negativa",
+        }
+
+    def test_sem_data_no_raw_response_nao_extrai_nada(self):
+        assert parse_resultado(CONFIG_FEDERAL, {"raw_response": {}}) == {}
+        assert parse_resultado(CONFIG_FEDERAL, {"raw_response": None}) == {}
+
+    def test_le_numero_e_datas_do_data_zero(self):
+        fetch_result = {
+            "raw_response": {
+                "data": [{
+                    "numero_controle": "ABC.123",
+                    "data_emissao": "10/03/2026",
+                    "data_validade": "10/09/2026",
+                }],
+            },
+        }
+        campos = parse_resultado(CONFIG_FEDERAL, fetch_result)
+        assert campos == {
+            "numero": "ABC.123",
+            "emitida_em": "2026-03-10",
+            "validade_ate": "2026-09-10",
+        }
+
+    def test_nao_adivinha_resultado_a_partir_do_code_200(self):
+        """🔴 A code=200 PDF can be negativa OR positiva — the parser has no
+        verified field mapping to tell them apart, so it must not guess."""
+        fetch_result = {
+            "raw_response": {"data": [{"numero_controle": "X"}]},
+        }
+        assert "resultado" not in parse_resultado(CONFIG_FEDERAL, fetch_result)
+
+    def test_tipo_sem_parse_fn_retorna_vazio(self):
+        assert parse_resultado({"parse_fn": "nao_existe"}, {
+            "raw_response": {"data": [{"numero": "1"}]},
+        }) == {}
+
+    def test_data_em_formato_invalido_e_ignorada_nao_derruba(self):
+        fetch_result = {
+            "raw_response": {"data": [{"data_emissao": "não é uma data"}]},
+        }
+        assert parse_resultado(CONFIG_FEDERAL, fetch_result) == {}
+
+
+# ---------------------------------------------------------------------------
+# _analyze_estrutura_with_ai — the structured AI fallback
+# ---------------------------------------------------------------------------
+
+
+class TestAnalyzeEstruturaWithAi:
+    @pytest.mark.asyncio
+    async def test_sem_chave_retorna_none_nao_marcador(self):
+        """🔴 Unlike `_analyze_with_ai`'s PT-BR marker (meant to be READ in a
+        text column), a failure here has no honest column to sit in — the
+        caller's fields simply stay whatever they already were."""
+        with patch(_CRED, return_value=None):
+            out = await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out is None
+
+    @pytest.mark.asyncio
+    async def test_provider_ilegivel_nao_derruba_o_job(self):
+        out = await service._analyze_estrutura_with_ai(
+            "texto", "CND Federal", ORG,
+            resolve_provider=_provider_raising(RuntimeError("supabase_url is required")),
+        )
+        assert out is None
+
+    @pytest.mark.asyncio
+    async def test_json_limpo_e_extraido(self):
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value=(
+                '{"numero": "123", "emitida_em": "2026-01-10", '
+                '"validade_ate": "2026-07-10", "resultado": "negativa"}'
+            )),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out == {
+            "numero": "123",
+            "emitida_em": "2026-01-10",
+            "validade_ate": "2026-07-10",
+            "resultado": "negativa",
+        }
+
+    @pytest.mark.asyncio
+    async def test_json_cercado_por_markdown_fence_e_aceito(self):
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='```json\n{"resultado": "positiva"}\n```'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out == {"resultado": "positiva"}
+
+    @pytest.mark.asyncio
+    async def test_resultado_fora_do_vocabulario_e_descartado(self):
+        """A model that ignores the instruction and answers a free-text
+        verdict must not write outside the CHECK-constrained vocabulary."""
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"resultado": "provavelmente ok"}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out is None
+
+    @pytest.mark.asyncio
+    async def test_json_invalido_retorna_none(self):
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value="isto não é json"),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out is None
+
+    @pytest.mark.asyncio
+    async def test_data_fora_do_formato_iso_e_descartada(self):
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value=(
+                '{"emitida_em": "10 de março", "resultado": "negativa"}'
+            )),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out == {"resultado": "negativa"}
+
+    @pytest.mark.asyncio
+    async def test_falha_do_provedor_retorna_none(self):
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(side_effect=RuntimeError("429")),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out is None
+
+    @pytest.mark.asyncio
+    async def test_resposta_vazia_de_json_retorna_none(self):
+        """Every field either absent or invalid → `_parse_json_resultado`
+        collapses the dict to empty and this returns `None`, not `{}`."""
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"numero": null, "resultado": null}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out is None
+
+
+# ---------------------------------------------------------------------------
+# _derive_estrutura — the orchestration: API first, AI fallback, human lock
+# ---------------------------------------------------------------------------
+
+
+class TestDerivaEstrutura:
+    @pytest.mark.asyncio
+    async def test_travado_nao_chama_nada(self):
+        estrutura_ia = AsyncMock()
+        patch_out = await service._derive_estrutura(
+            config=CONFIG_FEDERAL,
+            result={"raw_response": {"data": [{"numero_controle": "X"}]}},
+            texto_para_ia="texto",
+            nome_display="CND Federal",
+            org_id=ORG,
+            travado=True,
+            analyze_estrutura=estrutura_ia,
+        )
+        assert patch_out == {}
+        estrutura_ia.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_nada_consta_nao_precisa_de_ia(self):
+        estrutura_ia = AsyncMock()
+        patch_out = await service._derive_estrutura(
+            config=CONFIG_FEDERAL,
+            result={"nada_consta": "Nada consta"},
+            texto_para_ia=None,
+            nome_display="CND Federal",
+            org_id=ORG,
+            travado=False,
+            analyze_estrutura=estrutura_ia,
+        )
+        assert patch_out == {"resultado": "negativa", "resultado_origem": "api"}
+        estrutura_ia.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_api_ambigua_cai_para_ia(self):
+        estrutura_ia = AsyncMock(return_value={"resultado": "positiva"})
+        patch_out = await service._derive_estrutura(
+            config=CONFIG_FEDERAL,
+            result={"raw_response": {"data": [{"numero_controle": "X"}]}},
+            texto_para_ia="texto",
+            nome_display="CND Federal",
+            org_id=ORG,
+            travado=False,
+            analyze_estrutura=estrutura_ia,
+        )
+        assert patch_out == {
+            "numero": "X", "resultado": "positiva", "resultado_origem": "ia",
+        }
+        estrutura_ia.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_ia_nunca_sobrescreve_o_que_a_api_ja_disse(self):
+        """`setdefault` — the AI leg only FILLS GAPS, never overwrites a field
+        the API-response parse already produced."""
+        estrutura_ia = AsyncMock(
+            return_value={"numero": "IA-WRONG", "resultado": "positiva"}
+        )
+        patch_out = await service._derive_estrutura(
+            config=CONFIG_FEDERAL,
+            result={"raw_response": {"data": [{"numero_controle": "API-RIGHT"}]}},
+            texto_para_ia="texto",
+            nome_display="CND Federal",
+            org_id=ORG,
+            travado=False,
+            analyze_estrutura=estrutura_ia,
+        )
+        assert patch_out["numero"] == "API-RIGHT"
+
+    @pytest.mark.asyncio
+    async def test_sem_texto_nem_config_e_sem_resultado_da_api_fica_vazio(self):
+        estrutura_ia = AsyncMock()
+        patch_out = await service._derive_estrutura(
+            config=None, result=None, texto_para_ia=None,
+            nome_display="CND Federal", org_id=ORG, travado=False,
+            analyze_estrutura=estrutura_ia,
+        )
+        assert patch_out == {}
+        estrutura_ia.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ia_sem_resposta_nao_seta_origem(self):
+        estrutura_ia = AsyncMock(return_value=None)
+        patch_out = await service._derive_estrutura(
+            config=CONFIG_FEDERAL,
+            result={"raw_response": {"data": [{}]}},
+            texto_para_ia="texto",
+            nome_display="CND Federal",
+            org_id=ORG,
+            travado=False,
+            analyze_estrutura=estrutura_ia,
+        )
+        assert patch_out == {}
+
+
+# ---------------------------------------------------------------------------
+# _process_single_certidao — structured fields wired end-to-end
+# ---------------------------------------------------------------------------
+
+
+class TestProcessSingleCertidaoEstruturado:
+    @pytest.mark.asyncio
+    async def test_nada_consta_grava_negativa_e_origem_api(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado()],
+        )
+        http = _FakeHttp({"code": 612, "errors": ["Nada consta"]})
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, FakeStorageBackend(), analyze=_noop_analyze,
+        )
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["resultado"] == "negativa"
+        assert row["resultado_origem"] == "api"
+
+    @pytest.mark.asyncio
+    async def test_resultado_ja_confirmado_manualmente_nao_e_sobrescrito(self):
+        """🔴 The enforcement side of migration 107's header: a reprocess must
+        never silently overwrite a human's confirmed value."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(
+                resultado="positiva", resultado_origem="manual",
+                confirmado_por="user-1",
+            )],
+        )
+        http = _FakeHttp({"code": 612, "errors": ["Nada consta"]})
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, FakeStorageBackend(), analyze=_noop_analyze,
+        )
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        # The API said "nada_consta" (negativa) but the human's "positiva"
+        # (a real debt the certidão missed, corrected by hand) must stand.
+        assert row["resultado"] == "positiva"
+        assert row["resultado_origem"] == "manual"
+
+    @pytest.mark.asyncio
+    async def test_sucesso_com_pdf_deriva_campos_via_ia_quando_api_e_ambigua(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado()],
+        )
+        http = _FakeHttp(_api_ok(), file_body=b"%PDF-1.4 real")
+        estrutura_ia = AsyncMock(return_value={"resultado": "negativa"})
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, analyze_estrutura=estrutura_ia,
+        )
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["resultado"] == "negativa"
+        assert row["resultado_origem"] == "ia"
+        estrutura_ia.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# process_manual_upload — structured fields, AI-only on this path
+# ---------------------------------------------------------------------------
+
+
+class TestProcessManualUploadEstruturado:
+    @pytest.mark.asyncio
+    async def test_deriva_campos_via_ia_quando_nao_travado(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="serasa", nome_display="Serasa")],
+        )
+        estrutura_ia = AsyncMock(return_value={"resultado": "negativa"})
+        update_data = await service.process_manual_upload(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta=_consulta_row(),
+            tipo="serasa",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            storage=FakeStorageBackend(),
+            extract_text=AsyncMock(return_value="texto extraído"),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=estrutura_ia,
+        )
+        assert update_data["resultado"] == "negativa"
+        assert update_data["resultado_origem"] == "ia"
+        estrutura_ia.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_travado_por_confirmado_por_nao_chama_ia(self):
+        estrutura_ia = AsyncMock()
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(
+                tipo="serasa", resultado_origem="api", confirmado_por="user-1",
+            )],
+        )
+        update_data = await service.process_manual_upload(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta=_consulta_row(),
+            tipo="serasa",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            storage=FakeStorageBackend(),
+            resultado_origem_atual="api",
+            confirmado_por_atual="user-1",
+            extract_text=AsyncMock(return_value="texto extraído"),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=estrutura_ia,
+        )
+        assert "resultado" not in update_data
+        estrutura_ia.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_travado_por_origem_manual_nao_chama_ia(self):
+        estrutura_ia = AsyncMock()
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(
+                tipo="tjsp_esaj", resultado_origem="manual",
+            )],
+        )
+        await service.process_manual_upload(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta=_consulta_row(),
+            tipo="tjsp_esaj",
+            nome_display="TJSP e-SAJ",
+            org_id=ORG,
+            db=db,
+            storage=FakeStorageBackend(),
+            resultado_origem_atual="manual",
+            extract_text=AsyncMock(return_value="texto extraído"),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=estrutura_ia,
+        )
+        estrutura_ia.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_sem_texto_extraido_nao_chama_ia(self):
+        estrutura_ia = AsyncMock()
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="serasa")],
+        )
+        await service.process_manual_upload(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta=_consulta_row(),
+            tipo="serasa",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            storage=FakeStorageBackend(),
+            extract_text=AsyncMock(return_value=None),
+            analyze_estrutura=estrutura_ia,
+        )
+        estrutura_ia.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# certidoes_por_parte / confirmar_resultado / mint_resultado_url
+# ---------------------------------------------------------------------------
+
+
+class TestCertidoesPorParte:
+    def test_sem_consultas_para_a_parte_retorna_vazio(self):
+        db = _db(certidao_consultas=[], certidao_resultados=[])
+        assert service.certidoes_por_parte(db, ORG, "parte-1") == []
+
+    def test_agrega_resultados_das_consultas_da_parte(self):
+        db = _db(
+            certidao_consultas=[
+                _consulta_row(atendimento_parte_id="parte-1"),
+            ],
+            certidao_resultados=[
+                _resultado(id="r1"), _resultado(id="r2", ordem=2, tipo="trf3"),
+            ],
+        )
+        rows = service.certidoes_por_parte(db, ORG, "parte-1")
+        assert {r["id"] for r in rows} == {"r1", "r2"}
+        assert rows[0]["consulta_nome"] == "João da Silva"
+
+    def test_nao_traz_consultas_de_outra_parte(self):
+        db = _db(
+            certidao_consultas=[
+                _consulta_row(id="c-outra", atendimento_parte_id="parte-2"),
+            ],
+            certidao_resultados=[_resultado(consulta_id="c-outra")],
+        )
+        assert service.certidoes_por_parte(db, ORG, "parte-1") == []
+
+
+class TestConfirmarResultado:
+    def test_grava_campos_e_estampa_confirmacao(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado()],
+        )
+        updated = service.confirmar_resultado(
+            db, ORG, "resultado-001",
+            {"resultado": "positiva", "numero": "X-1"}, "user-9",
+        )
+        assert updated["resultado"] == "positiva"
+        assert updated["numero"] == "X-1"
+        assert updated["resultado_origem"] == "manual"
+        assert updated["confirmado_por"] == "user-9"
+        assert updated["confirmado_em"] is not None
+
+    def test_corpo_vazio_ainda_estampa_confirmacao(self):
+        """A pure 'I reviewed this' confirm — no field changes, but the lock
+        is set all the same."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(resultado="negativa", resultado_origem="api")],
+        )
+        updated = service.confirmar_resultado(db, ORG, "resultado-001", {}, "user-9")
+        assert updated["resultado"] == "negativa"
+        assert updated["resultado_origem"] == "manual"
+        assert updated["confirmado_por"] == "user-9"
+
+    def test_resultado_inexistente_retorna_none(self):
+        db = _db(certidao_resultados=[])
+        assert service.confirmar_resultado(db, ORG, "sumiu", {}, "user-9") is None
+
+    def test_resultado_de_outra_org_retorna_none(self):
+        db = _db(certidao_resultados=[_resultado(org_id=OTHER_ORG)])
+        assert service.confirmar_resultado(db, ORG, "resultado-001", {}, "user-9") is None
+
+
+class TestMintResultadoUrl:
+    @pytest.mark.asyncio
+    async def test_chave_de_storage_e_assinada_e_logada(self):
+        key = f"{ORG}/certidoes/consulta-001/cnd_federal_ab.pdf"
+        db = _db(certidao_resultados=[_resultado(arquivo_url=key)])
+        storage = FakeStorageBackend()
+        result = await service.mint_resultado_url(
+            db, storage, ORG, "resultado-001", usuario_id="user-1", intent="view",
+        )
+        assert result["url"].startswith("fake://storage/")
+        assert result["expires_at"] is not None
+        log = db.table("certidao_resultado_acessos").select("*").execute().data
+        assert len(log) == 1
+        assert log[0]["acao"] == "view"
+        assert log[0]["documento_id"] == "resultado-001"
+
+    @pytest.mark.asyncio
+    async def test_url_externa_e_devolvida_sem_assinar(self):
+        db = _db(certidao_resultados=[
+            _resultado(arquivo_url="https://infosimples.com/x.pdf"),
+        ])
+        result = await service.mint_resultado_url(
+            db, FakeStorageBackend(), ORG, "resultado-001", usuario_id="user-1",
+        )
+        assert result["url"] == "https://infosimples.com/x.pdf"
+        assert result["expires_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_sem_arquivo_retorna_marcador_de_erro(self):
+        db = _db(certidao_resultados=[_resultado(arquivo_url=None)])
+        result = await service.mint_resultado_url(
+            db, FakeStorageBackend(), ORG, "resultado-001", usuario_id="user-1",
+        )
+        assert result == {"error": "sem_arquivo"}
+
+    @pytest.mark.asyncio
+    async def test_resultado_inexistente_retorna_none(self):
+        db = _db(certidao_resultados=[])
+        result = await service.mint_resultado_url(
+            db, FakeStorageBackend(), ORG, "sumiu", usuario_id="user-1",
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_resultado_de_outra_org_retorna_none(self):
+        db = _db(certidao_resultados=[
+            _resultado(org_id=OTHER_ORG, arquivo_url="https://x/a.pdf"),
+        ])
+        result = await service.mint_resultado_url(
+            db, FakeStorageBackend(), ORG, "resultado-001", usuario_id="user-1",
+        )
+        assert result is None

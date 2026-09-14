@@ -140,6 +140,9 @@ class CertidoesService:
     cancelar_processamento: Callable
     queued_tjsp_for_org: Callable
     tjsp_cooldown_status: Callable
+    certidoes_por_parte: Callable
+    confirmar_resultado: Callable
+    mint_resultado_url: Callable
 
 
 def _build_default_service() -> CertidoesService:
@@ -163,6 +166,9 @@ def _build_default_service() -> CertidoesService:
         cancelar_processamento=service.cancelar_processamento,
         queued_tjsp_for_org=service.queued_tjsp_for_org,
         tjsp_cooldown_status=service.tjsp_cooldown_status,
+        certidoes_por_parte=service.certidoes_por_parte,
+        confirmar_resultado=service.confirmar_resultado,
+        mint_resultado_url=service.mint_resultado_url,
     )
 
 

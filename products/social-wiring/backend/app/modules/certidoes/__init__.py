@@ -48,7 +48,16 @@ Routes
     GET                    /api/certidoes/consultas/{id}/download-zip
     GET                    /api/certidoes/download
     POST                   /api/certidoes/resultados/{id}/upload
+    PATCH                  /api/certidoes/resultados/{id}
+    GET                    /api/certidoes/resultados/{id}/url
     GET                    /api/certidoes/fila-tjsp
+    POST                   /api/certidoes/consultas/{id}/vincular-parte
+    GET                    /api/certidoes/partes/{id}/resultados
+
+The last four (migration 107) are the contract-automation slice's per-parte
+certidões surface — no new upload route, no new `max_body_path_overrides`
+entry needed: they reuse the existing upload route above, whose entry
+already exists (see this file's "second half" note).
 """
 from __future__ import annotations
 

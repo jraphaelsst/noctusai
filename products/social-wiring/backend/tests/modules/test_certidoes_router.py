@@ -41,6 +41,9 @@ _CRED = "app.modules.certidoes.credentials.resolve_api_key"
 #: org so the authenticated caller and the seeded rows agree on "my org".
 CALLER_ORG = "48ab962b-ec86-517e-9e42-7b581f622377"
 OTHER_ORG = "22222222-2222-4222-8222-222222222222"
+#: `VincularParteRequest.atendimento_parte_id` is a `UUID` field — a plain
+#: slug like `"parte-001"` would 422 before the handler ever runs.
+PARTE_ID = "33333333-3333-4333-8333-333333333333"
 
 BASE = "/api/certidoes"
 
@@ -897,6 +900,254 @@ class TestFilaTjsp:
                        org_id=OTHER_ORG),
         ])
         assert client.get(f"{BASE}/fila-tjsp").json()["data"]["total_na_fila"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Contract-automation slice (migration 107)
+# ---------------------------------------------------------------------------
+
+
+def _parte(**overrides) -> dict:
+    row = {
+        "id": PARTE_ID,
+        "org_id": CALLER_ORG,
+        "atendimento_id": "atendimento-001",
+        "cliente_id": "cliente-001",
+        "papel": "conjuge",
+        "lado": "comprador",
+        "ordem": 0,
+        "observacao": None,
+        "created_at": "2026-03-05T10:00:00+00:00",
+        "created_by": "test-user-123",
+        "updated_at": None,
+    }
+    row.update(overrides)
+    return row
+
+
+class TestVincularParte:
+    def test_vincula_e_resolve_cliente_id_da_parte(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimento_partes", [_parte()])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["atendimento_parte_id"] == PARTE_ID
+        assert data["cliente_id"] == "cliente-001"
+
+    def test_faz_fan_out_dos_tres_tipos_manuais(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimento_partes", [_parte()])
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        tipos = {
+            r["tipo"]
+            for r in db.table("certidao_resultados").select("*").execute().data
+        }
+        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc"}
+
+    def test_fan_out_e_idempotente(self, client, certidoes_db):
+        """Linking the same parte twice must not duplicate the three manual
+        placeholders — `vincular_parte` checks existing tipos first."""
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimento_partes", [_parte()])
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        rows = db.table("certidao_resultados").select("*").execute().data
+        assert len(rows) == 3
+
+    def test_nao_duplica_tipos_ja_existentes(self, client, certidoes_db):
+        """A consulta already carrying the ten automated resultados (the
+        normal `criar_consulta` fan-out) must not get a second `serasa`
+        placeholder if one was already added by hand."""
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[
+            _resultado(id="ja-existe", tipo="serasa", ordem=11),
+        ])
+        db.set_table_data("atendimento_partes", [_parte()])
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        serasas = [
+            r for r in db.table("certidao_resultados").select("*").execute().data
+            if r["tipo"] == "serasa"
+        ]
+        assert len(serasas) == 1
+
+    def test_parte_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimento_partes", [])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": "00000000-0000-4000-8000-000000000000"},
+        )
+        assert resp.status_code == 404
+
+    def test_parte_de_outra_org_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimento_partes", [_parte(org_id=OTHER_ORG)])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        assert resp.status_code == 404
+
+    def test_consulta_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("atendimento_partes", [_parte()])
+        resp = client.post(
+            f"{BASE}/consultas/nao-existe/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        assert resp.status_code == 404
+
+    def test_corpo_invalido_e_422(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte", json={},
+        )
+        assert resp.status_code == 422
+
+
+class TestListarResultadosPorParte:
+    def test_lista_certidoes_da_parte(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(
+            db,
+            consultas=[_consulta(atendimento_parte_id=PARTE_ID)],
+            resultados=[_resultado(id="r1")],
+        )
+        data = client.get(f"{BASE}/partes/{PARTE_ID}/resultados").json()["data"]
+        assert [r["id"] for r in data] == ["r1"]
+
+    def test_parte_sem_consultas_retorna_lista_vazia(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        assert client.get(f"{BASE}/partes/{PARTE_ID}/resultados").json()["data"] == []
+
+
+class TestConfirmarOuCorrigirResultado:
+    def test_corrige_campos_e_estampa_manual(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado()])
+        resp = client.patch(
+            f"{BASE}/resultados/resultado-001",
+            json={"resultado": "positiva", "numero": "X-1"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["resultado"] == "positiva"
+        assert data["numero"] == "X-1"
+        assert data["resultado_origem"] == "manual"
+        assert data["confirmado_por"] is not None
+        assert data["confirmado_em"] is not None
+
+    def test_corpo_vazio_ainda_confirma(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado(resultado="negativa", resultado_origem="api")])
+        resp = client.patch(f"{BASE}/resultados/resultado-001", json={})
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["resultado"] == "negativa"
+        assert data["resultado_origem"] == "manual"
+
+    def test_resultado_invalido_e_422(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado()])
+        resp = client.patch(
+            f"{BASE}/resultados/resultado-001",
+            json={"resultado": "nao_e_um_valor_valido"},
+        )
+        assert resp.status_code == 422
+
+    def test_campo_desconhecido_e_recusado(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado()])
+        resp = client.patch(
+            f"{BASE}/resultados/resultado-001", json={"campo_fantasma": "x"},
+        )
+        assert resp.status_code == 422
+
+    def test_resultado_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        assert client.patch(
+            f"{BASE}/resultados/sumiu", json={},
+        ).status_code == 404
+
+    def test_resultado_de_outra_org_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado(id="alheio", org_id=OTHER_ORG)])
+        assert client.patch(
+            f"{BASE}/resultados/alheio", json={},
+        ).status_code == 404
+
+
+class TestObterUrlResultado:
+    def test_chave_de_storage_e_assinada(self, client, certidoes_db):
+        db, storage = certidoes_db
+        key = f"{CALLER_ORG}/certidoes/consulta-001/a.pdf"
+        _seed(db, resultados=[_resultado(id="r1", arquivo_url=key)])
+        resp = client.get(f"{BASE}/resultados/r1/url")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["url"].startswith("fake://storage/")
+        assert data["expires_at"] is not None
+
+    def test_loga_o_acesso_lgpd(self, client, certidoes_db):
+        db, _ = certidoes_db
+        key = f"{CALLER_ORG}/certidoes/consulta-001/a.pdf"
+        _seed(db, resultados=[_resultado(id="r1", arquivo_url=key)])
+        db.set_table_data("certidao_resultado_acessos", [])
+        client.get(f"{BASE}/resultados/r1/url?intent=download")
+        log = db.table("certidao_resultado_acessos").select("*").execute().data
+        assert len(log) == 1
+        assert log[0]["acao"] == "download"
+        assert log[0]["documento_id"] == "r1"
+
+    def test_url_externa_e_devolvida_sem_assinar(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[
+            _resultado(id="r1", arquivo_url="https://infosimples.com/x.pdf"),
+        ])
+        data = client.get(f"{BASE}/resultados/r1/url").json()["data"]
+        assert data["url"] == "https://infosimples.com/x.pdf"
+
+    def test_sem_arquivo_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado(id="r1", arquivo_url=None)])
+        assert client.get(f"{BASE}/resultados/r1/url").status_code == 404
+
+    def test_resultado_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        assert client.get(f"{BASE}/resultados/sumiu/url").status_code == 404
+
+    def test_intent_invalido_e_422(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado(id="r1")])
+        assert client.get(
+            f"{BASE}/resultados/r1/url?intent=apagar"
+        ).status_code == 422
 
 
 # ---------------------------------------------------------------------------

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -59,9 +60,11 @@ from app.modules.certidoes.registry import (
     CERTIDOES_CONFIG,
     INFOSIMPLES_BASE_URL,
     PARAM_BUILDERS,
+    RESULTADO_VALUES,
     TJSP_COOLDOWN_SECONDS,
     TJSP_TIPO,
     config_for,
+    parse_resultado,
 )
 
 logger = logging.getLogger(__name__)
@@ -538,6 +541,192 @@ async def _analyze_with_ai(
         return f"[Erro na análise IA: {e}]"
 
 
+def _is_iso_date(value: str) -> bool:
+    """Is `value` a well-formed `YYYY-MM-DD`? Used to sanitize an LLM's JSON
+    answer before it reaches a `DATE` column — a model that ignores the
+    format instruction and answers `"15 de março de 2026"` must not reach
+    Postgres as a date, silently or otherwise."""
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
+def _parse_json_resultado(raw: Optional[str], nome_display: str) -> Optional[dict]:
+    """Defensive JSON parse of `_analyze_estrutura_with_ai`'s own response.
+
+    LLMs fence JSON in ``` even when told not to; this strips a fence before
+    parsing rather than failing on it. Any field outside the CHECK-
+    constrained `resultado` vocabulary, or an unparseable payload, or a
+    non-dict payload is DROPPED rather than written — a malformed AI answer
+    must never reach the database as a confident-looking value. This module's
+    own `_analyze_with_ai` header names exactly that failure class for the
+    free-text column; the structured one has more surface for it, not less,
+    because here a malformed answer could otherwise land in a real column
+    instead of a text blob a human reads skeptically.
+    """
+    if not raw:
+        return None
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned[:4].lower() == "json":
+            cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+    try:
+        parsed = json.loads(cleaned)
+    except (ValueError, TypeError):
+        logger.warning(
+            "Structured AI extraction for %s returned unparseable JSON: %r",
+            nome_display, raw[:200],
+        )
+        return None
+    if not isinstance(parsed, dict):
+        return None
+
+    out: dict = {}
+    numero = parsed.get("numero")
+    if isinstance(numero, str) and numero.strip():
+        out["numero"] = numero.strip()
+    for key in ("emitida_em", "validade_ate"):
+        value = parsed.get(key)
+        if isinstance(value, str) and _is_iso_date(value):
+            out[key] = value
+    resultado = parsed.get("resultado")
+    if resultado in RESULTADO_VALUES:
+        out["resultado"] = resultado
+    return out or None
+
+
+async def _analyze_estrutura_with_ai(
+    text: str,
+    nome_display: str,
+    org_id: Optional[str] = None,
+    *,
+    resolve_provider: Optional[Callable[[Optional[str]], str]] = None,
+) -> Optional[dict]:
+    """Ask the same seed `chat_completion` wrapper for the STRUCTURED
+    determination (`numero`/`emitida_em`/`validade_ate`/`resultado`) instead
+    of `_analyze_with_ai`'s free-text summary — the fallback `_derive_
+    estrutura` reaches for when neither the raw API response
+    (`registry.parse_resultado`) nor a human already say what `resultado` is.
+
+    Returns `None` on ANY failure — unconfigured provider, unresolvable key,
+    a raised exception, or unparseable JSON. Unlike `_analyze_with_ai`, whose
+    PT-BR marker string is meant to be READ by a human in the free-text
+    analysis column, a failure here has nowhere honest to go in a `numero`/
+    `resultado` column, so the caller's own fields simply stay whatever they
+    already were (never downgraded to a guess, never a stack trace surfacing
+    on a background job — same posture `_analyze_with_ai` documents for the
+    identical class of failure, applied to a return shape that cannot carry
+    a PT-BR sentence).
+    """
+    from app.services.api_keys_store import resolve_chat_provider
+
+    resolver = resolve_provider or resolve_chat_provider
+    try:
+        provider = resolver(org_id)
+    except Exception as exc:  # noqa: BLE001 — background job must not die
+        logger.error(
+            "Structured AI extraction skipped for %s — could not read the "
+            "analysis-provider setting for org=%s: %s",
+            nome_display, org_id, exc,
+        )
+        return None
+
+    modelo = ANALYSIS_MODELS.get(provider, ANALYSIS_MODELS[DEFAULT_ANALYSIS_PROVIDER])
+    api_key = resolve_key(provider_api_key(provider), org_id)
+    if not api_key:
+        logger.warning(
+            "Structured AI extraction skipped for %s — %s not configured "
+            "(selected provider)",
+            nome_display, provider_api_key(provider),
+        )
+        return None
+
+    try:
+        raw = await chat_completion(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Você é um analista jurídico. Leia esta certidão e "
+                        "responda APENAS com um JSON (sem markdown, sem texto "
+                        "adicional) com estas chaves: numero (string ou null), "
+                        "emitida_em (formato YYYY-MM-DD ou null), validade_ate "
+                        "(formato YYYY-MM-DD ou null), resultado (um destes "
+                        "valores exatos: negativa, positiva, "
+                        "positiva_com_efeito_de_negativa, nao_emitida — ou "
+                        "null se não for possível determinar com confiança)."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            model=modelo,
+            provider=provider,
+            org_id=org_id,
+            max_tokens=300,
+        )
+    except Exception as e:
+        logger.error("Structured AI extraction failed for %s: %s", nome_display, e)
+        return None
+
+    return _parse_json_resultado(raw, nome_display)
+
+
+async def _derive_estrutura(
+    *,
+    config: Optional[dict],
+    result: Optional[dict],
+    texto_para_ia: Optional[str],
+    nome_display: str,
+    org_id: Optional[str],
+    travado: bool,
+    analyze_estrutura: Callable[..., Any],
+) -> dict:
+    """The structured-field patch (`numero`/`emitida_em`/`validade_ate`/
+    `resultado`, plus `resultado_origem`) for one resultado: the raw API
+    response first, an AI structured read only for what that left
+    undetermined, and NOTHING AT ALL when a human already owns this
+    resultado's fields.
+
+    🔴 `travado` IS THE ENFORCEMENT SIDE OF MIGRATION 107'S HEADER. A
+    resultado with `resultado_origem='manual'` or a non-null `confirmado_por`
+    was reviewed by a human — a reprocess, a retry, or a later manual upload
+    on the SAME resultado must never silently overwrite that, including with
+    a MORE confident-looking automated read. The caller (`_process_single_
+    certidao` / `process_manual_upload`) computes `travado` off the row it
+    already fetched; this function never reads the database itself.
+
+    🔴 `resultado_origem` TRACKS THE VERDICT, NOT "DID ANY FIELD COME FROM
+    THE API". `registry.parse_resultado` can legitimately fill `numero`/
+    dates while leaving `resultado` itself undetermined (see its own
+    docstring); when the AI leg THEN supplies the verdict, the row's origin
+    is "ia" even though a `numero` also landed from the API — a due-
+    diligence reader asking "who decided this was negativa" needs THAT
+    answer, not "something here came from InfoSimples".
+    """
+    if travado:
+        return {}
+    patch: dict = {}
+    origem: Optional[str] = None
+    if config and result:
+        parsed = parse_resultado(config, result)
+        if parsed:
+            patch.update(parsed)
+            origem = "api"
+    if "resultado" not in patch and texto_para_ia:
+        via_ia = await analyze_estrutura(texto_para_ia, nome_display, org_id)
+        if via_ia:
+            for k, v in via_ia.items():
+                patch.setdefault(k, v)
+            origem = "ia"
+    if patch:
+        patch["resultado_origem"] = origem
+    return patch
+
+
 async def _extract_pdf_text(
     pdf_bytes: bytes, nome_display: str, org_id: Optional[str] = None
 ) -> Optional[str]:
@@ -616,6 +805,7 @@ async def _process_single_certidao(
     storage: StorageBackend,
     *,
     analyze: Optional[Callable[..., Any]] = None,
+    analyze_estrutura: Optional[Callable[..., Any]] = None,
 ) -> None:
     """Process a single certificate: fetch → download → store → analyze → update.
 
@@ -627,11 +817,29 @@ async def _process_single_certidao(
     `_analyze_with_ai` out of the module — the InfoSimples call itself needs no
     such seam, because `http_client` already is one (drive the fake client and
     the real retry / 612 / error-extraction logic runs, which is the point).
+    `analyze_estrutura` is the same seam for `_derive_estrutura`'s AI leg,
+    defaulting to `_analyze_estrutura_with_ai`.
     → KB § PATTERNS/backend/di-test-seam.md
     """
     analyze = analyze or _analyze_with_ai
+    analyze_estrutura = analyze_estrutura or _analyze_estrutura_with_ai
     consulta_id = consulta["id"]
     org_id = consulta.get("org_id")
+    nome_display = config.get("nome", config["tipo"])
+
+    # Read BEFORE touching status — a resultado a human already confirmed or
+    # manually corrected must keep its structured fields untouched by this
+    # run, including on a reprocess. See `_derive_estrutura`'s docstring.
+    atual_rows = (
+        db.table(RESULTADOS)
+        .select("resultado_origem, confirmado_por")
+        .eq("id", resultado_id)
+        .execute()
+    ).data or []
+    travado = bool(atual_rows) and (
+        atual_rows[0].get("resultado_origem") == "manual"
+        or bool(atual_rows[0].get("confirmado_por"))
+    )
 
     # Update status to processando and record when the API call is about to
     # happen. api_requested_at survives status resets (reprocessing) so the
@@ -656,12 +864,18 @@ async def _process_single_certidao(
 
     # "Nada consta" result (e.g., no protests found) — success without PDF
     if result.get("nada_consta"):
-        db.table(RESULTADOS).update({
+        update_data = {
             "status": "sucesso",
             "analise_ia": result["nada_consta"],
             "api_response": result["raw_response"],
             "erro_mensagem": None,
-        }).eq("id", resultado_id).execute()
+        }
+        update_data.update(await _derive_estrutura(
+            config=config, result=result, texto_para_ia=None,
+            nome_display=nome_display, org_id=org_id, travado=travado,
+            analyze_estrutura=analyze_estrutura,
+        ))
+        db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
         _atualizar_status_consulta(consulta_id, org_id, db)
         return
 
@@ -714,6 +928,7 @@ async def _process_single_certidao(
 
     # AI analysis (use raw response summary as text input)
     analise = None
+    text_for_analysis = None
     raw = result["raw_response"]
     if raw and raw.get("data"):
         summary_parts = []
@@ -735,6 +950,11 @@ async def _process_single_certidao(
         "api_response": result["raw_response"],
         "erro_mensagem": None,
     }
+    update_data.update(await _derive_estrutura(
+        config=config, result=result, texto_para_ia=text_for_analysis,
+        nome_display=nome_display, org_id=org_id, travado=travado,
+        analyze_estrutura=analyze_estrutura,
+    ))
     db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
     _atualizar_status_consulta(consulta_id, org_id, db)
 
@@ -1118,6 +1338,12 @@ async def process_manual_upload(
     org_id: Optional[str],
     db,
     storage: StorageBackend,
+    *,
+    resultado_origem_atual: Optional[str] = None,
+    confirmado_por_atual: Optional[str] = None,
+    extract_text: Optional[Callable[..., Any]] = None,
+    analyze: Optional[Callable[..., Any]] = None,
+    analyze_estrutura: Optional[Callable[..., Any]] = None,
 ) -> dict:
     """Run a manually uploaded certificate PDF through the SAME pipeline as the
     automated flow (the post-download steps of `_process_single_certidao`).
@@ -1125,12 +1351,32 @@ async def process_manual_upload(
     1. Put it in the bucket (same key shape)
     2. Extract text for AI analysis
     3. Run AI analysis on the extracted text
-    4. Update resultado → sucesso
-    5. Recalculate consulta status
+    4. Derive the structured fields (numero/emitida_em/validade_ate/resultado)
+       from the SAME extracted text, unless a human already owns them
+    5. Update resultado → sucesso
+    6. Recalculate consulta status
 
     Returns the update_data dict applied to the resultado.
+
+    `resultado_origem_atual` / `confirmado_por_atual` are the caller's job to
+    fetch — the router already reads the resultado row before calling this
+    (it needs `tipo`/`nome_display` from it anyway), so a second lookup here
+    for two more columns off the same id would be a redundant round trip.
+    Manual uploads have no `api_response` to parse, so the AI structured
+    read is the ONLY source for these fields on this path — unlike the
+    automated flow, there is no `registry.parse_resultado` leg to try first.
+
+    `extract_text` / `analyze` / `analyze_estrutura` are DI seams (default:
+    the real `_extract_pdf_text` / `_analyze_with_ai` / `_analyze_estrutura_
+    with_ai`), the same shape `_process_single_certidao` already exposes for
+    `analyze` — a test injects a stub INSTEAD of patching this module's own
+    functions out from under it. → KB § PATTERNS/backend/di-test-seam.md
     """
+    extract_text = extract_text or _extract_pdf_text
+    analyze = analyze or _analyze_with_ai
+    analyze_estrutura = analyze_estrutura or _analyze_estrutura_with_ai
     consulta_id = consulta["id"]
+    travado = resultado_origem_atual == "manual" or bool(confirmado_por_atual)
 
     # Mark as processando (same as automated flow)
     db.table(RESULTADOS).update({
@@ -1142,12 +1388,12 @@ async def process_manual_upload(
 
     # 2. Extract text for AI analysis (replaces the API response data the
     #    automated flow uses as input for `_analyze_with_ai`)
-    text_for_analysis = await _extract_pdf_text(pdf_bytes, nome_display, org_id)
+    text_for_analysis = await extract_text(pdf_bytes, nome_display, org_id)
 
     # 3. AI analysis — same function as automated flow
     analise = None
     if text_for_analysis:
-        analise = await _analyze_with_ai(text_for_analysis, org_id)
+        analise = await analyze(text_for_analysis, org_id)
 
     # 4. Update resultado → sucesso (same fields as automated flow)
     update_data: dict = {
@@ -1158,6 +1404,14 @@ async def process_manual_upload(
         "api_response": None,
         "erro_mensagem": None,
     }
+
+    # 4b. Structured fields — AI-only on this path, and never over a human's.
+    if not travado and text_for_analysis:
+        via_ia = await analyze_estrutura(text_for_analysis, nome_display, org_id)
+        if via_ia:
+            update_data.update(via_ia)
+            update_data["resultado_origem"] = "ia"
+
     db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
 
     # 5. Recalculate consulta status — same function as automated flow
@@ -1541,17 +1795,194 @@ def queued_tjsp_for_org(org_id: Any, db) -> list[dict]:
     return _all_rows(_page, f"certidao_resultados na_fila for org_id={org_id}")
 
 
+# --------------- Per-parte reads, confirmation, LGPD-logged URL ---------------
+#
+# The contract-automation slice's three additions on top of the existing
+# consulta-centric surface — see migration 107's header for why they land
+# together.
+
+#: Mirrors migration 107's `certidao_resultado_acessos` table.
+RESULTADO_ACESSOS = "certidao_resultado_acessos"
+
+
+def certidoes_por_parte(db, org_id, atendimento_parte_id: str) -> list[dict]:
+    """Every certidão result across every consulta linked to one party of an
+    atendimento — the per-parte certidões panel the contract-automation
+    slice reads.
+
+    A consulta names a party via `atendimento_parte_id` (migration 107); a
+    resultado does not carry that column itself, only `consulta_id` — so this
+    is a two-step read (consultas for the parte, then their resultados), not
+    a single indexed lookup. Bounded like every other resultados read in this
+    module: a party realistically has one or two consultas over the life of
+    a deal, each with at most ~13 resultados (10 automated + 3 manual), well
+    under PostgREST's row cap.
+    """
+    # postgrest-unbounded-ok: a handful of consultas per party, not 1 000.
+    consultas = (
+        db.table(CONSULTAS)
+        .select("id, nome, documento, tipo_documento")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_parte_id", str(atendimento_parte_id))
+        .execute()
+    ).data or []
+    if not consultas:
+        return []
+    consulta_by_id = {c["id"]: c for c in consultas}
+
+    resultados: list[dict] = []
+    for batch in in_batches(list(consulta_by_id)):
+        # postgrest-unbounded-ok: batched by `in_batches` (200/batch), and a
+        # party's total resultado count across all its consultas stays in the
+        # low tens in practice.
+        rows = (
+            db.table(RESULTADOS)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .in_("consulta_id", batch)
+            .order("ordem")
+            .execute()
+        ).data or []
+        for r in rows:
+            consulta = consulta_by_id.get(r["consulta_id"], {})
+            r["consulta_nome"] = consulta.get("nome")
+            r["consulta_documento"] = consulta.get("documento")
+            resultados.append(r)
+    return resultados
+
+
+def confirmar_resultado(
+    db, org_id, resultado_id: str, campos: dict, usuario_id
+) -> Optional[dict]:
+    """Merge a human's structured-field correction/confirmation into a
+    resultado, and LOCK it: `resultado_origem='manual'` plus who/when,
+    unconditionally — even when `campos` is empty, because calling this AT
+    ALL is the human's statement "I reviewed this". After this,
+    `_derive_estrutura` refuses to touch the same resultado's structured
+    fields again (its `travado` check).
+
+    Returns `None` when the resultado does not exist in this org — the
+    router turns that into the 404. `campos` is whatever subset of
+    `numero`/`emitida_em`/`validade_ate`/`resultado` the caller sent
+    (`schemas.ResultadoPatch(...).model_dump(exclude_unset=True)`); already
+    validated against the CHECK-constrained vocabulary by that schema.
+    """
+    existing = (
+        db.table(RESULTADOS)
+        .select("id")
+        .eq("id", resultado_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not existing:
+        return None
+    patch = {
+        **campos,
+        "resultado_origem": "manual",
+        "confirmado_por": str(usuario_id) if usuario_id else None,
+        "confirmado_em": datetime.now(timezone.utc).isoformat(),
+    }
+    updated = (
+        db.table(RESULTADOS)
+        .update(patch)
+        .eq("id", resultado_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    return updated[0] if updated else None
+
+
+def _log_resultado_acesso(db, org_id, resultado_id: str, usuario_id, acao: str) -> None:
+    """Append to `certidao_resultado_acessos` — the LGPD content-read log
+    this module did not have before migration 107. Same shape
+    `documento_store.DocumentoStore.log_acesso` uses on the other document
+    surfaces, as a bespoke insert rather than reusing that class directly:
+    `DocumentoStore` is configured against a table that owns its OWN
+    document rows (`.guardar()` inserts one per upload), and a certidão's
+    file lives on the SAME `certidao_resultados` row `criar_consulta`'s
+    fan-out already created — see `mint_resultado_url`'s docstring.
+    """
+    db.table(RESULTADO_ACESSOS).insert({
+        "id": str(uuid.uuid4()),
+        "org_id": str(org_id),
+        "documento_id": str(resultado_id),
+        "usuario_id": str(usuario_id) if usuario_id else None,
+        "acao": acao,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }).execute()
+
+
+async def mint_resultado_url(
+    db,
+    storage: StorageBackend,
+    org_id,
+    resultado_id: str,
+    *,
+    usuario_id,
+    intent: str = "view",
+) -> Optional[dict]:
+    """A short-TTL signed URL for one resultado's stored file, LGPD-logging
+    the access — the resultado_id-scoped sibling of `GET /download` for a
+    caller that already holds the id (the per-parte panel) rather than the
+    opaque `arquivo_url` handle `GET /consultas/{id}` hands back.
+
+    Returns `None` for a resultado that does not exist in this org (→ 404 in
+    the router), or `{"error": "sem_arquivo"}` when it exists but has no
+    file yet (→ 404, distinct message).
+
+    NOT built on `DocumentoStore.url()`: that method reads a `storage_path`
+    column this table does not have (`arquivo_url` holds EITHER a bucket key
+    OR — when persisting failed — an external `https://` URL; see
+    `is_storage_key`). An external URL cannot be "signed" by our storage
+    backend at all, so it is handed back as-is, exactly as `/download`
+    already proxies it today.
+    """
+    rows = (
+        db.table(RESULTADOS)
+        .select("id, arquivo_url")
+        .eq("id", resultado_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    arquivo_url = rows[0].get("arquivo_url")
+    if not arquivo_url:
+        return {"error": "sem_arquivo"}
+
+    if is_storage_key(arquivo_url):
+        from app.services.documento_store import SIGNED_URL_TTL_SECONDS
+
+        signed = await storage.signed_url(
+            bucket=BUCKET, key=arquivo_url, expires_in_seconds=SIGNED_URL_TTL_SECONDS,
+        )
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=SIGNED_URL_TTL_SECONDS)
+        ).isoformat()
+        url = signed
+    else:
+        url = arquivo_url
+        expires_at = None
+
+    _log_resultado_acesso(db, org_id, resultado_id, usuario_id, intent)
+    return {"url": url, "expires_at": expires_at}
+
+
 __all__ = [
     "CERTIDOES_CONFIG",
     "CONSULTAS",
     "RESULTADOS",
+    "RESULTADO_ACESSOS",
     "STALE_PROCESSANDO_SECONDS",
     "TJSP_COOLDOWN_SECONDS",
     "TJSP_TIPO",
     "cancelar_processamento",
+    "certidoes_por_parte",
     "check_required_credentials",
+    "confirmar_resultado",
     "delete_storage_files",
     "is_storage_key",
+    "mint_resultado_url",
     "process_manual_upload",
     "processar_consulta",
     "in_batches",

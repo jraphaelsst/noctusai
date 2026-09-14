@@ -11,9 +11,14 @@
     GET    /api/certidoes/consultas/{id}/download-zip    all of them, zipped
     POST   /api/certidoes/resultados/{id}/upload         manual PDF, same pipeline
     GET    /api/certidoes/fila-tjsp                      queue + live cooldown
+    POST   /api/certidoes/consultas/{id}/vincular-parte  attach to an atendimento_parte
+    GET    /api/certidoes/partes/{id}/resultados          every certidão for one parte
+    PATCH  /api/certidoes/resultados/{id}                 confirm/correct structured fields
+    GET    /api/certidoes/resultados/{id}/url             LGPD-logged signed URL
 
 Same paths as the ERP router this is ported from, because a live user's
-frontend calls them.
+frontend calls them. The last four are new (migration 107) — the
+contract-automation slice's per-parte certidões surface.
 
 Auth: `Depends(get_current_user_org)` → `(user, token, org_id)`, per
 `KB § PATTERNS/backend/backend.md § Auth — canonical pattern`. The org is the
@@ -82,8 +87,13 @@ from app.modules.certidoes.registry import (
     CERTIDOES_CONFIG,
     TJSP_TIPO,
     get_certidoes_tipos,
+    get_manual_tipos,
 )
-from app.modules.certidoes.schemas import ConsultaCreate
+from app.modules.certidoes.schemas import (
+    ConsultaCreate,
+    ResultadoPatch,
+    VincularParteRequest,
+)
 from app.responses import (
     calculate_pagination,
     ok_response,
@@ -635,7 +645,9 @@ async def upload_certidao_manual(
 
     resultado_rows = (
         db.table(RESULTADOS)
-        .select("id, consulta_id, tipo, nome_display")
+        .select(
+            "id, consulta_id, tipo, nome_display, resultado_origem, confirmado_por"
+        )
         .eq("id", resultado_id)
         .eq("org_id", str(org_id))
         .execute()
@@ -659,6 +671,8 @@ async def upload_certidao_manual(
         org_id=str(org_id),
         db=db,
         storage=storage,
+        resultado_origem_atual=resultado.get("resultado_origem"),
+        confirmado_por_atual=resultado.get("confirmado_por"),
     )
 
     return success_response({**resultado, **update_data})
@@ -713,6 +727,161 @@ async def status_fila_tjsp(
         "total_na_fila": len(items),
         "cooldown": svc.tjsp_cooldown_status(org_id, db),
     })
+
+
+# ---------------------------------------------------------------------------
+# Contract-automation slice (migration 107): per-parte linkage, structured
+# fields, LGPD-logged URL.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/consultas/{consulta_id}/vincular-parte")
+async def vincular_parte(
+    consulta_id: str,
+    body: VincularParteRequest,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+):
+    """Attach a consulta to one party (`atendimento_partes` row) of an
+    atendimento — the contract-automation slice's entry point for "which
+    certidões exist for THIS person on THIS deal".
+
+    `cliente_id` is resolved off the `atendimento_partes` row rather than
+    trusted from the request body, so a caller cannot link a consulta to a
+    person who is not actually party to this atendimento.
+
+    Also fans out a `pendente` placeholder resultado for each manual-only
+    type (Serasa, TJSP e-SAJ, TJSP e-PROC — `registry.get_manual_tipos`) this
+    consulta does not already carry, idempotently: the ten automated types
+    get theirs from `criar_consulta`'s own fan-out; these three have no API
+    call to make one from, so the upload endpoint always needs a resultado_id
+    to target before a human can use it.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    parte_rows = (
+        db.table("atendimento_partes")
+        .select("id, cliente_id")
+        .eq("id", str(body.atendimento_parte_id))
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not parte_rows:
+        raise HTTPException(status_code=404, detail="Parte não encontrada")
+    parte = parte_rows[0]
+
+    _get_consulta_or_404(db, consulta_id, org_id, select="id")
+
+    updated = (
+        db.table(CONSULTAS)
+        .update({
+            "atendimento_parte_id": str(body.atendimento_parte_id),
+            "cliente_id": parte["cliente_id"],
+        })
+        .eq("id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
+
+    # postgrest-unbounded-ok: at most ~13 resultados per consulta (10
+    # automated + 3 manual), the same bound every other resultados read in
+    # this router relies on.
+    existentes = (
+        db.table(RESULTADOS)
+        .select("tipo")
+        .eq("consulta_id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    tipos_existentes = {r["tipo"] for r in existentes}
+    novos = [
+        {
+            "consulta_id": consulta_id,
+            "org_id": str(org_id),
+            "tipo": tipo["tipo"],
+            "nome_display": tipo["nome"],
+            "ordem": tipo["ordem"],
+            "status": "pendente",
+        }
+        for tipo in get_manual_tipos()
+        if tipo["tipo"] not in tipos_existentes
+    ]
+    if novos:
+        db.table(RESULTADOS).insert(novos).execute()
+
+    return success_response(consulta)
+
+
+@router.get("/partes/{atendimento_parte_id}/resultados")
+async def listar_resultados_por_parte(
+    atendimento_parte_id: str,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """Every certidão result across every consulta linked to one party —
+    the contract-automation screen's per-parte certidões panel."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    return success_response(
+        svc.certidoes_por_parte(db, org_id, atendimento_parte_id)
+    )
+
+
+@router.patch("/resultados/{resultado_id}")
+async def confirmar_ou_corrigir_resultado(
+    resultado_id: str,
+    body: ResultadoPatch,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """A human reviews (and optionally corrects) a resultado's structured
+    fields. ALWAYS stamps `resultado_origem='manual'` plus who confirmed it
+    and when — even an empty body, which means "I reviewed the API/IA-
+    suggested values and they are right". From this point on, the automated
+    pipeline (`service._derive_estrutura`) will never touch this resultado's
+    structured fields again.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    campos = body.model_dump(exclude_unset=True, mode="json")
+    updated = svc.confirmar_resultado(db, org_id, resultado_id, campos, _user.id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Resultado não encontrado")
+    return success_response(updated)
+
+
+@router.get("/resultados/{resultado_id}/url")
+async def obter_url_resultado(
+    resultado_id: str,
+    intent: str = Query("view", pattern="^(view|download)$"),
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """A short-TTL signed URL to one resultado's stored file, LGPD-logged to
+    `certidao_resultado_acessos` — the resultado_id-scoped sibling of
+    `GET /download`, for a caller that already holds the id (the per-parte
+    certidões panel) rather than the opaque `arquivo_url` handle."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    result = await svc.mint_resultado_url(
+        db, storage, org_id, resultado_id, usuario_id=_user.id, intent=intent
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Resultado não encontrado")
+    if result.get("error") == "sem_arquivo":
+        raise HTTPException(
+            status_code=404, detail="Nenhum arquivo para este resultado"
+        )
+    return success_response(result)
 
 
 __all__ = ["router"]
