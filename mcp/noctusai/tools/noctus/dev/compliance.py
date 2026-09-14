@@ -6072,6 +6072,7 @@ _SEED_PKG_GLOB = ("lib", "framework")
 _IMPORT_TO_DIST: dict[str, tuple[str, ...]] = {
     "fitz": ("pymupdf",),                       # PyMuPDF's import name
     "jwt": ("pyjwt",),
+    "docx": ("python-docx",),                    # python-docx's import name
     "pdfminer": ("pdfminer.six",),
     "googleapiclient": ("google-api-python-client",),
     "google": ("google-genai", "google-auth", "google-api-python-client"),
