@@ -57,7 +57,7 @@ dependencies = [
     # DIRECTLY and must not rely on supabase's transitive pin — which is exactly
     # the assumption that cost the 2026-07-12 erp outage when a rebuild floated
     # gotrue. Bound to what supabase 2.9.1 itself requires (>=0.17.0,<0.18.0).
-    "postgrest>=0.17.0,<0.18.0",
+    "postgrest>=0.17.0,<2.32.0",
     "slowapi>=0.1.9",
     "sentry-sdk>=1.45.1",
     # LLM providers — monolithic install, every product gets all three SDKs
