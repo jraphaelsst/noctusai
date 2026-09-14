@@ -71,6 +71,7 @@ def register_all(server) -> None:
     from . import kb_embeddings
     from . import kb_recurrence_radar
     from . import keeper_pattern
+    from . import knowledge_bundle_export
     from . import build_scope
     from . import spa_smoke
     from . import ensure_product_url_roster
@@ -191,6 +192,7 @@ def register_all(server) -> None:
     kb_embeddings.register(server)
     kb_recurrence_radar.register(server)
     keeper_pattern.register(server)
+    knowledge_bundle_export.register(server)
     build_scope.register(server)
     spa_smoke.register(server)
     ensure_product_url_roster.register(server)
