@@ -87,6 +87,9 @@ def _documento(scoped, did) -> dict:
 class TestWhichTypesAreRead:
     @pytest.mark.parametrize("tipo,expected", [
         ("rg", True), ("cpf", True), ("cnh", True), ("certidao_casamento", True),
+        # Migration 110 — a marriage/divórcio/óbito is averbado on a birth
+        # certificate's margin too, not only on a certidão de casamento.
+        ("certidao_nascimento", True),
         ("contrato", False), ("foto_imovel", False), ("comprovante_endereco", False),
         # `outro` is where the three certidões this org holds were actually
         # filed, which is why none of them was ever read (migration 103).
@@ -391,6 +394,11 @@ class TestUmaCertidaoEhLidaPorInteiro:
     def test_a_certidao_asks_for_every_page(self):
         assert svc.paginas_maximas("certidao_casamento") is None
 
+    def test_a_certidao_de_nascimento_asks_for_every_page_too(self):
+        """Migration 110 — the averbação that amends a birth certificate is
+        just as far into the document as it is on a certidão de casamento."""
+        assert svc.paginas_maximas("certidao_nascimento") is None
+
     @pytest.mark.parametrize("tipo", ["rg", "cpf", "cnh", "contrato"])
     def test_everything_else_leaves_the_default_to_the_adapter(self, tipo):
         # The sentinel, NOT the literal 3: the cost trade-off is owned by the
@@ -428,3 +436,182 @@ class TestUmaCertidaoEhLidaPorInteiro:
         await svc.extrair_identidade(scoped, storage, ORG_UUID, UUID(cid), UUID(did))
 
         assert visto.get("max_pages") is None, "a certidão must be read whole"
+
+
+class TestEstadoCivilERegimeBensSaoExtraidos:
+    """Migration 110. `CAMPOS` is table-driven — same claim
+    `TestGeneroIsTheThirdExtractedField` proves for `genero`, now for the
+    pair `civil_status.py` predicted its own arrival on `IdentityFields`'
+    docstring: `estado_civil` and `regime_bens` ride the exact same apply /
+    suggest / confirm / provenance / access-log code every other CAMPO does.
+    """
+
+    @staticmethod
+    def _com_civil(confianca=ExtractionConfidence.ALTA) -> IdentityFields:
+        return IdentityFields(
+            estado_civil="casado",
+            estado_civil_confianca=confianca,
+            estado_civil_rotulo="ESTADO CIVIL",
+            regime_bens="comunhao_parcial",
+            regime_bens_confianca=confianca,
+            regime_bens_rotulo="REGIME DE BENS",
+            source=TextSource.TEXT_LAYER,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_confident_read_fills_both_columns_and_stamps_provenance(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_civil()),
+        )
+        assert out["aplicado_ao_cliente"]["estado_civil"] is True
+        assert out["aplicado_ao_cliente"]["regime_bens"] is True
+
+        row = _cliente(scoped, cid)
+        assert row["estado_civil"] == "casado"
+        assert row["estado_civil_origem"] == "certidao_casamento"
+        assert row["estado_civil_documento_id"] == did
+        assert row["regime_bens"] == "comunhao_parcial"
+        assert row["regime_bens_origem"] == "certidao_casamento"
+
+    @pytest.mark.asyncio
+    async def test_a_low_confidence_read_stays_on_the_document_as_a_suggestion(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(
+                self._com_civil(ExtractionConfidence.BAIXA)
+            ),
+        )
+        row = _cliente(scoped, cid)
+        assert row.get("estado_civil") is None
+        assert row.get("regime_bens") is None
+
+        doc = _documento(scoped, did)
+        assert doc["extracao_estado_civil"] == "casado"
+        assert doc["extracao_regime_bens"] == "comunhao_parcial"
+
+    @pytest.mark.asyncio
+    async def test_an_existing_value_is_not_overwritten(self, client, scoped):
+        """`sobrescreve=False`, same as `cpf`/`rg` — neither field has a
+        second column holding an operator's own spelling."""
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"estado_civil": "divorciado", "estado_civil_origem": "manual"},
+        )
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_civil()),
+        )
+        assert _cliente(scoped, cid)["estado_civil"] == "divorciado"
+
+    @pytest.mark.asyncio
+    async def test_a_pending_suggestion_rides_the_extras_surface(self, client, scoped):
+        """Deliberately NOT a `documento_checklist_service.ITENS` entry (see
+        migration 110's header) — so it surfaces exactly where `nome_oficial`
+        already does: `sugestoes_extras` on the checklist GET."""
+        from app.modules.card_hub import documento_checklist_service as checklist_svc
+
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(
+                self._com_civil(ExtractionConfidence.BAIXA)
+            ),
+        )
+        body = checklist_svc.listar(scoped, ORG_UUID, UUID(cid))
+        assert "estado_civil" not in {i["key"] for i in body["items"]}
+        assert body["sugestoes_extras"]["estado_civil"]["valor"] == "casado"
+        assert body["sugestoes_extras"]["regime_bens"]["valor"] == "comunhao_parcial"
+
+
+class TestRgIgualCpfNaoEhAplicado:
+    """🔴 `rg.is_same_as_cpf` — the copy-paste bug, not a document to trust.
+
+    A qualificação form putting the CPF into the RG box verbatim is the
+    real-world shape this guards; see `rg.is_same_as_cpf`'s own docstring.
+    """
+
+    @staticmethod
+    def _rg_igual_ao_cpf(cpf: str) -> IdentityFields:
+        return IdentityFields(
+            rg=cpf,
+            rg_confianca=ExtractionConfidence.ALTA,
+            rg_rotulo="RG",
+            source=TextSource.TEXT_LAYER,
+        )
+
+    @pytest.mark.asyncio
+    async def test_declined_against_an_existing_cpf(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="rg", cliente={"cpf": "412.954.238-98"}
+        )
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._rg_igual_ao_cpf("412.954.238-98")),
+        )
+        assert out["aplicado_ao_cliente"]["rg"] is False
+        assert _cliente(scoped, cid).get("rg") is None
+        # The reading is NOT discarded — it stays on the document as a
+        # suggestion, same as any other declined-but-legible read.
+        assert _documento(scoped, did)["extracao_rg"] == "412.954.238-98"
+
+    @pytest.mark.asyncio
+    async def test_declined_against_a_cpf_applied_earlier_in_the_same_read(
+        self, client, scoped
+    ):
+        """`cpf` sorts before `rg` in `CAMPOS`, so a document reading BOTH
+        fields at once must compare `rg` against the CPF it JUST wrote, not
+        only against whatever was already on file."""
+        cid, did, storage = await _setup(scoped, tipo="rg")
+        fields = IdentityFields(
+            cpf="412.954.238-98",
+            cpf_confianca=ExtractionConfidence.ALTA,
+            rg="412.954.238-98",
+            rg_confianca=ExtractionConfidence.ALTA,
+            source=TextSource.TEXT_LAYER,
+        )
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(fields),
+        )
+        assert out["aplicado_ao_cliente"]["cpf"] is True
+        assert out["aplicado_ao_cliente"]["rg"] is False
+        assert _cliente(scoped, cid)["cpf"] == "412.954.238-98"
+        assert _cliente(scoped, cid).get("rg") is None
+
+    @pytest.mark.asyncio
+    async def test_surfaces_as_a_flagged_suggestion(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="rg", cliente={"cpf": "412.954.238-98"}
+        )
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._rg_igual_ao_cpf("412.954.238-98")),
+        )
+        sugestoes = svc.sugestoes_pendentes(scoped, ORG_UUID, UUID(cid))
+        assert sugestoes["rg"]["aviso"] == "rg_igual_cpf"
+
+    def test_confirmar_sugestao_refuses_the_same_collision(self, client, scoped):
+        """A human explicitly confirming must not be a bypass of the guard
+        the unattended apply already enforces."""
+        cid, did = str(uuid4()), str(uuid4())
+        scoped.set_table_data(
+            "clientes", [cliente_row(cid, cpf="412.954.238-98")]
+        )
+        scoped.set_table_data("cliente_documentos", [{
+            "id": did, "org_id": ORG_ID, "cliente_id": cid,
+            "tipo_documento": "rg", "deleted_at": None,
+            "extracao_descartada_em": None,
+            "extracao_rg": "412.954.238-98",
+        }])
+        with pytest.raises(Exception) as exc_info:
+            svc.confirmar_sugestao(
+                scoped, ORG_UUID, UUID(cid), UUID(did), item_key="rg",
+            )
+        assert "RG" in str(exc_info.value)

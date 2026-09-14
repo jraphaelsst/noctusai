@@ -84,6 +84,9 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from noctusai_lib.integrations.documents import is_same_as_cpf
+from noctusai_lib.primitives.exceptions import ValidationError_
+
 from app.services import identidade_service as ident
 from app.services import table_reads
 from app.services.identidade_service import SourceRow
@@ -1078,6 +1081,24 @@ def get_touches(
     return {"items": rows, "total": total, "page": page, "pages": pages}
 
 
+def _validar_rg_diferente_cpf(rg: Optional[str], cpf: Optional[str]) -> None:
+    """Refuse a PATCH that would leave `rg` and `cpf` holding the same
+    document, digits-and-letters compared (`rg.is_same_as_cpf`).
+
+    🔴 THE BUG THIS CATCHES. A qualificação form (or a copy-paste) puts the
+    CPF into the RG box verbatim — nothing about either value is individually
+    wrong, only the PAIR is. Migration 097 deliberately ships no DB CHECK for
+    it (existing rows may already disagree, and a CHECK refuses every future
+    write to a row it never asked about when it was created); this is the
+    manual-write half of the guard `identidade_extracao_service` runs on the
+    extraction side.
+    """
+    if is_same_as_cpf(rg, cpf):
+        raise ValidationError_(
+            "RG não pode ser igual ao CPF.", field="rg",
+        )
+
+
 def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) -> dict:
     """PATCH (§5 `PATCH /api/clientes/{id}`) — nome, ativo/arquivado (D4).
 
@@ -1117,6 +1138,16 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
     payload = {k: v for k, v in updates.items() if k in allowed}
     if not payload:
         return _require_cliente(client, org_id, cliente_id)
+
+    # A PATCH touching either document number must not leave the pair
+    # colliding, even when only one of the two is in THIS payload — fetch
+    # whichever side is missing from the request to validate the value the
+    # row will actually hold once this write lands.
+    if "rg" in payload or "cpf" in payload:
+        atual = _require_cliente(client, org_id, cliente_id)
+        rg_efetivo = payload["rg"] if "rg" in payload else atual.get("rg")
+        cpf_efetivo = payload["cpf"] if "cpf" in payload else atual.get("cpf")
+        _validar_rg_diferente_cpf(rg_efetivo, cpf_efetivo)
 
     # A hand-edited birthdate is authoritative and must never be silently
     # replaced by a later OCR read (`identidade_extracao_service` checks this

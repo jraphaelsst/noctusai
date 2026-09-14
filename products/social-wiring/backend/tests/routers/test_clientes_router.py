@@ -568,6 +568,33 @@ class TestPatchCliente:
         )
         assert resp.status_code == 422, resp.text
 
+    def test_patch_rg_equal_to_cpf_is_refused(self, client, scoped):
+        """🔴 The copy-paste bug `rg.is_same_as_cpf` exists to catch, refused
+        at the API boundary — `clientes_service._validar_rg_diferente_cpf`
+        raises `ValidationError_`, which this product maps to 400 (its
+        general validation-error convention, not 422 — see every other
+        `ValidationError_`-driven assertion in `test_compradores.py`)."""
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"cpf": "412.954.238-98", "rg": "412.954.238-98"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 400, resp.text
+
+    def test_patch_rg_different_from_cpf_is_accepted(self, client, scoped):
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"cpf": "412.954.238-98", "rg": "52.179.965-X"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cpf"] == "412.954.238-98"
+        assert resp.json()["rg"] == "52.179.965-X"
+
 
 # ─── review queue ───────────────────────────────────────────────────────
 

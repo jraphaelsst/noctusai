@@ -308,6 +308,26 @@ async def patch_documento_checklist_route(
         )
 
 
+# ─── Contract completeness (migration 110) ───────────────────────────────
+#
+# A stricter question than the Documentos checklist above — see
+# `documento_checklist_service.completude_contratual`'s own docstring for
+# why it is a separate function rather than another checklist item. Read
+# only: there is nothing to PATCH here, the missing fields are the same
+# `clientes` / `documento-checklist` columns every other route already
+# writes.
+
+
+@router.get("/{cliente_id}/qualificacao-completude")
+async def get_qualificacao_completude_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return doc_checklist_svc.completude_contratual(client, org_id, cliente_id)
+
+
 # ─── Checklist extras (migration 083) ───────────────────────────────────
 #
 # The OTHER half of the same on-screen surface. Where the block above has no

@@ -136,7 +136,22 @@ _FIELDS = (
 #: Columns of the joined person the card needs to render a party row without a
 #: second round-trip. Explicit rather than `*` so widening `clientes` cannot
 #: silently widen what this endpoint returns — it is personal data.
-_CLIENTE_RESUMO = ("id", "nome", "nome_completo", "celular", "email")
+#:
+#: Migration 097/110 widened this to the qualificação civil the CONTRACT
+#: needs from a party — nome oficial, nacionalidade, profissão, estado
+#: civil/regime, RG (with órgão), CPF, endereço and the cônjuge link — so the
+#: Compradores/Vendedores panel can render (or gate) a party's qualification
+#: without a second round-trip per person, the same reasoning the original
+#: five columns were picked for.
+_CLIENTE_RESUMO = (
+    "id", "nome", "nome_completo", "celular", "email",
+    "nome_oficial", "nacionalidade", "profissao",
+    "estado_civil", "regime_bens", "conjuge_cliente_id",
+    "cpf", "rg", "rg_orgao_expedidor",
+    "endereco_cep", "endereco_logradouro", "endereco_numero",
+    "endereco_complemento", "endereco_bairro", "endereco_cidade",
+    "endereco_uf",
+)
 
 
 def _out(row: dict, cliente: Optional[dict] = None) -> dict:

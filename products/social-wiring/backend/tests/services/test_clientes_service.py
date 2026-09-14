@@ -935,6 +935,86 @@ class TestReadSurface:
             svc.update_cliente(client, ORG, str(uuid4()), nome="X")
 
 
+class TestRgDiferenteDeCpf:
+    """🔴 A PATCH must not create the copy-paste bug
+    `noctusai_lib.integrations.documents.rg.is_same_as_cpf` exists to catch —
+    the same eleven digits landing in both boxes. No DB CHECK (migration
+    097/110's header): this is the manual-write half of the guard;
+    `identidade_extracao_service` runs the extraction-side half."""
+
+    CPF = "412.954.238-98"
+
+    def _cliente(self, cliente_id, **extra) -> dict:
+        return {
+            "id": cliente_id, "org_id": ORG, "nome": "Ana",
+            "cpf": None, "rg": None, **extra,
+        }
+
+    def test_both_fields_in_one_payload(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente(cid)])
+
+        with pytest.raises(Exception) as exc_info:
+            svc.update_cliente(client, ORG, cid, cpf=self.CPF, rg=self.CPF)
+        assert "RG" in str(exc_info.value)
+        # Nothing was written — the row must not be left half-updated.
+        assert _clientes(client)[0]["cpf"] is None
+
+    def test_rg_alone_against_an_existing_cpf(self):
+        """Only `rg` is in THIS payload; the collision is only visible once
+        the existing `cpf` is read off the row."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente(cid, cpf=self.CPF)])
+
+        with pytest.raises(Exception):
+            svc.update_cliente(client, ORG, cid, rg=self.CPF)
+        assert _clientes(client)[0]["rg"] is None
+
+    def test_cpf_alone_against_an_existing_rg(self):
+        """Same collision, the other write direction."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente(cid, rg=self.CPF)])
+
+        with pytest.raises(Exception):
+            svc.update_cliente(client, ORG, cid, cpf=self.CPF)
+        assert _clientes(client)[0]["cpf"] is None
+
+    def test_different_documents_are_accepted(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente(cid)])
+
+        updated = svc.update_cliente(
+            client, ORG, cid, cpf=self.CPF, rg="52.179.965-X",
+        )
+        assert updated["cpf"] == self.CPF
+        assert updated["rg"] == "52.179.965-X"
+
+    def test_clearing_rg_back_to_none_is_never_a_collision(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente(cid, cpf=self.CPF)])
+
+        updated = svc.update_cliente(client, ORG, cid, rg=None)
+        assert updated["rg"] is None
+
+    def test_unrelated_fields_are_unaffected_by_the_guard(self):
+        """The guard must not fire when neither `rg` nor `cpf` is touched."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data(
+            "clientes", [self._cliente(cid, cpf=self.CPF, rg=self.CPF)]
+        )
+        # Pre-existing bad data (predates this guard) must not block an
+        # unrelated PATCH — the guard is a write-time refusal, not a
+        # retroactive lock on every future write to the row.
+        updated = svc.update_cliente(client, ORG, cid, nome="Ana Maria")
+        assert updated["nome"] == "Ana Maria"
+
+
 # ─── PostgREST 1 000-row cap — the bug class the shared mock cannot see ────
 #
 # 🔴 `MockSupabaseClient.range()` is a NO-OP (`seed/lib/backend/noctusai_lib/

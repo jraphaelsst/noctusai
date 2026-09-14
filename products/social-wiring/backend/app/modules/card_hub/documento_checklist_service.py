@@ -38,7 +38,7 @@ from __future__ import annotations
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from noctusai_lib.integrations.documents import looks_like_a_name
+from noctusai_lib.integrations.documents import ESTADO_CIVIL_VALORES, looks_like_a_name
 
 from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
@@ -577,10 +577,186 @@ def marcar(
     )
 
 
+# ─── Contract completeness (migration 110) ───────────────────────────────
+#
+# Deliberately SEPARATE from `ITENS`/`derivar` above, not a parallel
+# mechanism doing the same job twice. The Documentos-tab checklist answers
+# "has SOMETHING plausible been collected for this column" and, by product
+# ruling (2026-08-24), accepts a channel-supplied `nome` for "Nome Completo".
+# A signed "Promessa de Venda e Compra" asks a stricter question — the
+# LEGAL name off a document, not a WhatsApp push name — and a question
+# `derivar`'s plain-boolean, always-required model cannot express at all:
+# `regime_bens` is required only for a married party, and a married party
+# additionally needs a linked cônjuge who is THEMSELVES qualified. Both are
+# facts about the PAIR, not a tick on one row, so they get their own
+# function rather than bending the checklist's pinned "verbatim contract"
+# item list to fit them.
+
+#: The columns a signed instrument needs from ONE party, beyond what
+#: `_ENDERECO_CAMPOS_OBRIGATORIOS` / the married-state branch below add.
+#: `nome_oficial` specifically — not `nome_completo` — because the document
+#: name is the legal one; see the section docstring.
+_CAMPOS_QUALIFICACAO_CONTRATO: tuple[str, ...] = (
+    "nome_oficial", "nacionalidade", "profissao", "estado_civil",
+    "rg", "rg_orgao_expedidor", "cpf",
+)
+
+#: `endereco` is satisfied only when every one of these is filled — a street
+#: with no city is not an address a contract can print. `endereco_complemento`
+#: is deliberately absent: most addresses genuinely have none.
+_ENDERECO_CAMPOS_OBRIGATORIOS: tuple[str, ...] = (
+    "endereco_logradouro", "endereco_numero", "endereco_bairro",
+    "endereco_cidade", "endereco_uf", "endereco_cep",
+)
+
+#: CC art. 1.647 — the states that make a spouse's outorga part of the
+#: instrument. Both `regime_bens`'s own requirement and the cônjuge
+#: requirement below key off this same set.
+_ESTADOS_QUE_EXIGEM_CONJUGE: frozenset[str] = frozenset({"casado", "uniao_estavel"})
+
+#: `clientes.estado_civil` is unconstrained TEXT (migration 097) and
+#: `ClientePatchBody.estado_civil` accepts any string, so a value typed
+#: through an OLDER version of the qualificação form — before this field's
+#: vocabulary was the extractor's closed snake_case set,
+#: `noctusai_lib.integrations.documents.civil_status.ESTADO_CIVIL_VALORES` —
+#: may still read "Casado(a)" rather than "casado". Mapped ON READ, here,
+#: rather than rewritten in the database: rewriting stored data was out of
+#: scope for this pass (existing rows may already disagree with each other
+#: in ways a blind rewrite would paper over), so every reader that needs the
+#: CANONICAL token goes through `_estado_civil_normalizado` instead of
+#: repeating this table.
+_ESTADO_CIVIL_LEGADO: dict[str, str] = {
+    "CASADO": "casado", "CASADO(A)": "casado", "CASADA": "casado",
+    "SOLTEIRO": "solteiro", "SOLTEIRO(A)": "solteiro", "SOLTEIRA": "solteiro",
+    "DIVORCIADO": "divorciado", "DIVORCIADO(A)": "divorciado",
+    "DIVORCIADA": "divorciado",
+    "VIUVO": "viuvo", "VIUVO(A)": "viuvo", "VIUVA": "viuvo",
+    "VIÚVO": "viuvo", "VIÚVO(A)": "viuvo", "VIÚVA": "viuvo",
+    "SEPARADO": "separado_judicialmente", "SEPARADO(A)": "separado_judicialmente",
+    "SEPARADO JUDICIALMENTE": "separado_judicialmente",
+    "UNIAO ESTAVEL": "uniao_estavel", "UNIÃO ESTÁVEL": "uniao_estavel",
+    "UNIAO_ESTAVEL": "uniao_estavel",
+}
+
+#: Explicit column list for the contract-completeness read — decoupled from
+#: `_CLIENTE_COLUNAS` (which is DERIVED from `ITENS` and must stay that way)
+#: so a future edit to the Documentos checklist cannot silently narrow what
+#: this stricter surface reads.
+_COLUNAS_QUALIFICACAO_CONTRATO: tuple[str, ...] = (
+    "id", "nome_completo", "nome", "nome_oficial", "nacionalidade",
+    "profissao", "estado_civil", "regime_bens", "conjuge_cliente_id",
+    "cpf", "rg", "rg_orgao_expedidor",
+    *_ENDERECO_CAMPOS_OBRIGATORIOS,
+)
+
+
+def _estado_civil_normalizado(valor: Optional[str]) -> Optional[str]:
+    """The canonical seed token for a possibly-legacy `estado_civil` value.
+
+    An already-canonical value passes straight through unchanged; an unknown
+    (neither canonical nor a mapped legacy spelling) value returns `None` —
+    treated as "not stated" rather than guessed at, the same "never guess"
+    discipline `civil_status.py` itself applies to a document read.
+    """
+    if not valor:
+        return None
+    if valor in ESTADO_CIVIL_VALORES:
+        return valor
+    return _ESTADO_CIVIL_LEGADO.get(valor.strip().upper())
+
+
+def _cliente_row_qualificacao(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> Optional[dict]:
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(",".join(_COLUNAS_QUALIFICACAO_CONTRATO))
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return rows[0] if rows else None
+
+
+def _faltantes_qualificacao(cliente: dict) -> list[str]:
+    """Missing-field keys for ONE party's contract qualification.
+
+    Pure — same reasoning `derivar` is pure — so the rule is testable
+    without a database. Does NOT look at the cônjuge; `completude_contratual`
+    composes that separately, since it is a fact about a PAIR, not this row.
+    """
+    faltando = [
+        campo for campo in _CAMPOS_QUALIFICACAO_CONTRATO
+        if not _preenchido(cliente.get(campo))
+    ]
+    if not all(_preenchido(cliente.get(c)) for c in _ENDERECO_CAMPOS_OBRIGATORIOS):
+        faltando.append("endereco")
+
+    estado_civil = _estado_civil_normalizado(cliente.get("estado_civil"))
+    if estado_civil in _ESTADOS_QUE_EXIGEM_CONJUGE and not _preenchido(
+        cliente.get("regime_bens")
+    ):
+        faltando.append("regime_bens")
+
+    return faltando
+
+
+def completude_contratual(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+    """Is this party qualified enough to go on the instrument?
+
+    Per-party: the fields a signed "Promessa de Venda e Compra" needs off
+    THIS person, plus — when `estado_civil` names a married state (CC art.
+    1.647) — a linked cônjuge who is ALSO qualified. A married party with no
+    cônjuge, or a cônjuge who is not themselves qualified, is not
+    contract-ready even when every one of THEIR OWN fields is filled.
+
+    Recurses exactly ONE level (into the cônjuge, never the cônjuge's own
+    cônjuge): `clientes_conjuge_nao_e_proprio` (migration 097) already
+    forbids a self-loop, and the pair is symmetric by construction
+    (`compradores_service._casar` writes both directions), so a second level
+    would only ever re-examine THIS same party.
+    """
+    ensure_cliente(client, org_id, cliente_id)
+    cliente = _cliente_row_qualificacao(client, org_id, cliente_id)
+    faltando = _faltantes_qualificacao(cliente or {})
+
+    conjuge_info: Optional[dict] = None
+    estado_civil = _estado_civil_normalizado((cliente or {}).get("estado_civil"))
+    if estado_civil in _ESTADOS_QUE_EXIGEM_CONJUGE:
+        conjuge_id = (cliente or {}).get("conjuge_cliente_id")
+        if not conjuge_id:
+            faltando.append("conjuge")
+        else:
+            conjuge = _cliente_row_qualificacao(
+                client, org_id, UUID(str(conjuge_id))
+            )
+            conjuge_faltando = (
+                _faltantes_qualificacao(conjuge) if conjuge else ["conjuge"]
+            )
+            conjuge_info = {
+                "cliente_id": str(conjuge_id),
+                "nome": _nome_registro(conjuge) if conjuge else None,
+                "completo": not conjuge_faltando,
+                "faltando": conjuge_faltando,
+            }
+            if conjuge_faltando:
+                faltando.append("conjuge_qualificacao")
+
+    return {
+        "cliente_id": str(cliente_id),
+        "estado_civil": estado_civil,
+        "completo": not faltando,
+        "faltando": faltando,
+        "conjuge": conjuge_info,
+    }
+
+
 __all__ = [
     "ITENS",
     "ITEM_KEYS",
     "TABLE",
+    "completude_contratual",
     "derivar",
     "listar",
     "marcar",

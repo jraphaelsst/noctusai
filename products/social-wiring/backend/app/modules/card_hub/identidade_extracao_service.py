@@ -88,6 +88,7 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import (
     IdentityFields,
+    is_same_as_cpf,
     make_identity_extractor,
     strip_accents_upper,
 )
@@ -112,7 +113,9 @@ CLIENTES_TABLE = "clientes"
 #: is unreachable today. It is here because the extractor already classifies and
 #: reads one — adding the type later is then a data change, not a code change.
 #: Stated rather than left to be discovered as a puzzling dead branch.
-TIPOS_EXTRAIVEIS = frozenset({"rg", "cpf", "cnh", "certidao_casamento"})
+TIPOS_EXTRAIVEIS = frozenset(
+    {"rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento"}
+)
 
 #: Types whose vision rung must receive EVERY page, not the adapter's
 #: 3-page default.
@@ -129,7 +132,12 @@ TIPOS_EXTRAIVEIS = frozenset({"rg", "cpf", "cnh", "certidao_casamento"})
 #: is safe to make extractable at all: registering the type without it would
 #: start writing confident wrong estado-civil values where today the document
 #: is simply never read.
-TIPOS_LEITURA_INTEGRAL = frozenset({"certidao_casamento"})
+#:
+#: `certidao_nascimento` joins it on the same terms (migration 110): a
+#: marriage, divórcio or óbito is averbado on the margin of a birth
+#: certificate too, further into the document than page 1 — see that
+#: migration's header.
+TIPOS_LEITURA_INTEGRAL = frozenset({"certidao_casamento", "certidao_nascimento"})
 
 #: How many times one document may be STARTED before the sweep gives up.
 #: Bounds the vision bill on a deterministically-broken document — see
@@ -251,6 +259,25 @@ CAMPOS: tuple[CampoExtraido, ...] = (
         coluna_rotulo="extracao_rg_rotulo",
         sobrescreve=False,
     ),
+    # Migration 110 — the two `civil_status.py` predicted (see `IdentityFields`'
+    # own docstring) and named on exactly the terms `cpf`/`rg` arrived on:
+    # `sobrescreve=False` for the same reason those two are — neither has a
+    # second column holding an operator's own spelling, so a later reading
+    # that disagrees is a suggestion, never an overwrite.
+    CampoExtraido(
+        item_key="estado_civil",
+        coluna_valor="extracao_estado_civil",
+        coluna_confianca="extracao_estado_civil_confianca",
+        coluna_rotulo="extracao_estado_civil_rotulo",
+        sobrescreve=False,
+    ),
+    CampoExtraido(
+        item_key="regime_bens",
+        coluna_valor="extracao_regime_bens",
+        coluna_confianca="extracao_regime_bens_confianca",
+        coluna_rotulo="extracao_regime_bens_rotulo",
+        sobrescreve=False,
+    ),
 )
 
 CAMPO_POR_CHAVE: dict[str, CampoExtraido] = {c.item_key: c for c in CAMPOS}
@@ -312,6 +339,18 @@ def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional
             fields.rg_confianca.value,
             fields.rg_rotulo,
             fields.persistable_rg,
+        ),
+        "estado_civil": (
+            fields.estado_civil,
+            fields.estado_civil_confianca.value,
+            fields.estado_civil_rotulo,
+            fields.persistable_estado_civil,
+        ),
+        "regime_bens": (
+            fields.regime_bens,
+            fields.regime_bens_confianca.value,
+            fields.regime_bens_rotulo,
+            fields.persistable_regime_bens,
         ),
     }
 
@@ -390,6 +429,20 @@ def _aplicar_ao_cliente(
         aplicados[campo.item_key] = False
         if not pode or valor is None:
             continue
+
+        # 🔴 An RG that collapses onto the CPF (this party's own, whether
+        # already on file or applied earlier in THIS same loop — `cpf` sorts
+        # before `rg` in `CAMPOS`) is the copy-paste bug `rg.is_same_as_cpf`
+        # exists to catch, not a document to trust. The reading is NOT
+        # discarded — it already sits on `cliente_documentos.extracao_rg`
+        # unconditionally (see `extrair_identidade`) — it is only declined
+        # here, so it resurfaces through `sugestoes_pendentes` for a human to
+        # look at instead of silently qualifying a party with their own CPF
+        # standing in for their RG.
+        if campo.item_key == "rg":
+            cpf_efetivo = updates.get("cpf", atual.get("cpf"))
+            if is_same_as_cpf(valor, cpf_efetivo):
+                continue
 
         presente = atual.get(campo.item_key)
 
@@ -720,6 +773,15 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             valor = doc.get(campo.coluna_valor)
             if not _oferecer(campo, atual, valor):
                 continue
+            # Tells the operator WHY a high-confidence RG reading is sitting
+            # here unapplied instead of already being on the record — see the
+            # rg==cpf guard in `_aplicar_ao_cliente`. `None` for every other
+            # field and every RG that is simply a normal pending suggestion.
+            aviso = (
+                "rg_igual_cpf"
+                if campo.item_key == "rg" and is_same_as_cpf(valor, cliente.get("cpf"))
+                else None
+            )
             out[campo.item_key] = {
                 "valor": valor,
                 "valor_atual": atual,
@@ -730,6 +792,7 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
                 "fonte": doc.get("extracao_fonte"),
                 "rotulo": doc.get(campo.coluna_rotulo),
                 "substitui": bool(campo.sobrescreve and atual),
+                "aviso": aviso,
             }
             break
     return out
@@ -800,9 +863,17 @@ def confirmar_sugestao(
             "Esta sugestão já foi descartada.", field="extracao_descartada_em"
         )
 
+    # `cpf` rides along when confirming an `rg` suggestion — the one extra
+    # column the rg==cpf guard below needs, and the same reasoning
+    # `_aplicar_ao_cliente` uses: a confirm is another write path onto
+    # `clientes.rg`, and it must refuse the same collision a PATCH refuses,
+    # not only the unattended apply.
+    colunas_cliente = f"{campo.item_key},{campo.origem}"
+    if campo.item_key == "rg":
+        colunas_cliente += ",cpf"
     cliente_rows = (
         _t(client, CLIENTES_TABLE)
-        .select(f"{campo.item_key},{campo.origem}")
+        .select(colunas_cliente)
         .eq("org_id", str(org_id))
         .eq("id", str(cliente_id))
         .limit(1)
@@ -811,6 +882,11 @@ def confirmar_sugestao(
     if not cliente_rows:
         raise NotFoundError("clientes", str(cliente_id))
     presente = cliente_rows[0].get(campo.item_key)
+
+    if campo.item_key == "rg" and is_same_as_cpf(valor, cliente_rows[0].get("cpf")):
+        raise ValidationError_(
+            "RG não pode ser igual ao CPF.", field="rg",
+        )
 
     if not campo.sobrescreve and presente:
         raise ValidationError_(
