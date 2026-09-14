@@ -502,6 +502,8 @@ Every table has `id uuid pk`, `org_id uuid not null`, `created_at`, `updated_at`
 
 **Why `tools=` is the primary restriction.** Tools that need no permission, such as the read-only built-ins and MCP resource reads, never reach `can_use_tool`. A hand-kept `disallowed_tools` list goes stale as the CLI adds tools. So the base tool set is pinned with `tools=` (SDK `types.py:1944`, the `--tools` flag), and `disallowed_tools` remains only as defence in depth.
 
+**`allowed_tools` must never contain an escrita tool** (contract defect corrected 2026-09-14, found by G2 against the installed SDK). In SDK 0.2.152 a bare `allowed_tools` entry is a whole-tool auto-approval that is granted BEFORE `can_use_tool` runs (`claude_agent_sdk/types.py` `_whole_tool_allowed` / `_get_can_use_tool_shadowed_warning`). Listing escrita names there would silently skip the gate, the broker and the approval assertion for every write. Only LEITURA names go in `allowed_tools`; escrita names reach the CLI solely through the in-process MCP server, and every call falls through to `can_use_tool`. The regression is pinned by `tests/runtime/test_claude_runtime.py::TestAllowedToolsNeverShadowsTheGate`.
+
 **Plugin invariant, enforced by a build-time test:** `agents/julia/plugin/` contains ONLY `skills/` (no `hooks/`, `.mcp.json`, `agents/` or `commands/`). No `SKILL.md` frontmatter declares `allowed-tools`.
 
 ```
@@ -513,7 +515,7 @@ plugins=[{"type":"local","path": "<image>/app/agents/julia/plugin"}]
 skills=[<explicit ar-* list>]
 mcp_servers={"academia": create_sdk_mcp_server("academia", tools=[...E.4 proxies])}
 strict_mcp_config=True
-allowed_tools=[E.4 leitura + escrita names]
+allowed_tools=[E.4 LEITURA names + "WebSearch" + "Skill" ONLY]   # NEVER escrita names — see note below
 disallowed_tools=["Bash","Write","Edit","MultiEdit","NotebookEdit","Read","Grep","Glob","Task","WebFetch"]
 can_use_tool=<gate>                    # PermissionResultAllow / PermissionResultDeny (types.py:238,247)
 env={}                                # adds nothing; the wrapper is what strips inherited keys
