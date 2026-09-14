@@ -91,7 +91,7 @@ def _t(client: Any, name: str):
     return table_reads.table(client, name)
 
 
-def _exigir_contrato(
+def exigir_contrato(
     client: Any, org_id: UUID, atendimento_id: UUID, contrato_id: UUID
 ) -> dict:
     """The live contract row, scoped to this org AND this atendimento.
@@ -268,8 +268,49 @@ async def nova_versao(
     usuario_id: Optional[UUID],
 ) -> dict:
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
-    row = _exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    row = exigir_contrato(client, org_id, atendimento_id, contrato_id)
 
+    if row["status"] == "cancelado":
+        raise ConflictError(
+            "Contrato cancelado não recebe novas versões.", resource=TABLE
+        )
+
+    _, atualizado = await _guardar_versao(
+        client,
+        storage,
+        org_id,
+        atendimento_id,
+        contrato_id,
+        filename=filename,
+        content_type=content_type,
+        data=data,
+        rotulo=rotulo,
+        usuario_id=usuario_id,
+        extra={"origem": "upload"},
+    )
+    return _contrato_saida(client, org_id, atualizado)
+
+
+async def _guardar_versao(
+    client: Any,
+    storage: StorageBackend,
+    org_id: UUID,
+    atendimento_id: UUID,
+    contrato_id: UUID,
+    *,
+    filename: Optional[str],
+    content_type: str,
+    data: bytes,
+    rotulo: Optional[str],
+    usuario_id: Optional[UUID],
+    extra: dict,
+) -> tuple[dict, dict]:
+    """The ONE version-write path, upload or gerado: cancelado refusal ->
+    validate -> next never-reused numero -> `DocumentoStore.guardar` (same
+    bucket, same LGPD access-log table) -> bump the contract's updated_at.
+    Returns (inserted version row, refreshed contract row). `filename=None`
+    names the file from its numero (a generated version has no upload name)."""
+    row = exigir_contrato(client, org_id, atendimento_id, contrato_id)
     if row["status"] == "cancelado":
         raise ConflictError(
             "Contrato cancelado não recebe novas versões.", resource=TABLE
@@ -283,24 +324,57 @@ async def nova_versao(
 
     owner = UUID(str(contrato_id))
     numero = _proximo_numero(client, org_id, owner)
-    await VERSOES_STORE.guardar(
+    inserida = await VERSOES_STORE.guardar(
         client,
         storage,
         org_id,
         owner,
-        filename=filename,
+        filename=filename or f"contrato-gerado-v{numero}.docx",
         content_type=content_type,
         data=data,
         tipo_documento=TIPO_VERSAO,
         enviado_por=usuario_id,
-        extra={"numero": numero, "rotulo": rotulo, "origem": "upload"},
+        extra={"numero": numero, "rotulo": rotulo, **extra},
     )
     _t(client, TABLE).update({"updated_at": now_iso()}).eq(
         "id", str(contrato_id)
     ).execute()
 
-    atualizado = _exigir_contrato(client, org_id, atendimento_id, contrato_id)
-    return _contrato_saida(client, org_id, atualizado)
+    atualizado = exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    return inserida, atualizado
+
+
+async def nova_versao_gerada(
+    client: Any,
+    storage: StorageBackend,
+    org_id: UUID,
+    atendimento_id: UUID,
+    contrato_id: UUID,
+    *,
+    data: bytes,
+    content_type: str,
+    contexto_sha256: str,
+    usuario_id: Optional[UUID],
+) -> dict:
+    """A version produced by the F5 generator (`card_hub/contrato_gerador`):
+    origem='gerado' plus the SHA-256 of the data it was rendered from
+    (migration 112 — required for 'gerado', forbidden for 'upload').
+    Returns the version in the same shape `listar` returns it."""
+    inserida, _ = await _guardar_versao(
+        client,
+        storage,
+        org_id,
+        atendimento_id,
+        contrato_id,
+        filename=None,
+        content_type=content_type,
+        data=data,
+        rotulo=None,
+        usuario_id=usuario_id,
+        extra={"origem": "gerado", "contexto_sha256": contexto_sha256},
+    )
+    resolved = table_reads.resolve_actors({inserida["enviado_por"]} - {None})
+    return _versao_out(inserida, resolved)
 
 
 def atualizar(
@@ -313,7 +387,7 @@ def atualizar(
     usuario_id: Optional[UUID],
 ) -> dict:
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
-    atual = _exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    atual = exigir_contrato(client, org_id, atendimento_id, contrato_id)
 
     recusados = sorted(set(valores) - set(CAMPOS_EDITAVEIS))
     if recusados:
@@ -350,7 +424,7 @@ def atualizar(
         "id", str(contrato_id)
     ).execute()
 
-    atualizado = _exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    atualizado = exigir_contrato(client, org_id, atendimento_id, contrato_id)
     return _contrato_saida(client, org_id, atualizado)
 
 
@@ -366,7 +440,7 @@ async def url_versao(
     intent: str = "view",
 ) -> dict:
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
-    _exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    exigir_contrato(client, org_id, atendimento_id, contrato_id)
     return await VERSOES_STORE.url(
         client,
         storage,
@@ -389,7 +463,7 @@ def remover_versao(
     usuario_id: Optional[UUID],
 ) -> None:
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
-    _exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    exigir_contrato(client, org_id, atendimento_id, contrato_id)
 
     owner = UUID(str(contrato_id))
     # Raises 404 first for a wrong/foreign/already-deleted versao_id — the
@@ -417,7 +491,7 @@ def remover_contrato(
     usuario_id: Optional[UUID],
 ) -> None:
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
-    _exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    exigir_contrato(client, org_id, atendimento_id, contrato_id)
 
     owner = UUID(str(contrato_id))
     # Every live version is soft-deleted too — a "deleted" contract whose
@@ -453,8 +527,10 @@ __all__ = [
     "VERSOES_STORE",
     "atualizar",
     "criar",
+    "exigir_contrato",
     "listar",
     "nova_versao",
+    "nova_versao_gerada",
     "remover_contrato",
     "remover_versao",
     "url_versao",

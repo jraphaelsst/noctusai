@@ -1847,6 +1847,10 @@ def certidoes_por_parte(db, org_id, atendimento_parte_id: str) -> list[dict]:
             consulta = consulta_by_id.get(r["consulta_id"], {})
             r["consulta_nome"] = consulta.get("nome")
             r["consulta_documento"] = consulta.get("documento")
+            # Already selected above; the contract generator groups a party's
+            # PF (cpf) and company (cnpj) certidões by it — never guessed from
+            # the document's digit count.
+            r["consulta_tipo_documento"] = consulta.get("tipo_documento")
             resultados.append(r)
     return resultados
 

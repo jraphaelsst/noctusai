@@ -206,7 +206,10 @@ def _forma(forma: Optional[str]) -> str:
 def banco_texto(fav: Favorecido) -> str:
     texto = ""
     if fav.conta:
-        texto += f", Banco {fav.banco}, Agência {fav.agencia}, Conta {fav.conta}"
+        banco = (fav.banco or "").strip()
+        # "Banco Exemplo" is stored with its own prefix; "Itaú" is not.
+        banco = banco if banco.lower().startswith("banco") else f"Banco {banco}"
+        texto += f", {banco}, Agência {fav.agencia}, Conta {fav.conta}"
     if fav.pix:
         texto += f" ou Chave PIX: {fav.pix}" if fav.conta else f", Chave PIX: {fav.pix}"
     return texto
