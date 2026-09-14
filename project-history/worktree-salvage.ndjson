@@ -673,3 +673,4 @@
 {"ts": "2026-09-14", "event": "worktree-sweep", "path": ".claude/worktrees/contract-seed-identity-civil", "branch": "feat/contract-seed-identity-civil", "sha": "855a8679eb0db8c8d9ef49860ebdfbfbfa20af03", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-14", "event": "worktree-sweep", "path": ".claude/worktrees/contract-seed-matricula-atos", "branch": "feat/contract-seed-matricula-atos", "sha": "1cb88095cfe1d983ee23bb7e678f49ae23cc4ffe", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-14", "event": "worktree-sweep", "path": ".claude/worktrees/contract-seed-docx-render", "branch": "feat/contract-seed-docx-render", "sha": "1b99b4e8cd67f8a5f9fbb1327b94c617e1ad60e1", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-14T14:03:57.627543+00:00", "kind": "salvage-before-delete:branch", "target": "feat/contract-f1-certidoes-be", "dry_run": false, "ok": true, "preserved": []}
