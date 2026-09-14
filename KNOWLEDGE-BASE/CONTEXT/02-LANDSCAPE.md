@@ -45,21 +45,21 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 23 | 41 | 126 | 82 | 201 | 3,118 |
+| Social Wiring | 23 | 41 | 126 | 82 | 204 | 3,148 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 8 | 0 | 15 | 8 | 17 | 135 |
 | Agents | 2 | 1 | 12 | 9 | 20 | 149 |
-| **Total** | **229** | **236** | **464** | **292** | **695** | **9,371** |
+| **Total** | **229** | **236** | **464** | **292** | **698** | **9,401** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (15):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 500** declared across those schemas.
+- **Tables: 504** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
