@@ -11,6 +11,11 @@ Conventions (spec §2.0):
 - `par('<key>')` — "Parágrafo Primeiro:" … / "Parágrafo Único:".
 - `V` / `C` — agreement for vendedores / compradores; no article is spelled.
 - `brl(x)` — digits and por-extenso from one Decimal; `dias(n)` likewise.
+- `{{r ... }}` — a docxtpl RICH-TEXT slot: the value MUST be built by
+  `contexto._descricao_matricula_rica` (via the seed `docx_render`
+  adapter's `rich_text()`), never a plain string — a plain string in a
+  `{{r ... }}` slot renders as EMPTY. Used exactly once, for the matrícula
+  literal quote's bold/underline (contract §5).
 - Long, data-dependent phrases (qualificação, each parcela line, certidão
   items, pendências) are composed in `frases.py` — also plain wording, kept
   next to the rules that choose between variants.
@@ -30,7 +35,7 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 
 CLÁUSULA {{ cl.objeto.ORD }} – DO OBJETO DO CONTRATO
 {{ V.ART }} {{ V.NOME }}, {{ titulo_aquisitivo }}, {{ V.pl('tornou-se','tornaram-se') }} {{ V.g('legítimo proprietário','legítima proprietária','legítimos proprietários') }} do imóvel descrito a seguir:
-IMÓVEL: {{ imovel.descricao_matricula }} Imóvel devidamente cadastrado pela Prefeitura Municipal de {{ imovel.cidade }} sob nº {{ imovel.inscricao_municipal }} e caracterizado na Matrícula Nº {{ imovel.matricula_numero }} do {{ imovel.cartorio }}.
+IMÓVEL: {{r imovel.descricao_matricula }} Imóvel devidamente cadastrado pela Prefeitura Municipal de {{ imovel.cidade }} sob nº {{ imovel.inscricao_municipal }} e caracterizado na Matrícula Nº {{ imovel.matricula_numero }} do {{ imovel.cartorio }}.
 {%p if tem_itens_integrantes %}
 {{ par('objeto') }} As partes estabelecem de comum acordo, que fará parte integrante da presente transação os itens relacionados a seguir: {{ itens_integrantes }}
 {%p endif %}

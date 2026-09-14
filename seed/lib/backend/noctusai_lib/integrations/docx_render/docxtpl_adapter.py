@@ -34,13 +34,22 @@ context key that is absent (and actually evaluated — a `{% if %}`
 branch that never runs is never evaluated) raise
 `jinja2.exceptions.UndefinedError`, which this adapter re-raises as
 `MissingPlaceholderError` — never a silently-blank substitution.
+
+**Rich text.** `rich_text(runs)` lazy-imports `docxtpl.RichText` and
+builds it from a sequence of `documents.formatting.Run`s — one `.add()`
+call per run, `bold`/`underline` passed through. The resulting object is
+a normal `render()` context value for a docxtpl `{{r ... }}` slot; a
+`\\n` inside a run's text becomes a real Word line break via the SAME
+mechanism as a plain string (`docxtpl`'s own resolver applies to the
+whole rendered XML, not just plain substitutions).
 """
 
 from __future__ import annotations
 
 import io
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
+from noctusai_lib.integrations.documents.formatting import Run
 from noctusai_lib.integrations.docx_render.types import MissingPlaceholderError
 
 _IMPORT_HINT = (
@@ -82,3 +91,15 @@ class DocxtplRenderAdapter:
 
         doc = DocxTemplate(io.BytesIO(template_bytes))
         return set(doc.get_undeclared_template_variables())
+
+    def rich_text(self, runs: Sequence[Run]) -> Any:
+        try:
+            from docxtpl import RichText
+        except ImportError as exc:  # pragma: no cover - exercised via factory real=False default
+            raise RuntimeError(_IMPORT_HINT) from exc
+
+        rt = RichText()
+        for run in runs:
+            if run.text:
+                rt.add(run.text, bold=run.bold, underline=run.underline)
+        return rt
