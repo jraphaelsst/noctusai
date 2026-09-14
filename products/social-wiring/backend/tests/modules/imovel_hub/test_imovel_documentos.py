@@ -204,6 +204,76 @@ class TestListingAndRemoval:
         # readable rather than becoming an anonymous value.
         assert body["numero_matricula_documento_id"] == did
 
+    def test_the_access_log_route_returns_who_did_what(self, client, scoped):
+        """Migration 111 — `imovel_hub` had the LOG since 109 but no route to
+        read it back. Mirrors `card_hub`'s `.../acessos` routes."""
+        did = str(uuid4())
+        seed(scoped, documentos=[documento_row(did)])
+        client.delete(
+            f"/api/imoveis/{CODIGO}/documentos/{did}?motivo=arquivo+errado",
+            headers=auth(),
+        )
+
+        resp = client.get(
+            f"/api/imoveis/{CODIGO}/documentos/{did}/acessos", headers=auth()
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] == 1
+        assert body["items"][0]["acao"] == "delete"
+
+    def test_the_access_log_route_is_a_404_for_an_unknown_document(
+        self, client, scoped
+    ):
+        seed(scoped)
+        resp = client.get(
+            f"/api/imoveis/{CODIGO}/documentos/{uuid4()}/acessos", headers=auth()
+        )
+        assert resp.status_code == 404
+
+
+class TestRetention:
+    """Migration 111 — the imóvel surface joins `documento_retencao_politicas`."""
+
+    def _politica(self, tipo="matricula", dias=3650) -> dict:
+        return {
+            "id": str(uuid4()),
+            "org_id": None,
+            "superficie": "imovel",
+            "tipo_documento": tipo,
+            "retencao_dias": dias,
+            "motivo": None,
+            "atualizado_em": None,
+            "atualizado_por": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    def test_upload_stamps_a_retention_date_when_a_policy_exists(
+        self, client, scoped, fake_storage, fake_extractor
+    ):
+        seed(scoped)
+        scoped.set_table_data("documento_retencao_politicas", [self._politica()])
+
+        r = _upload(client)
+
+        assert r.status_code == 200, r.text
+        rows = scoped.table("imovel_documentos").select("*").execute().data
+        (row,) = [x for x in rows if x["id"] == r.json()["id"]]
+        assert row["retencao_ate"] is not None
+
+    def test_upload_leaves_retencao_ate_null_without_a_policy(
+        self, client, scoped, fake_storage, fake_extractor
+    ):
+        seed(scoped)
+        scoped.set_table_data("documento_retencao_politicas", [])
+
+        r = _upload(client)
+
+        rows = scoped.table("imovel_documentos").select("*").execute().data
+        (row,) = [x for x in rows if x["id"] == r.json()["id"]]
+        assert row["retencao_ate"] is None
+
 
 class _Extractor:
     """Returns a scripted `MatriculaFields`, or raises if asked to."""

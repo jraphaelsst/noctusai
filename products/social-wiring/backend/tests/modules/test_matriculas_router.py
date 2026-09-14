@@ -99,6 +99,14 @@ class _RecordingDB:
     def limit(self, _n):
         return self
 
+    # `documento_retencao.dias_para` (migration 111 — `processar_extracao`
+    # stamps `retencao_ate` alongside `texto_extraido`) reads the policy
+    # table via `.select(...).is_(...)`. No policy is ever seeded on this
+    # double, so it reads "no policy" -> `None` -> `retencao_ate` stays
+    # `None`, which is what the outcome-only assertions here expect.
+    def is_(self, _col, _val):
+        return self
+
     def insert(self, payload):
         linhas = payload if isinstance(payload, list) else [payload]
         self.inserts.setdefault(self._table, []).extend(linhas)

@@ -50,16 +50,21 @@ logger = logging.getLogger(__name__)
 
 TABLE = "documento_retencao_politicas"
 
-#: The surfaces that HAVE a retention clock. `imovel` is deliberately absent —
-#: `imovel_documentos` (075) has no `retencao_ate` column, so offering a
-#: control for it would be a lying UI. Mirrors migration 079's CHECK; the two
-#: must move together.
-SUPERFICIES: tuple[str, ...] = ("cliente", "atendimento")
+#: The surfaces that HAVE a retention clock. `imovel` joined in migration 111
+#: — 079 excluded it because 075's `imovel_documentos` had no access log, and
+#: a retention control with nothing logging its use would be a lying UI. That
+#: reason closed when 109 added `imovel_documento_acessos`. Mirrors migration
+#: 111's CHECK on `documento_retencao_politicas.superficie`; the two must move
+#: together.
+SUPERFICIES: tuple[str, ...] = ("cliente", "atendimento", "imovel")
 
 #: What the countdown starts from, per surface. See the module header.
+#: `imovel` uses `envio` (upload time): unlike an `atendimento`, a property
+#: has no single `closed_at` to anchor to — it can outlive many deals.
 ANCORAS: dict[str, str] = {
     "cliente": "envio",
     "atendimento": "encerramento",
+    "imovel": "envio",
 }
 
 #: Human-facing one-liners for the screen, so the anchor is never implicit.

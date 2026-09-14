@@ -260,13 +260,28 @@ class TestEscrita:
         resp = admin_client.put(
             _URL,
             json={
-                "superficie": "imovel",
+                "superficie": "financeiro",
                 "tipo_documento": "matricula",
                 "retencao_dias": 365,
             },
             headers=_auth(),
         )
         assert resp.status_code == 422
+
+    def test_imovel_is_accepted_by_the_schema_but_needs_a_known_tipo(self, admin_client):
+        """`imovel` (migration 111) is now a valid `superficie` at the schema
+        layer — the request reaches the service, which is what still refuses
+        an unseeded `tipo_documento` (the platform tier is the allow-list)."""
+        resp = admin_client.put(
+            _URL,
+            json={
+                "superficie": "imovel",
+                "tipo_documento": "nao_existe",
+                "retencao_dias": 365,
+            },
+            headers=_auth(),
+        )
+        assert resp.status_code == 400
 
     def test_an_unknown_tipo_is_rejected_by_the_service(self, admin_client):
         """The platform tier is the allow-list; the schema cannot enumerate a

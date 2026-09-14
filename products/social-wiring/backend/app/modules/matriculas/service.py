@@ -38,6 +38,7 @@ from noctusai_lib.config.credentials import resolve_credential
 
 from app.modules.imovel_hub.deps import BUCKET as IMOVEL_BUCKET
 from app.modules.matriculas import estrutura_service
+from app.services import documento_retencao
 
 logger = logging.getLogger(__name__)
 
@@ -215,11 +216,24 @@ async def processar_extracao(
             len(resultado.paginas_por_visao),
         )
 
+        # 🔴 Stamped on the SAME write that lands the text (migration 111) —
+        # `documento_retencao.dias_para` reads the two-tier policy under
+        # `superficie="imovel"`, `tipo_documento="texto_extraido"`. `None`
+        # when there is no policy row or the policy says keep indefinitely;
+        # both read as "does not expire" to `estrutura_service.
+        # purgar_texto_expirado`.
+        dias = documento_retencao.dias_para(db, org_id, "imovel", "texto_extraido")
+        retencao_ate = (
+            (datetime.now(timezone.utc).date() + timedelta(days=dias)).isoformat()
+            if dias
+            else None
+        )
         _marcar(
             db, extracao_id, org_id,
             status="concluida",
             texto_extraido=resultado.text,
             num_paginas=resultado.num_paginas,
+            retencao_ate=retencao_ate,
         )
 
         # The acts (migration 109), as offsets into the text that just landed.

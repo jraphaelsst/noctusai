@@ -60,7 +60,7 @@ from noctusai_lib.primitives.exceptions import (
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.services import table_reads
-from app.services.documento_store import now_iso
+from app.services.documento_store import log_acesso_extracao, now_iso, today
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,13 @@ EXTRACOES_TABLE = "matricula_extracoes"
 ATOS_TABLE = "matricula_atos"
 SELECAO_TABLE = "atendimento_contrato_matricula_atos"
 CONTRATOS_TABLE = "atendimento_contratos"
+NEGOCIACAO_TABLE = "atendimento_negociacao"
 
 STATUS_CONCLUIDA = "concluida"
+
+#: A read of the raw transcription (migration 111) — the CPF-bearing text
+#: `imovel_documento_acessos` (109) never logged. See `log_leitura_texto`.
+ACAO_TEXT_VIEW = "text_view"
 
 #: Only a PDF goes through the transcriber (`service.processar_extracao`
 #: hands it `mimetype="application/pdf"`); an imóvel's photographed matrícula
@@ -157,6 +162,44 @@ def persistir_atos(db: Any, extracao_id: str, org_id: Any, texto: str) -> int:
     return len(linhas)
 
 
+def purgar_texto_expirado(client: Any, org_id: UUID) -> int:
+    """NULL `texto_extraido` for every extraction whose `retencao_ate` has
+    passed (migration 111). Returns how many rows were purged.
+
+    A PURGE, not a soft delete: `matricula_atos` offsets and every RESTRICT
+    citation (`atendimento_contrato_matricula_atos`, `imovel_dados`'s
+    título/ônus pointers) keep referencing this row by id, so the row itself
+    must survive — only the CPF-bearing text it points into is gone. The
+    row's `codigo` / `status` / act count stay readable as a record that a
+    transcription existed and was purged, same posture `documento_store.
+    DocumentoStore.varrer_expirados` takes with a soft-deleted document.
+
+    NOC-REMEDIATE[retention-sweep-scheduler]: not wired to a scheduled job —
+    same as `documento_store.DocumentoStore.varrer_expirados` (imovel) and
+    `card_hub.financiamento_service.varrer_retencao` (atendimento) today. All
+    three read the same policy table; wiring one is wiring the pattern, not a
+    one-surface fix. — 2026-09-14
+    """
+    # Filtered on `texto_extraido` in PYTHON, not via `.not_.is_()` — the same
+    # caution `certidoes.service._get_tjsp_last_request_at` documents:
+    # supabase-py's `.not_.is_()` filter can silently behave differently
+    # across client versions, and this query already has to fetch the id
+    # either way.
+    candidatos = (
+        _t(client, EXTRACOES_TABLE)
+        .select("id,texto_extraido")
+        .eq("org_id", str(org_id))
+        .lte("retencao_ate", today().isoformat())
+        .execute()
+    ).data or []
+    rows = [r for r in candidatos if r.get("texto_extraido")]
+    for row in rows:
+        _t(client, EXTRACOES_TABLE).update({"texto_extraido": None}).eq(
+            "id", row["id"]
+        ).execute()
+    return len(rows)
+
+
 # ─── reads ────────────────────────────────────────────────────────────────
 
 
@@ -172,6 +215,27 @@ def exigir_extracao(client: Any, org_id: UUID, extracao_id: UUID) -> dict:
     if not rows:
         raise NotFoundError(EXTRACOES_TABLE, str(extracao_id))
     return rows[0]
+
+
+def log_leitura_texto(
+    client: Any, org_id: UUID, extracao_id: Any, usuario_id: Optional[Any]
+) -> None:
+    """Append a `text_view` row (migration 111) — written BEFORE the caller
+    returns the text it names. A failed write fails the request, same
+    contract as `DocumentoStore.url`.
+
+    Keyed to `imovel_documento_acessos` via `docs_svc.STORE.acessos_table`
+    rather than the literal name, so a future change to which table backs
+    the imóvel surface's access log cannot silently drift the two apart.
+    """
+    log_acesso_extracao(
+        client,
+        docs_svc.STORE.acessos_table,
+        org_id,
+        extracao_id,
+        usuario_id,
+        ACAO_TEXT_VIEW,
+    )
 
 
 def _linhas_de_atos(client: Any, org_id: UUID, extracao: dict) -> list[dict]:
@@ -234,8 +298,11 @@ def _ato_saida(row: dict, texto: str) -> dict:
     }
 
 
-def listar_atos(client: Any, org_id: UUID, extracao_id: UUID) -> dict:
+def listar_atos(
+    client: Any, org_id: UUID, extracao_id: UUID, *, usuario_id: Optional[Any] = None
+) -> dict:
     extracao = exigir_extracao(client, org_id, extracao_id)
+    log_leitura_texto(client, org_id, extracao_id, usuario_id)
     texto = extracao.get("texto_extraido") or ""
     atos = [_ato_saida(r, texto) for r in _linhas_de_atos(client, org_id, extracao)]
     return {
@@ -627,7 +694,9 @@ def _exigir_contrato(client: Any, org_id: UUID, contrato_id: UUID) -> dict:
     return rows[0]
 
 
-def obter_selecao(client: Any, org_id: UUID, contrato_id: UUID) -> dict:
+def obter_selecao(
+    client: Any, org_id: UUID, contrato_id: UUID, *, usuario_id: Optional[Any] = None
+) -> dict:
     """The contract's quoted acts, in contract order, as literal slices.
 
     `texto` is the plain concatenation of the slices — no separator is added,
@@ -654,6 +723,10 @@ def obter_selecao(client: Any, org_id: UUID, contrato_id: UUID) -> dict:
         }
 
     extracao = exigir_extracao(client, org_id, selecao[0]["extracao_id"])
+    # 🔴 A quote (migration 111) — this returns the literal text of every
+    # selected act, so a caller reading it is exactly as much a text access
+    # as `listar_atos` or `GET /extracoes/{id}`.
+    log_leitura_texto(client, org_id, extracao["id"], usuario_id)
     texto = extracao.get("texto_extraido") or ""
     por_id = {str(r["id"]): r for r in _linhas_de_atos(client, org_id, extracao)}
 
@@ -695,6 +768,41 @@ def obter_selecao(client: Any, org_id: UUID, contrato_id: UUID) -> dict:
     }
 
 
+def _exigir_codigo_compativel(
+    client: Any, org_id: UUID, contrato: dict, extracao: dict
+) -> None:
+    """Refuse a selection whose matrícula belongs to a different imóvel.
+
+    `extracao.codigo` NULL means the extraction was never linked to any
+    imóvel (the 092 unlinked-upload shape) — it cannot be trusted to be THIS
+    deal's property either, so it is refused the same way a mismatch is.
+    Without this check, F5's contract generation would read a completely
+    unrelated property's matrícula as this deal's title source.
+    """
+    codigo_extracao = extracao.get("codigo")
+    if not codigo_extracao:
+        raise ValidationError_(
+            "Esta extração não está vinculada a um imóvel — vincule-a a um "
+            "imóvel antes de selecioná-la para o contrato.",
+            field="extracao_id",
+        )
+    negociacao = (
+        _t(client, NEGOCIACAO_TABLE)
+        .select("imovel_codigo")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", str(contrato["atendimento_id"]))
+        .maybe_single()
+        .execute()
+    ).data or {}
+    codigo_negociacao = negociacao.get("imovel_codigo")
+    if not codigo_negociacao or codigo_negociacao != codigo_extracao:
+        raise ValidationError_(
+            "A matrícula selecionada pertence a um imóvel diferente do "
+            "negociado neste atendimento.",
+            field="extracao_id",
+        )
+
+
 def definir_selecao(
     client: Any,
     org_id: UUID,
@@ -705,7 +813,7 @@ def definir_selecao(
     usuario_id: Optional[Any],
 ) -> dict:
     """Replace the contract's quoted acts. `ato_ids` order = contract order."""
-    _exigir_contrato(client, org_id, contrato_id)
+    contrato = _exigir_contrato(client, org_id, contrato_id)
     ids = [str(i) for i in ato_ids]
     if len(set(ids)) != len(ids):
         raise ValidationError_("Ato repetido na seleção.", field="ato_ids")
@@ -718,6 +826,7 @@ def definir_selecao(
             )
         extracao = exigir_extracao(client, org_id, extracao_id)
         _exigir_concluida(extracao)
+        _exigir_codigo_compativel(client, org_id, contrato, extracao)
         por_id = {str(r["id"]): r for r in _linhas_de_atos(client, org_id, extracao)}
         faltando = [i for i in ids if i not in por_id]
         if faltando:
@@ -749,7 +858,7 @@ def definir_selecao(
     ).execute()
     if linhas:
         _t(client, SELECAO_TABLE).insert(linhas).execute()
-    return obter_selecao(client, org_id, contrato_id)
+    return obter_selecao(client, org_id, contrato_id, usuario_id=usuario_id)
 
 
 # ─── delete guard ─────────────────────────────────────────────────────────
@@ -784,9 +893,11 @@ def garantir_removivel(client: Any, org_id: UUID, extracao_id: str) -> None:
 
 
 __all__ = [
+    "ACAO_TEXT_VIEW",
     "ATOS_TABLE",
     "CONTRATOS_TABLE",
     "EXTRACOES_TABLE",
+    "NEGOCIACAO_TABLE",
     "SELECAO_TABLE",
     "criar_extracao_de_documento",
     "definir_fontes",
@@ -795,8 +906,10 @@ __all__ = [
     "garantir_removivel",
     "linhas_de_atos",
     "listar_atos",
+    "log_leitura_texto",
     "obter_fontes",
     "obter_selecao",
     "persistir_atos",
+    "purgar_texto_expirado",
     "sugerir",
 ]

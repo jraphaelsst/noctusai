@@ -27,6 +27,7 @@ from tests.modules.matriculas.conftest import (
     TEXTO,
     contrato_row,
     extracao_row,
+    negociacao_row,
     registry_row,
     seed,
 )
@@ -375,6 +376,44 @@ class TestTheContractSelection:
     def test_a_deleted_contract_is_a_404(self, scoped):
         ext, contrato, atos = self._seed(scoped, deleted_at="2026-04-01T00:00:00+00:00")
         with pytest.raises(NotFoundError):
+            self._definir(scoped, contrato, ext, [atos[0]["id"]])
+
+    def test_an_unlinked_extraction_cannot_be_selected(self, scoped):
+        """`codigo=None` is the 092 unlinked-upload shape — it was never
+        vinculated to ANY imóvel, so it cannot be trusted to be THIS deal's
+        either (migration 111)."""
+        ext = extracao_row(codigo=None)
+        contrato = contrato_row()
+        seed(scoped, extracoes=[ext], contratos=[contrato])
+        atos = _atos(scoped, ext["id"])
+
+        with pytest.raises(ValidationError_, match="não está vinculada"):
+            self._definir(scoped, contrato, ext, [atos[0]["id"]])
+
+    def test_a_matricula_of_a_different_imovel_cannot_be_selected(self, scoped):
+        """The deal negotiates `imovel_codigo="AP1234"`; the extração belongs
+        to a different property. Without this check F5's contract generation
+        would read the wrong imóvel's matrícula as this deal's title source."""
+        ext = extracao_row(codigo="OUTRO99")
+        contrato = contrato_row()
+        seed(
+            scoped,
+            extracoes=[ext],
+            contratos=[contrato],
+            negociacoes=[negociacao_row(contrato["atendimento_id"], imovel_codigo=CODIGO)],
+        )
+        atos = _atos(scoped, ext["id"])
+
+        with pytest.raises(ValidationError_, match="imóvel diferente"):
+            self._definir(scoped, contrato, ext, [atos[0]["id"]])
+
+    def test_no_negociacao_row_at_all_is_also_refused(self, scoped):
+        """No `atendimento_negociacao` row means no imóvel was ever
+        negotiated for this deal — a NULL default must not read as a match."""
+        ext, contrato, atos = self._seed(scoped)
+        scoped.set_table_data("atendimento_negociacao", [])
+
+        with pytest.raises(ValidationError_, match="imóvel diferente"):
             self._definir(scoped, contrato, ext, [atos[0]["id"]])
 
 

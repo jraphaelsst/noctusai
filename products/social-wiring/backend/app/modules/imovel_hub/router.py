@@ -165,6 +165,18 @@ async def get_documento_url_route(
     )
 
 
+@router.get("/{codigo}/documentos/{documento_id}/acessos")
+async def list_documento_acessos_route(
+    codigo: str,
+    documento_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """The LGPD access log for one imóvel document (migration 109/111)."""
+    _user, org_id = _auth_parts(auth)
+    return docs_svc.listar_acessos(client, org_id, codigo.upper(), documento_id)
+
+
 @router.delete(
     "/{codigo}/documentos/{documento_id}",
     status_code=status.HTTP_204_NO_CONTENT,

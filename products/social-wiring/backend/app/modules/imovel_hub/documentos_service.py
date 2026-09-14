@@ -14,10 +14,14 @@ does not apply here at all:
   re-opening these PDFs routinely (`app.modules.matriculas`), the posture was
   aligned with 078/106: every CONTENT read (a minted signed URL) and every
   delete appends to `imovel_documento_acessos`, attributed to the user.
-- **No retention clock, no LGPD category.** `cliente_documento_tipos` drives
-  `retencao_ate` from a per-type `retencao_dias`. A property's registry
-  document has no such clock — it is evidence for a transaction, kept as
-  long as the transaction record is.
+- **No LGPD category column, and the retention clock came late (111).** This
+  module was written without a `retencao_ate` — 079's header explains why:
+  offering a retention control with nothing logging its use would be a lying
+  UI, and this surface had no access log until 109. Now that it does,
+  migration 111 gives it one, resolved through the SAME `documento_retencao`
+  two-tier policy `cliente`/`atendimento` use (`superficie="imovel"`),
+  anchored at `envio` — a property has no single `closed_at` an `atendimento`
+  can anchor to, so upload time is the only clock that makes sense here.
 - **No `ativo` allow-list table.** The client-side type list is DATA so that
   enabling a withheld, sensitive type is a data change rather than a deploy.
   There is nothing sensitive to withhold here, so the type list is code
@@ -35,15 +39,17 @@ to diverge without one silently dragging the other.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.primitives.exceptions import NotFoundError
 from noctusai_lib.integrations.storage import StorageBackend
 
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub.deps import BUCKET
-from app.services import table_reads
-from app.services.documento_store import DocumentoStore, documento_base
+from app.services import documento_retencao, table_reads
+from app.services.documento_store import DocumentoStore, documento_base, today
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +155,13 @@ async def upload(
     enviado_por: Optional[UUID],
 ) -> dict:
     dados_service.ensure_imovel(client, org_id, codigo)
+    # 🔴 Stamped at UPLOAD (migration 111) — same anchor `cliente_documentos`
+    # uses and for the same reason: there is no deal-level `closed_at` a
+    # standalone matrícula upload can anchor to. `None` when there is no
+    # policy row OR the policy says keep indefinitely — both read the same
+    # way to the sweep ("does not expire").
+    dias = documento_retencao.dias_para(client, org_id, "imovel", tipo_documento)
+    retencao_ate = (today() + timedelta(days=dias)).isoformat() if dias else None
     row = await STORE.guardar(
         client,
         storage,
@@ -166,6 +179,7 @@ async def upload(
             # invisibly lost, and the sweeper can find it.
             "extracao_status": "pendente" if deve_extrair(tipo_documento) else None,
             "extracao_tentativas": 0,
+            "retencao_ate": retencao_ate,
         },
     )
     resolved = table_reads.resolve_actors(
@@ -219,6 +233,45 @@ def remover(
     )
 
 
+def listar_acessos(client: Any, org_id: UUID, codigo: str, documento_id: UUID) -> dict:
+    """The LGPD access log for one imóvel document (migration 109/111).
+
+    Mirrors `card_hub.documentos_service.list_acessos` / `.listar_acessos`
+    (financiamento): actor names resolved, not raw ids, and readable even for
+    a soft-deleted document — soft delete is not erasure, so its own `delete`
+    entry (and everything before it) must stay visible.
+
+    A lighter existence check than `STORE.exigir` — that one 404s a
+    soft-deleted document, which would make its own delete entry unreachable
+    through this route.
+    """
+    existe = (
+        table_reads.table(client, TABLE)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("codigo", codigo)
+        .eq("id", str(documento_id))
+        .execute()
+    ).data or []
+    if not existe:
+        raise NotFoundError(TABLE, str(documento_id))
+
+    rows = STORE.listar_acessos(client, org_id, documento_id)
+    resolved = table_reads.resolve_actors(
+        {r["usuario_id"] for r in rows if r.get("usuario_id")}
+    )
+    items = [
+        {
+            "id": r["id"],
+            "acao": r["acao"],
+            "usuario": table_reads.actor(resolved, r.get("usuario_id")),
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": len(items)}
+
+
 __all__ = [
     "ALLOWED_MIME_TYPES",
     "MAX_UPLOAD_BYTES",
@@ -228,6 +281,7 @@ __all__ = [
     "deve_extrair",
     "validar_upload",
     "listar",
+    "listar_acessos",
     "remover",
     "upload",
     "url_do_documento",

@@ -347,9 +347,19 @@ async def listar_extracoes(
 
 
 @router.get("/extracoes/{extracao_id}")
-async def obter_extracao(extracao_id: str, auth=Depends(get_current_user_org)):
-    """Get a single extraction WITH its full text."""
-    _user, token, _org_id = _auth_parts(auth)
+async def obter_extracao(
+    extracao_id: str,
+    auth=Depends(get_current_user_org),
+    matriculas_client=Depends(get_matriculas_client),
+):
+    """Get a single extraction WITH its full text.
+
+    🔴 LGPD (migration 111): the row carries CPF-bearing text, so a
+    successful read appends a `text_view` row to `imovel_documento_acessos`
+    BEFORE the response goes out — a failed log write fails the request,
+    same contract as `DocumentoStore.url`.
+    """
+    user, token, org_id = _auth_parts(auth)
     db = get_user_client(token)
 
     # `maybe_single`, not `single`: PostgREST's `single` raises on zero rows
@@ -359,6 +369,9 @@ async def obter_extracao(extracao_id: str, auth=Depends(get_current_user_org)):
     if not result or not result.data:
         raise HTTPException(status_code=404, detail="Extração não encontrada")
 
+    estrutura_svc.log_leitura_texto(
+        matriculas_client, UUID(org_id), extracao_id, getattr(user, "id", None)
+    )
     return success_response(result.data)
 
 
@@ -388,9 +401,11 @@ async def listar_atos_route(
     client=Depends(get_matriculas_client),
 ):
     """The matrícula's acts, each with its literal text slice."""
-    _user, _token, org_id = _auth_parts(auth)
+    user, _token, org_id = _auth_parts(auth)
     return success_response(
-        estrutura_svc.listar_atos(client, UUID(org_id), extracao_id)
+        estrutura_svc.listar_atos(
+            client, UUID(org_id), extracao_id, usuario_id=getattr(user, "id", None)
+        )
     )
 
 
@@ -437,9 +452,11 @@ async def obter_selecao_route(
     client=Depends(get_matriculas_client),
 ):
     """The acts a contract quotes, as literal slices, in contract order."""
-    _user, _token, org_id = _auth_parts(auth)
+    user, _token, org_id = _auth_parts(auth)
     return success_response(
-        estrutura_svc.obter_selecao(client, UUID(org_id), contrato_id)
+        estrutura_svc.obter_selecao(
+            client, UUID(org_id), contrato_id, usuario_id=getattr(user, "id", None)
+        )
     )
 
 

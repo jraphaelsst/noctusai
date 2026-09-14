@@ -367,3 +367,75 @@ class TestDeleteListAndAccessLog:
         assert log[0]["acao"] == "view"
         assert log[0]["documento_id"] == doc["id"]
         assert log[0]["usuario_id"], "a content read must name who opened it"
+
+
+class TestTextReadsAreLogged:
+    """Migration 111: three routes hand back CPF-bearing text with no PDF
+    read behind them — each must append a `text_view` row, keyed to the
+    extraction (not a document, which may not exist for an unlinked upload)."""
+
+    def _seed(self, scoped, *, codigo=CODIGO):
+        ext = extracao_row(codigo=codigo)
+        contrato = contrato_row()
+        seed(scoped, extracoes=[ext], contratos=[contrato])
+        return ext, contrato
+
+    def test_getting_one_extracao_logs_a_text_view(self, client, scoped):
+        # `GET /extracoes/{id}` is a LEGACY route — it reads through the
+        # caller's own token (`get_user_client`), not the service-role
+        # `scoped` client the structured (109) routes use. Seeded on
+        # `client.mock_supabase`, same as `test_the_history_narrows_to_one_
+        # imovel` below. The LOG write still lands on `scoped` — the route
+        # logs through `get_matriculas_client` regardless of which client it
+        # read the row with.
+        ext, _contrato = self._seed(scoped)
+        client.mock_supabase.set_table_data("matricula_extracoes", [ext])
+
+        resp = client.get(f"/api/matriculas/extracoes/{ext['id']}")
+
+        assert resp.status_code == 200, resp.text
+        log = scoped.table("imovel_documento_acessos").inserted_payloads
+        assert len(log) == 1
+        assert log[0]["acao"] == "text_view"
+        assert log[0]["extracao_id"] == ext["id"]
+        assert log[0]["documento_id"] is None
+        assert log[0]["usuario_id"], "a content read must name who opened it"
+
+    def test_listing_atos_logs_a_text_view(self, client, scoped):
+        ext, _contrato = self._seed(scoped)
+
+        resp = client.get(f"/api/matriculas/extracoes/{ext['id']}/atos")
+
+        assert resp.status_code == 200, resp.text
+        log = scoped.table("imovel_documento_acessos").inserted_payloads
+        assert len(log) == 1
+        assert log[0]["acao"] == "text_view"
+        assert log[0]["extracao_id"] == ext["id"]
+
+    def test_getting_the_contract_selection_logs_a_text_view(self, client, scoped):
+        ext, contrato = self._seed(scoped)
+        atos = _data(client.get(f"/api/matriculas/extracoes/{ext['id']}/atos"))["atos"]
+        client.put(
+            f"/api/matriculas/contratos/{contrato['id']}/atos",
+            json={"extracao_id": ext["id"], "ato_ids": [a["id"] for a in atos]},
+        )
+        # The PUT above already logged (it returns the same quoted text) —
+        # only the GET's own row is under test here.
+        scoped.set_table_data("imovel_documento_acessos", [])
+
+        resp = client.get(f"/api/matriculas/contratos/{contrato['id']}/atos")
+
+        assert resp.status_code == 200, resp.text
+        log = scoped.table("imovel_documento_acessos").inserted_payloads
+        assert len(log) == 1
+        assert log[0]["acao"] == "text_view"
+        assert log[0]["extracao_id"] == ext["id"]
+
+    def test_an_empty_contract_selection_logs_nothing(self, client, scoped):
+        """No acts selected -> no text is returned -> nothing to log."""
+        _ext, contrato = self._seed(scoped)
+
+        resp = client.get(f"/api/matriculas/contratos/{contrato['id']}/atos")
+
+        assert resp.status_code == 200, resp.text
+        assert scoped.table("imovel_documento_acessos").inserted_payloads == []

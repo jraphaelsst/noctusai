@@ -296,6 +296,15 @@ class DocumentoStore:
         usuario_id: Optional[UUID] = None,
     ) -> None:
         self.exigir(client, org_id, owner, documento_id)
+        # 🔴 Logged BEFORE the soft-delete, not after. The document still
+        # exists (the `exigir` above proved it) at the moment the log write
+        # happens either way, so ordering was never about referential
+        # integrity — it is about failure semantics: a log write that fails
+        # AFTER the soft-delete leaves the document gone with no record that
+        # anyone asked for it to be, which is the exact silent gap an LGPD
+        # access log exists to close. Logging first means a failed write
+        # fails the request with the document still intact.
+        self.log_acesso(client, org_id, documento_id, usuario_id, "delete")
         patch: dict[str, Any] = {
             "deleted_at": now_iso(),
             "delete_motivo": motivo,
@@ -305,7 +314,6 @@ class DocumentoStore:
         table_reads.table(client, self.table).update(patch).eq(
             "id", str(documento_id)
         ).execute()
-        self.log_acesso(client, org_id, documento_id, usuario_id, "delete")
 
     # ─── retention ────────────────────────────────────────────────────
 
@@ -396,11 +404,45 @@ class DocumentoStore:
         return rows
 
 
+def log_acesso_extracao(
+    client: Any,
+    acessos_table: str,
+    org_id: UUID,
+    extracao_id: UUID,
+    usuario_id: Optional[UUID],
+    acao: str,
+) -> None:
+    """Append an access-log row keyed to an EXTRACTION rather than a document.
+
+    `DocumentoStore.log_acesso` always names `documento_id`, because every
+    `DocumentoStore` surface stores its own document row. A matrícula's raw
+    transcription (`matricula_extracoes`) is not one of those — it has no
+    document row at all when the upload was never linked to an imóvel (the
+    092 unlinked-upload shape) — so the access log this module also owns
+    (`imovel_documento_acessos`, migration 111) needs a second key. `NOT` a
+    no-op fallback: unlike a `DocumentoStore` with `acessos_table=None`, a
+    matrícula transcription's CPF-bearing text is ALWAYS personal data, so
+    the caller passes a real `acessos_table` every time.
+    """
+    table_reads.table(client, acessos_table).insert(
+        {
+            "id": str(uuid4()),
+            "org_id": str(org_id),
+            "documento_id": None,
+            "extracao_id": str(extracao_id),
+            "usuario_id": str(usuario_id) if usuario_id else None,
+            "acao": acao,
+            "created_at": now_iso(),
+        }
+    ).execute()
+
+
 __all__ = [
     "SIGNED_URL_TTL_SECONDS",
     "DocumentoStore",
     "documento_base",
     "format_bytes_human",
+    "log_acesso_extracao",
     "now_iso",
     "today",
 ]

@@ -56,6 +56,19 @@ class _RecordingDB:
         self.predicates.append(self._current)
         return self
 
+    # `documento_retencao.dias_para` (migration 111 — `processar_extracao`
+    # stamps `retencao_ate` on the write this double records) reads the
+    # policy table before it writes. No policy is ever seeded here, so
+    # `select`/`is_` only need to keep the chain alive and hand back nothing
+    # — `dias_para` reading "no policy" as `None` (keep indefinitely) is
+    # exactly the behaviour under test elsewhere, not something this double
+    # has an opinion on.
+    def select(self, *_a, **_k):
+        return self
+
+    def is_(self, _col, _val):
+        return self
+
     def eq(self, col, val):
         self._current.append((col, val))
         return self

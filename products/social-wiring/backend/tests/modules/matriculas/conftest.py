@@ -115,6 +115,14 @@ class RecordingDB:
     def limit(self, _n):
         return self
 
+    # `documento_retencao.dias_para` (migration 111 — `processar_extracao`
+    # stamps `retencao_ate` alongside `texto_extraido`) reads the policy
+    # table via `.select(...).is_(...)`. No policy is ever seeded on this
+    # double, so `dias_para` reads "no policy" -> `None` -> `retencao_ate`
+    # stays `None`, which is the safe default this double's tests rely on.
+    def is_(self, _col, _val):
+        return self
+
     def update(self, payload):
         self.updates.append(payload)
         self.update_predicates.append(self._current)
@@ -279,6 +287,18 @@ def contrato_row(id_: str | None = None, *, deleted_at: str | None = None) -> di
     }
 
 
+def negociacao_row(atendimento_id: str, *, imovel_codigo: str | None = CODIGO) -> dict:
+    """A minimal `atendimento_negociacao` row — only the column migration 111's
+    `_exigir_codigo_compativel` reads (109's contract-selection tests need one
+    per contrato so a matching `imovel_codigo` isn't itself the thing under
+    test)."""
+    return {
+        "atendimento_id": atendimento_id,
+        "org_id": ORG_ID,
+        "imovel_codigo": imovel_codigo,
+    }
+
+
 def seed(
     scoped,
     *,
@@ -289,6 +309,7 @@ def seed(
     dados=None,
     contratos=None,
     selecao=None,
+    negociacoes=None,
 ) -> None:
     """Every table this flow reads, set explicitly — an unset table would
     carry rows over from whatever an earlier test seeded."""
@@ -300,3 +321,13 @@ def seed(
     scoped.set_table_data("imovel_dados", dados or [])
     scoped.set_table_data("atendimento_contratos", contratos or [])
     scoped.set_table_data("atendimento_contrato_matricula_atos", selecao or [])
+    # 🔴 Defaults to one negociacao row PER CONTRATO, `imovel_codigo=CODIGO` —
+    # migration 111's `definir_selecao` now refuses a selection whose
+    # extração doesn't match the deal's imóvel, and most of this suite's
+    # fixtures build a contrato + extração that agree on `CODIGO` already.
+    # Pass `negociacoes=[]` explicitly to test the refusal itself.
+    if negociacoes is None:
+        negociacoes = [
+            negociacao_row(c["atendimento_id"]) for c in (contratos or [])
+        ]
+    scoped.set_table_data("atendimento_negociacao", negociacoes)

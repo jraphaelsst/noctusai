@@ -138,11 +138,16 @@ class TestAncora:
         assert por_superficie["atendimento"]["ancora_rotulo"]
         assert por_superficie["cliente"]["ancora_rotulo"]
 
-    def test_imovel_is_not_a_configurable_surface(self):
-        """075 gave `imovel_documentos` no `retencao_ate` column. A control
-        for it would be a lying UI, so it is absent from the enum AND from
-        migration 079's CHECK — the two must not drift apart."""
-        assert "imovel" not in svc.SUPERFICIES
+    def test_imovel_is_a_configurable_surface(self):
+        """079 excluded `imovel_documentos` — no access log, so a retention
+        control would be a lying UI. Migration 109 added the log
+        (`imovel_documento_acessos`); migration 111 gives the surface its
+        clock, anchored at `envio` (a property has no `closed_at` to anchor
+        to the way an `atendimento` does). Mirrors migration 111's CHECK on
+        `documento_retencao_politicas.superficie` — the two must not drift
+        apart."""
+        assert "imovel" in svc.SUPERFICIES
+        assert svc.ANCORAS["imovel"] == "envio"
         assert set(svc.ANCORAS) == set(svc.SUPERFICIES)
 
 
@@ -211,6 +216,15 @@ class TestEscrita:
         client.set_table_data(TABLE, [_politica(dias=730)])
 
         with pytest.raises(ValidationError_):
+            svc.definir(client, ORG, "financeiro", "matricula", 365)
+
+    def test_imovel_tipo_documento_unknown_to_the_platform_tier_is_refused(self, client):
+        """`imovel` IS a known surface (since 111) — an unseeded tipo for it
+        is still refused the ordinary way, by the allow-list, not by the
+        surface check."""
+        client.set_table_data(TABLE, [_politica(dias=730)])
+
+        with pytest.raises(ValidationError_, match="matricula"):
             svc.definir(client, ORG, "imovel", "matricula", 365)
 
     def test_zero_days_is_refused(self, client):

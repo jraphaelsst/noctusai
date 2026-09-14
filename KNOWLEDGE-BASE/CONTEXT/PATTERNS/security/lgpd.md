@@ -255,4 +255,17 @@ Therapy ships the platform's first **service-layer-only** guards because clinica
 
 **Forward-only revocation.** Revoking `therapy.session_summary` or `therapy.longitudinal_narrative` does NOT soft-delete past `ai_outputs` rows. Right-to-erasure is a separate workflow (LGPD Art. 18.VI) where the patient explicitly requests deletion.
 
+## 10. Public-registry documents ARE personal data (matrícula-imóvel, 2026-09)
+
+A certidão de matrícula, a certidão de casamento, a CND — any document a cartório or public body issues about a REAL asset, a marriage, a debt — still NAMES a natural person, with CPF, estado civil, cônjuge, regime de bens. "It's public" answers *who can request the document from the source*, not *what our system must do once it holds a copy*. Both facts are true at once:
+
+- migration `075_imovel_dados_cartorio.sql` shipped `imovel_documentos` with the reasoning "a matrícula is a public registry document about a PROPERTY, not a person" — and gave it no `categoria_lgpd`, no access log, no retention clock;
+- migration `109_matricula_estruturada.sql` reversed that: once the contract flow started keeping and re-opening these PDFs routinely, "public registry" stopped being a reason to skip logging WHO read a document that also happens to carry someone's CPF.
+
+**The lesson generalizes past matrículas.** A document being a public record NEVER exempts it from the LGPD posture (§2–§3 above) — it only changes the *lawful basis* (Art. 7 V — cumprimento de obrigação legal/regulatória — rather than Art. 7 I consent), never the *obligation to log access and set a retention window*.
+
+**Retention and access-log decisions are made TOGETHER, not staggered.** Migration 079 (`documento_retencao_politicas`) explicitly excluded the imóvel surface for the SAME reason 075 gave it no log: "offering a retention control with nothing logging its use would be a lying UI." Shipping the log (109) without also giving the surface a retention clock (111, two migrations later) leaves exactly that lying-UI window open — a surface that is LOGGED but has no ANSWER to "how long do we keep this". When a review finds one half missing, the fix ships both halves in the same change, or explicitly defers the second half with a named migration/ticket, never silently.
+
+**LGPD flag filed for this class:** matrícula transcription text (CPF, estado civil, cônjuge of every owner in the chain of title) — basis Art. 7 V (cumprimento de obrigação legal, corretor de imóveis) + Art. 7 IX (legítimo interesse — evidenciar o negócio), retention per the `documento_retencao_politicas` "imovel" surface (§2 above), LLM transcription of the CPF-bearing PDF is itself a processing operation under Art. 5º X. See `noctus.dev.lgpd_flag` output for `app/modules/matriculas/service.py::processar_extracao`.
+
 **Reference implementation:** `products/therapy-platform/backend/app/services/ai_pipeline.py` — `_notify_therapist_ai_skipped(...)` helper + `try/except AIConsentRequired` blocks around each AI step in `process_session_end`, `on_observation_change`, `on_patient_note_change`. Tests in `tests/services/test_ai_pipeline_service.py § TestPatientConsentGuards` show the granted-path autouse fixture pattern + per-test selective-revoke pattern.
