@@ -102,7 +102,9 @@ function baseProps(over: Record<string, unknown> = {}) {
 async function render(over: Record<string, unknown> = {}) {
   const rtl = await import("@testing-library/react");
   const props = baseProps(over);
-  const view = rtl.render(<ContratosPanel {...(props as never)} />);
+  const view = rtl.render(
+    <ContratosPanel {...(props as unknown as Parameters<typeof ContratosPanel>[0])} />,
+  );
   return { ...view, ...rtl, props };
 }
 

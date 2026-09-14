@@ -65,7 +65,9 @@ export interface ContratoOut {
   status_por: ContratoActor | null;
   origem: ContratoOrigem;
   created_at: string;
-  updated_at: string;
+  // Null until the first new version or PATCH — a freshly created contract
+  // has never been updated.
+  updated_at: string | null;
   versao_atual: VersaoOut | null;
   versoes: VersaoOut[];
 }
