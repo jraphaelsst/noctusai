@@ -1,59 +1,48 @@
 """`/api/settings/imobiliaria/testemunhas` — the org's standing signature
 witnesses, max 2 (migration 108).
 
-🔴 A LOCAL FIXTURE, NOT THE SHARED `scoped` ONE
----------------------------------------------------
-`settings_router.py`'s imobiliaria/testemunhas routes resolve
-`get_user_client(token)` fresh, INLINE, on every call, then chain
-`.schema("social_wiring")` — and `MockSupabaseClient.schema()` returns a
-BRAND NEW wrapper (empty table registry) every time it is invoked, same data-
-loss shape `card_hub/deps.py`'s own docstring documents for the identical
-Supabase-mock behaviour. A round trip (POST then GET) needs ONE stable
-scoped instance across a test's several HTTP calls, so `testemunhas_scoped`
-below patches `get_user_client` — this router's own DI seam, not a guard —
-to always hand back the same cached scoped client, mirroring how the shared
-`client` fixture itself patches `DatabaseModule.get_client`/`get_admin_client`
-(`unittest.mock.patch`, per `KB § PATTERNS/backend/di-test-seam.md`).
+🔴 A LOCAL FIXTURE, NOT THE SHARED `scoped` ONE — AND A REAL `Depends()` SEAM,
+NOT A PATCH OF OUR OWN CODE
+--------------------------------------------------------------------------------
+`settings_router.py`'s testemunhas (and `dados_imobiliaria`) routes resolve
+the caller's own client via `Depends(get_social_wiring_client)`
+(`app/dependencies.py`) — a cached, schema-scoped client, fixing the defect
+`get_user_client(token).schema(...)`-inline used to have: `MockSupabaseClient.
+schema()` returns a BRAND NEW wrapper (empty table registry) every time it is
+invoked, so re-deriving it fresh per call silently lost every prior write
+within a test — see `get_scoped_user_client`'s docstring.
 
-This is a PRE-EXISTING gap, not one introduced here: zero tests exist today
-for `dados_imobiliaria`/`agentes_financeiros`, the two other
-`get_user_client(token).schema(...)`-inline endpoints in this router — see
-this migration's delivery note (`drift-found:`).
+Because the client now arrives via a real FastAPI dependency, this fixture
+uses `app.dependency_overrides` — the sanctioned DI-test-seam
+(`KB § PATTERNS/backend/di-test-seam.md` Class-B), not `unittest.mock.patch`
+of our own module (CLAUDE.md §1 forbids monkeypatching our own code,
+including in tests). `testemunhas_scoped` overrides `get_social_wiring_client`
+with a shared-state fake so a test's several HTTP calls (POST then GET, …)
+see one consistent view — same shape `card_hub/conftest.py`'s `fake_storage`
+fixture uses for `get_storage_backend`.
 """
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import patch
-
 import pytest
 
-from app.dependencies import coerce_org_uuid
+from app.dependencies import coerce_org_uuid, get_social_wiring_client
 
 ORG_RAW = "test-org-123"
 ORG_ID = str(coerce_org_uuid(ORG_RAW))
 
 
-class _StableSchemaClient:
-    """`.schema(name)` always returns the SAME cached instance, regardless of
-    `name` — the route calls `get_user_client(token).schema("social_wiring")`
-    fresh on every request; without this, each call would re-invoke the real
-    `MockSupabaseClient.schema()` and get a brand new, empty table registry."""
-
-    def __init__(self, scoped: Any):
-        self._scoped = scoped
-
-    def schema(self, _name: str) -> Any:
-        return self._scoped
-
-
 @pytest.fixture
 def testemunhas_scoped(client):
+    from app.main import app
+
     scoped = client.mock_supabase.schema("social_wiring")
-    with patch(
-        "app.routers.settings_router.get_user_client",
-        return_value=_StableSchemaClient(scoped),
-    ):
-        yield scoped
+    prev = app.dependency_overrides.get(get_social_wiring_client)
+    app.dependency_overrides[get_social_wiring_client] = lambda: scoped
+    yield scoped
+    if prev is None:
+        app.dependency_overrides.pop(get_social_wiring_client, None)
+    else:
+        app.dependency_overrides[get_social_wiring_client] = prev
 
 
 class TestListAndCreate:

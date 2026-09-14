@@ -43,6 +43,7 @@ from app.dependencies import (
     get_current_user_org,
     get_scoped_admin_client,
     get_settings,
+    get_social_wiring_client,
     get_user_client,
 )
 from app.schemas.settings import (
@@ -1526,14 +1527,13 @@ def _imobiliaria_out(row: dict | None) -> dict:
 @router.get("/imobiliaria")
 def get_dados_imobiliaria(
     auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
 ) -> dict:
     """The agency's cadastral data. Never 404s — see the section note."""
-    _user, token, raw_org = auth
+    _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    supabase = get_user_client(token)
     rows = (
         supabase
-        .schema("social_wiring")
         .table(_IMOBILIARIA_TABLE)
         .select("*")
         .eq("org_id", str(org_id))
@@ -1547,6 +1547,7 @@ def get_dados_imobiliaria(
 def update_dados_imobiliaria(
     body: DadosImobiliariaBody,
     auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
 ) -> dict:
     """Save the agency's cadastral data.
 
@@ -1559,9 +1560,8 @@ def update_dados_imobiliaria(
     are the same call. A read-then-insert-or-update here would race two tabs
     into a duplicate-key error on a settings form.
     """
-    user, token, raw_org = auth
+    user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    supabase = get_user_client(token)
 
     valores = body.model_dump(exclude_unset=True)
     linha = {campo: valores[campo] for campo in _IMOBILIARIA_CAMPOS if campo in valores}
@@ -1571,12 +1571,14 @@ def update_dados_imobiliaria(
 
     (
         supabase
-        .schema("social_wiring")
         .table(_IMOBILIARIA_TABLE)
         .upsert(linha, on_conflict="org_id")
         .execute()
     )
-    return get_dados_imobiliaria(auth)
+    # A DIRECT Python call (not a second HTTP round trip), so `supabase` —
+    # already resolved for THIS request by the `Depends()` above — is passed
+    # through explicitly rather than re-resolved.
+    return get_dados_imobiliaria(auth, supabase)
 
 
 # ─── Testemunhas (migration 108) ──────────────────────────────────────────
@@ -1619,13 +1621,14 @@ def _testemunha_out(row: dict) -> dict:
 
 
 @router.get("/imobiliaria/testemunhas")
-def list_testemunhas(auth: tuple = Depends(get_current_user_org)) -> dict:
-    _user, token, raw_org = auth
+def list_testemunhas(
+    auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
+) -> dict:
+    _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    supabase = get_user_client(token)
     rows = (
         supabase
-        .schema("social_wiring")
         .table(_TESTEMUNHAS_TABLE)
         .select("*")
         .eq("org_id", str(org_id))
@@ -1639,14 +1642,13 @@ def list_testemunhas(auth: tuple = Depends(get_current_user_org)) -> dict:
 def create_testemunha(
     body: TestemunhaCreateBody,
     auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
 ) -> dict:
-    user, token, raw_org = auth
+    user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    supabase = get_user_client(token)
 
     existentes = (
         supabase
-        .schema("social_wiring")
         .table(_TESTEMUNHAS_TABLE)
         .select("id")
         .eq("org_id", str(org_id))
@@ -1669,13 +1671,7 @@ def create_testemunha(
     if getattr(user, "id", None):
         linha["created_por"] = str(user.id)
 
-    response = (
-        supabase
-        .schema("social_wiring")
-        .table(_TESTEMUNHAS_TABLE)
-        .insert(linha)
-        .execute()
-    )
+    response = supabase.table(_TESTEMUNHAS_TABLE).insert(linha).execute()
     if not response.data:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1689,10 +1685,10 @@ def update_testemunha(
     testemunha_id: UUID,
     body: TestemunhaPatchBody,
     auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
 ) -> dict:
-    user, token, raw_org = auth
+    user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    supabase = get_user_client(token)
 
     patch = body.model_dump(exclude_unset=True)
     if not patch:
@@ -1706,7 +1702,6 @@ def update_testemunha(
 
     response = (
         supabase
-        .schema("social_wiring")
         .table(_TESTEMUNHAS_TABLE)
         .update(patch)
         .eq("id", str(testemunha_id))
@@ -1729,13 +1724,12 @@ def update_testemunha(
 def delete_testemunha(
     testemunha_id: UUID,
     auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
 ) -> None:
-    _user, token, raw_org = auth
+    _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    supabase = get_user_client(token)
     response = (
         supabase
-        .schema("social_wiring")
         .table(_TESTEMUNHAS_TABLE)
         .delete()
         .eq("id", str(testemunha_id))

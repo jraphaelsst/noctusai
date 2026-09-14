@@ -168,6 +168,44 @@ def get_scoped_admin_client(schema: str = "social_wiring") -> Any:
     return cached
 
 
+_scoped_user_client_cache: "_weakref.WeakKeyDictionary[Any, dict[str, Any]]" = (
+    _weakref.WeakKeyDictionary()
+)
+
+
+def get_scoped_user_client(token: str, schema: str = "social_wiring") -> Any:
+    """RLS-enforcing sibling of `get_scoped_admin_client` — same
+    `MockSupabaseClient.schema()` data-loss defect (a brand new, empty
+    per-table cache on every call), same fix, for the `get_user_client(token)`
+    case: routes whose writes must go through the CALLER's own client (RLS
+    scopes them, not admin bypass) — `settings_router.py`'s
+    `dados_imobiliaria`/testemunhas endpoints and `agentes_financeiros`'s
+    router — all used to call `get_user_client(token).schema(schema)` fresh,
+    inline, per request. Cached by the underlying per-token client OBJECT
+    (never re-derived per call)."""
+    raw = get_user_client(token)
+    per_client = _scoped_user_client_cache.setdefault(raw, {})
+    cached = per_client.get(schema)
+    if cached is None:
+        cached = raw.schema(schema)
+        per_client[schema] = cached
+    return cached
+
+
+def get_social_wiring_client(
+    auth: tuple = Depends(get_current_user_org),
+) -> Any:
+    """FastAPI `Depends()` SEAM (not a manual `get_user_client(token)` call
+    inside a route body) resolving the caller's own RLS-scoped
+    `social_wiring` client — a real dependency so tests override it via
+    `app.dependency_overrides[get_social_wiring_client] = lambda: fake`
+    with a shared-state fake, instead of `unittest.mock.patch`-ing this
+    module. Mirrors `card_hub/deps.py::get_card_hub_client`'s shape, for the
+    user-token case."""
+    _user, token, _raw_org = auth
+    return get_scoped_user_client(token)
+
+
 def get_core_client():
     """``public``-schema-scoped client — ``noctus_users`` lives there,
     NOT the product schema (a `get_admin_client()` lookup 500s with
@@ -445,7 +483,9 @@ __all__ = [
     "get_current_user_org",
     "get_current_user_org_unified",
     "get_org_id",
+    "get_scoped_user_client",
     "get_settings",
+    "get_social_wiring_client",
     "get_user_client",
     "get_user_role",
     "resolve_sso_role",

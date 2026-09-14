@@ -13,6 +13,14 @@ The `.eq("org_id", ...)` predicates below are therefore belt-and-braces rather
 than the only guard. They stay because a future caller passing an admin client
 would otherwise silently reach every org's rows, and a redundant predicate is
 cheaper than that failure.
+
+🔴 `client` ARRIVES ALREADY `social_wiring`-SCHEMA-SCOPED. The router resolves
+it via `Depends(get_social_wiring_client)` — a cached scoped client, not a
+fresh `get_user_client(token).schema(...)` per call — so nothing in this
+module calls `.schema(...)` again: doing so would re-derive a BRAND NEW
+`MockSupabaseClient` wrapper (empty per-table cache) on every call under test,
+silently losing whatever a prior call in the same test just wrote. See
+`app.dependencies.get_scoped_user_client`'s docstring.
 """
 from __future__ import annotations
 
@@ -21,7 +29,6 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError
 
-SCHEMA = "social_wiring"
 TABLE = "agentes_financeiros"
 FINANCIAMENTO_TABLE = "atendimento_financiamento"
 
@@ -57,7 +64,7 @@ EDITAVEIS = (
 
 
 def _t(client: Any):
-    return client.schema(SCHEMA).table(TABLE)
+    return client.table(TABLE)
 
 
 def _out(row: dict) -> dict:
@@ -181,7 +188,7 @@ def remover(client: Any, org_id: UUID, agente_id: UUID) -> None:
     obter(client, org_id, agente_id)
 
     em_uso = (
-        client.schema(SCHEMA)
+        client
         .table(FINANCIAMENTO_TABLE)
         .select("atendimento_id")
         .eq("org_id", str(org_id))
