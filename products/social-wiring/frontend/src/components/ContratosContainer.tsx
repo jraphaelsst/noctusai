@@ -10,19 +10,19 @@
  * comment), so this container only receives `onNovoContrato` to flip that
  * dialog's `open` boolean.
  *
- * 🔴 `renderMatriculaAtos` wires `MatriculaAtosContainer` WITHOUT an imóvel
- * código — this container only ever receives `clienteId`. The picker inside
- * still works (it lists every transcribed matrícula in the org, unfiltered);
- * narrowing it to "this card's imóvel" needs the negociação slice's
- * `atendimento_negociacao.imovel_codigo` threaded down from
- * `ClienteDetailModal`, which is out of this change's scope (a sibling slice
- * owns that file this same wave).
+ * 🔴 `renderMatriculaAtos` narrows the picker to THIS deal's imóvel: the
+ * código comes from `atendimento_negociacao.imovel_codigo` (the same
+ * `useNegociacao` query the Negociação tab already runs, so no extra
+ * request). The backend refuses a selection from another imóvel's matrícula
+ * regardless — this only keeps the operator from being offered one. While the
+ * deal has no imóvel yet the picker lists every transcribed matrícula.
  */
 import { toast } from "sonner";
 
 import { MatriculaAtosContainer } from "@/components/MatriculaAtosContainer";
 import ContratosPanel from "@/components/card/ContratosPanel";
 import { useContratoMutations, useContratos } from "@/hooks/useContratos";
+import { useNegociacao } from "@/hooks/useNegociacao";
 
 function toastServerError(err: unknown, fallback: string) {
   const message = err instanceof Error && err.message ? err.message : fallback;
@@ -38,6 +38,9 @@ export function ContratosContainer({
 }) {
   const query = useContratos(clienteId);
   const mutations = useContratoMutations(clienteId);
+  // The deal's imóvel — narrows the matrícula picker (see header note).
+  const negociacao = useNegociacao(clienteId);
+  const imovelCodigo = negociacao.data?.imovel_codigo ?? null;
 
   // 🔴 Two signals off `data`, never `isLoading`: it is false mid-refetch, so
   // an empty/error branch keyed off it would lie over data that is still
@@ -118,7 +121,9 @@ export function ContratosContainer({
           toastServerError(err, "Não foi possível baixar o contrato.");
         }
       }}
-      renderMatriculaAtos={(contratoId) => <MatriculaAtosContainer contratoId={contratoId} />}
+      renderMatriculaAtos={(contratoId) => (
+        <MatriculaAtosContainer contratoId={contratoId} codigo={imovelCodigo} />
+      )}
     />
   );
 }
