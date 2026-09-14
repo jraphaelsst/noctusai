@@ -1,6 +1,6 @@
 /**
- * Julia chat adapter — contract §E.2 (conversations/messages), §E.3 (SSE),
- * §E.7 (ChatWindow seams).
+ * Julia chat adapter — contract §E.2 (conversations/messages), §E.3 (SSE,
+ * revised 2026-09-14), §E.7 (ChatWindow seams).
  *
  * Wires the seed `<ChatWindow>` organ (`@noctusai/lib/design-system`) onto
  * `/api/conversations`. Mirrors the shape of
@@ -14,21 +14,25 @@
  * calls exactly once per opened thread (`key={thread.id}` — see
  * `ChatWindow.tsx`), not at the top `useThreads` level.
  *
- * ── Live-turn scaffold (contract ambiguity, flagged in the delivery report)
- * `tool.started` / `tool.finished` / `approval.requested` / `approval.resolved`
- * / `message.delta` carry NO conversation-message id — only `message.new`
- * does, and the backend resets its own `current_blocks` accumulator to `[]`
- * on every `message.new` (`app/routers/conversations_router.py
- * ::_run_turn_background`), so a client cannot reliably attribute a given
- * tool/approval event to a specific PERSISTED message purely from the SSE
- * stream. This adapter therefore renders one synthetic "live turn" bubble
- * per open conversation (`id: "__live__"`) that accumulates
- * `message.delta` text + `tool.*`/`approval.*` blocks while
- * `session.status === "pensando"`, and is cleared the moment `message.new`
- * lands OR `session.status` moves away from `pensando` — never left
- * stranded showing stale activity from a finished turn. The DB-persisted
- * `blocks` on each real message (visible after the next `GET
- * .../messages`, e.g. on reopen) are the durable source of truth.
+ * ── Rendering model (contract §E.3 "Frontend rendering rule", revised
+ * 2026-09-14) — replaces the earlier `__live__` scaffold that built blocks
+ * from granular `tool.*`/`approval.*` events and vanished at turn end:
+ *   - Messages and their `blocks` render ONLY from `message.new` /
+ *     `message.updated`, upserted by `id` into the messages cache.
+ *     `message.updated` re-publishes the FULL row every time `blocks`
+ *     changes, so it is the single source of truth for card state —
+ *     durable across a reopen, never cleared at turn end.
+ *   - A transient streaming bubble (`id: "__live__"`) is driven only by
+ *     `message.delta` and `session.status: "pensando"`. It never holds
+ *     blocks, and it is cleared the moment an assistant `message.new`
+ *     lands, or `session.status` leaves `"pensando"`.
+ *   - `approval.requested` / `approval.resolved` no longer build blocks —
+ *     they only invalidate the approvals list query (`useApprovals.ts`'s
+ *     `["agents", "approvals", ...]`), so `/aprovacoes` and any other open
+ *     surface stay in sync.
+ *   - When `session.status` leaves `"pensando"`, the client invalidates the
+ *     conversation's messages query once, reconciling anything missed
+ *     during a reconnect.
  */
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -75,9 +79,12 @@ interface Envelope<T> {
 
 /** Every event name contract §E.3 defines. The `events` list passed to
  * `useRealtimeStream` MUST name every one, or the seed transport silently
- * drops it (`seed/lib/frontend/src/realtime.ts` — "load-bearing"). */
+ * drops it (`seed/lib/frontend/src/realtime.ts` — "load-bearing"). Revised
+ * 2026-09-14: `message.updated` is now load-bearing (it is the source of
+ * truth for `blocks`) and MUST be included. */
 export const JULIA_STREAM_EVENTS = [
   "message.new",
+  "message.updated",
   "message.delta",
   "tool.started",
   "tool.finished",
@@ -90,6 +97,10 @@ export const JULIA_STREAM_EVENTS = [
 const CONVERSATIONS_KEY = ["agents", "julia", "conversations"] as const;
 const messagesKey = (conversationId: string | null) =>
   [...CONVERSATIONS_KEY, conversationId, "messages"] as const;
+/** Prefix shared with `useApprovals.ts`'s `APPROVALS_KEY`
+ * (`["agents", "approvals", "pendente"]`) — invalidating the prefix covers
+ * every filtered view. */
+const APPROVALS_KEY_PREFIX = ["agents", "approvals"] as const;
 
 const LIVE_ID = "__live__";
 
@@ -113,14 +124,22 @@ function toChatMessage(m: RawMessage): ChatMessage {
   };
 }
 
+/** Upsert-by-id helper for both `message.new` (append or replace) and
+ * `message.updated` (always a replace of the full row — contract §E.3). */
+function upsertMessage(prev: Envelope<RawMessage> | undefined, msg: RawMessage): Envelope<RawMessage> | undefined {
+  if (!prev) return prev;
+  const idx = prev.items.findIndex((m) => m.id === msg.id);
+  const items = idx >= 0 ? prev.items.map((m, i) => (i === idx ? msg : m)) : [...prev.items, msg];
+  return { items, total: items.length };
+}
+
 interface LiveTurnState {
   textoParcial: string;
-  blocks: ChatBlock[];
   status: "pensando" | "ociosa" | "erro" | null;
 }
 
 function emptyLive(): LiveTurnState {
-  return { textoParcial: "", blocks: [], status: null };
+  return { textoParcial: "", status: null };
 }
 
 // ─── Threads (conversation list) ────────────────────────────────────────────
@@ -179,7 +198,7 @@ export function useJuliaMessagesAdapter(conversationId: string | null) {
     queryKey: messagesKey(conversationId),
     queryFn: () => api.get<Envelope<RawMessage>>(`/api/conversations/${conversationId}/messages`),
     enabled: !!conversationId,
-    staleTime: Infinity, // patched exclusively by the SSE stream below
+    staleTime: Infinity, // patched by the SSE stream below; reconciled once per turn (see session.status)
   });
 
   const onEvent = useCallback(
@@ -189,85 +208,30 @@ export function useJuliaMessagesAdapter(conversationId: string | null) {
       switch (evt.event) {
         case "message.new": {
           const msg = p as unknown as RawMessage;
-          qc.setQueryData<Envelope<RawMessage>>(messagesKey(conversationId), (prev) => {
-            if (!prev) return prev;
-            const idx = prev.items.findIndex((m) => m.id === msg.id);
-            const items =
-              idx >= 0
-                ? prev.items.map((m, i) => (i === idx ? msg : m))
-                : [...prev.items, msg];
-            return { items, total: items.length };
-          });
-          // A real message landed — the live scaffold's job is done.
-          setLive(null);
+          qc.setQueryData<Envelope<RawMessage>>(messagesKey(conversationId), (prev) => upsertMessage(prev, msg));
+          // A real assistant message landed — the streaming bubble's job is
+          // done. (A `message.new` for the USER's own message, published
+          // right before the turn starts, must not clear a bubble that
+          // hasn't started yet — there is none at that point anyway.)
+          if (msg.role === "assistant") setLive(null);
+          break;
+        }
+        case "message.updated": {
+          // Source of truth for `blocks` (contract §E.3, revised
+          // 2026-09-14) — always a full-row replace, never merged.
+          const msg = p as unknown as RawMessage;
+          qc.setQueryData<Envelope<RawMessage>>(messagesKey(conversationId), (prev) => upsertMessage(prev, msg));
           break;
         }
         case "message.delta": {
           setLive((prev) => ({ ...(prev ?? emptyLive()), textoParcial: String(p.texto_parcial ?? "") }));
           break;
         }
-        case "tool.started": {
-          const block: ChatBlock = {
-            kind: "tool",
-            toolUseId: String(p.tool_use_id),
-            name: String(p.tool_name ?? ""),
-            status: "running",
-            resumo: p.resumo ?? undefined,
-          };
-          setLive((prev) => ({ ...(prev ?? emptyLive()), blocks: [...(prev?.blocks ?? []), block] }));
-          break;
-        }
-        case "tool.finished": {
-          const resultado = (p.resultado ?? "ok") as "ok" | "erro" | "negada";
-          setLive((prev) => {
-            const base = prev ?? emptyLive();
-            const idx = base.blocks.findIndex(
-              (b) => b.kind === "tool" && b.toolUseId === String(p.tool_use_id),
-            );
-            if (idx < 0) {
-              const block: ChatBlock = {
-                kind: "tool",
-                toolUseId: String(p.tool_use_id),
-                name: String(p.tool_name ?? ""),
-                status: resultado,
-              };
-              return { ...base, blocks: [...base.blocks, block] };
-            }
-            const blocks = base.blocks.map((b, i) =>
-              i === idx && b.kind === "tool" ? { ...b, status: resultado } : b,
-            );
-            return { ...base, blocks };
-          });
-          break;
-        }
-        case "approval.requested": {
-          const block: ChatBlock = {
-            kind: "approval",
-            approvalId: String(p.id),
-            resumo: String(p.resumo ?? ""),
-            diff: p.diff ?? undefined,
-            decision: "pendente",
-          };
-          setLive((prev) => ({ ...(prev ?? emptyLive()), blocks: [...(prev?.blocks ?? []), block] }));
-          break;
-        }
+        case "approval.requested":
         case "approval.resolved": {
-          const decision = (p.decision ?? "pendente") as
-            | "pendente"
-            | "aprovada"
-            | "negada"
-            | "expirada";
-          setLive((prev) => {
-            if (!prev) return prev;
-            const idx = prev.blocks.findIndex(
-              (b) => b.kind === "approval" && b.approvalId === String(p.approval_id),
-            );
-            if (idx < 0) return prev;
-            const blocks = prev.blocks.map((b, i) =>
-              i === idx && b.kind === "approval" ? { ...b, decision } : b,
-            );
-            return { ...prev, blocks };
-          });
+          // No longer builds blocks (those come from `message.updated`) —
+          // only keeps the approvals list in sync with any open surface.
+          qc.invalidateQueries({ queryKey: APPROVALS_KEY_PREFIX });
           break;
         }
         case "session.status": {
@@ -275,9 +239,12 @@ export function useJuliaMessagesAdapter(conversationId: string | null) {
           if (status === "pensando") {
             setLive((prev) => ({ ...(prev ?? emptyLive()), status }));
           } else {
-            // Turn is over — nothing accumulated here is durable; the
-            // persisted `blocks` on the real message (next GET) are.
+            // Turn is over — the streaming bubble's job is done, and the
+            // durable state lives in `blocks` on the real messages. Refetch
+            // once to reconcile anything missed during a reconnect
+            // (contract §E.3 "Frontend rendering rule").
             setLive(null);
+            qc.invalidateQueries({ queryKey: messagesKey(conversationId) });
           }
           break;
         }
@@ -294,6 +261,9 @@ export function useJuliaMessagesAdapter(conversationId: string | null) {
           });
           break;
         }
+        // `tool.started` / `tool.finished` no longer build UI state — the
+        // persisted `blocks` (via `message.updated`) are the source of
+        // truth. Falls through to default (no-op).
         default:
           break;
       }
@@ -311,16 +281,14 @@ export function useJuliaMessagesAdapter(conversationId: string | null) {
 
   const liveBubble = useMemo<ChatMessage | null>(() => {
     if (!live) return null;
-    const hasBlocks = live.blocks.length > 0;
     const isThinking = live.status === "pensando";
-    if (!hasBlocks && !live.textoParcial && !isThinking) return null;
+    if (!live.textoParcial && !isThinking) return null;
     return {
       id: LIVE_ID,
       direction: "inbound",
       body: live.textoParcial || (isThinking ? "Julia está pensando…" : ""),
       created_at: new Date().toISOString(),
       pending: true,
-      blocks: hasBlocks ? live.blocks : undefined,
     };
   }, [live]);
 
@@ -350,15 +318,7 @@ export function useJuliaSendAdapter(conversationId: string | null) {
       // Optimistic upsert — `message.new` over SSE will also deliver this
       // (idempotent upsert-by-id in `onEvent` above), covering the gap if
       // the stream connection is still establishing.
-      qc.setQueryData<Envelope<RawMessage>>(messagesKey(conversationId), (prev) => {
-        if (!prev) return prev;
-        const idx = prev.items.findIndex((m) => m.id === resp.mensagem.id);
-        const items =
-          idx >= 0
-            ? prev.items.map((m, i) => (i === idx ? resp.mensagem : m))
-            : [...prev.items, resp.mensagem];
-        return { items, total: items.length };
-      });
+      qc.setQueryData<Envelope<RawMessage>>(messagesKey(conversationId), (prev) => upsertMessage(prev, resp.mensagem));
     },
   });
 
@@ -388,7 +348,7 @@ export function useJuliaApprovalActionAdapter() {
       // Covers both success (belt to the `approval.resolved` SSE patch) and
       // the "already_decided" / "orphaned" refetch contract §E.2 requires.
       qc.invalidateQueries({ queryKey: CONVERSATIONS_KEY });
-      qc.invalidateQueries({ queryKey: ["agents", "approvals"] });
+      qc.invalidateQueries({ queryKey: APPROVALS_KEY_PREFIX });
     },
   });
 

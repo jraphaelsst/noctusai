@@ -1,16 +1,26 @@
 /**
  * useJuliaChat.ts hook tests — contract §E.2 (conversations/messages),
- * §E.3 (SSE events → ChatWindow blocks/pending), §E.7.
+ * §E.3 (SSE events → messages cache / blocks / streaming bubble, revised
+ * 2026-09-14), §E.7.
  *
  * Stubs `@/lib/api` (HTTP boundary), `@noctusai/seed/infra` (getAuthToken),
  * and `@noctusai/lib`'s `useRealtimeStream` (captures `onEvent` + `events`
  * so each SSE event can be dispatched directly, exactly like
  * `WhatsAppChatWindow.test.tsx`'s "no real HTTP/SSE" convention).
+ *
+ * The `message.new` / `message.updated` / `tool.*` / `approval.*` tests
+ * REPLAY the canonical published stream at
+ * `products/agents/contract-fixtures/escrita-turn.events.json` — never a
+ * hand-written payload. That fixture is the one both the backend route
+ * tests and this hook assert against (contract §E.3 "Canonical stream");
+ * hand-writing an `approval.requested` payload here is exactly how the
+ * earlier, broken Approve button (missing `id`) shipped green.
  */
 import React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import escritaTurnFixture from "../../../../contract-fixtures/escrita-turn.events.json";
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
@@ -44,6 +54,42 @@ function newClient() {
   return new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+}
+
+interface FixtureEvent {
+  event: string;
+  payload: Record<string, unknown>;
+}
+
+const FIXTURE_EVENTS = (escritaTurnFixture as { events: FixtureEvent[] }).events;
+
+/** Index of the first `approval.requested` event, and of the
+ * `message.updated` that immediately follows it (contract §E.3: "the
+ * granular event first, then `message.updated`"). */
+const APPROVAL_REQUESTED_IDX = FIXTURE_EVENTS.findIndex((e) => e.event === "approval.requested");
+const APPROVAL_ID = String(FIXTURE_EVENTS[APPROVAL_REQUESTED_IDX].payload.id);
+
+/**
+ * The persisted-row equivalent of replaying every `message.new` /
+ * `message.updated` in the fixture (last-write-wins per id, in first-seen
+ * order) — i.e. what a real `GET .../messages` returns once every event has
+ * landed in the database. Used to stub the refetch contract §E.3 mandates
+ * when `session.status` leaves `"pensando"`, so that refetch reconciles to
+ * the SAME state the SSE stream already built, exactly as the real backend
+ * would (never to a stale/empty response a real API would not send).
+ */
+function finalMessagesFromFixture(events: FixtureEvent[]) {
+  const byId = new Map<string, Record<string, unknown>>();
+  const order: string[] = [];
+  for (const e of events) {
+    if (e.event === "message.new" || e.event === "message.updated") {
+      const msg = e.payload;
+      const id = String(msg.id);
+      if (!byId.has(id)) order.push(id);
+      byId.set(id, msg);
+    }
+  }
+  return order.map((id) => byId.get(id));
 }
 
 beforeEach(() => {
@@ -86,48 +132,51 @@ describe("useCreateConversation", () => {
   });
 });
 
-// ─── Messages + realtime (contract §E.3) ───────────────────────────────────
+// ─── Messages + realtime (contract §E.3, revised 2026-09-14) ───────────────
 
-const RAW_MESSAGE = {
-  id: "m1",
-  conversation_id: "c1",
-  role: "user",
-  texto: "Oi Julia",
-  blocks: [],
-  token_usage: null,
-  created_at: "2026-09-01T10:00:00Z",
-  updated_at: "2026-09-01T10:00:00Z",
-};
-
-async function renderMessages(conversationId = "c1") {
-  mockGet.mockResolvedValue({ items: [RAW_MESSAGE], total: 1 });
+async function renderMessages(conversationId = "00000000-0000-4000-8000-0000000000c1") {
+  mockGet.mockResolvedValue({ items: [], total: 0 });
   const { useJuliaMessagesAdapter } = await import("@/hooks/useJuliaChat");
   const qc = newClient();
   const { result } = renderHook(() => useJuliaMessagesAdapter(conversationId), {
     wrapper: wrapper(qc),
   });
-  await waitFor(() => expect(result.current.data.length).toBeGreaterThan(0));
+  // Wait for the initial GET to settle before replaying any SSE event —
+  // otherwise an event dispatched while `query.data` is still `undefined`
+  // is silently dropped (`setQueryData`'s updater returning its own
+  // `undefined` `prev` is a no-op), exactly the race the real ChatWindow
+  // avoids by mounting the subscription only once a thread is open.
+  await waitFor(() => expect(result.current.isLoading).toBe(false));
   const [, options] = mockUseRealtimeStream.mock.calls[mockUseRealtimeStream.mock.calls.length - 1];
   return { result, options, qc };
 }
 
+/** Dispatch fixture events `[0, uptoExclusive)` through the captured `onEvent`. */
+function replay(options: { onEvent: (evt: FixtureEvent) => void }, uptoExclusive: number) {
+  for (let i = 0; i < uptoExclusive; i++) {
+    act(() => {
+      options.onEvent(FIXTURE_EVENTS[i]);
+    });
+  }
+}
+
 describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
-  it("GETs the message list and maps role → direction", async () => {
-    const { result } = await renderMessages();
-    expect(mockGet).toHaveBeenCalledWith("/api/conversations/c1/messages");
-    expect(result.current.data).toEqual([
-      { id: "m1", direction: "outbound", body: "Oi Julia", created_at: "2026-09-01T10:00:00Z", blocks: undefined },
-    ]);
+  it("GETs the message list", async () => {
+    await renderMessages();
+    expect(mockGet).toHaveBeenCalledWith(
+      "/api/conversations/00000000-0000-4000-8000-0000000000c1/messages",
+    );
   });
 
-  it("subscribes to /api/conversations/{id}/stream with EVERY §E.3 event name", async () => {
+  it("subscribes to /api/conversations/{id}/stream with EVERY §E.3 event name, including message.updated", async () => {
     const { options } = await renderMessages();
     expect(mockUseRealtimeStream).toHaveBeenCalledWith(
-      "/api/conversations/c1/stream",
+      "/api/conversations/00000000-0000-4000-8000-0000000000c1/stream",
       expect.objectContaining({ getAuthToken: expect.any(Function) }),
     );
     const expected = [
       "message.new",
+      "message.updated",
       "message.delta",
       "tool.started",
       "tool.finished",
@@ -141,28 +190,61 @@ describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
     }
   });
 
-  it("message.new appends a new assistant message", async () => {
+  it("replaying the full canonical fixture leaves the cache with the user message and both assistant messages, blocks in their final state, and no __live__ bubble", async () => {
     const { result, options } = await renderMessages();
-    act(() => {
-      options.onEvent({
-        event: "message.new",
-        payload: {
-          id: "m2",
-          conversation_id: "c1",
-          role: "assistant",
-          texto: "Olá! Como posso ajudar?",
-          blocks: [],
-          token_usage: null,
-          created_at: "2026-09-01T10:00:05Z",
-          updated_at: "2026-09-01T10:00:05Z",
-        },
-      });
-    });
-    await waitFor(() => expect(result.current.data).toHaveLength(2));
-    expect(result.current.data[1]).toMatchObject({ id: "m2", direction: "inbound", body: "Olá! Como posso ajudar?" });
+
+    // The final `session.status: "ociosa"` triggers the contract §E.3
+    // "refetch once" — stub it to what the real backend would now return
+    // (every event already persisted), so the reconciliation lands on the
+    // SAME state the SSE stream built, not a stale empty response.
+    const finalItems = finalMessagesFromFixture(FIXTURE_EVENTS);
+    mockGet.mockResolvedValue({ items: finalItems, total: finalItems.length });
+
+    replay(options, FIXTURE_EVENTS.length);
+
+    await waitFor(() => expect(result.current.data).toHaveLength(3));
+
+    const [userMsg, assistantA, assistantB] = result.current.data;
+    expect(userMsg).toMatchObject({ id: "00000000-0000-4000-8000-0000000000a1", direction: "outbound" });
+    expect(assistantA).toMatchObject({ id: "00000000-0000-4000-8000-0000000000a2", direction: "inbound" });
+    expect(assistantA.blocks).toEqual([
+      { kind: "tool", toolUseId: "toolu_fixture_01", name: "mcp__academia__kb_escrever", status: "ok", resumo: "Editar KB: exemplo" },
+      {
+        kind: "approval",
+        approvalId: APPROVAL_ID,
+        resumo: "Editar KB: exemplo",
+        diff: { antes: "Texto antigo.", depois: "Texto novo." },
+        decision: "aprovada",
+      },
+    ]);
+    expect(assistantB).toMatchObject({ id: "00000000-0000-4000-8000-0000000000a3", direction: "inbound" });
+    expect(result.current.data.some((m: any) => m.id === "__live__")).toBe(false);
   });
 
-  it("message.delta shows a pending live bubble that a later message.new replaces", async () => {
+  it("replaying up to the first approval.requested + its message.updated produces a pendente approval block whose approvalId matches the fixture, and decide() posts to that id", async () => {
+    const { result, options } = await renderMessages();
+
+    // The event immediately after approval.requested is its message.updated
+    // (contract §E.3: "the granular event first, then message.updated").
+    replay(options, APPROVAL_REQUESTED_IDX + 2);
+
+    await waitFor(() => {
+      const assistantA = result.current.data.find((m: any) => m.id === "00000000-0000-4000-8000-0000000000a2");
+      expect(assistantA?.blocks).toContainEqual(
+        expect.objectContaining({ kind: "approval", approvalId: APPROVAL_ID, decision: "pendente" }),
+      );
+    });
+
+    const { useJuliaApprovalActionAdapter } = await import("@/hooks/useJuliaChat");
+    mockPost.mockResolvedValue({ id: APPROVAL_ID, decision: "aprovada" });
+    const qc2 = newClient();
+    const { result: actionResult } = renderHook(() => useJuliaApprovalActionAdapter(), { wrapper: wrapper(qc2) });
+    await actionResult.current.decide(APPROVAL_ID, true);
+
+    expect(mockPost).toHaveBeenCalledWith(`/api/approvals/${APPROVAL_ID}/decision`, { aprovada: true });
+  });
+
+  it("message.delta shows a pending live bubble that clears on the assistant message.new", async () => {
     const { result, options } = await renderMessages();
 
     act(() => {
@@ -185,57 +267,51 @@ describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
     });
   });
 
-  it("tool.started then tool.finished produce ONE tool block keyed by tool_use_id", async () => {
+  it("a message.new for the USER's own message does not clear an existing live bubble", async () => {
     const { result, options } = await renderMessages();
 
+    act(() => {
+      options.onEvent({ event: "message.delta", payload: { message_temp_id: "tmp1", texto_parcial: "Ainda pensando" } });
+    });
+    await waitFor(() => {
+      expect(result.current.data.find((m: any) => m.id === "__live__")).toMatchObject({ pending: true });
+    });
+
+    act(() => {
+      options.onEvent({
+        event: "message.new",
+        payload: { id: "mu1", conversation_id: "c1", role: "user", texto: "outra pergunta", blocks: [], token_usage: null, created_at: "t", updated_at: "t" },
+      });
+    });
+    await waitFor(() => {
+      expect(result.current.data.find((m: any) => m.id === "__live__")).toMatchObject({ pending: true });
+    });
+  });
+
+  it('tool.started / tool.finished no longer build blocks on the live bubble — they are no-ops', async () => {
+    const { result, options } = await renderMessages();
+
+    act(() => {
+      options.onEvent({ event: "session.status", payload: { status: "pensando" } });
+    });
     act(() => {
       options.onEvent({
         event: "tool.started",
         payload: { tool_use_id: "t1", tool_name: "mcp__academia__kb_buscar", classe: "leitura", resumo: "buscando..." },
       });
     });
-    await waitFor(() => {
-      const live: any = result.current.data.find((m: any) => m.id === "__live__");
-      expect(live.blocks).toEqual([
-        { kind: "tool", toolUseId: "t1", name: "mcp__academia__kb_buscar", status: "running", resumo: "buscando..." },
-      ]);
-    });
-
     act(() => {
       options.onEvent({ event: "tool.finished", payload: { tool_use_id: "t1", tool_name: "mcp__academia__kb_buscar", resultado: "ok" } });
     });
-    await waitFor(() => {
-      const live: any = result.current.data.find((m: any) => m.id === "__live__");
-      expect(live.blocks).toHaveLength(1);
-      expect(live.blocks[0]).toMatchObject({ toolUseId: "t1", status: "ok" });
-    });
+
+    const live: any = result.current.data.find((m: any) => m.id === "__live__");
+    expect(live).toBeDefined();
+    expect(live.blocks).toBeUndefined();
   });
 
-  it("approval.requested then approval.resolved produce an approval block with the decision updated", async () => {
-    const { result, options } = await renderMessages();
-
-    act(() => {
-      options.onEvent({
-        event: "approval.requested",
-        payload: { id: "ap1", resumo: "Editar KB dominio-x", diff: { antes: "old", depois: "new" } },
-      });
-    });
-    await waitFor(() => {
-      const live: any = result.current.data.find((m: any) => m.id === "__live__");
-      expect(live.blocks[0]).toMatchObject({ kind: "approval", approvalId: "ap1", decision: "pendente" });
-    });
-
-    act(() => {
-      options.onEvent({ event: "approval.resolved", payload: { approval_id: "ap1", decision: "aprovada", decided_by: "u1" } });
-    });
-    await waitFor(() => {
-      const live: any = result.current.data.find((m: any) => m.id === "__live__");
-      expect(live.blocks[0]).toMatchObject({ approvalId: "ap1", decision: "aprovada" });
-    });
-  });
-
-  it('session.status "pensando" shows the live bubble; a non-pensando status clears it', async () => {
-    const { result, options } = await renderMessages();
+  it('session.status "pensando" shows the live bubble; leaving it clears the bubble and invalidates the messages query exactly once', async () => {
+    const { result, options, qc } = await renderMessages();
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
 
     act(() => {
       options.onEvent({ event: "session.status", payload: { status: "pensando" } });
@@ -245,12 +321,35 @@ describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
       expect(live).toMatchObject({ pending: true, body: "Julia está pensando…" });
     });
 
+    invalidateSpy.mockClear();
     act(() => {
-      options.onEvent({ event: "session.status", payload: { status: "ociosa" } });
+      options.onEvent({ event: "session.status", payload: { status: "ociosa", sdk_session_id: "sess-1" } });
     });
     await waitFor(() => {
       expect(result.current.data.some((m: any) => m.id === "__live__")).toBe(false);
     });
+
+    const messagesInvalidations = invalidateSpy.mock.calls.filter(([arg]) =>
+      JSON.stringify((arg as any)?.queryKey).includes("messages"),
+    );
+    expect(messagesInvalidations).toHaveLength(1);
+  });
+
+  it("approval.requested and approval.resolved each invalidate the approvals list query", async () => {
+    const { options, qc } = await renderMessages();
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+
+    act(() => {
+      options.onEvent(FIXTURE_EVENTS[APPROVAL_REQUESTED_IDX]);
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["agents", "approvals"] });
+
+    invalidateSpy.mockClear();
+    const resolvedEvt = FIXTURE_EVENTS.find((e) => e.event === "approval.resolved")!;
+    act(() => {
+      options.onEvent(resolvedEvt);
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["agents", "approvals"] });
   });
 
   it("conversation.upsert patches the thread-list cache", async () => {
@@ -275,6 +374,17 @@ describe("useJuliaMessagesAdapter — REST + subscription wiring", () => {
 });
 
 // ─── Send (contract §E.2, error mapping) ───────────────────────────────────
+
+const RAW_MESSAGE = {
+  id: "m1",
+  conversation_id: "c1",
+  role: "user",
+  texto: "Oi Julia",
+  blocks: [],
+  token_usage: null,
+  created_at: "2026-09-01T10:00:00Z",
+  updated_at: "2026-09-01T10:00:00Z",
+};
 
 describe("useJuliaSendAdapter", () => {
   it("POSTs {texto} to .../messages", async () => {
