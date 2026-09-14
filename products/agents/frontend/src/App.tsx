@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, Boxes } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2 } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -20,10 +20,11 @@ const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
-// Placeholder domain page — rename + replace per
-// `products/seed/frontend/src/pages/Example.tsx`. Backend mirror at
-// `app/routers/example_router.py`.
-const Example = lazy(() => import("@/pages/Example"));
+// Julia agents UI — contract §E (`projects/julia-agents-academia-CONTRACT.md`).
+const Julia = lazy(() => import("@/pages/Julia"));
+const Agentes = lazy(() => import("@/pages/Agentes"));
+const JuliaPersona = lazy(() => import("@/pages/JuliaPersona"));
+const Aprovacoes = lazy(() => import("@/pages/Aprovacoes"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -34,7 +35,9 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Example", href: "/example", icon: Boxes, route: "example" },
+      { name: "Julia", href: "/julia", icon: MessageCircle, route: "julia" },
+      { name: "Agentes", href: "/agentes", icon: Bot, route: "agentes" },
+      { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2, route: "aprovacoes" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
   },
@@ -48,7 +51,9 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Example", href: "/example", icon: Boxes },
+      { name: "Julia", href: "/julia", icon: MessageCircle },
+      { name: "Agentes", href: "/agentes", icon: Bot },
+      { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2 },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
   },
@@ -66,7 +71,10 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
-    { path: "/example", component: Example },
+    { path: "/julia", component: Julia },
+    { path: "/agentes", component: Agentes },
+    { path: "/agentes/julia/persona", component: JuliaPersona },
+    { path: "/aprovacoes", component: Aprovacoes },
     { path: "/equipe", component: Equipe },
   ],
   Layout,

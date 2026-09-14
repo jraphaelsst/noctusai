@@ -286,6 +286,7 @@ jobs:
           - p-studio
           - igig
           - academia-de-reciclagem
+          - agents
 
     steps:
       - uses: actions/checkout@v7
