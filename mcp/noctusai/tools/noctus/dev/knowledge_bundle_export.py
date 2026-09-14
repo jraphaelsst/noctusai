@@ -18,29 +18,23 @@ git_message, content}`` — the file's content AT that commit, via
   must never land inside a git working tree — it is meant for an
   out-of-band admin upload, not a commit.
 
-**Why the secret scan here is a small duplicate, not an import.** This
-module lives in the shared MCP toolkit and cannot import
-``products/academia-de-reciclagem/backend/app/importer/secrets.py`` —
-that package isn't on this process's Python path, and reaching across
-the product/toolkit boundary would be a real layering violation, not a
-convenience. The scan logic (known-pattern + Shannon-entropy heuristic,
-hyphen-excluded token class) is kept identical in *behaviour* to
-``app/importer/secrets.py`` deliberately. See this module's
-`scoped-improvement` footer in the A2 delivery note for the follow-up:
-hoist both copies to one `noctusai_lib` helper once A1's
-``app/knowledge/`` lands, so they can never drift apart.
+**The secret scan is the shared ``noctusai_lib.security`` one.** A1c
+hoisted this module's own copy (a deliberate small duplicate of
+``app/importer/secrets.py`` — the product/toolkit layering boundary
+made an import impossible at the time) into
+``noctusai_lib.security.secrets_scan``, alongside the product's own
+importer. Both call sites now share one implementation; see that
+module's docstring for the full history.
 """
 from __future__ import annotations
 
 import json
 import logging
-import math
-import re
 import subprocess
-from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from noctusai_lib.security import has_secret as _content_has_secret
 from settings import REPO_ROOT
 
 logger = logging.getLogger(__name__)
@@ -53,38 +47,6 @@ DEFAULT_INCLUDE_GLOBS: tuple[str, ...] = (
 )
 
 _BUNDLE_FILENAME = "knowledge-bundle.jsonl"
-
-# --- content secret scan (mirrors app/importer/secrets.py; see module
-# docstring for why this is a deliberate small duplicate) -------------------
-
-_KNOWN_SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"pk_[A-Za-z0-9]{16,}"),
-    re.compile(r"sk-[A-Za-z0-9]{16,}"),
-    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
-    re.compile(r"AKIA[A-Z0-9]{12,}"),
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-)
-_SECRET_TOKEN_RE = re.compile(r"[A-Za-z0-9+/_=]{28,}")
-_SECRET_ENTROPY_THRESHOLD = 3.5
-
-
-def _shannon_entropy(token: str) -> float:
-    if not token:
-        return 0.0
-    counts = Counter(token)
-    length = len(token)
-    return -sum((c / length) * math.log2(c / length) for c in counts.values())
-
-
-def _content_has_secret(content: str) -> bool:
-    for pattern in _KNOWN_SECRET_PATTERNS:
-        if pattern.search(content):
-            return True
-    for token in _SECRET_TOKEN_RE.findall(content):
-        if _shannon_entropy(token) >= _SECRET_ENTROPY_THRESHOLD:
-            return True
-    return False
-
 
 # --- git plumbing ------------------------------------------------------
 

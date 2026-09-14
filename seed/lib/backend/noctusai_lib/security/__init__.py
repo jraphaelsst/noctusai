@@ -5,10 +5,12 @@ at-rest secret encryption (`encrypted_tokens`), the per-(org, provider)
 encrypted credential store (`token_store` — Protocol + Fake + Real +
 factory), the app-wide encrypted key→value config store (`app_config` —
 Protocol + Fake + Real + factory, sibling of `token_store` keyed on a
-single ``key`` instead of ``(org_id, provider)``), and the generic OAuth
+single ``key`` instead of ``(org_id, provider)``), the generic OAuth
 callback infrastructure (`oauth` — Protocol + Google + Fake + factory +
-`oauth_router`). Future additions (request rate limiters,
-secret-redaction helpers) live here too.
+`oauth_router`), and the content secret scan (`secrets_scan` —
+`find_secret`/`has_secret`, hoisted A1c from the academia importer + the
+`knowledge_bundle_export` MCP tool). Future additions (request rate
+limiters) live here too.
 """
 
 from noctusai_lib.security.app_config import (
@@ -42,6 +44,7 @@ from noctusai_lib.security.webhook_signatures import (
     webhook_endpoint,
 )
 from noctusai_lib.security import oauth
+from noctusai_lib.security.secrets_scan import find_secret, has_secret
 from noctusai_lib.security.token_store import (
     CredentialDecryptError,
     CredentialStore,
@@ -73,7 +76,9 @@ __all__ = [
     "compute_hmac_sha256_hex",
     "decrypt",
     "encrypt",
+    "find_secret",
     "generate_key",
+    "has_secret",
     "oauth",
     "resolve_meta_app_credentials",
     "rotate_key",
