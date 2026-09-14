@@ -24,17 +24,48 @@
  *      fetch falls through to `extracoes.length === 0` and renders "Nenhuma
  *      extração realizada" — an empty state lying over a fetch failure
  *      (`KB § PATTERNS/frontend/lying-loading-state.md`). Fixed on contact.
+ *
+ * F2 (contract automation) additions, all behind the SAME "concluída"
+ * gate the result pane already uses:
+ *   · an optional imóvel código on upload (`?extracao=` deep-links back here
+ *     from `ImovelCartorioCard`'s badges, and the ONE selected extraction is
+ *     auto-opened);
+ *   · the matrícula's ATOS, each with its literal text — expandable, never
+ *     trimmed (USER DECISION: the quote is verbatim, typos included);
+ *   · the FONTES panel — heuristic título aquisitivo / ônus suggestions,
+ *     clearly labelled as suggestions, with confirm / choose-other / clear.
  */
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   useMatriculaExtracoes,
   useMatriculaExtracao,
   useUploadMatricula,
   useDeleteExtracao,
 } from '@/hooks/useMatriculas';
+import {
+  useDefinirFontes,
+  useMatriculaAtos,
+  useMatriculaFontes,
+} from '@/hooks/useMatriculaEstrutura';
+import type { MatriculaAto } from '@/hooks/useMatriculaEstrutura';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -65,6 +96,8 @@ import {
   Trash2,
   Eye,
   FileUp,
+  ChevronDown,
+  Sparkles,
 } from 'lucide-react';
 import { TableSkeleton } from '@noctusai/lib/design-system';
 import { formatDate } from '@/lib/utils';
@@ -82,10 +115,12 @@ const STATUS_CONFIG: Record<string, { label: string; variant: 'default' | 'secon
 // --------------- Component ---------------
 
 export default function Matriculas() {
+  const [searchParams] = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [codigoUpload, setCodigoUpload] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const extracoesQuery = useMatriculaExtracoes();
@@ -99,18 +134,30 @@ export default function Matriculas() {
   const uploadMutation = useUploadMatricula();
   const deleteMutation = useDeleteExtracao();
 
+  // 🔴 DEEP-LINK: `ImovelCartorioCard`'s título-aquisitivo/ônus badges land
+  // here as `/matriculas?extracao=<id>` — auto-open that extraction once,
+  // never overriding an operator's own later click.
+  useEffect(() => {
+    const fromQuery = searchParams.get('extracao');
+    if (fromQuery && selectedId === null) {
+      setSelectedId(fromQuery);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   // Auto-select newly created extraction for live status tracking
   const handleUpload = useCallback((file: File) => {
     if (file.type !== 'application/pdf') {
       toast.error('Apenas arquivos PDF são aceitos.');
       return;
     }
-    uploadMutation.mutate(file, {
+    const codigo = codigoUpload.trim() || undefined;
+    uploadMutation.mutate(codigo ? { file, codigo } : file, {
       onSuccess: (data) => {
         setSelectedId(data.id);
       },
     });
-  }, [uploadMutation]);
+  }, [uploadMutation, codigoUpload]);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -179,6 +226,23 @@ export default function Matriculas() {
             <CardTitle className="text-lg">Upload</CardTitle>
           </CardHeader>
           <CardContent>
+            <div className="mb-3 space-y-1">
+              <label htmlFor="matricula-codigo" className="text-xs font-medium text-muted-foreground">
+                Imóvel (opcional)
+              </label>
+              <Input
+                id="matricula-codigo"
+                value={codigoUpload}
+                onChange={(e) => setCodigoUpload(e.target.value)}
+                placeholder="Ex.: ONE9001"
+                disabled={uploadMutation.isPending}
+                data-testid="matricula-codigo-input"
+              />
+              <p className="text-xs text-muted-foreground">
+                Vincula o PDF a este imóvel — fica salvo como a matrícula dele e
+                aparece no card de cartório.
+              </p>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
@@ -315,6 +379,9 @@ export default function Matriculas() {
         </Card>
       </div>
 
+      {/* Atos + Fontes — only once the transcription is usable for them. */}
+      {isComplete && selected && <MatriculaAtosEFontes extracaoId={selected.id} />}
+
       {/* History Table */}
       <Card>
         <CardHeader>
@@ -444,5 +511,328 @@ export default function Matriculas() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+// ─── Atos + Fontes (F2 — contract automation) ──────────────────────────────
+//
+// 🔴 USER DECISION: THE TEXT IS LITERAL, TYPOS INCLUDED. Every act body below
+// renders `white-space: pre-wrap` and is never trimmed/normalised — the
+// operator SELECTS acts (here) and QUOTES them into a contract
+// (`MatriculaAtosSelector`, on the card); nobody edits their wording.
+
+const KIND_LABEL: Record<MatriculaAto['kind'], string> = {
+  abertura: 'Abertura',
+  R: 'Registro',
+  AV: 'Averbação',
+};
+
+function rotuloDoAto(ato: Pick<MatriculaAto, 'kind' | 'numero' | 'rotulo'>): string {
+  if (ato.kind === 'abertura') return 'Abertura da matrícula';
+  const numero = ato.numero != null ? `-${ato.numero}` : '';
+  return `${ato.kind}${numero} · ${ato.rotulo || KIND_LABEL[ato.kind]}`;
+}
+
+function MatriculaAtosEFontes({ extracaoId }: { extracaoId: string }) {
+  const atosQuery = useMatriculaAtos(extracaoId);
+  const fontesQuery = useMatriculaFontes(extracaoId);
+  const definirFontes = useDefinirFontes(extracaoId);
+
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  const [outroTitulo, setOutroTitulo] = useState('');
+  const [onusDraft, setOnusDraft] = useState<string[]>([]);
+
+  const atos = atosQuery.data?.atos ?? [];
+  // Two signals off `data`, never `isLoading` — same discipline as the
+  // history table above.
+  const showAtosSkeleton = atosQuery.isPending && !atosQuery.data;
+  const showAtosError = atosQuery.isError && !atosQuery.data;
+
+  const fontes = fontesQuery.data;
+  const showFontesSkeleton = fontesQuery.isPending && !fontesQuery.data;
+  const showFontesError = fontesQuery.isError && !fontesQuery.data;
+
+  // Seed the ônus draft from the CONFIRMED pointer, keyed on the ids
+  // themselves (not object identity) — an unrelated refetch must not stomp
+  // an edit in progress, same discipline `ImovelCartorioCard.toDraft` uses.
+  const onusConfirmadoIds = (fontes?.onus?.atos ?? []).map((a) => a.ato_id).join(',');
+  useEffect(() => {
+    setOnusDraft(onusConfirmadoIds ? onusConfirmadoIds.split(',') : []);
+  }, [onusConfirmadoIds]);
+
+  const atosQuotaveis = useMemo(() => atos.filter((a) => a.kind !== 'abertura'), [atos]);
+
+  function alternarExpandido(atoId: string) {
+    setExpandidos((atual) => {
+      const copia = new Set(atual);
+      if (copia.has(atoId)) copia.delete(atoId);
+      else copia.add(atoId);
+      return copia;
+    });
+  }
+
+  function alternarOnusDraft(atoId: string) {
+    setOnusDraft((atual) =>
+      atual.includes(atoId) ? atual.filter((id) => id !== atoId) : [...atual, atoId],
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Atos e Fontes</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-6 lg:grid-cols-2">
+        {/* ─── Atos catalog ────────────────────────────────────────────── */}
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">Atos da matrícula</h3>
+          {showAtosSkeleton && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando atos...
+            </p>
+          )}
+          {showAtosError && (
+            <p className="text-sm text-destructive" data-testid="matriculas-atos-erro">
+              Não foi possível carregar os atos.
+            </p>
+          )}
+          {!showAtosSkeleton && !showAtosError && atos.length === 0 && (
+            <p className="text-sm text-muted-foreground">Nenhum ato segmentado ainda.</p>
+          )}
+          {atos.length > 0 && (
+            <ul className="max-h-[28rem] space-y-1.5 overflow-y-auto" data-testid="matriculas-atos-lista">
+              {atos.map((ato) => {
+                const expandido = expandidos.has(ato.id);
+                return (
+                  <li
+                    key={ato.id}
+                    className="rounded-md border p-2"
+                    data-testid={`matriculas-ato-${ato.id}`}
+                  >
+                    <Collapsible open={expandido} onOpenChange={() => alternarExpandido(ato.id)}>
+                      <CollapsibleTrigger asChild>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-1.5 text-left text-sm font-medium"
+                          data-testid={`matriculas-ato-toggle-${ato.id}`}
+                        >
+                          <ChevronDown
+                            className={`h-3.5 w-3.5 shrink-0 transition-transform ${expandido ? 'rotate-180' : ''}`}
+                          />
+                          {rotuloDoAto(ato)}
+                        </button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <p
+                          className="mt-2 whitespace-pre-wrap rounded bg-muted/30 p-2 font-mono text-xs leading-relaxed"
+                          data-testid={`matriculas-ato-texto-${ato.id}`}
+                        >
+                          {ato.texto}
+                        </p>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {/* ─── Fontes ──────────────────────────────────────────────────── */}
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold">Fontes</h3>
+          {showFontesSkeleton && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando fontes...
+            </p>
+          )}
+          {showFontesError && (
+            <p className="text-sm text-destructive" data-testid="matriculas-fontes-erro">
+              Não foi possível carregar as fontes.
+            </p>
+          )}
+
+          {fontes && (
+            <>
+              {/* Título aquisitivo */}
+              <div className="space-y-1.5 rounded-md border p-3" data-testid="matriculas-fonte-titulo">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Título aquisitivo
+                </p>
+                {fontes.titulo_aquisitivo ? (
+                  <div className="space-y-1 text-sm">
+                    <Badge
+                      variant={fontes.titulo_aquisitivo.origem === 'sugerido' ? 'secondary' : 'outline'}
+                      className="gap-1"
+                    >
+                      {fontes.titulo_aquisitivo.origem === 'sugerido' && <Sparkles className="h-3 w-3" />}
+                      {fontes.titulo_aquisitivo.origem === 'sugerido'
+                        ? 'Sugestão confirmada'
+                        : 'Escolhido manualmente'}
+                    </Badge>
+                    <p className="whitespace-pre-wrap font-mono text-xs text-muted-foreground">
+                      {fontes.titulo_aquisitivo.texto}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {fontes.titulo_aquisitivo.confirmado_por?.nome ?? '—'}
+                      {fontes.titulo_aquisitivo.confirmado_em
+                        ? ` em ${new Date(fontes.titulo_aquisitivo.confirmado_em).toLocaleString('pt-BR')}`
+                        : ''}
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => definirFontes.mutate({ titulo_aquisitivo_ato_id: null })}
+                      disabled={definirFontes.isPending}
+                      data-testid="matriculas-titulo-limpar"
+                    >
+                      Limpar
+                    </Button>
+                  </div>
+                ) : fontes.sugestoes.titulo_aquisitivo ? (
+                  <div className="space-y-1.5 text-sm">
+                    <p className="flex items-center gap-1.5 text-xs">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      Sugestão: {fontes.sugestoes.titulo_aquisitivo.rotulo} (
+                      {fontes.sugestoes.titulo_aquisitivo.termo})
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={() =>
+                        definirFontes.mutate({
+                          titulo_aquisitivo_ato_id: fontes.sugestoes.titulo_aquisitivo!.ato_id,
+                        })
+                      }
+                      disabled={definirFontes.isPending}
+                      data-testid="matriculas-titulo-confirmar-sugestao"
+                    >
+                      Confirmar sugestão
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Nenhuma sugestão encontrada.</p>
+                )}
+
+                <div className="space-y-1 pt-1.5">
+                  <label className="text-xs text-muted-foreground" htmlFor="titulo-outro-ato">
+                    Escolher outro ato
+                  </label>
+                  <Select
+                    value={outroTitulo}
+                    onValueChange={(v) => {
+                      setOutroTitulo(v);
+                      definirFontes.mutate({ titulo_aquisitivo_ato_id: v });
+                    }}
+                  >
+                    <SelectTrigger id="titulo-outro-ato" className="h-8 text-sm" data-testid="matriculas-titulo-outro-ato">
+                      <SelectValue placeholder="Selecione um ato..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {atosQuotaveis.map((ato) => (
+                        <SelectItem key={ato.id} value={ato.id}>
+                          {rotuloDoAto(ato)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Ônus */}
+              <div className="space-y-1.5 rounded-md border p-3" data-testid="matriculas-fonte-onus">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ônus</p>
+
+                {fontes.onus ? (
+                  <div className="space-y-1 text-sm">
+                    <Badge
+                      variant={fontes.onus.origem === 'sugerido' ? 'secondary' : 'outline'}
+                      className="gap-1"
+                    >
+                      {fontes.onus.origem === 'sugerido' && <Sparkles className="h-3 w-3" />}
+                      {fontes.onus.atos.length} ato{fontes.onus.atos.length > 1 ? 's' : ''}
+                      {fontes.onus.origem === 'sugerido' ? ' · sugestão confirmada' : ' · manual'}
+                    </Badge>
+                    <p className="text-xs text-muted-foreground">
+                      {fontes.onus.confirmado_por?.nome ?? '—'}
+                      {fontes.onus.confirmado_em
+                        ? ` em ${new Date(fontes.onus.confirmado_em).toLocaleString('pt-BR')}`
+                        : ''}
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => definirFontes.mutate({ onus_ato_ids: [] })}
+                      disabled={definirFontes.isPending}
+                      data-testid="matriculas-onus-limpar"
+                    >
+                      Limpar
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Nenhum ônus confirmado.</p>
+                )}
+
+                {fontes.sugestoes.onus.length > 0 && (
+                  <div className="space-y-1 rounded bg-muted/30 p-2">
+                    <p className="flex items-center gap-1.5 text-xs">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" /> Sugestões
+                    </p>
+                    <ul className="space-y-0.5 text-xs">
+                      {fontes.sugestoes.onus.map((o) => (
+                        <li
+                          key={o.ato_id}
+                          className={o.sugerido ? '' : 'text-muted-foreground line-through'}
+                        >
+                          {o.rotulo} ({o.tipo})
+                          {!o.sugerido && ' · cancelado'}
+                        </li>
+                      ))}
+                    </ul>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        definirFontes.mutate({
+                          onus_ato_ids: fontes.sugestoes.onus.filter((o) => o.sugerido).map((o) => o.ato_id),
+                        })
+                      }
+                      disabled={definirFontes.isPending || fontes.sugestoes.onus.every((o) => !o.sugerido)}
+                      data-testid="matriculas-onus-usar-sugestoes"
+                    >
+                      Usar sugestões
+                    </Button>
+                  </div>
+                )}
+
+                <div className="space-y-1 pt-1.5">
+                  <p className="text-xs text-muted-foreground">Escolher outros atos</p>
+                  <ul className="max-h-40 space-y-1 overflow-y-auto">
+                    {atosQuotaveis.map((ato) => (
+                      <li key={ato.id} className="flex items-center gap-2 text-xs">
+                        <Checkbox
+                          checked={onusDraft.includes(ato.id)}
+                          onCheckedChange={() => alternarOnusDraft(ato.id)}
+                          data-testid={`matriculas-onus-checkbox-${ato.id}`}
+                        />
+                        {rotuloDoAto(ato)}
+                      </li>
+                    ))}
+                  </ul>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => definirFontes.mutate({ onus_ato_ids: onusDraft })}
+                    disabled={definirFontes.isPending}
+                    data-testid="matriculas-onus-salvar"
+                  >
+                    Salvar seleção de ônus
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

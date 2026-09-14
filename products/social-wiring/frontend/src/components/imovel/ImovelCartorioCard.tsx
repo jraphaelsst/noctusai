@@ -13,9 +13,19 @@
  * text in a box. The provenance line is what lets someone answer "did anyone
  * actually check this?" without re-opening the certidão — and it is the same
  * reason the backend stores `numero_matricula_origem` at all.
+ *
+ * 🔴 READ-ONLY TÍTULO AQUISITIVO / ÔNUS BADGES (migration 109)
+ * ---------------------------------------------------------------
+ * `titulo_aquisitivo_fonte` / `onus_fonte` are pointers into a matrícula
+ * TRANSCRIPTION — offsets into text that lives on `/matriculas`, not on this
+ * card. Rendering them as editable fields here would mean duplicating both
+ * the literal quote AND the confirm/choose-other flow that already exists
+ * there (`GET/PUT .../extracoes/{id}/fontes`); a badge that links to the
+ * matrícula page is the whole feature, not a placeholder for a bigger one.
  */
 import { useEffect, useState } from "react";
-import { Landmark, Loader2, ScrollText } from "lucide-react";
+import { Landmark, Link2, Loader2, ScrollText } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -288,6 +298,49 @@ export default function ImovelCartorioCard({
             placeholder="Credor, valor, número do registro do gravame…"
             data-testid="imovel-onus-obs"
           />
+        </div>
+
+        {/* ─── Título aquisitivo / ônus sources (migration 109) — read-only ──
+            Pointers into a matrícula transcription; the literal quote and
+            the confirm/choose-other flow live on `/matriculas`. */}
+        <div className="space-y-1.5 border-t pt-4">
+          <Label>Fontes da matrícula</Label>
+          <div className="flex flex-wrap gap-2">
+            {dados?.titulo_aquisitivo_fonte ? (
+              <Link
+                to={`/matriculas?extracao=${dados.titulo_aquisitivo_fonte.extracao_id}`}
+                data-testid="imovel-titulo-aquisitivo-badge"
+              >
+                <Badge variant="outline" className="gap-1 hover:bg-muted">
+                  <Link2 className="h-3 w-3" />
+                  Título aquisitivo
+                  {dados.titulo_aquisitivo_fonte.origem === "manual" ? " · manual" : ""}
+                </Badge>
+              </Link>
+            ) : (
+              <Badge variant="outline" className="gap-1 text-muted-foreground" data-testid="imovel-titulo-aquisitivo-ausente">
+                <Link2 className="h-3 w-3" />
+                Título aquisitivo não confirmado
+              </Badge>
+            )}
+            {dados?.onus_fonte ? (
+              <Link
+                to={`/matriculas?extracao=${dados.onus_fonte.extracao_id}`}
+                data-testid="imovel-onus-fonte-badge"
+              >
+                <Badge variant="outline" className="gap-1 hover:bg-muted">
+                  <Link2 className="h-3 w-3" />
+                  Ônus ({dados.onus_fonte.atos.length})
+                  {dados.onus_fonte.origem === "manual" ? " · manual" : ""}
+                </Badge>
+              </Link>
+            ) : (
+              <Badge variant="outline" className="gap-1 text-muted-foreground" data-testid="imovel-onus-fonte-ausente">
+                <Link2 className="h-3 w-3" />
+                Ônus não confirmado
+              </Badge>
+            )}
+          </div>
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}

@@ -9,9 +9,18 @@
  * renders as a sibling of the card in `ClienteDetailModal` (see its header
  * comment), so this container only receives `onNovoContrato` to flip that
  * dialog's `open` boolean.
+ *
+ * 🔴 `renderMatriculaAtos` wires `MatriculaAtosContainer` WITHOUT an imóvel
+ * código — this container only ever receives `clienteId`. The picker inside
+ * still works (it lists every transcribed matrícula in the org, unfiltered);
+ * narrowing it to "this card's imóvel" needs the negociação slice's
+ * `atendimento_negociacao.imovel_codigo` threaded down from
+ * `ClienteDetailModal`, which is out of this change's scope (a sibling slice
+ * owns that file this same wave).
  */
 import { toast } from "sonner";
 
+import { MatriculaAtosContainer } from "@/components/MatriculaAtosContainer";
 import ContratosPanel from "@/components/card/ContratosPanel";
 import { useContratoMutations, useContratos } from "@/hooks/useContratos";
 
@@ -109,6 +118,7 @@ export function ContratosContainer({
           toastServerError(err, "Não foi possível baixar o contrato.");
         }
       }}
+      renderMatriculaAtos={(contratoId) => <MatriculaAtosContainer contratoId={contratoId} />}
     />
   );
 }

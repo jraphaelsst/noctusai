@@ -20,6 +20,37 @@ export interface Ator {
   nome: string | null;
 }
 
+/**
+ * Where the título aquisitivo pointer came from (migration 109) — offsets
+ * only. The literal text lives in the matrícula transcription, served by
+ * `GET /api/matriculas/extracoes/{id}/fontes`; this card links there rather
+ * than duplicating the quote.
+ */
+export interface ImovelFonteTituloAquisitivo {
+  extracao_id: string;
+  ato_id: string;
+  char_inicio: number;
+  char_fim: number;
+  origem: "sugerido" | "manual";
+  confirmado_por: Ator | null;
+  confirmado_em: string | null;
+}
+
+export interface ImovelFonteOnusAtoRef {
+  ato_id: string;
+  char_inicio: number;
+  char_fim: number;
+}
+
+/** The ônus source pointer (migration 109) — offsets only, same reason. */
+export interface ImovelFonteOnus {
+  extracao_id: string;
+  atos: ImovelFonteOnusAtoRef[];
+  origem: "sugerido" | "manual";
+  confirmado_por: Ator | null;
+  confirmado_em: string | null;
+}
+
 export interface ImovelDados {
   codigo: string;
   numero_matricula: string | null;
@@ -58,6 +89,13 @@ export interface ImovelDados {
    *  here so the list has ONE home — it lives in `dados_service`, beside the
    *  column it fills. */
   situacoes_onus: string[];
+
+  // ─── Título aquisitivo / ônus sources (migration 109) ──────────────────
+  // Pointers only — `null` until the operator confirms one on the matrícula
+  // page (`GET /api/matriculas/extracoes/{id}/fontes`). Never written by the
+  // PATCH route on this card; read-only here by construction.
+  titulo_aquisitivo_fonte: ImovelFonteTituloAquisitivo | null;
+  onus_fonte: ImovelFonteOnus | null;
 
   updated_at: string | null;
 }

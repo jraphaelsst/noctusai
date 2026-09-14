@@ -284,6 +284,24 @@ describe("ContratosPanel", () => {
     promptSpy.mockRestore();
   });
 
+  it("omits the matrícula section entirely when renderMatriculaAtos is not wired", async () => {
+    const { screen } = await render({ contratos: [contrato()] });
+    expect(screen.queryByTestId("contrato-matricula-toggle-c1")).toBeNull();
+  });
+
+  it("🔴 the matrícula section is a RENDER PROP, not an import — it renders whatever the caller passes, keyed by contratoId", async () => {
+    const renderMatriculaAtos = vi.fn((contratoId: string) => (
+      <div data-testid="matricula-stub">{contratoId}</div>
+    ));
+    const { screen, fireEvent } = await render({
+      contratos: [contrato()],
+      renderMatriculaAtos,
+    });
+    fireEvent.click(screen.getByTestId("contrato-matricula-toggle-c1"));
+    expect(renderMatriculaAtos).toHaveBeenCalledWith("c1");
+    expect(screen.getByTestId("matricula-stub").textContent).toBe("c1");
+  });
+
   it("clicking Abrir / Baixar calls back with the current version id", async () => {
     const onOpen = vi.fn();
     const onDownload = vi.fn();

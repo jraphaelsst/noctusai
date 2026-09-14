@@ -29,12 +29,21 @@ import { api, useAuthStore } from '@noctusai/seed/infra';
 
 export interface MatriculaExtracao {
   id: string;
+  org_id?: string;
+  user_id?: string;
   nome_arquivo: string;
   tamanho_bytes: number;
   num_paginas: number | null;
   texto_extraido: string | null;
   status: 'pendente' | 'processando' | 'concluida' | 'erro';
   erro_mensagem: string | null;
+  /** The imóvel this transcription is filed under, uppercased — `null` for
+   *  the legacy unlinked upload shape. */
+  codigo: string | null;
+  /** The imóvel document store row this extraction was transcribed FROM,
+   *  when it came from `POST /extracoes/de-documento` rather than a direct
+   *  upload. */
+  imovel_documento_id: string | null;
   created_at: string;
 }
 
@@ -47,18 +56,31 @@ function isInFlight(status: MatriculaExtracao['status']): boolean {
  * `ApiError.message` keeps the historical `[<status>] <message>` shape. For a
  * toast the prefix is noise — the backend sentence is the actionable part.
  * Mirrors the same strip in `components/portal-roi/CampanhaManagerDialog.tsx`.
+ * Exported — `useMatriculaEstrutura.ts` reuses it for its own mutations
+ * rather than re-implementing the same regex a third time.
  */
-function readableError(error: Error): string {
+export function readableError(error: Error): string {
   return error.message.replace(/^\[\d+\]\s*/, '').trim();
 }
 
-export function useMatriculaExtracoes() {
+export interface MatriculaExtracoesFiltro {
+  /** Narrow to one imóvel's matrículas — uppercased server-side. */
+  codigo?: string;
+  /** Substring match on `nome_arquivo`. */
+  busca?: string;
+}
+
+export function useMatriculaExtracoes(filtro?: MatriculaExtracoesFiltro) {
   const { user } = useAuthStore();
+  const codigo = filtro?.codigo;
+  const busca = filtro?.busca;
 
   return useQuery({
-    queryKey: ['matricula-extracoes'],
+    // `codigo`/`busca` join the key so switching either refetches instead of
+    // reusing a stale page cached under the unfiltered key.
+    queryKey: ['matricula-extracoes', codigo ?? null, busca ?? null],
     queryFn: async () => {
-      const result = await api.get('/api/matriculas/extracoes');
+      const result = await api.get('/api/matriculas/extracoes', { codigo, busca });
       return (result.data || []) as MatriculaExtracao[];
     },
     enabled: !!user,
@@ -95,13 +117,25 @@ export function useMatriculaExtracao(id?: string) {
   });
 }
 
+export interface UploadMatriculaInput {
+  file: File;
+  /** When set, the PDF is KEPT as that imóvel's `matricula` document and the
+   *  extraction is linked to it — the backend's `codigo` form field. */
+  codigo?: string;
+}
+
 export function useUploadMatricula() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (file: File): Promise<MatriculaExtracao> => {
+    mutationFn: async (input: File | UploadMatriculaInput): Promise<MatriculaExtracao> => {
+      // Accepts a bare `File` too — every existing call site (`Matriculas.tsx`
+      // pre-this-feature) passes one, and widening the signature must not
+      // break them.
+      const { file, codigo } = input instanceof File ? { file: input, codigo: undefined } : input;
       const formData = new FormData();
       formData.append('file', file);
+      if (codigo) formData.append('codigo', codigo);
       const result = await api.upload('/api/matriculas/extrair', formData);
       return result.data as MatriculaExtracao;
     },
@@ -111,6 +145,36 @@ export function useUploadMatricula() {
     },
     onError: (error: Error) => {
       toast.error('Erro ao enviar PDF', { description: readableError(error) });
+    },
+  });
+}
+
+/**
+ * Transcribe a matrícula PDF the imóvel ALREADY holds (no re-upload) —
+ * `POST /api/matriculas/extracoes/de-documento`. 409 when that document
+ * already carries a non-`erro` extraction; the caller surfaces the server's
+ * own message rather than a generic one, since it names which extraction.
+ */
+export function useCriarExtracaoDeDocumento() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      codigo: string;
+      imovelDocumentoId: string;
+    }): Promise<MatriculaExtracao> => {
+      const result = await api.post('/api/matriculas/extracoes/de-documento', {
+        codigo: input.codigo,
+        imovel_documento_id: input.imovelDocumentoId,
+      });
+      return result.data as MatriculaExtracao;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
+      toast.success('Transcrição iniciada!');
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao transcrever', { description: readableError(error) });
     },
   });
 }

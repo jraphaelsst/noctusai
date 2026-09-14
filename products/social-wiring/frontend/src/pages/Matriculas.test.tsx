@@ -16,6 +16,14 @@
  *   6. row click selects → extracted text renders
  *   7. delete asks for confirmation before mutating
  *
+ * F2 additions:
+ *   8. the optional imóvel código travels into the upload mutation
+ *   9. `?extracao=` auto-selects that extraction once (deep-link from
+ *      `ImovelCartorioCard`'s badges)
+ *  10. the Atos+Fontes section only mounts once `concluída`, renders the
+ *      literal act text unchanged, and the fontes confirm/choose-other/clear
+ *      flow calls `useDefinirFontes` with the right patch
+ *
  * Mock strategy (mirrors Marcas.test.tsx / the leads subtab tests):
  *   · ONE vi.mock per module
  *   · hooks are vi.fn()s configured per-test in beforeEach
@@ -46,6 +54,18 @@ vi.mock("@/hooks/useMatriculas", () => ({
   useMatriculaExtracao: mockUseExtracao,
   useUploadMatricula: mockUseUpload,
   useDeleteExtracao: mockUseDelete,
+}));
+
+// ─── F2: atos + fontes hook mocks ────────────────────────────────────────────
+
+const mockUseAtos = vi.fn();
+const mockUseFontes = vi.fn();
+const mockUseDefinirFontes = vi.fn();
+
+vi.mock("@/hooks/useMatriculaEstrutura", () => ({
+  useMatriculaAtos: mockUseAtos,
+  useMatriculaFontes: mockUseFontes,
+  useDefinirFontes: mockUseDefinirFontes,
 }));
 
 // ─── Component mocks ─────────────────────────────────────────────────────────
@@ -103,6 +123,7 @@ function makeQuery(overrides: Record<string, unknown> = {}) {
 const mockUploadMutate = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockRefetch = vi.fn();
+const mockDefinirFontesMutate = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -110,13 +131,28 @@ beforeEach(() => {
   mockUseExtracao.mockReturnValue(makeQuery({ data: null }));
   mockUseUpload.mockReturnValue({ mutate: mockUploadMutate, isPending: false });
   mockUseDelete.mockReturnValue({ mutate: mockDeleteMutate, isPending: false });
+  mockUseAtos.mockReturnValue(makeQuery({ data: { atos: [] } }));
+  mockUseFontes.mockReturnValue(
+    makeQuery({ data: { sugestoes: { titulo_aquisitivo: null, onus: [] }, titulo_aquisitivo: null, onus: null } }),
+  );
+  mockUseDefinirFontes.mockReturnValue({ mutate: mockDefinirFontesMutate, isPending: false });
 });
 
-async function renderPage() {
+async function renderPage(initialPath = "/matriculas") {
   const React = (await import("react")).default;
   const { default: Matriculas } = await import("./Matriculas");
   const rtl = await import("@testing-library/react");
-  return { ...rtl.render(React.createElement(Matriculas)), fireEvent: rtl.fireEvent };
+  const { MemoryRouter } = await import("react-router-dom");
+  return {
+    ...rtl.render(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: [initialPath] },
+        React.createElement(Matriculas),
+      ),
+    ),
+    fireEvent: rtl.fireEvent,
+  };
 }
 
 function pdf(name = "matricula.pdf") {
@@ -284,5 +320,177 @@ describe("Matriculas — delete", () => {
 
     fireEvent.click(await findByText("Excluir", { selector: "button" }));
     expect(mockDeleteMutate).toHaveBeenCalledWith("extracao-9");
+  });
+});
+
+// ─── F2: optional imóvel código on upload ────────────────────────────────────
+
+describe("Matriculas — upload with an optional imóvel código", () => {
+  it("uploads with `{file, codigo}` once a código is typed", async () => {
+    const { getByTestId, fireEvent } = await renderPage();
+
+    fireEvent.change(getByTestId("matricula-codigo-input"), { target: { value: "one9001" } });
+    fireEvent.change(getByTestId("matricula-file-input"), { target: { files: [pdf()] } });
+
+    expect(mockUploadMutate).toHaveBeenCalledTimes(1);
+    const [input] = mockUploadMutate.mock.calls[0];
+    expect(input).toEqual({ file: expect.any(File), codigo: "one9001" });
+  });
+
+  it("uploads a bare File when no código was typed — unchanged pre-F2 behaviour", async () => {
+    const { getByTestId, fireEvent } = await renderPage();
+    fireEvent.change(getByTestId("matricula-file-input"), { target: { files: [pdf()] } });
+    expect(mockUploadMutate.mock.calls[0][0]).toBeInstanceOf(File);
+  });
+});
+
+// ─── F2: `?extracao=` deep-link ───────────────────────────────────────────────
+
+describe("Matriculas — ?extracao= deep-link", () => {
+  it("🔴 auto-selects the extraction named in the query string", async () => {
+    mockUseExtracao.mockImplementation((id?: string) =>
+      makeQuery({ data: id ? makeExtracao({ id, texto_extraido: "texto do link" }) : null }),
+    );
+    const { getByTestId } = await renderPage("/matriculas?extracao=extracao-77");
+    expect(getByTestId("matricula-texto-extraido").textContent).toContain("texto do link");
+  });
+});
+
+// ─── F2: Atos + Fontes section ────────────────────────────────────────────────
+
+function makeAto(over: Record<string, unknown> = {}) {
+  return {
+    id: "ato-1",
+    ordem: 0,
+    kind: "R",
+    numero: 1,
+    char_inicio: 0,
+    char_fim: 40,
+    header_inicio: null,
+    header_fim: null,
+    rotulo: "R-1 Compra e venda",
+    texto: "R-1  Compra e venda a Joao,  CPF incorreto proposiltalmente.",
+    ...over,
+  };
+}
+
+describe("Matriculas — Atos + Fontes (only once concluída)", () => {
+  it("does NOT mount the section while processing", async () => {
+    mockUseExtracao.mockReturnValue(makeQuery({ data: makeExtracao({ status: "processando" }) }));
+    const { queryByText } = await renderPage();
+    expect(queryByText("Atos e Fontes")).toBeNull();
+  });
+
+  it("🔴 renders each act's literal text unchanged — double spaces and a typo included", async () => {
+    mockUseExtracao.mockReturnValue(makeQuery({ data: makeExtracao({ texto_extraido: "texto" }) }));
+    mockUseAtos.mockReturnValue(makeQuery({ data: { atos: [makeAto()] } }));
+    const { getByTestId, fireEvent } = await renderPage();
+
+    fireEvent.click(getByTestId("matriculas-ato-toggle-ato-1"));
+    expect(getByTestId("matriculas-ato-texto-ato-1").textContent).toBe(
+      "R-1  Compra e venda a Joao,  CPF incorreto proposiltalmente.",
+    );
+  });
+
+  it("confirming the título aquisitivo suggestion PUTs its ato_id", async () => {
+    mockUseExtracao.mockReturnValue(makeQuery({ data: makeExtracao({ texto_extraido: "texto" }) }));
+    mockUseFontes.mockReturnValue(
+      makeQuery({
+        data: {
+          sugestoes: {
+            titulo_aquisitivo: { ato_id: "ato-1", rotulo: "R-1", termo: "compra e venda" },
+            onus: [],
+          },
+          titulo_aquisitivo: null,
+          onus: null,
+        },
+      }),
+    );
+    const { getByTestId, fireEvent } = await renderPage();
+
+    fireEvent.click(getByTestId("matriculas-titulo-confirmar-sugestao"));
+    expect(mockDefinirFontesMutate).toHaveBeenCalledWith({ titulo_aquisitivo_ato_id: "ato-1" });
+  });
+
+  it("🔴 clearing a confirmed título aquisitivo sends null, not an omitted key", async () => {
+    mockUseExtracao.mockReturnValue(makeQuery({ data: makeExtracao({ texto_extraido: "texto" }) }));
+    mockUseFontes.mockReturnValue(
+      makeQuery({
+        data: {
+          sugestoes: { titulo_aquisitivo: null, onus: [] },
+          titulo_aquisitivo: {
+            extracao_id: "extracao-1",
+            ato_id: "ato-1",
+            char_inicio: 0,
+            char_fim: 10,
+            texto: "R-1 compra e venda",
+            origem: "sugerido",
+            confirmado_por: { id: "u1", nome: "Ana" },
+            confirmado_em: "2026-02-01T00:00:00Z",
+          },
+          onus: null,
+        },
+      }),
+    );
+    const { getByTestId, fireEvent } = await renderPage();
+
+    fireEvent.click(getByTestId("matriculas-titulo-limpar"));
+    expect(mockDefinirFontesMutate).toHaveBeenCalledWith({ titulo_aquisitivo_ato_id: null });
+  });
+
+  it("using ônus suggestions PUTs only the still-suggested ato ids", async () => {
+    mockUseExtracao.mockReturnValue(makeQuery({ data: makeExtracao({ texto_extraido: "texto" }) }));
+    mockUseFontes.mockReturnValue(
+      makeQuery({
+        data: {
+          sugestoes: {
+            titulo_aquisitivo: null,
+            onus: [
+              { ato_id: "ato-2", rotulo: "R-2", tipo: "hipoteca", sugerido: true, cancelamento_citado_por: [] },
+              { ato_id: "ato-3", rotulo: "AV-3", tipo: "hipoteca", sugerido: false, cancelamento_citado_por: ["ato-4"] },
+            ],
+          },
+          titulo_aquisitivo: null,
+          onus: null,
+        },
+      }),
+    );
+    const { getByTestId, fireEvent } = await renderPage();
+
+    fireEvent.click(getByTestId("matriculas-onus-usar-sugestoes"));
+    expect(mockDefinirFontesMutate).toHaveBeenCalledWith({ onus_ato_ids: ["ato-2"] });
+  });
+
+  it("🔴 clearing a confirmed ônus sends an empty list", async () => {
+    mockUseExtracao.mockReturnValue(makeQuery({ data: makeExtracao({ texto_extraido: "texto" }) }));
+    mockUseFontes.mockReturnValue(
+      makeQuery({
+        data: {
+          sugestoes: { titulo_aquisitivo: null, onus: [] },
+          titulo_aquisitivo: null,
+          onus: {
+            extracao_id: "extracao-1",
+            atos: [{ ato_id: "ato-2", char_inicio: 0, char_fim: 5, texto: "x" }],
+            origem: "manual",
+            confirmado_por: { id: "u1", nome: "Ana" },
+            confirmado_em: "2026-02-01T00:00:00Z",
+          },
+        },
+      }),
+    );
+    const { getByTestId, fireEvent } = await renderPage();
+
+    fireEvent.click(getByTestId("matriculas-onus-limpar"));
+    expect(mockDefinirFontesMutate).toHaveBeenCalledWith({ onus_ato_ids: [] });
+  });
+
+  it("shows the error branches — never a silent empty catalog", async () => {
+    mockUseExtracao.mockReturnValue(makeQuery({ data: makeExtracao({ texto_extraido: "texto" }) }));
+    mockUseAtos.mockReturnValue(makeQuery({ isError: true, data: undefined }));
+    mockUseFontes.mockReturnValue(makeQuery({ isError: true, data: undefined }));
+    const { getByTestId } = await renderPage();
+
+    expect(getByTestId("matriculas-atos-erro")).toBeTruthy();
+    expect(getByTestId("matriculas-fontes-erro")).toBeTruthy();
   });
 });

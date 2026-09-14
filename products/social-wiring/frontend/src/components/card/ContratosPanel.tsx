@@ -19,9 +19,17 @@
  * single required file with no other fields to collect, so it is a plain
  * hidden input behind a button — the same shape `FinanciamentoPanel`'s
  * per-slot upload uses — rather than a second modal for one field.
+ *
+ * 🔴 `renderMatriculaAtos` IS A RENDER PROP, NOT AN IMPORT — same reason
+ * `ClienteDetailModal.renderDocumentosDePessoa` is one. This file stays
+ * presentational (S3): the "Descrição do imóvel (matrícula)" section fetches
+ * — `useMatriculaExtracoes` / `useMatriculaAtos` / `useContratoAtos` /
+ * `useDefinirContratoAtos` all live behind it — and a `card/**` file may not
+ * call those hooks directly. The caller supplies `MatriculaAtosContainer`
+ * (in `components/`, not `components/card/`) through this callback instead.
  */
 import { useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, ReactNode } from "react";
 import {
   AlertCircle,
   ChevronDown,
@@ -79,6 +87,10 @@ interface Props {
   onDeleteContrato: (contratoId: string, motivo: string) => void;
   onOpen: (contratoId: string, versaoId: string) => void;
   onDownload: (contratoId: string, versaoId: string) => void;
+  /** Renders the "Descrição do imóvel (matrícula)" section for one contract.
+   *  Optional — omitted entirely (not even the collapsible header) while the
+   *  caller has not wired it, so this panel never breaks when nobody has. */
+  renderMatriculaAtos?: (contratoId: string) => ReactNode;
 }
 
 export default function ContratosPanel({
@@ -99,6 +111,7 @@ export default function ContratosPanel({
   onDeleteContrato,
   onOpen,
   onDownload,
+  renderMatriculaAtos,
 }: Props) {
   const lista = contratos ?? [];
 
@@ -167,6 +180,7 @@ export default function ContratosPanel({
               onDeleteContrato={(motivo) => onDeleteContrato(contrato.id, motivo)}
               onOpen={(versaoId) => onOpen(contrato.id, versaoId)}
               onDownload={(versaoId) => onDownload(contrato.id, versaoId)}
+              renderMatriculaAtos={renderMatriculaAtos}
             />
           ))}
         </div>
@@ -187,6 +201,7 @@ function ContratoCard({
   onDeleteContrato,
   onOpen,
   onDownload,
+  renderMatriculaAtos,
 }: {
   contrato: ContratoOut;
   addingVersao: boolean;
@@ -199,10 +214,12 @@ function ContratoCard({
   onDeleteContrato: (motivo: string) => void;
   onOpen: (versaoId: string) => void;
   onDownload: (versaoId: string) => void;
+  renderMatriculaAtos?: (contratoId: string) => ReactNode;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [historicoAberto, setHistoricoAberto] = useState(false);
+  const [matriculaAberta, setMatriculaAberta] = useState(false);
 
   const atual = contrato.versao_atual;
   // numero DESC — the newest revision reads first.
@@ -388,6 +405,26 @@ function ContratoCard({
                   onExcluir={() => excluirVersao(versao.id)}
                 />
               ))}
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {renderMatriculaAtos && (
+          <Collapsible open={matriculaAberta} onOpenChange={setMatriculaAberta}>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                data-testid={`contrato-matricula-toggle-${contrato.id}`}
+              >
+                <ChevronDown
+                  className={`h-3 w-3 transition-transform ${matriculaAberta ? "rotate-180" : ""}`}
+                />
+                Descrição do imóvel (matrícula)
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              {renderMatriculaAtos(contrato.id)}
             </CollapsibleContent>
           </Collapsible>
         )}
