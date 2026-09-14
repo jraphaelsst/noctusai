@@ -12,6 +12,14 @@ agents product gets its academia token"). The scaffold's placeholder
 ``example_router`` / ``webhook_router`` skeletons are retired — this
 product no longer has a "generic CRUD demo" surface, only the real API.
 
+A1c adds the contract §B.6 admin import route (``import_router``),
+``POST /api/import`` — a JSONL-or-multipart knowledge-bundle upload, so
+it needs its own ``max_body_path_overrides`` entry (see
+``_MAX_BODY_PATH_OVERRIDES`` below); the platform's 1 MB default exists
+to DoS-guard inbound webhooks, and a legitimate bundle upload can
+legitimately approach the route's own 20 MB business cap
+(``app/importer/bundle.py::MAX_BUNDLE_BYTES``).
+
 LLM access is inherited automatically — `create_product_app()` auto-wires
 credential resolution + the default multi-provider LLMConfig. This
 product currently has no LLM-backed feature.
@@ -30,11 +38,24 @@ from app.dependencies import (
 from app.rate_limit import limiter
 from app.routers.content_router import router as content_router
 from app.routers.decisions_router import router as decisions_router
+from app.routers.import_router import router as import_router
 from app.routers.kb_router import router as kb_router
 from app.routers.questions_router import router as questions_router
 from app.routers.roadmap_router import router as roadmap_router
 from app.routers.sources_router import router as sources_router
 from app.routers.timeline_router import router as timeline_router
+
+# Contract §B.6: the import route's own business cap is 20 MB
+# (`app/importer/bundle.py::MAX_BUNDLE_BYTES`) — this outer bound sits
+# ~25% above it so a clear ``422 bundle_too_large`` (raised once the
+# route reads the body) is what a caller sees for an over-cap upload,
+# never an opaque 413 from the outer middleware. No dynamic path
+# segment here, so the plain exact path is enough (see
+# `products/igig/backend/app/main.py`'s `_MAX_BODY_PATH_OVERRIDES` for
+# the wildcard-pattern footgun this avoids when a route DOES have one).
+_MAX_BODY_PATH_OVERRIDES = {
+    "/api/import": 25 * 1024 * 1024,  # 25 MB
+}
 
 # ONE combined router (`/api/auth` + `/api/settings/api-tokens`) — built
 # directly via the factory (NOT `standard_routers=["auth"]`) so it gets
@@ -67,7 +88,9 @@ app = create_product_app(
         content_router,
         timeline_router,
         sources_router,
+        import_router,
     ],
+    max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     # Contract §D: a missing/empty approval-assertion key list must
     # refuse to boot in prod — a product-token write with no key
     # configured to verify against would otherwise 500 (or worse,

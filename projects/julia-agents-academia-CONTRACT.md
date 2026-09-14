@@ -314,6 +314,8 @@ There is no PUT and no DELETE.
 
 `POST /api/import` accepts JSONL (`application/x-ndjson`) or multipart `bundle`. Scope `academia:import`, SSO admin only. Response: `{verificacao: {revisoes_git: int, revisoes_importadas: int, entidades: {<entity_type>: int}, hashes_head_ok: bool, codigos: {D: int, Q: int, T: int}}, avisos: string[]}`.
 
+**Status: `200`** (settled at A1c integration, 2026-09-14). The call returns a verification report, not a single addressable created resource — there is no new URI for a client to `GET` back, unlike every `201` elsewhere in §B. `200` is the correct member of the taxonomy for that shape, matching a search/report endpoint rather than a create endpoint.
+
 **Behaviour:**
 - **Idempotent.** A re-import of the same bundle is a no-op; the dedup key is `git_sha` + path.
 - **All-or-nothing:** a single transaction.
