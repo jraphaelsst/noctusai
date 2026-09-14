@@ -40,6 +40,7 @@ import unicodedata
 from typing import Optional
 
 from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_is_valid
+from noctusai_lib.integrations.documents.cpf import only_digits as _cpf_only_digits
 from noctusai_lib.integrations.documents.labels import Achado, label_before
 
 #: Same window as every sibling — these are the same document layouts.
@@ -271,4 +272,31 @@ def find_rg_orgao(text: str) -> tuple[Optional[str], str]:
     return (achados[0], "baixa")
 
 
-__all__ = ["find_rg", "find_rg_orgao", "normalize", "only_alnum"]
+def is_same_as_cpf(rg: Optional[str], cpf: Optional[str]) -> bool:
+    """Does this RG collapse onto this CPF once punctuation is dropped?
+
+    🔴 THE REAL BUG THIS GUARDS AGAINST
+    -------------------------------------
+    A qualificação form (or a copy-paste import) puts the CPF into the RG
+    field verbatim — a signatory's card is on file, the operator opens two
+    boxes, and the same eleven digits land in both. Nothing about either
+    value is individually wrong: the CPF is a real, valid CPF; the "RG" is
+    the right *shape* for one of the many states that issue bare numeric
+    RGs. Only comparing the two catches it.
+
+    `only_alnum` is the RG's own comparison form (mirrors
+    `social_wiring.normalizar_documento`); a CPF run through it strips to
+    the same eleven characters `cpf.only_digits` produces, since a CPF's
+    only punctuation is dots and a dash. Comparing the two normalised forms
+    therefore catches the copy regardless of which field carried the
+    punctuation, or whether either did.
+
+    Either value missing returns `False` — there is nothing to compare, and
+    "nothing" is not "the same".
+    """
+    if not rg or not cpf:
+        return False
+    return only_alnum(rg) == _cpf_only_digits(cpf)
+
+
+__all__ = ["find_rg", "find_rg_orgao", "is_same_as_cpf", "normalize", "only_alnum"]

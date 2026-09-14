@@ -72,7 +72,10 @@ class TextSource(str, Enum):
 #: product's `CampoExtraido` table mirrors it, and adding a field means adding
 #: one entry here plus its three attributes below. Hand-written per-field
 #: predicates were what this replaced — see the class docstring's N=3 note.
-CAMPOS: tuple[str, ...] = ("data_nascimento", "nome", "genero", "cpf", "rg")
+CAMPOS: tuple[str, ...] = (
+    "data_nascimento", "nome", "genero", "cpf", "rg",
+    "estado_civil", "regime_bens",
+)
 
 
 @dataclass(frozen=True)
@@ -129,6 +132,18 @@ class IdentityFields:
     next change is worth more once it has been tested than it was as a
     prediction — the derivation is now load-bearing at five fields, and
     the next one costs the same.
+
+    **AND `estado_civil` / `regime_bens` ARRIVED, ON THE SAME TERMS —
+    with one twist.** Contract automation F3 (social-wiring migration
+    097/103) needed both: two `CAMPOS` entries, two triples, two alias
+    pairs, no change to the derivation. The twist is that their finder
+    (`civil_status.py`) is the first in the family whose "two labelled
+    readings disagree" case is not always a misread — a certidão's
+    AVERBAÇÃO (divórcio, óbito, conversão de união estável) amends the
+    original registro, so a later reading straddling an AVERBAÇÃO marker
+    is a timeline, not noise, and wins instead of collapsing to
+    `nenhuma`. That resolution rule lives entirely in the finder; it did
+    not need a change here.
 
     The one thing five fields DID teach: not every extracted value is a
     CAMPO. `rg_orgao` is an attribute here and deliberately absent from
@@ -190,6 +205,26 @@ class IdentityFields:
     #: `persistable_rg_orgao` that no correct consumer should ever consult.
     rg_orgao: Optional[str] = None
     rg_orgao_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+
+    # ─── Estado civil (marital status) ─────────────────────────────────
+    #: Normalised to a closed snake_case vocabulary (`civil_status.
+    #: ESTADO_CIVIL_VALORES`) rather than to the document's own wording —
+    #: unlike `genero`, this field gates whether a spouse must sign an
+    #: instrument (CC art. 1.647), so a consumer branches on the VALUE,
+    #: not on its spelling. See `civil_status.py` for why.
+    estado_civil: Optional[str] = None
+    estado_civil_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    estado_civil_rotulo: Optional[str] = None
+
+    # ─── Regime de bens ─────────────────────────────────────────────────
+    #: Only meaningful when `estado_civil` is a married state (migration
+    #: 097's own comment on the consuming column). Read from the
+    #: registro unless a later AVERBAÇÃO changes it — see
+    #: `civil_status.find_regime_bens`. Vocabulary: `civil_status.
+    #: REGIME_BENS_VALORES`.
+    regime_bens: Optional[str] = None
+    regime_bens_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    regime_bens_rotulo: Optional[str] = None
 
     # ─── Provenance, shared by every field on this result ─────────────
     source: TextSource = TextSource.NENHUMA
@@ -263,6 +298,14 @@ class IdentityFields:
         return self.persistable("rg")
 
     @property
+    def persistable_estado_civil(self) -> bool:
+        return self.persistable("estado_civil")
+
+    @property
+    def persistable_regime_bens(self) -> bool:
+        return self.persistable("regime_bens")
+
+    @property
     def sugestao_data_nascimento(self) -> bool:
         return self.sugestao("data_nascimento")
 
@@ -281,6 +324,14 @@ class IdentityFields:
     @property
     def sugestao_rg(self) -> bool:
         return self.sugestao("rg")
+
+    @property
+    def sugestao_estado_civil(self) -> bool:
+        return self.sugestao("estado_civil")
+
+    @property
+    def sugestao_regime_bens(self) -> bool:
+        return self.sugestao("regime_bens")
 
 
 @runtime_checkable

@@ -39,6 +39,10 @@ import logging
 from typing import Optional
 
 from noctusai_lib.integrations.documents.birthdate import find_birthdate
+from noctusai_lib.integrations.documents.civil_status import (
+    find_estado_civil,
+    find_regime_bens,
+)
 from noctusai_lib.integrations.documents.cpf import find_cpf
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
@@ -127,6 +131,15 @@ class LadderIdentityExtractor:
         rg_orgao, rg_orgao_conf = find_rg_orgao(text)
         rg_orgao_conf = self._temper_name_confidence(rg_orgao_conf, source)
 
+        # Estado civil / regime de bens are NOT tempered by source, for the
+        # same reason `genero` is not: both parsers require an explicit
+        # label, an AVERBAÇÃO event keyword, or the regime-de-bens phrase
+        # itself (structural evidence, like the CPF check digit) — none of
+        # which an OCR misread can turn into a DIFFERENT valid vocabulary
+        # token. It can only turn a real reading into nothing.
+        estado_civil, estado_civil_conf, estado_civil_label = find_estado_civil(text)
+        regime_bens, regime_bens_conf, regime_bens_label = find_regime_bens(text)
+
         return IdentityFields(
             kind=kind,
             data_nascimento=data,
@@ -146,6 +159,12 @@ class LadderIdentityExtractor:
             rg_rotulo=rg_label,
             rg_orgao=rg_orgao,
             rg_orgao_confianca=ExtractionConfidence(rg_orgao_conf),
+            estado_civil=estado_civil,
+            estado_civil_confianca=ExtractionConfidence(estado_civil_conf),
+            estado_civil_rotulo=estado_civil_label,
+            regime_bens=regime_bens,
+            regime_bens_confianca=ExtractionConfidence(regime_bens_conf),
+            regime_bens_rotulo=regime_bens_label,
             source=source,
         )
 

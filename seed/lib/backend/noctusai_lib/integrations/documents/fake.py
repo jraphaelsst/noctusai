@@ -89,6 +89,12 @@ class FakeIdentityExtractor:
             rg_rotulo="REGISTRO GERAL",
             rg_orgao="SSP/SP",
             rg_orgao_confianca=ExtractionConfidence.ALTA,
+            estado_civil="casado",
+            estado_civil_confianca=ExtractionConfidence.ALTA,
+            estado_civil_rotulo="ESTADO CIVIL",
+            regime_bens="comunhao_parcial",
+            regime_bens_confianca=ExtractionConfidence.ALTA,
+            regime_bens_rotulo="COMUNHAO PARCIAL DE BENS",
             source=TextSource.TEXT_LAYER,
         )
 

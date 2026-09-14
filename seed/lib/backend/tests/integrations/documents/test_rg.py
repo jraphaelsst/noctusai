@@ -18,7 +18,7 @@ answer rather than an obvious one:
 """
 from __future__ import annotations
 
-from noctusai_lib.integrations.documents import find_rg, find_rg_orgao
+from noctusai_lib.integrations.documents import find_rg, find_rg_orgao, is_same_as_cpf
 from noctusai_lib.integrations.documents.rg import only_alnum
 
 #: São Paulo's shape: dotted thousands plus an alphanumeric check character.
@@ -159,3 +159,23 @@ class TestNothing:
 
     def test_a_document_with_no_rg(self):
         assert find_rg("NOME FULANO DE TAL SEXO MASCULINO") == (None, "nenhuma", None)
+
+
+class TestIsSameAsCpf:
+    """The real-contract bug: an RG field carrying the CPF verbatim."""
+
+    def test_flags_the_exact_copy(self):
+        assert is_same_as_cpf(CPF, CPF) is True
+
+    def test_flags_regardless_of_punctuation_on_either_side(self):
+        assert is_same_as_cpf("41295423898", CPF) is True
+        assert is_same_as_cpf(CPF, "41295423898") is True
+
+    def test_a_real_rg_is_not_flagged(self):
+        assert is_same_as_cpf(SP, CPF) is False
+
+    def test_missing_either_value_is_not_a_match(self):
+        assert is_same_as_cpf(None, CPF) is False
+        assert is_same_as_cpf(SP, None) is False
+        assert is_same_as_cpf(None, None) is False
+        assert is_same_as_cpf("", CPF) is False

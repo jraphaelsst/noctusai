@@ -52,10 +52,16 @@ consumer must honour both:
   overwrite must not be driven by a vision-pass guess.
 """
 from noctusai_lib.integrations.documents.birthdate import find_birthdate, normalize
+from noctusai_lib.integrations.documents.civil_status import (
+    ESTADO_CIVIL_VALORES,
+    REGIME_BENS_VALORES,
+    find_estado_civil,
+    find_regime_bens,
+)
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
 from noctusai_lib.integrations.documents.cpf import find_cpf
 from noctusai_lib.integrations.documents.gender import find_gender
-from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao
+from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao, is_same_as_cpf
 from noctusai_lib.integrations.documents.ladder import (
     DocumentTextLadder,
     looks_like_pdf,
@@ -121,6 +127,7 @@ def __getattr__(name: str):  # pragma: no cover - lazy proxy
 __all__ = [
     "DocumentTextLadder",
     "DocumentTranscriber",
+    "ESTADO_CIVIL_VALORES",
     "ExtractionConfidence",
     "FakeDocumentTranscriber",
     "FakeIdentityExtractor",
@@ -133,17 +140,21 @@ __all__ = [
     "LadderMatriculaExtractor",
     "MatriculaExtractor",
     "MatriculaFields",
+    "REGIME_BENS_VALORES",
     "TextSource",
     "TranscribedPage",
     "Transcription",
     "classify_kind",
     "find_birthdate",
     "find_cpf",
+    "find_estado_civil",
     "find_gender",
     "find_matricula",
     "find_name",
+    "find_regime_bens",
     "find_rg",
     "find_rg_orgao",
+    "is_same_as_cpf",
     "looks_like_a_name",
     "looks_like_pdf",
     "make_document_transcriber",
