@@ -38,6 +38,8 @@ export const TIPO_LABEL_CLIENTE: Record<string, string> = {
   outro: "Outro documento",
   rg: "RG",
   cpf: "CPF",
+  certidao_casamento: "Certidão de casamento",
+  certidao_nascimento: "Certidão de nascimento",
 };
 
 /**
