@@ -44,6 +44,7 @@ from noctusai_lib.api.auth.session import (
     AuthContext,
     FakeApiTokenResolver,
     SupabaseApiTokenResolver,
+    make_api_token_audit_writer,
     make_get_auth_context,
 )
 from noctusai_seed import make_get_settings
@@ -271,6 +272,35 @@ def _get_api_token_resolver():
                 get_admin_client(), schema="social_wiring"
             )
     return _api_token_resolver
+
+
+_audit_writer = None
+
+
+def _get_audit_writer():
+    """Lazy singleton for the product-token audit trail (contract §B.0).
+
+    Mirrors `_get_api_token_resolver`: the seed factory returns the in-memory
+    Fake when no admin client is given (sqlite/dev) and the Supabase writer
+    against `social_wiring.api_token_audit` (migration 105) otherwise."""
+    global _audit_writer
+    if _audit_writer is None:
+        admin = None if _use_sqlite else get_admin_client()
+        _audit_writer = make_api_token_audit_writer(admin, schema="social_wiring")
+    return _audit_writer
+
+
+class LazyApiTokenAuditWriter:
+    """`ApiTokenAuditWriter` proxy for `app.main`'s `ApiTokenAuditMiddleware`.
+
+    The middleware is registered at import time, before the admin client is
+    safe to build, so it receives this proxy and the real writer is created on
+    the first `.record()` call. The same shape exists in academia-de-reciclagem;
+    N=2 is triaged in the auto-improvement ledger (destination: the seed
+    middleware accepts a writer factory)."""
+
+    async def record(self, **kwargs):
+        return await _get_audit_writer().record(**kwargs)
 
 
 async def _legacy_jwt_resolver(token: str) -> AuthContext | None:

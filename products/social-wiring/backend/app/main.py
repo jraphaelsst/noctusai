@@ -46,6 +46,9 @@ from dataclasses import dataclass, field
 
 from noctusai_lib.config.credentials import register_credential_override
 from noctusai_seed import create_product_app
+from noctusai_lib.api.auth.session import ApiTokenAuditMiddleware
+
+from app.dependencies import LazyApiTokenAuditWriter
 
 from app.config import settings
 from app.lifespan import on_shutdown, on_startup
@@ -574,3 +577,10 @@ app = create_product_app(
     # `app/services/ai_consent_features.py`:
     # consent_features="app.services.ai_consent_features",
 )
+
+# Contract §B.0 / §E.6: audit every call resolved from a product token
+# (`social_wiring.api_token_audit`, created by migration 105), best-effort and
+# logged loudly on failure, never altering the response. Added after
+# `create_product_app` so the middleware wraps the fully built app. The first
+# product-token surface here is the agents bridge (`agents_bridge_router`).
+app.add_middleware(ApiTokenAuditMiddleware, audit_writer=LazyApiTokenAuditWriter())

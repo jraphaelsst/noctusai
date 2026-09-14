@@ -145,22 +145,20 @@ def _user_ctx(*, org_id: UUID = _ORG) -> AuthContext:
 
 
 def _error_code(resp) -> str:
-    """Extract the route's ``detail["code"]`` from the platform's
-    standard error envelope.
+    """Return the route's machine ``code`` from the contract §0 error body.
 
-    ``noctusai_lib.primitives.exceptions.http_exception_handler`` wraps
-    every ``HTTPException`` into ``{"error": {"code": "FORBIDDEN"|...,
-    "message": str(exc.detail)}}`` — the ENVELOPE'S OWN ``code`` is
-    coarse (one of ``FORBIDDEN``/``UNAUTHORIZED``/``NOT_FOUND``/...,
-    keyed off the HTTP status only), and ``str(...)`` of a dict
-    ``detail`` collapses it to Python's ``repr``-ish string form. The
-    route's own fine-grained ``code`` (``product_required`` /
-    ``scope_missing`` / ``issuer_not_allowed``) survives only inside
-    that stringified message — this helper digs it back out rather
-    than each test re-deriving the substring shape."""
-    message = resp.json()["error"]["message"]
-    assert "'code': '" in message, message
-    return message.split("'code': '", 1)[1].split("'", 1)[0]
+    ``noctusai_lib.primitives.exceptions.http_exception_handler`` passes an
+    ``HTTPException(detail={"detail": ..., "code": ...})`` through VERBATIM,
+    so the client receives the flat seed error shape
+    ``{"detail": "<msg>", "code": "<machine_code>"}``. Plain string details
+    still use the legacy ``{"error": {...}}`` envelope, but every bridge
+    error is raised in the seed shape. The assertion pins the shape itself:
+    a regression back to the legacy wrapper fails here instead of being
+    silently re-parsed.
+    """
+    body = resp.json()
+    assert set(body) == {"detail", "code"}, body
+    return body["code"]
 
 
 def _seed_connection(
