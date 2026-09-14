@@ -13,6 +13,15 @@ httpx>=0.27.0
 PyJWT==2.13.0
 slowapi>=0.1.9
 
+# Julia's runtime (contract §E.5/§E.9, G2). Pinned exactly — the launch
+# options factory (app/runtime/claude_runtime.py::build_launch_options)
+# and the plugin-invariant/wrapper tests are written against this exact
+# API surface (verified live against 0.2.152's own source, 2026-09-14).
+claude-agent-sdk==0.2.152
+# app/agents/julia/spec.yaml (skills list, max_turns) — read once by
+# app.runtime.build_julia_spec.
+PyYAML==6.0.3
+
 # Observability (optional)
 sentry-sdk[fastapi]==1.45.1
 

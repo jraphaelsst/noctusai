@@ -93,6 +93,8 @@ openpyxl>=3.1.0                 # social-wiring (leads xlsx importer)
 pdfminer.six>=20231228          # social-wiring (pdf extract)
 psycopg2-binary>=2.9.0          # daily-life
 python-docx>=1.1.0              # knowledge-extractor (docx_export service)
+claude-agent-sdk==0.2.152       # agents (Julia's runtime, contract §E.5/§E.9 — G2)
+PyYAML==6.0.3                   # agents (app/agents/julia/spec.yaml)
 
 # Testing
 pytest>=8.0.0
