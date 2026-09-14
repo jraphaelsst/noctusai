@@ -142,6 +142,16 @@ dependencies = [
     # `requirements.txt` already declares it for `knowledge-extractor`'s
     # `docx_export.py`; this is the seed's own, separate declaration.
     "python-docx>=1.1.0",
+    # ABNT PDF rendering — noctusai_lib.integrations.documents.abnt's
+    # `render_abnt_pdf` (core Times fonts, no system libs, no Cairo/Pango —
+    # same "pure Python" rationale as social-wiring's `roteiro_pdf_service`
+    # and `ads_export_service`, which already depend on it via
+    # `products/social-wiring/backend/requirements.txt`; this is the
+    # seed's own, separate declaration, imported lazily inside
+    # `render_abnt_pdf` so a caller who only needs `render_word_html` or
+    # the pure-Python paragraph builders is not forced to have it
+    # importable. Added 2026-09-14 (abnt-formatting-CONTRACT Slice S2).
+    "reportlab>=4.0.0",
 ]
 
 

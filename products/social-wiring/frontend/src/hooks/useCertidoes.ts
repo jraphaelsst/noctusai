@@ -20,11 +20,16 @@
  * pairs that with `isPending && !data` for the skeleton (never `isLoading`,
  * never a bare `isFetching`) — see KB § PATTERNS/frontend/lying-loading-state.md.
  */
+import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuthStore } from "@noctusai/seed/infra";
+import { copyRichText } from "@noctusai/lib/clipboard";
 
 import { api } from "@/lib/api";
+import { apiUrl } from "@/lib/apiBase";
+import { authenticatedFetch, triggerBlobDownload } from "@/lib/file-download";
+import { readableError, type FormatRange } from "@/hooks/useMatriculas";
 import type {
   ResultadoOrigem,
   ResultadoPatchInput,
@@ -71,6 +76,19 @@ export interface CertidaoResultado {
    * need a second fetch to label its own list. `null`/absent elsewhere. */
   consulta_nome?: string | null;
   consulta_documento?: string | null;
+  /** Migration 113 (ABNT formatting project, `projects/abnt-formatting-
+   *  CONTRACT.md` § 4) — `GENERATED ALWAYS AS (texto_extraido IS NOT NULL)`.
+   *  Gates the "Transcrição PDF" / "Copiar" actions; `false`/absent hides
+   *  both (a failed transcription never surfaces as a broken button). */
+  tem_transcricao?: boolean;
+}
+
+/** `GET /api/certidoes/resultados/{id}/transcricao` envelope's `data` — the
+ *  "Copiar" action's source (ABNT formatting project § 4). */
+export interface TranscricaoResultado {
+  texto: string;
+  texto_html: string;
+  formatacao: FormatRange[];
 }
 
 export interface TjspFilaItem {
@@ -418,4 +436,87 @@ export function useMintResultadoUrl() {
       toast.error("Erro ao obter arquivo", { description: error.message });
     },
   });
+}
+
+// ─── ABNT formatting project — transcript retrieval (migration 113) ────────
+//
+// `projects/abnt-formatting-CONTRACT.md` § 4 + § 6. Both actions are gated
+// on `resultado.tem_transcricao === true` by the callers (`pages/Certidoes.tsx`
+// and `CertidoesPartePanel`) — shared here so neither hand-rolls the fetch
+// or the copy-with-fallback logic a second time.
+
+/** GET `/resultados/{id}/transcricao` — the "Copiar" action's JSON source.
+ *  Action-triggered (not cached), same shape as `useMintResultadoUrl`. */
+export function useTranscricaoResultado() {
+  return useMutation({
+    mutationFn: async (resultadoId: string) => {
+      const result = await api.get(`/api/certidoes/resultados/${resultadoId}/transcricao`);
+      return result.data as TranscricaoResultado;
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao obter transcrição", { description: readableError(error) });
+    },
+  });
+}
+
+/** GET `/resultados/{id}/transcricao/pdf` — raw fetch (binary), not the JSON
+ *  `api` client, mirroring `useMatriculas.ts`'s own PDF download. `filename`
+ *  is the fallback used only when the server's `Content-Disposition` is
+ *  missing or unparseable. */
+export function useDownloadTranscricaoPdf() {
+  return useMutation({
+    mutationFn: async ({ resultadoId, filename }: { resultadoId: string; filename: string }) => {
+      const url = apiUrl(`/api/certidoes/resultados/${resultadoId}/transcricao/pdf`);
+      const resp = await authenticatedFetch(url);
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => null);
+        throw new Error(body?.detail || "Erro ao baixar transcrição");
+      }
+      const disposition = resp.headers.get("Content-Disposition") || "";
+      const match = /filename="?([^"]+)"?/.exec(disposition);
+      const blob = await resp.blob();
+      triggerBlobDownload(blob, match?.[1] || filename);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Erro ao baixar transcrição");
+    },
+  });
+}
+
+/**
+ * Composes `useTranscricaoResultado` + the seed `copyRichText` into the
+ * "Copiar" action shared by `pages/Certidoes.tsx` and `CertidoesPartePanel`
+ * — both render a transcribed resultado's copy button and neither should
+ * hand-roll the fetch-then-clipboard sequence a second time.
+ *
+ * `copyRichText`'s `{ rich: false }` fallback (browser lacks `ClipboardItem`)
+ * is surfaced via a distinct toast copy — never treated as equivalent to a
+ * rich copy, per the helper's own contract.
+ */
+export function useCopiarTranscricao() {
+  const transcricao = useTranscricaoResultado();
+
+  const copiar = useCallback(
+    (resultadoId: string, onCopied?: () => void) => {
+      transcricao.mutate(resultadoId, {
+        onSuccess: async (data) => {
+          try {
+            const result = await copyRichText(data.texto_html, data.texto);
+            toast.success(result.rich ? "Texto copiado!" : "Texto copiado (sem formatação).");
+            onCopied?.();
+          } catch {
+            toast.error("Não foi possível copiar o texto.");
+          }
+        },
+      });
+    },
+    [transcricao],
+  );
+
+  return {
+    copiar,
+    isPending: transcricao.isPending,
+    /** The resultado id currently being copied, for a per-row spinner. */
+    activeId: transcricao.variables,
+  };
 }

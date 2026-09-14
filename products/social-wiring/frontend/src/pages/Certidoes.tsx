@@ -38,13 +38,16 @@ import { z } from "zod";
 import {
   AlertCircle,
   Building2,
+  Check,
   CheckCircle,
   ChevronDown,
   Clock,
+  Copy,
   Download,
   ExternalLink,
   Eye,
   FileCheck,
+  FileDown,
   FileText,
   Loader2,
   Plus,
@@ -104,8 +107,10 @@ import {
   useCancelarProcessamento,
   useCertidaoConsulta,
   useCertidaoConsultas,
+  useCopiarTranscricao,
   useCreateConsulta,
   useDeleteConsulta,
+  useDownloadTranscricaoPdf,
   useMintResultadoUrl,
   useReprocessarConsulta,
   useTjspFila,
@@ -197,6 +202,20 @@ export default function Certidoes() {
   const reprocessarMutation = useReprocessarConsulta();
   const deleteMutation = useDeleteConsulta();
   const cancelarMutation = useCancelarProcessamento();
+
+  // ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6) —
+  // transcript retrieval for a resultado with `tem_transcricao === true`.
+  // `copiedId` mirrors Matrículas' own "Copiado" checkmark: a per-row flash,
+  // not a `Set` — only one row can be mid-copy at a time from a single click.
+  const downloadTranscricaoPdf = useDownloadTranscricaoPdf();
+  const { copiar: copiarTranscricao, activeId: copiandoId } = useCopiarTranscricao();
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const handleCopiarTranscricao = (resultadoId: string) => {
+    copiarTranscricao(resultadoId, () => {
+      setCopiedId(resultadoId);
+      setTimeout(() => setCopiedId((current) => (current === resultadoId ? null : current)), 2000);
+    });
+  };
 
   // Live countdown for TJSP cooldown. The server is polled every 15s; without
   // a local 1s tick between polls the bar sits still long enough to read as
@@ -1004,6 +1023,47 @@ export default function Certidoes() {
                                       }
                                     >
                                       <Download className="h-3 w-3" />
+                                    </Button>
+                                  </>
+                                )}
+                                {resultado.tem_transcricao === true && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      title="Transcrição PDF"
+                                      aria-label={`Transcrição PDF ${resultado.nome_display}`}
+                                      disabled={
+                                        downloadTranscricaoPdf.isPending &&
+                                        downloadTranscricaoPdf.variables?.resultadoId === resultado.id
+                                      }
+                                      onClick={() =>
+                                        downloadTranscricaoPdf.mutate({
+                                          resultadoId: resultado.id,
+                                          filename: `${resultado.tipo}_transcricao.pdf`,
+                                        })
+                                      }
+                                    >
+                                      {downloadTranscricaoPdf.isPending &&
+                                      downloadTranscricaoPdf.variables?.resultadoId === resultado.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <FileDown className="h-3 w-3" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      title="Copiar transcrição"
+                                      aria-label={`Copiar transcrição ${resultado.nome_display}`}
+                                      disabled={copiandoId === resultado.id}
+                                      onClick={() => handleCopiarTranscricao(resultado.id)}
+                                    >
+                                      {copiedId === resultado.id ? (
+                                        <Check className="h-3 w-3" />
+                                      ) : (
+                                        <Copy className="h-3 w-3" />
+                                      )}
                                     </Button>
                                   </>
                                 )}
