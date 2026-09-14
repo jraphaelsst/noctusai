@@ -24,14 +24,28 @@ _ALLOWLIST = {
     "CLAUDE_AGENT_SDK_VERSION",
 }
 
-# macOS's dyld/CoreFoundation unconditionally injects these into EVERY
+# macOS's dyld/CoreFoundation unconditionally injects this into EVERY
 # exec'd process (confirmed live on this dev machine) — entirely outside
-# `env -i`'s control and irrelevant to the wrapper's own guarantee (prod
-# runs in a Linux container, where this set is empty; CI is Linux too).
-# The test still asserts the allowlist is fully present AND that no
-# actual secret/other var leaks — only this documented OS noise is
-# excluded from the exact-match check.
-_PLATFORM_NOISE = {"LC_CTYPE", "__CF_USER_TEXT_ENCODING"} if platform.system() == "Darwin" else set()
+# `env -i`'s control and irrelevant to the wrapper's own guarantee. Linux
+# never sees it.
+_PLATFORM_NOISE = {"__CF_USER_TEXT_ENCODING"} if platform.system() == "Darwin" else set()
+
+# CPython's own PEP 538 C-locale coercion — NOT the wrapper, NOT the OS.
+# `env -i` hands the child an env with zero LANG/LC_* keys, which CPython
+# reads as the "C"/"POSIX" locale; on startup it picks a UTF-8 coercion
+# target (`C.UTF-8` here) and WRITES `LC_CTYPE` into its own `os.environ`
+# before a single line of the script body runs — so the env-dumper stub
+# (a Python process, used *because* `sh`/`dash` inject their own PWD/SHLVL
+# noise, see the fixture above) reports a key the wrapper never added.
+# Confirmed directly: `env -i python3 -c "print(os.environ)"` shows
+# LC_CTYPE=C.UTF-8; `env -i PYTHONCOERCECLOCALE=0 python3 -c ...` does not
+# — and `env -i` cannot forward `PYTHONCOERCECLOCALE` to disable it without
+# adding an unrelated key to the wrapper's real allowlist. This reproduces
+# identically on Linux (CI run 34873469229 first surfaced it there) and
+# macOS, so it is excluded unconditionally, by exact name, with this
+# evidence trail — not a platform guess and not a blanket allowance for
+# whatever a given run happens to emit.
+_INTERPRETER_NOISE = {"LC_CTYPE"}
 
 
 @pytest.fixture
@@ -92,7 +106,7 @@ class TestWrapperStripsInheritedEnv:
             line.split("=", 1)[0] for line in result.stdout.splitlines() if "=" in line
         }
 
-        unexpected = child_keys - _ALLOWLIST - _PLATFORM_NOISE
+        unexpected = child_keys - _ALLOWLIST - _PLATFORM_NOISE - _INTERPRETER_NOISE
         missing = _ALLOWLIST - child_keys
         assert not unexpected and not missing, (
             f"child env leaked or dropped keys: extra={unexpected} missing={missing}"
