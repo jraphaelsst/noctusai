@@ -459,7 +459,7 @@ Every table has `id uuid pk`, `org_id uuid not null`, `created_at`, `updated_at`
 | 409 `orphaned` | No live turn is waiting (the process restarted) |
 | 403 `not_allowed` | The caller may not decide this approval |
 
-**Side-effect of approving:** the waiting tool call proceeds, the control plane mints the §D assertion and calls academia. The approval row is then `aprovada`, and after academia returns 2xx, `consumed_at` is set.
+**Side-effect of approving:** the waiting tool call proceeds and the escrita handler runs the §E.10 checks. Only if they all pass does it atomically set `consumed_at`, before minting the §D assertion and calling academia. An approval is therefore spent exactly once, whether or not academia then returns 2xx. A failed academia call surfaces as a `tool.finished` with `resultado: "erro"`. It is never retried with the same approval. *(Revised 2026-09-14: the earlier text set `consumed_at` after academia's 2xx and never checked the stored row. See §E.10.)*
 
 **Admin decisions:** an admin may decide another member's approval. First decision wins, and a later one gets 409 `already_decided`. The assertion carries `approved_by`, so academia re-checks the approver's role (§D step 8). Admins can read every conversation in the org; this data-access fact is recorded in the LGPD flag for `agents`.
 
@@ -473,16 +473,31 @@ Every table has `id uuid pk`, `org_id uuid not null`, `created_at`, `updated_at`
 - **Scope:** `agents:julia:conv:<conversation_id>`. The `scope_resolver` returns 404 unless `ctx.user_id` owns the conversation (or the caller is admin).
 - **Frontend:** `useRealtimeStream(url, {getAuthToken, events: [...E3_EVENTS]})` (`realtime.ts:117`). The `events` list MUST name all of the events below, or they are dropped.
 
-| Event | Payload |
+| Event | Payload (as PUBLISHED by the route) |
 |---|---|
-| `message.new` | `Message` |
-| `message.delta` | `{message_temp_id, texto_parcial}` (from `include_partial_messages=True`) |
-| `tool.started` | `{tool_use_id, tool_name, classe: "leitura"\|"escrita", resumo}` |
-| `tool.finished` | `{tool_use_id, tool_name, resultado: "ok"\|"erro"\|"negada"}` |
-| `approval.requested` | `Approval` |
-| `approval.resolved` | `{approval_id, decision, decided_by}` |
-| `session.status` | `{status: "pensando"\|"ociosa"\|"erro"}` |
+| `message.new` | `Message`. It is published for every persisted message, including the empty assistant placeholder the route creates when a tool or approval event arrives before any assistant text in the turn. |
+| `message.updated` | `Message`: the full row, re-published after every change to its `blocks`. It has the same `id` as an earlier `message.new`. **This is the source of truth for rendering blocks.** |
+| `message.delta` | `{message_temp_id, texto_parcial}` (from `include_partial_messages=True`). Streaming text only; it never carries blocks. |
+| `tool.started` | `{message_id, tool_use_id, tool_name, classe: "leitura"\|"escrita", resumo}` |
+| `tool.finished` | `{message_id, tool_use_id, tool_name, resultado: "ok"\|"erro"\|"negada"}` |
+| `approval.requested` | `Approval` plus `message_id`. `id` is the real persisted approval id, never absent. |
+| `approval.resolved` | `{message_id, approval_id, decision, decided_by}` |
+| `session.status` | `{status: "pensando"\|"ociosa"\|"erro", sdk_session_id?}` |
 | `conversation.upsert` | `Conversation` |
+
+`message_id` is the id of the assistant message whose `blocks` the event was persisted into (§E.9, point 3).
+
+**Revision 2026-09-14** (the previous table had two defects):
+- `approval.requested` was emitted before the approval row existed, so it carried no `id`. The chat's Aprovar/Negar buttons could not work.
+- Block changes were persisted but never re-published, so tool and approval cards vanished from the chat when a turn ended.
+
+**Canonical stream:** `products/agents/contract-fixtures/escrita-turn.events.json` holds the exact published sequence for one approved escrita turn, together with its comparison rule. The backend route tests MUST assert the real published sequence against it, and the frontend tests MUST replay it. Neither side may hand-write its own event shapes.
+
+**Frontend rendering rule:**
+- Messages and their `blocks` render ONLY from `message.new` / `message.updated`, upserted by `id` into the messages cache.
+- `message.delta` and `session.status: pensando` may drive a transient streaming bubble, which never holds blocks.
+- `approval.*` events also invalidate the approvals list query.
+- When `session.status` leaves `pensando`, the client refetches the conversation's messages once. That reconciles any event missed while reconnecting.
 
 `message.ack` and `chat.upsert` are deprecated (WhatsApp-only, and renamed respectively).
 
@@ -610,7 +625,12 @@ class ApprovalDecision:
 class ApprovalBroker(Protocol):
     # runtime side, called by G2's can_use_tool for every `escrita` tool
     async def request(self, ctx: TurnContext, *, tool_name: str, tool_input: dict,
-                      resumo: str, diff: dict | None) -> ApprovalDecision
+                      resumo: str, diff: dict | None,
+                      on_created: Callable[[ApprovalRecord], Awaitable[None]]) -> ApprovalDecision
+    # Revision 2026-09-14: persists the pendente row, registers the wake-up future, THEN awaits
+    # on_created(record) (the runtime emits approval.requested from it, with the real id), THEN waits.
+    # Registering the future before the event goes out means a human deciding instantly never hits
+    # 409 orphaned.
     # route side, called by G1b's POST /api/approvals/{id}/decision
     async def resolve(self, org_id: UUID, approval_id: UUID, *, aprovada: bool,
                       decided_by: UUID) -> dict        # the updated approvals row
@@ -638,6 +658,12 @@ class AgentRuntime(Protocol):
    - `approval.*` → an `approval` block
 
    Then it publishes the event on scope `agents:julia:conv:<id>`.
+
+   **Revision 2026-09-14:**
+   - The "current assistant message" is the latest assistant `message.new` of this turn. If none exists yet, the task creates an empty assistant row and publishes `message.new` for it BEFORE the tool or approval event.
+   - Every published `tool.*` / `approval.*` payload gains `message_id`, added by the route. The runtime's own event payloads do not carry it.
+   - After each `blocks` write, the task publishes `message.updated` with the full row. The ordering is exactly as in the canonical fixture: the granular event first, then `message.updated`.
+   - Approval blocks correlate by `approvalId`, never by position: `approval.requested` carries the id.
 4. `message.delta` is published only, never persisted.
 5. When the iterator finishes, the task persists the `sdk_session_id` carried by the final `session.status` payload (`{"status": "ociosa", "sdk_session_id": "..."}`) and calls `release_turn`.
 6. If the iterator raises, the task persists a `system` message ("O turno falhou." — generic, no exception text, per security finding 8), publishes `session.status` with `{"status": "erro"}`, and calls `release_turn`.
@@ -649,6 +675,50 @@ class AgentRuntime(Protocol):
 - **The runtime never writes to the database.** It only yields events and calls the broker. The broker owns `approvals` rows via `stores.approvals`.
 
 **`FakeAgentRuntime`** is scriptable: `FakeAgentRuntime(script: list[AgentEvent | ("escrita", tool_name, tool_input)])`. A tuple entry calls `broker.request(...)` and emits the approval and tool events exactly as the real runtime would. G1b's route tests use it, so they exercise the real broker without an LLM.
+
+**Runtime guarantees, revision 2026-09-14** (these amend the list above):
+- **Escrita event order.** For an escrita tool the order is exactly: `tool.started` → `approval.requested` (emitted from inside `on_created`, with the full `Approval`) → `approval.resolved` → `tool.finished`. The real runtime and `FakeAgentRuntime` MUST produce the same order. The canonical fixture is the reference.
+- **Approval injection.** `can_use_tool` injects only `{"_approval": {"approval_id": "<uuid>"}}` into the tool input. It no longer injects `approved_by`. The handler treats the id as a lookup key and nothing more (§E.10).
+- **Resume after a restart.** The CLI's session transcripts live on tmpfs, so a container restart loses them. When `sdk_session_id` is set but the SDK cannot resume it, the runtime MUST NOT fail silently and MUST NOT silently start from an empty context:
+  - it starts a new session;
+  - the route persists a `system` message: "O contexto anterior desta conversa não está mais disponível; Julia começou uma nova sessão.";
+  - it publishes `message.new` for that message, then continues the turn;
+  - the final `session.status` carries the new `sdk_session_id`.
+  - How the SDK signals an unknown resume id MUST be verified against claude-agent-sdk 0.2.152 and pinned by a test.
+
+### E.10 Approval integrity: the escrita handler trusts only the stored row (security review, 2026-09-14)
+
+**Threat.** SEC-C assumes the CLI subprocess may be compromised. It can then speak the control protocol directly and call `mcp__academia__<escrita>` with an arbitrary `_approval`. Before this revision, the handler minted a valid §D assertion from the CLI-supplied `approval_id` / `approved_by` and signed whatever body the CLI sent. That allowed forged approvers, random approval ids, and reusing an approval granted for body A to send body B. Prompt injection alone could not reach this, because `can_use_tool` overwrote `_approval`.
+
+**Handler rule.** `products/agents/backend/app/runtime/tools.py`, every escrita tool. In order, before any network call:
+1. Read `approval_id` from `_approval`. A missing or unparseable id → refuse with `approval_missing`.
+2. `record = approvals.get(ctx.org_id, approval_id)`. NotFound → refuse with `approval_invalid`.
+3. Require all of the following; any mismatch → refuse with `approval_invalid`:
+   - `record.decision == "aprovada"`
+   - `record.tool_name == full_name`
+   - `record.conversation_id == ctx.conversation_id`
+   - `record.requested_by == ctx.requested_by`
+   - `record.instance_id == ctx.instance_id`
+   - `record.decided_at` no older than `APPROVAL_USE_WINDOW_SECONDS` (default 120)
+   - `canonical_sha256(record.tool_input without "_approval") == canonical_sha256(rest)`, where canonical means JSON with sorted keys, no whitespace and UTF-8
+4. `consumed = approvals.consume(ctx.org_id, approval_id)`. This is atomic: `UPDATE … SET consumed_at = now() WHERE id = … AND org_id = … AND decision = 'aprovada' AND consumed_at IS NULL RETURNING *`. No row returned → refuse with `approval_used`.
+5. Mint the §D assertion with `approved_by = consumed.decided_by`. It is never read from the arguments. Then call academia.
+
+**Refusals.** Each refusal returns the existing `_ok({"ok": false, "error": {status: 403, code, detail}})` shape, with a PT-BR `detail` and no internal values in it. It is logged with `approval_id`, `conversation_id` and the code. It never mints and never calls academia.
+
+**Store change** (`stores/approvals.py`):
+- The `mark_consumed(id) -> None` method is REPLACED by `consume(org_id, id) -> ApprovalRecord | None`, with the atomic semantics above.
+- Every implementation (Protocol, Fake, Supabase) is updated.
+- A test proves two concurrent consumes yield exactly one record.
+
+**Tests required** (stub CLI / direct handler calls, never monkeypatching our own gate):
+- a forged `approval_id` → `approval_invalid`, no academia call
+- a pendente, negada or expirada approval → `approval_invalid`
+- a replay of a consumed approval → `approval_used`
+- approve body A, send body B → `approval_invalid`
+- a different conversation, tool or instance → `approval_invalid`
+- a stale `decided_at` → `approval_invalid`
+- the happy path → exactly one academia call, whose assertion `approved_by` equals the stored `decided_by`
 
 ## F · Reserved migration numbers
 
