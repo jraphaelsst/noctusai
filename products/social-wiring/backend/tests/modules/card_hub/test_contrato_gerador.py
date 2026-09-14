@@ -10,7 +10,11 @@ WHAT THESE PIN
   actually rendered;
 - every "R$ X (Y)" in the rendered text round-trips through the extenso;
 - the matrícula's selected text lands byte-identical in word/document.xml;
-- the post-render lint catches the sample contracts' hand-assembly errors.
+- the post-render lint catches the sample contracts' hand-assembly errors;
+- `documento.gerar_pdf` turns that `.docx` into an ABNT PDF: the TITLE
+  paragraph is centered + bold, a HEADING is bold, and a matrícula range
+  carried through `Matricula.formatacao` renders bold/underlined —
+  contract `projects/abnt-formatting-CONTRACT.md` §5.
 
 Rendering uses the REAL seed docxtpl adapter — the Fake never evaluates Jinja.
 """
@@ -20,9 +24,12 @@ import re
 from dataclasses import replace
 from decimal import Decimal
 
+import fitz
 import pytest
 
 from noctusai_lib.domain.texto_ptbr import parse_brl, reais_por_extenso
+from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
+from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
 from app.modules.card_hub.contrato_gerador import derivacao, documento, lint
@@ -224,3 +231,101 @@ class TestLint:
         ]
         codigos = {h["codigo"] for h in lint.lint(paragrafos, referencias={}, clausulas={"objeto": 1})}
         assert {"PARAGRAFO_FORA_DE_SEQUENCIA", "LETRAS_COM_LACUNA", "EXTENSO_DIVERGENTE"} <= codigos
+
+
+# ─── ABNT PDF (§5) ──────────────────────────────────────────────────────────
+
+
+def _abrir(pdf_bytes: bytes) -> fitz.Document:
+    return fitz.open(stream=pdf_bytes, filetype="pdf")
+
+
+def _spans(page):
+    out = []
+    info = page.get_text("dict", flags=fitz.TEXTFLAGS_DICT)
+    for block in info["blocks"]:
+        for line in block.get("lines", []):
+            out.extend(line["spans"])
+    return out
+
+
+class TestAbntPdf:
+    def test_the_stored_version_is_a_real_pdf_never_docx(self):
+        r = _render(1)
+        pdf = documento.gerar_pdf(r.docx)
+        assert pdf[:5] == b"%PDF-"
+        # The internal `.docx` intermediate is a DIFFERENT zip-based format —
+        # confirm the PDF path did not just hand back the same bytes.
+        assert pdf[:2] != b"PK"
+
+    def test_title_paragraph_is_centered_and_bold(self):
+        r = _render(1)
+        pdf = documento.gerar_pdf(r.docx)
+        page = _abrir(pdf)[0]
+        titulo = r.paragrafos[0]
+        assert titulo.startswith("INSTRUMENTO PARTICULAR")
+        spans = [s for s in _spans(page) if s["text"].strip() and s["text"] in titulo]
+        assert spans, "esperava encontrar o texto do título na primeira página"
+        assert all("Bold" in s["font"] for s in spans)
+        frame_center = page.rect.width / 2
+        for s in spans:
+            x0, _y0, x1, _y1 = s["bbox"]
+            assert abs(((x0 + x1) / 2) - frame_center) < 40
+
+    def test_a_clause_heading_is_bold(self):
+        r = _render(1)
+        pdf = documento.gerar_pdf(r.docx)
+        heading = next(p for p in r.paragrafos if p.startswith("CLÁUSULA "))
+        found = False
+        for page in _abrir(pdf):
+            for s in _spans(page):
+                if s["text"].strip() and s["text"] in heading:
+                    found = True
+                    assert "Bold" in s["font"]
+        assert found, "esperava encontrar o texto de uma cláusula em alguma página"
+
+    def test_matricula_range_is_bold_and_underlined_in_the_pdf(self):
+        # "FULANO DE TAL" and "R.1/12.345" are both inside fx.MATRICULA_TEXTO
+        # (fx.variante(1)'s selected acts) — offsets computed against that
+        # literal string, matching contract §5's "carries its bold/underline".
+        negrito_inicio = fx.MATRICULA_TEXTO.index("FULANO DE TAL")
+        negrito_fim = negrito_inicio + len("FULANO DE TAL")
+        sublinhado_inicio = fx.MATRICULA_TEXTO.index("R.1/12.345")
+        sublinhado_fim = sublinhado_inicio + len("R.1/12.345")
+
+        d = fx.variante(1)
+        d = replace(
+            d,
+            matricula=replace(
+                d.matricula,
+                formatacao=(
+                    FormatRange(start=negrito_inicio, end=negrito_fim, bold=True),
+                    FormatRange(start=sublinhado_inicio, end=sublinhado_fim, underline=True),
+                ),
+            ),
+        )
+        r = _render(1, d)
+        pdf = documento.gerar_pdf(r.docx)
+
+        negrito_achado = False
+        sublinhado_achado = False
+        for page in _abrir(pdf):
+            for s in _spans(page):
+                if s["text"] == "FULANO DE TAL":
+                    negrito_achado = True
+                    assert "Bold" in s["font"]
+            if page.get_drawings():
+                sublinhado_achado = True
+        assert negrito_achado, "esperava encontrar 'FULANO DE TAL' em negrito"
+        assert sublinhado_achado, "esperava um traço de sublinhado (R.1/12.345)"
+
+    def test_a_character_the_core_font_cannot_represent_is_a_loud_refusal(self):
+        # `render_abnt_pdf` (seed) raises `UnsupportedGlyphError` naming the
+        # character — `gerar_pdf` does not swallow it; `service.gerar` maps
+        # it to `ContratoPdfNaoGerado` (422), never a silent 500.
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], nome="Fulano 🏠 de Tal")
+        d = replace(d, vendedores=[v])
+        r = _render(1, d)
+        with pytest.raises(UnsupportedGlyphError):
+            documento.gerar_pdf(r.docx)

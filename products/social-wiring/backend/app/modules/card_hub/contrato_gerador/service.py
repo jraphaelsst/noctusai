@@ -12,6 +12,7 @@ from typing import Any, Optional
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
+from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 from noctusai_lib.integrations.docx_render import DocxRenderAdapter
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import AppException
@@ -25,7 +26,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     derivar_switches,
     modelo_derivado,
 )
-from app.modules.card_hub.contrato_gerador.documento import MIME_DOCX, renderizar
+from app.modules.card_hub.contrato_gerador.documento import MIME_PDF, gerar_pdf, renderizar
 from app.modules.card_hub.contrato_gerador.lint import lint
 from app.modules.card_hub.contrato_gerador.politica import Politica
 
@@ -57,6 +58,20 @@ class ContratoReprovadoNaRevisao(AppException):
             message="O documento gerado não passou na verificação final; nenhuma versão foi salva.",
             status_code=422,
             details={"lint": achados},
+        )
+
+
+class ContratoPdfNaoGerado(AppException):
+    """`gerar_pdf` found a character the core Times font's `WinAnsiEncoding`
+    cannot represent (`UnsupportedGlyphError`) — a refusal, nothing saved,
+    never a silent 500 (contract §5)."""
+
+    def __init__(self, motivo: str) -> None:
+        super().__init__(
+            code="CONTRATO_PDF_NAO_GERADO",
+            message="O documento gerado não pôde ser convertido em PDF.",
+            status_code=422,
+            details={"motivo": motivo},
         )
 
 
@@ -119,14 +134,22 @@ async def gerar(
     if achados:
         raise ContratoReprovadoNaRevisao(achados)
 
+    # The `.docx` `renderizado.docx` produced was only ever an internal
+    # intermediate (contract §5) — the user receives the ABNT PDF built
+    # from it, never the `.docx` itself.
+    try:
+        pdf = gerar_pdf(renderizado.docx)
+    except UnsupportedGlyphError as exc:
+        raise ContratoPdfNaoGerado(str(exc)) from exc
+
     versao = await contratos_svc.nova_versao_gerada(
         client,
         storage,
         org_id,
         atendimento_id,
         contrato_id,
-        data=renderizado.docx,
-        content_type=MIME_DOCX,
+        data=pdf,
+        content_type=MIME_PDF,
         contexto_sha256=snapshot_sha256(dados, politica, data_assinatura),
         usuario_id=usuario_id,
     )
@@ -135,6 +158,7 @@ async def gerar(
 
 __all__ = [
     "ContratoIncompleto",
+    "ContratoPdfNaoGerado",
     "ContratoReprovadoNaRevisao",
     "gerar",
     "hoje",
