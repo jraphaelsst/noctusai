@@ -50,6 +50,10 @@ business logic" namespace.
   domain-agnostic surface. Consumers: youtube-crawler uploads,
   scheduling tasks, AI batches, future long-running products. Per
   `projects/seed-hardening-from-youtube-crawler/` Phase 2.1 + 2.2.
+- `texto_ptbr.py` — pure pt-BR legal-text helpers: número/reais por
+  extenso (Decimal-exact, notarial conventions pinned by tests), ordinals,
+  prazos em dias, data por extenso, percentual por extenso. Lifted
+  2026-09-14 for social-wiring's contract generator (F5).
 
 **Future occupants:**
 - `gamification/` (when ERP Metas patterns extract)
