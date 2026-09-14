@@ -338,6 +338,7 @@ There is no PUT and no DELETE.
 - **Specs.** `docs/SPEC.md` and `docs/OPEN-QUESTIONS.md` become `kb_entry` rows with `categoria='geral'`.
 - **Revisions and authors.** Each revision's `snapshot` is parsed from THAT commit's content. `author_kind='import'`, and `user_id` = the importing admin (the raw git author is kept in `git_author_raw`).
 - **Verification.** `hashes_head_ok` compares sha256 of each entity's latest body against the bundle's newest line per path.
+- **What `revisoes_importadas` counts** (settled at A2 integration, 2026-09-14). It counts `import_entity` calls issued in this run, not net-new `kb_revisions` rows. `import_entity` returns the row whether or not it wrote, so a full idempotent re-run reports the same number while writing zero new revisions. Idempotency is proven by the store's revision count, never by this field.
 
 **The bundle never enters the repo.** Exporting it is a local `noctus.dev.*` tool that writes outside the repo tree (scratch dir) and secret-scans first (built in slice A2).
 
@@ -653,6 +654,8 @@ class AgentRuntime(Protocol):
 | agents | `006_agents.sql` (E.1), `007_api_tokens.sql` (B.0 token table + audit) | G1 |
 | social-wiring | `105_api_tokens_scopes_and_audit.sql`: `api_tokens` gains `expires_at` / `principal_agent_id` / `issuer` / `human_personal` / `minted_by` plus backfill, and `api_token_audit` is created | SEED-1 (moved from SW1 at dispatch: the resolver change needs the columns in the same slice). SW1 now only adds the bridge route. |
 | erp-imobiliario | `046_api_tokens_scopes_and_audit.sql`, same shape as social-wiring | SEED-1 |
+| academia-de-reciclagem | `009_status_pagina_pages.sql`: `status_pagina` rows for the A3 UI routes (status `desenvolvimento`) | A3 |
+| agents | `008_status_pagina_pages.sql`: `status_pagina` rows for the G4 UI routes (status `desenvolvimento`) | G4 |
 
 **Deploy order is mandatory for 105 and 046.** Apply both migrations to the database BEFORE any social-wiring or erp-imobiliario image containing the SEED-1 resolver is deployed. The resolver selects `expires_at`, so the reverse order breaks every live product token.
 

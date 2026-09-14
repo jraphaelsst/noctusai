@@ -152,6 +152,18 @@ The decision log keeps every step.
   - token expiry, principal checks and audit (H3)
   - import bundle outside the repo, with a secret scan (H4)
 - **2026-09-14 (wave 1a integration)**: SEED-2 (ChatWindow seams) and G1 (agents data layer) are on `dev`. G1's review caught a SECURITY DEFINER function executable by PUBLIC; it was fixed before integration and logged as a keeper candidate. A2 (importer) is verified and waits for A1. SEED-1 (token scopes) is integrating, and it wrote migrations social-wiring 105 and erp-imobiliario 046, which carry a mandatory deploy order (contract §F).
+- **2026-09-14 (wave 1a complete)**: all five wave-1a slices are on `dev`, each re-gated on its rebased tip before push:
+  - **SEED-1** `3dbd2113`: social-wiring 3516 and erp-imobiliario 2176 tests green. A concurrent session's ledger rows were recovered in a separate commit.
+  - **SEED-2** `df1c2700`.
+  - **G1** `e363a044`.
+  - **A1** `3326faf1`: 22 SECURITY DEFINER functions, EXECUTE locked schema-wide to service_role (verified).
+  - **A2** `05e069d5`.
+
+  None of the 11 migrations is applied to any database; they are held for cutover prep.
+
+  Wave 1b is dispatched: SW1 bridge, G1b agents API, G2 runtime + gate + launch, and A1b academia API. The import route is added when A1b integrates.
+
+  Several engineer sessions stalled at the 600 s watchdog (A2, M1, A3, G4), and G2's dispatch twice hit an unavailable permission classifier. The tech-lead finished A2's store swap inline, and M1 / A3 / G4 are re-dispatched at lower concurrency.
 
 ## Retrospective (filled at first trigger fire)
 
