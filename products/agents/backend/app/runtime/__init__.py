@@ -92,6 +92,7 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
 
     from app.runtime.academia_api import make_academia_api
     from app.runtime.claude_runtime import ClaudeAgentSdkRuntime
+    from app.stores.approvals import get_approval_store
     from noctusai_lib.config.product_urls import resolve_product_url
 
     secrets = getattr(settings, "approval_assertion_secrets", []) or []
@@ -105,6 +106,15 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
         agent_id=_julia_agent_id(settings),
         approval_secret=secrets[0],
         plugin_path=_JULIA_PLUGIN_PATH,
+        # Contract §E.10 — the escrita handler (app/runtime/tools.py) needs
+        # the SAME approvals store the broker decides against; both read
+        # `get_approval_store(settings)`, which is stateless over the
+        # shared Supabase table in every real deploy (see
+        # `get_approval_broker`'s identical call, just above).
+        approvals=get_approval_store(settings),
+        approval_use_window_seconds=int(
+            getattr(settings, "approval_use_window_seconds", 120) or 120
+        ),
     )
 
 

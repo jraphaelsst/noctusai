@@ -10,15 +10,27 @@ contract's own asymmetry, not an oversight:
   "every pendente row whose instance_id equals this instance becomes
   expirada, never other instances' rows"). One process instance serves
   every org, so the sweep is instance-scoped, not org-scoped, by design.
-- ``expire_one(id)`` / ``mark_consumed(id)`` are called from an
-  already-authorized internal flow (the control plane's own timeout timer
-  / the post-academia-2xx callback) that already resolved and validated
-  the id; re-deriving an org filter there would be redundant, not safer.
+- ``expire_one(id)`` is called from an already-authorized internal flow
+  (the control plane's own timeout timer) that already resolved and
+  validated the id; re-deriving an org filter there would be redundant,
+  not safer.
 
-Both idempotency-sensitive transitions (``expire_one``, ``mark_consumed``)
-only ever move a row OUT of ``pendente`` / set ``consumed_at`` once — they
-never clobber a decision that already landed, which matters because the
+``expire_one`` only ever moves a row OUT of ``pendente`` once — it never
+clobbers a decision that already landed, which matters because the
 timeout timer and a human's decision race by construction.
+
+**``consume`` (contract §E.10, security review 2026-09-14)** replaces the
+former ``mark_consumed(id) -> None``, which had no caller and returned
+nothing — the escrita handler minted assertions straight from CLI-supplied
+fields without ever consulting the store. ``consume(org_id, id) ->
+ApprovalRecord | None`` is the atomic, single-use gate: ``UPDATE ... SET
+consumed_at = now() WHERE id = ... AND org_id = ... AND decision =
+'aprovada' AND consumed_at IS NULL RETURNING *``. It takes ``org_id``
+(unlike ``expire_one``) because it IS the authorization boundary the
+escrita handler calls directly with a caller-supplied id — scoping by org
+here is not redundant, it is the point. Two concurrent calls for the same
+row return exactly one non-``None`` record; the loser gets ``None``, which
+the handler maps to 409 ``approval_used``.
 """
 from __future__ import annotations
 
@@ -113,8 +125,18 @@ class ApprovalStore(Protocol):
         ``pendente`` (a human decision already landed first)."""
         ...
 
-    def mark_consumed(self, id: UUID) -> None:
-        """Set ``consumed_at`` — idempotent, a no-op if already set."""
+    def consume(self, org_id: UUID, id: UUID) -> ApprovalRecord | None:
+        """Atomically set ``consumed_at`` — contract §E.10: ``UPDATE ...
+        SET consumed_at = now() WHERE id = ... AND org_id = ... AND
+        decision = 'aprovada' AND consumed_at IS NULL RETURNING *``.
+
+        Returns the updated record on the FIRST call for a given row;
+        returns ``None`` on every subsequent call (already consumed), for
+        an unapproved/non-existent row, or for another org — the escrita
+        handler treats all three identically (403 ``approval_used`` is
+        only correct for the first; the earlier §E.10 checks already
+        ruled out the other two, so by the time this is called a
+        ``None`` here can only mean "already consumed")."""
         ...
 
     def list_pending(
@@ -210,12 +232,18 @@ class FakeApprovalStore:
         row["decision"] = "expirada"
         row["updated_at"] = utcnow()
 
-    def mark_consumed(self, id: UUID) -> None:
+    def consume(self, org_id: UUID, id: UUID) -> ApprovalRecord | None:
         row = self._rows.get(id)
-        if row is None or row["consumed_at"] is not None:
-            return
+        if (
+            row is None
+            or row["org_id"] != org_id
+            or row["decision"] != "aprovada"
+            or row["consumed_at"] is not None
+        ):
+            return None
         row["consumed_at"] = utcnow()
         row["updated_at"] = row["consumed_at"]
+        return self._to_record(row)
 
     def list_pending(
         self, org_id: UUID, *, owner_user_id: UUID | None = None
@@ -339,11 +367,21 @@ class SupabaseApprovalStore:
             {"decision": "expirada", "updated_at": utcnow_iso()}
         ).eq("id", str(id)).eq("decision", "pendente").execute()
 
-    def mark_consumed(self, id: UUID) -> None:
+    def consume(self, org_id: UUID, id: UUID) -> ApprovalRecord | None:
         now_iso = utcnow_iso()
-        self._table().update({"consumed_at": now_iso, "updated_at": now_iso}).eq(
-            "id", str(id)
-        ).is_("consumed_at", "null").execute()
+        resp = (
+            self._table()
+            .update({"consumed_at": now_iso, "updated_at": now_iso})
+            .eq("id", str(id))
+            .eq("org_id", str(org_id))
+            .eq("decision", "aprovada")
+            .is_("consumed_at", "null")
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            return None
+        return self._record(rows[0])
 
     def list_pending(
         self, org_id: UUID, *, owner_user_id: UUID | None = None

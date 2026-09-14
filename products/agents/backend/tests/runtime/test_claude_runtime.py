@@ -11,6 +11,7 @@ from app.runtime.claude_runtime import (
     build_launch_options,
 )
 from app.runtime.types import AgentSpec, TurnContext
+from app.stores.approvals import FakeApprovalStore
 
 
 def _spec(**overrides) -> AgentSpec:
@@ -51,6 +52,7 @@ def _build(**overrides):
         agent_id=uuid4(),
         approval_secret="s3cr3t",
         can_use_tool=_stub_can_use_tool,
+        approvals=FakeApprovalStore(),
         plugin_path="/app/agents/julia/plugin",
     )
     kwargs.update(overrides)

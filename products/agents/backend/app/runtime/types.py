@@ -7,10 +7,12 @@ other's shape — this module is read by both.
 """
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 from uuid import UUID
+
+from app.stores.approvals import ApprovalRecord
 
 __all__ = [
     "TurnContext",
@@ -19,6 +21,7 @@ __all__ = [
     "ApprovalDecision",
     "ApprovalBroker",
     "AgentRuntime",
+    "approval_event_payload",
 ]
 
 
@@ -63,7 +66,15 @@ class ApprovalDecision:
 
 
 class ApprovalBroker(Protocol):
-    # runtime side, called by G2's can_use_tool for every `escrita` tool
+    # runtime side, called by G2's can_use_tool for every `escrita` tool.
+    # Revision 2026-09-14 (contract §E.9): `on_created` is awaited AFTER the
+    # pendente row is persisted and the wake-up future is registered, but
+    # BEFORE `request` starts waiting on it — so a decision that lands
+    # while `on_created` is still running (e.g. an instant human click)
+    # always finds a live future and never raises `Orphaned`. The real
+    # runtime uses `on_created` to emit `approval.requested` with the row's
+    # real id; `FakeAgentRuntime` uses it to capture the record for the
+    # same event.
     async def request(
         self,
         ctx: TurnContext,
@@ -72,6 +83,7 @@ class ApprovalBroker(Protocol):
         tool_input: dict,
         resumo: str,
         diff: dict | None,
+        on_created: Callable[[ApprovalRecord], Awaitable[None]],
     ) -> ApprovalDecision: ...
 
     # route side, called by G1b's POST /api/approvals/{id}/decision
@@ -97,3 +109,35 @@ class AgentRuntime(Protocol):
         prompt: str,
         broker: ApprovalBroker,
     ) -> AsyncIterator[AgentEvent]: ...
+
+
+def _iso(value: Any) -> Any:
+    return value.isoformat() if hasattr(value, "isoformat") else value
+
+
+def approval_event_payload(record: ApprovalRecord) -> dict[str, Any]:
+    """The full ``Approval`` JSON for ``approval.requested`` (contract
+    §E.3/§E.9: "emitted from inside on_created, with the full Approval").
+
+    Same field set as ``app.schemas.agents.ApprovalOut`` — deliberately
+    NOT including ``message_id`` (contract §E.9 point 3: "the runtime's
+    own event payloads do not carry it" — the ROUTE adds it) nor
+    ``org_id``/``instance_id``/``consumed_at`` (store-internal, never
+    published). Shared by the real runtime and ``FakeAgentRuntime`` so
+    both emit byte-identical shapes for the same record.
+    """
+    return {
+        "id": str(record.id),
+        "conversation_id": str(record.conversation_id),
+        "tool_name": record.tool_name,
+        "tool_input": dict(record.tool_input),
+        "classe": record.classe,
+        "resumo": record.resumo,
+        "diff": record.diff,
+        "decision": record.decision,
+        "decided_by": str(record.decided_by) if record.decided_by else None,
+        "decided_at": _iso(record.decided_at),
+        "requested_by": str(record.requested_by),
+        "created_at": _iso(record.created_at),
+        "updated_at": _iso(record.updated_at),
+    }

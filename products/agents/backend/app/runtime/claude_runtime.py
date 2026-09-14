@@ -35,8 +35,10 @@ process), so the package must still be installed wherever tests run.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from typing import Any
 from uuid import UUID
 
@@ -46,6 +48,7 @@ from claude_agent_sdk import (
     ClaudeSDKClient,
     PermissionResultAllow,
     PermissionResultDeny,
+    ProcessError,
     ResultMessage,
     StreamEvent,
     TextBlock,
@@ -57,7 +60,14 @@ from claude_agent_sdk import (
 from app.runtime import gate
 from app.runtime.academia_api import AcademiaApi, AcademiaNotFoundError
 from app.runtime.tools import build_academia_tools
-from app.runtime.types import AgentEvent, AgentSpec, ApprovalBroker, TurnContext
+from app.runtime.types import (
+    AgentEvent,
+    AgentSpec,
+    ApprovalBroker,
+    TurnContext,
+    approval_event_payload,
+)
+from app.stores.approvals import ApprovalStore
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +119,10 @@ def build_launch_options(
     agent_id: UUID,
     approval_secret: str,
     can_use_tool: Any,
+    approvals: ApprovalStore,
     cli_path: str = DEFAULT_CLI_PATH,
     plugin_path: str,
+    approval_use_window_seconds: int = 120,
 ) -> ClaudeAgentOptions:
     """Build the exact §E.5 ``ClaudeAgentOptions`` for one turn — pure,
     synchronous, no subprocess spawned. ``can_use_tool`` is threaded in
@@ -154,6 +166,8 @@ def build_launch_options(
                 agent_id=agent_id,
                 secret=approval_secret,
                 aud=_ACADEMIA_AUD,
+                approvals=approvals,
+                use_window_seconds=approval_use_window_seconds,
             )
         },
         strict_mcp_config=True,
@@ -204,17 +218,16 @@ class _TurnDriver:
         diff = await self._build_diff(tool_name, tool_input)
         resumo_text = gate.resumo(tool_name, tool_input)
 
-        await self.queue.put(
-            {
-                "event": "approval.requested",
-                "payload": {
-                    "tool_name": tool_name,
-                    "tool_input": tool_input,
-                    "resumo": resumo_text,
-                    "diff": diff,
-                },
-            }
-        )
+        # Contract §E.9 revision 2026-09-14: `approval.requested` is
+        # emitted from INSIDE `on_created` — the broker has already
+        # persisted the pendente row and registered the wake-up future by
+        # the time it calls this, so the event carries the row's REAL id
+        # (the earlier behaviour queued this event before the row existed,
+        # so it never carried one at all).
+        async def on_created(record: Any) -> None:
+            await self.queue.put(
+                {"event": "approval.requested", "payload": approval_event_payload(record)}
+            )
 
         decision = await self._broker.request(
             self._ctx,
@@ -222,6 +235,7 @@ class _TurnDriver:
             tool_input=tool_input,
             resumo=resumo_text,
             diff=diff,
+            on_created=on_created,
         )
 
         await self.queue.put(
@@ -239,12 +253,14 @@ class _TurnDriver:
             self._denied_tool_use_ids.add(tool_use_id)
             return PermissionResultDeny(message="Aprovação negada.")
 
+        # Contract §E.9 revision 2026-09-14 / §E.10: only the id is
+        # injected. `approved_by` is no longer forwarded — the escrita
+        # handler (tools.py) reads it from the STORED, decided row instead
+        # of trusting whatever the CLI subprocess echoes back, closing the
+        # forged-approver hole the security review flagged.
         updated_input = {
             **tool_input,
-            "_approval": {
-                "approval_id": str(decision.approval_id),
-                "approved_by": str(decision.approved_by),
-            },
+            "_approval": {"approval_id": str(decision.approval_id)},
         }
         return PermissionResultAllow(updated_input=updated_input)
 
@@ -341,6 +357,15 @@ class _TurnDriver:
         return events
 
 
+#: contract §E.9 "Resume after a restart" — exact PT-BR text the route
+#: persists as a `system` message when a resume attempt fails and the
+#: runtime falls back to a fresh session.
+RESUME_LOST_CONTEXT_TEXT = (
+    "O contexto anterior desta conversa não está mais disponível; "
+    "Julia começou uma nova sessão."
+)
+
+
 class ClaudeAgentSdkRuntime:
     """Real :class:`~app.runtime.types.AgentRuntime`."""
 
@@ -351,13 +376,72 @@ class ClaudeAgentSdkRuntime:
         agent_id: UUID,
         approval_secret: str,
         plugin_path: str,
+        approvals: ApprovalStore,
         cli_path: str = DEFAULT_CLI_PATH,
+        approval_use_window_seconds: int = 120,
+        transport_factory: Any = None,
     ) -> None:
         self._academia_api = academia_api
         self._agent_id = agent_id
         self._approval_secret = approval_secret
         self._plugin_path = plugin_path
+        self._approvals = approvals
         self._cli_path = cli_path
+        self._approval_use_window_seconds = approval_use_window_seconds
+        # Test-only seam (contract §E.9 "Resume after a restart" — pinning
+        # the SDK's unknown-resume-id signal needs a stubbed `Transport`,
+        # never a monkeypatch of this module). ``None`` in production: the
+        # SDK builds its own `SubprocessCLITransport`.
+        self._transport_factory = transport_factory
+
+    def _make_client(self, options: ClaudeAgentOptions) -> ClaudeSDKClient:
+        transport = self._transport_factory() if self._transport_factory else None
+        return ClaudeSDKClient(options, transport=transport)
+
+    async def _connect_or_fresh(
+        self, options: ClaudeAgentOptions, prompt: str, ctx: TurnContext
+    ) -> tuple[ClaudeSDKClient, bool]:
+        """Contract §E.9 "Resume after a restart": ``options.resume`` may
+        point at a session the CLI subprocess's tmpfs transcript store no
+        longer has (a container restart). Verified live against the
+        installed SDK (0.2.152) — an unknown ``resume`` id surfaces as a
+        terminal `result` frame with ``is_error: true`` that the CLI then
+        exits non-zero over; the SDK's background reader
+        (``claude_agent_sdk/_internal/query.py::Query._read_messages``)
+        replaces the resulting ``ProcessError`` with the richer
+        ``ResultError`` subclass when it saw that frame first (both are
+        ``ClaudeSDKError``), and delivers it to the still-in-flight
+        ``initialize`` control request — so it is ``client.connect()``
+        itself (which awaits ``Query.initialize()``) that raises, before
+        any turn message is ever seen. This is exactly the case
+        ``query.py``'s own comment names: "an `initialize` still in flight
+        when the CLI reports an error result during startup (e.g. a
+        refused resume)".
+
+        Returns ``(client, used_fresh_session)``. On a genuine (non-resume)
+        connect failure the exception propagates unchanged — silently
+        starting fresh only when a resume was actually attempted.
+        """
+        client = self._make_client(options)
+        try:
+            await client.connect(prompt)
+            return client, False
+        except ProcessError:
+            if ctx.sdk_session_id is None:
+                raise
+            logger.warning(
+                "run_turn: resume of sdk_session_id=%s failed; starting a "
+                "fresh session (conversation=%s, org=%s)",
+                ctx.sdk_session_id,
+                ctx.conversation_id,
+                ctx.org_id,
+            )
+            with suppress(Exception):
+                await client.disconnect()
+            fresh_options = dataclasses.replace(options, resume=None)
+            fresh_client = self._make_client(fresh_options)
+            await fresh_client.connect(prompt)
+            return fresh_client, True
 
     async def run_turn(
         self,
@@ -374,12 +458,21 @@ class ClaudeAgentSdkRuntime:
             agent_id=self._agent_id,
             approval_secret=self._approval_secret,
             can_use_tool=driver.can_use_tool,
+            approvals=self._approvals,
             cli_path=self._cli_path,
             plugin_path=self._plugin_path,
+            approval_use_window_seconds=self._approval_use_window_seconds,
         )
 
-        client = ClaudeSDKClient(options)
-        result_holder: dict[str, str | None] = {"sdk_session_id": ctx.sdk_session_id}
+        client, resumed_fresh = await self._connect_or_fresh(options, prompt, ctx)
+        result_holder: dict[str, str | None] = {
+            "sdk_session_id": None if resumed_fresh else ctx.sdk_session_id
+        }
+        if resumed_fresh:
+            yield {
+                "event": "session.resume_fallback",
+                "payload": {"texto": RESUME_LOST_CONTEXT_TEXT},
+            }
 
         async def pump() -> None:
             try:
@@ -393,7 +486,6 @@ class ClaudeAgentSdkRuntime:
             finally:
                 await driver.queue.put(_PUMP_DONE)  # type: ignore[arg-type]
 
-        await client.connect(prompt)
         pump_task = asyncio.create_task(pump())
         try:
             while True:

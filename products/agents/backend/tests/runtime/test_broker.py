@@ -12,6 +12,11 @@ from app.stores.approvals import FakeApprovalStore
 from app.stores.errors import AlreadyDecided, NotFound
 
 
+async def _noop_on_created(record):
+    """Test-default `on_created` — most `TestBroker` cases don't care
+    about the callback itself, only about `request()`'s return value."""
+
+
 def _ctx(*, instance_id: str = "inst-1") -> TurnContext:
     return TurnContext(
         org_id=uuid4(),
@@ -35,6 +40,7 @@ class TestRequestTimeout:
             tool_input={"titulo": "t"},
             resumo="r",
             diff=None,
+            on_created=_noop_on_created,
         )
 
         assert decision.aprovada is False
@@ -48,7 +54,12 @@ class TestRequestTimeout:
         ctx = _ctx()
 
         decision = await broker.request(
-            ctx, tool_name="mcp__academia__kb_escrever", tool_input={}, resumo="r", diff=None
+            ctx,
+            tool_name="mcp__academia__kb_escrever",
+            tool_input={},
+            resumo="r",
+            diff=None,
+            on_created=_noop_on_created,
         )
         row = store.get(ctx.org_id, decision.approval_id)
         assert row.decision == "expirada"
@@ -74,6 +85,7 @@ class TestRequestTimeout:
             tool_input={"titulo": "t"},
             resumo="r",
             diff={"antes": "a", "depois": "b"},
+            on_created=_noop_on_created,
         )
         await task
         assert decision.aprovada is True
@@ -104,7 +116,10 @@ class TestResolveOrdering:
             await broker.resolve(ctx.org_id, row.id, aprovada=True, decided_by=uuid4())
 
         task = asyncio.create_task(race())
-        await broker.request(ctx, tool_name="x", tool_input={}, resumo="r", diff=None)
+        await broker.request(
+            ctx, tool_name="x", tool_input={}, resumo="r", diff=None,
+            on_created=_noop_on_created,
+        )
         await task
 
     @pytest.mark.asyncio
@@ -125,7 +140,10 @@ class TestResolveOrdering:
                 await broker.resolve(ctx.org_id, row.id, aprovada=False, decided_by=uuid4())
 
         task = asyncio.create_task(decide_twice())
-        await broker.request(ctx, tool_name="x", tool_input={}, resumo="r", diff=None)
+        await broker.request(
+            ctx, tool_name="x", tool_input={}, resumo="r", diff=None,
+            on_created=_noop_on_created,
+        )
         await task
 
     @pytest.mark.asyncio
@@ -154,7 +172,8 @@ class TestResolveOrdering:
 
         task = asyncio.create_task(approve_soon())
         decision = await broker.request(
-            ctx, tool_name="x", tool_input={}, resumo="r", diff=None
+            ctx, tool_name="x", tool_input={}, resumo="r", diff=None,
+            on_created=_noop_on_created,
         )
         await task
         assert decision.aprovada is False

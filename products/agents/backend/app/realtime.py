@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 EVENTS = frozenset(
     {
         "message.new",
+        "message.updated",
         "message.delta",
         "tool.started",
         "tool.finished",

@@ -124,16 +124,49 @@ def test_expire_one_only_flips_a_pendente_row(store):
     assert store._rows[decided.id]["decision"] == "aprovada"
 
 
-def test_mark_consumed_is_idempotent(store):
+def test_consume_returns_the_record_only_on_the_first_call(store):
+    """§E.10: ``consume`` replaces ``mark_consumed`` — atomic, single-use,
+    returns the record once and ``None`` on every replay."""
     org_id = uuid4()
     approval = _create(store, org_id=org_id)
     store.decide(org_id, approval.id, True, uuid4())
 
-    store.mark_consumed(approval.id)
-    first_consumed_at = store._rows[approval.id]["consumed_at"]
+    first = store.consume(org_id, approval.id)
+    assert first is not None
+    assert first.consumed_at is not None
+    first_consumed_at = first.consumed_at
 
-    store.mark_consumed(approval.id)  # second call must not move the timestamp
+    second = store.consume(org_id, approval.id)  # replay — must not move the timestamp
+    assert second is None
     assert store._rows[approval.id]["consumed_at"] == first_consumed_at
+
+
+def test_consume_returns_none_for_an_unapproved_row(store):
+    org_id = uuid4()
+    approval = _create(store, org_id=org_id)  # still pendente — never decided
+
+    assert store.consume(org_id, approval.id) is None
+
+
+def test_consume_returns_none_for_wrong_org_or_unknown_id(store):
+    org_id = uuid4()
+    approval = _create(store, org_id=org_id)
+    store.decide(org_id, approval.id, True, uuid4())
+
+    assert store.consume(uuid4(), approval.id) is None
+    assert store.consume(org_id, uuid4()) is None
+
+
+def test_two_concurrent_consume_calls_yield_exactly_one_record(store):
+    """§E.10 required test: "two concurrent consume calls yielding exactly
+    one record"."""
+    org_id = uuid4()
+    approval = _create(store, org_id=org_id)
+    store.decide(org_id, approval.id, True, uuid4())
+
+    results = [store.consume(org_id, approval.id) for _ in range(2)]
+    non_none = [r for r in results if r is not None]
+    assert len(non_none) == 1
 
 
 def test_list_pending_filters_by_owner(store):

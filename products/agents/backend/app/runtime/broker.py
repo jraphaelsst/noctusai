@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from uuid import UUID, uuid4
 
-from app.stores.approvals import ApprovalStore
+from app.stores.approvals import ApprovalRecord, ApprovalStore
 from app.stores.errors import AlreadyDecided, NotFound
 from app.runtime.errors import Orphaned
 from app.runtime.types import ApprovalDecision, TurnContext
@@ -56,6 +57,7 @@ class StoreApprovalBroker:
         tool_input: dict,
         resumo: str,
         diff: dict | None,
+        on_created: Callable[[ApprovalRecord], Awaitable[None]],
     ) -> ApprovalDecision:
         record = self._store.create_pending(
             ctx.org_id,
@@ -68,8 +70,13 @@ class StoreApprovalBroker:
             diff=diff,
         )
         future: "asyncio.Future[ApprovalDecision]" = asyncio.get_running_loop().create_future()
+        # Registered BEFORE `on_created` runs (contract §E.9 revision
+        # 2026-09-14) — a decision that lands while `on_created` is still
+        # executing (an instant human click racing the SSE publish) always
+        # finds a live future here and resolves normally; never `Orphaned`.
         self._pending[record.id] = future
         try:
+            await on_created(record)
             return await asyncio.wait_for(future, timeout=self._timeout_seconds)
         except (asyncio.TimeoutError, TimeoutError):
             self._pending.pop(record.id, None)

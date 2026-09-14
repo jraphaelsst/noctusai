@@ -13,13 +13,27 @@ from typing import Any
 from uuid import uuid4
 
 from app.runtime import gate
-from app.runtime.types import AgentEvent, AgentSpec, ApprovalBroker, TurnContext
+from app.runtime.types import (
+    AgentEvent,
+    AgentSpec,
+    ApprovalBroker,
+    TurnContext,
+    approval_event_payload,
+)
+from app.stores.approvals import ApprovalRecord
 
 __all__ = ["FakeAgentRuntime"]
 
-# A scripted entry is either a ready-made event, or a 3-tuple describing an
-# escrita tool call the fake should route through the real broker.
-ScriptItem = AgentEvent | tuple[str, str, dict[str, Any]]
+# A scripted entry is either a ready-made event, or a 3-/4-tuple describing
+# an escrita tool call the fake should route through the real broker. The
+# optional 4th element is the `diff` the approval card would show (contract
+# §E.4) — defaults to `None` when omitted, matching every pre-existing
+# 3-tuple script.
+ScriptItem = (
+    AgentEvent
+    | tuple[str, str, dict[str, Any]]
+    | tuple[str, str, dict[str, Any], "dict[str, Any] | None"]
+)
 
 
 class FakeAgentRuntime:
@@ -53,11 +67,15 @@ class FakeAgentRuntime:
 
     async def _drive_escrita(
         self,
-        item: tuple[str, str, dict[str, Any]],
+        item: tuple[str, str, dict[str, Any]] | tuple[str, str, dict[str, Any], dict[str, Any] | None],
         ctx: TurnContext,
         broker: ApprovalBroker,
     ) -> AsyncIterator[AgentEvent]:
-        _marker, tool_name, tool_input = item
+        diff: dict[str, Any] | None = None
+        if len(item) == 4:
+            _marker, tool_name, tool_input, diff = item
+        else:
+            _marker, tool_name, tool_input = item
         if _marker != "escrita":
             raise ValueError(f"unknown FakeAgentRuntime script tuple marker: {_marker!r}")
 
@@ -76,24 +94,33 @@ class FakeAgentRuntime:
                 "resumo": resumo_text,
             },
         }
-        yield {
-            "event": "approval.requested",
-            "payload": {
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "resumo": resumo_text,
-                "diff": None,
-            },
-        }
+
+        # `on_created` runs synchronously inside `broker.request()`, before
+        # it starts waiting — by the time `request()` returns below, the
+        # created record is already captured. Yielding "approval.requested"
+        # here (rather than from inside the callback, which isn't a
+        # generator) preserves the exact §E.9 event ORDER without needing
+        # the real runtime's queue machinery, since this fake never
+        # publishes concurrently with another task the way the SDK's
+        # message pump does.
+        created: dict[str, ApprovalRecord] = {}
+
+        async def on_created(record: ApprovalRecord) -> None:
+            created["record"] = record
 
         decision = await broker.request(
             ctx,
             tool_name=tool_name,
             tool_input=tool_input,
             resumo=resumo_text,
-            diff=None,
+            diff=diff,
+            on_created=on_created,
         )
 
+        yield {
+            "event": "approval.requested",
+            "payload": approval_event_payload(created["record"]),
+        }
         yield {
             "event": "approval.resolved",
             "payload": {

@@ -104,6 +104,25 @@ def _message_out(record: MessageRecord) -> MessageOut:
     )
 
 
+def _conversation_payload(record: ConversationRecord) -> dict[str, Any]:
+    """JSON-safe SSE payload for ``conversation.upsert`` (contract §E.3)."""
+
+    def _iso(value: Any) -> Any:
+        return value.isoformat() if hasattr(value, "isoformat") else value
+
+    return {
+        "id": str(record.id),
+        "agent_id": str(record.agent_id),
+        "owner_user_id": str(record.owner_user_id),
+        "titulo": record.titulo,
+        "sdk_session_id": record.sdk_session_id,
+        "status": record.status,
+        "last_message_at": _iso(record.last_message_at),
+        "created_at": _iso(record.created_at),
+        "updated_at": _iso(record.updated_at),
+    }
+
+
 def _message_payload(record: MessageRecord) -> dict[str, Any]:
     """JSON-safe SSE payload for ``message.new`` (contract §E.3)."""
     return {
@@ -326,34 +345,35 @@ def _apply_approval_event(
     """Contract §E.7 ``ChatBlock`` (approval variant): ``{kind:"approval",
     approvalId, resumo, diff?, decision}``.
 
-    G2's real runtime (``app/runtime/claude_runtime.py``) and its
-    ``FakeAgentRuntime`` both emit ``approval.requested`` WITHOUT an id
-    (the approval row doesn't exist yet at that instant — it's created
-    inside ``broker.request()``, which the runtime awaits AFTER emitting
-    this event) — only ``approval.resolved`` carries ``approval_id``.
-    Correlation is therefore by POSITION, not id: since escrita calls
-    within one script/turn are sequential (never interleaved — contract
-    §E.9 "Tool events are paired"), ``approval.resolved`` always closes
-    the MOST RECENT still-``pendente`` approval block."""
+    Revision 2026-09-14 (contract §E.3/§E.9): ``approval.requested`` now
+    carries the real, persisted approval id (``payload["id"]`` — emitted
+    from inside ``ApprovalBroker.request``'s ``on_created`` callback,
+    AFTER the row is created). Correlation is therefore by ``approvalId``,
+    NEVER by position — the earlier version had no id to correlate on and
+    fell back to "the most recent pendente block", which silently mis-
+    attributed a resolution whenever two escrita calls in the same message
+    were ever concurrent rather than strictly sequential."""
     blocks = list(blocks)
     if kind == "approval.requested":
         blocks.append(
             {
                 "kind": "approval",
-                "approvalId": None,
+                "approvalId": payload.get("id"),
                 "resumo": payload.get("resumo"),
                 "diff": payload.get("diff"),
                 "decision": "pendente",
             }
         )
         return blocks
+    # approval.resolved
     approval_id = payload.get("approval_id")
     decision = payload.get("decision", "pendente")
-    for block in reversed(blocks):
-        if block.get("kind") == "approval" and block.get("decision") == "pendente":
-            block["approvalId"] = approval_id
+    for block in blocks:
+        if block.get("kind") == "approval" and block.get("approvalId") == approval_id:
             block["decision"] = decision
             return blocks
+    # Defensive: no matching block (should never happen given the fixed
+    # §E.9 event order) — append rather than silently drop the signal.
     blocks.append(
         {
             "kind": "approval",
@@ -364,6 +384,39 @@ def _apply_approval_event(
         }
     )
     return blocks
+
+
+async def _apply_and_publish_block_event(
+    *,
+    org_id: UUID,
+    conversation_id: UUID,
+    kind: str,
+    evt_payload: dict[str, Any],
+    current_message_id: UUID | None,
+    current_blocks: list[dict[str, Any]],
+    msg_store: Any,
+    bus: Any,
+    apply_fn: Any,
+) -> tuple[UUID, list[dict[str, Any]]]:
+    """Contract §E.9 point 3 (revised): shared by ``tool.*`` and
+    ``approval.*`` handling in ``_run_turn_background`` — both persist
+    into the CURRENT assistant message's ``blocks`` (creating a placeholder
+    ``message.new`` first if none exists yet), gain ``message_id`` on the
+    published event, and are followed by a ``message.updated`` republish
+    of the full row — in that fixture order: the granular event first,
+    THEN ``message.updated``."""
+    if current_message_id is None:
+        record = msg_store.add(org_id, conversation_id, "assistant", "", blocks=[])
+        current_message_id = record.id
+        current_blocks = []
+        await publish_event(conversation_id, "message.new", _message_payload(record), bus=bus)
+
+    evt_payload = {**evt_payload, "message_id": str(current_message_id)}
+    current_blocks = apply_fn(current_blocks, kind, evt_payload)
+    updated = msg_store.update_blocks(org_id, conversation_id, current_message_id, current_blocks)
+    await publish_event(conversation_id, kind, evt_payload, bus=bus)
+    await publish_event(conversation_id, "message.updated", _message_payload(updated), bus=bus)
+    return current_message_id, current_blocks
 
 
 async def _run_turn_background(
@@ -406,6 +459,15 @@ async def _run_turn_background(
             sdk_session_id=conversation.sdk_session_id,
         )
 
+        # Contract §E.3 canonical fixture — bookends the turn's
+        # `session.status` transitions the same way the failure branch
+        # below bookends `erro`: the runtime only ever yields its OWN
+        # final status (it has no reason to know the turn is starting
+        # before it starts), so the route publishes the opening
+        # "pensando" itself. Ephemeral — never persisted, same as
+        # `message.delta`.
+        await publish_event(conversation_id, "session.status", {"status": "pensando"}, bus=bus)
+
         async for event in runtime.run_turn(spec, turn_ctx, prompt, broker):
             kind = event["event"]
             evt_payload = event["payload"]
@@ -424,26 +486,59 @@ async def _run_turn_background(
                 # Contract §E.9 point 4: published only, never persisted.
                 await publish_event(conversation_id, "message.delta", evt_payload, bus=bus)
             elif kind in ("tool.started", "tool.finished"):
-                if current_message_id is None:
-                    record = msg_store.add(org_id, conversation_id, "assistant", "", blocks=[])
-                    current_message_id = record.id
-                    current_blocks = []
-                current_blocks = _apply_tool_event(current_blocks, kind, evt_payload)
-                msg_store.update_blocks(org_id, conversation_id, current_message_id, current_blocks)
-                await publish_event(conversation_id, kind, evt_payload, bus=bus)
+                current_message_id, current_blocks = await _apply_and_publish_block_event(
+                    org_id=org_id,
+                    conversation_id=conversation_id,
+                    kind=kind,
+                    evt_payload=evt_payload,
+                    current_message_id=current_message_id,
+                    current_blocks=current_blocks,
+                    msg_store=msg_store,
+                    bus=bus,
+                    apply_fn=_apply_tool_event,
+                )
             elif kind in ("approval.requested", "approval.resolved"):
-                if current_message_id is None:
-                    record = msg_store.add(org_id, conversation_id, "assistant", "", blocks=[])
-                    current_message_id = record.id
-                    current_blocks = []
-                current_blocks = _apply_approval_event(current_blocks, kind, evt_payload)
-                msg_store.update_blocks(org_id, conversation_id, current_message_id, current_blocks)
-                await publish_event(conversation_id, kind, evt_payload, bus=bus)
+                current_message_id, current_blocks = await _apply_and_publish_block_event(
+                    org_id=org_id,
+                    conversation_id=conversation_id,
+                    kind=kind,
+                    evt_payload=evt_payload,
+                    current_message_id=current_message_id,
+                    current_blocks=current_blocks,
+                    msg_store=msg_store,
+                    bus=bus,
+                    apply_fn=_apply_approval_event,
+                )
+            elif kind == "session.resume_fallback":
+                # Contract §E.9 "Resume after a restart" — a distinct
+                # `system` message, deliberately NOT threaded through the
+                # assistant-message block accumulator above (it isn't a
+                # tool/approval block, and it must render as its own
+                # message per the fixed PT-BR text).
+                system_record = msg_store.add(
+                    org_id, conversation_id, "system", evt_payload.get("texto", "")
+                )
+                await publish_event(
+                    conversation_id, "message.new", _message_payload(system_record), bus=bus
+                )
             elif kind == "session.status":
                 sdk_session_id = evt_payload.get("sdk_session_id")
-                if sdk_session_id:
-                    conv_store.set_sdk_session_id(org_id, conversation_id, sdk_session_id)
                 await publish_event(conversation_id, "session.status", evt_payload, bus=bus)
+                if sdk_session_id:
+                    # Canonical fixture: `conversation.upsert` follows the
+                    # terminal `session.status` — the route re-publishes
+                    # the conversation row it just persisted so list views
+                    # pick up the new `sdk_session_id` live, without a
+                    # refetch.
+                    updated_conv = conv_store.set_sdk_session_id(
+                        org_id, conversation_id, sdk_session_id
+                    )
+                    await publish_event(
+                        conversation_id,
+                        "conversation.upsert",
+                        _conversation_payload(updated_conv),
+                        bus=bus,
+                    )
             elif kind == "conversation.upsert":
                 await publish_event(conversation_id, "conversation.upsert", evt_payload, bus=bus)
             else:

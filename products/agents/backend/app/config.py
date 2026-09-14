@@ -30,6 +30,13 @@ class SeedSettings(ProductSettings):
     # seconds; the waiting tool call is then denied (app/runtime/broker.py).
     approval_timeout_seconds: int = 900
 
+    # Contract §E.10 (security review 2026-09-14): the escrita handler
+    # refuses `approval_invalid` once `decided_at` is older than this —
+    # bounds how long a valid, unconsumed approval stays usable between a
+    # human's decision and the tool call actually reaching academia
+    # (app/runtime/tools.py's `_escrita` handler).
+    approval_use_window_seconds: int = 120
+
     # `X-Approval-Assertion` HS256 signing/verification keys (contract §D).
     # Comma-separated in the env var — `agents` SIGNS with element [0]
     # (app/runtime/assertion.py); an academia-side product would ACCEPT any
