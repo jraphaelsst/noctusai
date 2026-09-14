@@ -18,4 +18,4 @@
 # products pin this explicitly; seed/lib/backend's pyproject lists FastAPI
 # but not uvicorn. Follow-up: consider absorbing uvicorn into
 # seed/lib/backend deps so every product inherits it.
-uvicorn[standard]==0.30.6
+uvicorn[standard]==0.31.1

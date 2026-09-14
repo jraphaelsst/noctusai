@@ -1,7 +1,7 @@
 -e seed/lib/backend
 -e seed/framework/backend
 fastapi==0.121.0
-uvicorn[standard]==0.30.6
+uvicorn[standard]==0.31.1
 supabase==2.9.1
 # gotrue is supabase's auth sub-dep; supabase 2.9.1's <3.0.0 floor is too loose.
 # gotrue 2.12.x dropped `SyncSupabaseAuthClient._refresh_token_timer`, which
