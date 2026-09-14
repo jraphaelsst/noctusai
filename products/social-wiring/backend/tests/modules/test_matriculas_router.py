@@ -335,6 +335,80 @@ class TestObterExtracao:
         resp = client.get("/api/matriculas/extracoes/nonexistent")
         assert resp.status_code == 404
 
+    def test_extracao_traz_formatacao_e_texto_html(self, client):
+        """Contract §4: `data` gains `formatacao` and `texto_html`."""
+        linha = {
+            **SAMPLE_EXTRACAO,
+            "texto_extraido": "Bold word here",
+            "formatacao": [{"start": 0, "end": 4, "bold": True, "underline": False}],
+        }
+        client.mock_supabase.set_table_data("matricula_extracoes", [linha])
+        resp = client.get("/api/matriculas/extracoes/ext-001")
+        data = resp.json()["data"]
+        assert data["formatacao"] == linha["formatacao"]
+        assert data["texto_html"] == (
+            '<p style="font-family:\'Times New Roman\', Times, serif; '
+            'font-size:12pt; line-height:1.5; text-align:justify; '
+            'text-indent:1.25cm;"><b>Bold</b> word here</p>'
+        )
+
+    def test_extracao_sem_texto_traz_texto_html_nulo(self, client):
+        linha = {**SAMPLE_EXTRACAO, "texto_extraido": None, "formatacao": []}
+        client.mock_supabase.set_table_data("matricula_extracoes", [linha])
+        resp = client.get("/api/matriculas/extracoes/ext-001")
+        assert resp.json()["data"]["texto_html"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /api/matriculas/extracoes/{id}/pdf
+# ---------------------------------------------------------------------------
+
+class TestBaixarExtracaoPdf:
+    def test_download_com_transcricao_concluida(self, client):
+        linha = {
+            **SAMPLE_EXTRACAO,
+            "texto_extraido": "Bold word here",
+            "formatacao": [{"start": 0, "end": 4, "bold": True, "underline": False}],
+        }
+        client.mock_supabase.set_table_data("matricula_extracoes", [linha])
+        resp = client.get("/api/matriculas/extracoes/ext-001/pdf")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content[:5] == b"%PDF-"
+        assert (
+            'filename="matricula_transcricao.pdf"'
+            in resp.headers["content-disposition"]
+        )
+
+        import fitz
+
+        doc = fitz.open(stream=resp.content, filetype="pdf")
+        texto_pdf = "".join(page.get_text() for page in doc)
+        assert "Bold word here" in texto_pdf
+        assert "Transcrição da matrícula — matricula.pdf" in texto_pdf
+
+    def test_download_extracao_inexistente_e_404(self, client):
+        client.mock_supabase.set_table_data("matricula_extracoes", [])
+        resp = client.get("/api/matriculas/extracoes/nonexistent/pdf")
+        assert resp.status_code == 404
+
+    def test_download_sem_transcricao_concluida_e_409(self, client):
+        linha = {
+            **SAMPLE_EXTRACAO, "status": "processando", "texto_extraido": None,
+        }
+        client.mock_supabase.set_table_data("matricula_extracoes", [linha])
+        resp = client.get("/api/matriculas/extracoes/ext-001/pdf")
+        assert resp.status_code == 409
+        assert resp.json()["error"]["message"] == "Transcrição ainda não concluída"
+
+    def test_download_concluida_mas_sem_texto_e_409(self, client):
+        """Belt-and-suspenders: `status == 'concluida'` alone is not enough —
+        a row could theoretically carry no text at all."""
+        linha = {**SAMPLE_EXTRACAO, "status": "concluida", "texto_extraido": None}
+        client.mock_supabase.set_table_data("matricula_extracoes", [linha])
+        resp = client.get("/api/matriculas/extracoes/ext-001/pdf")
+        assert resp.status_code == 409
+
 
 # ---------------------------------------------------------------------------
 # DELETE /api/matriculas/extracoes/{id}

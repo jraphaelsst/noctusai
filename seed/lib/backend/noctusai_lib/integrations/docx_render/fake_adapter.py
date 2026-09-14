@@ -32,9 +32,12 @@ import hashlib
 import io
 import re
 import zipfile
-from typing import Any, Mapping
+from dataclasses import dataclass
+from typing import Any, Mapping, Sequence
 
 from docx import Document
+
+from noctusai_lib.integrations.documents.formatting import Run
 
 _VAR_RE = re.compile(r"\{\{-?\s*([A-Za-z_][A-Za-z0-9_]*)")
 _FOR_RE = re.compile(
@@ -42,6 +45,23 @@ _FOR_RE = re.compile(
     r"(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)?)\s+in\s+([A-Za-z_][A-Za-z0-9_]*)"
 )
 _IF_RE = re.compile(r"\{%-?\s*(?:tr\s+)?if\s+([A-Za-z_][A-Za-z0-9_]*)")
+
+
+@dataclass(frozen=True)
+class FakeRichText:
+    """Fake-parity `rich_text()` return value — never imports `docxtpl`.
+
+    Records the `Run`s it was built from (read-side test introspection,
+    same posture as `FakeDocxRenderAdapter.calls`) and stringifies to
+    their plain-text concatenation, mirroring `docxtpl.RichText.__str__`
+    returning its raw markup: a test exercising the Fake path can still
+    read the quote's plain text back out of a rendered context dict.
+    """
+
+    runs: tuple[Run, ...]
+
+    def __str__(self) -> str:
+        return "".join(r.text for r in self.runs)
 
 
 class FakeDocxRenderAdapter:
@@ -96,3 +116,6 @@ class FakeDocxRenderAdapter:
         # them, and a Fake that did would make a completeness gate under test
         # demand a key production never needs.
         return found - loop_bound
+
+    def rich_text(self, runs: Sequence[Run]) -> Any:
+        return FakeRichText(tuple(runs))

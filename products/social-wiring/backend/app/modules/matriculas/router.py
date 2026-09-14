@@ -58,7 +58,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import unicodedata
+from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import (
@@ -71,7 +74,9 @@ from fastapi import (
     Query,
     UploadFile,
 )
+from fastapi.responses import Response
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_user_client
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
@@ -98,6 +103,8 @@ from app.modules.matriculas.service import (
     check_required_credentials,
     processar_extracao,
     processar_extracao_de_documento,
+    renderizar_extracao_pdf,
+    texto_html_da_extracao,
 )
 from app.responses import (
     calculate_pagination,
@@ -139,6 +146,31 @@ def _auth_parts(auth) -> tuple[object, str, str]:
     """
     user, token, raw_org = auth
     return user, token, str(coerce_org_uuid(raw_org))
+
+
+def _content_disposition(filename: str) -> str:
+    """An attachment header that survives an accented filename.
+
+    Copied from `certidoes/routers/certidoes.py::_content_disposition`
+    (identical bug, identical fix — an unescaped accented `filename=` raises
+    inside Starlette and 500s the whole download) rather than imported: the
+    two modules share no common parent this platform lets them both import
+    from within THIS slice's scope. Flagged as `scoped-improvement:` in
+    S3's delivery note — a third caller makes this N=3, the DRY recurrence
+    rule's MUST-formalize threshold.
+    """
+    folded = (
+        unicodedata.normalize("NFKD", filename)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .replace('"', "")
+        .strip()
+    )
+    ascii_name = folded or "download"
+    return (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
 
 
 def _exigir_credenciais(org_id: str) -> None:
@@ -358,6 +390,10 @@ async def obter_extracao(
     successful read appends a `text_view` row to `imovel_documento_acessos`
     BEFORE the response goes out — a failed log write fails the request,
     same contract as `DocumentoStore.url`.
+
+    Contract §4 (migration 113): `data` gains `texto_html` (Word-pasteable,
+    `None` when there is no text yet) alongside the `formatacao` the raw
+    `select("*")` already carries.
     """
     user, token, org_id = _auth_parts(auth)
     db = get_user_client(token)
@@ -372,7 +408,63 @@ async def obter_extracao(
     estrutura_svc.log_leitura_texto(
         matriculas_client, UUID(org_id), extracao_id, getattr(user, "id", None)
     )
-    return success_response(result.data)
+    dados = dict(result.data)
+    dados["texto_html"] = texto_html_da_extracao(
+        dados.get("texto_extraido"), dados.get("formatacao")
+    )
+    return success_response(dados)
+
+
+@router.get("/extracoes/{extracao_id}/pdf")
+async def baixar_extracao_pdf(
+    extracao_id: str,
+    auth=Depends(get_current_user_org),
+    matriculas_client=Depends(get_matriculas_client),
+):
+    """ABNT-formatted PDF of the transcript — 'Baixar PDF' on the Matrículas
+    page (contract §4). Route ordering: `{extracao_id}` matches exactly one
+    path segment (Starlette), so this two-segment suffix can never be
+    shadowed by, or shadow, the bare `GET /extracoes/{extracao_id}` above.
+
+    🔴 LGPD (migration 111): the SAME `text_view` log `obter_extracao`
+    writes — this route exposes the identical CPF-bearing text, as a PDF
+    instead of JSON.
+    """
+    user, token, org_id = _auth_parts(auth)
+    db = get_user_client(token)
+
+    result = (
+        db.table(TABLE)
+        .select("nome_arquivo, status, texto_extraido, formatacao")
+        .eq("id", extracao_id)
+        .maybe_single()
+        .execute()
+    )
+    if not result or not result.data:
+        raise HTTPException(status_code=404, detail="Extração não encontrada")
+    row = result.data
+    texto = row.get("texto_extraido")
+    if row.get("status") != "concluida" or not texto:
+        raise HTTPException(
+            status_code=409, detail="Transcrição ainda não concluída"
+        )
+
+    estrutura_svc.log_leitura_texto(
+        matriculas_client, UUID(org_id), extracao_id, getattr(user, "id", None)
+    )
+
+    nome_arquivo = row.get("nome_arquivo") or "matricula.pdf"
+    try:
+        pdf_bytes = renderizar_extracao_pdf(nome_arquivo, texto, row.get("formatacao"))
+    except UnsupportedGlyphError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    filename = f"{Path(nome_arquivo).stem}_transcricao.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _content_disposition(filename)},
+    )
 
 
 @router.delete("/extracoes/{extracao_id}")

@@ -9,11 +9,13 @@ blocks (`{% if %}`), and repeating table rows (`{% for %}` over
 
 **What ships** (`KB § PATTERNS/backend/seed-fake-real-adapter.md` shape):
 
-- `DocxRenderAdapter` Protocol (`types.py`) — `render()` + `list_placeholders()`.
+- `DocxRenderAdapter` Protocol (`types.py`) — `render()` + `list_placeholders()`
+  + `rich_text()`.
 - `MissingPlaceholderError` / `DocxRenderError` — typed errors; a missing
   context key is REPORTED, never silently rendered blank.
-- `FakeDocxRenderAdapter` — deterministic in-memory implementation, no
-  `docxtpl` dependency (dev/test default).
+- `FakeDocxRenderAdapter` (+ its `rich_text()` return value `FakeRichText`)
+  — deterministic in-memory implementation, no `docxtpl` dependency
+  (dev/test default).
 - `DocxtplRenderAdapter` — real rendering via `docxtpl` (lazy-imported).
 - `get_docx_render_adapter()` factory.
 
@@ -46,7 +48,10 @@ change; noted here for the next agent that touches it.
 from __future__ import annotations
 
 from noctusai_lib.integrations.docx_render.docxtpl_adapter import DocxtplRenderAdapter
-from noctusai_lib.integrations.docx_render.fake_adapter import FakeDocxRenderAdapter
+from noctusai_lib.integrations.docx_render.fake_adapter import (
+    FakeDocxRenderAdapter,
+    FakeRichText,
+)
 from noctusai_lib.integrations.docx_render.types import (
     DocxRenderAdapter,
     DocxRenderError,
@@ -73,6 +78,7 @@ __all__ = [
     "DocxRenderError",
     "DocxtplRenderAdapter",
     "FakeDocxRenderAdapter",
+    "FakeRichText",
     "MissingPlaceholderError",
     "get_docx_render_adapter",
 ]

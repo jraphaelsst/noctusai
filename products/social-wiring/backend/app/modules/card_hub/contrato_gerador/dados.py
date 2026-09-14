@@ -19,6 +19,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Mapping, Optional
 
+from noctusai_lib.integrations.documents.formatting import FormatRange
+
 
 @dataclass
 class Endereco:
@@ -133,6 +135,12 @@ class Matricula:
     codigo: Optional[str] = None
     texto: str = ""
     num_atos: int = 0
+    #: Bold/underline offsets into `texto` — already re-based by
+    #: `obter_selecao` from the extraction's document-level `formatacao`
+    #: onto this selection's own concatenated text (contract §5). Empty
+    #: for a selection made before the source was (re-)transcribed with
+    #: formatting — the quote still renders, just unformatted.
+    formatacao: tuple[FormatRange, ...] = ()
 
 
 @dataclass

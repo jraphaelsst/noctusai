@@ -82,6 +82,20 @@ vi.mock("@noctusai/lib/design-system", () => ({
   ),
 }));
 
+// ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6) — the
+// seed clipboard helper and the raw-fetch download IO boundary.
+const mockCopyRichText = vi.fn();
+vi.mock("@noctusai/lib/clipboard", () => ({
+  copyRichText: (...a: unknown[]) => mockCopyRichText(...a),
+}));
+
+const mockAuthenticatedFetch = vi.fn();
+const mockTriggerBlobDownload = vi.fn();
+vi.mock("@/lib/file-download", () => ({
+  authenticatedFetch: (...a: unknown[]) => mockAuthenticatedFetch(...a),
+  triggerBlobDownload: (...a: unknown[]) => mockTriggerBlobDownload(...a),
+}));
+
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 type Extracao = {
@@ -90,6 +104,9 @@ type Extracao = {
   tamanho_bytes: number;
   num_paginas: number | null;
   texto_extraido: string | null;
+  /** ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 4) —
+   *  `null` for rows transcribed before the feature shipped. */
+  texto_html?: string | null;
   status: "pendente" | "processando" | "concluida" | "erro";
   erro_mensagem: string | null;
   created_at: string;
@@ -102,6 +119,7 @@ function makeExtracao(overrides: Partial<Extracao> = {}): Extracao {
     tamanho_bytes: 204800,
     num_paginas: 3,
     texto_extraido: null,
+    texto_html: null,
     status: "concluida",
     erro_mensagem: null,
     created_at: "2026-01-15T10:00:00Z",
@@ -296,12 +314,127 @@ describe("Matriculas — result pane", () => {
     expect(getByText("PDF protegido por senha")).toBeTruthy();
   });
 
-  it("offers 'Nova Extração' once an extraction is complete", async () => {
+  it("offers 'Nova Extração', 'Baixar PDF' and 'Copiar' once an extraction is complete", async () => {
     mockUseExtracao.mockReturnValue(makeQuery({ data: makeExtracao({ texto_extraido: "texto" }) }));
-    const { getByText } = await renderPage();
+    const { getByText, queryByText } = await renderPage();
 
     expect(getByText("Nova Extração")).toBeTruthy();
-    expect(getByText("Copiar Texto")).toBeTruthy();
+    expect(getByText("Baixar PDF")).toBeTruthy();
+    expect(getByText("Copiar")).toBeTruthy();
+    // The old copy-plain-text-only action is gone, not just renamed.
+    expect(queryByText("Copiar Texto")).toBeNull();
+  });
+});
+
+// ─── ABNT formatting project § 6 — Copiar (rich-text clipboard) ─────────────
+
+describe("Matriculas — Copiar (rich-text clipboard)", () => {
+  it("🔴 copies via copyRichText(texto_html, texto_extraido) and toasts success when rich", async () => {
+    mockCopyRichText.mockResolvedValue({ rich: true });
+    mockUseExtracao.mockReturnValue(
+      makeQuery({
+        data: makeExtracao({ texto_extraido: "MATRÍCULA Nº 1", texto_html: "<p><b>MATRÍCULA</b> Nº 1</p>" }),
+      }),
+    );
+    const { getByText, fireEvent } = await renderPage();
+
+    fireEvent.click(getByText("Copiar"));
+    await vi.waitFor(() => expect(mockCopyRichText).toHaveBeenCalledWith("<p><b>MATRÍCULA</b> Nº 1</p>", "MATRÍCULA Nº 1"));
+    await vi.waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith("Texto copiado!"));
+  });
+
+  it("says so — never a silent downgrade — when copyRichText falls back to plain text", async () => {
+    mockCopyRichText.mockResolvedValue({ rich: false });
+    mockUseExtracao.mockReturnValue(
+      makeQuery({
+        data: makeExtracao({ texto_extraido: "texto", texto_html: "<p>texto</p>" }),
+      }),
+    );
+    const { getByText, fireEvent } = await renderPage();
+
+    fireEvent.click(getByText("Copiar"));
+    await vi.waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith("Texto copiado (sem formatação)."),
+    );
+  });
+
+  it("🔴 when texto_html is null, copies plain text directly and says so", async () => {
+    const mockWriteText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: mockWriteText },
+    });
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ texto_extraido: "texto sem html", texto_html: null }) }),
+    );
+    const { getByText, fireEvent } = await renderPage();
+
+    fireEvent.click(getByText("Copiar"));
+    await vi.waitFor(() => expect(mockWriteText).toHaveBeenCalledWith("texto sem html"));
+    expect(mockCopyRichText).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith("Texto copiado (sem formatação)."),
+    );
+  });
+});
+
+// ─── ABNT formatting project § 6 — Baixar PDF ───────────────────────────────
+
+describe("Matriculas — Baixar PDF", () => {
+  function headers(map: Record<string, string>) {
+    return { get: (name: string) => map[name] ?? null };
+  }
+
+  it("🔴 downloads the blob and saves it under the server's Content-Disposition filename", async () => {
+    mockAuthenticatedFetch.mockResolvedValue({
+      ok: true,
+      headers: headers({ "Content-Disposition": 'attachment; filename="matricula-12345_transcricao.pdf"' }),
+      blob: async () => new Blob(["%PDF"]),
+    });
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ id: "extracao-9", texto_extraido: "texto" }) }),
+    );
+    const { getByText, fireEvent } = await renderPage();
+
+    fireEvent.click(getByText("Baixar PDF"));
+    await vi.waitFor(() => expect(mockTriggerBlobDownload).toHaveBeenCalled());
+    expect(mockAuthenticatedFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/matriculas/extracoes/extracao-9/pdf"),
+    );
+    expect(mockTriggerBlobDownload.mock.calls[0][1]).toBe("matricula-12345_transcricao.pdf");
+  });
+
+  it("falls back to `<nome_arquivo>_transcricao.pdf` when Content-Disposition is missing", async () => {
+    mockAuthenticatedFetch.mockResolvedValue({
+      ok: true,
+      headers: headers({}),
+      blob: async () => new Blob(["%PDF"]),
+    });
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ nome_arquivo: "matricula-12345.pdf", texto_extraido: "texto" }) }),
+    );
+    const { getByText, fireEvent } = await renderPage();
+
+    fireEvent.click(getByText("Baixar PDF"));
+    await vi.waitFor(() => expect(mockTriggerBlobDownload).toHaveBeenCalled());
+    expect(mockTriggerBlobDownload.mock.calls[0][1]).toBe("matricula-12345.pdf_transcricao.pdf");
+  });
+
+  it("🔴 toasts the backend detail on a 409 (transcription not yet complete)", async () => {
+    mockAuthenticatedFetch.mockResolvedValue({
+      ok: false,
+      json: async () => ({ detail: "Transcrição ainda não concluída" }),
+    });
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ texto_extraido: "texto" }) }),
+    );
+    const { getByText, fireEvent } = await renderPage();
+
+    fireEvent.click(getByText("Baixar PDF"));
+    await vi.waitFor(() =>
+      expect(mockToastError).toHaveBeenCalledWith("Transcrição ainda não concluída"),
+    );
+    expect(mockTriggerBlobDownload).not.toHaveBeenCalled();
   });
 });
 

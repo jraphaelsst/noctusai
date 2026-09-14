@@ -51,6 +51,13 @@ consumer must honour both:
   is tempered by text source (`real._temper_name_confidence`): an
   overwrite must not be driven by a vision-pass guess.
 """
+from noctusai_lib.integrations.documents.abnt import (
+    UnsupportedGlyphError,
+    paragraphs_from_docx,
+    paragraphs_from_text,
+    render_abnt_pdf,
+    render_word_html,
+)
 from noctusai_lib.integrations.documents.birthdate import find_birthdate, normalize
 from noctusai_lib.integrations.documents.civil_status import (
     ESTADO_CIVIL_VALORES,
@@ -102,6 +109,15 @@ from noctusai_lib.integrations.documents.types import (
     IdentityFields,
     TextSource,
 )
+from noctusai_lib.integrations.documents.formatting import (
+    FormatRange,
+    FormattedDocument,
+    Paragraph,
+    ParagraphKind,
+    Run,
+    ranges_from_json,
+    ranges_to_json,
+)
 
 
 #: Attribute name → the module it lives in, for the lazy proxy below. Both
@@ -139,6 +155,8 @@ __all__ = [
     "FakeDocumentTranscriber",
     "FakeIdentityExtractor",
     "FakeMatriculaExtractor",
+    "FormatRange",
+    "FormattedDocument",
     "IdentityDocumentKind",
     "IdentityExtractor",
     "IdentityFields",
@@ -148,10 +166,14 @@ __all__ = [
     "MatriculaAto",
     "MatriculaExtractor",
     "MatriculaFields",
+    "Paragraph",
+    "ParagraphKind",
     "REGIME_BENS_VALORES",
+    "Run",
     "TextSource",
     "TranscribedPage",
     "Transcription",
+    "UnsupportedGlyphError",
     "ato_hint_span",
     "classify_kind",
     "find_birthdate",
@@ -171,6 +193,12 @@ __all__ = [
     "make_matricula_extractor",
     "normalize",
     "normalize_lines",
+    "paragraphs_from_docx",
+    "paragraphs_from_text",
+    "ranges_from_json",
+    "ranges_to_json",
+    "render_abnt_pdf",
+    "render_word_html",
     "segment_matricula_atos",
     "strip_accents_upper",
 ]

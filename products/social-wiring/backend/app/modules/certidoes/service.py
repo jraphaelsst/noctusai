@@ -40,10 +40,25 @@ import io
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 import httpx
+from noctusai_lib.integrations.documents.abnt import (
+    paragraphs_from_text,
+    render_abnt_pdf,
+    render_word_html,
+)
+from noctusai_lib.integrations.documents.formatting import (
+    FormatRange,
+    FormattedDocument,
+    Paragraph,
+    ParagraphKind,
+    Run,
+    ranges_from_json,
+    ranges_to_json,
+)
 from noctusai_lib.integrations.llm import chat_completion
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.storage import StorageBackend
@@ -71,6 +86,21 @@ logger = logging.getLogger(__name__)
 
 CONSULTAS = "certidao_consultas"
 RESULTADOS = "certidao_resultados"
+
+#: Every `certidao_resultados` column EXCEPT `texto_extraido` / `formatacao`
+#: (migration 113) — the two columns a polling response must never carry,
+#: PLUS `tem_transcricao` (the GENERATED flag the frontend gates its
+#: transcript buttons on, safe to poll precisely because it never carries
+#: the text itself). Used everywhere a resultado is returned to the
+#: frontend as part of a LIST (a consulta's `resultados[]`, the per-parte
+#: panel) — the two dedicated `.../transcricao` routes are the only place
+#: the full text travels, and each of those LGPD-logs the read.
+RESULTADO_COLUNAS_SEM_TEXTO = (
+    "id,consulta_id,org_id,tipo,nome_display,ordem,status,analise_ia,"
+    "arquivo_url,arquivo_nome,api_response,erro_mensagem,api_requested_at,"
+    "created_at,updated_at,numero,emitida_em,validade_ate,resultado,"
+    "resultado_origem,confirmado_por,confirmado_em,tem_transcricao"
+)
 
 MAX_RETRIES = 3
 DEFAULT_TIMEOUT = 240.0
@@ -732,44 +762,76 @@ async def _derive_estrutura(
     return patch
 
 
+@dataclass(frozen=True)
+class ExtractedPdfText:
+    """`_extract_pdf_text`'s result, shaped for its TWO consumers.
+
+    `para_ia` is the AI-analysis input — UNCHANGED by migration 113 (still
+    `"Certidão: <nome>\\n\\n<text[:4000]>"`, still `None` when nothing
+    trustworthy is there). `texto_extraido` / `formatacao` are the
+    UNTRUNCATED transcript and its inline formatting, persisted onto
+    `certidao_resultados` for the `.../transcricao` routes. A transcription
+    that finds nothing, or that raises, is `ExtractedPdfText(para_ia=None)`
+    — logged, never raised; see `_extract_pdf_text`.
+    """
+
+    para_ia: Optional[str]
+    texto_extraido: Optional[str] = None
+    formatacao: tuple[FormatRange, ...] = ()
+
+
+#: Vision pages a certidão transcription may bill. 0 = text layer only (the
+#: free, exact rung). See `_extract_pdf_text` for why this is a cost decision,
+#: and why the vision provider is only resolved when this is above 0.
+CERTIDAO_MAX_VISION_PAGES = 0
+
+
 async def _extract_pdf_text(
     pdf_bytes: bytes, nome_display: str, org_id: Optional[str] = None
-) -> Optional[str]:
-    """Extract text content from a certidão PDF for AI analysis.
+) -> ExtractedPdfText:
+    """Extract text (and its formatting) from a certidão PDF.
 
     Goes through the seed transcriber (`documents.make_document_transcriber`)
     rather than a bare `get_text()` sweep, so a scanned certidão — whose text
     layer is a digital-signature stamp, not content — is not handed to
-    `_analyze_with_ai` as if it were the document.
+    `_analyze_with_ai` (nor persisted) as if it were the document.
 
-    `max_vision_pages=0` keeps this path on the free, exact half of the ladder.
-    Certidões arrive here from a background scheduler that runs per org on a
-    timer, so switching rung 2 on would start billing vision calls on a loop
-    nobody is watching. Raise it (or drop the argument for the seed default of
-    40) to transcribe scanned certidões too — that is a cost decision, not a
-    technical blocker.
+    `max_vision_pages=0` keeps this path on the free, exact half of the
+    ladder — UNCHANGED by migration 113. Certidões arrive here from a
+    background scheduler that runs per org on a timer, so switching rung 2
+    on would start billing vision calls on a loop nobody is watching. Raise
+    it (or drop the argument for the seed default of 40) to transcribe
+    scanned certidões too — that is a cost decision, not a technical
+    blocker.
 
-    Returns None when nothing trustworthy is there, which the caller already
-    treats as "no analysis". The `vision_disabled` case is logged rather than
-    silently dropped: a scanned certidão getting no AI analysis is a real gap
-    and should be visible in the logs, not inferred from an empty column.
+    Never raises: a failed or empty transcription is
+    `ExtractedPdfText(para_ia=None)` (contract §4 — "never fails the
+    certidão"). The `vision_disabled` case is logged rather than silently
+    dropped: a scanned certidão getting no AI analysis (nor a persisted
+    transcript) is a real gap and should be visible in the logs, not
+    inferred from an empty column.
     """
     try:
         from noctusai_lib.integrations.documents import make_document_transcriber
 
         from app.services.api_keys_store import resolve_vision_provider
 
-        # `max_vision_pages=0` means no page reaches a vision model today, so
-        # this argument buys nothing at runtime — it is here so that the day
-        # that cap is raised, the rung starts at the vendor the operator
-        # picked instead of silently at the seed default. The alternative is a
-        # provider switch that governs matrículas and quietly does not govern
-        # certidões, which is the harder bug to see.
+        # The provider is resolved ONLY when the cap lets a page reach a vision
+        # model. At 0 no vendor can ever be called, and resolving it anyway
+        # made a text-layer-only transcription depend on a credential lookup:
+        # without Supabase config it raised, the broad `except` below turned
+        # that into "no transcript", and every certidão silently lost its AI
+        # analysis. Tying both to ONE constant keeps the original intent — the
+        # day the cap is raised, the rung starts at the vendor the operator
+        # picked, not at the seed default.
+        provider = (
+            resolve_vision_provider(org_id) if CERTIDAO_MAX_VISION_PAGES > 0 else None
+        )
         transcriber = make_document_transcriber(
             real=True,
             org_id=org_id,
-            max_vision_pages=0,
-            provider=resolve_vision_provider(org_id),
+            max_vision_pages=CERTIDAO_MAX_VISION_PAGES,
+            provider=provider,
         )
         resultado = await transcriber.transcribe(
             pdf_bytes, mimetype="application/pdf"
@@ -787,14 +849,19 @@ async def _extract_pdf_text(
 
         extracted = resultado.text
         if not extracted:
-            return None
+            return ExtractedPdfText(para_ia=None)
         # Prefix with certificate type for context (mirrors how the automated
         # flow sends structured API response data). Truncate to avoid exceeding
-        # token limits.
-        return f"Certidão: {nome_display}\n\n{extracted[:4000]}"
+        # token limits. UNCHANGED shape — see `ExtractedPdfText.para_ia`.
+        para_ia = f"Certidão: {nome_display}\n\n{extracted[:4000]}"
+        return ExtractedPdfText(
+            para_ia=para_ia,
+            texto_extraido=extracted,
+            formatacao=resultado.formatting,
+        )
     except Exception as e:
         logger.warning("PDF text extraction failed: %s", e)
-        return None
+        return ExtractedPdfText(para_ia=None)
 
 
 # --------------- One certificate ---------------
@@ -811,6 +878,7 @@ async def _process_single_certidao(
     *,
     analyze: Optional[Callable[..., Any]] = None,
     analyze_estrutura: Optional[Callable[..., Any]] = None,
+    extract_text: Optional[Callable[..., Any]] = None,
 ) -> None:
     """Process a single certificate: fetch → download → store → analyze → update.
 
@@ -823,11 +891,17 @@ async def _process_single_certidao(
     such seam, because `http_client` already is one (drive the fake client and
     the real retry / 612 / error-extraction logic runs, which is the point).
     `analyze_estrutura` is the same seam for `_derive_estrutura`'s AI leg,
-    defaulting to `_analyze_estrutura_with_ai`.
+    defaulting to `_analyze_estrutura_with_ai`. `extract_text` is the same
+    shape for the transcription leg (migration 113), defaulting to
+    `_extract_pdf_text` — separate from `analyze`: THIS flow's AI analysis
+    reads the API's own response summary, never the PDF text, so
+    `extract_text`'s only job here is persisting `texto_extraido` /
+    `formatacao` for the `.../transcricao` routes.
     → KB § PATTERNS/backend/di-test-seam.md
     """
     analyze = analyze or _analyze_with_ai
     analyze_estrutura = analyze_estrutura or _analyze_estrutura_with_ai
+    extract_text = extract_text or _extract_pdf_text
     consulta_id = consulta["id"]
     org_id = consulta.get("org_id")
     nome_display = config.get("nome", config["tipo"])
@@ -870,6 +944,12 @@ async def _process_single_certidao(
     file_url = result["file_url"]
     arquivo_url = file_url
     is_html = config["response_format"] == "html"
+    # Migration 113: every PDF this pipeline STORES is also transcribed, so
+    # the `.../transcricao` routes have something to serve. Stays
+    # `ExtractedPdfText(None)` (never persisted — see the two `update_data`
+    # sites below) when nothing gets stored, e.g. an unrecognised
+    # content-type or a download failure.
+    extracted_doc = ExtractedPdfText(para_ia=None)
 
     # Download the document and persist it to our own bucket so we don't depend
     # on InfoSimples keeping the site_receipt URL alive.
@@ -908,6 +988,9 @@ async def _process_single_certidao(
                 )
                 if stored_key:
                     arquivo_url = stored_key
+                    extracted_doc = await extract_text(
+                        pdf_bytes, nome_display, org_id
+                    )
         else:
             logger.warning(
                 "Failed to download file for %s from %s, keeping original URL",
@@ -924,6 +1007,8 @@ async def _process_single_certidao(
             "analise_ia": result["nada_consta"],
             "api_response": result["raw_response"],
             "erro_mensagem": None,
+            "texto_extraido": extracted_doc.texto_extraido,
+            "formatacao": ranges_to_json(extracted_doc.formatacao),
         }
         if arquivo_url:
             update_data["arquivo_url"] = arquivo_url
@@ -960,6 +1045,8 @@ async def _process_single_certidao(
         "analise_ia": analise,
         "api_response": result["raw_response"],
         "erro_mensagem": None,
+        "texto_extraido": extracted_doc.texto_extraido,
+        "formatacao": ranges_to_json(extracted_doc.formatacao),
     }
     update_data.update(await _derive_estrutura(
         config=config, result=result, texto_para_ia=text_for_analysis,
@@ -1367,7 +1454,13 @@ async def process_manual_upload(
     5. Update resultado → sucesso
     6. Recalculate consulta status
 
-    Returns the update_data dict applied to the resultado.
+    Returns the update_data dict applied to the resultado — WITHOUT
+    `texto_extraido` / `formatacao` (migration 113): the router echoes this
+    dict straight into the HTTP response (`upload_certidao_manual`), and
+    certidão text must never round-trip through that JSON envelope, same
+    rule as the polling reads (`RESULTADO_COLUNAS_SEM_TEXTO`). Those two
+    columns ARE written — to the database, via a superset dict this
+    function builds separately and never returns.
 
     `resultado_origem_atual` / `confirmado_por_atual` are the caller's job to
     fetch — the router already reads the resultado row before calling this
@@ -1397,9 +1490,11 @@ async def process_manual_upload(
     # 1. Storage — same key shape as `_process_single_certidao`
     arquivo_url = await _persist_pdf(pdf_bytes, storage, org_id, consulta_id, tipo)
 
-    # 2. Extract text for AI analysis (replaces the API response data the
-    #    automated flow uses as input for `_analyze_with_ai`)
-    text_for_analysis = await extract_text(pdf_bytes, nome_display, org_id)
+    # 2. Extract text — replaces the API response data the automated flow
+    #    uses as `_analyze_with_ai`'s input, and (migration 113) also carries
+    #    the untruncated transcript + formatting this function persists below.
+    extracted = await extract_text(pdf_bytes, nome_display, org_id)
+    text_for_analysis = extracted.para_ia
 
     # 3. AI analysis — same function as automated flow
     analise = None
@@ -1423,7 +1518,15 @@ async def process_manual_upload(
             update_data.update(via_ia)
             update_data["resultado_origem"] = "ia"
 
-    db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
+    # 🔴 `persist_data` is a SUPERSET of `update_data`, built for the DB write
+    # ONLY — see this docstring's leak note. `update_data` itself never gains
+    # these two keys.
+    persist_data = {
+        **update_data,
+        "texto_extraido": extracted.texto_extraido,
+        "formatacao": ranges_to_json(extracted.formatacao),
+    }
+    db.table(RESULTADOS).update(persist_data).eq("id", resultado_id).execute()
 
     # 5. Recalculate consulta status — same function as automated flow
     _atualizar_status_consulta(consulta_id, org_id, db)
@@ -1846,9 +1949,11 @@ def certidoes_por_parte(db, org_id, atendimento_parte_id: str) -> list[dict]:
         # postgrest-unbounded-ok: batched by `in_batches` (200/batch), and a
         # party's total resultado count across all its consultas stays in the
         # low tens in practice.
+        # Migration 113: this panel polls like the consulta-detail screen
+        # does — never `select("*")` here, or the certidão text rides along.
         rows = (
             db.table(RESULTADOS)
-            .select("*")
+            .select(RESULTADO_COLUNAS_SEM_TEXTO)
             .eq("org_id", str(org_id))
             .in_("consulta_id", batch)
             .order("ordem")
@@ -1881,6 +1986,13 @@ def confirmar_resultado(
     `numero`/`emitida_em`/`validade_ate`/`resultado` the caller sent
     (`schemas.ResultadoPatch(...).model_dump(exclude_unset=True)`); already
     validated against the CHECK-constrained vocabulary by that schema.
+
+    🔴 Never carries `texto_extraido` / `formatacao` (migration 113): an
+    UPDATE returns its full row by default (`postgrest-py` has no per-column
+    `.select()` on that chain — see this module's history), and this
+    dict rides straight into the router's HTTP response. Stripped below
+    rather than avoided upstream, since there is nowhere upstream to avoid
+    it FROM.
     """
     existing = (
         db.table(RESULTADOS)
@@ -1904,7 +2016,12 @@ def confirmar_resultado(
         .eq("org_id", str(org_id))
         .execute()
     ).data or []
-    return updated[0] if updated else None
+    if not updated:
+        return None
+    row = dict(updated[0])
+    row.pop("texto_extraido", None)
+    row.pop("formatacao", None)
+    return row
 
 
 def _log_resultado_acesso(db, org_id, resultado_id: str, usuario_id, acao: str) -> None:
@@ -1983,14 +2100,78 @@ async def mint_resultado_url(
     return {"url": url, "expires_at": expires_at}
 
 
+def obter_transcricao_resultado(
+    db, org_id, resultado_id: str, *, usuario_id
+) -> Optional[dict]:
+    """The resultado's transcript row for the two `.../transcricao` routes
+    (migration 113) — JSON and PDF both start here. LGPD-logs the read
+    (`_log_resultado_acesso`, acao='view') BEFORE returning, exactly as
+    `mint_resultado_url` logs a file read; a failed log fails the request,
+    same existing contract.
+
+    Returns `None` for a resultado absent from this org (-> 404 "Resultado
+    não encontrado"). Returns `{"disponivel": False}` for one that exists
+    but has no transcript yet (-> 404 "Transcrição indisponível para esta
+    certidão") — no log fires for that case, there is no read to log.
+    """
+    rows = (
+        db.table(RESULTADOS)
+        .select("id, tipo, nome_display, texto_extraido, formatacao")
+        .eq("id", resultado_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    row = rows[0]
+    texto = row.get("texto_extraido")
+    if not texto:
+        return {"disponivel": False}
+
+    _log_resultado_acesso(db, org_id, resultado_id, usuario_id, "view")
+
+    formatacao_json = row.get("formatacao") or []
+    doc = FormattedDocument(
+        paragraphs=paragraphs_from_text(texto, ranges_from_json(formatacao_json))
+    )
+    return {
+        "disponivel": True,
+        "tipo": row["tipo"],
+        "nome_display": row["nome_display"],
+        "texto": texto,
+        "texto_html": render_word_html(doc),
+        "formatacao": formatacao_json,
+    }
+
+
+def renderizar_transcricao_pdf(nome_display: str, texto: str, formatacao_json) -> bytes:
+    """ABNT-formatted PDF of one certidão transcript, titled
+    `"Transcrição — <nome_display>"` (contract §4).
+
+    Raises `noctusai_lib.integrations.documents.abnt.UnsupportedGlyphError`
+    straight through — the router turns it into a 422 naming the character,
+    never a silent 500.
+    """
+    titulo = f"Transcrição — {nome_display}"
+    ranges = ranges_from_json(formatacao_json)
+    titulo_paragrafo = Paragraph(runs=(Run(text=titulo),), kind=ParagraphKind.TITLE)
+    doc = FormattedDocument(
+        paragraphs=(titulo_paragrafo, *paragraphs_from_text(texto, ranges)),
+        title=titulo,
+    )
+    return render_abnt_pdf(doc)
+
+
 __all__ = [
     "CERTIDOES_CONFIG",
     "CONSULTAS",
     "RESULTADOS",
     "RESULTADO_ACESSOS",
+    "RESULTADO_COLUNAS_SEM_TEXTO",
     "STALE_PROCESSANDO_SECONDS",
     "TJSP_COOLDOWN_SECONDS",
     "TJSP_TIPO",
+    "ExtractedPdfText",
     "cancelar_processamento",
     "certidoes_por_parte",
     "check_required_credentials",
@@ -1998,6 +2179,7 @@ __all__ = [
     "delete_storage_files",
     "is_storage_key",
     "mint_resultado_url",
+    "obter_transcricao_resultado",
     "process_manual_upload",
     "processar_consulta",
     "in_batches",
@@ -2005,6 +2187,7 @@ __all__ = [
     "read_certidao_bytes",
     "recover_stale_processando",
     "recover_stuck_processando",
+    "renderizar_transcricao_pdf",
     "schedule_all_pending_tjsp",
     "schedule_tjsp_for_org",
     "status_counts_por_consulta",

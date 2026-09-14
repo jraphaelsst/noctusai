@@ -27,6 +27,20 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, useAuthStore } from '@noctusai/seed/infra';
 
+/**
+ * `noctusai_lib.integrations.documents.formatting.FormatRange` on the wire —
+ * offsets `[start, end)` into the owning plain text. ABNT formatting project
+ * (`projects/abnt-formatting-CONTRACT.md` § 1); shared shape for BOTH
+ * matrícula extractions and certidão transcriptions, so `useCertidoes.ts`
+ * imports this type rather than redeclaring it.
+ */
+export interface FormatRange {
+  start: number;
+  end: number;
+  bold: boolean;
+  underline: boolean;
+}
+
 export interface MatriculaExtracao {
   id: string;
   org_id?: string;
@@ -35,6 +49,14 @@ export interface MatriculaExtracao {
   tamanho_bytes: number;
   num_paginas: number | null;
   texto_extraido: string | null;
+  /** `render_word_html(FormattedDocument)` — `null` when there is no text
+   *  yet. The "Copiar" action's rich-text source (`copyRichText`'s `html`
+   *  argument); ABNT formatting project § 4. */
+  texto_html: string | null;
+  /** Bold/underline ranges into `texto_extraido`. Not consumed directly by
+   *  this page today (the backend already bakes them into `texto_html`) —
+   *  carried through so the wire type matches the contract. */
+  formatacao: FormatRange[];
   status: 'pendente' | 'processando' | 'concluida' | 'erro';
   erro_mensagem: string | null;
   /** The imóvel this transcription is filed under, uppercased — `null` for
