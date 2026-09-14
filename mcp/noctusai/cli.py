@@ -406,6 +406,21 @@ def main():
         # worktree, not noc; the operator should see exactly what was rebound.
         print(f"  {YELLOW}worktree override:{RESET} REPO_ROOT={wt}")
 
+    # Load the repo's `.env` into THIS process — the CLI/hooks leg of the
+    # shared server+CLI credential bootstrap (`env_bootstrap.py`). The MCP
+    # server has loaded its own `.env` at import time since 2026-08-31; the
+    # CLI never did, so any DB-backed keeper invoked via `scripts/hooks/*`
+    # (e.g. `--check-migration-applied-ledger-drift`) SKIPped for want of a
+    # credential the server resolved fine. Runs AFTER the `--worktree-path`
+    # override above — `settings.REPO_ROOT` may legitimately point at a
+    # worktree here (a worktree carries no `.env` of its own;
+    # `env_bootstrap.load_repo_env` falls back to the PRIMARY checkout via
+    # `git rev-parse --git-common-dir`) — and BEFORE any tool branch below
+    # can touch a DB-backed credential.
+    from settings import REPO_ROOT as _env_repo_root
+    from env_bootstrap import load_repo_env
+    load_repo_env(_env_repo_root)
+
     print(f"\n{BOLD}╔══════════════════════════════════════════════════════════╗{RESET}")
     print(f"{BOLD}║                NoctusAI Dev Toolkit                      ║{RESET}")
     print(f"{BOLD}╚══════════════════════════════════════════════════════════╝{RESET}\n")

@@ -2674,6 +2674,29 @@ class TestCheckMigrationAppliedLedgerDrift:
         assert "DB unreachable" in issues[0]["issue"]
         assert "NOC-REMEDIATE" in issues[0]["issue"]
 
+    def test_skip_message_names_which_credential_sources_were_tried(self, monkeypatch):
+        """🔴 THE 2026-09-14 FIX — a bare "not resolved" hid that the actual
+        cause was `cli.py` never loading `.env` (the MCP server resolved the
+        identical credential fine). The SKIP message must name the concrete
+        sources it checked, so a genuine no-credentials-anywhere state stays
+        distinguishable from a bootstrap gap."""
+        repo = self._mk("erp-imobiliario", ["043_api_tokens.sql"], main_py_schema="erp")
+        monkeypatch.delenv("SUPABASE_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential",
+            lambda *a, **k: None,
+        )
+
+        issues = check_migration_applied_ledger_drift(repo, executor=None)
+
+        assert len(issues) == 1, issues
+        msg = issues[0]["issue"]
+        assert "SUPABASE_ACCESS_TOKEN=unset" in msg
+        assert "SUPABASE_URL=unset" in msg
+        assert "SUPABASE_SERVICE_ROLE_KEY=unset" in msg
+
     # ── The real regression: erp-imobiliario's phantom schema ──────────────
     def test_flags_file_applied_via_non_recording_path(self):
         repo = self._mk("erp-imobiliario", ["043_api_tokens.sql"], main_py_schema="erp")

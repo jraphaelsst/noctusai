@@ -10456,6 +10456,32 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
     return findings
 
 
+def _describe_credential_sources_tried() -> str:
+    """Human-readable summary of which ``supabase_access_token`` resolution
+    tiers had a live value in THIS process's environment, for an honest SKIP
+    message on :func:`check_migration_applied_ledger_drift`.
+
+    Reads ``os.environ`` directly (no DB round-trip here — that already
+    happened, and failed, inside ``make_sql_executor``). By the time this
+    runs, BOTH the MCP server (``server.py``) and the CLI (``cli.py``) have
+    already run the shared ``mcp/noctusai/env_bootstrap.load_repo_env``
+    loader, so these booleans reflect the repo-root ``.env`` too — not only
+    variables the calling shell happened to export. See
+    ``KB § PATTERNS/backend/migrate-product-mcp-tool.md``.
+    """
+    import os
+
+    token_set = bool(os.environ.get("SUPABASE_ACCESS_TOKEN"))
+    url_set = bool(os.environ.get("SUPABASE_URL"))
+    key_set = bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY"))
+    return (
+        f"env SUPABASE_ACCESS_TOKEN={'set' if token_set else 'unset'}; "
+        "DB platform_settings tier needs SUPABASE_URL="
+        f"{'set' if url_set else 'unset'} + SUPABASE_SERVICE_ROLE_KEY="
+        f"{'set' if key_set else 'unset'} to even attempt a lookup"
+    )
+
+
 def check_migration_applied_ledger_drift(
     repo_root: Path | None = None,
     *,
@@ -10548,10 +10574,17 @@ def check_migration_applied_ledger_drift(
             "product": "*",
             "file": "*",
             "issue": (
-                "DB unreachable: no supabase_access_token resolved — this "
+                "DB unreachable: no supabase_access_token resolved "
+                f"(tried: {_describe_credential_sources_tried()}) — this "
                 "detector was SKIPPED, not run clean. NOC-REMEDIATE[credentials]: "
-                "store platform_settings['supabase_access_token'] or set env "
-                "SUPABASE_ACCESS_TOKEN."
+                "store platform_settings['supabase_access_token'] (global scope, "
+                "DB-first) or set env SUPABASE_ACCESS_TOKEN in the repo-root "
+                ".env — both the MCP server AND the CLI/hooks load that same "
+                ".env via the shared mcp/noctusai/env_bootstrap.load_repo_env "
+                "loader (2026-09-14: the CLI leg of this loader used to be "
+                "missing entirely, which was the actual cause the last time "
+                "this SKIPped while the MCP server resolved the identical "
+                "credential fine)."
             ),
             "severity": "skipped",
         }]

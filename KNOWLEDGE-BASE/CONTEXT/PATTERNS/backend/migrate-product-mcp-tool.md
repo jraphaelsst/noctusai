@@ -187,6 +187,30 @@ that intersection is the "applied through the non-recording path" set.
   per-product static seed-compliance check).
 - CLI: `python cli.py --check-migration-applied-ledger-drift`.
 
+**🔴 The server and the CLI must resolve the SAME `supabase_access_token` —
+they didn't, once (2026-09-14).** `_resolve_access_token` (above) is DB-first
+via the seed `resolve_credential` seam, which needs `SUPABASE_URL` +
+`SUPABASE_SERVICE_ROLE_KEY` in `os.environ` before it can even attempt the
+DB tier, falling back to plain env `SUPABASE_ACCESS_TOKEN` (Tier 3) either
+way. The MCP server (`server.py`) has loaded the repo-root `.env` into its
+own process at import time since 2026-08-31 — but `scripts/hooks/pre-push`
+invokes `cli.py` directly, and `cli.py` never loaded `.env` at all, so this
+keeper SKIPped from the hook path ("no supabase_access_token resolved") even
+though the identical MCP-server-backed tool call resolved the same
+credential fine. Both entry points now call the SAME loader —
+`mcp/noctusai/env_bootstrap.load_repo_env(REPO_ROOT)` — so there is exactly
+one dotenv-loading code path for this platform, not two independently
+maintained copies. The loader also handles the worktree wrinkle: a worktree
+never carries its own `.env` (gitignored), but `cli.py` legitimately runs
+with `settings.REPO_ROOT` pointed at a worktree when invoked from
+`scripts/hooks/pre-push` there — `load_repo_env` falls back to the PRIMARY
+checkout's `.env` via `git rev-parse --git-common-dir` in that case. The
+keeper's own `severity='skipped'` message now names which sources were
+tried (`_describe_credential_sources_tried` in `compliance.py`) instead of a
+generic "not resolved", so a genuine no-credentials-anywhere state (fresh
+clone, CI without secrets) is still honestly distinguishable from this class
+of bootstrap gap.
+
 ## Usage flow
 
 ```

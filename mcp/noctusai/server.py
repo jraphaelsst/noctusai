@@ -14,7 +14,6 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -58,58 +57,29 @@ def _load_repo_root_dotenv() -> None:
     module, so a tool that reads ``os.environ`` at call time (not just at
     import time) sees the loaded values either way.
 
-    ``override=False`` is load-bearing: an already-set environment
-    variable ALWAYS wins over the ``.env`` file — this never clobbers a
-    value the caller (shell, CI, launcher) deliberately set. Missing
-    ``.env`` is NOT an error (fresh clone / CI must still boot) — logged
-    once at INFO and the server continues with whatever the process
-    environment already has.
-
-    ``python-dotenv`` is already a declared + installed dependency of this
-    server's own venv (``mcp/noctusai/requirements.txt`` +
-    ``pyproject.toml``, both pin ``python-dotenv>=1.0.0``) — same package
-    ``tools/noctus/dev/ai_brain.py`` already uses (lazily, on first LLM
-    call) for this identical repo-root ``.env``. Reused here rather than
-    the connector-MCP ``mcp/_kit/settings.py`` idiom: that one builds a
-    per-connector frozen-dataclass settings object for a small named
-    ``env_map`` (e.g. ``VISTA_BASE_URL``), not a bulk "populate
-    ``os.environ`` for whatever downstream code reads directly" load —
-    the wrong shape for this server's ~185 tool modules that read
-    ``SUPABASE_URL`` etc. straight off ``os.environ.get(...)``.
+    Delegates to :func:`env_bootstrap.load_repo_env` — the ONE dotenv-loading
+    path now shared with ``cli.py`` (2026-09-14: the CLI/pre-push-hook leg of
+    this same credential never loaded ``.env`` at all, so
+    ``check_migration_applied_ledger_drift`` SKIPped from the hook path even
+    though this server resolved the identical credential fine — see
+    ``mcp/noctusai/env_bootstrap.py`` for the full incident + worktree
+    resolution rationale). Kept as a thin wrapper (not inlined at the call
+    site) so the pre-existing ``server._load_repo_root_dotenv`` name — and
+    the tests pinned to it — keep working unchanged; only the mechanism
+    moved.
     """
     logger = logging.getLogger(__name__)
-    try:
-        from dotenv import load_dotenv
-    except ImportError as exc:  # pragma: no cover - dependency is pinned in requirements.txt
-        logger.warning(
-            "server: python-dotenv not installed (%s); relying on already-set "
-            "env. Run `pip install -r mcp/noctusai/requirements.txt`.",
-            exc,
-        )
-        return
-
     from settings import REPO_ROOT
+    from env_bootstrap import load_repo_env
 
-    dotenv_path = REPO_ROOT / ".env"
-    if not dotenv_path.exists():
+    result = load_repo_env(REPO_ROOT, logger=logger)
+    if result.loaded_from:
         logger.info(
-            "server: no repo-root .env at %s; relying on already-set process "
-            "env (expected on a fresh clone / CI).",
-            dotenv_path,
+            "server: catalog creds present: SUPABASE_URL=%s "
+            "SUPABASE_SERVICE_ROLE_KEY=%s",
+            result.supabase_url_present,
+            result.supabase_service_role_key_present,
         )
-        return
-
-    before = len(os.environ)
-    load_dotenv(dotenv_path, override=False)
-    after = len(os.environ)
-    logger.info(
-        "server: loaded repo-root .env (%s new key(s), override=False so an "
-        "already-set env var always wins). Catalog creds present: "
-        "SUPABASE_URL=%s SUPABASE_SERVICE_ROLE_KEY=%s",
-        after - before,
-        bool(os.environ.get("SUPABASE_URL")),
-        bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY")),
-    )
 
 
 _load_repo_root_dotenv()
