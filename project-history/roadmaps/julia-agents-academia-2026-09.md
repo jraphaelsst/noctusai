@@ -179,6 +179,37 @@ The decision log keeps every step.
   Found out-of-band:
   - The dev toolkit's OpenAI account has no credits, so embedding cache refreshes fail at push. Prod impact on One Chat is unverified: no chatbot traffic appeared in the recent log window.
   - A peer session's client contracts folder is now git-ignored (`products/*/contracts/`).
+- **2026-09-14 (wave 1b, part 2)**: four more slices are on `dev`, each re-gated on its rebased tip.
+  - **A3 academia UI** `5d8feba4`.
+  - **M1 academia MCP client** `5f25f501`: 22 tools with 77 tests, covering every §C row.
+  - **Core icon registry** `6f3dec96`: migration 043 seeds the `Recycle` icon, which core's `ProductIcon` registry did not list. That left `test_all_products_compliant` red on `dev`. The fix is at the registry. A reproduction on the `dev` tip confirmed this was the only failing test; the lying-loading-state detector tests were green.
+  - **G4 Agents UI** `b49613e3`:
+    - pages: Julia chat on the seed `ChatWindow` organ, Agentes with the One Chat toggle, the persona editor, and Aprovações
+    - held migration `agents/008`
+    - `agents` added to the CI frontend test matrix
+    - gates: 38 vitest, tsc, build, and the organ, loading-state, status-pagina, migration-collision and KB-sync keepers
+    - the only rebase conflict was the CI matrix, where `academia-de-reciclagem` and `agents` were both new entries; both are kept
+  - **Contract gap from G4:** the §E.3 tool and approval events carry no message id. The UI renders one temporary "live turn" bubble per open conversation and treats the persisted `blocks` as the durable record. Candidate for a later contract revision.
+  - **DRY triage, N=2:** the seed frontend `ApiError` was not exposing the backend's `code`, so both the academia and agents UIs match on `detail` text. A peer session has since added `ApiError.code` (`2b7cbd68`). That getter reads only the nested `{error: {code}}` shape, so it returns `null` for this contract's flat `{detail, code}` errors. Queued as a small seed slice, due before a third contract-driven UI:
+    - make the getter fall back to a top-level `code`;
+    - switch both UIs' `errors.ts` from matching `detail` text to matching `code`.
+  - **G1b agents API + SSE** (`19037004`, `843262cb`, `01db5cc7`) and **A1c import route + seed secret scan** (`d8f280bf`, `ac5eedf7`):
+    - A cherry-pick at 16:08 put both on `dev` before tech-lead integration.
+    - The engineer running G1b stopped on an API session limit after committing its reconciliation.
+    - `dev`'s agents backend equals G1b's final tip, apart from later commits.
+    - A1c's blobs are identical to the engineer's branch.
+    - A1c's two secret-scan copies were already identical in behaviour, so the change is a pure move into the seed. `find_secret` also returns the matched pattern name.
+    - §B.6 now states that a successful import returns 200. A product token gets 403 `product_forbidden`.
+  - **Re-gate on `dev` tip `c5edb64d`**, all by exit code:
+    - agents backend: 258 passed
+    - academia backend: 308 passed
+    - social-wiring bridge: 13 passed
+    - seed secret scan and bundle export: 21 passed
+    - keepers clean: migration-number-collision, every-test-file-is-gated, kb-sync, no-self-monkeypatch, ci-test-matrix-coverage
+
+  **Wave 1b is complete.** All of M1–M3's build slices are on `dev`, and no migration has been applied. Next: D1 devops (containers, wiring for the `/app/bin` wrapper, a stable `AGENTS_INSTANCE_ID`, secrets), the SEC-C isolation suite, and the §G E2E checks.
+
+  G4's two branch-pointer rows were set aside during its rebase. They are republished once the `noctusai` MCP server reconnects, together with the pending pointer updates and cleanups.
 
 ## Retrospective (filled at first trigger fire)
 
