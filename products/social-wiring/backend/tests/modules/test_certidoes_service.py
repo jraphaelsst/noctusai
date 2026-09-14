@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.storage import FakeStorageBackend
 from noctusai_lib.testing import MockSupabaseClient
 
@@ -921,6 +922,15 @@ async def _noop_analyze(text, org_id=None):
     return "ok"
 
 
+async def _noop_extract_text(pdf_bytes, nome_display, org_id=None):
+    """The `extract_text=` DI seam's stand-in — mirrors `_noop_analyze`'s
+    role. Migration 113's transcription leg is a separate concern with its
+    own tests (`TestExtractPdfText`, `TestProcessSingleCertidaoTranscricao`);
+    a test not about it must not pay for a real seed transcriber call
+    against a garbage/converted PDF."""
+    return service.ExtractedPdfText(para_ia=None)
+
+
 class TestProcessSingleCertidao:
     @pytest.mark.asyncio
     async def test_pdf_vai_para_o_bucket_e_arquivo_url_guarda_a_chave(self):
@@ -933,7 +943,8 @@ class TestProcessSingleCertidao:
 
         await service._process_single_certidao(
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
-            "resultado-001", http, storage, analyze=_noop_analyze,
+            "resultado-001", http, storage,
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
 
         row = db.table("certidao_resultados").select("*").eq(
@@ -964,7 +975,8 @@ class TestProcessSingleCertidao:
 
         await service._process_single_certidao(
             config_for("cenprot"), _consulta_row(), "tok", db,
-            "r-html", http, storage, analyze=_noop_analyze,
+            "r-html", http, storage,
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
 
         row = db.table("certidao_resultados").select("*").eq(
@@ -992,7 +1004,8 @@ class TestProcessSingleCertidao:
         )
         await service._process_single_certidao(
             config_for("cenprot"), _consulta_row(), "tok", db,
-            "r-cenprot", http, FakeStorageBackend(), analyze=_noop_analyze,
+            "r-cenprot", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
         assert http.downloaded == ["https://x/cenprot.html"]
 
@@ -1009,7 +1022,8 @@ class TestProcessSingleCertidao:
 
         await service._process_single_certidao(
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
-            "resultado-001", http, storage, analyze=_noop_analyze,
+            "resultado-001", http, storage,
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
 
         row = db.table("certidao_resultados").select("*").eq(
@@ -1027,7 +1041,8 @@ class TestProcessSingleCertidao:
         http = _FakeHttp({"code": 612, "errors": ["Nada consta"]})
         await service._process_single_certidao(
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
-            "resultado-001", http, FakeStorageBackend(), analyze=_noop_analyze,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -1060,7 +1075,8 @@ class TestProcessSingleCertidao:
         )
         await service._process_single_certidao(
             config_for("cenprot"), _consulta_row(), "tok", db,
-            "r-cenprot", http, storage, analyze=_noop_analyze,
+            "r-cenprot", http, storage,
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "r-cenprot"
@@ -1082,7 +1098,8 @@ class TestProcessSingleCertidao:
         http = _FakeHttp({"code": 400, "errors": ["CPF inválido"]})
         await service._process_single_certidao(
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
-            "resultado-001", http, FakeStorageBackend(), analyze=_noop_analyze,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -1103,7 +1120,8 @@ class TestProcessSingleCertidao:
             await service._process_single_certidao(
                 config_for(TJSP_TIPO), _consulta_row(), "tok", db,
                 "resultado-001", _FakeHttp({"code": 400, "errors": ["x"]}),
-                FakeStorageBackend(), analyze=_noop_analyze,
+                FakeStorageBackend(),
+                analyze=_noop_analyze, extract_text=_noop_extract_text,
             )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -2212,7 +2230,8 @@ class TestProcessSingleCertidaoEstruturado:
         http = _FakeHttp({"code": 612, "errors": ["Nada consta"]})
         await service._process_single_certidao(
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
-            "resultado-001", http, FakeStorageBackend(), analyze=_noop_analyze,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -2234,7 +2253,8 @@ class TestProcessSingleCertidaoEstruturado:
         http = _FakeHttp({"code": 612, "errors": ["Nada consta"]})
         await service._process_single_certidao(
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
-            "resultado-001", http, FakeStorageBackend(), analyze=_noop_analyze,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -2255,7 +2275,9 @@ class TestProcessSingleCertidaoEstruturado:
         await service._process_single_certidao(
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
             "resultado-001", http, FakeStorageBackend(),
-            analyze=_noop_analyze, analyze_estrutura=estrutura_ia,
+
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
+            analyze_estrutura=estrutura_ia,
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -2287,7 +2309,9 @@ class TestProcessManualUploadEstruturado:
             org_id=ORG,
             db=db,
             storage=FakeStorageBackend(),
-            extract_text=AsyncMock(return_value="texto extraído"),
+            extract_text=AsyncMock(
+                return_value=service.ExtractedPdfText(para_ia="texto extraído")
+            ),
             analyze=AsyncMock(return_value="resumo"),
             analyze_estrutura=estrutura_ia,
         )
@@ -2315,7 +2339,9 @@ class TestProcessManualUploadEstruturado:
             storage=FakeStorageBackend(),
             resultado_origem_atual="api",
             confirmado_por_atual="user-1",
-            extract_text=AsyncMock(return_value="texto extraído"),
+            extract_text=AsyncMock(
+                return_value=service.ExtractedPdfText(para_ia="texto extraído")
+            ),
             analyze=AsyncMock(return_value="resumo"),
             analyze_estrutura=estrutura_ia,
         )
@@ -2341,7 +2367,9 @@ class TestProcessManualUploadEstruturado:
             db=db,
             storage=FakeStorageBackend(),
             resultado_origem_atual="manual",
-            extract_text=AsyncMock(return_value="texto extraído"),
+            extract_text=AsyncMock(
+                return_value=service.ExtractedPdfText(para_ia="texto extraído")
+            ),
             analyze=AsyncMock(return_value="resumo"),
             analyze_estrutura=estrutura_ia,
         )
@@ -2363,7 +2391,7 @@ class TestProcessManualUploadEstruturado:
             org_id=ORG,
             db=db,
             storage=FakeStorageBackend(),
-            extract_text=AsyncMock(return_value=None),
+            extract_text=AsyncMock(return_value=service.ExtractedPdfText(para_ia=None)),
             analyze_estrutura=estrutura_ia,
         )
         estrutura_ia.assert_not_awaited()
@@ -2401,6 +2429,18 @@ class TestCertidoesPorParte:
         )
         assert service.certidoes_por_parte(db, ORG, "parte-1") == []
 
+    def test_a_query_nunca_seleciona_o_texto_da_certidao(self):
+        """Migration 113: this panel polls like the consulta-detail screen.
+        `MockSupabaseClient` does not project columns (see
+        `test_matriculas_router.py::test_a_lista_nao_seleciona_o_texto_
+        extraido`), so — same house pattern — the contract is asserted on
+        the projection STRING itself."""
+        assert "texto_extraido" not in service.RESULTADO_COLUNAS_SEM_TEXTO
+        assert "formatacao" not in service.RESULTADO_COLUNAS_SEM_TEXTO
+        assert "tem_transcricao" in service.RESULTADO_COLUNAS_SEM_TEXTO
+        assert "id" in service.RESULTADO_COLUNAS_SEM_TEXTO
+        assert "status" in service.RESULTADO_COLUNAS_SEM_TEXTO
+
 
 class TestConfirmarResultado:
     def test_grava_campos_e_estampa_confirmacao(self):
@@ -2437,6 +2477,23 @@ class TestConfirmarResultado:
     def test_resultado_de_outra_org_retorna_none(self):
         db = _db(certidao_resultados=[_resultado(org_id=OTHER_ORG)])
         assert service.confirmar_resultado(db, ORG, "resultado-001", {}, "user-9") is None
+
+    def test_nunca_devolve_o_texto_da_certidao(self):
+        """🔴 An UPDATE returns its full row by default — including
+        `texto_extraido`/`formatacao` once migration 113 lands them — and
+        this dict rides straight into `confirmar_ou_corrigir_resultado`'s
+        HTTP response. Stripped in the service, not merely absent from the
+        test fixture: seed the row WITH text so the assertion is real."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(
+                texto_extraido="CPF: 123.456.789-00",
+                formatacao=[{"start": 0, "end": 3, "bold": True, "underline": False}],
+            )],
+        )
+        updated = service.confirmar_resultado(db, ORG, "resultado-001", {}, "user-9")
+        assert "texto_extraido" not in updated
+        assert "formatacao" not in updated
 
 
 class TestMintResultadoUrl:
@@ -2491,3 +2548,309 @@ class TestMintResultadoUrl:
             db, FakeStorageBackend(), ORG, "resultado-001", usuario_id="user-1",
         )
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _extract_pdf_text / ExtractedPdfText — migration 113
+# ---------------------------------------------------------------------------
+
+#: >=100 chars of filler so `classify_pdf_text_layer` (the seed's rung-1
+#: gate) treats the page as a substantive, trustworthy text layer rather
+#: than routing it to vision — same floor `test_transcription_formatting.py`
+#: documents. Built with PyMuPDF directly (not reportlab) so the bytes carry
+#: the font/flag metadata the seed's OWN bold detector reads.
+_PREENCHIMENTO_CERTIDAO = (
+    "Certidao emitida para fins de comprovacao de regularidade fiscal do "
+    "requerente perante o orgao competente, sem qualquer valor probatorio "
+    "adicional alem do quanto aqui descrito."
+)
+
+
+def _pdf_certidao_com_negrito() -> bytes:
+    """A real, synthetic certidão PDF with one bold word — exercises
+    `_extract_pdf_text`'s REAL text-layer rung end-to-end, no transcriber
+    stub."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    y = 72.0
+    page.insert_text((72, y), _PREENCHIMENTO_CERTIDAO[:70], fontsize=11)
+    y += 16
+    page.insert_text((72, y), _PREENCHIMENTO_CERTIDAO[70:], fontsize=11)
+    y += 24
+    page.insert_text((72, y), "Regular", fontsize=11, fontname="Helvetica-Bold")
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+class TestExtractPdfText:
+    @pytest.mark.asyncio
+    async def test_texto_e_formatacao_de_um_pdf_real(self):
+        """`max_vision_pages=0` never needs a vision credential for a page
+        with a real, substantive text layer — no transcriber stub here."""
+        resultado = await service._extract_pdf_text(
+            _pdf_certidao_com_negrito(), "CND Federal", org_id=None,
+        )
+        assert resultado.texto_extraido is not None
+        assert "Regular" in resultado.texto_extraido
+        assert any(r.bold for r in resultado.formatacao)
+
+    @pytest.mark.asyncio
+    async def test_para_ia_fica_no_formato_de_sempre(self):
+        """UNCHANGED by migration 113 — same prefix, same shape."""
+        resultado = await service._extract_pdf_text(
+            _pdf_certidao_com_negrito(), "CND Federal", org_id=None,
+        )
+        assert resultado.para_ia.startswith("Certidão: CND Federal\n\n")
+        assert "Regular" in resultado.para_ia
+
+    @pytest.mark.asyncio
+    async def test_pdf_invalido_nunca_levanta(self):
+        """Contract §4: a failed transcription is logged, never raised, and
+        leaves both fields empty."""
+        resultado = await service._extract_pdf_text(b"nao e um pdf", "X", org_id=None)
+        assert resultado == service.ExtractedPdfText(para_ia=None)
+
+    @pytest.mark.asyncio
+    async def test_pdf_sem_texto_confiavel_fica_vazio(self):
+        """A page too short to clear the substantive-text floor routes to
+        vision, which is disabled here (`max_vision_pages=0`) — `vision_
+        disabled`, not an exception, and still `ExtractedPdfText(None)`."""
+        import fitz
+
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "curto", fontsize=11)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        resultado = await service._extract_pdf_text(pdf_bytes, "X", org_id=None)
+        assert resultado == service.ExtractedPdfText(para_ia=None)
+
+
+# ---------------------------------------------------------------------------
+# _process_single_certidao — persists texto_extraido/formatacao (migration 113)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessSingleCertidaoTranscricao:
+    @pytest.mark.asyncio
+    async def test_persiste_texto_e_formatacao_no_caminho_de_sucesso(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado()],
+        )
+        http = _FakeHttp(_api_ok(), file_body=b"%PDF-1.4 real")
+        extraido = service.ExtractedPdfText(
+            para_ia=None, texto_extraido="Bold word here",
+            formatacao=(FormatRange(start=0, end=4, bold=True),),
+        )
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=AsyncMock(return_value=extraido),
+        )
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["texto_extraido"] == "Bold word here"
+        assert row["formatacao"] == [
+            {"start": 0, "end": 4, "bold": True, "underline": False}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_persiste_texto_no_caminho_nada_consta_com_recibo(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="cenprot", id="r-cenprot")],
+        )
+        http = _FakeHttp(
+            {
+                "code": 612,
+                "errors": ["Não constam protestos"],
+                "data": [],
+                "site_receipts": ["https://x/cenprot.html"],
+            },
+            file_body=b"<html><body>Nao constam protestos</body></html>",
+            file_content_type="text/html",
+        )
+        extraido = service.ExtractedPdfText(
+            para_ia=None, texto_extraido="Nao constam protestos",
+        )
+        await service._process_single_certidao(
+            config_for("cenprot"), _consulta_row(), "tok", db,
+            "r-cenprot", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=AsyncMock(return_value=extraido),
+        )
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "r-cenprot"
+        ).execute().data[0]
+        assert row["texto_extraido"] == "Nao constam protestos"
+        assert row["formatacao"] == []
+
+    @pytest.mark.asyncio
+    async def test_transcricao_vazia_nao_falha_a_certidao(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado()],
+        )
+        http = _FakeHttp(_api_ok(), file_body=b"%PDF-1.4 real")
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze,
+            extract_text=AsyncMock(
+                return_value=service.ExtractedPdfText(para_ia=None)
+            ),
+        )
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["status"] == "sucesso"
+        assert row["texto_extraido"] is None
+        assert row["formatacao"] == []
+
+    @pytest.mark.asyncio
+    async def test_nada_e_armazenado_nunca_chama_extract_text(self):
+        """Content-type desconhecido -> nada persistido -> nada a transcrever."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado()],
+        )
+        http = _FakeHttp(
+            _api_ok(), file_body=b"\x89PNG\r\n", file_content_type="image/png"
+        )
+        extract = AsyncMock()
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=extract,
+        )
+        extract.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# process_manual_upload — persists but never RETURNS the text (migration 113)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessManualUploadTranscricao:
+    @pytest.mark.asyncio
+    async def test_persiste_no_banco_mas_nunca_devolve_ao_chamador(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="serasa", nome_display="Serasa")],
+        )
+        extraido = service.ExtractedPdfText(
+            para_ia="Certidão: Serasa\n\nBold word here",
+            texto_extraido="Bold word here",
+            formatacao=(FormatRange(start=0, end=4, bold=True),),
+        )
+        update_data = await service.process_manual_upload(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta=_consulta_row(),
+            tipo="serasa",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            storage=FakeStorageBackend(),
+            extract_text=AsyncMock(return_value=extraido),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value=None),
+        )
+        # 🔴 The router echoes THIS dict straight into the HTTP response.
+        assert "texto_extraido" not in update_data
+        assert "formatacao" not in update_data
+
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["texto_extraido"] == "Bold word here"
+        assert row["formatacao"] == [
+            {"start": 0, "end": 4, "bold": True, "underline": False}
+        ]
+
+
+# ---------------------------------------------------------------------------
+# obter_transcricao_resultado / renderizar_transcricao_pdf — migration 113
+# ---------------------------------------------------------------------------
+
+
+class TestObterTranscricaoResultado:
+    def test_resultado_inexistente_retorna_none(self):
+        db = _db(certidao_resultados=[])
+        assert service.obter_transcricao_resultado(
+            db, ORG, "sumiu", usuario_id="user-1"
+        ) is None
+
+    def test_resultado_de_outra_org_retorna_none(self):
+        db = _db(certidao_resultados=[
+            _resultado(org_id=OTHER_ORG, texto_extraido="x"),
+        ])
+        assert service.obter_transcricao_resultado(
+            db, ORG, "resultado-001", usuario_id="user-1"
+        ) is None
+
+    def test_sem_transcricao_retorna_indisponivel_sem_logar(self):
+        db = _db(certidao_resultados=[_resultado(texto_extraido=None)])
+        result = service.obter_transcricao_resultado(
+            db, ORG, "resultado-001", usuario_id="user-1"
+        )
+        assert result == {"disponivel": False}
+        assert db.table("certidao_resultado_acessos").select("*").execute().data == []
+
+    def test_com_transcricao_devolve_texto_html_e_loga_o_acesso(self):
+        db = _db(certidao_resultados=[_resultado(
+            texto_extraido="Bold word here",
+            formatacao=[{"start": 0, "end": 4, "bold": True, "underline": False}],
+        )])
+        result = service.obter_transcricao_resultado(
+            db, ORG, "resultado-001", usuario_id="user-1"
+        )
+        assert result["disponivel"] is True
+        assert result["texto"] == "Bold word here"
+        assert "<b>Bold</b>" in result["texto_html"]
+        assert result["formatacao"] == [
+            {"start": 0, "end": 4, "bold": True, "underline": False}
+        ]
+
+        log = db.table("certidao_resultado_acessos").select("*").execute().data
+        assert len(log) == 1
+        assert log[0]["acao"] == "view"
+        assert log[0]["documento_id"] == "resultado-001"
+
+
+class TestRenderizarTranscricaoPdf:
+    def test_pdf_traz_titulo_e_texto_com_negrito(self):
+        pdf_bytes = service.renderizar_transcricao_pdf(
+            "CND Federal", "Bold word here",
+            [{"start": 0, "end": 4, "bold": True, "underline": False}],
+        )
+        assert pdf_bytes[:5] == b"%PDF-"
+
+        import fitz
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        texto = "".join(page.get_text() for page in doc)
+        assert "Transcrição — CND Federal" in texto
+        assert "Bold word here" in texto
+
+        spans = {}
+        for page in doc:
+            info = page.get_text("dict", flags=fitz.TEXTFLAGS_DICT)
+            for block in info["blocks"]:
+                for line in block.get("lines", []):
+                    for span in line["spans"]:
+                        spans[span["text"]] = span
+        assert "Bold" in spans["Bold"]["font"]
+        assert "Bold" not in spans[" word here"]["font"]
+
+    def test_glifo_nao_suportado_levanta_com_o_caractere_nomeado(self):
+        from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
+
+        with pytest.raises(UnsupportedGlyphError) as exc:
+            service.renderizar_transcricao_pdf("X", "emoji \U0001F600 aqui", [])
+        assert "\U0001F600" in str(exc.value) or "1F600" in str(exc.value)

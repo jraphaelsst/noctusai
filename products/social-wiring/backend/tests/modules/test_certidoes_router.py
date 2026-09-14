@@ -1151,6 +1151,100 @@ class TestObterUrlResultado:
 
 
 # ---------------------------------------------------------------------------
+# GET /resultados/{id}/transcricao · GET /resultados/{id}/transcricao/pdf
+# migration 113
+# ---------------------------------------------------------------------------
+
+
+class TestObterTranscricao:
+    def test_com_transcricao_devolve_texto_html_e_formatacao(
+        self, client, certidoes_db
+    ):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado(
+            id="r1",
+            texto_extraido="Bold word here",
+            formatacao=[{"start": 0, "end": 4, "bold": True, "underline": False}],
+        )])
+        resp = client.get(f"{BASE}/resultados/r1/transcricao")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["texto"] == "Bold word here"
+        assert "<b>Bold</b>" in data["texto_html"]
+        assert data["formatacao"] == [
+            {"start": 0, "end": 4, "bold": True, "underline": False}
+        ]
+
+    def test_loga_o_acesso_lgpd(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado(id="r1", texto_extraido="texto")])
+        db.set_table_data("certidao_resultado_acessos", [])
+        client.get(f"{BASE}/resultados/r1/transcricao")
+        log = db.table("certidao_resultado_acessos").select("*").execute().data
+        assert len(log) == 1
+        assert log[0]["acao"] == "view"
+        assert log[0]["documento_id"] == "r1"
+
+    def test_sem_transcricao_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado(id="r1", texto_extraido=None)])
+        resp = client.get(f"{BASE}/resultados/r1/transcricao")
+        assert resp.status_code == 404
+        assert _msg(resp) == "Transcrição indisponível para esta certidão"
+
+    def test_resultado_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        resp = client.get(f"{BASE}/resultados/sumiu/transcricao")
+        assert resp.status_code == 404
+        assert _msg(resp) == "Resultado não encontrado"
+
+    def test_resultado_de_outra_org_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[
+            _resultado(id="alheio", org_id=OTHER_ORG, texto_extraido="x"),
+        ])
+        assert client.get(f"{BASE}/resultados/alheio/transcricao").status_code == 404
+
+
+class TestObterTranscricaoPdf:
+    def test_pdf_com_titulo_e_texto(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado(
+            id="r1", tipo="cnd_federal", nome_display="CND Federal",
+            texto_extraido="Bold word here",
+            formatacao=[{"start": 0, "end": 4, "bold": True, "underline": False}],
+        )])
+        resp = client.get(f"{BASE}/resultados/r1/transcricao/pdf")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content[:5] == b"%PDF-"
+        assert (
+            'filename="cnd_federal_transcricao.pdf"'
+            in resp.headers["content-disposition"]
+        )
+
+        import fitz
+
+        doc = fitz.open(stream=resp.content, filetype="pdf")
+        texto = "".join(page.get_text() for page in doc)
+        assert "Transcrição — CND Federal" in texto
+        assert "Bold word here" in texto
+
+    def test_sem_transcricao_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, resultados=[_resultado(id="r1", texto_extraido=None)])
+        resp = client.get(f"{BASE}/resultados/r1/transcricao/pdf")
+        assert resp.status_code == 404
+
+    def test_resultado_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        resp = client.get(f"{BASE}/resultados/sumiu/transcricao/pdf")
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Auth boundary
 # ---------------------------------------------------------------------------
 
@@ -1178,6 +1272,8 @@ class TestAuthBoundary:
             ("get", f"{BASE}/consultas/consulta-001/download-zip"),
             ("post", f"{BASE}/resultados/r1/upload"),
             ("get", f"{BASE}/fila-tjsp"),
+            ("get", f"{BASE}/resultados/r1/transcricao"),
+            ("get", f"{BASE}/resultados/r1/transcricao/pdf"),
         ],
     )
     def test_sem_token_e_401(self, anon_client, method, path):
