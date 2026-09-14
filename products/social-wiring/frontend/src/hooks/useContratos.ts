@@ -145,8 +145,11 @@ export interface GerarContratoResult {
 }
 
 interface ContratoIncompletoDetails {
-  faltando: GeracaoFaltando[];
-  bloqueios: GeracaoBloqueio[];
+  faltando?: GeracaoFaltando[];
+  bloqueios?: GeracaoBloqueio[];
+  /** `422 CONTRATO_LINT`: the rendered text failed the final check (clause
+   *  numbering, references, extenso…); nothing was saved. */
+  lint?: GeracaoBloqueio[];
 }
 
 /**

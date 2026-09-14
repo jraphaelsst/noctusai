@@ -216,14 +216,19 @@ export default function GeradorContratoSection({
           data-testid="gerador-contrato-erro-incompleto"
         >
           <p className="text-destructive">{erroGeracao.message}</p>
-          {erroGeracao.details?.faltando.map((item) => (
+          {erroGeracao.details?.faltando?.map((item) => (
             <p key={`f-${item.campo}-${item.parte_id ?? ""}`} className="text-muted-foreground">
               • {item.rotulo}
             </p>
           ))}
-          {erroGeracao.details?.bloqueios.map((b) => (
+          {erroGeracao.details?.bloqueios?.map((b) => (
             <p key={`b-${b.codigo}`} className="text-muted-foreground">
               • {b.mensagem}
+            </p>
+          ))}
+          {erroGeracao.details?.lint?.map((l, i) => (
+            <p key={`l-${l.codigo}-${i}`} className="text-muted-foreground">
+              • {l.mensagem}
             </p>
           ))}
         </div>

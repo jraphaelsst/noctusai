@@ -26,8 +26,19 @@ export interface GeradorContratoContainerProps {
   aberto: boolean;
 }
 
+/**
+ * Today in São Paulo as `YYYY-MM-DD` — the same default the backend applies
+ * when `assinatura_data` is omitted. `toISOString()` is UTC, which after 21h
+ * local time is already tomorrow and would silently date the contract a day
+ * late.
+ */
 function hoje(): string {
-  return new Date().toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 export function GeradorContratoContainer({
@@ -59,8 +70,14 @@ export function GeradorContratoContainer({
           toast.success("Nova versão gerada.");
         },
         onError: (err) => {
-          if (err instanceof ContratoGeracaoError && err.code === "CONTRATO_INCOMPLETO") {
+          if (
+            err instanceof ContratoGeracaoError &&
+            (err.code === "CONTRATO_INCOMPLETO" || err.code === "CONTRATO_LINT")
+          ) {
             setErroGeracao(err);
+            // The data behind the refusal may have changed since the readiness
+            // check ran — show the current state next to the error.
+            void query.refetch();
             return;
           }
           toast.error(

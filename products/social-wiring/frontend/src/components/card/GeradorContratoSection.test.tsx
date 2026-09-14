@@ -165,6 +165,17 @@ describe("GeradorContratoSection", () => {
     expect(bloco.textContent).toContain("Falta uma testemunha.");
   });
 
+  it("🔴 a 422 CONTRATO_LINT surfaces each finding from details.lint", async () => {
+    const erro = new ContratoGeracaoError(
+      "CONTRATO_LINT",
+      "O texto gerado não passou na verificação final.",
+      { lint: [{ codigo: "REFERENCIA_CLAUSULA", mensagem: "A Cláusula Sétima citada não existe." }] },
+    );
+    const { screen } = await render({ erroGeracao: erro });
+    expect(screen.getByText("O texto gerado não passou na verificação final.")).toBeTruthy();
+    expect(screen.getByText(/A Cláusula Sétima citada não existe\./)).toBeTruthy();
+  });
+
   it("shows the avisos returned by a successful 201 generation", async () => {
     const { screen } = await render({
       avisosGerados: ["Cláusula de foro padrão aplicada."],
