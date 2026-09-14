@@ -7,30 +7,22 @@ walks parsed ``BundleLine``s in commit-time order, maps each one via
 all-or-nothing, idempotent on ``(git_sha, natural_key)`` by
 construction of that store method.
 
-**Why ``Provenance`` isn't imported from ``app.knowledge`` at runtime.**
-A1 builds ``app/knowledge/`` (the ``KnowledgeStore`` implementation, incl.
-the real ``Provenance`` dataclass) in parallel on this same contract; it
-does not exist on this branch. This module types against the §A.11
-shape behind ``TYPE_CHECKING`` and constructs a local, field-identical
-``_ImportProvenance`` at runtime instead — see
-``tests/importer/_fake_store.py`` for the matching integration note.
-Swap ``_ImportProvenance`` for the real ``app.knowledge.Provenance``
-once A1 lands (same field names, so the swap is mechanical).
+``Provenance`` and ``KnowledgeStore`` are A1's real
+``app/knowledge/`` module (contract §A.11), imported at runtime — A1
+landed on ``dev`` and this branch was rebased onto it. Earlier revisions
+of this module duck-typed a local ``_ImportProvenance`` while A1 was
+still in flight; that stand-in is gone.
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from datetime import datetime
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import Any, TypedDict
 from uuid import UUID
 
 from app.importer.bundle import BundleLine
 from app.importer.mapping import map_line
-
-if TYPE_CHECKING:
-    from app.knowledge import KnowledgeStore  # noqa: F401 — typing only
+from app.knowledge import KnowledgeStore, Provenance
 
 # JSON-state entity types: a revision is only worth writing when the
 # item's content actually changed vs. the previous commit's version of
@@ -41,27 +33,20 @@ _CODE_RE = re.compile(r"^([A-Z]+)-(\d+)$")
 _TRACKED_CODE_PREFIXES = ("D", "Q", "T")
 
 
-@dataclass(frozen=True, slots=True)
-class _ImportProvenance:
-    """Runtime duck-type of ``app.knowledge.Provenance`` (§A.11) — see
-    module docstring. Field set and defaults mirror the real dataclass
-    exactly.
+class ImportReport(TypedDict):
+    """``verificacao.revisoes_importadas`` counts ``import_entity`` CALLS
+    issued this run, not net-new ``kb_revisions`` rows. A1's
+    ``import_entity`` returns the (possibly-unchanged) row whether or
+    not it actually wrote a revision — the idempotency signal
+    (duplicate ``(git_sha, natural_key)``) is internal to the store, not
+    exposed on the return value — so this counter cannot distinguish a
+    genuine write from a no-op replay. A full idempotent re-run of the
+    same bundle therefore reports the SAME ``revisoes_importadas`` as
+    the first run, even though zero additional ``kb_revisions`` rows
+    land (see ``tests/importer/test_run.py::TestIdempotentReplay``,
+    which asserts on the store's revision count instead of this field).
     """
 
-    author_kind: str
-    user_id: UUID | None = None
-    agent_id: UUID | None = None
-    approval_id: UUID | None = None
-    channel: str | None = None
-    conversation_id: UUID | None = None
-    motivo: str | None = None
-    git_sha: str | None = None
-    git_author_raw: str | None = None
-    git_committed_at: datetime | None = None
-    git_message: str | None = None
-
-
-class ImportReport(TypedDict):
     verificacao: dict[str, Any]
     avisos: list[str]
 
@@ -109,16 +94,18 @@ def _verify_hashes_head_ok(
 
 
 async def run_import(
-    store: "KnowledgeStore",
+    store: KnowledgeStore,
     org_id: UUID,
     lines: list[BundleLine],
     importing_user_id: UUID,
 ) -> ImportReport:
     """Import every mapped entity from ``lines`` into ``store``, inside
     one transaction. Lines are processed in commit-time order
-    (``git_committed_at`` ascending). Idempotent: re-running the same
-    bundle produces zero additional revisions, because
-    ``store.import_entity`` is idempotent on ``(git_sha, natural_key)``.
+    (``git_committed_at`` ascending). Idempotent at the STORE level:
+    re-running the same bundle writes zero additional ``kb_revisions``
+    rows, because ``store.import_entity`` is idempotent on
+    ``(git_sha, natural_key)`` (see ``ImportReport`` docstring for the
+    corresponding caveat on the ``revisoes_importadas`` counter).
     """
     ordered = sorted(lines, key=lambda ln: ln.git_committed_at_dt)
     newest_line_by_path = _newest_line_per_path(lines)
@@ -142,7 +129,7 @@ async def run_import(
 
             last_processed_content_by_path[line.path] = line.content
 
-            prov = _ImportProvenance(
+            prov = Provenance(
                 author_kind="import",
                 user_id=importing_user_id,
                 git_sha=line.git_sha,

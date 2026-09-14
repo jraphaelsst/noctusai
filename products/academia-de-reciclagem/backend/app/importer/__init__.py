@@ -16,10 +16,7 @@ Modules:
   - ``mapping.py`` — pure per-path-shape mapping functions (§B.6).
   - ``run.py`` — the transactional orchestrator, ``run_import()``.
 
-``app/knowledge/`` (A1, the ``KnowledgeStore`` implementation) does not
-exist on this branch yet — A1 builds it in parallel off the same
-contract. This package types against §A.11 behind ``TYPE_CHECKING`` and
-duck-types at runtime; see ``run.py`` and
-``tests/importer/_fake_store.py`` for the integration note.
+The store is A1's ``app/knowledge/`` (``KnowledgeStore`` + ``Provenance``,
+§A.11), imported directly; tests run against A1's ``FakeKnowledgeStore``.
 """
 from __future__ import annotations
