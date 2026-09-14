@@ -676,3 +676,4 @@
 {"ts": "2026-09-14T14:03:57.627543+00:00", "kind": "salvage-before-delete:branch", "target": "feat/contract-f1-certidoes-be", "dry_run": false, "ok": true, "preserved": []}
 {"ts": "2026-09-14T14:25:32.012665+00:00", "kind": "salvage-before-delete:branch", "target": "feat/contract-f4-negociacao-be", "dry_run": false, "ok": true, "preserved": []}
 {"ts": "2026-09-14", "event": "worktree-sweep", "path": ".claude/worktrees/contract-f2-matricula-be", "branch": "feat/contract-f2-matricula-be", "sha": "a214e6bbbd15e6415cc34e3b832bcbfdc5f889b9", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-14", "event": "worktree-sweep", "path": ".claude/worktrees/contract-f3-qualificacao-be", "branch": "feat/contract-f3-qualificacao-be", "sha": "73fccba8ba53a2809f52c64a0327f7c651c04214", "reason": "task_branch cleanup (learn-before-delete)"}
