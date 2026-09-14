@@ -1,8 +1,10 @@
-"""`/api/matriculas/*` — upload a matrícula PDF, get its full text back.
+"""`/api/matriculas/*` — transcribe a matrícula, split it into acts, and let a
+contract quote them literally.
 
 Ported from `erp-imobiliario`'s `app/routers/matriculas.py` (2026-09-02).
-The route shapes, status codes and Portuguese are identical; three things
-changed, and each one is a decision rather than a translation:
+The legacy route shapes, status codes and Portuguese are identical; three
+things changed in the port, and each one is a decision rather than a
+translation:
 
 1. 🔴 ORG COMES FROM THE DB, NOT THE JWT — and now not from this file
    either. ERP had to read `noctus_users` by hand (`resolve_org_id_db`)
@@ -14,17 +16,17 @@ changed, and each one is a decision rather than a translation:
    none, so the hand-rolled lookup and its 400 branch are gone — the
    incident is closed one layer down instead of re-litigated here.
    Migration 092 additionally stamps `org_id DEFAULT public.current_org_id()`,
-   so the INSERT below deliberately does NOT send an org: the DB derives it
+   so the upload INSERT deliberately does NOT send an org: the DB derives it
    from the same table RLS trusts, and the app cannot get it wrong.
 
 2. 🔴 NO `log_action`. ERP audited upload + delete through
    `app.dependencies.log_action`; this product has no audit-log table and
    no such helper. The calls are dropped rather than shimmed — inventing a
    product-local audit trail to keep two call sites company is a fork, not
-   a port. Surfaced as `drift-found:` for a real decision.
+   a port.
 
-3. 🔴 THE REQUEST PATH USES THE CALLER'S TOKEN; THE BACKGROUND TASK DOES
-   NOT. RLS decides which org's rows a request can reach — application
+3. 🔴 THE LEGACY ROUTES USE THE CALLER'S TOKEN; THE BACKGROUND TASK DOES
+   NOT. RLS decides which org's rows those requests reach — application
    `.eq("org_id", ...)` filters are a second lock, not the first one. But a
    background task outlives the request that spawned it, so it cannot hold
    that token (a long vision pass can outlive its expiry, and the write
@@ -32,22 +34,39 @@ changed, and each one is a decision rather than a translation:
    is exactly why every write in `service.py` carries an explicit `org_id`
    predicate.
 
-Route ordering: every path here is under the literal `/api/matriculas`
-prefix, and the only dynamic segment (`/extracoes/{extracao_id}`) sits
-below a literal one. Nothing in this module can shadow, or be shadowed by,
-another router.
+MIGRATION 109 — THE STRUCTURED HALF
+-----------------------------------
+The contract ("Promessa de Venda e Compra") describes the property with the
+LITERAL matrícula text, typos included, as a sequence of acts the operator
+selects. The routes added for that (`/extracoes/de-documento`,
+`/extracoes/{id}/atos`, `/extracoes/{id}/fontes`, `/contratos/{id}/atos`)
+touch `imovel_dados`, `imovel_documentos` and `atendimento_contratos`, whose
+RLS grants `authenticated` SELECT only — so they go through the
+service-role `get_matriculas_client`, and every query in
+`estrutura_service.py` carries an explicit org predicate.
+
+A matrícula uploaded WITH a `codigo` is kept: its PDF becomes the imóvel's
+`imovel_documentos` row (one storage home for an imóvel's matrícula, LGPD-
+logged since 109), and the imóvel's número-de-matrícula read is queued
+exactly as an upload on the imóvel page would queue it.
+
+Route ordering: every path is under the literal `/api/matriculas` prefix.
+`POST /extracoes/de-documento` is a literal sibling of the dynamic
+`/extracoes/{extracao_id}`, which declares no POST — nothing can shadow it.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 from typing import Optional
+from uuid import UUID
 
 from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     UploadFile,
@@ -55,15 +74,30 @@ from fastapi import (
 from noctusai_lib.api.crud_safety import delete_or_404
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_user_client
+from app.modules.imovel_hub import documentos_service as imovel_docs_svc
+from app.modules.imovel_hub import matricula_extracao_service as imovel_matricula_svc
+from app.modules.imovel_hub.deps import (
+    MatriculaExtractorFactory,
+    get_matricula_extractor_factory,
+    get_storage_backend,
+)
+from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.modules.matriculas.deps import (
     TranscriberFactory,
     get_background_client,
+    get_matriculas_client,
     get_transcriber_factory,
+)
+from app.modules.matriculas.schemas import (
+    ExtracaoDeDocumentoBody,
+    FontesMatriculaBody,
+    SelecaoAtosBody,
 )
 from app.modules.matriculas.service import (
     TABLE,
     check_required_credentials,
     processar_extracao,
+    processar_extracao_de_documento,
 )
 from app.responses import (
     calculate_pagination,
@@ -83,17 +117,17 @@ MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 #: `noctusai_seed.upload_route_overrides` requires every mounted route that
 #: declares an `UploadFile` to carry a `max_body_path_overrides` entry — the
 #: platform-wide 1 MB default exists to DoS-guard inbound webhooks and would
-#: silently 413 every realistic matrícula. The tech-lead merges this dict
-#: into `main.py`'s `_MAX_BODY_PATH_OVERRIDES` in the SAME commit that
-#: appends this module to `MODULES`. Declared here, next to the number it
-#: mirrors, so the two cannot drift.
+#: silently 413 every realistic matrícula. `main.py`'s
+#: `_MAX_BODY_PATH_OVERRIDES` carries the same number; declared here too, next
+#: to the handler ceiling it mirrors, so a test can pin the two together.
 MAX_BODY_PATH_OVERRIDES = {"/api/matriculas/extrair": MAX_FILE_SIZE}
 
 #: Selected for the history list. `texto_extraido` is deliberately absent —
 #: a full matrícula transcription is tens of KB, and a 50-row page of them
 #: is megabytes nobody on that screen reads.
 _COLUNAS_LISTA = (
-    "id,nome_arquivo,tamanho_bytes,num_paginas,status,erro_mensagem,created_at"
+    "id,nome_arquivo,tamanho_bytes,num_paginas,status,erro_mensagem,"
+    "codigo,imovel_documento_id,created_at"
 )
 
 
@@ -107,21 +141,10 @@ def _auth_parts(auth) -> tuple[object, str, str]:
     return user, token, str(coerce_org_uuid(raw_org))
 
 
-@router.post("/extrair")
-async def extrair_matricula(
-    file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
-    auth=Depends(get_current_user_org),
-    background_db=Depends(get_background_client),
-    transcriber_factory: TranscriberFactory = Depends(get_transcriber_factory),
-):
-    """Upload a matrícula PDF and start text extraction in the background."""
-    user, token, org_id = _auth_parts(auth)
-    db = get_user_client(token)
-
-    # Validated up front: the extraction runs detached, so a missing key
-    # discovered there reaches the user as a row that failed 40 seconds
-    # later instead of as an answer to the request that caused it.
+def _exigir_credenciais(org_id: str) -> None:
+    """422 up front: the transcription runs detached, so a missing key
+    discovered there reaches the user as a row that failed 40 seconds later
+    instead of as an answer to the request that caused it."""
     missing = check_required_credentials(org_id)
     if missing:
         raise HTTPException(
@@ -129,6 +152,34 @@ async def extrair_matricula(
             detail=" ".join(missing)
             + " Configure em Configurações → Chaves de API.",
         )
+
+
+# ─── transcription ────────────────────────────────────────────────────────
+
+
+@router.post("/extrair")
+async def extrair_matricula(
+    file: UploadFile = File(...),
+    codigo: Optional[str] = Form(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    auth=Depends(get_current_user_org),
+    background_db=Depends(get_background_client),
+    transcriber_factory: TranscriberFactory = Depends(get_transcriber_factory),
+    matriculas_client=Depends(get_matriculas_client),
+    storage=Depends(get_storage_backend),
+    extractor_factory: MatriculaExtractorFactory = Depends(
+        get_matricula_extractor_factory
+    ),
+):
+    """Upload a matrícula PDF and start text extraction in the background.
+
+    With `codigo`, the PDF is KEPT as that imóvel's `matricula` document and
+    the extraction is linked to it; without, the legacy unlinked shape.
+    """
+    user, token, org_id = _auth_parts(auth)
+    db = get_user_client(token)
+
+    _exigir_credenciais(org_id)
 
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Apenas arquivos PDF são aceitos.")
@@ -145,6 +196,28 @@ async def extrair_matricula(
     if len(pdf_bytes) == 0:
         raise HTTPException(status_code=400, detail="Arquivo vazio.")
 
+    codigo_canonico = (codigo or "").strip().upper() or None
+    documento: Optional[dict] = None
+    vinculo: dict = {}
+    if codigo_canonico:
+        # 404 for an unknown imóvel happens HERE, before any extraction row
+        # exists. The document store is the imóvel's — one home for the PDF.
+        documento = await imovel_docs_svc.upload(
+            matriculas_client,
+            storage,
+            UUID(org_id),
+            codigo_canonico,
+            filename=file.filename or "matricula.pdf",
+            content_type="application/pdf",
+            data=pdf_bytes,
+            tipo_documento="matricula",
+            enviado_por=getattr(user, "id", None),
+        )
+        vinculo = {
+            "codigo": codigo_canonico,
+            "imovel_documento_id": documento["id"],
+        }
+
     # 🔴 `org_id` is deliberately absent: migration 092 defaults the column
     # to `public.current_org_id()`, the same trusted source RLS reads. The
     # app never names the org on a write, so it can never name the wrong one.
@@ -156,6 +229,7 @@ async def extrair_matricula(
                 "nome_arquivo": file.filename or "matricula.pdf",
                 "tamanho_bytes": len(pdf_bytes),
                 "status": "pendente",
+                **vinculo,
             }
         )
         .execute()
@@ -181,35 +255,90 @@ async def extrair_matricula(
         background_db,
         transcriber_factory,
     )
+    if documento is not None:
+        # The imóvel's número-de-matrícula read, queued exactly as the imóvel
+        # page's own upload queues it — the same job, not a second copy.
+        background_tasks.add_task(
+            imovel_matricula_svc.extrair,
+            matriculas_client,
+            storage,
+            UUID(org_id),
+            codigo_canonico,
+            UUID(documento["id"]),
+            extractor=extractor_factory(org_id),
+        )
 
+    return success_response(extracao)
+
+
+@router.post("/extracoes/de-documento")
+async def extrair_de_documento(
+    body: ExtracaoDeDocumentoBody,
+    background_tasks: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+    background_db=Depends(get_background_client),
+    storage=Depends(get_storage_backend),
+    transcriber_factory: TranscriberFactory = Depends(get_transcriber_factory),
+):
+    """Transcribe a matrícula PDF the imóvel already holds (no re-upload)."""
+    user, _token, org_id = _auth_parts(auth)
+    _exigir_credenciais(org_id)
+
+    extracao = estrutura_svc.criar_extracao_de_documento(
+        client,
+        UUID(org_id),
+        codigo=body.codigo,
+        imovel_documento_id=body.imovel_documento_id,
+        usuario_id=getattr(user, "id", None),
+    )
+    storage_path = extracao.pop("storage_path")
+    background_tasks.add_task(
+        _run_extraction_de_documento,
+        extracao["id"],
+        storage_path,
+        org_id,
+        background_db,
+        storage,
+        transcriber_factory,
+    )
     return success_response(extracao)
 
 
 @router.get("/extracoes")
 async def listar_extracoes(
     busca: Optional[str] = Query(None),
+    codigo: Optional[str] = Query(None, max_length=64),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     auth=Depends(get_current_user_org),
 ):
-    """List extraction history — without `texto_extraido` (see `_COLUNAS_LISTA`)."""
+    """List extraction history — without `texto_extraido` (see `_COLUNAS_LISTA`).
+
+    `codigo` narrows to one imóvel's matrículas.
+    """
     _user, token, _org_id = _auth_parts(auth)
     db = get_user_client(token)
 
     validated_page, validated_page_size, offset = calculate_pagination(page, page_size)
+    codigo_canonico = (codigo or "").strip().upper() or None
 
-    count_query = db.table(TABLE).select("id", count="exact")
-    if busca:
-        count_query = count_query.ilike("nome_arquivo", f"%{busca}%")
-    count_result = count_query.execute()
+    def _filtrar(query):
+        if busca:
+            query = query.ilike("nome_arquivo", f"%{busca}%")
+        if codigo_canonico:
+            query = query.eq("codigo", codigo_canonico)
+        return query
+
+    count_result = _filtrar(db.table(TABLE).select("id", count="exact")).execute()
     total = count_result.count if count_result.count is not None else 0
 
-    query = db.table(TABLE).select(_COLUNAS_LISTA).order("created_at", desc=True)
-    if busca:
-        query = query.ilike("nome_arquivo", f"%{busca}%")
     # Bounded by `page_size` (≤ 200), so this read cannot reach PostgREST's
     # 1 000-row cap — no pager needed.
-    query = query.range(offset, offset + validated_page_size - 1)
+    query = (
+        _filtrar(db.table(TABLE).select(_COLUNAS_LISTA).order("created_at", desc=True))
+        .range(offset, offset + validated_page_size - 1)
+    )
 
     result = query.execute()
     return paginated_response(
@@ -234,14 +363,108 @@ async def obter_extracao(extracao_id: str, auth=Depends(get_current_user_org)):
 
 
 @router.delete("/extracoes/{extracao_id}")
-async def excluir_extracao(extracao_id: str, auth=Depends(get_current_user_org)):
-    """Delete an extraction."""
-    _user, token, _org_id = _auth_parts(auth)
-    db = get_user_client(token)
+async def excluir_extracao(
+    extracao_id: str,
+    auth=Depends(get_current_user_org),
+    matriculas_client=Depends(get_matriculas_client),
+):
+    """Delete an extraction — 409 while a contract or an imóvel quotes it."""
+    _user, token, org_id = _auth_parts(auth)
+    estrutura_svc.garantir_removivel(matriculas_client, UUID(org_id), extracao_id)
 
+    db = get_user_client(token)
     delete_or_404(db, TABLE, ("id", extracao_id), message="Extração não encontrada")
 
     return ok_response("Extração excluída com sucesso")
+
+
+# ─── the structured half (migration 109) ──────────────────────────────────
+
+
+@router.get("/extracoes/{extracao_id}/atos")
+async def listar_atos_route(
+    extracao_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """The matrícula's acts, each with its literal text slice."""
+    _user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        estrutura_svc.listar_atos(client, UUID(org_id), extracao_id)
+    )
+
+
+@router.get("/extracoes/{extracao_id}/fontes")
+async def obter_fontes_route(
+    extracao_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Heuristic título/ônus suggestions + the imóvel's confirmed pointers."""
+    _user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        estrutura_svc.obter_fontes(client, UUID(org_id), extracao_id)
+    )
+
+
+@router.put("/extracoes/{extracao_id}/fontes")
+async def definir_fontes_route(
+    extracao_id: UUID,
+    body: FontesMatriculaBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Record the operator's título aquisitivo / ônus source acts."""
+    user, _token, org_id = _auth_parts(auth)
+    # `model_fields_set`: `null` is a real value (clear the pointer), so
+    # absence is the only thing that can mean "leave alone".
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return success_response(
+        estrutura_svc.definir_fontes(
+            client,
+            UUID(org_id),
+            extracao_id,
+            valores=valores,
+            usuario_id=getattr(user, "id", None),
+        )
+    )
+
+
+@router.get("/contratos/{contrato_id}/atos")
+async def obter_selecao_route(
+    contrato_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """The acts a contract quotes, as literal slices, in contract order."""
+    _user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        estrutura_svc.obter_selecao(client, UUID(org_id), contrato_id)
+    )
+
+
+@router.put("/contratos/{contrato_id}/atos")
+async def definir_selecao_route(
+    contrato_id: UUID,
+    body: SelecaoAtosBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Replace the acts a contract quotes."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        estrutura_svc.definir_selecao(
+            client,
+            UUID(org_id),
+            contrato_id,
+            extracao_id=body.extracao_id,
+            ato_ids=body.ato_ids,
+            usuario_id=getattr(user, "id", None),
+        )
+    )
+
+
+# ─── background bridges ───────────────────────────────────────────────────
 
 
 def _run_extraction(
@@ -263,6 +486,27 @@ def _run_extraction(
             pdf_bytes,
             org_id,
             db,
+            transcriber_factory=transcriber_factory,
+        )
+    )
+
+
+def _run_extraction_de_documento(
+    extracao_id: str,
+    storage_path: str,
+    org_id: str,
+    db,
+    storage,
+    transcriber_factory: TranscriberFactory,
+) -> None:
+    """Same bridge, reading the kept PDF back out of storage first."""
+    asyncio.run(
+        processar_extracao_de_documento(
+            extracao_id,
+            storage_path,
+            org_id,
+            db,
+            storage,
             transcriber_factory=transcriber_factory,
         )
     )

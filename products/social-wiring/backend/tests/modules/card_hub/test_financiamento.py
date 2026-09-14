@@ -280,11 +280,16 @@ class TestTheAccessLog:
         assert log["items"][0]["acao"] == "download"
 
 
-class TestTheImovelSurfaceStaysUnlogged:
-    def test_the_imovel_store_declares_no_access_log(self):
-        """The two surfaces differ ON PURPOSE, and the difference is one
-        explicit field rather than two divergent copies of a service."""
+class TestEachSurfaceNamesItsOwnAccessLog:
+    def test_the_imovel_store_logs_to_its_own_table(self):
+        """The LGPD posture is still one explicit field per surface rather
+        than two divergent copies of a service — but the imóvel surface's
+        value changed. It was `None` on the claim that a matrícula holds no
+        personal data; migration 109 reversed that (a matrícula names its
+        owners with CPF and estado civil), so it now logs, to ITS OWN table.
+        Pinned so a regression back to `None` is a deliberate edit here, not
+        a silent one there."""
         from app.modules.imovel_hub import documentos_service as imovel_docs
 
-        assert imovel_docs.STORE.acessos_table is None
+        assert imovel_docs.STORE.acessos_table == "imovel_documento_acessos"
         assert svc.STORE.acessos_table == "atendimento_documento_acessos"

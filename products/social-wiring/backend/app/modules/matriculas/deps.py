@@ -33,10 +33,13 @@ TranscriberFactory = Callable[[Optional[str]], DocumentTranscriber]
 def get_matriculas_client() -> Any:
     """FastAPI dependency — the `social_wiring`-scoped admin client.
 
-    Used for the DETACHED half of the work only (the background task and
-    the recovery sweep), never for the request path: the request path goes
+    NOT used by the legacy routes (upload / list / get / delete), which go
     through the caller's own token so RLS — not application code — decides
-    which org's rows are reachable. See `router.py`'s module docstring.
+    which org's rows are reachable. It IS the client for the structured routes
+    migration 109 added: they write `imovel_dados`, `imovel_documentos`,
+    `matricula_atos` and the contract selection, whose RLS grants
+    `authenticated` SELECT only — so every query in `estrutura_service.py`
+    carries an explicit `org_id` predicate instead. See `router.py`.
     """
     return get_scoped_admin_client()
 

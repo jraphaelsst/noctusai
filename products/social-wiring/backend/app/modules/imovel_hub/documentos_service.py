@@ -6,11 +6,14 @@ The two look alike (upload → storage → row → signed URL → soft delete) a
 they are deliberately not shared, because the half that dominates that file
 does not apply here at all:
 
-- **No access log.** Every read of a client document's CONTENT appends to
-  `cliente_documento_acessos`, because an RG is personal data about a
-  natural person and who looked at it is auditable. A matrícula is a PUBLIC
-  registry document about a property. Logging it would imply an LGPD posture
-  this data does not have, and would bury the real log in noise.
+- **An access log — reversed by migration 109.** This module originally
+  shipped WITHOUT one, on the claim that a matrícula is a public registry
+  document about a property and has no personal data to log. That claim was
+  wrong: a certidão de matrícula names every owner with CPF, estado civil,
+  cônjuge and regime de bens. Once the contract flow started keeping and
+  re-opening these PDFs routinely (`app.modules.matriculas`), the posture was
+  aligned with 078/106: every CONTENT read (a minted signed URL) and every
+  delete appends to `imovel_documento_acessos`, attributed to the user.
 - **No retention clock, no LGPD category.** `cliente_documento_tipos` drives
   `retencao_ate` from a per-type `retencao_dias`. A property's registry
   document has no such clock — it is evidence for a transaction, kept as
@@ -64,10 +67,10 @@ ALLOWED_MIME_TYPES = frozenset(
     {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 )
 
-#: 🔴 `acessos_table=None` is an EXPLICIT claim, not a default this fell into:
-#: a matrícula is a public registry document about a PROPERTY, so there is no
-#: personal-data access to log. `atendimento_documentos` sets it, because an
-#: imposto de renda is a very different thing. See the module docstring.
+#: 🔴 `acessos_table` is SET (migration 109). It was `None` until then, on a
+#: claim this module now records as wrong — see the module docstring. A
+#: matrícula names its owners with CPF and estado civil; every content read
+#: and every delete is logged, same posture as `atendimento_documentos`.
 STORE = DocumentoStore(
     table=TABLE,
     owner_col="codigo",
@@ -76,7 +79,7 @@ STORE = DocumentoStore(
     tipos=TIPOS_DOCUMENTO,
     max_bytes=MAX_UPLOAD_BYTES,
     mimes=ALLOWED_MIME_TYPES,
-    acessos_table=None,
+    acessos_table="imovel_documento_acessos",
 )
 
 
@@ -177,14 +180,17 @@ async def url_do_documento(
     org_id: UUID,
     codigo: str,
     documento_id: UUID,
+    *,
+    usuario_id: Optional[UUID] = None,
 ) -> dict:
     """A short-TTL signed URL. Minted per request, never stored.
 
-    No access-log append — the store is constructed with `acessos_table=None`
-    because a property's registry document is not personal data. See the
-    module docstring.
+    Appends a `view` to `imovel_documento_acessos` attributed to `usuario_id`
+    (migration 109 — see the module docstring for why this surface is logged).
     """
-    return await STORE.url(client, storage, org_id, codigo, documento_id)
+    return await STORE.url(
+        client, storage, org_id, codigo, documento_id, usuario_id=usuario_id
+    )
 
 
 def remover(
@@ -194,6 +200,7 @@ def remover(
     documento_id: UUID,
     *,
     motivo: str,
+    usuario_id: Optional[UUID] = None,
 ) -> None:
     """Soft delete.
 
@@ -207,7 +214,9 @@ def remover(
     `numero_matricula_documento_id` keeps pointing at the soft-deleted row, so
     the provenance stays readable.
     """
-    STORE.remover(client, org_id, codigo, documento_id, motivo=motivo)
+    STORE.remover(
+        client, org_id, codigo, documento_id, motivo=motivo, usuario_id=usuario_id
+    )
 
 
 __all__ = [

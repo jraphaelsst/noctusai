@@ -102,6 +102,32 @@ CAMPOS_PROVENIENCIA: tuple[str, ...] = (
 )
 
 
+#: Migration 109 — where the título aquisitivo came from: an act of a
+#: transcribed matrícula, as offsets. Written ONLY by
+#: `matriculas.estrutura_service.definir_fontes` (a human's choice), never by
+#: the PATCH route and never by the heuristic suggester.
+CAMPOS_TITULO_AQUISITIVO: tuple[str, ...] = (
+    "titulo_aquisitivo_extracao_id",
+    "titulo_aquisitivo_ato_id",
+    "titulo_aquisitivo_char_inicio",
+    "titulo_aquisitivo_char_fim",
+    "titulo_aquisitivo_origem",
+    "titulo_aquisitivo_confirmado_por",
+    "titulo_aquisitivo_confirmado_em",
+)
+
+#: Migration 109 — the acts the ônus reading is sourced from. Pointers only:
+#: 099's manual `situacao_onus` / `onus_observacoes` stay the human's reading
+#: and are never derived from these.
+CAMPOS_ONUS_FONTE: tuple[str, ...] = (
+    "onus_fonte_extracao_id",
+    "onus_fonte_atos",
+    "onus_fonte_origem",
+    "onus_fonte_confirmado_por",
+    "onus_fonte_confirmado_em",
+)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -215,7 +241,7 @@ def registrar_imovel(
     return canonico
 
 
-def _linha(client: Any, org_id: UUID, codigo: str) -> Optional[dict]:
+def linha(client: Any, org_id: UUID, codigo: str) -> Optional[dict]:
     rows = (
         _t(client, TABLE)
         .select("*")
@@ -225,6 +251,42 @@ def _linha(client: Any, org_id: UUID, codigo: str) -> Optional[dict]:
         .execute()
     ).data or []
     return rows[0] if rows else None
+
+
+def _fonte_titulo_aquisitivo(row: dict, resolved: dict) -> Optional[dict]:
+    """The título aquisitivo source pointer (migration 109), or None.
+
+    Offsets only — the literal text lives in the matrícula transcription and
+    is served by `GET /api/matriculas/extracoes/{id}/fontes`.
+    """
+    if not row.get("titulo_aquisitivo_ato_id"):
+        return None
+    return {
+        "extracao_id": row.get("titulo_aquisitivo_extracao_id"),
+        "ato_id": row.get("titulo_aquisitivo_ato_id"),
+        "char_inicio": row.get("titulo_aquisitivo_char_inicio"),
+        "char_fim": row.get("titulo_aquisitivo_char_fim"),
+        "origem": row.get("titulo_aquisitivo_origem"),
+        "confirmado_por": table_reads.actor(
+            resolved, row.get("titulo_aquisitivo_confirmado_por")
+        ),
+        "confirmado_em": row.get("titulo_aquisitivo_confirmado_em"),
+    }
+
+
+def _fonte_onus(row: dict, resolved: dict) -> Optional[dict]:
+    """The ônus source pointer (migration 109), or None. Offsets only."""
+    if not row.get("onus_fonte_extracao_id"):
+        return None
+    return {
+        "extracao_id": row.get("onus_fonte_extracao_id"),
+        "atos": row.get("onus_fonte_atos") or [],
+        "origem": row.get("onus_fonte_origem"),
+        "confirmado_por": table_reads.actor(
+            resolved, row.get("onus_fonte_confirmado_por")
+        ),
+        "confirmado_em": row.get("onus_fonte_confirmado_em"),
+    }
 
 
 def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
@@ -258,17 +320,21 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
         ),
         "onus_registrado_em": row.get("onus_registrado_em"),
         "situacoes_onus": list(SITUACOES_ONUS),
+        "titulo_aquisitivo_fonte": _fonte_titulo_aquisitivo(row, resolved),
+        "onus_fonte": _fonte_onus(row, resolved),
         "updated_at": row.get("updated_at"),
     }
 
 
 def obter(client: Any, org_id: UUID, codigo: str) -> dict:
     ensure_imovel(client, org_id, codigo)
-    row = _linha(client, org_id, codigo)
+    row = linha(client, org_id, codigo)
     ids = {
         (row or {}).get("captador_user_id"),
         (row or {}).get("numero_matricula_confirmado_por"),
         (row or {}).get("onus_registrado_por"),
+        (row or {}).get("titulo_aquisitivo_confirmado_por"),
+        (row or {}).get("onus_fonte_confirmado_por"),
     }
     return _saida(codigo, row, table_reads.resolve_actors(ids))
 
@@ -297,7 +363,7 @@ def atualizar(
             field=recusados[0],
         )
 
-    atual = _linha(client, org_id, codigo)
+    atual = linha(client, org_id, codigo)
     patch = {k: v for k, v in valores.items() if k in CAMPOS_EDITAVEIS}
 
     # A human typing the number IS the provenance. Stamped here rather than
@@ -320,16 +386,29 @@ def atualizar(
     if "captador_user_id" in patch and patch["captador_user_id"] is not None:
         patch["captador_user_id"] = str(patch["captador_user_id"])
 
-    if atual is None:
-        row = {"org_id": str(org_id), "codigo": codigo, **patch, "created_at": _now()}
-        _t(client, TABLE).insert(row).execute()
-    else:
-        patch["updated_at"] = _now()
-        _t(client, TABLE).update(patch).eq("org_id", str(org_id)).eq(
-            "codigo", codigo
-        ).execute()
-
+    _gravar(client, org_id, codigo, atual, patch)
     return obter(client, org_id, codigo)
+
+
+def _gravar(
+    client: Any, org_id: UUID, codigo: str, atual: Optional[dict], patch: dict
+) -> None:
+    """Insert the imóvel's row, or update it — the ONE write shape every
+    author of this table uses (`atualizar`, `aplicar_matricula_extraida`,
+    `gravar_fontes_matricula`).
+
+    `atual` is the row the caller just re-read. Read-then-write rather than
+    `upsert()` for the reason `registrar_imovel` records: the mock's upsert is
+    a no-op, so an upsert path tests green and breaks live.
+    """
+    if atual is None:
+        _t(client, TABLE).insert(
+            {"org_id": str(org_id), "codigo": codigo, **patch, "created_at": _now()}
+        ).execute()
+    else:
+        _t(client, TABLE).update({**patch, "updated_at": _now()}).eq(
+            "org_id", str(org_id)
+        ).eq("codigo", codigo).execute()
 
 
 def aplicar_matricula_extraida(
@@ -350,7 +429,7 @@ def aplicar_matricula_extraida(
     race — not a failure.
     """
     ensure_imovel(client, org_id, codigo)
-    atual = _linha(client, org_id, codigo)
+    atual = linha(client, org_id, codigo)
     if atual and atual.get("numero_matricula"):
         return False
 
@@ -365,24 +444,57 @@ def aplicar_matricula_extraida(
         "numero_matricula_confirmado_por": None,
         "numero_matricula_confirmado_em": None,
     }
-    if atual is None:
-        _t(client, TABLE).insert(
-            {"org_id": str(org_id), "codigo": codigo, **patch, "created_at": _now()}
-        ).execute()
-    else:
-        patch["updated_at"] = _now()
-        _t(client, TABLE).update(patch).eq("org_id", str(org_id)).eq(
-            "codigo", codigo
-        ).execute()
+    _gravar(client, org_id, codigo, atual, patch)
     return True
+
+
+def gravar_fontes_matricula(
+    client: Any, org_id: UUID, codigo: str, patch: dict
+) -> None:
+    """Write título aquisitivo / ônus source pointers (migration 109).
+
+    The caller (`matriculas.estrutura_service.definir_fontes`) has already
+    validated the acts against the extraction and stamped origem +
+    confirmation. This refuses any column outside the two pointer groups — it
+    is not a back door to the authored fields, and in particular never
+    touches 099's manual `situacao_onus`.
+    """
+    recusados = sorted(set(patch) - set(CAMPOS_TITULO_AQUISITIVO) - set(CAMPOS_ONUS_FONTE))
+    if recusados:
+        raise ValueError(
+            f"gravar_fontes_matricula: colunas fora das fontes: {', '.join(recusados)}"
+        )
+    ensure_imovel(client, org_id, codigo)
+    _gravar(client, org_id, codigo, linha(client, org_id, codigo), patch)
+
+
+def extracao_referenciada(client: Any, org_id: UUID, extracao_id: Any) -> bool:
+    """Does any imóvel's título/ônus pointer quote this matrícula extraction?"""
+    for coluna in ("titulo_aquisitivo_extracao_id", "onus_fonte_extracao_id"):
+        rows = (
+            _t(client, TABLE)
+            .select("codigo")
+            .eq("org_id", str(org_id))
+            .eq(coluna, str(extracao_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if rows:
+            return True
+    return False
 
 
 __all__ = [
     "CAMPOS_EDITAVEIS",
+    "CAMPOS_ONUS_FONTE",
     "CAMPOS_PROVENIENCIA",
+    "CAMPOS_TITULO_AQUISITIVO",
     "TABLE",
     "aplicar_matricula_extraida",
     "atualizar",
     "ensure_imovel",
+    "extracao_referenciada",
+    "gravar_fontes_matricula",
+    "linha",
     "obter",
 ]

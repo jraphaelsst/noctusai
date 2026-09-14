@@ -152,9 +152,16 @@ async def get_documento_url_route(
     client=Depends(get_imovel_hub_client),
     storage=Depends(get_storage_backend),
 ) -> dict:
-    _user, org_id = _auth_parts(auth)
+    user, org_id = _auth_parts(auth)
+    # The user is passed so the LGPD access log (migration 109) names WHO
+    # opened the file — an unattributed content read is not an audit trail.
     return await docs_svc.url_do_documento(
-        client, storage, org_id, codigo.upper(), documento_id
+        client,
+        storage,
+        org_id,
+        codigo.upper(),
+        documento_id,
+        usuario_id=getattr(user, "id", None),
     )
 
 
@@ -178,8 +185,15 @@ async def delete_documento_route(
 ):
     # No `-> None` annotation: FastAPI would build a response model for it
     # and then assert that a 204 carries no body, which fails at import.
-    _user, org_id = _auth_parts(auth)
-    docs_svc.remover(client, org_id, codigo.upper(), documento_id, motivo=motivo)
+    user, org_id = _auth_parts(auth)
+    docs_svc.remover(
+        client,
+        org_id,
+        codigo.upper(),
+        documento_id,
+        motivo=motivo,
+        usuario_id=getattr(user, "id", None),
+    )
 
 
 __all__ = ["router"]

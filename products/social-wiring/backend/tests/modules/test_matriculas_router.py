@@ -8,13 +8,12 @@ DI seam, and a real auth boundary.
 
 MOUNTING
 ────────
-`app/main.py` deliberately does NOT register the matriculas module yet
-(peer branches are live in that file concurrently; the tech-lead wires
-`MODULES` at integration time — see `app/modules/matriculas/__init__.py`).
-This module mounts the router onto the shared `app.main.app` object
-IN-MEMORY at collection time, exactly as `tests/modules/n8n/conftest.py`
-does and for the same reason: it touches nothing on disk and is precisely
-what the real wiring step will do.
+The module is registered in `app/main.py`'s `MODULES`, so these tests hit the
+real mounted router. (They used to mount it in-memory while the module was
+still unregistered; that guard is gone now that the wiring is real.)
+
+The structured routes migration 109 added are covered in
+`tests/modules/matriculas/`.
 """
 import pytest
 from unittest.mock import patch
@@ -31,13 +30,6 @@ from app.modules.matriculas.deps import (
     get_background_client,
     get_transcriber_factory,
 )
-
-# Idempotent by construction (a module is imported once per pytest process),
-# and guarded anyway so a future re-import cannot double-mount.
-if not any(
-    getattr(r, "path", "") == "/api/matriculas/extrair" for r in _app.routes
-):
-    _app.include_router(_router_mod.router)
 
 
 SAMPLE_EXTRACAO = {
@@ -92,10 +84,24 @@ class _RecordingDB:
     def __init__(self):
         self.updates: list[dict] = []
         self.predicates: list[list[tuple]] = []
+        self.inserts: dict[str, list[dict]] = {}
+        self._table = ""
         self._current: list[tuple] = []
 
-    def table(self, _name):
+    def table(self, name):
+        self._table = name
         self._current = []
+        return self
+
+    def select(self, *_a, **_k):
+        return self
+
+    def limit(self, _n):
+        return self
+
+    def insert(self, payload):
+        linhas = payload if isinstance(payload, list) else [payload]
+        self.inserts.setdefault(self._table, []).extend(linhas)
         return self
 
     def update(self, payload):
@@ -181,6 +187,12 @@ class TestExtrairMatricula:
         ]
         assert background_db.updates[-1]["texto_extraido"] == "P1"
         assert background_db.updates[-1]["num_paginas"] == 1
+        # Migration 109: the acts land with the text, as offsets into it.
+        atos = background_db.inserts["matricula_atos"]
+        assert [(a["kind"], a["char_inicio"], a["char_fim"]) for a in atos] == [
+            ("abertura", 0, 2)
+        ]
+        assert all(a["org_id"] for a in atos)
         for preds in background_db.predicates:
             assert ("id", extracao_id) in preds
             assert any(col == "org_id" and val for col, val in preds), (

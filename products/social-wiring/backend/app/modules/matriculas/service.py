@@ -36,6 +36,9 @@ from typing import Any, Optional
 
 from noctusai_lib.config.credentials import resolve_credential
 
+from app.modules.imovel_hub.deps import BUCKET as IMOVEL_BUCKET
+from app.modules.matriculas import estrutura_service
+
 logger = logging.getLogger(__name__)
 
 TABLE = "matricula_extracoes"
@@ -56,6 +59,17 @@ _ESTADOS_NAO_TERMINAIS = ("pendente", "processando")
 MENSAGEM_ORFA = (
     "A extração foi interrompida (o servidor reiniciou durante o "
     "processamento). Envie o PDF novamente."
+)
+
+#: The same situation for an extraction LINKED to an imóvel (migration 109):
+#: its PDF is kept as the imóvel's document, so "send the file again" would
+#: be false — the operator re-requests the transcription from that document
+#: (`POST /api/matriculas/extracoes/de-documento`; an `erro` row never blocks
+#: the retry).
+MENSAGEM_ORFA_VINCULADA = (
+    "A extração foi interrompida (o servidor reiniciou durante o "
+    "processamento). O PDF continua guardado nos documentos do imóvel — "
+    "solicite a transcrição novamente a partir dele."
 )
 
 #: Machine error code → what this product's users should read.
@@ -208,25 +222,88 @@ async def processar_extracao(
             num_paginas=resultado.num_paginas,
         )
 
+        # The acts (migration 109), as offsets into the text that just landed.
+        # Deliberately AFTER the text write and in its own try: the text is
+        # the product of a paid vision pass and must not be rolled back to
+        # `erro` because a second insert failed. The failure is logged at
+        # ERROR and self-heals — `estrutura_service.listar_atos` re-segments
+        # a concluded extraction that has no acts on its first read.
+        try:
+            escritos = estrutura_service.persistir_atos(
+                db, extracao_id, org_id, resultado.text
+            )
+            logger.info("Matrícula %s: %d acts persisted", extracao_id, escritos)
+        except Exception as falha_atos:  # noqa: BLE001 - text landed; acts heal on read
+            logger.error(
+                "Matrícula %s: text saved but its acts were not persisted (%s) — "
+                "they are re-segmented on the first GET .../atos",
+                extracao_id, falha_atos, exc_info=True,
+            )
+
     except Exception as e:  # noqa: BLE001 - detached task; record, never raise
         logger.error(
             "Matrícula %s extraction failed: %s", extracao_id, e, exc_info=True
         )
-        try:
-            _marcar(
-                db, extracao_id, org_id,
-                status="erro",
-                erro_mensagem=f"Erro inesperado: {e}",
-            )
-        except Exception as falha:  # noqa: BLE001 - last resort; say so
-            # The row cannot be updated (bad org_id, DB down). There is
-            # nowhere else to report to, so the log IS the report — it must
-            # not be swallowed, and it must not mask the original failure.
-            logger.error(
-                "Matrícula %s: could not even record the failure: %s "
-                "(original error: %s)",
-                extracao_id, falha, e,
-            )
+        _registrar_erro(db, extracao_id, org_id, f"Erro inesperado: {e}", e)
+
+
+def _registrar_erro(db, extracao_id: str, org_id: str, mensagem: str, causa) -> None:
+    """Write `erro` onto the row — the last thing a detached task can do.
+
+    If even that fails (bad org_id, DB down) there is nowhere else to report
+    to, so the log IS the report — it must not be swallowed, and it must not
+    mask the original failure.
+    """
+    try:
+        _marcar(db, extracao_id, org_id, status="erro", erro_mensagem=mensagem)
+    except Exception as falha:  # noqa: BLE001 - last resort; say so
+        logger.error(
+            "Matrícula %s: could not even record the failure: %s "
+            "(original error: %s)",
+            extracao_id, falha, causa,
+        )
+
+
+async def processar_extracao_de_documento(
+    extracao_id: str,
+    storage_path: str,
+    org_id: str,
+    db,
+    storage,
+    *,
+    transcriber=None,
+    transcriber_factory=None,
+) -> None:
+    """Read an imóvel's KEPT matrícula PDF back out of storage, then run the
+    one transcription pipeline (`processar_extracao`). NEVER raises.
+    """
+    try:
+        blob = await storage.get(bucket=IMOVEL_BUCKET, key=storage_path)
+    except Exception as e:  # noqa: BLE001 - detached task; record, never raise
+        logger.warning("Matrícula %s: storage read failed: %s", extracao_id, e)
+        _registrar_erro(
+            db, extracao_id, org_id,
+            "Não foi possível ler o PDF guardado no imóvel. Tente novamente.", e,
+        )
+        return
+    if blob is None:
+        logger.warning(
+            "Matrícula %s: stored object %s is missing", extracao_id, storage_path
+        )
+        _registrar_erro(
+            db, extracao_id, org_id,
+            "O PDF da matrícula não foi encontrado no armazenamento do imóvel.",
+            "objeto ausente",
+        )
+        return
+    await processar_extracao(
+        extracao_id,
+        blob.data,
+        org_id,
+        db,
+        transcriber=transcriber,
+        transcriber_factory=transcriber_factory,
+    )
 
 
 async def varrer_pendentes(client, _storage=None, *, limite: int = 50) -> dict:
@@ -240,13 +317,19 @@ async def varrer_pendentes(client, _storage=None, *, limite: int = 50) -> dict:
 
     🔴 WHY THIS MARKS `erro` INSTEAD OF RETRYING, unlike `card_hub` /
     `imovel_hub`. Those two read their bytes back out of Storage, so a
-    stranded document can genuinely be re-read. This workflow keeps NO copy
-    of the uploaded PDF — the bytes live only in the `BackgroundTask`'s
+    stranded document can genuinely be re-read. A legacy UNLINKED upload
+    keeps NO copy of the PDF — the bytes live only in the `BackgroundTask`'s
     closure (ERP's shape, ported unchanged). When the process dies the bytes
     die with it. So the honest recovery is to tell the user the truth and
     ask for the file again; pretending a retry is possible would leave the
     row cycling through `processando` forever, which is the silent error
     this sweep exists to remove, wearing a different hat.
+
+    A LINKED extraction (migration 109) does keep its PDF, as the imóvel's
+    document, and the message says so (`MENSAGEM_ORFA_VINCULADA`): the
+    operator re-requests it from that document. It is still marked rather
+    than retried here because a retry needs the org's transcriber, which is
+    a per-request DI seam this scheduler does not hold.
 
     `_storage` is accepted and ignored: `app.services.extraction_sweep`'s
     `SweepFn` contract is `(admin_client, storage_backend)`, shared with the
@@ -266,7 +349,7 @@ async def varrer_pendentes(client, _storage=None, *, limite: int = 50) -> dict:
     # postgrest-unbounded-ok: fixed 2-element `in_` constant, `.limit(limite)`.
     presos = (
         client.table(TABLE)
-        .select("id,org_id,nome_arquivo,status")
+        .select("id,org_id,nome_arquivo,status,imovel_documento_id")
         .in_("status", list(_ESTADOS_NAO_TERMINAIS))
         .lt("updated_at", cutoff)
         .limit(limite)
@@ -288,7 +371,11 @@ async def varrer_pendentes(client, _storage=None, *, limite: int = 50) -> dict:
         _marcar(
             client, row["id"], str(org_id),
             status="erro",
-            erro_mensagem=MENSAGEM_ORFA,
+            erro_mensagem=(
+                MENSAGEM_ORFA_VINCULADA
+                if row.get("imovel_documento_id")
+                else MENSAGEM_ORFA
+            ),
         )
         marcados += 1
 
@@ -330,9 +417,11 @@ def check_required_credentials(org_id: Optional[str] = None) -> list[str]:
 
 __all__ = [
     "MENSAGEM_ORFA",
+    "MENSAGEM_ORFA_VINCULADA",
     "STALE_APOS",
     "TABLE",
     "check_required_credentials",
     "processar_extracao",
+    "processar_extracao_de_documento",
     "varrer_pendentes",
 ]
