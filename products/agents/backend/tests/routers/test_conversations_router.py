@@ -47,6 +47,50 @@ def _seed_active_agent_and_persona(agents_client, *, ativo: bool = True):
     return agent
 
 
+def _wait_until(predicate, *, timeout_s: float = 10.0, interval_s: float = 0.01) -> bool:
+    """Poll ``predicate()`` from the test's (main) thread. Starlette's
+    ``TestClient`` runs the whole ASGI app on a background-thread event
+    loop that stays alive for the client's lifetime — a
+    ``asyncio.create_task(...)`` spawned inside a request handler keeps
+    running on that loop AFTER the response returns, exactly like
+    production. There is no cross-thread ``await``, so polling (not
+    ``asyncio.sleep``, which would run on the WRONG loop) is the correct
+    synchronization primitive here."""
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval_s)
+    return predicate()
+
+
+def _wait_turn_released(conv_store, org_id, conversation_id) -> bool:
+    """Block until the given conversation's turn lock is free — i.e. the
+    background task's `finally: release_turn(...)` has run (contract
+    §E.9 points 5/6). MUST be called by every test that lets a
+    `POST .../messages` call reach the point of spawning a background
+    task, even one whose assertions don't care about the turn's outcome
+    — an un-joined task can still be mid-flight when the NEXT test's
+    fixture resets `app.dependency_overrides`, and since dependency
+    resolution for THAT task already completed (its `runtime`/`broker`
+    closures are fixed), the risk isn't cross-contamination of ITS OWN
+    run — it's wall-clock contention: the lingering task keeps running
+    on the SAME shared TestClient portal thread the next test's requests
+    also drive, competing for that thread's GIL slices and making
+    otherwise-generous polling windows unreliable. Uses a synthetic
+    probe instance id — never the real `INSTANCE_ID` — so it can never
+    accidentally satisfy (or corrupt) the real lock."""
+    probe_instance = "test-poll-probe"
+    acquired = _wait_until(
+        lambda: conv_store.try_acquire_turn(org_id, conversation_id, probe_instance, 1)
+    )
+    if acquired:
+        conv_store.release_turn(org_id, conversation_id, probe_instance)
+    return acquired
+
+
 class TestAuthBoundary:
     def test_list_requires_auth(self, agents_client):
         resp = agents_client.raw().get("/api/conversations")
@@ -194,33 +238,15 @@ class TestPostMessage:
                 f"/api/conversations/{conv.id}/messages", json={"texto": "oi"}
             )
             statuses.append(resp.status_code)
-            # Release the lock between requests so a 409 never masks the
-            # rate-limit boundary being tested.
-            agents_client.stores.conversations.release_turn(
-                DEFAULT_ORG_ID, conv.id,
-                agents_client.stores.conversations.get(DEFAULT_ORG_ID, conv.id).sdk_session_id
-                or "",
-            )
+            if resp.status_code == 202:
+                # Wait for THIS iteration's background task to release the
+                # turn lock before the next iteration — a 409 from lock
+                # contention (rather than the rate limit itself) would
+                # mask the boundary this test exists to check, and an
+                # un-joined task must never be left running into the next
+                # test (see `_wait_turn_released`'s docstring).
+                _wait_turn_released(agents_client.stores.conversations, DEFAULT_ORG_ID, conv.id)
         assert 429 in statuses, statuses
-
-
-def _wait_until(predicate, *, timeout_s: float = 10.0, interval_s: float = 0.01) -> bool:
-    """Poll ``predicate()`` from the test's (main) thread. Starlette's
-    ``TestClient`` runs the whole ASGI app on a background-thread event
-    loop that stays alive for the client's lifetime — a
-    ``asyncio.create_task(...)`` spawned inside a request handler keeps
-    running on that loop AFTER the response returns, exactly like
-    production. There is no cross-thread ``await``, so polling (not
-    ``asyncio.sleep``, which would run on the WRONG loop) is the correct
-    synchronization primitive here."""
-    import time
-
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(interval_s)
-    return predicate()
 
 
 class TestFullScriptedTurn:
@@ -254,11 +280,8 @@ class TestFullScriptedTurn:
         # The turn is done once the lock is released (contract §E.9 point
         # 5/6 — `release_turn` is the LAST thing either the success or the
         # failure branch does).
-        turn_finished = _wait_until(
-            lambda: conv_store.try_acquire_turn(DEFAULT_ORG_ID, conv.id, "poll-probe", 1)
-        )
+        turn_finished = _wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
         assert turn_finished, "turn never released the lock within the timeout"
-        conv_store.release_turn(DEFAULT_ORG_ID, conv.id, "poll-probe")
 
         messages = msg_store.list(DEFAULT_ORG_ID, conv.id, limite=50)
         roles = [m.role for m in messages]
@@ -266,13 +289,13 @@ class TestFullScriptedTurn:
         # SAME assistant message carries the tool block from the escrita
         # entry (no new row for tool.*/approval.*, contract §E.9: appended
         # into the CURRENT assistant message's blocks).
-        assert roles == ["user", "assistant"]
+        assert roles == ["user", "assistant"], messages
 
         assistant_message = messages[1]
         assert assistant_message.texto == "Vou verificar a KB."
         tool_blocks = [b for b in assistant_message.blocks if b["kind"] == "tool"]
         approval_blocks = [b for b in assistant_message.blocks if b["kind"] == "approval"]
-        assert len(tool_blocks) == 1
+        assert len(tool_blocks) == 1, assistant_message.blocks
         assert tool_blocks[0]["status"] == "ok"
         assert len(approval_blocks) == 1
         assert approval_blocks[0]["decision"] == "aprovada"
@@ -305,11 +328,8 @@ class TestFullScriptedTurn:
         assert resp.status_code == 202, resp.text
 
         conv_store = agents_client.stores.conversations
-        turn_finished = _wait_until(
-            lambda: conv_store.try_acquire_turn(DEFAULT_ORG_ID, conv.id, "poll-probe", 1)
-        )
+        turn_finished = _wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
         assert turn_finished
-        conv_store.release_turn(DEFAULT_ORG_ID, conv.id, "poll-probe")
 
         messages = agents_client.stores.messages.list(DEFAULT_ORG_ID, conv.id, limite=50)
         system_messages = [m for m in messages if m.role == "system"]

@@ -24,6 +24,7 @@ from app.dependencies import (
     get_conversation_store_dep,
     get_message_store_dep,
     get_persona_store_dep,
+    get_realtime_bus_dep,
     get_social_wiring_client_dep,
 )
 from app.stores.agents import FakeAgentStore
@@ -31,6 +32,7 @@ from app.stores.approvals import FakeApprovalStore
 from app.stores.conversations import FakeConversationStore
 from app.stores.messages import FakeMessageStore
 from app.stores.personas import FakePersonaStore
+from noctusai_lib.realtime import FakeRealtimeBus
 from noctusai_lib.testing import MockUser, MockUserResponse
 from noctusai_lib.testing.clients import TEST_USER_ID
 from tests._runtime_standin import (
@@ -61,6 +63,7 @@ class _Stores:
         self.personas = FakePersonaStore()
         self.approvals = FakeApprovalStore()
         self.social_wiring = FakeSocialWiringClient()
+        self.bus = FakeRealtimeBus()
 
 
 @pytest.fixture
@@ -76,6 +79,13 @@ def agents_client(client):
     app.dependency_overrides[get_persona_store_dep] = lambda: stores.personas
     app.dependency_overrides[get_approval_store_dep] = lambda: stores.approvals
     app.dependency_overrides[get_social_wiring_client_dep] = lambda: stores.social_wiring
+    # A real `RedisRealtimeBus` is constructed whenever `settings.redis_url`
+    # is truthy (the fleet-wide default), regardless of whether Redis is
+    # actually reachable — a publish then attempts (and, in some
+    # environments, takes several real seconds to fail) a genuine network
+    # connection. Overriding this dependency keeps every test's publish
+    # calls in-memory and instant, matching the other Fake-store overrides.
+    app.dependency_overrides[get_realtime_bus_dep] = lambda: stores.bus
     # Default runtime/broker/spec-builder — every `POST .../messages` route
     # declares these as `Depends(...)` UNCONDITIONALLY (FastAPI resolves
     # every dependency before the route body runs, including for a request
@@ -103,6 +113,7 @@ def agents_client(client):
             get_persona_store_dep,
             get_approval_store_dep,
             get_social_wiring_client_dep,
+            get_realtime_bus_dep,
             # Defensively cleared too — individual test files that install
             # a runtime/broker/spec-builder stand-in (tests/_runtime_standin.py)
             # via these same dependency-override keys must never leak into

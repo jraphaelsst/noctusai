@@ -63,11 +63,22 @@ def conversation_scope(conversation_id: UUID | str) -> str:
 
 
 async def publish_event(
-    conversation_id: UUID | str, event: str, payload: dict[str, Any]
+    conversation_id: UUID | str,
+    event: str,
+    payload: dict[str, Any],
+    *,
+    bus: RealtimeBus | None = None,
 ) -> str | None:
     """Publish one E.3 event onto the conversation's scope. Raises
     ``ValueError`` for any event name outside :data:`EVENTS` — a typo here
     is a silent-drop-from-the-frontend bug, never a warning.
+
+    ``bus`` is an optional DI seam — pass the value resolved from
+    ``app.dependencies.get_realtime_bus_dep`` (itself overridable via
+    ``app.dependency_overrides`` in tests) to avoid the process-wide
+    singleton entirely; defaults to :func:`get_bus` when omitted
+    (production call sites that don't thread a request-scoped bus
+    through).
 
     The bus write itself is **best-effort** — the persisted DB row is the
     source of truth (contract §E.9: the runtime never writes the DB;
@@ -82,8 +93,9 @@ async def publish_event(
     """
     if event not in EVENTS:
         raise ValueError(f"publish_event: unknown contract §E.3 event {event!r}")
+    target_bus = bus if bus is not None else get_bus()
     try:
-        return await get_bus().publish(conversation_scope(conversation_id), event, payload)
+        return await target_bus.publish(conversation_scope(conversation_id), event, payload)
     except Exception:
         logger.warning(
             "agents.realtime.publish_failed conversation_id=%s event=%s",

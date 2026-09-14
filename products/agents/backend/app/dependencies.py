@@ -287,6 +287,17 @@ def get_social_wiring_client_dep():
     return get_social_wiring_client(settings)
 
 
+def get_realtime_bus_dep():
+    """FastAPI dependency seam over ``app.realtime.get_bus()`` — the
+    process-wide singleton is a Redis-or-Fake factory keyed on
+    ``settings.redis_url``; tests override THIS dependency with a bare
+    ``FakeRealtimeBus()`` so a publish never attempts a real (and, in some
+    environments, measurably slow-to-fail) network connection."""
+    from app.realtime import get_bus
+
+    return get_bus()
+
+
 def get_build_julia_spec_dep():
     """Returns G2's ``build_julia_spec(persona_row) -> AgentSpec`` callable
     itself (not its result) — the turn loop calls it once it has the
@@ -319,6 +330,7 @@ __all__ = [
     "get_message_store_dep",
     "get_org_id",
     "get_persona_store_dep",
+    "get_realtime_bus_dep",
     "get_settings",
     "get_social_wiring_client_dep",
     "get_user_client",

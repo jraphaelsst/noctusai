@@ -34,6 +34,7 @@ from app.dependencies import (
     get_core_client,
     get_message_store_dep,
     get_persona_store_dep,
+    get_realtime_bus_dep,
     require_member,
 )
 from app.config import settings
@@ -229,6 +230,7 @@ async def post_message(
     agent_store=Depends(get_agent_store_dep),
     msg_store=Depends(get_message_store_dep),
     persona_store=Depends(get_persona_store_dep),
+    bus=Depends(get_realtime_bus_dep),
 ) -> MessagePostResponse:
     try:
         conv_store.get_owned(ctx.org_id, conversation_id, ctx.user_id)
@@ -247,7 +249,7 @@ async def post_message(
 
     # Contract §E.9 point 1: persist the user message, THEN try_acquire_turn.
     user_message = msg_store.add(ctx.org_id, conversation_id, "user", payload.texto)
-    await publish_event(conversation_id, "message.new", _message_payload(user_message))
+    await publish_event(conversation_id, "message.new", _message_payload(user_message), bus=bus)
 
     acquired = conv_store.try_acquire_turn(
         ctx.org_id, conversation_id, INSTANCE_ID, _TURN_LOCK_TTL_SECONDS
@@ -271,6 +273,7 @@ async def post_message(
             conv_store=conv_store,
             msg_store=msg_store,
             persona_store=persona_store,
+            bus=bus,
         )
     )
     _track_background_task(request.app.state, task)
@@ -363,6 +366,7 @@ async def _run_turn_background(
     conv_store: Any,
     msg_store: Any,
     persona_store: Any,
+    bus: Any,
 ) -> None:
     """Contract §E.9 "What the routes must do with a turn", points 2-6.
 
@@ -400,10 +404,12 @@ async def _run_turn_background(
                 )
                 current_message_id = record.id
                 current_blocks = []
-                await publish_event(conversation_id, "message.new", _message_payload(record))
+                await publish_event(
+                    conversation_id, "message.new", _message_payload(record), bus=bus
+                )
             elif kind == "message.delta":
                 # Contract §E.9 point 4: published only, never persisted.
-                await publish_event(conversation_id, "message.delta", evt_payload)
+                await publish_event(conversation_id, "message.delta", evt_payload, bus=bus)
             elif kind in ("tool.started", "tool.finished"):
                 if current_message_id is None:
                     record = msg_store.add(org_id, conversation_id, "assistant", "", blocks=[])
@@ -411,7 +417,7 @@ async def _run_turn_background(
                     current_blocks = []
                 current_blocks = _apply_tool_event(current_blocks, kind, evt_payload)
                 msg_store.update_blocks(org_id, conversation_id, current_message_id, current_blocks)
-                await publish_event(conversation_id, kind, evt_payload)
+                await publish_event(conversation_id, kind, evt_payload, bus=bus)
             elif kind in ("approval.requested", "approval.resolved"):
                 if current_message_id is None:
                     record = msg_store.add(org_id, conversation_id, "assistant", "", blocks=[])
@@ -419,14 +425,14 @@ async def _run_turn_background(
                     current_blocks = []
                 current_blocks = _apply_approval_event(current_blocks, kind, evt_payload)
                 msg_store.update_blocks(org_id, conversation_id, current_message_id, current_blocks)
-                await publish_event(conversation_id, kind, evt_payload)
+                await publish_event(conversation_id, kind, evt_payload, bus=bus)
             elif kind == "session.status":
                 sdk_session_id = evt_payload.get("sdk_session_id")
                 if sdk_session_id:
                     conv_store.set_sdk_session_id(org_id, conversation_id, sdk_session_id)
-                await publish_event(conversation_id, "session.status", evt_payload)
+                await publish_event(conversation_id, "session.status", evt_payload, bus=bus)
             elif kind == "conversation.upsert":
-                await publish_event(conversation_id, "conversation.upsert", evt_payload)
+                await publish_event(conversation_id, "conversation.upsert", evt_payload, bus=bus)
             else:
                 logger.warning(
                     "agents.turn.unknown_event org_id=%s conversation_id=%s kind=%s",
@@ -439,7 +445,9 @@ async def _run_turn_background(
         )
         try:
             msg_store.add(org_id, conversation_id, "system", "O turno falhou.")
-            await publish_event(conversation_id, "session.status", {"status": "erro"})
+            await publish_event(
+                conversation_id, "session.status", {"status": "erro"}, bus=bus
+            )
         except Exception:
             logger.exception(
                 "agents.turn.failure_reporting_failed org_id=%s conversation_id=%s",
