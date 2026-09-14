@@ -72,6 +72,7 @@ class TestAuthContextBackCompat:
         assert ctx.expires_at is None
         assert ctx.human_personal is False
         assert ctx.minted_by is None
+        assert ctx.issuer is None
 
     def test_old_keyword_construction_still_works(self):
         ctx = AuthContext(
@@ -85,6 +86,7 @@ class TestAuthContextBackCompat:
         assert ctx.scopes == ["read"]
         assert ctx.principal_agent_id is None
         assert ctx.human_personal is False
+        assert ctx.issuer is None
 
     def test_new_fields_are_settable(self):
         ctx = AuthContext(
@@ -97,10 +99,12 @@ class TestAuthContextBackCompat:
             principal_agent_id=_AGENT,
             human_personal=True,
             minted_by=_MINTER,
+            issuer="agents",
         )
         assert ctx.principal_agent_id == _AGENT
         assert ctx.human_personal is True
         assert ctx.minted_by == _MINTER
+        assert ctx.issuer == "agents"
 
 
 def _token_row(
@@ -112,6 +116,7 @@ def _token_row(
     human_personal: bool = False,
     minted_by: str | None = None,
     scopes: list[str] | None = None,
+    issuer: str | None = None,
 ) -> dict:
     return {
         "id": str(_TOKEN_ID),
@@ -123,6 +128,7 @@ def _token_row(
         "human_personal": human_personal,
         "minted_by": minted_by,
         "token_hash": secret_hash,
+        "issuer": issuer,
     }
 
 
@@ -175,6 +181,7 @@ class TestSupabaseApiTokenResolver:
             human_personal=True,
             minted_by=str(_MINTER),
             scopes=["academia:read"],
+            issuer="agents",
         )
         resolver = SupabaseApiTokenResolver(
             self._client([row]), schema="academia_de_reciclagem"
@@ -189,6 +196,7 @@ class TestSupabaseApiTokenResolver:
         assert ctx.human_personal is True
         assert ctx.minted_by == _MINTER
         assert ctx.scopes == ["academia:read"]
+        assert ctx.issuer == "agents"
 
     def test_unknown_token_returns_none(self):
         resolver = SupabaseApiTokenResolver(
@@ -198,6 +206,43 @@ class TestSupabaseApiTokenResolver:
         ctx = _run(resolver.resolve("pk_" + "d" * 32))
 
         assert ctx is None
+
+    def test_issuer_populated_from_row(self):
+        """SW1 (contract §E.6): the resolver reads + populates
+        ``AuthContext.issuer`` from the token row's ``issuer`` column —
+        the field the bridge route's ``ctx.issuer != "agents"`` check
+        depends on."""
+        from noctusai_lib.api.auth.session import hash_token
+
+        secret = "pk_" + "e" * 32
+        future = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+        row = _token_row(hash_token(secret), expires_at=future, issuer="agents")
+        resolver = SupabaseApiTokenResolver(
+            self._client([row]), schema="social_wiring"
+        )
+
+        ctx = _run(resolver.resolve(secret))
+
+        assert ctx is not None
+        assert ctx.issuer == "agents"
+
+    def test_issuer_none_when_absent(self):
+        """A token row with no ``issuer`` value (pre-SW1 token, or one
+        minted without an issuer) resolves with ``ctx.issuer is None``
+        — never an empty string or a KeyError."""
+        from noctusai_lib.api.auth.session import hash_token
+
+        secret = "pk_" + "f" * 32
+        future = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+        row = _token_row(hash_token(secret), expires_at=future)
+        resolver = SupabaseApiTokenResolver(
+            self._client([row]), schema="social_wiring"
+        )
+
+        ctx = _run(resolver.resolve(secret))
+
+        assert ctx is not None
+        assert ctx.issuer is None
 
 
 class _FakeCoreClient:

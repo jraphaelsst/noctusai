@@ -112,6 +112,9 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.whatsapp_connections_router import (
         router as whatsapp_connections_router,
     )
+    from app.routers.agents_bridge_router import (
+        router as agents_bridge_router,
+    )
 
     from app.routers.integration_accounts_router import (
         router as integration_accounts_router,
@@ -203,6 +206,7 @@ def _register_media_wiring() -> ModuleRegistration:
             settings_router,
             whatsapp_router,
             whatsapp_connections_router,
+            agents_bridge_router,
             intake_monitor_router,
             chat_router,
             calendar_router,

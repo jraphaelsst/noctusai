@@ -169,7 +169,7 @@ class SupabaseApiTokenResolver:
                 .table("api_tokens")
                 .select(
                     "id, org_id, scopes, revoked_at, expires_at, "
-                    "principal_agent_id, human_personal, minted_by"
+                    "principal_agent_id, human_personal, minted_by, issuer"
                 )
                 .eq("token_hash", digest)
                 .limit(1)
@@ -251,6 +251,8 @@ class SupabaseApiTokenResolver:
 
         scopes = list(row.get("scopes") or [])
         human_personal = bool(row.get("human_personal") or False)
+        raw_issuer = row.get("issuer")
+        issuer = str(raw_issuer) if raw_issuer else None
 
         # Best-effort last_used_at bump. Failure here must not break
         # the auth path — log and continue.
@@ -281,6 +283,7 @@ class SupabaseApiTokenResolver:
             expires_at=expires_at,
             human_personal=human_personal,
             minted_by=minted_by,
+            issuer=issuer,
         )
 
 

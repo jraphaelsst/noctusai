@@ -95,6 +95,20 @@ class AuthContext(NamedTuple):
             mint time). ``None`` for user sessions (irrelevant — the
             session already carries ``user_id``) and for any token
             minted before this field existed.
+        issuer: SW1 (``project-history/roadmaps/julia-agents-academia-
+            2026-09.md``, contract §E.6). Free-form label naming WHO
+            minted a product token's origin control-plane (e.g.
+            ``"agents"`` for a token the ``agents`` product holds on
+            behalf of an automation principal). ``None`` for user
+            sessions and for any token minted before this field
+            existed or with no issuer recorded. A product-only bridge
+            route checks this to restrict callers to one specific
+            control plane (e.g. ``ctx.issuer != "agents"`` → 403
+            ``issuer_not_allowed``) — narrower than a scope check
+            alone, since a scope string says WHAT the token may do,
+            never WHO holds it. Appended at the END (not interleaved)
+            so every existing positional constructor call keeps
+            working unchanged.
     """
 
     org_id: UUID
@@ -107,6 +121,7 @@ class AuthContext(NamedTuple):
     expires_at: datetime | None = None
     human_personal: bool = False
     minted_by: UUID | None = None
+    issuer: str | None = None
 
 
 class SessionTokens(NamedTuple):
