@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.documents.formatting import ranges_to_json
 
 from app.modules.imovel_hub.deps import BUCKET as IMOVEL_BUCKET
 from app.modules.matriculas import estrutura_service
@@ -228,10 +229,21 @@ async def processar_extracao(
             if dias
             else None
         )
+        # 🔴 NOC-REMEDIATE[transcricao-formatacao-backfill]: 5 rows in prod
+        # already hold `texto_extraido` with literal `**bold**`/`<u>…</u>`
+        # markers baked into the PLAIN TEXT (the OLD vision prompt, before
+        # the seed learned to parse markup into ranges). Migration 111's
+        # write-once trigger refuses to let `texto_extraido` be REWRITTEN
+        # once `status = 'concluida'`, and this write never touches an
+        # existing row either — so those five stay unformatted (`formatacao`
+        # keeps its `'[]'` column default) until someone re-transcribes
+        # them. Every row landing HERE, from this write onward, is correct.
+        # — 2026-09-14
         _marcar(
             db, extracao_id, org_id,
             status="concluida",
             texto_extraido=resultado.text,
+            formatacao=ranges_to_json(resultado.formatting),
             num_paginas=resultado.num_paginas,
             retencao_ate=retencao_ate,
         )
@@ -429,6 +441,57 @@ def check_required_credentials(org_id: Optional[str] = None) -> list[str]:
     return missing
 
 
+def texto_html_da_extracao(texto: Optional[str], formatacao_json) -> Optional[str]:
+    """Word-pasteable HTML of a transcript — `GET .../extracoes/{id}`'s
+    `texto_html` field. `None` when there is no text yet (an in-progress or
+    failed extraction), never an HTML fragment of an empty string.
+    `formatacao_json` is the raw `jsonb` column value (possibly `None` for a
+    row written before migration 113).
+    """
+    if not texto:
+        return None
+    from noctusai_lib.integrations.documents.abnt import (
+        paragraphs_from_text,
+        render_word_html,
+    )
+    from noctusai_lib.integrations.documents.formatting import (
+        FormattedDocument,
+        ranges_from_json,
+    )
+
+    doc = FormattedDocument(
+        paragraphs=paragraphs_from_text(texto, ranges_from_json(formatacao_json))
+    )
+    return render_word_html(doc)
+
+
+def renderizar_extracao_pdf(nome_arquivo: str, texto: str, formatacao_json) -> bytes:
+    """ABNT-formatted PDF of one matrícula transcript, titled
+    `"Transcrição da matrícula — <nome_arquivo>"` (contract §4).
+
+    Raises `noctusai_lib.integrations.documents.abnt.UnsupportedGlyphError`
+    straight through — the router turns it into a 422 naming the character,
+    never a silent 500.
+    """
+    from noctusai_lib.integrations.documents.abnt import (
+        paragraphs_from_text,
+        render_abnt_pdf,
+    )
+    from noctusai_lib.integrations.documents.formatting import (
+        FormattedDocument,
+        Paragraph,
+        ParagraphKind,
+        Run,
+        ranges_from_json,
+    )
+
+    titulo = f"Transcrição da matrícula — {nome_arquivo}"
+    corpo = paragraphs_from_text(texto, ranges_from_json(formatacao_json))
+    titulo_paragrafo = Paragraph(runs=(Run(text=titulo),), kind=ParagraphKind.TITLE)
+    doc = FormattedDocument(paragraphs=(titulo_paragrafo, *corpo), title=titulo)
+    return render_abnt_pdf(doc)
+
+
 __all__ = [
     "MENSAGEM_ORFA",
     "MENSAGEM_ORFA_VINCULADA",
@@ -437,5 +500,7 @@ __all__ = [
     "check_required_credentials",
     "processar_extracao",
     "processar_extracao_de_documento",
+    "renderizar_extracao_pdf",
+    "texto_html_da_extracao",
     "varrer_pendentes",
 ]

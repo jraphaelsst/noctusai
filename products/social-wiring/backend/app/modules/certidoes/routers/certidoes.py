@@ -73,6 +73,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import Response, StreamingResponse
+from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 from noctusai_lib.integrations.storage import StorageBackend
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
@@ -327,7 +328,7 @@ async def criar_consulta(
     # postgrest-unbounded-ok: bounded at 10 rows by that fan-out, not 1 000.
     resultados = (
         db.table(RESULTADOS)
-        .select("*")
+        .select(service.RESULTADO_COLUNAS_SEM_TEXTO)
         .eq("consulta_id", consulta["id"])
         .eq("org_id", str(org_id))
         .order("ordem")
@@ -359,9 +360,11 @@ async def obter_consulta(
     # `criar_consulta` inserts exactly `len(CERTIDOES_CONFIG)` of them and the
     # FK cascades with the consulta.
     # postgrest-unbounded-ok: bounded at 10 rows by that fan-out, not 1 000.
+    # Migration 113: THIS is the endpoint the certidão detail screen polls —
+    # never select("*") here, or the certidão text rides along on every poll.
     resultados = (
         db.table(RESULTADOS)
-        .select("*")
+        .select(service.RESULTADO_COLUNAS_SEM_TEXTO)
         .eq("consulta_id", consulta_id)
         .eq("org_id", str(org_id))
         .order("ordem")
@@ -828,6 +831,78 @@ async def listar_resultados_por_parte(
 
     return success_response(
         svc.certidoes_por_parte(db, org_id, atendimento_parte_id)
+    )
+
+
+@router.get("/resultados/{resultado_id}/transcricao")
+async def obter_transcricao(
+    resultado_id: str,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """The certidão's transcript — text, Word-pasteable HTML, and inline
+    formatting (migration 113) — the per-parte panel's `[Copiar]` source.
+    LGPD-logged (`view`) before the response goes out.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    result = svc.obter_transcricao_resultado(
+        db, org_id, resultado_id, usuario_id=_user.id
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Resultado não encontrado")
+    if not result["disponivel"]:
+        raise HTTPException(
+            status_code=404,
+            detail="Transcrição indisponível para esta certidão",
+        )
+    return success_response({
+        "texto": result["texto"],
+        "texto_html": result["texto_html"],
+        "formatacao": result["formatacao"],
+    })
+
+
+@router.get("/resultados/{resultado_id}/transcricao/pdf")
+async def obter_transcricao_pdf(
+    resultado_id: str,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """ABNT-formatted PDF of the certidão's transcript (migration 113).
+    Route ordering: a two-segment suffix of `{resultado_id}` — cannot shadow,
+    or be shadowed by, `GET /resultados/{resultado_id}/url` or the JSON
+    `.../transcricao` route above (distinct static suffixes).
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    result = svc.obter_transcricao_resultado(
+        db, org_id, resultado_id, usuario_id=_user.id
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Resultado não encontrado")
+    if not result["disponivel"]:
+        raise HTTPException(
+            status_code=404,
+            detail="Transcrição indisponível para esta certidão",
+        )
+
+    try:
+        pdf_bytes = svc.renderizar_transcricao_pdf(
+            result["nome_display"], result["texto"], result["formatacao"]
+        )
+    except UnsupportedGlyphError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    filename = f"{result['tipo']}_transcricao.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _content_disposition(filename)},
     )
 
 

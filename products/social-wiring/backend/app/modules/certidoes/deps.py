@@ -143,6 +143,8 @@ class CertidoesService:
     certidoes_por_parte: Callable
     confirmar_resultado: Callable
     mint_resultado_url: Callable
+    obter_transcricao_resultado: Callable
+    renderizar_transcricao_pdf: Callable
 
 
 def _build_default_service() -> CertidoesService:
@@ -169,6 +171,8 @@ def _build_default_service() -> CertidoesService:
         certidoes_por_parte=service.certidoes_por_parte,
         confirmar_resultado=service.confirmar_resultado,
         mint_resultado_url=service.mint_resultado_url,
+        obter_transcricao_resultado=service.obter_transcricao_resultado,
+        renderizar_transcricao_pdf=service.renderizar_transcricao_pdf,
     )
 
 
