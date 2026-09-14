@@ -432,3 +432,36 @@ reference in the project's own docs and tests.
   `except`, so not fatal, but permanent error noise in prod.
 * Gate 2 (live traffic) still needs vendor credentials — see
   `projects/imovelweb-portal-leads-ingestion/HANDOFF.md` §1.
+
+## 105–112 — applied 2026-09-14 (owner-approved, ahead of the certidões TRF3/CENPROT release)
+
+✅ **APPLIED + VERIFIED 2026-09-14** via `noctus.dev.migrate_product social-wiring confirm=true`
+(which records each file in `social_wiring.schema_migrations`). `103` was already live
+(`cliente_documento_tipos` held `certidao_casamento`), so the tool's pending set was exactly
+`105`→`112`.
+
+**Why now.** The `dev` tip being promoted reads columns these migrations create — e.g.
+`_process_single_certidao` selects `resultado_origem, confirmado_por` (107). Deploying that image
+without them would have broken certidão processing, including the TRF3/CENPROT fixes the release
+existed to ship.
+
+**Probe before.** Per-migration `information_schema` probes showed every object from 105–112
+absent. Each file was scanned for data-touching statements first:
+* `105` — `UPDATE api_tokens SET expires_at = now() + 365 days WHERE expires_at IS NULL`: 1 live
+  token in prod at the time.
+* `107`, `109`, `111`, `112` — `DROP CONSTRAINT IF EXISTS` + re-`ADD` (idempotent);
+  `111` also relaxes `imovel_documento_acessos.documento_id` to NULLable under the new
+  `um_alvo` CHECK (existing rows carry `documento_id`, so they satisfy it).
+* `108` — `DROP POLICY IF EXISTS` + `CREATE POLICY`.
+* No `DROP TABLE`, `DELETE` or `TRUNCATE` in any of the eight.
+
+**Post-verify (15/15 present):** `api_token_audit` + `api_tokens.expires_at` and no live token left
+without expiry (105) · `atendimento_contratos`, `atendimento_contrato_versoes` (106) ·
+`certidao_resultados.resultado_origem`, `.confirmado_por`, `certidao_resultado_acessos` (107) ·
+`org_testemunhas` (108) · `matricula_atos`, `matricula_extracoes.codigo` (109) ·
+`cliente_documentos.extracao_estado_civil` + the `certidao_nascimento` document type (110) ·
+`imovel_documentos.retencao_ate` (111) · `atendimento_contrato_versoes.contexto_sha256` (112).
+
+**PostgREST.** None of the eight files ends with a schema reload, so
+`NOTIFY pgrst, 'reload schema';` was run once after the apply — without it the API would not see
+the new columns until PostgREST restarted.
