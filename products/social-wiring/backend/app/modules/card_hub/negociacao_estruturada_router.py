@@ -25,8 +25,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.dependencies import get_current_user_org
 from app.modules.card_hub import negociacao_estruturada_service as svc
+from app.modules.card_hub.auth import auth_parts
 from app.modules.card_hub.deps import get_card_hub_client
 from app.modules.card_hub.schemas import (
     FavorecidoCreateBody,
@@ -41,14 +42,9 @@ from app.modules.card_hub.schemas import (
 router = APIRouter()
 
 
-def _auth_parts(auth):
-    """Same two-liner `router.py::_auth_parts` — duplicated rather than
-    imported to avoid a circular import (`router.py` imports THIS module to
-    `include_router` it). Noted as a scoped-improvement: a shared
-    `card_hub/auth.py` helper would remove the duplication for both call
-    sites; not done here to keep this migration's footprint additive-only."""
-    user, _token, raw_org = auth
-    return user, coerce_org_uuid(raw_org)
+#: The shared helper this module's original scoped-improvement note asked
+#: for — `card_hub/auth.py` (formalized at N=3 by the F5 contract generator).
+_auth_parts = auth_parts
 
 
 # ─── the aggregate view ───────────────────────────────────────────────────

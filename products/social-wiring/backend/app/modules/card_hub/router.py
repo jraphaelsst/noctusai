@@ -48,6 +48,10 @@ from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import financiamento_service as financiamento_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub import negociacao_service as negociacao_svc
+from app.modules.card_hub.auth import auth_parts
+from app.modules.card_hub.contrato_gerador.router import (
+    router as contrato_gerador_router,
+)
 from app.modules.card_hub.negociacao_estruturada_router import (
     router as negociacao_estruturada_router,
 )
@@ -99,11 +103,11 @@ router = APIRouter(prefix="/api/clientes", tags=["card_hub"])
 # already-1300-line one, and why this is additive (no other line in this
 # file changes for it).
 router.include_router(negociacao_estruturada_router)
+# F5 — contract generation (GET .../contratos/{id}/geracao, POST .../gerar).
+router.include_router(contrato_gerador_router)
 
-
-def _auth_parts(auth):
-    user, _token, raw_org = auth
-    return user, coerce_org_uuid(raw_org)
+#: Shared with the included routers — see `card_hub/auth.py`.
+_auth_parts = auth_parts
 
 
 # ─── Tags (org catalogue — literal path, see module docstring) ─────────
