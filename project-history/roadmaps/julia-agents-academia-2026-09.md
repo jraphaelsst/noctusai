@@ -100,7 +100,7 @@ The decision log keeps every step.
 
 | # | Wave | Slice | Owner | Class | Verify recipe |
 |---|---|---|---|---|---|
-| W0 | 0 | Four contracts, `agents` scaffold, reserved migrations, vendored `_kit` removed, skill-content audit, CODEOWNERS on Julia's prompt + skills | tech-lead | — | Contracts import on both sides; `noctus.dev.propagate check=True` clean for both slugs. |
+| W0 | 0 | Contract `projects/julia-agents-academia-CONTRACT.md` (academia API, approval assertion, agents API + SSE + gate + launch, social-wiring toggle, ChatWindow seams, reserved migrations, E2E checks) · `agents` scaffold · skill-content audit · advisory CODEOWNERS (see Q4) | tech-lead | — | Contract on `origin/dev` before any fork; `noctus.dev.propagate check=True` clean for both slugs. The vendored `_kit` never entered noc (slice M1 builds `mcp/academia` on noc's `_kit`). |
 | A1 | 1 | academia `KnowledgeStore`, migrations, API with scopes + single-use approval assertions | backend-engineer | C1 | Live Supabase: create an entry, read its revision; UPDATE on `kb_revisions` raises; replayed assertion → 409. |
 | A2 | 1 | academia importer + verifier (bundle outside the repo, secret scan first) | backend-engineer | C1 | Revision count = git revision count; HEAD body hashes match. |
 | SEED-1 | 1 | Product-token resolver + scopes + audit + expiry | engineer-seed | C2 | Pilots green; strict `== 401` (missing/expired) and `403` (scope) tests. |
@@ -130,7 +130,8 @@ The decision log keeps every step.
 
 - **Q1 — terminal Julia.** How the local Claude Code session loads JULIA.md + skills and authenticates to the academia API (personal token).
 - **Q2 — One Chat's sender policy.** Unchanged by user decision on 2026-09-14; revisit before M6.
-- **Q3 — who may approve Julia's writes.** Owner only, or an `academia:approver` role for additional team members?
+- **Q3 — who may approve Julia's writes.** The contract (E.2) sets the default: the requester or an org admin. Revisit if more team members need approval rights.
+- **Q4 — enforced review of Julia's prompt and skills.** `.github/CODEOWNERS` is advisory only: `dev` has no branch protection (checked 2026-09-14), so direct pushes bypass it. Enforcing needs branch protection with required code-owner review. That is a repository-settings decision for the user, and until they decide, prompt changes are guarded only by the review habit plus the contract's E.8 rule.
 
 ## Decision log
 

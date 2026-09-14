@@ -1,0 +1,12 @@
+# CODEOWNERS — review requests for prompt-bearing paths.
+#
+# ADVISORY ONLY: `dev` has no branch protection (checked 2026-09-14), so this
+# file requests review on pull requests but does NOT block a direct push.
+# Enforcement needs branch protection with "Require review from Code Owners",
+# a repository-settings decision tracked as open question Q4 in
+# project-history/roadmaps/julia-agents-academia-2026-09.md.
+#
+# Why these paths: the repository is public, and an agent's prompt and skills
+# are behaviour. A change here is a prompt change, not a code change.
+
+/products/agents/backend/app/agents/ @jraphaelsst
