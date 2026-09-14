@@ -780,6 +780,12 @@ class ExtractedPdfText:
     formatacao: tuple[FormatRange, ...] = ()
 
 
+#: Vision pages a certidão transcription may bill. 0 = text layer only (the
+#: free, exact rung). See `_extract_pdf_text` for why this is a cost decision,
+#: and why the vision provider is only resolved when this is above 0.
+CERTIDAO_MAX_VISION_PAGES = 0
+
+
 async def _extract_pdf_text(
     pdf_bytes: bytes, nome_display: str, org_id: Optional[str] = None
 ) -> ExtractedPdfText:
@@ -810,17 +816,22 @@ async def _extract_pdf_text(
 
         from app.services.api_keys_store import resolve_vision_provider
 
-        # `max_vision_pages=0` means no page reaches a vision model today, so
-        # this argument buys nothing at runtime — it is here so that the day
-        # that cap is raised, the rung starts at the vendor the operator
-        # picked instead of silently at the seed default. The alternative is a
-        # provider switch that governs matrículas and quietly does not govern
-        # certidões, which is the harder bug to see.
+        # The provider is resolved ONLY when the cap lets a page reach a vision
+        # model. At 0 no vendor can ever be called, and resolving it anyway
+        # made a text-layer-only transcription depend on a credential lookup:
+        # without Supabase config it raised, the broad `except` below turned
+        # that into "no transcript", and every certidão silently lost its AI
+        # analysis. Tying both to ONE constant keeps the original intent — the
+        # day the cap is raised, the rung starts at the vendor the operator
+        # picked, not at the seed default.
+        provider = (
+            resolve_vision_provider(org_id) if CERTIDAO_MAX_VISION_PAGES > 0 else None
+        )
         transcriber = make_document_transcriber(
             real=True,
             org_id=org_id,
-            max_vision_pages=0,
-            provider=resolve_vision_provider(org_id),
+            max_vision_pages=CERTIDAO_MAX_VISION_PAGES,
+            provider=provider,
         )
         resultado = await transcriber.transcribe(
             pdf_bytes, mimetype="application/pdf"
