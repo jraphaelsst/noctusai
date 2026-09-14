@@ -33,6 +33,8 @@ const mockVincular = vi.fn();
 const mockConfirmar = vi.fn();
 const mockUpload = vi.fn();
 const mockMintUrl = vi.fn();
+const mockDownloadTranscricaoPdf = vi.fn();
+const mockCopiarTranscricao = vi.fn();
 
 vi.mock("@/hooks/useCertidoes", () => ({
   useResultadosPorParte: (...a: any[]) => mockUseResultadosPorParte(...a),
@@ -41,6 +43,9 @@ vi.mock("@/hooks/useCertidoes", () => ({
   useConfirmarResultado: () => ({ mutate: mockConfirmar, isPending: false }),
   useUploadResultadoManual: () => ({ mutate: mockUpload, isPending: false }),
   useMintResultadoUrl: () => ({ mutate: mockMintUrl, isPending: false }),
+  // ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6).
+  useDownloadTranscricaoPdf: () => ({ mutate: mockDownloadTranscricaoPdf, isPending: false }),
+  useCopiarTranscricao: () => ({ copiar: mockCopiarTranscricao, activeId: undefined }),
 }));
 
 const mockDownloadFile = vi.fn();
@@ -308,5 +313,48 @@ describe("CertidoesPartePanel — view / download", () => {
     const { queryByLabelText } = await renderPanel();
     expect(queryByLabelText("Visualizar Certidão TJSP")).toBeFalsy();
     expect(queryByLabelText("Baixar Certidão TJSP")).toBeFalsy();
+  });
+});
+
+// ─── ABNT formatting project § 6 — transcript retrieval ─────────────────────
+
+describe("CertidoesPartePanel — transcrição (Transcrição PDF / Copiar)", () => {
+  it("🔴 hides both actions when tem_transcricao is false or absent", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ tem_transcricao: false }), makeResultado({ id: "res-2" })] }),
+    );
+    const { queryByLabelText } = await renderPanel();
+    expect(queryByLabelText("Transcrição PDF Certidão TJSP")).toBeFalsy();
+    expect(queryByLabelText("Copiar transcrição Certidão TJSP")).toBeFalsy();
+  });
+
+  it("shows both actions when tem_transcricao is true", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ tem_transcricao: true })] }),
+    );
+    const { getByLabelText } = await renderPanel();
+    expect(getByLabelText("Transcrição PDF Certidão TJSP")).toBeTruthy();
+    expect(getByLabelText("Copiar transcrição Certidão TJSP")).toBeTruthy();
+  });
+
+  it("downloads the transcription PDF for the clicked resultado", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ tem_transcricao: true })] }),
+    );
+    const { getByLabelText, fireEvent } = await renderPanel();
+    fireEvent.click(getByLabelText("Transcrição PDF Certidão TJSP"));
+    expect(mockDownloadTranscricaoPdf).toHaveBeenCalledWith({
+      resultadoId: "res-1",
+      filename: "tjsp_transcricao.pdf",
+    });
+  });
+
+  it("copies the transcription for the clicked resultado", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ tem_transcricao: true })] }),
+    );
+    const { getByLabelText, fireEvent } = await renderPanel();
+    fireEvent.click(getByLabelText("Copiar transcrição Certidão TJSP"));
+    expect(mockCopiarTranscricao).toHaveBeenCalledWith("res-1", expect.any(Function));
   });
 });
