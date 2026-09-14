@@ -35,16 +35,36 @@ export function extractErrorMessage(data: any, status: number): string {
  *
  * `status` is `null` for a transport-level failure (server unreachable) that
  * never produced an HTTP response — an honest "there is no status", never 0.
+ *
+ * `body` is the parsed JSON error body (`undefined` when the response had
+ * none or it was not JSON). Backends answer `{error: {code, message,
+ * details}}`; `code` and `details` read straight from it, so a consumer that
+ * needs the structured refusal — a field list, a conflict id — branches on
+ * them instead of re-implementing the fetch to see the body the message
+ * extraction used to discard.
  */
 export class ApiError extends Error {
   readonly status: number | null;
-  constructor(status: number | null, message: string) {
+  readonly body: unknown;
+  constructor(status: number | null, message: string, body?: unknown) {
     super(status === null ? message : `[${status}] ${message}`);
     this.name = 'ApiError';
     this.status = status;
+    this.body = body;
     // Restore prototype chain — required when extending built-ins under the
     // TS `target` this lib compiles to, so `err instanceof ApiError` holds.
     Object.setPrototypeOf(this, ApiError.prototype);
+  }
+
+  /** `error.code` from a `{error: {code, ...}}` body, or `null`. */
+  get code(): string | null {
+    const code = (this.body as { error?: { code?: unknown } } | undefined)?.error?.code;
+    return typeof code === 'string' ? code : null;
+  }
+
+  /** `error.details` from a `{error: {details, ...}}` body, or `null`. */
+  get details(): unknown {
+    return (this.body as { error?: { details?: unknown } } | undefined)?.error?.details ?? null;
   }
 }
 
@@ -134,7 +154,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       const message = data
         ? extractErrorMessage(data, response.status)
         : `Erro HTTP ${response.status}`;
-      throw new ApiError(response.status, message);
+      throw new ApiError(response.status, message, data ?? undefined);
     }
     if (response.status === 204) return null as T;
     // 200 OK with non-JSON body is the classic SPA-fallback-eats-API shape

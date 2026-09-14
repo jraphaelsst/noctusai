@@ -116,6 +116,33 @@ describe('ApiError — structured status', () => {
     expect(err.status).toBeNull();          // honest "no status", never a fake 0
     expect(err.message).not.toMatch(/^\[/); // no [status] prefix when there is none
   });
+
+  it('keeps the structured error body so consumers read code and details', async () => {
+    const body = {
+      error: {
+        code: 'CONTRATO_INCOMPLETO',
+        message: 'Faltam dados para gerar o contrato.',
+        details: { faltando: [{ campo: 'cpf', rotulo: 'CPF', onde: 'partes', parte_id: 'p-1' }] },
+      },
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(400, body));
+    const { client } = make();
+    const err = await client.post('/api/x', {}).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.message).toBe('[400] Faltam dados para gerar o contrato.');
+    expect(err.body).toEqual(body);
+    expect(err.code).toBe('CONTRATO_INCOMPLETO');
+    expect(err.details).toEqual(body.error.details);
+  });
+
+  it('reports null code/details when the error body has neither', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(422, { detail: 'invalido' }));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    expect(err.code).toBeNull();
+    expect(err.details).toBeNull();
+    expect(err.body).toEqual({ detail: 'invalido' });
+  });
 });
 
 // ── upload() — multipart ───────────────────────────────────────────────────

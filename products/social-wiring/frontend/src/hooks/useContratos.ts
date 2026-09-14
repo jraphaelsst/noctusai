@@ -14,6 +14,7 @@
  * mutations go through `api`.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@noctusai/lib";
 import { api, supabase } from "@noctusai/seed/infra";
 
 import { apiUrl } from "@/lib/apiBase";
@@ -150,11 +151,8 @@ interface ContratoIncompletoDetails {
 
 /**
  * Thrown by `useContratoMutations().gerar` on the 400 `CONTRATO_INCOMPLETO`
- * shape. `ApiError` (the seed `api` client's error type) only carries
- * `status` + a flattened message string — it discards the response body, and
- * this 400's `error.details.{faltando,bloqueios}` is exactly what the panel
- * needs to show without a second round trip. Bypasses `api.post` the same
- * way `postMultipart` bypasses it, for the same reason.
+ * shape: the typed view of the seed `ApiError`'s `code` + `details`, so the
+ * panel shows `details.{faltando,bloqueios}` without a second round trip.
  */
 export class ContratoGeracaoError extends Error {
   readonly code: string;
@@ -316,30 +314,28 @@ async function extractDetailMessage(response: Response): Promise<string> {
 }
 
 /**
- * POST JSON, reading the FULL `{error: {code, message, details}}` body on a
- * non-2xx — `api.post` (seed client) throws `ApiError` with only a flattened
- * message, and `CONTRATO_INCOMPLETO`'s `details.{faltando,bloqueios}` is
- * exactly what the readiness section needs to show. See
- * `ContratoGeracaoError`'s header note.
+ * POST through the seed `api` client (auth, 401 refresh, error extraction),
+ * translating its `ApiError` into `ContratoGeracaoError` so the readiness
+ * section reads `code` + `details.{faltando,bloqueios}` from the 400
+ * `CONTRATO_INCOMPLETO` body — which `ApiError` now carries as `body`.
  */
 async function postGerarContrato(
   url: string,
   body: GerarContratoInput,
 ): Promise<GerarContratoResult> {
-  const headers = { ...(await getAuthHeader()), "Content-Type": "application/json" };
-  const response = await fetch(apiUrl(url), {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const data = await response.json().catch(() => null);
-    const code = data?.error?.code ?? "erro_desconhecido";
-    const message = data?.error?.message ?? `Erro HTTP ${response.status}`;
-    const details = data?.error?.details ?? null;
-    throw new ContratoGeracaoError(code, message, details);
+  try {
+    return await api.post<GerarContratoResult>(url, body);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      const envelope = err.body as { error?: { message?: string } } | undefined;
+      throw new ContratoGeracaoError(
+        err.code ?? "erro_desconhecido",
+        envelope?.error?.message ?? err.message,
+        (err.details as ContratoIncompletoDetails | null) ?? null,
+      );
+    }
+    throw err;
   }
-  return (await response.json()) as GerarContratoResult;
 }
 
 export function useContratoMutations(clienteId: string) {
