@@ -222,6 +222,8 @@ export interface ClienteCardDialogProps {
    */
   renderNegociacao?: () => ReactNode;
   renderFinanciamento?: () => ReactNode;
+  /** The Contratos subpage — same render-prop reasoning as the two above. */
+  renderContratos?: () => ReactNode;
 
   /** Current values behind the typed checklist items — read by the inline row
    *  editors AND by the full form on the Dados do cliente tab. */
@@ -825,6 +827,16 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   {props.renderNegociacao?.() ?? (
                     <p className="text-sm text-muted-foreground">
                       Negociação indisponível.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {subpage === "contratos" && (
+                <div data-testid="card-subpage-contratos">
+                  {props.renderContratos?.() ?? (
+                    <p className="text-sm text-muted-foreground">
+                      Contratos indisponível.
                     </p>
                   )}
                 </div>

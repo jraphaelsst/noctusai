@@ -1608,6 +1608,37 @@ describe("a barra lateral como hover rail", () => {
       chaves.indexOf("card-subpage-tab-roteiros") + 1,
     );
   });
+
+  it("🔴 Contratos sits right after Negociação — end of the deal group", async () => {
+    const screen = await rail();
+    const chaves = Array.from(
+      screen.getByTestId("card-sidebar-nav").querySelectorAll("[data-testid^='card-subpage-tab-']"),
+    ).map((el) => el.getAttribute("data-testid"));
+    expect(chaves.indexOf("card-subpage-tab-contratos")).toBe(
+      chaves.indexOf("card-subpage-tab-negociacao") + 1,
+    );
+  });
+
+  it("renders renderContratos when the Contratos subpage is opened", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({ renderContratos: () => <div data-testid="contratos-stub" /> })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-contratos"));
+    expect(screen.getByTestId("card-subpage-contratos")).toBeTruthy();
+    expect(screen.getByTestId("contratos-stub")).toBeTruthy();
+  });
+
+  it("falls back to a placeholder when no renderContratos is given", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("card-subpage-tab-contratos"));
+    expect(screen.getByTestId("card-subpage-contratos").textContent).toContain(
+      "Contratos indisponível.",
+    );
+  });
 });
 
 describe("legendas nos botões (ícone + tooltip)", () => {

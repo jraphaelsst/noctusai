@@ -44,6 +44,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   CalendarClock,
   ClipboardList,
+  FileSignature,
   Handshake,
   Landmark,
   Megaphone,
@@ -63,6 +64,7 @@ export type CardSubpageKey =
   | "roteiros"
   | "financiamento"
   | "negociacao"
+  | "contratos"
   | "campanha";
 
 interface SubpageDef {
@@ -105,6 +107,11 @@ export const CARD_SUBPAGES: readonly SubpageDef[] = [
   { key: "roteiros", label: "Roteiros", icon: Route },
   { key: "financiamento", label: "Financiamento/Escritura", icon: Landmark },
   { key: "negociacao", label: "Negociação", icon: Handshake },
+  // Sits at the end of the deal group, after Negociação: the contract is the
+  // paperwork that CLOSES the deal the two subpages above it decide the
+  // terms of — uploaded today, and where an auto-generated one will land
+  // later (marked, never a second surface).
+  { key: "contratos", label: "Contratos", icon: FileSignature },
   { key: "campanha", label: "Campanha e imóvel", icon: Megaphone },
 ] as const;
 

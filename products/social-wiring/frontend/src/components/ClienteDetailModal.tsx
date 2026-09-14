@@ -64,9 +64,12 @@ import type { CardSubpageKey } from "@/components/card/CardSidebarNav";
 import { baixarArquivo } from "@/components/card/format";
 import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
 import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
+import { NovoContratoDialog } from "@/components/card/NovoContratoDialog";
 import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
 import { NegociacaoContainer } from "@/components/NegociacaoContainer";
 import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
+import { ContratosContainer } from "@/components/ContratosContainer";
+import { useContratoMutations } from "@/hooks/useContratos";
 
 export interface ClienteDetailModalProps {
   clienteId: string | null;
@@ -92,6 +95,9 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const [compradorDialogOpen, setCompradorDialogOpen] = useState(false);
   const [vendedorDialogOpen, setVendedorDialogOpen] = useState(false);
   const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
+  // Sibling of `roteiroDialogOpen` for the same reason: a Dialog nested inside
+  // `ClienteCardDialog`'s own Dialog content fights the outer focus trap.
+  const [contratoDialogOpen, setContratoDialogOpen] = useState(false);
   // Which roteiro's PDF is being generated. Per-id, not a boolean: with two
   // roteiros on screen a shared flag spins BOTH buttons and tells the user the
   // wrong one is working.
@@ -150,6 +156,10 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const agendamentoMutations = useAgendamentoMutations(id ?? "__none__");
   const roteiros = useRoteiros(idSeAbriu("roteiros"));
   const roteiroMutations = useRoteiroMutations(id ?? "__none__");
+  // Only `create` is used here — the rest of the contract mutations live
+  // inside `ContratosContainer`, self-contained the same way
+  // `FinanciamentoContainer` owns its own document mutations.
+  const contratoMutations = useContratoMutations(id ?? "__none__");
   const checklistMutations = useChecklistMutations(id ?? "__none__");
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
   const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
@@ -654,6 +664,12 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       }
       renderNegociacao={() => <NegociacaoContainer clienteId={id} />}
       renderFinanciamento={() => <FinanciamentoContainer clienteId={id} />}
+      renderContratos={() => (
+        <ContratosContainer
+          clienteId={id as string}
+          onNovoContrato={() => setContratoDialogOpen(true)}
+        />
+      )}
       onOpenDocumento={handleOpenDocumento}
       onDeleteDocumento={(documentoId, motivo) =>
         documentoMutations.remove.mutate(
@@ -719,6 +735,19 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         })
       }
       saving={roteiroMutations.create.isPending}
+    />
+
+    {/* Sibling of the card for the same reason `CriarRoteiroDialog` is. */}
+    <NovoContratoDialog
+      open={contratoDialogOpen}
+      onOpenChange={setContratoDialogOpen}
+      onCriar={(input) =>
+        contratoMutations.create.mutate(input, {
+          onSuccess: () => setContratoDialogOpen(false),
+          onError: (err) => toastServerError(err, "Não foi possível criar o contrato."),
+        })
+      }
+      saving={contratoMutations.create.isPending}
     />
     </>
   );

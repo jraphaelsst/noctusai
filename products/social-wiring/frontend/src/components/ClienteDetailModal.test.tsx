@@ -143,6 +143,28 @@ vi.mock("@/hooks/useCardHub", () => ({
   }),
 }));
 
+// `useContratoMutations` — only `create` is read here (`NovoContratoDialog`
+// is a sibling reached even though the card itself is stubbed, same as
+// `CriarRoteiroDialog`/`useImoveisBusca` above). `importActual` keeps every
+// constant/label/validator `NovoContratoDialog` also imports from this
+// module real, so only the hook itself is faked.
+vi.mock("@/hooks/useContratos", async () => {
+  const actual = await vi.importActual<typeof import("@/hooks/useContratos")>(
+    "@/hooks/useContratos",
+  );
+  return {
+    ...actual,
+    useContratoMutations: () => ({
+      create: { mutate: vi.fn(), isPending: false },
+      addVersao: { mutate: vi.fn(), isPending: false },
+      patch: { mutate: vi.fn(), isPending: false },
+      deleteVersao: { mutate: vi.fn(), isPending: false },
+      deleteContrato: { mutate: vi.fn(), isPending: false },
+      getUrl: { mutate: vi.fn(), mutateAsync: vi.fn() },
+    }),
+  };
+});
+
 // Thin control surface over the real presentational dialog: exposes just
 // the description save + comentário post affordances this file exercises.
 vi.mock("@/components/card/ClienteCardDialog", async () => {
