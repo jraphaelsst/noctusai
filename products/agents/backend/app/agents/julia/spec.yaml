@@ -1,0 +1,24 @@
+# Julia's static spec (contract §E.5/§E.9) — the part of AgentSpec that does
+# NOT come from the `agent_personas` DB row (model/effort/persona text do;
+# see app/runtime/__init__.py::build_julia_spec).
+#
+# `tools` is deliberately NOT listed here — it is derived from
+# `app.runtime.gate.LEITURA` + `app.runtime.gate.ESCRITA` at spec-build time
+# (single source of truth; a hand-kept copy here would drift from the gate
+# the moment either tuple changes).
+
+key: julia
+
+# Explicit ar-* skill list (contract §E.5 "skills=[<explicit ar-* list>]").
+# Names match each `plugin/skills/<dir>/SKILL.md` directory name.
+skills:
+  - ar-capturar
+  - ar-decisao
+  - ar-entrevista
+  - ar-pesquisa
+  - ar-quiz
+  - ar-roteiro
+  - ar-trilha
+  - ar-sessao
+
+max_turns: 40
