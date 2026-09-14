@@ -68,6 +68,8 @@ jobs:
           - orbity
           - seed
           - p-studio
+          - academia-de-reciclagem
+          - agents
 
     steps:
       - uses: actions/checkout@v7

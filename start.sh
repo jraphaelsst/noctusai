@@ -63,6 +63,8 @@ PRODUCTS=(
   "orbity:Orbity:8010:8140"
   "igig:IgIg:8013:8170"
   "p-studio:P Studio:8014:8180"
+  "academia-de-reciclagem:Academia de Reciclagem:8015:8190"
+  "agents:Agentes:8016:8200"
 )
 # END_PRODUCTS_REGISTRY
 
