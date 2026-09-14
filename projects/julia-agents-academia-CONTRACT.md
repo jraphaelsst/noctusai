@@ -108,7 +108,7 @@ Every table has these columns: `id uuid pk`, `org_id uuid not null` with RLS via
 | `author_kind` | text | CHECK in (`human`, `agent`, `import`). |
 | `user_id` | uuid null | |
 | `agent_id` | uuid null | |
-| `approval_id` | uuid null | UNIQUE when not null. One approval can produce exactly one revision, which is the replay guard (H2). |
+| `approval_id` | uuid null | UNIQUE on (`approval_id`, `entity_type`, `entity_id`) when not null. One approved call may legitimately write several revisions: a supersede writes two, the new decision and the old one. The single-use replay guard is the separate table `approval_consumptions(jti uuid pk, org_id, consumed_at)`; its INSERT happens first, in the same transaction, and a duplicate returns 409 `assertion_used`. |
 | `channel` | text null | |
 | `conversation_id` | uuid null | |
 | `motivo` | text null | |
@@ -132,9 +132,17 @@ Every table has these columns: `id uuid pk`, `org_id uuid not null` with RLS via
 **Seed changes these routes depend on** (all from SEED-1, back-compat — every new field defaults so existing consumers are unchanged):
 - **`AuthContext`** (`session/types.py:29`) gains `principal_agent_id: UUID | None = None` and `expires_at: datetime | None = None`.
 - **`SupabaseApiTokenResolver(admin_client, *, schema)`** is promoted from `products/social-wiring/backend/app/services/api_token_resolver.py`. It selects `id, org_id, scopes, revoked_at, expires_at, principal_agent_id`. It refuses a token when `revoked_at IS NOT NULL` or `expires_at <= now()`, which returns 401. The social-wiring and erp-imobiliario product-local copies migrate to it in the same slice.
-- **`require_scopes(*scopes)`** is a FastAPI dependency factory over `get_auth_context`. For `caller_kind == "user"` it passes (the user's authorization is org-role RLS). For `caller_kind == "product"` every listed scope must be in `ctx.scopes`, else 403 `scope_missing`. No scope check exists anywhere in the seed today; this is the first.
+- **`require_scopes(*scopes, user_roles: frozenset[str])`** is a FastAPI dependency factory over `get_auth_context`. No scope check exists anywhere in the seed today; this is the first.
+  - For `caller_kind == "product"`: every listed scope must be in `ctx.scopes`, else 403 `scope_missing`.
+  - For `caller_kind == "user"`: the caller's org role (`public.noctus_users.org_role` ∈ `owner | admin | member | viewer`, core `001_noctusai_core.sql:39`; resolved like seed `_require_org_admin`, `auth_router.py:228`) must be in `user_roles`, else 403 `role_missing`. User sessions carry `scopes=[]` today (`session/store.py:178`), so scopes are never the user's authorization.
+  - Routes use the admin client and therefore bypass RLS, so every query filters by `ctx.org_id` explicitly. RLS is defence in depth, never the authorization.
+  - Role sets used below: `READ = {owner, admin, member, viewer}` · `WRITE = {owner, admin, member}` · `ADMIN = {owner, admin}`. (Security review 2026-09-14 suggested an `editor` role; noc has none, so `member` holds that position.)
 - **Audit:** every resolved product-token call writes `api_token_audit(api_token_id, org_id, method, path, status, at)`, best-effort and logged loudly on failure.
-- **Token table columns** (per product schema, migration-added): `expires_at timestamptz NOT NULL` for new tokens, `principal_agent_id uuid NULL`, `issuer text NULL`. Existing social-wiring/erp tokens get `expires_at` backfilled to `now() + interval '365 days'`, so nothing breaks on deploy.
+- **Token table columns** (per product schema, migration-added): `expires_at timestamptz NOT NULL` for new tokens, `principal_agent_id uuid NULL`, `issuer text NULL`, `human_personal bool NOT NULL DEFAULT false`, `minted_by uuid NULL`.
+- **Backfill of existing social-wiring/erp tokens.** They get `expires_at = now() + interval '365 days'`, under three conditions:
+  - The migration is applied BEFORE the resolver that reads `expires_at` is deployed; the reverse order breaks every live token.
+  - An audit row is written per backfilled token.
+  - An alert fires 30 days before any token expires.
 
 **How the agents product gets its academia token.** Tokens are minted in the TARGET product by an org admin via the seed route `POST /api/settings/api-tokens {label, scopes}` (`auth_router.py:173,266`), extended with `expires_at` (required, ≤ 90 days) and `principal_agent_id`. The secret is shown once and stored as the agents secret `ACADEMIA_API_TOKEN` (deploy secret, slice D1). It never goes into the Julia CLI's `env`.
 
@@ -147,7 +155,9 @@ Every table has these columns: `id uuid pk`, `org_id uuid not null` with RLS via
 - `academia:kb:write` · `academia:decisions:write` · `academia:questions:write` · `academia:roadmap:write` · `academia:content:write` · `academia:sources:write`
 - `academia:import`: admin-only, never granted to an agent.
 
-**Agent writes** (caller is a product token with a principal agent) MUST carry `X-Approval-Assertion` (§D). An SSO user's write needs no assertion.
+**Product-token writes.** EVERY write by a `caller_kind == "product"` caller MUST carry a valid `X-Approval-Assertion` (§D), whether or not the token has a principal agent. The only exception is a token flagged `human_personal = true` (terminal-Julia's personal token): it needs no assertion, and its writes record `kb_revisions.user_id = minted_by`. A write-scoped product token without an assertion and without `human_personal` gets 403 `assertion_invalid`. An SSO user's write needs no assertion, but does need the `WRITE` role set.
+
+**Role set per route:** every `GET` needs `READ`; every write in B.1–B.5 needs `WRITE`; `/api/import` needs `ADMIN`.
 
 **Status taxonomy** (all endpoints):
 
@@ -241,7 +251,10 @@ There is no PUT and no DELETE.
 **Behaviour:**
 - **Idempotent.** A re-import of the same bundle is a no-op; the dedup key is `git_sha` + path.
 - **All-or-nothing:** a single transaction.
-- **Refusal:** the endpoint rejects any file whose path matches the secret-scan denylist (`.env*`, `*.pem`, `*secret*`) with 422.
+- **Refusal:**
+  - Path denylist: any file whose path matches `.env*`, `*.pem`, `*.key`, `id_rsa*`, `*secret*`, `credentials*` or `.npmrc` is rejected with 422.
+  - Content secret scan: a server-side scan (entropy threshold plus known token patterns such as `pk_`, `sk-`, `ghp_`, `AKIA`, `-----BEGIN`) runs on every line's `content`, and any hit is 422 `secret_detected`, naming the path but never the value.
+  - Size cap: 422 `bundle_too_large` above 20 MB or 5,000 lines.
 
 **Bundle line shape:**
 ```
@@ -298,12 +311,19 @@ The stdio server stays at `mcp/academia/`, rebuilt as a thin HTTP client: base U
 - **academia** accepts any element. Rotation = prepend the new key, deploy both, then drop the old one.
 - **Missing or empty list:** the product refuses to start in prod (`required_prod_config`, `create_product_app` `app.py:57`). The key is never in the Julia CLI's `env`.
 
+**One key list per audience.** `approval_assertion_secrets` is keyed by `aud`. Before a second target product accepts assertions, it gets its own list; a key for `academia-de-reciclagem` must never validate for another audience.
+
 **Header:** `X-Approval-Assertion: <compact JWS, HS256>`. The claims:
 ```
 {"jti": "<approval uuid>", "iss": "agents", "aud": "academia-de-reciclagem",
  "sub": "<agent uuid>", "org": "<org uuid>", "tool": "academia.kb.escrever",
- "body_sha256": "<hex of the canonical JSON request body>", "iat": <int>, "exp": <iat + 60>}
+ "method": "PUT", "path": "/api/kb/dominio-regulatorio-pnrs",
+ "body_sha256": "<hex of the canonical JSON request body>",
+ "approved_by": "<user uuid who approved>", "requested_by": "<user uuid who owns the conversation>",
+ "iat": <int>, "exp": <iat + 60>}
 ```
+
+**Why method and path are signed:** the body alone does not identify the target. `PUT /api/kb/{slug}` carries the slug in the path, and two tools can produce identical bodies.
 
 **Canonical JSON:** UTF-8, sorted keys, no insignificant whitespace (`json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`).
 
@@ -314,8 +334,10 @@ The stdio server stays at `mcp/academia/`, rebuilt as a thin HTTP client: base U
 4. `org` equals the token's org.
 5. `sub` equals the token's principal agent.
 6. `body_sha256` equals the canonical hash of the received body.
+7. `method` and `path` equal the received request exactly, and `tool` maps to that route in the §C table. A mismatch is 403 `assertion_invalid`.
+8. `approved_by` holds the `WRITE` role set in this org (B.0), checked at verification time, not at approval time. A mismatch is 403 `approver_not_allowed`.
 
-Then it inserts the revision with `approval_id = jti`. A UNIQUE violation returns 409 `assertion_used`.
+Then, in one transaction, it inserts `approval_consumptions(jti)` (duplicate → 409 `assertion_used`) and writes the revision(s) with `approval_id = jti`, `user_id = approved_by`, `agent_id = sub`.
 
 **The assertion is minted ONLY by the agents control plane, AFTER a human approved the specific tool call.** The Julia CLI process never sees the signing key or the product token.
 
@@ -354,8 +376,8 @@ Every table has `id uuid pk`, `org_id uuid not null`, `created_at`, `updated_at`
 | `GET /api/conversations` | — | `{items: Conversation[], total}` | Own conversations only. |
 | `POST /api/conversations` | `{titulo?}` | `201 Conversation` | For agent `julia`. |
 | `GET /api/conversations/{id}` | — | `Conversation` | 404 if not the owner. |
-| `GET /api/conversations/{id}/messages?before=&limite=50` | — | `{items: Message[], total}` | Newest last. |
-| `POST /api/conversations/{id}/messages` | `{texto}` (1..8000) | `202 {mensagem: Message, status: "processando"}` | Persists the user message, publishes `message.new`, starts the turn in the background. 409 `turn_in_progress` if a turn is already running for this conversation (one in-flight turn per conversation, DB lock). 409 `agent_off`. 429 on the per-user rate limit. |
+| `GET /api/conversations/{id}/messages?before=&limite=50` | — | `{items: Message[], total}` | Newest last. 404 unless the caller owns the conversation; admins may read. |
+| `POST /api/conversations/{id}/messages` | `{texto}` (1..8000) | `202 {mensagem: Message, status: "processando"}` | 404 unless the caller OWNS the conversation; admins may read but never post. Persists the user message, publishes `message.new`, starts the turn in the background. 409 `turn_in_progress` if a turn is already running for this conversation (one in-flight turn per conversation, DB lock). 409 `agent_off`. 429 on the per-user rate limit. |
 | `GET /api/approvals?estado=pendente` | — | `{items: Approval[], total}` | Approvals in the caller's own conversations; admins see all in the org. |
 | `POST /api/approvals/{id}/decision` | `{aprovada: bool}` | `Approval` | Requester or admin. |
 
@@ -369,6 +391,8 @@ Every table has `id uuid pk`, `org_id uuid not null`, `created_at`, `updated_at`
 | 403 `not_allowed` | The caller may not decide this approval |
 
 **Side-effect of approving:** the waiting tool call proceeds, the control plane mints the §D assertion and calls academia. The approval row is then `aprovada`, and after academia returns 2xx, `consumed_at` is set.
+
+**Admin decisions:** an admin may decide another member's approval. First decision wins, and a later one gets 409 `already_decided`. The assertion carries `approved_by`, so academia re-checks the approver's role (§D step 8). Admins can read every conversation in the org; this data-access fact is recorded in the LGPD flag for `agents`.
 
 **Timeout:** `APPROVAL_TIMEOUT_SECONDS` (default 900). An unanswered request becomes `expirada` and the tool call is denied.
 
@@ -407,7 +431,15 @@ Every table has `id uuid pk`, `org_id uuid not null`, `created_at`, `updated_at`
 ### E.5 Julia launch (SEC-A) and the tool proxy
 
 `ClaudeAgentOptions` (SDK 0.2.152, `types.py:1941`):
+**Why a wrapper is mandatory.** The SDK builds the CLI's environment as `{**os.environ (minus CLAUDECODE), "CLAUDE_CODE_ENTRYPOINT": ..., **options.env, "CLAUDE_AGENT_SDK_VERSION": ...}` (`_internal/transport/subprocess_cli.py:809-815`, verified 2026-09-14). `options.env` can ADD keys but never REMOVE inherited ones, so without the wrapper every control-plane secret would reach the CLI: `ACADEMIA_API_TOKEN`, `SOCIAL_WIRING_API_TOKEN`, `APPROVAL_ASSERTION_SECRETS`, the database key. The wrapper at `/app/bin/julia-cli-exec` runs `exec env -i HOME=<tmpfs> PATH=<minimal> ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" CLAUDE_CODE_ENTRYPOINT="$CLAUDE_CODE_ENTRYPOINT" CLAUDE_AGENT_SDK_VERSION="$CLAUDE_AGENT_SDK_VERSION" <claude binary> "$@"`, re-exporting only the allowlisted keys from its own (inherited) environment.
+
+**Why `tools=` is the primary restriction.** Tools that need no permission, such as the read-only built-ins and MCP resource reads, never reach `can_use_tool`. A hand-kept `disallowed_tools` list goes stale as the CLI adds tools. So the base tool set is pinned with `tools=` (SDK `types.py:1944`, the `--tools` flag), and `disallowed_tools` remains only as defence in depth.
+
+**Plugin invariant, enforced by a build-time test:** `agents/julia/plugin/` contains ONLY `skills/` (no `hooks/`, `.mcp.json`, `agents/` or `commands/`). No `SKILL.md` frontmatter declares `allowed-tools`.
+
 ```
+cli_path="/app/bin/julia-cli-exec"     # env -i wrapper, see above (SDK types.py:2064)
+tools=["WebSearch", "Skill"]           # base built-in set; the academia proxies arrive via mcp_servers
 setting_sources=[]                     # no project CLAUDE.md / settings / hooks
 system_prompt={"type":"preset","preset":"claude_code","append": JULIA.md + persona}
 plugins=[{"type":"local","path": "<image>/app/agents/julia/plugin"}]
@@ -417,7 +449,7 @@ strict_mcp_config=True
 allowed_tools=[E.4 leitura + escrita names]
 disallowed_tools=["Bash","Write","Edit","MultiEdit","NotebookEdit","Read","Grep","Glob","Task","WebFetch"]
 can_use_tool=<gate>                    # PermissionResultAllow / PermissionResultDeny (types.py:238,247)
-env={"HOME": "<tmpfs>", "PATH": "<minimal>"} # nothing inherited; no tokens, no DB, no API keys beyond the SDK's own auth
+env={}                                # adds nothing; the wrapper is what strips inherited keys
 user="julia-cli"
 include_partial_messages=True
 max_turns=<config, default 40>
@@ -430,7 +462,11 @@ resume=<conversations.sdk_session_id>
 3. Calls academia with `ACADEMIA_API_TOKEN` plus `X-Approval-Assertion`.
 4. Returns `{"content":[{"type":"text","text": <json of the §C output>}]}`.
 
-The Anthropic credential is passed only via the mechanism the SDK requires, verified in slice G2. If the SDK needs it in `env`, it is the ONLY credential there, and the SEC-C test asserts that.
+**SEC-C proves both invariants on the real image.**
+- It reads `/proc/<julia-cli pid>/environ` and asserts the key set is exactly `{HOME, PATH, ANTHROPIC_API_KEY, CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_VERSION}`.
+- It asserts that the CLI's `init` message lists exactly the E.4 tools, and nothing else.
+
+`ANTHROPIC_API_KEY` is a dedicated, spend-capped key for Julia's workspace, never shared with any other product.
 
 ### E.6 social-wiring One Chat toggle (slice SW1 — a new route, the existing route unchanged)
 
@@ -442,6 +478,7 @@ The Anthropic credential is passed only via the mechanism the SDK requires, veri
 - **What it calls:** `WhatsAppConnectionStore.update_auto_reply` (the same store call as the existing route at `whatsapp_connections_router.py:1150`).
 - **Audit:** an audit row is written.
 - **Errors:** 404 for an unknown connection or another org, 403 `scope_missing`, 401 for a bad or expired token.
+- **Product-only:** `caller_kind != "product"` gets 403 `product_required` (a user session must not pass through this bridge). The token's `issuer` must be `agents`.
 - **Nothing else in social-wiring changes:** no prompt, tool, sender-policy or webhook change.
 - **Token:** the agents product holds `SOCIAL_WIRING_API_TOKEN` (deploy secret) with only these two scopes.
 
