@@ -1,15 +1,17 @@
 """`render_abnt_pdf` — every assertion here reads the ACTUAL rendered PDF
-back with PyMuPDF (page size, text, font flags, drawings), not the story
-we handed reportlab. `reportlab` writes, it does not read, and this
-product has no PDF reader dependency of its own for production code — but
-`PyMuPDF` is already a hard seed dependency (`integrations.media`), so
-using it here to verify our OWN writer's output is free.
+back with PyMuPDF (page size, text, font flags, drawings), not the HTML
+string we handed `xhtml2pdf`. `xhtml2pdf` (via reportlab) writes, it does
+not read, and this product has no PDF reader dependency of its own for
+production code — but `PyMuPDF` is already a hard seed dependency
+(`integrations.media`), so using it here to verify our OWN writer's
+output is free.
 
 A layout claim this file cannot make mechanically (does the line before a
 hard <br/> wrap look visually ragged rather than stretched?) was verified
 by rendering a sample to PNG and inspecting it — see the engineer's
-delivery note for the paths; `justifyBreaks=0` (asserted indirectly here
-via the style construction) is the mechanism.
+delivery note for the paths; reportlab's own `justifyBreaks=0` default
+(never overridden by `xhtml2pdf` — see the module docstring's "CSS
+FEATURES USED" section) is the mechanism.
 """
 from __future__ import annotations
 
@@ -187,6 +189,13 @@ class TestPageNumbers:
 
 class TestDeterminism:
     def test_mesma_entrada_produz_os_mesmos_bytes(self):
+        # `title` is set here on purpose: it also exercises the running
+        # header (see TestDocumentHeader) inside the determinism check.
+        # `xhtml2pdf` embeds no run-to-run-varying metadata of its own —
+        # confirmed empirically (not assumed) before this test was kept
+        # as a byte-identity assertion rather than weakened to a
+        # text/layout comparison; see the module docstring's
+        # "DETERMINISM" section.
         doc = FormattedDocument(
             title="Determinismo",
             paragraphs=(
@@ -197,6 +206,30 @@ class TestDeterminism:
         first = render_abnt_pdf(doc)
         second = render_abnt_pdf(doc)
         assert first == second
+
+
+class TestDocumentHeader:
+    """The 2026-09-14 owner ask for a "UI for documents": a running
+    header showing `doc.title`, distinct from the centered-bold
+    `ParagraphKind.TITLE` paragraph — see the module docstring's "PDF
+    ENGINE" section for why the two are different things."""
+
+    def test_titulo_do_documento_aparece_no_cabecalho_quando_definido(self):
+        doc = FormattedDocument(
+            title="Transcrição da matrícula 12345",
+            paragraphs=(Paragraph(runs=(Run("corpo do documento"),)),),
+        )
+        page = _open(render_abnt_pdf(doc))[0]
+        text = page.get_text()
+        assert "Transcrição da matrícula 12345" in text
+        spans = [s for s in _spans(page) if "Transcrição da matrícula" in s["text"]]
+        assert spans, "esperava o título no topo da página"
+        assert spans[0]["bbox"][1] < 3 * cm, "cabeçalho deveria estar dentro da margem superior"
+
+    def test_sem_titulo_nao_ha_cabecalho(self):
+        doc = FormattedDocument(paragraphs=(Paragraph(runs=(Run("única página sem título"),)),))
+        page = _open(render_abnt_pdf(doc))[0]
+        assert page.get_text().strip() == "única página sem título"
 
 
 class TestGlyphCoverage:

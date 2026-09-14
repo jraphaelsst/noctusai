@@ -26,26 +26,102 @@ source `Run`'s own `bold` flag, so a synthesized title string built via
 `paragraphs_from_text` (which carries no formatting of its own) still
 renders bold — the same "by construction" rule applied consistently.
 
+PDF ENGINE: xhtml2pdf, FROM ONE HTML DOCUMENT (2026-09-14)
+-------------------------------------------------------------
+Owner requirement (2026-09-14): "Use xhtml2pdf on all PDFs to style and
+create a UI for documents." `render_abnt_pdf` builds ONE self-contained
+HTML document (an ABNT stylesheet + the same run/paragraph markup
+`render_word_html` emits, `<br/>` instead of `<br>`) and hands it to
+`xhtml2pdf.pisa.CreatePDF`, which renders it with reportlab underneath —
+`render_abnt_pdf`'s own reportlab platypus story-building is gone; only
+the font-encoding pre-check and the `rl_config.invariant` determinism
+toggle remain reportlab-specific.
+
+"Document UI" (owner's second ask, both matrículas and contract PDFs get
+it for free from this one renderer): a running header showing `doc.title`
+top-left on every page (`ParagraphKind.TITLE` inside `doc.paragraphs` is a
+DIFFERENT thing — the centered bold ABNT title paragraph; `doc.title` is
+the document's own name, shown outside the ABNT body like a page chrome)
+and the ABNT page-number top-right from page 2 — see "PAGE NUMBERS" below.
+
+CSS FEATURES USED (verified against THIS xhtml2pdf, 0.2.19, not assumed)
+--------------------------------------------------------------------------
+`@page` (`size`, the `margin` shorthand — confirmed it expands to
+`margin-top/right/bottom/left` the same as writing the longhands),
+`@frame` (`-pdf-frame-content` to divert a `<div>`'s content into a
+per-page running header/footer instead of the main flow), `text-align`
+(`justify`/`center`/`left`/`right`), `text-indent`, `line-height`,
+`margin-left` (the QUOTE indent), `font-weight: bold`, `<b>`/`<u>`/`<br/>`
+inline. All confirmed against ACTUAL rendered+extracted PDF output while
+building this module, not against documentation alone — see
+`test_abnt_pdf.py`'s geometry/style assertions, which read the same way
+back with PyMuPDF.
+
+Unsupported, with the alternative used: xhtml2pdf's own CSS Paged-Media
+support is `:left`/`:right` only — `@page :first` (or any other pseudo-page
+name) is EXPLICITLY not implemented (`xhtml2pdf/w3c/cssParser.py`:
+"`:first` and `:blank` have no equivalent in this model", a matching
+non-`:left`/`:right` pseudo-page is parsed but a warning says it will
+never be selected). The documented alternative for "page 1 differs from
+the rest" is a second named `@page` rule plus `<pdf:nexttemplate
+name="...">` (NOT `<pdf:nextpage>`, which forces an immediate `PageBreak`
+— wrong for a single-page document, which must show no page-number frame
+at all): `<pdf:nexttemplate>` only queues the template switch for
+reportlab's own next natural page break, so a one-page document never
+takes it and a longer one takes it starting page 2. Placed once, near the
+top of the body, before any real content.
+
+PAGE NUMBERS: THE EMPTY-FRAGMENT-PARAGRAPH QUIRK
+---------------------------------------------------
+A `-pdf-frame-content` `<div>` whose ONLY content is `<pdf:pagenumber/>`
+never renders — confirmed empirically, then traced to
+`xhtml2pdf.context.pisaContext.addPara`: a paragraph is only emitted when
+`self.text.strip()` is non-empty, and `<pdf:pagenumber/>` contributes
+nothing to `self.text` (its value is a `Fragment` object added straight to
+`fragList`, resolved only at reportlab draw time via `PageNumberText`).
+Giving it an `example="..."` placeholder attribute does not help — that
+placeholder is what the line is MEASURED with, not literal text queued
+into `self.text`. The fix: one literal, non-breaking space character
+ahead of the tag (`&nbsp;<pdf:pagenumber/>`) — `\xa0` round-trips through
+the core font like any other WinAnsi character, and `str.strip()` treats
+it as whitespace, so `s["text"].strip() == str(page_number)` still holds
+for every assertion in `test_abnt_pdf.py::TestPageNumbers`. A raw
+zero-width space (`&#8203;`) was tried first and rejected: it round-trips
+through `WinAnsiEncoding` as a stray "I" glyph — the exact silent
+wrong-glyph failure mode `UnsupportedGlyphError` exists to prevent
+elsewhere in this module, so it is not an acceptable placeholder here
+either.
+
 FONT: CORE TIMES, NO EMBEDDING
 -------------------------------
-PDF: reportlab's core `Times-Roman`/`Times-Bold`, `WinAnsiEncoding` (a
-cp1252 superset of Latin-1). Checked against every character pt-BR legal
-documents use — ordinal indicators, section sign, en/em dash, curly
-quotes, bullet, one-half, superscript two, and the accented capitals
-`Ç Ã Õ É Ê Ô Ú` — all present in `WinAnsiEncoding`; see
+`font-family: Times, serif` resolves, through xhtml2pdf, to reportlab's
+core `Times-Roman`/`Times-Bold`, `WinAnsiEncoding` (a cp1252 superset of
+Latin-1) — same font, same encoding, same no-embedding choice as before
+this module switched rendering engines. Checked against every character
+pt-BR legal documents use — ordinal indicators, section sign, en/em dash,
+curly quotes, bullet, one-half, superscript two, and the accented
+capitals `Ç Ã Õ É Ê Ô Ú` — all present in `WinAnsiEncoding`; see
 `test_abnt_pdf.py::TestGlyphCoverage::test_winansi_covers_pt_br_legal_glyphs`
-for the render-and-extract-back proof. No character has needed vendoring
-Liberation Serif. If one ever does, `render_abnt_pdf` must raise naming it
-— never drop it silently (see `_assert_renders_with_core_font` below).
+for the render-and-extract-back proof, now through xhtml2pdf. No character
+has needed vendoring Liberation Serif. If one ever does, `render_abnt_pdf`
+must raise naming it — never drop it silently (see
+`_assert_renders_with_core_font` below); xhtml2pdf's own `@font-face`
+support was not needed and was not exercised.
 
 DETERMINISM
 ------------
 `reportlab.rl_config.invariant` fixes the PDF's `/CreationDate` and file
-`/ID` for the build. It is a PROCESS-GLOBAL reportlab flag, so it is
-toggled on only around this module's own `doc.build()` call and restored
-in a `finally` — a concurrent reportlab consumer in the same process
-(e.g. social-wiring's `roteiro_pdf_service`, which wants a real timestamp)
-must never see it flipped.
+`/ID` for the build — still true with xhtml2pdf, which builds on
+reportlab's own `BaseDocTemplate`/canvas underneath and never overrides
+this flag itself (confirmed by rendering the same input twice and diffing
+bytes). It is a PROCESS-GLOBAL reportlab flag, so it is toggled on only
+around this module's own `pisa.CreatePDF()` call and restored in a
+`finally` — a concurrent reportlab consumer in the same process (e.g.
+social-wiring's `roteiro_pdf_service`, which wants a real timestamp) must
+never see it flipped. xhtml2pdf embeds no other run-to-run-varying
+metadata (`Producer` names the library version, which is fixed for a
+given install) — byte-for-byte identity for identical input holds without
+any further compensation.
 
 Contract: `projects/abnt-formatting-CONTRACT.md` §3.
 """
@@ -289,70 +365,78 @@ def paragraphs_from_docx(
 
 # ─── render_abnt_pdf ───────────────────────────────────────────────────────
 
-_PDF_FONT_SIZE_BODY = 12
-_PDF_LEADING_BODY = 18  # 12pt × 1.5 line spacing
-_PDF_FONT_SIZE_QUOTE = 10
-_PDF_LEADING_QUOTE = 10  # single spacing
+#: "Followed by one blank line" (TITLE) and BODY's own 1.5 line spacing at
+#: 12pt both cash out to the same 18pt — one BODY line's worth of space.
+_PDF_BODY_LEADING_PT = 18
+
+#: The ABNT stylesheet plus the "document UI" chrome (header/footer),
+#: shared by every page via two named `@page` rules — see the module
+#: docstring's "PDF ENGINE" and "PAGE NUMBERS" sections for why each
+#: piece is shaped the way it is (verified against xhtml2pdf 0.2.19, not
+#: assumed from documentation). `withfooter` repeats `header_frame`
+#: because `@frame` does not inherit across `@page` rules; the repetition
+#: is the honest cost of xhtml2pdf having no `@page` inheritance, not an
+#: oversight.
+_PDF_CSS = f"""
+@page {{
+  size: A4;
+  margin: 3cm 2cm 2cm 3cm;
+  @frame header_frame {{
+    -pdf-frame-content: header_content;
+    top: 1cm; left: 3cm; right: 2cm; height: 1cm;
+  }}
+}}
+@page withfooter {{
+  size: A4;
+  margin: 3cm 2cm 2cm 3cm;
+  @frame header_frame {{
+    -pdf-frame-content: header_content;
+    top: 1cm; left: 3cm; right: 2cm; height: 1cm;
+  }}
+  @frame footer_frame {{
+    -pdf-frame-content: footer_content;
+    top: 1.3cm; left: 3cm; right: 2cm; height: 1cm;
+  }}
+}}
+body {{ font-family: Times, serif; }}
+#header_content {{ font-size: 9pt; text-align: left; }}
+#footer_content {{ font-size: 10pt; text-align: right; }}
+.title {{
+  font-size: 12pt; font-weight: bold; text-align: center;
+  margin-bottom: {_PDF_BODY_LEADING_PT}pt;
+}}
+.heading {{ font-size: 12pt; font-weight: bold; text-align: left; line-height: 1.5; }}
+.body {{ font-size: 12pt; text-align: justify; text-indent: 1.25cm; line-height: 1.5; }}
+.quote {{ font-size: 10pt; text-align: justify; margin-left: 4cm; line-height: 1; }}
+"""
 
 
-def _pdf_styles() -> dict:
-    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
-    from reportlab.lib.styles import ParagraphStyle
-    from reportlab.lib.units import cm
-
-    return {
-        ParagraphKind.TITLE: ParagraphStyle(
-            "ABNTTitle",
-            fontName="Times-Roman",
-            fontSize=_PDF_FONT_SIZE_BODY,
-            leading=_PDF_LEADING_BODY,
-            alignment=TA_CENTER,
-            spaceAfter=_PDF_LEADING_BODY,  # "followed by one blank line"
-        ),
-        ParagraphKind.HEADING: ParagraphStyle(
-            "ABNTHeading",
-            fontName="Times-Roman",
-            fontSize=_PDF_FONT_SIZE_BODY,
-            leading=_PDF_LEADING_BODY,
-            alignment=TA_LEFT,
-        ),
-        ParagraphKind.BODY: ParagraphStyle(
-            "ABNTBody",
-            fontName="Times-Roman",
-            fontSize=_PDF_FONT_SIZE_BODY,
-            leading=_PDF_LEADING_BODY,
-            alignment=TA_JUSTIFY,
-            firstLineIndent=1.25 * cm,
-            # reportlab already defaults justifyBreaks=0 (never stretch the
-            # line immediately before an explicit <br/>); set explicitly so
-            # a future reportlab default change cannot silently regress the
-            # "no ugly stretched justification before a hard wrap" contract
-            # clause.
-            justifyBreaks=0,
-        ),
-        ParagraphKind.QUOTE: ParagraphStyle(
-            "ABNTQuote",
-            fontName="Times-Roman",
-            fontSize=_PDF_FONT_SIZE_QUOTE,
-            leading=_PDF_LEADING_QUOTE,
-            alignment=TA_JUSTIFY,
-            leftIndent=4 * cm,
-            justifyBreaks=0,
-        ),
-    }
-
-
-def _draw_page_number(canvas, doc) -> None:
-    from reportlab.lib.units import cm
-
-    canvas.saveState()
-    canvas.setFont("Times-Roman", 10)
-    canvas.drawRightString(doc.pagesize[0] - 2 * cm, doc.pagesize[1] - 1.5 * cm, str(canvas.getPageNumber()))
-    canvas.restoreState()
-
-
-def _no_page_number(canvas, doc) -> None:  # page 1 carries no number
-    return None
+def _pdf_html_document(doc: FormattedDocument) -> str:
+    """`FormattedDocument` → one self-contained HTML document for
+    `xhtml2pdf.pisa.CreatePDF`. Shares `_run_markup`/`_is_forced_bold_kind`
+    with `render_word_html` — the same run/paragraph markup, `<br/>`
+    instead of `<br>`, styled by `_PDF_CSS`'s `.title`/`.heading`/`.body`/
+    `.quote` classes (`ParagraphKind.name.lower()`) instead of inline
+    styles. See the module docstring for the header/footer/page-number
+    mechanics `<pdf:nexttemplate>` and the `&nbsp;` prefix implement."""
+    parts: list[str] = []
+    if doc.title:
+        parts.append(f'<div id="header_content">{_escape_markup(doc.title)}</div>')
+    # A leading literal NBSP, not a bare `<pdf:pagenumber/>` — see the
+    # module docstring's "PAGE NUMBERS" section for why the bare tag alone
+    # never renders.
+    parts.append('<div id="footer_content">&nbsp;<pdf:pagenumber /></div>')
+    # Queues the page-2-onward template; never forces a page break (that is
+    # `<pdf:nextpage>`, deliberately not used here) — see the module
+    # docstring's "CSS FEATURES USED" section.
+    parts.append('<pdf:nexttemplate name="withfooter" />')
+    for paragraph in doc.paragraphs:
+        force_bold = _is_forced_bold_kind(paragraph.kind)
+        markup = "".join(_run_markup(r, force_bold=force_bold, br="<br/>") for r in paragraph.runs)
+        parts.append(f'<p class="{paragraph.kind.name.lower()}">{markup}</p>')
+    body_html = "\n".join(parts)
+    title_html = f"<title>{_escape_markup(doc.title)}</title>" if doc.title else ""
+    return f"<html><head>{title_html}<style>{_PDF_CSS}</style></head><body>{body_html}</body></html>"
 
 
 #: The core Times font's `WinAnsiEncoding` is, byte-for-byte, Windows-1252
@@ -384,54 +468,37 @@ def _assert_renders_with_core_font(doc: FormattedDocument) -> None:
 
 
 def render_abnt_pdf(doc: FormattedDocument) -> bytes:
-    """`FormattedDocument` → ABNT-formatted (NBR 14724) PDF bytes. A4,
-    margins top/left/bottom/right 3/3/2/2 cm, core Times 12pt (10pt for
-    `QUOTE`), page numbers top-right from page 2. Deterministic for
-    identical input — see module docstring.
+    """`FormattedDocument` → ABNT-formatted (NBR 14724) PDF bytes, via
+    `xhtml2pdf.pisa.CreatePDF` on one self-contained HTML document (see
+    module docstring, "PDF ENGINE"). A4, margins top/left/bottom/right
+    3/3/2/2 cm, core Times 12pt (10pt for `QUOTE`), a running header
+    showing `doc.title` (when set) and page numbers top-right from page 2
+    — the "document UI" the 2026-09-14 owner request asked for. Deterministic
+    for identical input — see module docstring, "DETERMINISM".
 
     Raises `UnsupportedGlyphError`, naming the character, for anything
     the core Times font cannot represent — see that class's docstring.
 
-    Imports `reportlab` lazily — declared in `pyproject.toml` for
-    `check_seed_declared_imports`, but a caller who only needs
-    `render_word_html` should not need it importable."""
+    Imports `xhtml2pdf`/`reportlab` lazily — declared in `pyproject.toml`
+    for `check_seed_declared_imports`, but a caller who only needs
+    `render_word_html` should not need either importable."""
     import io
 
     from reportlab import rl_config
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph as _RLParagraph
-    from reportlab.platypus import SimpleDocTemplate
+    from xhtml2pdf import pisa
 
     _assert_renders_with_core_font(doc)
-
-    styles = _pdf_styles()
-    story = []
-    for paragraph in doc.paragraphs:
-        force_bold = _is_forced_bold_kind(paragraph.kind)
-        markup = "".join(_run_markup(r, force_bold=force_bold, br="<br/>") for r in paragraph.runs)
-        story.append(_RLParagraph(markup, styles[paragraph.kind]))
+    html = _pdf_html_document(doc)
 
     buffer = io.BytesIO()
-    pdf_doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        topMargin=3 * cm,
-        leftMargin=3 * cm,
-        bottomMargin=2 * cm,
-        rightMargin=2 * cm,
-        title=doc.title or "",
-        author="",
-        subject="",
-        creator="NoctusAI",
-    )
-
     # `rl_config.invariant` is a PROCESS-GLOBAL flag (see module
     # docstring) — flip it only around this build, restore unconditionally.
+    # xhtml2pdf builds on reportlab underneath, so the same flag still
+    # fixes `/CreationDate` and file `/ID` here.
     previous_invariant = rl_config.invariant
     rl_config.invariant = 1
     try:
-        pdf_doc.build(story, onFirstPage=_no_page_number, onLaterPages=_draw_page_number)
+        pisa.CreatePDF(html, dest=buffer, raise_exception=True)
     finally:
         rl_config.invariant = previous_invariant
     return buffer.getvalue()

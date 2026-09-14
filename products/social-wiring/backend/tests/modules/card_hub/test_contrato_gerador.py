@@ -26,6 +26,7 @@ from decimal import Decimal
 
 import fitz
 import pytest
+from reportlab.lib.units import cm
 
 from noctusai_lib.domain.texto_ptbr import parse_brl, reais_por_extenso
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
@@ -264,7 +265,17 @@ class TestAbntPdf:
         page = _abrir(pdf)[0]
         titulo = r.paragrafos[0]
         assert titulo.startswith("INSTRUMENTO PARTICULAR")
-        spans = [s for s in _spans(page) if s["text"].strip() and s["text"] in titulo]
+        # `gerar_pdf` passes this same TITLE text as `doc.title`, which now
+        # ALSO drives the running header `render_abnt_pdf` prints top-left
+        # on every page (contract §3's "document UI") — excluding the
+        # header's band (inside the top margin, y0 < 3cm) keeps this test
+        # about the centered BODY-frame title paragraph only, not a
+        # same-text-different-place false positive from the header.
+        spans = [
+            s
+            for s in _spans(page)
+            if s["text"].strip() and s["text"] in titulo and s["bbox"][1] >= 3 * cm
+        ]
         assert spans, "esperava encontrar o texto do título na primeira página"
         assert all("Bold" in s["font"] for s in spans)
         frame_center = page.rect.width / 2

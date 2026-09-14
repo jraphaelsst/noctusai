@@ -143,14 +143,24 @@ dependencies = [
     # `docx_export.py`; this is the seed's own, separate declaration.
     "python-docx>=1.1.0",
     # ABNT PDF rendering — noctusai_lib.integrations.documents.abnt's
-    # `render_abnt_pdf` (core Times fonts, no system libs, no Cairo/Pango —
-    # same "pure Python" rationale as social-wiring's `roteiro_pdf_service`
-    # and `ads_export_service`, which already depend on it via
-    # `products/social-wiring/backend/requirements.txt`; this is the
+    # `render_abnt_pdf` builds one HTML document (core Times fonts, no
+    # system libs, no Cairo/Pango) and hands it to `xhtml2pdf.pisa`, which
+    # renders it with `reportlab` underneath. Same lower bound
+    # social-wiring already uses for both
+    # (`products/social-wiring/backend/requirements.txt`); this is the
     # seed's own, separate declaration, imported lazily inside
     # `render_abnt_pdf` so a caller who only needs `render_word_html` or
-    # the pure-Python paragraph builders is not forced to have it
-    # importable. Added 2026-09-14 (abnt-formatting-CONTRACT Slice S2).
+    # the pure-Python paragraph builders is not forced to have either
+    # importable. Added 2026-09-14 (abnt-formatting-CONTRACT Slice S2);
+    # switched from a direct `reportlab` platypus renderer to `xhtml2pdf`
+    # same day (owner request: "Use xhtml2pdf on all PDFs"). `reportlab`
+    # stays declared DIRECTLY (not left to resolve only transitively via
+    # `xhtml2pdf`'s own `reportlab<6,>=4.0.4` pin) because
+    # `render_abnt_pdf` still imports `reportlab.rl_config` itself, for the
+    # determinism toggle — `check_seed_declared_imports` correctly flags a
+    # module-named-but-undeclared import even when some OTHER dependency
+    # happens to pull the same distribution in.
+    "xhtml2pdf>=0.2.0",
     "reportlab>=4.0.0",
 ]
 
