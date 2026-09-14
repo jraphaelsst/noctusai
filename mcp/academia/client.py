@@ -93,9 +93,16 @@ class HttpAcademiaApi:
     Constructed from `AcademiaSettings`. Every call checks
     `settings.configured` first — an unconfigured connector never
     attempts a network call and never crashes at import/construction.
+
+    `transport` is a test seam ONLY — pass an `httpx.MockTransport` to
+    exercise the real request/response/error-mapping code path with no
+    network call (mirrors `noctusai_lib.integrations.n8n.n8n_adapter`'s
+    `transport` kwarg). `None` (default) uses httpx's real connection
+    transport.
     """
 
     settings: AcademiaSettings
+    transport: Optional[httpx.AsyncBaseTransport] = None
 
     async def request(
         self,
@@ -117,7 +124,7 @@ class HttpAcademiaApi:
         clean_params = {k: v for k, v in (params or {}).items() if v is not None} or None
 
         try:
-            async with httpx.AsyncClient(timeout=timeout) as http_client:
+            async with httpx.AsyncClient(timeout=timeout, transport=self.transport) as http_client:
                 resp = await http_client.request(
                     method.upper(), url, params=clean_params, json=json_body, headers=headers,
                 )
