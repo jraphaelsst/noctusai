@@ -2,12 +2,14 @@
 (contract §E.1/§E.2, security finding 5)."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
 
-from app.stores.approvals import FakeApprovalStore
+from app.stores.approvals import FakeApprovalStore, SupabaseApprovalStore
 from app.stores.errors import AlreadyDecided, NotFound
+from noctusai_lib.testing import MockSupabaseClient
 
 
 @pytest.fixture
@@ -188,3 +190,87 @@ def test_list_pending_excludes_decided_rows(store):
     store.decide(org_id, approval.id, True, uuid4())
 
     assert store.list_pending(org_id) == []
+
+
+def _supabase_row(*, org_id, approval_id, decision="aprovada", consumed_at=None, **overrides):
+    row = {
+        "id": str(approval_id),
+        "org_id": str(org_id),
+        "conversation_id": str(uuid4()),
+        "tool_name": "mcp__academia__kb_escrever",
+        "tool_input": {"slug": "dominio-regulatorio-pnrs"},
+        "classe": "escrita",
+        "resumo": "Atualizar entrada da KB",
+        "diff": None,
+        "decision": decision,
+        "decided_by": str(uuid4()) if decision != "pendente" else None,
+        "decided_at": "2026-09-14T12:00:00+00:00" if decision != "pendente" else None,
+        "requested_by": str(uuid4()),
+        "instance_id": "inst-1",
+        "consumed_at": consumed_at,
+        "created_at": "2026-09-14T11:00:00+00:00",
+        "updated_at": "2026-09-14T11:00:00+00:00",
+    }
+    row.update(overrides)
+    return row
+
+
+class TestSupabaseApprovalStoreConsumeQueryShape:
+    """§E.10: ``SupabaseApprovalStore.consume`` — the query SHAPE that makes
+    the atomic single-use gate real against a live Postgres table (the
+    mock evaluates the same ``.eq``/``.is_`` predicates a real PostgREST
+    conditional UPDATE would; genuine cross-connection concurrency is the
+    Fake store's job, above — ``test_two_concurrent_consume_calls_yield_
+    exactly_one_record``)."""
+
+    def test_consume_updates_consumed_at_when_every_filter_matches(self):
+        org_id, approval_id = uuid4(), uuid4()
+        client = MockSupabaseClient(
+            [_supabase_row(org_id=org_id, approval_id=approval_id)],
+            validate_schema=False,
+        )
+        store = SupabaseApprovalStore(client)
+
+        record = store.consume(org_id, approval_id)
+
+        assert record is not None
+        assert record.id == approval_id
+        assert record.consumed_at is not None
+
+    def test_consume_returns_none_when_decision_is_not_aprovada(self):
+        """Proves the ``.eq("decision", "aprovada")`` filter is really
+        part of the WHERE clause — a pendente row must never be
+        consumable, however the id/org match."""
+        org_id, approval_id = uuid4(), uuid4()
+        client = MockSupabaseClient(
+            [_supabase_row(org_id=org_id, approval_id=approval_id, decision="pendente")],
+            validate_schema=False,
+        )
+        store = SupabaseApprovalStore(client)
+
+        assert store.consume(org_id, approval_id) is None
+
+    def test_consume_returns_none_when_already_consumed(self):
+        """Proves the ``.is_("consumed_at", "null")`` filter is really
+        part of the WHERE clause — the single-use gate."""
+        org_id, approval_id = uuid4(), uuid4()
+        already = datetime(2026, 9, 14, 12, 5, tzinfo=timezone.utc).isoformat()
+        client = MockSupabaseClient(
+            [_supabase_row(org_id=org_id, approval_id=approval_id, consumed_at=already)],
+            validate_schema=False,
+        )
+        store = SupabaseApprovalStore(client)
+
+        assert store.consume(org_id, approval_id) is None
+
+    def test_consume_returns_none_for_another_org(self):
+        """Proves ``.eq("org_id", ...)`` is really part of the WHERE
+        clause — this IS the authorization boundary (contract §E.10)."""
+        org_id, approval_id = uuid4(), uuid4()
+        client = MockSupabaseClient(
+            [_supabase_row(org_id=org_id, approval_id=approval_id)],
+            validate_schema=False,
+        )
+        store = SupabaseApprovalStore(client)
+
+        assert store.consume(uuid4(), approval_id) is None

@@ -181,6 +181,40 @@ class TestResolveOrdering:
         assert decision.via == "web"
 
 
+class TestInstantDecisionRace:
+    @pytest.mark.asyncio
+    async def test_decision_posted_from_inside_on_created_succeeds_never_orphaned(self):
+        """Contract §E.9 revision 2026-09-14: the wake-up future is
+        registered BEFORE `on_created` runs — a decision that lands WHILE
+        `on_created` is still executing (an instantaneous human click,
+        modeled here as `on_created` itself calling `resolve()`
+        synchronously before returning) must succeed, never raise
+        `Orphaned`."""
+        store = FakeApprovalStore()
+        broker = StoreApprovalBroker(store, timeout_seconds=5, instance_id="inst-1")
+        ctx = _ctx()
+        decided_by = uuid4()
+
+        async def decide_instantly(record):
+            result = await broker.resolve(
+                ctx.org_id, record.id, aprovada=True, decided_by=decided_by
+            )
+            assert result["decision"] == "aprovada"
+
+        decision = await broker.request(
+            ctx,
+            tool_name="mcp__academia__kb_escrever",
+            tool_input={"titulo": "t"},
+            resumo="r",
+            diff=None,
+            on_created=decide_instantly,
+        )
+
+        assert decision.aprovada is True
+        assert decision.approved_by == decided_by
+        assert decision.via == "web"
+
+
 class TestExpireOrphansOnStartup:
     @pytest.mark.asyncio
     async def test_expires_only_this_instance(self):

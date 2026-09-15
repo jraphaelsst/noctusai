@@ -306,7 +306,18 @@ def _apply_tool_event(
     blocks: list[dict[str, Any]], kind: str, payload: dict[str, Any]
 ) -> list[dict[str, Any]]:
     """Contract §E.7 ``ChatBlock`` (tool variant): ``{kind:"tool",
-    toolUseId, name, status, resumo?}``."""
+    toolUseId, name, status, resumo?}``.
+
+    Every branch below builds a NEW block dict rather than mutating an
+    existing one in place — an in-place ``block["status"] = ...`` would
+    retroactively change every EARLIER published ``message.updated``
+    payload too, since ``_message_payload``/``FakeMessageStore.
+    update_blocks`` only ever shallow-copy the BLOCKS LIST, never the
+    block dicts inside it, so an already-published snapshot would still
+    hold a reference to the SAME dict object. (Found 2026-09-14, once
+    ``message.updated`` was republished for the first time — the earlier
+    revision never republished it, so the bug had no observable effect.)
+    """
     blocks = list(blocks)
     tool_use_id = payload.get("tool_use_id")
     if kind == "tool.started":
@@ -320,12 +331,13 @@ def _apply_tool_event(
             }
         )
         return blocks
-    # tool.finished — update the matching block in place; append defensively
-    # if `tool.started` was somehow missed rather than dropping the signal.
+    # tool.finished — replace the matching block with a new dict; append
+    # defensively if `tool.started` was somehow missed rather than
+    # dropping the signal.
     resultado = payload.get("resultado", "ok")
-    for block in blocks:
+    for i, block in enumerate(blocks):
         if block.get("kind") == "tool" and block.get("toolUseId") == tool_use_id:
-            block["status"] = resultado
+            blocks[i] = {**block, "status": resultado}
             return blocks
     blocks.append(
         {
@@ -365,12 +377,13 @@ def _apply_approval_event(
             }
         )
         return blocks
-    # approval.resolved
+    # approval.resolved — replace with a new dict (see this module's other
+    # mutation-safety note in `_apply_tool_event`).
     approval_id = payload.get("approval_id")
     decision = payload.get("decision", "pendente")
-    for block in blocks:
+    for i, block in enumerate(blocks):
         if block.get("kind") == "approval" and block.get("approvalId") == approval_id:
-            block["decision"] = decision
+            blocks[i] = {**block, "decision": decision}
             return blocks
     # Defensive: no matching block (should never happen given the fixed
     # §E.9 event order) — append rather than silently drop the signal.
