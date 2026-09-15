@@ -317,6 +317,21 @@ The decision log keeps every step.
     - **Unexplained capability reading.** The real entrypoint's uvicorn showed CapInh=0 while CapAmb=`e0`, which a manual `setpriv` chain did not reproduce. Everything works, but there is no root cause. Destination: the SEC-C CI job asserts the exact cap sets, which will pin or explain it.
     - **Drift found:** agents `approval_assertion_secrets: list[str]` crashes at boot on a plain `APPROVAL_ASSERTION_SECRETS=k1,k2` (pydantic-settings 2.5.2 JSON-decodes complex env fields before validators). Academia already works around it. Dispatched as `feat/seed-csv-settings`, which hoists the raw-str + list-property idiom into a seed helper (third copy, so it must be formalized) with a red-before/green-after regression test.
     - **Methodology note:** `docker exec -u <user>` does not reproduce the app's spawn path, because it gets no ambient-cap inheritance. A proof using it gives false negatives. Candidate for `KB § PATTERNS/devops/containerization.md` / `noc-container-debug`.
+- **2026-09-14 (D1 turned dev CI red; fixed; settings boot crash fixed)**:
+  - **CI regression from D1, reported cross-session by a release session blocked on bless.**
+    - `tests/runtime/test_wrapper.py` failed 5 tests on GitHub's ubuntu runner (run 34914554800) with `setpriv: setgroups failed: Operation not permitted`.
+    - Cause: the skip guard accepted `euid in (0, 1001)`. The runner user IS uid 1001, and `--clear-groups` needs CAP_SETGID for every caller.
+    - macOS skipped the tests (no setpriv), so the engineer's gate and the tech-lead's re-gate were both green.
+    - **Fix `4f8cce6c`:** the guard reads CapEff and requires root or CAP_SETUID+CAP_SETGID. Reproduced in `python:3.11-slim` as uid 1001:118: the dev version gave 5 failed, the fix gives 3 passed / 6 skipped.
+    - **Follow-up `736fd9ed`:** as root, the privileged tests had never worked. The stubs sat in pytest's 0700 `tmp_path`, which uid 1001 cannot read, giving exit 126. A `julia_tmp` fixture (0755, under `/tmp`) fixes it: 9 passed as root.
+    - CI: agents backend green on both commits. The MCP Toolkit failure seen on dev `3eccc545` was unrelated (env leak from dotenv tests) and fixed by the release session at `dc051a3b`.
+    - Lesson saved to memory: gate on capability, not uid; reproduce as the CI runner uid and as root before pushing.
+  - **Agents settings boot crash fixed, `1ec99a35`.**
+    - New seed helper `noctusai_lib.config.csv_settings` (`parse_csv_setting`, `reject_json_array`), extracted at the third copy of the idiom.
+    - Agents `approval_assertion_secrets` is now a raw `str` with a `_list` property. Both academia properties consume the helper with unchanged behaviour.
+    - The seed `cors_origins_list` stays deliberately untouched: it keeps empty items and the helper drops them. Unifying it needs its own reviewed change.
+    - Regression test: red before (3 failed, `SettingsError` at import), green after. The tech-lead hardened it to restore the original `app.config` module after each test, so the re-import cannot leak into later tests.
+    - Suites: seed lib 3993, agents 286 (+6 skipped), academia 308, core 619, social-wiring 3894.
 
 ## Retrospective (filled at first trigger fire)
 
