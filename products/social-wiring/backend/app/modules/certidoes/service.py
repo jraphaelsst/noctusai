@@ -40,8 +40,6 @@ import html
 import io
 import json
 import logging
-import re
-import urllib.parse as urlparse
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -310,73 +308,35 @@ def _with_protocolo_stamp(html_bytes: bytes, protocolo: str) -> bytes:
     return html_bytes[:insert_at] + stamp + html_bytes[insert_at:]
 
 
-#: A `<base href="...">` tag — InfoSimples' TRF3 receipt snapshots declare
-#: their own origin this way (they are a saved copy of a real page). xhtml2pdf
-#: has no special handling for `<base>` (no `pisaTagBASE` in `xhtml2pdf.tags`);
-#: reading it ourselves is what lets `_convert_html_to_pdf` tell xhtml2pdf
-#: where the document came from.
-_BASE_HREF_RE = re.compile(
-    rb'<base\s[^>]*\bhref\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE
-)
+#: The receipt is converted from its own bytes only. xhtml2pdf would otherwise
+#: fetch every stylesheet and image the page references, synchronously and
+#: without a deadline: on 2026-09-15 a TRF3 receipt pulled bootstrap.min.css,
+#: three site stylesheets, two images and an anti-bot script served as CSS
+#: from web.trf3.jus.br, one conversion took 92 s locally (0.6 s without the
+#: fetches), and in prod it pinned the event loop at 95% CPU — the whole
+#: social-wiring app stopped answering. `data:` URIs still render (they are
+#: not a remote scheme); `base_dir=None` also refuses local file reads.
+_NO_FETCH_POLICY = ResourceAccessPolicy(allow_remote=False, base_dir=None)
 
-
-def _base_href(html_bytes: bytes) -> Optional[str]:
-    """The value of a `<base href="...">` tag, if the document declares one."""
-    match = _BASE_HREF_RE.search(html_bytes)
-    if not match:
-        return None
-    return match.group(1).decode("ascii", errors="replace")
+#: Upper bound for one HTML→PDF conversion. The conversion runs in a worker
+#: thread (`asyncio.to_thread`), so a slow document can no longer block other
+#: requests; past this deadline the certidão keeps the provider's original URL.
+HTML_TO_PDF_TIMEOUT_SECONDS = 60
 
 
 def _convert_html_to_pdf(html_bytes: bytes) -> Optional[bytes]:
-    """Convert HTML content to PDF using xhtml2pdf.
+    """Convert HTML content to PDF using xhtml2pdf, from the given bytes only.
 
-    Prod logs, verbatim, converting a TRF3 receipt: "Blocked by the resource
-    policy: '/certidao-regional/imagens/trf3logo2.png' is outside the
-    directories this document may read (/app/products/social-wiring/backend)"
-    — same for its CSS files. The cause is that `pisa.CreatePDF` was called
-    with no `path=`, so `xhtml2pdf.context.pisaContext` had no document
-    origin, and a root-relative reference like that one is resolved as a
-    LOCAL FILE PATH (checked against the process's own cwd) rather than a
-    same-origin fetch — confirmed against `xhtml2pdf==0.2.19` source:
-    `xhtml2pdf/files.py` `FileNetworkManager.get_manager` picks the fetcher
-    by the SCHEME OF `basepath` (`context.pathDirectory`, itself `path`
-    unchanged when `path` has a scheme — `xhtml2pdf/context.py`
-    `getDirName`) when the reference itself has none; with no `path`, that
-    basepath is a bare filesystem directory, so `get_manager` falls through
-    to `LocalFileURI` instead of `NetworkFileUri`.
-
-    When the receipt declares an https `<base href="https://host/...">`, this
-    passes that as `path=` — `xhtml2pdf.document.pisaDocument`'s own documented
-    way of telling it the document's origin — so `xhtml2pdf.files` resolves
-    every relative AND root-relative reference against it via
-    `urllib.parse.urljoin`, exactly the browser behaviour a `<base>` tag asks
-    for. A `ResourceAccessPolicy` (`xhtml2pdf.config.resources`, new in
-    0.2.19) scoped to ONLY that host is put in force for the duration of the
-    build, so the receipt cannot be made to fetch anything else — no local
-    reads either (`base_dir=None`). Without an https `<base href>`, this is
-    UNCHANGED from before: no `path`, no scoped policy, xhtml2pdf's own
-    default (any non-internal http/https host; local reads confined to the
-    process cwd).
+    Nothing referenced by the page is fetched — see `_NO_FETCH_POLICY`. A
+    receipt that relies on external CSS or images (TRF3's logo) renders
+    without them.
     """
     try:
-        path = ""
-        resource_policy = None
-        base_href = _base_href(html_bytes)
-        if base_href:
-            parsed = urlparse.urlsplit(base_href)
-            if parsed.scheme == "https" and parsed.hostname:
-                path = base_href
-                resource_policy = ResourceAccessPolicy(
-                    allowed_hosts=frozenset({parsed.hostname.lower()}),
-                    base_dir=None,
-                )
         pdf_buffer = io.BytesIO()
         pisa_status = pisa.CreatePDF(
             io.BytesIO(html_bytes),
             dest=pdf_buffer,
-            path=path,
-            resource_policy=resource_policy,
+            resource_policy=_NO_FETCH_POLICY,
         )
         if pisa_status.err:
             logger.error("xhtml2pdf conversion error count: %d", pisa_status.err)
@@ -1070,7 +1030,17 @@ async def _process_single_certidao(
                     protocolo = _cenprot_protocolo_consulta(result.get("raw_response"))
                     if protocolo:
                         html_to_convert = _with_protocolo_stamp(raw_bytes, protocolo)
-                pdf_bytes = _convert_html_to_pdf(html_to_convert)
+                try:
+                    pdf_bytes = await asyncio.wait_for(
+                        asyncio.to_thread(_convert_html_to_pdf, html_to_convert),
+                        timeout=HTML_TO_PDF_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "HTML→PDF conversion for %s exceeded %ds",
+                        config["tipo"], HTML_TO_PDF_TIMEOUT_SECONDS,
+                    )
+                    pdf_bytes = None
                 if not pdf_bytes:
                     logger.warning(
                         "HTML→PDF conversion failed for %s, keeping original URL",

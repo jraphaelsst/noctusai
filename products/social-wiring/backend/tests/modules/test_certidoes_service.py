@@ -26,8 +26,6 @@ import pytest
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.storage import FakeStorageBackend
 from noctusai_lib.testing import MockSupabaseClient
-from xhtml2pdf.config.resources import ResourceAccessPolicy
-from xhtml2pdf.files import pisaFileObject
 
 from app.modules.certidoes import service
 from app.modules.certidoes.registry import (
@@ -582,76 +580,24 @@ class TestConvertHtmlToPdf:
         assert service._convert_html_to_pdf(b"<<<>>> nao e html") is not None
 
 
-class TestBaseHref:
-    """`_base_href` reads the `<base href="...">` xhtml2pdf itself never
-    looks for (no `pisaTagBASE` in `xhtml2pdf.tags`)."""
+class TestConvertHtmlToPdfNeverFetches:
+    """The real `_convert_html_to_pdf` renders from the given bytes only.
 
-    def test_extrai_href_double_quotes(self):
-        assert service._base_href(
-            b'<html><head><base href="https://x.example/r.html"></head></html>'
-        ) == "https://x.example/r.html"
-
-    def test_extrai_href_single_quotes_e_atributos_extras(self):
-        assert service._base_href(
-            b"<base target='_blank' href='https://x.example/r.html'>"
-        ) == "https://x.example/r.html"
-
-    def test_case_insensitive(self):
-        assert service._base_href(
-            b'<BASE HREF="https://x.example/r.html">'
-        ) == "https://x.example/r.html"
-
-    def test_sem_base_retorna_none(self):
-        assert service._base_href(b"<html><body>oi</body></html>") is None
-
-
-class TestConvertHtmlToPdfHostMismatchEndToEnd:
-    """The REAL, unmodified `_convert_html_to_pdf` — no real network
-    reached: a host mismatch is refused by `ResourceAccessPolicy.check_url`
-    BEFORE any DNS lookup (the `allowed_hosts` check runs first), so this
-    proves "blocked for a different host" against the actual shipped
-    function without a server fixture."""
-
-    def test_img_de_outro_host_e_bloqueada_pdf_ainda_e_gerado(self, caplog):
-        html_bytes = (
-            b'<html><head><base href="https://real-receipt.example/r.html">'
-            b"</head><body><img src=\"https://evil-host.example/logo.png\">"
-            b"<p>conteudo</p></body></html>"
-        )
-        with caplog.at_level(logging.WARNING):
-            pdf = service._convert_html_to_pdf(html_bytes)
-        assert pdf is not None
-        assert pdf[:5] == b"%PDF-"
-        assert any(
-            "resource policy" in r.getMessage() for r in caplog.records
-        )
-
-
-class TestResourceAccessPolicyHostScopedFetch:
-    """`ResourceAccessPolicy(allowed_hosts=...)` — the exact mechanism
-    `_convert_html_to_pdf` wires from a `<base href>` — against a REAL local
-    HTTP server (`127.0.0.1`, ephemeral port). No real internet is reached.
-
-    `allow_private_networks=True` here is a TEST-ONLY relaxation of
-    `ResourceAccessPolicy`'s SEPARATE SSRF gate, which refuses loopback
-    regardless of `allowed_hosts` — there is no way to stand up a fixture
-    that is both "local" and "not a private address", and a real production
-    host (TRF3's) is never a private address, so `_convert_html_to_pdf`
-    itself never sets this. What is under test here is `allowed_hosts`
-    alone — fetched when it matches, refused when it doesn't — via
-    `xhtml2pdf.files.pisaFileObject`, the library's own fetch primitive
-    (`getFile`/`pisaFileObject` is what the parser calls for every
-    `<img src>`)."""
+    2026-09-15: fetching a TRF3 receipt's stylesheets and images made one
+    conversion take 92 s and froze prod. A local HTTP server stands in for
+    the receipt's origin; the page points every kind of reference at it
+    (`<base href>`, root-relative and absolute stylesheet and image), and the
+    server must see zero requests."""
 
     @staticmethod
-    def _start_server(image_bytes: bytes) -> http.server.HTTPServer:
+    def _start_server(hits: list[str]) -> http.server.HTTPServer:
         class _Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 — stdlib method name
+                hits.append(self.path)
                 self.send_response(200)
-                self.send_header("Content-Type", "image/png")
-                self.send_header("Content-Length", str(len(image_bytes)))
+                self.send_header("Content-Type", "text/css")
                 self.end_headers()
-                self.wfile.write(image_bytes)
+                self.wfile.write(b"p { color: red }")
 
             def log_message(self, *args) -> None:
                 pass  # keep test output quiet
@@ -660,39 +606,40 @@ class TestResourceAccessPolicyHostScopedFetch:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         return server
 
-    def test_host_igual_ao_allowed_hosts_e_buscada(self):
-        image_bytes = b"\x89PNG\r\n\x1a\nfake-bytes"
-        server = self._start_server(image_bytes)
+    def test_nenhum_recurso_referenciado_e_buscado(self):
+        hits: list[str] = []
+        server = self._start_server(hits)
         try:
             host, port = server.server_address
-            url = f"http://{host}:{port}/logo.png"
-            policy = ResourceAccessPolicy(
-                allowed_hosts=frozenset({host}),
-                base_dir=None,
-                allow_private_networks=True,
-            )
-            data = pisaFileObject(url, policy=policy).getData()
+            origin = f"http://{host}:{port}"
+            html_bytes = (
+                f'<html><head><base href="{origin}/certidao/recibo">'
+                f'<link rel="stylesheet" href="/css/site.css">'
+                f'<link rel="stylesheet" href="{origin}/css/abs.css">'
+                f'</head><body><img src="/imagens/logo.png">'
+                f'<img src="{origin}/imagens/brasao.png">'
+                f"<p>conteudo</p></body></html>"
+            ).encode()
+            pdf = service._convert_html_to_pdf(html_bytes)
         finally:
             server.shutdown()
-        assert data == image_bytes
+        assert pdf is not None
+        assert pdf[:5] == b"%PDF-"
+        assert hits == []
 
-    def test_host_diferente_do_allowed_hosts_e_bloqueada(self, caplog):
-        image_bytes = b"\x89PNG\r\n\x1a\nfake-bytes"
-        server = self._start_server(image_bytes)
-        try:
-            host, port = server.server_address
-            url = f"http://{host}:{port}/logo.png"
-            policy = ResourceAccessPolicy(
-                allowed_hosts=frozenset({"outro-host.example"}),
-                base_dir=None,
-                allow_private_networks=True,
-            )
-            with caplog.at_level(logging.WARNING):
-                data = pisaFileObject(url, policy=policy).getData()
-        finally:
-            server.shutdown()
-        assert data is None
-        assert any("resource policy" in r.getMessage() for r in caplog.records)
+    def test_imagem_data_uri_ainda_renderiza(self):
+        png_1x1 = (
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8Dw"
+            "HwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+        )
+        html_bytes = (
+            f'<html><body><img src="data:image/png;base64,{png_1x1}">'
+            f"<p>conteudo</p></body></html>"
+        ).encode()
+        pdf = service._convert_html_to_pdf(html_bytes)
+        assert pdf is not None
+        assert pdf[:5] == b"%PDF-"
+        assert b"/Subtype /Image" in pdf
 
 
 class TestCenprotProtocoloConsulta:
