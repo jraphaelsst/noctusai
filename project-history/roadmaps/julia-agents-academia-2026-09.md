@@ -266,6 +266,22 @@ The decision log keeps every step.
       - **Wheel supply chain** (the bundled CLI now arrives inside the pip wheel). Destination: a hash-pinning follow-up for `products/agents/backend/requirements.txt`.
       - **Prod compose parity:** the security block is generated from one propagate source and reused by the M6 `docker-compose.prod.yml` entry, with a keeper parity check.
       - **SEC-C kill tests** must assert via `os.kill` plus `/proc` liveness, because `Popen.terminate()` gives a false pass after a reap.
+- **2026-09-14 (Julia chat events + approval integrity landed)**: `7815c3fa` + `6ae348ce` (backend) and `1ac12801` (frontend) are on `dev`. Backend and frontend were stacked and checked together on one tip before a single push.
+  - **Backend:**
+    - `broker.request(..., on_created)` registers the wake-up future before `approval.requested` goes out, so the event carries the real id. A test covers an instant decision racing the event.
+    - The route publishes a placeholder `message.new`, adds `message_id` to tool and approval events, publishes `message.updated` after every blocks write, and correlates approvals by id.
+    - **§E.10 handler:** it trusts only the stored row (decision, tool, conversation, requester, instance, use window, canonical input hash). It consumes atomically with a conditional `UPDATE … consumed_at IS NULL`, then mints with the stored `decided_by`.
+    - **Resume after restart:** in SDK 0.2.152 an unknown resume id surfaces as `ResultError(ProcessError)` from `connect()` (`_internal/query.py:384-439`). The runtime reconnects with a fresh session and persists the contract's system message. A startup failure that isn't a resume still propagates.
+  - **Bug the canonical fixture caught (drift fixed):** the route mutated block dicts in place, so a snapshot already published changed after the fact.
+  - **Frontend:** blocks render only from `message.new` / `message.updated`. The streaming bubble carries text only. Approval events invalidate the approvals list. When a turn ends, messages refetch once.
+  - **Checks on the pushed tip, by exit code:**
+    - agents backend: 285 passed
+    - fixture, handler and resume tests: 19 passed
+    - agents frontend: 45 passed, plus tsc and build
+    - keepers clean: every-test-file-is-gated, no-self-monkeypatch, kb-sync, migration-number-collision, lying-loading-state, canonical-organ-consumption
+    - no migration needed: `consumed_at` already exists in `006_agents.sql`
+  - **Flake under load, not a defect:** `products/agents/frontend/src/pages/__tests__/Agentes.test.tsx` times out at 15s on this host under load (~17, from local `dev-noctus-*` containers, one restart-looping). It fails identically on the untouched base commit, passes with a 90s timeout (~15s of test time), and passed 45/45 once load fell to ~9. A follow-up should find why three render tests take ~15s.
+  - **D1 is still reworking.** Both engineers stalled at the 600s watchdog on long foreground commands; both were resumed. D1's orphaned `docker build`, hung for 1h43m, was killed. D1 must rebase over this slice's small edits to `config.py` and `runtime/__init__.py`, keeping both sides.
 
 ## Retrospective (filled at first trigger fire)
 
