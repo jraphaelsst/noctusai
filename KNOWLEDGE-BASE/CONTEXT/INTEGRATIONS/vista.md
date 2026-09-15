@@ -343,7 +343,7 @@ the request.
 | List | GET | `/imoveis/listar` | — | ✅ | 📖 | ~1,783 properties on this tenant 2026-05-03 (count fluctuates as listings come and go). |
 | Detail | GET | `/imoveis/detalhes` | `?imovel=` | ✅ | 📖 | `Foto` field NOT available on detalhes — use `FotoDestaque` from listar instead. |
 | List enum content | GET | `/imoveis/listarConteudo` | — | ✅ | ❓ | Returns enum values for fields like `Status`, `Categoria`, `Cidade`, `Bairro`. Drives filter dropdowns. |
-| Photos | GET | `/imoveis/fotos` | `?imovel=` | ⚠️ **405** | 📖 | **Corrected 2026-09-11: this row said 404/"not enabled for this tier". It is 405** — `Method Not Allowed (Allow: POST, PUT, DELETE)`, i.e. the route EXISTS and is **write-only**, which is what the prose in § 4.2 said all along. There is no GET read for photos (workaround stands: `FotoDestaque` from `/imoveis/listar`), but treating it as "absent" understated the surface — it is write-capable, `DELETE` included. |
+| Photos | GET | `/imoveis/fotos` | `?imovel=` | ⚠️ **405** | 📖 | **Corrected 2026-09-11: this row said 404/"not enabled for this tier". It is 405** — `Method Not Allowed (Allow: POST, PUT, DELETE)`, i.e. the route EXISTS and is **write-only**, which is what the prose in § 4.2 said all along. There is no GET read for photos (workaround stands: `FotoDestaque` from `/imoveis/listar`), but treating it as "absent" understated the surface — it is write-capable, `DELETE` included. **Full POST contract + permission verdicts → § 4.7.** |
 | Documents | GET | `/imoveis/anexos` | `?imovel=` | ❓ | 📖 | Not probed. |
 | History | GET | `/imoveis/historicos` | `?imovel=` | ❓ | 📖 | Public-doc spelling is `historicos`; we also tried `historico` → 404. |
 | Available fields | GET | `/imoveis/campos` | — | ❓ | 📖 | Returns field-name reference. Not probed. |
@@ -571,7 +571,8 @@ routes are absent regardless of permission.
 > proves the route exists and the verb routes, not that auth passes. No write
 > has been sent (live-CRM write-probe rule, § 9).
 
-**The full write surface on this tenant** (mapped 2026-09-11, GET-only):
+**The full write surface on this tenant** (mapped 2026-09-11, GET-only; the
+`/imoveis/fotos` POST contract + per-key permission verdicts are in **§ 4.7**):
 `/lead` (POST) · `/imoveis/fotos` (POST, PUT, **DELETE**) · `/clientes/anexos`
 (POST). Everything else is genuinely absent under all three naming
 conventions tried — our abbreviated forms (`cadfoto`/`caddoc`/`cadhis`/
@@ -813,6 +814,103 @@ question is the Tier-2 ask in the support request (§ 9).
 
 If/when an MCP targets a tenant that exposes any of these, the adapter must
 re-probe and add a row above with verified shape.
+
+---
+
+### 4.7 The WRITE surface — `/imoveis/fotos`, and the permission split
+
+**Mapped 2026-09-11.** Three routes on this tenant accept writes:
+`/lead` (POST) · `/imoveis/fotos` (POST, PUT, **DELETE**) · `/clientes/anexos`
+(POST). Everything else is absent (§ 4.2 retraction block).
+
+#### The photo-upload contract — ✅ PROVEN end-to-end on the sandbox
+
+```
+POST https://<tenant>-rest.vistahost.com.br/imoveis/fotos
+     ?key=<KEY>
+     &imovel=<CODIGO>                         ← TOP-LEVEL param, not inside cadastro
+     &cadastro={"fields":{"foto1":"<URL>","foto2":"<URL>"}}
+Header: Accept: application/json              Body: EMPTY
+```
+
+Four properties of this contract, each established by a failing probe, not
+by reading docs (the public docs do not specify it):
+
+1. **Vista PULLS the image from a URL. You never upload bytes.** It fetches
+   server-side and re-hosts on its own CDN, returning `CodigoFoto` + `Foto` +
+   `Thumbnail` per photo. **Architectural consequence: a publisher needs a
+   publicly reachable image host, not a multipart client.** A URL Vista cannot
+   reach fails the photo, not the request.
+2. **A set of photos goes in ONE call.** `fields` is a **keyed object** with
+   arbitrary distinct keys (`foto1`/`foto2`/`foto3`); each key returns its own
+   result. A JSON **array is rejected** — `"A foto 0 informada está em formato
+   inválido"`.
+3. **base64 is NOT supported** — `"A foto <k> informada não é uma URL válida"`.
+4. **A failed fetch is safe and per-photo.** Response is `207` with
+   `Fotos.<key> = ["Erro ao resgatar imagem <url> (http_code: N)"]`, and the
+   `CodigoFoto` counter is **not** consumed — nothing is created. This is what
+   makes a non-mutating permission probe possible (below).
+
+#### 🔴 `401` means TWO different things — never read it as "denied"
+
+Every missing-parameter step of the discovery returned **401**, not 400:
+missing `cadastro` → `"Você deve informar os dados em json no parâmetro
+cadastro"`; missing `fields` → `"Você deve informar os dados no indice
+fields"`; misplaced imóvel code → `"Você deve informar o código do imóvel"`.
+A genuine permission failure is **also** 401: `"Permissão Negada: "<key>"
+Método: imoveis/fotos"`.
+
+**Discriminate on the MESSAGE, never the status.** This is the same trap that
+produced the retracted lead-writeback claim in § 4.2 — a status code read as a
+capability verdict.
+
+#### The non-mutating permission probe (reusable recipe)
+
+Send a **well-formed** request whose image URL uses the RFC 2606 reserved
+`.invalid` TLD, which can never resolve:
+
+```
+&cadastro={"fields":{"permprobe":"https://<anything>.invalid/probe.jpg"}}
+```
+
+- `401` + `Permissão Negada` → the key may **not** write photos.
+- `207` + `Erro ao resgatar imagem … (http_code: 0)` → the key **may** write;
+  the fetch failed by construction, so nothing was created.
+
+Verified non-destructive on production 2026-09-11: listing `CA2830` still
+carried its 28 real photos with zero probe artifacts afterwards.
+
+#### Permission verdicts — the two keys DIFFER (production, 2026-09-11)
+
+| key | `/imoveis/fotos` write | owner data (§ 4.1 `proprietarios`) |
+|---|---|---|
+| `…644c` — **ours**, the ERP's key | ❌ **DENIED** (`Permissão Negada`) | ❌ 403 |
+| `…bced` — issued for the **Quinto Andar** portal | ✅ **PERMITTED** | ✅ 200 |
+
+> 🔴 **The portal key is a superset of ours, in both directions.** It can
+> `POST`/`PUT`/**`DELETE`** photos on live listings *and* read full owner PII
+> (CPF/CNPJ, RG, Nascimento, Renda, Banco/Agência/Conta, endereço, spouse
+> data). Our own key can do neither.
+>
+> **The delete right is the sharp edge and is almost certainly an unrequested
+> default** — a portal that receives a property feed has no reason to hold it.
+> A bug or compromise on their side could strip photos from production
+> listings, and `…644c` **cannot re-upload them**, so there is no API-side
+> recovery. Carried into the § 9 ask as a read-only request.
+
+#### Sandbox — use it, never production, to learn a write contract
+
+Vista publishes a test tenant **`sandbox-rest.vistahost.com.br`** with the key
+`c9fdd79584fb8d369a6a579af1a8f681` **in their own public docs** (so it is not a
+secret). It carries the **identical** write surface to production, which makes
+it the correct place to work out any payload shape — the entire contract above
+was derived there without a single write to the live CRM (§ 9 rule).
+
+⚠️ **Sandbox reads under-report.** After a `200 OK` upload with a real CDN
+object (verified: distinct 22 KB / 24 KB JPEGs, HTTP 200), the sandbox listing
+still read `Foto: []`. That is a **demo-tenant limitation, not an upload
+defect** — the same `Foto` group on production returns 28 photos for `CA2830`.
+Do not conclude "upload does not attach" from a sandbox read-back.
 
 ---
 
@@ -1530,6 +1628,19 @@ technical detail.
    *the 401 response body contains the caller's API key in plaintext.* Any
    customer logging error bodies is persisting a credential. We redact on
    receipt (§ 3), but the fix belongs upstream.
+3a. **🔴 Scope the Quinto Andar key DOWN — the highest-value ask (added
+   2026-09-11).** The portal key `…bced` was issued with full photo **write +
+   DELETE** on live listings and full owner-PII read (§ 4.7). Neither is needed
+   to receive a property feed, and our own key holds neither, so this is an
+   unrequested default rather than a considered grant. Ask for:
+   **(a)** read-only — revoke `POST`/`PUT`/`DELETE` on `/imoveis/fotos`;
+   **(b)** field-restriction on the `proprietarios` group — owner name and
+   contact only, **no** CPF/CNPJ, RG, Nascimento, Renda, Banco/Agência/Conta,
+   or spouse data.
+   **This ask is well-founded, not speculative:** Vista demonstrably gates at
+   both method level (`corretores/listar` 401 on both keys) and field level
+   (owner fields 403 on `…644c` but 200 on `…bced`), so the mechanism plainly
+   exists — it simply was not applied to this key.
 4. **Key rotation.** Ask for the rotation procedure — ours has been exposed
    in logs/agent contexts and should be rotated once Tier 1 lands.
 
