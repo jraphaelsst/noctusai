@@ -465,3 +465,27 @@ without expiry (105) · `atendimento_contratos`, `atendimento_contrato_versoes` 
 **PostgREST.** None of the eight files ends with a schema reload, so
 `NOTIFY pgrst, 'reload schema';` was run once after the apply — without it the API would not see
 the new columns until PostgREST restarted.
+
+## 113 — applied 2026-09-14 (owner-approved, ahead of the ABNT formatting release)
+
+✅ **APPLIED + VERIFIED 2026-09-14** via
+`noctus.dev.migrate_product social-wiring target=113_transcricao_formatacao.sql confirm=true`
+(recorded in `social_wiring.schema_migrations`). The dry run's pending set was exactly `113`.
+
+**Why before the deploy.** The formatting release reads and writes these columns
+(`matriculas` and `certidoes` transcript routes, `RESULTADO_COLUNAS_SEM_TEXTO`). The file is
+additive and idempotent (`ADD COLUMN IF NOT EXISTS` only, no data touched), so applying it
+while the previous image still runs is harmless — that image never selects the new columns
+by name, and `texto_extraido` starts NULL on every existing row.
+
+**Post-verify (4/4 present, `information_schema.columns`):**
+`matricula_extracoes.formatacao` jsonb NOT NULL default `'[]'` ·
+`certidao_resultados.formatacao` jsonb NOT NULL default `'[]'` ·
+`certidao_resultados.texto_extraido` text NULL ·
+`certidao_resultados.tem_transcricao` boolean, `is_generated = ALWAYS`.
+
+**PostgREST.** `NOTIFY pgrst, 'reload schema';` run once after the apply.
+
+**Follow-up (not done by this apply).** The 5 matrículas whose `texto_extraido` still carries
+literal `**bold**` / `<u>` markers keep `formatacao = '[]'` until re-transcribed — see the
+migration header and `NOC-REMEDIATE[transcricao-formatacao-backfill]`.
