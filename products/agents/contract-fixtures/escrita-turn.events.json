@@ -1,0 +1,181 @@
+{
+  "description": "Canonical SSE stream published on agents:julia:conv:<id> for one Julia turn that proposes one escrita tool call which a human approves (contract §E.3 + §E.10). Both slices consume this file: the backend route test asserts its real published sequence matches it; the frontend useJuliaChat tests replay it. Synthetic, neutral data only.",
+  "comparison_rule": "Compare, in order: event names; payload key sets; message role/blocks (kind, status, decision); and id cross-references (every message_id equals the id of a message published earlier by message.new; approval.requested.id equals the approvalId in the following message.updated block and equals approval.resolved.approval_id; tool events share one tool_use_id). UUIDs, timestamps, texto, resumo, diff, tool_input values and sdk_session_id are compared by shape only (UUID string / ISO-8601 string / string / object), never literally.",
+  "events": [
+    {
+      "event": "message.new",
+      "payload": {
+        "id": "00000000-0000-4000-8000-0000000000a1",
+        "conversation_id": "00000000-0000-4000-8000-0000000000c1",
+        "role": "user",
+        "texto": "Atualize a entrada exemplo.",
+        "blocks": [],
+        "token_usage": null,
+        "created_at": "2026-09-14T12:00:00+00:00",
+        "updated_at": "2026-09-14T12:00:00+00:00"
+      }
+    },
+    {
+      "event": "session.status",
+      "payload": { "status": "pensando" }
+    },
+    {
+      "event": "message.delta",
+      "payload": { "message_temp_id": "tmp-1", "texto_parcial": "Vou atualizar" }
+    },
+    {
+      "event": "message.new",
+      "payload": {
+        "id": "00000000-0000-4000-8000-0000000000a2",
+        "conversation_id": "00000000-0000-4000-8000-0000000000c1",
+        "role": "assistant",
+        "texto": "Vou atualizar a entrada exemplo.",
+        "blocks": [],
+        "token_usage": null,
+        "created_at": "2026-09-14T12:00:01+00:00",
+        "updated_at": "2026-09-14T12:00:01+00:00"
+      }
+    },
+    {
+      "event": "tool.started",
+      "payload": {
+        "message_id": "00000000-0000-4000-8000-0000000000a2",
+        "tool_use_id": "toolu_fixture_01",
+        "tool_name": "mcp__academia__kb_escrever",
+        "classe": "escrita",
+        "resumo": "Editar KB: exemplo"
+      }
+    },
+    {
+      "event": "message.updated",
+      "payload": {
+        "id": "00000000-0000-4000-8000-0000000000a2",
+        "conversation_id": "00000000-0000-4000-8000-0000000000c1",
+        "role": "assistant",
+        "texto": "Vou atualizar a entrada exemplo.",
+        "blocks": [
+          { "kind": "tool", "toolUseId": "toolu_fixture_01", "name": "mcp__academia__kb_escrever", "status": "running", "resumo": "Editar KB: exemplo" }
+        ],
+        "token_usage": null,
+        "created_at": "2026-09-14T12:00:01+00:00",
+        "updated_at": "2026-09-14T12:00:02+00:00"
+      }
+    },
+    {
+      "event": "approval.requested",
+      "payload": {
+        "message_id": "00000000-0000-4000-8000-0000000000a2",
+        "id": "00000000-0000-4000-8000-0000000000b1",
+        "conversation_id": "00000000-0000-4000-8000-0000000000c1",
+        "tool_name": "mcp__academia__kb_escrever",
+        "tool_input": { "slug": "exemplo", "corpo_md": "Texto novo." },
+        "classe": "escrita",
+        "resumo": "Editar KB: exemplo",
+        "diff": { "antes": "Texto antigo.", "depois": "Texto novo." },
+        "decision": "pendente",
+        "decided_by": null,
+        "decided_at": null,
+        "requested_by": "00000000-0000-4000-8000-0000000000d1",
+        "created_at": "2026-09-14T12:00:02+00:00",
+        "updated_at": "2026-09-14T12:00:02+00:00"
+      }
+    },
+    {
+      "event": "message.updated",
+      "payload": {
+        "id": "00000000-0000-4000-8000-0000000000a2",
+        "conversation_id": "00000000-0000-4000-8000-0000000000c1",
+        "role": "assistant",
+        "texto": "Vou atualizar a entrada exemplo.",
+        "blocks": [
+          { "kind": "tool", "toolUseId": "toolu_fixture_01", "name": "mcp__academia__kb_escrever", "status": "running", "resumo": "Editar KB: exemplo" },
+          { "kind": "approval", "approvalId": "00000000-0000-4000-8000-0000000000b1", "resumo": "Editar KB: exemplo", "diff": { "antes": "Texto antigo.", "depois": "Texto novo." }, "decision": "pendente" }
+        ],
+        "token_usage": null,
+        "created_at": "2026-09-14T12:00:01+00:00",
+        "updated_at": "2026-09-14T12:00:02+00:00"
+      }
+    },
+    {
+      "event": "approval.resolved",
+      "payload": {
+        "message_id": "00000000-0000-4000-8000-0000000000a2",
+        "approval_id": "00000000-0000-4000-8000-0000000000b1",
+        "decision": "aprovada",
+        "decided_by": "00000000-0000-4000-8000-0000000000d1"
+      }
+    },
+    {
+      "event": "message.updated",
+      "payload": {
+        "id": "00000000-0000-4000-8000-0000000000a2",
+        "conversation_id": "00000000-0000-4000-8000-0000000000c1",
+        "role": "assistant",
+        "texto": "Vou atualizar a entrada exemplo.",
+        "blocks": [
+          { "kind": "tool", "toolUseId": "toolu_fixture_01", "name": "mcp__academia__kb_escrever", "status": "running", "resumo": "Editar KB: exemplo" },
+          { "kind": "approval", "approvalId": "00000000-0000-4000-8000-0000000000b1", "resumo": "Editar KB: exemplo", "diff": { "antes": "Texto antigo.", "depois": "Texto novo." }, "decision": "aprovada" }
+        ],
+        "token_usage": null,
+        "created_at": "2026-09-14T12:00:01+00:00",
+        "updated_at": "2026-09-14T12:00:03+00:00"
+      }
+    },
+    {
+      "event": "tool.finished",
+      "payload": {
+        "message_id": "00000000-0000-4000-8000-0000000000a2",
+        "tool_use_id": "toolu_fixture_01",
+        "tool_name": "mcp__academia__kb_escrever",
+        "resultado": "ok"
+      }
+    },
+    {
+      "event": "message.updated",
+      "payload": {
+        "id": "00000000-0000-4000-8000-0000000000a2",
+        "conversation_id": "00000000-0000-4000-8000-0000000000c1",
+        "role": "assistant",
+        "texto": "Vou atualizar a entrada exemplo.",
+        "blocks": [
+          { "kind": "tool", "toolUseId": "toolu_fixture_01", "name": "mcp__academia__kb_escrever", "status": "ok", "resumo": "Editar KB: exemplo" },
+          { "kind": "approval", "approvalId": "00000000-0000-4000-8000-0000000000b1", "resumo": "Editar KB: exemplo", "diff": { "antes": "Texto antigo.", "depois": "Texto novo." }, "decision": "aprovada" }
+        ],
+        "token_usage": null,
+        "created_at": "2026-09-14T12:00:01+00:00",
+        "updated_at": "2026-09-14T12:00:04+00:00"
+      }
+    },
+    {
+      "event": "message.new",
+      "payload": {
+        "id": "00000000-0000-4000-8000-0000000000a3",
+        "conversation_id": "00000000-0000-4000-8000-0000000000c1",
+        "role": "assistant",
+        "texto": "Pronto, a entrada exemplo foi atualizada.",
+        "blocks": [],
+        "token_usage": null,
+        "created_at": "2026-09-14T12:00:05+00:00",
+        "updated_at": "2026-09-14T12:00:05+00:00"
+      }
+    },
+    {
+      "event": "session.status",
+      "payload": { "status": "ociosa", "sdk_session_id": "sess-fixture" }
+    },
+    {
+      "event": "conversation.upsert",
+      "payload": {
+        "id": "00000000-0000-4000-8000-0000000000c1",
+        "agent_id": "00000000-0000-4000-8000-0000000000e1",
+        "owner_user_id": "00000000-0000-4000-8000-0000000000d1",
+        "titulo": "Nova conversa",
+        "sdk_session_id": "sess-fixture",
+        "status": "ativa",
+        "last_message_at": "2026-09-14T12:00:05+00:00",
+        "created_at": "2026-09-14T11:59:00+00:00",
+        "updated_at": "2026-09-14T12:00:05+00:00"
+      }
+    }
+  ]
+}
