@@ -15,6 +15,9 @@ recovery tests actually assert on.
 from __future__ import annotations
 
 import asyncio
+import http.server
+import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +26,8 @@ import pytest
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.storage import FakeStorageBackend
 from noctusai_lib.testing import MockSupabaseClient
+from xhtml2pdf.config.resources import ResourceAccessPolicy
+from xhtml2pdf.files import pisaFileObject
 
 from app.modules.certidoes import service
 from app.modules.certidoes.registry import (
@@ -577,6 +582,167 @@ class TestConvertHtmlToPdf:
         assert service._convert_html_to_pdf(b"<<<>>> nao e html") is not None
 
 
+class TestBaseHref:
+    """`_base_href` reads the `<base href="...">` xhtml2pdf itself never
+    looks for (no `pisaTagBASE` in `xhtml2pdf.tags`)."""
+
+    def test_extrai_href_double_quotes(self):
+        assert service._base_href(
+            b'<html><head><base href="https://x.example/r.html"></head></html>'
+        ) == "https://x.example/r.html"
+
+    def test_extrai_href_single_quotes_e_atributos_extras(self):
+        assert service._base_href(
+            b"<base target='_blank' href='https://x.example/r.html'>"
+        ) == "https://x.example/r.html"
+
+    def test_case_insensitive(self):
+        assert service._base_href(
+            b'<BASE HREF="https://x.example/r.html">'
+        ) == "https://x.example/r.html"
+
+    def test_sem_base_retorna_none(self):
+        assert service._base_href(b"<html><body>oi</body></html>") is None
+
+
+class TestConvertHtmlToPdfHostMismatchEndToEnd:
+    """The REAL, unmodified `_convert_html_to_pdf` — no real network
+    reached: a host mismatch is refused by `ResourceAccessPolicy.check_url`
+    BEFORE any DNS lookup (the `allowed_hosts` check runs first), so this
+    proves "blocked for a different host" against the actual shipped
+    function without a server fixture."""
+
+    def test_img_de_outro_host_e_bloqueada_pdf_ainda_e_gerado(self, caplog):
+        html_bytes = (
+            b'<html><head><base href="https://real-receipt.example/r.html">'
+            b"</head><body><img src=\"https://evil-host.example/logo.png\">"
+            b"<p>conteudo</p></body></html>"
+        )
+        with caplog.at_level(logging.WARNING):
+            pdf = service._convert_html_to_pdf(html_bytes)
+        assert pdf is not None
+        assert pdf[:5] == b"%PDF-"
+        assert any(
+            "resource policy" in r.getMessage() for r in caplog.records
+        )
+
+
+class TestResourceAccessPolicyHostScopedFetch:
+    """`ResourceAccessPolicy(allowed_hosts=...)` — the exact mechanism
+    `_convert_html_to_pdf` wires from a `<base href>` — against a REAL local
+    HTTP server (`127.0.0.1`, ephemeral port). No real internet is reached.
+
+    `allow_private_networks=True` here is a TEST-ONLY relaxation of
+    `ResourceAccessPolicy`'s SEPARATE SSRF gate, which refuses loopback
+    regardless of `allowed_hosts` — there is no way to stand up a fixture
+    that is both "local" and "not a private address", and a real production
+    host (TRF3's) is never a private address, so `_convert_html_to_pdf`
+    itself never sets this. What is under test here is `allowed_hosts`
+    alone — fetched when it matches, refused when it doesn't — via
+    `xhtml2pdf.files.pisaFileObject`, the library's own fetch primitive
+    (`getFile`/`pisaFileObject` is what the parser calls for every
+    `<img src>`)."""
+
+    @staticmethod
+    def _start_server(image_bytes: bytes) -> http.server.HTTPServer:
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 — stdlib method name
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(image_bytes)))
+                self.end_headers()
+                self.wfile.write(image_bytes)
+
+            def log_message(self, *args) -> None:
+                pass  # keep test output quiet
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server
+
+    def test_host_igual_ao_allowed_hosts_e_buscada(self):
+        image_bytes = b"\x89PNG\r\n\x1a\nfake-bytes"
+        server = self._start_server(image_bytes)
+        try:
+            host, port = server.server_address
+            url = f"http://{host}:{port}/logo.png"
+            policy = ResourceAccessPolicy(
+                allowed_hosts=frozenset({host}),
+                base_dir=None,
+                allow_private_networks=True,
+            )
+            data = pisaFileObject(url, policy=policy).getData()
+        finally:
+            server.shutdown()
+        assert data == image_bytes
+
+    def test_host_diferente_do_allowed_hosts_e_bloqueada(self, caplog):
+        image_bytes = b"\x89PNG\r\n\x1a\nfake-bytes"
+        server = self._start_server(image_bytes)
+        try:
+            host, port = server.server_address
+            url = f"http://{host}:{port}/logo.png"
+            policy = ResourceAccessPolicy(
+                allowed_hosts=frozenset({"outro-host.example"}),
+                base_dir=None,
+                allow_private_networks=True,
+            )
+            with caplog.at_level(logging.WARNING):
+                data = pisaFileObject(url, policy=policy).getData()
+        finally:
+            server.shutdown()
+        assert data is None
+        assert any("resource policy" in r.getMessage() for r in caplog.records)
+
+
+class TestCenprotProtocoloConsulta:
+    def test_extrai_do_data_0(self):
+        raw = {"code": 200, "data": [{"protocolo_consulta": "26091412345"}]}
+        assert service._cenprot_protocolo_consulta(raw) == "26091412345"
+
+    def test_612_sem_protocolo_retorna_none(self):
+        """A 612 has `data: []` — no `protocolo_consulta` anywhere, per
+        InfoSimples docs (read 2026-09-14)."""
+        raw = {"code": 612, "data": [], "errors": ["Nada consta"]}
+        assert service._cenprot_protocolo_consulta(raw) is None
+
+    def test_none_ou_vazio_retorna_none(self):
+        assert service._cenprot_protocolo_consulta(None) is None
+        assert service._cenprot_protocolo_consulta({}) is None
+        assert service._cenprot_protocolo_consulta({"data": [{}]}) is None
+        assert service._cenprot_protocolo_consulta(
+            {"data": [{"protocolo_consulta": ""}]}
+        ) is None
+
+
+class TestWithProtocoloStamp:
+    def test_insere_apos_body(self):
+        out = service._with_protocolo_stamp(
+            b"<html><body><h1>Receipt</h1></body></html>", "26091412345"
+        )
+        assert out.startswith(b"<html><body>")
+        assert b"Protocolo da consulta:</b> 26091412345" in out
+        assert out.index(b"Protocolo da consulta") < out.index(b"<h1>Receipt</h1>")
+
+    def test_insere_apos_body_com_atributos(self):
+        out = service._with_protocolo_stamp(
+            b'<html><body class="x"><h1>Receipt</h1></body></html>', "999"
+        )
+        assert b'<body class="x"><p><b>Protocolo' in out
+
+    def test_html_escapa_o_valor(self):
+        out = service._with_protocolo_stamp(
+            b"<html><body></body></html>", "<script>alert(1)</script>"
+        )
+        assert b"<script>alert(1)</script>" not in out
+        assert b"&lt;script&gt;" in out
+
+    def test_sem_body_prepende(self):
+        out = service._with_protocolo_stamp(b"<p>sem body aqui</p>", "42")
+        assert out.startswith(b"<p><b>Protocolo")
+        assert b"<p>sem body aqui</p>" in out
+
+
 # ---------------------------------------------------------------------------
 # AI analysis
 # ---------------------------------------------------------------------------
@@ -695,15 +861,27 @@ class TestAnalyzeWithAi:
         chat.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_falha_do_provedor_vira_marcador_nao_excecao(self):
+    async def test_falha_do_provedor_vira_none_nao_excecao_nem_texto_de_erro(
+        self, caplog
+    ):
+        """🔴 The regression this pins: a vendor error must never land in
+        `analise_ia` (prod showed the raw `AsyncMessages.create() got an
+        unexpected keyword argument 'temperature'` as if it were the
+        analysis, 2026-09-10 onward). NULL + a logged error, not a marker
+        string — the column is a due-diligence read surface, not an error
+        channel."""
         with patch(_CRED, return_value="sk-x"), patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(side_effect=RuntimeError("429")),
-        ):
+        ), caplog.at_level(logging.ERROR):
             out = await service._analyze_with_ai(
                 "texto", ORG, resolve_provider=_provider("openai")
             )
-        assert "Erro na análise IA" in out
+        assert out is None
+        assert any(
+            "AI analysis failed" in r.getMessage() and ORG in r.getMessage()
+            for r in caplog.records
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1008,6 +1186,85 @@ class TestProcessSingleCertidao:
             analyze=_noop_analyze, extract_text=_noop_extract_text,
         )
         assert http.downloaded == ["https://x/cenprot.html"]
+
+    @pytest.mark.asyncio
+    async def test_cenprot_200_com_protocolo_e_gravado_no_pdf(self):
+        """A CENPROT 200 ("protests found") response carries
+        `data[0].protocolo_consulta` — the receipt itself never prints it, so
+        it must land in the stored PDF's text, not just the API response
+        JSON."""
+        import fitz
+
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="cenprot", id="r-protocolo")],
+        )
+        storage = FakeStorageBackend()
+        http = _FakeHttp(
+            {
+                "code": 200,
+                "data": [{
+                    "protocolo_consulta": "26091412345678",
+                    "documento_pesquisado": "12345678901",
+                    "quantidade_titulos": 0,
+                }],
+                "site_receipts": ["https://x/cenprot.html"],
+            },
+            file_body=b"<html><body><h1>Receipt</h1></body></html>",
+            file_content_type="text/html",
+        )
+
+        await service._process_single_certidao(
+            config_for("cenprot"), _consulta_row(), "tok", db,
+            "r-protocolo", http, storage,
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
+        )
+
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "r-protocolo"
+        ).execute().data[0]
+        blob = await storage.get(bucket=service.BUCKET, key=row["arquivo_url"])
+        doc = fitz.open(stream=blob.data, filetype="pdf")
+        texto = doc[0].get_text()
+        doc.close()
+        assert "Protocolo da consulta: 26091412345678" in texto
+
+    @pytest.mark.asyncio
+    async def test_cenprot_612_nada_consta_nao_grava_protocolo(self):
+        """612 ("nada consta") has no `protocolo_consulta` anywhere — the
+        stamp must not be inserted for it."""
+        import fitz
+
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="cenprot", id="r-612")],
+        )
+        storage = FakeStorageBackend()
+        http = _FakeHttp(
+            {
+                "code": 612,
+                "data": [],
+                "errors": ["Nada consta"],
+                "site_receipts": ["https://x/cenprot-612.html"],
+            },
+            file_body=b"<html><body><h1>Nada consta</h1></body></html>",
+            file_content_type="text/html",
+        )
+
+        await service._process_single_certidao(
+            config_for("cenprot"), _consulta_row(), "tok", db,
+            "r-612", http, storage,
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
+        )
+
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "r-612"
+        ).execute().data[0]
+        blob = await storage.get(bucket=service.BUCKET, key=row["arquivo_url"])
+        doc = fitz.open(stream=blob.data, filetype="pdf")
+        texto = doc[0].get_text()
+        doc.close()
+        assert "Protocolo da consulta" not in texto
 
     @pytest.mark.asyncio
     async def test_content_type_desconhecido_mantem_a_url_de_origem(self):
