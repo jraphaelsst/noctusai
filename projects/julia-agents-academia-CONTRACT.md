@@ -463,7 +463,9 @@ Every table has `id uuid pk`, `org_id uuid not null`, `created_at`, `updated_at`
 
 **Admin decisions:** an admin may decide another member's approval. First decision wins, and a later one gets 409 `already_decided`. The assertion carries `approved_by`, so academia re-checks the approver's role (§D step 8). Admins can read every conversation in the org; this data-access fact is recorded in the LGPD flag for `agents`.
 
-**Timeout:** `APPROVAL_TIMEOUT_SECONDS` (default 900). An unanswered request becomes `expirada` and the tool call is denied.
+**Timeout:** `APPROVAL_TIMEOUT_SECONDS` (default **300**, user decision 2026-09-15, down from 900). A waiting approval holds one of Julia's three slots (§E.11), so the timeout bounds how long pending approvals can block her. An unanswered request becomes `expirada` and the tool call is denied.
+
+**Capacity (§E.11):** `POST /api/conversations/{id}/messages` returns **429 `julia_capacidade`** with `Retry-After` when every Julia slot is busy. Detail: "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes." The check runs before the turn lock and before the user message is persisted, so a 429 or a 409 never leaves an orphan user message.
 
 **Startup:** every `pendente` row whose `instance_id` equals this instance becomes `expirada`, never other instances' rows (security finding 5).
 
@@ -542,6 +544,8 @@ max_turns=<config, default 40>
 resume=<conversations.sdk_session_id>
 ```
 
+> **Superseded by §E.11 (2026-09-15):** `user`, `env`, `resume`, `system_prompt` (the persona moves off argv) and the wrapper description are replaced by the per-conversation slot design, and `session_store` is added. Where this block and §E.11 differ, §E.11 wins.
+
 **How tools reach academia.** Tools are in-process SDK MCP tools (`@tool`, `__init__.py:251`) executed by the control plane, not by the CLI. Each proxy:
 1. Validates its input against the sibling-extracted schema (§C).
 2. For an `escrita` call, has already passed the gate, so it holds the approval id.
@@ -549,7 +553,7 @@ resume=<conversations.sdk_session_id>
 4. Returns `{"content":[{"type":"text","text": <json of the §C output>}]}`.
 
 **SEC-C proves both invariants on the real image.**
-- It reads `/proc/<julia-cli pid>/environ` and asserts the key set is exactly `{HOME, PATH, ANTHROPIC_API_KEY, CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_VERSION}`.
+- It reads `/proc/<julia-cli pid>/environ` and asserts the key set is exactly the wrapper's allowlist. *(Corrected 2026-09-15: this line listed 5 keys, but the D1 wrapper already exports 8: `HOME, TMPDIR, PATH, ANTHROPIC_API_KEY, CLAUDE_CODE_ENTRYPOINT, CLAUDE_AGENT_SDK_VERSION, DISABLE_AUTOUPDATER, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. §E.11 adds `CLAUDE_CONFIG_DIR`, making 9.)*
 - It asserts that the CLI's `init` message lists exactly the E.4 tools, and nothing else.
 
 `ANTHROPIC_API_KEY` is a dedicated, spend-capped key for Julia's workspace, never shared with any other product.
@@ -720,6 +724,123 @@ class AgentRuntime(Protocol):
 - a stale `decided_at` → `approval_invalid`
 - the happy path → exactly one academia call, whose assertion `approved_by` equals the stored `decided_by`
 
+### E.11 Per-conversation isolation: slots, durable transcripts (2026-09-15)
+
+**Why.** Before this, every Julia turn of every conversation, from every user and org, ran as uid 1001 with one shared `HOME=/run/julia`, where the CLI keeps session transcripts. A CLI compromised during one turn could read every other conversation's transcript on the container. D1 and SEC-C protect the app from the CLI, not one conversation from another. The user decided to close this before the prod deploy. Design: architect review on 2026-09-15, checked against SDK 0.2.152 and bundled CLI 2.1.259.
+
+**User decisions (2026-09-15):**
+- Julia keeps full memory between turns through durable transcripts (option d).
+- 3 slots, with `APPROVAL_TIMEOUT_SECONDS=300`.
+- Transcript cap of 24 MiB per session. When a transcript exceeds it, a fresh session starts with a visible message.
+
+**Invariants:**
+- **I1:** at most one live turn per slot uid.
+- **I2:** a slot returns to the free pool only when no non-zombie process with that uid is alive AND the slot's tmpfs is empty.
+- **I3:** nothing from one conversation (transcript, handoff file, persona text, process memory, environment) is readable by another slot's uid.
+- **I4:** uvicorn keeps exactly SETUID+SETGID+KILL. No CHOWN, FOWNER or DAC_OVERRIDE is ever added.
+
+**Image.**
+- Slot users `julia-cli-K` with uid and gid `2000+K`, for K from 0 to 2. `--system --no-create-home --shell /usr/sbin/nologin`.
+- `ENV JULIA_CLI_SLOTS=3`.
+- `noctus` is a supplementary member of exactly the slot groups; `--init-groups` in the entrypoint picks them up.
+- uid 1001 and the shared `/run/julia` are removed.
+- `ENV CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK=1` (SDK `subprocess_cli.py:799`), so the `-v` spawn without `user=` never happens. The CLI version is already pinned by the wheel.
+- New root-owned `bin/julia-cli-slot`.
+
+**Compose (generated through the propagate seam).**
+- One tmpfs per slot: `/run/julia-K:uid=2000+K,gid=2000+K,mode=0700,size=40m` (24 MiB transcript cap plus working space).
+- `/run/julia-handoff:uid=1000,gid=1000,mode=0711,size=80m`.
+- The entrypoint fails closed unless the mounted slots match `JULIA_CLI_SLOTS` in number, owner, mode and size, and the handoff mount is correct.
+- **Memory:** worst-case tmpfs is 3×40 + 80 = 200 MiB of the 1 GiB limit. The CLI's own RSS has not been measured, because CI has no API key. SEC-C records it at the first prod turn. If three concurrent CLIs plus uvicorn exceed the limit, raise `mem_limit` rather than shrink the caps.
+
+**Wrapper (`bin/julia-cli-exec`).**
+1. Reads its real uid with `id -u` (kernel-set on the spawn path) and refuses with exit 126 unless the uid is in `[2000, 2000+JULIA_CLI_SLOTS)`. It never reads the slot number from any argument or env var.
+2. Refuses if the inherited `CLAUDE_CONFIG_DIR` is not `/run/julia-K/home/.claude`. This is a drift check only; the value is recomputed.
+3. Runs `setpriv --reuid=K --regid=K --clear-groups --inh-caps=-all --ambient-caps=-all --no-new-privs -- /app/bin/julia-cli-slot "$@"`.
+
+**Slot script (`bin/julia-cli-slot`, as K, no capabilities).**
+1. Sweeps `/run/julia-K` (`chmod -R u+rwx`, then removes everything). Fails closed if anything remains.
+2. Creates `home/.claude/projects/-app` and `tmp`.
+3. If `/run/julia-handoff/K/<sid>.jsonl` exists (a single UUID-named file), copies it into `projects/-app/`.
+4. Runs `exec /usr/bin/env -i HOME=/run/julia-K/home TMPDIR=/run/julia-K/tmp CLAUDE_CONFIG_DIR=/run/julia-K/home/.claude PATH=/usr/bin:/bin ANTHROPIC_API_KEY CLAUDE_CODE_ENTRYPOINT CLAUDE_AGENT_SDK_VERSION DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 /usr/local/bin/claude-bundled "$@"`. The exec keeps the SDK's pid equal to the CLI's pid; there is no supervisor.
+5. `julia-cli-slot --julia-sweep` only sweeps and exits 0 or non-zero.
+
+**Launch options (replacing §E.5's `user`, `env`, `resume` and `system_prompt`):**
+- `user="julia-cli-<K>"` for the leased slot.
+- `env={"CLAUDE_CONFIG_DIR": "/run/julia-<K>/home/.claude"}`.
+- `system_prompt={"type":"preset","preset":"claude_code"}` with no `append` (never `None`).
+- `extra_args={"append-system-prompt-file": "/run/julia-handoff/<K>/append.md"}`. The persona and `JULIA.md` go in a group-only 0640 file, never on argv, because `/proc/<pid>/cmdline` is readable by every uid.
+- `session_store=ConversationTranscriptMirror(...)` and `session_store_flush="batched"`.
+- `resume=<sdk_session_id>` only when a valid stored transcript exists. `--resume=<sid>` on argv is accepted: the id alone is useless without the stored transcript, which is bound to its conversation.
+
+**Durable transcripts.**
+- **Outbound.** `ConversationTranscriptMirror(org_id, conversation_id, expected_session_id)` stores mirror frames under the trusted `conversation_id` from `TurnContext`. It never uses the session key parsed from the frame's file path, which a compromised CLI controls.
+  - It drops frames with a subpath, a project key other than `-app`, or a session id different from the expected one (on a fresh session, the first id seen is pinned).
+  - Entry `uuid` is the idempotency key.
+  - At turn end the pinned id must equal `ResultMessage.session_id`; otherwise the transcript is marked `invalido`.
+  - A `MirrorErrorMessage` marks it `incompleto`.
+  - Crossing the 24 MiB cap marks it `truncado`.
+  - `load()` returns `None` on purpose. The SDK's own resume copies uvicorn credentials into uvicorn's `/tmp`, which a slot uid cannot read; the wrapper and slot script do the loading. The code must say so.
+- **Inbound.** Before spawning, the runtime loads the stored transcript.
+  - If it is missing or not `ok`, the turn starts fresh and emits `session.resume_fallback` with a PT-BR message. "Too long" (`truncado`) has its own text.
+  - If it is `ok`, uvicorn writes `/run/julia-handoff/K/<sid>.jsonl` with `O_EXCL|O_NOFOLLOW`, mode 0640, group `julia-cli-K`. A file's owner may set its group to any group the owner belongs to, so no CHOWN is needed.
+- **Resume after a restart now works.** A CLI refusal of a resume is caught only as `ResultError`, never the broad `ProcessError`, so a wrapper refusal (exit 126) is never mistaken for lost context.
+
+**Slot pool.**
+- `SlotPool` (Protocol, Real, Fake, factory) is an in-process free list. `try_reserve() -> TurnSlot | None` is synchronous, which is safe because there is one worker.
+- `TurnSlot.release()` is shielded and idempotent, and runs in the route task's `finally` after `aclosing(run_turn(...))`:
+  1. Scan `/proc/*/status` and SIGKILL (using CAP_KILL) every non-zombie process with real uid `2000+K`, including grandchildren reparented to init. Poll for up to 5 s.
+  2. Spawn `julia-cli-slot --julia-sweep` as K and require exit 0.
+  3. Unlink the slot's handoff files.
+  4. Return K to the pool.
+- Any failure quarantines K: an error is logged and `/api/health` reports degraded. A slot never returns while one of its processes is alive.
+- Every slot is swept once at startup.
+
+**Route order (§E.9, revised):**
+1. Reserve a slot (429 `julia_capacidade`).
+2. Acquire the turn lock (409 `turn_in_progress`).
+3. Persist the user message.
+4. Start the task, under `asyncio.timeout(TURN_TIMEOUT_SECONDS)` (default 600).
+
+The task's `finally` releases the turn lock, then the slot. `_TURN_LOCK_TTL_SECONDS` must stay greater than `TURN_TIMEOUT_SECONDS`.
+
+**§E.9 amendments:**
+- `AgentRuntime` gains `try_reserve()`, and `run_turn(..., slot)` gains the slot.
+- "The runtime never writes to the database" now carries one named exception: transcripts go through an injected `TranscriptStore` seam, like the approval broker.
+- `FakeAgentRuntime` gets a configurable capacity.
+- The "Resume after a restart" block is replaced by the "Durable transcripts" rules above.
+
+**§E.1 data model (migration `agents/009`):**
+- `agents.session_transcript_entries`: `id`, `org_id`, `conversation_id` (FK, on delete cascade), `sdk_session_id`, `seq`, `entry jsonb`, `entry_uuid`, `created_at`, unique on `(conversation_id, sdk_session_id, entry_uuid)`. RLS is enabled with NO user policies (service role only).
+- `agents.conversations.transcript_estado text NOT NULL DEFAULT 'ok' CHECK (transcript_estado IN ('ok','truncado','incompleto','invalido'))`.
+- **LGPD:** transcripts store tool outputs, academia content and web results. A flag must be recorded for `agents` before prod.
+
+**SEC-C harness additions (all must pass on the real image in CI):**
+1. **Image:** slot users and groups are in the fixed range; `noctus` groups equal exactly the slot groups; no uid 1001; `CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK=1` is set.
+2. **Mounts:** per-slot tmpfs owner, mode and size, plus the handoff mount, derived from compose. The entrypoint fails closed on a missing slot mount, wrong owner, or wrong mode.
+3. **Wrapper refusals:** exit 126 with no probe output for uid 1000, for a uid outside the range, and for a mismatched `CLAUDE_CONFIG_DIR`.
+4. **Two concurrent slots:** slot 1 against slot 0's pid gets EACCES/EPERM on `environ`, `mem`, `fd`, `cwd`, `kill 0`, SIGTERM, ptrace attach, `/run/julia-0` and `/run/julia-handoff/0/*`. In addition:
+   - no persona sentinel appears in any `/proc/*/cmdline`;
+   - every capability set of a slot process is 0;
+   - its groups are only its own;
+   - a writable scan as K finds only `/run/julia-K`.
+5. **Handoff:** a sentinel transcript lands in slot 0's `projects/-app/<sid>.jsonl` and is unreadable from slot 1.
+6. **SIGKILL leftovers** (junk files, a chmod-000 dir, a 10 MB file): after release the slot is empty.
+7. **Orphans:** a grandchild detached with `setsid` is killed by the release scan before the slot returns.
+8. **Quota:** slot 0 hits ENOSPC while slot 1 can still write.
+9. **Pool:** the real `SlotPool` on the real image discovers 3 slots, a 4th reservation returns `None`, and reserving works again after release.
+
+**Frontend:** `products/agents/frontend/src/lib/errors.ts` maps `julia_capacidade` to the backend's detail.
+
+**Slices (file-disjoint; order: D1 + B1 + B2 in parallel → B3 + B4 + D2 → F1 → gates on the merged tip):**
+- **D1:** image, wrapper, slot script, entrypoint and compose (through propagate), plus `test_wrapper.py`.
+- **B1:** `app/runtime/slots.py` + `types.py` + `fake_runtime.py` + tests. The `/proc` scan and sweep spawner are injected seams.
+- **B2:** migration 009 + `app/stores/transcripts.py` + `app/runtime/transcript_mirror.py` + tests.
+- **B3:** `claude_runtime.py` + `runtime/__init__.py` + runtime and resume tests.
+- **B4:** `conversations_router.py` + `main.py` (startup sweep, route order, deadline) + route tests + config (approval timeout 300, turn timeout 600).
+- **D2:** SEC-C harness additions 1–9.
+- **F1:** frontend 429 mapping.
+
 ## F · Reserved migration numbers
 
 | Product | Numbers | Owner |
@@ -730,6 +851,7 @@ class AgentRuntime(Protocol):
 | erp-imobiliario | `046_api_tokens_scopes_and_audit.sql`, same shape as social-wiring | SEED-1 |
 | academia-de-reciclagem | `009_status_pagina_pages.sql`: `status_pagina` rows for the A3 UI routes (status `desenvolvimento`) | A3 |
 | agents | `008_status_pagina_pages.sql`: `status_pagina` rows for the G4 UI routes (status `desenvolvimento`) | G4 |
+| agents | `009_session_transcripts.sql`: `agents.session_transcript_entries` plus `conversations.transcript_estado` (§E.11) | B2 |
 
 **Deploy order is mandatory for 105 and 046.** Apply both migrations to the database BEFORE any social-wiring or erp-imobiliario image containing the SEED-1 resolver is deployed. The resolver selects `expires_at`, so the reverse order breaks every live product token.
 

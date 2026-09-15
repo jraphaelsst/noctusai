@@ -352,6 +352,29 @@ The decision log keeps every step.
     - asserts 27 checks, including all three fail-closed entrypoint refusals, uvicorn identity and caps, the real spawn and `-v` spawn identity/caps/env, uid-1001 EACCES/EPERM on uvicorn's `/proc`, `/run/julia` as the only writable path, zero setuid bits, and kill/reap.
     - Local arm64: 27/27 pass. Agents suite 297 passed, 6 skipped.
     - **CapInh gap closed:** with the real entrypoint, CapInh=`e0`, equal to CapAmb, which is what `setpriv --inh-caps` requests. The earlier CapInh=0 reading is attributed to a non-app reproduction path.
+- **2026-09-15 (SEC-C CI green on amd64; per-conversation isolation designed, contract §E.11)**:
+  - **SEC-C CI:** the first CI run of `agents-secc-ci.yml` (run 35024788335, dev `4968dfb1`) passed with every check listed in the log (`ALL CHECKS PASSED`). This is also the first amd64 build of the agents image.
+  - **Architect design, checked against SDK 0.2.152 and bundled CLI 2.1.259:**
+    - 3 slot uids (2000–2002), each with its own size-capped tmpfs declared in compose (no CHOWN needed);
+    - the wrapper derives the slot from the kernel's real uid;
+    - a root-owned slot script that sweeps, then copies in the handoff, then execs the CLI;
+    - durable transcripts in the DB through the SDK session-store mirror, bound to the trusted `conversation_id`, with a group-only handoff file for resume;
+    - release kills any process of the slot uid, sweeps, and quarantines the slot on failure;
+    - persona moves off argv (`/proc/cmdline` is world-readable);
+    - 429 `julia_capacidade` when all slots are busy.
+  - **User decisions:**
+    - full memory (durable transcripts, kept across restarts);
+    - 3 slots with `APPROVAL_TIMEOUT_SECONDS=300`;
+    - a larger transcript cap: the user chose "larger" without a number, so the tech-lead set **24 MiB**, with 40m slot tmpfs and 80m handoff tmpfs (200 MiB worst-case tmpfs within the 1 GiB limit). CLI RSS is still unmeasured; `mem_limit` is raised if needed.
+  - **Existing defects found by the design, fixed in these slices:**
+    - a 409 left an orphan user message (the lock was acquired after the persist);
+    - no turn deadline, and the lock TTL equalled the approval timeout;
+    - persona text visible in `/proc/<pid>/cmdline`;
+    - the broad `ProcessError` resume fallback would read a wrapper refusal as lost context;
+    - the §E.5 env allowlist listed 5 keys, the wrapper exports 8.
+  - **Also:** agents migration `009_session_transcripts.sql` is reserved (B2). An LGPD flag for stored transcripts is required before prod.
+  - **Git identity:** at the user's instruction, the machine's global identity is now `jraphaelsst <joaoraphaelsst@gmail.com>` (it was `test <a@b.com>`, which invalidated consent records such as igig and p-studio).
+  - **Consent:** still pending the user typing each product's exact sentence.
 
 ## Retrospective (filled at first trigger fire)
 
