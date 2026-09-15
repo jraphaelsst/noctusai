@@ -332,6 +332,26 @@ The decision log keeps every step.
     - The seed `cors_origins_list` stays deliberately untouched: it keeps empty items and the helper drops them. Unifying it needs its own reviewed change.
     - Regression test: red before (3 failed, `SettingsError` at import), green after. The tech-lead hardened it to restore the original `app.config` module after each test, so the re-import cannot leak into later tests.
     - Suites: seed lib 3993, agents 286 (+6 skipped), academia 308, core 619, social-wiring 3894.
+- **2026-09-15 (user decisions before prod; SEC-C CI job)**:
+  - **Consent:** the user gave consent to deploy both products to prod, but only after (1) the isolation test runs in CI and (2) they had decided the cross-org question. It is not yet recorded through `noctus.dev.prod_consent`; that happens at cutover.
+  - **Prod facts used for the decision** (read-only queries):
+    - 4 orgs. Only `noctusai` has users (19): the owner, one other admin, and 17 `corretor`, none active in the last 30 days. `one-consultoria` and two test orgs have 0 users.
+    - Julia's agent rows are created per org on first use (`ensure_default_agents`), inactive by default.
+  - **User decision — isolation between conversations: build it now, before deploy.** Every Julia turn currently shares uid 1001 and one HOME, so a compromised CLI could read other conversations' transcripts. Design is dispatched to an architect (read-only). Constraints:
+    - no new capabilities beyond SETUID/SETGID/KILL
+    - tmpfs cleanup even after SIGKILL
+    - no silent context loss
+    - provable by the SEC-C harness
+  - **User decision — who may chat with Julia: any org member, unchanged.**
+    - The agents chat routes have no role gate.
+    - Julia reads academia with her own product token, so a member whose role academia's own UI refuses (for example `corretor`, which is not in academia READ/WRITE) can probably read the knowledge base through Julia. This was explained to the user before they chose. Not verified end to end.
+    - Academia's approver check still refuses such members' write approvals (§D step 8).
+  - **SEC-C CI job, `.github/workflows/agents-secc-ci.yml`** (`secc/` harness plus a proof-only `secc-proof` Dockerfile stage that is never tagged, pushed or deployed):
+    - builds the real `runtime` image on the amd64 runner (this closes the "amd64 image never built" gap);
+    - starts it with docker flags derived from the compose security block;
+    - asserts 27 checks, including all three fail-closed entrypoint refusals, uvicorn identity and caps, the real spawn and `-v` spawn identity/caps/env, uid-1001 EACCES/EPERM on uvicorn's `/proc`, `/run/julia` as the only writable path, zero setuid bits, and kill/reap.
+    - Local arm64: 27/27 pass. Agents suite 297 passed, 6 skipped.
+    - **CapInh gap closed:** with the real entrypoint, CapInh=`e0`, equal to CapAmb, which is what `setpriv --inh-caps` requests. The earlier CapInh=0 reading is attributed to a non-app reproduction path.
 
 ## Retrospective (filled at first trigger fire)
 
