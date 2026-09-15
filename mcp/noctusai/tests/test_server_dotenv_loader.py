@@ -16,8 +16,20 @@ mutation proof run manually during development).
 from __future__ import annotations
 
 import logging
+import os
+from unittest.mock import patch
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_environ():
+    """The loader writes loaded keys into the real `os.environ`, and
+    `monkeypatch.delenv(..., raising=False)` records nothing for a key that
+    was never set — restore the whole environment so the fake `SUPABASE_*`
+    values never reach later tests."""
+    with patch.dict(os.environ):
+        yield
 
 
 def _reload_settings_module(monkeypatch, repo_root):

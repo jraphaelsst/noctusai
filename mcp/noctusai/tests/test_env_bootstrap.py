@@ -17,10 +17,22 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from env_bootstrap import load_repo_env
+
+
+@pytest.fixture(autouse=True)
+def _restore_environ():
+    """`load_repo_env` writes loaded keys into the real `os.environ`, and
+    `monkeypatch.delenv(..., raising=False)` records nothing for a key that
+    was never set — so without this, the fake `SUPABASE_*` values below
+    outlive the test and every later test that builds a Supabase client
+    fails with "Invalid API key" (CI, 2026-09-14)."""
+    with patch.dict(os.environ):
+        yield
 
 
 def _git(*args: str, cwd: Path) -> None:
