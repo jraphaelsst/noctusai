@@ -31,14 +31,36 @@ _REAL_CLAUDE_TARGET = "/usr/local/bin/claude-bundled"
 # a real regression under "well it exited nonzero, as some tests expect."
 _HAS_SETPRIV = Path("/usr/bin/setpriv").exists()
 
-# The wrapper's OWN `setpriv --reuid=1001 --regid=1001` (contract §E.5's
-# uid switch, now living IN the wrapper so it also covers the SDK's
-# no-`user=` version-check spawn) only succeeds if the CALLING process is
-# already uid 1001 (an allowed self-setresuid no-op) OR holds CAP_SETUID
-# (root, or an explicit `cap_add`). A bare test host/CI runner is neither
-# in general — gate on it explicitly rather than let the switch fail and
-# be misread as a wrapper bug.
-_CAN_SWITCH_TO_1001 = os.geteuid() in (0, 1001)
+# The wrapper's OWN `setpriv --reuid=1001 --regid=1001 --clear-groups`
+# (contract §E.5's uid switch, living IN the wrapper so it also covers the
+# SDK's no-`user=` version-check spawn) needs BOTH CAP_SETUID and
+# CAP_SETGID in the caller's effective set — root has them, the real
+# container's uvicorn has them as ambient caps. Being uid 1001 already is
+# NOT enough: `--clear-groups` calls setgroups(2), which requires
+# CAP_SETGID for every caller. That was the original guard's bug — it
+# accepted `euid in (0, 1001)`, and GitHub's ubuntu runner user IS uid
+# 1001, so these tests ran unprivileged in CI and failed with
+# "setpriv: setgroups failed: Operation not permitted" (dev CI run
+# 34914554800, 2026-09-14). The skip is decided from the kernel's own
+# answer (`/proc/self/status` CapEff), never inferred from a uid.
+_CAP_SETGID_BIT = 1 << 6
+_CAP_SETUID_BIT = 1 << 7
+
+
+def _effective_caps() -> int:
+    """This process's CapEff mask, or 0 where `/proc` is unavailable (macOS)."""
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("CapEff:"):
+                return int(line.split()[1], 16)
+    except OSError:
+        return 0
+    return 0
+
+
+_CAN_SWITCH_TO_1001 = os.geteuid() == 0 or (
+    _effective_caps() & (_CAP_SETUID_BIT | _CAP_SETGID_BIT)
+) == (_CAP_SETUID_BIT | _CAP_SETGID_BIT)
 
 _SKIP_NO_SETPRIV = pytest.mark.skipif(
     not _HAS_SETPRIV,
@@ -48,10 +70,13 @@ _SKIP_NO_SETPRIV = pytest.mark.skipif(
 _SKIP_CANNOT_SELF_SWITCH = pytest.mark.skipif(
     not (_HAS_SETPRIV and _CAN_SWITCH_TO_1001),
     reason=(
-        "the wrapper's own `setpriv --reuid=1001` needs CAP_SETUID or an "
-        f"already-uid-1001 caller; this test process is euid={os.geteuid()} "
-        "on a host without setpriv or that capability — skipping rather "
-        "than asserting a spawn failure that says nothing about the wrapper"
+        "the wrapper's own `setpriv --reuid=1001 --regid=1001 --clear-groups` "
+        "needs CAP_SETUID and CAP_SETGID (setgroups always needs CAP_SETGID, "
+        f"even for an already-uid-1001 caller); this process is euid={os.geteuid()} "
+        f"with CapEff={_effective_caps():#x} and setpriv "
+        f"{'present' if _HAS_SETPRIV else 'absent'} — skipping rather than "
+        "asserting a spawn failure that says nothing about the wrapper. The "
+        "privilege drop itself is proven on the real image (SEC-C)."
     ),
 )
 
