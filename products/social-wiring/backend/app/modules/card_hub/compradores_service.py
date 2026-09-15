@@ -87,9 +87,18 @@ PAPEL_CONJUGE = "conjuge"
 LADOS: tuple[str, ...] = ("comprador", "vendedor")
 LADO_PADRAO = "comprador"
 
+#: `antigo_proprietario` (contract-automation slice F6): a PREVIOUS owner,
+#: not the seller today — due diligence needs their certidões whenever the
+#: last registered sale is under 5 years old, but they sign nothing on this
+#: deal. Seller-side only: a buyer has no "previous" analogue.
+PAPEL_ANTIGO_PROPRIETARIO = "antigo_proprietario"
+
 PAPEIS_POR_LADO: dict[str, tuple[str, ...]] = {
     "comprador": ("comprador", "conjuge", "fiador", "procurador", "outro"),
-    "vendedor": ("proprietario", "conjuge", "procurador", "inventariante", "outro"),
+    "vendedor": (
+        "proprietario", "conjuge", "procurador", "inventariante",
+        PAPEL_ANTIGO_PROPRIETARIO, "outro",
+    ),
 }
 
 PAPEL_PADRAO_POR_LADO: dict[str, str] = {
@@ -671,6 +680,7 @@ def remover(client: Any, org_id: UUID, cliente_id: UUID, parte_id: UUID) -> None
 __all__ = [
     "PAPEIS",
     "PAPEIS_POR_LADO",
+    "PAPEL_ANTIGO_PROPRIETARIO",
     "PAPEL_CONJUGE",
     "PAPEL_PADRAO",
     "TABLE",

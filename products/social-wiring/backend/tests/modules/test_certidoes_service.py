@@ -43,6 +43,7 @@ from app.modules.certidoes.registry import (
     _build_params_trf3_sp,
     _build_params_trt2_digital,
     _build_params_trt2_fisico,
+    _cenprot_protocolo_date,
     config_for,
     get_certidoes_tipos,
     get_manual_tipos,
@@ -2116,10 +2117,10 @@ class TestRegistryEstruturado:
         for config in CERTIDOES_CONFIG:
             assert config["parse_fn"] in PARSE_BUILDERS, config["tipo"]
 
-    def test_resultado_values_bate_com_o_check_da_migracao_107(self):
+    def test_resultado_values_bate_com_o_check_das_migracoes_107_e_116(self):
         assert RESULTADO_VALUES == {
             "negativa", "positiva", "positiva_com_efeito_de_negativa",
-            "nao_emitida",
+            "nao_emitida", "negativa_com_homonimos",
         }
 
     def test_manual_tipos_tem_tres_itens_sem_endpoint(self):
@@ -2206,6 +2207,69 @@ class TestParseResultado:
 
 
 # ---------------------------------------------------------------------------
+# CENPROT's date fallback (migration 116) — protocolo_consulta, not
+# data_emissao/data_consulta, which this endpoint never carries.
+# ---------------------------------------------------------------------------
+
+
+CONFIG_CENPROT = config_for("cenprot")
+
+
+class TestCenprotProtocoloDate:
+    def test_seis_primeiros_digitos_viram_a_data(self):
+        assert _cenprot_protocolo_date("26091412345678") == "2026-09-14"
+
+    def test_protocolo_curto_demais_retorna_none(self):
+        assert _cenprot_protocolo_date("2609") is None
+
+    def test_protocolo_nao_numerico_retorna_none(self):
+        assert _cenprot_protocolo_date("ab091412345678") is None
+
+    def test_data_invalida_no_prefixo_retorna_none(self):
+        assert _cenprot_protocolo_date("99991412345678") is None
+
+    def test_none_e_nao_string_retornam_none(self):
+        assert _cenprot_protocolo_date(None) is None
+        assert _cenprot_protocolo_date(12345) is None
+
+
+class TestParseResultadoCenprot:
+    def test_deriva_emitida_em_do_protocolo_quando_sem_data(self):
+        fetch_result = {
+            "raw_response": {"data": [{"protocolo_consulta": "26091412345678"}]},
+        }
+        assert parse_resultado(CONFIG_CENPROT, fetch_result) == {
+            "emitida_em": "2026-09-14",
+        }
+
+    def test_nao_sobrescreve_uma_data_emissao_real(self):
+        """If a future CENPROT payload DOES carry `data_emissao`, the
+        generic reader wins — the protocol-derived date is a fallback, not
+        an override."""
+        fetch_result = {
+            "raw_response": {"data": [{
+                "protocolo_consulta": "26091412345678",
+                "data_emissao": "01/01/2026",
+            }]},
+        }
+        assert parse_resultado(CONFIG_CENPROT, fetch_result) == {
+            "emitida_em": "2026-01-01",
+        }
+
+    def test_sem_protocolo_nao_deriva_nada(self):
+        fetch_result = {"raw_response": {"data": [{"quantidade_titulos": 0}]}}
+        assert parse_resultado(CONFIG_CENPROT, fetch_result) == {}
+
+    def test_nada_consta_nao_chama_o_parser_de_protocolo(self):
+        """612 short-circuits to `{"resultado": "negativa"}` before any
+        `parse_fn` runs — consistent with `_cenprot_protocolo_consulta`
+        never finding a protocol on a 612 either."""
+        assert parse_resultado(
+            CONFIG_CENPROT, {"nada_consta": "Nada consta"}
+        ) == {"resultado": "negativa"}
+
+
+# ---------------------------------------------------------------------------
 # _analyze_estrutura_with_ai — the structured AI fallback
 # ---------------------------------------------------------------------------
 
@@ -2259,6 +2323,38 @@ class TestAnalyzeEstruturaWithAi:
                 "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
             )
         assert out == {"resultado": "positiva"}
+
+    @pytest.mark.asyncio
+    async def test_negativa_com_homonimos_e_aceita_migracao_116(self):
+        """The fifth `resultado` value (migration 116) must round-trip
+        through the SAME vocabulary check as the original four — it is not
+        special-cased, just added to `RESULTADO_VALUES`."""
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"resultado": "negativa_com_homonimos"}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out == {"resultado": "negativa_com_homonimos"}
+
+    @pytest.mark.asyncio
+    async def test_prompt_pede_homonimos_e_data_da_consulta_como_fallback(self):
+        """Migration 116: the shared extraction prompt (used by BOTH the
+        automated flow and every manual upload, including Serasa) must ask
+        the model to (a) recognize a homônimos caveat and (b) fall back to
+        the consulta date when a document has no explicit emission date."""
+        mock_chat = AsyncMock(return_value='{"resultado": "negativa"}')
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion", new=mock_chat,
+        ):
+            await service._analyze_estrutura_with_ai(
+                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        system_msg = mock_chat.call_args.kwargs["messages"][0]["content"]
+        assert "negativa_com_homonimos" in system_msg
+        assert "homônimos" in system_msg
+        assert "data da consulta" in system_msg
 
     @pytest.mark.asyncio
     async def test_resultado_fora_do_vocabulario_e_descartado(self):
@@ -2644,6 +2740,87 @@ class TestCertidoesPorParte:
         assert "tem_transcricao" in service.RESULTADO_COLUNAS_SEM_TEXTO
         assert "id" in service.RESULTADO_COLUNAS_SEM_TEXTO
         assert "status" in service.RESULTADO_COLUNAS_SEM_TEXTO
+
+
+class TestCertidoesPorCliente:
+    """`certidoes_por_parte`'s sibling for a card's titular (migration
+    116) — same shared `_resultados_das_consultas` body, keyed on
+    `cliente_id` instead of `atendimento_parte_id`."""
+
+    def test_sem_consultas_para_o_cliente_retorna_vazio(self):
+        db = _db(certidao_consultas=[], certidao_resultados=[])
+        assert service.certidoes_por_cliente(db, ORG, "cliente-1") == []
+
+    def test_agrega_resultados_das_consultas_do_cliente(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(cliente_id="cliente-1")],
+            certidao_resultados=[
+                _resultado(id="r1"), _resultado(id="r2", ordem=2, tipo="trf3"),
+            ],
+        )
+        rows = service.certidoes_por_cliente(db, ORG, "cliente-1")
+        assert {r["id"] for r in rows} == {"r1", "r2"}
+        assert rows[0]["consulta_nome"] == "João da Silva"
+
+    def test_nao_traz_consultas_de_outro_cliente(self):
+        db = _db(
+            certidao_consultas=[
+                _consulta_row(id="c-outra", cliente_id="cliente-2"),
+            ],
+            certidao_resultados=[_resultado(consulta_id="c-outra")],
+        )
+        assert service.certidoes_por_cliente(db, ORG, "cliente-1") == []
+
+    def test_inclui_situacao_cadastral_denormalizada(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(
+                cliente_id="cliente-1",
+                situacao_cadastral="ativa",
+                data_situacao="2026-08-01",
+                situacao_origem="manual",
+            )],
+            certidao_resultados=[_resultado(id="r1")],
+        )
+        rows = service.certidoes_por_cliente(db, ORG, "cliente-1")
+        assert rows[0]["consulta_situacao_cadastral"] == "ativa"
+        assert rows[0]["consulta_data_situacao"] == "2026-08-01"
+        assert rows[0]["consulta_situacao_origem"] == "manual"
+
+    def test_uma_consulta_ligada_por_vincular_parte_tambem_conta(self):
+        """`vincular_parte` denormalizes `cliente_id` too (migration 107) —
+        `certidoes_por_cliente` deliberately does not filter those out."""
+        db = _db(
+            certidao_consultas=[_consulta_row(
+                atendimento_parte_id="parte-9", cliente_id="cliente-1",
+            )],
+            certidao_resultados=[_resultado(id="r1")],
+        )
+        rows = service.certidoes_por_cliente(db, ORG, "cliente-1")
+        assert {r["id"] for r in rows} == {"r1"}
+
+
+class TestAtualizarSituacaoCadastral:
+    def test_grava_campos_e_estampa_origem_manual(self):
+        db = _db(certidao_consultas=[_consulta_row()])
+        updated = service.atualizar_situacao_cadastral(
+            db, ORG, "consulta-001",
+            {"situacao_cadastral": "baixada", "data_situacao": "2026-01-01"},
+        )
+        assert updated["situacao_cadastral"] == "baixada"
+        assert updated["data_situacao"] == "2026-01-01"
+        assert updated["situacao_origem"] == "manual"
+
+    def test_consulta_inexistente_retorna_none(self):
+        db = _db(certidao_consultas=[])
+        assert service.atualizar_situacao_cadastral(
+            db, ORG, "sumiu", {"situacao_cadastral": "ativa"}
+        ) is None
+
+    def test_consulta_de_outra_org_retorna_none(self):
+        db = _db(certidao_consultas=[_consulta_row(org_id=OTHER_ORG)])
+        assert service.atualizar_situacao_cadastral(
+            db, ORG, "consulta-001", {"situacao_cadastral": "ativa"}
+        ) is None
 
 
 class TestConfirmarResultado:

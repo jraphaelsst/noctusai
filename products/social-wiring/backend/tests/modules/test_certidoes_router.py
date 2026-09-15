@@ -1102,6 +1102,161 @@ class TestConfirmarOuCorrigirResultado:
         ).status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# The titular's own certidões (migration 116) — vincular_parte's sibling for
+# the one party it cannot reach.
+# ---------------------------------------------------------------------------
+
+CLIENTE_ID = "44444444-4444-4444-8444-444444444444"
+
+
+def _cliente(**overrides) -> dict:
+    row = {"id": CLIENTE_ID, "org_id": CALLER_ORG, "nome": "Titular"}
+    row.update(overrides)
+    return row
+
+
+class TestVincularCliente:
+    def test_vincula_o_titular_a_consulta(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("clientes", [_cliente()])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-cliente",
+            json={"cliente_id": CLIENTE_ID},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["cliente_id"] == CLIENTE_ID
+
+    def test_faz_fan_out_dos_tres_tipos_manuais(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("clientes", [_cliente()])
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-cliente",
+            json={"cliente_id": CLIENTE_ID},
+        )
+        tipos = {
+            r["tipo"]
+            for r in db.table("certidao_resultados").select("*").execute().data
+        }
+        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc"}
+
+    def test_fan_out_e_idempotente(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("clientes", [_cliente()])
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-cliente",
+            json={"cliente_id": CLIENTE_ID},
+        )
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-cliente",
+            json={"cliente_id": CLIENTE_ID},
+        )
+        rows = db.table("certidao_resultados").select("*").execute().data
+        assert len(rows) == 3
+
+    def test_cliente_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("clientes", [])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-cliente",
+            json={"cliente_id": CLIENTE_ID},
+        )
+        assert resp.status_code == 404
+
+    def test_cliente_de_outra_org_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("clientes", [_cliente(org_id=OTHER_ORG)])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-cliente",
+            json={"cliente_id": CLIENTE_ID},
+        )
+        assert resp.status_code == 404
+
+    def test_consulta_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("clientes", [_cliente()])
+        resp = client.post(
+            f"{BASE}/consultas/nao-existe/vincular-cliente",
+            json={"cliente_id": CLIENTE_ID},
+        )
+        assert resp.status_code == 404
+
+    def test_corpo_invalido_e_422(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-cliente", json={},
+        )
+        assert resp.status_code == 422
+
+
+class TestListarResultadosPorCliente:
+    def test_lista_certidoes_do_cliente(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(
+            db,
+            consultas=[_consulta(cliente_id=CLIENTE_ID)],
+            resultados=[_resultado(id="r1")],
+        )
+        data = client.get(f"{BASE}/clientes/{CLIENTE_ID}/resultados").json()["data"]
+        assert [r["id"] for r in data] == ["r1"]
+
+    def test_cliente_sem_consultas_retorna_lista_vazia(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        assert client.get(
+            f"{BASE}/clientes/{CLIENTE_ID}/resultados"
+        ).json()["data"] == []
+
+
+class TestAtualizarSituacaoCadastralRoute:
+    def test_grava_e_estampa_origem_manual(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        resp = client.patch(
+            f"{BASE}/consultas/consulta-001/situacao-cadastral",
+            json={"situacao_cadastral": "baixada", "data_situacao": "2026-01-01"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["situacao_cadastral"] == "baixada"
+        assert data["situacao_origem"] == "manual"
+
+    def test_situacao_invalida_e_422(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        resp = client.patch(
+            f"{BASE}/consultas/consulta-001/situacao-cadastral",
+            json={"situacao_cadastral": "nao_e_um_valor_valido"},
+        )
+        assert resp.status_code == 422
+
+    def test_corpo_vazio_e_422(self, client, certidoes_db):
+        """Unlike `confirmar_ou_corrigir_resultado`, there is no automated
+        writer to lock out here — an empty body has nothing to confirm."""
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        resp = client.patch(
+            f"{BASE}/consultas/consulta-001/situacao-cadastral", json={},
+        )
+        assert resp.status_code == 422
+
+    def test_consulta_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        resp = client.patch(
+            f"{BASE}/consultas/nao-existe/situacao-cadastral",
+            json={"situacao_cadastral": "ativa"},
+        )
+        assert resp.status_code == 404
+
+
 class TestObterUrlResultado:
     def test_chave_de_storage_e_assinada(self, client, certidoes_db):
         db, storage = certidoes_db

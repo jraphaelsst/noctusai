@@ -141,7 +141,9 @@ class CertidoesService:
     queued_tjsp_for_org: Callable
     tjsp_cooldown_status: Callable
     certidoes_por_parte: Callable
+    certidoes_por_cliente: Callable
     confirmar_resultado: Callable
+    atualizar_situacao_cadastral: Callable
     mint_resultado_url: Callable
     obter_transcricao_resultado: Callable
     renderizar_transcricao_pdf: Callable
@@ -169,7 +171,9 @@ def _build_default_service() -> CertidoesService:
         queued_tjsp_for_org=service.queued_tjsp_for_org,
         tjsp_cooldown_status=service.tjsp_cooldown_status,
         certidoes_por_parte=service.certidoes_por_parte,
+        certidoes_por_cliente=service.certidoes_por_cliente,
         confirmar_resultado=service.confirmar_resultado,
+        atualizar_situacao_cadastral=service.atualizar_situacao_cadastral,
         mint_resultado_url=service.mint_resultado_url,
         obter_transcricao_resultado=service.obter_transcricao_resultado,
         renderizar_transcricao_pdf=service.renderizar_transcricao_pdf,

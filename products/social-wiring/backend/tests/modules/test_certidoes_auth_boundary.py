@@ -38,6 +38,7 @@ _app.include_router(_certidoes_router_mod.router)
 _CONSULTA_ID = "consulta-001"
 _RESULTADO_ID = "resultado-001"
 _PARTE_ID = str(uuid4())
+_CLIENTE_ID = str(uuid4())
 
 
 def test_every_certidoes_route_requires_auth(anon_client):
@@ -59,6 +60,7 @@ def test_every_certidoes_route_requires_auth(anon_client):
             path.replace("{consulta_id}", _CONSULTA_ID)
             .replace("{resultado_id}", _RESULTADO_ID)
             .replace("{atendimento_parte_id}", _PARTE_ID)
+            .replace("{cliente_id}", _CLIENTE_ID)
         )
         kwargs = {}
         # PATCH and the two POST-with-a-JSON-body routes need a body;

@@ -15,10 +15,15 @@
     GET    /api/certidoes/partes/{id}/resultados          every certidão for one parte
     PATCH  /api/certidoes/resultados/{id}                 confirm/correct structured fields
     GET    /api/certidoes/resultados/{id}/url             LGPD-logged signed URL
+    POST   /api/certidoes/consultas/{id}/vincular-cliente attach to a card's titular
+    GET    /api/certidoes/clientes/{id}/resultados         every certidão for one cliente
+    PATCH  /api/certidoes/consultas/{id}/situacao-cadastral  manual registration-status entry
 
 Same paths as the ERP router this is ported from, because a live user's
-frontend calls them. The last four are new (migration 107) — the
-contract-automation slice's per-parte certidões surface.
+frontend calls them. The middle four are migration 107's contract-automation
+slice; the last three are migration 116's — the titular's own certidões
+(the card's `atendimento_parte_id`-less party) plus the manual entry point
+for a CNPJ/CPF's registration status.
 
 Auth: `Depends(get_current_user_org)` → `(user, token, org_id)`, per
 `KB § PATTERNS/backend/backend.md § Auth — canonical pattern`. The org is the
@@ -93,6 +98,8 @@ from app.modules.certidoes.registry import (
 from app.modules.certidoes.schemas import (
     ConsultaCreate,
     ResultadoPatch,
+    SituacaoCadastralPatch,
+    VincularClienteRequest,
     VincularParteRequest,
 )
 from app.responses import (
@@ -194,6 +201,45 @@ def _get_consulta_or_404(db, consulta_id: str, org_id: UUID, select: str = "*") 
     if not rows:
         raise HTTPException(status_code=404, detail="Consulta não encontrada")
     return rows[0]
+
+
+def _fan_out_tipos_manuais(db, consulta_id: str, org_id) -> None:
+    """Idempotently add a `pendente` placeholder resultado for each
+    manual-only type (Serasa, TJSP e-SAJ, TJSP e-PROC —
+    `registry.get_manual_tipos`) this consulta does not already carry.
+
+    Shared by `vincular_parte` and `vincular_cliente` (migration 116): both
+    attach a consulta to a person and both need the same manual-upload
+    targets to exist afterwards — the ten automated types get theirs from
+    `criar_consulta`'s own fan-out; these three have no API call to make one
+    from, so the upload endpoint always needs a resultado_id to target
+    before a human can use it.
+    """
+    # postgrest-unbounded-ok: at most ~13 resultados per consulta (10
+    # automated + 3 manual), the same bound every other resultados read in
+    # this router relies on.
+    existentes = (
+        db.table(RESULTADOS)
+        .select("tipo")
+        .eq("consulta_id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    tipos_existentes = {r["tipo"] for r in existentes}
+    novos = [
+        {
+            "consulta_id": consulta_id,
+            "org_id": str(org_id),
+            "tipo": tipo["tipo"],
+            "nome_display": tipo["nome"],
+            "ordem": tipo["ordem"],
+            "status": "pendente",
+        }
+        for tipo in get_manual_tipos()
+        if tipo["tipo"] not in tipos_existentes
+    ]
+    if novos:
+        db.table(RESULTADOS).insert(novos).execute()
 
 
 # --------------- Endpoints ---------------
@@ -788,31 +834,7 @@ async def vincular_parte(
     ).data or []
     consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
 
-    # postgrest-unbounded-ok: at most ~13 resultados per consulta (10
-    # automated + 3 manual), the same bound every other resultados read in
-    # this router relies on.
-    existentes = (
-        db.table(RESULTADOS)
-        .select("tipo")
-        .eq("consulta_id", consulta_id)
-        .eq("org_id", str(org_id))
-        .execute()
-    ).data or []
-    tipos_existentes = {r["tipo"] for r in existentes}
-    novos = [
-        {
-            "consulta_id": consulta_id,
-            "org_id": str(org_id),
-            "tipo": tipo["tipo"],
-            "nome_display": tipo["nome"],
-            "ordem": tipo["ordem"],
-            "status": "pendente",
-        }
-        for tipo in get_manual_tipos()
-        if tipo["tipo"] not in tipos_existentes
-    ]
-    if novos:
-        db.table(RESULTADOS).insert(novos).execute()
+    _fan_out_tipos_manuais(db, consulta_id, org_id)
 
     return success_response(consulta)
 
@@ -832,6 +854,98 @@ async def listar_resultados_por_parte(
     return success_response(
         svc.certidoes_por_parte(db, org_id, atendimento_parte_id)
     )
+
+
+@router.post("/consultas/{consulta_id}/vincular-cliente")
+async def vincular_cliente(
+    consulta_id: str,
+    body: VincularClienteRequest,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+):
+    """Attach a consulta to a card's TITULAR — `atendimentos.cliente_id` —
+    `vincular_parte`'s sibling for the one party it cannot reach: the
+    titular has no `atendimento_partes` row at all (migration 073's
+    header), so there is no party to resolve a `cliente_id` off; the
+    caller names it directly, and it is validated against THIS org's
+    `clientes` before it is written.
+
+    Also fans out the three manual-only placeholder types, exactly like
+    `vincular_parte` — see `_fan_out_tipos_manuais`.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    cliente_rows = (
+        db.table("clientes")
+        .select("id")
+        .eq("id", str(body.cliente_id))
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not cliente_rows:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    _get_consulta_or_404(db, consulta_id, org_id, select="id")
+
+    updated = (
+        db.table(CONSULTAS)
+        .update({"cliente_id": str(body.cliente_id)})
+        .eq("id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
+
+    _fan_out_tipos_manuais(db, consulta_id, org_id)
+
+    return success_response(consulta)
+
+
+@router.get("/clientes/{cliente_id}/resultados")
+async def listar_resultados_por_cliente(
+    cliente_id: str,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """Every certidão result across every consulta linked to one cliente —
+    `listar_resultados_por_parte`'s sibling for a card's titular, who has
+    no `atendimento_parte_id` to look up by."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    return success_response(
+        svc.certidoes_por_cliente(db, org_id, cliente_id)
+    )
+
+
+@router.patch("/consultas/{consulta_id}/situacao-cadastral")
+async def atualizar_situacao_cadastral_route(
+    consulta_id: str,
+    body: SituacaoCadastralPatch,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """A human's manual entry of the CNPJ/CPF's registration status
+    (migration 116) — `situacao_cadastral` / `data_situacao`, on the
+    CONSULTA, not any one resultado. Requires at least one field: an empty
+    body has nothing to confirm (unlike `confirmar_ou_corrigir_resultado`,
+    there is no automated writer for this field to lock out today)."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    campos = body.model_dump(exclude_unset=True, mode="json")
+    if not campos:
+        raise HTTPException(
+            status_code=422,
+            detail="Informe situacao_cadastral e/ou data_situacao.",
+        )
+    updated = svc.atualizar_situacao_cadastral(db, org_id, consulta_id, campos)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Consulta não encontrada")
+    return success_response(updated)
 
 
 @router.get("/resultados/{resultado_id}/transcricao")

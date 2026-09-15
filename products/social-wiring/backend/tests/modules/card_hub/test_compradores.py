@@ -545,6 +545,32 @@ class TestOLadoVendedor:
             assert r.status_code == 201, r.text
             assert r.json()["papel"] == "conjuge"
 
+    def test_antigo_proprietario_is_accepted_on_the_seller_side_only(
+        self, client, scoped
+    ):
+        """A PREVIOUS owner — due diligence needs their certidões whenever
+        the last registered sale is under 5 years old, but they sign
+        nothing on this deal. Seller-side only: a buyer has no "previous"
+        analogue."""
+        cid, _ = _titular(scoped)
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={
+                "nome": "Antigo Dono", "lado": "vendedor",
+                "papel": "antigo_proprietario",
+            },
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["papel"] == "antigo_proprietario"
+
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Alguem", "papel": "antigo_proprietario"},
+            headers=_auth(),
+        )
+        assert r.status_code == 400
+
     def test_an_unknown_lado_is_refused_rather_than_defaulted(self, client, scoped):
         """Silently falling back to the buyer side would file a seller under
         the buyers."""

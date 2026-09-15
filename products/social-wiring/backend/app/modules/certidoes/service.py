@@ -749,11 +749,19 @@ async def _analyze_estrutura_with_ai(
                         "Você é um analista jurídico. Leia esta certidão e "
                         "responda APENAS com um JSON (sem markdown, sem texto "
                         "adicional) com estas chaves: numero (string ou null), "
-                        "emitida_em (formato YYYY-MM-DD ou null), validade_ate "
-                        "(formato YYYY-MM-DD ou null), resultado (um destes "
-                        "valores exatos: negativa, positiva, "
-                        "positiva_com_efeito_de_negativa, nao_emitida — ou "
-                        "null se não for possível determinar com confiança)."
+                        "emitida_em (data de emissão do documento, formato "
+                        "YYYY-MM-DD ou null — se o documento não tiver uma "
+                        "data de emissão explícita, use a data da consulta/"
+                        "pesquisa quando o documento indicar uma, por exemplo "
+                        "um relatório Serasa), validade_ate (formato "
+                        "YYYY-MM-DD ou null), resultado (um destes valores "
+                        "exatos: negativa, positiva, "
+                        "positiva_com_efeito_de_negativa, nao_emitida, "
+                        "negativa_com_homonimos — este último quando o "
+                        "documento é negativo mas menciona homônimos ou "
+                        "multiplicidade de registros sob o mesmo nome/CPF que "
+                        "impedem confirmar a identidade com plena certeza — "
+                        "ou null se não for possível determinar com confiança)."
                     ),
                 },
                 {"role": "user", "content": text},
@@ -1994,27 +2002,31 @@ def queued_tjsp_for_org(org_id: Any, db) -> list[dict]:
 RESULTADO_ACESSOS = "certidao_resultado_acessos"
 
 
-def certidoes_por_parte(db, org_id, atendimento_parte_id: str) -> list[dict]:
-    """Every certidão result across every consulta linked to one party of an
-    atendimento — the per-parte certidões panel the contract-automation
-    slice reads.
+#: Every `certidao_consultas` column the per-person resultados readers below
+#: need — the identifying fields `certidoes_por_parte`/`certidoes_por_
+#: cliente` denormalize onto each resultado row, plus the migration 116
+#: registration-status fields (a fact about the document being
+#: investigated, worth showing alongside its certidões without a second
+#: round-trip).
+_CONSULTA_COLUNAS_RESUMO = (
+    "id, nome, documento, tipo_documento, "
+    "situacao_cadastral, data_situacao, situacao_origem"
+)
 
-    A consulta names a party via `atendimento_parte_id` (migration 107); a
-    resultado does not carry that column itself, only `consulta_id` — so this
-    is a two-step read (consultas for the parte, then their resultados), not
-    a single indexed lookup. Bounded like every other resultados read in this
-    module: a party realistically has one or two consultas over the life of
-    a deal, each with at most ~13 resultados (10 automated + 3 manual), well
-    under PostgREST's row cap.
+
+def _resultados_das_consultas(db, org_id, consultas: list[dict]) -> list[dict]:
+    """Every resultado across a set of already-fetched consultas,
+    denormalized with each parent consulta's identifying fields.
+
+    The shared body of `certidoes_por_parte` / `certidoes_por_cliente`,
+    which differ only in HOW they select their consultas (by
+    `atendimento_parte_id` vs. by `cliente_id`) — everything past that
+    point is the same two-step read (a resultado carries no `atendimento_
+    parte_id`/`cliente_id` of its own, only `consulta_id`) and the same
+    bound: a person realistically has one or two consultas over the life of
+    a deal, each with at most ~13 resultados (10 automated + 3 manual),
+    well under PostgREST's row cap.
     """
-    # postgrest-unbounded-ok: a handful of consultas per party, not 1 000.
-    consultas = (
-        db.table(CONSULTAS)
-        .select("id, nome, documento, tipo_documento")
-        .eq("org_id", str(org_id))
-        .eq("atendimento_parte_id", str(atendimento_parte_id))
-        .execute()
-    ).data or []
     if not consultas:
         return []
     consulta_by_id = {c["id"]: c for c in consultas}
@@ -2022,8 +2034,8 @@ def certidoes_por_parte(db, org_id, atendimento_parte_id: str) -> list[dict]:
     resultados: list[dict] = []
     for batch in in_batches(list(consulta_by_id)):
         # postgrest-unbounded-ok: batched by `in_batches` (200/batch), and a
-        # party's total resultado count across all its consultas stays in the
-        # low tens in practice.
+        # person's total resultado count across all their consultas stays in
+        # the low tens in practice.
         # Migration 113: this panel polls like the consulta-detail screen
         # does — never `select("*")` here, or the certidão text rides along.
         rows = (
@@ -2038,12 +2050,96 @@ def certidoes_por_parte(db, org_id, atendimento_parte_id: str) -> list[dict]:
             consulta = consulta_by_id.get(r["consulta_id"], {})
             r["consulta_nome"] = consulta.get("nome")
             r["consulta_documento"] = consulta.get("documento")
-            # Already selected above; the contract generator groups a party's
-            # PF (cpf) and company (cnpj) certidões by it — never guessed from
-            # the document's digit count.
+            # Already selected above; the contract generator groups a
+            # person's PF (cpf) and company (cnpj) certidões by it — never
+            # guessed from the document's digit count.
             r["consulta_tipo_documento"] = consulta.get("tipo_documento")
+            r["consulta_situacao_cadastral"] = consulta.get("situacao_cadastral")
+            r["consulta_data_situacao"] = consulta.get("data_situacao")
+            r["consulta_situacao_origem"] = consulta.get("situacao_origem")
             resultados.append(r)
     return resultados
+
+
+def certidoes_por_parte(db, org_id, atendimento_parte_id: str) -> list[dict]:
+    """Every certidão result across every consulta linked to one party of an
+    atendimento — the per-parte certidões panel the contract-automation
+    slice reads.
+
+    A consulta names a party via `atendimento_parte_id` (migration 107); see
+    `_resultados_das_consultas` for the shared two-step read this and
+    `certidoes_por_cliente` both run.
+    """
+    # postgrest-unbounded-ok: a handful of consultas per party, not 1 000.
+    consultas = (
+        db.table(CONSULTAS)
+        .select(_CONSULTA_COLUNAS_RESUMO)
+        .eq("org_id", str(org_id))
+        .eq("atendimento_parte_id", str(atendimento_parte_id))
+        .execute()
+    ).data or []
+    return _resultados_das_consultas(db, org_id, consultas)
+
+
+def certidoes_por_cliente(db, org_id, cliente_id: str) -> list[dict]:
+    """Every certidão result across every consulta linked to a `clientes`
+    row — `certidoes_por_parte`'s sibling for the one party it cannot reach:
+    a card's TITULAR, named by `atendimentos.cliente_id`, has no
+    `atendimento_parte_id` row to key off at all (migration 073's header).
+    `routers/certidoes.py::vincular_cliente` (migration 116) is what links a
+    consulta this way.
+
+    Filters `certidao_consultas.cliente_id` directly rather than through
+    `atendimento_partes` — and deliberately does NOT exclude a consulta that
+    ALSO carries an `atendimento_parte_id` (set by `vincular_parte`, which
+    denormalizes `cliente_id` too, per migration 107's header): the
+    certidão still belongs to this person either way, and a caller asking
+    "every certidão for this cliente" wants both.
+    """
+    # postgrest-unbounded-ok: a handful of consultas per cliente, not 1 000.
+    consultas = (
+        db.table(CONSULTAS)
+        .select(_CONSULTA_COLUNAS_RESUMO)
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .execute()
+    ).data or []
+    return _resultados_das_consultas(db, org_id, consultas)
+
+
+def atualizar_situacao_cadastral(db, org_id, consulta_id: str, campos: dict) -> Optional[dict]:
+    """A human's manual entry of the CNPJ/CPF's registration status
+    (migration 116) — `situacao_cadastral` / `data_situacao` on the
+    CONSULTA. Stamps `situacao_origem='manual'` alongside whatever subset of
+    the two fields `campos` carries (`SituacaoCadastralPatch(...).model_dump
+    (exclude_unset=True)` — the router refuses an empty `campos` with a 422
+    before this is ever called, unlike `confirmar_resultado`'s deliberate
+    empty-body-is-a-confirmation shape: there is no automated writer for
+    this field today (see migration 116's header for what was checked and
+    found absent in the API/IA payloads this module already receives), so an
+    empty PATCH here has nothing to confirm.
+
+    Returns `None` when the consulta does not exist in this org — the router
+    turns that into the 404, same shape as `confirmar_resultado`.
+    """
+    existing = (
+        db.table(CONSULTAS)
+        .select("id")
+        .eq("id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not existing:
+        return None
+    patch = {**campos, "situacao_origem": "manual"}
+    updated = (
+        db.table(CONSULTAS)
+        .update(patch)
+        .eq("id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    return updated[0] if updated else None
 
 
 def confirmar_resultado(
@@ -2247,7 +2343,9 @@ __all__ = [
     "TJSP_COOLDOWN_SECONDS",
     "TJSP_TIPO",
     "ExtractedPdfText",
+    "atualizar_situacao_cadastral",
     "cancelar_processamento",
+    "certidoes_por_cliente",
     "certidoes_por_parte",
     "check_required_credentials",
     "confirmar_resultado",

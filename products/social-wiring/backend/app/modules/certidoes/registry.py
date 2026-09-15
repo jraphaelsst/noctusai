@@ -26,13 +26,22 @@ from app.modules.certidoes.credentials import (
 )
 
 #: The `resultado` vocabulary — kept in sync BY HAND with migration 107's
-#: `certidao_resultados_resultado_check` and `schemas.ResultadoPatch`'s
-#: `Literal`. Not a shared import across those three because two of them
-#: (SQL, Pydantic) cannot import a Python frozenset; this is the same
-#: duplicated-but-documented vocabulary `genero`'s `M`/`F` already lives with
-#: elsewhere in this schema.
+#: `certidao_resultados_resultado_check` (widened by migration 116 to add
+#: `negativa_com_homonimos`) and `schemas.ResultadoPatch`'s `Literal`. Not a
+#: shared import across those three because two of them (SQL, Pydantic)
+#: cannot import a Python frozenset; this is the same duplicated-but-documented
+#: vocabulary `genero`'s `M`/`F` already lives with elsewhere in this schema.
+#:
+#: `negativa_com_homonimos` (migration 116): a negativa whose document itself
+#: says so ONLY WITH A CAVEAT — the source found no record for this exact
+#: identity, but flags that OTHER records exist under the same name/CPF that
+#: could not be ruled out (a homônimo). That is materially different due-
+#: diligence information from a clean `negativa` and must not be collapsed
+#: into it; see `service._analyze_estrutura_with_ai`'s prompt, the one place
+#: today capable of reading that caveat off the document text.
 RESULTADO_VALUES = frozenset({
     "negativa", "positiva", "positiva_com_efeito_de_negativa", "nao_emitida",
+    "negativa_com_homonimos",
 })
 
 # --------------- Certificate Registry ---------------
@@ -107,7 +116,7 @@ CERTIDOES_CONFIG = [
         "endpoint": "cenprot-sp/protestos",
         "ordem": 8,
         "params_fn": "simples",
-        "parse_fn": "padrao",
+        "parse_fn": "cenprot",
         "response_format": "html",
     },
     {
@@ -337,8 +346,54 @@ def _parse_resultado_padrao(raw_response: dict) -> dict:
     return out
 
 
+def _cenprot_protocolo_date(protocolo: Any) -> Optional[str]:
+    """The CENPROT protocol number's own date prefix, `YYMMDD` (20YY).
+
+    A CENPROT 200 ("protests found") `data[0]` carries no `data_emissao` /
+    `data_consulta` field at all — verified against this module's own
+    fixtures (`tests/modules/test_certidoes_service.py`, 2026-09-15) — only
+    `protocolo_consulta`, whose first six digits ARE the date the consulta
+    ran, per InfoSimples' own numbering for this endpoint. This is "the
+    consulta/protocol date" the office named as an acceptable substitute for
+    a printed emission date on a source that has no such date itself (see
+    `_parse_resultado_cenprot`).
+
+    `None` on anything that does not look like that shape — a malformed or
+    unexpectedly-shaped protocol must fall through to "undetermined", never
+    a guessed date."""
+    if not isinstance(protocolo, str) or len(protocolo) < 6 or not protocolo[:6].isdigit():
+        return None
+    try:
+        return datetime.strptime(protocolo[:6], "%y%m%d").date().isoformat()
+    except ValueError:
+        return None
+
+
+def _parse_resultado_cenprot(raw_response: dict) -> dict:
+    """`_parse_resultado_padrao`, plus CENPROT's own fallback for the one
+    date field the generic reader cannot find on this endpoint: when no
+    `emitida_em` came off `data_emissao`/`data_consulta` (there is neither
+    on a CENPROT response), derive it from `protocolo_consulta`'s date
+    prefix instead — see `_cenprot_protocolo_date`.
+
+    A 612 ("nada consta") response has no `protocolo_consulta` either (see
+    `_cenprot_protocolo_consulta`'s own docstring), so this naturally adds
+    nothing for that case — `parse_resultado` never calls a `parse_fn` for
+    a `nada_consta` result in the first place.
+    """
+    out = _parse_resultado_padrao(raw_response)
+    if "emitida_em" not in out:
+        data = (raw_response or {}).get("data") or []
+        if data and isinstance(data[0], dict):
+            derived = _cenprot_protocolo_date(data[0].get("protocolo_consulta"))
+            if derived:
+                out["emitida_em"] = derived
+    return out
+
+
 PARSE_BUILDERS = {
     "padrao": _parse_resultado_padrao,
+    "cenprot": _parse_resultado_cenprot,
 }
 
 
