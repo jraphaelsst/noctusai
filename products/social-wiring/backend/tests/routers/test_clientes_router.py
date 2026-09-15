@@ -556,6 +556,46 @@ class TestPatchCliente:
         assert payload["data_nascimento"] == "1990-05-15"
         assert isinstance(payload["data_nascimento"], str)
 
+    def test_patch_data_casamento_is_accepted_and_stamps_manual_origin(
+        self, client, scoped
+    ):
+        """Migration 117 (contract F6). `data_casamento` rides the exact
+        `mode="json"` fix above — same `Optional[date]` shape — plus the
+        server-stamped `_origem`/`_documento_id`/`_em` triple every other
+        machine-or-hand field gets (`data_nascimento`/`genero`/`cpf`/`rg`)."""
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"data_casamento": "2010-03-12"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+
+        payload = scoped.table("clientes").updated_payloads[-1]
+        import json as _json
+
+        _json.dumps(payload)
+        assert payload["data_casamento"] == "2010-03-12"
+        assert isinstance(payload["data_casamento"], str)
+        assert payload["data_casamento_origem"] == "manual"
+        assert payload["data_casamento_documento_id"] is None
+
+    def test_patch_data_casamento_origem_is_not_accepted_from_the_body(
+        self, client, scoped
+    ):
+        """Provenance is the server's to stamp — same discipline every
+        other extracted field enforces (`extra='forbid'` catches an unknown
+        key outright)."""
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"data_casamento": "2010-03-12", "data_casamento_origem": "certidao_casamento"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 422, resp.text
+
     def test_patch_extra_field_rejected(self, client, scoped):
         """`StrictHttpModel`'s `extra='forbid'` — a raw `arquivado_em` in
         the body must 422, not silently write an arbitrary timestamp."""

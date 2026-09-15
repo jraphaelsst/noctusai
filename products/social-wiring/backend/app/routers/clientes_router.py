@@ -296,6 +296,12 @@ class ClientePatchBody(StrictHttpModel):
     #: (CC art. 1.647), so this is not a preference field.
     estado_civil: Optional[str] = None
     regime_bens: Optional[str] = None
+    #: Migration 117 (contract F6). The marriage CELEBRATION date — the
+    #: office's generated instrument cites Lei 6.515/77 differently depending
+    #: on which side of 26/12/1977 it falls. `data_casamento_origem` is NOT
+    #: accepted, exactly like `data_nascimento_origem`: it is also read off a
+    #: certidão de casamento, so its provenance is the server's to stamp.
+    data_casamento: Optional[date] = None
     #: The spouse's OWN clientes row, so they get the same checklist, uploads
     #: and extraction as any other signatory. A name in TEXT signs nothing.
     conjuge_cliente_id: Optional[UUID] = None

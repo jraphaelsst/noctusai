@@ -1134,6 +1134,9 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
         "endereco_cep", "endereco_logradouro", "endereco_numero",
         "endereco_complemento", "endereco_bairro", "endereco_cidade",
         "endereco_uf",
+        # 117 (contract F6) — the marriage celebration date. A checklist item
+        # like data_nascimento/genero/cpf/rg above, on the same terms.
+        "data_casamento",
     }
     payload = {k: v for k, v in updates.items() if k in allowed}
     if not payload:
@@ -1183,6 +1186,15 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
             payload[f"{campo}_origem"] = "manual" if payload[campo] else None
             payload[f"{campo}_documento_id"] = None
             payload[f"{campo}_em"] = _now() if payload[campo] else None
+
+    # 🔴 Identical treatment for `data_casamento` (migration 117, contract
+    # F6) — the same "a typed value must outrank every later extraction"
+    # rule `data_nascimento` established above, on a field that is ALSO read
+    # off a document (certidao_casamento).
+    if "data_casamento" in payload:
+        payload["data_casamento_origem"] = "manual" if payload["data_casamento"] else None
+        payload["data_casamento_documento_id"] = None
+        payload["data_casamento_em"] = _now() if payload["data_casamento"] else None
 
     payload["updated_at"] = _now()
     resp = (

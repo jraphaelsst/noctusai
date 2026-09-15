@@ -53,12 +53,51 @@ Portuguese words with far more reasons to appear loose in prose than a sex
 word does, so accepting them unlabelled would be a guess wearing a
 confidence score. A document that simply does not carry the field returns
 `(None, "nenhuma", None)`.
+
+🔴 CONTRACT F6 — TWO DATES, NEITHER OF THEM `birthdate.py`'S PROBLEM
+----------------------------------------------------------------------
+`find_data_casamento` / `find_data_emissao` (social-wiring migration 117)
+answer questions `birthdate.py` never had to: the office's generated
+instrument cites Lei 6.515/77 differently depending on which side of
+26/12/1977 the marriage CELEBRATION fell, and a certidão de estado civil
+must be under 90 days old AS OF SIGNING — which needs the certidão's own
+ISSUANCE date, not the marriage date.
+
+They are label-anchored the same way every function above is, with the
+same "never guess" discipline: `find_data_casamento` accepts a REGISTRO
+date only when it is itself explicitly labelled (never inferred from an
+unlabelled date the way `find_estado_civil` infers "casado" from a bare
+regime phrase — a wrong marriage date changes which law an instrument
+cites, so the bar here is higher, not the same). `find_data_emissao`
+falls back to the document's LAST dated line (the cartório's closing
+signature) only when no explicit "emitida em" label exists, and types
+that fallback `baixa` — a position-based guess, same posture
+`birthdate.find_birthdate` takes for its own single unlabelled candidate.
+
+🔴 WHY THE DATE PARSING IS NOT SHARED WITH `birthdate.py`
+------------------------------------------------------------
+The two numeric/semi-extenso regexes below overlap what `birthdate.py`
+already has. Not extracted into a shared `documents/dates.py` here: this
+slice's scope is `types.py` + `civil_status.py` only (social-wiring
+migration 117's dispatch), and factoring a shared module means editing
+`birthdate.py`, which is out of scope for it. Recurrence is at N=2 —
+`KB § PATTERNS/architect/project-execution.md`'s own threshold for
+"triage", not yet "must formalize" — surfaced as a scoped-improvement
+rather than silently duplicated.
+
+What genuinely IS new here, because no certidão-adjacent parser needed it
+before: a certidão frequently spells the WHOLE date in words — "doze de
+março de dois mil e dez" — not just the month the way `birthdate.py`'s
+semi-extenso form does. `_extenso_prefixo` is a small additive Portuguese
+cardinal-number parser, bounded to what a date needs (a day 1-31, a year
+in the low thousands), not a general-purpose number-to-words module.
 """
 from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Optional
+from datetime import date
+from typing import Optional, Sequence
 
 from noctusai_lib.integrations.documents.labels import Achado, label_before
 
@@ -315,9 +354,320 @@ def find_estado_civil(text: str) -> tuple[Optional[str], str, Optional[str]]:
     return (None, "nenhuma", None)
 
 
+# ─── Dates (contract F6) ──────────────────────────────────────────────────
+#
+# See the module docstring's "CONTRACT F6" and "WHY THE DATE PARSING IS NOT
+# SHARED WITH birthdate.py" sections for what these answer and why the
+# numeric/semi-extenso forms below are a deliberate, flagged N=2 with
+# `birthdate.py` rather than a shared primitives module.
+
+_MESES: dict[str, int] = {
+    "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4,
+    "MAIO": 5, "JUNHO": 6, "JULHO": 7, "AGOSTO": 8,
+    "SETEMBRO": 9, "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12,
+}
+
+#: Portuguese cardinal-number tables, additive: UNIDADES/DEZENAS/CENTENAS sum
+#: into a running total, MIL multiplies whatever precedes it. Bounded to what
+#: a day (1-31) and a year (low thousands) need — not a general number-to-
+#: words module.
+_UNIDADES: dict[str, int] = {
+    "UM": 1, "UMA": 1, "DOIS": 2, "DUAS": 2, "TRES": 3, "QUATRO": 4,
+    "CINCO": 5, "SEIS": 6, "SETE": 7, "OITO": 8, "NOVE": 9,
+    "DEZ": 10, "ONZE": 11, "DOZE": 12, "TREZE": 13,
+    "CATORZE": 14, "QUATORZE": 14, "QUINZE": 15,
+    "DEZESSEIS": 16, "DEZESSETE": 17, "DEZOITO": 18, "DEZENOVE": 19,
+}
+_DEZENAS: dict[str, int] = {
+    "VINTE": 20, "TRINTA": 30, "QUARENTA": 40, "CINQUENTA": 50,
+    "SESSENTA": 60, "SETENTA": 70, "OITENTA": 80, "NOVENTA": 90,
+}
+_CENTENAS: dict[str, int] = {
+    "CEM": 100, "CENTO": 100, "DUZENTOS": 200, "TREZENTOS": 300,
+    "QUATROCENTOS": 400, "QUINHENTOS": 500, "SEISCENTOS": 600,
+    "SETECENTOS": 700, "OITOCENTOS": 800, "NOVECENTOS": 900,
+}
+
+
+def _extenso_prefixo(tokens: Sequence[str]) -> tuple[Optional[int], int]:
+    """Parse the number-word PREFIX of `tokens` (already normalised, split on
+    whitespace). Returns `(valor, quantidade_consumida)` — `valor` is `None`
+    when `tokens` does not begin with a recognised number word at all.
+
+    `E` is consumed only when it genuinely connects two number words —
+    peeked, never swallowed speculatively — so "TRES E MEIA HORAS DEPOIS"
+    (unrelated prose following a year) does not eat the "E" and then stop
+    with `visto=True` on a value that never included it.
+    """
+    total = 0
+    atual = 0
+    i = 0
+    visto = False
+    n = len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if tok == "E":
+            proximo = tokens[i + 1] if i + 1 < n else ""
+            if proximo in _UNIDADES or proximo in _DEZENAS or proximo in _CENTENAS or proximo == "MIL":
+                i += 1
+                continue
+            break
+        if tok == "MIL":
+            atual = atual or 1
+            total += atual * 1000
+            atual = 0
+            visto = True
+            i += 1
+            continue
+        if tok in _CENTENAS:
+            atual += _CENTENAS[tok]
+            visto = True
+            i += 1
+            continue
+        if tok in _DEZENAS:
+            atual += _DEZENAS[tok]
+            visto = True
+            i += 1
+            continue
+        if tok in _UNIDADES:
+            atual += _UNIDADES[tok]
+            visto = True
+            i += 1
+            continue
+        break
+    if not visto:
+        return (None, 0)
+    return (total + atual, i)
+
+
+def _gerar_dias_por_extenso() -> dict[str, int]:
+    """Every spelled-out day 1-31, built from the same UNIDADES/DEZENAS
+    tables the year parser uses, rather than 31 hand-written entries."""
+    dias: dict[str, int] = {}
+    for palavra, valor in _UNIDADES.items():
+        if 1 <= valor <= 19:
+            dias.setdefault(palavra, valor)
+    for palavra, valor in _DEZENAS.items():
+        if valor not in (20, 30):
+            continue
+        dias[palavra] = valor
+        for u_palavra, u_valor in _UNIDADES.items():
+            if 1 <= u_valor <= 9:
+                dias[f"{palavra} E {u_palavra}"] = valor + u_valor
+    return dias
+
+
+_DIAS_POR_EXTENSO: dict[str, int] = _gerar_dias_por_extenso()
+
+_NUMERIC_DATE = re.compile(r"\b(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{4})\b")
+_SEMI_EXTENSO_DATE = re.compile(
+    r"\b(\d{1,2})\s+DE\s+(" + "|".join(_MESES) + r")\s+DE\s+(\d{4})\b"
+)
+_EXTENSO_DATE = re.compile(
+    r"\b(" + "|".join(sorted(_DIAS_POR_EXTENSO, key=len, reverse=True)) + r")"
+    r"\s+DE\s+(" + "|".join(_MESES) + r")\s+DE\s+"
+    r"([A-Z]+(?:\s+[A-Z]+){0,6})"
+)
+
+#: No client's marriage or certidão plausibly predates this — the same role
+#: `birthdate.MIN_AGE` plays, guarding against an OCR digit confusion
+#: producing a well-formed but wrong year.
+_ANO_MINIMO = 1900
+
+
+def _iter_datas(norm: str):
+    """Every parseable date in `norm` (already `normalize()`d) as
+    `(offset, date)`, across the three forms a certidão uses: numeric
+    (`12/03/2010`), semi-extenso (`12 DE MARCO DE 2010`) and fully extenso
+    (`DOZE DE MARCO DE DOIS MIL E DEZ`). Malformed values (day 32, a year
+    word sequence that fails to parse at all) are skipped, not raised — the
+    same posture `birthdate._iter_dates` takes."""
+    for m in _NUMERIC_DATE.finditer(norm):
+        dia, mes, ano = (int(g) for g in m.groups())
+        try:
+            yield (m.start(), date(ano, mes, dia))
+        except ValueError:
+            continue
+    for m in _SEMI_EXTENSO_DATE.finditer(norm):
+        dia, mes_nome, ano = int(m.group(1)), m.group(2), int(m.group(3))
+        try:
+            yield (m.start(), date(ano, _MESES[mes_nome], dia))
+        except ValueError:
+            continue
+    for m in _EXTENSO_DATE.finditer(norm):
+        dia = _DIAS_POR_EXTENSO[m.group(1)]
+        mes = _MESES[m.group(2)]
+        ano, _consumidos = _extenso_prefixo(m.group(3).split())
+        if ano is None:
+            continue
+        try:
+            yield (m.start(), date(ano, mes, dia))
+        except ValueError:
+            continue
+
+
+def _plausivel(d: date, today: date) -> bool:
+    return _ANO_MINIMO <= d.year and d <= today
+
+
+def _rotulo_data(
+    haystack: str, at: int, *, labels: Sequence[str], decoys: Sequence[str] = ()
+) -> Achado:
+    """Same shared label-window mechanism every function above uses —
+    `labels.label_before`, not a bespoke copy. `decoys` are passed as
+    `valores`: a different KIND of date (an emission date competing with a
+    celebration date, or vice-versa) is rejected outright, not demoted —
+    there is no "different person" block-ambiguity for a document-level
+    date the way there is for `estado_civil`."""
+    return label_before(haystack, at, labels=labels, blocos=(), valores=decoys, window=_LABEL_WINDOW)
+
+
+#: Celebration-date labels. Longest/most-specific alternatives listed first
+#: is not required here (unlike `birthdate._BIRTH_LABELS`) since
+#: `label_before` itself already prefers the label that ends latest, then the
+#: longest, on a tie.
+_CASAMENTO_LABELS = (
+    "CASARAM-SE EM", "CASARAM SE EM", "DATA DO CASAMENTO", "DATA DE CASAMENTO",
+    "CASADOS EM", "CONTRAIRAM CASAMENTO EM", "CONTRAIU CASAMENTO EM",
+)
+#: Used ONLY when no celebration-date label exists anywhere in the document —
+#: see `find_data_casamento`'s "never guess" note. Still requires an explicit
+#: label of its own; an unlabelled date is never accepted as the registro.
+_CASAMENTO_LABELS_FALLBACK = (
+    "DATA DE REGISTRO", "DATA DO REGISTRO", "REGISTRADO EM", "REGISTRO EM",
+)
+_CASAMENTO_DECOYS = (
+    "DATA DE NASCIMENTO", "DATA NASCIMENTO",
+    "EMITIDA EM", "EMITIDO EM", "DATA DE EMISSAO", "DATA EMISSAO",
+)
+
+_EMISSAO_LABELS = ("EMITIDA EM", "EMITIDO EM", "DATA DE EMISSAO", "DATA EMISSAO")
+_EMISSAO_DECOYS = (
+    "DATA DE NASCIMENTO", "DATA NASCIMENTO",
+    "DATA DO CASAMENTO", "DATA DE CASAMENTO", "CASARAM-SE EM", "CASARAM SE EM",
+)
+
+
+def find_data_casamento(
+    text: str, *, today: Optional[date] = None
+) -> tuple[Optional[date], str, Optional[str]]:
+    """Extract the marriage CELEBRATION date off a certidão de casamento.
+
+    Returns `(value, confidence, matched_label)` — value one of the three
+    date forms `_iter_datas` recognises, confidence one of `"alta"` /
+    `"nenhuma"` (never `"baixa"`: unlike a birthdate, a wrong marriage date
+    changes which side of Lei 6.515/77's 26/12/1977 line the office's
+    generated instrument cites, so there is no unlabelled-guess tier here —
+    see the module docstring).
+
+    Resolution order:
+
+    1. **A celebration-date label** ("casaram-se em", "data do casamento", …).
+       Several labelled dates that agree are still `alta`; several that
+       disagree report `nenhuma` — the layout was misread, not updated (a
+       marriage date does not change over time the way `estado_civil` does,
+       so there is no averbação-precedence rule to apply here).
+    2. **A registro-date label**, used ONLY when step 1 found nothing. Still
+       requires its OWN explicit label — "registro date fallback only if
+       clearly labelled": an unlabelled date is never promoted to the
+       registro date by position alone.
+
+    A document carrying neither is legible with the field simply absent —
+    `(None, "nenhuma", None)`, never a guess.
+    """
+    today = today or date.today()
+    norm = normalize(text or "")
+    if not norm:
+        return (None, "nenhuma", None)
+
+    def _rotuladas(
+        labels: Sequence[str], *, extra_decoys: Sequence[str] = ()
+    ) -> list[tuple[date, str]]:
+        # `extra_decoys` is the OTHER label set — a nearer, more-specific
+        # label (e.g. "DATA DE REGISTRO" sitting right next to its own date)
+        # must block a farther, merely-in-window primary label from claiming
+        # that date too. Same "different KIND of value" rejection
+        # `_CASAMENTO_DECOYS` already does for emission-date labels.
+        decoys = tuple(_CASAMENTO_DECOYS) + tuple(extra_decoys)
+        achadas: list[tuple[date, str]] = []
+        for offset, valor in _iter_datas(norm):
+            if not _plausivel(valor, today):
+                continue
+            achado = _rotulo_data(norm, offset, labels=labels, decoys=decoys)
+            if achado.rejeitado or achado.rotulo is None:
+                continue
+            achadas.append((valor, achado.rotulo))
+        return achadas
+
+    primarias = _rotuladas(_CASAMENTO_LABELS, extra_decoys=_CASAMENTO_LABELS_FALLBACK)
+    if primarias:
+        distintas = {v for v, _ in primarias}
+        if len(distintas) == 1:
+            return (primarias[0][0], "alta", primarias[0][1])
+        return (None, "nenhuma", None)
+
+    secundarias = _rotuladas(_CASAMENTO_LABELS_FALLBACK, extra_decoys=_CASAMENTO_LABELS)
+    if secundarias:
+        distintas = {v for v, _ in secundarias}
+        if len(distintas) == 1:
+            return (secundarias[0][0], "alta", secundarias[0][1])
+        return (None, "nenhuma", None)
+
+    return (None, "nenhuma", None)
+
+
+def find_data_emissao(
+    text: str, *, today: Optional[date] = None
+) -> tuple[Optional[date], str, Optional[str]]:
+    """Extract the certidão's OWN issuance date — when the cartório closed
+    it, not a fact about the holder. Read off `certidao_casamento` AND
+    `certidao_nascimento` alike; see `types.IdentityFields.data_emissao` for
+    why this rides on the document rather than promoting to `clientes`.
+
+    Resolution order:
+
+    1. **An explicit label** ("emitida em", "emitido em", "data de emissão").
+       Several that agree are `alta`; several that disagree are `nenhuma`.
+    2. **The document's LAST dated line** — the cartório's closing signature,
+       used only when step 1 found nothing. Genuinely a guess by position,
+       so it is typed `baixa` and never written unattended — the same
+       posture `birthdate.find_birthdate` takes for a single unlabelled
+       candidate.
+
+    A document carrying no date at all is `(None, "nenhuma", None)`.
+    """
+    today = today or date.today()
+    norm = normalize(text or "")
+    if not norm:
+        return (None, "nenhuma", None)
+
+    candidatas = [
+        (offset, valor) for offset, valor in _iter_datas(norm) if _plausivel(valor, today)
+    ]
+    if not candidatas:
+        return (None, "nenhuma", None)
+
+    rotuladas: list[tuple[date, str]] = []
+    for offset, valor in candidatas:
+        achado = _rotulo_data(norm, offset, labels=_EMISSAO_LABELS, decoys=_EMISSAO_DECOYS)
+        if achado.rotulo is not None and not achado.rejeitado:
+            rotuladas.append((valor, achado.rotulo))
+
+    if rotuladas:
+        distintas = {v for v, _ in rotuladas}
+        if len(distintas) == 1:
+            return (rotuladas[0][0], "alta", rotuladas[0][1])
+        return (None, "nenhuma", None)
+
+    _ultimo_offset, ultimo_valor = max(candidatas, key=lambda c: c[0])
+    return (ultimo_valor, "baixa", "FECHAMENTO_CARTORIO")
+
+
 __all__ = [
     "ESTADO_CIVIL_VALORES",
     "REGIME_BENS_VALORES",
+    "find_data_casamento",
+    "find_data_emissao",
     "find_estado_civil",
     "find_regime_bens",
     "normalize",

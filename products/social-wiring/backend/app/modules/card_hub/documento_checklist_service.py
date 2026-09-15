@@ -644,10 +644,18 @@ _ESTADO_CIVIL_LEGADO: dict[str, str] = {
 #: this stricter surface reads.
 _COLUNAS_QUALIFICACAO_CONTRATO: tuple[str, ...] = (
     "id", "nome_completo", "nome", "nome_oficial", "nacionalidade",
-    "profissao", "estado_civil", "regime_bens", "conjuge_cliente_id",
+    "profissao", "estado_civil", "regime_bens", "data_casamento",
+    "conjuge_cliente_id",
     "cpf", "rg", "rg_orgao_expedidor",
     *_ENDERECO_CAMPOS_OBRIGATORIOS,
 )
+
+#: Migration 117 (contract F6). The office's Lei 6.515/77 citation depends on
+#: which side of 26/12/1977 the marriage fell — a `casado` party the
+#: instrument cannot cite correctly without this date. Deliberately NARROWER
+#: than `_ESTADOS_QUE_EXIGEM_CONJUGE`: a `uniao_estavel` party has no
+#: "casamento" to date, so it is not required there.
+_ESTADO_QUE_EXIGE_DATA_CASAMENTO = "casado"
 
 
 def _estado_civil_normalizado(valor: Optional[str]) -> Optional[str]:
@@ -699,6 +707,11 @@ def _faltantes_qualificacao(cliente: dict) -> list[str]:
     ):
         faltando.append("regime_bens")
 
+    if estado_civil == _ESTADO_QUE_EXIGE_DATA_CASAMENTO and not _preenchido(
+        cliente.get("data_casamento")
+    ):
+        faltando.append("data_casamento")
+
     return faltando
 
 
@@ -743,12 +756,22 @@ def completude_contratual(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             if conjuge_faltando:
                 faltando.append("conjuge_qualificacao")
 
+    # Migration 117 (contract F6). Informational, not a `faltando` gate: the
+    # office's 90-day-freshness rule is checked AT SIGNING by the contract
+    # generator (out of this module's scope), not here — this only surfaces
+    # the fact the generator needs. `None` when the party has no qualifying
+    # certidão with a recorded emission date yet.
+    certidao_estado_civil = identidade_svc.certidao_estado_civil_mais_recente(
+        client, org_id, cliente_id
+    )
+
     return {
         "cliente_id": str(cliente_id),
         "estado_civil": estado_civil,
         "completo": not faltando,
         "faltando": faltando,
         "conjuge": conjuge_info,
+        "certidao_estado_civil": certidao_estado_civil,
     }
 
 

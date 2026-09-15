@@ -176,12 +176,12 @@ class TestConjugeExigidoQuandoCasado:
             [
                 _qualificado(
                     cid, estado_civil="casado", regime_bens="comunhao_parcial",
-                    conjuge_cliente_id=esposa,
+                    conjuge_cliente_id=esposa, data_casamento="2010-03-12",
                 ),
                 _qualificado(
                     esposa, estado_civil="casado", regime_bens="comunhao_parcial",
                     conjuge_cliente_id=cid, nome_oficial="Maria da Silva",
-                    cpf="123.456.789-09",
+                    cpf="123.456.789-09", data_casamento="2010-03-12",
                 ),
             ],
         )
@@ -200,12 +200,12 @@ class TestConjugeExigidoQuandoCasado:
             [
                 _qualificado(
                     cid, estado_civil="casado", regime_bens="comunhao_parcial",
-                    conjuge_cliente_id=esposa,
+                    conjuge_cliente_id=esposa, data_casamento="2010-03-12",
                 ),
                 _qualificado(
                     esposa, estado_civil="casado", regime_bens="comunhao_parcial",
                     conjuge_cliente_id=cid, nome_oficial="Maria da Silva",
-                    cpf="123.456.789-09",
+                    cpf="123.456.789-09", data_casamento="2010-03-12",
                 ),
             ],
         )
@@ -251,3 +251,88 @@ class TestEstadoCivilLegado:
         svc.completude_contratual(scoped, ORG_UUID, cid)
         row = scoped.table("clientes").select("*").execute().data[0]
         assert row["estado_civil"] == "Casado(a)"
+
+
+class TestDataCasamentoExigidoQuandoCasado:
+    """Migration 117 (contract F6). The office's Lei 6.515/77 citation needs
+    the marriage date off a `casado` party — narrower than
+    `_ESTADOS_QUE_EXIGEM_CONJUGE`: `uniao_estavel` has no "casamento" to
+    date, so it is NOT required there."""
+
+    def test_a_casado_party_with_no_data_casamento_is_missing_it(
+        self, client, scoped
+    ):
+        cid = str(uuid4())
+        scoped.set_table_data(
+            "clientes",
+            [_qualificado(
+                cid, estado_civil="casado", regime_bens="comunhao_parcial",
+                conjuge_cliente_id=None, data_casamento=None,
+            )],
+        )
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert "data_casamento" in out["faltando"]
+
+    def test_a_casado_party_with_data_casamento_does_not_list_it(
+        self, client, scoped
+    ):
+        cid = str(uuid4())
+        scoped.set_table_data(
+            "clientes",
+            [_qualificado(
+                cid, estado_civil="casado", regime_bens="comunhao_parcial",
+                conjuge_cliente_id=None, data_casamento="2010-03-12",
+            )],
+        )
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert "data_casamento" not in out["faltando"]
+
+    def test_uniao_estavel_does_not_require_data_casamento(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data(
+            "clientes",
+            [_qualificado(
+                cid, estado_civil="uniao_estavel",
+                regime_bens="comunhao_parcial", conjuge_cliente_id=None,
+                data_casamento=None,
+            )],
+        )
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert "data_casamento" not in out["faltando"]
+
+    def test_a_solteiro_party_does_not_require_data_casamento(
+        self, client, scoped
+    ):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [_qualificado(cid)])
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert "data_casamento" not in out["faltando"]
+
+
+class TestCertidaoEstadoCivilInResponse:
+    """Migration 117. `completude_contratual` surfaces the office's
+    90-day-freshness rule as data, never as a `faltando` gate — see
+    `identidade_extracao_service.certidao_estado_civil_mais_recente`."""
+
+    def test_none_when_no_certidao_has_a_recorded_emissao(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [_qualificado(cid)])
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert out["certidao_estado_civil"] is None
+
+    def test_surfaces_the_documento_id_and_emitida_em_when_present(
+        self, client, scoped
+    ):
+        cid = str(uuid4())
+        did = str(uuid4())
+        scoped.set_table_data("clientes", [_qualificado(cid)])
+        scoped.set_table_data("cliente_documentos", [{
+            "id": did, "org_id": ORG_ID, "cliente_id": cid,
+            "tipo_documento": "certidao_casamento", "deleted_at": None,
+            "extracao_descartada_em": None,
+            "extracao_data_emissao": "2024-03-15",
+        }])
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert out["certidao_estado_civil"]["documento_id"] == did
+        assert out["certidao_estado_civil"]["emitida_em"] == "2024-03-15"
+        assert isinstance(out["certidao_estado_civil"]["dias"], int)

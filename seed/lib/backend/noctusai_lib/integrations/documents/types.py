@@ -74,7 +74,7 @@ class TextSource(str, Enum):
 #: predicates were what this replaced — see the class docstring's N=3 note.
 CAMPOS: tuple[str, ...] = (
     "data_nascimento", "nome", "genero", "cpf", "rg",
-    "estado_civil", "regime_bens",
+    "estado_civil", "regime_bens", "data_casamento",
 )
 
 
@@ -150,6 +150,25 @@ class IdentityFields:
     `CAMPOS`, because it is not independently persistable — see its own
     comment below. A future field should ask that question before adding
     its tuple entry.
+
+    **AND `data_casamento` ARRIVED (contract F6, social-wiring migration
+    117), ON THE SAME TERMS `data_nascimento` DID** — one `CAMPOS` entry,
+    one triple, two aliases, `sobrescreve=False`: it is "a date is a
+    date" in exactly the way `data_nascimento`'s own note argues, with no
+    registration-vs-document tension to preserve.
+
+    `data_emissao` arrived alongside it and answers the SAME question
+    `rg_orgao` already answered once: not every extracted value is a
+    CAMPO. It is the certidão's OWN issuance date (when the cartório
+    closed the document — "emitida em" / the closing signature line), not
+    a fact about the holder at all, so there is no `clientes` column it
+    could promote to — a person does not have one "certidão emission
+    date", their certidões each have their own, and the office's
+    90-day-freshness rule (a certidão de estado civil must be recent as
+    of SIGNING, not as of upload) is answered by asking the DOCUMENT row,
+    not the client. `data_emissao` therefore lives here as a plain triple
+    and stays deliberately absent from `CAMPOS`, exactly as `rg_orgao`
+    does — see that field's own comment.
     """
 
     kind: IdentityDocumentKind = IdentityDocumentKind.UNKNOWN
@@ -225,6 +244,28 @@ class IdentityFields:
     regime_bens: Optional[str] = None
     regime_bens_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
     regime_bens_rotulo: Optional[str] = None
+
+    # ─── Data do casamento (contract F6) ───────────────────────────────
+    #: The CELEBRATION date — "casaram-se em" / "data do casamento" — off a
+    #: certidão de casamento. `sobrescreve=False`: no registration-vs-document
+    #: tension to preserve, same reasoning as `data_nascimento`. Why it
+    #: matters: the office's Lei 6.515/77 citation in a generated instrument
+    #: depends on which side of 26/12/1977 this date falls.
+    data_casamento: Optional[date] = None
+    data_casamento_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    data_casamento_rotulo: Optional[str] = None
+
+    # ─── Data de emissão da certidão (contract F6) ─────────────────────
+    #: 🔴 Deliberately NOT a member of :data:`CAMPOS` — see the class
+    #: docstring's note on `data_emissao`. The certidão's OWN issuance date
+    #: ("emitida em" / the cartório's closing signature line), read off
+    #: `certidao_casamento` AND `certidao_nascimento` alike (both carry
+    #: averbações and both close the same way). Answers the office's
+    #: 90-day-freshness rule, which is a question about ONE document, not
+    #: about the client.
+    data_emissao: Optional[date] = None
+    data_emissao_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    data_emissao_rotulo: Optional[str] = None
 
     # ─── Provenance, shared by every field on this result ─────────────
     source: TextSource = TextSource.NENHUMA
@@ -306,6 +347,10 @@ class IdentityFields:
         return self.persistable("regime_bens")
 
     @property
+    def persistable_data_casamento(self) -> bool:
+        return self.persistable("data_casamento")
+
+    @property
     def sugestao_data_nascimento(self) -> bool:
         return self.sugestao("data_nascimento")
 
@@ -332,6 +377,10 @@ class IdentityFields:
     @property
     def sugestao_regime_bens(self) -> bool:
         return self.sugestao("regime_bens")
+
+    @property
+    def sugestao_data_casamento(self) -> bool:
+        return self.sugestao("data_casamento")
 
 
 @runtime_checkable

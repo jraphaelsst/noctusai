@@ -62,6 +62,8 @@ from noctusai_lib.integrations.documents.birthdate import find_birthdate, normal
 from noctusai_lib.integrations.documents.civil_status import (
     ESTADO_CIVIL_VALORES,
     REGIME_BENS_VALORES,
+    find_data_casamento,
+    find_data_emissao,
     find_estado_civil,
     find_regime_bens,
 )
@@ -193,6 +195,8 @@ __all__ = [
     "classify_kind",
     "find_birthdate",
     "find_cpf",
+    "find_data_casamento",
+    "find_data_emissao",
     "find_estado_civil",
     "find_gender",
     "find_matricula",

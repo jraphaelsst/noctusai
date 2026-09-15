@@ -30,7 +30,7 @@ from uuid import UUID, uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.integrations.whatsapp import chat_id_for_phone, get_whatsapp_client
@@ -1488,7 +1488,21 @@ _IMOBILIARIA_CAMPOS: tuple[str, ...] = (
     "endereco_bairro",
     "endereco_cidade",
     "endereco_uf",
+    # Migration 117 (contract F6) — the office's own operational answers:
+    # which platform the instrument is signed on, the daily fine for a
+    # holdover ("posse"), and the default pendências window. See
+    # `DadosImobiliariaBody`'s field-level comments.
+    "plataforma_assinatura_nome",
+    "plataforma_assinatura_url",
+    "posse_multa_diaria",
+    "prazo_pendencias_padrao_dias",
 )
+
+
+def _validar_https(value: Optional[str]) -> Optional[str]:
+    if value and not value.startswith("https://"):
+        raise ValueError("plataforma_assinatura_url deve começar com https://")
+    return value
 
 
 class DadosImobiliariaBody(StrictHttpModel):
@@ -1515,6 +1529,28 @@ class DadosImobiliariaBody(StrictHttpModel):
     endereco_bairro: Optional[str] = Field(default=None, max_length=120)
     endereco_cidade: Optional[str] = Field(default=None, max_length=120)
     endereco_uf: Optional[str] = Field(default=None, max_length=2)
+
+    # ─── Migration 117 (contract F6) — the office's operational answers ────
+    #: The signing platform's name (e.g. "ClickSign", "D4Sign") — free text,
+    #: printed on the generated instrument's signature clause.
+    plataforma_assinatura_nome: Optional[str] = Field(default=None, max_length=255)
+    #: The signing platform's URL. HTTPS only — this is embedded verbatim
+    #: into a legal document handed to a client, so an `http://` value is
+    #: refused at the boundary rather than shipped and discovered later.
+    plataforma_assinatura_url: Optional[str] = Field(default=None, max_length=2048)
+    _validar_plataforma_assinatura_url = field_validator("plataforma_assinatura_url")(
+        _validar_https
+    )
+    #: R$/day fine for a holdover after the contractual "posse" deadline.
+    #: `ge=0` — a negative fine is not a discount, it is a data-entry error.
+    posse_multa_diaria: Optional[float] = Field(default=None, ge=0)
+    #: Default window (days) a "pendência" gets before it is considered
+    #: overdue. `gt=0`: a zero-or-negative window is not "immediately due",
+    #: it is meaningless as a countdown. Migration 117 backs this with a DB
+    #: `DEFAULT 10` (the office's own answer), so an org that has never
+    #: opened this settings form still gets a sane value the moment a row is
+    #: created for any other reason.
+    prazo_pendencias_padrao_dias: Optional[int] = Field(default=10, gt=0)
 
 
 def _imobiliaria_out(row: dict | None) -> dict:

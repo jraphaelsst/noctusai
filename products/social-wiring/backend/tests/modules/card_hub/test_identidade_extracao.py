@@ -615,3 +615,181 @@ class TestRgIgualCpfNaoEhAplicado:
                 scoped, ORG_UUID, UUID(cid), UUID(did), item_key="rg",
             )
         assert "RG" in str(exc_info.value)
+
+
+class TestDataCasamentoIsExtracted:
+    """Migration 117 (contract F6). `data_casamento` is a `CAMPOS` entry on
+    exactly the same terms `estado_civil`/`regime_bens` arrived on —
+    `TestEstadoCivilERegimeBensSaoExtraidos`'s own claim, now for the field
+    `civil_status.py`'s docstring predicted."""
+
+    @staticmethod
+    def _com_casamento(
+        confianca=ExtractionConfidence.ALTA, value=date(2010, 3, 12)
+    ) -> IdentityFields:
+        return IdentityFields(
+            data_casamento=value,
+            data_casamento_confianca=confianca,
+            data_casamento_rotulo="CASARAM-SE EM",
+            source=TextSource.TEXT_LAYER,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_confident_read_fills_the_column_and_stamps_provenance(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_casamento()),
+        )
+        assert out["aplicado_ao_cliente"]["data_casamento"] is True
+
+        row = _cliente(scoped, cid)
+        assert row["data_casamento"] == "2010-03-12"
+        assert row["data_casamento_origem"] == "certidao_casamento"
+        assert row["data_casamento_documento_id"] == did
+
+    @pytest.mark.asyncio
+    async def test_a_low_confidence_read_stays_on_the_document_as_a_suggestion(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(
+                self._com_casamento(ExtractionConfidence.BAIXA)
+            ),
+        )
+        assert _cliente(scoped, cid).get("data_casamento") is None
+        assert _documento(scoped, did)["extracao_data_casamento"] == "2010-03-12"
+
+    @pytest.mark.asyncio
+    async def test_an_existing_value_is_not_overwritten(self, client, scoped):
+        """`sobrescreve=False`, same reasoning `data_nascimento` gives: "a
+        date is a date", no registration-vs-document tension to preserve."""
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={
+                "data_casamento": "1999-06-05",
+                "data_casamento_origem": "manual",
+            },
+        )
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_casamento()),
+        )
+        assert _cliente(scoped, cid)["data_casamento"] == "1999-06-05"
+
+
+class TestDataEmissaoRidesTheDocumentNotTheClient:
+    """Migration 117. `data_emissao` is deliberately NOT a `CAMPOS` entry —
+    it never reaches `clientes`, only `cliente_documentos`."""
+
+    @pytest.mark.asyncio
+    async def test_recorded_on_the_document_regardless_of_confidence(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        fields = IdentityFields(
+            data_emissao=date(2024, 3, 15),
+            data_emissao_confianca=ExtractionConfidence.ALTA,
+            data_emissao_rotulo="EMITIDA EM",
+            source=TextSource.TEXT_LAYER,
+        )
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(fields),
+        )
+        assert out["status"] == "ok"
+        doc = _documento(scoped, did)
+        assert doc["extracao_data_emissao"] == "2024-03-15"
+        assert doc["extracao_data_emissao_confianca"] == "alta"
+        assert doc["extracao_data_emissao_rotulo"] == "EMITIDA EM"
+        # Never promoted — there is no clientes.data_emissao column at all.
+        assert "data_emissao" not in _cliente(scoped, cid)
+
+    @pytest.mark.asyncio
+    async def test_a_document_carrying_only_data_emissao_is_not_sem_dados(
+        self, client, scoped
+    ):
+        """`achou_algo` must count `data_emissao` too — a document that
+        found nothing else still found something."""
+        cid, did, storage = await _setup(scoped, tipo="certidao_nascimento")
+        fields = IdentityFields(
+            data_emissao=date(2024, 3, 15),
+            data_emissao_confianca=ExtractionConfidence.BAIXA,
+            data_emissao_rotulo="FECHAMENTO_CARTORIO",
+            source=TextSource.OCR,
+        )
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(fields),
+        )
+        assert out["status"] == "ok"
+
+
+class TestCertidaoEstadoCivilMaisRecente:
+    """`certidao_estado_civil_mais_recente` — the office's 90-day-freshness
+    rule reads the DOCUMENT, not the client."""
+
+    @pytest.mark.asyncio
+    async def test_none_when_no_qualifying_document_has_an_emission_date(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        assert svc.certidao_estado_civil_mais_recente(
+            scoped, ORG_UUID, UUID(cid)
+        ) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_the_newest_emission_across_both_certidao_types(
+        self, client, scoped
+    ):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        antigo, novo = str(uuid4()), str(uuid4())
+        scoped.set_table_data("cliente_documentos", [
+            {
+                "id": antigo, "org_id": ORG_ID, "cliente_id": cid,
+                "tipo_documento": "certidao_nascimento", "deleted_at": None,
+                "extracao_descartada_em": None,
+                "extracao_data_emissao": "2020-01-10",
+            },
+            {
+                "id": novo, "org_id": ORG_ID, "cliente_id": cid,
+                "tipo_documento": "certidao_casamento", "deleted_at": None,
+                "extracao_descartada_em": None,
+                "extracao_data_emissao": "2024-03-15",
+            },
+        ])
+        out = svc.certidao_estado_civil_mais_recente(scoped, ORG_UUID, UUID(cid))
+        assert out is not None
+        assert out["documento_id"] == novo
+        assert out["emitida_em"] == "2024-03-15"
+        assert isinstance(out["dias"], int)
+        assert out["dias"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_excludes_deleted_and_discarded_documents(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        deletado, descartado = str(uuid4()), str(uuid4())
+        scoped.set_table_data("cliente_documentos", [
+            {
+                "id": deletado, "org_id": ORG_ID, "cliente_id": cid,
+                "tipo_documento": "certidao_casamento",
+                "deleted_at": "2026-01-01T00:00:00+00:00",
+                "extracao_descartada_em": None,
+                "extracao_data_emissao": "2025-01-01",
+            },
+            {
+                "id": descartado, "org_id": ORG_ID, "cliente_id": cid,
+                "tipo_documento": "certidao_casamento", "deleted_at": None,
+                "extracao_descartada_em": "2026-01-01T00:00:00+00:00",
+                "extracao_data_emissao": "2025-06-01",
+            },
+        ])
+        assert svc.certidao_estado_civil_mais_recente(
+            scoped, ORG_UUID, UUID(cid)
+        ) is None

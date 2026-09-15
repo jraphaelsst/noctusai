@@ -82,7 +82,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -278,7 +278,41 @@ CAMPOS: tuple[CampoExtraido, ...] = (
         coluna_rotulo="extracao_regime_bens_rotulo",
         sobrescreve=False,
     ),
+    # Migration 117 (contract F6). `sobrescreve=False`, same reasoning
+    # `data_nascimento` gives: "a date is a date" with no registration-vs-
+    # document tension to preserve. Unlike `data_nascimento`, only
+    # `certidao_casamento` ever supplies it (`TIPOS_LEITURA_INTEGRAL` already
+    # reads that type whole, for the estado_civil averbação — the same full
+    # read now also carries the celebration date).
+    CampoExtraido(
+        item_key="data_casamento",
+        coluna_valor="extracao_data_casamento",
+        coluna_confianca="extracao_data_casamento_confianca",
+        coluna_rotulo="extracao_data_casamento_rotulo",
+        sobrescreve=False,
+    ),
 )
+
+#: 🔴 `data_emissao` (contract F6) is deliberately NOT a member of `CAMPOS` —
+#: see `types.IdentityFields.data_emissao`'s own comment. It is the
+#: certidão's OWN issuance date, not a fact about the holder, so there is no
+#: `clientes` column for it to promote to and no suggestion to offer through
+#: `sugestoes_pendentes` (which is `CAMPOS`-driven). It still rides on
+#: `cliente_documentos` — `extracao_data_emissao` / `_confianca` / `_rotulo`
+#: — written unconditionally in `extrair_identidade`, exactly like every
+#: `CAMPOS` triple, just outside the generic loop. Read back by
+#: `certidao_estado_civil_mais_recente` for the office's 90-day-freshness
+#: rule.
+_COLUNAS_DATA_EMISSAO = (
+    "extracao_data_emissao",
+    "extracao_data_emissao_confianca",
+    "extracao_data_emissao_rotulo",
+)
+
+#: Document types `certidao_estado_civil_mais_recente` considers — the two
+#: that carry an estado-civil-relevant `data_emissao` (see
+#: `TIPOS_LEITURA_INTEGRAL`).
+_TIPOS_CERTIDAO_ESTADO_CIVIL = ("certidao_casamento", "certidao_nascimento")
 
 CAMPO_POR_CHAVE: dict[str, CampoExtraido] = {c.item_key: c for c in CAMPOS}
 
@@ -351,6 +385,12 @@ def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional
             fields.regime_bens_confianca.value,
             fields.regime_bens_rotulo,
             fields.persistable_regime_bens,
+        ),
+        "data_casamento": (
+            fields.data_casamento.isoformat() if fields.data_casamento else None,
+            fields.data_casamento_confianca.value,
+            fields.data_casamento_rotulo,
+            fields.persistable_data_casamento,
         ),
     }
 
@@ -577,7 +617,10 @@ async def extrair_identidade(
         return {"status": "erro", "erro": fields.error}
 
     lidos = _valores_lidos(fields)
-    achou_algo = any(v is not None for v, _, _, _ in lidos.values())
+    data_emissao = fields.data_emissao.isoformat() if fields.data_emissao else None
+    achou_algo = data_emissao is not None or any(
+        v is not None for v, _, _, _ in lidos.values()
+    )
 
     # Recorded whether or not it is persistable — a low-confidence read is a
     # suggestion the card can offer, and the `_rotulo` columns let a human
@@ -594,6 +637,12 @@ async def extrair_identidade(
         marcacoes[campo.coluna_valor] = valor
         marcacoes[campo.coluna_confianca] = confianca
         marcacoes[campo.coluna_rotulo] = rotulo
+    # `data_emissao` rides outside the `CAMPOS` loop — see its own comment
+    # above `_TIPOS_CERTIDAO_ESTADO_CIVIL`. Recorded on the document row the
+    # same as every other extracted value, unconditionally; never promoted.
+    marcacoes["extracao_data_emissao"] = data_emissao
+    marcacoes["extracao_data_emissao_confianca"] = fields.data_emissao_confianca.value
+    marcacoes["extracao_data_emissao_rotulo"] = fields.data_emissao_rotulo
     _marcar(client, documento_id, **marcacoes)
 
     aplicados = _aplicar_ao_cliente(
@@ -967,6 +1016,54 @@ def descartar_sugestao(
     }
 
 
+# ─── The certidão's own freshness (contract F6, migration 117) ───────────
+#
+# `data_emissao` rides on the document, never on the client — see
+# `_TIPOS_CERTIDAO_ESTADO_CIVIL`'s comment. This is the one reader that
+# answers the office's own rule: a certidão de estado civil must be under 90
+# days old AS OF SIGNING.
+
+
+def certidao_estado_civil_mais_recente(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> Optional[dict]:
+    """The person's LATEST estado-civil certidão, by its OWN emission date —
+    not by upload recency. An operator may upload an old certidão after a
+    fresher one already sits on file, and the fresher document is the one
+    that actually answers "is this current as of signing".
+
+    Deleted and discarded rows are excluded, same posture `sugestoes_
+    pendentes` takes: a document the client asked us to forget, or a
+    reading a human turned down, cannot go on answering a freshness
+    question.
+
+    Returns `None` when no qualifying document has a recorded emission date
+    yet — legible with the fact simply absent, never an error.
+    """
+    rows = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("id," + ",".join(_COLUNAS_DATA_EMISSAO))
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .in_("tipo_documento", list(_TIPOS_CERTIDAO_ESTADO_CIVIL))
+        .is_("deleted_at", "null")
+        .is_("extracao_descartada_em", "null")
+        .not_.is_("extracao_data_emissao", "null")
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+
+    mais_recente = max(rows, key=lambda r: r["extracao_data_emissao"])
+    emitida_em = date.fromisoformat(mais_recente["extracao_data_emissao"])
+    dias = (datetime.now(timezone.utc).date() - emitida_em).days
+    return {
+        "documento_id": mais_recente["id"],
+        "emitida_em": mais_recente["extracao_data_emissao"],
+        "dias": dias,
+    }
+
+
 __all__ = [
     "CAMPOS",
     "CAMPO_POR_CHAVE",
@@ -975,6 +1072,7 @@ __all__ = [
     "STALE_APOS",
     "TIPOS_EXTRAIVEIS",
     "CampoExtraido",
+    "certidao_estado_civil_mais_recente",
     "confirmar_sugestao",
     "descartar_sugestao",
     "deve_extrair",
