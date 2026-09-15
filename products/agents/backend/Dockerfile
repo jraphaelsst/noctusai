@@ -70,39 +70,52 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # agents: Julia's dedicated non-login uid + the CLI she is launched
 # through (contract §E.5, SEC-A/SEC-C; roadmap D1). `--no-create-home`:
 # there is no home dir to protect (nothing is ever baked there) — the
-# wrapper points HOME at an ephemeral tmpfs path instead (compose
-# `tmpfs: [/tmp]`). A distinct uid from `noctus` is what lets the
-# container drop capabilities down to CAP_SETUID/CAP_SETGID only
-# (compose `cap_add`) while still giving the SDK's `user="julia-cli"`
-# subprocess spawn a real uid boundary — /proc/<julia-cli-pid>/environ
-# is unreadable to any other uid in the container, kernel-enforced,
-# never app code.
+# wrapper points HOME/TMPDIR at a dedicated tmpfs instead (compose
+# `tmpfs: [/run/julia]`, uid/gid-owned by this uid — this product's
+# `/tmp` belongs to `noctus` only).
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin \
         --uid 1001 --user-group julia-cli
 
-# Native Claude Code CLI install — deliberately NOT
-# `npm install -g @anthropic-ai/claude-code`: the slim deploy
-# `runtime` target ships no Node (node is `runtime-watch`-only, see
-# below), and the native installer is a self-contained binary with no
-# Node runtime dependency. UNVERIFIED against a real network build —
-# this worktree has no docker daemon (see the D1 report); confirm this
-# exact invocation the first time this image is actually built, before
-# it ships (NOC-REMEDIATE[cli-install-verify], closed by SEC-C's
-# real-image proof).
-RUN curl -fsSL https://claude.ai/install.sh | bash \
-    && install -o root -g root -m 0755 \
-         "$(find /root/.local/bin /root/.claude/local -maxdepth 1 -name claude -print -quit)" \
-         /usr/local/bin/claude
-ENV JULIA_CLAUDE_BIN=/usr/local/bin/claude
+# Bundled Claude Code CLI — NOT a `curl .../install.sh | bash` step
+# (tech-lead review 2026-09-14: unpinned, pulled at build time, drifts
+# from the SDK pin) and NOT `npm install -g @anthropic-ai/claude-code`
+# (the slim deploy `runtime` target ships no Node — see `runtime-watch`
+# below). `claude-agent-sdk==0.2.152`'s manylinux wheels (x86_64 AND
+# aarch64) already ship a version-matched, self-contained binary at
+# `claude_agent_sdk/_bundled/claude` (~200MB, already mode 0755
+# root:root from `pip install` running as root, before the non-root
+# step below — verified live). Resolved via python, not a second
+# hardcoded path literal, and `test -x` fails the BUILD (not a live
+# Julia turn) the day a future SDK bump relocates or drops it. The
+# symlink is what makes the wrapper's own hardcoded exec target a
+# stable literal that never needs to track the exact venv/
+# site-packages path (no `JULIA_CLAUDE_BIN` env seam — dropped
+# deliberately, see `bin/julia-cli-exec`'s own header comment).
+RUN CLAUDE_BUNDLED="$(python3 -c 'import claude_agent_sdk, pathlib; print(pathlib.Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude")')" \
+    && test -x "$CLAUDE_BUNDLED" || { echo "bundled claude CLI not found/executable at $CLAUDE_BUNDLED (claude-agent-sdk version drift?)" >&2; exit 1; } \
+    && ln -s "$CLAUDE_BUNDLED" /usr/local/bin/claude-bundled
 
-# The env -i wrapper itself (contract §E.5) — placed here (root context,
-# before USER noctus below) so a plain COPY lands it root:root by
-# Docker's default. Its FINAL ownership/mode is reasserted after the
-# canonical `chown -R noctus:noctus /app` a few lines down — that
-# recursive chown would otherwise flip this one file to `noctus`,
-# silently undoing "root-owned, not app-writable" (see the
-# `_D_POST_CHOWN_EXTRA` hook below).
+# The wrapper + entrypoint (contract §E.5, SEC-A/SEC-C) — placed here
+# (root context, BEFORE the non-root-user step below) so a plain COPY
+# lands them root:root by Docker's default. Their FINAL ownership/mode
+# is reasserted after the canonical `chown -R noctus:noctus /app` a
+# few lines down — that recursive chown would otherwise flip them to
+# `noctus`, silently undoing "root-owned, not app-writable" (see the
+# ownership reassertion a few lines down — that same block also drops
+# the canonical `USER noctus` for this product only; see the
+# ENTRYPOINT at the bottom).
 COPY products/agents/backend/bin/julia-cli-exec /app/bin/julia-cli-exec
+COPY products/agents/backend/bin/entrypoint.sh /app/bin/entrypoint.sh
+
+# Strip every setuid/setgid bit in the image (roadmap D1) — defence in
+# depth ORTHOGONAL to the capability model above: a setuid/setgid file
+# (Debian ships several by default, e.g. `su`/`mount`/`passwd`) grants
+# privilege via the FILE's own bits, independent of the calling
+# process's capability set — our `cap_drop`/`cap_add` restrictions say
+# nothing about what a setuid-root binary could still do if exec'd.
+# None of these binaries are used by this product at runtime (uvicorn/
+# python + the two scripts above only).
+RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + || true
 
 # Product backend code + the built SPA.
 COPY products/agents/backend/ ./products/agents/backend/
@@ -118,18 +131,25 @@ ENV SERVE_SPA_DIR=/app/products/agents/frontend/dist
 # (venv is world-readable from `python -m venv`; noctus only needs read+exec).
 # Anti-pattern: never `chown -R` a large inherited base path. ~2.5GB fleet.
 RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app \
-    && chown root:root /app/bin/julia-cli-exec \
-    && chmod 0755 /app/bin/julia-cli-exec
-USER noctus
+    && chown root:root /app/bin/julia-cli-exec /app/bin/entrypoint.sh \
+    && chmod 0755 /app/bin/julia-cli-exec /app/bin/entrypoint.sh
+# No `USER noctus` here (deviates from the canonical shape, agents-only,
+# roadmap D1): the ENTRYPOINT below does the uid switch AT EXEC via
+# `setpriv` instead, which is what actually populates AMBIENT caps for
+# the SDK's `Popen(user="julia-cli")` subprocess spawn — a plain
+# `USER noctus` directive here does not (verified empirically,
+# moby#45491/PR#36587).
 
 EXPOSE 8016
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:8016/api/health || exit 1
-# Default CMD = plain uvicorn over the BAKED dist → this image is a
-# self-contained, shippable artifact (deploy/CI run it as-is).
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \
-     "--port", "8016", "--app-dir", "products/agents/backend", \
-     "--workers", "1"]
+# ENTRYPOINT replaces the canonical plain-uvicorn CMD (roadmap D1)
+# — a root:root, fail-closed script; see `bin/entrypoint.sh`'s own
+# header for exactly what it refuses to boot without, and why the
+# container stays root through this line (no `USER noctus` above)
+# so its own `setpriv` can populate AMBIENT caps as it drops to
+# `noctus`.
+ENTRYPOINT ["/app/bin/entrypoint.sh"]
 
 # ── runtime-watch: SAME single container, local live-rebuild ────────────
 # ONE container, ONE shape, ONE command (`./start.sh`). The local
@@ -140,6 +160,14 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \
 # `runtime` above (node absent there). Source is bind-mounted at run, so
 # THIS target is intentionally not a shippable artifact — `runtime` is.
 FROM runtime AS runtime-watch
+# SEC-A/SEC-C do NOT apply to this stage (roadmap D1, declared not
+# fixed — dev fleet is dormant): the node-install step below re-runs
+# `chown -R noctus:noctus /app`, flipping the wrapper/entrypoint back
+# to `noctus`-owned, and ends on a plain `USER noctus` + the
+# `local-watch` ENTRYPOINT, not `bin/entrypoint.sh`. Harmless only
+# because `get_agent_runtime` never returns the real SDK runtime
+# without a configured `ANTHROPIC_API_KEY`, which local dev never
+# sets — there is no live Julia turn to isolate in this stage today.
 USER root
 # Node for the in-container SPA rebuild — from the OFFICIAL nodejs.org binary
 # tarball (node 20 + npm 10 BUNDLED). Only the local runtime-watch image

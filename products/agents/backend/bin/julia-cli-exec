@@ -1,38 +1,85 @@
 #!/bin/sh
-# julia-cli-exec — the `env -i` wrapper the Claude Agent SDK spawns as its
-# `cli_path` (contract §E.5, SEC-C).
+# julia-cli-exec — the wrapper the Claude Agent SDK spawns as its
+# `cli_path` (contract §E.5, SEC-C; roadmap D1, tech-lead + security-
+# advisor review 2026-09-14, ACCEPT-WITH-CHANGES over the first cut).
 #
-# WHY THIS IS MANDATORY (not a hardening nice-to-have): the SDK builds the
-# CLI subprocess's environment as
-#   {**os.environ (minus CLAUDECODE), CLAUDE_CODE_ENTRYPOINT, **options.env,
-#    CLAUDE_AGENT_SDK_VERSION}
-# (verified live, `_internal/transport/subprocess_cli.py:809-815`, SDK
-# 0.2.152). `options.env` can only ADD keys, never remove an inherited one —
-# so without this wrapper, EVERY control-plane secret (ACADEMIA_API_TOKEN,
-# SOCIAL_WIRING_API_TOKEN, APPROVAL_ASSERTION_SECRETS, the database key,
-# ANTHROPIC_API_KEY is the one exception that's meant to reach it) would be
-# visible to the Julia CLI subprocess and, transitively, to Bash/WebFetch it
-# might run. `env -i` starts the child from a BLANK slate; only the five
-# names below are re-added, and HOME/PATH are fixed literals, never
-# re-exported from the parent (the parent's own PATH could carry things
-# this process has no business handing to a subprocess that talks to an
-# LLM).
+# WHY THE UID SWITCH LIVES HERE, NOT ONLY AT THE CALLER (found live
+# against the installed SDK, `_internal/transport/subprocess_cli.py:1151`
+# — the version-check spawn `[cli_path, "-v"]` runs WITHOUT `user=` at
+# all): the SDK does not ALWAYS pass `user="julia-cli"` when it spawns
+# `cli_path` — the one-off version probe does not. Relying only on the
+# CALLER's `Popen(user=...)` would leave that specific spawn running as
+# whatever uid called it (the app process, `noctus`), never switching to
+# `julia-cli` at all. This wrapper is therefore the single, caller-
+# independent place the uid switch happens — `app/runtime/claude_runtime.py`
+# still passes `user="julia-cli"` too (a separate slice owns that file;
+# harmless here — a `setpriv --reuid=1001` onto a process ALREADY uid 1001
+# is an allowed no-op self-setresuid, needing no capability at all).
 #
-# The binary to exec is resolved via `JULIA_CLAUDE_BIN` — read from the
-# WRAPPER's own (still-full) environment BEFORE `env -i` wipes it for the
-# child. This is the test seam: tests point `JULIA_CLAUDE_BIN` at a stub
-# script; the real image points it at the installed `claude` binary.
+# WHY THE CAP DROP IS STILL MANDATORY EVEN AFTER THE SWITCH: whichever way
+# this process arrived here, it can carry CAP_SETUID/CAP_SETGID/CAP_KILL
+# in its AMBIENT set (inherited across a non-root->non-root uid change, or
+# never dropped at all on the no-`user=` version-check path) — verified
+# empirically against a real container matching the compose hardening
+# (`cap_drop: ALL` + `cap_add: SETUID,SETGID,KILL` + `no-new-privileges`).
+# Left alone, the CLI binary (and anything it spawns) would inherit those
+# on its own exec and could `setuid`/`setgid` to become `noctus`, or
+# `kill` it — defeating SEC-C. `--inh-caps=-all --ambient-caps=-all`
+# strips both before the final exec. No `--bounding-set=` clause: it needs
+# CAP_SETPCAP, which this process never has (verified empirically —
+# `setpriv: apply bounding set: Operation not permitted`); Docker's own
+# `cap_drop`/`cap_add` already bounds the set, and `--no-new-privs` keeps
+# the leftover bounding bits inert (nothing can ever re-raise them without
+# CAP_SETPCAP, and `no_new_privs` blocks any privilege gain via a future
+# exec of a setuid/file-capability binary regardless).
 #
-# POSIX `sh`, not bash — this only needs to be portable to whatever base
-# image the product container ships; no bash-only features are used.
+# WHY A HARDCODED ABSOLUTE PATH, NOT `JULIA_CLAUDE_BIN`: the previous cut
+# read the CLI binary's path from an env var (a test seam). Dropped
+# deliberately — an env-var-controlled exec target is an extra thing an
+# `env`-polluting caller could influence. `/usr/local/bin/claude-bundled`
+# is a symlink the Dockerfile creates at BUILD time (root-owned, resolved
+# via python from the pinned `claude-agent-sdk==0.2.152`'s bundled binary
+# — see the Dockerfile's `_D_AGENTS_EXTRA` block); this wrapper always
+# execs that one fixed path. Tests that need a stub CLI point the SDK's
+# `cli_path` option at an entirely different stub script instead of this
+# wrapper (a separate slice's test seam) — or, for THIS wrapper's own
+# tests, run a temp COPY of this file with that one line substituted
+# (`tests/runtime/test_wrapper.py`), never an env var.
+#
+# WHY HOME/TMPDIR POINT AT /run/julia, NOT /tmp: compose gives this
+# product's `/tmp` to `noctus` only (`mode=1770,uid=0,gid=1000` — `other`,
+# i.e. `julia-cli`, has NO access at all) and a SEPARATE, dedicated tmpfs
+# at `/run/julia` (`uid=1001,gid=1001,mode=0700`) for the CLI's own
+# scratch space — so `julia-cli` can never read or leave a file in
+# `noctus`'s `/tmp`, and vice versa.
+#
+# DISABLE_AUTOUPDATER=1 / CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1: the
+# CLI must never phone home to check for updates or emit telemetry from
+# inside this sandboxed, network-egress-constrained subprocess — an
+# update check is itself a mechanism this uid has no business using, and
+# it would silently depend on network access this container's threat
+# model does not assume for `julia-cli`.
+#
+# `setpriv` is util-linux (present in the python:3.11-slim / Debian trixie
+# base — verified live) and Linux-only; this script only ever runs inside
+# the Linux container, never on a developer's host. POSIX `sh`, not bash —
+# no bash-only features are used.
 set -eu
 
-: "${JULIA_CLAUDE_BIN:?JULIA_CLAUDE_BIN must be set to the Claude CLI binary path}"
+umask 077
 
-exec env -i \
-  HOME=/tmp/julia-home \
-  PATH=/usr/local/bin:/usr/bin:/bin \
+exec /usr/bin/setpriv \
+  --reuid=1001 --regid=1001 --clear-groups \
+  --inh-caps=-all --ambient-caps=-all \
+  --no-new-privs \
+  -- \
+  /usr/bin/env -i \
+  HOME=/run/julia \
+  TMPDIR=/run/julia \
+  PATH=/usr/bin:/bin \
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
   CLAUDE_CODE_ENTRYPOINT="${CLAUDE_CODE_ENTRYPOINT:-}" \
   CLAUDE_AGENT_SDK_VERSION="${CLAUDE_AGENT_SDK_VERSION:-}" \
-  "$JULIA_CLAUDE_BIN" "$@"
+  DISABLE_AUTOUPDATER=1 \
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+  /usr/local/bin/claude-bundled "$@"

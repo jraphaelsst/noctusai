@@ -148,38 +148,74 @@ _C_HARDENING_ACADEMIA = (
     "      - /tmp:mode=1777,size=64m\n"
     "    mem_limit: 512m\n"
 )
+# agents' D1 hardening (roadmap julia-agents-academia-2026-09, row D1) —
+# revised 2026-09-14 (tech-lead + security-advisor review, ACCEPT-WITH-
+# CHANGES over the first cut) against a REAL container reproducing these
+# exact flags. Kept as ONE block so a future prod compose entry at cutover
+# reuses it verbatim (never hand-copied) — see `_C_HARDENING_EXTRA` above.
 _C_HARDENING_AGENTS = (
-    "    # D1 hardening (roadmap julia-agents-academia-2026-09, row D1).\n"
-    "    # Prod is first contact for this image (dev fleet dormant — KB §\n"
-    "    # PATTERNS/devops/dev-fleet-dormant.md).\n"
+    "    # D1 hardening (roadmap julia-agents-academia-2026-09, row D1;\n"
+    "    # tech-lead + security-advisor review 2026-09-14). Prod is first\n"
+    "    # contact for this image (dev fleet dormant — KB § PATTERNS/devops/\n"
+    "    # dev-fleet-dormant.md). `bin/entrypoint.sh` FAILS CLOSED if any of\n"
+    "    # these three are missing — verified empirically, not asserted.\n"
     "    cap_drop:\n"
     "      - ALL\n"
-    "    # SETUID/SETGID ONLY: contract §E.5 spawns the Julia CLI subprocess\n"
-    "    # under a DIFFERENT, dedicated uid (`user=\"julia-cli\"` on\n"
-    "    # ClaudeAgentOptions). Verified live against the installed SDK:\n"
-    "    # subprocess_cli.py passes `user=` through to `anyio.open_process`\n"
-    "    # -> `subprocess.Popen(user=...)`, whose POSIX exec path needs\n"
-    "    # CAP_SETUID (+ CAP_SETGID for the implicit initgroups() call when\n"
-    "    # no explicit `group=` is given) in the PARENT app process's\n"
-    "    # capability set to drop from `noctus` into `julia-cli`. Dropping\n"
-    "    # ALL caps without adding these back would silently break every\n"
-    "    # Julia turn the first time the SDK tries to spawn the CLI\n"
-    "    # (PermissionError) — exactly the silent-regression shape this\n"
-    "    # hardening slice must not introduce.\n"
+    "    # SETUID/SETGID/KILL — nothing else. contract §E.5 spawns the Julia\n"
+    "    # CLI subprocess under a DIFFERENT, dedicated uid\n"
+    "    # (`user=\"julia-cli\"` on ClaudeAgentOptions); dropping to that uid\n"
+    "    # AT EXEC (`bin/entrypoint.sh`'s own `setpriv`, not a bare `USER`\n"
+    "    # directive — verified empirically that `USER` alone never\n"
+    "    # populates AMBIENT caps for a non-root process, moby#45491) needs\n"
+    "    # CAP_SETUID + CAP_SETGID effective on the process making that\n"
+    "    # switch. CAP_KILL: `noctus` must be able to signal the Julia CLI\n"
+    "    # subprocess (uid 1001, a DIFFERENT uid) on turn-timeout/SDK-close —\n"
+    "    # verified empirically that signalling a different uid without it\n"
+    "    # is denied (EPERM), leaking a hung CLI process for the container's\n"
+    "    # whole lifetime. NOT CAP_SETPCAP: every `setpriv --bounding-set=`\n"
+    "    # clause was removed from every script in this image (wrapper +\n"
+    "    # entrypoint) — verified empirically that it needs CAP_SETPCAP\n"
+    "    # (`setpriv: apply bounding set: Operation not permitted`), and\n"
+    "    # `cap_drop`/`cap_add` already fix the bounding-set ceiling with\n"
+    "    # zero in-container action needed; `no-new-privileges` keeps the\n"
+    "    # leftover bounding bits inert regardless.\n"
     "    cap_add:\n"
     "      - SETUID\n"
     "      - SETGID\n"
+    "      - KILL\n"
     "    security_opt:\n"
     "      - no-new-privileges:true\n"
     "    read_only: true\n"
-    "    # /tmp only: the julia-cli-exec wrapper (contract §E.5) sets\n"
-    "    # HOME=/tmp/julia-home for the CLI subprocess. mode=1777 (standard\n"
-    "    # /tmp semantics) lets the `julia-cli` uid create that directory\n"
-    "    # itself on first use, without granting it — or `noctus` — any\n"
-    "    # broader writable root.\n"
+    "    # A dedicated tmpfs for the Julia CLI's own HOME/TMPDIR — owned by\n"
+    "    # `julia-cli` (uid/gid 1001) alone, mode 0700: `noctus` cannot read\n"
+    "    # or write into it, and `julia-cli` cannot read or write this\n"
+    "    # product's `/tmp` (below) — verified empirically both ways.\n"
+    "    # size-capped; the CLI's own scratch needs are small.\n"
+    "    #\n"
+    "    # This product's `/tmp` belongs to `noctus` ONLY —\n"
+    "    # uid=0,gid=1000,mode=1770 (owner root rwx, group `noctus` rwx +\n"
+    "    # sticky, other/`julia-cli` NO access at all). agents has no\n"
+    "    # multipart-upload route (unlike academia's `/tmp:mode=1777`, kept\n"
+    "    # as-is there — see `_C_HARDENING_ACADEMIA`'s own comment), so\n"
+    "    # nothing needs `/tmp` to be world-writable here, and locking it to\n"
+    "    # `noctus` closes the one path `julia-cli` could otherwise have\n"
+    "    # used to leave a file `noctus` might later trust.\n"
     "    tmpfs:\n"
-    "      - /tmp:mode=1777,size=64m\n"
+    "      - /run/julia:uid=1001,gid=1001,mode=0700,size=32m\n"
+    "      - /tmp:mode=1770,uid=0,gid=1000,size=64m\n"
+    "    # A small explicit /dev/shm — python/uvicorn have no real shared-\n"
+    "    # memory need here; explicit + small beats an unexamined default.\n"
+    "    shm_size: 64m\n"
     "    mem_limit: 1g\n"
+    "    # `init: true` — a minimal PID-1 init (tini) reaps zombies from the\n"
+    "    # Julia CLI subprocess tree so a killed-but-unreaped child (see\n"
+    "    # `bin/entrypoint.sh`'s CAP_KILL comment above) never accumulates;\n"
+    "    # without it `noctus` (not PID 1 here — the entrypoint execs INTO\n"
+    "    # it, so it IS PID 1) would have to reap its own children, which\n"
+    "    # the SDK's client-close path already does on the happy path but\n"
+    "    # should not be the ONLY thing standing between a hung turn and a\n"
+    "    # zombie leak.\n"
+    "    init: true\n"
     "    # AGENTS_INSTANCE_ID (contract §E.9, roadmap D1) is deliberately\n"
     "    # left UNSET here, not baked as a fixed literal: `app/runtime/\n"
     "    # __init__.py::_resolve_instance_id` already prefers an explicit\n"
@@ -280,44 +316,61 @@ _D_KE_EXTRA = (
 )
 # agents: Julia's dedicated non-login uid + the CLI she is launched through
 # (contract projects/julia-agents-academia-CONTRACT.md §E.5, SEC-A/SEC-C;
-# roadmap D1). Injected as root, before the non-root-user step below.
+# roadmap D1, tech-lead + security-advisor review 2026-09-14 — the
+# ACCEPT-WITH-CHANGES pass over the first cut). Injected as root, before
+# the non-root-user step below.
 _D_AGENTS_EXTRA = (
     "# agents: Julia's dedicated non-login uid + the CLI she is launched\n"
     "# through (contract §E.5, SEC-A/SEC-C; roadmap D1). `--no-create-home`:\n"
     "# there is no home dir to protect (nothing is ever baked there) — the\n"
-    "# wrapper points HOME at an ephemeral tmpfs path instead (compose\n"
-    "# `tmpfs: [/tmp]`). A distinct uid from `noctus` is what lets the\n"
-    "# container drop capabilities down to CAP_SETUID/CAP_SETGID only\n"
-    "# (compose `cap_add`) while still giving the SDK's `user=\"julia-cli\"`\n"
-    "# subprocess spawn a real uid boundary — /proc/<julia-cli-pid>/environ\n"
-    "# is unreadable to any other uid in the container, kernel-enforced,\n"
-    "# never app code.\n"
+    "# wrapper points HOME/TMPDIR at a dedicated tmpfs instead (compose\n"
+    "# `tmpfs: [/run/julia]`, uid/gid-owned by this uid — this product's\n"
+    "# `/tmp` belongs to `noctus` only).\n"
     "RUN useradd --system --no-create-home --shell /usr/sbin/nologin \\\n"
     "        --uid 1001 --user-group julia-cli\n"
     "\n"
-    "# Native Claude Code CLI install — deliberately NOT\n"
-    "# `npm install -g @anthropic-ai/claude-code`: the slim deploy\n"
-    "# `runtime` target ships no Node (node is `runtime-watch`-only, see\n"
-    "# below), and the native installer is a self-contained binary with no\n"
-    "# Node runtime dependency. UNVERIFIED against a real network build —\n"
-    "# this worktree has no docker daemon (see the D1 report); confirm this\n"
-    "# exact invocation the first time this image is actually built, before\n"
-    "# it ships (NOC-REMEDIATE[cli-install-verify], closed by SEC-C's\n"
-    "# real-image proof).\n"
-    "RUN curl -fsSL https://claude.ai/install.sh | bash \\\n"
-    "    && install -o root -g root -m 0755 \\\n"
-    "         \"$(find /root/.local/bin /root/.claude/local -maxdepth 1 -name claude -print -quit)\" \\\n"
-    "         /usr/local/bin/claude\n"
-    "ENV JULIA_CLAUDE_BIN=/usr/local/bin/claude\n"
+    "# Bundled Claude Code CLI — NOT a `curl .../install.sh | bash` step\n"
+    "# (tech-lead review 2026-09-14: unpinned, pulled at build time, drifts\n"
+    "# from the SDK pin) and NOT `npm install -g @anthropic-ai/claude-code`\n"
+    "# (the slim deploy `runtime` target ships no Node — see `runtime-watch`\n"
+    "# below). `claude-agent-sdk==0.2.152`'s manylinux wheels (x86_64 AND\n"
+    "# aarch64) already ship a version-matched, self-contained binary at\n"
+    "# `claude_agent_sdk/_bundled/claude` (~200MB, already mode 0755\n"
+    "# root:root from `pip install` running as root, before the non-root\n"
+    "# step below — verified live). Resolved via python, not a second\n"
+    "# hardcoded path literal, and `test -x` fails the BUILD (not a live\n"
+    "# Julia turn) the day a future SDK bump relocates or drops it. The\n"
+    "# symlink is what makes the wrapper's own hardcoded exec target a\n"
+    "# stable literal that never needs to track the exact venv/\n"
+    "# site-packages path (no `JULIA_CLAUDE_BIN` env seam — dropped\n"
+    "# deliberately, see `bin/julia-cli-exec`'s own header comment).\n"
+    "RUN CLAUDE_BUNDLED=\"$(python3 -c 'import claude_agent_sdk, pathlib; "
+    "print(pathlib.Path(claude_agent_sdk.__file__).parent / \"_bundled\" / \"claude\")')\" \\\n"
+    "    && test -x \"$CLAUDE_BUNDLED\" || { echo \"bundled claude CLI not found/executable "
+    "at $CLAUDE_BUNDLED (claude-agent-sdk version drift?)\" >&2; exit 1; } \\\n"
+    "    && ln -s \"$CLAUDE_BUNDLED\" /usr/local/bin/claude-bundled\n"
     "\n"
-    "# The env -i wrapper itself (contract §E.5) — placed here (root context,\n"
-    "# before USER noctus below) so a plain COPY lands it root:root by\n"
-    "# Docker's default. Its FINAL ownership/mode is reasserted after the\n"
-    "# canonical `chown -R noctus:noctus /app` a few lines down — that\n"
-    "# recursive chown would otherwise flip this one file to `noctus`,\n"
-    "# silently undoing \"root-owned, not app-writable\" (see the\n"
-    "# `_D_POST_CHOWN_EXTRA` hook below).\n"
+    "# The wrapper + entrypoint (contract §E.5, SEC-A/SEC-C) — placed here\n"
+    "# (root context, BEFORE the non-root-user step below) so a plain COPY\n"
+    "# lands them root:root by Docker's default. Their FINAL ownership/mode\n"
+    "# is reasserted after the canonical `chown -R noctus:noctus /app` a\n"
+    "# few lines down — that recursive chown would otherwise flip them to\n"
+    "# `noctus`, silently undoing \"root-owned, not app-writable\" (see the\n"
+    "# ownership reassertion a few lines down — that same block also drops\n"
+    "# the canonical `USER noctus` for this product only; see the\n"
+    "# ENTRYPOINT at the bottom).\n"
     "COPY products/agents/backend/bin/julia-cli-exec /app/bin/julia-cli-exec\n"
+    "COPY products/agents/backend/bin/entrypoint.sh /app/bin/entrypoint.sh\n"
+    "\n"
+    "# Strip every setuid/setgid bit in the image (roadmap D1) — defence in\n"
+    "# depth ORTHOGONAL to the capability model above: a setuid/setgid file\n"
+    "# (Debian ships several by default, e.g. `su`/`mount`/`passwd`) grants\n"
+    "# privilege via the FILE's own bits, independent of the calling\n"
+    "# process's capability set — our `cap_drop`/`cap_add` restrictions say\n"
+    "# nothing about what a setuid-root binary could still do if exec'd.\n"
+    "# None of these binaries are used by this product at runtime (uvicorn/\n"
+    "# python + the two scripts above only).\n"
+    "RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + || true\n"
 )
 # slug → backend-stage extra injected at the seed's {{BACKEND_EXTRA}} marker.
 _D_EXTRA: dict[str, str] = {
@@ -325,30 +378,119 @@ _D_EXTRA: dict[str, str] = {
     "knowledge-extractor": _D_KE_EXTRA,
     "agents": _D_AGENTS_EXTRA,
 }
-# slug → CMD extra arg pair appended to the seed's plain-uvicorn CMD list.
-# agents ONLY: contract §E.9 approval wake-up is in-process (a pending
-# `approvals` row is resolved by the SAME worker that is awaiting it); a
-# second uvicorn worker would split conversations across processes with no
-# shared wake-up channel, silently orphaning approvals (roadmap trigger T6
-# tracks lifting this). Roadmap D1.
-_D_WORKERS_1: frozenset[str] = frozenset({"agents"})
-
 # The canonical non-root-user step (`useradd -m -u 1000 noctus && chown -R
-# noctus:noctus /app`) is a RECURSIVE chown that runs AFTER `_D_EXTRA`'s
-# injection point — so it silently flips ANY file `_D_EXTRA` placed under
-# /app back to `noctus`. agents needs one exception (the julia-cli-exec
-# wrapper must end up root-owned, not noctus-owned), so this hook appends
-# a re-assertion to the SAME `RUN` as the canonical chown, immediately
-# after it, in the SAME layer (no extra layer, no window where the wrapper
-# is transiently noctus-owned).
+# noctus:noctus /app` then `USER noctus`) is a RECURSIVE chown that runs
+# AFTER `_D_EXTRA`'s injection point — so it silently flips ANY file
+# `_D_EXTRA` placed under /app back to `noctus`. agents needs two
+# exceptions here, both load-bearing and both verified empirically against
+# a real container (tech-lead + security-advisor review 2026-09-14, not
+# theorized):
+#
+# 1. The wrapper AND the entrypoint must end up root-owned, not
+#    noctus-owned — this hook appends a re-assertion to the SAME `RUN` as
+#    the canonical chown, immediately after it, in the SAME layer (no
+#    extra layer, no window where either file is transiently
+#    noctus-owned).
+# 2. NO trailing `USER noctus` for this product. Docker only carries a
+#    compose `cap_add` into a non-root process through the AMBIENT
+#    capability set, and a plain `USER noctus` directive does NOT
+#    populate that set — confirmed by reproducing the exact compose
+#    hardening flags against a real container: `USER noctus` alone leaves
+#    CapEff/CapAmb at zero, so the SDK's `Popen(user="julia-cli")`
+#    subprocess spawn gets PermissionError on every Julia turn
+#    (moby#45491, moby PR#36587). The container instead stays root all the
+#    way to the ENTRYPOINT (see `_D_ENTRYPOINT_OVERRIDE` below), which
+#    itself fails closed (refuses to drop privilege at all unless the
+#    compose hardening is actually in effect) and only THEN uses `setpriv`
+#    to do the root->noctus switch AT EXEC, which DOES populate ambient
+#    caps as part of that one transition.
+#    `check_product_container_shape` does not assert `USER noctus`
+#    anywhere (only the base-seam/runtime-watch/SERVE_SPA_DIR markers),
+#    so this needs no keeper change — verified against the real keeper.
 _D_POST_CHOWN_ANCHOR = "RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app\nUSER noctus\n"
 _D_AGENTS_POST_CHOWN = (
     "RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app \\\n"
-    "    && chown root:root /app/bin/julia-cli-exec \\\n"
-    "    && chmod 0755 /app/bin/julia-cli-exec\n"
-    "USER noctus\n"
+    "    && chown root:root /app/bin/julia-cli-exec /app/bin/entrypoint.sh \\\n"
+    "    && chmod 0755 /app/bin/julia-cli-exec /app/bin/entrypoint.sh\n"
+    "# No `USER noctus` here (deviates from the canonical shape, agents-only,\n"
+    "# roadmap D1): the ENTRYPOINT below does the uid switch AT EXEC via\n"
+    "# `setpriv` instead, which is what actually populates AMBIENT caps for\n"
+    "# the SDK's `Popen(user=\"julia-cli\")` subprocess spawn — a plain\n"
+    "# `USER noctus` directive here does not (verified empirically,\n"
+    "# moby#45491/PR#36587).\n"
 )
 _D_POST_CHOWN_EXTRA: dict[str, str] = {"agents": _D_AGENTS_POST_CHOWN}
+
+# slug → full CMD replacement, upgraded to an ENTRYPOINT override (roadmap
+# D1, tech-lead + security-advisor review 2026-09-14). agents ONLY. The
+# entrypoint (`bin/entrypoint.sh`, root:root) does two things the
+# canonical plain-uvicorn CMD cannot:
+#   1. FAILS CLOSED — refuses to even attempt the privilege drop unless
+#      uid==0, NoNewPrivs==1, CapBnd is EXACTLY {SETUID,SETGID,KILL}
+#      (0xE0), and a root-fs write attempt fails. A future compose edit
+#      that silently drops `cap_drop`/`no-new-privileges`/`read_only`
+#      must not fall back to "runs anyway, less isolated" — verified
+#      empirically: each of the three flags removed individually makes
+#      the container refuse to start, with a clear reason on stderr.
+#   2. `setpriv --reuid=noctus --regid=noctus ... --ambient-caps=-all,
+#      +setuid,+setgid,+kill -- uvicorn ... --workers 1` — the actual
+#      root->noctus privilege drop, done AT EXEC so ambient caps end up
+#      populated (see `_D_AGENTS_POST_CHOWN` above for why a plain `USER
+#      noctus` cannot do this). `+kill`: `noctus` must be able to signal
+#      the Julia CLI subprocess (uid 1001, a DIFFERENT uid) on
+#      turn-timeout/SDK-close — verified empirically that this needs
+#      CAP_KILL (a same-uid-only signal check otherwise denies it), and
+#      that a killed different-uid child shows as a transient ZOMBIE in
+#      `/proc`, not an immediate disappearance — the D1 report's kill test
+#      checks `/proc/<pid>/stat` state, never bare existence. `--workers
+#      1`: contract §E.9's approval wake-up is in-process (a pending
+#      `approvals` row is resolved by the SAME worker that is awaiting
+#      it); a second uvicorn worker would split conversations across
+#      processes with no shared wake-up channel, silently orphaning
+#      approvals (roadmap trigger T6 tracks lifting this). No
+#      `--bounding-set=` clause anywhere in this product's setpriv calls:
+#      verified empirically that it needs CAP_SETPCAP (`setpriv: apply
+#      bounding set: Operation not permitted`), which is deliberately NOT
+#      in `cap_add`; the compose-level `cap_drop`/`cap_add` already fixes
+#      the bounding-set ceiling, and `--no-new-privs` keeps the leftover
+#      bounding bits inert (nothing can ever re-raise them without
+#      CAP_SETPCAP).
+_D_ENTRYPOINT_OVERRIDE: dict[str, str] = {
+    "agents": (
+        '# ENTRYPOINT replaces the canonical plain-uvicorn CMD (roadmap D1)\n'
+        "# — a root:root, fail-closed script; see `bin/entrypoint.sh`'s own\n"
+        "# header for exactly what it refuses to boot without, and why the\n"
+        "# container stays root through this line (no `USER noctus` above)\n"
+        "# so its own `setpriv` can populate AMBIENT caps as it drops to\n"
+        "# `noctus`.\n"
+        'ENTRYPOINT ["/app/bin/entrypoint.sh"]\n'
+    ),
+}
+# runtime-watch (LOCAL DEV ONLY — the dev fleet is dormant per
+# KB § PATTERNS/devops/dev-fleet-dormant.md, and this is declared rather
+# than fixed, per that rule) does NOT inherit SEC-A/SEC-C's isolation:
+# this stage's OWN `chown -R noctus:noctus /app` (a few lines down, the
+# canonical local-watch node-install step) flips `julia-cli-exec` +
+# `entrypoint.sh` back to `noctus`-owned, and its `local-watch`
+# ENTRYPOINT overrides the `runtime` stage's `entrypoint.sh` with a plain
+# `USER noctus`. Not fixed here: `get_agent_runtime` only ever returns the
+# real `ClaudeAgentSdkRuntime` when `ANTHROPIC_API_KEY` is configured, and
+# no real key is ever set for local dev (never a live Julia turn to
+# isolate in this stage today) — see the D1 report for the explicit
+# call-out this comment stands in for.
+_D_RUNTIME_WATCH_NOTE: dict[str, str] = {
+    "agents": (
+        "FROM runtime AS runtime-watch\n"
+        "# SEC-A/SEC-C do NOT apply to this stage (roadmap D1, declared not\n"
+        "# fixed — dev fleet is dormant): the node-install step below re-runs\n"
+        "# `chown -R noctus:noctus /app`, flipping the wrapper/entrypoint back\n"
+        "# to `noctus`-owned, and ends on a plain `USER noctus` + the\n"
+        "# `local-watch` ENTRYPOINT, not `bin/entrypoint.sh`. Harmless only\n"
+        "# because `get_agent_runtime` never returns the real SDK runtime\n"
+        "# without a configured `ANTHROPIC_API_KEY`, which local dev never\n"
+        "# sets — there is no live Julia turn to isolate in this stage today.\n"
+    ),
+}
 _D_PIP_RUN_SEED = (
     "RUN --mount=type=cache,target=/root/.cache/pip \\\n"
     "    grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \\\n"
@@ -389,20 +531,27 @@ def _render_dockerfile(canon: str, slug: str, port: str) -> str:
     post_chown = _D_POST_CHOWN_EXTRA.get(slug)
     if post_chown:
         s = s.replace(_D_POST_CHOWN_ANCHOR, post_chown, 1)
-    # per-product deploy-CMD extras (roadmap D1) — `--workers 1`, built
-    # against the ALREADY-substituted port/slug (every earlier substitution
-    # has run by this point).
-    if slug in _D_WORKERS_1:
+    # per-product ENTRYPOINT override (roadmap D1) — built against the
+    # ALREADY-substituted port/slug (every earlier substitution has run by
+    # this point). See `_D_ENTRYPOINT_OVERRIDE`'s docstring for what/why.
+    # `bin/entrypoint.sh` hardcodes this product's own port/app-dir
+    # directly (it is a plain, agents-only committed file, same as
+    # `bin/julia-cli-exec` — never templated), so this is a straight
+    # CMD -> ENTRYPOINT line swap, no port/slug substitution needed here.
+    entrypoint_override = _D_ENTRYPOINT_OVERRIDE.get(slug)
+    if entrypoint_override:
         anchor = (
+            "# Default CMD = plain uvicorn over the BAKED dist → this image is a\n"
+            "# self-contained, shippable artifact (deploy/CI run it as-is).\n"
             'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \\\n'
             f'     "--port", "{port}", "--app-dir", "products/{slug}/backend"]\n'
         )
-        replacement = (
-            'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", \\\n'
-            f'     "--port", "{port}", "--app-dir", "products/{slug}/backend", \\\n'
-            '     "--workers", "1"]\n'
-        )
-        s = s.replace(anchor, replacement, 1)
+        s = s.replace(anchor, entrypoint_override, 1)
+    # runtime-watch disclosure (roadmap D1) — see `_D_RUNTIME_WATCH_NOTE`'s
+    # docstring for why this is declared, not fixed.
+    rw_note = _D_RUNTIME_WATCH_NOTE.get(slug)
+    if rw_note:
+        s = s.replace("FROM runtime AS runtime-watch\n", rw_note, 1)
     return s
 
 
