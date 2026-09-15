@@ -1,0 +1,93 @@
+name: Agents SEC-C Isolation Proof
+
+# Roadmap julia-agents-academia-2026-09, row SEC-C. Builds the REAL agents
+# `runtime` image (plus the proof-only `secc-proof` stage) on this
+# amd64 runner and asserts the isolation properties
+# `products/agents/backend/bin/entrypoint.sh` / `bin/julia-cli-exec` /
+# `products/agents/docker-compose.yml`'s security block claim — against a
+# container started EXACTLY the way prod will start it (the docker-run
+# flags are DERIVED from the compose file, never hand-copied — see
+# `secc/compose_flags.py`).
+#
+# WHY THIS EXISTS: `tests/runtime/test_wrapper.py`'s privileged tests
+# correctly SKIP on GitHub's non-root ubuntu runner, so `dev` had ZERO
+# automated coverage of the privilege drop before this job — the design
+# was proven only by a one-off manual run on an arm64 Mac (D1, 2026-09-14).
+# No amd64 image had ever been built before this job either.
+#
+# Separate workflow (not a job inside test.yml): this needs its own
+# path-scoped trigger (`test.yml` has none — it runs its whole matrix on
+# every push/PR to main/dev regardless of path) and its own docker-build
+# runtime, which would otherwise slow every push down for products that
+# never touch `agents`.
+#
+# See `products/agents/backend/secc/run_proof.py` for the proof itself.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, dev]
+    paths:
+      - "products/agents/**"
+      - "seed/docker/**"
+      - "scripts/infra/build-base-images.sh"
+      - ".github/workflows/agents-secc-ci.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "products/agents/**"
+      - "seed/docker/**"
+      - "scripts/infra/build-base-images.sh"
+      - ".github/workflows/agents-secc-ci.yml"
+
+concurrency:
+  group: agents-secc-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  secc-proof:
+    name: Real-image isolation proof (amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install PyYAML (the harness's only non-stdlib dep)
+        run: pip install PyYAML==6.0.3
+
+      # Same recipe `scripts/infra/build-and-push.sh` / build-and-push.yml
+      # already use: build the shared seed base images ONCE (locally —
+      # this runner has no prior cache; every layer builds fresh, unlike
+      # the D1 arm64 proof's stale-base miss), then the product image
+      # FROMs them. `docker/setup-buildx-action` gives `docker build`
+      # BuildKit for free; no custom builder/registry involved (this
+      # host — ubuntu-latest — IS amd64 natively, so there's no
+      # cross-build / registry-pull hole to fall into here).
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build seed base images (dev tag)
+        run: bash scripts/infra/build-base-images.sh dev
+
+      - name: Run the SEC-C real-image isolation proof
+        run: |
+          python3 products/agents/backend/secc/run_proof.py \
+            --tag "ci-${{ github.run_id }}" \
+            --json-out secc-proof-results.json
+
+      - name: Upload proof results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: secc-proof-results
+          path: secc-proof-results.json
+          retention-days: 14

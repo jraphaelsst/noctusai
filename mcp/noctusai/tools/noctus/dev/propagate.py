@@ -466,6 +466,47 @@ _D_ENTRYPOINT_OVERRIDE: dict[str, str] = {
         'ENTRYPOINT ["/app/bin/entrypoint.sh"]\n'
     ),
 }
+# secc-proof (roadmap julia-agents-academia-2026-09, row SEC-C;
+# `products/agents/backend/secc/run_proof.py`) — a PROOF-ONLY `FROM runtime`
+# stage, inserted right after the ENTRYPOINT line and before the
+# runtime-watch stage. agents ONLY: no other product has a Julia-CLI
+# subprocess spawn path to prove in CI without a real API key. NEVER
+# tagged/pushed/deployed — `run_proof.py`'s own
+# `check_build_and_push_never_builds_secc_proof` asserts that statically.
+_D_SECC_PROOF_EXTRA: dict[str, str] = {
+    "agents": (
+        "\n"
+        "# ── secc-proof: PROOF-ONLY stage, NEVER tagged/pushed/deployed ──────────\n"
+        "# Roadmap julia-agents-academia-2026-09, row SEC-C\n"
+        "# (`products/agents/backend/secc/run_proof.py`). CI has no real\n"
+        "# `ANTHROPIC_API_KEY` to exercise the Julia CLI subprocess with, so this\n"
+        "# stage re-points ONLY `/usr/local/bin/claude-bundled` at a root-owned\n"
+        "# probe script (`secc/probe.py`) that dumps its own uid/gid/groups/caps/\n"
+        "# env + an EACCES/EPERM access-check battery instead of talking to\n"
+        "# Anthropic. `bin/julia-cli-exec` and `bin/entrypoint.sh` are otherwise\n"
+        "# BYTE-IDENTICAL to `runtime` (asserted by `run_proof.py` via sha256) —\n"
+        "# only the one symlink target changes.\n"
+        "# \U0001f534 This stage must NEVER be tagged, pushed, or deployed:\n"
+        "# `scripts/infra/build-and-push.sh` / `.github/workflows/build-and-push.yml`\n"
+        "# build + push `--target runtime` only, never `secc-proof`\n"
+        "# (`run_proof.py`'s `check_build_and_push_never_builds_secc_proof` asserts\n"
+        "# this statically on every proof run).\n"
+        "FROM runtime AS secc-proof\n"
+        "USER root\n"
+        "RUN rm -f /usr/local/bin/claude-bundled\n"
+        "COPY products/agents/backend/secc/probe.py /usr/local/bin/claude-bundled\n"
+        "# probe.py's `#!/usr/bin/env python3` shebang resolves through `env`'s OWN\n"
+        "# PATH lookup — and the wrapper's `env -i PATH=/usr/bin:/bin ...` handoff\n"
+        "# (bin/julia-cli-exec, unchanged) deliberately does NOT include\n"
+        "# `/opt/venv/bin` (the real bundled CLI is a native binary, not a python\n"
+        "# script, so it never needed it). Symlinking the venv's python3 onto that\n"
+        "# same restricted PATH is proof-harness-only plumbing, not a change to\n"
+        "# the allowlist the wrapper actually enforces for the real CLI.\n"
+        'RUN ln -sf "$(command -v python3)" /usr/bin/python3 \\\n'
+        "    && chown root:root /usr/local/bin/claude-bundled \\\n"
+        "    && chmod 0755 /usr/local/bin/claude-bundled\n"
+    ),
+}
 # runtime-watch (LOCAL DEV ONLY — the dev fleet is dormant per
 # KB § PATTERNS/devops/dev-fleet-dormant.md, and this is declared rather
 # than fixed, per that rule) does NOT inherit SEC-A/SEC-C's isolation:
@@ -547,6 +588,13 @@ def _render_dockerfile(canon: str, slug: str, port: str) -> str:
             f'     "--port", "{port}", "--app-dir", "products/{slug}/backend"]\n'
         )
         s = s.replace(anchor, entrypoint_override, 1)
+    # per-product secc-proof stage (roadmap SEC-C) — inserted right after
+    # the (already-substituted) ENTRYPOINT line, before the runtime-watch
+    # substitution below. See `_D_SECC_PROOF_EXTRA`'s docstring.
+    secc_proof_extra = _D_SECC_PROOF_EXTRA.get(slug)
+    if secc_proof_extra:
+        entrypoint_anchor = 'ENTRYPOINT ["/app/bin/entrypoint.sh"]\n'
+        s = s.replace(entrypoint_anchor, entrypoint_anchor + secc_proof_extra, 1)
     # runtime-watch disclosure (roadmap D1) — see `_D_RUNTIME_WATCH_NOTE`'s
     # docstring for why this is declared, not fixed.
     rw_note = _D_RUNTIME_WATCH_NOTE.get(slug)

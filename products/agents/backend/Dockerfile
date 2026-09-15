@@ -151,6 +151,36 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # `noctus`.
 ENTRYPOINT ["/app/bin/entrypoint.sh"]
 
+# ── secc-proof: PROOF-ONLY stage, NEVER tagged/pushed/deployed ──────────
+# Roadmap julia-agents-academia-2026-09, row SEC-C
+# (`products/agents/backend/secc/run_proof.py`). CI has no real
+# `ANTHROPIC_API_KEY` to exercise the Julia CLI subprocess with, so this
+# stage re-points ONLY `/usr/local/bin/claude-bundled` at a root-owned
+# probe script (`secc/probe.py`) that dumps its own uid/gid/groups/caps/
+# env + an EACCES/EPERM access-check battery instead of talking to
+# Anthropic. `bin/julia-cli-exec` and `bin/entrypoint.sh` are otherwise
+# BYTE-IDENTICAL to `runtime` (asserted by `run_proof.py` via sha256) —
+# only the one symlink target changes.
+# 🔴 This stage must NEVER be tagged, pushed, or deployed:
+# `scripts/infra/build-and-push.sh` / `.github/workflows/build-and-push.yml`
+# build + push `--target runtime` only, never `secc-proof`
+# (`run_proof.py`'s `check_build_and_push_never_builds_secc_proof` asserts
+# this statically on every proof run).
+FROM runtime AS secc-proof
+USER root
+RUN rm -f /usr/local/bin/claude-bundled
+COPY products/agents/backend/secc/probe.py /usr/local/bin/claude-bundled
+# probe.py's `#!/usr/bin/env python3` shebang resolves through `env`'s OWN
+# PATH lookup — and the wrapper's `env -i PATH=/usr/bin:/bin ...` handoff
+# (bin/julia-cli-exec, unchanged) deliberately does NOT include
+# `/opt/venv/bin` (the real bundled CLI is a native binary, not a python
+# script, so it never needed it). Symlinking the venv's python3 onto that
+# same restricted PATH is proof-harness-only plumbing, not a change to
+# the allowlist the wrapper actually enforces for the real CLI.
+RUN ln -sf "$(command -v python3)" /usr/bin/python3 \
+    && chown root:root /usr/local/bin/claude-bundled \
+    && chmod 0755 /usr/local/bin/claude-bundled
+
 # ── runtime-watch: SAME single container, local live-rebuild ────────────
 # ONE container, ONE shape, ONE command (`./start.sh`). The local
 # per-product compose builds THIS target + bind-mounts source; the user
