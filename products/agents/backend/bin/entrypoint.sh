@@ -1,28 +1,49 @@
 #!/bin/sh
 # entrypoint.sh — root:root, PID 1. Fails CLOSED before dropping to
-# `noctus` (contract SEC-A/SEC-C, roadmap D1, tech-lead + security-advisor
-# review 2026-09-14).
+# `noctus` (contract §E.11, supersedes §E.5; roadmap D1, per-conversation
+# slot isolation, architect review 2026-09-15).
 #
-# WHY FAIL CLOSED: this image's whole isolation model (julia-cli's uid
+# WHY FAIL CLOSED: this image's whole isolation model (each slot uid's
 # separation, the wrapper's cap-drop) depends on the COMPOSE hardening
 # actually being in effect (`cap_drop: ALL` + `cap_add: SETUID,SETGID,
-# KILL` + `no-new-privileges:true` + `read_only: true`). A future compose
-# edit that silently drops one of those flags (or a bare `docker run`
+# KILL` + `no-new-privileges:true` + `read_only: true` + one tmpfs per
+# slot plus the shared handoff tmpfs). A future compose edit that
+# silently drops one of those flags or mounts (or a bare `docker run`
 # with none of them) must not fall back to "starts anyway, just less
 # isolated" — every check below is a refusal-to-boot, not a warning.
 #
 # WHY `--ambient-caps=... +kill`: `noctus` (uid 1000) must be able to
-# `kill()` the Julia CLI subprocess (uid 1001, a DIFFERENT uid) on
-# turn-timeout / SDK client close — sending a signal across a uid
-# boundary needs CAP_KILL (or being the same uid, or root), and `noctus`
-# is neither of the other two. Without it, a timed-out/hung CLI process
-# leaks for the container's lifetime (the SDK's own `close()` reaps it
-# via a signal it can no longer send).
+# `kill()` a slot's Julia CLI subprocess (a DIFFERENT uid — one of
+# `julia-cli-0`/`julia-cli-1`/`julia-cli-2`) on turn-timeout / SDK client
+# close — sending a signal across a uid boundary needs CAP_KILL (or being
+# the same uid, or root), and `noctus` is neither of the other two.
+# Without it, a timed-out/hung CLI process leaks for the container's
+# lifetime (the SDK's own `close()` reaps it via a signal it can no
+# longer send).
 set -eu
 
 fail() {
   echo "entrypoint: refusing to start — $1" >&2
   exit 1
+}
+
+# Returns the fs_mntops (4th /proc/mounts field) for the FIRST mount whose
+# mount point EXACTLY matches $1, or nothing if not mounted at all.
+_mount_opts() {
+  awk -v m="$1" '$2 == m { print $4; exit }' /proc/mounts
+}
+
+# $1 = raw comma-separated options string (no leading/trailing comma, as
+# /proc/mounts always presents it). $2 = the exact "key=value" (or bare
+# flag) token to require. Wrapping both sides in commas turns "is this
+# token present" into one substring test regardless of whether the token
+# is first, middle, or last (the LAST token has no trailing comma in
+# /proc/mounts — verified live: `size=40960k,mode=700,uid=2000,gid=2000`).
+_opts_has() {
+  case ",$1," in
+    *",$2,"*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # 1. Must be launched as root — the whole point of this entrypoint is the
@@ -59,6 +80,44 @@ if ( set -e; touch /.d1-readonly-probe ) 2>/dev/null; then
   rm -f /.d1-readonly-probe
   fail "root filesystem is writable (compose read_only: true is missing)"
 fi
+
+# 5. Every slot's tmpfs must be mounted with the correct owner, mode and
+#    size (contract §E.11) — a compose edit that drops one slot's tmpfs,
+#    or leaves it wrongly owned/sized, must not fall back to "boots
+#    anyway, with that one slot silently unusable or under-isolated."
+#    $JULIA_CLI_SLOTS itself must resolve — `set -u` would already abort
+#    on a genuinely unset var below, but this gives a named reason instead
+#    of a bare "unbound variable" shell error.
+case "${JULIA_CLI_SLOTS:-}" in
+  ''|*[!0-9]*)
+    fail "JULIA_CLI_SLOTS must be a positive integer, got '${JULIA_CLI_SLOTS:-<unset>}'"
+    ;;
+esac
+
+k=0
+while [ "$k" -lt "$JULIA_CLI_SLOTS" ]; do
+  mnt="/run/julia-$k"
+  uid=$((2000 + k))
+  opts="$(_mount_opts "$mnt")"
+  [ -n "$opts" ] || fail "missing tmpfs mount at $mnt (JULIA_CLI_SLOTS=$JULIA_CLI_SLOTS expects one per slot; compose tmpfs: entry missing or the mount point is wrong)"
+  _opts_has "$opts" "uid=$uid" || fail "$mnt: expected uid=$uid; got options '$opts'"
+  _opts_has "$opts" "gid=$uid" || fail "$mnt: expected gid=$uid; got options '$opts'"
+  _opts_has "$opts" "mode=700" || fail "$mnt: expected mode=700; got options '$opts'"
+  _opts_has "$opts" "size=40960k" || fail "$mnt: expected size=40960k (40m); got options '$opts'"
+  k=$((k + 1))
+done
+
+# 6. The shared handoff tmpfs must be owned by `noctus` (uid/gid 1000)
+#    with mode 0711 — a wider mode (e.g. 0777, or group/other read) would
+#    let one slot uid LIST another slot's handoff subdirectory, and a
+#    different owner would break the "noctus writes, only the matching
+#    slot's own primary group can read" guarantee the handoff file's own
+#    mode 0640 depends on.
+handoff_opts="$(_mount_opts /run/julia-handoff)"
+[ -n "$handoff_opts" ] || fail "missing tmpfs mount at /run/julia-handoff (compose tmpfs: entry missing)"
+_opts_has "$handoff_opts" "uid=1000" || fail "/run/julia-handoff: expected uid=1000; got options '$handoff_opts'"
+_opts_has "$handoff_opts" "gid=1000" || fail "/run/julia-handoff: expected gid=1000; got options '$handoff_opts'"
+_opts_has "$handoff_opts" "mode=711" || fail "/run/julia-handoff: expected mode=711; got options '$handoff_opts'"
 
 umask 077
 
