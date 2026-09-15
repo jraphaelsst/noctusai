@@ -6,7 +6,7 @@ a 422 naming it rather than a silently-ignored value.
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import Field
@@ -44,4 +44,26 @@ class ImovelDadosPatchBody(StrictHttpModel):
     captador_user_id: Optional[UUID] = None
 
 
-__all__ = ["ImovelDadosPatchBody"]
+class ImovelDocumentoExtracaoPatchBody(StrictHttpModel):
+    """The operator's confirmation/edit of one document's structured
+    extraction (migration 118) — `PATCH .../documentos/{id}/extracao`.
+
+    Every field is Optional, and `model_fields_set` (not `is None`) is what
+    the service reads: an empty body is a valid "I reviewed this and it is
+    correct" confirmation, not a no-op. `documentos_service.confirmar_
+    extracao` refuses any field this document's `tipo_documento` does not
+    carry (e.g. `resultado` on a `guia_iptu`) — this schema stays generic
+    across every extractable tipo rather than branching on it at the HTTP
+    boundary.
+    """
+
+    numero: Optional[str] = Field(default=None, max_length=64)
+    emitida_em: Optional[date] = None
+    validade_ate: Optional[date] = None
+    resultado: Optional[
+        Literal["negativa", "positiva", "positiva_com_efeito_de_negativa"]
+    ] = None
+    inscricao_imobiliaria: Optional[str] = Field(default=None, max_length=64)
+
+
+__all__ = ["ImovelDadosPatchBody", "ImovelDocumentoExtracaoPatchBody"]

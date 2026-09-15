@@ -35,21 +35,43 @@ The size/mime limits ARE duplicated as values, and that is intentional: they
 are policy for a DIFFERENT surface. A matrícula is a multi-page scanned PDF
 and routinely larger than a photo of an ID, so the two ceilings must be free
 to diverge without one silently dragging the other.
+
+🔴 MIGRATION 118 — STRUCTURED FIELDS FOR THE CONTRACT'S IMÓVEL CND GROUP
+--------------------------------------------------------------------------
+The contract's certidões clause needs, for the imóvel side: the IPTU CND
+(número + data de emissão + resultado), the condomínio debt certificate
+(data de emissão + resultado) and the matrícula certidão's own emissão date
+— all of which the office treats as stale past 30 days at signing. Two new
+tipos (`cnd_iptu`, `cnd_condominio`) join the tuple below, and every
+extraction-eligible tipo gains a SECOND, independent structured read
+(`extrair_estrutura`) alongside whatever it already had:
+`numero`/`emitida_em`/`validade_ate`/`resultado`/`inscricao_imobiliaria`,
+each `origem`d `ia` or `manual` and, once a human looks at it,
+`confirmado_por`/`confirmado_em`. It reuses the SAME LLM client and
+credential-resolution seam `certidoes.service._analyze_estrutura_with_ai`
+established — see `_analisar_estrutura` — extended with
+`inscricao_imobiliaria`, which that seam never needed. Unlike the número-de-
+matrícula job (`matricula_extracao_service`), there is no status/tentativas
+lifecycle for it: it is a best-effort suggestion, not a due-diligence
+record, and a failure logs its reason and leaves the row untouched rather
+than parking it in a "processando" a sweep would need to recover.
 """
 from __future__ import annotations
 
+import json
 import logging
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.primitives.exceptions import NotFoundError
+from noctusai_lib.integrations.llm import chat_completion
+from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.integrations.storage import StorageBackend
 
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub.deps import BUCKET
 from app.services import documento_retencao, table_reads
-from app.services.documento_store import DocumentoStore, documento_base, today
+from app.services.documento_store import DocumentoStore, documento_base, now_iso, today
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +79,67 @@ TABLE = "imovel_documentos"
 
 #: The document types an imóvel accepts. Code-owned, per migration 075's note
 #: — the set will grow (certidão negativa, habite-se, convenção de condomínio)
-#: and a CHECK constraint would make each addition a migration.
-TIPOS_DOCUMENTO: tuple[str, ...] = ("matricula", "guia_iptu")
+#: and a CHECK constraint would make each addition a migration. `cnd_iptu` /
+#: `cnd_condominio` joined in migration 118 — the contract's imóvel CND group.
+TIPOS_DOCUMENTO: tuple[str, ...] = (
+    "matricula", "guia_iptu", "cnd_iptu", "cnd_condominio",
+)
 
 #: Which types are worth reading a número de matrícula off. Only the matrícula
 #: itself — a guia de IPTU carries an inscrição imobiliária, a DIFFERENT
 #: number that would be wrong in this column.
 TIPOS_EXTRAIVEIS = frozenset({"matricula"})
+
+#: Which types get the migration-118 structured read (`numero`/`emitida_em`/
+#: `validade_ate`/`resultado`/`inscricao_imobiliaria`, per-tipo subset below).
+#: Runs ALONGSIDE `TIPOS_EXTRAIVEIS`'s número-de-matrícula job for `matricula`
+#: — two different questions asked of the same PDF, so two independent jobs.
+TIPOS_ESTRUTURA_EXTRAIVEL = frozenset(
+    {"cnd_iptu", "cnd_condominio", "guia_iptu", "matricula"}
+)
+
+#: Which structured fields matter per tipo. The AI prompt asks for exactly
+#: this subset — a model answering with extra keys must not smuggle a field
+#: this tipo_documento never requested into the row (`_parse_json_estrutura`
+#: filters on it too).
+CAMPOS_ESTRUTURA_POR_TIPO: dict[str, tuple[str, ...]] = {
+    "cnd_iptu": (
+        "numero", "emitida_em", "validade_ate", "resultado",
+        "inscricao_imobiliaria",
+    ),
+    "cnd_condominio": ("emitida_em", "resultado"),
+    "guia_iptu": ("inscricao_imobiliaria",),
+    # Only the certidão's OWN emissão date — its número de matrícula is a
+    # different job (`matricula_extracao_service`, `TIPOS_EXTRAIVEIS` above).
+    "matricula": ("emitida_em",),
+}
+
+#: The imóvel CND vocabulary — deliberately narrower than
+#: `certidoes.registry.RESULTADO_VALUES` (no `nao_emitida`): every document
+#: in `CAMPOS_ESTRUTURA_POR_TIPO` is one this module ALREADY HOLDS, so "not
+#: yet emitted" cannot be this row's answer the way it can for a pending
+#: InfoSimples consulta.
+RESULTADO_VALUES: tuple[str, ...] = (
+    "negativa", "positiva", "positiva_com_efeito_de_negativa",
+)
+
+#: `imovel_documentos.origem` — who last wrote the structured fields above.
+#: Mirrors `certidao_resultados.resultado_origem`'s two write-only values
+#: (migration 107); there is no `api` leg here, only `ia` and `manual`.
+ORIGENS_ESTRUTURA: tuple[str, ...] = ("ia", "manual")
+
+#: Vision pages the structured-fields read may bill. Unlike
+#: `certidoes._extract_pdf_text`'s scheduler-driven `CERTIDAO_MAX_VISION_
+#: PAGES=0`, this runs once per upload (never on a loop), and every tipo in
+#: `TIPOS_ESTRUTURA_EXTRAIVEL` is a short document (a CND/guia is 1-3 pages,
+#: not the 20-40-page matrícula scan `matricula_extracao_service` budgets
+#: for) — so a small vision cap is affordable here.
+MAX_VISION_PAGES_ESTRUTURA = 5
+
+#: The certidões `GET /{codigo}/certidoes` surfaces — every tipo the imóvel
+#: CND clause needs a date for. `guia_iptu` is excluded: it carries an
+#: inscrição cadastral, not a resultado/emissão of its own.
+CERTIDOES_TIPOS: tuple[str, ...] = ("cnd_iptu", "cnd_condominio", "matricula")
 
 #: 40 MB. Higher than the client-document ceiling (25 MB) on purpose: a
 #: certidão de matrícula with decades of averbações is routinely 20-40 pages
@@ -104,6 +180,15 @@ def _documento_out(row: dict, resolved: dict) -> dict:
         "extracao_confianca": row.get("extracao_confianca"),
         "extracao_rotulo": row.get("extracao_rotulo"),
         "extracao_erro": row.get("extracao_erro"),
+        # Migration 118 — the structured CND/guia/matrícula fields.
+        "numero": row.get("numero"),
+        "emitida_em": row.get("emitida_em"),
+        "validade_ate": row.get("validade_ate"),
+        "resultado": row.get("resultado"),
+        "inscricao_imobiliaria": row.get("inscricao_imobiliaria"),
+        "origem": row.get("origem"),
+        "confirmado_por": table_reads.actor(resolved, row.get("confirmado_por")),
+        "confirmado_em": row.get("confirmado_em"),
     }
 
 
@@ -112,6 +197,7 @@ def listar(client: Any, org_id: UUID, codigo: str) -> dict:
     rows = STORE.listar_linhas(client, org_id, codigo)
     resolved = table_reads.resolve_actors(
         {r["enviado_por"] for r in rows if r.get("enviado_por")}
+        | {r["confirmado_por"] for r in rows if r.get("confirmado_por")}
     )
     items = [_documento_out(r, resolved) for r in rows]
     return {"items": items, "total": len(items)}
@@ -140,6 +226,11 @@ def validar_upload(
 
 def deve_extrair(tipo_documento: str) -> bool:
     return tipo_documento in TIPOS_EXTRAIVEIS
+
+
+def deve_extrair_estrutura(tipo_documento: str) -> bool:
+    """Does this tipo get the migration-118 structured read?"""
+    return tipo_documento in TIPOS_ESTRUTURA_EXTRAIVEL
 
 
 async def upload(
@@ -272,13 +363,412 @@ def listar_acessos(client: Any, org_id: UUID, codigo: str, documento_id: UUID) -
     return {"items": items, "total": len(items)}
 
 
+# ─── Structured extraction (migration 118) ─────────────────────────────
+
+
+def _marcar(client: Any, documento_id: UUID, **updates: Any) -> None:
+    _t(client, TABLE).update(updates).eq("id", str(documento_id)).execute()
+
+
+_DESCRICAO_CAMPO: dict[str, str] = {
+    "numero": "numero (string ou null) - o numero de controle/protocolo do documento",
+    "emitida_em": (
+        "emitida_em (formato YYYY-MM-DD ou null) - data de emissao impressa "
+        "no documento"
+    ),
+    "validade_ate": (
+        "validade_ate (formato YYYY-MM-DD ou null) - data de validade "
+        "impressa no documento, quando houver"
+    ),
+    "resultado": (
+        "resultado (um destes valores exatos: negativa, positiva, "
+        "positiva_com_efeito_de_negativa - ou null se nao for possivel "
+        "determinar com confianca)"
+    ),
+    "inscricao_imobiliaria": (
+        "inscricao_imobiliaria (string ou null) - o numero de inscricao "
+        "cadastral do imovel junto a prefeitura"
+    ),
+}
+
+
+def _prompt_estrutura(campos: tuple[str, ...]) -> str:
+    itens = "; ".join(_DESCRICAO_CAMPO[c] for c in campos)
+    return (
+        "Voce e um analista imobiliario. Leia este documento e responda "
+        "APENAS com um JSON (sem markdown, sem texto adicional) com estas "
+        f"chaves: {itens}."
+    )
+
+
+def _data_valida(value: Any) -> bool:
+    """Is `value` a well-formed `YYYY-MM-DD`? Sanitizes an LLM's JSON answer
+    before it reaches a `DATE` column — mirrors `certidoes.service.
+    _is_iso_date`."""
+    if not isinstance(value, str):
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
+def _parse_json_estrutura(raw: Optional[str], campos: tuple[str, ...]) -> Optional[dict]:
+    """Defensive JSON parse of the structured-fields prompt's answer.
+
+    Mirrors `certidoes.service._parse_json_resultado`'s posture: fenced
+    markdown is stripped before parsing, and any field outside `campos` or
+    the closed vocabularies (`RESULTADO_VALUES`, ISO dates) is DROPPED
+    rather than written — a malformed AI answer must never reach the
+    database looking confident. Only keys the caller actually asked for are
+    kept, so a model answering with extra keys cannot smuggle a field this
+    tipo_documento never requested into the row.
+    """
+    if not raw:
+        return None
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned[:4].lower() == "json":
+            cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+    try:
+        parsed = json.loads(cleaned)
+    except (ValueError, TypeError):
+        logger.warning(
+            "extracao estrutura: resposta da IA nao e JSON valido: %r", raw[:200]
+        )
+        return None
+    if not isinstance(parsed, dict):
+        return None
+
+    out: dict = {}
+    if "numero" in campos:
+        valor = parsed.get("numero")
+        if isinstance(valor, str) and valor.strip():
+            out["numero"] = valor.strip()
+    for campo in ("emitida_em", "validade_ate"):
+        if campo in campos and _data_valida(parsed.get(campo)):
+            out[campo] = parsed[campo]
+    if "resultado" in campos and parsed.get("resultado") in RESULTADO_VALUES:
+        out["resultado"] = parsed["resultado"]
+    if "inscricao_imobiliaria" in campos:
+        valor = parsed.get("inscricao_imobiliaria")
+        if isinstance(valor, str) and valor.strip():
+            out["inscricao_imobiliaria"] = valor.strip()
+    return out or None
+
+
+async def _analisar_estrutura(
+    texto: str, tipo_documento: str, org_id: Optional[str]
+) -> Optional[dict]:
+    """Ask the seed `chat_completion` wrapper for this tipo's structured
+    fields — numero/emitida_em/validade_ate/resultado/inscricao_imobiliaria,
+    per `CAMPOS_ESTRUTURA_POR_TIPO`.
+
+    🔴 REUSES THE SEAM `certidoes.service._analyze_estrutura_with_ai`
+    established, extended with `inscricao_imobiliaria` (which that seam has
+    no reason to ask for) — the SAME `chat_completion` client, the SAME
+    credential resolution (`resolve_chat_provider` → `resolve_key` →
+    `provider_api_key`), the SAME model table. Imported lazily so importing
+    this module never drags in `certidoes.service`'s heavier dependencies
+    (httpx, xhtml2pdf) — the same reason `matricula_extracao_service` lazy-
+    imports its own real extractor.
+
+    Never raises: every failure (unreadable provider setting, no key
+    configured, the call itself failing) is logged and returns `None`, same
+    posture as the seam it reuses — this runs detached from the upload
+    request, and an exception here would surface nowhere.
+    """
+    campos = CAMPOS_ESTRUTURA_POR_TIPO.get(tipo_documento)
+    if not campos:
+        return None
+
+    from app.modules.certidoes.credentials import provider_api_key, resolve_key
+    from app.modules.certidoes.service import ANALYSIS_MODELS, DEFAULT_ANALYSIS_PROVIDER
+    from app.services.api_keys_store import resolve_chat_provider
+
+    try:
+        provider = resolve_chat_provider(org_id)
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "extracao estrutura: nao foi possivel ler o provedor de IA para "
+            "org=%s: %s",
+            org_id, exc,
+        )
+        return None
+
+    modelo = ANALYSIS_MODELS.get(provider, ANALYSIS_MODELS[DEFAULT_ANALYSIS_PROVIDER])
+    api_key = resolve_key(provider_api_key(provider), org_id)
+    if not api_key:
+        logger.warning(
+            "extracao estrutura: %s nao configurada (provedor selecionado)",
+            provider_api_key(provider),
+        )
+        return None
+
+    try:
+        raw = await chat_completion(
+            messages=[
+                {"role": "system", "content": _prompt_estrutura(campos)},
+                {"role": "user", "content": texto},
+            ],
+            model=modelo,
+            provider=provider,
+            org_id=org_id,
+            max_tokens=300,
+        )
+    except Exception as e:  # noqa: BLE001 - background job must not die
+        logger.error("extracao estrutura: chamada de IA falhou: %s", e)
+        return None
+
+    return _parse_json_estrutura(raw, campos)
+
+
+async def _extrair_texto(
+    conteudo: bytes, mimetype: Optional[str], org_id: Optional[str]
+) -> Optional[str]:
+    """Bytes → text, via the seed transcription ladder (`noctusai_lib.
+    integrations.documents.make_document_transcriber`) — the "seed documents
+    pipeline" half of the reused seam. Text-layer first, vision second, up to
+    `MAX_VISION_PAGES_ESTRUTURA` pages.
+
+    Never raises: a failed or empty transcription returns `None`, logged.
+    """
+    try:
+        from noctusai_lib.integrations.documents import make_document_transcriber
+
+        from app.services.api_keys_store import resolve_vision_provider
+
+        provider = (
+            resolve_vision_provider(org_id)
+            if MAX_VISION_PAGES_ESTRUTURA > 0
+            else None
+        )
+        transcriber = make_document_transcriber(
+            real=True,
+            org_id=org_id,
+            max_vision_pages=MAX_VISION_PAGES_ESTRUTURA,
+            provider=provider,
+        )
+        resultado = await transcriber.transcribe(
+            conteudo, mimetype=mimetype or "application/pdf"
+        )
+        return resultado.text or None
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.warning("extracao estrutura: leitura de texto falhou: %s", exc)
+        return None
+
+
+def _sugestao_imovel_dados(tipo_documento: str, campos: dict) -> Optional[tuple[str, Any]]:
+    """The ONE `imovel_dados` field this tipo's read may suggest, or `None`.
+
+    Only the two pairings the contract asked for: a guia de IPTU's inscrição
+    into `prefeitura_cadastro_imobiliario`, and a matrícula certidão's own
+    emissão date into `onus_certidao_em`. `cnd_iptu` also carries an
+    `inscricao_imobiliaria` but is deliberately NOT wired here — the guia de
+    IPTU is the canonical source for the cadastral number, and widening this
+    silently would make two documents race to suggest the same field.
+    """
+    if tipo_documento == "guia_iptu" and campos.get("inscricao_imobiliaria"):
+        return ("prefeitura_cadastro_imobiliario", campos["inscricao_imobiliaria"])
+    if tipo_documento == "matricula" and campos.get("emitida_em"):
+        return ("onus_certidao_em", campos["emitida_em"])
+    return None
+
+
+async def extrair_estrutura(
+    client: Any,
+    storage: StorageBackend,
+    org_id: UUID,
+    codigo: str,
+    documento_id: UUID,
+    *,
+    extract_text: Optional[Any] = None,
+    analyze_estrutura: Optional[Any] = None,
+) -> dict:
+    """Read numero/emitida_em/validade_ate/resultado/inscricao_imobiliaria
+    off a CND/guia/matrícula upload, and suggest into `imovel_dados` when
+    applicable (migration 118).
+
+    NEVER raises — this runs detached from the upload request, same posture
+    as `matricula_extracao_service.extrair`. Unlike that job there is no
+    status/tentativas lifecycle: a failure logs its reason and leaves the
+    document exactly as it was, never stuck in an intermediate state a sweep
+    would need to recover.
+
+    🔴 A HUMAN'S CONFIRMATION IS NEVER OVERWRITTEN. `origem == "manual"` (or
+    a non-null `confirmado_por`) means a human already reviewed this
+    document's fields — a retry must never silently override that, same
+    enforcement `certidoes.service._derive_estrutura`'s `travado` gives its
+    own surface.
+
+    `extract_text` / `analyze_estrutura` are DI seams (default: the real
+    `_extrair_texto` / `_analisar_estrutura`) — a test injects a stub instead
+    of patching this module's own functions. → KB § PATTERNS/backend/
+    di-test-seam.md
+    """
+    extract_text = extract_text or _extrair_texto
+    analyze_estrutura = analyze_estrutura or _analisar_estrutura
+
+    rows = (
+        _t(client, TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("id", str(documento_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        logger.warning(
+            "extracao estrutura: documento %s not found for org %s",
+            documento_id, org_id,
+        )
+        return {"status": "erro", "erro": "documento_nao_encontrado"}
+
+    doc = rows[0]
+    if doc.get("deleted_at"):
+        return {"status": "erro", "erro": "documento_removido"}
+    tipo = doc["tipo_documento"]
+    if not deve_extrair_estrutura(tipo):
+        return {"status": "erro", "erro": "tipo_nao_extraivel"}
+    if doc.get("origem") == "manual" or doc.get("confirmado_por"):
+        return {"status": "ignorado", "erro": "confirmado_manualmente"}
+
+    try:
+        blob = await storage.get(bucket=BUCKET, key=doc["storage_path"])
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.warning(
+            "extracao estrutura %s: storage read failed: %s", documento_id, exc
+        )
+        return {"status": "erro", "erro": "storage"}
+    if blob is None:
+        logger.warning(
+            "extracao estrutura %s: objeto ausente no storage", documento_id
+        )
+        return {"status": "erro", "erro": "objeto_ausente"}
+
+    texto = await extract_text(blob.data, doc.get("mime_type"), str(org_id))
+    if not texto:
+        logger.info("extracao estrutura %s: sem texto legivel", documento_id)
+        return {"status": "sem_dados", "erro": "sem_texto"}
+
+    via_ia = await analyze_estrutura(texto, tipo, str(org_id))
+    if not via_ia:
+        return {"status": "sem_dados"}
+
+    _marcar(client, documento_id, **via_ia, origem="ia")
+
+    sugerido = False
+    sugestao = _sugestao_imovel_dados(tipo, via_ia)
+    if sugestao:
+        campo, valor = sugestao
+        atual = dados_service.linha(client, org_id, codigo)
+        if not (atual and atual.get(campo)):
+            dados_service.atualizar(
+                client, org_id, codigo, valores={campo: valor}, usuario_id=None
+            )
+            sugerido = True
+
+    return {"status": "ok", "campos": sorted(via_ia), "sugerido_em_dados": sugerido}
+
+
+def confirmar_extracao(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    documento_id: UUID,
+    *,
+    valores: dict,
+    usuario_id: Optional[UUID],
+) -> dict:
+    """`PATCH /{codigo}/documentos/{documento_id}/extracao` — the operator
+    confirms or corrects the structured extraction (migration 118).
+
+    Always stamps `origem="manual"` + `confirmado_por`/`confirmado_em`, even
+    when `valores` is empty — a pure "I reviewed this and it is correct" is a
+    confirmation too, and it is what LOCKS the row against `extrair_estrutura`
+    ever overwriting it on a later retry (mirrors `certidoes.service.
+    confirmar_resultado`'s reasoning for the same lock).
+    """
+    dados_service.ensure_imovel(client, org_id, codigo)
+    doc = STORE.exigir(client, org_id, codigo, documento_id)
+
+    campos = CAMPOS_ESTRUTURA_POR_TIPO.get(doc["tipo_documento"], ())
+    recusados = sorted(set(valores) - set(campos))
+    if recusados:
+        raise ValidationError_(
+            f"Campos não aplicáveis a {doc['tipo_documento']}: "
+            f"{', '.join(recusados)}",
+            field=recusados[0],
+        )
+
+    patch = {
+        **{
+            k: (v.isoformat() if isinstance(v, date) else v)
+            for k, v in valores.items()
+        },
+        "origem": "manual",
+        "confirmado_por": str(usuario_id) if usuario_id else None,
+        "confirmado_em": now_iso(),
+    }
+    _marcar(client, documento_id, **patch)
+
+    row = {**doc, **patch}
+    resolved = table_reads.resolve_actors({usuario_id} if usuario_id else set())
+    return _documento_out(row, resolved)
+
+
+def certidoes(client: Any, org_id: UUID, codigo: str) -> dict:
+    """`GET /{codigo}/certidoes` — the latest structured read per tipo, for
+    the contract's imóvel CND clause (IPTU CND, condomínio, and the
+    matrícula certidão's own emissão date) — all of it in one call so the
+    office's 30-day-old rule can be checked without opening each document.
+    """
+    dados_service.ensure_imovel(client, org_id, codigo)
+    rows = STORE.listar_linhas(client, org_id, codigo)  # already newest-first
+
+    por_tipo: dict[str, dict] = {}
+    for row in rows:
+        tipo = row["tipo_documento"]
+        if tipo in CERTIDOES_TIPOS and tipo not in por_tipo:
+            por_tipo[tipo] = row
+
+    items = [
+        {
+            "tipo": tipo,
+            "documento_id": row["id"],
+            "numero": row.get("numero"),
+            "emitida_em": row.get("emitida_em"),
+            "validade_ate": row.get("validade_ate"),
+            "resultado": row.get("resultado"),
+            "inscricao_imobiliaria": row.get("inscricao_imobiliaria"),
+            "confirmado": row.get("origem") == "manual" or bool(row.get("confirmado_por")),
+        }
+        for tipo in CERTIDOES_TIPOS
+        for row in [por_tipo.get(tipo)]
+        if row is not None
+    ]
+    return {"items": items, "total": len(items)}
+
+
 __all__ = [
     "ALLOWED_MIME_TYPES",
+    "CAMPOS_ESTRUTURA_POR_TIPO",
+    "CERTIDOES_TIPOS",
     "MAX_UPLOAD_BYTES",
+    "ORIGENS_ESTRUTURA",
+    "RESULTADO_VALUES",
     "TABLE",
     "TIPOS_DOCUMENTO",
+    "TIPOS_ESTRUTURA_EXTRAIVEL",
     "TIPOS_EXTRAIVEIS",
+    "certidoes",
+    "confirmar_extracao",
     "deve_extrair",
+    "deve_extrair_estrutura",
+    "extrair_estrutura",
     "validar_upload",
     "listar",
     "listar_acessos",

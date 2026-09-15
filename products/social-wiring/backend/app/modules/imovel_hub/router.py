@@ -42,7 +42,10 @@ from app.modules.imovel_hub.deps import (
     get_matricula_extractor_factory,
     get_storage_backend,
 )
-from app.modules.imovel_hub.schemas import ImovelDadosPatchBody
+from app.modules.imovel_hub.schemas import (
+    ImovelDadosPatchBody,
+    ImovelDocumentoExtracaoPatchBody,
+)
 
 router = APIRouter(prefix="/api/imoveis", tags=["imoveis-dados"])
 
@@ -141,6 +144,19 @@ async def upload_documento_route(
             UUID(documento["id"]),
             extractor=extractor_factory(str(org_id)),
         )
+    # Migration 118 — a SECOND, independent job: numero/emitida_em/
+    # validade_ate/resultado/inscricao_imobiliaria. Runs alongside the
+    # número-de-matrícula job above for `matricula` — two different
+    # questions asked of the same PDF.
+    if docs_svc.deve_extrair_estrutura(tipo_documento):
+        background.add_task(
+            docs_svc.extrair_estrutura,
+            client,
+            storage,
+            org_id,
+            codigo,
+            UUID(documento["id"]),
+        )
     return documento
 
 
@@ -175,6 +191,41 @@ async def list_documento_acessos_route(
     """The LGPD access log for one imóvel document (migration 109/111)."""
     _user, org_id = _auth_parts(auth)
     return docs_svc.listar_acessos(client, org_id, codigo.upper(), documento_id)
+
+
+@router.patch("/{codigo}/documentos/{documento_id}/extracao")
+async def patch_documento_extracao_route(
+    codigo: str,
+    documento_id: UUID,
+    body: ImovelDocumentoExtracaoPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """The operator confirms or corrects a document's structured extraction
+    (migration 118). Same `model_fields_set` convention as `patch_dados_
+    route`: an empty body is a valid confirmation, not a no-op."""
+    user, org_id = _auth_parts(auth)
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return docs_svc.confirmar_extracao(
+        client,
+        org_id,
+        codigo.upper(),
+        documento_id,
+        valores=valores,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.get("/{codigo}/certidoes")
+async def list_certidoes_route(
+    codigo: str,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """The imóvel CND group — IPTU CND, condomínio, matrícula emissão date —
+    latest per tipo (migration 118)."""
+    _user, org_id = _auth_parts(auth)
+    return docs_svc.certidoes(client, org_id, codigo.upper())
 
 
 @router.delete(
