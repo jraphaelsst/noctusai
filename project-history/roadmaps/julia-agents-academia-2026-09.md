@@ -282,6 +282,41 @@ The decision log keeps every step.
     - no migration needed: `consumed_at` already exists in `006_agents.sql`
   - **Flake under load, not a defect:** `products/agents/frontend/src/pages/__tests__/Agentes.test.tsx` times out at 15s on this host under load (~17, from local `dev-noctus-*` containers, one restart-looping). It fails identically on the untouched base commit, passes with a 90s timeout (~15s of test time), and passed 45/45 once load fell to ~9. A follow-up should find why three render tests take ~15s.
   - **D1 is still reworking.** Both engineers stalled at the 600s watchdog on long foreground commands; both were resumed. D1's orphaned `docker build`, hung for 1h43m, was killed. D1 must rebase over this slice's small edits to `config.py` and `runtime/__init__.py`, keeping both sides.
+- **2026-09-14 (D1 containers landed — SEC-C isolation proven on a real arm64 image)**: `0edbf1d0` + `5b9b9b11` are on `dev`.
+  - **Rebase:** onto `1ac12801`, keeping both sides of `runtime/__init__.py`.
+  - **Re-gated on the pushed tip:**
+    - agents backend: 283 passed, 6 skipped
+    - academia backend: 308 passed
+    - `--propagate both --check`: in sync (14 products)
+    - `check_product_container_shape`: `[]`
+    - keepers clean: tunnel-ingress-snapshot, ci-test-matrix, kb-sync, every-test-file-is-gated, no-self-monkeypatch, prod-exposure-consent, hardcoded-slug-set
+  - **Shape.**
+    - **Entrypoint (agents only):** a root:root `bin/entrypoint.sh` fails closed unless uid is 0, NoNewPrivs is 1, CapBnd is exactly `e0` (SETUID+SETGID+KILL) and the rootfs is read-only. It then runs `setpriv` to uid 1000 with ambient SETUID/SETGID/KILL.
+    - **Wrapper:** `bin/julia-cli-exec` itself switches to uid/gid 1001 with cleared groups, drops all inheritable and ambient caps, sets no_new_privs and uses `env -i` with the allowlist. It covers the SDK's `-v` spawn, which runs without `user=`.
+    - **CLI:** the SDK-bundled binary, reached through a root-owned symlink with a build-time `test -x`.
+    - **Image:** setuid/setgid bits stripped. `/run/julia` is a tmpfs owned by uid 1001 (mode 0700); `/tmp` is mode 1770 gid 1000.
+    - **Compose:** `init: true`, `shm_size` and `mem_limit`. The local seed base images were rebuilt before the proof.
+  - **Real-image proof (arm64), all passing:**
+    - health 200 (degraded start with placeholder Supabase credentials, as designed)
+    - uvicorn: uid 1000, CapPrm/Eff/Amb `e0`, NoNewPrivs 1
+    - rootfs write: EROFS
+    - wrapper, entrypoint and CLI: root:root 0755
+    - the real `Popen(user=)` spawn: uid, gid and groups 1001; all caps zero; env exactly the allowlist
+    - as uid 1001:
+      - EACCES on uvicorn's `environ`, `mem` and `fd`
+      - EPERM on `kill -0`
+      - EACCES on the app's `/tmp`
+      - `setpriv --reuid=1000` denied
+      - `find -writable` returns only `/run/julia`
+    - zero setuid/setgid files
+    - SIGTERM kill observed through `/proc` state, and zero zombies after repeated spawns
+    - the `-v` spawn switches to 1001
+  - **Gaps, each with a named destination:**
+    - **amd64 image not built.** `buildx`'s container builder cannot see the local-only seed base images, so the cross-build tried a registry pull (rc 1). Destination: the M6 build through `build-and-push.yml` (registry bases, amd64) plus a `claude -v` smoke on the built amd64 image before deploy.
+    - **The wrapper's uid-switch tests skip off Linux-with-CAP_SETUID** (6 skipped, with explicit reasons), so CI has no automated coverage of the privilege drop. Destination: the SEC-C suite as a real-image CI job (build the agents image, run the proof table as assertions).
+    - **Unexplained capability reading.** The real entrypoint's uvicorn showed CapInh=0 while CapAmb=`e0`, which a manual `setpriv` chain did not reproduce. Everything works, but there is no root cause. Destination: the SEC-C CI job asserts the exact cap sets, which will pin or explain it.
+    - **Drift found:** agents `approval_assertion_secrets: list[str]` crashes at boot on a plain `APPROVAL_ASSERTION_SECRETS=k1,k2` (pydantic-settings 2.5.2 JSON-decodes complex env fields before validators). Academia already works around it. Dispatched as `feat/seed-csv-settings`, which hoists the raw-str + list-property idiom into a seed helper (third copy, so it must be formalized) with a red-before/green-after regression test.
+    - **Methodology note:** `docker exec -u <user>` does not reproduce the app's spawn path, because it gets no ambient-cap inheritance. A proof using it gives false negatives. Candidate for `KB § PATTERNS/devops/containerization.md` / `noc-container-debug`.
 
 ## Retrospective (filled at first trigger fire)
 
