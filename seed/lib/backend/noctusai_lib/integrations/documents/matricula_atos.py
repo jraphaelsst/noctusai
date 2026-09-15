@@ -98,11 +98,15 @@ class MatriculaAto:
         return text[self.start : self.end]
 
 
-def _normalized_with_offsets(text: str) -> tuple[str, list[int]]:
+def normalized_with_offsets(text: str) -> tuple[str, list[int]]:
     """Per-char normalised text plus, for each normalised char, the offset of
     the original char it came from. Whitespace is kept verbatim (so `\\n`
     survives); a char that normalises to nothing (a lone combining mark)
-    contributes no position."""
+    contributes no position.
+
+    Public because `matricula_ato_detalhes` matches against the same
+    normalisation and must map every hit back to a LITERAL slice — one
+    mapping, not two that could disagree about an accented character."""
     parts: list[str] = []
     origem: list[int] = []
     for i, c in enumerate(text):
@@ -133,7 +137,7 @@ def segment_matricula_atos(text: str) -> list[MatriculaAto]:
     """
     if not text:
         return []
-    norm, origem = _normalized_with_offsets(text)
+    norm, origem = normalized_with_offsets(text)
 
     def to_orig_start(k: int) -> int:
         return origem[k] if k < len(origem) else len(text)
@@ -190,4 +194,10 @@ def ato_hint_span(text: str, ato: MatriculaAto) -> tuple[int, int]:
     return (ato.start, ato.start)
 
 
-__all__ = ["AtoKind", "MatriculaAto", "ato_hint_span", "segment_matricula_atos"]
+__all__ = [
+    "AtoKind",
+    "MatriculaAto",
+    "ato_hint_span",
+    "normalized_with_offsets",
+    "segment_matricula_atos",
+]

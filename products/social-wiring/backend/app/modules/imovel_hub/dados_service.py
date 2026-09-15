@@ -127,6 +127,19 @@ CAMPOS_ONUS_FONTE: tuple[str, ...] = (
     "onus_fonte_confirmado_em",
 )
 
+#: Migration 115 — the CONFIRMED contract wording: the título aquisitivo
+#: phrase and the ônus creditor. Written ONLY by `matriculas.titulo_service`
+#: (an operator's PUT), never by the PATCH route and never by a suggester —
+#: the suggestion is recomputed from the acts on every read, not stored.
+CAMPOS_TEXTO_CONTRATO: tuple[str, ...] = (
+    "titulo_aquisitivo_texto",
+    "titulo_aquisitivo_texto_confirmado_por",
+    "titulo_aquisitivo_texto_confirmado_em",
+    "onus_credor",
+    "onus_credor_confirmado_por",
+    "onus_credor_confirmado_em",
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -322,6 +335,19 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
         "situacoes_onus": list(SITUACOES_ONUS),
         "titulo_aquisitivo_fonte": _fonte_titulo_aquisitivo(row, resolved),
         "onus_fonte": _fonte_onus(row, resolved),
+        # Migration 115 — the confirmed contract wording.
+        "titulo_aquisitivo_texto": row.get("titulo_aquisitivo_texto"),
+        "titulo_aquisitivo_texto_confirmado_por": table_reads.actor(
+            resolved, row.get("titulo_aquisitivo_texto_confirmado_por")
+        ),
+        "titulo_aquisitivo_texto_confirmado_em": row.get(
+            "titulo_aquisitivo_texto_confirmado_em"
+        ),
+        "onus_credor": row.get("onus_credor"),
+        "onus_credor_confirmado_por": table_reads.actor(
+            resolved, row.get("onus_credor_confirmado_por")
+        ),
+        "onus_credor_confirmado_em": row.get("onus_credor_confirmado_em"),
         "updated_at": row.get("updated_at"),
     }
 
@@ -335,6 +361,8 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("onus_registrado_por"),
         (row or {}).get("titulo_aquisitivo_confirmado_por"),
         (row or {}).get("onus_fonte_confirmado_por"),
+        (row or {}).get("titulo_aquisitivo_texto_confirmado_por"),
+        (row or {}).get("onus_credor_confirmado_por"),
     }
     return _saida(codigo, row, table_reads.resolve_actors(ids))
 
@@ -468,6 +496,24 @@ def gravar_fontes_matricula(
     _gravar(client, org_id, codigo, linha(client, org_id, codigo), patch)
 
 
+def gravar_texto_contrato(
+    client: Any, org_id: UUID, codigo: str, patch: dict
+) -> None:
+    """Write the confirmed título phrase / ônus creditor (migration 115).
+
+    The caller (`matriculas.titulo_service`) stamps the confirmation. Refuses
+    any column outside `CAMPOS_TEXTO_CONTRATO` — not a back door to the
+    authored fields or the 109 source pointers.
+    """
+    recusados = sorted(set(patch) - set(CAMPOS_TEXTO_CONTRATO))
+    if recusados:
+        raise ValueError(
+            f"gravar_texto_contrato: colunas fora do texto do contrato: {', '.join(recusados)}"
+        )
+    ensure_imovel(client, org_id, codigo)
+    _gravar(client, org_id, codigo, linha(client, org_id, codigo), patch)
+
+
 def extracao_referenciada(client: Any, org_id: UUID, extracao_id: Any) -> bool:
     """Does any imóvel's título/ônus pointer quote this matrícula extraction?"""
     for coluna in ("titulo_aquisitivo_extracao_id", "onus_fonte_extracao_id"):
@@ -488,6 +534,7 @@ __all__ = [
     "CAMPOS_EDITAVEIS",
     "CAMPOS_ONUS_FONTE",
     "CAMPOS_PROVENIENCIA",
+    "CAMPOS_TEXTO_CONTRATO",
     "CAMPOS_TITULO_AQUISITIVO",
     "TABLE",
     "aplicar_matricula_extraida",
@@ -495,6 +542,7 @@ __all__ = [
     "ensure_imovel",
     "extracao_referenciada",
     "gravar_fontes_matricula",
+    "gravar_texto_contrato",
     "linha",
     "obter",
 ]

@@ -18,7 +18,12 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-_IDS = {"{extracao_id}": str(uuid4()), "{contrato_id}": str(uuid4())}
+_IDS = {
+    "{extracao_id}": str(uuid4()),
+    "{contrato_id}": str(uuid4()),
+    "{ato_id}": str(uuid4()),
+    "{codigo}": "AP1234",
+}
 _PDF = {"file": ("matricula.pdf", b"%PDF-1.0 fake", "application/pdf")}
 
 _ROTAS_109 = {
@@ -28,6 +33,15 @@ _ROTAS_109 = {
     ("put", "/api/matriculas/extracoes/{extracao_id}/fontes"),
     ("get", "/api/matriculas/contratos/{contrato_id}/atos"),
     ("put", "/api/matriculas/contratos/{contrato_id}/atos"),
+}
+
+_ROTAS_115 = {
+    ("put", "/api/matriculas/atos/{ato_id}/detalhes"),
+    ("get", "/api/matriculas/imoveis/{codigo}/titulo-aquisitivo"),
+    ("put", "/api/matriculas/imoveis/{codigo}/titulo-aquisitivo"),
+    ("get", "/api/matriculas/imoveis/{codigo}/onus-credor"),
+    ("put", "/api/matriculas/imoveis/{codigo}/onus-credor"),
+    ("get", "/api/matriculas/imoveis/{codigo}/antigos-proprietarios"),
 }
 
 
@@ -42,6 +56,7 @@ def test_every_matriculas_route_requires_auth(anon_client):
         if method.lower() in {"get", "post", "patch", "delete", "put"}
     }
     assert _ROTAS_109 <= paths, f"missing 109 routes: {_ROTAS_109 - paths}"
+    assert _ROTAS_115 <= paths, f"missing 115 routes: {_ROTAS_115 - paths}"
 
     for method, path in sorted(paths):
         concrete = path

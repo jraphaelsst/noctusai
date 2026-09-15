@@ -65,6 +65,7 @@ from noctusai_lib.primitives.exceptions import (
 
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub import documentos_service as docs_svc
+from app.modules.matriculas import ato_detalhes_service as detalhes_svc
 from app.services import table_reads
 from app.services.documento_store import log_acesso_extracao, now_iso, today
 
@@ -75,6 +76,11 @@ ATOS_TABLE = "matricula_atos"
 SELECAO_TABLE = "atendimento_contrato_matricula_atos"
 CONTRATOS_TABLE = "atendimento_contratos"
 NEGOCIACAO_TABLE = "atendimento_negociacao"
+PERMUTA_ATIVOS_TABLE = "permuta_ativos"
+
+#: `atendimento_contrato_matricula_atos.papel` (migration 115).
+PAPEL_OBJETO = "objeto"
+PAPEL_PERMUTA = "permuta"
 
 STATUS_CONCLUIDA = "concluida"
 
@@ -165,6 +171,20 @@ def persistir_atos(db: Any, extracao_id: str, org_id: Any, texto: str) -> int:
     linhas = linhas_de_atos(str(extracao_id), org, segment_matricula_atos(texto or ""))
     if linhas:
         _t(db, ATOS_TABLE).insert(linhas).execute()
+        # Migration 115 — each act's typed reading, as a SUGGESTION. Its own
+        # try: the acts are the product and are already written; a failed
+        # detail insert is logged at ERROR and self-heals on the next read
+        # (`ato_detalhes_service.detalhes_por_ato` mints missing suggestions).
+        try:
+            detalhes_svc.persistir_sugestoes(db, org, str(extracao_id), texto or "", linhas)
+        except Exception as falha:  # noqa: BLE001 - acts landed; details heal on read
+            logger.error(
+                "matricula %s: acts persisted but their detail suggestions were not "
+                "(%s) — they are re-read on the next GET .../atos",
+                extracao_id,
+                falha,
+                exc_info=True,
+            )
     return len(linhas)
 
 
@@ -203,6 +223,9 @@ def purgar_texto_expirado(client: Any, org_id: UUID) -> int:
         _t(client, EXTRACOES_TABLE).update({"texto_extraido": None}).eq(
             "id", row["id"]
         ).execute()
+        # Migration 115 — party names / CPFs READ OUT of this text are the
+        # same personal data; they must not outlive the text they came from.
+        detalhes_svc.purgar_da_extracao(client, org_id, row["id"])
     return len(rows)
 
 
@@ -304,13 +327,28 @@ def _ato_saida(row: dict, texto: str) -> dict:
     }
 
 
+def atos_da_extracao(client: Any, org_id: UUID, extracao: dict) -> list[dict]:
+    """The extraction's act rows in matrícula order (healing missing acts)."""
+    return _linhas_de_atos(client, org_id, extracao)
+
+
 def listar_atos(
     client: Any, org_id: UUID, extracao_id: UUID, *, usuario_id: Optional[Any] = None
 ) -> dict:
+    """The acts as literal slices, each with its typed `detalhes` (migration
+    115; `None` for the abertura). One `text_view` log covers the details
+    too: they are readings OF the text this response already hands back."""
     extracao = exigir_extracao(client, org_id, extracao_id)
     log_leitura_texto(client, org_id, extracao_id, usuario_id)
     texto = extracao.get("texto_extraido") or ""
-    atos = [_ato_saida(r, texto) for r in _linhas_de_atos(client, org_id, extracao)]
+    rows = _linhas_de_atos(client, org_id, extracao)
+    atos = [_ato_saida(r, texto) for r in rows]
+    detalhes = detalhes_svc.detalhes_por_ato(client, org_id, extracao, rows) if rows else {}
+    resolved = table_reads.resolve_actors(
+        {d.get("confirmado_por") for d in detalhes.values()} - {None}
+    )
+    for ato in atos:
+        ato["detalhes"] = detalhes_svc.detalhes_saida(detalhes.get(str(ato["id"])), resolved)
     return {
         "extracao_id": extracao["id"],
         "status": extracao.get("status"),
@@ -733,6 +771,10 @@ def _rebase_formatacao_da_selecao(
     return tuple(out)
 
 
+def _papel(row: dict) -> str:
+    return row.get("papel") or PAPEL_OBJETO
+
+
 def obter_selecao(
     client: Any, org_id: UUID, contrato_id: UUID, *, usuario_id: Optional[Any] = None
 ) -> dict:
@@ -745,26 +787,61 @@ def obter_selecao(
     re-based from the extraction's document-level ranges (contract
     `projects/abnt-formatting-CONTRACT.md` §5) — `[]` for a selection made
     before the source carried formatting at all.
+
+    The top-level quote is the OBJECT's (`papel='objeto'`), unchanged in
+    shape. `permutas` (migration 115) lists one quote per property given in
+    exchange, each in that same shape plus its `permuta_ativo_id`.
     """
     _exigir_contrato(client, org_id, contrato_id)
-    selecao = sorted(
+    todas = sorted(
         table_reads.paged_rows(
             client, SELECAO_TABLE, org_id, eq_filters={"contrato_id": str(contrato_id)}
         ),
-        key=lambda r: r["ordem"],
+        key=lambda r: (_papel(r) != PAPEL_OBJETO, str(r.get("permuta_ativo_id") or ""), r["ordem"]),
     )
-    if not selecao:
-        return {
-            "contrato_id": str(contrato_id),
-            "extracao_id": None,
-            "codigo": None,
-            "atos": [],
-            "texto": "",
-            "formatacao": [],
-            "selecionado_por": None,
-            "selecionado_em": None,
-        }
+    saida: dict[str, Any] = {
+        "contrato_id": str(contrato_id),
+        "extracao_id": None,
+        "codigo": None,
+        "atos": [],
+        "texto": "",
+        "formatacao": [],
+        "permutas": [],
+        "selecionado_por": None,
+        "selecionado_em": None,
+    }
+    if not todas:
+        return saida
 
+    objeto = [r for r in todas if _papel(r) == PAPEL_OBJETO]
+    if objeto:
+        saida.update(_citacao(client, org_id, contrato_id, objeto, usuario_id))
+    grupos: dict[str, list[dict]] = {}
+    for row in todas:
+        if _papel(row) == PAPEL_PERMUTA:
+            grupos.setdefault(str(row["permuta_ativo_id"]), []).append(row)
+    for permuta_ativo_id, rows in grupos.items():
+        saida["permutas"].append(
+            {
+                "permuta_ativo_id": permuta_ativo_id,
+                **_citacao(client, org_id, contrato_id, rows, usuario_id),
+            }
+        )
+
+    resolved = table_reads.resolve_actors({todas[0].get("selecionado_por")} - {None})
+    saida["selecionado_por"] = table_reads.actor(resolved, todas[0].get("selecionado_por"))
+    saida["selecionado_em"] = todas[0].get("created_at")
+    return saida
+
+
+def _citacao(
+    client: Any,
+    org_id: UUID,
+    contrato_id: UUID,
+    selecao: list[dict],
+    usuario_id: Optional[Any],
+) -> dict:
+    """One group's quote — `selecao` is ordered and shares one extraction."""
     extracao = exigir_extracao(client, org_id, selecao[0]["extracao_id"])
     # 🔴 A quote (migration 111) — this returns the literal text of every
     # selected act, so a caller reading it is exactly as much a text access
@@ -800,19 +877,12 @@ def obter_selecao(
     formatacao = _rebase_formatacao_da_selecao(
         atos, ranges_from_json(extracao.get("formatacao"))
     )
-
-    resolved = table_reads.resolve_actors(
-        {selecao[0].get("selecionado_por")} - {None}
-    )
     return {
-        "contrato_id": str(contrato_id),
         "extracao_id": str(extracao["id"]),
         "codigo": extracao.get("codigo"),
         "atos": atos,
         "texto": "".join(a["texto"] for a in atos),
         "formatacao": ranges_to_json(formatacao),
-        "selecionado_por": table_reads.actor(resolved, selecao[0].get("selecionado_por")),
-        "selecionado_em": selecao[0].get("created_at"),
     }
 
 
@@ -851,6 +921,75 @@ def _exigir_codigo_compativel(
         )
 
 
+def _exigir_permuta_compativel(
+    client: Any, org_id: UUID, permuta_ativo_id: Any, extracao: dict
+) -> None:
+    """Refuse a permuta quote whose matrícula is not the permuta ativo's
+    property — the permuta twin of `_exigir_codigo_compativel` (migration 115).
+    """
+    codigo_extracao = extracao.get("codigo")
+    if not codigo_extracao:
+        raise ValidationError_(
+            "Esta extração não está vinculada a um imóvel — vincule-a a um imóvel "
+            "antes de selecioná-la como matrícula da permuta.",
+            field="permutas",
+        )
+    rows = (
+        _t(client, PERMUTA_ATIVOS_TABLE)
+        .select("id,imovel_codigo")
+        .eq("org_id", str(org_id))
+        .eq("id", str(permuta_ativo_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise NotFoundError(PERMUTA_ATIVOS_TABLE, str(permuta_ativo_id))
+    codigo_ativo = (rows[0].get("imovel_codigo") or "").strip().upper()
+    if not codigo_ativo or codigo_ativo != codigo_extracao:
+        raise ValidationError_(
+            "A matrícula selecionada para a permuta pertence a um imóvel diferente "
+            "do ativo de permuta.",
+            field="permutas",
+        )
+
+
+def _linhas_do_grupo(
+    client: Any,
+    org_id: UUID,
+    contrato_id: UUID,
+    extracao: dict,
+    ids: list[str],
+    *,
+    papel: str,
+    permuta_ativo_id: Optional[str],
+    usuario_id: Optional[Any],
+    campo: str,
+    agora: str,
+) -> list[dict]:
+    por_id = {str(r["id"]): r for r in _linhas_de_atos(client, org_id, extracao)}
+    faltando = [i for i in ids if i not in por_id]
+    if faltando:
+        raise ValidationError_(
+            f"Atos não pertencem a esta matrícula: {', '.join(faltando)}",
+            field=campo,
+        )
+    return [
+        {
+            "id": str(uuid4()),
+            "org_id": str(org_id),
+            "contrato_id": str(contrato_id),
+            "extracao_id": str(extracao["id"]),
+            "ato_id": ato_id,
+            "ordem": ordem,
+            "papel": papel,
+            "permuta_ativo_id": permuta_ativo_id,
+            "selecionado_por": str(usuario_id) if usuario_id else None,
+            "created_at": agora,
+        }
+        for ordem, ato_id in enumerate(ids, start=1)
+    ]
+
+
 def definir_selecao(
     client: Any,
     org_id: UUID,
@@ -859,13 +998,25 @@ def definir_selecao(
     extracao_id: Optional[UUID],
     ato_ids: list[UUID],
     usuario_id: Optional[Any],
+    permutas: Optional[list[dict]] = None,
 ) -> dict:
-    """Replace the contract's quoted acts. `ato_ids` order = contract order."""
-    contrato = _exigir_contrato(client, org_id, contrato_id)
-    ids = [str(i) for i in ato_ids]
-    if len(set(ids)) != len(ids):
-        raise ValidationError_("Ato repetido na seleção.", field="ato_ids")
+    """Replace the contract's quoted acts. `ato_ids` order = contract order.
 
+    `permutas` (migration 115): `[{permuta_ativo_id, extracao_id, ato_ids}]` —
+    the acts quoted from each exchanged property's matrícula. Replaced
+    together with the object's quote.
+    """
+    contrato = _exigir_contrato(client, org_id, contrato_id)
+    permutas = permutas or []
+    ids = [str(i) for i in ato_ids]
+    todos = ids + [str(a) for p in permutas for a in p["ato_ids"]]
+    if len(set(todos)) != len(todos):
+        raise ValidationError_("Ato repetido na seleção.", field="ato_ids")
+    ativos = [str(p["permuta_ativo_id"]) for p in permutas]
+    if len(set(ativos)) != len(ativos):
+        raise ValidationError_("Permuta repetida na seleção.", field="permutas")
+
+    agora = now_iso()
     linhas: list[dict] = []
     if ids:
         if extracao_id is None:
@@ -875,27 +1026,24 @@ def definir_selecao(
         extracao = exigir_extracao(client, org_id, extracao_id)
         _exigir_concluida(extracao)
         _exigir_codigo_compativel(client, org_id, contrato, extracao)
-        por_id = {str(r["id"]): r for r in _linhas_de_atos(client, org_id, extracao)}
-        faltando = [i for i in ids if i not in por_id]
-        if faltando:
-            raise ValidationError_(
-                f"Atos não pertencem a esta matrícula: {', '.join(faltando)}",
-                field="ato_ids",
+        linhas.extend(
+            _linhas_do_grupo(
+                client, org_id, contrato_id, extracao, ids,
+                papel=PAPEL_OBJETO, permuta_ativo_id=None, usuario_id=usuario_id,
+                campo="ato_ids", agora=agora,
             )
-        agora = now_iso()
-        linhas = [
-            {
-                "id": str(uuid4()),
-                "org_id": str(org_id),
-                "contrato_id": str(contrato_id),
-                "extracao_id": str(extracao["id"]),
-                "ato_id": ato_id,
-                "ordem": ordem,
-                "selecionado_por": str(usuario_id) if usuario_id else None,
-                "created_at": agora,
-            }
-            for ordem, ato_id in enumerate(ids, start=1)
-        ]
+        )
+    for permuta in permutas:
+        extracao = exigir_extracao(client, org_id, permuta["extracao_id"])
+        _exigir_concluida(extracao)
+        _exigir_permuta_compativel(client, org_id, permuta["permuta_ativo_id"], extracao)
+        linhas.extend(
+            _linhas_do_grupo(
+                client, org_id, contrato_id, extracao, [str(a) for a in permuta["ato_ids"]],
+                papel=PAPEL_PERMUTA, permuta_ativo_id=str(permuta["permuta_ativo_id"]),
+                usuario_id=usuario_id, campo="permutas", agora=agora,
+            )
+        )
 
     # Delete-then-insert: the UNIQUE (contrato_id, ordem) index makes an
     # in-place reorder impossible row by row. A failure between the two calls
@@ -946,7 +1094,11 @@ __all__ = [
     "CONTRATOS_TABLE",
     "EXTRACOES_TABLE",
     "NEGOCIACAO_TABLE",
+    "PAPEL_OBJETO",
+    "PAPEL_PERMUTA",
+    "PERMUTA_ATIVOS_TABLE",
     "SELECAO_TABLE",
+    "atos_da_extracao",
     "criar_extracao_de_documento",
     "definir_fontes",
     "definir_selecao",

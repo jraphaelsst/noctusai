@@ -310,12 +310,16 @@ def seed(
     contratos=None,
     selecao=None,
     negociacoes=None,
+    detalhes=None,
+    permutas=None,
 ) -> None:
     """Every table this flow reads, set explicitly — an unset table would
     carry rows over from whatever an earlier test seeded."""
     scoped.set_table_data("imovel_registry", registry or [])
     scoped.set_table_data("matricula_extracoes", extracoes or [])
     scoped.set_table_data("matricula_atos", atos or [])
+    scoped.set_table_data("matricula_ato_detalhes", detalhes or [])
+    scoped.set_table_data("permuta_ativos", permutas or [])
     scoped.set_table_data("imovel_documentos", documentos or [])
     scoped.set_table_data("imovel_documento_acessos", [])
     scoped.set_table_data("imovel_dados", dados or [])

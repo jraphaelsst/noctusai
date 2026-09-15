@@ -80,6 +80,21 @@ from noctusai_lib.integrations.documents.matricula_atos import (
     ato_hint_span,
     segment_matricula_atos,
 )
+from noctusai_lib.integrations.documents.matricula_ato_detalhes import (
+    NATUREZAS_ATO,
+    NATUREZAS_COM_CREDOR,
+    NATUREZAS_TRANSFERENCIA,
+    AtoDetalhes,
+    AtoReferido,
+    Instrumento,
+    NaturezaAto,
+    Parte,
+    cpf_cnpj_valido,
+    extrair_detalhes_ato,
+    formatar_cpf_cnpj,
+    frase_titulo_aquisitivo,
+    parse_detalhes_json,
+)
 from noctusai_lib.integrations.documents.matricula_extractor import (
     FakeMatriculaExtractor,
     MatriculaExtractor,

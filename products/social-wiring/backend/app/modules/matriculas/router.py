@@ -50,6 +50,17 @@ A matrícula uploaded WITH a `codigo` is kept: its PDF becomes the imóvel's
 logged since 109), and the imóvel's número-de-matrícula read is queued
 exactly as an upload on the imóvel page would queue it.
 
+MIGRATION 115 — WHAT THE ACTS SAY
+---------------------------------
+`GET .../atos` now carries each act's typed `detalhes` (seed
+`extrair_detalhes_ato`, stored as a suggestion). `PUT /atos/{ato_id}/detalhes`
+is the operator's confirmation. Three imóvel-level reads build on the acts
+the operator chose in 109 — `/imoveis/{codigo}/titulo-aquisitivo`,
+`/imoveis/{codigo}/onus-credor` (each with a PUT that confirms the wording)
+and `/imoveis/{codigo}/antigos-proprietarios` (the office's 5-year certidões
+rule). They live HERE, not in `imovel_hub`, because every answer is a reading
+of a matrícula; `titulo_service.py` holds the logic.
+
 Route ordering: every path is under the literal `/api/matriculas` prefix.
 `POST /extracoes/de-documento` is a literal sibling of the dynamic
 `/extracoes/{extracao_id}`, which declares no POST — nothing can shadow it.
@@ -74,6 +85,7 @@ from fastapi import (
     Query,
     UploadFile,
 )
+from fastapi import Path as PathParam
 from fastapi.responses import Response
 from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
@@ -87,6 +99,7 @@ from app.modules.imovel_hub.deps import (
     get_storage_backend,
 )
 from app.modules.matriculas import estrutura_service as estrutura_svc
+from app.modules.matriculas import titulo_service as titulo_svc
 from app.modules.matriculas.deps import (
     TranscriberFactory,
     get_background_client,
@@ -94,9 +107,12 @@ from app.modules.matriculas.deps import (
     get_transcriber_factory,
 )
 from app.modules.matriculas.schemas import (
+    DetalhesAtoBody,
     ExtracaoDeDocumentoBody,
     FontesMatriculaBody,
+    OnusCredorBody,
     SelecaoAtosBody,
+    TituloAquisitivoTextoBody,
 )
 from app.modules.matriculas.service import (
     TABLE,
@@ -569,6 +585,110 @@ async def definir_selecao_route(
             extracao_id=body.extracao_id,
             ato_ids=body.ato_ids,
             usuario_id=getattr(user, "id", None),
+            permutas=[p.model_dump() for p in body.permutas],
+        )
+    )
+
+
+# ─── act details · título · ônus creditor · previous owners (115) ─────────
+
+
+_CODIGO = PathParam(..., min_length=1, max_length=64)
+
+
+@router.put("/atos/{ato_id}/detalhes")
+async def confirmar_detalhes_route(
+    ato_id: UUID,
+    body: DetalhesAtoBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Confirm an act's details, editing any subset. Absent keys keep the
+    suggestion; `null` clears. The request IS the confirmation."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.confirmar_detalhes_ato(
+            client,
+            UUID(org_id),
+            ato_id,
+            valores=body.model_dump(include=body.model_fields_set),
+            usuario_id=getattr(user, "id", None),
+        )
+    )
+
+
+@router.get("/imoveis/{codigo}/titulo-aquisitivo")
+async def obter_titulo_route(
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Suggested título aquisitivo phrase + the confirmed wording."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.obter_titulo(client, UUID(org_id), codigo, usuario_id=getattr(user, "id", None))
+    )
+
+
+@router.put("/imoveis/{codigo}/titulo-aquisitivo")
+async def confirmar_titulo_route(
+    body: TituloAquisitivoTextoBody,
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Confirm the título aquisitivo wording (`texto: null` clears it)."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.confirmar_titulo(
+            client, UUID(org_id), codigo, texto=body.texto, usuario_id=getattr(user, "id", None)
+        )
+    )
+
+
+@router.get("/imoveis/{codigo}/onus-credor")
+async def obter_onus_credor_route(
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Creditor(s) read from the confirmed ônus acts + the confirmed value."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.obter_onus_credor(
+            client, UUID(org_id), codigo, usuario_id=getattr(user, "id", None)
+        )
+    )
+
+
+@router.put("/imoveis/{codigo}/onus-credor")
+async def confirmar_onus_credor_route(
+    body: OnusCredorBody,
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Confirm the ônus creditor (`credor: null` clears it)."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.confirmar_onus_credor(
+            client, UUID(org_id), codigo, credor=body.credor, usuario_id=getattr(user, "id", None)
+        )
+    )
+
+
+@router.get("/imoveis/{codigo}/antigos-proprietarios")
+async def antigos_proprietarios_route(
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """The last registered compra e venda's sellers, its date, and whether
+    their certidões are required (sale less than 5 years old)."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.antigos_proprietarios(
+            client, UUID(org_id), codigo, usuario_id=getattr(user, "id", None)
         )
     )
 
