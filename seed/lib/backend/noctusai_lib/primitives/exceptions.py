@@ -172,9 +172,19 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
       no detail at all): UNCHANGED legacy `{"error": {"code",
       "message"}}` envelope, so every existing product's tests (which
       assert THIS shape) keep passing.
+
+    Both shapes forward `exc.headers` onto the `JSONResponse` — a route
+    that raises `HTTPException(..., headers={"Retry-After": "10"})` (e.g.
+    contract §E.11's 429 `julia_capacidade`) had that header silently
+    dropped before this fix, since `JSONResponse(...)` was built with no
+    `headers=` kwarg at all. `exc.headers` defaults to `None`, and
+    `JSONResponse(headers=None)` is the same as omitting it, so this is
+    purely additive — no existing caller's response changes.
     """
     if isinstance(exc.detail, dict) and "detail" in exc.detail and "code" in exc.detail:
-        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code, content=exc.detail, headers=exc.headers
+        )
 
     code = "HTTP_ERROR"
     if exc.status_code == 404:
@@ -191,6 +201,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     return JSONResponse(
         status_code=exc.status_code,
         content=format_error_response(code, str(exc.detail)),
+        headers=exc.headers,
     )
 
 
