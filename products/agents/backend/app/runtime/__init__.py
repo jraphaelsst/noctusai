@@ -95,7 +95,7 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
     from app.stores.approvals import get_approval_store
     from noctusai_lib.config.product_urls import resolve_product_url
 
-    secrets = getattr(settings, "approval_assertion_secrets", []) or []
+    secrets = getattr(settings, "approval_assertion_secrets_list", []) or []
     academia_api = make_academia_api(
         base_url=resolve_product_url("academia-de-reciclagem"),
         token=getattr(settings, "academia_api_token", "") or "",

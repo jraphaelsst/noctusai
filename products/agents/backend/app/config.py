@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pydantic import field_validator
 
+from noctusai_lib.config.csv_settings import parse_csv_setting, reject_json_array
 from noctusai_seed import ProductSettings
 
 
@@ -38,22 +39,38 @@ class SeedSettings(ProductSettings):
     approval_use_window_seconds: int = 120
 
     # `X-Approval-Assertion` HS256 signing/verification keys (contract §D).
-    # Comma-separated in the env var — `agents` SIGNS with element [0]
-    # (app/runtime/assertion.py); an academia-side product would ACCEPT any
-    # element (not this product's concern). Empty/missing → the product
-    # refuses to start in a deploy context (`required_prod_config` at app
-    # boot); the key is never exposed to the Julia CLI subprocess (contract
-    # §E.5 — the `env -i` wrapper strips it either way).
-    approval_assertion_secrets: list[str] = []
+    # Raw comma-separated string field (NOT `list[str]`) — the platform's
+    # established CSV-setting idiom (see
+    # `noctusai_lib.config.csv_settings` for why): `pydantic-settings`
+    # 2.5.2 JSON-decodes any complex (list/dict) env-sourced field BEFORE
+    # any `field_validator` runs, so a plain
+    # `APPROVAL_ASSERTION_SECRETS=key1,key2` env value raised
+    # `SettingsError` at boot for a `list[str]`-typed field — confirmed
+    # against this repo's installed `pydantic-settings` 2.5.2 (D1
+    # boot-crash fix). `agents` SIGNS with element [0] of
+    # `approval_assertion_secrets_list` (app/runtime/assertion.py); an
+    # academia-side product would ACCEPT any element (not this product's
+    # concern). Empty/missing → the product refuses to start in a deploy
+    # context (`required_prod_config` at app boot); the key is never
+    # exposed to the Julia CLI subprocess (contract §E.5 — the `env -i`
+    # wrapper strips it either way). The `_list` property below is the
+    # single point every consumer reads; never split
+    # `approval_assertion_secrets` ad hoc at a call site.
+    approval_assertion_secrets: str = ""
 
-    @field_validator("approval_assertion_secrets", mode="before")
+    @property
+    def approval_assertion_secrets_list(self) -> list[str]:
+        """Resolve `approval_assertion_secrets` into the concrete key list."""
+        return parse_csv_setting(self.approval_assertion_secrets)
+
+    @field_validator("approval_assertion_secrets")
     @classmethod
-    def _split_csv_secrets(cls, v):
-        if v is None or v == "":
-            return []
-        if isinstance(v, list):
-            return v
-        return [s.strip() for s in str(v).split(",") if s.strip()]
+    def _approval_assertion_secrets_no_json_shape(cls, v: str) -> str:
+        """Fail loud on a `["a","b"]`-shaped env value — that string would
+        silently parse as ONE key (the literal bracketed text) instead of
+        the intended list, since this field is a raw `str` (see the field
+        docstring for why it isn't `list[str]`)."""
+        return reject_json_array(v, "APPROVAL_ASSERTION_SECRETS")
 
     # ── Julia runtime (contract §E.5 / §E.9) ───────────────────────────
     # Dedicated, spend-capped key for Julia's workspace — never shared

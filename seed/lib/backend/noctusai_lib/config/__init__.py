@@ -5,6 +5,9 @@
 **Active occupants:**
 - `settings.py` — `ProductSettings` base + per-product extensions, lazy
   module-level singleton.
+- `csv_settings.py` — `parse_csv_setting(...)` / `reject_json_array(...)`,
+  the shared comma-separated-list-setting idiom (raw `str` field + `_list`
+  property) every product's CSV-shaped settings field should use.
 - `credentials.py` — `configure_credentials(...)`, `resolve_credential(...)`,
   `check_required_credentials(...)`. Reads from secrets store; cached
   per-request.
@@ -22,4 +25,5 @@ re-exports the public surface. Step 3 of the migration updates product
 imports to the explicit `from noctusai_lib.config.settings import ...`
 form, after which the re-exports drop.
 """
+from noctusai_lib.config.csv_settings import *  # noqa: F401, F403
 from noctusai_lib.config.settings import *  # noqa: F401, F403

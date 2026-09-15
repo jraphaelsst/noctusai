@@ -86,6 +86,14 @@ class BaseAppSettings(BaseSettings):
         - ``"@registry:own:<slug>"``       → that product's frontend +
           localhost alts. Single-product shape.
         - plain comma-separated string     → ``[s.strip() for s in split(",")]``.
+          NOTE: this keeps empty items (``"a,"`` → ``["a", ""]``) — this is
+          NOT the shared :func:`noctusai_lib.config.csv_settings.
+          parse_csv_setting` helper (which drops empties), by deliberate
+          choice: CORS is a fleet-wide, live surface, and switching this
+          branch onto the drop-empties helper would be a silent behaviour
+          change here, not a pure extraction. See
+          :mod:`noctusai_lib.config.csv_settings` for the shared idiom
+          every OTHER comma-separated setting should use instead.
 
         See :mod:`noctusai_lib.config.cors_registry`.
         """
