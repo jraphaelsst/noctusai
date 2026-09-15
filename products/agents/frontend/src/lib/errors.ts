@@ -26,6 +26,20 @@
  * backend's own `detail`, so it passes through unchanged — matching to a
  * TEXT table would only re-couple this module to backend copy, the gap this
  * slice closes (contract slice `seed-apierror-flat-code`).
+ *
+ * `julia_capacidade` (contract §E.11 "Capacity") is a THIRD shape: the
+ * backend's own `detail` is the contract's authoritative PT-BR text, so it
+ * is never overridden (no `CODE_MESSAGES` entry) — but a 429 body without a
+ * usable `detail` must still resolve to that SAME text, not the generic
+ * rate-limit fallback (`STATUS_FALLBACK[429]`), which is slowapi's own
+ * `RATE_LIMITED` message and would conflate the two distinct 429 causes.
+ * `CODE_FALLBACKS` carries that per-code fallback, checked after the
+ * backend's `detail` and before the status table.
+ *
+ * The seed `ApiError` (`seed/lib/frontend/src/api.ts`) does not expose
+ * response headers, so `Retry-After` is not surfaced here — the countdown
+ * called for in §E.11 is out of scope for this slice (see
+ * `scoped-improvement:` in the delivery note).
  */
 import { ApiError } from "@noctusai/lib";
 
@@ -43,6 +57,17 @@ const CODE_MESSAGES: Record<string, string> = {
   // defensively rather than left to leak English.
   role_missing: "Sem permissão para esta ação.",
   user_required: "Sem permissão para esta ação.",
+};
+
+/** Per-code fallback text, used only when the backend's own `detail` is
+ * absent/unusable — never overrides a real `detail` (unlike `CODE_MESSAGES`).
+ * Contract §E.11: the backend's `detail` for `julia_capacidade` already IS
+ * this exact string; this fallback exists only for the edge case of a
+ * 429 body missing `detail`, so it must stay byte-identical to the
+ * contract's PT-BR text. */
+const CODE_FALLBACKS: Record<string, string> = {
+  julia_capacidade:
+    "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
 };
 
 /** Mirrors the contract §B.0-shaped status taxonomy, keyed by HTTP status —
@@ -79,6 +104,10 @@ export function errorMessage(err: unknown): string {
     // ("Erro HTTP 404") leaked through (no JSON body, or a body without
     // `detail` — e.g. slowapi's own 429 body, which is not contract-shaped).
     if (clean && !/^Erro HTTP \d+$/.test(clean)) return clean;
+    // A per-code fallback (currently only `julia_capacidade`) beats the
+    // generic status table, so a capacity 429 without a usable `detail`
+    // never gets mistaken for slowapi's rate-limit 429.
+    if (err.code && CODE_FALLBACKS[err.code]) return CODE_FALLBACKS[err.code];
     if (err.status !== null && STATUS_FALLBACK[err.status]) {
       return STATUS_FALLBACK[err.status];
     }

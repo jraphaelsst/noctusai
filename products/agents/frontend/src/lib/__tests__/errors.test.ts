@@ -83,6 +83,33 @@ describe("errorMessage — code-specific overrides (contract §E.2)", () => {
   });
 });
 
+describe("errorMessage — julia_capacidade (contract §E.11 Capacity)", () => {
+  it("429 julia_capacidade with a backend detail returns that detail verbatim", () => {
+    const err = flatError(
+      429,
+      "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+      "julia_capacidade",
+    );
+    expect(errorMessage(err)).toBe(
+      "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+    );
+  });
+
+  it("429 julia_capacidade with no usable detail falls back to the same contract text (never the rate-limit fallback)", () => {
+    const err = new ApiError(429, "Erro HTTP 429", { code: "julia_capacidade" });
+    expect(errorMessage(err)).toBe(
+      "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+    );
+  });
+
+  it("slowapi's own RATE_LIMITED 429 still gives its own message — the two 429 causes stay distinguishable", () => {
+    const err = new ApiError(429, "Muitas requisições. Tente novamente em breve.", {
+      error: { code: "RATE_LIMITED", message: "Muitas requisições. Tente novamente em breve." },
+    });
+    expect(errorMessage(err)).toBe("Muitas requisições. Tente novamente em breve.");
+  });
+});
+
 describe("errorMessage — status fallbacks (no usable code)", () => {
   it("401 → session-expired message", () => {
     const err = new ApiError(401, "");

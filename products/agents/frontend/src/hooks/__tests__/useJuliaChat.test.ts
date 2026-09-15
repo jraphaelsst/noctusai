@@ -430,6 +430,36 @@ describe("useJuliaSendAdapter", () => {
       "Julia está desligada — um administrador pode ligá-la em Agentes.",
     );
   });
+
+  it("maps a 429 julia_capacidade rejection to the contract's PT-BR message and leaves no phantom user message in the cache (contract §E.11: a capacity 429 persists no user message)", async () => {
+    const { ApiError } = await import("@/lib/errors");
+    mockPost.mockRejectedValue(
+      new ApiError(
+        429,
+        "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+        {
+          detail: "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+          code: "julia_capacidade",
+        },
+      ),
+    );
+    const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+    const qc = newClient();
+    const messagesKey = ["agents", "julia", "conversations", "c1", "messages"];
+    const initial = { items: [], total: 0 };
+    qc.setQueryData(messagesKey, initial);
+    const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+
+    await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow(
+      "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+    );
+
+    // The optimistic upsert only runs in `onSuccess` — never on rejection —
+    // so a capacity 429 must leave the messages cache exactly as it was,
+    // never a phantom user bubble for the message the backend refused to
+    // persist.
+    expect(qc.getQueryData(messagesKey)).toEqual(initial);
+  });
 });
 
 // ─── Approval action (ChatWindow seam, contract §E.7) ──────────────────────
