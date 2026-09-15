@@ -504,6 +504,13 @@ class ContratoPatchBody(StrictHttpModel):
             "cancelado",
         ]
     ] = None
+    #: Migration 114. ISO date (AAAA-MM-DD); null clears it. Parsed by the
+    #: service so a malformed date is a named 400, not a 422.
+    assinatura_data: Optional[str] = Field(default=None, max_length=32)
+    #: Migration 114. Per-contract override of the office deadline to resolve
+    #: pendências; null = the office default (10). > 0 when set — a service
+    #: 400, not a 422.
+    prazo_pendencias_dias: Optional[int] = None
 
 
 # ─── Negociação estruturada (migration 108) ──────────────────────────────
@@ -515,7 +522,8 @@ class ParcelaCreateBody(StrictHttpModel):
     that is not a DB-level composite FK."""
 
     tipo: Literal[
-        "sinal", "intermediaria", "financiamento", "fgts", "saldo", "direta"
+        "sinal", "intermediaria", "financiamento", "fgts", "saldo", "direta",
+        "permuta",
     ]
     valor: Decimal = Field(ge=0)
     vencimento: Optional[str] = Field(default=None, max_length=10)
@@ -523,16 +531,23 @@ class ParcelaCreateBody(StrictHttpModel):
     forma_pagamento: Optional[str] = Field(default=None, max_length=50)
     favorecido_id: Optional[UUID] = None
     confissao_divida: bool = False
+    #: Payment of this parcela triggers the brokerage payment (114).
+    dispara_corretagem: bool = False
+    #: `tipo='permuta'` only — the `permuta_ativos` (natureza permuta_imovel)
+    #: this parcela is paid with. One swap can hand over several matrículas.
+    permuta_ativo_ids: list[UUID] = Field(default_factory=list, max_length=20)
     ordem: int = 0
 
 
 class ParcelaPatchBody(StrictHttpModel):
     """Every field optional; absence means "leave alone" — same
-    `model_fields_set` contract `NegociacaoPatchBody` uses."""
+    `model_fields_set` contract `NegociacaoPatchBody` uses.
+    `permuta_ativo_ids`, when sent, REPLACES the parcela's linked set."""
 
     tipo: Optional[
         Literal[
-            "sinal", "intermediaria", "financiamento", "fgts", "saldo", "direta"
+            "sinal", "intermediaria", "financiamento", "fgts", "saldo", "direta",
+            "permuta",
         ]
     ] = None
     valor: Optional[Decimal] = Field(default=None, ge=0)
@@ -541,6 +556,8 @@ class ParcelaPatchBody(StrictHttpModel):
     forma_pagamento: Optional[str] = Field(default=None, max_length=50)
     favorecido_id: Optional[UUID] = None
     confissao_divida: Optional[bool] = None
+    dispara_corretagem: Optional[bool] = None
+    permuta_ativo_ids: Optional[list[UUID]] = Field(default=None, max_length=20)
     ordem: Optional[int] = None
 
 
@@ -582,7 +599,30 @@ class FavorecidoPatchBody(StrictHttpModel):
     pix: Optional[str] = Field(default=None, max_length=140)
 
 
-class IntermediarioCreateBody(StrictHttpModel):
+class _IntermediarioQualificacao(StrictHttpModel):
+    """PF/PJ qualification of an intermediário (migration 114) — personal
+    data, RLS org-scoped, never logged. Lengths here are only abuse caps: the
+    real rules (CPF/CNPJ check digits, pf↔CPF / pj↔CNPJ, e-mail, UF, CEP) are
+    the service's named 400s, so a caller gets a pt-BR message instead of a
+    422. `documento`'s `pessoa_tipo` is inferred when omitted."""
+
+    #: Which of THIS deal's favorecidos receives the commission.
+    favorecido_id: Optional[UUID] = None
+    pessoa_tipo: Optional[Literal["pf", "pj"]] = None
+    documento: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[str] = Field(default=None, max_length=254)
+    endereco_cep: Optional[str] = Field(default=None, max_length=16)
+    endereco_logradouro: Optional[str] = Field(default=None, max_length=255)
+    endereco_numero: Optional[str] = Field(default=None, max_length=32)
+    endereco_complemento: Optional[str] = Field(default=None, max_length=120)
+    endereco_bairro: Optional[str] = Field(default=None, max_length=120)
+    endereco_cidade: Optional[str] = Field(default=None, max_length=120)
+    endereco_uf: Optional[str] = Field(default=None, max_length=8)
+    representante_nome: Optional[str] = Field(default=None, max_length=255)
+    representante_cpf: Optional[str] = Field(default=None, max_length=32)
+
+
+class IntermediarioCreateBody(_IntermediarioQualificacao):
     """`nome`/`creci` are always accepted directly — `corretor_id` is an
     optional pointer into `lead_corretores` when the intermediary happens to
     be in-house (migration 108's header)."""
@@ -594,9 +634,49 @@ class IntermediarioCreateBody(StrictHttpModel):
     valor: Optional[Decimal] = Field(default=None, ge=0)
 
 
-class IntermediarioPatchBody(StrictHttpModel):
+class IntermediarioPatchBody(_IntermediarioQualificacao):
     corretor_id: Optional[UUID] = None
     nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
     creci: Optional[str] = Field(default=None, max_length=64)
     tipo: Optional[Literal["percentual", "valor_fixo"]] = None
     valor: Optional[Decimal] = Field(default=None, ge=0)
+
+
+# ─── Termos do negócio (migration 114) ────────────────────────────────────
+
+PosseMarco = Literal["assinatura", "parcela", "protocolo_registro"]
+
+
+class TermosNegocioPutBody(StrictHttpModel):
+    """The deal's contract clauses, replaced as a WHOLE (PUT) — an absent key
+    is stored as null. Every field nullable: clauses are drafted over several
+    sittings. Ranges (prazos ≥ 0, corretagem_num_parcelas ≥ 1, juros 0–100%
+    a.m.) and the `*_marco = 'parcela'` ⇔ `*_marco_parcela_id` rule are the
+    service's named 400s, not 422s."""
+
+    posse_prazo_dias: Optional[int] = None
+    posse_marco: Optional[PosseMarco] = None
+    posse_marco_parcela_id: Optional[UUID] = None
+
+    permuta_posse_prazo_dias: Optional[int] = None
+    permuta_posse_marco: Optional[PosseMarco] = None
+    permuta_posse_marco_parcela_id: Optional[UUID] = None
+    permuta_obrigacoes_entrega: Optional[str] = Field(default=None, max_length=4000)
+
+    itens_integrantes: Optional[str] = Field(default=None, max_length=4000)
+    ad_corpus: Optional[bool] = None
+    obrigacoes_vendedor: Optional[str] = Field(default=None, max_length=4000)
+
+    onus_quitacao: Optional[
+        Literal["compradores_prazo", "interveniente_quitante", "parcela", "ja_quitado"]
+    ] = None
+    onus_prazo_dias: Optional[int] = None
+
+    #: % ao mês.
+    confissao_juros_am: Optional[Decimal] = None
+    confissao_garantia: Optional[str] = Field(default=None, max_length=4000)
+
+    corretagem_contratantes: Optional[
+        Literal["vendedores", "compradores", "partes"]
+    ] = None
+    corretagem_num_parcelas: Optional[int] = None

@@ -37,6 +37,7 @@ from app.modules.card_hub.schemas import (
     ParcelaCreateBody,
     ParcelaPatchBody,
     ParcelasDividirBody,
+    TermosNegocioPutBody,
 )
 
 router = APIRouter()
@@ -58,6 +59,26 @@ async def get_negociacao_estruturada_route(
 ) -> dict:
     _user, org_id = _auth_parts(auth)
     return svc.obter_estruturada(client, org_id, cliente_id)
+
+
+# ─── termos do negócio (migration 114) ────────────────────────────────────
+
+
+@router.put("/{cliente_id}/negociacao/termos")
+async def put_termos_negocio_route(
+    cliente_id: UUID,
+    body: TermosNegocioPutBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Replace the deal's contract clauses as a whole — an absent key is
+    stored as null. Read back through `GET .../negociacao/estruturada`
+    (`termos` key); the response IS that aggregate."""
+    user, org_id = _auth_parts(auth)
+    return svc.atualizar_termos(
+        client, org_id, cliente_id,
+        valores=body.model_dump(), usuario_id=getattr(user, "id", None),
+    )
 
 
 # ─── parcelas ─────────────────────────────────────────────────────────────

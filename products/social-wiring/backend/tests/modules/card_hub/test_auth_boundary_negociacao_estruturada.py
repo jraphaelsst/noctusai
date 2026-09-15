@@ -24,6 +24,8 @@ _INTERMEDIARIO_ID = str(uuid4())
 
 _ROUTES: tuple[tuple[str, str], ...] = (
     ("get", "/api/clientes/{cliente_id}/negociacao/estruturada"),
+    # Migration 114 — the deal's contract clauses.
+    ("put", "/api/clientes/{cliente_id}/negociacao/termos"),
     ("post", "/api/clientes/{cliente_id}/negociacao/parcelas"),
     ("patch", "/api/clientes/{cliente_id}/negociacao/parcelas/{parcela_id}"),
     ("delete", "/api/clientes/{cliente_id}/negociacao/parcelas/{parcela_id}"),

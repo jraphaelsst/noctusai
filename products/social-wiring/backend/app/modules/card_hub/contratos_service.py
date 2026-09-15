@@ -22,6 +22,7 @@ mounted card_hub route and asserts a strict 401 on each.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -60,7 +61,14 @@ STATUSES: tuple[str, ...] = (
     "cancelado",
 )
 
-CAMPOS_EDITAVEIS: tuple[str, ...] = ("titulo", "modelo", "status")
+CAMPOS_EDITAVEIS: tuple[str, ...] = (
+    "titulo",
+    "modelo",
+    "status",
+    # Migration 114.
+    "assinatura_data",
+    "prazo_pendencias_dias",
+)
 
 #: A compra e venda contract PDF/DOCX with its anexos. Same ceiling
 #: `financiamento_service` uses for the deal's other closing paperwork.
@@ -151,6 +159,9 @@ def _contrato_saida(client: Any, org_id: UUID, row: dict) -> dict:
         "status_em": row.get("status_em"),
         "status_por": table_reads.actor(resolved, row.get("status_por")),
         "origem": row.get("origem", "upload"),
+        # Migration 114. `prazo_pendencias_dias` null = the office default.
+        "assinatura_data": row.get("assinatura_data"),
+        "prazo_pendencias_dias": row.get("prazo_pendencias_dias"),
         "created_at": row["created_at"],
         "updated_at": row.get("updated_at"),
         # Highest `numero` among LIVE versions — `linhas` above already
@@ -170,6 +181,9 @@ def _proximo_numero(client: Any, org_id: UUID, contrato_id: UUID) -> int:
     migration's UNIQUE index on `(contrato_id, numero)` is what turns a
     mistake here into a loud insert failure instead of a silent collision.
     """
+    # postgrest-unbounded-ok: one contract's versions (a handful of legal
+    # revisions); even past the 1 000-row cap the UNIQUE (contrato_id, numero)
+    # index turns a stale max into a loud insert failure, never a reuse.
     rows = (
         _t(client, VERSOES_STORE.table)
         .select("numero")
@@ -420,6 +434,30 @@ def atualizar(
         )
 
     patch = {k: v for k, v in valores.items() if k in CAMPOS_EDITAVEIS}
+
+    # Migration 114. `assinatura_data`: an ISO date or null (cleared).
+    # `prazo_pendencias_dias`: null = the office default
+    # (`contrato_gerador.politica.prazo_pendencias_dias`), otherwise > 0 —
+    # same rule as the DB CHECK, raised here as a named 400.
+    if "assinatura_data" in patch:
+        bruto = patch["assinatura_data"]
+        if bruto in (None, ""):
+            patch["assinatura_data"] = None
+        else:
+            try:
+                patch["assinatura_data"] = date.fromisoformat(str(bruto)).isoformat()
+            except ValueError:
+                raise ValidationError_(
+                    "data de assinatura inválida — use o formato AAAA-MM-DD",
+                    field="assinatura_data",
+                ) from None
+    if "prazo_pendencias_dias" in patch and patch["prazo_pendencias_dias"] is not None:
+        prazo = patch["prazo_pendencias_dias"]
+        if isinstance(prazo, bool) or not isinstance(prazo, int) or prazo <= 0:
+            raise ValidationError_(
+                "o prazo de pendências deve ser um número inteiro de dias maior que zero",
+                field="prazo_pendencias_dias",
+            )
 
     # Stamped only when it CHANGES — otherwise "when did this reach
     # enviado_assinatura" silently becomes "when was this last edited"
