@@ -95,6 +95,16 @@ class FakeIdentityExtractor:
             regime_bens="comunhao_parcial",
             regime_bens_confianca=ExtractionConfidence.ALTA,
             regime_bens_rotulo="COMUNHAO PARCIAL DE BENS",
+            # Contract F6 (migration 117) — same parity rule the module
+            # docstring states: a Fake that omitted a field the Real adapter
+            # populates would let a consumer's tests pass against behaviour
+            # the Real adapter never exhibits.
+            data_casamento=date(2010, 3, 12),
+            data_casamento_confianca=ExtractionConfidence.ALTA,
+            data_casamento_rotulo="CASARAM-SE EM",
+            data_emissao=date(2024, 3, 15),
+            data_emissao_confianca=ExtractionConfidence.ALTA,
+            data_emissao_rotulo="EMITIDA EM",
             source=TextSource.TEXT_LAYER,
         )
 

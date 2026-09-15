@@ -40,6 +40,8 @@ from typing import Optional
 
 from noctusai_lib.integrations.documents.birthdate import find_birthdate
 from noctusai_lib.integrations.documents.civil_status import (
+    find_data_casamento,
+    find_data_emissao,
     find_estado_civil,
     find_regime_bens,
 )
@@ -140,6 +142,20 @@ class LadderIdentityExtractor:
         estado_civil, estado_civil_conf, estado_civil_label = find_estado_civil(text)
         regime_bens, regime_bens_conf, regime_bens_label = find_regime_bens(text)
 
+        # `data_casamento` / `data_emissao` (contract F6, migration 117) — NOT
+        # tempered by source, same reasoning `data_nascimento` above already
+        # settles for a date: the plausibility gate plus the explicit-label
+        # requirement (or, for `data_emissao`'s fallback, the finder's own
+        # `baixa` typing of a position-based guess) already carries the
+        # tempering a date needs; a second demotion here would double-count
+        # it. Run unconditionally, exactly like every other field here — this
+        # extractor is document-type-agnostic, and a document that carries
+        # neither pattern simply returns `nenhuma`.
+        data_casamento, data_casamento_conf, data_casamento_label = (
+            find_data_casamento(text)
+        )
+        data_emissao, data_emissao_conf, data_emissao_label = find_data_emissao(text)
+
         return IdentityFields(
             kind=kind,
             data_nascimento=data,
@@ -165,6 +181,12 @@ class LadderIdentityExtractor:
             regime_bens=regime_bens,
             regime_bens_confianca=ExtractionConfidence(regime_bens_conf),
             regime_bens_rotulo=regime_bens_label,
+            data_casamento=data_casamento,
+            data_casamento_confianca=ExtractionConfidence(data_casamento_conf),
+            data_casamento_rotulo=data_casamento_label,
+            data_emissao=data_emissao,
+            data_emissao_confianca=ExtractionConfidence(data_emissao_conf),
+            data_emissao_rotulo=data_emissao_label,
             source=source,
         )
 

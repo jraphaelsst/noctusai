@@ -15,7 +15,11 @@ relax:
    a null user, which would launder a machine read as a human one.
 
 Everything runs against `FakeIdentityExtractor` through the DI seam, so no test
-here touches a vision model.
+here touches a vision model — EXCEPT `TestDataCasamentoEDataEmissaoViaLadderReal`
+at the bottom, which runs the REAL `LadderIdentityExtractor` (a stubbed
+resolver stands in for the vision rung, per `test_civil_status.py`'s own
+`TestCivilStatusWiring` pattern) to prove the seed's parser wiring and this
+service's storage wiring compose end to end, not just against canned Fake data.
 """
 from __future__ import annotations
 
@@ -31,6 +35,7 @@ from noctusai_lib.integrations.documents import (
     IdentityFields,
     TextSource,
 )
+from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 from noctusai_lib.integrations.storage import FakeStorageBackend
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
@@ -793,3 +798,97 @@ class TestCertidaoEstadoCivilMaisRecente:
         assert svc.certidao_estado_civil_mais_recente(
             scoped, ORG_UUID, UUID(cid)
         ) is None
+
+
+# ─── End-to-end through the REAL ladder (B5 — the wiring this slice finishes) ──
+#
+# Every test above scripts `FakeIdentityExtractor` — proof that THIS service's
+# apply/suggest/confirm/access-log code is correct, but not that the seed's
+# own parser wiring (`real.LadderIdentityExtractor`) actually produces the
+# values this service consumes. `civil_status.find_data_casamento`/
+# `find_data_emissao` shipped without that wiring in an earlier commit on
+# this same branch (the deviation the "no incomplete commits" rule caught);
+# this section is the fix, mirroring `test_civil_status.py`'s own
+# `TestCivilStatusWiring` pattern — a stubbed resolver stands in for the
+# vision rung, so still no patch of our own code and no real vision call.
+
+CERTIDAO_CASAMENTO_COM_EMISSAO = (
+    "CERTIDAO DE CASAMENTO\n"
+    "OS CONTRAENTES CASARAM-SE EM DOZE DE MARCO DE DOIS MIL E DEZ SOB O "
+    "REGIME DA COMUNHAO PARCIAL DE BENS\n"
+    "EMITIDA EM 15 DE MARCO DE 2024\n"
+)
+
+
+class _StubResolved:
+    def __init__(self, text="", error=None, error_message=None):
+        self.text, self.error, self.error_message = text, error, error_message
+
+
+class _StubResolver:
+    """Stands in for the media resolver's vision rung — dependency
+    injection, not a patch of our own code."""
+
+    def __init__(self, resolved=None):
+        self._resolved = resolved or _StubResolved(text="")
+        self.calls = 0
+
+    async def resolve(self, media):
+        self.calls += 1
+        return self._resolved
+
+
+class TestDataCasamentoEDataEmissaoViaLadderReal:
+    @pytest.mark.asyncio
+    async def test_a_real_certidao_read_stores_both_dates_end_to_end(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        resolver = _StubResolver(_StubResolved(text=CERTIDAO_CASAMENTO_COM_EMISSAO))
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=LadderIdentityExtractor(resolver=resolver, max_pages=None),
+        )
+        assert out["status"] == "ok"
+        assert out["aplicado_ao_cliente"]["data_casamento"] is True
+
+        row = _cliente(scoped, cid)
+        assert row["data_casamento"] == "2010-03-12"
+        assert row["data_casamento_origem"] == "certidao_casamento"
+
+        doc = _documento(scoped, did)
+        assert doc["extracao_data_casamento"] == "2010-03-12"
+        assert doc["extracao_data_emissao"] == "2024-03-15"
+        assert doc["extracao_data_emissao_confianca"] == "alta"
+        assert doc["extracao_data_emissao_rotulo"] == "EMITIDA EM"
+        # Never promoted — no clientes.data_emissao column exists at all.
+        assert "data_emissao" not in row
+
+        info = svc.certidao_estado_civil_mais_recente(scoped, ORG_UUID, UUID(cid))
+        assert info is not None
+        assert info["documento_id"] == did
+        assert info["emitida_em"] == "2024-03-15"
+
+    @pytest.mark.asyncio
+    async def test_a_real_certidao_with_no_explicit_emissao_label_falls_back_low_confidence(
+        self, client, scoped
+    ):
+        """The closing-line heuristic still reaches the document row —
+        typed `baixa`, never promoted (data_emissao is not a CAMPO), but
+        recorded all the same."""
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        texto = (
+            "CERTIDAO DE CASAMENTO\n"
+            "OS CONTRAENTES CASARAM-SE EM 12/03/2010 SOB O REGIME DA "
+            "COMUNHAO PARCIAL DE BENS\n"
+            "SAO PAULO, DOZE DE MARCO DE DOIS MIL E VINTE E QUATRO.\n"
+        )
+        resolver = _StubResolver(_StubResolved(text=texto))
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=LadderIdentityExtractor(resolver=resolver, max_pages=None),
+        )
+        doc = _documento(scoped, did)
+        assert doc["extracao_data_emissao"] == "2024-03-12"
+        assert doc["extracao_data_emissao_confianca"] == "baixa"
+        assert doc["extracao_data_emissao_rotulo"] == "FECHAMENTO_CARTORIO"

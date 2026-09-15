@@ -1,21 +1,19 @@
 """`find_data_casamento` / `find_data_emissao` — contract F6 (social-wiring
 migration 117).
 
-🔴 SCOPE NOTE — pure-parser tests only, deliberately
-------------------------------------------------------
-This slice's dispatch scope is `types.py` + `civil_status.py` (+ additive
-`__init__.py` lines) only. `real.LadderIdentityExtractor` — which wires
-`find_estado_civil`/`find_regime_bens` into the full `extract()` call — is
-NOT in scope, so it does not yet call these two new finders either. These
-tests therefore exercise the bare parsers directly, the same ground-truth
-layer `test_civil_status.py`'s `TestEstadoCivilLabelled` etc. classes do,
-without the end-to-end `TestCivilStatusWiring` section that file also has —
-that wiring is a follow-up slice's job, not this one's. Synthetic text only,
-never a real CPF/RG/certidão.
+The bare-parser classes below are the ground-truth layer, the same shape
+`test_civil_status.py`'s `TestEstadoCivilLabelled` etc. classes use.
+`TestLadderExtractsDataCasamentoEDataEmissao` at the bottom is the
+end-to-end confirmation — `real.LadderIdentityExtractor` wiring these two
+finders into the full `extract()` call, mirroring that file's own
+`TestCivilStatusWiring` section for `estado_civil`/`regime_bens`. Synthetic
+text only, never a real CPF/RG/certidão.
 """
 from __future__ import annotations
 
 from datetime import date
+
+import pytest
 
 from noctusai_lib.integrations.documents import (
     ExtractionConfidence,
@@ -23,6 +21,7 @@ from noctusai_lib.integrations.documents import (
     find_data_casamento,
     find_data_emissao,
 )
+from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 from noctusai_lib.integrations.documents.types import CAMPOS
 
 
@@ -231,3 +230,77 @@ class TestDataCasamentoIsACampoDataEmissaoIsNot:
 
     def test_data_emissao_has_no_persistable_property(self):
         assert not hasattr(IdentityFields(), "persistable_data_emissao")
+
+
+# ─── End-to-end through the ladder (B5 — the wiring this slice finishes) ───
+#
+# The bare-parser tests above are the ground truth; these confirm the same
+# behaviour survives the full `extract()` call, exactly as
+# `test_civil_status.py::TestCivilStatusWiring` does for
+# `estado_civil`/`regime_bens`. Image mimetype throughout so the text-layer
+# rung is skipped entirely — an injected resolver is the only seam needed,
+# no patching of our own code.
+
+CERTIDAO_CASAMENTO_COM_EMISSAO = (
+    "CERTIDAO DE CASAMENTO\n"
+    "OS CONTRAENTES CASARAM-SE EM DOZE DE MARCO DE DOIS MIL E DEZ SOB O "
+    "REGIME DA COMUNHAO PARCIAL DE BENS\n"
+    "EMITIDA EM 15 DE MARCO DE 2024\n"
+)
+
+
+class _StubResolved:
+    def __init__(self, text="", error=None, error_message=None):
+        self.text, self.error, self.error_message = text, error, error_message
+
+
+class _StubResolver:
+    """Stands in for the media resolver's vision rung — dependency
+    injection, not a patch of our own code."""
+
+    def __init__(self, resolved=None):
+        self._resolved = resolved or _StubResolved(text="")
+        self.calls = 0
+
+    async def resolve(self, media):
+        self.calls += 1
+        return self._resolved
+
+
+class TestLadderExtractsDataCasamentoEDataEmissao:
+    @pytest.mark.asyncio
+    async def test_real_adapter_reads_both_dates_off_a_certidao(self):
+        resolver = _StubResolver(_StubResolved(text=CERTIDAO_CASAMENTO_COM_EMISSAO))
+        out = await LadderIdentityExtractor(resolver=resolver).extract(
+            b"x", mimetype="image/png"
+        )
+        assert out.data_casamento == date(2010, 3, 12)
+        assert out.data_casamento_confianca is ExtractionConfidence.ALTA
+        assert out.persistable_data_casamento is True
+        assert out.data_emissao == date(2024, 3, 15)
+        assert out.data_emissao_confianca is ExtractionConfidence.ALTA
+        # Not tempered by source, unlike `nome`/`rg` — see `real.py`.
+        assert out.source.value in ("ocr", "texto")
+
+    @pytest.mark.asyncio
+    async def test_estado_civil_and_data_casamento_both_survive_one_read(self):
+        """The same call that reads the marriage date must not disturb the
+        averbação-precedence rule `TestCivilStatusWiring` already pins."""
+        resolver = _StubResolver(_StubResolved(text=CERTIDAO_CASAMENTO_COM_EMISSAO))
+        out = await LadderIdentityExtractor(resolver=resolver).extract(
+            b"x", mimetype="image/png"
+        )
+        assert out.estado_civil == "casado"
+        assert out.regime_bens == "comunhao_parcial"
+        assert out.data_casamento == date(2010, 3, 12)
+
+    @pytest.mark.asyncio
+    async def test_a_document_with_neither_date_yields_no_guess(self):
+        resolver = _StubResolver(_StubResolved(text="NOME FULANO DE TAL"))
+        out = await LadderIdentityExtractor(resolver=resolver).extract(
+            b"x", mimetype="image/png"
+        )
+        assert out.data_casamento is None
+        assert out.data_casamento_confianca is ExtractionConfidence.NENHUMA
+        assert out.data_emissao is None
+        assert out.persistable_data_casamento is False
