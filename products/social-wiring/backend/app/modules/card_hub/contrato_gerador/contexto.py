@@ -26,9 +26,13 @@ from app.modules.card_hub.contrato_gerador import frases
 from app.modules.card_hub.contrato_gerador.concordancia import lado, normalizar_genero
 from app.modules.card_hub.contrato_gerador.dados import DadosContrato, Pessoa, signatarios
 from app.modules.card_hub.contrato_gerador.derivacao import (
-    grupos_pj,
+    antigos_proprietarios,
+    exige_antigo_proprietario,
+    grupos_pj_exigidos,
     indice_certidoes,
     parcelas_ordenadas,
+    pessoas_certificadas,
+    prazo_pendencias,
     tipos_exigidos,
 )
 from app.modules.card_hub.contrato_gerador.numeracao import (
@@ -107,7 +111,6 @@ def montar_contexto(
     p_ref = {
         "sinal": refs("sinal"),
         "financiamento": refs("financiamento"),
-        "fgts": refs("fgts"),
         "saldo": refs("saldo"),
         "permuta": num2(len(parcelas) + 1) if sw["tem_permuta"] else "",
     }
@@ -125,6 +128,7 @@ def montar_contexto(
                     V=V,
                     C=C,
                     tem_financiamento=sw["tem_financiamento"],
+                    fgts=d.financiamento.fgts,
                     ref_financiamento=p_ref["financiamento"],
                     favorecido=fav,
                     favorecido_repetido=bool(fav and fav.id in ja_usados),
@@ -163,23 +167,37 @@ def montar_contexto(
     }
 
     # ── certidões ──
-    pessoas_cert = vend + (comp_pessoas if sw["tem_permuta"] else [])
+    # Whose certidões are presented and which companies — [Q9] — come from
+    # the same derivacao rules the gate checked.
+    pessoas_cert = pessoas_certificadas(d, sw, assinatura, politica)
     grupos, pendentes_cert = [], []
     n = 0
     for p in pessoas_cert:
-        idx, _ = indice_certidoes(p.certidoes or [], "cpf", politica)
+        idx = indice_certidoes(p.certidoes or [], "cpf")
         n += 1
         grupos.append(
-            {"num": n, "em_nome_de": p.nome, "itens": [frases.item_certidao(t, idx[t]) for t in tipos_exigidos("cpf")]}
+            {
+                "num": n,
+                "em_nome_de": p.nome,
+                "sufixo": None,
+                "itens": [frases.item_certidao(t, idx[t]) for t in tipos_exigidos("cpf")],
+            }
         )
         pendentes_cert += [frases.pendencia_certidao(t, p.nome or "") for t in tipos_exigidos("cpf") if idx[t].resultado == "nao_emitida"]
     for p in pessoas_cert:
-        for documento, certs in grupos_pj(p).items():
-            idx, _ = indice_certidoes(certs, "cnpj", politica)
+        for documento, certs, sufixo in grupos_pj_exigidos(p, assinatura, politica):
+            idx = indice_certidoes(certs, "cnpj")
             nome_pj = certs[0].consulta_nome or documento
             n += 1
-            tipos = [t for t in tipos_exigidos("cnpj") if t in idx]
-            grupos.append({"num": n, "em_nome_de": nome_pj, "itens": [frases.item_certidao(t, idx[t]) for t in tipos]})
+            tipos = tipos_exigidos("cnpj")
+            grupos.append(
+                {
+                    "num": n,
+                    "em_nome_de": nome_pj,
+                    "sufixo": sufixo,
+                    "itens": [frases.item_certidao(t, idx[t]) for t in tipos],
+                }
+            )
             pendentes_cert += [frases.pendencia_certidao(t, nome_pj) for t in tipos if idx[t].resultado == "nao_emitida"]
     grupos_imovel = []
     if im.onus_certidao_em and im.numero_matricula:
@@ -191,7 +209,7 @@ def montar_contexto(
     pendencias: list[str] = []
     if em_condominio:
         pendencias.append(frases.PENDENCIA_CONDOMINIO_PERMUTA if sw["tem_permuta"] else frases.PENDENCIA_CONDOMINIO)
-    pendencias.append(frases.pendencia_estado_civil(politica.comprovante_estado_civil_max_dias))
+    pendencias.append(frases.pendencia_estado_civil(politica.certidao_estado_civil_max_dias))
     pendencias.append(frases.PENDENCIA_DOCUMENTOS)
     if not grupos_imovel:
         pendencias.append(frases.PENDENCIA_MATRICULA)
@@ -202,9 +220,14 @@ def montar_contexto(
     pendencias += pendentes_cert
 
     if sw["tem_permuta"]:
-        apresentantes, plural_apres = f"{V.ART} {V.NOME} e {C.art} {C.NOME}", True
+        apresentantes_lista, plural_apres = [f"{V.ART} {V.NOME}", f"{C.art} {C.NOME}"], True
     else:
-        apresentantes, plural_apres = f"{V.ART} {V.NOME}", V.plural
+        apresentantes_lista, plural_apres = [f"{V.ART} {V.NOME}"], V.plural
+    if exige_antigo_proprietario(d, assinatura, politica):
+        # [Q9] the previous owner(s) present certidões too.
+        apresentantes_lista.append(frases.antigos_proprietarios_texto(antigos_proprietarios(d)))
+        plural_apres = True
+    apresentantes = juntar(apresentantes_lista)
     certidoes = {
         "apresentantes_texto": apresentantes,
         "apresenta": "apresentam" if plural_apres else "apresenta",
@@ -242,7 +265,8 @@ def montar_contexto(
         "prazo": comp.posse_prazo_dias,
         "marco_texto": frases.posse_marco_texto(marco, ref_financiamento=p_ref["financiamento"]),
         "condicao_frase": condicao,
-        "multa_diaria": politica.posse_multa_diaria,
+        # [Q12] the office's value — same daily fine for each party in a permuta.
+        "multa_diaria": d.imobiliaria.posse_multa_diaria,
     }
     permuta: dict[str, Any] = {}
     if sw["tem_permuta"]:
@@ -252,7 +276,6 @@ def montar_contexto(
             "posse_marco_texto": frases.posse_marco_texto(
                 comp.permuta_posse_marco or "", ref_financiamento=p_ref["financiamento"]
             ),
-            "despesas_texto": frases.despesas_permuta_texto(politica.permuta_despesas or "", C=C),
         }
 
     # ── intermediação ──
@@ -294,10 +317,10 @@ def montar_contexto(
         "pct_extenso": percentual_por_extenso,
         "V": V,
         "C": C,
-        "V_qualificacao": frases.qualificacao(vend, citar_lei_6515=politica.citar_lei_6515),
-        "C_qualificacao": frases.qualificacao(comp_pessoas, citar_lei_6515=politica.citar_lei_6515),
-        "V_signatarios": [frases.signatario_linha(p, com_email=politica.email_no_bloco_assinatura) for p in vend],
-        "C_signatarios": [frases.signatario_linha(p, com_email=politica.email_no_bloco_assinatura) for p in comp_pessoas],
+        "V_qualificacao": frases.qualificacao(vend, lei_6515_desde=politica.lei_6515_vigencia_desde),
+        "C_qualificacao": frases.qualificacao(comp_pessoas, lei_6515_desde=politica.lei_6515_vigencia_desde),
+        "V_signatarios": [frases.signatario_linha(p) for p in vend],
+        "C_signatarios": [frases.signatario_linha(p) for p in comp_pessoas],
         "imovel": imovel,
         "titulo_aquisitivo": (comp.titulo_aquisitivo_texto or "").strip(),
         "itens_integrantes": (comp.itens_integrantes or "").strip(),
@@ -311,15 +334,13 @@ def montar_contexto(
             "garantia_texto": (comp.garantia_confissao or "").strip(),
         },
         "certidoes": certidoes,
-        "prazo_pendencias": politica.prazo_pendencias_dias,
+        "prazo_pendencias": prazo_pendencias(d, politica),
         "prazo_esclarecimentos": politica.prazo_esclarecimentos_dias,
         "onus": onus,
         "posse": posse,
         "permuta": permuta,
-        "rescisao": {
-            "cura_frase": frases.cura_rescisao_frase(politica.rescisao_cura_dias),
-            "encargo_texto": frases.ENCARGO_RESCISAO_TEXTO.get(politica.rescisao_encargo or "nenhum", ""),
-        },
+        # [Q4] ¶2 wording is fixed in the template (multa + proven costs).
+        "rescisao": {"cura_frase": frases.cura_rescisao_frase(politica.rescisao_cura_dias)},
         # [Q3] multa rescisória = the sinal's valor.
         "multa_rescisoria": sinal.valor,
         "resolutiva_notificacao_email": politica.resolutiva_notificacao_email,
@@ -328,10 +349,13 @@ def montar_contexto(
         "assinatura": {
             "local": d.imobiliaria.endereco.cidade,
             "data_extenso": data_por_extenso(assinatura),
-            "plataforma_nome": comp.plataforma_assinatura_nome,
-            "plataforma_url": comp.plataforma_assinatura_url,
+            "plataforma_nome": d.imobiliaria.plataforma_assinatura_nome,
+            "plataforma_url": d.imobiliaria.plataforma_assinatura_url,
         },
-        "testemunhas": [{"nome": (t.nome or "").upper(), "rg": t.rg} for t in d.testemunhas],
+        # [Q14] witnesses print their CPF.
+        "testemunhas": [
+            {"nome": (t.nome or "").upper(), "cpf": frases.documento(t.cpf)[1]} for t in d.testemunhas
+        ],
     }
 
 

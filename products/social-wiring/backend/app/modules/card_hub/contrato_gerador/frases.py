@@ -8,6 +8,7 @@ after the gate passed, so every field they print is present).
 from __future__ import annotations
 
 import re
+from datetime import date
 from decimal import Decimal
 from typing import Optional, Sequence
 
@@ -163,7 +164,14 @@ def nucleos(pessoas: Sequence[Pessoa]) -> list[tuple[Pessoa, Optional[Pessoa]]]:
     return saida
 
 
-def qualificacao(pessoas: Sequence[Pessoa], *, citar_lei_6515: bool) -> str:
+def lei_6515_frase(data_casamento: date, vigencia_desde: date) -> str:
+    """[Q2] Every casamento cites the Lei 6.515/77 by its date."""
+    if data_casamento >= vigencia_desde:
+        return ", na vigência da Lei 6.515/77"
+    return ", anterior à vigência da Lei 6.515/77"
+
+
+def qualificacao(pessoas: Sequence[Pessoa], *, lei_6515_desde: date) -> str:
     textos: list[str] = []
     for a, b in nucleos(pessoas):
         if b is None:
@@ -182,15 +190,16 @@ def qualificacao(pessoas: Sequence[Pessoa], *, citar_lei_6515: bool) -> str:
         if a.estado_civil == "uniao_estavel":
             textos.append(f"{ta}, que convive em união estável com {tb}{sufixo}")
         else:
-            lei = ", na vigência da Lei 6.515/77" if citar_lei_6515 else ""
+            lei = lei_6515_frase(a.data_casamento, lei_6515_desde)  # type: ignore[arg-type] — gated
             regime = REGIME_EXTENSO.get(a.regime_bens or "", a.regime_bens or "")
             textos.append(f"{ta}, e {tb}, casados no regime da {regime}{lei}{sufixo}")
     return ", e ".join(textos)
 
 
-def signatario_linha(p: Pessoa, *, com_email: bool) -> str:
+def signatario_linha(p: Pessoa) -> str:
+    """[Q14] The e-mail stays beside the name (the signing platform needs it)."""
     nome = (p.nome or "").upper()
-    if com_email and p.email:
+    if p.email:
         return f"{nome}    {p.email.strip().lower()}"
     return nome
 
@@ -221,6 +230,7 @@ def texto_parcela(
     V: Concordancia,
     C: Concordancia,
     tem_financiamento: bool,
+    fgts: bool,
     ref_financiamento: str,
     favorecido: Optional[Favorecido],
     favorecido_repetido: bool,
@@ -229,10 +239,12 @@ def texto_parcela(
 ) -> str:
     """Everything after "Parcela NN:" for one parcela."""
     valor = brl_por_extenso(p.valor)  # type: ignore[arg-type] — gate guarantees it
-    if p.tipo == "fgts":
-        valor += ", por meio do uso das contas vinculadas ao FGTS"
-    elif p.tipo == "financiamento":
-        valor += ", por meio de recursos de financiamento imobiliário e/ou moeda corrente nacional"
+    if p.tipo == "financiamento":
+        # [Q6] FGTS + financiamento are ONE parcela (contract 03's wording).
+        if fgts:
+            valor += ", através do uso de FGTS e financiamento imobiliário"
+        else:
+            valor += ", por meio de recursos de financiamento imobiliário e/ou moeda corrente nacional"
     elif p.tipo == "saldo":
         # [Q7] saldo = payoff of the seller's existing financing.
         valor += ", destinada à quitação do saldo devedor do financiamento que onera o imóvel"
@@ -348,6 +360,15 @@ def pendencia_baixa_onus(situacao_onus: str) -> str:
     return f"Termo de quitação do financiamento e matrícula com o registro da baixa da {gravame}"
 
 
+def antigos_proprietarios_texto(pessoas: Sequence[Pessoa]) -> str:
+    """[Q9] "o antigo proprietário" / "a antiga proprietária" / "os antigos
+    proprietários" / "as antigas proprietárias" (a mixed group is masculine)."""
+    generos = [normalizar_genero(p.genero) or "m" for p in pessoas]
+    if len(generos) > 1:
+        return "as antigas proprietárias" if all(g == "f" for g in generos) else "os antigos proprietários"
+    return "a antiga proprietária" if generos[0] == "f" else "o antigo proprietário"
+
+
 def pendencia_certidao(tipo: str, nome: str) -> str:
     return f"{rotulo_certidao(tipo, None)} em nome de {nome.upper()}"
 
@@ -394,31 +415,12 @@ def condicao_posse_frase(anteriores: Sequence[str], *, todas: bool) -> str:
     return f", com a condição que as parcelas {juntar(list(anteriores))} do preço tenham sido anteriormente e integralmente quitadas"
 
 
-ENCARGO_RESCISAO_TEXTO = {
-    "honorarios": ", além de arcar com os honorários de intermediação das imobiliárias envolvidas na transação",
-    "custos": ", além de custos comprovadamente gerados com a presente transação",
-    "nenhum": "",
-}
-
-
 def cura_rescisao_frase(dias: Optional[int]) -> str:
     if not dias:
         return ""
     return (
         ", desde que a infração contratual seja apontada em notificação extrajudicial enviada à "
         f"Parte considerada como infratora e não seja sanada no prazo de até {dias_por_extenso(dias, uteis=True)}"
-    )
-
-
-def despesas_permuta_texto(quem: str, *, C: Concordancia) -> str:
-    if quem == "compradores":
-        return (
-            "As despesas decorrentes deste instrumento, tais como, emolumentos de cartório, "
-            f"registro, ITBI, serão suportadas {C.pelos} {C.NOME}."
-        )
-    return (
-        "As despesas decorrentes da transmissão de cada imóvel, tais como emolumentos de "
-        "cartório, registro e ITBI, serão suportadas pela respectiva parte adquirente."
     )
 
 

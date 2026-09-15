@@ -8,8 +8,11 @@ WHAT THESE PIN
 - POST .../gerar refuses with 400 CONTRATO_INCOMPLETO carrying the same
   faltando the GET reported — nothing rendered, nothing saved;
 - a fully-seeded card (complementos injected through the DI seam) is read
-  through the real services and saved as a version with origem='gerado' and a
-  64-hex `contexto_sha256`, and the matrícula text read is access-logged;
+  through the real services and waits ONLY for the office-policy fields the
+  loader does not read yet (spec §6.2, answered 2026-09-15);
+- once the loader reads them, it is saved as a version with origem='gerado'
+  and a 64-hex `contexto_sha256`, and the matrícula text read is
+  access-logged (strict xfail until the F6 wiring slice lands);
 - the SAVED version is a real PDF (`%PDF-` magic bytes), `mime_type
   application/pdf`, a `.pdf` filename — the `.docx` the generator builds
   internally never reaches storage (contract §5).
@@ -20,17 +23,35 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 
 from app.modules.card_hub.contrato_gerador.deps import get_complementos_contrato
+from app.modules.card_hub.contrato_gerador.service import hoje
 from app.modules.card_hub.contrato_gerador.frases import CERTIDOES
 from app.modules.card_hub.deps import BUCKET
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 _T0 = "2026-01-01T00:00:00+00:00"
+
+#: The office-policy fields `carregador` does not read yet — every one is
+#: `faltando` on an otherwise complete card until the F6 wiring slice.
+CAMPOS_AGUARDANDO_CARREGADOR = {
+    "qualificacao.certidao_estado_civil_emissao",
+    "matricula.ultima_transferencia",
+    "imobiliaria.plataforma_assinatura",
+    "imobiliaria.posse_multa_diaria",
+}
+
+#: NOC-REMEDIATE[contrato-f6-campos-missing]: drop this mark when `carregador`
+#: fills the new dados fields (the F6 wiring slice) — 2026-09-15
+AGUARDA_CARREGADOR_F6 = pytest.mark.xfail(
+    strict=True,
+    reason="the loader does not read the office-policy fields yet (CAMPOS_AGUARDANDO_CARREGADOR)",
+)
 
 
 def _auth() -> dict:
@@ -115,10 +136,14 @@ def _seed_completo(scoped) -> dict:
         "total_certidoes": 12, "concluidas": 12, "cliente_id": vendedor_id,
         "atendimento_parte_id": parte_id, "created_at": _T0, "updated_at": _T0,
     }])
+    # Relative to the office calendar: GET /geracao checks against `hoje()`,
+    # and a certidão must be < 30 days old at the assinatura [Q10].
+    emitida = hoje() - timedelta(days=5)
     scoped.set_table_data("certidao_resultados", [
         {"id": str(uuid4()), "consulta_id": consulta_id, "org_id": ORG_ID, "tipo": tipo, "nome_display": tipo,
-         "ordem": i, "status": "sucesso", "numero": f"SIM-{i:04d}", "emitida_em": "2026-09-01",
-         "validade_ate": "2026-12-01", "resultado": "negativa", "created_at": _T0, "updated_at": _T0}
+         "ordem": i, "status": "sucesso", "numero": f"SIM-{i:04d}", "emitida_em": emitida.isoformat(),
+         "validade_ate": (emitida + timedelta(days=90)).isoformat(), "resultado": "negativa",
+         "created_at": _T0, "updated_at": _T0}
         for i, (tipo, *_r) in enumerate(CERTIDOES, start=1)
     ])
 
@@ -206,8 +231,10 @@ def _seed_completo(scoped) -> dict:
         "endereco_uf": "SP", "updated_at": _T0,
     }])
     scoped.set_table_data("org_testemunhas", [
-        {"id": str(uuid4()), "org_id": ORG_ID, "nome": nome, "cpf": None, "rg": rg, "created_at": _T0, "updated_at": None}
-        for nome, rg in (("Testemunha Um", "33.333.333-3"), ("Testemunha Dois", "44.444.444-4"))
+        {"id": str(uuid4()), "org_id": ORG_ID, "nome": nome, "cpf": fx.cpf_sintetico(base), "rg": rg,
+         "created_at": _T0, "updated_at": None}
+        for nome, rg, base in (("Testemunha Um", "33.333.333-3", "321654987"),
+                               ("Testemunha Dois", "44.444.444-4", "456789123"))
     ])
     ids.update(fav_org=fav_org, intermediario=int_id)
     return ids
@@ -280,6 +307,21 @@ class TestGerar:
         assert [f["campo"] for f in erro["details"]["faltando"]] == [f["campo"] for f in geracao["faltando"]]
         assert _rows(scoped,"atendimento_contrato_versoes") == []
 
+    def test_a_fully_seeded_card_waits_only_for_the_fields_the_loader_does_not_read_yet(
+        self, client, scoped, fake_storage, complementos_injetados
+    ):
+        ids = _seed_completo(scoped)
+        complementos_injetados(ids["intermediario"], ids["fav_org"])
+
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert geracao["bloqueios"] == []
+        assert {f["campo"] for f in geracao["faltando"]} == CAMPOS_AGUARDANDO_CARREGADOR
+
+        r = client.post(_url(ids, "gerar"), json={"assinatura_data": hoje().isoformat()}, headers=_auth())
+        assert r.status_code == 400, r.text
+        assert _rows(scoped, "atendimento_contrato_versoes") == []
+
+    @AGUARDA_CARREGADOR_F6
     def test_a_ready_contract_is_saved_as_a_generated_version(
         self, client, scoped, fake_storage, complementos_injetados
     ):
@@ -289,7 +331,7 @@ class TestGerar:
         geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
         assert geracao["pronto"] is True, (geracao["faltando"], geracao["bloqueios"])
 
-        r = client.post(_url(ids, "gerar"), json={"assinatura_data": "2026-09-14"}, headers=_auth())
+        r = client.post(_url(ids, "gerar"), json={"assinatura_data": hoje().isoformat()}, headers=_auth())
         assert r.status_code == 201, r.text
         body = r.json()
         assert body["versao"]["origem"] == "gerado"
@@ -315,6 +357,7 @@ class TestGerar:
         listagem = client.get(f"/api/clientes/{ids['cliente']}/contratos", headers=_auth()).json()
         assert listagem["contratos"][0]["versao_atual"]["origem"] == "gerado"
 
+    @AGUARDA_CARREGADOR_F6
     def test_a_character_the_pdf_font_cannot_represent_is_a_refusal_not_a_500(
         self, client, scoped, fake_storage, complementos_injetados
     ):
@@ -328,7 +371,7 @@ class TestGerar:
         testemunhas[0] = {**testemunhas[0], "nome": "Testemunha 🏠 Um"}
         scoped.set_table_data("org_testemunhas", testemunhas)
 
-        r = client.post(_url(ids, "gerar"), json={"assinatura_data": "2026-09-14"}, headers=_auth())
+        r = client.post(_url(ids, "gerar"), json={"assinatura_data": hoje().isoformat()}, headers=_auth())
 
         assert r.status_code == 422, r.text
         assert r.json()["error"]["code"] == "CONTRATO_PDF_NAO_GERADO"

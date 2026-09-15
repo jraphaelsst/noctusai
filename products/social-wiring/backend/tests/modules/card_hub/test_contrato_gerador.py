@@ -11,6 +11,9 @@ WHAT THESE PIN
 - every "R$ X (Y)" in the rendered text round-trips through the extenso;
 - the matrícula's selected text lands byte-identical in word/document.xml;
 - the post-render lint catches the sample contracts' hand-assembly errors;
+- each of the office's 15 policy answers (spec §6.2, answered 2026-09-15) is
+  generator behaviour, pinned at its boundary (1977-12-25/26, 29/30 days,
+  89/90 days, the 5-year baixada / last-transfer edge);
 - `documento.gerar_pdf` turns that `.docx` into an ABNT PDF: the TITLE
   paragraph is centered + bold, a HEADING is bold, and a matrícula range
   carried through `Matricula.formatacao` renders bold/underlined —
@@ -22,14 +25,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from datetime import date
 from decimal import Decimal
 
 import fitz
 import pytest
 from reportlab.lib.units import cm
 
-from noctusai_lib.domain.texto_ptbr import parse_brl, reais_por_extenso
+from noctusai_lib.domain.texto_ptbr import dias_por_extenso, parse_brl, reais_por_extenso
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
+from noctusai_lib.integrations.documents.cpf import format_cpf
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
@@ -162,7 +167,6 @@ class TestGate:
             "contrato.titulo_aquisitivo_texto",
             "contrato.posse_prazo_dias",
             "contrato.posse_marco",
-            "imobiliaria.plataforma_assinatura",
             "contrato.intermediario.int-1.favorecido",
             "contrato.corretagem_contratantes",
             "contrato.corretagem_parcelas_marco",
@@ -202,10 +206,273 @@ class TestGate:
         _d, _pol, _sw, av = _avaliar(5, replace(d, compradores=[titular]))
         assert [f["campo"] for f in av.faltando] == ["certidoes.titular.c1"]
 
-    def test_policy_defaults_surface_as_avisos_not_invented_text(self):
-        _d, _pol, _sw, av = _avaliar(1)
+    @pytest.mark.parametrize("n", range(1, 7))
+    def test_no_pending_policy_question_aviso_survives_the_answers(self, n):
+        _d, _pol, _sw, av = _avaliar(n)
         codigos = {a["codigo"] for a in av.avisos}
-        assert {"ENCARGO_RESCISAO_NAO_DEFINIDO", "MULTA_DIARIA_POSSE_OMITIDA", "CORRETAGEM_RESCISAO_PELA_COMISSAO"} <= codigos
+        assert not codigos & {
+            "ENCARGO_RESCISAO_NAO_DEFINIDO", "MULTA_DIARIA_POSSE_OMITIDA", "CORRETAGEM_RESCISAO_PELA_COMISSAO",
+            "LEI_6515_NAO_CITADA", "TJSP_API_COMO_ESAJ", "CERTIDOES_SEM_VALIDADE",
+        }
+        assert not any("[Q" in a["mensagem"] for a in av.avisos + av.bloqueios)
+
+
+def _codigos(itens):
+    return [i["codigo"] for i in itens]
+
+
+def _campos(av):
+    return [(f["campo"], f["parte_id"]) for f in av.faltando]
+
+
+def _texto(n: int, d=None) -> str:
+    return "\n".join(_render(n, d).paragrafos)
+
+
+class TestQ2Lei6515:
+    def _casal(self, data_v1, data_v2="igual", estado_civil="casado"):
+        d = fx.variante(1)
+        data_v2 = data_v1 if data_v2 == "igual" else data_v2
+        v1 = replace(d.vendedores[0], estado_civil=estado_civil, regime_bens="comunhao_parcial",
+                     conjuge_cliente_id="v2", data_casamento=data_v1)
+        v2 = replace(fx.pessoa("v2", "vendedor", "conjuge", "Cicrana Amostra", "Feminino", "111222333", "55.555.555-5"),
+                     estado_civil=estado_civil, regime_bens="comunhao_parcial", conjuge_cliente_id="v1",
+                     data_casamento=data_v2)
+        return replace(d, vendedores=[v1, v2])
+
+    @pytest.mark.parametrize("data, frase", [
+        (date(1977, 12, 26), ", na vigência da Lei 6.515/77"),
+        (date(1977, 12, 25), ", anterior à vigência da Lei 6.515/77"),
+    ])
+    def test_the_marriage_date_picks_the_wording(self, data, frase):
+        texto = _texto(1, self._casal(data))
+        assert f"casados no regime da comunhão parcial de bens{frase}" in texto
+
+    def test_a_casado_without_the_marriage_date_is_missing_it(self):
+        _d, _pol, _sw, av = _avaliar(1, self._casal(None))
+        assert ("qualificacao.data_casamento", "parte-v1") in _campos(av)
+
+    def test_spouses_with_different_marriage_dates_block(self):
+        _d, _pol, _sw, av = _avaliar(1, self._casal(date(1990, 5, 5), date(1990, 5, 6)))
+        assert "DATA_CASAMENTO_DIVERGENTE" in _codigos(av.bloqueios)
+
+    def test_uniao_estavel_never_cites_the_law_nor_needs_the_date(self):
+        d = self._casal(None, estado_civil="uniao_estavel")
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert "6.515" not in _texto(1, d)
+
+
+class TestQ4Q3Rescisao:
+    def test_the_party_at_fault_pays_the_sinal_and_every_proven_cost(self):
+        assert (
+            "multa rescisória no valor de R$ 50.000,00 (cinquenta mil reais), a ser paga pela parte que der causa "
+            "à rescisão, que arcará ainda com todos os custos comprovadamente gerados durante o processo de compra "
+            "e venda até a data da rescisão."
+        ) in _texto(1)
+
+
+class TestQ6Fgts:
+    def test_fgts_is_worded_inside_the_financiamento_parcela(self):
+        r = _render(2)
+        financiamento = next(p for p in r.paragrafos if p.startswith("Parcela 03:"))
+        assert "através do uso de FGTS e financiamento imobiliário" in financiamento
+        assert not any(p.startswith("Parcela 04:") for p in r.paragrafos)
+
+    def test_a_separate_fgts_parcela_blocks(self):
+        d = fx.variante(2)
+        parcelas = [d.parcelas[0], d.parcelas[1], replace(d.parcelas[2], valor=Decimal("300000.00")),
+                    fx.parcela("p4", "fgts", "100000.00", 4, evento="na liberação do FGTS")]
+        _d, _pol, _sw, av = _avaliar(2, replace(d, parcelas=parcelas))
+        assert _codigos(av.bloqueios) == ["PARCELA_FGTS_SEPARADA"]
+
+
+class TestQ8Tjsp:
+    def test_the_system_emitted_tjsp_stands_in_for_esaj_silently(self):
+        d = fx.variante(1)
+        v = d.vendedores[0]
+        certs = [replace(c, tipo="tjsp") if c.tipo == "tjsp_esaj" else c for c in v.certidoes]
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[replace(v, certidoes=certs)]))
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+
+CNPJ = "11444777000161"
+
+
+class TestQ9CertidoesDeEmpresa:
+    def _com_empresa(self, situacao, data_situacao=None, sem_tipo=None):
+        d = fx.variante(1)
+        v = d.vendedores[0]
+        pj = [c for c in fx.certidoes_pj(CNPJ, "Empresa Amostra Ltda", situacao, data_situacao) if c.tipo != sem_tipo]
+        return replace(d, vendedores=[replace(v, certidoes=v.certidoes + pj)])
+
+    @pytest.mark.parametrize("situacao", ["ativa", "inapta"])
+    def test_an_active_or_inapta_company_is_required_and_rendered(self, situacao):
+        _d, _pol, _sw, av = _avaliar(1, self._com_empresa(situacao, sem_tipo="cnd_federal"))
+        assert _campos(av) == [("certidao.cnd_federal", "parte-v1")]
+        texto = _texto(1, self._com_empresa(situacao))
+        assert "- Em nome de EMPRESA AMOSTRA LTDA\n" in texto + "\n"
+        assert "Baixada" not in texto
+
+    @pytest.mark.parametrize("situacao", ["suspensa", "nula"])
+    def test_a_suspensa_or_nula_company_is_omitted(self, situacao):
+        d = self._com_empresa(situacao, sem_tipo="cnd_federal")
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert "EMPRESA AMOSTRA" not in _texto(1, d)
+
+    def test_baixada_exactly_five_years_before_signing_is_omitted(self):
+        d = self._com_empresa("baixada", date(2021, 9, 14), sem_tipo="cnd_federal")
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert "EMPRESA AMOSTRA" not in _texto(1, d)
+
+    def test_baixada_less_than_five_years_before_signing_is_required_with_the_suffix(self):
+        _d, _pol, _sw, av = _avaliar(1, self._com_empresa("baixada", date(2021, 9, 15), sem_tipo="cnd_federal"))
+        assert _campos(av) == [("certidao.cnd_federal", "parte-v1")]
+        assert "- Em nome de EMPRESA AMOSTRA LTDA - Baixada" in _texto(1, self._com_empresa("baixada", date(2021, 9, 15)))
+
+    def test_unknown_situacao_is_missing(self):
+        _d, _pol, _sw, av = _avaliar(1, self._com_empresa(None))
+        assert _campos(av) == [(f"certidoes.pj.{CNPJ}.situacao", "parte-v1")]
+
+    def test_baixada_without_its_date_is_missing(self):
+        _d, _pol, _sw, av = _avaliar(1, self._com_empresa("baixada"))
+        assert _campos(av) == [(f"certidoes.pj.{CNPJ}.data_situacao", "parte-v1")]
+
+
+class TestQ9AntigoProprietario:
+    def _transferido_em(self, quando, *antigos):
+        d = fx.variante(1)
+        return replace(d, imovel=replace(d.imovel, ultima_transferencia_em=quando),
+                       vendedores=d.vendedores + list(antigos))
+
+    def test_unknown_last_transfer_is_missing(self):
+        _d, _pol, _sw, av = _avaliar(1, self._transferido_em(None))
+        assert _campos(av) == [("matricula.ultima_transferencia", None)]
+
+    def test_a_transfer_less_than_five_years_ago_requires_a_previous_owner(self):
+        _d, _pol, _sw, av = _avaliar(1, self._transferido_em(date(2021, 9, 15)))
+        assert _campos(av) == [("partes.antigo_proprietario", None)]
+
+    def test_a_transfer_exactly_five_years_ago_does_not(self):
+        antiga = fx.antiga_proprietaria()
+        d = self._transferido_em(date(2021, 9, 14), antiga)
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert "ANTIGO_PROPRIETARIO_DISPENSADO" in _codigos(av.avisos)
+        assert "ANTIGA DONA" not in _texto(1, d)
+
+    def test_the_previous_owner_needs_full_certidoes(self):
+        antiga = fx.antiga_proprietaria()
+        antiga = replace(antiga, certidoes=[c for c in antiga.certidoes if c.tipo != "serasa"])
+        _d, _pol, _sw, av = _avaliar(1, self._transferido_em(date(2021, 9, 15), antiga))
+        assert _campos(av) == [("certidao.serasa", "parte-a1")]
+
+    def test_the_previous_owner_presents_certidoes_with_agreement(self):
+        texto = _texto(1, self._transferido_em(date(2021, 9, 15), fx.antiga_proprietaria()))
+        assert "O VENDEDOR e a antiga proprietária apresentam neste momento as certidões em seus nomes" in texto
+        assert "- Em nome de ANTIGA DONA EXEMPLO" in texto
+        assert "PARTE_NAO_SIGNATARIA" not in _codigos(_avaliar(1, self._transferido_em(date(2021, 9, 15), fx.antiga_proprietaria()))[3].avisos)
+
+    def test_several_previous_owners_take_the_plural(self):
+        dois = replace(fx.pessoa("a2", "vendedor", "antigo_proprietario", "Antigo Dono Amostra", "Masculino",
+                                 "333444555", "77.777.777-7"))
+        texto = _texto(1, self._transferido_em(date(2021, 9, 15), fx.antiga_proprietaria(), dois))
+        assert "O VENDEDOR e os antigos proprietários apresentam" in texto
+
+
+class TestQ10IdadeDasCertidoes:
+    def _emitidas_ha(self, dias):
+        d = fx.variante(1)
+        v = d.vendedores[0]
+        return replace(d, vendedores=[replace(v, certidoes=fx.certidoes_completas(fx.dias_antes(dias)))])
+
+    def test_29_days_old_is_accepted(self):
+        _d, _pol, _sw, av = _avaliar(1, self._emitidas_ha(29))
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_30_days_old_blocks(self):
+        _d, _pol, _sw, av = _avaliar(1, self._emitidas_ha(30))
+        assert set(_codigos(av.bloqueios)) == {"CERTIDAO_EMISSAO_ANTIGA"}
+
+    def test_a_stated_validity_is_still_checked(self):
+        d = fx.variante(1)
+        v = d.vendedores[0]
+        certs = [replace(c, validade_ate=fx.dias_antes(1)) if c.tipo == "cnd_federal" else c for c in v.certidoes]
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[replace(v, certidoes=certs)]))
+        assert _codigos(av.bloqueios) == ["CERTIDAO_VENCIDA"]
+
+
+class TestQ11PendenciasEEstadoCivil:
+    def _estado_civil(self, emitida):
+        d = fx.variante(1)
+        return replace(d, vendedores=[replace(d.vendedores[0], certidao_estado_civil_emitida_em=emitida)])
+
+    def test_89_days_old_is_accepted(self):
+        _d, _pol, _sw, av = _avaliar(1, self._estado_civil(fx.dias_antes(89)))
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_90_days_old_blocks(self):
+        _d, _pol, _sw, av = _avaliar(1, self._estado_civil(fx.dias_antes(90)))
+        assert _codigos(av.bloqueios) == ["CERTIDAO_ESTADO_CIVIL_ANTIGA"]
+
+    def test_missing_emission_date_is_missing(self):
+        _d, _pol, _sw, av = _avaliar(1, self._estado_civil(None))
+        assert _campos(av) == [("qualificacao.certidao_estado_civil_emissao", "parte-v1")]
+
+    def test_the_pendencia_text_says_90_days(self):
+        assert "Comprovante de estado civil atualizado, emitido há no máximo 90 dias" in _texto(1)
+
+    @pytest.mark.parametrize("contrato, escritorio, esperado", [(None, None, 10), (None, 12, 12), (15, 12, 15)])
+    def test_prazo_default_office_default_and_contract_override(self, contrato, escritorio, esperado):
+        d = fx.variante(1)
+        d = replace(d, prazo_pendencias_dias=contrato,
+                    imobiliaria=replace(d.imobiliaria, prazo_pendencias_padrao_dias=escritorio))
+        assert f"no prazo de {dias_por_extenso(esperado)}, a contar da assinatura" in _texto(1, d)
+
+
+class TestQ12Posse:
+    def test_missing_office_daily_fine_is_missing(self):
+        d = fx.variante(1)
+        _d, _pol, _sw, av = _avaliar(1, replace(d, imobiliaria=replace(d.imobiliaria, posse_multa_diaria=None)))
+        assert _campos(av) == [("imobiliaria.posse_multa_diaria", None)]
+
+    def test_missing_signing_platform_is_missing(self):
+        d = fx.variante(1)
+        _d, _pol, _sw, av = _avaliar(1, replace(d, imobiliaria=replace(d.imobiliaria, plataforma_assinatura_url=None)))
+        assert _campos(av) == [("imobiliaria.plataforma_assinatura", None)]
+
+    def test_compra_e_venda_carries_one_daily_fine(self):
+        assert _texto(1).count("R$ 500,00 (quinhentos reais) por dia de atraso") == 1
+
+    def test_permuta_carries_the_same_daily_fine_for_each_party(self):
+        paragrafos = [p for p in _render(6).paragrafos if "R$ 500,00 (quinhentos reais) por dia de atraso" in p]
+        assert len(paragrafos) == 2
+        assert "o VENDEDOR" in paragrafos[0] and "Rua Fictícia, nº 100" in paragrafos[0]
+        assert "a COMPRADORA" in paragrafos[1] and "Avenida Amostra, nº 5" in paragrafos[1]
+
+
+class TestQ13Permuta:
+    def test_each_receiving_party_pays_its_imovel_registry_and_itbi(self):
+        texto = _texto(5)
+        assert ("As despesas decorrentes da transmissão de cada imóvel, tais como emolumentos de cartório, "
+                "registro e ITBI, serão suportadas pela parte que o recebe.") in texto
+        assert "serão suportadas pela COMPRADORA" not in texto
+
+
+class TestQ14Assinaturas:
+    def test_witnesses_need_a_cpf_not_an_rg(self):
+        d = fx.variante(1)
+        t1, t2 = d.testemunhas
+        _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, cpf=None), replace(t2, rg=None)]))
+        assert _campos(av) == [("imobiliaria.testemunha.1.cpf", None)]
+
+    def test_witnesses_print_cpf_and_signatories_keep_their_email(self):
+        r = _render(1)
+        assert f"CPF {format_cpf(fx.cpf_sintetico('321654987'))}" in r.paragrafos
+        assert not any(p.startswith("RG ") for p in r.paragrafos)
+        assert "FULANO DE TAL    v1@exemplo.test" in r.paragrafos
 
 
 class TestLint:

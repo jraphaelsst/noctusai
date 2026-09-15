@@ -6,18 +6,19 @@ Pure over `DadosContrato`. Three outputs, never mixed:
                 system cannot hold yet, spec §6.1). Named field + pt-BR label
                 + where in the card it is fixed.
 - `bloqueios` — the data is there but contradicts itself or the law of the
-                instrument (Σ parcelas ≠ preço, RG = CPF, expired certidão…).
-- `avisos`    — generation proceeds, but a human should know (an office
-                default was applied, an optional clause was omitted…).
+                instrument (Σ parcelas ≠ preço, RG = CPF, old certidão…).
+- `avisos`    — generation proceeds, but a human should know.
 
 `pronto` is `not faltando and not bloqueios`. A switch that needs a MISSING
 field adds a `faltando`; optional wording whose switch is off is omitted.
+The office's policy answers (spec §6.2, answered 2026-09-15) are cited as
+[Qn] next to the rule that implements each — see `politica.py`.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from typing import Optional
 
@@ -37,10 +38,12 @@ from app.modules.card_hub.contrato_gerador.dados import (
 )
 from app.modules.card_hub.contrato_gerador.numeracao import num2
 from app.modules.card_hub.contrato_gerador.politica import (
-    DESPESAS_PERMUTA,
-    ENCARGOS_RESCISAO,
     ONUS_COM_SALDO,
     ONUS_SUPORTADOS,
+    PAPEL_ANTIGO_PROPRIETARIO,
+    SITUACAO_PJ_BAIXADA,
+    SITUACOES_CADASTRAIS,
+    SITUACOES_PJ_EXIGIDAS,
     Politica,
 )
 
@@ -68,6 +71,17 @@ ROTULO_QUALIFICACAO = {
 
 SUFIXO_SEM_CAMPO = " — campo ainda não existe no sistema"
 
+#: [Q9] `classificar_grupo_pj` outcomes.
+PJ_EXIGIDO = "exigido"
+PJ_EXIGIDO_BAIXADA = "exigido_baixada"
+PJ_OMITIDO = "omitido"
+PJ_SEM_SITUACAO = "sem_situacao"
+PJ_SEM_DATA_SITUACAO = "sem_data_situacao"
+PJ_SITUACAO_DESCONHECIDA = "situacao_desconhecida"
+
+#: [Q9] The title suffix of a recently-closed company's certidão group.
+SUFIXO_PJ_BAIXADA = "Baixada"
+
 
 @dataclass
 class Avaliacao:
@@ -94,6 +108,23 @@ class Avaliacao:
             self.avisos.append({"codigo": codigo, "mensagem": mensagem})
 
 
+# ─── dates ────────────────────────────────────────────────────────────────
+
+
+def anos_antes(referencia: date, anos: int) -> date:
+    """The same calendar day `anos` years earlier (29/02 → 28/02)."""
+    try:
+        return referencia.replace(year=referencia.year - anos)
+    except ValueError:
+        return referencia.replace(year=referencia.year - anos, day=28)
+
+
+def ha_menos_de_anos(data: date, referencia: date, anos: int) -> bool:
+    """True when `data` is LESS than `anos` years before `referencia` —
+    exactly `anos` years earlier is not "less than"."""
+    return data > anos_antes(referencia, anos)
+
+
 # ─── switches ─────────────────────────────────────────────────────────────
 
 
@@ -109,19 +140,19 @@ def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
     """Spec §1.1 — computed, never typed."""
     tipos = {p.tipo for p in d.parcelas}
     tem_financiamento = "financiamento" in tipos
-    tem_fgts = "fgts" in tipos
     tem_parcelas_diretas = "direta" in tipos
     tem_permuta = d.permuta_ativo_id is not None
     comp = d.complementos
     partes = signatarios(d.vendedores) + signatarios(d.compradores)
     return {
         "tem_financiamento": tem_financiamento,
-        "tem_fgts": tem_fgts,
+        # [Q6] FGTS is part of the financiamento parcela, never its own.
+        "tem_fgts": tem_financiamento and d.financiamento.fgts,
         "tem_intermediaria": "intermediaria" in tipos,
         "tem_permuta": tem_permuta,
         "tem_parcelas_diretas": tem_parcelas_diretas,
         "tem_confissao": any(p.tipo == "direta" and p.confissao_divida for p in d.parcelas),
-        "a_vista": not (tem_financiamento or tem_fgts or tem_parcelas_diretas),
+        "a_vista": not (tem_financiamento or "fgts" in tipos or tem_parcelas_diretas),
         "tem_saldo_devedor": bool(d.imovel and d.imovel.situacao_onus in ONUS_COM_SALDO),
         "tem_intermediacao": bool(d.intermediarios),
         "tem_itens_integrantes": bool((comp.itens_integrantes or "").strip()),
@@ -130,7 +161,8 @@ def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
             c.consulta_tipo_documento == "cnpj" for c in todas_certidoes(partes)
         ),
         "tem_declaracao_partes": politica.tem_declaracao_partes,
-        "tem_multa_diaria_posse": (not tem_permuta) and politica.posse_multa_diaria is not None,
+        # [Q12] the office's value, in every modelo (permuta included).
+        "tem_multa_diaria_posse": d.imobiliaria.posse_multa_diaria is not None,
     }
 
 
@@ -143,6 +175,15 @@ def modelo_derivado(switches: dict[str, bool]) -> str:
     return MODELO_COMPRA_VENDA
 
 
+def prazo_pendencias(d: DadosContrato, politica: Politica) -> int:
+    """[Q11] contract override → office default → 10 days."""
+    if d.prazo_pendencias_dias is not None:
+        return d.prazo_pendencias_dias
+    if d.imobiliaria.prazo_pendencias_padrao_dias is not None:
+        return d.imobiliaria.prazo_pendencias_padrao_dias
+    return politica.prazo_pendencias_padrao_dias
+
+
 # ─── certidões index ──────────────────────────────────────────────────────
 
 
@@ -151,11 +192,10 @@ def tipos_exigidos(tipo_documento: str) -> list[str]:
     return [c[0] for c in frases.CERTIDOES if c[coluna]]
 
 
-def indice_certidoes(
-    certidoes: list[Certidao], tipo_documento: str, politica: Politica
-) -> tuple[dict[str, Certidao], bool]:
-    """tipo -> the result to print for ONE consulta kind. Returns whether the
-    API `tjsp` result stood in for `tjsp_esaj` [Q8]."""
+def indice_certidoes(certidoes: list[Certidao], tipo_documento: str) -> dict[str, Certidao]:
+    """tipo -> the result to print for ONE consulta kind. [Q8] The
+    system-emitted `tjsp` certidão IS the TJSP document: it stands in for
+    `tjsp_esaj` when no manual E-SAJ result exists."""
     idx: dict[str, Certidao] = {}
     for c in certidoes:
         if c.consulta_tipo_documento != tipo_documento:
@@ -164,11 +204,9 @@ def indice_certidoes(
         # Most recently emitted wins when a type was issued more than once.
         if atual is None or (c.emitida_em or date.min) > (atual.emitida_em or date.min):
             idx[c.tipo] = c
-    usou_api = False
-    if "tjsp_esaj" not in idx and "tjsp" in idx and politica.tjsp_api_equivale_esaj:
+    if "tjsp_esaj" not in idx and "tjsp" in idx:
         idx["tjsp_esaj"] = idx["tjsp"]
-        usou_api = True
-    return idx, usou_api
+    return idx
 
 
 def grupos_pj(pessoa: Pessoa) -> dict[str, list[Certidao]]:
@@ -178,6 +216,65 @@ def grupos_pj(pessoa: Pessoa) -> dict[str, list[Certidao]]:
         if c.consulta_tipo_documento == "cnpj":
             grupos.setdefault(c.consulta_documento or "", []).append(c)
     return grupos
+
+
+def classificar_grupo_pj(certs: list[Certidao], assinatura: date, politica: Politica) -> str:
+    """[Q9] Whether a company's certidão group is required: `ativa`/`inapta`
+    always; `baixada` only when closed less than `pj_baixada_janela_anos`
+    before the assinatura; `suspensa`/`nula`/older baixadas are omitted."""
+    situacao = next((c.consulta_situacao_cadastral for c in certs if c.consulta_situacao_cadastral), None)
+    if situacao is None:
+        return PJ_SEM_SITUACAO
+    if situacao not in SITUACOES_CADASTRAIS:
+        return PJ_SITUACAO_DESCONHECIDA
+    if situacao in SITUACOES_PJ_EXIGIDAS:
+        return PJ_EXIGIDO
+    if situacao != SITUACAO_PJ_BAIXADA:
+        return PJ_OMITIDO
+    data = next((c.consulta_data_situacao for c in certs if c.consulta_data_situacao), None)
+    if data is None:
+        return PJ_SEM_DATA_SITUACAO
+    if ha_menos_de_anos(data, assinatura, politica.pj_baixada_janela_anos):
+        return PJ_EXIGIDO_BAIXADA
+    return PJ_OMITIDO
+
+
+def grupos_pj_exigidos(
+    pessoa: Pessoa, assinatura: date, politica: Politica
+) -> list[tuple[str, list[Certidao], Optional[str]]]:
+    """(documento, results, title suffix) of each REQUIRED company group."""
+    saida: list[tuple[str, list[Certidao], Optional[str]]] = []
+    for documento, certs in grupos_pj(pessoa).items():
+        situacao = classificar_grupo_pj(certs, assinatura, politica)
+        if situacao == PJ_EXIGIDO:
+            saida.append((documento, certs, None))
+        elif situacao == PJ_EXIGIDO_BAIXADA:
+            saida.append((documento, certs, SUFIXO_PJ_BAIXADA))
+    return saida
+
+
+def antigos_proprietarios(d: DadosContrato) -> list[Pessoa]:
+    return [p for p in d.vendedores if p.papel == PAPEL_ANTIGO_PROPRIETARIO]
+
+
+def exige_antigo_proprietario(d: DadosContrato, assinatura: date, politica: Politica) -> Optional[bool]:
+    """[Q9] True when the last registered compra e venda is less than
+    `antigo_proprietario_janela_anos` before the assinatura; None = unknown."""
+    if d.imovel is None or d.imovel.ultima_transferencia_em is None:
+        return None
+    return ha_menos_de_anos(d.imovel.ultima_transferencia_em, assinatura, politica.antigo_proprietario_janela_anos)
+
+
+def pessoas_certificadas(
+    d: DadosContrato, sw: dict[str, bool], assinatura: date, politica: Politica
+) -> list[Pessoa]:
+    """Whose certidões the contract presents, in group order: the signing
+    vendedores, the signing compradores in a permuta, then the previous
+    owner(s) when [Q9] requires them."""
+    pessoas = signatarios(d.vendedores) + (signatarios(d.compradores) if sw["tem_permuta"] else [])
+    if exige_antigo_proprietario(d, assinatura, politica):
+        pessoas += antigos_proprietarios(d)
+    return pessoas
 
 
 # ─── the gate ─────────────────────────────────────────────────────────────
@@ -191,14 +288,15 @@ def _doc_norm(valor: Optional[str]) -> str:
     return re.sub(r"\W", "", (valor or "").upper())
 
 
-def _partes(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
+def _partes(av: Avaliacao, d: DadosContrato) -> None:
     vend, comp = signatarios(d.vendedores), signatarios(d.compradores)
+    antigos = antigos_proprietarios(d)
     if not vend:
         av.falta("partes.vendedores", "Ao menos um vendedor (proprietário) no card", "partes")
     if not comp:
         av.falta("partes.compradores", "Ao menos um comprador no card", "partes")
     for p in d.vendedores + d.compradores:
-        if p not in vend and p not in comp:
+        if p not in vend and p not in comp and p not in antigos:
             av.avisa(
                 "PARTE_NAO_SIGNATARIA",
                 f"{_nome(p)} ({p.papel}) não entra na qualificação nem assina o contrato.",
@@ -227,7 +325,8 @@ def _partes(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
                     "partes",
                     p.parte_id,
                 )
-            if politica.email_no_bloco_assinatura and not p.email:
+            # [Q14] the e-mail is printed beside the name in the signature block.
+            if not p.email:
                 av.avisa("PARTE_SEM_EMAIL", f"{_nome(p)} não tem e-mail; o bloco de assinatura sai sem ele.")
             if p.cpf and not cpf_valido(p.cpf):
                 av.bloqueia("CPF_INVALIDO", f"O CPF de {_nome(p)} não confere (dígitos verificadores).")
@@ -262,17 +361,18 @@ def _partes(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
                             "CONJUGE_SEPARACAO_TOTAL",
                             f"{_nome(p)} é casado(a) em separação total; o cônjuge ainda assina.",
                         )
-                    if politica.citar_lei_6515:
+                    # [Q2] the date decides the Lei 6.515/77 wording.
+                    if p.data_casamento is None:
                         av.falta(
                             "qualificacao.data_casamento",
-                            f"Data do casamento (Lei 6.515/77) — {_nome(p)}{SUFIXO_SEM_CAMPO}",
+                            f"Data do casamento (Lei 6.515/77) — {_nome(p)}",
                             "partes",
                             p.parte_id,
                         )
-                    else:
-                        av.avisa(
-                            "LEI_6515_NAO_CITADA",
-                            "A menção à Lei 6.515/77 não é feita: a data do casamento não é registrada [Q2].",
+                    elif conjuge.data_casamento is not None and conjuge.data_casamento != p.data_casamento:
+                        av.bloqueia(
+                            "DATA_CASAMENTO_DIVERGENTE",
+                            f"{_nome(p)} e o cônjuge têm datas de casamento diferentes.",
                         )
 
 
@@ -339,9 +439,7 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
             av.bloqueia("ONUS_QUITACAO_SEM_PARCELA_SALDO", "A quitação do ônus é por parcela, mas não há parcela de saldo.")
 
 
-def _negociacao(
-    av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Politica, assinatura: date
-) -> None:
+def _negociacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], assinatura: date) -> None:
     if d.valor_negociado is None:
         av.falta("negociacao.valor_negociado", "Valor negociado", "negociacao")
     parcelas = parcelas_ordenadas(d)
@@ -381,8 +479,9 @@ def _negociacao(
                 av.falta(f"negociacao.parcela.{p.id}.forma_pagamento", f"Forma de pagamento da {rot}", "negociacao")
         if "financiamento" in (p.evento or "").lower() and not sw["tem_financiamento"]:
             av.bloqueia("EVENTO_CITA_FINANCIAMENTO", f"A {rot} cita financiamento, mas não há parcela de financiamento.")
-        if p.tipo == "saldo" and politica.saldo_quita_financiamento_vendedor and not sw["tem_saldo_devedor"]:
-            av.bloqueia("SALDO_SEM_ONUS", f"A {rot} é de saldo (quitação do financiamento do vendedor), mas o imóvel não tem ônus [Q7].")
+        # [Q7] saldo = the open financing balance on the imóvel, paid off.
+        if p.tipo == "saldo" and not sw["tem_saldo_devedor"]:
+            av.bloqueia("SALDO_SEM_ONUS", f"A {rot} é de saldo (quitação do financiamento que onera o imóvel), mas o imóvel não tem ônus.")
         if p.confissao_divida and p.tipo != "direta":
             av.bloqueia("CONFISSAO_EM_PARCELA_NAO_DIRETA", f"Só parcelas diretas entram na confissão de dívida ({rot}).")
         if p.vencimento:
@@ -390,6 +489,7 @@ def _negociacao(
                 av.bloqueia("VENCIMENTOS_FORA_DE_ORDEM", f"O vencimento da {rot} não é posterior ao da parcela anterior.")
             ultimo_venc = p.vencimento
 
+    # [Q15] Σ parcelas must equal the price — the sample-contract errors were data.
     if d.valor_negociado is not None and parcelas and all(p.valor is not None for p in parcelas):
         soma = sum((p.valor for p in parcelas), Decimal("0"))  # type: ignore[misc]
         permuta = d.complementos.permuta_parcela_valor
@@ -410,8 +510,6 @@ def _negociacao(
         av.bloqueia("POSSE_MARCO_INVALIDO", f"Marco da posse desconhecido: {comp.posse_marco}.")
     elif comp.posse_marco == "parcela_financiamento" and not sw["tem_financiamento"]:
         av.bloqueia("POSSE_MARCO_SEM_FINANCIAMENTO", "A posse conta do financiamento, mas não há parcela de financiamento.")
-    if not sw["tem_permuta"] and politica.posse_multa_diaria is None:
-        av.avisa("MULTA_DIARIA_POSSE_OMITIDA", "O parágrafo de multa diária pela posse foi omitido: valor não definido [Q12].")
 
     if sw["tem_confissao"]:
         if comp.juros_am_confissao is None:
@@ -431,13 +529,22 @@ def _financiamento(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None
             av.falta("financiamento", "Registro do financiamento do atendimento", "financiamento")
         elif d.financiamento.situacao == "recusado":
             av.bloqueia("FINANCIAMENTO_RECUSADO", "O financiamento deste atendimento está recusado.")
-    if sw["tem_fgts"] and not d.financiamento.fgts:
-        av.bloqueia("FGTS_NAO_MARCADO", "Há parcela de FGTS, mas o financiamento não marca uso de FGTS.")
-    if d.financiamento.fgts and not sw["tem_fgts"]:
-        av.avisa("FGTS_SEM_PARCELA", "O financiamento marca FGTS, mas nenhuma parcela é de FGTS [Q6].")
+    # [Q6] ONE parcela: FGTS is worded inside the financiamento parcela.
+    for i, p in enumerate(parcelas_ordenadas(d), start=1):
+        if p.tipo == "fgts":
+            av.bloqueia(
+                "PARCELA_FGTS_SEPARADA",
+                f"A Parcela {num2(i)} é de FGTS: o FGTS entra na parcela de financiamento — junte o valor "
+                "na parcela de financiamento e marque o uso de FGTS no financiamento.",
+            )
+    if d.financiamento.fgts and not sw["tem_financiamento"]:
+        av.avisa(
+            "FGTS_SEM_PARCELA",
+            "O financiamento marca uso de FGTS, mas não há parcela de financiamento; o FGTS não aparece no contrato.",
+        )
 
 
-def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Politica) -> None:
+def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     if not sw["tem_permuta"]:
         return
     comp = d.complementos
@@ -451,23 +558,18 @@ def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Pol
         av.falta("contrato.permuta_posse_marco", "Marco da posse do imóvel da permuta" + SUFIXO_SEM_CAMPO, "negociacao")
     elif comp.permuta_posse_marco not in frases.MARCOS_POSSE:
         av.bloqueia("POSSE_MARCO_INVALIDO", f"Marco da posse da permuta desconhecido: {comp.permuta_posse_marco}.")
-    if politica.permuta_despesas is None:
-        av.falta("contrato.permuta_despesas", "Quem paga escritura/ITBI de cada imóvel da permuta [Q13]", "contrato")
-    elif politica.permuta_despesas not in DESPESAS_PERMUTA:
-        av.bloqueia("PERMUTA_DESPESAS_INVALIDA", f"Política de despesas desconhecida: {politica.permuta_despesas}.")
 
 
 def _certidoes(
     av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Politica, assinatura: date
 ) -> None:
-    exigidas = signatarios(d.vendedores) + (signatarios(d.compradores) if sw["tem_permuta"] else [])
-    sem_validade: list[str] = []
+    signatarios_certificados = signatarios(d.vendedores) + (
+        signatarios(d.compradores) if sw["tem_permuta"] else []
+    )
     positivas: list[str] = []
 
     def conferir(p: Pessoa, certs: list[Certidao], tipo_documento: str, nome_grupo: str) -> None:
-        idx, usou_api = indice_certidoes(certs, tipo_documento, politica)
-        if usou_api:
-            av.avisa("TJSP_API_COMO_ESAJ", f"A certidão TJSP da API foi usada como E-SAJ para {nome_grupo} [Q8].")
+        idx = indice_certidoes(certs, tipo_documento)
         for tipo in tipos_exigidos(tipo_documento):
             rotulo = frases.rotulo_certidao(tipo, None)
             c = idx.get(tipo)
@@ -483,17 +585,19 @@ def _certidoes(
                 continue
             if c.emitida_em > assinatura:
                 av.bloqueia("CERTIDAO_EMITIDA_APOS_ASSINATURA", f"{rotulo} de {nome_grupo} tem emissão posterior à assinatura.")
-            validade = c.validade_ate
-            if validade is None and tipo in politica.validade_padrao_dias:
-                validade = c.emitida_em + timedelta(days=politica.validade_padrao_dias[tipo])
-            if validade is None:
-                sem_validade.append(f"{rotulo} ({nome_grupo})")
-            elif validade < assinatura:
+            elif (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
+                # [Q10] every certidão is emitted less than 30 days before signing.
+                av.bloqueia(
+                    "CERTIDAO_EMISSAO_ANTIGA",
+                    f"{rotulo} de {nome_grupo} foi emitida há {(assinatura - c.emitida_em).days} dias; "
+                    f"precisa ter menos de {politica.certidao_max_dias} dias na data da assinatura.",
+                )
+            if c.validade_ate is not None and c.validade_ate < assinatura:
                 av.bloqueia("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")
             if c.resultado == "positiva":
                 positivas.append(f"{rotulo} ({nome_grupo})")
 
-    for p in exigidas:
+    def conferir_pessoa(p: Pessoa) -> None:
         if p.certidoes is None:
             av.falta(
                 f"certidoes.titular.{p.cliente_id}",
@@ -501,16 +605,88 @@ def _certidoes(
                 "certidoes",
                 None,
             )
-            continue
+            return
         conferir(p, p.certidoes, "cpf", _nome(p))
+        # [Q9] which of the person's companies are certified.
         for documento, certs in grupos_pj(p).items():
-            conferir(p, certs, "cnpj", certs[0].consulta_nome or documento)
+            nome_pj = certs[0].consulta_nome or documento
+            situacao = classificar_grupo_pj(certs, assinatura, politica)
+            if situacao == PJ_SEM_SITUACAO:
+                av.falta(
+                    f"certidoes.pj.{documento}.situacao",
+                    f"Situação cadastral (Receita Federal) da empresa {nome_pj} — {_nome(p)}",
+                    "certidoes",
+                    p.parte_id,
+                )
+            elif situacao == PJ_SEM_DATA_SITUACAO:
+                av.falta(
+                    f"certidoes.pj.{documento}.data_situacao",
+                    f"Data da baixa da empresa {nome_pj} — {_nome(p)}",
+                    "certidoes",
+                    p.parte_id,
+                )
+            elif situacao == PJ_SITUACAO_DESCONHECIDA:
+                av.bloqueia(
+                    "SITUACAO_CADASTRAL_DESCONHECIDA",
+                    f"A situação cadastral da empresa {nome_pj} ({_nome(p)}) não é reconhecida.",
+                )
+            elif situacao in (PJ_EXIGIDO, PJ_EXIGIDO_BAIXADA):
+                conferir(p, certs, "cnpj", nome_pj)
 
-    if sem_validade:
-        av.avisa(
-            "CERTIDOES_SEM_VALIDADE",
-            f"{len(sem_validade)} certidão(ões) sem data de validade não tiveram a validade conferida [Q10].",
-        )
+    for p in signatarios_certificados:
+        conferir_pessoa(p)
+        # [Q11] the estado-civil certidão is less than 90 days old.
+        emitida = p.certidao_estado_civil_emitida_em
+        if emitida is None:
+            av.falta(
+                "qualificacao.certidao_estado_civil_emissao",
+                f"Data de emissão da certidão de estado civil — {_nome(p)}",
+                "partes",
+                p.parte_id,
+            )
+        elif emitida > assinatura:
+            av.bloqueia(
+                "CERTIDAO_EMITIDA_APOS_ASSINATURA",
+                f"A certidão de estado civil de {_nome(p)} tem emissão posterior à assinatura.",
+            )
+        elif (assinatura - emitida).days >= politica.certidao_estado_civil_max_dias:
+            av.bloqueia(
+                "CERTIDAO_ESTADO_CIVIL_ANTIGA",
+                f"A certidão de estado civil de {_nome(p)} foi emitida há {(assinatura - emitida).days} dias; "
+                f"precisa ter menos de {politica.certidao_estado_civil_max_dias} dias na data da assinatura.",
+            )
+
+    # [Q9] previous owner(s) when the last compra e venda is recent.
+    antigos = antigos_proprietarios(d)
+    if d.imovel is not None:
+        exige = exige_antigo_proprietario(d, assinatura, politica)
+        if exige is None:
+            av.falta(
+                "matricula.ultima_transferencia",
+                "Data do registro da última compra e venda na matrícula",
+                "matricula",
+            )
+        elif exige:
+            if not antigos:
+                av.falta(
+                    "partes.antigo_proprietario",
+                    "Antigo(s) proprietário(s) do imóvel no card — a última compra e venda foi registrada há "
+                    f"menos de {politica.antigo_proprietario_janela_anos} anos",
+                    "partes",
+                )
+            for a in antigos:
+                if not a.nome:
+                    av.falta("qualificacao.nome_oficial", f"Nome oficial — {_nome(a)} (antigo proprietário)", "partes", a.parte_id)
+                if normalizar_genero(a.genero) is None:
+                    av.falta("qualificacao.genero", f"Gênero — {_nome(a)} (antigo proprietário)", "partes", a.parte_id)
+                conferir_pessoa(a)
+        elif antigos:
+            av.avisa(
+                "ANTIGO_PROPRIETARIO_DISPENSADO",
+                f"A última compra e venda foi registrada há {politica.antigo_proprietario_janela_anos} anos ou mais; "
+                "as certidões do(s) antigo(s) proprietário(s) não entram no contrato.",
+            )
+
     if positivas:
         av.avisa("CERTIDOES_POSITIVAS", "Certidões positivas exigem esclarecimentos: " + "; ".join(positivas) + ".")
 
@@ -531,20 +707,32 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
     for i, t in enumerate(d.testemunhas, start=1):
         if not t.nome:
             av.falta(f"imobiliaria.testemunha.{i}.nome", f"Nome da testemunha {i}", "imobiliaria")
-        if not t.rg:
-            av.falta(f"imobiliaria.testemunha.{i}.rg", f"RG da testemunha {i}", "imobiliaria")
-        if politica.testemunha_exige_cpf and not t.cpf:
+        # [Q14] witnesses print their CPF.
+        if not t.cpf:
             av.falta(f"imobiliaria.testemunha.{i}.cpf", f"CPF da testemunha {i}", "imobiliaria")
-    comp = d.complementos
-    if not comp.plataforma_assinatura_nome or not comp.plataforma_assinatura_url:
+        elif not cpf_valido(t.cpf):
+            av.bloqueia("CPF_INVALIDO", f"O CPF da testemunha {i} não confere (dígitos verificadores).")
+    if not org.plataforma_assinatura_nome or not org.plataforma_assinatura_url:
         av.falta(
             "imobiliaria.plataforma_assinatura",
-            "Plataforma de assinatura digital (nome e endereço)" + SUFIXO_SEM_CAMPO,
+            "Plataforma de assinatura digital (nome e endereço)",
             "imobiliaria",
         )
+    # [Q12] the office's posse multa diária.
+    if org.posse_multa_diaria is None:
+        av.falta(
+            "imobiliaria.posse_multa_diaria",
+            "Multa diária por atraso na entrega da posse (valor da imobiliária)",
+            "imobiliaria",
+        )
+    elif org.posse_multa_diaria <= 0:
+        av.bloqueia("MULTA_DIARIA_POSSE_INVALIDA", "A multa diária da posse precisa ser maior que zero.")
+    # [Q11] pendências prazo.
+    if prazo_pendencias(d, politica) <= 0:
+        av.bloqueia("PRAZO_PENDENCIAS_INVALIDO", "O prazo para apresentar as pendências precisa ser maior que zero.")
 
 
-def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Politica) -> None:
+def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     if not sw["tem_intermediacao"]:
         return
     comp = d.complementos
@@ -584,26 +772,19 @@ def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politic
         )
     elif any(not 1 <= n <= len(d.parcelas) for n in comp.corretagem_parcelas_marco):
         av.bloqueia("CORRETAGEM_MARCO_INEXISTENTE", "A corretagem cita uma parcela que não existe.")
+    # [Q5] the corretagem % owed on rescisão is the deal's commission.
     if d.pct_comissao is None:
         av.falta("negociacao.pct_comissao", "Percentual de comissão", "negociacao")
-    elif politica.corretagem_rescisao_igual_comissao:
-        av.avisa(
-            "CORRETAGEM_RESCISAO_PELA_COMISSAO",
-            "O percentual de corretagem devido na rescisão é o da comissão do negócio [Q5].",
-        )
+    else:
         pct_total = sum((i.valor for i in d.intermediarios if i.tipo == "percentual" and i.valor is not None), Decimal("0"))
         if pct_total and pct_total != d.pct_comissao:
             av.avisa("CORRETAGEM_PERCENTUAL_DIVERGE", "Os percentuais dos intermediários não somam o percentual de comissão.")
 
 
-def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Politica) -> None:
+def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     derivado = modelo_derivado(sw)
     if d.modelo != derivado:
         av.avisa("MODELO_DIVERGENTE", f"O modelo do contrato é '{d.modelo}', mas os dados indicam '{derivado}'.")
-    if politica.rescisao_encargo is None:
-        av.avisa("ENCARGO_RESCISAO_NAO_DEFINIDO", "O encargo adicional na rescisão foi omitido: política não definida [Q4].")
-    elif politica.rescisao_encargo not in ENCARGOS_RESCISAO:
-        av.bloqueia("ENCARGO_RESCISAO_INVALIDO", f"Encargo de rescisão desconhecido: {politica.rescisao_encargo}.")
     if d.complementos.itens_integrantes is None:
         av.avisa("ITENS_INTEGRANTES_NAO_INFORMADOS", "Itens integrantes não informados; o parágrafo foi omitido.")
     if d.complementos.ad_corpus is None:
@@ -616,15 +797,15 @@ def avaliar(
     d: DadosContrato, switches: dict[str, bool], politica: Politica, assinatura: date
 ) -> Avaliacao:
     av = Avaliacao()
-    _partes(av, d, politica)
+    _partes(av, d)
     _imovel(av, d, switches)
-    _negociacao(av, d, switches, politica, assinatura)
+    _negociacao(av, d, switches, assinatura)
     _financiamento(av, d, switches)
-    _permuta(av, d, switches, politica)
+    _permuta(av, d, switches)
     _certidoes(av, d, switches, politica, assinatura)
     _imobiliaria(av, d, politica)
-    _intermediacao(av, d, switches, politica)
-    _contrato(av, d, switches, politica)
+    _intermediacao(av, d, switches)
+    _contrato(av, d, switches)
     return av
 
 
@@ -633,11 +814,20 @@ __all__ = [
     "MODELO_A_VISTA",
     "MODELO_COMPRA_VENDA",
     "MODELO_PERMUTA",
+    "SUFIXO_PJ_BAIXADA",
+    "anos_antes",
+    "antigos_proprietarios",
     "avaliar",
+    "classificar_grupo_pj",
     "derivar_switches",
+    "exige_antigo_proprietario",
     "grupos_pj",
+    "grupos_pj_exigidos",
+    "ha_menos_de_anos",
     "indice_certidoes",
     "modelo_derivado",
     "parcelas_ordenadas",
+    "pessoas_certificadas",
+    "prazo_pendencias",
     "tipos_exigidos",
 ]

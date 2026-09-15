@@ -79,7 +79,7 @@ IV – reembolso integral das despesas comprovadamente suportadas {{ V.pelos }} 
 CLÁUSULA {{ cl.certidoes.ORD }} – DAS CERTIDÕES E DOCUMENTOS
 {{ certidoes.apresentantes_texto }} {{ certidoes.apresenta }} neste momento as certidões em {{ certidoes.seus_nomes }}, abaixo relacionadas:
 {%p for g in certidoes.grupos %}
-{{ g.num }} - Em nome de {{ g.em_nome_de|upper }}
+{{ g.num }} - Em nome de {{ g.em_nome_de|upper }}{% if g.sufixo %} - {{ g.sufixo }}{% endif %}
 {%p for i in g.itens %}
 {{ g.num }}.{{ loop.index }} – {{ i }}{{ '.' if loop.last else ';' }}
 {%p endfor %}
@@ -119,6 +119,10 @@ CLÁUSULA {{ cl.posse.ORD }} – DA POSSE SOBRE {{ 'OS IMÓVEIS' if tem_permuta 
 Durante o referido período, {{ C.art }} {{ C.NOME }} {{ C.pl('se compromete','se comprometem') }} a permitir o acesso ao imóvel, mediante prévio agendamento, a qualquer tempo, {{ V.aos }} {{ V.NOME }}, ao novo proprietário ou a terceiros por estes autorizados, para fins de vistoria, medição, planejamento ou quaisquer outras providências relacionadas ao imóvel.
 {{ V.ART }} {{ V.NOME }}, por sua vez, {{ V.pl('assume','assumem') }} a obrigação de entregar {{ C.aos }} {{ C.NOME }} a posse do imóvel situado à {{ imovel.endereco_curto }}, no prazo máximo de {{ dias(posse.prazo) }}, a contar {{ posse.marco_texto }}.
 {{ par('posse') }} As Partes se comprometem a entregar seus imóveis, de maneira limpa e organizada, livre e desimpedida de coisas e pessoas estranhas a esta negociação.
+{%p if tem_multa_diaria_posse %}
+{{ par('posse') }} Fica convencionada multa de {{ brl(posse.multa_diaria) }} por dia de atraso na hipótese de que {{ V.art }} {{ V.NOME }}, {{ V.pl('apresente','apresentem') }} obstáculos para acesso ao imóvel situado à {{ imovel.endereco_curto }} ou entrega das chaves, no prazo ora pactuado, sem prejuízo de eventual propositura de demanda de imissão na posse ou ação de perdas e danos.
+{{ par('posse') }} Fica convencionada a mesma multa de {{ brl(posse.multa_diaria) }} por dia de atraso na hipótese de que {{ C.art }} {{ C.NOME }}, {{ C.pl('apresente','apresentem') }} obstáculos para acesso ao imóvel situado à {{ permuta.endereco_curto }} ou entrega das chaves, no prazo ora pactuado, sem prejuízo de eventual propositura de demanda de imissão na posse ou ação de perdas e danos.
+{%p endif %}
 {%p else %}
 {{ V.ART }} {{ V.NOME }} {{ V.pl('outorgará','outorgarão') }} a posse do imóvel objeto deste contrato {{ C.aos }} {{ C.NOME }}, em até {{ dias(posse.prazo) }} a contar {{ posse.marco_texto }}{{ posse.condicao_frase }}.
 {%p if tem_multa_diaria_posse %}
@@ -130,7 +134,7 @@ CLÁUSULA {{ cl.tributos.ORD }} - DO PAGAMENTO DOS TRIBUTOS, TAXAS E CONTRIBUIÇ
 {%p if tem_permuta %}
 {{ V.ART }} {{ V.NOME }} e {{ C.art }} {{ C.NOME }}, cada qual se responsabilizará pelos pagamentos pontuais dos tributos, taxas e contribuições de melhoria, incidentes sobre seu imóvel, que se vencerem a partir da data da transmissão da posse sobre o imóvel adquirido, especialmente o IPTU, Condomínio, Luz, água e gás.
 {{ par('tributos') }} {{ V.ART }} {{ V.NOME }} e {{ C.art }} {{ C.NOME }} se obrigam a informar a aquisição do imóvel objeto deste contrato, no cadastro da Prefeitura Municipal, cadastro de administradora de Condomínios, bem como junto às concessionárias públicas, a fim de que para o próximo exercício de contribuição os respectivos avisos de cobrança sejam lançados em seu nome no prazo máximo de 30 dias após a posse e se obrigam a dar ciência {{ V.aos }} {{ V.NOME }} e {{ C.aos }} {{ C.NOME }} das transferências feitas, apresentando os devidos protocolos ou a devida titularidade trocada.
-{{ par('tributos') }} {{ permuta.despesas_texto }}
+{{ par('tributos') }} As despesas decorrentes da transmissão de cada imóvel, tais como emolumentos de cartório, registro e ITBI, serão suportadas pela parte que o recebe.
 {%p else %}
 {{ C.ART }} {{ C.NOME }} se {{ C.pl('responsabilizará','responsabilizarão') }} pelos pagamentos pontuais dos tributos, taxas e contribuições de melhoria, que se vencerem a partir do recebimento da posse do imóvel, ficando {{ V.art }} {{ V.NOME }} {{ V.g('responsável','responsável','responsáveis') }} pelos pagamentos das contas de consumo como: água, luz e gás (se aplicável), tributos como IPTU e despesa condominial que tenham seu fato gerador antes da entrega da posse do imóvel.
 {{ par('tributos') }} {{ C.ART }} {{ C.NOME }} se {{ C.pl('obriga','obrigam') }} a informar a aquisição do imóvel objeto deste contrato, no cadastro da Prefeitura Municipal, cadastro de administradora de Condomínios, bem como junto às concessionárias públicas, a fim de que para o próximo exercício de contribuição os respectivos avisos de cobrança sejam lançados em seu nome no prazo máximo de 30 dias após a posse e se {{ C.pl('obriga','obrigam') }} a dar ciência {{ V.aos }} {{ V.NOME }} das transferências feitas, apresentando os protocolos ou a devida titularidade trocada.
@@ -140,7 +144,7 @@ CLÁUSULA {{ cl.tributos.ORD }} - DO PAGAMENTO DOS TRIBUTOS, TAXAS E CONTRIBUIÇ
 CLÁUSULA {{ cl.irretratabilidade.ORD }} – DA IRRETRATABILIDADE, VINCULAÇÃO E RESCISÃO
 O presente Instrumento Particular de Promessa de Compra e Venda de Bem Imóvel, é firmado em caráter irrevogável e irretratável, não se admitindo arrependimento por nenhum dos contratantes, vinculando não só as partes, mas também seus herdeiros e/ou sucessores, que deverão fazer da presente venda sempre boa, firme e valiosa, tendo como base legal os artigos 417 a 420 do Código Civil, nos termos dos parágrafos seguintes.
 {{ par('irretratabilidade') }} Não obstante a irretratabilidade e irrevogabilidade do presente Instrumento, considerar-se-á rescindido o presente Instrumento, por descumprimento das obrigações assumidas {{ V.pelos }} {{ V.NOME }} ou {{ C.pelos }} {{ C.NOME }}{{ rescisao.cura_frase }}.
-{{ par('irretratabilidade') }} Fica ajustado entre as Partes, multa rescisória no valor de {{ brl(multa_rescisoria) }}, para a parte que der causa à rescisão{{ rescisao.encargo_texto }}.
+{{ par('irretratabilidade') }} Fica ajustado entre as Partes, multa rescisória no valor de {{ brl(multa_rescisoria) }}, a ser paga pela parte que der causa à rescisão, que arcará ainda com todos os custos comprovadamente gerados durante o processo de compra e venda até a data da rescisão.
 {{ par('irretratabilidade') }} Caso a rescisão do Contrato seja motivada {{ V.pelos }} {{ V.NOME }}, {{ V.estes }} {{ V.pl('deverá','deverão') }}, além do pagamento da multa rescisória, devolver {{ C.aos }} {{ C.NOME }}, todas as importâncias efetivamente recebidas {{ C.g('deste','desta','destes') }}, no prazo máximo de 2 dias úteis após a rescisão do Contrato.
 {{ par('irretratabilidade') }} Caso a rescisão do Contrato seja motivada {{ C.pelos }} {{ C.NOME }}, caracterizada pela falta de pagamento de qualquer das parcelas, {{ C.estes }} {{ C.pl('perderá','perderão') }} o valor pago na Parcela {{ p_ref.sinal }} (Sinal) em favor {{ V.dos }} {{ V.NOME }}, a título indenizatório.
 
@@ -196,7 +200,7 @@ E, por estarem assim justos e contratados, os contraentes assinam o presente ins
 TESTEMUNHAS:
 {%p for t in testemunhas %}
 {{ t.nome }}
-RG {{ t.rg }}
+CPF {{ t.cpf }}
 {%p endfor %}
 """
 

@@ -5,16 +5,21 @@
 copied from the real contracts in `products/social-wiring/contracts/`.
 
 V1 financiamento + intermediária + intermediação + itens        (compra_venda)
-V2 V1 + FGTS + saldo devedor (interveniente quitante)           (compra_venda)
+V2 V1 + FGTS (in the financiamento parcela) + saldo devedor      (compra_venda)
 V3 V1 − itens + ad corpus                                       (compra_venda)
 V4 à vista + saldo devedor paid by a parcela + intermediação    (compra_venda_a_vista)
 V5 financiamento + permuta + diretas/confissão + saldo devedor  (compra_venda_permuta)
 V6 financiamento + intermediária + permuta + declaração + ad corpus (compra_venda_permuta)
+
+Every variant carries the data the office's policy answers require (spec §6.2,
+answered 2026-09-15): estado-civil certidão < 90 days, certidões < 30 days, the
+last compra e venda ≥ 5 years ago (no previous owner required), the office's
+posse multa diária + signing platform, witnesses with CPF.
 """
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from app.modules.card_hub.contrato_gerador.dados import (
@@ -35,7 +40,10 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Testemunha,
 )
 from app.modules.card_hub.contrato_gerador.frases import CERTIDOES
-from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
+from app.modules.card_hub.contrato_gerador.politica import (
+    PAPEL_ANTIGO_PROPRIETARIO,
+    POLITICA_PADRAO,
+)
 
 ASSINATURA = date(2026, 9, 14)
 
@@ -67,6 +75,36 @@ def certidoes_completas(emitida: date = date(2026, 9, 1)) -> list[Certidao]:
         )
         for i, (tipo, *_resto) in enumerate(CERTIDOES, start=1)
     ]
+
+
+def certidoes_pj(
+    documento: str,
+    nome: str,
+    situacao: str | None,
+    data_situacao: date | None = None,
+    emitida: date = date(2026, 9, 1),
+) -> list[Certidao]:
+    """The PJ-column certidões of ONE company (CNPJ consulta) of a parte."""
+    return [
+        Certidao(
+            tipo=tipo,
+            resultado="negativa",
+            numero=f"PJ-{i:04d}",
+            emitida_em=emitida,
+            validade_ate=date(2026, 12, 1),
+            consulta_tipo_documento="cnpj",
+            consulta_nome=nome,
+            consulta_documento=documento,
+            consulta_situacao_cadastral=situacao,
+            consulta_data_situacao=data_situacao,
+        )
+        for i, (tipo, _r, _n, _pf, pj, _s) in enumerate(CERTIDOES, start=1)
+        if pj
+    ]
+
+
+def dias_antes(dias: int) -> date:
+    return ASSINATURA - timedelta(days=dias)
 
 
 def endereco(n: str = "10") -> Endereco:
@@ -108,6 +146,7 @@ def pessoa(
         email=f"{cliente_id}@exemplo.test",
         endereco=endereco(),
         certidoes=certidoes_completas(),
+        certidao_estado_civil_emitida_em=date(2026, 8, 1),
     )
     base.update(extra)
     return Pessoa(**base)
@@ -119,6 +158,11 @@ def vendedor() -> Pessoa:
 
 def compradora() -> Pessoa:
     return pessoa("c1", "comprador", "comprador", "Beltrana Exemplo", "Feminino", "987654321", "22.222.222-2")
+
+
+def antiga_proprietaria() -> Pessoa:
+    """A previous owner — lado vendedor, not a signatory."""
+    return pessoa("a1", "vendedor", PAPEL_ANTIGO_PROPRIETARIO, "Antiga Dona Exemplo", "Feminino", "222333444", "66.666.666-6")
 
 
 def parcela(pid: str, tipo: str, valor: str, ordem: int, **extra) -> Parcela:
@@ -145,8 +189,6 @@ def _complementos_base() -> Complementos:
         ),
         itens_integrantes="armários planejados da cozinha e dos dormitórios.",
         ad_corpus=False,
-        plataforma_assinatura_nome="Plataforma Exemplo",
-        plataforma_assinatura_url="https://assinatura.exemplo.test",
         posse_prazo_dias=30,
         posse_marco="parcela_financiamento",
         corretagem_contratantes="vendedores",
@@ -176,6 +218,7 @@ def base_v1() -> DadosContrato:
             situacao_onus="livre",
             onus_certidao_em=date(2026, 9, 2),
             titulo_aquisitivo_confirmado=True,
+            ultima_transferencia_em=date(2020, 1, 10),
         ),
         matricula=Matricula(codigo="EX001", texto=MATRICULA_TEXTO, num_atos=2),
         valor_negociado=Decimal("500000.00"),
@@ -209,9 +252,12 @@ def base_v1() -> DadosContrato:
             responsavel_creci="000002-F",
             email="contato@exemplo.test",
             endereco=endereco("200"),
+            posse_multa_diaria=Decimal("500.00"),
+            plataforma_assinatura_nome="Plataforma Exemplo",
+            plataforma_assinatura_url="https://assinatura.exemplo.test",
         ),
-        testemunhas=[Testemunha(nome="Testemunha Um", rg="33.333.333-3"),
-                     Testemunha(nome="Testemunha Dois", rg="44.444.444-4")],
+        testemunhas=[Testemunha(nome="Testemunha Um", rg="33.333.333-3", cpf=cpf_sintetico("321654987")),
+                     Testemunha(nome="Testemunha Dois", rg="44.444.444-4", cpf=cpf_sintetico("456789123"))],
         complementos=_complementos_base(),
     )
 
@@ -247,10 +293,8 @@ def variante(n: int) -> DadosContrato:
     if n == 1:
         return d
     if n == 2:
-        parcelas = [d.parcelas[0], d.parcelas[1],
-                    replace(d.parcelas[2], valor=Decimal("300000.00")),
-                    parcela("p4", "fgts", "100000.00", 4, evento="na liberação do FGTS pelo agente financeiro")]
-        d = replace(d, parcelas=parcelas, financiamento=Financiamento(True, "aprovado", True))
+        # [Q6] ONE parcela: the FGTS is worded inside the financiamento parcela.
+        d = replace(d, financiamento=Financiamento(True, "aprovado", True))
         return _saldo_devedor(d, "interveniente_quitante")
     if n == 3:
         return replace(d, complementos=replace(d.complementos, itens_integrantes=None, ad_corpus=True))
@@ -288,11 +332,9 @@ def variante(n: int) -> DadosContrato:
 
 
 def politica_variante(n: int):
-    """V5/V6 need the permuta despesas answer [Q13]; V6 carries the declaração [Q1]."""
-    if n == 5:
-        return replace(POLITICA_PADRAO, permuta_despesas="compradores")
+    """V6 turns on the (non-standard [Q1]) Declaração das Partes."""
     if n == 6:
-        return replace(POLITICA_PADRAO, permuta_despesas="cada_parte", tem_declaracao_partes=True)
+        return replace(POLITICA_PADRAO, tem_declaracao_partes=True)
     return POLITICA_PADRAO
 
 

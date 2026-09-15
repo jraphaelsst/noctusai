@@ -1,15 +1,18 @@
-"""The office's open policy questions — ONE named default each, in ONE place.
+"""The office's contract policy — the 15 answers, in ONE place.
 
 The 15 questions in `contracts/f5-template-spec.md` §6.2 were published to the
-office and are unanswered. Every place the generator would otherwise have to
-guess an answer reads a field of `Politica` instead, and each field's comment
-cites its question number — so an answer becomes a config change here, not a
-rewrite of the builder.
+office and ANSWERED on 2026-09-15. Each answer below is either:
 
-The default for each is the most conservative reading of the 8 signed
-sample contracts: wording present in only one contract is OFF, a value the
-system does not hold is NOT invented (the clause is omitted and an `aviso`
-names the omission), and an unanswered data question is left to the gate.
+- a field of `Politica` whose DEFAULT is the answer (an office knob that stays
+  a knob — e.g. the optional clauses of Q1, the age limits of Q10/Q11), or
+- a fixed rule in `derivacao` / `frases` / `modelo_texto`, with only a comment
+  here citing the question — an answer that removed an alternative leaves no
+  toggle behind, because a toggle set against the answer is a latent
+  misconfiguration, not a feature.
+
+Values the office holds per organisation (posse multa diária, signing
+platform, pendências prazo default) are DATA, not policy: they live on
+`dados.Imobiliaria` and a missing one is `faltando`, never an invented value.
 
 `POLITICA_PADRAO` is what production uses (`deps.get_politica_contrato`).
 Tests pass a `dataclasses.replace(POLITICA_PADRAO, ...)` through the same
@@ -17,12 +20,12 @@ parameter — a DI seam, never a patch.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from decimal import Decimal
-from typing import Mapping, Optional
+from dataclasses import dataclass
+from datetime import date
+from typing import Optional
 
 #: `imovel_dados.situacao_onus` values that mean an active financing debt on
-#: the imóvel (spec §1.1 `tem_saldo_devedor`, "vocabulary to confirm").
+#: the imóvel (spec §1.1 `tem_saldo_devedor`).
 ONUS_COM_SALDO: tuple[str, ...] = ("hipoteca", "alienacao_fiduciaria")
 
 #: `situacao_onus` values the generator can word today. `penhora`,
@@ -35,92 +38,110 @@ ONUS_SUPORTADOS: tuple[str, ...] = ("livre",) + ONUS_COM_SALDO
 #: (rule to confirm)". A named rule, not an inline truthiness test.
 EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO = True
 
-ENCARGOS_RESCISAO: tuple[str, ...] = ("honorarios", "custos", "nenhum")
-DESPESAS_PERMUTA: tuple[str, ...] = ("compradores", "cada_parte")
+#: [Q9] Receita Federal situação cadastral of a CNPJ consulta
+#: (`Certidao.consulta_situacao_cadastral`).
+SITUACOES_CADASTRAIS: tuple[str, ...] = ("ativa", "baixada", "inapta", "suspensa", "nula")
+#: [Q9] A company in one of these is ALWAYS certified.
+SITUACOES_PJ_EXIGIDAS: tuple[str, ...] = ("ativa", "inapta")
+#: [Q9] A `baixada` company is certified only when it was closed recently.
+SITUACAO_PJ_BAIXADA = "baixada"
+
+#: [Q9] The (non-signatory, lado vendedor) papel of a previous owner whose
+#: certidões the contract presents.
+PAPEL_ANTIGO_PROPRIETARIO = "antigo_proprietario"
 
 
 @dataclass(frozen=True)
 class Politica:
-    # [Q1] Declaração das Partes (Lei 8.212/91; Dec. 93.240/86) appears only in
-    # contract 07. Standard for all? Unanswered → OFF.
+    # [Q1] Declaração das Partes (Lei 8.212/91; Dec. 93.240/86) — answered:
+    # NOT standard → OFF. A contract that needs it turns it on here.
     tem_declaracao_partes: bool = False
-    # [Q1] Notice + cure period before rescisão (07 only). Unanswered → none.
+    # [Q1] Notice + cure period before rescisão — answered: NOT standard → none.
     rescisao_cura_dias: Optional[int] = None
-    # [Q1] Resolutiva mora constituted by e-mail notice (07 only) → OFF.
+    # [Q1] Resolutiva mora constituted by e-mail notice — answered: NOT
+    # standard → OFF.
     resolutiva_notificacao_email: bool = False
 
-    # [Q2] "na vigência da Lei 6.515/77": every comunhão parcial, only
-    # marriages after 26/12/1977, or never? The marriage date is MISSING
-    # (§6.1 #19), so it is NOT cited and an aviso names the omission.
-    citar_lei_6515: bool = False
+    # [Q2] Answered: cite the Lei 6.515/77 for every CASAMENTO (not união
+    # estável), by the marriage date: on/after this day → ", na vigência da
+    # Lei 6.515/77"; before → ", anterior à vigência da Lei 6.515/77". A
+    # casado without `Pessoa.data_casamento` is `faltando`.
+    lei_6515_vigencia_desde: date = date(1977, 12, 26)
 
-    # [Q3] Multa rescisória = the sinal's valor (8/8 contracts). Negotiable?
-    # Unanswered → derived from the sinal; there is no override field.
-    multa_rescisoria_igual_sinal: bool = True
+    # [Q3] Answered: the multa rescisória IS the sinal's valor, always.
+    # Fixed rule (contexto `multa_rescisoria`) — no override field.
 
-    # [Q4] Rescisão ¶2 encargo: "honorarios" | "custos" | "nenhum". Not
-    # chosen (None) → the encargo wording is omitted and an aviso says so.
-    rescisao_encargo: Optional[str] = None
+    # [Q4] Answered: rescisão ¶2 is always "multa (valor do sinal) + every
+    # cost proven to have been generated during the purchase-and-sale process
+    # up to the rescisão", paid by the party that caused it. Fixed wording in
+    # `modelo_texto` — the honorários/custos/nenhum variants are gone.
 
-    # [Q5] Corretagem % owed on rescisão = the deal's `pct_comissao`?
-    # (it is not in 03 and 04) → yes, with an aviso.
-    corretagem_rescisao_igual_comissao: bool = True
+    # [Q5] Answered: the corretagem % owed on rescisão is the deal's
+    # `pct_comissao`, always. Fixed rule (contexto `corretagem.pct_rescisao`).
 
-    # [Q6] FGTS + financiamento: one combined parcela (03) or two numbered
-    # parcelas? → two parcelas, one row per `tipo` (the data model's shape).
-    fgts_parcela_separada: bool = True
+    # [Q6] Answered: FGTS + financiamento are ONE parcela. A `financiamento`
+    # parcela with `Financiamento.fgts` reads "através do uso de FGTS e
+    # financiamento imobiliário"; a separate `tipo='fgts'` parcela BLOCKS
+    # (PARCELA_FGTS_SEPARADA). Fixed rule — no toggle.
 
-    # [Q7] `tipo='saldo'` means "payoff of the seller's existing financing"
-    # (05's boleto)? → yes; a saldo parcela without an active ônus BLOCKS.
-    saldo_quita_financiamento_vendedor: bool = True
+    # [Q7] Answered: `tipo='saldo'` is the open financing balance on the
+    # imóvel, to be paid off. A saldo parcela without an active ônus BLOCKS
+    # (SALDO_SEM_ONUS). Fixed rule.
 
-    # [Q8] The API `tjsp` certidão is the same document as the manual
-    # `tjsp_esaj` (used when no `tjsp_esaj` result exists), and
-    # `trf3_sp` → 1ª instância / `trf3` → 2ª instância.
-    tjsp_api_equivale_esaj: bool = True
+    # [Q8] Answered: the system-emitted `tjsp` certidão IS the TJSP document
+    # (it stands in for `tjsp_esaj` when no manual one exists);
+    # `trf3_sp` → 1ª instância, `trf3` → 2ª instância. Fixed rule.
 
-    # [Q9] Which companies of a parte must be certified? Unanswered → none
-    # is REQUIRED; CNPJ consultas already linked to a parte are rendered.
-    exigir_certidoes_pj: bool = False
+    # [Q9] Answered: a parte's company (CNPJ consulta) is certified when it
+    # is `ativa` or `inapta`, or `baixada` less than this many years before
+    # the assinatura (the group is then titled "… - Baixada"); `suspensa` /
+    # `nula` / older baixadas are omitted.
+    pj_baixada_janela_anos: int = 5
+    # [Q9] Answered: when the last registered compra e venda of the imóvel
+    # happened less than this many years before the assinatura, the previous
+    # owner(s) present full certidões too.
+    antigo_proprietario_janela_anos: int = 5
 
-    # [Q10] Default validity (days) per certidão tipo when the document
-    # states none. Unanswered → empty: such certidões are not freshness-
-    # checked and an aviso lists them.
-    validade_padrao_dias: Mapping[str, int] = field(default_factory=dict)
+    # [Q10] Answered: EVERY certidão must have been emitted less than this
+    # many days before the assinatura ((assinatura − emitida_em).days < N);
+    # a stated `validade_ate` is still checked on top. No per-tipo default
+    # validity any more.
+    certidao_max_dias: int = 30
 
-    # [Q11] Pendências prazo: 10 days default (05 = 15, when?). Estado-civil
-    # comprovante max age: < 30 days (02 says 90).
-    prazo_pendencias_dias: int = 10
+    # [Q11] Answered: pendências prazo defaults to 10 days — used when neither
+    # the contract (`DadosContrato.prazo_pendencias_dias`) nor the office
+    # (`Imobiliaria.prazo_pendencias_padrao_dias`) sets one.
+    prazo_pendencias_padrao_dias: int = 10
     prazo_esclarecimentos_dias: int = 10
-    comprovante_estado_civil_max_dias: int = 30
+    # [Q11] Answered: the estado-civil certidão must be less than 90 days old
+    # at the assinatura (`Pessoa.certidao_estado_civil_emitida_em`).
+    certidao_estado_civil_max_dias: int = 90
 
-    # [Q12] Posse multa diária: a fixed office value? Unknown → None → the
-    # paragraph is omitted (never an invented amount) and an aviso says so.
-    posse_multa_diaria: Optional[Decimal] = None
+    # [Q12] Answered: the posse multa diária is the office's value
+    # (`Imobiliaria.posse_multa_diaria`, missing → faltando) and applies in
+    # permuta too — the same daily fine for each party's delivery.
 
-    # [Q13] Permuta: who pays deed/ITBI of each imóvel — "compradores" (01)
-    # or "cada_parte" (07)? Unanswered → None → a permuta contract is
-    # `faltando` this decision.
-    permuta_despesas: Optional[str] = None
+    # [Q13] Answered: registry costs + ITBI of each imóvel are paid by the
+    # party RECEIVING it. Fixed permuta wording in `modelo_texto`.
 
-    # [Q14] Keep e-mails beside names in the signature block (D4sign)? → yes,
-    # when the person has one (missing → aviso). Witnesses carry RG only.
-    email_no_bloco_assinatura: bool = True
-    testemunha_exige_cpf: bool = False
+    # [Q14] Answered: keep each signatory's e-mail beside the name (D4sign);
+    # witnesses print their CPF (not RG) — the gate requires the CPF.
 
-    # [Q15] Contract 01's Σ parcelas ≠ preço and 08's card-vs-contract price
-    # are DATA questions with no code default: the gate blocks any Σ parcelas
-    # ≠ valor_negociado (bloqueio SOMA_PARCELAS_DIFERENTE_DO_PRECO).
+    # [Q15] Answered: contract 01's split and 08's card price were DATA
+    # errors — no code default. The gate keeps blocking any Σ parcelas ≠
+    # valor_negociado (bloqueio SOMA_PARCELAS_DIFERENTE_DO_PRECO).
 
 
 POLITICA_PADRAO = Politica()
 
 __all__ = [
-    "DESPESAS_PERMUTA",
     "EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO",
-    "ENCARGOS_RESCISAO",
     "ONUS_COM_SALDO",
     "ONUS_SUPORTADOS",
+    "PAPEL_ANTIGO_PROPRIETARIO",
     "POLITICA_PADRAO",
     "Politica",
+    "SITUACAO_PJ_BAIXADA",
+    "SITUACOES_CADASTRAIS",
+    "SITUACOES_PJ_EXIGIDAS",
 ]

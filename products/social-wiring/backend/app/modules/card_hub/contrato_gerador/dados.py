@@ -11,6 +11,16 @@ the system does not HOLD. Production passes an empty `Complementos()` (see
 reports it as `faltando` — never a blank, never an invented value.
 NOC-REMEDIATE[contrato-f6-campos-missing]: each field below moves to real
 storage (the F6 data-model slice); the provider then reads it — 2026-09-14
+
+The fields the office's policy answers added (spec §6.2, answered 2026-09-15)
+live on the entity they describe — `Pessoa.data_casamento` /
+`certidao_estado_civil_emitida_em`, `Certidao.consulta_situacao_cadastral` /
+`consulta_data_situacao`, `Imovel.ultima_transferencia_em`, the
+`Imobiliaria` office settings and `DadosContrato.prazo_pendencias_dias`. Each
+defaults to None = UNKNOWN, so a loader that does not read it yet still builds
+a `DadosContrato`; the gate then names it as `faltando`.
+NOC-REMEDIATE[contrato-f6-campos-missing]: `carregador` fills these (the F6
+wiring slice) — 2026-09-15
 """
 from __future__ import annotations
 
@@ -45,6 +55,12 @@ class Certidao:
     consulta_tipo_documento: str = "cpf"
     consulta_nome: Optional[str] = None
     consulta_documento: Optional[str] = None
+    #: [Q9] Receita situação cadastral of the CNPJ consulta — 'ativa' |
+    #: 'baixada' | 'inapta' | 'suspensa' | 'nula'; None = unknown. Decides
+    #: whether the company's certidão group is required (cnpj only).
+    consulta_situacao_cadastral: Optional[str] = None
+    #: [Q9] Date of that situação (for 'baixada': when it was closed).
+    consulta_data_situacao: Optional[date] = None
 
 
 @dataclass
@@ -66,6 +82,12 @@ class Pessoa:
     email: Optional[str] = None
     endereco: Endereco = field(default_factory=Endereco)
     conjuge_cliente_id: Optional[str] = None
+    #: [Q2] Marriage date — picks "na vigência" / "anterior à vigência da Lei
+    #: 6.515/77" for a casado. None = unknown (faltando for a casado).
+    data_casamento: Optional[date] = None
+    #: [Q11] Emission date of the estado-civil certidão (nascimento/casamento
+    #: with averbações); must be < 90 days old at the assinatura.
+    certidao_estado_civil_emitida_em: Optional[date] = None
     #: Keys from `documento_checklist_service.completude_contratual`.
     faltando_qualificacao: list[str] = field(default_factory=list)
     #: None = unreachable, not "none issued": the titular has no parte row,
@@ -126,6 +148,10 @@ class Imovel:
     onus_certidao_em: Optional[date] = None
     onus_fonte_atos: list[AtoCitado] = field(default_factory=list)
     titulo_aquisitivo_confirmado: bool = False
+    #: [Q9] Registration date of the LAST compra e venda on the matrícula.
+    #: < 5 years before the assinatura → the previous owner(s) must present
+    #: certidões. None = unknown (faltando).
+    ultima_transferencia_em: Optional[date] = None
 
 
 @dataclass
@@ -160,12 +186,22 @@ class Imobiliaria:
     responsavel_creci: Optional[str] = None
     email: Optional[str] = None
     endereco: Endereco = field(default_factory=Endereco)
+    #: [Q12] The office's posse multa diária (R$ per day of delay), used in
+    #: every contract, permuta included. None = not configured (faltando).
+    posse_multa_diaria: Optional[Decimal] = None
+    #: Digital signing platform named in the assinatura_digital clause
+    #: (spec §6.1 #26). None = not configured (faltando).
+    plataforma_assinatura_nome: Optional[str] = None
+    plataforma_assinatura_url: Optional[str] = None
+    #: [Q11] The office's default pendências prazo (days); None → 10.
+    prazo_pendencias_padrao_dias: Optional[int] = None
 
 
 @dataclass
 class Testemunha:
     nome: Optional[str]
     rg: Optional[str]
+    #: [Q14] Printed under the witness's name and required by the gate.
     cpf: Optional[str] = None
 
 
@@ -197,8 +233,6 @@ class Complementos:
     permuta_posse_marco: Optional[str] = None  # §6.1 #12
     juros_am_confissao: Optional[Decimal] = None  # §6.1 #6
     garantia_confissao: Optional[str] = None  # §6.1 #6
-    plataforma_assinatura_nome: Optional[str] = None  # §6.1 #26
-    plataforma_assinatura_url: Optional[str] = None  # §6.1 #26
     corretagem_contratantes: Optional[str] = None  # §6.1 #23 vendedores|partes
     corretagem_parcelas_marco: tuple[int, ...] = ()  # §6.1 #23
     corretagem_num_parcelas: Optional[int] = None  # §6.1 #23
@@ -224,6 +258,9 @@ class DadosContrato:
     imobiliaria: Imobiliaria
     testemunhas: list[Testemunha]
     complementos: Complementos = field(default_factory=Complementos)
+    #: [Q11] Per-contract pendências prazo (days), overriding the office's
+    #: `Imobiliaria.prazo_pendencias_padrao_dias`; None = use that default.
+    prazo_pendencias_dias: Optional[int] = None
 
 
 #: Papéis that sign the instrument. `fiador`/`outro` are parties to the deal
