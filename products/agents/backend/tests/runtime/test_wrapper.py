@@ -12,9 +12,12 @@ one absolute path via a build-time symlink.
 """
 import os
 import platform
+import shutil
 import stat
 import subprocess
 import sys
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -123,27 +126,45 @@ def _wrapper_copy_targeting(tmp_path: Path, stub: Path) -> Path:
     substituted = real_text.replace(_REAL_CLAUDE_TARGET, str(stub))
     copy_path = tmp_path / "julia-cli-exec-under-test"
     copy_path.write_text(substituted)
-    copy_path.chmod(copy_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    copy_path.chmod(0o755)
     return copy_path
 
 
 @pytest.fixture
-def env_dumper_wrapper(tmp_path: Path) -> Path:
+def julia_tmp() -> Iterator[Path]:
+    """A scratch dir the post-switch uid 1001 can traverse and read.
+
+    The wrapper drops to uid 1001 before exec'ing the stub, so every stub
+    and every directory above it must be readable/traversable by "other".
+    pytest's own `tmp_path` lives under `/tmp/pytest-of-<user>/` (mode 0700),
+    which uid 1001 cannot enter — running these tests as root in a Linux
+    container failed with `env: '<tmp_path>/killer.py': Permission denied`
+    (exit 126), a harness defect that says nothing about the wrapper. Only
+    reached when `_SKIP_CANNOT_SELF_SWITCH` lets the test run (root, or
+    CAP_SETUID+CAP_SETGID)."""
+    scratch = Path(tempfile.mkdtemp(prefix="julia-wrapper-test-", dir="/tmp"))
+    scratch.chmod(0o755)
+    yield scratch
+    shutil.rmtree(scratch)
+
+
+@pytest.fixture
+def env_dumper_wrapper(julia_tmp: Path) -> Path:
     # A Python stub, not a shell script: `sh`/`dash` auto-populate `PWD` /
     # `SHLVL` / `_` into a NEW shell's own environment regardless of what
     # `env -i` handed it (a property of nested shells, not a wrapper leak)
     # — the real target is a compiled CLI binary, not a shell, so a Python
     # stub is the closer analogue and keeps this test measuring only what
     # the wrapper itself controls.
-    stub = tmp_path / "env-dumper.py"
+    stub = julia_tmp / "env-dumper.py"
     stub.write_text(
         f"#!{sys.executable}\n"
         "import os\n"
         "for k, v in sorted(os.environ.items()):\n"
         "    print(f'{k}={v}')\n"
     )
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    return _wrapper_copy_targeting(tmp_path, stub)
+    stub.chmod(0o755)
+    return _wrapper_copy_targeting(julia_tmp, stub)
 
 
 class TestWrapperExists:
@@ -301,11 +322,11 @@ class TestWrapperDropsCapsBeforeExec:
         )
 
     @_SKIP_CANNOT_SELF_SWITCH
-    def test_child_caps_are_all_empty_after_the_drop(self, tmp_path: Path):
+    def test_child_caps_are_all_empty_after_the_drop(self, julia_tmp: Path):
         # A Python stub that dumps ITS OWN /proc/self/status Cap* lines —
         # this is what the wrapper's final `env -i <target>` actually
         # execs into, standing in for the real bundled `claude` binary.
-        caps_dumper = tmp_path / "caps-dumper.py"
+        caps_dumper = julia_tmp / "caps-dumper.py"
         caps_dumper.write_text(
             f"#!{sys.executable}\n"
             "with open('/proc/self/status') as f:\n"
@@ -313,8 +334,8 @@ class TestWrapperDropsCapsBeforeExec:
             "        if line.startswith('Cap'):\n"
             "            print(line.strip())\n"
         )
-        caps_dumper.chmod(caps_dumper.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-        wrapper_copy = _wrapper_copy_targeting(tmp_path, caps_dumper)
+        caps_dumper.chmod(0o755)
+        wrapper_copy = _wrapper_copy_targeting(julia_tmp, caps_dumper)
 
         result = subprocess.run(
             [str(wrapper_copy)],
@@ -342,7 +363,7 @@ class TestWrapperDropsCapsBeforeExec:
             assert caps[key] == zero_mask, f"{key} should be all-zero after the drop, got {caps[key]}"
 
     @_SKIP_CANNOT_SELF_SWITCH
-    def test_child_cannot_signal_pid_1(self, tmp_path: Path):
+    def test_child_cannot_signal_pid_1(self, julia_tmp: Path):
         """A concrete exercise of the drop's actual guarantee: the exec'd
         child can no longer signal an arbitrary uid — probed via
         `os.kill(pid, 0)` (a permission probe, no actual signal delivered)
@@ -353,7 +374,7 @@ class TestWrapperDropsCapsBeforeExec:
         `Popen.terminate()`/`.wait()` return, which reaps silently either
         way and proves nothing about permission.
         """
-        killer = tmp_path / "killer.py"
+        killer = julia_tmp / "killer.py"
         killer.write_text(
             f"#!{sys.executable}\n"
             "import os\n"
@@ -365,8 +386,8 @@ class TestWrapperDropsCapsBeforeExec:
             "except ProcessLookupError:\n"
             "    print('KILL_DENIED_NO_SUCH_PROCESS')\n"
         )
-        killer.chmod(killer.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-        wrapper_copy = _wrapper_copy_targeting(tmp_path, killer)
+        killer.chmod(0o755)
+        wrapper_copy = _wrapper_copy_targeting(julia_tmp, killer)
 
         result = subprocess.run(
             [str(wrapper_copy)],
