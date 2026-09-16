@@ -409,6 +409,43 @@ target_today = proportional_target(monthly_target=300, kind=PeriodKind.DAILY, re
 
 See `KB § PATTERNS/backend/metas-seed.md` for the wiring recipe + status mapping table.
 
+### `domain/engagement/` — Engagement points / badges / leaderboard primitives
+
+Built 2026-09-16 for `products/community` (wave-0 design, Slice E) per `KB § CONTEXT/07-GAMIFICATION.md § 8` (owner-tunable rules — nothing hardcoded). Pure-domain, same shape as `domain/metas/` and `domain/payments/event_inbox`: value objects + pure functions + a Protocol+Fake+RealSupabase+factory ledger seam. `erp-imobiliario`'s `gamificacao_service.py` hardcodes a `PONTOS_POR_ACAO` dict + lambda badge conditions — the re-point is deliberately DEFERRED (community alone is only N=1; ERP would make it N=2, which the wave-0 design calls triage, not a forced extraction) — marked `NOC-REMEDIATE[seed-lift]` in that file; tracked at `project-history/roadmaps/erp-gamificacao-seed-lift-2026-09.md`.
+
+| Symbol | Purpose |
+|---|---|
+| `PointRule(source, action, points, daily_cap?, period_cap?)` | Frozen dataclass — one scoring rule. `source`/`action` are plain strings (data, not an enum) so a tenant owner can configure any action their product emits. Rejects non-positive `points`/caps and a `daily_cap` exceeding `period_cap` at construction. |
+| `RuleSet` | Immutable collection of `PointRule`, indexed by `(source, action)`. `RuleSet.from_rules([...])` raises `EngagementRuleError` on a duplicate `(source, action)` pair — never silently last-one-wins. `.for_action(source, action)` returns `None` when unconfigured (a normal outcome, not an error). |
+| `EngagementEvent(member_id, source, action, occurred_at, idempotency_key)` | `source: Literal["platform","whatsapp","event","content"]` — the seed's typed vocabulary for where a signal originates. Rejects a naive (non-tz-aware) `occurred_at`. |
+| `evaluate(event, rules, history) -> list[PointAward] \| DuplicateEvent` | Pure. Idempotency: a replayed `idempotency_key` already in `history` returns `DuplicateEvent` (never re-scored, never an error). Caps: `daily_cap` compares same-UTC-date awards in `history`; `period_cap` compares the ENTIRE `history` window the caller passes in (the caller pre-scopes `history` to whatever period it cares about — `evaluate` has no calendar opinion beyond the UTC-date check, keeping it pure). The tightest remaining cap clips the award; a fully-exhausted cap returns `[]` rather than a zero-point award. |
+| `BadgeRule(badge_id, metric, threshold)` + `evaluate_badges(totals, rules) -> list[str]` | Data-driven threshold check — replaces per-rule `lambda stats: ...` conditions. A missing `metric` key in `totals` reads as `0`. |
+| `leaderboard(totals, period) -> LeaderboardResult` | Pure. Standard competition ranking (ties share a rank; the next distinct score skips ahead — `1,1,3` not `1,1,2`). Reuses `noctusai_lib.domain.metas.Period` (does NOT filter `totals` by it — the caller pre-scopes `totals` to the window, e.g. via `metas.periods.period_bounds`; `period` is carried through purely so the result is self-describing) rather than inventing a second period vocabulary. |
+| `PointsLedger` (Protocol), `InMemoryPointsLedger`, `RealSupabasePointsLedger`, `make_points_ledger` | Mirrors `domain.payments.event_inbox`'s shape exactly: `record()` is idempotent-on-insert (a duplicate `(member_id, idempotency_key)` returns `False`, never raises, never double-counts) via a `23505`-unique-violation no-op in the Real adapter. **Shape-only, no migration ships** — `schema_name`/`table_name` are REQUIRED constructor args (no default) since the points table lives in the CONSUMING product's schema, not the seed's. |
+
+```python
+from noctusai_lib.domain.engagement import (
+    EngagementEvent, PointRule, RuleSet, evaluate, DuplicateEvent,
+    BadgeRule, evaluate_badges, leaderboard, make_points_ledger,
+)
+
+rules = RuleSet.from_rules([
+    PointRule(source="platform", action="post", points=10, daily_cap=30),
+])
+event = EngagementEvent(
+    member_id="m1", source="platform", action="post",
+    occurred_at=datetime.now(timezone.utc), idempotency_key="evt-123",
+)
+result = evaluate(event, rules, history=ledger.history("m1", source="platform", action="post"))
+if isinstance(result, DuplicateEvent):
+    ...  # replay — no-op
+else:
+    for award in result:
+        ledger.record(award)
+```
+
+**Adopters:** `products/community` (target consumer, this slice). ERP re-point deferred (see above). Tests: `seed/lib/backend/tests/domain/engagement/` (caps, idempotency, badges, leaderboard ranking, ledger idempotent-insert, + a credential-gated realdb smoke test for the Real adapter's error-propagation path).
+
 ### `ai/` — Per-entity AI-output storage (P1 pattern)
 
 Shipped 2026-04-25 by ai-expansion Tier 2 Phase 3. Standardizes how products persist + retrieve per-entity AI outputs (categorizations, scores, flags, narratives).

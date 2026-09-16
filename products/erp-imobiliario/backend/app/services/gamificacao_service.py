@@ -1,6 +1,12 @@
 """
 Gamification service — point rules, badge logic, and leaderboard helpers.
 """
+# NOC-REMEDIATE[seed-lift]: this module hardcodes PONTOS_POR_ACAO + lambda
+# badge conditions; noctusai_lib.domain.engagement now ships the same shape
+# data-driven (PointRule/RuleSet/evaluate, BadgeRule/evaluate_badges,
+# leaderboard, PointsLedger) for products/community. The erp re-point was
+# deferred to triage (community is only the 2nd consumer) — see
+# project-history/roadmaps/erp-gamificacao-seed-lift-2026-09.md — 2026-09-16
 import logging
 from typing import Optional
 from datetime import datetime, timedelta, timezone
