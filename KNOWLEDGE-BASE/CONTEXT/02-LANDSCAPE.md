@@ -37,7 +37,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 29 | 14 | 29 | 0 | 51 | 572 |
+| Core | 29 | 14 | 29 | 0 | 52 | 585 |
 | Erp Imobiliario | 63 | 57 | 80 | 78 | 134 | 1,876 |
 | Personal Finance | 15 | 18 | 30 | 26 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 35 | 84 | 1,140 |
@@ -45,21 +45,21 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 23 | 41 | 126 | 89 | 224 | 3,582 |
+| Social Wiring | 23 | 41 | 126 | 89 | 232 | 3,663 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 9 | 0 | 15 | 8 | 18 | 146 |
 | Agents | 4 | 0 | 12 | 9 | 33 | 302 |
-| **Total** | **232** | **235** | **464** | **299** | **732** | **9,999** |
+| **Total** | **232** | **235** | **464** | **299** | **741** | **10,093** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (15):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 513** declared across those schemas.
+- **Tables: 534** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
