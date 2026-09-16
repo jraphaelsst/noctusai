@@ -141,6 +141,29 @@ is large. Recommend splitting: **R1** = engine + review + zip (seed organs + SW
 module, no billing); **R2** = billing. R1 alone satisfies Phase 1's stated purpose
 of validating the idea.
 
+### C8 — "Econômico" has no viable model 🔴 (found at Wave 1 verification)
+`supports_batch` ships as a real field on `ModelEntry`, and the contract's
+`capacidades.economico_disponivel` lock keys off it. But **no catalog row sets it
+`True`** — verified against the built catalog: 32 rows, `batch-capable: []`.
+
+Cause, and it is the correct behaviour: the spec says `gpt-image-2` and older support
+the Batch API at 50% off, but publishes **no per-1M-token rate** for them. S2 refused to
+fabricate one and filed `NOC-REMEDIATE[llm-model-unpriced]` instead — right call, since
+an invented price would silently corrupt every cost record and margin figure.
+
+Consequence: **Econômico is permanently blocked for every org**, so the speed-mode
+toggle, the 50%-discount path, and the `fotos.poll_openai_batch` job are all v1 dead
+code. The two priced models (`gpt-image-2.5-sunburst` / `-flare`) are `supports_batch=False`
+by verified fact, not omission.
+
+Resolution is an owner decision, and it is cheap either way:
+1. **Supply `gpt-image-2`'s pricing** → add the row, Econômico ships.
+2. **Cut Econômico from v1** → drop the toggle, the batch job, and the lock from the
+   contract; re-add when a batch-capable model is priced.
+
+Until one is chosen, do NOT build the Econômico half of the pipeline — it cannot be
+exercised end-to-end, so it would ship untested by construction.
+
 ## 4 · Vista integration facts (from `noctusai-c3`, 2026-09-16)
 
 Relevant to Phase 2 (write-back) and to the probe design:
