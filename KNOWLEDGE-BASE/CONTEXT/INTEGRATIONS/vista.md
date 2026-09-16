@@ -98,7 +98,30 @@ relations:
 
 - `Corretor` → `Nome`, `Fone`, `Email`, `Creci`
 - `Agencia` → `Nome`, `Fone`, `Endereco`, `Numero`, `Complemento`, `Bairro`, `Cidade`
-- `fotos` (on `/imoveis/listar`) → `Foto`, `FotoPequena`, `Destaque`, `Tipo`, `Descricao`
+- `Foto` (on **`/imoveis/detalhes`**) → `Codigo`, `Foto`, `FotoPequena`, `Destaque`, `Tipo`, `Descricao`
+
+> 🔴 **Corrected 2026-09-16 — this row previously read `fotos` (lowercase) on
+> `/imoveis/listar`. Both halves were wrong** and the error was live-proven:
+>
+> - `{"fotos": [...]}` on `listar` → `400 "Origem fotos e campo Foto não está
+>   disponível"` — **byte-identical in shape to a made-up relation name** (control
+>   probe: `{"naoExiste":["Xyz"]}` → `"Origem naoExiste e campo Xyz não está
+>   disponível"`). `fotos` is not a relation.
+> - `{"Foto": [...]}` on `listar` → `400 "A tabela Foto não está disponível **para
+>   este método**"` — a *different* message: the table is real, the method is wrong.
+> - `{"Foto": [...]}` on **`detalhes`** → `200`. ✅
+>
+> **Live-verified on production 2026-09-16** with the ERP's own key (`…644c`):
+> `CA2830` returns **28 photos**. The gallery read needs **no portal key** — `…bced`
+> is required for photo *writes* (§ 4.7), not reads.
+>
+> ⚠️ **The payload is a DICT keyed by photo code, not a list** — same shape trap as
+> `Corretor` (§ 4.1). Normalize with `list(d.values())` before iterating; indexing
+> `[0]` on the raw response silently yields a key string.
+>
+> Entry keys: `Codigo`, `Foto` (full URL), `FotoPequena` (thumb), `Destaque`
+> (`"Sim"` on exactly one), `Tipo`, `Descricao`. `FotoDestaque` on `/imoveis/listar`
+> returns only that one cover photo — it is a *cover* field, not a gallery.
 
 > **Public-doc warning.** "Caso você não informe os campos que quer utilizar, a
 > API retornará apenas o código." — without explicit `fields`, only the primary
@@ -851,6 +874,31 @@ by reading docs (the public docs do not specify it):
    `CodigoFoto` counter is **not** consumed — nothing is created. This is what
    makes a non-mutating permission probe possible (below).
 
+#### 🔴 RULE — on this API, read the MESSAGE, not the status
+
+**Vista's status codes are not capability verdicts. Its messages are.** Three
+independent instances in two days, so this is a rule, not a footnote:
+
+| # | surface | the status said | the message said |
+|---|---|---|---|
+| 1 | `/clientes` lead-writeback (§ 4.2) | `401` → "denied" | missing parameter — produced a **retracted KB claim** |
+| 2 | `/imoveis/fotos` write (below) | `401` → "denied" | *also* `401` for a missing parameter |
+| 3 | `Foto` relation (§ 2 `fields`, 2026-09-16) | `400` → "no such field" | "não está disponível **para este método**" — field real, **method** wrong |
+
+**The discriminator: fire a deliberately fake name and compare error SHAPES.**
+A real name used wrongly and a name that does not exist produce *different*
+messages — but the same status. Probe #3 was settled exactly this way:
+
+```
+{"fields":[{"naoExiste":["Xyz"]}]}   → "Origem naoExiste e campo Xyz não está disponível"   ← control
+{"fields":[{"fotos":["Foto"]}]}      → "Origem fotos e campo Foto não está disponível"      ← IDENTICAL ⇒ not a relation
+{"fields":[{"Foto":["Foto"]}]}       → "A tabela Foto não está disponível para este método" ← DIFFERENT ⇒ real, wrong method
+```
+
+Byte-identical to the control ⇒ the name does not exist. Different ⇒ it exists and
+something else about the call is wrong. Reach for this **before** concluding a
+capability is absent — twice now the "absent" reading was wrong and cost a rewrite.
+
 #### 🔴 `401` means TWO different things — never read it as "denied"
 
 Every missing-parameter step of the discovery returned **401**, not 400:
@@ -887,6 +935,13 @@ carried its 28 real photos with zero probe artifacts afterwards.
 | `…644c` — **ours**, the ERP's key | ❌ **DENIED** (`Permissão Negada`) | ❌ 403 |
 | `…bced` — issued for the **Quinto Andar** portal | ✅ **PERMITTED** | ✅ 200 |
 
+> ✅ **READS ARE UNGATED — do not over-read this table.** It covers photo **writes**.
+> The photo **gallery read** (`Foto` on `/imoveis/detalhes`, § 2 `fields`) works on the
+> ERP's own `…644c`: production `CA2830` returns **28 photos**, verified independently
+> by two sessions on 2026-09-16. A consumer that only *reads* photos needs **no portal
+> key and no new credential**. Inferring "reads need `…bced`" from the write denial
+> below is a wrong architecture call — it was nearly made once already.
+>
 > 🔴 **The portal key is a superset of ours, in both directions.** It can
 > `POST`/`PUT`/**`DELETE`** photos on live listings *and* read full owner PII
 > (CPF/CNPJ, RG, Nascimento, Renda, Banco/Agência/Conta, endereço, spouse
