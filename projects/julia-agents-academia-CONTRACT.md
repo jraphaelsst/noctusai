@@ -761,7 +761,7 @@ class AgentRuntime(Protocol):
 **Slot script (`bin/julia-cli-slot`, as K, no capabilities).**
 1. Sweeps `/run/julia-K` (`chmod -R u+rwx`, then removes everything). Fails closed if anything remains.
 2. Creates `home/.claude/projects/-app` and `tmp`.
-3. If `/run/julia-handoff/K/<sid>.jsonl` exists (a single UUID-named file), copies it into `projects/-app/`.
+3. Copies the staged transcript into `projects/-app/`, if one is staged. Only `*.jsonl` entries count as transcripts: **`append.md` shares this directory by design** (see "Launch options" below — the CLI reads it in place through `--append-system-prompt-file`), so it is skipped, never copied and never counted. The script refuses on: more than one `*.jsonl`, a `*.jsonl` whose name is not a UUID, a symlink, a non-regular file, or ANY entry that is neither `append.md` nor `*.jsonl` (nothing else is ever staged, so an unexpected entry means tampering). *(Corrected 2026-09-16: this step used to say "a single UUID-named file" and the script counted every entry, so `append.md` — written on EVERY launch — made it refuse each real turn. The integration proof caught it as 11 failing checks; before the fix it would have been a fail-closed outage on Julia's first prod turn.)*
 4. Runs `exec /usr/bin/env -i HOME=/run/julia-K/home TMPDIR=/run/julia-K/tmp CLAUDE_CONFIG_DIR=/run/julia-K/home/.claude PATH=/usr/bin:/bin ANTHROPIC_API_KEY CLAUDE_CODE_ENTRYPOINT CLAUDE_AGENT_SDK_VERSION DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 /usr/local/bin/claude-bundled "$@"`. The exec keeps the SDK's pid equal to the CLI's pid; there is no supervisor.
 5. `julia-cli-slot --julia-sweep` only sweeps and exits 0 or non-zero.
 

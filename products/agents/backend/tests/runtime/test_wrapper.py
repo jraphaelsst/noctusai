@@ -685,7 +685,58 @@ class TestSlotScriptHandoff:
 
         result = _run([str(slot_copy)], env={"PATH": _path_with_fake_id(bindir)})
         assert result.returncode != 0
-        assert "more than one entry" in result.stderr
+        assert "more than one transcript" in result.stderr
+
+    def test_append_md_alone_is_a_fresh_session(self, tmp_path):
+        """`append.md` shares the handoff dir by design (contract §E.11:
+        the CLI reads it in place via `--append-system-prompt-file`), so a
+        turn with no transcript staged must still start. Counting it as a
+        transcript is the 2026-09-16 defect: the slot refused EVERY real
+        turn, since the runtime writes `append.md` on every launch."""
+        bindir = _fake_id_dir(tmp_path, "2000")
+        cli_stub = self._env_dumper(tmp_path)
+        slot_copy = self._slot_copy(tmp_path, cli_stub)
+
+        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir.mkdir(parents=True)
+        (handoff_dir / "append.md").write_text("# JULIA.md + persona\n")
+
+        result = _run([str(slot_copy)], env={"PATH": _path_with_fake_id(bindir)})
+        assert result.returncode == 0, result.stderr
+        project_dir = tmp_path / "julia-0" / "home" / ".claude" / "projects" / "-app"
+        assert list(project_dir.iterdir()) == []
+
+    def test_append_md_beside_a_transcript_copies_only_the_transcript(self, tmp_path):
+        """The real resume shape: the runtime stages BOTH files."""
+        bindir = _fake_id_dir(tmp_path, "2000")
+        cli_stub = self._env_dumper(tmp_path)
+        slot_copy = self._slot_copy(tmp_path, cli_stub)
+
+        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir.mkdir(parents=True)
+        (handoff_dir / "append.md").write_text("# JULIA.md + persona\n")
+        (handoff_dir / f"{self._VALID_SID}.jsonl").write_text('{"type": "mirror-frame"}\n')
+
+        result = _run([str(slot_copy)], env={"PATH": _path_with_fake_id(bindir)})
+        assert result.returncode == 0, result.stderr
+        project_dir = tmp_path / "julia-0" / "home" / ".claude" / "projects" / "-app"
+        assert [p.name for p in project_dir.iterdir()] == [f"{self._VALID_SID}.jsonl"]
+
+    def test_refuses_an_unexpected_entry(self, tmp_path):
+        """Only `append.md` and one `*.jsonl` are ever staged, so anything
+        else means the handoff was tampered with."""
+        bindir = _fake_id_dir(tmp_path, "2000")
+        cli_stub = self._env_dumper(tmp_path)
+        slot_copy = self._slot_copy(tmp_path, cli_stub)
+
+        handoff_dir = tmp_path / "julia-handoff" / "0"
+        handoff_dir.mkdir(parents=True)
+        (handoff_dir / "append.md").write_text("# persona\n")
+        (handoff_dir / "sneaky.sh").write_text("#!/bin/sh\n")
+
+        result = _run([str(slot_copy)], env={"PATH": _path_with_fake_id(bindir)})
+        assert result.returncode != 0
+        assert "unexpected entry 'sneaky.sh'" in result.stderr
 
     def test_refuses_a_non_uuid_named_handoff_file(self, tmp_path):
         bindir = _fake_id_dir(tmp_path, "2000")

@@ -124,24 +124,45 @@ sweep
 
 mkdir -p "$PROJECT_DIR" "${SLOT_DIR}/tmp"
 
-# Handoff: at most ONE regular, non-symlink, UUID-named `<sid>.jsonl` file
-# under this slot's handoff subdirectory. A missing directory (no resume
-# data staged for this turn) is the normal fresh-session case, not an
-# error.
+# Handoff: at most ONE regular, non-symlink, UUID-named `<sid>.jsonl`
+# TRANSCRIPT under this slot's handoff subdirectory. A missing directory
+# (no resume data staged for this turn) is the normal fresh-session case,
+# not an error.
+#
+# `append.md` shares this directory BY DESIGN (contract §E.11 launch
+# options): it is the persona file the CLI reads IN PLACE through
+# `--append-system-prompt-file`, so it is never copied into the slot and
+# never counts as a transcript. Counting it is exactly the defect the
+# 2026-09-16 integration proof caught — the script refused every real
+# turn ("'append.md' is not a UUID-named .jsonl file" / "more than one
+# entry"), which would have been a fail-closed outage on the first turn.
+# Anything that is NEITHER `append.md` NOR `*.jsonl` is still refused:
+# nothing else is ever staged here, so an unexpected entry means the
+# handoff was tampered with.
 if [ -d "$HANDOFF_DIR" ]; then
   handoff_count=0
   handoff_file=""
   for entry in "$HANDOFF_DIR"/*; do
     # Unmatched glob (empty directory) leaves the literal pattern string —
     # `-e` on that non-existent literal path is false, so this is the
-    # standard nullglob-free POSIX idiom.
-    [ -e "$entry" ] || continue
+    # standard nullglob-free POSIX idiom. `-L` keeps a DANGLING symlink
+    # visible to the refusals below instead of silently skipping it.
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    entry_base="$(basename "$entry")"
+    [ "$entry_base" = "append.md" ] && continue
+    case "$entry_base" in
+      *.jsonl) ;;
+      *)
+        echo "julia-cli-slot: refusing handoff — unexpected entry '$entry_base' in $HANDOFF_DIR" >&2
+        exit 1
+        ;;
+    esac
     handoff_count=$((handoff_count + 1))
     handoff_file="$entry"
   done
 
   if [ "$handoff_count" -gt 1 ]; then
-    echo "julia-cli-slot: refusing handoff — more than one entry in $HANDOFF_DIR" >&2
+    echo "julia-cli-slot: refusing handoff — more than one transcript in $HANDOFF_DIR" >&2
     exit 1
   fi
 
