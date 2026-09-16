@@ -179,6 +179,16 @@ dependencies = [
     # manylinux/macOS wheels (no system libheif needed). Same addition as
     # Pillow above.
     "pillow-heif>=0.18.0",
+    # Stripe SDK — noctusai_lib.integrations.payments.real_stripe's
+    # StripePaymentGateway. Same monolithic-install convention as
+    # docxtpl/resvg-py/xhtml2pdf above (every product image gets it);
+    # lazily imported inside the adapter's methods so this module, and
+    # the Fake path, stay importable without it. `products/core/backend`
+    # already declares `stripe>=7.0.0` in its own requirements.txt for
+    # its LIVE `stripe_service.py`/`billing_service.py` (untouched by
+    # this organ) — same floor, kept in lock-step on purpose. Added
+    # 2026-09-16 (edicao-fotos-contract Slice S5, ef-s5-payments).
+    "stripe>=7.0.0",
 ]
 
 
