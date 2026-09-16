@@ -163,9 +163,121 @@ All 86 tests run on Fakes/mocks — zero network, zero Stripe/Asaas keys:
 
 ## Gaps / not-yet-consumed
 
-No product consumes this yet (Phase 1 seed lift only). Checkout/hosted-page
-flows, one-off charges, and Core's live billing migration are explicitly
-out of scope for this slice. `RealSupabaseEventInbox` and
-`RealSupabaseJobRepository`-style Supabase adapters are shape-only —
-the first consumer ships the `payment_gateway_events` migration
-(`primary key (gateway, event_id)`) documented in `event_inbox.py`.
+No product consumes this yet (Phase 1 seed lift only). One-off charges
+and Core's live billing migration are explicitly out of scope for this
+slice. `RealSupabaseEventInbox` and `RealSupabaseJobRepository`-style
+Supabase adapters are shape-only — the first consumer ships the
+`payment_gateway_events` migration (`primary key (gateway, event_id)`)
+documented in `event_inbox.py`.
+
+## Checkout + webhook parsing (`checkout.py` / `webhook_events.py`)
+
+Shipped 2026-09-16 (products/community Wave 0, Slice P,
+`feat/seed-payments-checkout-webhooks`) as two ADDITIVE-ONLY new files —
+neither edits `protocol.py` / `factory.py` / `fake.py` / `real_stripe.py` /
+`real_asaas.py`, composing the existing Real gateways instead. Landed
+concurrently with `feat/ef-r2-billing` (core billing), which consumes and
+extends the same package from a different angle; the two branches touch
+disjoint files by construction.
+
+- **`HostedCheckout`** — a sibling Protocol to `PaymentGateway`, not a
+  wider surface on it: `create_checkout(CheckoutRequest) -> CheckoutSession`.
+  `StripeHostedCheckout` / `AsaasHostedCheckout` each COMPOSE a
+  `StripePaymentGateway` / `AsaasPaymentGateway` instance (reusing
+  `ensure_customer`, the Stripe SDK lazy-import + error-translation
+  helpers, and the Asaas HTTP primitive — never duplicating any of them).
+  `FakeHostedCheckout` + `make_hosted_checkout(*, provider, use_fake, ...)`
+  mirror `FakePaymentGateway` / `make_payment_gateway`'s shape exactly;
+  `make_hosted_checkout` in fact DELEGATES gateway construction to
+  `make_payment_gateway` so provider/api-key validation lives once.
+  - **Stripe**: a Checkout Session in `mode="subscription"`
+    (`stripe.checkout.Session.create`) IS the subscription-creation call —
+    `create_subscription` / `stripe.Subscription.create` MUST NOT also run
+    on this path (would attempt to bill twice). `plan_ref`,
+    `success_url`, and `cancel_url` are all required; `subscription_id_at_gateway`
+    on the returned `CheckoutSession` is `None` until the payer completes
+    the hosted page (Stripe does not create the `Subscription` resource
+    at Session-creation time).
+  - **Asaas has no hosted-checkout resource.** `AsaasHostedCheckout`
+    reuses `ensure_customer` + `create_subscription` verbatim (a real
+    subscription exists immediately, unlike Stripe), then
+    `GET /subscriptions/{id}/payments` for the first generated `Payment`
+    and returns ITS `invoiceUrl` as the "checkout url". Only
+    `billing_method="pix"` or `"boleto"` are accepted (no card
+    hosted-checkout equivalent). For `pix`, also fetches
+    `GET /payments/{id}/pixQrCode` and returns `PixQr(payload,
+    encoded_image, expiration_date)`.
+- **`parse_webhook_event(body, headers, *, gateway, stripe_webhook_secret=,
+  asaas_webhook_token=) -> GatewayEvent`** — verifies + normalizes one
+  inbound webhook delivery. Raises `PaymentWebhookSignatureError` (a new,
+  separate type from `PaymentGatewayError` — a bad signature means nothing
+  was called, it isn't "the gateway call failed").
+  - **Stripe** — `stripe.Webhook.construct_event` (never reimplemented,
+    per `noctusai_lib.security.webhook_signatures`'s own docstring naming
+    this the one scheme that must go through the vendor SDK). **Finding
+    from writing real-signed-payload tests (not a mocked SDK): a genuine
+    `stripe.Webhook.construct_event` result is a `StripeObject`, which
+    supports `in` / `[]` but NOT `.get()`** — unlike the plain `dict`
+    `test_stripe_gateway.py`'s `sys.modules` double returns, and unlike
+    what `real_stripe.py`'s own `_to_gateway_subscription` assumes
+    (`sub.get("latest_invoice")` etc., only exercised there against that
+    same dict-shaped test double). `webhook_events.py`'s `_stripe_field`
+    helper does `key in obj else default` instead — works against both a
+    real `StripeObject` and a plain dict. Event-type → `kind` mapping:
+    `customer.subscription.{created,updated,deleted}` →
+    `subscription_updated` (status re-mapped via `StripePaymentGateway.
+    _map_status`, imported not re-derived); `invoice.{paid,payment_succeeded}`
+    → `charge_paid`; `invoice.payment_failed` → `charge_failed`;
+    `charge.refunded` → `charge_refunded`; anything else → `ignored`
+    (not an error — a gateway adding an event type later must never 500).
+  - **Asaas** — the `asaas-access-token` header, verified via
+    `noctusai_lib.security.webhook_signatures.verify_basic_shared_secret`.
+    **Finding: Asaas sends the raw configured token VERBATIM in this
+    header — no `Basic`/base64 envelope, no username half** (confirmed
+    against `docs.asaas.com/docs/webhook-authentication`), which does not
+    literally match that helper's `Authorization: Basic
+    base64("<user>:<secret>")` input shape. Reused anyway by wrapping the
+    raw token in a synthetic empty-username Basic credential
+    (`"Basic " + base64(":" + token)`, `expected_username=None`) so the
+    constant-time `hmac.compare_digest` call is reused rather than
+    duplicated a second time in this module. Event (`event` field) →
+    `kind`: `PAYMENT_{CONFIRMED,RECEIVED}` → `charge_paid`;
+    `PAYMENT_OVERDUE` → `charge_failed`; `PAYMENT_{REFUNDED,
+    CHARGEBACK_REQUESTED}` → `charge_refunded`; anything else →
+    `ignored`. **`subscription_updated` never fires on the Asaas path —
+    Asaas' webhook catalog is PAYMENT-level only, there is no
+    `SUBSCRIPTION_*` event; a consumer that needs the coarse
+    ACTIVE/EXPIRED/INACTIVE subscription status polls
+    `AsaasPaymentGateway.get_subscription` directly.**
+  - **Finding: Asaas webhook payloads carry no stable per-delivery id**
+    (no `id`/`eventId` field — confirmed against
+    `docs.asaas.com/docs/webhook-events`; the payload shape is bare
+    `{"event": ..., "payment": {...}}`). `GatewayEvent.event_id` is
+    therefore DERIVED as `f"{event}:{payment_id}:{status}:{moment}"`
+    (`moment` = `paymentDate` or `clientPaymentDate` or `dueDate`,
+    whichever is present) — a genuine retry of the identical delivery
+    produces the same key (dedupes via `EventInbox.claim`), a real status
+    change on the same payment produces a different one. This is OUR
+    construction, not a gateway guarantee — documented here so a future
+    reader doesn't mistake it for one.
+  - **`GatewayEvent.inbox_key`** is `(gateway, event_id)` — pass straight
+    to `noctusai_lib.domain.payments.EventInbox.claim`. `GatewayEvent.
+    subscription_status` (a `GatewaySubscriptionStatus`, the SAME type
+    `PaymentGateway.get_subscription` returns — no parallel enum) is
+    populated for Stripe subscription events and always `None` for Asaas
+    (see above); a consumer maps it to a `SubscriptionState` transition
+    itself, same as the existing consume-recipe above.
+  - **`make_fake_gateway_event(...)`** — the dev/test seam: builds a
+    `GatewayEvent` directly, bypassing `parse_webhook_event` and every
+    signature check. Never call it from a real webhook route.
+
+Tests: `tests/integrations/payments/test_checkout.py` (Stripe via a
+`sys.modules` double — same DI-on-an-external-dependency seam as
+`test_stripe_gateway.py` — plus Asaas via `httpx.MockTransport`; a
+protocol-conformance + Fake/Real-parity check) and `test_webhook_events.py`
+(Stripe verified against the REAL installed `stripe` SDK with real
+HMAC-signed payloads generated from a test secret — no SDK
+substitution needed, `construct_event` does pure local verification;
+Asaas via a scripted `asaas-access-token` header). 129 payments tests
+total (integrations + domain), still zero network / zero real Stripe or
+Asaas keys.
