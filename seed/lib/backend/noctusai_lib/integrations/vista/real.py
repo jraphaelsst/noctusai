@@ -12,7 +12,7 @@ Why a second adapter at this layer (when the module already ships the
 lower-level `VistaClient`):
 
 - ``VistaClient`` is endpoint-shape (raw Vista payloads + showcase
-  DTOs + 7-class error hierarchy + paginated listing). Useful for the
+  DTOs + 8-class error hierarchy + paginated listing). Useful for the
   ERP showcase + MCP server.
 - ``VistaRESTAdapter`` is property-by-code-shape (returns a domain
   ``PropertyData``). Useful for social-wiring's YouTube fan-out.
@@ -45,6 +45,7 @@ from noctusai_lib.integrations.vista.client import (
     VistaConfigError,
     VistaError,
     VistaNotFound,
+    VistaRecordUnpublished,
     extract_items,
     redact_api_key,
 )
@@ -216,7 +217,10 @@ class VistaRESTAdapter:
             result = await client.detalhes_imovel(code, fields=fields)
             if isinstance(result.data, dict):
                 detalhes = result.data
-        except VistaNotFound:
+        except (VistaNotFound, VistaRecordUnpublished):
+            # VistaRecordUnpublished: the record exists but this key can't
+            # see its property fields (vista.md § 4.1) — same "no detail
+            # data" outcome as a 404 from this domain layer's perspective.
             detalhes = None
 
         if listing is None and detalhes is None:
@@ -277,6 +281,12 @@ class VistaRESTAdapter:
             result = await client.detalhes_imovel(codigo, fields=fields)
         except VistaNotFound:
             logger.info("Vista: imóvel %s not found (404) — no photos", codigo)
+            return []
+        except VistaRecordUnpublished:
+            logger.info(
+                "Vista: imóvel %s is unpublished (ExibirNoSite=Nao) — no visible photos",
+                codigo,
+            )
             return []
 
         if not isinstance(result.data, dict):

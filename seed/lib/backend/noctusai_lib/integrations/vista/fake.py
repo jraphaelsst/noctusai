@@ -48,6 +48,7 @@ from .client import (
     VistaError,
     VistaNotFound,
     VistaPermissionDenied,
+    _assert_detalhes_describes_record,
     validate_fotos_payload,
     validate_lead_payload,
 )
@@ -125,7 +126,9 @@ class FakeVistaClient:
     async def detalhes_imovel(
         self, codigo: str, *, fields: list[Any]
     ) -> VistaCallResult:
-        return self._resolve("/imoveis/detalhes", ["imovel", "key", "pesquisa"])
+        result = self._resolve("/imoveis/detalhes", ["imovel", "key", "pesquisa"])
+        _assert_detalhes_describes_record(result, codigo)
+        return result
 
     async def listar_conteudo_imoveis(
         self, *, fields: list[str]

@@ -19,6 +19,7 @@ from noctusai_lib.integrations.vista import (
     VistaFieldNotAvailable,
     VistaNotFound,
     VistaPermissionDenied,
+    VistaRecordUnpublished,
     VistaTimeout,
     VistaUpstreamError,
     calibrator,
@@ -124,6 +125,17 @@ async def get_imovel(args: dict) -> dict:
         result = await client.detalhes_imovel(inp.codigo, fields=detail_fields)
     except VistaNotFound:
         return GetImovelOutput(item=None, probe_status="live_probed").model_dump()
+    except VistaRecordUnpublished as e:
+        # Root-caused live 2026-09-16 (vista.md § 4.1): `/imoveis/detalhes`
+        # answers 200 for an unpublished (ExibirNoSite=Nao) codigo, but the
+        # body carries no property fields — only the persistent `Corretor`
+        # relation survives, if it was even requested. Silently building an
+        # "empty but successful" item from that stub is the bug this guards
+        # against — surface the typed error instead, naming the codigo.
+        logger.info("get_imovel: %s is unpublished — %s", inp.codigo, e)
+        return GetImovelOutput(item=None, probe_status="live_probed").model_dump() | {
+            "error": _typed_error(e)
+        }
     except (
         VistaConfigError,
         VistaPermissionDenied,
@@ -214,7 +226,10 @@ def tool_descriptors() -> list[Tool]:
             description=(
                 "Fetch full property detail by Codigo. Auto-fetches the listing "
                 "row first to populate the photo URL (vista.md § 4.1 quirk). "
-                "Returns ShowcaseImovelDetalhes with the full Caracteristicas dict."
+                "Returns ShowcaseImovelDetalhes with the full Caracteristicas dict. "
+                "A Codigo whose CRM record has 'Exibir no site' unchecked "
+                "(unpublished) returns item=null with a VistaRecordUnpublished "
+                "typed error, not an empty success (vista.md § 4.1)."
             ),
             inputSchema=GetImovelInput.model_json_schema(),
         ),

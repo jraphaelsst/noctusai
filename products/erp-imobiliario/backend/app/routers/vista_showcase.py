@@ -24,6 +24,7 @@ from noctusai_lib.integrations.vista import (
     VistaFieldNotAvailable,
     VistaNotFound,
     VistaPermissionDenied,
+    VistaRecordUnpublished,
     VistaTimeout,
     VistaUpstreamError,
 )
@@ -126,6 +127,12 @@ async def imovel_detalhes(codigo: str, user=Depends(require_admin)):
         raise HTTPException(403, "Permissão pendente para acessar detalhes deste imóvel.")
     except VistaNotFound:
         raise HTTPException(404, "Imóvel não encontrado em Vista.")
+    except VistaRecordUnpublished as e:
+        # Subclass of VistaUpstreamError — must come BEFORE it. Vista's 200
+        # for this codigo carries no property data because it is unpublished
+        # (ExibirNoSite=Nao) and this key can't see unpublished fields
+        # (vista.md § 4.1). Distinct from VistaNotFound: the record exists.
+        raise HTTPException(404, f"Imóvel {e.codigo} não está publicado (Exibir no site = Não) — sem dados visíveis para esta chave.")
     except VistaFieldNotAvailable as e:
         raise HTTPException(422, f"Campo '{e.field}' não disponível para este tenant.")
     except VistaTimeout:

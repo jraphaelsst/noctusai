@@ -317,7 +317,7 @@ will degrade to `<unknown>`.
 
 ### Typed error hierarchy
 
-The adapter typifies these in a 7-class hierarchy
+The adapter typifies these in an 8-class hierarchy
 (`noctusai_lib/integrations/vista/client.py:26-65`). **Inheritance matters for
 `except` ordering** — every router and service catches the leaves before
 the parent, otherwise the parent swallows them:
@@ -330,9 +330,11 @@ VistaError                                   # base — catch-all for all Vista 
 └── VistaUpstreamError(status, body, endpoint)
     ├── VistaPermissionDenied                # HTTP 401, "Permissão Negada"
     ├── VistaNotFound                        # HTTP 404, endpoint not exposed on tenant
-    └── VistaFieldNotAvailable(field, ...)   # HTTP 400, "Campo X não está disponível"
-                                             # `.field` is best-effort parsed from body
-                                             # (returns `<unknown>` if parsing fails)
+    ├── VistaFieldNotAvailable(field, ...)   # HTTP 400, "Campo X não está disponível"
+    │                                        # `.field` is best-effort parsed from body
+    │                                        # (returns `<unknown>` if parsing fails)
+    └── VistaRecordUnpublished(codigo, ...)  # HTTP 200, but the body describes no
+                                             # property — unpublished record, § 4.1
 ```
 
 **Catch-order rule** (concrete example from
@@ -478,6 +480,48 @@ own probe pass — see §6 for the calibration gap.
   it as a non-dict, the normalizer substitutes `{}`. Live sample 2026-05-03
   shows ~75 boolean-flag keys per property (Adega, Banheiro Social, Piscina,
   Lavabo, Vista Mar, etc.).
+
+#### 🔴 Unpublished (`ExibirNoSite=Nao`) records answer 200 with NO property data
+
+**Root-caused live 2026-09-16** on codes `ONE8065`, `ONE9615`, `ONE10194`,
+`AP0632`, `ONE7135`, `ONE8323`, `ONE9547` (reported via `vista.imoveis.get`
+returning an item with `codigo: ""` and every field null except a nested
+`Corretor`). This is a silent-error surface, now fixed
+(`VistaRecordUnpublished`, below) — the finding:
+
+- This API key's grant on `/imoveis/listar` is scoped to `ExibirNoSite="Sim"`
+  ONLY. A bare unfiltered page never contains any other value; an explicit
+  `filter={"ExibirNoSite": "Nao"}` — even combined with an exact `Codigo` that
+  is known to be unpublished — returns **zero rows**
+  (`"A pesquisa não retornou resultados."`), tenant-wide, not just for one
+  code.
+- `/imoveis/detalhes?imovel=<Codigo>` for such a code does **NOT** 404 — the
+  record resolves — but every scalar/property field is suppressed. The body
+  is:
+  - `{"Corretor": {"<id>": {...}}}` if `Corretor` was in the requested
+    `fields` (the nested relation survives independently of site-visibility
+    — it is a broker assignment, not a listing field), or
+  - `[]` (empty list) if `Corretor` was NOT requested.
+  - A **genuinely nonexistent** `Codigo` returns `[]` regardless of whether
+    `Corretor` is requested — that asymmetry is the discriminator that rules
+    out "never existed" for the unpublished case.
+- Corroborated against the Vista CRM UI: `ONE8065`'s record has "Exibir no
+  site" **unchecked**; `AP0643` (full payload, `ExibirNoSite: "Sim"` on
+  `/imoveis/listar`) has it checked.
+
+**Fix.** `VistaClient.detalhes_imovel` (and `FakeVistaClient.detalhes_imovel`,
+via the shared `_assert_detalhes_describes_record` helper) now raise
+`VistaRecordUnpublished(codigo, endpoint, payload_keys)` — a new leaf of the
+error hierarchy (§ 3) — whenever the 200 body carries no `Codigo`, instead of
+letting every downstream consumer (`vista_imovel_detalhes_to_showcase`,
+`vista_to_imovel`, `vista.imoveis.get`) silently build an "empty but
+successful" result from the `Corretor`-only stub. Consumers: `vista.imoveis.get`
+(MCP) returns `item=null` + a typed error naming the codigo; the ERP showcase
+router (`GET /api/vista-showcase/imoveis/{codigo}`) maps it to `404` with a
+Portuguese message distinct from the "não encontrado" 404 `VistaNotFound`
+already owns; `VistaRESTAdapter.get_imovel` / `list_imovel_fotos` degrade to
+`None` / `[]`, the same outcome as a 404, since that domain layer doesn't
+distinguish "not found" from "not visible".
 
 #### `/imoveis/listarConteudo` quirks
 
@@ -1042,7 +1086,7 @@ Do not conclude "upload does not attach" from a sandbox read-back.
 seed/lib/backend/noctusai_lib/integrations/vista/   # canonical platform home
 ├── __init__.py              # public surface: VistaClient + error hierarchy
 │                            #   + extract_items + 4 normalizers + 4 ShowcaseDTOs
-├── client.py                # VistaClient + 7-class error hierarchy + extract_items
+├── client.py                # VistaClient + 8-class error hierarchy + extract_items
 ├── normalizers.py           # vista_*_to_showcase() — Vista payload → ShowcaseDTO
 └── types.py                 # ShowcaseImovel/Usuario/Agencia/ImovelDetalhes Pydantic DTOs
 
@@ -1508,6 +1552,24 @@ ships):
   `vista.leads.submit` (both behind `VISTA_MCP_ALLOW_WRITES`),
   `vista.diagnostics.probe_write_permissions`; `_client`/`_typed_error`
   lifted to `tools/_common.py` (was copied ×6).
+
+### 2026-09-16 — 🔴 Silent-error fix: unpublished records answered `vista.imoveis.get` with an empty "success"
+
+Reported live on the `oneconsu` tenant: `vista.imoveis.get` for `ONE8065`,
+`ONE9615`, `ONE10194`, `AP0632`, `ONE7135`, `ONE8323`, `ONE9547` returned
+`probe_status: "live_probed"` with a non-null but empty item (`codigo: ""`,
+every scalar field null, only a nested `Corretor` populated) — a silent
+error, not a typed failure. Root-caused (§ 4.1, new subsection) to
+`ExibirNoSite=Nao` (unpublished) records: this API key's `/imoveis/listar`
+grant is scoped to `ExibirNoSite="Sim"` only, and `/imoveis/detalhes`
+answers 200-with-no-property-data instead of 404 for such a code. Fixed by
+a new error-hierarchy leaf, `VistaRecordUnpublished`, raised from
+`VistaClient.detalhes_imovel` (and mirrored in `FakeVistaClient` via a
+shared guard) whenever a 200 body carries no `Codigo`. Hierarchy is now
+8 classes, not 7. Consumers updated: `vista.imoveis.get` (MCP), the ERP
+showcase router (`/api/vista-showcase/imoveis/{codigo}` → 404 with a
+distinct message), and `VistaRESTAdapter.get_imovel` / `list_imovel_fotos`
+(degrade to `None` / `[]`, same as `VistaNotFound`).
 
 ### 2026-08-21 — ✅ The Tier-1 grant LANDED (2 of 3) + live field map + delta sync solved
 

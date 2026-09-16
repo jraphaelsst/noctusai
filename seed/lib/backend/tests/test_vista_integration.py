@@ -163,6 +163,87 @@ async def test_fake_detalhes_round_trips_through_real_normalizer() -> None:
 
 
 # ============================================================================
+# Unpublished-record guard (vista.md § 4.1) — root-caused live 2026-09-16
+# ============================================================================
+#
+# `/imoveis/detalhes` answers HTTP 200 for a `Codigo` whose CRM record has
+# `ExibirNoSite=Nao` (unpublished — this API key's grant only surfaces
+# `ExibirNoSite="Sim"` on `/imoveis/listar`), but the body carries no
+# property fields — only the persistent `Corretor` relation (if requested)
+# or `[]` (if not). Before the fix, `vista.imoveis.get` silently returned
+# `item={"codigo": "", ...all null...}` as a "successful" probe. The guard
+# lives in `_assert_detalhes_describes_record`, shared by `VistaClient` and
+# `FakeVistaClient` so both raise identically for the same seeded shape.
+
+
+@pytest.mark.asyncio
+async def test_fake_detalhes_corretor_only_stub_raises_typed_error() -> None:
+    """The exact live shape reported for ONE8065/ONE9615/… on `oneconsu-rest`."""
+    from noctusai_lib.integrations.vista import VistaRecordUnpublished
+
+    fake = FakeVistaClient(
+        responses={
+            "/imoveis/detalhes": {
+                "Corretor": {"59": {"Codigo": "59", "Nome": "Ana Maria"}}
+            }
+        }
+    )
+    with pytest.raises(VistaRecordUnpublished) as exc_info:
+        await fake.detalhes_imovel(
+            "ONE8065", fields=["Codigo", {"Corretor": ["Nome"]}]
+        )
+    assert "ONE8065" in str(exc_info.value)
+    assert exc_info.value.codigo == "ONE8065"
+    assert exc_info.value.status == 200
+
+
+@pytest.mark.asyncio
+async def test_fake_detalhes_empty_list_raises_typed_error() -> None:
+    """Same guard fires for the `[]` shape (Corretor not in `fields`) — this
+    is what a genuinely nonexistent Codigo ALSO returns, so both manifestations
+    of "no property data" are covered by one check, not two."""
+    from noctusai_lib.integrations.vista import VistaRecordUnpublished
+
+    fake = FakeVistaClient(responses={"/imoveis/detalhes": []})
+    with pytest.raises(VistaRecordUnpublished) as exc_info:
+        await fake.detalhes_imovel("ONE9615", fields=["Codigo"])
+    assert "ONE9615" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_fake_detalhes_normal_payload_does_not_raise() -> None:
+    """Regression: a real payload (has `Codigo`) must NOT trip the guard."""
+    fake = FakeVistaClient(responses={"/imoveis/detalhes": {"Codigo": "AP0643"}})
+    result = await fake.detalhes_imovel("AP0643", fields=["Codigo"])
+    assert result.data == {"Codigo": "AP0643"}
+
+
+def test_real_client_detalhes_corretor_only_raises_typed_error() -> None:
+    """Real-client parity for the same live-observed shape, via MockTransport
+    (DI seam — `http_client=`, not a patch of our own code)."""
+    import asyncio
+
+    from noctusai_lib.integrations.vista import VistaRecordUnpublished
+
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(
+            200, json={"Corretor": {"59": {"Codigo": "59", "Nome": "Ana Maria"}}}
+        )
+    )
+
+    async def _run():
+        async with httpx.AsyncClient(transport=transport) as http:
+            client = VistaClient("https://t.example.com", SECRET, http_client=http)
+            await client.detalhes_imovel(
+                "ONE8065", fields=["Codigo", {"Corretor": ["Nome"]}]
+            )
+
+    with pytest.raises(VistaRecordUnpublished) as exc_info:
+        asyncio.run(_run())
+    assert "ONE8065" in str(exc_info.value)
+
+
+# ============================================================================
 # Credential hygiene — Vista echoes the API key back at us (vista.md § 3)
 # ============================================================================
 #

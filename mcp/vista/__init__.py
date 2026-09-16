@@ -11,7 +11,7 @@ Package shape:
 
 Imported from the seed, never forked here — `noctusai_lib.integrations.vista`
 owns the transport and the domain mapping:
-- `VistaClient` + the 7-class error hierarchy + `extract_items`
+- `VistaClient` + the 8-class error hierarchy + `extract_items`
 - `vista_*_to_showcase` normalizers + the `Showcase*` DTOs
 - `calibrator` — per-tenant field-set calibration (vista.md § 6)
 

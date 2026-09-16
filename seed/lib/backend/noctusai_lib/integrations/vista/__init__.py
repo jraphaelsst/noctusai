@@ -24,7 +24,7 @@ Fake + factory.
 
 Public surface:
 
-- `VistaClient` — async typed Real client + 7-class error hierarchy
+- `VistaClient` — async typed Real client + 8-class error hierarchy
 - `FakeVistaClient` — deterministic in-memory dev/test stand-in
 - `make_vista_client(...)` — Fake/Real factory (the single seam)
 - `extract_items` — normalize Vista's dict-keyed-by-id envelope
@@ -73,6 +73,7 @@ from .client import (
     VistaMissingParameter,
     VistaNotFound,
     VistaPermissionDenied,
+    VistaRecordUnpublished,
     VistaTimeout,
     VistaUpstreamError,
     extract_items,
@@ -142,7 +143,7 @@ __all__ = [
     "CANDIDATE_USUARIO_FIELDS",
     "CANDIDATE_AGENCIA_FIELDS",
     "CANDIDATE_CONTEUDO_FIELDS",
-    # 7-class error hierarchy (catch-order matters — leaves before parent)
+    # 8-class error hierarchy (catch-order matters — leaves before parent)
     "VistaError",
     "VistaConfigError",
     "VistaUpstreamError",
@@ -150,6 +151,7 @@ __all__ = [
     "VistaMissingParameter",
     "VistaNotFound",
     "VistaFieldNotAvailable",
+    "VistaRecordUnpublished",
     "VistaTimeout",
     # Normalizers
     "vista_imovel_to_showcase",

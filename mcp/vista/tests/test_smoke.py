@@ -63,6 +63,7 @@ def test_error_hierarchy_inheritance():
         VistaPermissionDenied,
         VistaNotFound,
         VistaFieldNotAvailable,
+        VistaRecordUnpublished,
         VistaTimeout,
     )
 
@@ -72,6 +73,7 @@ def test_error_hierarchy_inheritance():
     assert issubclass(VistaPermissionDenied, VistaUpstreamError)
     assert issubclass(VistaNotFound, VistaUpstreamError)
     assert issubclass(VistaFieldNotAvailable, VistaUpstreamError)
+    assert issubclass(VistaRecordUnpublished, VistaUpstreamError)
 
 
 def test_first_corretor_nome_walks_both_shapes():
@@ -117,6 +119,22 @@ def test_to_float_collapses_zero_and_empty():
     assert _to_float(0) == 0.0
     assert _to_float("250000,50") == 250000.50  # comma decimal separator
     assert _to_float("not a number") is None
+
+
+def test_typed_error_names_the_codigo_for_unpublished_records():
+    """`vista.imoveis.get`'s `_typed_error` (vista.md § 4.1 fix, 2026-09-16):
+    the JSON-friendly error the MCP surfaces for an unpublished-record 200
+    must name the offending codigo and the exact error class, so a host LLM
+    reading `probe_status: "live_probed"` + `error` doesn't mistake it for a
+    generic upstream failure."""
+    from noctusai_lib.integrations.vista import VistaRecordUnpublished
+    from vista.tools.imoveis import _typed_error
+
+    exc = VistaRecordUnpublished("ONE8065", "/imoveis/detalhes", ["Corretor"])
+    rendered = _typed_error(exc)
+    assert rendered["error_class"] == "VistaRecordUnpublished"
+    assert "ONE8065" in rendered["message"]
+    assert rendered["status"] == 200
 
 
 def test_all_handlers_aggregates_every_leaf():

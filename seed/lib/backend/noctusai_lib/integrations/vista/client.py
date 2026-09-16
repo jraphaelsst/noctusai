@@ -184,6 +184,44 @@ class VistaFieldNotAvailable(VistaUpstreamError):
         self.field = fields[0] if fields else "<unknown>"
 
 
+class VistaRecordUnpublished(VistaUpstreamError):
+    """`/imoveis/detalhes` answered 200 but the body describes no property.
+
+    **Root-caused live 2026-09-16** against `oneconsu-rest` (codes `ONE8065`,
+    `ONE9615`, `ONE10194`, `AP0632`, `ONE7135`, `ONE8323`, `ONE9547`) and
+    corroborated against the Vista CRM UI: this tenant's API key's grant on
+    `/imoveis/listar` is scoped to `ExibirNoSite="Sim"` records ONLY — a
+    request explicitly filtered on `{"ExibirNoSite": "Nao"}` returns ZERO
+    rows tenant-wide, and a bare unfiltered page never contains a
+    `ExibirNoSite` other than `"Sim"`. `ONE8065`'s CRM record has "Exibir no
+    site" unchecked.
+
+    `/imoveis/detalhes?imovel=<Codigo>` does NOT 404 for such a code — the
+    underlying record still resolves — but every scalar/property field is
+    suppressed (permission-stripped, not merely blank), leaving only the
+    persistent `Corretor` relation when it is in the requested `fields`
+    (`{"Corretor": {"<id>": {...}}}`) or an empty list `[]` when it is not.
+    A genuinely nonexistent `Codigo` returns `[]` regardless of whether
+    `Corretor` is requested — that is the discriminator that rules out
+    "never existed" here.
+
+    Distinct from `VistaNotFound` (HTTP 404 — the ENDPOINT is absent on this
+    tenant): this is an HTTP 200 whose body carries no visible record,
+    because the record is unpublished and this key cannot see unpublished
+    property data. See `KB § INTEGRATIONS/vista.md § 4.1`.
+    """
+
+    def __init__(self, codigo: str, endpoint: str, payload_keys: list[str]):
+        keys_desc = ", ".join(payload_keys) if payload_keys else "none"
+        body = (
+            f"no `Codigo` in body for imovel={codigo!r} (keys present: {keys_desc}) "
+            "— property is unpublished (ExibirNoSite=Nao) and not visible to "
+            "this API key (vista.md § 4.1)"
+        )
+        super().__init__(200, body, endpoint)
+        self.codigo = codigo
+
+
 class VistaTimeout(VistaError):
     """`httpx.TimeoutException` wrapper."""
 
@@ -391,11 +429,13 @@ class VistaClient:
         return await self._request("/imoveis/listar", pesquisa=pesquisa, showtotal=True)
 
     async def detalhes_imovel(self, codigo: str, *, fields: list[Any]) -> VistaCallResult:
-        return await self._request(
+        result = await self._request(
             "/imoveis/detalhes",
             pesquisa={"fields": fields},
             extra_params={"imovel": codigo},
         )
+        _assert_detalhes_describes_record(result, codigo)
+        return result
 
     async def listar_conteudo_imoveis(self, *, fields: list[str]) -> VistaCallResult:
         return await self._request(
@@ -739,6 +779,26 @@ def extract_items(payload: dict) -> tuple[list[dict], dict]:
     return items, pagination
 
 
+def _assert_detalhes_describes_record(result: VistaCallResult, codigo: str) -> None:
+    """Guard against Vista's unpublished-record stub (vista.md § 4.1).
+
+    A `/imoveis/detalhes` 200 whose body carries no `Codigo` does not
+    describe the requested property — it is Vista's response for a record
+    this API key cannot see the property fields of (confirmed root cause:
+    `ExibirNoSite=Nao`, i.e. unpublished from the site). Left unchecked,
+    every caller downstream (normalizers, `vista_to_imovel`, the MCP tool)
+    happily builds an "empty but successful" result from whatever survives
+    — usually just the `Corretor` relation, which Vista keeps attached
+    regardless of publish state. Shared by `VistaClient` and
+    `FakeVistaClient` so both raise identically for the same seeded shape.
+    """
+    data = result.data
+    if isinstance(data, dict) and data.get("Codigo"):
+        return
+    keys = list(data.keys()) if isinstance(data, dict) else []
+    raise VistaRecordUnpublished(codigo, result.endpoint, keys)
+
+
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "DEFAULT_PAGE_SIZE",
@@ -749,6 +809,7 @@ __all__ = [
     "VistaPermissionDenied",
     "VistaNotFound",
     "VistaFieldNotAvailable",
+    "VistaRecordUnpublished",
     "VistaTimeout",
     "VistaCallResult",
     "VistaClient",
