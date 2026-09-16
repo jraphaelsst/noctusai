@@ -16,6 +16,10 @@ from noctusai_lib.integrations.whatsapp import (
     phone_from_chat_id,
     rewrite_vendor_media_url,
 )
+from noctusai_lib.integrations.whatsapp.mappers import (
+    group_id_from_chat_id,
+    normalize_waha_id,
+)
 
 
 # ---- rewrite_vendor_media_url (SESSION-NOTES §4.3, workspace fedd4cf) ----
@@ -242,6 +246,76 @@ def test_build_send_text_body_returns_waha_send_text_shape() -> None:
         "chatId": "5511999999999@c.us",
         "text": "Olá!",
     }
+
+
+# ---- group_id / author_id (Slice W — additive, default None) ----------------
+
+
+def test_parse_waha_payload_1to1_leaves_group_id_and_author_id_none() -> None:
+    inbound = parse_waha_inbound_message(
+        {
+            "event": "message",
+            "session": "default",
+            "payload": {"id": "m-1", "from": "5511999999999@c.us", "body": "oi"},
+        }
+    )
+
+    assert inbound.group_id is None
+    assert inbound.author_id is None
+    # existing behavior stays exactly as before this addition:
+    assert inbound.chat_id == "5511999999999@c.us"
+    assert inbound.from_phone == "+5511999999999"
+
+
+def test_parse_waha_payload_group_message_sets_group_id_and_author_id() -> None:
+    inbound = parse_waha_inbound_message(
+        {
+            "event": "message",
+            "session": "default",
+            "payload": {
+                "id": "m-2",
+                "from": "120363012345678901@g.us",
+                "participant": "5511988888888@c.us",
+                "body": "oi grupo",
+            },
+        }
+    )
+
+    assert inbound.group_id == "120363012345678901@g.us"
+    assert inbound.author_id == "5511988888888@c.us"
+    # additive-only: from_phone/chat_id keep their pre-existing (group-
+    # misattributing) shape — this addition does not change that.
+    assert inbound.chat_id == "120363012345678901@g.us"
+
+
+def test_parse_waha_payload_group_message_reads_author_field_fallback() -> None:
+    inbound = parse_waha_inbound_message(
+        {
+            "event": "message",
+            "session": "default",
+            "payload": {
+                "id": "m-3",
+                "from": "120363099999999999@g.us",
+                "author": "5511977777777@c.us",
+                "body": "oi",
+            },
+        }
+    )
+
+    assert inbound.author_id == "5511977777777@c.us"
+
+
+def test_group_id_from_chat_id() -> None:
+    assert group_id_from_chat_id("120363012345678901@g.us") == "120363012345678901@g.us"
+    assert group_id_from_chat_id("5511999999999@c.us") is None
+
+
+def test_normalize_waha_id_accepts_bare_string_and_serialized_dict() -> None:
+    assert normalize_waha_id("5511999999999@c.us") == "5511999999999@c.us"
+    assert normalize_waha_id({"_serialized": "5511999999999@c.us"}) == "5511999999999@c.us"
+    assert normalize_waha_id({"id": "5511999999999@c.us"}) == "5511999999999@c.us"
+    assert normalize_waha_id(None) is None
+    assert normalize_waha_id({}) is None
 
 
 def test_ignores_own_message_any_events() -> None:

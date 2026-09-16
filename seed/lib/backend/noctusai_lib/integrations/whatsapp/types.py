@@ -9,8 +9,8 @@ rename pass.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,17 @@ class WhatsAppInboundMessage:
 
     Today populated by `parse_waha_inbound_message`; future Twilio /
     Cloud-API parsers populate the same shape.
+
+    `group_id` / `author_id` are additive (default `None`) — a 1:1 chat
+    leaves both unset. `group_id` is the `@g.us` chat id when the
+    message came from a group (existing `chat_id`/`from_phone` stay
+    populated exactly as before: `from_phone` is still derived from
+    `chat_id`, so today it names the GROUP, not the sending
+    participant — a known gap, not fixed by this addition, see
+    `KB § CONTEXT/INTEGRATIONS/whatsapp.md`). `author_id` is the
+    sending participant's JID within that group (WAHA's `participant` /
+    `author` field) — the field a consumer needs to attribute a group
+    message to its actual sender.
     """
 
     provider_message_id: str | None
@@ -36,6 +47,8 @@ class WhatsAppInboundMessage:
     session: str
     media: WhatsAppMedia | None = None
     from_name: str | None = None
+    group_id: str | None = None
+    author_id: str | None = None
 
 
 class WhatsAppPayloadError(ValueError):
@@ -108,6 +121,91 @@ class WhatsAppClient(Protocol):
     async def set_webhook(self, url: str, events: list[str]) -> dict[str, Any]: ...
 
     async def recover_session(self, *, settle_seconds: float = 8.0) -> dict[str, Any]: ...
+
+
+@dataclass(frozen=True)
+class GroupParticipant:
+    """One member of a WhatsApp group, as WAHA's Groups API reports it."""
+
+    id: str
+    role: Literal["participant", "admin", "superadmin"] = "participant"
+
+
+@dataclass(frozen=True)
+class GroupInfo:
+    """A WhatsApp group, as `create_group` / `list_groups` / `get_group`
+    return it. `participants` defaults to `[]` on the list-groups summary
+    shape — call `list_participants(group_id)` for the authoritative,
+    always-populated roster."""
+
+    id: str
+    name: str
+    participants: list[GroupParticipant] = field(default_factory=list)
+    owner: str | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class ParticipantChangeResult:
+    """One participant's outcome from `add_participants` / `remove_participants`.
+
+    WAHA answers group membership changes per-participant rather than
+    all-or-nothing — WhatsApp itself silently refuses some adds when the
+    target's privacy settings block group invites, which WAHA surfaces
+    as a per-participant non-2xx rather than a client-level error. That
+    refusal maps to `"invite_required"` here so a bulk-add caller can
+    tell "actually added" apart from "needs the invite link instead"
+    without inspecting a raw status code itself.
+    """
+
+    id: str
+    outcome: Literal["added", "removed", "invite_required", "failed"]
+    code: int | None = None
+
+
+@runtime_checkable
+class WhatsAppGroupClient(Protocol):
+    """WhatsApp group-management surface — deliberately separate from
+    `WhatsAppClient` so a 1:1-only connector (the Meta Cloud API client
+    has no group-management endpoints) isn't forced to implement group
+    ops it structurally cannot support. `WahaClient` + `FakeWahaClient`
+    satisfy this Protocol; `MetaCloudClient` does not.
+
+    Broadcast to an existing group needs nothing new here: `send_text`
+    (on `WhatsAppClient`) already accepts a `@g.us` chat id.
+    """
+
+    async def create_group(
+        self, name: str, participant_ids: list[str]
+    ) -> GroupInfo: ...
+
+    async def list_groups(self, limit: int = 50, offset: int = 0) -> list[GroupInfo]: ...
+
+    async def get_group(self, group_id: str) -> GroupInfo: ...
+
+    async def list_participants(self, group_id: str) -> list[GroupParticipant]: ...
+
+    async def add_participants(
+        self, group_id: str, participant_ids: list[str]
+    ) -> list[ParticipantChangeResult]: ...
+
+    async def remove_participants(
+        self, group_id: str, participant_ids: list[str]
+    ) -> list[ParticipantChangeResult]: ...
+
+    async def promote_admins(self, group_id: str, participant_ids: list[str]) -> None: ...
+
+    async def demote_admins(self, group_id: str, participant_ids: list[str]) -> None: ...
+
+    async def get_invite_link(self, group_id: str) -> str: ...
+
+    async def revoke_invite_link(self, group_id: str) -> str: ...
+
+    async def set_messages_admin_only(self, group_id: str, on: bool) -> None: ...
+
+    async def delete_message(self, chat_id: str, message_id: str) -> None: ...
+
+    async def leave_group(self, group_id: str) -> None: ...
 
 
 # Legacy WAHA-prefixed aliases (kept for call-site portability).

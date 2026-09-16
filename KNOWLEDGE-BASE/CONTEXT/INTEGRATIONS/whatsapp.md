@@ -44,12 +44,56 @@ Every symbol below is exported from `whatsapp/__init__.py.__all__`.
 ### HTTP clients + factories
 | Symbol | Role |
 |---|---|
-| `WahaClient` | Real WAHA client (sync + async `send_text` + `download_media`) |
+| `WahaClient` | Real WAHA client (sync + async `send_text` + `download_media`); every call routes through `_request`/`_request_sync`, paced against the shared `"whatsapp"` rate-limit bucket; `transport=` constructor param (an `httpx.MockTransport`) is the test seam — no monkey-patching needed |
 | `FakeWahaClient` | Bi-directional in-memory deterministic — records `sent_messages`, accepts `inject_text`/`inject_inbound`, serves `media_bytes` |
 | `get_whatsapp_client(...)` | **Factory** — `WahaClient` when `base_url=` set, else `FakeWahaClient` |
-| `MetaCloudClient` `FakeMetaCloudClient` | Meta Cloud API (WhatsApp Business) client + fake |
+| `MetaCloudClient` `FakeMetaCloudClient` | Meta Cloud API (WhatsApp Business) client + fake — 1:1 only, does **not** implement `WhatsAppGroupClient` |
 | `get_meta_cloud_client(...)` | **Factory** — `MetaCloudClient` when `api_key=` set, else `FakeMetaCloudClient` |
 | `META_CLOUD_DEFAULT_BASE_URL` | Default Cloud API base |
+
+### Group management (`whatsapp.types` / `.mappers` / `.client`)
+| Symbol | Role |
+|---|---|
+| `WhatsAppGroupClient` | Protocol — separate from `WhatsAppClient` so a 1:1-only connector isn't forced to implement it. `WahaClient` + `FakeWahaClient` satisfy it |
+| `GroupInfo` `GroupParticipant` `ParticipantChangeResult` | Value types — a group, one member (`role: participant\|admin\|superadmin`), one add/remove outcome (`outcome: added\|removed\|invite_required\|failed`) |
+| `WahaGroupError` | Typed error for a group op that failed for a real (non-privacy-refusal) reason — carries `op` + `status`; alongside `WahaSessionNotReady` |
+| `create_group` `list_groups` `get_group` `list_participants` `add_participants` `remove_participants` `promote_admins` `demote_admins` `get_invite_link` `revoke_invite_link` `set_messages_admin_only` `delete_message` `leave_group` | `WahaClient`/`FakeWahaClient` methods — the full `WhatsAppGroupClient` surface |
+
+Broadcast to an existing group needs nothing new: `send_text` already
+accepts a `@g.us` chat id. A group INBOUND message additionally
+populates `WhatsAppInboundMessage.group_id` (the `@g.us` chat id) and
+`.author_id` (the sending participant's JID, from WAHA's `participant`/
+`author` field) — both additive, default `None`; `from_phone`/`chat_id`
+keep their pre-existing shape (`from_phone` still names the GROUP on a
+group message, not the author — a known gap this addition does not
+close).
+
+**Endpoint verification + engine finding (Slice W, 2026-09-16):**
+endpoint paths/body shapes match the WAHA Groups API's documented
+`/api/{session}/groups...` convention (this client's own established
+shape) and this session's design spec — **not independently
+re-verified against a live WAHA swagger fetch**: neither the `waha`
+MCP server's tools nor outbound web access were bound to this dispatch,
+and a live-VPS read was denied by the session's permission classifier.
+Static evidence confirms the fleet's configured engine: `WHATSAPP_DEFAULT_ENGINE:
+NOWEB` (`deploy/services/compose.services.yml:113`), image
+`devlikeapro/waha:latest` — **unpinned**, a pre-existing risk this slice
+did not touch (`deploy/` is out of scope here). WAHA's Groups API has
+historically shipped on the NOWEB engine at the Core (self-hosted,
+free) tier this fleet runs.
+
+**Live confirmation (tech-lead, 2026-09-16, `waha.server.version`):** the
+running server reports `version=2026.7.2`, `engine=NOWEB`, `tier=CORE`,
+`platform=linux/x64`. That matches the static evidence above, so the group
+endpoints this slice targets are the NOWEB/CORE set. The per-participant
+response shape is still un-exercised against a real group (no write call was
+made), which is what `NOC-REMEDIATE[waha-verify]` tracks.
+See `NOC-REMEDIATE[waha-verify]` in
+`noctusai_lib/integrations/whatsapp/mappers.py`
+(`participant_change_result_from_waha`) for the specific per-participant
+status-code assumption (`401`/`403` → `"invite_required"`) that most
+needs a live confirmation before this carries production bulk-add
+traffic.
 
 ### @lid auth (`whatsapp.lid_auth`)
 `is_authorized` (3-tier), `resolve_canonical_session`,
@@ -141,7 +185,12 @@ without caring which backend is wired.
 (`raise_for_status`) — consumers map to their own error envelope
 (ERP wrapper does this at `whatsapp_service.py:340+`). Parse failures
 surface as typed `WhatsAppPayloadError`; non-message webhook events as
-`WhatsAppIgnoredEvent` (not errors — the router skips them).
+`WhatsAppIgnoredEvent` (not errors — the router skips them). Group ops
+raise `WahaGroupError` (op + status; wraps the original
+`HTTPStatusError` as `__cause__`) instead of a bare `httpx` error —
+**except** `add_participants`/`remove_participants`, which never raise
+for a per-participant refusal: that outcome is reported per-id via
+`ParticipantChangeResult(outcome="invite_required"|"failed")` instead.
 
 ---
 
@@ -179,6 +228,9 @@ config-writing path routes through `client._session_config()`.
 |---|---|---|
 | Twilio backend | not shipped | Provider-neutral surface is ready; add `integrations/whatsapp/twilio_client.py` + factory branch when a consumer needs it |
 | Outbound media send (image/doc) | partial — `send_text` + `download_media` ship; rich outbound media is not in the Protocol | Additive Protocol extension; file when a consumer needs it |
+| MCP-surfaced group tools (`waha.group.*`) | not shipped — `WahaClient`/`FakeWahaClient` ship the group surface, `mcp/waha` does not yet expose it | Slice W2 (deliberately deferred, wave0-design.md): `mcp/waha/tools/groups.py`, mirroring the existing `session`/`message`/`server` tool modules |
+| Live confirmation of WAHA group-endpoint wire shapes | inferred from the WAHA Groups API's documented convention, not fetched from a live swagger this pass (no `waha` MCP / web access bound to this dispatch, live-VPS read denied) | Re-verify against `GET /api/server/version` + the live swagger (`waha.server.version` MCP tool, or `/api` on a bound session) before group ops carry real traffic; see `NOC-REMEDIATE[waha-verify]` in `mappers.py` |
+| `devlikeapro/waha:latest` unpinned in `deploy/` | pre-existing, untouched by this slice (group endpoints differ by engine: WEBJS/NOWEB/GOWS — fleet runs NOWEB) | `deploy/services/compose.services.yml:106` / `deploy/fleet/compose.infra.prod.yml:109` — pin when a devops slice is scheduled |
 | Read-state INBOUND (phone → app) | **not expressible with this transport** | `message.ack` carries acks only for messages WE sent; `chats/overview`'s `ChatSummary` (`{id,name,picture,lastMessage,_chat}`) has no top-level `unreadCount`. `sendSeen` therefore syncs read state OUT to the device, but reading a chat ON the phone does not clear the app's badge. Probe the untyped `_chat.unreadCount` once a session is `WORKING` if this needs revisiting. |
 | Realtime delivery to the browser | shipped, but **not in this package** | `noctusai_lib.realtime` (SSE + Redis Streams) → `CONTEXT/PATTERNS/common/realtime-sse-bus.md` |
 | Chatbot orchestration (buffer/worker/LLM dispatch) | **separate by design** | `noctusai_lib.domain.chatbot` + recipe `CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md` |

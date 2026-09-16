@@ -15,10 +15,14 @@ from typing import Any
 
 from noctusai_lib.integrations.whatsapp.client import (
     RECOVER_READY_STATUSES,
+    WahaGroupError,
     WahaSessionNotReady,
     recovery_outcome,
 )
 from noctusai_lib.integrations.whatsapp.types import (
+    GroupInfo,
+    GroupParticipant,
+    ParticipantChangeResult,
     WhatsAppInboundMessage,
 )
 
@@ -82,6 +86,17 @@ class FakeWahaClient:
         self.fake_lids: list[dict[str, Any]] = []
         # send_seen call log — assert against this to verify read-receipt calls.
         self.seen_calls: list[dict[str, Any]] = []
+        # Group management state. Seed `privacy_restricted_ids` before
+        # `add_participants` to simulate a target whose privacy settings
+        # block group invites (mirrors WAHA's real per-participant
+        # "invite_required" outcome).
+        self.fake_groups: dict[str, GroupInfo] = {}
+        self._group_counter = 0
+        self.privacy_restricted_ids: set[str] = set()
+        self.invite_links: dict[str, str] = {}
+        self.messages_admin_only: dict[str, bool] = {}
+        self.deleted_messages: list[dict[str, str]] = []
+        self.left_groups: list[str] = []
 
     # ------------------------------------------------------------------
     # Outbound — mirrors WahaClient.send_text / send_text_sync
@@ -349,3 +364,131 @@ class FakeWahaClient:
         self.fake_lid_phones.clear()
         self.fake_lids.clear()
         self.seen_calls.clear()
+        self.fake_groups.clear()
+        self.privacy_restricted_ids.clear()
+        self.invite_links.clear()
+        self.messages_admin_only.clear()
+        self.deleted_messages.clear()
+        self.left_groups.clear()
+
+    # ------------------------------------------------------------------
+    # Group management — mirrors WahaClient's group surface (WahaGroupError
+    # on an unknown group_id, ParticipantChangeResult per add/remove target)
+    # ------------------------------------------------------------------
+
+    async def create_group(self, name: str, participant_ids: list[str]) -> GroupInfo:
+        self._group_counter += 1
+        group_id = f"fake-group-{self._group_counter}@g.us"
+        info = GroupInfo(
+            id=group_id,
+            name=name,
+            participants=[GroupParticipant(id=pid, role="participant") for pid in participant_ids],
+        )
+        self.fake_groups[group_id] = info
+        return info
+
+    async def list_groups(self, limit: int = 50, offset: int = 0) -> list[GroupInfo]:
+        return list(self.fake_groups.values())[offset : offset + limit]
+
+    async def get_group(self, group_id: str) -> GroupInfo:
+        try:
+            return self.fake_groups[group_id]
+        except KeyError as exc:
+            raise WahaGroupError(
+                op="get_group", status=404, detail=f"group not found: {group_id}"
+            ) from exc
+
+    async def list_participants(self, group_id: str) -> list[GroupParticipant]:
+        return list((await self.get_group(group_id)).participants)
+
+    def _replace_participants(
+        self, group_id: str, participants: list[GroupParticipant]
+    ) -> None:
+        group = self.fake_groups[group_id]
+        self.fake_groups[group_id] = GroupInfo(
+            id=group.id,
+            name=group.name,
+            participants=participants,
+            owner=group.owner,
+            description=group.description,
+        )
+
+    async def add_participants(
+        self, group_id: str, participant_ids: list[str]
+    ) -> list[ParticipantChangeResult]:
+        """Adds each id unless seeded into `privacy_restricted_ids`
+        (mirrors WAHA's real per-participant privacy-refusal outcome —
+        ``ParticipantChangeResult(outcome="invite_required")``)."""
+        group = await self.get_group(group_id)
+        existing_ids = {p.id for p in group.participants}
+        participants = list(group.participants)
+        results: list[ParticipantChangeResult] = []
+        for pid in participant_ids:
+            if pid in existing_ids:
+                results.append(ParticipantChangeResult(id=pid, outcome="added", code=200))
+            elif pid in self.privacy_restricted_ids:
+                results.append(
+                    ParticipantChangeResult(id=pid, outcome="invite_required", code=403)
+                )
+            else:
+                participants.append(GroupParticipant(id=pid, role="participant"))
+                existing_ids.add(pid)
+                results.append(ParticipantChangeResult(id=pid, outcome="added", code=200))
+        self._replace_participants(group_id, participants)
+        return results
+
+    async def remove_participants(
+        self, group_id: str, participant_ids: list[str]
+    ) -> list[ParticipantChangeResult]:
+        group = await self.get_group(group_id)
+        existing_ids = {p.id for p in group.participants}
+        remaining = [p for p in group.participants if p.id not in participant_ids]
+        self._replace_participants(group_id, remaining)
+        return [
+            ParticipantChangeResult(
+                id=pid,
+                outcome="removed" if pid in existing_ids else "failed",
+                code=200 if pid in existing_ids else 404,
+            )
+            for pid in participant_ids
+        ]
+
+    async def _set_role(
+        self, group_id: str, participant_ids: list[str], *, role: str
+    ) -> None:
+        group = await self.get_group(group_id)
+        target_ids = set(participant_ids)
+        updated = [
+            GroupParticipant(id=p.id, role=role) if p.id in target_ids else p  # type: ignore[arg-type]
+            for p in group.participants
+        ]
+        self._replace_participants(group_id, updated)
+
+    async def promote_admins(self, group_id: str, participant_ids: list[str]) -> None:
+        await self._set_role(group_id, participant_ids, role="admin")
+
+    async def demote_admins(self, group_id: str, participant_ids: list[str]) -> None:
+        await self._set_role(group_id, participant_ids, role="participant")
+
+    async def get_invite_link(self, group_id: str) -> str:
+        await self.get_group(group_id)  # raises WahaGroupError if unknown
+        return self.invite_links.setdefault(
+            group_id, f"https://chat.whatsapp.com/fake-{group_id.split('@')[0]}"
+        )
+
+    async def revoke_invite_link(self, group_id: str) -> str:
+        await self.get_group(group_id)
+        new_link = f"https://chat.whatsapp.com/fake-{group_id.split('@')[0]}-r{len(self.invite_links) + 1}"
+        self.invite_links[group_id] = new_link
+        return new_link
+
+    async def set_messages_admin_only(self, group_id: str, on: bool) -> None:
+        await self.get_group(group_id)
+        self.messages_admin_only[group_id] = on
+
+    async def delete_message(self, chat_id: str, message_id: str) -> None:
+        self.deleted_messages.append({"chatId": chat_id, "messageId": message_id})
+
+    async def leave_group(self, group_id: str) -> None:
+        self.fake_groups.pop(group_id, None)
+        self.left_groups.append(group_id)

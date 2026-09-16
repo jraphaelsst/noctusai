@@ -8,10 +8,13 @@ output shape stays uniform.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from noctusai_lib.integrations.whatsapp.types import (
+    GroupInfo,
+    GroupParticipant,
+    ParticipantChangeResult,
     WhatsAppIgnoredEvent,
     WhatsAppInboundMessage,
     WhatsAppMedia,
@@ -42,6 +45,8 @@ def parse_waha_inbound_message(payload: dict[str, Any]) -> WhatsAppInboundMessag
     session = str(payload.get("session") or event_payload.get("session") or "default")
     media = extract_media(event_payload)
     from_name = extract_from_name(event_payload)
+    group_id = group_id_from_chat_id(chat_id)
+    author_id = extract_author_id(event_payload)
 
     if not chat_id:
         raise WhatsAppPayloadError("WAHA webhook payload is missing chat id")
@@ -56,6 +61,8 @@ def parse_waha_inbound_message(payload: dict[str, Any]) -> WhatsAppInboundMessag
         session=session,
         media=media,
         from_name=from_name,
+        group_id=group_id,
+        author_id=author_id,
     )
 
 
@@ -179,3 +186,114 @@ def extract_from_name(payload: dict[str, Any]) -> str | None:
         if nested:
             return nested
     return None
+
+
+# ---- Group support -----------------------------------------------------
+
+
+def group_id_from_chat_id(chat_id: str) -> str | None:
+    """A WAHA `chatId` ending `@g.us` identifies a group chat; return it
+    as `group_id` when so, else `None` for a 1:1 chat. Additive sibling
+    of `phone_from_chat_id` — does not change `from_phone`'s existing
+    (group-misattributing) behavior, see `WhatsAppInboundMessage`."""
+    return chat_id if chat_id.endswith("@g.us") else None
+
+
+def extract_author_id(payload: dict[str, Any]) -> str | None:
+    """The sending participant's JID within a group message. WAHA/NOWEB
+    emits this as `participant` (canonical field on a group `message`
+    event); some payload shapes carry it as `author` instead. Absent
+    (and correctly `None`) on a 1:1 chat payload, which carries neither
+    field."""
+    return first_text(payload, "participant", "author") or None
+
+
+def normalize_waha_id(value: Any) -> str | None:
+    """WAHA emits identifiers — message ids, and (per the Groups API)
+    sometimes group/participant ids too — either as a bare string or as
+    `{"_serialized": "...", "id": "..."}`. Normalizes both shapes to the
+    plain string form. Sibling of `extract_message_id`, generalized for
+    the group-parsing call sites (left `extract_message_id` itself
+    untouched to avoid touching an already-covered code path)."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        serialized = value.get("_serialized") or value.get("id")
+        if isinstance(serialized, str):
+            return serialized
+    return None
+
+
+def group_participant_from_waha(item: dict[str, Any]) -> GroupParticipant:
+    """Parse one WAHA group-participant entry into a `GroupParticipant`.
+
+    WAHA's participant schema carries `id` (string or `{"_serialized":
+    ...}`) plus `isAdmin` / `isSuperAdmin` booleans — collapsed here into
+    the single `role` field so callers get one Literal instead of two
+    separate flags to check.
+    """
+    participant_id = normalize_waha_id(item.get("id")) or ""
+    role: Literal["participant", "admin", "superadmin"]
+    if item.get("isSuperAdmin"):
+        role = "superadmin"
+    elif item.get("isAdmin"):
+        role = "admin"
+    else:
+        role = "participant"
+    return GroupParticipant(id=participant_id, role=role)
+
+
+def group_info_from_waha(body: dict[str, Any]) -> GroupInfo:
+    """Parse a WAHA group object (`POST/GET .../groups[/id]`) into a
+    `GroupInfo`. `participants` may be absent on the list-groups summary
+    shape — defaults to `[]`; call `list_participants` for the
+    authoritative roster."""
+    group_id = normalize_waha_id(body.get("id")) or ""
+    name = body.get("name") or body.get("subject") or ""
+    raw_participants = body.get("participants")
+    participants = (
+        [group_participant_from_waha(p) for p in raw_participants if isinstance(p, dict)]
+        if isinstance(raw_participants, list)
+        else []
+    )
+    owner = normalize_waha_id(body.get("owner"))
+    description = body.get("description") if isinstance(body.get("description"), str) else None
+    return GroupInfo(
+        id=group_id,
+        name=name,
+        participants=participants,
+        owner=owner,
+        description=description,
+    )
+
+
+def participant_change_result_from_waha(
+    item: dict[str, Any], *, action: Literal["added", "removed"]
+) -> ParticipantChangeResult:
+    """Map one entry of WAHA's per-participant add/remove response.
+
+    WAHA answers group participant-add/remove with one outcome per
+    requested id rather than a single all-or-nothing result — WhatsApp
+    itself silently refuses some adds when the target's privacy
+    settings block group invites, which WAHA surfaces as a
+    non-success per-participant status rather than a client-level
+    error.
+
+    NOC-REMEDIATE[waha-verify]: the exact status/code WAHA emits for the
+    privacy-refusal case (mapped here to `"invite_required"` for any
+    `401`/`403`) is inferred from the WAHA Groups API's documented
+    shape, not confirmed against a live add on the fleet session (no
+    live-WAHA read access in this dispatch — see the delivery note).
+    Confirm the real codes before this path carries production bulk-add
+    traffic. — 2026-09-16
+    """
+    participant_id = normalize_waha_id(item.get("id")) or ""
+    code = item.get("status") if isinstance(item.get("status"), int) else item.get("code")
+    outcome: Literal["added", "removed", "invite_required", "failed"]
+    if code is None or code in (200, 201):
+        outcome = action
+    elif code in (401, 403):
+        outcome = "invite_required"
+    else:
+        outcome = "failed"
+    return ParticipantChangeResult(id=participant_id, outcome=outcome, code=code)

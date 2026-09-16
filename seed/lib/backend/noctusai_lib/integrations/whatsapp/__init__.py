@@ -21,7 +21,17 @@ Public surface:
   by default (camelCase `fullSync`, WAHA's actual wire key);
   external→internal media-URL rewrite; `recover_session` — the
   start→restart→logout+start escalation ladder for a session stuck
-  outside `{SCAN_QR_CODE, WORKING}`).
+  outside `{SCAN_QR_CODE, WORKING}`). Every call routes through
+  `_request`/`_request_sync`, paced against the shared `"whatsapp"`
+  rate-limit bucket.
+- Groups: `WhatsAppGroupClient` Protocol (create/list/get group,
+  list/add/remove participants, promote/demote admins, invite-link
+  get/revoke, messages-admin-only toggle, delete_message, leave_group) —
+  `WahaClient` + `FakeWahaClient` implement it; `MetaCloudClient` does
+  not (1:1-only, no group API). Types: `GroupInfo`, `GroupParticipant`,
+  `ParticipantChangeResult` (per-participant add/remove outcome incl.
+  `"invite_required"` for a privacy-refused add). Errors:
+  `WahaGroupError` alongside `WahaSessionNotReady`.
 - Fake: `FakeWahaClient` — bi-directional in-memory deterministic
   (records `sent_messages` / `seen_calls`, accepts `inject_text` /
   `inject_inbound`, serves pre-populated `media_bytes` /
@@ -49,6 +59,7 @@ See `KB § PATTERNS/whatsapp-chatbot-seed.md` for the wiring recipe.
 
 from noctusai_lib.integrations.whatsapp.client import (
     WahaClient,
+    WahaGroupError,
     WahaSessionNotReady,
 )
 from noctusai_lib.integrations.whatsapp.dedup import (
@@ -101,11 +112,15 @@ from noctusai_lib.integrations.whatsapp.router import (
 )
 from noctusai_lib.integrations.whatsapp.settings import WhatsAppSettings
 from noctusai_lib.integrations.whatsapp.types import (
+    GroupInfo,
+    GroupParticipant,
+    ParticipantChangeResult,
     WahaIgnoredEvent,
     WahaInboundMessage,
     WahaMedia,
     WahaPayloadError,
     WhatsAppClient,
+    WhatsAppGroupClient,
     WhatsAppIgnoredEvent,
     WhatsAppInboundMessage,
     WhatsAppMedia,
@@ -171,12 +186,15 @@ __all__ = [
     "FakeMetaCloudClient",
     "FakeResponseRegistry",
     "FakeWahaClient",
+    "GroupInfo",
+    "GroupParticipant",
     "InMemoryLidPhoneCache",
     "InMemoryWebhookDedup",
     "InboundHandler",
     "LidPhoneCache",
     "META_CLOUD_DEFAULT_BASE_URL",
     "MetaCloudClient",
+    "ParticipantChangeResult",
     "PersistentResponseRegistry",
     "RedisLidPhoneCache",
     "RedisWebhookDedup",
@@ -185,6 +203,7 @@ __all__ = [
     "ResponseSampleSink",
     "SetnxRedis",
     "WahaClient",
+    "WahaGroupError",
     "WahaIgnoredEvent",
     "WahaSessionNotReady",
     "WahaInboundMessage",
@@ -192,6 +211,7 @@ __all__ = [
     "WahaPayloadError",
     "WebhookDedup",
     "WhatsAppClient",
+    "WhatsAppGroupClient",
     "WhatsAppIgnoredEvent",
     "WhatsAppInboundMessage",
     "WhatsAppMedia",
