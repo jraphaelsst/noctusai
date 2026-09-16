@@ -32,7 +32,7 @@ def _call(edicao, method, path, body, lote_id, foto_id):
     url = path.replace("{lote_id}", lote_id).replace("{foto_id}", foto_id)
     kwargs = {}
     if body == "files":
-        kwargs["files"] = [("files", ("a.jpg", b"x", "image/jpeg"))]
+        kwargs["files"] = [("fotos", ("a.jpg", b"x", "image/jpeg"))]
     elif body is not None:
         kwargs["json"] = body
     return getattr(edicao.http, method)(url, **kwargs)
@@ -88,7 +88,7 @@ def test_settings_read_and_write_only_the_callers_org(edicao) -> None:
     edicao.as_user("admin")
     resp = edicao.http.put(
         "/api/edicao-fotos/configuracoes",
-        json={"tipos_edicao_ativos": ["ceu"], "modelo_editor_id": "gpt-image-2.5-flare"},
+        json={"tipos_edicao_ativos": ["ceu"], "modelo_editor_imagem": "gpt-image-2.5-flare"},
     )
     assert resp.status_code == 200 and resp.json()["org_id"] == ORG
     assert edicao.run(edicao.repo.get_org_settings(OTHER_ORG)).modelo_editor_id is None

@@ -4,8 +4,8 @@
 |---|---|---|
 | GET  | `/lotes` | member — own batches for a corretor, org-wide for an agency/platform admin |
 | POST | `/lotes` | member — blocked until the org has an editor model + edit types |
-| GET  | `/lotes/{id}` | member who can see the batch |
-| POST | `/lotes/{id}/fotos` | same — multipart, ≤ `MAX_FILES_PER_REQUEST` files per call |
+| GET  | `/lotes/{id}` | member who can see the batch (verdict only for admins) |
+| POST | `/lotes/{id}/fotos` | same — multipart field `fotos` (repeated), ≤ `MAX_FILES_PER_REQUEST` files per call |
 | POST | `/lotes/{id}/vista` | same — pulls the imóvel's Vista gallery |
 | POST | `/lotes/{id}/submeter` | same |
 | POST | `/lotes/{id}/fotos/{foto_id}/retentar` | same |
@@ -14,6 +14,9 @@
 Every call goes through the engine's route entry points
 (`noctusai_lib.domain.photo_editing`); nothing here re-implements a pipeline
 rule. Batch visibility is enforced by `deps.load_visible_batch`.
+
+Shapes follow the seed FE hooks (`LoteResumo`, `LoteDetalhe`, `FotoRevisao`
+in `seed/lib/frontend/src/photo-editing/hooks.ts`).
 """
 from __future__ import annotations
 
@@ -37,13 +40,20 @@ from noctusai_lib.domain.photo_editing import (
 )
 
 from app.modules.edicao_fotos.deps import (
+    can_see_verdict,
     get_edicao_ports,
     get_vista_photo_source,
     load_visible_batch,
     require_member,
 )
 from app.modules.edicao_fotos.errors import ENGINE_ERRORS, api_error, engine_error
-from app.modules.edicao_fotos.presenters import batch_out, page_out, photo_out
+from app.modules.edicao_fotos.presenters import (
+    foto_revisao_out,
+    lote_detalhe_out,
+    lote_resumo_out,
+    page_out,
+)
+from app.modules.edicao_fotos.services.review import review_rows, signed_url
 from app.modules.edicao_fotos.schemas import LoteCreateBody, VistaIngestBody
 from app.modules.edicao_fotos.services.vista_fotos import VistaPhotoSource, ingest_vista_gallery
 
@@ -74,7 +84,9 @@ async def list_lotes_route(
         limit=page_size,
         offset=(page - 1) * page_size,
     )
-    return page_out([batch_out(b) for b in batches], page=page, page_size=page_size, total=total)
+    states = await ports.repo.photo_states_for_batches([b.id for b in batches])
+    items = [lote_resumo_out(b, states.get(b.id, [])) for b in batches]
+    return page_out(items, page=page, page_size=page_size, total=total)
 
 
 @router.post("", status_code=201)
@@ -109,7 +121,7 @@ async def create_lote_route(
         imovel_org_id=str(body.imovel.org_id) if body.imovel else None,
         imovel_codigo=body.imovel.codigo.strip() if body.imovel else None,
     )
-    return batch_out(batch, [])
+    return lote_resumo_out(batch, [])
 
 
 @router.get("/{lote_id}")
@@ -120,7 +132,8 @@ async def get_lote_route(
 ) -> dict:
     batch = await load_visible_batch(ports, actor, str(lote_id))
     photos = await ports.repo.list_photos(batch.id)
-    return {**batch_out(batch, photos), "fotos": [photo_out(p) for p in photos]}
+    rows = await review_rows(ports, batch, photos, include_verdict=can_see_verdict(actor))
+    return lote_detalhe_out(batch, photos, rows)
 
 
 @router.post("/{lote_id}/fotos", status_code=201)
@@ -128,8 +141,9 @@ async def upload_fotos_route(
     lote_id: UUID,
     actor: Actor = Depends(require_member),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
-    files: list[UploadFile] = File(...),
+    fotos: list[UploadFile] = File(...),
 ) -> dict:
+    files = fotos
     batch = await load_visible_batch(ports, actor, str(lote_id))
     if not files:
         raise api_error(422, "sem_arquivos", "Nenhum arquivo enviado.")
@@ -166,7 +180,17 @@ async def upload_fotos_route(
         ]
     except ENGINE_ERRORS as exc:
         raise engine_error(exc) from exc
-    return {"fotos": [photo_out(p) for p in stored]}
+    return {
+        "fotos": [
+            foto_revisao_out(
+                p,
+                url_antes=await signed_url(ports, p.storage_path_original),
+                url_depois=None,
+                decision=None,
+            )
+            for p in stored
+        ]
+    }
 
 
 @router.post("/{lote_id}/vista")
@@ -202,7 +226,8 @@ async def submit_lote_route(
         submitted = await submit_batch(ports, batch.id, submitted_by=actor.user_id)
     except ENGINE_ERRORS as exc:
         raise engine_error(exc) from exc
-    return batch_out(submitted, await ports.repo.list_photos(batch.id))
+    photos = await ports.repo.list_photos(batch.id)
+    return lote_resumo_out(submitted, [p.status for p in photos])
 
 
 @router.post("/{lote_id}/fotos/{foto_id}/retentar")
@@ -220,7 +245,8 @@ async def retry_foto_route(
         moved = await retry_photo(ports, photo.id, requested_by=actor.user_id)
     except ENGINE_ERRORS as exc:
         raise engine_error(exc) from exc
-    return photo_out(moved)
+    [row] = await review_rows(ports, batch, [moved], include_verdict=can_see_verdict(actor))
+    return row
 
 
 @router.get("/{lote_id}/zip")

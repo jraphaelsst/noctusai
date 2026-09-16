@@ -1,0 +1,108 @@
+{
+  "_doc": "Pinned wire shapes for /api/edicao-fotos, shared by the seed FE hooks (hooks.ts types) and the social-wiring backend. The backend replays every entry against its real routes (products/social-wiring/backend/tests/modules/edicao_fotos/test_edicao_fotos_contract_fixture.py): each fixture key must exist in the response with the same JSON type (null matches any type; responses may carry extra keys). A request-body entry must be accepted as-is. Change a shape here and in hooks.ts in the same commit.",
+  "upload_field": "fotos",
+  "capacidades": {
+    "pode_criar_lote": true,
+    "pode_ver_veredito": false,
+    "pode_gerir_pool": false,
+    "pode_aprovar_regras": false,
+    "pode_ativar_guia": false,
+    "dashboard": null,
+    "modelo_configurado": true,
+    "economico_disponivel": false,
+    "economico_bloqueado_motivo": "modelo_sem_batch",
+    "tipos_edicao_ativos": ["cor_luz", "ceu"],
+    "limites": { "fotos_por_lote": 100, "bytes_por_foto": 26214400 }
+  },
+  "novo_lote_body": { "nome": "Apto 12 — Rua das Flores", "imovel": null },
+  "lote_criado": {
+    "id": "7b0c7f7e-3f55-4a53-9d7c-6a1d6f0e2a10",
+    "nome": "Apto 12 — Rua das Flores",
+    "criado_em": "2026-09-16T18:00:00+00:00",
+    "imovel": null,
+    "velocidade": "urgente",
+    "estado_agregado": "rascunho",
+    "total_fotos": 0,
+    "fotos_decididas": 0
+  },
+  "lotes_page": {
+    "items": [
+      {
+        "id": "7b0c7f7e-3f55-4a53-9d7c-6a1d6f0e2a10",
+        "nome": "Apto 12 — Rua das Flores",
+        "criado_em": "2026-09-16T18:00:00+00:00",
+        "imovel": null,
+        "velocidade": "urgente",
+        "estado_agregado": "aguardando_revisao",
+        "total_fotos": 2,
+        "fotos_decididas": 0
+      }
+    ],
+    "page": 1,
+    "page_size": 50,
+    "total": 1
+  },
+  "vista_body": { "codigo": "CA2830" },
+  "foto_revisao_corretor": {
+    "id": "0a6c3c55-2f6a-4f7b-9b53-1f1a2b3c4d5e",
+    "url_antes": "https://storage.example/edicao-fotos/org/lote/foto/original.jpg?token=x",
+    "url_depois": "https://storage.example/edicao-fotos/org/lote/foto/editada.jpg?token=x",
+    "comodo": null,
+    "estado": "aguardando_decisao",
+    "falha_motivo": null,
+    "decisao": null,
+    "comentario": null
+  },
+  "foto_revisao_admin": {
+    "id": "0a6c3c55-2f6a-4f7b-9b53-1f1a2b3c4d5e",
+    "url_antes": "https://storage.example/edicao-fotos/org/lote/foto/original.jpg?token=x",
+    "url_depois": "https://storage.example/edicao-fotos/org/lote/foto/editada.jpg?token=x",
+    "comodo": null,
+    "estado": "aguardando_decisao",
+    "falha_motivo": null,
+    "decisao": null,
+    "comentario": null,
+    "avaliacao": { "veredito": "aprovar", "score": 8.5, "motivo": "Cores naturais." }
+  },
+  "lote_detalhe": {
+    "id": "7b0c7f7e-3f55-4a53-9d7c-6a1d6f0e2a10",
+    "nome": "Apto 12 — Rua das Flores",
+    "velocidade": "urgente",
+    "imovel": null,
+    "criado_em": "2026-09-16T18:00:00+00:00",
+    "fotos": [
+      {
+        "id": "0a6c3c55-2f6a-4f7b-9b53-1f1a2b3c4d5e",
+        "url_antes": "https://storage.example/edicao-fotos/org/lote/foto/original.jpg?token=x",
+        "url_depois": "https://storage.example/edicao-fotos/org/lote/foto/editada.jpg?token=x",
+        "comodo": null,
+        "estado": "aguardando_decisao",
+        "falha_motivo": null,
+        "decisao": null,
+        "comentario": null
+      }
+    ]
+  },
+  "decisao_body_rejeitar": { "decisao": "rejeitar", "comentario": "Céu artificial demais" },
+  "decisao_body_aprovar": { "decisao": "aprovar", "comentario": null },
+  "configuracoes": {
+    "tipos_edicao_ativos": ["cor_luz", "ceu"],
+    "modelo_editor_imagem": "gpt-image-2.5-sunburst",
+    "velocidade_padrao": "urgente"
+  },
+  "configuracoes_body": {
+    "tipos_edicao_ativos": ["cor_luz", "ceu", "declutter"],
+    "modelo_editor_imagem": "gpt-image-2.5-flare",
+    "velocidade_padrao": "urgente"
+  },
+  "modelo": {
+    "id": "gpt-image-2.5-sunburst",
+    "nome": "GPT Image 2.5 Sunburst",
+    "versao": "gpt-image-2.5-sunburst-2026-09-08",
+    "tag_performance": null,
+    "suporta_batch": false,
+    "nota_recomendacao": null,
+    "metricas": null
+  },
+  "erro": { "detail": "Nenhum modelo de edição configurado para a organização.", "code": "modelo_nao_configurado" }
+}

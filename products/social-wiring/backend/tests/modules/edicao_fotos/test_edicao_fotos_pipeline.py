@@ -89,13 +89,13 @@ def test_upload_stores_photos_and_enqueues_ingest(edicao) -> None:
     assert resp.status_code == 201, resp.text
     fotos = resp.json()["fotos"]
     assert [f["ordem"] for f in fotos] == [1, 2, 3]
-    assert all(f["status"] == "recebida" for f in fotos)
+    assert all(f["estado"] == "recebida" and f["url_antes"] for f in fotos)
     keys = edicao.run(edicao.backend.list_keys(bucket="edicao-fotos", prefix=f"{ORG}/{lote}/"))
     assert len(keys) == 3
     assert edicao.drain() == 3  # one ingest job per photo
     detail = edicao.http.get(f"/api/edicao-fotos/lotes/{lote}").json()
-    assert {f["status"] for f in detail["fotos"]} == {"pronta"}
-    assert detail["por_status"] == {"pronta": 3}
+    assert [f["estado"] for f in detail["fotos"]] == ["pronta"] * 3
+    assert (detail["total_fotos"], detail["estado_agregado"]) == (3, "rascunho")
 
 
 def test_upload_limits(edicao) -> None:
@@ -109,7 +109,7 @@ def test_upload_limits(edicao) -> None:
     bad_ext = edicao.upload(lote, 1, name="foto.gif", data=b"x")
     assert bad_ext.status_code == 415 and bad_ext.json()["code"] == "formato_nao_suportado"
     no_ext = edicao.http.post(
-        f"/api/edicao-fotos/lotes/{lote}/fotos", files=[("files", ("semextensao", b"x", "image/jpeg"))]
+        f"/api/edicao-fotos/lotes/{lote}/fotos", files=[("fotos", ("semextensao", b"x", "image/jpeg"))]
     )
     assert no_ext.status_code == 415
     assert edicao.repo.photos == {}  # nothing half-stored
@@ -243,13 +243,17 @@ def test_full_run_review_decide_and_zip(edicao) -> None:
     early = edicao.http.get(f"/api/edicao-fotos/lotes/{lote}/zip")
     assert early.status_code == 409 and early.json()["code"] == "lote_nao_decidido"
 
+    listed = edicao.http.get("/api/edicao-fotos/lotes").json()["items"]
+    assert [(i["estado_agregado"], i["total_fotos"], i["fotos_decididas"]) for i in listed] == [
+        ("aguardando_revisao", 2, 0)
+    ]
     review = edicao.http.get(f"/api/edicao-fotos/revisao/{lote}").json()
-    assert review["pode_ver_veredito"] is False and review["total"] == 2
-    for item in review["items"]:
+    assert len(review) == 2
+    for item in review:
         assert "avaliacao" not in item  # absent, not null
-        assert item["url_original"] and item["url_editada"]
-        assert item["decisao"] is None
-    first, second = (i["id"] for i in review["items"])
+        assert item["url_antes"] and item["url_depois"]
+        assert item["decisao"] is None and item["estado"] == "aguardando_decisao"
+    first, second = (i["id"] for i in review)
 
     no_comment = edicao.http.post(
         f"/api/edicao-fotos/revisao/{lote}/fotos/{second}/decisao", json={"decisao": "rejeitar"}
@@ -257,12 +261,13 @@ def test_full_run_review_decide_and_zip(edicao) -> None:
     assert no_comment.status_code == 422 and no_comment.json()["code"] == "comentario_obrigatorio"
 
     ok = edicao.http.post(f"/api/edicao-fotos/revisao/{lote}/fotos/{first}/decisao", json={"decisao": "aprovar"})
-    assert ok.status_code == 200 and ok.json()["foto"]["status"] == "aprovada"
+    assert ok.status_code == 200 and ok.json()["estado"] == "aprovada"
     rej = edicao.http.post(
         f"/api/edicao-fotos/revisao/{lote}/fotos/{second}/decisao",
         json={"decisao": "rejeitar", "comentario": "Céu artificial demais"},
     )
-    assert rej.status_code == 200 and rej.json()["decisao"]["comentario"] == "Céu artificial demais"
+    assert rej.status_code == 200 and rej.json()["comentario"] == "Céu artificial demais"
+    assert rej.json()["decisao"] == "rejeitar"
     assert len(edicao.repo.decisions) == 2 and len(edicao.repo.dataset) == 2
 
     zipped = edicao.http.get(f"/api/edicao-fotos/lotes/{lote}/zip")
@@ -277,6 +282,8 @@ def test_full_run_review_decide_and_zip(edicao) -> None:
     assert flip.status_code == 200
     names = zipfile.ZipFile(io.BytesIO(edicao.http.get(f"/api/edicao-fotos/lotes/{lote}/zip").content)).namelist()
     assert len(names) == 2
+    done = edicao.http.get("/api/edicao-fotos/lotes").json()["items"][0]
+    assert (done["estado_agregado"], done["fotos_decididas"]) == ("concluido", 2)
 
 
 def test_admin_review_carries_the_verdict(edicao) -> None:
@@ -288,9 +295,9 @@ def test_admin_review_carries_the_verdict(edicao) -> None:
     edicao.drain()
     for admin in ("admin", "plataforma"):
         review = edicao.as_user(admin).http.get(f"/api/edicao-fotos/revisao/{lote}").json()
-        assert review["pode_ver_veredito"] is True
-        assert review["items"][0]["avaliacao"]["recomendacao"] == "aprovar"
-        assert review["items"][0]["avaliacao"]["score"] == 8.5
+        assert review[0]["avaliacao"] == {"veredito": "aprovar", "score": 8.5, "motivo": "Cores naturais."}
+        detail = edicao.http.get(f"/api/edicao-fotos/lotes/{lote}").json()
+        assert detail["fotos"][0]["avaliacao"]["veredito"] == "aprovar"
 
 
 def test_deciding_a_photo_not_yet_reviewable_is_409(edicao) -> None:
@@ -326,5 +333,5 @@ def test_retry_only_for_failed_photos(edicao) -> None:
     assert refused.status_code == 409 and refused.json()["code"] == "foto_nao_falhou"
     edicao.run(edicao.repo.transition_photo(foto, PhotoStatus.FALHOU, detalhe={"motivo": "teste"}))
     ok = edicao.http.post(f"/api/edicao-fotos/lotes/{lote}/fotos/{foto}/retentar")
-    assert ok.status_code == 200 and ok.json()["status"] == "recebida"
+    assert ok.status_code == 200 and ok.json()["estado"] == "recebida"
     assert ok.json()["tentativas"] == 1

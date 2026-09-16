@@ -139,14 +139,23 @@ in `cost_schema`.
 ### 4.5 First consumer — social-wiring (W2, 2026-09-16)
 
 `products/social-wiring/backend/app/modules/edicao_fotos/`: routes under
-`/api/edicao-fotos` (capacidades · configuracoes · curadores · lotes ·
-revisao), authorization + org scoping in `deps.py` (the engine's service-role
+`/api/edicao-fotos` (capacidades · configuracoes · curadores · modelos ·
+lotes · revisao), authorization + org scoping in `deps.py` (the engine's service-role
 client bypasses RLS, so visibility is enforced there), the worker behind
 `EDICAO_FOTOS_WORKER_ENABLED` (default OFF), and the in-app batch-ready
 notifier. Curator grants use `domain.permissions`' `list_grants` /
 `add_grant` / `remove_grant`. Tests drive the routes and the real seed
 Worker on `InMemoryPhotoEditingRepository(id_factory=...)` (UUID ids for
-UUID path params).
+UUID path params). List views read `photo_states_for_batches` (one paged
+read per page, not one per batch).
+
+**Wire shapes are the seed FE's.** Responses match the types in
+`seed/lib/frontend/src/photo-editing/hooks.ts` (`LoteResumo`,
+`LoteDetalhe`, `FotoRevisao`, `OrgConfiguracoes`, `ModeloCatalogoItem`),
+pinned by `seed/lib/frontend/src/photo-editing/contract.fixture.json`, which
+the backend replays against its live routes. `compute_capabilities` emits
+`dashboard ∈ {"platform", "org", None}` — the FE's literal set. Errors use
+the seed's flat `{"detail", "code"}` shape.
 
 ## 5. Invariants
 

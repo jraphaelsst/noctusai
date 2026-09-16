@@ -186,7 +186,7 @@ class Harness:
         return self.run(_go())
 
     def upload(self, lote_id: str, count: int = 1, *, name: str = "foto.jpg", data: bytes = JPEG):
-        files = [("files", (f"{i}-{name}", data, "image/jpeg")) for i in range(count)]
+        files = [("fotos", (f"{i}-{name}", data, "image/jpeg")) for i in range(count)]
         return self.http.post(f"/api/edicao-fotos/lotes/{lote_id}/fotos", files=files)
 
 

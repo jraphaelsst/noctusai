@@ -29,7 +29,7 @@ def test_admin_and_platform_capabilities(edicao) -> None:
     admin = edicao.as_user("admin").http.get("/api/edicao-fotos/capacidades").json()
     assert admin["pode_ver_veredito"] and admin["pode_aprovar_regras"] and admin["dashboard"] == "org"
     platform = edicao.as_user("plataforma").http.get("/api/edicao-fotos/capacidades").json()
-    assert platform["dashboard"] == "plataforma" and platform["pode_ativar_guia"] is True
+    assert platform["dashboard"] == "platform" and platform["pode_ativar_guia"] is True
 
 
 def test_curator_without_org_role_gets_capabilities_but_no_batches(edicao) -> None:
@@ -48,11 +48,21 @@ def test_no_model_reports_sem_modelo(edicao) -> None:
 # --- org settings -----------------------------------------------------------
 
 
-def test_org_settings_default_and_catalog(edicao) -> None:
-    body = edicao.as_user("gerente").http.get("/api/edicao-fotos/configuracoes").json()
-    assert body["org_id"] == ORG and body["modelo_editor_id"] is None
-    assert body["tipos_edicao_ativos"] == []
-    assert {m["id"] for m in body["modelos_edicao"]} >= {EDIT_MODEL}
+def test_org_settings_default_readable_by_members(edicao) -> None:
+    for user in ("gerente", "corretor"):
+        body = edicao.as_user(user).http.get("/api/edicao-fotos/configuracoes").json()
+        assert body["org_id"] == ORG and body["modelo_editor_imagem"] is None
+        assert body["tipos_edicao_ativos"] == []
+        assert body["velocidade_padrao"] == "urgente" and body["segue_padrao_plataforma"] is True
+
+
+def test_modelos_catalog(edicao) -> None:
+    models = edicao.as_user("corretor").http.get("/api/edicao-fotos/modelos").json()
+    by_id = {m["id"]: m for m in models}
+    assert EDIT_MODEL in by_id
+    assert by_id[EDIT_MODEL]["suporta_batch"] is False
+    assert by_id[EDIT_MODEL]["versao"] == f"{EDIT_MODEL}-2026-09-08"
+    assert by_id[EDIT_MODEL]["metricas"] is None
 
 
 def test_org_settings_update_persists(edicao) -> None:
@@ -60,8 +70,8 @@ def test_org_settings_update_persists(edicao) -> None:
         "/api/edicao-fotos/configuracoes",
         json={
             "tipos_edicao_ativos": ["staging_virtual", "ceu", "ceu"],
-            "modelo_editor_id": EDIT_MODEL,
-            "velocidade_override": "urgente",
+            "modelo_editor_imagem": EDIT_MODEL,
+            "velocidade_padrao": "urgente",
             "notificacoes_ativas": False,
         },
     )
@@ -69,23 +79,27 @@ def test_org_settings_update_persists(edicao) -> None:
     saved = edicao.run(edicao.repo.get_org_settings(ORG))
     assert saved.tipos_edicao_ativos == (EditType.STAGING_VIRTUAL, EditType.CEU)
     assert saved.modelo_editor_id == EDIT_MODEL
-    assert saved.velocidade_override is Speed.URGENTE and saved.notificacoes_ativas is False
+    # "urgente" IS the platform default → the org follows the platform.
+    assert saved.velocidade_override is None and saved.notificacoes_ativas is False
+    assert resp.json()["velocidade_padrao"] == "urgente"
 
 
-def test_org_settings_keep_owner_limits(edicao) -> None:
-    edicao.configure_org(limite_fotos_por_lote=40)
+def test_org_settings_keep_owner_limits_and_omitted_switches(edicao) -> None:
+    edicao.configure_org(limite_fotos_por_lote=40, notificacoes_ativas=False)
     edicao.as_user("admin").http.put(
         "/api/edicao-fotos/configuracoes", json={"tipos_edicao_ativos": ["ceu"]}
     )
-    assert edicao.run(edicao.repo.get_org_settings(ORG)).limite_fotos_por_lote == 40
+    saved = edicao.run(edicao.repo.get_org_settings(ORG))
+    assert saved.limite_fotos_por_lote == 40
+    assert saved.notificacoes_ativas is False  # the FE body omits it
 
 
 @pytest.mark.parametrize(
     "body,code",
     [
-        ({"modelo_editor_id": "gpt-inventado"}, "modelo_desconhecido"),
-        ({"modelo_editor_id": EDIT_MODEL, "velocidade_override": "economico"}, "economico_indisponivel"),
-        ({"velocidade_override": "economico"}, "economico_indisponivel"),
+        ({"modelo_editor_imagem": "gpt-inventado"}, "modelo_desconhecido"),
+        ({"modelo_editor_imagem": EDIT_MODEL, "velocidade_padrao": "economico"}, "economico_indisponivel"),
+        ({"velocidade_padrao": "economico"}, "economico_indisponivel"),
     ],
 )
 def test_org_settings_refusals(edicao, body, code) -> None:

@@ -13,17 +13,23 @@ storage bucket, notification fan-out and the worker lifecycle. Contract:
     services/worker.py      seed Worker, behind EDICAO_FOTOS_WORKER_ENABLED (default OFF)
     services/notifier.py    batch-ready in-app notification
     services/vista_fotos.py Vista gallery → batch
-    routers/                capacidades · configuracoes · curadores · lotes · revisao
+    services/review.py      FotoRevisao rows (verdict read only for admins)
+    routers/                capacidades · configuracoes · curadores · modelos · lotes · revisao
+
+Response shapes are the seed FE hook types
+(`seed/lib/frontend/src/photo-editing/hooks.ts`), pinned by
+`seed/lib/frontend/src/photo-editing/contract.fixture.json`.
 
 Routes (all under ``/api/edicao-fotos``; every one requires auth → 401):
     GET    /capacidades                              member ∨ platform admin ∨ curator
-    GET    /configuracoes                            agency admin ∨ platform admin
+    GET    /configuracoes                            member (read-only summary)
     PUT    /configuracoes                            agency admin ∨ platform admin
     GET    /configuracoes/plataforma                 platform admin
     PUT    /configuracoes/plataforma                 platform admin
     GET    /curadores                                platform admin
     POST   /curadores                                platform admin
     DELETE /curadores/{user_id}                      platform admin
+    GET    /modelos                                  member (catalog; metrics/notes null until W8)
     GET    /lotes                                    member (corretor: own)
     POST   /lotes                                    member
     GET    /lotes/{id}                               member, batch visible
@@ -36,7 +42,7 @@ Routes (all under ``/api/edicao-fotos``; every one requires auth → 401):
     POST   /revisao/{lote_id}/fotos/{foto_id}/decisao member, batch visible
 
 Not in R1 here (later slices): reference pool, style guides, learning rules,
-model catalog/notes, dashboard, email/WhatsApp notifications, Econômico (C8).
+model metrics/notes, dashboard, email/WhatsApp notifications, Econômico (C8).
 
 Seam contract
 ─────────────
@@ -60,6 +66,7 @@ def register() -> Any:
         configuracoes,
         curadores,
         lotes,
+        modelos,
         revisao,
     )
 
@@ -68,6 +75,7 @@ def register() -> Any:
             capacidades.router,
             configuracoes.router,
             curadores.router,
+            modelos.router,
             lotes.router,
             revisao.router,
         ],

@@ -34,10 +34,14 @@ class DecisaoBody(StrictHttpModel):
 
 
 class OrgSettingsBody(StrictHttpModel):
+    """FE `OrgConfiguracoes` (hooks.ts). `velocidade_padrao` equal to the
+    platform default (or null) means "follow the platform"; `notificacoes_ativas`
+    omitted keeps the stored value."""
+
     tipos_edicao_ativos: list[EditTypeLiteral] = Field(default_factory=list)
-    modelo_editor_id: Optional[str] = Field(default=None, max_length=120)
-    velocidade_override: Optional[SpeedLiteral] = None
-    notificacoes_ativas: bool = True
+    modelo_editor_imagem: Optional[str] = Field(default=None, max_length=120)
+    velocidade_padrao: Optional[SpeedLiteral] = None
+    notificacoes_ativas: Optional[bool] = None
 
 
 class PlatformSettingsBody(StrictHttpModel):

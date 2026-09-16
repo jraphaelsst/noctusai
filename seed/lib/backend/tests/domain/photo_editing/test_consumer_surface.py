@@ -199,3 +199,40 @@ def test_in_memory_id_factory_mints_consumer_ids() -> None:
         assert minted == ["lote", "foto"]
 
     run(scenario())
+
+
+def test_photo_states_for_batches_in_memory_and_supabase() -> None:
+    from noctusai_lib.domain.photo_editing import PhotoStatus
+
+    async def scenario(repo, fill_defaults) -> None:
+        a = await repo.create_batch(org_id=ORG, nome="a", criado_por=USER, origem="upload",
+                                    velocidade=Speed.URGENTE)
+        b = await repo.create_batch(org_id=ORG, nome="b", criado_por=USER, origem="upload",
+                                    velocidade=Speed.URGENTE)
+        empty = await repo.create_batch(org_id=ORG, nome="c", criado_por=USER, origem="upload",
+                                        velocidade=Speed.URGENTE)
+        photos = [
+            await repo.add_photo(org_id=ORG, lote_id=lote.id, ordem=i, storage_path_original=f"p{i}")
+            for i, lote in enumerate((a, a, b), start=1)
+        ]
+        fill_defaults()
+        await repo.transition_photo(photos[0].id, PhotoStatus.NORMALIZANDO)
+        states = await repo.photo_states_for_batches([a.id, b.id, empty.id])
+        assert states == {
+            a.id: [PhotoStatus.NORMALIZANDO, PhotoStatus.RECEBIDA],
+            b.id: [PhotoStatus.RECEBIDA],
+            empty.id: [],
+        }
+        assert await repo.photo_states_for_batches([]) == {}
+
+    run(scenario(InMemoryPhotoEditingRepository(now=Clock()), lambda: None))
+
+    client = SchemaStableClient()
+
+    def fill() -> None:
+        # Mock rows carry no DB defaults; seed the ones Postgres would fill.
+        for row in client.sw("fotos_fotos")._data:
+            row.setdefault("status", "recebida")
+            row.setdefault("tentativas", 0)
+
+    run(scenario(SupabasePhotoEditingRepository(client, now=Clock()), fill))

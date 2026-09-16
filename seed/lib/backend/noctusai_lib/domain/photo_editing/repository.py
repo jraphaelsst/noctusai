@@ -81,6 +81,9 @@ _PHOTO_MUTABLE = frozenset(
         "falha_motivo",
     }
 )
+#: Ids per `.in_()` filter — keeps the query string far from URL limits.
+_IN_CHUNK = 100
+
 _PLATFORM_MUTABLE = frozenset(
     {"velocidade_default", "notificacoes_globais_ativas", "preco_storage_gb_mes_usd"}
 )
@@ -145,6 +148,13 @@ class PhotoEditingRepository(Protocol):
     ) -> Photo: ...
     async def get_photo(self, foto_id: str) -> Photo | None: ...
     async def list_photos(self, lote_id: str) -> list[Photo]: ...
+    async def photo_states_for_batches(
+        self, lote_ids: list[str]
+    ) -> dict[str, list[PhotoStatus]]:
+        """Every photo status per batch (order unspecified), for list views — one read for the
+        whole page instead of one ``list_photos`` per batch. Batches with
+        no photos map to ``[]``."""
+        ...
     async def update_photo(self, foto_id: str, **changes: Any) -> Photo: ...
     async def transition_photo(
         self,
@@ -419,6 +429,15 @@ class InMemoryPhotoEditingRepository:
 
     async def get_photo(self, foto_id: str) -> Photo | None:
         return self.photos.get(foto_id)
+
+    async def photo_states_for_batches(
+        self, lote_ids: list[str]
+    ) -> dict[str, list[PhotoStatus]]:
+        out: dict[str, list[PhotoStatus]] = {lid: [] for lid in lote_ids}
+        for photo in sorted(self.photos.values(), key=lambda p: p.ordem):
+            if photo.lote_id in out:
+                out[photo.lote_id].append(PhotoStatus(photo.status))
+        return out
 
     async def list_photos(self, lote_id: str) -> list[Photo]:
         return sorted(
@@ -1159,6 +1178,35 @@ class SupabasePhotoEditingRepository:
             self._t("fotos_fotos").select("*").eq("lote_id", lote_id).order("ordem")
         )
         return [_photo(r) for r in rows]
+
+    async def photo_states_for_batches(
+        self, lote_ids: list[str]
+    ) -> dict[str, list[PhotoStatus]]:
+        from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
+        out: dict[str, list[PhotoStatus]] = {lid: [] for lid in lote_ids}
+        # `.in_()` values ride in the URL: chunk the ids; page each chunk,
+        # since 100 batches × 100 photos passes PostgREST's 1 000-row cap.
+        ids = list(out)
+        for start in range(0, len(ids), _IN_CHUNK):
+            chunk = ids[start : start + _IN_CHUNK]
+
+            def fetch(lo: int, hi: int, chunk: list[str] = chunk) -> list[dict[str, Any]]:
+                result = (
+                    self._t("fotos_fotos")
+                    .select("id, lote_id, status")
+                    .in_("lote_id", chunk)
+                    .order("id")
+                    .range(lo, hi)
+                    .execute()
+                )
+                return getattr(result, "data", None) or []
+
+            for row in iter_paged_rows(fetch, label=f"fotos_fotos states for {len(chunk)} lotes"):
+                lote = str(row["lote_id"])
+                if lote in out:
+                    out[lote].append(PhotoStatus(row["status"]))
+        return out
 
     async def update_photo(self, foto_id: str, **changes: Any) -> Photo:
         _check_fields("update_photo", changes, _PHOTO_MUTABLE)

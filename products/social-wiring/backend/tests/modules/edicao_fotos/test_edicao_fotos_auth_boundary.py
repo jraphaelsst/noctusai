@@ -40,7 +40,7 @@ def test_module_is_mounted_on_the_app() -> None:
 
 def test_every_route_requires_auth(anon_client) -> None:
     routes = _routes()
-    assert len(routes) == 18, sorted(routes)
+    assert len(routes) == 19, sorted(routes)
     for method, path in sorted(routes):
         # No body at all: a JSON body on the multipart route (or a missing
         # one on a JSON route) must not be what decides the status.
@@ -51,13 +51,14 @@ def test_every_route_requires_auth(anon_client) -> None:
 # (method, path, body, forbidden user) — one row per route.
 _FORBIDDEN = [
     ("get", "/api/edicao-fotos/capacidades", None, "viewer"),
-    ("get", "/api/edicao-fotos/configuracoes", None, "corretor"),
+    ("get", "/api/edicao-fotos/configuracoes", None, "viewer"),
     ("put", "/api/edicao-fotos/configuracoes", {}, "corretor"),
     ("get", "/api/edicao-fotos/configuracoes/plataforma", None, "admin"),
     ("put", "/api/edicao-fotos/configuracoes/plataforma", {}, "admin"),
     ("get", "/api/edicao-fotos/curadores", None, "admin"),
     ("post", "/api/edicao-fotos/curadores", {"user_id": _ID}, "admin"),
     ("delete", "/api/edicao-fotos/curadores/{user_id}", None, "curador"),
+    ("get", "/api/edicao-fotos/modelos", None, "viewer"),
     ("get", "/api/edicao-fotos/lotes", None, "viewer"),
     ("post", "/api/edicao-fotos/lotes", {"nome": "x"}, "viewer"),
     ("get", "/api/edicao-fotos/lotes/{lote_id}", None, "viewer"),
@@ -81,7 +82,7 @@ def test_role_matrix_denies(edicao, method, path, body, user) -> None:
     edicao.as_user(user)
     kwargs = {}
     if body == "files":
-        kwargs["files"] = [("files", ("a.jpg", b"x", "image/jpeg"))]
+        kwargs["files"] = [("fotos", ("a.jpg", b"x", "image/jpeg"))]
     elif body is not None:
         kwargs["json"] = body
     resp = getattr(edicao.http, method)(_concrete(path), **kwargs)

@@ -49,7 +49,9 @@ async def compute_capabilities(
         "pode_gerir_pool": admin or is_curator,
         "pode_aprovar_regras": admin or agency_admin,
         "pode_ativar_guia": admin or is_curator,
-        "dashboard": "plataforma" if admin else ("org" if agency_admin else None),
+        # 'platform' | 'org' | None — the literal set the seed FE
+        # (`photo-editing/permissions.ts`) is typed against.
+        "dashboard": "platform" if admin else ("org" if agency_admin else None),
         "modelo_configurado": bool(model),
         "economico_disponivel": economico,
         "economico_bloqueado_motivo": motivo,

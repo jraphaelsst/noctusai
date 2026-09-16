@@ -1,21 +1,28 @@
-"""Response shapes. Enum values are the pt-BR literals the tables store.
+"""Response shapes — the SAME shapes the seed FE hook factory is typed
+against (`seed/lib/frontend/src/photo-editing/hooks.ts`), pinned by
+`seed/lib/frontend/src/photo-editing/contract.fixture.json` and replayed by
+`tests/modules/edicao_fotos/test_edicao_fotos_contract_fixture.py`.
 
-🔴 No presenter here ever reads an evaluation: the AI verdict is added by
-the review router ONLY for callers allowed to see it (contract §1)."""
+Enum values are the pt-BR literals the tables store.
+
+🔴 The AI verdict (`avaliacao`) is added by `foto_revisao_out` ONLY when the
+caller passes an evaluation — the routers fetch one only for callers allowed
+to see it (contract §1). Absent key, never `null`, for everyone else."""
 from __future__ import annotations
 
-from collections import Counter
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
-from noctusai_lib.domain.photo_editing import Batch, Photo
+from noctusai_lib.domain.photo_editing import Batch, Photo, PhotoStatus
 from noctusai_lib.domain.photo_editing.types import (
+    BatchStatus,
     Evaluation,
     OrgSettings,
     PlatformSettings,
     ReviewDecision,
 )
 
+_DECIDED = {PhotoStatus.APROVADA, PhotoStatus.REJEITADA}
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value is not None else None
@@ -25,74 +32,107 @@ def _v(value: Any) -> Any:
     return getattr(value, "value", value)
 
 
-def batch_out(batch: Batch, photos: Optional[list[Photo]] = None) -> dict[str, Any]:
-    out: dict[str, Any] = {
+def estado_agregado(batch: Batch, states: Iterable[PhotoStatus]) -> str:
+    """One badge for the list view, derived from batch + photo states.
+
+    rascunho            the batch was not submitted yet
+    processando         submitted, photos still in the pipeline
+    aguardando_revisao  processed; at least one photo awaits a decision
+    com_falhas          everything decided, but some photos failed
+    concluido           everything decided, no failures
+    """
+    status = BatchStatus(batch.status)
+    if status is BatchStatus.RASCUNHO:
+        return "rascunho"
+    if status is not BatchStatus.PRONTO:
+        return "processando"
+    states = [PhotoStatus(s) for s in states]
+    if any(s is PhotoStatus.AGUARDANDO_DECISAO for s in states):
+        return "aguardando_revisao"
+    if any(s is PhotoStatus.FALHOU for s in states):
+        return "com_falhas"
+    return "concluido"
+
+
+def _imovel(batch: Batch) -> Optional[dict[str, Any]]:
+    if not batch.imovel_codigo:
+        return None
+    return {"org_id": str(batch.imovel_org_id), "codigo": batch.imovel_codigo}
+
+
+def lote_resumo_out(batch: Batch, states: list[PhotoStatus]) -> dict[str, Any]:
+    """FE `LoteResumo` (+ `status`, the raw batch state)."""
+    return {
         "id": str(batch.id),
         "nome": batch.nome,
-        "status": _v(batch.status),
+        "criado_em": _iso(batch.created_at),
+        "imovel": _imovel(batch),
         "velocidade": _v(batch.velocidade),
-        "origem": batch.origem,
-        "criado_por": str(batch.criado_por),
-        "imovel": (
-            {"org_id": str(batch.imovel_org_id), "codigo": batch.imovel_codigo}
-            if batch.imovel_codigo
-            else None
-        ),
-        "modelo_editor_id": batch.modelo_editor_id,
-        "created_at": _iso(batch.created_at),
-        "submetido_at": _iso(batch.submetido_at),
-        "pronto_at": _iso(batch.pronto_at),
+        "estado_agregado": estado_agregado(batch, states),
+        "total_fotos": len(states),
+        "fotos_decididas": sum(1 for s in states if PhotoStatus(s) in _DECIDED),
+        "status": _v(batch.status),
     }
-    if photos is not None:
-        out["total_fotos"] = len(photos)
-        out["por_status"] = dict(Counter(_v(p.status) for p in photos))
+
+
+def lote_detalhe_out(batch: Batch, photos: list[Photo], fotos: list[dict[str, Any]]) -> dict[str, Any]:
+    """FE `LoteDetalhe` (+ the `LoteResumo` aggregates and timestamps)."""
+    return {
+        **lote_resumo_out(batch, [PhotoStatus(p.status) for p in photos]),
+        "submetido_em": _iso(batch.submetido_at),
+        "pronto_em": _iso(batch.pronto_at),
+        "fotos": fotos,
+    }
+
+
+def foto_revisao_out(
+    photo: Photo,
+    *,
+    url_antes: Optional[str],
+    url_depois: Optional[str],
+    decision: Optional[ReviewDecision],
+    evaluation: Optional[Evaluation] = None,
+    include_verdict: bool = False,
+) -> dict[str, Any]:
+    """FE `FotoRevisao` (+ `ordem`, `tentativas`, `vista_codigo`)."""
+    out: dict[str, Any] = {
+        "id": str(photo.id),
+        "ordem": photo.ordem,
+        "url_antes": url_antes,
+        "url_depois": url_depois,
+        "comodo": None,
+        "estado": _v(photo.status),
+        "falha_motivo": photo.falha_motivo,
+        "decisao": _v(decision.decisao) if decision else None,
+        "comentario": decision.comentario if decision else None,
+        "tentativas": photo.tentativas,
+        "vista_codigo": photo.vista_codigo,
+    }
+    if include_verdict:
+        out["avaliacao"] = (
+            {
+                "veredito": _v(evaluation.recomendacao),
+                "score": float(evaluation.score),
+                "motivo": evaluation.motivo or "",
+            }
+            if evaluation is not None
+            else None
+        )
     return out
 
 
-def photo_out(photo: Photo) -> dict[str, Any]:
+def org_configuracoes_out(settings: OrgSettings, platform: PlatformSettings) -> dict[str, Any]:
+    """FE `OrgConfiguracoes` (+ org_id, the raw override, notificacoes, limites).
+
+    `velocidade_padrao` is the EFFECTIVE speed: the org override when set,
+    else the platform default."""
+    effective = settings.velocidade_override or platform.velocidade_default
     return {
-        "id": str(photo.id),
-        "ordem": photo.ordem,
-        "status": _v(photo.status),
-        "tentativas": photo.tentativas,
-        "falha_motivo": photo.falha_motivo,
-        "vista_codigo": photo.vista_codigo,
-        "largura": photo.largura_original,
-        "altura": photo.altura_original,
-        "editada": bool(photo.storage_path_editada),
-    }
-
-
-def decision_out(decision: Optional[ReviewDecision]) -> Optional[dict[str, Any]]:
-    if decision is None:
-        return None
-    return {
-        "id": str(decision.id),
-        "decisao": _v(decision.decisao),
-        "comentario": decision.comentario,
-        "decidido_por": str(decision.decidido_por),
-        "created_at": _iso(decision.created_at),
-    }
-
-
-def evaluation_out(evaluation: Optional[Evaluation]) -> Optional[dict[str, Any]]:
-    if evaluation is None:
-        return None
-    return {
-        "recomendacao": _v(evaluation.recomendacao),
-        "score": float(evaluation.score),
-        "motivo": evaluation.motivo,
-        "modelo_id": evaluation.modelo_id,
-        "modelo_versao": evaluation.modelo_versao,
-    }
-
-
-def org_settings_out(settings: OrgSettings) -> dict[str, Any]:
-    return {
-        "org_id": str(settings.org_id),
         "tipos_edicao_ativos": [_v(t) for t in settings.tipos_edicao_ativos],
-        "modelo_editor_id": settings.modelo_editor_id,
-        "velocidade_override": _v(settings.velocidade_override),
+        "modelo_editor_imagem": settings.modelo_editor_id,
+        "velocidade_padrao": _v(effective),
+        "org_id": str(settings.org_id),
+        "segue_padrao_plataforma": settings.velocidade_override is None,
         "notificacoes_ativas": settings.notificacoes_ativas,
         "limites": {
             "fotos_por_lote": settings.limite_fotos_por_lote,
@@ -107,6 +147,21 @@ def platform_settings_out(settings: PlatformSettings) -> dict[str, Any]:
         "velocidade_default": _v(settings.velocidade_default),
         "notificacoes_globais_ativas": settings.notificacoes_globais_ativas,
         "preco_storage_gb_mes_usd": str(price) if price is not None else None,
+    }
+
+
+def modelo_out(entry: Any) -> dict[str, Any]:
+    """FE `ModeloCatalogoItem`. Live metrics and the AI-written notes are
+    the model-notes slice (W8) — `null` until then, which the FE type
+    already allows."""
+    return {
+        "id": entry.id,
+        "nome": entry.label,
+        "versao": f"{entry.id}{entry.snapshot}" if entry.snapshot else entry.id,
+        "tag_performance": None,
+        "suporta_batch": bool(entry.supports_batch),
+        "nota_recomendacao": None,
+        "metricas": None,
     }
 
 

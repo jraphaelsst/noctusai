@@ -30,7 +30,7 @@ def test_agency_admin_and_platform_admin() -> None:
     assert admin["pode_gerir_pool"] is False
     plat = caps(Actor(user_id="p", org_id=None, org_role=None, is_platform_admin=True))
     assert (plat["pode_gerir_pool"], plat["pode_ativar_guia"], plat["dashboard"]) == (
-        True, True, "plataforma")
+        True, True, "platform")
 
 
 def test_curator_grant_manages_pool_only() -> None:
