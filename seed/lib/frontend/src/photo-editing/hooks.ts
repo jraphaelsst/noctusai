@@ -146,7 +146,7 @@ export interface LoteImovelRef {
  * compute + return a differently-named/shaped field — if `GET /lotes` ships
  * something else, update this type + `Lotes.tsx`'s badge mapping together.
  */
-export type EstadoLoteAgregado = 'processando' | 'aguardando_revisao' | 'concluido' | 'com_falhas';
+export type EstadoLoteAgregado = 'rascunho' | 'processando' | 'aguardando_revisao' | 'concluido' | 'com_falhas';
 
 /** One row from `GET /lotes` (contract §3) — batch list. */
 export interface LoteResumo {

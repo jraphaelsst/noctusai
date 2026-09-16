@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useLotes, type EstadoLoteAgregado, type LoteResumo } from "@/hooks/useEdicaoFotos";
 
 const ESTADO_LABEL: Record<EstadoLoteAgregado, string> = {
+  rascunho: "Rascunho",
   processando: "Processando",
   aguardando_revisao: "Aguardando revisão",
   concluido: "Concluído",
@@ -28,6 +29,7 @@ const ESTADO_LABEL: Record<EstadoLoteAgregado, string> = {
 };
 
 const ESTADO_VARIANT: Record<EstadoLoteAgregado, "default" | "secondary" | "destructive" | "outline"> = {
+  rascunho: "outline",
   processando: "secondary",
   aguardando_revisao: "default",
   concluido: "outline",
