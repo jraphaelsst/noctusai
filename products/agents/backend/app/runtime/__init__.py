@@ -92,7 +92,9 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
 
     from app.runtime.academia_api import make_academia_api
     from app.runtime.claude_runtime import DEFAULT_CLI_PATH, ClaudeAgentSdkRuntime
+    from app.runtime.slots import get_slot_pool
     from app.stores.approvals import get_approval_store
+    from app.stores.transcripts import get_transcript_store
     from noctusai_lib.config.product_urls import resolve_product_url
 
     secrets = getattr(settings, "approval_assertion_secrets_list", []) or []
@@ -112,6 +114,13 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
         # shared Supabase table in every real deploy (see
         # `get_approval_broker`'s identical call, just above).
         approvals=get_approval_store(settings),
+        # Contract §E.11 — both process singletons (mirrors
+        # `get_approval_broker`'s shape): the SAME SlotPool leases every
+        # turn this process serves, and the SAME TranscriptStore both
+        # writes durable transcripts (session_store) and reads them back
+        # (the resume decision), like the approval broker's store.
+        slot_pool=get_slot_pool(settings),
+        transcripts=get_transcript_store(settings),
         approval_use_window_seconds=int(
             getattr(settings, "approval_use_window_seconds", 120) or 120
         ),

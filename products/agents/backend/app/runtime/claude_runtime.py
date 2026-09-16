@@ -31,12 +31,27 @@ exercise :class:`~app.runtime.fake_runtime.FakeAgentRuntime` never pay for
 it). The launch-options test in ``tests/runtime/`` DOES import this
 module directly (it asserts the options shape without spawning a
 process), so the package must still be installed wherever tests run.
+
+**Contract §E.11 (per-conversation isolation, supersedes §E.5's ``user``/
+``env``/``resume``/``system_prompt``, per the contract's 2026-09-15 note).**
+Every real turn now runs under a leased :class:`~app.runtime.slots.TurnSlot`
+(``try_reserve()`` delegates to the injected
+:class:`~app.runtime.slots.SlotPool`); :func:`build_launch_options` pins
+``user``/``env`` to that slot, moves the persona text off argv into a
+slot-owned ``append.md`` handoff file (:func:`_write_turn_handoff`), and
+wires an injected :class:`~app.runtime.transcript_mirror.ConversationTranscriptMirror`
+as ``session_store``. ``ClaudeAgentSdkRuntime._resolve_resume`` is the one
+place that decides whether ``ctx.sdk_session_id`` is a USABLE resume
+target — never a bare passthrough — reading the injected
+:class:`~app.stores.transcripts.TranscriptStore`.
 """
 from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import Any
@@ -46,9 +61,10 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    MirrorErrorMessage,
     PermissionResultAllow,
     PermissionResultDeny,
-    ProcessError,
+    ResultError,
     ResultMessage,
     StreamEvent,
     TextBlock,
@@ -59,7 +75,9 @@ from claude_agent_sdk import (
 
 from app.runtime import gate
 from app.runtime.academia_api import AcademiaApi, AcademiaNotFoundError
+from app.runtime.slots import SlotPool, TurnSlot
 from app.runtime.tools import build_academia_tools
+from app.runtime.transcript_mirror import ConversationTranscriptMirror
 from app.runtime.types import (
     AgentEvent,
     AgentSpec,
@@ -68,10 +86,22 @@ from app.runtime.types import (
     approval_event_payload,
 )
 from app.stores.approvals import ApprovalStore
+from app.stores.transcripts import TranscriptStore
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["build_launch_options", "ClaudeAgentSdkRuntime"]
+
+#: Contract §E.11 "Launch options" — the persona/JULIA.md text goes in a
+#: group-only file inside the slot's handoff dir, never on argv.
+_HANDOFF_APPEND_FILENAME = "append.md"
+
+#: Contract §E.11 "Inbound": "uvicorn writes ... mode 0640, group
+#: julia-cli-K" (handoff files); the dir itself is 0750 (the slot script
+#: and the CLI, running as K, need to read/exec into it; nothing else can).
+_HANDOFF_DIR_MODE = 0o750
+_HANDOFF_FILE_MODE = 0o640
+_HANDOFF_OPEN_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
 
 #: Contract §E.5 — the `env -i` wrapper's location inside the image.
 DEFAULT_CLI_PATH = "/app/bin/julia-cli-exec"
@@ -120,11 +150,14 @@ def build_launch_options(
     approval_secret: str,
     can_use_tool: Any,
     approvals: ApprovalStore,
+    slot: TurnSlot,
+    mirror: ConversationTranscriptMirror,
+    resume: str | None,
     cli_path: str = DEFAULT_CLI_PATH,
     plugin_path: str,
     approval_use_window_seconds: int = 120,
 ) -> ClaudeAgentOptions:
-    """Build the exact §E.5 ``ClaudeAgentOptions`` for one turn — pure,
+    """Build the exact ``ClaudeAgentOptions`` for one turn — pure,
     synchronous, no subprocess spawned. ``can_use_tool`` is threaded in
     (rather than built here) so tests can assert this factory's shape
     with a stub callback, independently of the real gate + broker wiring.
@@ -143,6 +176,18 @@ def build_launch_options(
     ``can_use_tool`` (gate → broker), which is the one and only place a
     write is allowed to proceed. ``tests/runtime/test_claude_runtime.py``
     asserts no ESCRITA name ever appears in ``allowed_tools``.
+
+    **Contract §E.11 "Launch options" (supersedes §E.5's ``user``/``env``/
+    ``resume``/``system_prompt``).** ``user``/``env`` pin the leased
+    ``slot``; the persona (``spec.prompt_append``) never appears here —
+    it is written to the slot's own ``append.md`` handoff file by
+    :func:`_write_turn_handoff` and referenced only via
+    ``extra_args["append-system-prompt-file"]``, because
+    ``/proc/<pid>/cmdline`` is readable by every uid. ``resume`` is the
+    caller's OWN transcript-usability decision
+    (``ClaudeAgentSdkRuntime._resolve_resume``) — never a bare
+    ``ctx.sdk_session_id`` passthrough, since an unusable transcript must
+    never reach the CLI as a resume attempt.
     """
     allowed_tools = list(BASE_TOOLS) + [
         f"mcp__academia__{n}" for n in _leitura_short_names()
@@ -152,10 +197,11 @@ def build_launch_options(
         cli_path=cli_path,
         tools=list(BASE_TOOLS),
         setting_sources=[],
-        system_prompt={
-            "type": "preset",
-            "preset": "claude_code",
-            "append": spec.prompt_append,
+        system_prompt={"type": "preset", "preset": "claude_code"},
+        extra_args={
+            "append-system-prompt-file": os.path.join(
+                slot.handoff_dir, _HANDOFF_APPEND_FILENAME
+            )
         },
         plugins=[{"type": "local", "path": plugin_path}],
         skills=list(spec.skills),
@@ -174,13 +220,82 @@ def build_launch_options(
         allowed_tools=allowed_tools,
         disallowed_tools=list(DISALLOWED_TOOLS),
         can_use_tool=can_use_tool,
-        env={},
-        user="julia-cli",
+        env={"CLAUDE_CONFIG_DIR": slot.config_dir},
+        user=slot.user_name,
         include_partial_messages=True,
         max_turns=spec.max_turns,
-        resume=ctx.sdk_session_id,
+        resume=resume,
         model=spec.model,
+        session_store=mirror,
+        session_store_flush="batched",
     )
+
+
+def _ensure_handoff_dir(handoff_dir: str, gid: int) -> None:
+    """Contract §E.11 "Launch options" / "Inbound": the per-slot handoff
+    dir under ``/run/julia-handoff`` is uvicorn-owned (mode 0711) but its
+    per-slot subdirectory does not exist until uvicorn creates it here —
+    mode 0750, group ``gid`` (the slot's own gid, contract: "uid and gid
+    2000+K"). Idempotent: the dir survives across turns (only its
+    ENTRIES are unlinked by :meth:`~app.runtime.slots.TurnSlot.release`),
+    so a later turn on the same slot just re-asserts mode/group."""
+    os.makedirs(handoff_dir, exist_ok=True)
+    os.chmod(handoff_dir, _HANDOFF_DIR_MODE)
+    os.chown(handoff_dir, -1, gid)
+
+
+def _write_handoff_file(path: str, data: bytes, *, gid: int) -> None:
+    """Creates exactly ONE handoff file with the §E.11 flags/mode/group:
+    ``O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW``, mode 0640, group ``gid``.
+
+    ``O_EXCL`` makes an already-existing path a hard, loud failure — the
+    slot was swept clean before this turn (contract invariant I2), so a
+    survivor here is a real invariant breach, never a race to paper over
+    by reusing or overwriting it."""
+    try:
+        fd = os.open(path, _HANDOFF_OPEN_FLAGS, _HANDOFF_FILE_MODE)
+    except FileExistsError as exc:
+        raise RuntimeError(
+            f"handoff file already exists at {path!r} — the slot was not "
+            "swept clean before this turn (contract §E.11 invariant I2); "
+            "refusing to reuse or overwrite it"
+        ) from exc
+    try:
+        os.fchmod(fd, _HANDOFF_FILE_MODE)
+        os.fchown(fd, -1, gid)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+    except Exception:
+        with suppress(FileNotFoundError):
+            os.unlink(path)
+        raise
+
+
+def _write_turn_handoff(
+    slot: TurnSlot,
+    *,
+    persona_text: str,
+    handoff_entries: list[dict[str, Any]] | None,
+    resume_session_id: str | None,
+) -> None:
+    """Writes the §E.11 handoff files for this turn's leased slot, BEFORE
+    any CLI is spawned. Never writes anything else into the handoff dir.
+
+    ``handoff_entries``/``resume_session_id`` are either both ``None`` (a
+    fresh session — only ``append.md`` is written) or both set (a usable
+    resume — ``append.md`` plus ``<resume_session_id>.jsonl``, one JSON
+    entry per line in ``seq`` order, exactly what
+    :meth:`~app.runtime.transcript_mirror.ConversationTranscriptMirror.load_for_handoff`
+    returned).
+    """
+    _ensure_handoff_dir(slot.handoff_dir, slot.uid)
+    append_path = os.path.join(slot.handoff_dir, _HANDOFF_APPEND_FILENAME)
+    _write_handoff_file(append_path, persona_text.encode("utf-8"), gid=slot.uid)
+
+    if handoff_entries is not None:
+        transcript_path = os.path.join(slot.handoff_dir, f"{resume_session_id}.jsonl")
+        body = "".join(json.dumps(entry) + "\n" for entry in handoff_entries)
+        _write_handoff_file(transcript_path, body.encode("utf-8"), gid=slot.uid)
 
 
 class _TurnDriver:
@@ -357,12 +472,22 @@ class _TurnDriver:
         return events
 
 
-#: contract §E.9 "Resume after a restart" — exact PT-BR text the route
-#: persists as a `system` message when a resume attempt fails and the
-#: runtime falls back to a fresh session.
+#: contract §E.9/§E.11 "Durable transcripts" — exact PT-BR text the route
+#: persists as a `system` message when a resume attempt fails (or the
+#: stored transcript is unusable) and the runtime falls back to a fresh
+#: session.
 RESUME_LOST_CONTEXT_TEXT = (
     "O contexto anterior desta conversa não está mais disponível; "
     "Julia começou uma nova sessão."
+)
+
+#: contract §E.11 "Durable transcripts" — "'Too long' (`truncado`) has its
+#: own text." Distinct from :data:`RESUME_LOST_CONTEXT_TEXT` so the user
+#: knows THIS session grew past the 24 MiB cap, rather than context being
+#: lost to an infrastructure event.
+RESUME_TRUNCATED_TEXT = (
+    "O histórico desta conversa ficou muito longo; Julia começou uma "
+    "nova sessão e não tem mais acesso ao contexto anterior."
 )
 
 
@@ -377,6 +502,8 @@ class ClaudeAgentSdkRuntime:
         approval_secret: str,
         plugin_path: str,
         approvals: ApprovalStore,
+        slot_pool: SlotPool,
+        transcripts: TranscriptStore,
         cli_path: str = DEFAULT_CLI_PATH,
         approval_use_window_seconds: int = 120,
         transport_factory: Any = None,
@@ -386,6 +513,8 @@ class ClaudeAgentSdkRuntime:
         self._approval_secret = approval_secret
         self._plugin_path = plugin_path
         self._approvals = approvals
+        self._slot_pool = slot_pool
+        self._transcripts = transcripts
         self._cli_path = cli_path
         self._approval_use_window_seconds = approval_use_window_seconds
         # Test-only seam (contract §E.9 "Resume after a restart" — pinning
@@ -394,40 +523,104 @@ class ClaudeAgentSdkRuntime:
         # SDK builds its own `SubprocessCLITransport`.
         self._transport_factory = transport_factory
 
+    def try_reserve(self) -> TurnSlot | None:
+        """Contract §E.11 "Slot pool": delegates to this runtime's own
+        injected :class:`~app.runtime.slots.SlotPool` — the SAME pool
+        instance across every turn this process serves (constructor
+        injection, never a fresh pool per call)."""
+        return self._slot_pool.try_reserve()
+
     def _make_client(self, options: ClaudeAgentOptions) -> ClaudeSDKClient:
         transport = self._transport_factory() if self._transport_factory else None
         return ClaudeSDKClient(options, transport=transport)
 
+    def _resolve_resume(
+        self, ctx: TurnContext
+    ) -> tuple[ConversationTranscriptMirror, list[dict[str, Any]] | None, str | None]:
+        """Contract §E.11 "Durable transcripts" / "Inbound": decides, BEFORE
+        any CLI is spawned, whether ``ctx.sdk_session_id``'s stored
+        transcript is a usable resume target. Never mutates the store —
+        only reads.
+
+        Returns ``(mirror, handoff_entries, fallback_text)``:
+
+        - a genuinely fresh conversation (``ctx.sdk_session_id is None``)
+          → a fresh mirror, ``None`` entries, ``None`` fallback text (no
+          fallback message — there was never anything to resume).
+        - a usable transcript (``estado == "ok"`` and it has stored
+          entries) → a mirror already pinned to ``ctx.sdk_session_id``,
+          its entries, ``None`` fallback text.
+        - missing (no stored entries despite ``estado == "ok"``),
+          ``truncado``, ``incompleto`` or ``invalido`` → a fresh mirror,
+          ``None`` entries, and the PT-BR fallback text (`truncado` gets
+          its own; every other case gets the generic one).
+        """
+        if ctx.sdk_session_id is None:
+            fresh = ConversationTranscriptMirror(
+                self._transcripts, ctx.org_id, ctx.conversation_id, None
+            )
+            return fresh, None, None
+
+        probe = ConversationTranscriptMirror(
+            self._transcripts, ctx.org_id, ctx.conversation_id, ctx.sdk_session_id
+        )
+        entries = probe.load_for_handoff()
+        if entries is not None:
+            return probe, entries, None
+
+        estado = self._transcripts.get_estado(ctx.org_id, ctx.conversation_id)
+        fallback_text = (
+            RESUME_TRUNCATED_TEXT if estado == "truncado" else RESUME_LOST_CONTEXT_TEXT
+        )
+        fresh = ConversationTranscriptMirror(
+            self._transcripts, ctx.org_id, ctx.conversation_id, None
+        )
+        return fresh, None, fallback_text
+
     async def _connect_or_fresh(
-        self, options: ClaudeAgentOptions, prompt: str, ctx: TurnContext
-    ) -> tuple[ClaudeSDKClient, bool]:
-        """Contract §E.9 "Resume after a restart": ``options.resume`` may
-        point at a session the CLI subprocess's tmpfs transcript store no
-        longer has (a container restart). Verified live against the
-        installed SDK (0.2.152) — an unknown ``resume`` id surfaces as a
-        terminal `result` frame with ``is_error: true`` that the CLI then
-        exits non-zero over; the SDK's background reader
+        self,
+        options: ClaudeAgentOptions,
+        prompt: str,
+        ctx: TurnContext,
+        mirror: ConversationTranscriptMirror,
+    ) -> tuple[ClaudeSDKClient, bool, ConversationTranscriptMirror]:
+        """Contract §E.9/§E.11 "Resume after a restart": ``options.resume``
+        may point at a session the CLI subprocess's tmpfs transcript store
+        no longer has (e.g. a container restart mid-turn). Verified live
+        against the installed SDK (0.2.152) — an unknown ``resume`` id
+        surfaces as a terminal `result` frame with ``is_error: true`` that
+        the CLI then exits non-zero over; the SDK's background reader
         (``claude_agent_sdk/_internal/query.py::Query._read_messages``)
         replaces the resulting ``ProcessError`` with the richer
-        ``ResultError`` subclass when it saw that frame first (both are
-        ``ClaudeSDKError``), and delivers it to the still-in-flight
-        ``initialize`` control request — so it is ``client.connect()``
-        itself (which awaits ``Query.initialize()``) that raises, before
-        any turn message is ever seen. This is exactly the case
-        ``query.py``'s own comment names: "an `initialize` still in flight
-        when the CLI reports an error result during startup (e.g. a
-        refused resume)".
+        ``ResultError`` subclass when it saw that frame first, and
+        delivers it to the still-in-flight ``initialize`` control request
+        — so it is ``client.connect()`` itself (which awaits
+        ``Query.initialize()``) that raises, before any turn message is
+        ever seen. This is exactly the case ``query.py``'s own comment
+        names: "an `initialize` still in flight when the CLI reports an
+        error result during startup (e.g. a refused resume)".
 
-        Returns ``(client, used_fresh_session)``. On a genuine (non-resume)
-        connect failure the exception propagates unchanged — silently
-        starting fresh only when a resume was actually attempted.
+        Narrowed to ``ResultError`` (never the broader ``ProcessError`` —
+        e.g. a wrapper refusal, exit 126, is a real failure and must
+        propagate, never be mistaken for lost context). Keyed off
+        ``options.resume is None`` (never ``ctx.sdk_session_id`` — since
+        §E.11, a stored session id can be present while ``options.resume``
+        is still ``None``, when ``_resolve_resume`` already decided the
+        transcript is unusable; in that case NO resume was attempted, so a
+        genuine connect failure here must propagate too).
+
+        Returns ``(client, used_fresh_session, active_mirror)`` — a fresh
+        fallback swaps in a NEW, unpinned mirror (the CLI will mint a new
+        session id the old, still-pinned ``mirror`` would only drop
+        frames for), so the caller must use ``active_mirror`` for the
+        rest of the turn, never the ``mirror`` argument itself.
         """
         client = self._make_client(options)
         try:
             await client.connect(prompt)
-            return client, False
-        except ProcessError:
-            if ctx.sdk_session_id is None:
+            return client, False, mirror
+        except ResultError:
+            if options.resume is None:
                 raise
             logger.warning(
                 "run_turn: resume of sdk_session_id=%s failed; starting a "
@@ -438,10 +631,15 @@ class ClaudeAgentSdkRuntime:
             )
             with suppress(Exception):
                 await client.disconnect()
-            fresh_options = dataclasses.replace(options, resume=None)
+            fresh_mirror = ConversationTranscriptMirror(
+                self._transcripts, ctx.org_id, ctx.conversation_id, None
+            )
+            fresh_options = dataclasses.replace(
+                options, resume=None, session_store=fresh_mirror
+            )
             fresh_client = self._make_client(fresh_options)
             await fresh_client.connect(prompt)
-            return fresh_client, True
+            return fresh_client, True, fresh_mirror
 
     async def run_turn(
         self,
@@ -449,7 +647,28 @@ class ClaudeAgentSdkRuntime:
         ctx: TurnContext,
         prompt: str,
         broker: ApprovalBroker,
+        slot: TurnSlot | None = None,
     ) -> AsyncIterator[AgentEvent]:
+        if slot is None:
+            raise RuntimeError(
+                "ClaudeAgentSdkRuntime.run_turn requires a reserved "
+                "TurnSlot (contract §E.11) — the caller must reserve one "
+                "via try_reserve() and pass it through; running the real "
+                "runtime without one would launch the CLI under a shared "
+                "uid, defeating the per-conversation isolation this slot "
+                "pool exists to guarantee."
+            )
+
+        mirror, handoff_entries, fallback_text = self._resolve_resume(ctx)
+        resume_session_id = ctx.sdk_session_id if handoff_entries is not None else None
+
+        _write_turn_handoff(
+            slot,
+            persona_text=spec.prompt_append,
+            handoff_entries=handoff_entries,
+            resume_session_id=resume_session_id,
+        )
+
         driver = _TurnDriver(ctx=ctx, broker=broker, academia_api=self._academia_api)
         options = build_launch_options(
             spec=spec,
@@ -459,16 +678,26 @@ class ClaudeAgentSdkRuntime:
             approval_secret=self._approval_secret,
             can_use_tool=driver.can_use_tool,
             approvals=self._approvals,
+            slot=slot,
+            mirror=mirror,
+            resume=resume_session_id,
             cli_path=self._cli_path,
             plugin_path=self._plugin_path,
             approval_use_window_seconds=self._approval_use_window_seconds,
         )
 
-        client, resumed_fresh = await self._connect_or_fresh(options, prompt, ctx)
+        client, resumed_fresh, active_mirror = await self._connect_or_fresh(
+            options, prompt, ctx, mirror
+        )
         result_holder: dict[str, str | None] = {
-            "sdk_session_id": None if resumed_fresh else ctx.sdk_session_id
+            "sdk_session_id": None if resumed_fresh else resume_session_id
         }
-        if resumed_fresh:
+        if fallback_text is not None:
+            yield {
+                "event": "session.resume_fallback",
+                "payload": {"texto": fallback_text},
+            }
+        elif resumed_fresh:
             yield {
                 "event": "session.resume_fallback",
                 "payload": {"texto": RESUME_LOST_CONTEXT_TEXT},
@@ -477,6 +706,13 @@ class ClaudeAgentSdkRuntime:
         async def pump() -> None:
             try:
                 async for message in client.receive_response():
+                    if isinstance(message, MirrorErrorMessage):
+                        # Contract §E.11: "A MirrorErrorMessage marks it
+                        # incompleto." Non-fatal — the CLI's own local
+                        # transcript write already succeeded; only the
+                        # durable mirror copy missed this batch.
+                        active_mirror.on_mirror_error()
+                        continue
                     for event in driver.translate(message):
                         await driver.queue.put(event)
                     if isinstance(message, ResultMessage):
@@ -505,6 +741,22 @@ class ClaudeAgentSdkRuntime:
         finally:
             await client.disconnect()
 
+        # Contract §E.11 "Durable transcripts": "At turn end the pinned id
+        # must equal ResultMessage.session_id; otherwise the transcript is
+        # marked invalido." A missing result session id (no ResultMessage
+        # ever observed) has nothing to finalize against — logged, never
+        # silently ignored, but not a crash on the success path either.
+        final_session_id = result_holder["sdk_session_id"]
+        if final_session_id is not None:
+            active_mirror.finalize(final_session_id)
+        else:
+            logger.warning(
+                "run_turn: no ResultMessage.session_id observed; skipping "
+                "mirror.finalize (conversation=%s, org=%s)",
+                ctx.conversation_id,
+                ctx.org_id,
+            )
+
         # Guarantee (contract §E.9): the last event is always session.status
         # on the success path — the SAME guarantee on the FAILURE path is
         # fulfilled by the caller (contract §E.9 "What the routes must do"
@@ -512,5 +764,5 @@ class ClaudeAgentSdkRuntime:
         # itself), not by this generator yielding after an exception.
         yield {
             "event": "session.status",
-            "payload": {"status": "ociosa", "sdk_session_id": result_holder["sdk_session_id"]},
+            "payload": {"status": "ociosa", "sdk_session_id": final_session_id},
         }
