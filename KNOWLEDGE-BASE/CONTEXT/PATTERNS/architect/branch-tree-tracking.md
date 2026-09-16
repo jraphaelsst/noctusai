@@ -107,6 +107,8 @@ Mirror the existing ledger tools (`auto_improvement`, `_worktree_salvage`, `brie
 
 `query`/`list` default `from_dev=True` — read dev's copy, not the local branch's. Append/update default `push_dev=True` — the no-skip guarantee is the default, not an opt-in.
 
+**Consumer (2026-09-16): `query` is also the live-pointer removal guard.** `tools/noctus/dev/_worktree_staleness.pointer_blocks_removal(branch, run)` calls `query(from_dev=True, branch=branch, runner=run)` directly — reusing the SAME latest-per-branch resolution rather than re-parsing the ndjson — and refuses to classify a worktree as removable when the resolved row's `status` is not in `TERMINAL_STATUSES` (`shipped`/`canceled`/`stale`). Both `noctus.dev.cleanup_stale_worktrees` and `noctus.dev.mole` (worktree scope) call it before ever reaching their "safe to remove" bucket; `force=True` never bypasses it (see `KB § PATTERNS/common/storage-hygiene.md § 2.3`). This is the first non-branch_pointer-module consumer of `query` and the reason a stale/never-updated pointer must resolve to a genuinely terminal status rather than being left `on_going` forever — an abandoned `on_going` row would permanently block that worktree's cleanup.
+
 ## 5 · The mirror keeper — `check_branch_tree_mirror` (pre-push HARD-BLOCK)
 
 In `compliance.py` (+ keeper-pattern-cache mirror + `--check-branch-tree-mirror` cli flag), wired into the **pre-push** hook. A push to dev is **blocked** unless, for the branch being pushed:
@@ -191,3 +193,19 @@ written to the working tree first and committed later, so the window where it
 exists only as an uncommitted modification is what made it stashable at all.
 Making the append a write → commit → push unit would remove the class rather
 than make it survivable. Logged, not attempted.
+
+**Addendum (2026-09-16) — operator-legible labels, same SHA contract.** With
+the fix above landed, the shared stack kept accumulating entries — 10+ at
+once observed — that all carried the byte-identical generic message
+`"task_branch auto-stash: benign refresh artifacts"`. Correctness was never
+at risk (restore/drop are SHA-addressed, never by message), but a human (or
+the tech-lead) triaging the stack via `git stash list` had no way to tell
+which entry belonged to which worktree. `_benign_stash.stash_message`
+now folds in a short content fingerprint (a hash of the sorted benign-path
+set) plus, when the caller supplies one, a `label_hint` — `task_branch`
+passes its own worktree path. The fixed prefix survives (the ERROR-log grep
+target from the incident above still matches), so this is additive:
+`"<prefix> [<worktree path>] #<8-char digest>"`. Do NOT clean up the
+existing accumulated entries by hand without checking each one first — some
+may belong to sessions still in flight; see `noctus.dev.mole` /
+`git stash list` for triage, never a blind `git stash clear`.

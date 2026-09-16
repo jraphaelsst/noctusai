@@ -13,6 +13,7 @@ worktrees.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -162,3 +163,134 @@ def test_helper_exposes_no_register_and_is_not_in_register_all():
     assert "_worktree_staleness" not in src, (
         "_worktree_staleness must NOT be registered in register_all"
     )
+
+
+# ═══════════════ 2026-09-16 incident guards ═══════════════════════════════
+# A freshly-forked worktree has 0 commits ahead of origin/dev, which
+# `is_ancestor` reads as trivially merged (see the module docstring). These
+# tests pin the two guards that stop that false positive from reaching an
+# actual `git worktree remove`.
+
+class TestMinAgeGuard:
+    def test_default_min_age_is_in_the_documented_30_120_minute_range(self):
+        assert 30.0 <= wts.DEFAULT_MIN_AGE_MINUTES <= 120.0
+
+    def test_worktree_age_seconds_uses_the_youngest_of_dir_and_commit(self, tmp_path):
+        # tmp_path's real ctime is ~"now" (pytest just created it). A commit
+        # timestamp far in the past must NOT win — age is measured from the
+        # YOUNGEST of the two signals, not the oldest.
+        long_ago = time.time() - 10_000
+        runner = FakeRunner({
+            ("git", "log", "-1", "--format=%ct", "br"): (0, f"{long_ago:.0f}\n", ""),
+        })
+        age = wts.worktree_age_seconds(runner, tmp_path, "br")
+        assert age is not None and age < 60.0, (
+            "age must reflect the freshly-created dir, not the stale commit time"
+        )
+
+    def test_worktree_age_seconds_none_when_neither_source_resolves(self, tmp_path):
+        missing = tmp_path / "does-not-exist"
+        runner = FakeRunner({
+            ("git", "log", "-1", "--format=%ct", "br"): (128, "", "fatal: bad revision"),
+        })
+        assert wts.worktree_age_seconds(runner, missing, "br") is None
+
+    def test_is_too_young_true_when_age_unresolvable_conservative_refusal(self, tmp_path):
+        missing = tmp_path / "does-not-exist"
+        runner = FakeRunner({
+            ("git", "log", "-1", "--format=%ct", "br"): (128, "", "fatal"),
+        })
+        too_young, age, min_age_seconds = wts.is_too_young(runner, missing, "br")
+        assert too_young is True and age is None
+        assert min_age_seconds == wts.DEFAULT_MIN_AGE_MINUTES * 60.0
+
+    def test_is_too_young_false_when_age_exceeds_threshold(self, tmp_path):
+        runner = FakeRunner({
+            ("git", "log", "-1", "--format=%ct", "br"): (0, "0\n", ""),
+        })
+        real_ctime = tmp_path.stat().st_ctime
+        now = real_ctime + 3600.0  # 1 hour after the dir was created
+        too_young, age, min_age_seconds = wts.is_too_young(
+            runner, tmp_path, "br", min_age_minutes=1.0, now=now,
+        )
+        assert too_young is False
+        assert age is not None and abs(age - (now - real_ctime)) < 0.01, (
+            "age must be measured from the dir's own ctime, not the ancient commit epoch"
+        )
+
+    def test_is_too_young_true_when_age_below_threshold(self, tmp_path):
+        runner = FakeRunner({
+            ("git", "log", "-1", "--format=%ct", "br"): (0, "0\n", ""),
+        })
+        real_ctime = tmp_path.stat().st_ctime
+        now = real_ctime + 5.0  # 5s after creation
+        too_young, age, min_age_seconds = wts.is_too_young(
+            runner, tmp_path, "br", min_age_minutes=60.0, now=now,
+        )
+        assert too_young is True
+        assert age is not None and age < min_age_seconds
+
+
+class TestLivePointerGuard:
+    def test_no_pointer_row_never_blocks(self):
+        runner = FakeRunner({
+            ("git", "show", "origin/dev:project-history/branch-tree.ndjson"): (
+                0, "", "",
+            ),
+        })
+        assert wts.pointer_status_for_branch("feat/x", runner) is None
+        blocks, status = wts.pointer_blocks_removal("feat/x", runner)
+        assert blocks is False and status is None
+
+    def test_on_going_pointer_blocks(self):
+        row = (
+            '{"branch": "feat/x", "status": "on_going", "ts": "2026-09-16T19:05:00Z"}'
+        )
+        runner = FakeRunner({
+            ("git", "show", "origin/dev:project-history/branch-tree.ndjson"): (
+                0, row + "\n", "",
+            ),
+        })
+        assert wts.pointer_status_for_branch("feat/x", runner) == "on_going"
+        blocks, status = wts.pointer_blocks_removal("feat/x", runner)
+        assert blocks is True and status == "on_going"
+
+    def test_terminal_status_does_not_block(self):
+        row = (
+            '{"branch": "feat/x", "status": "shipped", "ts": "2026-09-16T19:05:00Z"}'
+        )
+        runner = FakeRunner({
+            ("git", "show", "origin/dev:project-history/branch-tree.ndjson"): (
+                0, row + "\n", "",
+            ),
+        })
+        blocks, status = wts.pointer_blocks_removal("feat/x", runner)
+        assert blocks is False and status == "shipped"
+
+    def test_latest_row_wins_over_an_earlier_stale_row(self):
+        rows = (
+            '{"branch": "feat/x", "status": "on_going", "ts": "2026-09-16T19:00:00Z"}\n'
+            '{"branch": "feat/x", "status": "shipped", "ts": "2026-09-16T19:10:00Z"}\n'
+        )
+        runner = FakeRunner({
+            ("git", "show", "origin/dev:project-history/branch-tree.ndjson"): (
+                0, rows, "",
+            ),
+        })
+        blocks, status = wts.pointer_blocks_removal("feat/x", runner)
+        assert blocks is False and status == "shipped", (
+            "the LATEST row (by ts) must win, not the first one seen"
+        )
+
+    def test_a_different_branchs_pointer_never_blocks_this_one(self):
+        row = (
+            '{"branch": "feat/other", "status": "on_going", '
+            '"ts": "2026-09-16T19:05:00Z"}'
+        )
+        runner = FakeRunner({
+            ("git", "show", "origin/dev:project-history/branch-tree.ndjson"): (
+                0, row + "\n", "",
+            ),
+        })
+        blocks, status = wts.pointer_blocks_removal("feat/x", runner)
+        assert blocks is False and status is None

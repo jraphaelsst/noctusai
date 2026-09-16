@@ -54,6 +54,7 @@ KB § PATTERNS/common/self-branching-mode.md · KB § PATTERNS/architect/branch-
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import logging
 from typing import Any, Callable
 
@@ -156,6 +157,30 @@ BENIGN_REFRESH_PATTERNS: tuple[str, ...] = (
 STASH_MESSAGE = "task_branch auto-stash: benign refresh artifacts"
 
 
+def stash_message(benign: list[str], *, label_hint: str | None = None) -> str:
+    """Build the message for THIS stash entry: the fixed prefix (so
+    ``git stash list | grep <STASH_MESSAGE>`` keeps working, and so the
+    error-path log line above stays correct) plus a short content
+    fingerprint of the exact benign-path set plus, when given, a caller
+    hint (the worktree path).
+
+    WHY. With every entry carrying the byte-identical generic message,
+    ``git stash list`` gives a human (or the tech-lead, triaging the shared
+    stack) NO way to tell 10+ entries apart at a glance — every one of them
+    reads as "task_branch auto-stash: benign refresh artifacts" regardless
+    of which worktree or which files it holds. Restore/drop were NEVER
+    positional (see :func:`stash_benign` / :func:`pop_stash` — always by
+    SHA), so this is purely an operator-legibility fix, not a correctness
+    one: the message string plays no role in which entry gets applied or
+    dropped.
+    """
+    digest = hashlib.sha1(
+        "\n".join(sorted(benign)).encode("utf-8")
+    ).hexdigest()[:8]
+    hint = f" [{label_hint}]" if label_hint else ""
+    return f"{STASH_MESSAGE}{hint} #{digest}"
+
+
 def is_benign(path: str, patterns: tuple[str, ...] = BENIGN_REFRESH_PATTERNS) -> bool:
     """True iff ``path`` matches one of the known-benign refresh patterns."""
     return any(fnmatch.fnmatch(path, pat) for pat in patterns)
@@ -212,6 +237,7 @@ def stash_benign(
     benign: list[str],
     *,
     log_prefix: str = "benign_stash",
+    label_hint: str | None = None,
 ) -> str | None:
     """Stash the known-benign artifacts so the tree is clean enough to rebase.
 
@@ -220,6 +246,12 @@ def stash_benign(
     stack. ``None`` when there was nothing to stash, when the stash failed (the
     caller then proceeds unstashed and lets the rebase surface it, rather than
     pretending the tree is clean), or when the entry could not be addressed.
+
+    ``label_hint`` (typically the caller's worktree path) is folded into the
+    stash message alongside a content fingerprint (:func:`stash_message`) so
+    a human triaging a shared stack carrying 10+ of these entries can tell
+    them apart in ``git stash list`` — restore/drop remain SHA-addressed
+    either way (the message plays no role in correctness).
 
     🔴 WHY A SHA AND NOT A BOOL (2026-09-09 — a real cross-session data-loss
     incident). ``.git/refs/stash`` is ONE stack shared by the primary checkout
@@ -242,8 +274,9 @@ def stash_benign(
         return None
     logger.debug("%s: auto-stashing %d benign artifact(s): %s",
                  log_prefix, len(benign), benign)
+    message = stash_message(benign, label_hint=label_hint)
     rc, _out, err = run_git(
-        "stash", "push", "--include-untracked", "--message", STASH_MESSAGE, "--", *benign
+        "stash", "push", "--include-untracked", "--message", message, "--", *benign
     )
     if rc != 0:
         logger.warning("%s: auto-stash failed (%s); proceeding without stash — "
@@ -347,5 +380,5 @@ __all__ = [
     "BENIGN_REFRESH_PATTERNS", "STASH_MESSAGE", "RunGit",
     "_kb_counts_regenerated_rel_paths",
     "is_benign", "strip_status_code", "classify_porcelain", "classify_dirty",
-    "stash_benign", "pop_stash", "dirty_blocked_result",
+    "stash_message", "stash_benign", "pop_stash", "dirty_blocked_result",
 ]

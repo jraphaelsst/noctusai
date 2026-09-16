@@ -1130,6 +1130,33 @@ def test_integrate_with_known_benign_dirty_files_succeeds():
     assert stash_pushed, "stash push must be called for benign artifacts"
 
 
+# ── 2026-09-16: label the stash entry with the worktree path + a content ────
+# fingerprint — a shared stack carrying 10+ identical "task_branch auto-stash:
+# benign refresh artifacts" entries is undistinguishable at a glance. Restore
+# stays SHA-addressed regardless (never positional — see _benign_stash.py);
+# this is purely an operator-legibility fix.
+def test_stash_benign_artifacts_labels_with_the_worktree_path():
+    calls = []
+
+    def runner(cmd, cwd=None):
+        calls.append(cmd)
+        if len(cmd) > 3 and cmd[3] == "rev-parse":
+            return (0, STASH_SHA + "\n", "")
+        return (0, "", "")
+
+    ref = T._stash_benign_artifacts(
+        runner, "/some/wt/path", ["project-history/vector-costs.ndjson"],
+    )
+    assert ref == STASH_SHA
+    push = next(
+        c for c in calls
+        if len(c) > 3 and c[3] == "stash" and "push" in c
+    )
+    message = push[push.index("--message") + 1]
+    assert "/some/wt/path" in message
+    assert message.startswith("task_branch auto-stash: benign refresh artifacts")
+
+
 def test_integrate_with_real_dirty_conflict_blocks_loudly():
     """The inverse: real uncommitted changes (not in the benign list) must cause
     the rebase to fail AND surface conflicted_files loudly. We must never silently

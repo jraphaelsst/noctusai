@@ -492,11 +492,18 @@ def _stash_benign_artifacts(
     The SHA — not a flag — because `.git/refs/stash` is one stack shared by every
     worktree, so `stash@{0}` at restore time may be a PEER's entry (see
     `_benign_stash.stash_benign`; it cost a cross-session near-loss on 2026-09-09).
+
+    `label_hint=wt_path` folds THIS worktree's path into the stash message
+    (alongside a content fingerprint) so a shared stack carrying 10+ of these
+    entries reads as distinguishable per-worktree in `git stash list` — a
+    purely cosmetic/operator-legibility improvement; restore/drop stay
+    SHA-addressed regardless (see `_benign_stash.stash_message`).
     """
     return _shared_stash_benign(
         lambda *a: runner(["git", "-C", wt_path, *a]),
         benign,
         log_prefix="task_branch.integrate",
+        label_hint=wt_path,
     )
 
 

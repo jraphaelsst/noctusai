@@ -101,6 +101,42 @@ class TestStashLegs:
         assert "--" in push and push[-1] == "project-history/vector-costs.ndjson"
         assert calls[1][0] == "rev-parse", "must resolve the entry it just created"
 
+    def test_message_carries_the_fixed_prefix_and_a_content_fingerprint(self):
+        calls = []
+        BS.stash_benign(_fake_git(calls), ["project-history/vector-costs.ndjson"])
+        push = calls[0]
+        msg_idx = push.index("--message") + 1
+        message = push[msg_idx]
+        assert message.startswith(BS.STASH_MESSAGE)
+        assert message != BS.STASH_MESSAGE, (
+            "the message must carry a fingerprint beyond the fixed prefix — "
+            "10+ identical entries on the shared stack were undistinguishable"
+        )
+
+    def test_message_folds_in_the_label_hint(self):
+        calls = []
+        BS.stash_benign(
+            _fake_git(calls), ["project-history/vector-costs.ndjson"],
+            label_hint="/some/worktree/path",
+        )
+        push = calls[0]
+        message = push[push.index("--message") + 1]
+        assert "/some/worktree/path" in message
+
+    def test_message_fingerprint_differs_for_different_path_sets(self):
+        msg_a = BS.stash_message(["project-history/vector-costs.ndjson"])
+        msg_b = BS.stash_message(["project-history/auto-improvement.ndjson"])
+        assert msg_a != msg_b, (
+            "two worktrees stashing different benign sets must not collide"
+        )
+
+    def test_message_fingerprint_is_stable_regardless_of_input_order(self):
+        # The digest is over the SORTED set — order-of-discovery must not
+        # change the label for the same underlying set of files.
+        a = BS.stash_message(["x", "y"])
+        b = BS.stash_message(["y", "x"])
+        assert a == b
+
     def test_stash_failure_reports_no_handle_rather_than_pretending(self):
         assert BS.stash_benign(lambda *a: (1, "", "nope"),
                                ["project-history/vector-costs.ndjson"]) is None

@@ -35,10 +35,34 @@ def _init_repo(root: Path) -> None:
     # (the same gate engineer worktrees satisfy in production).
     (root / ".noctusai-workspace").write_text("test\n")
     (root / "README.md").write_text("seed\n")
-    _git(root, "add", "README.md")
+    # An EMPTY project-history/branch-tree.ndjson so `pointer_status_for_branch`'s
+    # `git show origin/dev:project-history/branch-tree.ndjson` always succeeds
+    # from this fake repo instead of falling back to the REAL production
+    # ledger (`branch_pointer.LEDGER_PATH`, derived from the real
+    # `settings.REPO_ROOT`) — a genuine test-isolation hazard.
+    (root / "project-history").mkdir(parents=True)
+    (root / "project-history" / "branch-tree.ndjson").write_text("")
+    _git(root, "add", "README.md", "project-history/branch-tree.ndjson")
     _git(root, "commit", "-qm", "init")
     # A self-referential 'origin/dev' so merge-base checks resolve offline.
     _git(root, "remote", "add", "origin", str(root))
+    _git(root, "fetch", "-q", "origin")
+
+
+def _publish_pointer_row(root: Path, *, branch: str, status: str) -> None:
+    """Append a branch-tree pointer row for `branch` and re-fetch the
+    self-referential `origin` so `origin/dev` picks it up."""
+    import json as _json
+
+    ledger = root / "project-history" / "branch-tree.ndjson"
+    row = _json.dumps({
+        "branch": branch, "status": status,
+        "ts": "2026-09-16T19:05:00+00:00",
+    })
+    with ledger.open("a") as fh:
+        fh.write(row + "\n")
+    _git(root, "add", "project-history/branch-tree.ndjson")
+    _git(root, "commit", "-qm", f"pointer: {branch} {status}")
     _git(root, "fetch", "-q", "origin")
 
 
@@ -159,7 +183,10 @@ def test_worktree_classifier_categories(tmp_path):
     _git(root, "worktree", "add", "-q", "-b", "dirty-br", str(dirty))
     (dirty / "untracked.txt").write_text("dirty")
 
-    recs = mole_tool._classify_worktrees(root)
+    # min_age_minutes=0: this test is about CATEGORY parity, not the
+    # (separately tested) min-age guard — every worktree here was just
+    # created in this test run.
+    recs = mole_tool._classify_worktrees(root, min_age_minutes=0)
     by_path = {Path(p).name: cat for cat, p, _b, _r in recs}
 
     assert by_path.get("agent-orphan") == "ORPHAN"
@@ -177,7 +204,7 @@ def test_scan_actionable_count_is_stale_orphan_phantom(tmp_path):
     stale = wt_dir / "agent-stale"
     _git(root, "worktree", "add", "-q", "-b", "m-br", str(stale))
 
-    actionable, tally, _recs = mole_tool._scan_worktrees(root)
+    actionable, tally, _recs = mole_tool._scan_worktrees(root, min_age_minutes=0)
     assert tally["ORPHAN"] == 1 and tally["STALE"] == 1
     assert actionable == tally["STALE"] + tally["ORPHAN"] + tally["PHANTOM"]
 
@@ -274,3 +301,63 @@ def test_registers_under_dotted_name():
 
     mole_tool.register(_Srv())
     assert captured["name"] == "noctus.dev.mole"
+
+
+# ═══════════ 2026-09-16 incident: shares the guards with cleanup_stale_worktrees ═══
+# via _worktree_staleness — confirming BOTH callers actually got the fix, per
+# the brief's explicit "fix it ONCE, confirm both callers get it" instruction.
+def test_pointer_blocked_worktree_never_stale_even_with_force(tmp_path):
+    root = tmp_path
+    _init_repo(root)
+    wt_dir = root / ".claude" / "worktrees"
+    wt_dir.mkdir(parents=True)
+    wt = wt_dir / "agent-live"
+    _git(root, "worktree", "add", "-q", "-b", "feat/live", str(wt))
+    _publish_pointer_row(root, branch="feat/live", status="on_going")
+
+    recs = mole_tool._classify_worktrees(root, min_age_minutes=0)
+    by_path = {Path(p).name: (cat, reason) for cat, p, _b, reason in recs}
+    cat, reason = by_path["agent-live"]
+    assert cat == "POINTER_BLOCKED"
+    assert "on_going" in reason
+
+    out = mole_tool.run_mole(
+        mode="sweep", scope="worktrees", force=True, worktree_path=str(root),
+        min_age_minutes=0,
+    )
+    assert wt.exists(), "force=True must NEVER sweep a live-pointer worktree"
+
+
+def test_too_young_worktree_skipped_by_default_but_removable_with_force(tmp_path):
+    root = tmp_path
+    _init_repo(root)
+    wt_dir = root / ".claude" / "worktrees"
+    wt_dir.mkdir(parents=True)
+    wt = wt_dir / "agent-fresh"
+    _git(root, "worktree", "add", "-q", "-b", "feat/fresh", str(wt))
+
+    # Default min_age_minutes — this worktree was created microseconds ago.
+    recs = mole_tool._classify_worktrees(root)
+    by_path = {Path(p).name: cat for cat, p, _b, _r in recs}
+    assert by_path["agent-fresh"] == "TOO_YOUNG"
+
+    out = mole_tool.run_mole(
+        mode="sweep", scope="worktrees", force=True, worktree_path=str(root),
+    )
+    assert not wt.exists(), "force=True MAY bypass the age guard"
+
+
+def test_scan_worktrees_tally_includes_the_new_categories(tmp_path):
+    root = tmp_path
+    _init_repo(root)
+    wt_dir = root / ".claude" / "worktrees"
+    wt_dir.mkdir(parents=True)
+    live = wt_dir / "agent-live2"
+    _git(root, "worktree", "add", "-q", "-b", "feat/live2", str(live))
+    _publish_pointer_row(root, branch="feat/live2", status="deferred")
+    fresh = wt_dir / "agent-fresh2"
+    _git(root, "worktree", "add", "-q", "-b", "feat/fresh2", str(fresh))
+
+    _actionable, tally, _recs = mole_tool._scan_worktrees(root)
+    assert tally["POINTER_BLOCKED"] == 1
+    assert tally["TOO_YOUNG"] == 1
