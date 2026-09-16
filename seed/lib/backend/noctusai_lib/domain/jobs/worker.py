@@ -85,8 +85,16 @@ class Worker:
         poll_interval_seconds: float = 1.0,
         lease_seconds: float = 600.0,
         heartbeat_interval_seconds: float | None = None,
+        claim_gate: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         self._repo = repo
+        # Pause switch, consulted before EVERY claim: `False` ⇒ claim
+        # nothing this cycle (jobs stay queued, the loop idles). Lets an
+        # operator pause/resume a live worker from data (a settings row)
+        # without restarting the process. A gate that RAISES counts as
+        # closed — failing open would run paid work nobody authorized.
+        self._claim_gate = claim_gate
+        self.last_gate_error: str | None = None
         self._worker_id = worker_id
         self._handlers = dict(handlers)
         self._retry_policy = retry_policy
@@ -110,7 +118,9 @@ class Worker:
     async def run_once(self) -> bool:
         """Claim one job and dispatch it. Returns True if a job was
         processed (regardless of success/failure), False if the queue
-        was empty."""
+        was empty (or the claim gate is closed)."""
+        if not await self.claim_allowed():
+            return False
         job = await self._repo.claim_next(
             worker_id=self._worker_id,
             job_types=self._job_types,
@@ -134,6 +144,20 @@ class Worker:
 
         await self._dispatch(job, handler)
         return True
+
+    async def claim_allowed(self) -> bool:
+        """The claim gate's current answer (`True` when there is no gate)."""
+        if self._claim_gate is None:
+            return True
+        try:
+            allowed = bool(await self._claim_gate())
+        except Exception as exc:
+            if self.last_gate_error is None:
+                logger.exception("worker.claim_gate_failed worker_id=%s", self._worker_id)
+            self.last_gate_error = f"{type(exc).__name__}: {exc}"
+            return False
+        self.last_gate_error = None
+        return allowed
 
     async def run_forever(
         self,

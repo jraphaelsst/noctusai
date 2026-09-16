@@ -29,11 +29,12 @@
  * organs" this is the required shape (extend, never fork). W6 extended it
  * again with the reference-pool upload (multipart), guias de estilo and the
  * platform settings the pool limit lives in. W7 extended it again with the
- * per-agency learning loop (`/regras`) + the effective-guide view; this
- * slice added curadores (`photo_curator` grants) and notificacoes/
- * preferencias (per-user opt-in, plan §1 "Notifications"). Painel remains
- * out of scope — it belongs to a later admin slice (plan §7 W10e) and
- * extends this factory in turn when built.
+ * per-agency learning loop (`/regras`) + the effective-guide view; the
+ * notifications slice added curadores (`photo_curator` grants) and
+ * notificacoes/preferencias (per-user opt-in, plan §1 "Notifications"); W8
+ * added the model catalog admin (rows, versions, per-step models, note
+ * rewrite) and the processing panel (pause switch, health, OpenAI probe);
+ * W9 added the dashboard (`/painel`).
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiClient } from '../api';
@@ -54,6 +55,14 @@ export interface Capacidades {
   pode_ativar_guia: boolean;
   dashboard: 'org' | 'platform' | null;
   modelo_configurado: boolean;
+  /**
+   * Why a configured image model still cannot run (W8): `sem_modelo`,
+   * `modelo_desativado` (switched off in the catalog) or `modelo_sem_preco`
+   * (a rate is missing). `null` when the model is usable.
+   */
+  modelo_bloqueado_motivo?: 'sem_modelo' | 'modelo_desativado' | 'modelo_sem_preco' | null;
+  /** Platform admin: may open the model catalog + processing admin pages (W8). */
+  pode_administrar_plataforma?: boolean;
   economico_disponivel: boolean;
   economico_bloqueado_motivo: string | null;
   tipos_edicao_ativos: string[];
@@ -214,14 +223,13 @@ export interface PlataformaConfiguracoes {
   /** Reference-pool limit in pairs; null (or 0 on write) = unlimited. */
   limite_pares_referencia: number | null;
   /**
-   * 🔴 READ-ONLY (W7, contract §7) — `PhotoEditingConfig` engine tunables,
-   * not `PlatformSettings` DB columns (no spare capacity + this slice was
-   * told not to add a migration). `GET` includes them; `PUT` does not
-   * accept them — sending either 422s (`extra="forbid"`). Present ONLY on
-   * `GET`, so both are optional here.
+   * Rule-proposer tunables (W7 panel, contract §7) — `fotos_platform_settings`
+   * columns since SW 130 (W8). `GET` returns the effective value; `PUT`
+   * writes them only when sent (0-604800 s / 1-500), `null` = engine default.
+   * Optional so an older client that omits them never resets them.
    */
-  rule_proposal_debounce_seconds?: number;
-  max_rejections_per_proposal?: number;
+  rule_proposal_debounce_seconds?: number | null;
+  max_rejections_per_proposal?: number | null;
 }
 
 /** Contract §7 — status of a per-agency "don't do this" rule. */
@@ -403,19 +411,169 @@ export interface NotificacaoPreferencia {
   whatsapp_number: string | null;
 }
 
-/** `GET /modelos` (contract §8) — the image-model catalog; drives Configuracoes' picker + the Econômico lock. */
+export type TagPerformance = 'performance' | 'economico';
+
+/**
+ * `GET /modelos` (contract §8) — the EFFECTIVE image-model catalog (the
+ * platform admin's overrides applied); drives Configuracoes' picker + the
+ * Econômico lock. `metricas` / `nota_recomendacao` are `null` for callers
+ * who may not see them (corretores) and while there is no data / no note.
+ */
 export interface ModeloCatalogoItem {
   id: string;
   nome: string;
   versao: string;
-  tag_performance: 'performance' | 'economico' | null;
+  tag_performance: TagPerformance | null;
   suporta_batch: boolean;
+  /** `false` ⇒ a rate is missing; selecting this model is refused (W8). */
+  com_preco?: boolean;
   nota_recomendacao: string | null;
+  nota_gerada_em?: string | null;
   metricas: {
+    total_fotos?: number;
+    /** 0-1; null = no decided photo yet ("no data" is not "0%"). */
     taxa_aprovacao: number | null;
     score_medio_ia: number | null;
+    /** USD; null while no photo was approved. */
     custo_por_foto_aprovada: number | null;
   } | null;
+}
+
+/** Per-1M-token USD rates of one model; `null` = no published rate. */
+export interface ModeloPrecos {
+  entrada_texto: number | null;
+  saida_texto: number | null;
+  entrada_imagem: number | null;
+  saida_imagem: number | null;
+}
+
+export type ModeloKind = 'image_edit' | 'vision' | 'chat';
+
+/** One row of `GET /modelos/catalogo` (platform admin, W8). */
+export interface ModeloCatalogoAdmin {
+  id: string;
+  kind: ModeloKind;
+  nome: string;
+  descricao: string | null;
+  snapshot: string | null;
+  versao: string;
+  habilitado: boolean;
+  precos: ModeloPrecos;
+  suporta_batch: boolean;
+  tag_performance: TagPerformance | null;
+  com_preco: boolean;
+  /** `catalogo` = static row untouched · `personalizado` = static row edited · `adicionado` = operator-only row. */
+  origem: 'catalogo' | 'personalizado' | 'adicionado';
+  /** The static catalog's rates, for comparison (null for an added row). */
+  precos_padrao: ModeloPrecos | null;
+  /** Override version (null = never edited). */
+  revisao: number | null;
+  atualizado_em: string | null;
+  atualizado_por: string | null;
+}
+
+export interface ModelosCatalogoPage {
+  items: ModeloCatalogoAdmin[];
+}
+
+/**
+ * `PUT /modelos/catalogo/{id}` — a FULL row. Prices travel as decimal
+ * strings; `null` = "no rate" (the model is then refused where it would be
+ * billed), never "keep the previous value".
+ */
+export interface ModeloCatalogoBody {
+  kind: ModeloKind;
+  nome: string | null;
+  descricao: string | null;
+  snapshot: string | null;
+  habilitado: boolean;
+  preco_entrada_texto_1m: string | null;
+  preco_saida_texto_1m: string | null;
+  preco_entrada_imagem_1m: string | null;
+  preco_saida_imagem_1m: string | null;
+  suporta_batch: boolean;
+  tag_performance: TagPerformance | null;
+}
+
+/** `PUT` answer: the saved row + whether this server already serves it. */
+export interface ModeloCatalogoSalvo extends ModeloCatalogoAdmin {
+  recarregado: boolean;
+}
+
+/** One immutable history row of a model (`GET /modelos/catalogo/{id}/versoes`). */
+export interface ModeloCatalogoVersao {
+  revisao: number;
+  habilitado: boolean;
+  nome: string | null;
+  snapshot: string | null;
+  precos: ModeloPrecos;
+  suporta_batch: boolean;
+  tag_performance: TagPerformance | null;
+  atualizado_em: string | null;
+  atualizado_por: string | null;
+}
+
+export type EtapaModelo = 'guia' | 'avaliador' | 'regras' | 'notas';
+
+/** `GET|PUT /modelos/etapas` — the model each engine step calls. */
+export interface ModelosEtapas {
+  etapas: {
+    etapa: EtapaModelo;
+    tipo: 'vision' | 'chat';
+    modelo: string;
+    padrao: string;
+    personalizado: boolean;
+  }[];
+}
+
+/** `PUT /modelos/etapas` — only keys sent are written; `null` = back to the default. */
+export type ModelosEtapasBody = Partial<Record<EtapaModelo, string | null>>;
+
+export type SondaStatus = 'ok' | 'sem_credito' | 'chave_invalida' | 'sem_chave' | 'limite' | 'erro';
+
+/** `POST /processamento/sonda` — OpenAI key/credit probe (costs one token). */
+export interface SondaResultado {
+  status: SondaStatus;
+  mensagem: string;
+  verificado_em: string | null;
+  modelo: string | null;
+  http_status: number | null;
+}
+
+/** `GET|PUT /processamento` — the worker's switch + health (platform admin, W8). */
+export interface ProcessamentoPainel {
+  /** The live pause switch ("processamento ativo"). */
+  ativo: boolean;
+  /** The process that answered — not the whole fleet. */
+  worker: {
+    escopo: 'este_processo';
+    kill_switch_ativo: boolean;
+    rodando: boolean;
+    pausado: boolean;
+    worker_id: string | null;
+    iniciado_em: string | null;
+    motivo_parado: string | null;
+    erro_gate: string | null;
+    catalogo_atualizado_em: string | null;
+    erro_catalogo: string | null;
+  };
+  /** The shared job table (every process). */
+  fila: {
+    pendentes: number;
+    prontos_para_rodar: number;
+    em_execucao: number;
+    lease_expirado: number;
+    mortos: number;
+    workers_ativos: string[];
+  };
+  ultimo_erro: { mensagem: string; tipo_job: string | null; em: string | null } | null;
+  /** From the last probe OR the latest job error. */
+  sem_creditos: boolean;
+  sonda: SondaResultado | null;
+}
+
+export interface ProcessamentoBody {
+  ativo: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -808,7 +966,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   /**
    * `POST /regras/propor-agora` — the "propor agora" button: run the AI
    * rule proposer NOW instead of waiting for the rejection-settling
-   * debounce (`PhotoEditingConfig.rule_proposal_debounce_seconds`).
+   * debounce (`PlataformaConfiguracoes.rule_proposal_debounce_seconds`).
    */
   function useProporRegrasAgora() {
     return useMutation({
@@ -1175,6 +1333,145 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     });
   }
 
+  // ---------------------------------------------------------------------
+  // Catálogo de modelos + etapas + notas (contract §8), W8 — platform admin
+  // ---------------------------------------------------------------------
+
+  /** `GET /modelos/catalogo` — every model row, incl. disabled ones. */
+  function useModelosCatalogo(options: { enabled?: boolean } = {}) {
+    const { enabled = true } = options;
+    const query = useQuery<ModelosCatalogoPage>({
+      queryKey: ['edicao-fotos', 'modelos-catalogo'],
+      queryFn: () => api.get('/api/edicao-fotos/modelos/catalogo'),
+      enabled,
+    });
+    return {
+      modelos: query.data?.items ?? [],
+      showSkeleton: enabled && query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  function invalidateModelos(queryClient: ReturnType<typeof useQueryClient>) {
+    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'modelos-catalogo'] });
+    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'modelos'] });
+    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'modelo-versoes'] });
+    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'capacidades'] });
+  }
+
+  /** `PUT /modelos/catalogo/{id}` — save one row (a new immutable version). */
+  function useSalvarModeloCatalogo() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: ({ id, body }: { id: string; body: ModeloCatalogoBody }) =>
+        api.put<ModeloCatalogoSalvo>(`/api/edicao-fotos/modelos/catalogo/${encodeURIComponent(id)}`, body),
+      onSuccess: () => invalidateModelos(queryClient),
+    });
+  }
+
+  /** `GET /modelos/catalogo/{id}/versoes` — a row's price/flag history, newest first. */
+  function useModeloVersoes(modeloId: string | null | undefined, kind: ModeloKind = 'image_edit') {
+    const query = useQuery<{ items: ModeloCatalogoVersao[] }>({
+      queryKey: ['edicao-fotos', 'modelo-versoes', modeloId, kind],
+      queryFn: () =>
+        api.get(`/api/edicao-fotos/modelos/catalogo/${encodeURIComponent(modeloId ?? '')}/versoes`, { kind }),
+      enabled: !!modeloId,
+      placeholderData: (prev) => prev,
+    });
+    return {
+      versoes: query.data?.items ?? [],
+      showSkeleton: !!modeloId && query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+    };
+  }
+
+  /** `GET /modelos/etapas`. */
+  function useModelosEtapas(options: { enabled?: boolean } = {}) {
+    const { enabled = true } = options;
+    const query = useQuery<ModelosEtapas>({
+      queryKey: ['edicao-fotos', 'modelos-etapas'],
+      queryFn: () => api.get('/api/edicao-fotos/modelos/etapas'),
+      enabled,
+    });
+    return {
+      etapas: query.data?.etapas ?? [],
+      showSkeleton: enabled && query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  /** `PUT /modelos/etapas` — send only the steps that changed. */
+  function useAtualizarModelosEtapas() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (body: ModelosEtapasBody) =>
+        api.put<ModelosEtapas>('/api/edicao-fotos/modelos/etapas', body),
+      onSuccess: (data) => {
+        queryClient.setQueryData(['edicao-fotos', 'modelos-etapas'], data);
+      },
+    });
+  }
+
+  /** `POST /modelos/notas/gerar` → 202: the rewrite runs on the worker (only while processing is active). */
+  function useGerarNotasModelos() {
+    return useMutation({
+      mutationFn: () => api.post<RegenerarGuiaResposta>('/api/edicao-fotos/modelos/notas/gerar', {}),
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Processamento (worker control + health), W8 — platform admin
+  // ---------------------------------------------------------------------
+
+  /**
+   * `GET /processamento`. `refetchInterval` keeps the health panel live;
+   * a background refetch reports `isRefreshing`, never a skeleton.
+   */
+  function useProcessamento(options: { enabled?: boolean; refetchInterval?: number | false } = {}) {
+    const { enabled = true, refetchInterval = false } = options;
+    const query = useQuery<ProcessamentoPainel>({
+      queryKey: ['edicao-fotos', 'processamento'],
+      queryFn: () => api.get('/api/edicao-fotos/processamento'),
+      enabled,
+      refetchInterval,
+    });
+    return {
+      painel: query.data,
+      showSkeleton: enabled && query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  /** `PUT /processamento` — pause/resume live (no redeploy). */
+  function useAtualizarProcessamento() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (body: ProcessamentoBody) =>
+        api.put<ProcessamentoPainel>('/api/edicao-fotos/processamento', body),
+      onSuccess: (data) => {
+        queryClient.setQueryData(['edicao-fotos', 'processamento'], data);
+      },
+    });
+  }
+
+  /** `POST /processamento/sonda` — spends one token; run on click only. */
+  function useSondarOpenAI() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: () => api.post<SondaResultado>('/api/edicao-fotos/processamento/sonda', {}),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'processamento'] });
+      },
+    });
+  }
+
   return {
     useCapacidades,
     useRevisao,
@@ -1213,6 +1510,15 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     useNotificacaoPreferencia,
     useAtualizarNotificacaoPreferencia,
     usePainel,
+    useModelosCatalogo,
+    useSalvarModeloCatalogo,
+    useModeloVersoes,
+    useModelosEtapas,
+    useAtualizarModelosEtapas,
+    useGerarNotasModelos,
+    useProcessamento,
+    useAtualizarProcessamento,
+    useSondarOpenAI,
   };
 }
 

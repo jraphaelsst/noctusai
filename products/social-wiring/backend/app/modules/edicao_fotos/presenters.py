@@ -15,6 +15,7 @@ from typing import Any, Iterable, Optional
 
 from noctusai_lib.domain.photo_editing import Batch, Photo, PhotoStatus
 from noctusai_lib.domain.photo_editing.ports import PhotoEditingConfig
+from noctusai_lib.domain.photo_editing.steps import rejections_per_proposal, rule_proposal_window
 from noctusai_lib.domain.photo_editing.types import (
     BatchStatus,
     EffectiveGuide,
@@ -149,15 +150,11 @@ def org_configuracoes_out(settings: OrgSettings, platform: PlatformSettings) -> 
 def platform_settings_out(
     settings: PlatformSettings, config: PhotoEditingConfig | None = None
 ) -> dict[str, Any]:
-    """🔴 `rule_proposal_debounce_seconds` / `max_rejections_per_proposal`
-    (W7) are `PhotoEditingConfig` engine tunables, not `PlatformSettings`
-    DB columns — `fotos_platform_settings` has no spare capacity and this
-    slice was told not to add a migration (SW 130-132 claimed by parallel
-    slices). Surfaced here READ-ONLY when `config` is passed; `PUT
-    /configuracoes/plataforma` does NOT accept them (see `schemas.
-    PlatformSettingsBody`, `extra="forbid"`) — making them writable needs a
-    migration, surfaced to the tech-lead rather than silently worked
-    around."""
+    """FE `PlataformaConfiguracoes`. The rule-proposer tunables
+    (`rule_proposal_debounce_seconds` / `max_rejections_per_proposal`) are
+    `fotos_platform_settings` columns since SW 130 and writable on `PUT`;
+    the EFFECTIVE value is returned (the setting, or the engine default
+    from `config` when unset — `config` defaults to `PhotoEditingConfig()`)."""
     price = settings.preco_storage_gb_mes_usd
     out = {
         "velocidade_default": _v(settings.velocidade_default),
@@ -165,9 +162,9 @@ def platform_settings_out(
         "preco_storage_gb_mes_usd": str(price) if price is not None else None,
         "limite_pares_referencia": settings.limite_pares_referencia or None,
     }
-    if config is not None:
-        out["rule_proposal_debounce_seconds"] = config.rule_proposal_debounce_seconds
-        out["max_rejections_per_proposal"] = config.max_rejections_per_proposal
+    cfg = config or PhotoEditingConfig()
+    out["rule_proposal_debounce_seconds"] = rule_proposal_window(settings, cfg)
+    out["max_rejections_per_proposal"] = rejections_per_proposal(settings, cfg)
     return out
 
 
@@ -250,18 +247,124 @@ def guia_out(guide: StyleGuide) -> dict[str, Any]:
     }
 
 
-def modelo_out(entry: Any) -> dict[str, Any]:
-    """FE `ModeloCatalogoItem`. Live metrics and the AI-written notes are
-    the model-notes slice (W8) — `null` until then, which the FE type
-    already allows."""
+def _versao(entry: Any) -> str:
+    return f"{entry.id}{entry.snapshot}" if entry.snapshot else entry.id
+
+
+def _num(value: Any) -> Optional[float]:
+    return None if value is None else float(value)
+
+
+def metricas_out(metrics: Any) -> dict[str, Any]:
+    """FE `ModeloCatalogoItem.metricas` (+ `total_fotos`). With no decided
+    photo the rates are `null` — "no data" is not "0% approval"."""
+    has_data = metrics.total_fotos > 0
+    return {
+        "total_fotos": metrics.total_fotos,
+        "taxa_aprovacao": _num(metrics.taxa_aprovacao) if has_data else None,
+        "score_medio_ia": _num(metrics.score_medio) if has_data else None,
+        "custo_por_foto_aprovada": (
+            _num(metrics.custo_por_foto_aprovada_usd)
+            if has_data and metrics.taxa_aprovacao > 0
+            else None
+        ),
+    }
+
+
+def modelo_out(entry: Any, *, metrics: Any = None, note: Any = None) -> dict[str, Any]:
+    """FE `ModeloCatalogoItem` — the EFFECTIVE catalog row (overlay applied).
+    `metricas` / `nota_recomendacao` are `null` for callers not allowed to
+    see them (or with no data / no note yet)."""
     return {
         "id": entry.id,
         "nome": entry.label,
-        "versao": f"{entry.id}{entry.snapshot}" if entry.snapshot else entry.id,
-        "tag_performance": None,
+        "versao": _versao(entry),
+        "tag_performance": entry.tag_performance,
         "suporta_batch": bool(entry.supports_batch),
-        "nota_recomendacao": None,
-        "metricas": None,
+        "com_preco": _is_priced(entry),
+        "nota_recomendacao": note.texto if note is not None else None,
+        "nota_gerada_em": _iso(note.gerado_em) if note is not None else None,
+        "metricas": metricas_out(metrics) if metrics is not None else None,
+    }
+
+
+def _is_priced(entry: Any) -> bool:
+    from noctusai_lib.integrations.llm import is_priced
+
+    return is_priced(entry)
+
+
+def precos_out(entry: Any) -> dict[str, Optional[float]]:
+    return {
+        "entrada_texto": _num(entry.cost_per_1m_input_tokens),
+        "saida_texto": _num(entry.cost_per_1m_output_tokens),
+        "entrada_imagem": _num(entry.cost_per_1m_image_input_tokens),
+        "saida_imagem": _num(entry.cost_per_1m_image_output_tokens),
+    }
+
+
+def modelo_admin_out(
+    *, model_id: str, kind: str, effective: Any, base: Any, override: Any
+) -> dict[str, Any]:
+    """FE `ModeloCatalogoAdmin` — one row of the platform admin's catalog.
+
+    `effective` is `None` for a disabled row; the row is then described by
+    the override itself. `origem`: `catalogo` (static, untouched) ·
+    `personalizado` (static row edited) · `adicionado` (operator-only)."""
+    shown = effective or (override.to_entry(base) if override is not None else base)
+    return {
+        "id": model_id,
+        "kind": kind,
+        "nome": shown.label,
+        "descricao": shown.description or None,
+        "snapshot": shown.snapshot,
+        "versao": _versao(shown),
+        "habilitado": effective is not None,
+        "precos": precos_out(shown),
+        "suporta_batch": bool(shown.supports_batch),
+        "tag_performance": shown.tag_performance,
+        "com_preco": _is_priced(shown),
+        "origem": "catalogo" if override is None else ("personalizado" if base is not None else "adicionado"),
+        "precos_padrao": precos_out(base) if base is not None else None,
+        "revisao": override.version if override is not None else None,
+        "atualizado_em": _iso(override.updated_at) if override is not None else None,
+        "atualizado_por": override.updated_by if override is not None else None,
+    }
+
+
+def modelo_versao_out(o: Any) -> dict[str, Any]:
+    """FE `ModeloCatalogoVersao` — one immutable history row."""
+    return {
+        "revisao": o.version,
+        "habilitado": o.enabled,
+        "nome": o.label,
+        "snapshot": o.snapshot,
+        "precos": {
+            "entrada_texto": o.cost_per_1m_input_tokens,
+            "saida_texto": o.cost_per_1m_output_tokens,
+            "entrada_imagem": o.cost_per_1m_image_input_tokens,
+            "saida_imagem": o.cost_per_1m_image_output_tokens,
+        },
+        "suporta_batch": o.supports_batch,
+        "tag_performance": o.tag_performance,
+        "atualizado_em": _iso(o.updated_at),
+        "atualizado_por": o.updated_by,
+    }
+
+
+def etapas_out(views: list[Any]) -> dict[str, Any]:
+    """FE `ModelosEtapas`."""
+    return {
+        "etapas": [
+            {
+                "etapa": v.step.value,
+                "tipo": v.kind,
+                "modelo": v.modelo,
+                "padrao": v.padrao,
+                "personalizado": v.personalizado,
+            }
+            for v in views
+        ]
     }
 
 

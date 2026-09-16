@@ -116,6 +116,7 @@ class JobType:
     FX_BACKFILL = "fotos.fx_backfill"
     SUBMIT_OPENAI_BATCH = "fotos.submit_openai_batch"
     POLL_OPENAI_BATCH = "fotos.poll_openai_batch"
+    NOTAS_MODELOS = "fotos.notas_modelos"
 
     ALL: tuple[str, ...] = (
         INGEST,
@@ -128,6 +129,7 @@ class JobType:
         FX_BACKFILL,
         SUBMIT_OPENAI_BATCH,
         POLL_OPENAI_BATCH,
+        NOTAS_MODELOS,
     )
 
 
@@ -257,6 +259,31 @@ class PlatformSettings:
     #: Reference-pool size limit, counted in PAIRS. ``None`` or ``0`` =
     #: unlimited; archived pairs never count (contract §5).
     limite_pares_referencia: int | None = None
+    #: Per-step AI model (edicao-fotos W8). ``None`` = the engine default
+    #: (``PhotoEditingConfig``); resolved by ``steps.resolve_step_model``.
+    modelo_guia: str | None = None
+    modelo_avaliador: str | None = None
+    modelo_regras: str | None = None
+    modelo_notas: str | None = None
+    #: Live pause switch for the job worker. ``False`` (the default, and
+    #: what a pre-130 database reads as) ⇒ the worker claims nothing.
+    processamento_ativo: bool = False
+    #: Rule-proposer tunables (W7 panel, editable since W8 / SW 130).
+    #: ``None`` (a pre-130 database) = the engine default
+    #: (``PhotoEditingConfig``); resolved by ``steps.resolve_rule_proposer_tunables``.
+    rule_proposal_debounce_seconds: int | None = None
+    max_rejections_per_proposal: int | None = None
+
+
+@dataclass(frozen=True)
+class ModelNote:
+    """One AI-written daily note about a model (``fotos_modelos_notas``)."""
+
+    id: str  # BIGSERIAL, carried as text like every other record id
+    modelo_id: str
+    texto: str
+    dados_base: dict[str, Any] = field(default_factory=dict)
+    gerado_em: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -618,6 +645,11 @@ def dedupe_poll_openai_batch(lote_openai_id: str, consulta: int) -> str:
     return f"{JobType.POLL_OPENAI_BATCH}:{lote_openai_id}:{consulta}"
 
 
+def dedupe_notas_modelos(day_iso: str) -> str:
+    """One daily-notes run per São Paulo day (manual runs pass a finer key)."""
+    return f"{JobType.NOTAS_MODELOS}:{day_iso}"
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -641,6 +673,7 @@ __all__ = [
     "LlmUsageRow",
     "MAX_BYTES_PER_PHOTO",
     "MAX_PHOTOS_PER_BATCH",
+    "ModelNote",
     "OpenAIBatchRecord",
     "OpenAIBatchStatus",
     "OrgRule",
@@ -668,6 +701,7 @@ __all__ = [
     "dedupe_fx_backfill",
     "dedupe_ingest",
     "dedupe_lote_pronto",
+    "dedupe_notas_modelos",
     "dedupe_poll_openai_batch",
     "dedupe_propor_regras",
     "dedupe_propor_regras_manual",

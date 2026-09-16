@@ -180,6 +180,13 @@ engine `fotos.submit_openai_batch` + self-rescheduling `fotos.poll_openai_batch`
 Exercised end-to-end on fakes only; the real smoke run still needs credits + a
 priced batch-capable model.
 
+**Update 2026-09-16 (W8) — pricing is now a UI action, not a code change.** The model
+catalog has a runtime overlay (`llm.catalog_overrides`, SW 130) that `models_for()` applies,
+so W4's `PhotoEditingPorts.capabilities` port sees it with no extra wiring: the platform admin
+opens Edição de Fotos → Modelos, adds `gpt-image-2` with its rates and "Suporta Batch API", and
+Econômico unlocks. An unpriced model is refused (`modelo_sem_preco`) instead of billed at $0, so
+`NOC-REMEDIATE[llm-model-unpriced]` for `gpt-image-2` is resolved.
+
 ### C9 — 🔴 DO NOT APPLY Core 045, and do not trust a tree you did not name
 **Core 045 is on the prod branch but deliberately UNAPPLIED.** It belongs to
 `noctusai-36`'s cutover. `deploy/fleet/build-scope.txt` derives from
@@ -282,7 +289,12 @@ promote will see them in the rebuild set.
 - `NOC-REMEDIATE[llm-usage-image-columns]` — `SupabaseUsageSink` can't write the new
   image-token columns yet. That migration is the one that must become the **seed template**
   (§C2, N=3), not a fourth hand-copy.
-- `NOC-REMEDIATE[llm-model-unpriced]` — `gpt-image-2` (see C8).
+- ~~`NOC-REMEDIATE[llm-model-unpriced]` — `gpt-image-2` (see C8).~~ Resolved by W8 (the owner
+  enters the price in the UI). The same marker still names `gemini-2.0-flash` in
+  `mcp/noctusai/tests/test_model_catalog_pricing.py` — a different model, untouched.
+- W8 worker defaults: `EDICAO_FOTOS_WORKER_ENABLED` now defaults ON (kill switch); the live
+  pause `processamento_ativo` defaults OFF (SW 130). The worker runs but spends nothing until
+  a platform admin turns processing on — the "ready for when OpenAI has credits" shape.
 - `mcp/noctusai/tests/test_llm_providers.py` is effectively frozen to edits: a pre-existing
   unannotated self-monkeypatch at line ~356 makes the guard refuse any edit to the file.
   Annotate or rewire before a later slice needs to touch it.

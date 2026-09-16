@@ -189,6 +189,33 @@ def get_vista_photo_source(cfg: Any = Depends(get_settings)) -> VistaPhotoSource
     return RealVistaPhotoSource(adapter)
 
 
+def get_catalog_store() -> Any:
+    """Seam: the model-catalog override store (W8, migration 130)."""
+    try:
+        return ports_service.get_catalog_store()
+    except ports_service.EdicaoFotosUnavailable as exc:
+        raise api_error(503, exc.code, str(exc)) from exc
+
+
+def get_credit_probe() -> Any:
+    """Seam: the OpenAI credential/credit probe (seed `llm.credit_probe`)."""
+    from noctusai_lib.integrations.llm import make_credit_probe
+
+    return make_credit_probe("openai")
+
+
+def get_platform_openai_key() -> Callable[[], str | None]:
+    """Seam: resolves the PLATFORM OpenAI key (no org) at call time."""
+    return lambda: ports_service.openai_key_for_org(None)
+
+
+def get_worker_control() -> Any:
+    """Seam: this process's worker lifecycle (`services.worker`)."""
+    from app.modules.edicao_fotos.services import worker as worker_service
+
+    return worker_service
+
+
 def batch_visible_to(actor: Actor, batch: Batch) -> bool:
     if str(batch.org_id) != actor.org_id:
         return False
@@ -222,12 +249,16 @@ __all__ = [
     "batch_visible_to",
     "can_see_verdict",
     "get_actor",
+    "get_catalog_store",
+    "get_credit_probe",
     "get_edicao_ports",
     "get_grant_repository",
     "get_painel_client",
+    "get_platform_openai_key",
     "get_preferences_repository",
     "get_role_resolver",
     "get_vista_photo_source",
+    "get_worker_control",
     "is_member",
     "load_visible_batch",
     "load_visible_rule",

@@ -10,13 +10,15 @@ storage bucket, notification fan-out and the worker lifecycle. Contract:
 
     deps.py                 actor + role guards + DI seams (ports, grants, prefs, Vista)
     services/ports.py       engine ports → real adapters
-    services/worker.py      seed Worker, behind EDICAO_FOTOS_WORKER_ENABLED (default OFF)
+    services/worker.py      seed Worker: EDICAO_FOTOS_WORKER_ENABLED = kill switch (default ON);
+                            `processamento_ativo` = live pause (default OFF) · catalog refresher
+    services/scheduler.py   00:05 model notes + PTAX backfill (seed scheduler, lease, catch-up)
     services/notifier.py    batch-ready fan-out: in-app + email + WhatsApp
     services/notificacoes_preferencias.py  per-user opt-in storage (migration 131)
     services/vista_fotos.py Vista gallery → batch
     services/review.py      FotoRevisao rows (verdict read only for admins) + URL signing
     routers/                capacidades · configuracoes · curadores · modelos · lotes · revisao
-                            · referencias · guias · regras · notificacoes · painel
+                            · referencias · guias · regras · notificacoes · painel · processamento
 
 Response shapes are the seed FE hook types
 (`seed/lib/frontend/src/photo-editing/hooks.ts`), pinned by
@@ -31,7 +33,16 @@ Routes (all under ``/api/edicao-fotos``; every one requires auth → 401):
     GET    /curadores                                platform admin
     POST   /curadores                                platform admin
     DELETE /curadores/{user_id}                      platform admin
-    GET    /modelos                                  member (catalog; metrics/notes null until W8)
+    GET    /modelos                                  member (catalog; metrics + notes for admins)
+    GET    /modelos/catalogo                         platform admin (every row, incl. disabled)
+    PUT    /modelos/catalogo/{modelo_id}             platform admin (versioned override)
+    GET    /modelos/catalogo/{modelo_id}/versoes     platform admin
+    GET    /modelos/etapas                           platform admin (model per engine step)
+    PUT    /modelos/etapas                           platform admin
+    POST   /modelos/notas/gerar                      platform admin (enqueue fotos.notas_modelos)
+    GET    /processamento                            platform admin (switch · worker · queue · probe)
+    PUT    /processamento                            platform admin (pause/resume, live)
+    POST   /processamento/sonda                      platform admin (OpenAI key/credit probe)
     GET    /lotes                                    member (corretor: own)
     POST   /lotes                                    member
     GET    /lotes/{id}                               member, batch visible
@@ -61,9 +72,9 @@ Routes (all under ``/api/edicao-fotos``; every one requires auth → 401):
     PUT    /notificacoes/preferencias                 member (own row)
     GET    /painel                                   agency admin (own org) ∨ platform admin (org filter)
 
-Not in R1 here (later slices): model metrics/notes, Econômico (C8).
-Batch-ready notifications (in-app + email + WhatsApp, per-user
-agency-admin opt-in) ship in THIS slice — resolves
+Not in R1 here (later slices): nothing from plan §7 W2-W9 remains. Batch-ready
+notifications (in-app + email + WhatsApp, per-user agency-admin opt-in)
+shipped with the notifications slice — resolves
 NOC-REMEDIATE[edicao-fotos-notify-channels].
 
 `GET /painel` (contract §8, W9) is a single SQL-aggregation RPC
@@ -96,10 +107,15 @@ def register() -> Any:
         modelos,
         notificacoes,
         painel,
+        processamento,
         referencias,
         regras,
         revisao,
     )
+    from app.modules.edicao_fotos.services import scheduler as fotos_scheduler
+
+    # W8: daily model notes (00:05) + PTAX backfill, on the seed scheduler.
+    fotos_scheduler.configure()
 
     return ModuleRegistration(
         routers=[
@@ -114,6 +130,7 @@ def register() -> Any:
             regras.router,
             notificacoes.router,
             painel.router,
+            processamento.router,
         ],
         standard_routers=(),
     )

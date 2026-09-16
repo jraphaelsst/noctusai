@@ -21,6 +21,7 @@ const mockEditar = vi.fn();
 const mockAprovar = vi.fn();
 const mockRejeitar = vi.fn();
 const mockProporAgora = vi.fn();
+const mockAtualizarPlataforma = vi.fn();
 
 vi.mock("@/hooks/useEdicaoFotos", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useEdicaoFotos")>("@/hooks/useEdicaoFotos");
@@ -35,6 +36,7 @@ vi.mock("@/hooks/useEdicaoFotos", async () => {
     useAprovarRegra: () => ({ mutateAsync: mockAprovar, isPending: false }),
     useRejeitarRegra: () => ({ mutateAsync: mockRejeitar, isPending: false }),
     useProporRegrasAgora: () => ({ mutateAsync: mockProporAgora, isPending: false }),
+    useAtualizarConfiguracoesPlataforma: () => ({ mutateAsync: mockAtualizarPlataforma, isPending: false }),
   };
 });
 
@@ -111,9 +113,18 @@ beforeEach(() => {
   mockUseRegras.mockReturnValue(regrasState());
   mockUseGuiaEfetivo.mockReturnValue(guiaEfetivoState());
   mockUseConfiguracoesPlataforma.mockReturnValue({
-    configuracoes: { rule_proposal_debounce_seconds: 1800, max_rejections_per_proposal: 50 },
+    configuracoes: {
+      velocidade_default: "urgente",
+      notificacoes_globais_ativas: true,
+      preco_storage_gb_mes_usd: null,
+      limite_pares_referencia: null,
+      rule_proposal_debounce_seconds: 1800,
+      max_rejections_per_proposal: 50,
+    },
     showSkeleton: false,
+    error: null,
   });
+  mockAtualizarPlataforma.mockResolvedValue({});
 });
 
 describe("Regras — access + states", () => {
@@ -250,10 +261,34 @@ describe("Regras — platform-only config panel", () => {
     expect(queryByTestId("regras-config-proponente")).toBeNull();
   });
 
-  it("shows the read-only debounce/threshold values for a platform admin", async () => {
+  it("edits the debounce/threshold values for a platform admin (whole object PUT)", async () => {
     mockUseCapacidades.mockReturnValue({ capacidades: capacidades({ dashboard: "platform" }), showSkeleton: false });
-    const { getByTestId } = await renderPage();
-    expect(getByTestId("regras-config-proponente").textContent).toContain("1800");
-    expect(getByTestId("regras-config-proponente").textContent).toContain("50");
+    const rtl = await import("@testing-library/react");
+    const { getByLabelText, getByText } = await renderPage();
+    const debounce = getByLabelText("Espera após a última rejeição (s)") as HTMLInputElement;
+    const max = getByLabelText("Máx. rejeições por chamada") as HTMLInputElement;
+    expect(debounce.value).toBe("1800");
+    expect(max.value).toBe("50");
+    rtl.fireEvent.change(debounce, { target: { value: "600" } });
+    rtl.fireEvent.change(max, { target: { value: "20" } });
+    rtl.fireEvent.click(getByText("Salvar"));
+    await rtl.waitFor(() => expect(mockAtualizarPlataforma).toHaveBeenCalled());
+    expect(mockAtualizarPlataforma.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        velocidade_default: "urgente",
+        limite_pares_referencia: null,
+        rule_proposal_debounce_seconds: 600,
+        max_rejections_per_proposal: 20,
+      }),
+    );
+  });
+
+  it("refuses out-of-range values", async () => {
+    mockUseCapacidades.mockReturnValue({ capacidades: capacidades({ dashboard: "platform" }), showSkeleton: false });
+    const rtl = await import("@testing-library/react");
+    const { getByLabelText, getByTestId, getByText } = await renderPage();
+    rtl.fireEvent.change(getByLabelText("Máx. rejeições por chamada"), { target: { value: "0" } });
+    expect(getByTestId("proponente-invalido")).toBeTruthy();
+    expect((getByText("Salvar").closest("button") as HTMLButtonElement).disabled).toBe(true);
   });
 });

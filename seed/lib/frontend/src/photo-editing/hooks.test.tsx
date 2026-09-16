@@ -521,3 +521,64 @@ describe('notificação preferência hooks (self-service opt-in)', () => {
     });
   });
 });
+
+// ── W8: model catalog admin + processing ─────────────────────────────────────
+
+describe('W8 hooks: model catalog + processing', () => {
+  it('useModelosCatalogo exposes rows and stays idle when disabled', async () => {
+    const get = vi.fn().mockResolvedValue({ items: [{ id: 'gpt-image-2' }] });
+    const { useModelosCatalogo } = createEdicaoFotosHooks(makeApi({ get }));
+    const idle = renderHook(() => useModelosCatalogo({ enabled: false }), { wrapper: wrapper() });
+    expect(idle.result.current.showSkeleton).toBe(false);
+    expect(get).not.toHaveBeenCalled();
+    const { result } = renderHook(() => useModelosCatalogo(), { wrapper: wrapper() });
+    expect(result.current.showSkeleton).toBe(true);
+    await waitFor(() => expect(result.current.modelos).toHaveLength(1));
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/modelos/catalogo');
+  });
+
+  it('mutations hit the contract routes', async () => {
+    const put = vi.fn().mockResolvedValue({ etapas: [] });
+    const post = vi.fn().mockResolvedValue({});
+    const api = makeApi({ put, post });
+    const hooks = createEdicaoFotosHooks(api);
+    const w = wrapper();
+    const salvar = renderHook(() => hooks.useSalvarModeloCatalogo(), { wrapper: w });
+    const etapas = renderHook(() => hooks.useAtualizarModelosEtapas(), { wrapper: w });
+    const notas = renderHook(() => hooks.useGerarNotasModelos(), { wrapper: w });
+    const proc = renderHook(() => hooks.useAtualizarProcessamento(), { wrapper: w });
+    const sonda = renderHook(() => hooks.useSondarOpenAI(), { wrapper: w });
+    await act(async () => {
+      await salvar.result.current.mutateAsync({ id: 'gpt-image-2', body: { kind: 'image_edit' } as never });
+      await etapas.result.current.mutateAsync({ avaliador: null });
+      await notas.result.current.mutateAsync();
+      await proc.result.current.mutateAsync({ ativo: true });
+      await sonda.result.current.mutateAsync();
+    });
+    expect(put).toHaveBeenCalledWith('/api/edicao-fotos/modelos/catalogo/gpt-image-2', { kind: 'image_edit' });
+    expect(put).toHaveBeenCalledWith('/api/edicao-fotos/modelos/etapas', { avaliador: null });
+    expect(put).toHaveBeenCalledWith('/api/edicao-fotos/processamento', { ativo: true });
+    expect(post).toHaveBeenCalledWith('/api/edicao-fotos/modelos/notas/gerar', {});
+    expect(post).toHaveBeenCalledWith('/api/edicao-fotos/processamento/sonda', {});
+  });
+
+  it('useProcessamento polls and reports refreshes without a skeleton', async () => {
+    const painel = { ativo: false };
+    const get = vi.fn().mockResolvedValue(painel);
+    const { useProcessamento } = createEdicaoFotosHooks(makeApi({ get }));
+    const { result } = renderHook(() => useProcessamento({ refetchInterval: false }), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.painel).toEqual(painel));
+    expect(result.current.showSkeleton).toBe(false);
+    expect(result.current.isRefreshing).toBe(false);
+  });
+
+  it('useModeloVersoes is keyed on the model and idle without one', async () => {
+    const get = vi.fn().mockResolvedValue({ items: [{ revisao: 1 }] });
+    const { useModeloVersoes } = createEdicaoFotosHooks(makeApi({ get }));
+    const idle = renderHook(() => useModeloVersoes(null), { wrapper: wrapper() });
+    expect(idle.result.current.showSkeleton).toBe(false);
+    const { result } = renderHook(() => useModeloVersoes('gpt-image-2', 'image_edit'), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.versoes).toHaveLength(1));
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/modelos/catalogo/gpt-image-2/versoes', { kind: 'image_edit' });
+  });
+});

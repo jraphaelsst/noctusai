@@ -68,7 +68,7 @@ def test_status_literals_match_the_sql_check() -> None:
 def test_job_types_include_the_economico_pair() -> None:
     assert JobType.SUBMIT_OPENAI_BATCH == "fotos.submit_openai_batch"
     assert JobType.POLL_OPENAI_BATCH == "fotos.poll_openai_batch"
-    assert len(JobType.ALL) == len(set(JobType.ALL)) == 10
+    assert len(JobType.ALL) == len(set(JobType.ALL)) == 11  # + W8 fotos.notas_modelos
 
 
 def test_economico_auto_retry_returns_the_photo_to_pronta() -> None:

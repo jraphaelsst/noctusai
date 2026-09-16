@@ -147,8 +147,7 @@ def test_platform_settings_round_trip(edicao) -> None:
         "notificacoes_globais_ativas": True,
         "preco_storage_gb_mes_usd": None,
         "limite_pares_referencia": None,  # W6: reference-pool limit (null = unlimited)
-        # W7: `PhotoEditingConfig` engine tunables, read-only (no DB column
-        # — see `presenters.platform_settings_out`'s docstring).
+        # W7 tunables, effective values (engine default while unset; SW 130).
         "rule_proposal_debounce_seconds": 1800,
         "max_rejections_per_proposal": 50,
     }
@@ -161,6 +160,28 @@ def test_platform_settings_round_trip(edicao) -> None:
     stored = edicao.repo.platform_settings
     assert stored.notificacoes_globais_ativas is False
     assert stored.preco_storage_gb_mes_usd == Decimal("0.021")
+
+
+def test_rule_proposer_tunables_are_writable(edicao) -> None:
+    http = edicao.as_user("plataforma").http
+    resp = http.put(
+        "/api/edicao-fotos/configuracoes/plataforma",
+        json={"rule_proposal_debounce_seconds": 600, "max_rejections_per_proposal": 20},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["rule_proposal_debounce_seconds"] == 600
+    assert resp.json()["max_rejections_per_proposal"] == 20
+    stored = edicao.repo.platform_settings
+    assert (stored.rule_proposal_debounce_seconds, stored.max_rejections_per_proposal) == (600, 20)
+    # Omitted ⇒ untouched; null ⇒ back to the engine default.
+    http.put("/api/edicao-fotos/configuracoes/plataforma", json={"notificacoes_globais_ativas": True})
+    assert edicao.repo.platform_settings.max_rejections_per_proposal == 20
+    reset = http.put(
+        "/api/edicao-fotos/configuracoes/plataforma", json={"max_rejections_per_proposal": None}
+    ).json()
+    assert reset["max_rejections_per_proposal"] == 50
+    for bad in ({"max_rejections_per_proposal": 0}, {"rule_proposal_debounce_seconds": -1}):
+        assert http.put("/api/edicao-fotos/configuracoes/plataforma", json=bad).status_code == 422
 
 
 def test_platform_default_economico_is_accepted_and_gated_per_org(edicao) -> None:

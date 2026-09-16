@@ -12,6 +12,7 @@ known_facts:
   - "`useRevisao(loteId)` and any future batch-keyed hook MUST carry `placeholderData: (prev) => prev` — contract §9's explicit requirement that a `lote_id` key change never unmounts a grid that already has content."
   - "Scope grew wave by wave — capacidades/review/decisions/reference-pool (S9), lotes CRUD/upload/vista/zip + configuracoes/modelos (W10a), guias de estilo + platform settings (W6), curadores + notificacoes/preferencias (this slice) — same factory extended each time rather than forked. Regras and painel are the remaining out-of-scope admin surfaces."
   - "Zero Social-Wiring coupling — travels unchanged to the owner's phase-2 standalone rebuild of the engine."
+  - "W8 (2026-09-16) extended the factory with the platform-admin surfaces: useModelosCatalogo / useSalvarModeloCatalogo / useModeloVersoes / useModelosEtapas / useAtualizarModelosEtapas / useGerarNotasModelos and useProcessamento (refetchInterval-friendly: a poll reports isRefreshing, never a skeleton) / useAtualizarProcessamento / useSondarOpenAI. Disable-able reads (`enabled: false`) report showSkeleton=false so a locked page never shows a phantom skeleton."
 
 errors_encountered: []
 

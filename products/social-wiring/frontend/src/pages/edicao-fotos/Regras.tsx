@@ -41,6 +41,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -57,6 +58,7 @@ import {
   fotosPermissions,
   useAprovarRegra,
   useCapacidades,
+  useAtualizarConfiguracoesPlataforma,
   useConfiguracoesPlataforma,
   useCriarRegra,
   useEditarRegra,
@@ -70,6 +72,9 @@ import {
 } from "@/hooks/useEdicaoFotos";
 
 const TEXTO_MAX = 2000;
+// Mirror the SW 130 CHECKs / the PUT validation.
+const DEBOUNCE_MAX_S = 7 * 86400;
+const MAX_REJEICOES = 500;
 
 const STATUS_ROTULO: Record<RegraStatus, string> = {
   proposta: "Proposta",
@@ -435,25 +440,75 @@ function GuiaEfetivoSection() {
 }
 
 function ConfiguracoesProponente() {
-  const { configuracoes, showSkeleton } = useConfiguracoesPlataforma();
+  const { configuracoes, showSkeleton, error } = useConfiguracoesPlataforma();
+  const atualizar = useAtualizarConfiguracoesPlataforma();
+  const [debounce, setDebounce] = useState<string | null>(null);
+  const [maxRejeicoes, setMaxRejeicoes] = useState<string | null>(null);
+
+  const debounceValor = debounce ?? String(configuracoes?.rule_proposal_debounce_seconds ?? "");
+  const maxValor = maxRejeicoes ?? String(configuracoes?.max_rejections_per_proposal ?? "");
+  const debounceNum = Number(debounceValor);
+  const maxNum = Number(maxValor);
+  const valido =
+    /^\d+$/.test(debounceValor) && debounceNum <= DEBOUNCE_MAX_S && /^\d+$/.test(maxValor) && maxNum >= 1 && maxNum <= MAX_REJEICOES;
+
+  async function handleSalvar(event: FormEvent) {
+    event.preventDefault();
+    if (!configuracoes || !valido) return;
+    try {
+      // Read → change → write: the PUT takes the whole object.
+      await atualizar.mutateAsync({
+        ...configuracoes,
+        rule_proposal_debounce_seconds: debounceNum,
+        max_rejections_per_proposal: maxNum,
+      });
+      setDebounce(null);
+      setMaxRejeicoes(null);
+      toast.success("Configurações do proponente salvas.");
+    } catch (err) {
+      toast.error("Não foi possível salvar.", { description: err instanceof Error ? err.message : undefined });
+    }
+  }
 
   return (
     <Card data-testid="regras-config-proponente">
-      <CardContent className="space-y-2 p-4">
+      <CardContent className="space-y-3 p-4">
         <p className="text-sm font-semibold">Configurações do proponente de regras</p>
-        {showSkeleton ? (
+        {error ? (
+          <p className="text-sm text-destructive">Não foi possível carregar as configurações.</p>
+        ) : showSkeleton ? (
           <Skeleton className="h-10 w-full" />
         ) : (
-          <>
-            <p className="text-sm text-muted-foreground">
-              Debounce: {configuracoes?.rule_proposal_debounce_seconds ?? "—"} s · Máx. rejeições por
-              chamada: {configuracoes?.max_rejections_per_proposal ?? "—"}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              🔴 Somente leitura nesta versão — são parâmetros do motor (não uma coluna de
-              configurações da plataforma); torná-los editáveis exige uma migração.
-            </p>
-          </>
+          <form className="flex flex-wrap items-end gap-3" onSubmit={handleSalvar}>
+            <div className="space-y-1">
+              <Label htmlFor="proponente-debounce">Espera após a última rejeição (s)</Label>
+              <Input
+                id="proponente-debounce"
+                inputMode="numeric"
+                className="w-40"
+                value={debounceValor}
+                onChange={(e) => setDebounce(e.target.value.trim())}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="proponente-max">Máx. rejeições por chamada</Label>
+              <Input
+                id="proponente-max"
+                inputMode="numeric"
+                className="w-40"
+                value={maxValor}
+                onChange={(e) => setMaxRejeicoes(e.target.value.trim())}
+              />
+            </div>
+            <Button type="submit" disabled={!valido || atualizar.isPending}>
+              {atualizar.isPending ? "Salvando…" : "Salvar"}
+            </Button>
+            {!valido && (
+              <p className="w-full text-xs text-destructive" data-testid="proponente-invalido">
+                Espera: 0 a {DEBOUNCE_MAX_S} s · Rejeições: 1 a {MAX_REJEICOES}.
+              </p>
+            )}
+          </form>
         )}
       </CardContent>
     </Card>

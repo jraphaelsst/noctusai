@@ -155,13 +155,19 @@ def test_notifier_failure_propagates_for_the_retry() -> None:
 # --- worker flag ----------------------------------------------------------------
 
 
-def test_worker_stays_off_by_default() -> None:
+def test_kill_switch_defaults_on_and_still_stops_the_worker() -> None:
+    """W8: the env flag is the hard kill switch and defaults ON (the worker
+    is built and waits on `processamento_ativo`); false keeps it from
+    starting at all, and the status says why."""
     from app.config import SocialWiringSettings
 
-    assert SocialWiringSettings.model_fields["edicao_fotos_worker_enabled"].default is False
+    assert SocialWiringSettings.model_fields["edicao_fotos_worker_enabled"].default is True
     cfg = SimpleNamespace(edicao_fotos_worker_enabled=False)
     assert asyncio.run(worker_service.start_worker(cfg)) is False
     assert worker_service.is_running() is False
+    status = worker_service.status()
+    assert status.kill_switch_ativo is False and status.rodando is False
+    assert "EDICAO_FOTOS_WORKER_ENABLED" in (status.motivo_parado or "")
     asyncio.run(worker_service.stop_worker())  # no-op when never started
 
 

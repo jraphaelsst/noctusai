@@ -36,7 +36,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -55,6 +57,7 @@ from noctusai_lib.domain.photo_editing.guide import (
     resolve_effective_guide,
 )
 from noctusai_lib.domain.photo_editing.learning import InvalidModelOutputError, propose_rules
+from noctusai_lib.domain.photo_editing.notes import write_model_notes
 from noctusai_lib.domain.photo_editing.naming import (
     EDITED_NAME,
     ORIGINAL_NAME,
@@ -82,6 +85,12 @@ from noctusai_lib.domain.photo_editing.ports import (
 from noctusai_lib.domain.photo_editing.prompts import (
     render_edit_prompt,
     render_evaluator_prompt,
+)
+from noctusai_lib.domain.photo_editing.steps import (
+    STEP_KIND,
+    Step,
+    resolve_rule_proposer_tunables,
+    resolve_step_model,
 )
 from noctusai_lib.domain.photo_editing.types import (
     PROCESSING_DONE_STATES,
@@ -975,8 +984,8 @@ async def handle_avaliar(ports: PhotoEditingPorts, job: Job) -> None:
         original = await ports.storage.get(current.storage_path_original)
         edited = await ports.storage.get(current.storage_path_editada)
         prompt = render_evaluator_prompt(edit.tipos_edicao, guia_texto=guide.texto)
-        model = ports.config.evaluator_model
-        catalog_entry(ports.config.llm_provider, model, "vision")  # fail before spend
+        model = await resolve_step_model(ports, Step.AVALIADOR)
+        catalog_entry(ports.config.llm_provider, model, STEP_KIND[Step.AVALIADOR])  # fail before spend
         result = await ports.llm.analyze(
             images=[original, edited],
             prompt=prompt.text,
@@ -1106,12 +1115,12 @@ async def handle_propor_regras(ports: PhotoEditingPorts, job: Job) -> None:
 
     async def body() -> None:
         now = ports.clock()
-        window = ports.config.rule_proposal_debounce_seconds
+        window, limit = await resolve_rule_proposer_tunables(ports)
         cursor = await ports.repo.get_cursor(org_id)
         pending = await ports.repo.list_rejections(
             org_id,
             after=cursor.ultima_execucao_em if cursor else None,
-            limit=ports.config.max_rejections_per_proposal,
+            limit=limit,
         )
         if not pending:
             return
@@ -1142,6 +1151,38 @@ async def handle_fx_backfill(ports: PhotoEditingPorts, job: Job) -> None:
 
 
 # ---------------------------------------------------------------------------
+# fotos.notas_modelos (daily, W8)
+# ---------------------------------------------------------------------------
+
+
+def _optional_dt(job: Job, key: str) -> datetime | None:
+    value = (job.payload or {}).get(key)
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise DeadLetterError(f"job {job.id} ({job.type}) payload {key!r} is not a string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise DeadLetterError(f"job {job.id} ({job.type}) payload {key!r} is not ISO-8601") from exc
+    if parsed.tzinfo is None:
+        raise DeadLetterError(f"job {job.id} ({job.type}) payload {key!r} lacks a timezone")
+    return parsed
+
+
+async def handle_notas_modelos(ports: PhotoEditingPorts, job: Job) -> None:
+    # ``desde`` = the slot this run belongs to: a model already noted since
+    # then is skipped, so a retried or duplicated run never writes twice.
+    # A manual run carries no ``desde`` and rewrites every model with data.
+    since = _optional_dt(job, "desde")
+
+    async def body() -> None:
+        await write_model_notes(ports, since=since)
+
+    await _plain_step(body)
+
+
+# ---------------------------------------------------------------------------
 # Wiring
 # ---------------------------------------------------------------------------
 
@@ -1158,6 +1199,7 @@ HANDLERS: dict[str, HandlerFn] = {
     JobType.FX_BACKFILL: handle_fx_backfill,
     JobType.SUBMIT_OPENAI_BATCH: handle_submit_openai_batch,
     JobType.POLL_OPENAI_BATCH: handle_poll_openai_batch,
+    JobType.NOTAS_MODELOS: handle_notas_modelos,
 }
 
 
@@ -1172,13 +1214,52 @@ def build_handlers(ports: PhotoEditingPorts) -> dict[str, JobHandler]:
     return {job_type: bind(fn) for job_type, fn in HANDLERS.items()}
 
 
+class ProcessingGate:
+    """Worker claim gate backed by ``PlatformSettings.processamento_ativo``
+    (the UI's "processamento ativo" toggle): pause/resume a LIVE worker
+    without a restart.
+
+    The answer is cached for ``ttl_seconds`` so an idle worker polling every
+    second does not read the settings row every second; a toggle therefore
+    reaches a running worker within ``ttl_seconds`` (``invalidate()`` makes
+    it immediate in the process that flipped it). A failed read raises —
+    ``Worker.claim_allowed`` treats that as CLOSED."""
+
+    def __init__(
+        self,
+        ports: PhotoEditingPorts,
+        *,
+        ttl_seconds: float = 10.0,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ports = ports
+        self._ttl = ttl_seconds
+        self._monotonic = monotonic
+        self._cached: bool | None = None
+        self._read_at = 0.0
+
+    def invalidate(self) -> None:
+        self._cached = None
+
+    async def __call__(self) -> bool:
+        now = self._monotonic()
+        if self._cached is None or now - self._read_at >= self._ttl:
+            settings = await self._ports.repo.get_platform_settings()
+            self._cached = bool(settings.processamento_ativo)
+            self._read_at = now
+        return self._cached
+
+
 def build_worker(
     ports: PhotoEditingPorts,
     *,
     worker_id: str,
     poll_interval_seconds: float = 1.0,
     lease_seconds: float = 600.0,
+    claim_gate: Callable[[], Awaitable[bool]] | None = None,
 ) -> Worker:
+    """``claim_gate=None`` runs unconditionally (tests, one-shot drains);
+    production passes a :class:`ProcessingGate`."""
     return Worker(
         ports.jobs,
         worker_id=worker_id,
@@ -1186,6 +1267,7 @@ def build_worker(
         retry_policy=ports.config.retry_policy(),
         poll_interval_seconds=poll_interval_seconds,
         lease_seconds=lease_seconds,
+        claim_gate=claim_gate,
     )
 
 
@@ -1193,6 +1275,7 @@ __all__ = [
     "EditQuotaExceededError",
     "HANDLERS",
     "HandlerFn",
+    "ProcessingGate",
     "PhotoEditingConfigError",
     "build_handlers",
     "build_worker",
@@ -1202,6 +1285,7 @@ __all__ = [
     "handle_fx_backfill",
     "handle_ingest",
     "handle_lote_pronto",
+    "handle_notas_modelos",
     "handle_poll_openai_batch",
     "handle_propor_regras",
     "handle_regen_guia",

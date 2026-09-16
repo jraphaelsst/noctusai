@@ -18,7 +18,9 @@
     "limites": {
       "fotos_por_lote": 100,
       "bytes_por_foto": 26214400
-    }
+    },
+    "modelo_bloqueado_motivo": null,
+    "pode_administrar_plataforma": false
   },
   "novo_lote_body": {
     "nome": "Apto 12 — Rua das Flores",
@@ -130,7 +132,9 @@
     "tag_performance": null,
     "suporta_batch": false,
     "nota_recomendacao": null,
-    "metricas": null
+    "metricas": null,
+    "com_preco": true,
+    "nota_gerada_em": null
   },
   "erro": {
     "detail": "Nenhum modelo de edição configurado para a organização.",
@@ -243,13 +247,17 @@
     "velocidade_default": "urgente",
     "notificacoes_globais_ativas": true,
     "preco_storage_gb_mes_usd": null,
-    "limite_pares_referencia": null
+    "limite_pares_referencia": null,
+    "rule_proposal_debounce_seconds": 1800,
+    "max_rejections_per_proposal": 50
   },
   "configuracoes_plataforma_body": {
     "velocidade_default": "urgente",
     "notificacoes_globais_ativas": true,
     "preco_storage_gb_mes_usd": "0.021",
-    "limite_pares_referencia": 40
+    "limite_pares_referencia": 40,
+    "rule_proposal_debounce_seconds": 900,
+    "max_rejections_per_proposal": 30
   },
   "erro_pool_cheio": {
     "detail": "O pool de referências está cheio — arquive um par ou aumente o limite.",
@@ -389,5 +397,164 @@
       },
       "margem_brl": -4.5
     }
+  },
+  "modelo_admin_visao": {
+    "id": "gpt-image-2.5-sunburst",
+    "nome": "GPT Image 2.5 Sunburst",
+    "versao": "gpt-image-2.5-sunburst-2026-09-08",
+    "tag_performance": null,
+    "suporta_batch": false,
+    "com_preco": true,
+    "nota_recomendacao": null,
+    "nota_gerada_em": null,
+    "metricas": {
+      "total_fotos": 0,
+      "taxa_aprovacao": null,
+      "score_medio_ia": null,
+      "custo_por_foto_aprovada": null
+    }
+  },
+  "modelos_catalogo_page": {
+    "items": [
+      {
+        "id": "gpt-image-2.5-sunburst",
+        "kind": "image_edit",
+        "nome": "GPT Image 2.5 Sunburst",
+        "descricao": "Image editing — multi-turn, reference-image aware.",
+        "snapshot": "-2026-09-08",
+        "versao": "gpt-image-2.5-sunburst-2026-09-08",
+        "habilitado": true,
+        "precos": {
+          "entrada_texto": 5.0,
+          "saida_texto": null,
+          "entrada_imagem": 8.0,
+          "saida_imagem": 30.0
+        },
+        "suporta_batch": false,
+        "tag_performance": null,
+        "com_preco": true,
+        "origem": "catalogo",
+        "precos_padrao": {
+          "entrada_texto": 5.0,
+          "saida_texto": null,
+          "entrada_imagem": 8.0,
+          "saida_imagem": 30.0
+        },
+        "revisao": null,
+        "atualizado_em": null,
+        "atualizado_por": null
+      }
+    ]
+  },
+  "modelo_catalogo_body": {
+    "kind": "image_edit",
+    "nome": "GPT Image 2",
+    "descricao": null,
+    "snapshot": null,
+    "habilitado": true,
+    "preco_entrada_texto_1m": "5",
+    "preco_saida_texto_1m": null,
+    "preco_entrada_imagem_1m": "10",
+    "preco_saida_imagem_1m": "40",
+    "suporta_batch": true,
+    "tag_performance": "economico"
+  },
+  "modelo_catalogo_salvo": {
+    "id": "gpt-image-2",
+    "kind": "image_edit",
+    "nome": "GPT Image 2",
+    "descricao": null,
+    "snapshot": null,
+    "versao": "gpt-image-2",
+    "habilitado": true,
+    "precos": {
+      "entrada_texto": 5.0,
+      "saida_texto": null,
+      "entrada_imagem": 10.0,
+      "saida_imagem": 40.0
+    },
+    "suporta_batch": true,
+    "tag_performance": "economico",
+    "com_preco": true,
+    "origem": "adicionado",
+    "precos_padrao": null,
+    "revisao": 1,
+    "atualizado_em": "2026-09-16T18:00:00+00:00",
+    "atualizado_por": "00000000-0000-4000-8000-0000000000a5",
+    "recarregado": true
+  },
+  "modelo_versoes_page": {
+    "items": [
+      {
+        "revisao": 1,
+        "habilitado": true,
+        "nome": "GPT Image 2",
+        "snapshot": null,
+        "precos": {
+          "entrada_texto": 5.0,
+          "saida_texto": null,
+          "entrada_imagem": 10.0,
+          "saida_imagem": 40.0
+        },
+        "suporta_batch": true,
+        "tag_performance": "economico",
+        "atualizado_em": "2026-09-16T18:00:00+00:00",
+        "atualizado_por": "00000000-0000-4000-8000-0000000000a5"
+      }
+    ]
+  },
+  "modelos_etapas": {
+    "etapas": [
+      {
+        "etapa": "guia",
+        "tipo": "vision",
+        "modelo": "gpt-5.6-sol",
+        "padrao": "gpt-5.6-sol",
+        "personalizado": false
+      }
+    ]
+  },
+  "modelos_etapas_body": {
+    "avaliador": "gpt-6-astra"
+  },
+  "notas_gerar": {
+    "job_id": "b1c1d1e1-0000-4000-8000-000000000001",
+    "status": "pending"
+  },
+  "processamento": {
+    "ativo": false,
+    "worker": {
+      "escopo": "este_processo",
+      "kill_switch_ativo": true,
+      "rodando": true,
+      "pausado": true,
+      "worker_id": "sw-edicao-fotos-host-1",
+      "iniciado_em": "2026-09-16T18:00:00+00:00",
+      "motivo_parado": null,
+      "erro_gate": null,
+      "catalogo_atualizado_em": "2026-09-16T18:00:00+00:00",
+      "erro_catalogo": null
+    },
+    "fila": {
+      "pendentes": 0,
+      "prontos_para_rodar": 0,
+      "em_execucao": 0,
+      "lease_expirado": 0,
+      "mortos": 0,
+      "workers_ativos": []
+    },
+    "ultimo_erro": null,
+    "sem_creditos": false,
+    "sonda": null
+  },
+  "processamento_body": {
+    "ativo": true
+  },
+  "sonda": {
+    "status": "sem_credito",
+    "mensagem": "Sem créditos na conta.",
+    "verificado_em": "2026-09-16T18:00:00+00:00",
+    "modelo": "gpt-4o-mini",
+    "http_status": 429
   }
 }

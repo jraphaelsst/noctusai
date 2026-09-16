@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from noctusai_lib.domain.photo_editing.ports import ImageInput, PhotoEditingPorts
 from noctusai_lib.domain.photo_editing.prompts import render_style_guide_prompt
+from noctusai_lib.domain.photo_editing.steps import Step, resolve_step_model
 from noctusai_lib.domain.photo_editing.types import (
     EffectiveGuide,
     OrgRule,
@@ -188,7 +189,7 @@ async def generate_draft_from_pool(ports: PhotoEditingPorts) -> StyleGuide | Non
         images=images,
         prompt=rendered.text,
         response_schema=rendered.response_schema or {},
-        model=cfg.style_guide_model,
+        model=await resolve_step_model(ports, Step.GUIA),
         org_id=None,
         schema_name="guia_estilo",
     )

@@ -177,8 +177,9 @@ export default function Configuracoes() {
                   </SelectTrigger>
                   <SelectContent>
                     {modelosQuery.modelos.map((modelo) => (
-                      <SelectItem key={modelo.id} value={modelo.id}>
+                      <SelectItem key={modelo.id} value={modelo.id} disabled={modelo.com_preco === false}>
                         {modelo.nome} ({modelo.versao}){modelo.suporta_batch ? " · suporta Econômico" : ""}
+                        {modelo.com_preco === false ? " · sem preço (indisponível)" : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>

@@ -34,11 +34,13 @@ from noctusai_lib.domain.photo_editing import (
     BucketPhotoStorage,
     LlmStructuredAdapter,
     PhotoEditingPorts,
+    catalog_capabilities,
     make_photo_editing_repository,
     openai_image_edit_factory,
 )
 from noctusai_lib.integrations.fx import get_fx_rate_adapter
 from noctusai_lib.integrations.imaging import get_imaging_adapter
+from noctusai_lib.integrations.llm import ModelCatalogStore, make_model_catalog_store
 from noctusai_lib.integrations.quota import (
     DefaultingQuotaTracker,
     QuotaConfig,
@@ -120,7 +122,12 @@ def build_ports(cfg: Any) -> PhotoEditingPorts:
         storage=BucketPhotoStorage(backend, bucket=BUCKET_FOTOS),
         reference_storage=BucketPhotoStorage(backend, bucket=BUCKET_REFERENCIAS),
         imaging=get_imaging_adapter(),
-        image_edit=openai_image_edit_factory(openai_key_for_org),
+        # One capabilities port for the engine AND the adapter: the catalog,
+        # read at call time — which includes the platform admin's overrides
+        # (`llm.catalog_overrides`, W8), so a model priced + marked
+        # batch-capable in "Modelos" unlocks Econômico with no redeploy.
+        image_edit=openai_image_edit_factory(openai_key_for_org, capabilities=catalog_capabilities),
+        capabilities=catalog_capabilities,
         llm=LlmStructuredAdapter(),
         fx=get_fx_rate_adapter(live=True),
         notifier=MultiChannelBatchReadyNotifier(
@@ -140,10 +147,18 @@ def build_grant_repository() -> PermissionGrantRepository:
     return make_permission_grant_repository(supabase_client=core)
 
 
+def build_catalog_store() -> ModelCatalogStore:
+    """Model-catalog overrides (migration 130), `social_wiring` tables
+    reached with `.schema()` on the service-role client."""
+    _admin, core = _clients()
+    return make_model_catalog_store(supabase_client=core, schema=SCHEMA)
+
+
 _lock = threading.Lock()
 _ports: Optional[PhotoEditingPorts] = None
 _grants: Optional[PermissionGrantRepository] = None
 _preferences: Optional[NotificationPreferencesRepository] = None
+_catalog: Optional[ModelCatalogStore] = None
 
 
 def get_ports(cfg: Any) -> PhotoEditingPorts:
@@ -171,13 +186,23 @@ def get_preferences_repository() -> NotificationPreferencesRepository:
         return _preferences
 
 
+def get_catalog_store() -> ModelCatalogStore:
+    global _catalog
+    with _lock:
+        if _catalog is None:
+            _catalog = build_catalog_store()
+        return _catalog
+
+
 __all__ = [
     "BUCKET_FOTOS",
     "BUCKET_REFERENCIAS",
     "EdicaoFotosUnavailable",
+    "build_catalog_store",
     "build_edit_quota",
     "build_grant_repository",
     "build_ports",
+    "get_catalog_store",
     "build_preferences_repository",
     "get_grant_repository",
     "get_ports",

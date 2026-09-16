@@ -53,7 +53,9 @@ or for a raw edit call without review (`integrations.image_edit` directly).
 | `costs.py` | usage priced from the catalog at call time → `llm_usage` + `cost_ledger` (USD native, PTAX rate + quote date, BRL) · `fx_pending` when no bulletin · `backfill_fx` |
 | `learning.py` | rule proposer (cursor watermark, case-insensitive dedupe) · `decide_rule` authority (agency admin decides a proposal; only platform admin flips a decided rule) · `create_manual_rule` / `edit_rule_text` (W7 — manual create is auto-APROVADA, sharing authority via `can_manage_rule`; edit refuses once REJEITADA) |
 | `pool.py` | reference pool entry points: `add_reference_pair` (normalize both sides, GPS strip, store under `referencias/<token>/{antes,depois}.jpg`, pair limit, cleanup on a refused insert) · `archive_reference_pair` (idempotent) · `pool_status` (active count + limit, `None`/`0` = unlimited) |
-| `access.py` | `compute_capabilities` → contract §2 `/capacidades` (server-computed, never SSO metadata) |
+| `access.py` | `compute_capabilities` → contract §2 `/capacidades` (server-computed, never SSO metadata; `modelo_bloqueado_motivo` ∈ `sem_modelo`/`modelo_desativado`/`modelo_sem_preco`, `pode_administrar_plataforma`) |
+| `steps.py` | per-step model (`Step` guia/avaliador/regras/notas): `PlatformSettings.modelo_*` override → `PhotoEditingConfig` default, resolved at call time; `validate_step_model` (enabled + right kind + priced) |
+| `notes.py` | `write_model_notes` — daily AI note per image model from `repo.model_metrics` (skip no-data, skip already-noted-since-slot), stored with its `dados_base`; platform scope (no `cost_ledger` row) |
 | `pipeline.py` | route entry points: `add_photo_bytes`, `submit_batch`, `retry_photo`, debounced `schedule_*`, `request_guide_regen` (manual, runs now), `enqueue_*` |
 | `handlers.py` | one idempotent handler per job type · `build_handlers` · `build_worker` |
 | `ports.py` | `PhotoEditingPorts` (the one DI seam) + `PhotoStorage` (`InMemoryPhotoStorage` / `BucketPhotoStorage` over `integrations.storage`, with `signed_url`), `StructuredLlm`, `BatchReadyNotifier` ports with in-memory fakes + real adapters |
@@ -126,10 +128,16 @@ Fake and would let a production batch "succeed" with placeholder bytes.
 | `fotos.regen_guia` | — | trailing debounce on pool changes → AI-written DRAFT |
 | `fotos.propor_regras` | `org_id` | trailing debounce on rejections → proposed rules |
 | `fotos.fx_backfill` | `dia` | resolves `fx_pending` ledger rows |
+| `fotos.notas_modelos` | `desde` (slot, tz-aware) ∨ `manual` | `write_model_notes(since=desde)` — idempotent per slot |
 
-Run them with `build_worker(ports, worker_id=...)` — it binds
-`ports.config.retry_policy()` (one automatic retry), which the handlers'
-own last-attempt check assumes.
+Run them with `build_worker(ports, worker_id=..., claim_gate=ProcessingGate(ports))`
+— it binds `ports.config.retry_policy()` (one automatic retry), which the
+handlers' own last-attempt check assumes. `ProcessingGate` is the live pause:
+`domain.jobs.Worker` consults it before EVERY claim and claims nothing while
+`PlatformSettings.processamento_ativo` is false (TTL-cached read; a read
+failure counts as closed). `claim_gate=None` runs unconditionally (tests).
+`enqueue_model_notes(ports, slot=...)` dedupes on the slot's São Paulo
+date; `slot=None` is the manual "rewrite now".
 
 ### 4.3 Route entry points (`pipeline.py`, `dataset.py`, `learning.py`, `guide.py`, `zipper.py`)
 
@@ -179,6 +187,8 @@ effective guides / proposal cursor · costs (`add_llm_usage`, `add_cost`, `list_
 Econômico provider batches (`create_openai_batch`, `get_openai_batch`,
 `update_openai_batch`, `list_openai_batches` → `fotos_lotes_openai`, SW 132;
 `OpenAIBatchRecord.itens` = `{foto_id, edicao_id, custom_id, tentativas, prompt}`).
+Model metrics + notes (`model_metrics` = the SW 126 `fotos_modelo_metricas` RPC, never cached;
+`add_model_note`, `latest_model_notes`).
 The Supabase implementation targets social-wiring migrations 123-126 and 132 (plus
 121 jobs and 122 `llm_usage`) in `schema`, and Core 046 `public.cost_ledger`
 in `cost_schema`.
@@ -190,8 +200,8 @@ in `cost_schema`.
 `products/social-wiring/backend/app/modules/edicao_fotos/`: routes under
 `/api/edicao-fotos` (capacidades · configuracoes · curadores · modelos ·
 lotes · revisao), authorization + org scoping in `deps.py` (the engine's service-role
-client bypasses RLS, so visibility is enforced there), the worker behind
-`EDICAO_FOTOS_WORKER_ENABLED` (default OFF), and the in-app batch-ready
+client bypasses RLS, so visibility is enforced there), the worker (see W8
+below for its two switches), and the in-app batch-ready
 notifier. Curator grants use `domain.permissions`' `list_grants` /
 `add_grant` / `remove_grant`. Tests drive the routes and the real seed
 Worker on `InMemoryPhotoEditingRepository(id_factory=...)` (UUID ids for
@@ -231,6 +241,23 @@ the backend replays against its live routes. `compute_capabilities` emits
 `dashboard ∈ {"platform", "org", None}` — the FE's literal set. Errors use
 the seed's flat `{"detail", "code"}` shape.
 
+W8 (2026-09-16) — every model spec is UI-controllable, and the worker is
+built and ready: `/modelos` (effective catalog; metrics + latest note for
+admins only) · `/modelos/catalogo[/{id}[/versoes]]` (platform admin: full
+rows incl. disabled, versioned saves through the catalog overlay; a step
+model cannot be disabled while in use) · `/modelos/etapas` · `/modelos/notas/gerar`
+· `/processamento` (GET health: switch, this process's worker, shared queue
+`JobRepository.queue_stats`, last error, "sem créditos"; PUT pause/resume) ·
+`/processamento/sonda` (seed `llm.credit_probe`, click-only). Two switches:
+`EDICAO_FOTOS_WORKER_ENABLED` = hard kill switch, **default ON** (the worker
+is started in the lifespan whenever the process can build the ports);
+`processamento_ativo` = live pause, **default OFF** (SW 130; a pre-130
+database also reads OFF). `services/scheduler.py` enqueues
+`fotos.notas_modelos` at 00:05 and `fotos.fx_backfill` at 13:30/18:30
+(America/Sao_Paulo, seed scheduler, `sync_lease`, startup catch-up gated by
+`NOCTUS_SCHEDULERS_ENABLED`); each process refreshes the catalog overlay on
+a timer (`EDICAO_FOTOS_CATALOG_REFRESH_SECONDS`).
+
 ## 5. Invariants
 
 - 🔴 **Failure policy** — retryable (429 · 5xx · timeout · malformed model
@@ -257,6 +284,10 @@ the seed's flat `{"detail", "code"}` shape.
   automatic retry returns photos to the SAME `pronta` state).
 - **`ImageEditRequest.extra` reaches the provider verbatim** — engine
   metadata (prompt refs, ids) goes on events / rows, never there.
+- **Unpriced ⇒ refused, never $0** — `validate_submission` raises
+  `modelo_sem_preco` for a known model missing a rate; a disabled model is
+  `modelo_desconhecido`. Both come from the catalog overlay (W8) that
+  `ports.capabilities` and the cost code read.
 
 ---
 
@@ -280,12 +311,11 @@ the seed's flat `{"detail", "code"}` shape.
   PostgREST (missing column) and only the pre-check guards the pool.
 - No live OpenAI verification was possible (no credits, PROJECT.md § 4c):
   the suite runs on fakes only.
-- `NOC-REMEDIATE[fotos-rule-proposer-settings-migration]` (W7) — making
-  `rule_proposal_debounce_seconds` / `max_rejections_per_proposal` genuinely
-  editable in the UI needs a new `fotos_platform_settings` column (no spare
-  capacity today); this slice was told not to add a migration (SW 130-132
-  claimed by parallel slices), so they stay `PhotoEditingConfig` engine
-  tunables, surfaced READ-ONLY on `GET /configuracoes/plataforma`.
+- ~~`fotos-rule-proposer-settings-migration`~~ (W7) — resolved by W8: SW 130
+  adds `rule_proposal_debounce_seconds` / `max_rejections_per_proposal` to
+  `fotos_platform_settings` (defaults = `PhotoEditingConfig`), writable on
+  `PUT /configuracoes/plataforma`, read per run through
+  `steps.resolve_rule_proposer_tunables`; the Regras panel edits them.
 - `NOC-REMEDIATE[mock-count-exact-ignores-predicates]` (seed
   `noctusai_lib.testing.MockSupabaseClient`) — `select(..., count="exact")`
   snapshots `len(table)` at `.select()` time, before any `.eq()` narrows it,

@@ -127,16 +127,25 @@ class ImageEditCapabilities:
 
     ``supports_batch`` mirrors `ModelEntry.supports_batch` exactly: the
     "Econômico" (Batch API) capability gate. Per `projects/edicao-fotos/
-    PROJECT.md` C8: as of 2026-09-16 NO catalog `image_edit` row sets
-    this True, so every known model reports `supports_batch=False` —
-    correct behaviour, not a bug in this module. See the
-    `NOC-REMEDIATE[llm-model-unpriced]` marker in
-    `noctusai_lib/integrations/llm/models.py`.
+    PROJECT.md` C8: no STATIC catalog `image_edit` row sets this True;
+    since W8 an operator can supply a batch-capable model (with its rates)
+    through the catalog overlay (`llm.catalog_overrides`), and this lookup
+    sees it because it reads the effective catalog.
+
+    ``priced`` is ``llm.models.is_priced`` for the row: a known model with a
+    missing rate is refusable at selection/submission instead of billing a
+    silent $0.
     """
 
     model: str
     supports_batch: bool
-    known: bool  # False when `model` is not a catalog `image_edit` entry
+    known: bool  # False when `model` is not an ENABLED catalog `image_edit` entry
+    #: ``capabilities_for_model`` always sets this from the catalog. The
+    #: default only applies to hand-built capabilities (test doubles, a
+    #: consumer's own ``capabilities`` port): "not known to be unpriced".
+    #: Money stays safe either way — ``photo_editing.costs`` refuses an
+    #: unpriced call with ``UnpricedModelError`` before the provider runs.
+    priced: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -243,12 +252,17 @@ def capabilities_for_model(model: str) -> ImageEditCapabilities:
     (mirrors the lazy `from .models import models_for` already used
     inside `llm.usage.estimate_cost_usd`).
     """
-    from noctusai_lib.integrations.llm.models import models_for
+    from noctusai_lib.integrations.llm.models import is_priced, models_for
 
     for entry in models_for("openai", "image_edit"):
         if entry.id == model:
-            return ImageEditCapabilities(model=model, supports_batch=entry.supports_batch, known=True)
-    return ImageEditCapabilities(model=model, supports_batch=False, known=False)
+            return ImageEditCapabilities(
+                model=model,
+                supports_batch=entry.supports_batch,
+                known=True,
+                priced=is_priced(entry),
+            )
+    return ImageEditCapabilities(model=model, supports_batch=False, known=False, priced=False)
 
 
 @runtime_checkable

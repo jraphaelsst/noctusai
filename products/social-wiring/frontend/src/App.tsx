@@ -64,6 +64,7 @@ import {
   ImagePlus,
   Images,
   BookOpen,
+  Cpu,
   Plus,
   UserCog,
 } from "lucide-react";
@@ -119,8 +120,8 @@ const AgentesFinanceiros = lazyWithReload(
   () => import("@/pages/AgentesFinanceiros"),
 );
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —
-// W6; Regras — W7; Curadores — notify slice; Painel — W9) are shipped;
-// Modelos is the only later slice.
+// W6; Regras — W7; Curadores — notify slice; Painel — W9; Modelos +
+// Processamento — W8) are all shipped.
 const EdicaoFotosLotes = lazyWithReload(() => import("@/pages/edicao-fotos/Lotes"));
 const EdicaoFotosNovoLote = lazyWithReload(() => import("@/pages/edicao-fotos/NovoLote"));
 const EdicaoFotosLoteRevisao = lazyWithReload(() => import("@/pages/edicao-fotos/LoteRevisao"));
@@ -130,6 +131,8 @@ const EdicaoFotosGuiasEstilo = lazyWithReload(() => import("@/pages/edicao-fotos
 const EdicaoFotosRegras = lazyWithReload(() => import("@/pages/edicao-fotos/Regras"));
 const EdicaoFotosCuradores = lazyWithReload(() => import("@/pages/edicao-fotos/Curadores"));
 const EdicaoFotosPainel = lazyWithReload(() => import("@/pages/edicao-fotos/Painel"));
+const EdicaoFotosModelos = lazyWithReload(() => import("@/pages/edicao-fotos/Modelos"));
+const EdicaoFotosProcessamento = lazyWithReload(() => import("@/pages/edicao-fotos/Processamento"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -257,8 +260,8 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     // (painel)). LoteRevisao (`/edicao-fotos/lotes/:loteId/revisao`) is a
     // detail route reached from a Lotes card, not a standalone nav item —
     // same shape as `/imoveis/:codigo` next to the `imoveis` nav entry.
-    // Modelos is the only later slice; its `status_pagina` row already
-    // exists (migration 128) but no nav entry points at it yet. Route
+    // W8 added Modelos + Processamento (platform admin — they lock
+    // themselves without `pode_administrar_plataforma`). Route
     // slugs below match migration 128's `nome_pagina` values EXACTLY (its
     // own explicit instruction) — kebab-case, unlike this file's usual
     // snake_case.
@@ -280,6 +283,16 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText, route: "edicao-fotos-regras" },
       { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog, route: "edicao-fotos-curadores" },
       { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3, route: "edicao-fotos-painel" },
+      // W8 — platform-admin pages (they lock themselves without
+      // `pode_administrar_plataforma`). `edicao-fotos-modelos` is migration
+      // 128's row; `edicao-fotos-processamento` is migration 130's.
+      { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu, route: "edicao-fotos-modelos" },
+      {
+        name: "Processamento",
+        href: "/edicao-fotos/processamento",
+        icon: Activity,
+        route: "edicao-fotos-processamento",
+      },
     ],
   },
   {
@@ -408,6 +421,8 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText },
       { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog },
       { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3 },
+      { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu },
+      { name: "Processamento", href: "/edicao-fotos/processamento", icon: Activity },
     ],
   },
   {
@@ -465,6 +480,8 @@ export default createProductApp({
     { path: "/edicao-fotos/regras", component: EdicaoFotosRegras },
     { path: "/edicao-fotos/curadores", component: EdicaoFotosCuradores },
     { path: "/edicao-fotos/painel", component: EdicaoFotosPainel },
+    { path: "/edicao-fotos/modelos", component: EdicaoFotosModelos },
+    { path: "/edicao-fotos/processamento", component: EdicaoFotosProcessamento },
     { path: "/clientes", component: ClientesBoard },
     { path: "/clientes/revisao", component: RevisaoFila },
     { path: "/email-marketing/listas", component: EmailListas },

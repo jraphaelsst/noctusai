@@ -77,6 +77,7 @@ from noctusai_lib.domain.photo_editing.handlers import (
     HANDLERS,
     EditQuotaExceededError,
     PhotoEditingConfigError,
+    ProcessingGate,
     build_handlers,
     build_worker,
     handle_avaliar,
@@ -84,6 +85,7 @@ from noctusai_lib.domain.photo_editing.handlers import (
     handle_fx_backfill,
     handle_ingest,
     handle_lote_pronto,
+    handle_notas_modelos,
     handle_poll_openai_batch,
     handle_propor_regras,
     handle_regen_guia,
@@ -119,6 +121,7 @@ from noctusai_lib.domain.photo_editing.pipeline import (
     SubmissionError,
     add_photo_bytes,
     enqueue_fx_backfill,
+    enqueue_model_notes,
     enqueue_openai_batch_poll,
     enqueue_openai_batch_submit,
     request_guide_regen,
@@ -128,6 +131,11 @@ from noctusai_lib.domain.photo_editing.pipeline import (
     schedule_rule_proposal,
     submit_batch,
     validate_submission,
+)
+from noctusai_lib.domain.photo_editing.notes import (
+    NotesReport,
+    NoteWriterOutputError,
+    write_model_notes,
 )
 from noctusai_lib.domain.photo_editing.pool import (
     PoolStatus,
@@ -162,12 +170,23 @@ from noctusai_lib.domain.photo_editing.repository import (
     SupabasePhotoEditingRepository,
     make_photo_editing_repository,
 )
+from noctusai_lib.domain.photo_editing.steps import (
+    STEP_KIND,
+    Step,
+    StepModelError,
+    StepModelView,
+    resolve_rule_proposer_tunables,
+    resolve_step_model,
+    step_models_view,
+    validate_step_model,
+)
 from noctusai_lib.domain.photo_editing.types import (
     Batch,
     BatchStatus,
     Decision,
     EditType,
     JobType,
+    ModelNote,
     OpenAIBatchRecord,
     OpenAIBatchStatus,
     OrgSettings,
@@ -311,4 +330,20 @@ __all__ = [
     "validate_submission",
     "zip_entry_name",
     "zip_file_name",
+    # W8 — model catalog steps, daily notes, processing gate
+    "ModelNote",
+    "NoteWriterOutputError",
+    "NotesReport",
+    "ProcessingGate",
+    "STEP_KIND",
+    "Step",
+    "StepModelError",
+    "StepModelView",
+    "enqueue_model_notes",
+    "handle_notas_modelos",
+    "resolve_rule_proposer_tunables",
+    "resolve_step_model",
+    "step_models_view",
+    "validate_step_model",
+    "write_model_notes",
 ]

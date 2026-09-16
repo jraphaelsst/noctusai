@@ -42,6 +42,7 @@ from noctusai_lib.domain.photo_editing.types import (
     GuideStatus,
     IllegalTransitionError,
     LlmUsageRow,
+    ModelNote,
     OpenAIBatchRecord,
     OpenAIBatchStatus,
     OrgRule,
@@ -61,6 +62,7 @@ from noctusai_lib.domain.photo_editing.types import (
     StyleGuide,
     can_transition,
 )
+from noctusai_lib.domain.photo_editing.prompts.note_writer import ModelMetrics
 
 _BATCH_MUTABLE = frozenset(
     {
@@ -110,6 +112,13 @@ _PLATFORM_MUTABLE = frozenset(
         "notificacoes_globais_ativas",
         "preco_storage_gb_mes_usd",
         "limite_pares_referencia",
+        "modelo_guia",
+        "modelo_avaliador",
+        "modelo_regras",
+        "modelo_notas",
+        "processamento_ativo",
+        "rule_proposal_debounce_seconds",
+        "max_rejections_per_proposal",
     }
 )
 _EDIT_MUTABLE = frozenset(
@@ -349,6 +358,15 @@ class PhotoEditingRepository(Protocol):
     async def update_openai_batch(self, lote_openai_id: str, **changes: Any) -> OpenAIBatchRecord: ...
     async def list_openai_batches(self, lote_id: str) -> list[OpenAIBatchRecord]: ...
 
+    # --- model metrics + notes (W8) -----------------------------------
+    async def model_metrics(self, modelo_id: str) -> ModelMetrics:
+        """Live, never cached — the ``fotos_modelo_metricas`` RPC contract."""
+        ...
+    async def add_model_note(
+        self, *, modelo_id: str, texto: str, dados_base: dict[str, Any]
+    ) -> ModelNote: ...
+    async def latest_model_notes(self, modelo_ids: list[str]) -> dict[str, ModelNote]: ...
+
 
 # ---------------------------------------------------------------------------
 # In-memory implementation
@@ -396,6 +414,7 @@ class InMemoryPhotoEditingRepository:
         self.llm_usage: dict[int, LlmUsageRow] = {}
         self.costs: dict[int, CostLedgerRow] = {}
         self.openai_batches: dict[str, OpenAIBatchRecord] = {}
+        self.model_notes: list[ModelNote] = []
 
     def _id(self, kind: str) -> str:
         if self._id_factory is not None:
@@ -989,6 +1008,55 @@ class InMemoryPhotoEditingRepository:
 
     async def list_openai_batches(self, lote_id: str) -> list[OpenAIBatchRecord]:
         return [r for r in self.openai_batches.values() if r.lote_id == lote_id]
+
+    # --- model metrics + notes ----------------------------------------
+    async def model_metrics(self, modelo_id: str) -> ModelMetrics:
+        """Mirror of social-wiring migration 126's RPC over in-memory rows."""
+        edits = [e for e in self.edits.values() if e.modelo_id == modelo_id]
+        foto_ids = {e.foto_id for e in edits}
+        latest: dict[str, ReviewDecision] = {}
+        for d in self.decisions:
+            if d.foto_id in foto_ids:
+                latest[d.foto_id] = d  # appended in time order
+        approved = {f for f, d in latest.items() if Decision(d.decisao) is Decision.APROVAR}
+        edit_ids = {e.id for e in edits}
+        scores = [ev.score for ev in self.evaluations if ev.edicao_id in edit_ids]
+        cost = sum(
+            (
+                self.llm_usage[e.llm_usage_id].cost_estimate_usd
+                for e in edits
+                if e.foto_id in approved and e.llm_usage_id in self.llm_usage
+            ),
+            Decimal(0),
+        )
+        total = len(latest)
+        return ModelMetrics(
+            modelo_id=modelo_id,
+            total_fotos=total,
+            taxa_aprovacao=(Decimal(len(approved)) / total) if total else Decimal(0),
+            score_medio=(sum(scores, Decimal(0)) / len(scores)) if scores else Decimal(0),
+            custo_por_foto_aprovada_usd=(cost / len(approved)) if approved else Decimal(0),
+        )
+
+    async def add_model_note(
+        self, *, modelo_id: str, texto: str, dados_base: dict[str, Any]
+    ) -> ModelNote:
+        note = ModelNote(
+            id=str(next(self._seq)),
+            modelo_id=modelo_id,
+            texto=texto,
+            dados_base=dict(dados_base),
+            gerado_em=self._now(),
+        )
+        self.model_notes.append(note)
+        return note
+
+    async def latest_model_notes(self, modelo_ids: list[str]) -> dict[str, ModelNote]:
+        out: dict[str, ModelNote] = {}
+        for note in self.model_notes:
+            if note.modelo_id in modelo_ids:
+                out[note.modelo_id] = note  # appended in time order
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -2025,6 +2093,57 @@ class SupabasePhotoEditingRepository:
             .order("created_at", desc=False)
         )
         return [_openai_batch(r) for r in rows]
+
+    # --- model metrics + notes ----------------------------------------
+    async def model_metrics(self, modelo_id: str) -> ModelMetrics:
+        rows = await self._execute(
+            self._client.schema(self._schema).rpc(
+                "fotos_modelo_metricas", {"p_modelo_id": modelo_id}
+            )
+        )
+        row = rows[0] if rows else {}
+        return ModelMetrics(
+            modelo_id=modelo_id,
+            total_fotos=int(row.get("total_fotos") or 0),
+            taxa_aprovacao=_parse_dec(row.get("taxa_aprovacao")) or Decimal(0),
+            score_medio=_parse_dec(row.get("score_medio")) or Decimal(0),
+            custo_por_foto_aprovada_usd=(
+                _parse_dec(row.get("custo_por_foto_aprovada_usd")) or Decimal(0)
+            ),
+        )
+
+    async def add_model_note(
+        self, *, modelo_id: str, texto: str, dados_base: dict[str, Any]
+    ) -> ModelNote:
+        row = await self._insert(
+            "fotos_modelos_notas",
+            {"modelo_id": modelo_id, "texto": texto, "dados_base": _encode(dados_base)},
+        )
+        return _model_note(row)
+
+    async def latest_model_notes(self, modelo_ids: list[str]) -> dict[str, ModelNote]:
+        out: dict[str, ModelNote] = {}
+        for modelo_id in modelo_ids:
+            row = await self._one(
+                self._t("fotos_modelos_notas")
+                .select("*")
+                .eq("modelo_id", modelo_id)
+                .order("gerado_em", desc=True)
+                .limit(1)
+            )
+            if row is not None:
+                out[modelo_id] = _model_note(row)
+        return out
+
+
+def _model_note(row: dict[str, Any]) -> ModelNote:
+    return ModelNote(
+        id=str(row["id"]),
+        modelo_id=row["modelo_id"],
+        texto=row["texto"],
+        dados_base=dict(row.get("dados_base") or {}),
+        gerado_em=_parse_dt(row.get("gerado_em")),
+    )
 
 
 def make_photo_editing_repository(

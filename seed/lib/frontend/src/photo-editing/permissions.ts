@@ -79,3 +79,8 @@ export function limiteFotosPorLote(capacidades: Capacidades | null | undefined):
 export function limiteBytesPorFoto(capacidades: Capacidades | null | undefined): number | null {
   return hasCapacidades(capacidades) ? capacidades.limites.bytes_por_foto : null;
 }
+
+/** Platform admin surfaces (model catalog, processing) — W8. Closed while loading. */
+export function podeAdministrarPlataforma(capacidades: Capacidades | null | undefined): boolean {
+  return hasCapacidades(capacidades) && capacidades.pode_administrar_plataforma === true;
+}

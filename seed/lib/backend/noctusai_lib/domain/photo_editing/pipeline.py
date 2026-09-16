@@ -26,11 +26,13 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from noctusai_lib.domain.jobs import Job
 from noctusai_lib.domain.photo_editing.guide import resolve_effective_guide
 from noctusai_lib.domain.photo_editing.naming import upload_path
 from noctusai_lib.domain.photo_editing.ports import PhotoEditingPorts
+from noctusai_lib.domain.photo_editing.steps import resolve_rule_proposer_tunables
 from noctusai_lib.domain.photo_editing.types import (
     Batch,
     BatchStatus,
@@ -48,6 +50,7 @@ from noctusai_lib.domain.photo_editing.types import (
     dedupe_fx_backfill,
     dedupe_ingest,
     dedupe_lote_pronto,
+    dedupe_notas_modelos,
     dedupe_poll_openai_batch,
     dedupe_propor_regras,
     dedupe_propor_regras_manual,
@@ -226,7 +229,7 @@ async def request_guide_regen(ports: PhotoEditingPorts, *, requested_by: str) ->
 
 async def schedule_rule_proposal(ports: PhotoEditingPorts, org_id: str) -> Job:
     now = ports.clock()
-    window = ports.config.rule_proposal_debounce_seconds
+    window, _limit = await resolve_rule_proposer_tunables(ports)
     return await _enqueue(
         ports,
         JobType.PROPOR_REGRAS,
@@ -252,9 +255,47 @@ async def request_rule_proposal(ports: PhotoEditingPorts, org_id: str, *, reques
     )
 
 
-async def enqueue_fx_backfill(ports: PhotoEditingPorts, day: date) -> Job:
+async def enqueue_fx_backfill(
+    ports: PhotoEditingPorts, day: date, *, dedupe_suffix: str | None = None
+) -> Job:
+    """One backfill per day by default; a scheduler that runs several times
+    a day passes ``dedupe_suffix`` (e.g. the hour) to get one per run."""
+    key = dedupe_fx_backfill(day.isoformat())
+    if dedupe_suffix:
+        key = f"{key}:{dedupe_suffix}"
+    return await _enqueue(ports, JobType.FX_BACKFILL, {"dia": day.isoformat()}, key)
+
+
+#: Manual "rewrite notes now" button: one job per window (double click = one).
+MANUAL_NOTES_WINDOW_SECONDS = 60
+
+
+async def enqueue_model_notes(
+    ports: PhotoEditingPorts, *, slot: datetime | None = None
+) -> Job:
+    """Queue ``fotos.notas_modelos``.
+
+    ``slot`` = the scheduled run this job belongs to (a timezone-aware
+    instant): dedupe-keyed on its São Paulo date, so the cron path and a
+    startup catch-up for the same slot collapse to ONE job, and the handler
+    skips models noted since ``slot``. ``slot=None`` = a manual run that
+    rewrites every note (short-window dedupe)."""
+    if slot is None:
+        bucket = debounce_bucket(ports.clock(), MANUAL_NOTES_WINDOW_SECONDS)
+        return await _enqueue(
+            ports,
+            JobType.NOTAS_MODELOS,
+            {"manual": True},
+            f"{dedupe_notas_modelos('manual')}:{bucket}",
+        )
+    if slot.tzinfo is None:
+        raise ValueError("slot must be timezone-aware")
+    day = slot.astimezone(ZoneInfo(ports.config.fx_timezone)).date().isoformat()
     return await _enqueue(
-        ports, JobType.FX_BACKFILL, {"dia": day.isoformat()}, dedupe_fx_backfill(day.isoformat())
+        ports,
+        JobType.NOTAS_MODELOS,
+        {"desde": slot.isoformat(), "manual": False},
+        dedupe_notas_modelos(day),
     )
 
 
@@ -351,6 +392,12 @@ async def validate_submission(ports: PhotoEditingPorts, batch: Batch) -> Submiss
         raise SubmissionError(
             "modelo_desconhecido", f"modelo {settings.modelo_editor_id} não está no catálogo"
         )
+    if not caps.priced:
+        # Refused BEFORE any job exists: an unpriced model would only fail
+        # later, per photo, after the upload round-trip (W8).
+        raise SubmissionError(
+            "modelo_sem_preco", f"modelo {settings.modelo_editor_id} não tem preço cadastrado"
+        )
     if not settings.tipos_edicao_ativos:
         raise SubmissionError("sem_tipos_edicao", "nenhum tipo de edição ativo")
     if Speed(batch.velocidade) is Speed.ECONOMICO and not caps.supports_batch:
@@ -442,6 +489,7 @@ async def retry_photo(ports: PhotoEditingPorts, foto_id: str, *, requested_by: s
 
 __all__ = [
     "ECONOMICO_IMPLEMENTED",
+    "MANUAL_NOTES_WINDOW_SECONDS",
     "MANUAL_REGEN_WINDOW_SECONDS",
     "NotFoundError",
     "PhotoNotRetryableError",
@@ -454,6 +502,7 @@ __all__ = [
     "enqueue_evaluation",
     "enqueue_fx_backfill",
     "enqueue_ingest",
+    "enqueue_model_notes",
     "enqueue_openai_batch_poll",
     "enqueue_openai_batch_submit",
     "enqueue_photo_work",

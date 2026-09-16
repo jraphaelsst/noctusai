@@ -53,6 +53,10 @@ class PlatformSettingsBody(StrictHttpModel):
     preco_storage_gb_mes_usd: Optional[Decimal] = Field(default=None, ge=0)
     #: Reference-pool size limit in PAIRS; null/0 = unlimited (contract §5).
     limite_pares_referencia: Optional[int] = Field(default=None, ge=0, le=100_000)
+    #: Rule-proposer tunables (W7 panel; writable since W8 / SW 130). Only
+    #: written when sent; `null` = back to the engine default value.
+    rule_proposal_debounce_seconds: Optional[int] = Field(default=None, ge=0, le=7 * 86_400)
+    max_rejections_per_proposal: Optional[int] = Field(default=None, ge=1, le=500)
 
 
 class CuradorCreateBody(StrictHttpModel):
@@ -74,6 +78,45 @@ class GuiaCreateBody(StrictHttpModel):
     version in `rascunho`; activation is a separate call."""
 
     texto: str = Field(min_length=1, max_length=20_000)
+
+
+PrecoField = Optional[Decimal]
+
+
+class ModeloCatalogoBody(StrictHttpModel):
+    """`PUT /modelos/catalogo/{modelo_id}` — one FULL catalog row (W8).
+
+    A null price means "no published rate" (the model is then refused
+    where it would be billed), never "keep the old one". `suporta_batch`
+    only means something for `image_edit`."""
+
+    kind: Literal["image_edit", "vision", "chat"]
+    nome: Optional[str] = Field(default=None, max_length=120)
+    descricao: Optional[str] = Field(default=None, max_length=500)
+    snapshot: Optional[str] = Field(default=None, max_length=60)
+    habilitado: bool = True
+    preco_entrada_texto_1m: PrecoField = Field(default=None, ge=0, le=100_000)
+    preco_saida_texto_1m: PrecoField = Field(default=None, ge=0, le=100_000)
+    preco_entrada_imagem_1m: PrecoField = Field(default=None, ge=0, le=100_000)
+    preco_saida_imagem_1m: PrecoField = Field(default=None, ge=0, le=100_000)
+    suporta_batch: bool = False
+    tag_performance: Optional[Literal["performance", "economico"]] = None
+
+
+class ModelosEtapasBody(StrictHttpModel):
+    """`PUT /modelos/etapas` — the model per engine step. Only the keys SENT
+    are written; `null` resets a step to the engine default."""
+
+    guia: Optional[str] = Field(default=None, max_length=120)
+    avaliador: Optional[str] = Field(default=None, max_length=120)
+    regras: Optional[str] = Field(default=None, max_length=120)
+    notas: Optional[str] = Field(default=None, max_length=120)
+
+
+class ProcessamentoBody(StrictHttpModel):
+    """`PUT /processamento` — the live pause switch."""
+
+    ativo: bool
 
 
 RoomLiteral = Literal[
@@ -103,9 +146,12 @@ __all__ = [
     "GuiaCreateBody",
     "ImovelRef",
     "LoteCreateBody",
+    "ModeloCatalogoBody",
+    "ModelosEtapasBody",
     "NotificacaoPreferenciaBody",
     "OrgSettingsBody",
     "PlatformSettingsBody",
+    "ProcessamentoBody",
     "RegraCreateBody",
     "RegraUpdateBody",
     "RoomLiteral",

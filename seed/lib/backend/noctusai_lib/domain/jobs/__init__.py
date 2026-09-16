@@ -71,6 +71,7 @@ from noctusai_lib.domain.jobs.repo import (
     FakeJobRepository,
     JobRepository,
     LeaseLostError,
+    QueueStats,
     RealSupabaseJobRepository,
     make_job_repository,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "JobRepository",
     "JobStatus",
     "LeaseLostError",
+    "QueueStats",
     "RealSupabaseJobRepository",
     "RetryPolicy",
     "Worker",

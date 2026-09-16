@@ -273,3 +273,90 @@ def test_configuracoes_plataforma_round_trip(edicao) -> None:
     )
     assert put.status_code == 200, put.text
     assert put.json() == FIXTURE["configuracoes_plataforma_body"]
+
+
+# --- W8: model catalog admin + processing ------------------------------------
+
+
+def _w8_seams(edicao):
+    """The W8 routes' own seams (store, probe, worker control, probe memory)."""
+    from noctusai_lib.integrations.llm import (
+        FakeCreditProbe,
+        InMemoryModelCatalogStore,
+        clear_model_overrides,
+    )
+
+    from app.modules.edicao_fotos.deps import (
+        get_catalog_store,
+        get_credit_probe,
+        get_platform_openai_key,
+        get_worker_control,
+    )
+    from app.modules.edicao_fotos.routers.processamento import ProbeMemory, get_probe_memory
+    from app.modules.edicao_fotos.services import worker as worker_service
+
+    clear_model_overrides()
+    store, memory = InMemoryModelCatalogStore(), ProbeMemory()
+    edicao.app.dependency_overrides.update({
+        get_catalog_store: lambda: store,
+        get_credit_probe: lambda: FakeCreditProbe("sem_credito"),
+        get_worker_control: lambda: worker_service,
+        get_probe_memory: lambda: memory,
+        get_platform_openai_key: lambda: (lambda: "sk-test"),
+    })
+    return [get_catalog_store, get_credit_probe, get_worker_control, get_probe_memory, get_platform_openai_key]
+
+
+def _drop(edicao, keys) -> None:
+    from noctusai_lib.integrations.llm import clear_model_overrides
+
+    for key in keys:
+        edicao.app.dependency_overrides.pop(key, None)
+    clear_model_overrides()
+
+
+def test_modelos_admin_view_shape(edicao) -> None:
+    resp = edicao.as_user("admin").http.get("/api/edicao-fotos/modelos")
+    item = next(m for m in resp.json() if m["id"] == FIXTURE["modelo_admin_visao"]["id"])
+    assert_shape(FIXTURE["modelo_admin_visao"], item)
+    assert isinstance(item["metricas"], dict)
+
+
+def test_modelos_catalogo_shapes(edicao) -> None:
+    keys = _w8_seams(edicao)
+    try:
+        http = edicao.as_user("plataforma").http
+        page = http.get("/api/edicao-fotos/modelos/catalogo").json()
+        assert_shape(FIXTURE["modelos_catalogo_page"], page)
+        saved = http.put("/api/edicao-fotos/modelos/catalogo/gpt-image-2", json=FIXTURE["modelo_catalogo_body"])
+        assert saved.status_code == 200, saved.text
+        assert_shape(FIXTURE["modelo_catalogo_salvo"], saved.json())
+        versions = http.get("/api/edicao-fotos/modelos/catalogo/gpt-image-2/versoes", params={"kind": "image_edit"})
+        assert_shape(FIXTURE["modelo_versoes_page"], versions.json())
+    finally:
+        _drop(edicao, keys)
+
+
+def test_modelos_etapas_and_notas_shapes(edicao) -> None:
+    http = edicao.as_user("plataforma").http
+    assert_shape(FIXTURE["modelos_etapas"], http.get("/api/edicao-fotos/modelos/etapas").json())
+    put = http.put("/api/edicao-fotos/modelos/etapas", json=FIXTURE["modelos_etapas_body"])
+    assert put.status_code == 200, put.text
+    assert_shape(FIXTURE["modelos_etapas"], put.json())
+    queued = http.post("/api/edicao-fotos/modelos/notas/gerar")
+    assert queued.status_code == 202
+    assert_shape(FIXTURE["notas_gerar"], queued.json())
+
+
+def test_processamento_shapes(edicao) -> None:
+    keys = _w8_seams(edicao)
+    try:
+        http = edicao.as_user("plataforma").http
+        assert_shape(FIXTURE["processamento"], http.get("/api/edicao-fotos/processamento").json())
+        put = http.put("/api/edicao-fotos/processamento", json=FIXTURE["processamento_body"])
+        assert put.status_code == 200, put.text
+        assert_shape(FIXTURE["processamento"], put.json())
+        sonda = http.post("/api/edicao-fotos/processamento/sonda")
+        assert_shape(FIXTURE["sonda"], sonda.json())
+    finally:
+        _drop(edicao, keys)

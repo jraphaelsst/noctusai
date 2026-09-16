@@ -15,14 +15,11 @@ stay inside their own org too" precedent `deps.py` documents for batches;
 `deps.load_visible_rule` 404s (never 403s) a rule from another org so its
 existence never leaks, before the engine's own decide-authority runs.
 
-🔴 `rule_proposal_debounce_seconds` / `max_rejections_per_proposal`
-(contract §7 "editable in the UI") are process-level `PhotoEditingConfig`
-tunables, not `fotos_platform_settings` DB columns — the table has no
-spare capacity and this slice was told not to add a migration (SW
-130-132 claimed by parallel slices). `GET /configuracoes/plataforma`
-(`configuracoes.py`) surfaces them READ-ONLY; `PUT` refuses them (`extra=
-"forbid"`). Making them writable needs a migration — surfaced to the
-tech-lead, not silently worked around."""
+`rule_proposal_debounce_seconds` / `max_rejections_per_proposal`
+(contract §7 "editable in the UI") are `fotos_platform_settings` columns
+since SW 130 (W8): read and written through `GET|PUT
+/configuracoes/plataforma`, read by the engine on every proposer run
+(`steps.resolve_rule_proposer_tunables`)."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query

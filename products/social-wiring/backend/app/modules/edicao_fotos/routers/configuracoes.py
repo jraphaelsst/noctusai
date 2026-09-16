@@ -61,8 +61,14 @@ async def put_org_settings_route(
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
 ) -> dict:
     model = (body.modelo_editor_imagem or "").strip() or None
-    if model is not None and not ports.capabilities(model).known:
-        raise api_error(422, "modelo_desconhecido", f"Modelo {model} não está no catálogo.")
+    if model is not None:
+        caps = ports.capabilities(model)
+        if not caps.known:
+            raise api_error(422, "modelo_desconhecido", f"Modelo {model} não está no catálogo.")
+        if not caps.priced:
+            # W8: a model without every rate would bill a silent $0 — refused
+            # here; the platform admin sets the price in "Modelos".
+            raise api_error(422, "modelo_sem_preco", f"Modelo {model} não tem preço cadastrado.")
     refuse_economico(ports, body.velocidade_padrao, model)
     platform = await ports.repo.get_platform_settings()
     override = None
@@ -112,8 +118,12 @@ async def put_platform_settings_route(
     # as NULL — both mean unlimited (contract §5).
     if "limite_pares_referencia" in body.model_fields_set:
         changes["limite_pares_referencia"] = body.limite_pares_referencia or None
+    # Rule-proposer tunables (W7 panel, SW 130): same "only when sent" rule;
+    # `null` resets to the engine default — written as that VALUE, because
+    # the columns are NOT NULL. The engine reads them on every run.
+    for field in ("rule_proposal_debounce_seconds", "max_rejections_per_proposal"):
+        if field in body.model_fields_set:
+            value = getattr(body, field)
+            changes[field] = getattr(ports.config, field) if value is None else value
     saved = await ports.repo.update_platform_settings(**changes)
-    # No `config=` here: these engine tunables are not part of the writable
-    # body (see module docstring) — the PUT response mirrors exactly what
-    # was persisted, same as before W7.
-    return platform_settings_out(saved)
+    return platform_settings_out(saved, ports.config)
