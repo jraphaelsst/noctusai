@@ -17,9 +17,28 @@ export type ParcelaTipo =
   | "sinal"
   | "intermediaria"
   | "financiamento"
+  /** LEGACY (114): the office folded FGTS into the `financiamento` parcela —
+   *  `contrato_gerador` now BLOCKS generation on a separate `fgts` parcela
+   *  (`PARCELA_FGTS_SEPARADA`). Still a valid `tipo` the backend accepts (old
+   *  rows exist), just no longer offered on create — see `PARCELA_TIPOS_CRIAVEIS`. */
   | "fgts"
   | "saldo"
-  | "direta";
+  | "direta"
+  /** A payment made by handing over a `permuta_ativos` (natureza
+   *  `permuta_imovel`) instead of money — see `permuta_ativo_ids`. */
+  | "permuta";
+
+/** Selectable on a NEW parcela — `fgts` excluded (see `ParcelaTipo`). An
+ *  existing `fgts` row keeps rendering (with a warning), it is just not an
+ *  option going forward. */
+export const PARCELA_TIPOS_CRIAVEIS: ParcelaTipo[] = [
+  "sinal",
+  "intermediaria",
+  "financiamento",
+  "saldo",
+  "direta",
+  "permuta",
+];
 
 export interface NegociacaoParcela {
   id: string;
@@ -31,6 +50,11 @@ export interface NegociacaoParcela {
   forma_pagamento: string | null;
   favorecido_id: string | null;
   confissao_divida: boolean;
+  /** Migration 114. Paying this parcela triggers the brokerage payment. */
+  dispara_corretagem: boolean;
+  /** Migration 114. `tipo === "permuta"` only — the `permuta_ativos`
+   *  (natureza `permuta_imovel`) this parcela is paid with. */
+  permuta_ativo_ids: string[];
   ordem: number;
   created_at: string | null;
   updated_at: string | null;
@@ -50,7 +74,28 @@ export interface NegociacaoFavorecido {
 
 export type IntermediarioTipo = "percentual" | "valor_fixo";
 
-export interface NegociacaoIntermediario {
+export type PessoaTipo = "pf" | "pj";
+
+/** Migration 114 — PF/PJ qualification shared by create/patch/read. Every
+ *  field nullable: an intermediário may be registered with only nome/CRECI
+ *  for a long time before the qualification is filled in. */
+export interface IntermediarioQualificacao {
+  favorecido_id: string | null;
+  pessoa_tipo: PessoaTipo | null;
+  documento: string | null;
+  email: string | null;
+  endereco_cep: string | null;
+  endereco_logradouro: string | null;
+  endereco_numero: string | null;
+  endereco_complemento: string | null;
+  endereco_bairro: string | null;
+  endereco_cidade: string | null;
+  endereco_uf: string | null;
+  representante_nome: string | null;
+  representante_cpf: string | null;
+}
+
+export interface NegociacaoIntermediario extends IntermediarioQualificacao {
   id: string;
   corretor_id: string | null;
   nome: string;
@@ -68,6 +113,84 @@ export interface NegociacaoCompletude {
   faltando: string[];
 }
 
+// ─── Termos do negócio (migration 114) — the contract clauses no document
+// carries. `TermosNegocioPutBody` on the backend: PUT replaces this WHOLE
+// object, an absent key is stored as null — every field here is nullable and
+// a write always sends the complete shape. ─────────────────────────────────
+
+export type PosseMarco = "assinatura" | "parcela" | "protocolo_registro";
+
+export type OnusQuitacao =
+  | "compradores_prazo"
+  | "interveniente_quitante"
+  | "parcela"
+  | "ja_quitado";
+
+export type CorretagemContratantes = "vendedores" | "compradores" | "partes";
+
+export interface NegociacaoTermos {
+  posse_prazo_dias: number | null;
+  posse_marco: PosseMarco | null;
+  posse_marco_parcela_id: string | null;
+
+  permuta_posse_prazo_dias: number | null;
+  permuta_posse_marco: PosseMarco | null;
+  permuta_posse_marco_parcela_id: string | null;
+  permuta_obrigacoes_entrega: string | null;
+
+  itens_integrantes: string | null;
+  ad_corpus: boolean | null;
+  obrigacoes_vendedor: string | null;
+
+  onus_quitacao: OnusQuitacao | null;
+  onus_prazo_dias: number | null;
+
+  /** % ao mês, e.g. "1.5". Never parsed to float. */
+  confissao_juros_am: string | null;
+  confissao_garantia: string | null;
+
+  corretagem_contratantes: CorretagemContratantes | null;
+  corretagem_num_parcelas: number | null;
+}
+
+/** PUT body — same shape as `NegociacaoTermos` minus the read-only parts
+ *  (there are none; every field here IS the write surface). Kept as a
+ *  distinct alias so a future read-only addition to `NegociacaoTermos` does
+ *  not silently widen what a PUT is allowed to send. */
+export type TermosNegocioPut = NegociacaoTermos;
+
+export const POSSE_MARCOS: PosseMarco[] = ["assinatura", "parcela", "protocolo_registro"];
+export const ONUS_QUITACOES: OnusQuitacao[] = [
+  "compradores_prazo",
+  "interveniente_quitante",
+  "parcela",
+  "ja_quitado",
+];
+export const CORRETAGEM_CONTRATANTES: CorretagemContratantes[] = [
+  "vendedores",
+  "compradores",
+  "partes",
+];
+
+export const POSSE_MARCO_LABELS: Record<PosseMarco, string> = {
+  assinatura: "Na assinatura",
+  parcela: "No pagamento de uma parcela",
+  protocolo_registro: "No protocolo do registro",
+};
+
+export const ONUS_QUITACAO_LABELS: Record<OnusQuitacao, string> = {
+  compradores_prazo: "Compradores quitam, em prazo",
+  interveniente_quitante: "Interveniente quitante",
+  parcela: "Quitado com uma parcela",
+  ja_quitado: "Já quitado",
+};
+
+export const CORRETAGEM_CONTRATANTES_LABELS: Record<CorretagemContratantes, string> = {
+  vendedores: "Vendedores",
+  compradores: "Compradores",
+  partes: "Ambas as partes",
+};
+
 export interface NegociacaoEstruturada {
   atendimento_id: string;
   valor_negociado: string | null;
@@ -78,6 +201,7 @@ export interface NegociacaoEstruturada {
   parcelas: NegociacaoParcela[];
   favorecidos: NegociacaoFavorecido[];
   intermediarios: NegociacaoIntermediario[];
+  termos: NegociacaoTermos;
   completude: NegociacaoCompletude;
 }
 
@@ -91,6 +215,10 @@ export interface ParcelaCreate {
   forma_pagamento?: string | null;
   favorecido_id?: string | null;
   confissao_divida?: boolean;
+  /** Migration 114. */
+  dispara_corretagem?: boolean;
+  /** Migration 114. `tipo === "permuta"` only. */
+  permuta_ativo_ids?: string[];
   ordem?: number;
 }
 
@@ -117,7 +245,14 @@ export interface FavorecidoCreate {
 
 export type FavorecidoPatch = Partial<FavorecidoCreate>;
 
-export interface IntermediarioCreate {
+/** `pessoa_tipo`/`documento`/... are OPTIONAL, and omitting a key is not the
+ *  same as sending it `null`: the service infers `pessoa_tipo` from
+ *  `documento` only when the `pessoa_tipo` KEY IS ABSENT from the JSON body
+ *  (`"pessoa_tipo" not in valores` — see `negociacao_estruturada_service
+ *  ._normalizar_qualificacao`). Sending `pessoa_tipo: null` explicitly BLOCKS
+ *  that inference. The form builds this payload accordingly — see
+ *  `NegociacaoEstruturadaPanel.IntermediarioFormDialog`. */
+export interface IntermediarioCreate extends Partial<IntermediarioQualificacao> {
   corretor_id?: string | null;
   nome: string;
   creci?: string | null;
@@ -140,9 +275,10 @@ export const PARCELA_TIPO_LABELS: Record<ParcelaTipo, string> = {
   sinal: "Sinal",
   intermediaria: "Intermediária",
   financiamento: "Financiamento",
-  fgts: "FGTS",
+  fgts: "FGTS (legado — junte ao financiamento)",
   saldo: "Saldo",
   direta: "Direta",
+  permuta: "Permuta",
 };
 
 export const INTERMEDIARIO_TIPO_LABELS: Record<IntermediarioTipo, string> = {

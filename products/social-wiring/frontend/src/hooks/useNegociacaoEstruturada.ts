@@ -24,6 +24,7 @@ import type {
   NegociacaoPossePatch,
   ParcelaCreate,
   ParcelaPatch,
+  TermosNegocioPut,
 } from "@/types/negociacaoEstruturada";
 
 // ─── Keys ───────────────────────────────────────────────────────────────────
@@ -191,6 +192,22 @@ export function useNegociacaoPosseMutation(clienteId: string) {
   return useMutation({
     mutationFn: (patch: NegociacaoPossePatch) =>
       api.patch(base(clienteId), patch),
+    onSuccess,
+  });
+}
+
+// ─── Termos do negócio (114) ────────────────────────────────────────────────
+
+/**
+ * PUT `.../negociacao/termos` — replaces the deal's contract clauses as a
+ * WHOLE (an absent key is stored as null). Returns the full aggregate, same
+ * seed-not-invalidate rationale as every other write here.
+ */
+export function useAtualizarTermos(clienteId: string) {
+  const onSuccess = useSeedOnSuccess(clienteId);
+  return useMutation({
+    mutationFn: (payload: TermosNegocioPut) =>
+      api.put<NegociacaoEstruturada>(`${base(clienteId)}/termos`, payload),
     onSuccess,
   });
 }

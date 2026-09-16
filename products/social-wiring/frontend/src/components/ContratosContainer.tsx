@@ -88,6 +88,15 @@ export function ContratosContainer({
           { onError: (err) => toastServerError(err, "Não foi possível atualizar o status.") },
         )
       }
+      onPatchPrazos={(contratoId, patch) =>
+        mutations.patch.mutate(
+          { contratoId, patch },
+          {
+            onError: (err) =>
+              toastServerError(err, "Não foi possível salvar os prazos do contrato."),
+          },
+        )
+      }
       onDeleteVersao={(contratoId, versaoId, motivo) =>
         mutations.deleteVersao.mutate(
           { contratoId, versaoId, motivo },
