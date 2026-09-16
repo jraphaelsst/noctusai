@@ -28,8 +28,11 @@ from claude_agent_sdk import ProcessError
 
 from app.runtime.academia_api import FakeAcademiaApi
 from app.runtime.claude_runtime import ClaudeAgentSdkRuntime, build_launch_options
+from app.runtime.slots import FakeSlotPool
+from app.runtime.transcript_mirror import ConversationTranscriptMirror
 from app.runtime.types import AgentSpec, TurnContext
 from app.stores.approvals import FakeApprovalStore
+from app.stores.transcripts import FakeTranscriptStore
 
 pytestmark = pytest.mark.asyncio
 
@@ -145,6 +148,25 @@ def _ctx(*, sdk_session_id: str | None) -> TurnContext:
     )
 
 
+def _slot():
+    slot = FakeSlotPool(1).try_reserve()
+    assert slot is not None
+    return slot
+
+
+def _runtime(*, transport_factory) -> ClaudeAgentSdkRuntime:
+    return ClaudeAgentSdkRuntime(
+        academia_api=FakeAcademiaApi(),
+        agent_id=uuid4(),
+        approval_secret="s3cr3t",
+        plugin_path="/app/agents/julia/plugin",
+        approvals=FakeApprovalStore(),
+        slot_pool=FakeSlotPool(1),
+        transcripts=FakeTranscriptStore(),
+        transport_factory=transport_factory,
+    )
+
+
 class TestResumeAfterRestart:
     async def test_refused_resume_falls_back_to_a_fresh_session(self):
         transports = [_ResumeRejectedTransport(), _InitializeOnlySuccessTransport()]
@@ -152,15 +174,16 @@ class TestResumeAfterRestart:
         def factory():
             return transports.pop(0)
 
-        runtime = ClaudeAgentSdkRuntime(
-            academia_api=FakeAcademiaApi(),
-            agent_id=uuid4(),
-            approval_secret="s3cr3t",
-            plugin_path="/app/agents/julia/plugin",
-            approvals=FakeApprovalStore(),
-            transport_factory=factory,
-        )
+        runtime = _runtime(transport_factory=factory)
         ctx = _ctx(sdk_session_id="a-session-lost-to-a-restart")
+        slot = _slot()
+        # `_resolve_resume` decided this transcript IS usable (this test
+        # is exercising the SDK-level refusal, a layer BELOW that
+        # decision) — so `resume` mirrors `ctx.sdk_session_id` verbatim,
+        # same as the real `run_turn` would build it in that case.
+        mirror = ConversationTranscriptMirror(
+            runtime._transcripts, ctx.org_id, ctx.conversation_id, ctx.sdk_session_id
+        )
         options = build_launch_options(
             spec=_spec(),
             ctx=ctx,
@@ -169,34 +192,41 @@ class TestResumeAfterRestart:
             approval_secret=runtime._approval_secret,
             can_use_tool=lambda *a, **k: None,
             approvals=runtime._approvals,
+            slot=slot,
+            mirror=mirror,
+            resume=ctx.sdk_session_id,
             plugin_path=runtime._plugin_path,
         )
         assert options.resume == "a-session-lost-to-a-restart"
 
-        client, used_fresh = await runtime._connect_or_fresh(options, "oi", ctx)
+        client, used_fresh, active_mirror = await runtime._connect_or_fresh(
+            options, "oi", ctx, mirror
+        )
         try:
             assert used_fresh is True
+            # The fallback swaps in a fresh, unpinned mirror — the old one
+            # (pinned to the now-abandoned session id) would only drop
+            # every frame of the CLI's brand-new session.
+            assert active_mirror is not mirror
+            assert active_mirror.pinned_session_id is None
         finally:
             await client.disconnect()
 
     async def test_non_resume_connect_failure_propagates(self):
-        """A genuine startup failure that is NOT a resume attempt
-        (``ctx.sdk_session_id is None``) must propagate — the fallback
-        is scoped to resume failures only, never a blanket retry."""
+        """A genuine startup failure when NO resume was attempted
+        (``options.resume is None``) must propagate — the fallback is
+        scoped to resume failures only, never a blanket retry."""
         transports = [_ResumeRejectedTransport()]
 
         def factory():
             return transports.pop(0)
 
-        runtime = ClaudeAgentSdkRuntime(
-            academia_api=FakeAcademiaApi(),
-            agent_id=uuid4(),
-            approval_secret="s3cr3t",
-            plugin_path="/app/agents/julia/plugin",
-            approvals=FakeApprovalStore(),
-            transport_factory=factory,
-        )
+        runtime = _runtime(transport_factory=factory)
         ctx = _ctx(sdk_session_id=None)
+        slot = _slot()
+        mirror = ConversationTranscriptMirror(
+            runtime._transcripts, ctx.org_id, ctx.conversation_id, None
+        )
         options = build_launch_options(
             spec=_spec(),
             ctx=ctx,
@@ -205,9 +235,12 @@ class TestResumeAfterRestart:
             approval_secret=runtime._approval_secret,
             can_use_tool=lambda *a, **k: None,
             approvals=runtime._approvals,
+            slot=slot,
+            mirror=mirror,
+            resume=None,
             plugin_path=runtime._plugin_path,
         )
         assert options.resume is None
 
         with pytest.raises(ProcessError):
-            await runtime._connect_or_fresh(options, "oi", ctx)
+            await runtime._connect_or_fresh(options, "oi", ctx, mirror)
