@@ -8,9 +8,9 @@ in a fresh process — not on the vendor's word). Both now return 200:
 
 Every other `/clientes/*` sub-route still answers 404 and is genuinely
 absent, so it gets no tool here: a tool that can only ever return "no route"
-is a lie about the surface. In particular there is still **no
-`/clientes/lead`**, so there remains no API path to write a captured lead
-back into Vista.
+is a lie about the surface. `/clientes/lead` is one of them — but leads CAN
+be written back: the route is top-level `/lead`, wrapped by
+`vista.leads.submit` (vista.md § 4.2 retraction, § 4.7).
 
 The typed-401 path is KEPT, not deleted — a different tenant key may lack
 the grant, and this one's can be rolled back. `probe_status` carries that
@@ -45,7 +45,6 @@ from mcp.server import Server
 from mcp.types import Tool
 
 from noctusai_lib.integrations.vista import (
-    VistaClient,
     VistaConfigError,
     VistaFieldNotAvailable,
     VistaNotFound,
@@ -56,13 +55,13 @@ from noctusai_lib.integrations.vista import (
     extract_items,
 )
 
-from ..settings import get_settings
 from ..types import (
     GetClienteInput,
     GetClienteOutput,
     ListClientesInput,
     ListClientesOutput,
 )
+from ._common import client as _client, typed_error as _typed_error
 
 #: Errors that mean "we could not read this", all surfaced as a typed_error
 #: rather than raised — an MCP tool that throws gives the host LLM nothing
@@ -75,19 +74,6 @@ _HANDLED = (
     VistaTimeout,
     VistaUpstreamError,
 )
-
-
-def _client() -> VistaClient:
-    s = get_settings()
-    return VistaClient(s.base_url, s.api_key, timeout_seconds=s.timeout_seconds)
-
-
-def _typed_error(e: Exception) -> dict:
-    return {
-        "error_class": type(e).__name__,
-        "message": str(e),
-        "status": getattr(e, "status", None),
-    }
 
 
 def _probe_status(e: Exception) -> str:

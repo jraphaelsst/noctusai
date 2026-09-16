@@ -37,10 +37,18 @@ class VistaSettings(ConnectorSettings):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     timeout_seconds: float = 15.0
+    #: Raw `VISTA_MCP_ALLOW_WRITES`. The write tools (`vista.imoveis.add_photos`,
+    #: `vista.leads.submit`) mutate the agency's LIVE CRM — they refuse unless
+    #: an operator opted this process in. Reads are never gated by it.
+    allow_writes: Optional[str] = None
 
     @property
     def configured(self) -> bool:
         return bool(self.base_url) and bool(self.api_key)
+
+    @property
+    def writes_enabled(self) -> bool:
+        return (self.allow_writes or "").strip().lower() in {"1", "true", "yes"}
 
 
 # Env wins over the co-located .env; cached for the process. Call
@@ -50,7 +58,11 @@ class VistaSettings(ConnectorSettings):
 get_settings = make_get_settings(
     VistaSettings,
     dotenv_dir=Path(__file__).resolve().parent,
-    env_map={"base_url": "VISTA_BASE_URL", "api_key": "VISTA_API_KEY"},
+    env_map={
+        "base_url": "VISTA_BASE_URL",
+        "api_key": "VISTA_API_KEY",
+        "allow_writes": "VISTA_MCP_ALLOW_WRITES",
+    },
 )
 
 

@@ -20,7 +20,6 @@ from mcp.server import Server
 from mcp.types import Tool
 
 from noctusai_lib.integrations.vista import (
-    VistaClient,
     VistaConfigError,
     VistaFieldNotAvailable,
     VistaNotFound,
@@ -31,8 +30,8 @@ from noctusai_lib.integrations.vista import (
     extract_items,
 )
 
-from ..settings import get_settings
 from ..types import ListCorretoresInput, ListCorretoresOutput
+from ._common import client as _client, typed_error as _typed_error
 
 _HANDLED = (
     VistaConfigError,
@@ -42,19 +41,6 @@ _HANDLED = (
     VistaTimeout,
     VistaUpstreamError,
 )
-
-
-def _client() -> VistaClient:
-    s = get_settings()
-    return VistaClient(s.base_url, s.api_key, timeout_seconds=s.timeout_seconds)
-
-
-def _typed_error(e: Exception) -> dict:
-    return {
-        "error_class": type(e).__name__,
-        "message": str(e),
-        "status": getattr(e, "status", None),
-    }
 
 
 def _probe_status(e: Exception) -> str:

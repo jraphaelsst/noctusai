@@ -5,7 +5,6 @@ from mcp.server import Server
 from mcp.types import Tool
 
 from noctusai_lib.integrations.vista import (
-    VistaClient,
     VistaConfigError,
     VistaFieldNotAvailable,
     VistaNotFound,
@@ -17,21 +16,8 @@ from noctusai_lib.integrations.vista import (
 )
 
 from noctusai_lib.integrations.vista import calibrator
-from ..settings import get_settings
 from ..types import ListUsuariosOutput
-
-
-def _client() -> VistaClient:
-    s = get_settings()
-    return VistaClient(s.base_url, s.api_key, timeout_seconds=s.timeout_seconds)
-
-
-def _typed_error(e: Exception) -> dict:
-    return {
-        "error_class": type(e).__name__,
-        "message": str(e),
-        "status": getattr(e, "status", None),
-    }
+from ._common import client as _client, typed_error as _typed_error
 
 
 async def list_usuarios(args: dict) -> dict:

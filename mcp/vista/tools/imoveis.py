@@ -4,18 +4,17 @@ Tools registered:
 - vista.imoveis.list           — paginated property listing with filters
 - vista.imoveis.get            — full property detail (auto-fetches photo from listar)
 - vista.imoveis.list_filters   — enum content for Status/Categoria/Cidade/Bairro
+- vista.imoveis.add_photos     — ✍️ WRITE: attach photos by URL (`POST /imoveis/fotos`)
 """
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
 from mcp.server import Server
-from mcp.types import TextContent, Tool
+from mcp.types import Tool
 
 from noctusai_lib.integrations.vista import (
-    VistaClient,
     VistaConfigError,
     VistaFieldNotAvailable,
     VistaNotFound,
@@ -28,30 +27,23 @@ from noctusai_lib.integrations.vista import (
     vista_imovel_to_showcase,
 )
 
-from ..settings import get_settings
 from ..types import (
+    AddImovelFotosInput,
     GetImovelInput,
     GetImovelOutput,
     ListImoveisFiltersOutput,
     ListImoveisInput,
     ListImoveisOutput,
+    WriteOutput,
+)
+from ._common import (
+    WritesDisabled,
+    client as _client,
+    require_writes_enabled,
+    typed_error as _typed_error,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _client() -> VistaClient:
-    s = get_settings()
-    return VistaClient(s.base_url, s.api_key, timeout_seconds=s.timeout_seconds)
-
-
-def _typed_error(e: Exception) -> dict:
-    """Render a typed Vista error as a JSON-friendly payload (vista.md § 3.4)."""
-    return {
-        "error_class": type(e).__name__,
-        "message": str(e),
-        "status": getattr(e, "status", None),
-    }
 
 
 # ─── Handlers ────────────────────────────────────────────────────────────
@@ -170,6 +162,19 @@ async def list_imoveis_filters(args: dict) -> dict:
     return ListImoveisFiltersOutput(filters=filters, probe_status="live_probed").model_dump()
 
 
+async def add_imovel_fotos(args: dict) -> dict:
+    """Attach photos by URL. Deliberately no update/delete tool: `/imoveis/fotos`
+    also accepts DELETE on live listings, and nothing here needs it."""
+    inp = AddImovelFotosInput(**args)
+    try:
+        require_writes_enabled()
+        result = await _client().cadastrar_fotos_imovel(inp.codigo, inp.fotos)
+    except (WritesDisabled, ValueError, VistaConfigError, VistaTimeout, VistaUpstreamError) as e:
+        return WriteOutput(typed_error=_typed_error(e)).model_dump()
+    data = result.data if isinstance(result.data, dict) else {"raw": result.data}
+    return WriteOutput(result=data, http_status=result.status).model_dump()
+
+
 # ─── Registration ───────────────────────────────────────────────────────
 
 
@@ -177,6 +182,7 @@ HANDLERS = {
     "vista.imoveis.list": list_imoveis,
     "vista.imoveis.get": get_imovel,
     "vista.imoveis.list_filters": list_imoveis_filters,
+    "vista.imoveis.add_photos": add_imovel_fotos,
 }
 
 
@@ -220,6 +226,20 @@ def tool_descriptors() -> list[Tool]:
                 "Cidade/Bairro filter strings — note tenant casing duplicates."
             ),
             inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="vista.imoveis.add_photos",
+            description=(
+                "✍️ WRITE — attach photos to a LIVE Vista listing "
+                "(`POST /imoveis/fotos`). Pass `fotos` as a keyed map of PUBLIC "
+                "http(s) URLs; Vista downloads and re-hosts each one. A 207 "
+                "means some photos failed (see result.Fotos.<key>) and those "
+                "created nothing. Returns VistaPermissionDenied while the key "
+                "lacks the photo-write grant — check "
+                "vista.diagnostics.probe_write_permissions first. Disabled "
+                "unless the server runs with VISTA_MCP_ALLOW_WRITES=1."
+            ),
+            inputSchema=AddImovelFotosInput.model_json_schema(),
         ),
     ]
 

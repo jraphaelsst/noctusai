@@ -255,3 +255,88 @@ def test_probe_descriptor_endpoint_count_matches_the_baseline():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ─── Write tools (vista.md § 4.7) ────────────────────────────────────────
+
+
+@pytest.fixture
+def _settings(monkeypatch):
+    """Point get_settings at a configured tenant; writes toggled per test."""
+    from vista import settings as vista_settings
+
+    def _apply(allow_writes):
+        monkeypatch.setenv("VISTA_BASE_URL", "https://t-rest.vistahost.com.br")
+        monkeypatch.setenv("VISTA_API_KEY", "k" * 32)
+        if allow_writes is None:
+            monkeypatch.delenv("VISTA_MCP_ALLOW_WRITES", raising=False)
+        else:
+            monkeypatch.setenv("VISTA_MCP_ALLOW_WRITES", allow_writes)
+        vista_settings.get_settings.cache_clear()
+
+    yield _apply
+    vista_settings.get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", [None, "", "0", "no"])
+async def test_write_tools_refuse_without_opt_in(_settings, flag):
+    """A write to the live CRM must be opted into — refused before any request."""
+    from vista.tools import all_handlers
+
+    _settings(flag)
+    handlers = all_handlers()
+    photos = await handlers["vista.imoveis.add_photos"](
+        {"codigo": "CA2830", "fotos": {"f": "https://a/b.jpg"}}
+    )
+    lead = await handlers["vista.leads.submit"](
+        {"nome": "A", "mensagem": "m", "veiculo": "v", "fone": "1"}
+    )
+    for out in (photos, lead):
+        assert out["result"] is None
+        assert out["typed_error"]["error_class"] == "WritesDisabled"
+
+
+@pytest.mark.asyncio
+async def test_write_tool_surfaces_payload_errors_as_typed(_settings):
+    from vista.tools import all_handlers
+
+    _settings("1")
+    out = await all_handlers()["vista.imoveis.add_photos"](
+        {"codigo": "CA2830", "fotos": {"f": "data:image/png;base64,AA"}}
+    )
+    assert out["typed_error"]["error_class"] == "ValueError"
+
+
+@pytest.mark.asyncio
+async def test_probe_write_permissions_flags_deviations(_settings, monkeypatch):
+    """`unexpected` lists only routes whose verdict moved off the baseline —
+    `/imoveis/fotos` turning `permitted` is how a Vista grant shows up."""
+    from noctusai_lib.integrations.vista import VistaClient
+    from vista.tools import all_handlers
+
+    _settings(None)
+
+    async def fake_probe(self, endpoint):
+        return {"endpoint": endpoint, "verdict": "permitted", "http_status": 401}
+
+    monkeypatch.setattr(VistaClient, "probe_write_permission", fake_probe)
+    out = await all_handlers()["vista.diagnostics.probe_write_permissions"]({})
+    assert out["configured"] is True
+    assert out["writes_enabled"] is False
+    assert out["unexpected"] == ["/imoveis/fotos", "/clientes/anexos"]
+
+
+@pytest.mark.asyncio
+async def test_known_endpoints_lists_write_routes_with_their_tools():
+    from vista.tools import all_handlers
+
+    out = await all_handlers()["vista.diagnostics.list_known_endpoints"]({})
+    by_path = {r["path"]: r for r in out["endpoints"]}
+    assert by_path["/lead"]["tool"] == "vista.leads.submit"
+    assert by_path["/lead"]["write_permission"] == "permitted"
+    assert by_path["/clientes/anexos"]["tool"] is None
+    assert by_path["/imoveis/fotos"]["tool"] == "vista.imoveis.add_photos"
+    assert by_path["/imoveis/fotos"]["write_permission"] == "denied"
+    # /imoveis/fotos is already a read-baseline row; enriched, not duplicated
+    assert [r["path"] for r in out["endpoints"]].count("/imoveis/fotos") == 1

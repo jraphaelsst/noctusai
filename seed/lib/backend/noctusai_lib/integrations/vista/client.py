@@ -16,7 +16,7 @@ import json
 import logging
 import re
 import time
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import httpx
 
@@ -89,6 +89,37 @@ VISTA_ENDPOINT_BASELINE: tuple[tuple[str, int, str, str], ...] = (
 
 VISTA_PROBE_PATHS: tuple[str, ...] = tuple(row[0] for row in VISTA_ENDPOINT_BASELINE)
 
+# ─── Write-permission baseline (vista.md § 4.7) ───────────────────────────
+
+# Verdict vocabulary for `VistaClient.probe_write_permission`.
+WRITE_PERMITTED = "permitted"            # auth passed; Vista then asked for params
+WRITE_DENIED = "denied"                  # 401 "Permissão Negada … Método: <m>"
+WRITE_ABSENT = "absent"                  # 404 — no such route
+WRITE_UNKNOWN = "unknown"                # timeout / 5xx / unrecognised body
+
+# The three write routes this tenant exposes, with the verdict our key
+# (`…644c`) actually gets — re-probed live 2026-09-16, the day Vista said the
+# permission grants were resolved. `/imoveis/fotos` is still DENIED, so the
+# grant has NOT landed for it; a `permitted` verdict there is the signal that
+# it finally did. `/lead` was never tested before this probe existed and turns
+# out to be PERMITTED.
+#
+# Why an empty POST is safe AND conclusive: Vista checks the per-method
+# permission BEFORE it validates parameters. Proven on both sides of the gate
+# 2026-09-16 — the sandbox key (write-permitted) answers an empty POST to
+# `/imoveis/fotos` with the missing-`cadastro` 401, while our key answers the
+# same request with `Permissão Negada`. With no `cadastro` there is nothing to
+# create, so the probe can never write.
+VISTA_WRITE_PERMISSION_BASELINE: tuple[tuple[str, str, str], ...] = (
+    ("/imoveis/fotos", WRITE_DENIED, "photo upload — asked of Vista; still denied on …644c 2026-09-16"),
+    ("/lead", WRITE_PERMITTED, "lead submission — permitted on …644c (first probed 2026-09-16)"),
+    ("/clientes/anexos", WRITE_DENIED, "client attachments — denied on …644c; never requested"),
+)
+
+#: Vista's permission-denial marker. JSON-escaped on the wire
+#: (`Permiss\u00e3o`), so match the ASCII prefix only.
+_PERMISSION_DENIED_MARKER = "Permiss"
+
 
 # ─── Error hierarchy (vista.md §3 typed-error model) ───────────────────────
 
@@ -112,7 +143,26 @@ class VistaUpstreamError(VistaError):
 
 
 class VistaPermissionDenied(VistaUpstreamError):
-    """Endpoint exists but the API key has no permission (HTTP 401)."""
+    """The API key lacks a grant.
+
+    Two shapes: **401** `"Permissão Negada"` (method-level — the whole route)
+    and **403** (field-level — e.g. the `proprietarios` owner group on
+    `/imoveis/detalhes`, vista.md § 4.7). `status` tells them apart.
+    """
+
+
+class VistaMissingParameter(VistaUpstreamError):
+    """A 401 that is NOT a permission denial — Vista's missing-parameter reply.
+
+    Vista answers a request that lacks a required parameter with **401**, e.g.
+    `"Você deve informar os dados em json no parâmetro \"cadastro\""`, and
+    reserves `"Permissão Negada: … Método: <m>"` for real denials. Reading
+    the status alone produced a retracted KB claim once already (vista.md
+    § 4.7, "read the MESSAGE, not the status"), so the two are separate types.
+
+    Deliberately NOT a `VistaPermissionDenied` subclass: a caller that
+    catches the denial must not swallow a request-shape bug as "ask Vista".
+    """
 
 
 class VistaNotFound(VistaUpstreamError):
@@ -217,6 +267,7 @@ class VistaClient:
         method: str = "GET",
         pesquisa: Optional[dict] = None,
         extra_params: Optional[dict] = None,
+        cadastro: Optional[dict] = None,
         showtotal: bool = False,
     ) -> VistaCallResult:
         # NOC-REMEDIATE[rate-limit]: pace this async chokepoint via
@@ -234,6 +285,10 @@ class VistaClient:
             params.update(extra_params)
         if pesquisa is not None:
             params["pesquisa"] = json.dumps(pesquisa, separators=(",", ":"))
+        if cadastro is not None:
+            # Writes carry their payload in the QUERY string as `cadastro`,
+            # with an empty body — the only shape Vista accepts (vista.md § 4.7).
+            params["cadastro"] = json.dumps(cadastro, separators=(",", ":"))
         if showtotal:
             params["showtotal"] = 1
 
@@ -270,23 +325,36 @@ class VistaClient:
         # so this is the single boundary the credential has to cross.
         body_text = self._redact(resp.text or "")
 
-        if resp.status_code == 200:
+        # 207 = a write where some items failed (per-photo fetch errors on
+        # `/imoveis/fotos`). The request itself succeeded; the per-item
+        # verdicts are in the body, so it is returned, not raised.
+        if resp.status_code in (200, 207):
             try:
                 data = resp.json()
             except json.JSONDecodeError as e:
                 logger.warning("Vista %s returned non-JSON 200: %s", endpoint, e)
-                raise VistaUpstreamError(200, body_text, endpoint) from e
+                raise VistaUpstreamError(resp.status_code, body_text, endpoint) from e
             return VistaCallResult(
                 data=data,
-                status=200,
+                status=resp.status_code,
                 latency_ms=latency_ms,
                 endpoint=endpoint,
                 params_keys=params_keys,
             )
 
         if resp.status_code == 401:
+            # Read the MESSAGE, not the status (vista.md § 4.7). Only an
+            # explicit missing-parameter reply is reclassified; any other 401
+            # stays a denial, which is what a 401 meant before this split.
+            if _is_missing_parameter(body_text):
+                logger.info("Vista %s rejected the request shape (401): %s", endpoint, body_text[:200])
+                raise VistaMissingParameter(401, body_text, endpoint)
             logger.info("Vista %s denied (401) — tenant key lacks permission", endpoint)
             raise VistaPermissionDenied(401, body_text, endpoint)
+
+        if resp.status_code == 403:
+            logger.info("Vista %s denied (403) — key lacks a field-level grant", endpoint)
+            raise VistaPermissionDenied(403, body_text, endpoint)
 
         if resp.status_code == 404:
             logger.info("Vista %s not found (404) — not exposed on this tenant", endpoint)
@@ -429,6 +497,93 @@ class VistaClient:
             showtotal=True,
         )
 
+    # ─── Writes (vista.md § 4.7) ────────────────────────────────────────
+
+    async def cadastrar_fotos_imovel(
+        self, codigo: str, fotos: Mapping[str, str]
+    ) -> VistaCallResult:
+        """Attach photos to a listing — `POST /imoveis/fotos`.
+
+        Contract (proven on the sandbox, vista.md § 4.7):
+
+        - Vista **pulls** each image from its URL and re-hosts it; no bytes
+          are sent, so every URL must be publicly reachable. base64 is
+          rejected.
+        - `fotos` is a keyed mapping (`{"foto1": url, …}`) — Vista answers
+          per key. A JSON array is rejected, hence no `list` here.
+        - `imovel` is a TOP-LEVEL param, not part of `cadastro`.
+        - `200` = all attached; `207` = some keys failed (their entry in
+          `data["Fotos"]` is an error list) and the failed ones created
+          nothing. Inspect the per-key result either way.
+
+        Raises `VistaPermissionDenied` when the key lacks the grant — the
+        state of `…644c` as of 2026-09-16.
+        """
+        validate_fotos_payload(codigo, fotos)
+        return await self._request(
+            "/imoveis/fotos",
+            method="POST",
+            extra_params={"imovel": codigo},
+            cadastro={"fields": dict(fotos)},
+        )
+
+    async def enviar_lead(self, lead: Mapping[str, Any]) -> VistaCallResult:
+        """Submit an inbound lead — `POST /lead` (top level, NOT `/clientes/lead`).
+
+        Contract (derived on the sandbox 2026-09-16):
+
+        - payload is `cadastro={"lead": {...}}`; `{"fields": ...}` is rejected.
+        - required: `nome`, `mensagem`, `veiculo` (the lead source, e.g. the
+          portal/site name) and one of `email` / `fone`. Checked here first so
+          a bad call never costs a round-trip.
+        - Vista de-duplicates: a lead matching an existing client answers
+          `"O cadastro foi encontrado."` instead of `"Ok."`. Both return
+          `Codigo` (the client id) and `Corretor` (the assigned broker).
+        - unknown keys are accepted silently, and `anuncio` (the listing code)
+          is not validated — the caller owns correctness of both.
+
+        ⚠️ LGPD: this WRITES a third party's personal data into the agency's
+        CRM. The caller must hold a legal basis for that processing.
+        """
+        validate_lead_payload(lead)
+        return await self._request(
+            "/lead", method="POST", cadastro={"lead": dict(lead)}
+        )
+
+    async def probe_write_permission(self, endpoint: str) -> dict:
+        """Non-mutating verdict on whether this key may write to `endpoint`.
+
+        Sends a POST with **no payload**. Vista authorises before it
+        validates, so the reply is `Permissão Negada` when the key lacks the
+        method grant, and a missing-parameter/format error when it has it —
+        and with no payload there is nothing to create. See
+        `VISTA_WRITE_PERMISSION_BASELINE` for the evidence.
+
+        Returns `{endpoint, verdict, http_status}`; never raises.
+        """
+        try:
+            result = await self._request(endpoint, method="POST")
+        except VistaPermissionDenied as e:
+            return {"endpoint": endpoint, "verdict": WRITE_DENIED, "http_status": e.status}
+        except VistaMissingParameter as e:
+            return {"endpoint": endpoint, "verdict": WRITE_PERMITTED, "http_status": e.status}
+        except VistaNotFound as e:
+            return {"endpoint": endpoint, "verdict": WRITE_ABSENT, "http_status": e.status}
+        except VistaConfigError:
+            return {"endpoint": endpoint, "verdict": "not_configured", "http_status": None}
+        except VistaTimeout:
+            return {"endpoint": endpoint, "verdict": WRITE_UNKNOWN, "http_status": None}
+        except VistaUpstreamError as e:
+            # A 400 past the auth check ("O formato dos dados não está
+            # correto" — `/clientes/anexos` on a permitted key) is still
+            # evidence of permission. Anything else is not a verdict.
+            verdict = WRITE_PERMITTED if e.status == 400 else WRITE_UNKNOWN
+            return {"endpoint": endpoint, "verdict": verdict, "http_status": e.status}
+        # An empty POST should never succeed; if it does, say so loudly
+        # rather than guess.
+        logger.warning("Vista %s accepted an EMPTY write probe (%d)", endpoint, result.status)
+        return {"endpoint": endpoint, "verdict": WRITE_UNKNOWN, "http_status": result.status}
+
     # ─── Diagnostics ────────────────────────────────────────────────────
 
     async def probe(self, endpoint: str) -> dict:
@@ -459,6 +614,39 @@ class VistaClient:
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
+
+
+_LEAD_REQUIRED: tuple[str, ...] = ("nome", "mensagem", "veiculo")
+
+
+def validate_fotos_payload(codigo: str, fotos: Mapping[str, str]) -> None:
+    """Reject a photo write Vista would refuse. Shared by Real + Fake, so the
+    Fake can never accept a call the Real rejects."""
+    if not codigo:
+        raise ValueError("codigo is required")
+    if not fotos:
+        raise ValueError("at least one photo URL is required")
+    for key, url in fotos.items():
+        if not key or not isinstance(url, str) or not url.startswith(("http://", "https://")):
+            raise ValueError(f"photo {key!r} must map to an http(s) URL Vista can fetch")
+
+
+def validate_lead_payload(lead: Mapping[str, Any]) -> None:
+    """Reject a lead missing Vista's required fields (shared by Real + Fake)."""
+    missing = [k for k in _LEAD_REQUIRED if not lead.get(k)]
+    if not (lead.get("email") or lead.get("fone")):
+        missing.append("email|fone")
+    if missing:
+        raise ValueError(f"lead is missing required field(s): {', '.join(missing)}")
+
+
+def _is_missing_parameter(body: str) -> bool:
+    """True iff a 401 body is Vista's missing-parameter reply, not a denial.
+
+    Every such reply observed starts `"Você deve informar …"` (JSON-escaped
+    on the wire as `Voc\u00ea deve informar`), so match the ASCII tail.
+    """
+    return _PERMISSION_DENIED_MARKER not in body and "deve informar" in body
 
 
 def _detect_unavailable_fields(body: str) -> tuple[bool, list[str]]:

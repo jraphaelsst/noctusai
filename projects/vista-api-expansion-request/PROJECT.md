@@ -11,8 +11,9 @@
 > Every number below was measured live — none is inferred.
 
 - **Created:** 2026-08-05
-- **Last updated:** 2026-08-21
+- **Last updated:** 2026-09-16
 - **Status:** 🟡 **PARTIALLY SATISFIED — Tier 1 is 2-of-3 granted and probe-verified.** Vista re-applied the permissions on key `…644c` and cleared their cache; re-probed live 2026-08-21 in a fresh process: `clientes/listar` → **200** (42,960 clients) and `clientes/detalhes` → **200**. `corretores/listar` is **still 401** and is the one open Tier-1 item. § 10's "which key did they grant?" question is **closed** — the same `…644c` key works, no rotation needed. Remaining: the Tier-2 version question (now much better evidenced). The § 10a corretores re-ask is **CLOSED — NOT SENT, by the owner's decision on 2026-08-24**; the draft stays for reference, do not re-raise it. The LGPD intake that gated consumption is **done** — the ERP Clientes tab has read the family live since 2026-08-22 under a two-tier minimisation split (`vista.md` § 5.1); three controller-level questions remain in `LGPD-WARNINGS.md`.
+- **2026-09-16 update:** the owner opened a second ticket (photo-write + owner-data permissions on `…644c`) and Vista replied that the grants were resolved. **Re-probed on production: NOT landed** — `/imoveis/fotos` write still `Permissão Negada`, owner data still 403. `/lead` turns out to be **permitted** on our key. The write surface is now built and sandbox-verified (§ 12); § 12a holds the send-ready follow-up.
 - **Owner / stakeholders:** USER (joaoraphaelsst) sends + owns the vendor relationship · tech-lead evaluates the reply
 - **Related docs:**
   - `KB § INTEGRATIONS/vista.md` — the authoritative Vista reference. § 3 (credential echo), § 4.2/4.5/4.6 (re-probed endpoint tables), § 5.3 (seed-canonical probe baseline), § 9 (the tiered ask + rationale)
@@ -347,6 +348,7 @@ measured counter-example resolves it fastest.
 
 | Date | Change | Author |
 |---|---|---|
+| 2026-09-16 | **Vista's "resolved" NOT verified.** Owner's second ticket (photo write + owner data on `…644c`) came back "resolved"; live re-probe, twice: photo write still `Permissão Negada`, owner data still 403. New: `/lead` PERMITTED, `/clientes/anexos` denied — via an empty-POST probe that is non-mutating because Vista authorises before it validates (proven on both sides of the gate). Lead contract derived on the sandbox. Built: seed write methods + write-permission probe + MCP write tools (opt-in) — `vista.md` § 4.7/§ 8. Follow-up drafted (§ 12a). | Claude Opus 5 |
 | 2026-08-21 | **✅ The grant LANDED — Tier 1 is 2-of-3.** Vista replied that they had re-adjusted the endpoint permissions on `…644c` and cleared their system cache. Verified per § 7.0 (probe, not their word), twice: `vista.diagnostics.probe` and raw HTTP in a fresh process. `clientes/listar` 401 → **200** (42,960 clients); `clientes/detalhes` 401 → **200**; `corretores/listar` **still 401** → § 10a re-ask drafted. § 10's key question is closed: same key, no rotation. Also landed, all live-measured: the `clientes` field set mapped **without reading any client record** (11 of 32 candidates accepted — and the old guess omitted 7 fields the tenant does expose, which matters because calibration narrows and never widens); LGPD categories corrected (no CPF/address/email, but DataNascimento/Sexo/EstadoCivil/Profissao/Celular); `/imoveis` **delta sync solved** via `filter` on `DataAtualizacao`, closing a Tier-4 ask with no vendor involvement, while `/clientes` has no such field (860-request full crawl); `/clientes/listarConteudo`'s PHP crash fixed upstream; two § 2.3 route names exposed as **our own typos** (`pesquisar` is not a Vista method; history is `historico`, not `historicos`). Code: endpoint baseline re-graded so a future 401 reads as a ROLLBACK, and calibration now drops every rejected field per pass — **13 round-trips → 2**, measured live. `vista.md` § 2/4.2/4.5/8/9 updated. | Claude Opus 5 |
 | 2026-08-19 | **Re-probe: the grant has NOT landed.** Verified twice (MCP probe + raw HTTP, fresh process, well-formed payloads) — `clientes/listar`, `clientes/detalhes`, `corretores/listar` all still 401. Full § 2.3 404 surface re-swept: nothing moved. Two new endpoint facts: `/corretores/detalhes` + `/corretores/listarConteudo` are 404; `/clientes/listarConteudo` exists ungated but crashes (raw PHP `in_array()` error) — not a partial grant. Separately, refined the gated MCP surface to parity with the working one (silent pagination drop, dead candidate-field constant, **401 poisoning the calibration cache**, missing `vista.clientes.get`, unenforced Fake↔Real parity) so a grant lands on working code instead of stubs. `vista.md` § 4.2/4.5/5.3/8/9 updated. Status → BLOCKED-EXTERNAL, awaiting the key question in § 10. | Claude Opus 5 |
 | 2026-08-05 | Project filed. Live audit of 24 Vista routes established the § 2 baseline; the 401-vs-404 split and the read-only 405/404 write-probe technique were the two enabling findings. Email drafted (§ 6). Related same-day fix `d3cb3c26` shipped the credential redaction, corrected the endpoint tables in `vista.md`, and lifted `PROBE_ENDPOINTS` to a seed-canonical baseline after finding it forked at N=2. **Status: awaiting user send.** | Claude Opus 5 |
@@ -483,3 +485,46 @@ Recorded so the next agent does not over-read the win.
 - **`clientes` cannot be delta-synced.** No `DataAtualizacao` on that family;
   860 requests per full refresh. Design no sync loop over it until § 10a's
   question is answered.
+
+---
+
+## 12. 2026-09-16 — the photo-write / owner-data ticket
+
+Vista replied that the permissions were resolved. Measured on production with
+`…644c` (non-mutating probes, twice, minutes apart):
+
+| surface | result |
+|---|---|
+| `POST /imoveis/fotos` | ❌ `401 Permissão Negada … Método: imoveis/fotos` — **unchanged** |
+| owner data (`proprietarios` on `/imoveis/detalhes`) | ❌ `403 "A chave de API não possui as permissões necessárias para acessar os dados do proprietário."` — **unchanged** |
+| `POST /clientes/anexos` | ❌ `Permissão Negada` |
+| `POST /lead` | ✅ permitted |
+
+Most likely the same thing as 2026-08-21: the change needs a Vista-side cache
+flush. Re-check any time with `vista.diagnostics.probe_write_permissions` —
+`/imoveis/fotos` showing up in `unexpected` means it landed.
+
+### 12a. Follow-up — send-ready, key REDACTED (never paste the real key)
+
+**Assunto:** Re: permissões da chave `…644c` — `imoveis/fotos` e dados do proprietário ainda negados
+
+Prezada equipe Vista,
+
+Obrigado pelo retorno. Testamos novamente hoje (16/09/2026) e as duas
+permissões ainda não estão ativas na chave terminada em `644c`
+(tenant `oneconsu`):
+
+1. **Envio de fotos**
+   - `POST https://oneconsu-rest.vistahost.com.br/imoveis/fotos?key=<CHAVE_644c>&imovel=CA2830&cadastro={"fields":{"foto1":"<URL>"}}`
+   - Retorno: `401 {"status":401,"message":"Permissão Negada: \"<CHAVE_644c>\" Método: imoveis/fotos"}`
+
+2. **Dados do proprietário**
+   - `GET https://oneconsu-rest.vistahost.com.br/imoveis/detalhes?key=<CHAVE_644c>&imovel=CA2830&pesquisa={"fields":["Codigo",{"proprietarios":["Nome"]}]}`
+   - Retorno: `403 {"status":403,"message":"A chave de API não possui as permissões necessárias para acessar os dados do proprietário."}`
+
+Na liberação anterior (agosto) foi necessário limpar o cache do sistema para
+que a alteração tivesse efeito — poderiam verificar se é o mesmo caso?
+
+Atenciosamente,
+*[assinatura]*
+

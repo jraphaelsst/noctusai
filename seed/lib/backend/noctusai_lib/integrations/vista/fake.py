@@ -37,13 +37,19 @@ Validated against the live workspace behavior captured in
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from .client import (
     DEFAULT_PAGE_SIZE,
+    WRITE_DENIED,
+    WRITE_PERMITTED,
     VistaCallResult,
     VistaConfigError,
     VistaError,
+    VistaNotFound,
+    VistaPermissionDenied,
+    validate_fotos_payload,
+    validate_lead_payload,
 )
 
 
@@ -159,6 +165,33 @@ class FakeVistaClient:
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> VistaCallResult:
         return self._resolve("/corretores/listar", ["key", "pesquisa", "showtotal"])
+
+    # ─── Writes (parity with VistaClient — same validation, no network) ─
+
+    async def cadastrar_fotos_imovel(
+        self, codigo: str, fotos: Mapping[str, str]
+    ) -> VistaCallResult:
+        # Same validator as the Real: a Fake that accepts what the Real
+        # rejects lets a consumer ship a call that fails in production.
+        validate_fotos_payload(codigo, fotos)
+        return self._resolve("/imoveis/fotos", ["cadastro", "imovel", "key"])
+
+    async def enviar_lead(self, lead: Mapping[str, Any]) -> VistaCallResult:
+        validate_lead_payload(lead)
+        return self._resolve("/lead", ["cadastro", "key"])
+
+    async def probe_write_permission(self, endpoint: str) -> dict:
+        """Verdict from the seeded errors: a `VistaPermissionDenied` seeded
+        for `endpoint` reads as denied, anything unseeded as permitted."""
+        if not self._configured:
+            return {"endpoint": endpoint, "verdict": "not_configured", "http_status": None}
+        self.calls.append((endpoint, ["key"]))
+        err = self._errors.get(endpoint)
+        if isinstance(err, VistaPermissionDenied):
+            return {"endpoint": endpoint, "verdict": WRITE_DENIED, "http_status": err.status}
+        if isinstance(err, VistaNotFound):
+            return {"endpoint": endpoint, "verdict": "absent", "http_status": err.status}
+        return {"endpoint": endpoint, "verdict": WRITE_PERMITTED, "http_status": 401}
 
     async def probe(self, endpoint: str) -> dict:
         """Structured status row — never raises (mirrors VistaClient.probe)."""

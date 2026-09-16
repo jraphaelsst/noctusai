@@ -12,9 +12,15 @@ Tool surface (Phase 1 — see KB § INTEGRATIONS/vista.md § 7):
 - vista.imoveis.{list, get, list_filters}    — live-probed
 - vista.usuarios.list                         — live-probed
 - vista.agencias.list                         — live-probed
-- vista.clientes.list                         — permission-gated (returns typed_error on 401)
+- vista.clientes.{list, get}                  — granted 2026-08-21 (typed_error if rolled back)
 - vista.corretores.list                       — permission-gated (returns typed_error on 401)
-- vista.diagnostics.{probe, list_known_endpoints, show_calibrated_fields}
+- vista.imoveis.add_photos                    — ✍️ write; key …644c still DENIED (2026-09-16)
+- vista.leads.submit                          — ✍️ write; key …644c permitted
+- vista.diagnostics.{probe, probe_write_permissions, list_known_endpoints,
+  show_calibrated_fields}
+
+Both write tools refuse unless VISTA_MCP_ALLOW_WRITES=1 — they mutate the
+agency's live CRM.
 
 Per-tenant calibration (vista.md § 6) runs lazily on first call to
 imoveis/usuarios/agencias and caches per-process. Inspect via

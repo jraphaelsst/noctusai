@@ -18,7 +18,7 @@ The full Vista API contract lives at `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.
   adapter uses hardcoded constants; this MCP discovers each tenant's
   safe field set by candidate-then-drop probing on first real call,
   cached per process.
-- **11 tools across 6 services** following the dotted naming convention
+- **14 tools across 7 services** following the dotted naming convention
   per `KB § PATTERNS/mcp-tool-conventions.md`. The `access` column is the
   one to read before wiring a consumer — ✅ returns data today, 🔒 returns a
   typed 401 until Vista grants the per-method permission:
@@ -33,14 +33,21 @@ The full Vista API contract lives at `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.
   | `vista.clientes.list` | `/clientes/listar` | ✅ *(granted 2026-08-21)* | Paginated (≤50). **42,960 rows**, no `DataAtualizacao` ⇒ no delta sync. LGPD: Celular/DataNascimento/Sexo/EstadoCivil/Profissao (no CPF or address on this tenant). |
   | `vista.clientes.get` | `/clientes/detalhes` | ✅ *(granted 2026-08-21)* | `?cliente=` top-level. LGPD as above. |
   | `vista.corretores.list` | `/corretores/listar` | 🔒 401 | Substitute: `vista.usuarios.list`. |
+  | `vista.imoveis.add_photos` | `POST /imoveis/fotos` | ✍️ 🔒 401 | Write. Photos by public URL, keyed map. **Still denied on `…644c` (2026-09-16)** despite Vista saying the grant was fixed. |
+  | `vista.leads.submit` | `POST /lead` | ✍️ ✅ | Write. `nome`+`mensagem`+`veiculo`+(`email`\|`fone`). Vista de-dups on existing clients. |
   | `vista.diagnostics.probe` | — | ✅ | 8-row baseline; read `unexpected`, not `status`. |
+  | `vista.diagnostics.probe_write_permissions` | — | ✅ | Empty-POST write verdicts — non-mutating (Vista authorises before it validates). |
   | `vista.diagnostics.list_known_endpoints` | — | ✅ | Static catalog + `probe_status`. |
   | `vista.diagnostics.show_calibrated_fields` | — | ✅ | Per-tenant safe field set. |
 
+- **✍️ Write tools are OFF by default.** They mutate the agency's live CRM,
+  so they return a typed `WritesDisabled` unless the server runs with
+  `VISTA_MCP_ALLOW_WRITES=1`. There is deliberately no update/delete-photo
+  tool — `/imoveis/fotos` accepts `DELETE` on live listings (`vista.md § 4.7`).
 - **🔒 and ❌ are different answers, and the tools say which.** A gated tool
   returns `probe_status: "permission_gated"` with a typed 401 — meaning *ask
   Vista for the grant*, not *retry*, and not *this does not exist*. Routes
-  that answer 404 (`/clientes/lead`, `/negociacoes/*`, and the ten other
+  that answer 404 (`/clientes/lead` — leads live at top-level `/lead` —, `/negociacoes/*`, and the ten other
   families in `vista.md § 4.6`) get **no tool at all**: a tool that can only
   ever report "no route" misrepresents the surface. See `vista.md § 4.2`.
 - **Pydantic In/Out per tool** with `Field(description=...)` so MCP
@@ -52,7 +59,9 @@ The full Vista API contract lives at `KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.
 ## What this Phase 1 does NOT ship (deferred per PROJECT.md)
 
 - Phase 5 — keeper detector for guide ↔ adapter drift.
-- Write tooling (POST endpoints) — out of scope for the read-only v1.
+- Write tooling beyond `add_photos` + `leads.submit` — `/clientes/anexos` is
+  denied on our key and nothing needs it; photo update/delete is excluded on
+  purpose.
 - Full integration tests against a live tenant — the `tests/` folder
   has a smoke test that confirms imports work; full live-probe tests
   belong in Phase 5.
@@ -159,6 +168,8 @@ mcp/vista/
 │   ├── agencias.py
 │   ├── clientes.py
 │   ├── corretores.py
+│   ├── leads.py       — ✍️ vista.leads.submit
+│   ├── _common.py     — shared client/typed_error/write gate
 │   └── diagnostics.py
 ├── tests/
 │   └── test_smoke.py  — import + registration smoke test

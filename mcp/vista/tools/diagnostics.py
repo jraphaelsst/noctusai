@@ -4,11 +4,15 @@ from __future__ import annotations
 from mcp.server import Server
 from mcp.types import Tool
 
-from noctusai_lib.integrations.vista import VISTA_ENDPOINT_BASELINE, VistaClient
+from noctusai_lib.integrations.vista import (
+    VISTA_ENDPOINT_BASELINE,
+    VISTA_WRITE_PERMISSION_BASELINE,
+)
 
 from noctusai_lib.integrations.vista import calibrator
 from ..settings import get_settings
-from ..types import CalibratedFieldsOutput, ProbeOutput
+from ..types import CalibratedFieldsOutput, ProbeOutput, WritePermissionsOutput
+from ._common import client as _client
 
 # The endpoint baseline is seed-canonical (`VISTA_ENDPOINT_BASELINE`) — this
 # module and the ERP showcase service consume the SAME tuple, so a re-probe
@@ -25,6 +29,13 @@ _TOOL_BY_PATH = {
     "/clientes/listar": "vista.clientes.list",
     "/clientes/detalhes": "vista.clientes.get",
     "/corretores/listar": "vista.corretores.list",
+}
+
+# Which dotted tool writes to each write route (None = no tool on purpose).
+_WRITE_TOOL_BY_PATH = {
+    "/imoveis/fotos": "vista.imoveis.add_photos",
+    "/lead": "vista.leads.submit",
+    "/clientes/anexos": None,
 }
 
 # Known to Vista's public docs but NOT in the probe loop — either wrapped by a
@@ -45,6 +56,7 @@ _UNPROBED_KNOWN: list[dict] = [
     {"path": "/clientes/poragencia", "probe_status": "absent", "tool": None},
     {"path": "/clientes/favoritos", "probe_status": "absent", "tool": None},
     {"path": "/clientes/campos", "probe_status": "absent", "tool": None},
+    # Absent under THIS name — leads are top-level `/lead` (write rows below).
     {"path": "/clientes/lead", "probe_status": "absent", "tool": None},
     {"path": "/clientes/cadastrar", "probe_status": "absent", "tool": None},
     {"path": "/clientes/update", "probe_status": "absent", "tool": None},
@@ -60,11 +72,6 @@ _UNPROBED_KNOWN: list[dict] = [
     {"path": "/imoveis/cadastrar", "probe_status": "absent", "tool": None},
     {"path": "/imoveis/update", "probe_status": "absent", "tool": None},
 ]
-
-
-def _client() -> VistaClient:
-    s = get_settings()
-    return VistaClient(s.base_url, s.api_key, timeout_seconds=s.timeout_seconds)
 
 
 async def probe(args: dict) -> dict:
@@ -118,7 +125,42 @@ async def list_known_endpoints(args: dict) -> dict:
         for path, _expected, probe_status, _note in VISTA_ENDPOINT_BASELINE
     ]
     rows.extend(_UNPROBED_KNOWN)
+    # Write routes carry this key's recorded write verdict. `/imoveis/fotos`
+    # is already a read-baseline row (its bare GET is 405), so it is enriched
+    # in place rather than listed twice.
+    by_path = {r["path"]: r for r in rows}
+    for path, verdict, _note in VISTA_WRITE_PERMISSION_BASELINE:
+        row = by_path.get(path)
+        if row is None:
+            row = {"path": path, "probe_status": "write_only"}
+            rows.append(row)
+        row["write_permission"] = verdict
+        row["tool"] = _WRITE_TOOL_BY_PATH[path]
     return {"endpoints": rows}
+
+
+async def probe_write_permissions(args: dict) -> dict:
+    """Non-mutating write-permission verdict per write route (vista.md § 4.7).
+
+    Empty POSTs only: Vista authorises before it validates, so the reply
+    tells denied from permitted and, with no payload, nothing is created.
+    """
+    client = _client()
+    writes_enabled = get_settings().writes_enabled
+    if not client.configured:
+        return WritePermissionsOutput(writes_enabled=writes_enabled).model_dump()
+    rows, unexpected = [], []
+    for endpoint, expected, note in VISTA_WRITE_PERMISSION_BASELINE:
+        row = await client.probe_write_permission(endpoint)
+        row["expected_verdict"] = expected
+        row["as_expected"] = row["verdict"] == expected
+        row["note"] = note
+        if not row["as_expected"]:
+            unexpected.append(endpoint)
+        rows.append(row)
+    return WritePermissionsOutput(
+        probes=rows, configured=True, unexpected=unexpected, writes_enabled=writes_enabled
+    ).model_dump()
 
 
 async def show_calibrated_fields(args: dict) -> dict:
@@ -160,6 +202,7 @@ async def show_calibrated_fields(args: dict) -> dict:
 HANDLERS = {
     "vista.diagnostics.probe": probe,
     "vista.diagnostics.list_known_endpoints": list_known_endpoints,
+    "vista.diagnostics.probe_write_permissions": probe_write_permissions,
     "vista.diagnostics.show_calibrated_fields": show_calibrated_fields,
 }
 
@@ -197,6 +240,20 @@ def tool_descriptors() -> list[Tool]:
                 "permission_gated = route exists, key lacks the grant (a "
                 "support request unlocks it); absent = 404, no such route on "
                 "this tenant (a request will NOT unlock it)."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="vista.diagnostics.probe_write_permissions",
+            description=(
+                "Non-mutating check of whether this tenant key may WRITE to "
+                "each Vista write route (/imoveis/fotos, /lead, "
+                "/clientes/anexos). Sends empty POSTs — Vista checks "
+                "permission before parameters, so nothing is ever created. "
+                "Each row: {endpoint, verdict (permitted|denied|absent|"
+                "unknown), http_status, expected_verdict, as_expected, note}. "
+                "Use it to verify a vendor-side grant actually landed; read "
+                "`unexpected` first."
             ),
             inputSchema={"type": "object", "properties": {}},
         ),

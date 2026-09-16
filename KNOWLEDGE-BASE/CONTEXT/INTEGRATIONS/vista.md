@@ -372,7 +372,7 @@ the request.
 | Available fields | GET | `/imoveis/campos` | — | ❓ | 📖 | Returns field-name reference. Not probed. |
 | Create | POST | `/imoveis/cadastrar` | — | ❌ 404 | 📖 | Probed 2026-09-11 — also 404 under the documented `/imoveis/cadastrar`. Absent. |
 | Update | PUT | ~~`/imoveis/alterar`~~ → `/imoveis/update` | `?imovel=` | ❌ 404 | 📖 | **`alterar` was OUR name, never Vista's** — the docs say `/imoveis/update`. Both 404 (2026-09-11). |
-| Add photo | POST | `/imoveis/fotos` | `?imovel=` | ✅ **405 = exists** | 📖 | **Not `cadfoto` (404) nor `/imoveis/fotos/cadastrar` (404).** The live route is the flat resource with `POST/PUT/DELETE`. Permission untested. |
+| Add photo | POST | `/imoveis/fotos` | `?imovel=` | ✅ **405 = exists** | 📖 | **Not `cadfoto` (404) nor `/imoveis/fotos/cadastrar` (404).** The live route is the flat resource with `POST/PUT/DELETE`. **Our key: DENIED** (re-probed 2026-09-16). Client: `cadastrar_fotos_imovel` · MCP: `vista.imoveis.add_photos` — § 4.7. |
 | Add doc | POST | ~~`/imoveis/caddoc`~~ | `?imovel=` | ❌ 404 | 📖 | Also 404 as `/imoveis/documentos` and `/imoveis/documentos/cadastrar`. |
 | Add history | POST | ~~`/imoveis/cadhis`~~ | `?imovel=` | ❌ 404 | 📖 | Also 404 as `/imoveis/historico` and `/imoveis/historico/cadastrar`. |
 | Register owner | POST | ~~`/imoveis/cadprop`~~ | `?imovel=` | ❌ 404 | 📖 | Also 404 as `/imoveis/proprietario` and `/imoveis/proprietario/cadastrar`. |
@@ -543,8 +543,8 @@ row is still 404 after the same grant.
 | Add history | POST | `/clientes/cadhis` | `?cliente=` | ❌ 404 | 📖 |
 | Assign broker | POST | `/clientes/cadcor` | `?cliente=` | ❌ 404 | 📖 |
 | ~~Submit lead~~ | ~~POST~~ | ~~`/clientes/lead`~~ | — | ❌ 404 | 📖 | **Wrong name — see `/lead` below.** |
-| **Submit lead** | **POST** | **`/lead`** (top-level) | — | ✅ **405 = exists, write-only** | 📖 | Confirmed 2026-09-11 by GET → `405 (Allow: POST)`. **Permission NOT tested** — no write was sent. |
-| **Add attachment** | **POST** | **`/clientes/anexos`** | — | ✅ **405 = exists, write-only** | — | Confirmed 2026-09-11 by GET → `405 (Allow: POST)`. Permission not tested. |
+| **Submit lead** | **POST** | **`/lead`** (top-level) | — | ✅ **405 = exists, write-only** | 📖 | Confirmed 2026-09-11 by GET → `405 (Allow: POST)`. **Our key: PERMITTED** (empty-POST probe 2026-09-16). Contract derived on the sandbox — § 4.7. Client: `enviar_lead` · MCP: `vista.leads.submit`. |
+| **Add attachment** | **POST** | **`/clientes/anexos`** | — | ✅ **405 = exists, write-only** | — | Confirmed 2026-09-11 by GET → `405 (Allow: POST)`. **Our key: DENIED** (2026-09-16). No tool — no consumer needs it. |
 
 > **🔴 Two route names in the pre-2026-08-21 table were OUR typos, not
 > Vista's routes.** `/clientes/pesquisar` is not a documented Vista method at
@@ -952,6 +952,66 @@ carried its 28 real photos with zero probe artifacts afterwards.
 > A bug or compromise on their side could strip photos from production
 > listings, and `…644c` **cannot re-upload them**, so there is no API-side
 > recovery. Carried into the § 9 ask as a read-only request.
+
+#### ✅ 2026-09-16 — re-probed after Vista said the grants were fixed: they are NOT
+
+Vista told the owner the permission grants had been resolved. Verified by probe,
+not by their word (project § 7.0), on production with `…644c`, twice, minutes
+apart:
+
+| surface | 2026-09-11 | 2026-09-16 |
+|---|---|---|
+| `/imoveis/fotos` write | ❌ `Permissão Negada` | ❌ **`Permissão Negada` — unchanged** |
+| owner data (`{"proprietarios": [...]}` on `detalhes`) | ❌ 403 | ❌ **403 — unchanged** (`"A chave de API não possui as permissões necessárias para acessar os dados do proprietário."`) |
+| `/corretores/listar` | 🔒 401 | 🔒 401 (not re-asked, § 10a of the project) |
+| `/clientes/anexos` write | untested | ❌ `Permissão Negada` |
+| `/lead` write | untested | ✅ **PERMITTED** |
+
+The 2026-08-21 grant needed a Vista-side **cache flush** before it showed —
+the likeliest explanation again. Re-run `vista.diagnostics.probe_write_permissions`:
+`/imoveis/fotos` appearing in `unexpected` with `verdict: permitted` is the
+signal the grant has landed.
+
+#### 🔑 Vista authorises BEFORE it validates — the empty-POST probe
+
+Proven on both sides of the gate 2026-09-16: an **empty** `POST /imoveis/fotos`
+answers the sandbox key (permitted) with the missing-`cadastro` 401, and our
+key (denied) with `Permissão Negada`. So a POST with **no parameters at all**
+is a conclusive permission check that cannot create anything — simpler than the
+`.invalid`-URL recipe above (no imóvel code needed) and it generalises to every
+write route. Canonical implementation: `VistaClient.probe_write_permission`;
+baseline: `VISTA_WRITE_PERMISSION_BASELINE`. A permitted key may also answer
+`400 "O formato dos dados não está correto"` (`/clientes/anexos`) — still past
+the auth check, still a `permitted` verdict.
+
+The client now encodes the message rule too: a 401 whose body is a
+`"Você deve informar …"` reply raises **`VistaMissingParameter`**, not
+`VistaPermissionDenied`; a field-level **403** raises `VistaPermissionDenied`
+with `status == 403`.
+
+#### The lead contract — `POST /lead` — derived on the sandbox
+
+```
+POST https://<tenant>-rest.vistahost.com.br/lead
+     ?key=<KEY>
+     &cadastro={"lead":{"nome":"…","mensagem":"…","veiculo":"<source>","email":"…"|"fone":"…",
+                        "anuncio":"<CODIGO>","interesse":"Venda"}}
+Header: Accept: application/json              Body: EMPTY
+```
+
+- Wrapper key is **`lead`**; `{"fields": …}` is rejected.
+- Required (Vista's own message): **`nome`, `mensagem`, `email` ou `fone`, `veiculo`**.
+  `veiculo` is the lead *source* label shown to the agency.
+- `200 {"message":"Ok.","Codigo":<cliente>,"Corretor":<id>,"message_integration":{…}}`
+  for a new client; `200 {"message":"O cadastro foi encontrado.", …}` when
+  Vista matched an existing client (by phone/e-mail) — it de-duplicates.
+- **Not validated:** unknown keys are ignored silently and `anuncio` accepts a
+  non-existent code. The caller owns both.
+- `/clientes/lead` stays 404 — the route is top-level.
+
+⚠️ This is the write that § 9 Tier 3 treated as impossible. Pushing captured
+leads into Vista is now a **product decision** (and an LGPD one — a third
+party's data leaving our boundary), no longer a technical blocker.
 
 #### Sandbox — use it, never production, to learn a write contract
 
@@ -1433,6 +1493,22 @@ ships):
 
 ## 8. Change log
 
+### 2026-09-16 — Vista's "grants resolved" NOT verified + write surface built
+
+- **Re-probed after the owner's ticket:** photo write and owner data are still
+  denied on `…644c` (§ 4.7 table). Nothing moved.
+- **New:** `/lead` is **permitted** on our key; `/clientes/anexos` is denied.
+  Found with the empty-POST probe, which works because Vista authorises
+  before it validates (§ 4.7).
+- **Lead contract derived** on the sandbox (§ 4.7).
+- **Code:** `VistaClient.cadastrar_fotos_imovel` / `enviar_lead` /
+  `probe_write_permission` (+ Fake parity, shared validators);
+  `VistaMissingParameter` split out of the 401 path; 403 → `VistaPermissionDenied`;
+  207 returned as a partial-success result. MCP: `vista.imoveis.add_photos`,
+  `vista.leads.submit` (both behind `VISTA_MCP_ALLOW_WRITES`),
+  `vista.diagnostics.probe_write_permissions`; `_client`/`_typed_error`
+  lifted to `tools/_common.py` (was copied ×6).
+
 ### 2026-08-21 — ✅ The Tier-1 grant LANDED (2 of 3) + live field map + delta sync solved
 
 Vista replied that they had re-applied the endpoint permissions on key
@@ -1659,6 +1735,10 @@ it as a new integration surface — re-probe all of § 4 and expect response
 shapes to move (§ 7.2 of the project doc).
 
 ### Tier 3 — the write path (only if Tier 2 says it is available)
+
+> **2026-09-16 — answered by probe, not by Vista:** the lead write exists at
+> top-level `/lead` and our key is **permitted** on it (§ 4.7). What remains
+> is the product/LGPD decision, not an API gap. `clientes/cadastrar` is still 404.
 
 `clientes/lead` (POST) and `clientes/cadastrar` (POST). This is the one
 that changes the architecture: **without it there is no API path to write a

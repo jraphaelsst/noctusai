@@ -22,6 +22,7 @@
 | **P Studio** | `products/p-studio/` | ERP for a real-estate photography/AV production studio: cadastros (clientes/imóveis/serviços/equipamentos), comercial funnel (`negocios`), shoot scheduling (`captacoes` + equipment checklist), production pipeline (`producoes`), financeiro with real bank billing. Billing goes through a `ProvedorCobranca` Protocol — Asaas is the only adapter allowed to know Asaas vocabulary, so the move to Banco do Brasil is an adapter swap. Absorbed 2026-08-13 from the sibling workspace `cadu/p-studio/` (project `p-studio-absorption-rollout`); schema + PostgREST exposure were already applied to the shared Supabase before absorption | 8014/8180 | `p_studio` |
 | **Academia de Reciclagem** | `products/academia-de-reciclagem/` | Knowledge workspace of a real environmental-education project: knowledge base, decisions, open questions, roadmap/tasks in the DB with append-only revision history; scoped API consumed by the `agents` product and `academia.*` MCP. Absorbed from the sibling `academia-de-reciclagem` workspace (scaffold 2026-09-12; roadmap `julia-agents-academia-2026-09`) | 8015/8190 | `academia_de_reciclagem` |
 | **Agentes** | `products/agents/` | Home of managed AI agents: Julia (Claude Agent SDK, web-only, approval-gated writes to academia via scoped API) + One Chat listing with on/off via social-wiring's scoped toggle (scaffold 2026-09-14; roadmap `julia-agents-academia-2026-09`) | 8016/8200 | `agents` |
+| **Community** | `products/community/` | Management center for one paid online women's community: back office (`admin`/`moderador`) + member portal, tiered paid access (Stripe + Asaas), semi-automatic WhatsApp group management. pt-BR. Scaffolded 2026-09-16 — domain modules planned, not built | 8017/8210 | `community` |
 | **Orbity** | `products/orbity/` | Agency operating-system (absorbing `sistema-orbity`): CRM/funil, clients, contracts, financeiro, agenda, WhatsApp automation, Meta ads, notifications — built seed-first via the absorption capability-uplift loop (in flight on `feat/orbity-build`, roadmap `project-history/roadmaps/orbity-2026-06.md`, knowledge `KB § ABSORPTIONS/orbity/`) | 8010/8140 | `orbity` |
 
 > **Retired 2026-05-16** (`social-wiring-absorption` Wave 4): `media-scheduling`, `youtube-crawler`, `mailing`, `imobi-scheduling` were consolidated into **`social-wiring`** (`products/social-wiring/`). Email-marketing → `social-wiring/app/modules/email_marketing/`; WhatsApp-scheduling → `social-wiring/app/modules/scheduling/`. Core un-registration: forward migration `products/core/backend/migrations/033_retire_consolidated_products.sql` (013/028 immutable). Durable record: `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`.
@@ -45,7 +46,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 23 | 41 | 138 | 90 | 241 | 3,775 |
+| Social Wiring | 23 | 41 | 140 | 90 | 242 | 3,789 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
@@ -53,7 +54,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Academia De Reciclagem | 9 | 0 | 15 | 8 | 18 | 146 |
 | Agents | 4 | 0 | 12 | 9 | 33 | 302 |
 | Community | 2 | 1 | 8 | 1 | 6 | 19 |
-| **Total** | **234** | **236** | **484** | **301** | **757** | **10,227** |
+| **Total** | **234** | **236** | **486** | **301** | **758** | **10,241** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

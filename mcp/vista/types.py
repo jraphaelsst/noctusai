@@ -106,6 +106,38 @@ class ListCorretoresOutput(BaseModel):
     probe_status: str = Field("permission_gated", description="One of live_probed | permission_gated | write_only | absent.")
 
 
+# ─── ✍️ Writes (vista.md § 4.7) ─────────────────────────────────────────────
+
+
+class AddImovelFotosInput(BaseModel):
+    codigo: str = Field(..., description="Vista imóvel code, e.g. 'CA2830'. Sent as the top-level `imovel=` param.")
+    fotos: dict[str, str] = Field(..., min_length=1, description="Keyed map of distinct labels → PUBLIC http(s) image URLs, e.g. {\"foto1\": \"https://…/a.jpg\"}. Vista downloads each URL itself; no bytes, no base64, no arrays.")
+
+
+class SubmitLeadInput(BaseModel):
+    nome: str = Field(..., min_length=1, description="Lead's name.")
+    mensagem: str = Field(..., min_length=1, description="The lead's message / what they asked.")
+    veiculo: str = Field(..., min_length=1, description="Lead source shown to the agency (site, portal, campaign name).")
+    email: Optional[str] = Field(None, description="Lead e-mail. `email` or `fone` is required.")
+    fone: Optional[str] = Field(None, description="Lead phone. `email` or `fone` is required. Vista de-duplicates existing clients on it.")
+    anuncio: Optional[str] = Field(None, description="Imóvel code the lead is about. NOT validated by Vista — pass a real code.")
+    interesse: Optional[str] = Field(None, description="Interest, e.g. 'Venda' or 'Locação'.")
+
+
+class WriteOutput(BaseModel):
+    """Result of a CRM write. Exactly one of `result` / `typed_error` is set."""
+    result: Optional[dict] = Field(None, description="Vista's response body. For photos, read `Fotos.<key>` per photo — a 207 means some keys failed and created nothing.")
+    http_status: Optional[int] = Field(None, description="200 = all ok; 207 = partial (photos).")
+    typed_error: Optional[dict] = Field(None, description="{error_class, message, status}. VistaPermissionDenied = the key lacks the method grant (ask Vista, do not retry); WritesDisabled = VISTA_MCP_ALLOW_WRITES is off; ValueError = the payload was rejected before any request.")
+
+
+class WritePermissionsOutput(BaseModel):
+    probes: list[dict] = Field(default_factory=list, description="One row per write route: {endpoint, verdict, http_status, expected_verdict, as_expected, note}. verdict ∈ permitted | denied | absent | unknown | not_configured.")
+    configured: bool = Field(False, description="True iff base_url + api_key are set.")
+    unexpected: list[str] = Field(default_factory=list, description="Routes whose verdict differs from the recorded baseline — e.g. `/imoveis/fotos` flipping to permitted means Vista's grant has landed.")
+    writes_enabled: bool = Field(False, description="Whether this MCP process allows the write tools (VISTA_MCP_ALLOW_WRITES).")
+
+
 class ProbeOutput(BaseModel):
     probes: list[dict] = Field(default_factory=list, description="One row per PROBE_ENDPOINTS entry: {endpoint, status, http_status, latency_ms, expected_http_status, as_expected, note}. Read `as_expected` — NOT `status` — to decide whether a row needs attention: several endpoints answer a bare GET with 400/401/405 by design.")
     tenant_base_url: str = Field("", description="The base URL the probe was issued against.")
@@ -132,10 +164,6 @@ class CalibratedFieldsOutput(BaseModel):
 
 
 __all__ = [
-    "ShowcaseImovel",
-    "ShowcaseImovelDetalhes",
-    "ShowcaseUsuario",
-    "ShowcaseAgencia",
     "ListImoveisInput",
     "ListImoveisOutput",
     "GetImovelInput",
@@ -149,6 +177,10 @@ __all__ = [
     "GetClienteOutput",
     "ListCorretoresInput",
     "ListCorretoresOutput",
+    "AddImovelFotosInput",
+    "SubmitLeadInput",
+    "WriteOutput",
+    "WritePermissionsOutput",
     "ProbeOutput",
     "CalibratedFieldsOutput",
 ]

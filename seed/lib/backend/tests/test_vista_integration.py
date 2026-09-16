@@ -423,6 +423,9 @@ def test_fake_client_and_real_client_signatures_agree() -> None:
         "listar_clientes",
         "detalhes_cliente",
         "listar_corretores",
+        "cadastrar_fotos_imovel",
+        "enviar_lead",
+        "probe_write_permission",
     ):
         real = getattr(VistaClient, name, None)
         fake = getattr(FakeVistaClient, name, None)
