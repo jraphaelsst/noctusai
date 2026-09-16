@@ -164,6 +164,31 @@ Resolution is an owner decision, and it is cheap either way:
 Until one is chosen, do NOT build the Econômico half of the pipeline — it cannot be
 exercised end-to-end, so it would ship untested by construction.
 
+### C9 — 🔴 DO NOT APPLY Core 045, and do not trust a tree you did not name
+**Core 045 is on the prod branch but deliberately UNAPPLIED.** It belongs to
+`noctusai-36`'s cutover. `deploy/fleet/build-scope.txt` derives from
+`ativo=true AND deploy_scope='live'`, so applying 045 early makes build-scope list two
+slugs that have no compose service — **breaking the next build for every product,
+including this one**. Confirmed by `noctusai-cd` 2026-09-16. Leave it alone.
+
+**The wrong-tree family (N=3 in one night).** A repo with 47 worktrees makes "which tree
+am I acting on?" a live hazard, and it bit three different surfaces the same night:
+
+| # | surface | failure | cost |
+|---|---|---|---|
+| 1 | `noctus.dev.branch_pointer` | **writes** to the MCP server's tree, not the calling worktree (it is the only tool in its family with no `worktree_path` param) | stray commit `996c64c2` on primary `dev` |
+| 2 | `noctus.dev.predeploy_check` | **measures** the primary tree and returned **GREEN** against a 40-commits-behind state | a false "ready to deploy" |
+| 3 | hand-written `git --git-dir=<primary>/.git … origin/dev..HEAD` run from inside a worktree | **reads** the wrong tree — `HEAD` resolves to the primary's branch | a 170-file diff that looked like a rogue slice; truth was 6 files |
+
+**Rule.** This is `CLAUDE.md` §1 *verdict-channel integrity* — "the exit code you read must
+belong to what you are judging" — one axis over: **the TREE you read must belong to what
+you are judging.** #2 is the dangerous variant: a deploy gate returning GREEN from the
+wrong tree is a false-green on the one check whose entire job is to be trustworthy.
+
+**Practice, until the tools carry `worktree_path`:** never pass `--git-dir` to inspect a
+worktree — `cd` into it and let git resolve its own context; and before trusting any
+gate's verdict, confirm which tree produced it. `noctusai-cd` owns the incident filing.
+
 ## 4 · Vista integration facts (from `noctusai-c3`, 2026-09-16)
 
 Relevant to Phase 2 (write-back) and to the probe design:
