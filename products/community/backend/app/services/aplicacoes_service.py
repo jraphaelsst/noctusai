@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 _PERGUNTAS_TABLE = "aplicacao_perguntas"
 _APLICACOES_TABLE = "aplicacoes"
@@ -57,7 +57,9 @@ class AplicacoesService:
 
     async def create_pergunta(self, *, payload: dict) -> dict:
         _validate_opcoes(payload["tipo"], payload.get("opcoes") or [])
-        row = {**payload, "org_id": self._org_id}
+        # See `planos_service.create`'s comment: client-supplied id keeps
+        # mock and real-Postgres behavior identical.
+        row = {"id": str(uuid4()), **payload, "org_id": self._org_id}
         result = self._client.table(_PERGUNTAS_TABLE).insert(row).execute()
         if not result.data:
             raise AplicacoesServiceError("Falha ao criar pergunta.")
@@ -167,7 +169,9 @@ class AplicacoesService:
         membro_status = "pendente"
         if plano_id and ativar:
             membro_status = "ativo"
+        _now = datetime.now(timezone.utc).isoformat()
         membro_row = {
+            "id": str(uuid4()),
             "org_id": self._org_id,
             "nome": aplicacao["nome"],
             "email": email,
@@ -176,7 +180,9 @@ class AplicacoesService:
             "plano_id": str(plano_id) if plano_id else None,
             "origem": "aplicacao",
             "tags": [],
-            "entrou_em": datetime.now(timezone.utc).isoformat(),
+            "entrou_em": _now,
+            "created_at": _now,
+            "updated_at": _now,
         }
         membro_result = self._client.table(_MEMBROS_TABLE).insert(membro_row).execute()
         if not membro_result.data:
@@ -294,11 +300,15 @@ class PublicAplicacoesService:
                 "Já existe uma inscrição em análise para esse e-mail.", status_code=409,
             )
 
+        _now = datetime.now(timezone.utc).isoformat()
         row = {
+            "id": str(uuid4()),
             **payload,
             "org_id": self._org_id,
             "respostas": respostas,
             "status": "pendente",
+            "created_at": _now,
+            "updated_at": _now,
         }
         result = self._client.table(_APLICACOES_TABLE).insert(row).execute()
         if not result.data:

@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.dependencies import (
     coerce_org_uuid,
+    http_error,
     get_community_role,
     get_current_user_org,
     get_user_client,
@@ -65,7 +66,7 @@ async def create_membro(
     try:
         row = await service.create(payload=payload.model_dump())
     except MembrosServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     return Membro(**row)
 
 
@@ -80,7 +81,7 @@ async def get_membro(
     service = MembrosService(client, org_id=org_id)
     row = await service.get(membro_id=membro_id)
     if not row:
-        raise HTTPException(status_code=404, detail="Membro não encontrado.")
+        raise http_error(404, "Membro não encontrado.")
     return Membro(**row)
 
 
@@ -99,9 +100,9 @@ async def update_membro(
     try:
         row = await service.update(membro_id=membro_id, payload=data)
     except MembrosServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     if not row:
-        raise HTTPException(status_code=404, detail="Membro não encontrado.")
+        raise http_error(404, "Membro não encontrado.")
     return Membro(**row)
 
 
@@ -121,9 +122,9 @@ async def set_membro_status(
             membro_id=membro_id, novo_status=payload.status, motivo=payload.motivo,
         )
     except MembrosServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     if not row:
-        raise HTTPException(status_code=404, detail="Membro não encontrado.")
+        raise http_error(404, "Membro não encontrado.")
     return Membro(**row)
 
 
@@ -139,5 +140,5 @@ async def delete_membro(
     service = MembrosService(client, org_id=org_id)
     ok = await service.soft_delete(membro_id=membro_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="Membro não encontrado.")
+        raise http_error(404, "Membro não encontrado.")
     return None

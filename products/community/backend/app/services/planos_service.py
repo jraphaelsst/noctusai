@@ -16,8 +16,9 @@ full filtered set and slicing in Python is the correct trade-off.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 _TABLE = "planos"
 _MEMBROS_TABLE = "membros"
@@ -127,10 +128,18 @@ class PlanosService:
             raise PlanosServiceError(
                 "Já existe um plano com esse nome.", status_code=409,
             )
-        row = {**payload, "org_id": self._org_id}
-        entitlements = row.get("entitlements")
-        if entitlements is not None:
-            row["entitlements"] = entitlements
+        # Client-supplied id (never a client-facing field on `PlanoCreate` —
+        # this is OUR generation, not caller input): Postgres would assign
+        # `gen_random_uuid()` equally validly if omitted; supplying it
+        # ourselves keeps behavior identical whether the backing store is
+        # real Postgres or the in-repo `MockSupabaseClient` (whose auto-id
+        # fallback is a non-UUID `mock-<table>-<n>` label the `Plano.id:
+        # UUID` response model would otherwise reject).
+        now = datetime.now(timezone.utc).isoformat()
+        row = {
+            "id": str(uuid4()), **payload, "org_id": self._org_id,
+            "created_at": now, "updated_at": now,
+        }
         result = self._client.table(_TABLE).insert(row).execute()
         if not result.data:
             raise PlanosServiceError("Falha ao criar plano.")

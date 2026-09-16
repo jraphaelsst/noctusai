@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.dependencies import (
     coerce_org_uuid,
+    http_error,
     get_community_role,
     get_current_user_org,
     get_user_client,
@@ -59,7 +60,7 @@ async def create_plano(
     try:
         row = await service.create(payload=body)
     except PlanosServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     return Plano(**row)
 
 
@@ -74,7 +75,7 @@ async def get_plano(
     service = PlanosService(client, org_id=org_id)
     row = await service.get(plano_id=plano_id)
     if not row:
-        raise HTTPException(status_code=404, detail="Plano não encontrado.")
+        raise http_error(404, "Plano não encontrado.")
     return Plano(**row)
 
 
@@ -93,9 +94,9 @@ async def update_plano(
     try:
         row = await service.update(plano_id=plano_id, payload=data)
     except PlanosServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     if not row:
-        raise HTTPException(status_code=404, detail="Plano não encontrado.")
+        raise http_error(404, "Plano não encontrado.")
     return Plano(**row)
 
 
@@ -111,5 +112,5 @@ async def delete_plano(
     service = PlanosService(client, org_id=org_id)
     ok = await service.soft_delete(plano_id=plano_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="Plano não encontrado.")
+        raise http_error(404, "Plano não encontrado.")
     return None

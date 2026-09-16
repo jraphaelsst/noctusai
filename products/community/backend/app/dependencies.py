@@ -79,6 +79,38 @@ def get_admin_client():
     return _db.get_admin_client()
 
 
+_ERROR_CODES = {
+    400: "BAD_REQUEST", 401: "UNAUTHORIZED", 403: "FORBIDDEN",
+    404: "NOT_FOUND", 409: "CONFLICT", 422: "VALIDATION_ERROR",
+    503: "SERVICE_UNAVAILABLE",
+}
+
+
+def http_error(status_code: int, detail: str) -> HTTPException:
+    """Build an ``HTTPException`` whose JSON body has a top-level ``detail``
+    key — the contract's error shape (``{"detail": "..."}``).
+
+    The seed's global handler (``noctusai_lib.primitives.exceptions.
+    http_exception_handler``) reshapes a PLAIN-STRING-``detail``
+    ``HTTPException`` into the platform-wide legacy envelope
+    (``{"error": {"code", "message"}}``) — no top-level ``detail`` key at
+    all. It passes a DICT ``detail`` containing BOTH ``"detail"`` and
+    ``"code"`` keys through **verbatim** instead (documented on that
+    handler as the escape hatch for exactly this case). Every explicit
+    error this module/its routers raise goes through this helper rather
+    than a bare ``HTTPException(status_code=..., detail="...")`` so the
+    wire shape actually matches what the contract — and the frontend
+    built against it in parallel — expect.
+
+    Out of scope: FastAPI's OWN automatic request-body validation
+    (missing/malformed fields) still surfaces via the seed's separate
+    ``ValidationError`` handler in the same legacy envelope — that is
+    platform-wide behavior this product does not override.
+    """
+    code = _ERROR_CODES.get(status_code, "HTTP_ERROR")
+    return HTTPException(status_code=status_code, detail={"detail": detail, "code": code})
+
+
 # ── Community role gate — admin / moderador (contract §Conventions) ─────
 #
 # Reuses the seed's trusted-first platform-admin cascade
@@ -142,10 +174,7 @@ def require_admin(role: str, *, action: str) -> None:
     criar planos.").
     """
     if role != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail=f"Apenas administradores podem {action}.",
-        )
+        raise http_error(403, f"Apenas administradores podem {action}.")
 
 
 # ── Public-endpoint org resolution (contract §Aplicações, PUBLIC routes) ─
@@ -182,10 +211,7 @@ def resolve_public_org_id() -> UUID:
     )
     product_rows = product.data or []
     if not product_rows:
-        raise HTTPException(
-            status_code=503,
-            detail="Formulário de inscrição indisponível no momento.",
-        )
+        raise http_error(503, "Formulário de inscrição indisponível no momento.")
     product_id = product_rows[0]["id"]
     licenses = (
         core.table("licenses")
@@ -196,10 +222,7 @@ def resolve_public_org_id() -> UUID:
     )
     license_rows = licenses.data or []
     if len(license_rows) != 1:
-        raise HTTPException(
-            status_code=503,
-            detail="Formulário de inscrição indisponível no momento.",
-        )
+        raise http_error(503, "Formulário de inscrição indisponível no momento.")
     return coerce_org_uuid(license_rows[0]["org_id"])
 
 

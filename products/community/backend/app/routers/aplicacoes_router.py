@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.config import settings
 from app.dependencies import (
     coerce_org_uuid,
+    http_error,
     get_admin_client,
     get_community_role,
     get_current_user_org,
@@ -77,7 +78,7 @@ async def create_pergunta(
     try:
         row = await service.create_pergunta(payload=payload.model_dump())
     except AplicacoesServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     return Pergunta(**row)
 
 
@@ -96,9 +97,9 @@ async def update_pergunta(
     try:
         row = await service.update_pergunta(pergunta_id=pergunta_id, payload=data)
     except AplicacoesServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     if not row:
-        raise HTTPException(status_code=404, detail="Pergunta não encontrada.")
+        raise http_error(404, "Pergunta não encontrada.")
     return Pergunta(**row)
 
 
@@ -114,7 +115,7 @@ async def delete_pergunta(
     service = AplicacoesService(client, org_id=org_id)
     ok = await service.soft_delete_pergunta(pergunta_id=pergunta_id)
     if not ok:
-        raise HTTPException(status_code=404, detail="Pergunta não encontrada.")
+        raise http_error(404, "Pergunta não encontrada.")
     return None
 
 
@@ -143,7 +144,7 @@ async def submit_aplicacao(
     try:
         row = await service.submit(payload=payload.model_dump())
     except AplicacoesServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     return AplicacaoPublicaOut(**row)
 
 
@@ -185,7 +186,7 @@ async def aprovar_aplicacao(
             revisor_id=str(getattr(user, "id", "")),
         )
     except AplicacoesServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     return AplicacaoAprovarResponse(
         aplicacao=Aplicacao(**result["aplicacao"]),
         membro=Membro(**result["membro"]),
@@ -210,7 +211,7 @@ async def rejeitar_aplicacao(
             revisor_id=str(getattr(user, "id", "")),
         )
     except AplicacoesServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail) from exc
     if not row:
-        raise HTTPException(status_code=404, detail="Inscrição não encontrada.")
+        raise http_error(404, "Inscrição não encontrada.")
     return Aplicacao(**row)

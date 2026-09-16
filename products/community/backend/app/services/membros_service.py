@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.schemas.membros import MEMBRO_STATUSES
 
@@ -136,10 +136,16 @@ class MembrosService:
             raise MembrosServiceError(
                 "Já existe um membro com esse e-mail.", status_code=409,
             )
+        # See `planos_service.create`'s comment: client-supplied id keeps
+        # mock and real-Postgres behavior identical.
+        now = datetime.now(timezone.utc).isoformat()
         row = {
+            "id": str(uuid4()),
             **payload,
             "org_id": self._org_id,
-            "entrou_em": datetime.now(timezone.utc).isoformat(),
+            "entrou_em": now,
+            "created_at": now,
+            "updated_at": now,
         }
         if row.get("plano_id") is not None:
             row["plano_id"] = str(row["plano_id"])

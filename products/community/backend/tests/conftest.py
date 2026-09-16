@@ -51,6 +51,56 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
 
 
+# ── Module 1 (Membros/Planos/Aplicações) shared test helpers ────────────
+#
+# The default `client` fixture's `MockUser(org_id="test-org-123")` — a
+# non-UUID opaque string — round-trips through `coerce_org_uuid`'s
+# `uuid5(NAMESPACE_OID, ...)` fallback deterministically, so every test
+# that doesn't re-bind `auth.get_user` shares the same coerced org UUID.
+from uuid import NAMESPACE_OID as _NAMESPACE_OID, uuid5 as _uuid5  # noqa: E402
+
+TEST_USER_ID = "test-user-123"
+TEST_ORG_ID = "test-org-123"
+ORG_UUID = str(_uuid5(_NAMESPACE_OID, TEST_ORG_ID))
+
+
+def seed_community_role(client, *, org_role: str | None = None, platform_role: str = "user") -> None:
+    """Seed the trusted `public.noctus_users` row `get_community_role` reads.
+
+    `org_role="admin"` also satisfies the seed's platform-admin cascade
+    (`owner`/`admin` → `"platform_admin"`) — both paths converge on the
+    same `"admin"` community-tier answer. `org_role="moderador"` (or any
+    other value) falls through the cascade and is read back verbatim by
+    `get_community_role`'s direct query, resolving to `"moderador"`.
+    """
+    client.mock_supabase.set_table_data(
+        "noctus_users",
+        [{
+            "id": TEST_USER_ID,
+            "org_id": TEST_ORG_ID,
+            "role": platform_role,
+            "org_role": org_role,
+        }],
+    )
+
+
+def seed_public_license(client, *, org_id: str = ORG_UUID, slug: str = "community") -> None:
+    """Seed `public.products` + `public.licenses` for the two PUBLIC routes
+    (`resolve_public_org_id` — see `app/dependencies.py`)."""
+    client.mock_supabase.set_table_data(
+        "products", [{"id": "prod-community-1", "slug": slug}],
+    )
+    client.mock_supabase.set_table_data(
+        "licenses",
+        [{
+            "id": "lic-1",
+            "product_id": "prod-community-1",
+            "org_id": org_id,
+            "status": "active",
+        }],
+    )
+
+
 @pytest.fixture
 def client():
     mock_sb = MockSupabaseClient()
