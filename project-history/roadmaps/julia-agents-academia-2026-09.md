@@ -375,6 +375,27 @@ The decision log keeps every step.
   - **Also:** agents migration `009_session_transcripts.sql` is reserved (B2). An LGPD flag for stored transcripts is required before prod.
   - **Git identity:** at the user's instruction, the machine's global identity is now `jraphaelsst <joaoraphaelsst@gmail.com>` (it was `test <a@b.com>`, which invalidated consent records such as igig and p-studio).
   - **Consent:** still pending the user typing each product's exact sentence.
+- **2026-09-16 (§E.11 per-conversation isolation BUILT and proven; integrated as one tip)**: seven slices plus the LGPD register and the held cutover migration, merged into `integration/julia-slot-isolation` and gated together.
+  - **Slices:**
+    - **D1** image, wrapper, `bin/julia-cli-slot`, entrypoint, compose (through the propagate seam)
+    - **B1** `SlotPool` / `TurnSlot` with kill + sweep + quarantine
+    - **B2** migration `agents/009`, `TranscriptStore`, `ConversationTranscriptMirror`
+    - **B3** runtime wiring: slot user, per-slot `CLAUDE_CONFIG_DIR`, persona off argv into `append.md`, transcript handoff, narrowed `ResultError` resume fallback, fresh mirror on fallback, abandoned-session cleanup
+    - **B4** route order (reserve → lock → persist), 429 `julia_capacidade`, turn deadline, startup sweep, slot health through the seed's `liveness_hooks`
+    - **D2** the nine SEC-C checks plus compose-derived slot mounts
+    - **F1** the capacity message in the chat UI
+  - **Two real defects, both caught by a REAL-IMAGE proof and neither by any unit test:**
+    1. **Slot gid ≠ uid** (D1's own check): `useradd --user-group` does not pin the group's gid to `--uid`, so groups came out 999/998/997. Silent consequence: the group-only handoff file would have been unreadable by the slot, and `julia-cli-slot`'s glob would have found nothing — a SILENT resume loss, not a loud failure. Fixed with explicit `groupadd --gid` (`f549466b`).
+    2. **`append.md` vs the handoff guard** (`c1f113f1`, tech-lead's own contract error): §E.11 told B3 to write the persona file into `/run/julia-handoff/K/` AND told the slot script to refuse anything that was not a single UUID-named `*.jsonl`. Since `append.md` is written on EVERY launch, the slot refused EVERY real turn. The integration proof failed 11 checks on it; unfixed it would have been a fail-closed outage on Julia's first prod turn. The script now counts only `*.jsonl`, skips `append.md`, and still refuses more than one transcript, a non-UUID name, a symlink, a non-regular file, or any unexpected entry. §E.11 step 3 corrected; three wrapper tests pin it (verified running as root in a Linux container — they skip on macOS).
+  - **Fleet drift fixed in passing (B4):** the seed `http_exception_handler` dropped `HTTPException.headers` on both response shapes, so ANY product's `Retry-After` / `WWW-Authenticate` was silently lost. Fixed and pinned by `seed/lib/backend/tests/test_exception_handlers.py`.
+  - **Verification on the merged tip, every result by exit code:**
+    - SEC-C real-image proof (arm64): **82 checks, 0 failures**
+    - agents backend 418 passed / 15 skipped · seed lib 4180 · core 619 · academia 308 · social-wiring 4151 · erp 2184
+    - agents frontend 49 · academia frontend 45 · both tsc + vite build
+    - keepers clean: propagate both, ci-test-matrix, every-test-file-is-gated, no-self-monkeypatch, kb-sync, container-shape, lying-loading-state, canonical-organ-consumption, migration-number-collision, prod-exposure-consent, hardcoded-product-slug-set, tunnel-ingress-snapshot
+  - **Also landed:** three LGPD register entries (durable transcripts, admins reading every conversation, Julia as a read path into academia), and core migration `045` (HELD) flipping both products to live with `https://academia.noctusai.com` / `https://agents.noctusai.com`.
+  - **Not done, by design:** no migration applied, no prod compose service, no ingress hostname, no DNS. Those are the cutover, gated on the user's consent sentences.
+  - **Open follow-ups:** the CLI's real memory use per slot is still unmeasured (no API key in CI), so `mem_limit` may need raising above 1 GiB; the seed `ApiError` still exposes no response headers, so the UI cannot show a `Retry-After` countdown.
 
 ## Retrospective (filled at first trigger fire)
 
