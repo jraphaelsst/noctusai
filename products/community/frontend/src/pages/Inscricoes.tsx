@@ -83,6 +83,7 @@ export default function Inscricoes() {
         <h1 className="text-2xl font-bold text-foreground">Inscrições</h1>
         <p className="text-sm text-muted-foreground">
           Fila de inscrições e o formulário público de aplicação.
+          {/* lying-loading-ok: text-only suffix, never unmounts real content */}
           {isRefreshing ? " Atualizando…" : ""}
         </p>
       </div>
