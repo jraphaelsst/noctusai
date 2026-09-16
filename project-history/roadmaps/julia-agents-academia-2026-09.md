@@ -30,14 +30,14 @@ The decision log keeps every step.
 
 ## Milestones
 
-- **M0: decisions + design** — two-product split, knowledge in the DB, lean agents home, isolation + hardening model, slice plan (this roadmap). ⬜
+- **M0: decisions + design** — two-product split, knowledge in the DB, lean agents home, isolation + hardening model, slice plan (this roadmap). ✅ reached 2026-09-15 (decision log).
 - **M1: contracts on `origin/dev`** — both products scaffolded and migration numbers reserved. Four contracts:
   - the academia API, with scopes and MCP descriptors
   - the agents API: conversations, messages, approvals, persona, agent list, SSE event vocabulary
   - the product-token scheme: scope names, `expires_at`, principal, audit shape, 401 vs 403
   - the social-wiring One Chat toggle contract
 
-  Vendored `_kit` removed. ⬜
+  Vendored `_kit` removed. ✅ reached 2026-09-14 (contract on `dev` at `340c56b7` and earlier).
 - **M2: academia knowledge product**
   - `KnowledgeStore` (Protocol + Fake + Pg + factory).
   - Append-only `kb_revisions` with provenance.
@@ -47,13 +47,13 @@ The decision log keeps every step.
   - KB / Decisions / Questions / Roadmap UI showing real data.
   - `mcp/academia` rebuilt as an HTTP client.
 
-  ⬜
+  ⬜ built and tested; the sibling-history import into prod has not run yet (bundle stays outside the repo).
 - **M3: seed uplift**
   - Product-token resolver + `require_scopes` + audit + expiry (N=3).
   - ChatWindow streaming / tool-card / approval seams.
   - Pilots green.
 
-  ⬜
+  ✅ reached 2026-09-14 (`1ec99a35`, SEED-1/SEED-2 slices; pilots green).
 - **M4: agents product**
   - `AgentRuntime` Protocol (Claude SDK + Fake + factory) and the approval gate.
   - Hardened Julia launch.
@@ -62,9 +62,9 @@ The decision log keeps every step.
   - Julia works on academia only through scoped tools.
   - Isolation test suite green.
 
-  ⬜
-- **M5: social-wiring toggle API** — a scoped product-token endpoint that flips One Chat's existing auto-reply flag, with audit; no other change to the live product. Ships alone, behind `predeploy_check`. ⬜
-- **M6: prod promote**
+  ✅ reached 2026-09-16 (§E.11 isolation merged; SEC-C real-image proof 82/82, CI job green on amd64).
+- **M5: social-wiring toggle API** — a scoped product-token endpoint that flips One Chat's existing auto-reply flag, with audit; no other change to the live product. Ships alone, behind `predeploy_check`. ✅ reached 2026-09-16 (bridge route on the prod tip `7e5f5ad6`, running in prod).
+- **M6: prod promote** — ✅ authorized 2026-09-16 by the user in-session (consent records `cd4508d7`, `9747db4f`); cutover in progress, the live checks below are still owed.
   - `academia-de-reciclagem` and `agents` public behind SSO.
   - Knowledge imported.
   - Julia usable in the browser.
