@@ -324,3 +324,39 @@ class TestRealWorldFile:
         assert "useVistaTabs" in function_names
         interface_names = {c.name for c in result.classes if c.kind == "interface"}
         assert "VistaShowcaseImovel" in interface_names
+
+
+class TestDestructuredBindings:
+    """`export const { useA, useB } = createHooks(api)` declares one symbol per
+    binding; before this, such a factory-wiring file outlined to zero symbols."""
+
+    def test_multiline_destructured_export_yields_each_binding(self, tmp_path):
+        from tools.noctus.dev.outline_typescript import outline_typescript
+
+        f = tmp_path / "useThing.ts"
+        f.write_text(
+            "import { createHooks } from '@lib/hooks';\n"
+            "\n"
+            "export const {\n"
+            "  useLotes,\n"
+            "  useCriarLote: useNovoLote,\n"
+            "  LIMITE = 100,\n"
+            "  nested: { skipped },\n"
+            "  ...resto\n"
+            "} = createHooks(api);\n"
+            "\n"
+            "export const AFTER = 1;\n"
+        )
+        result = outline_typescript(f)
+        functions = [s.name for s in result.functions]
+        constants = [s.name for s in result.constants]
+        assert functions == ["useLotes", "useNovoLote"]
+        assert constants == ["LIMITE", "resto", "AFTER"]
+
+    def test_single_line_destructured_const(self, tmp_path):
+        from tools.noctus.dev.outline_typescript import outline_typescript
+
+        f = tmp_path / "one.ts"
+        f.write_text("const { a, b } = obj;\n")
+        result = outline_typescript(f)
+        assert [s.name for s in result.constants] == ["a", "b"]

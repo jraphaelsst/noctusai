@@ -82,6 +82,13 @@ _RE_TYPE = re.compile(
 _RE_CONST_OR_LET = re.compile(
     r'^(?:export\s+(?:default\s+)?)?(const|let|var)\s+(\w+)\s*[:=]'
 )
+# Destructured top-level binding: `export const { a, b: c, ...rest } = f(...)`.
+# The factory-wiring shape (`export const { useX, useY } = createHooks(api)`)
+# declares every hook this way; without it such a file outlines to zero symbols.
+_RE_DESTRUCTURED = re.compile(
+    r'^(?:export\s+)?(const|let|var)\s+\{'
+)
+_RE_HOOK_NAME = re.compile(r'^use[A-Z0-9]')
 _RE_IMPORT = re.compile(
     r'^(?:import\b|export\s+(?:type\s+)?(?:\*|\{).*?\bfrom\b)'
 )
@@ -233,6 +240,51 @@ def _collect_decorators_above(lines: list[str], symbol_line_idx: int) -> list[st
     return decos
 
 
+def _destructured_names(lines: list[str], start_idx: int) -> tuple[list[str], int]:
+    """Binding names of a top-level `const { … } =` starting at `start_idx`,
+    plus the index of the line holding the closing `}`. Handles renames
+    (`a: b` binds `b`), defaults (`a = 1`) and rest (`...rest`). Nested
+    patterns are skipped rather than guessed at."""
+    open_at: Optional[tuple[int, int]] = None
+    depth = 0
+    for j in range(start_idx, len(lines)):
+        for k, ch in enumerate(lines[j]):
+            if ch == "{":
+                if open_at is None:
+                    open_at = (j, k)
+                depth += 1
+            elif ch == "}" and open_at is not None:
+                depth -= 1
+                if depth == 0:
+                    oj, ok = open_at
+                    if oj == j:
+                        inner = lines[j][ok + 1:k]
+                    else:
+                        inner = " ".join(
+                            [lines[oj][ok + 1:]] + lines[oj + 1:j] + [lines[j][:k]]
+                        )
+                    return _binding_names(inner), j
+    return [], start_idx
+
+
+def _binding_names(inner: str) -> list[str]:
+    """Local names bound by the text between a pattern's outer braces.
+    Pieces of a nested pattern fail the identifier match and are dropped."""
+    names: list[str] = []
+    for raw in inner.split(","):
+        item = raw.strip()
+        if not item or "{" in item or "[" in item:
+            continue
+        item = item.split("=", 1)[0].strip()
+        if item.startswith("..."):
+            item = item[3:].strip()
+        if ":" in item:
+            item = item.split(":", 1)[1].strip()
+        if re.fullmatch(r"[A-Za-z_$][\w$]*", item):
+            names.append(item)
+    return names
+
+
 # ---------------------------------------------------------------------------
 # Public entry
 # ---------------------------------------------------------------------------
@@ -376,6 +428,21 @@ def outline_typescript(path: str | Path) -> OutlineResult:
                 end_line=idx + 1,
                 docstring_first_line=_docstring_first_line(raw_lines, idx),
             ))
+            continue
+
+        # Destructured const / let / var — one symbol per binding
+        if _RE_DESTRUCTURED.match(line):
+            names, end_idx = _destructured_names(lines, idx)
+            for body_idx in range(idx + 1, end_idx + 1):
+                consumed_lines.add(body_idx)
+            for name in names:
+                bucket = functions if _RE_HOOK_NAME.match(name) else constants
+                bucket.append(Symbol(
+                    name=name,
+                    kind="function" if bucket is functions else "constant",
+                    line=idx + 1,
+                    end_line=end_idx + 1,
+                ))
             continue
 
         # const / let / var
