@@ -16,8 +16,10 @@ WHAT THESE PIN
 - `assinatura_data` precedence: the stored contract date beats "today", and an
   explicit date in the POST body beats both;
 - the SAVED version is a real PDF (`%PDF-` magic bytes), `mime_type
-  application/pdf`, a `.pdf` filename — the `.docx` the generator builds
-  internally never reaches storage (contract §5).
+  application/pdf`, a `.pdf` filename — AND (migration 120, 2026-09-16) the
+  `.docx` the generator builds is ALSO saved, as a sibling artifact on the
+  SAME version row (`docx_storage_path`), a real docx (`PK\x03\x04` zip
+  magic bytes), never a second `numero`.
 
 All data is synthetic (see `contrato_gerador_fixtures`).
 """
@@ -570,14 +572,25 @@ class TestGerar:
         assert len(versoes) == 1 and versoes[0]["origem"] == "gerado"
         assert re.fullmatch(r"[0-9a-f]{64}", versoes[0]["contexto_sha256"])
         assert versoes[0]["tamanho_bytes"] > 0
-        # The user never receives the internal `.docx` — the stored version
-        # is a real PDF, never `.docx` mime/extension (contract §5).
+        # The primary artifact is a real PDF, never `.docx` mime/extension
+        # (contract §5).
         assert versoes[0]["mime_type"] == "application/pdf"
         assert versoes[0]["nome_original"].endswith(".pdf")
         assert not versoes[0]["nome_original"].endswith(".docx")
         blob = asyncio.run(fake_storage.get(bucket=BUCKET, key=versoes[0]["storage_path"]))
         assert blob is not None and blob.data[:5] == b"%PDF-"
         assert body["versao"]["mime_type"] == "application/pdf"
+
+        # The editable `.docx` is ALSO stored, as a sibling artifact on the
+        # SAME version row — migration 120, 2026-09-16.
+        assert body["versao"]["docx_disponivel"] is True
+        assert versoes[0]["docx_storage_path"] == f"{versoes[0]['storage_path']}.docx"
+        assert versoes[0]["docx_tamanho_bytes"] > 0
+        docx_blob = asyncio.run(
+            fake_storage.get(bucket=BUCKET, key=versoes[0]["docx_storage_path"])
+        )
+        assert docx_blob is not None and docx_blob.data[:4] == b"PK\x03\x04"
+
         assert any(a["acao"] == "text_view" for a in _rows(scoped, "imovel_documento_acessos"))
 
         listagem = client.get(f"/api/clientes/{ids['cliente']}/contratos", headers=_auth()).json()

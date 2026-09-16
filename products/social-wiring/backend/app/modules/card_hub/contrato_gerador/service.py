@@ -146,9 +146,9 @@ async def gerar(
     if achados:
         raise ContratoReprovadoNaRevisao(achados)
 
-    # The `.docx` `renderizado.docx` produced was only ever an internal
-    # intermediate (contract §5) — the user receives the ABNT PDF built
-    # from it, never the `.docx` itself.
+    # `renderizado.docx` is the editable rendering; `gerar_pdf` derives the
+    # ABNT PDF from it. BOTH are stored on the saved version (migration 120,
+    # 2026-09-16) — the user can download either.
     try:
         pdf = gerar_pdf(renderizado.docx)
     except UnsupportedGlyphError as exc:
@@ -162,6 +162,7 @@ async def gerar(
         contrato_id,
         data=pdf,
         content_type=MIME_PDF,
+        docx=renderizado.docx,
         contexto_sha256=snapshot_sha256(dados, politica, data),
         usuario_id=usuario_id,
     )

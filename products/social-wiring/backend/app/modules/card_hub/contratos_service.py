@@ -22,7 +22,7 @@ mounted card_hub route and asserts a strict 401 on each.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -36,7 +36,12 @@ from noctusai_lib.primitives.exceptions import (
 from app.modules.card_hub import services as svc
 from app.modules.card_hub.deps import BUCKET
 from app.services import table_reads
-from app.services.documento_store import DocumentoStore, documento_base, now_iso
+from app.services.documento_store import (
+    SIGNED_URL_TTL_SECONDS,
+    DocumentoStore,
+    documento_base,
+    now_iso,
+)
 
 TABLE = "atendimento_contratos"
 
@@ -70,13 +75,18 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
     "prazo_pendencias_dias",
 )
 
+#: The docx sibling `nova_versao_gerada` stores beside a gerado version's PDF
+#: (migration 120) is always this — never a column, see that migration's
+#: header.
+MIME_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
 #: A compra e venda contract PDF/DOCX with its anexos. Same ceiling
 #: `financiamento_service` uses for the deal's other closing paperwork.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_MIME_TYPES = frozenset(
     {
         "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        MIME_DOCX,
         "application/msword",
     }
 )
@@ -87,7 +97,7 @@ ALLOWED_MIME_TYPES = frozenset(
 #: this is ever consulted), never silently mis-extensioned.
 _EXTENSAO_GERADA: dict[str, str] = {
     "application/pdf": "pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    MIME_DOCX: "docx",
 }
 
 #: 🔴 `acessos_table` is SET — LGPD-logged, same posture as
@@ -136,6 +146,10 @@ def _versao_out(row: dict, resolved: dict) -> dict:
         "numero": row["numero"],
         "rotulo": row.get("rotulo"),
         "origem": row.get("origem", "upload"),
+        # Migration 120. Always False for an upload; a gerado version has
+        # both a PDF (this row's own mime_type/tamanho_bytes) and this docx
+        # sibling — `formato=docx` on `.../versoes/{id}/url` needs it.
+        "docx_disponivel": bool(row.get("docx_storage_path")),
     }
 
 
@@ -376,12 +390,22 @@ async def nova_versao_gerada(
     *,
     data: bytes,
     content_type: str,
+    docx: bytes,
     contexto_sha256: str,
     usuario_id: Optional[UUID],
 ) -> dict:
     """A version produced by the F5 generator (`card_hub/contrato_gerador`):
     origem='gerado' plus the SHA-256 of the data it was rendered from
     (migration 112 — required for 'gerado', forbidden for 'upload').
+
+    Stores TWO artifacts for this ONE version (migration 120): `data` (the
+    ABNT PDF, through the normal `_guardar_versao` path — same row shape
+    every version has) and `docx` (the editable rendering that PDF was
+    derived from) as a SIBLING object under the same storage key, same
+    bucket, same org-first path convention — never a second `numero`. See
+    that migration's header for why this is one row with two artifacts
+    rather than two version rows.
+
     Returns the version in the same shape `listar` returns it."""
     inserida, _ = await _guardar_versao(
         client,
@@ -396,6 +420,21 @@ async def nova_versao_gerada(
         usuario_id=usuario_id,
         extra={"origem": "gerado", "contexto_sha256": contexto_sha256},
     )
+
+    docx_path = f"{inserida['storage_path']}.docx"
+    await storage.put(
+        bucket=VERSOES_STORE.bucket,
+        key=docx_path,
+        data=docx,
+        content_type=MIME_DOCX,
+        metadata={"nome_original": f"contrato-gerado-v{inserida['numero']}.docx"},
+    )
+    _t(client, VERSOES_STORE.table).update(
+        {"docx_storage_path": docx_path, "docx_tamanho_bytes": len(docx)}
+    ).eq("id", inserida["id"]).execute()
+    inserida["docx_storage_path"] = docx_path
+    inserida["docx_tamanho_bytes"] = len(docx)
+
     resolved = table_reads.resolve_actors({inserida["enviado_por"]} - {None})
     return _versao_out(inserida, resolved)
 
@@ -485,18 +524,50 @@ async def url_versao(
     *,
     usuario_id: Optional[UUID],
     intent: str = "view",
+    formato: str = "pdf",
 ) -> dict:
+    """Mint a short-TTL signed URL for a version's content.
+
+    `formato='pdf'` (default) delegates to `VERSOES_STORE.url` unchanged —
+    every version, upload or gerado, has one. `formato='docx'` (migration
+    120) is only ever populated on a `gerado` row; a foreign/missing/upload
+    `versao_id` still 404s first (`VERSOES_STORE.exigir`), so a probe cannot
+    distinguish "not yours" from "has no docx" from "does not exist" any
+    more finely than the pdf path already lets it. Same short TTL, same
+    access-log call (`VERSOES_STORE.log_acesso`, keyed to this version's own
+    id — not a separate artifact identity) as the PDF path.
+    """
+    if formato not in ("pdf", "docx"):
+        raise ValidationError_(
+            f"formato inválido: {formato!r}. Permitidos: pdf, docx", field="formato"
+        )
+
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     exigir_contrato(client, org_id, atendimento_id, contrato_id)
-    return await VERSOES_STORE.url(
-        client,
-        storage,
-        org_id,
-        UUID(str(contrato_id)),
-        versao_id,
-        usuario_id=usuario_id,
-        intent=intent,
+    owner = UUID(str(contrato_id))
+
+    if formato == "pdf":
+        return await VERSOES_STORE.url(
+            client, storage, org_id, owner, versao_id,
+            usuario_id=usuario_id, intent=intent,
+        )
+
+    if intent not in ("view", "download"):
+        raise ValidationError_(f"intent inválido: {intent!r}", field="intent")
+    documento = VERSOES_STORE.exigir(client, org_id, owner, versao_id)
+    docx_path = documento.get("docx_storage_path")
+    if not docx_path:
+        raise NotFoundError(VERSOES_STORE.table, f"{versao_id} (.docx)")
+
+    signed = await storage.signed_url(
+        bucket=VERSOES_STORE.bucket, key=docx_path,
+        expires_in_seconds=SIGNED_URL_TTL_SECONDS,
     )
+    VERSOES_STORE.log_acesso(client, org_id, versao_id, usuario_id, intent)
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=SIGNED_URL_TTL_SECONDS)
+    ).isoformat()
+    return {"url": signed, "expires_at": expires_at}
 
 
 def remover_versao(
@@ -567,6 +638,7 @@ __all__ = [
     "ALLOWED_MIME_TYPES",
     "CAMPOS_EDITAVEIS",
     "MAX_UPLOAD_BYTES",
+    "MIME_DOCX",
     "MODELOS",
     "STATUSES",
     "TABLE",

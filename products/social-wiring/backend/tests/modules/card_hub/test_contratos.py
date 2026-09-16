@@ -17,9 +17,11 @@ mounted card_hub route and asserts a strict 401 on each.
 """
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
 from app.modules.card_hub import contratos_service as svc
+from app.modules.card_hub.deps import BUCKET
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 PDF = ("contrato.pdf", b"%PDF-1.7 fake", "application/pdf")
@@ -85,6 +87,44 @@ def _nova_versao(client, cid, contrato_id, *, rotulo=None, arquivo=DOCX):
         data=data,
         headers=_auth(),
     )
+
+
+def _seed_gerado(scoped, fake_storage, aid: str) -> dict:
+    """A contract with ONE `origem='gerado'` version — the F5 generator's
+    shape (migration 106/112/120) — seeded directly, since generation itself
+    (F6 wiring) needs a fully-populated card this module's tests don't build.
+    Puts real PDF + docx bytes in `fake_storage` so a `formato=` url actually
+    resolves to something."""
+    contrato_id, versao_id = str(uuid4()), str(uuid4())
+    pdf_path = f"{ORG_ID}/contratos/{contrato_id}/{versao_id}"
+    docx_path = f"{pdf_path}.docx"
+    asyncio.run(
+        fake_storage.put(bucket=BUCKET, key=pdf_path, data=b"%PDF-1.7 fake", content_type="application/pdf")
+    )
+    asyncio.run(
+        fake_storage.put(bucket=BUCKET, key=docx_path, data=b"PK\x03\x04 fake docx", content_type=svc.MIME_DOCX)
+    )
+    scoped.set_table_data("atendimento_contratos", [{
+        "id": contrato_id, "org_id": ORG_ID, "atendimento_id": aid,
+        "titulo": "Contrato gerado", "modelo": "compra_venda", "status": "rascunho",
+        "status_em": None, "status_por": None, "origem": "gerado", "criado_por": None,
+        "deleted_at": None, "delete_motivo": None, "delete_solicitado_por": None,
+        "created_at": "2026-09-16T00:00:00+00:00", "updated_at": None,
+        "assinatura_data": None, "prazo_pendencias_dias": None,
+    }])
+    scoped.set_table_data("atendimento_contrato_versoes", [{
+        "id": versao_id, "org_id": ORG_ID, "contrato_id": contrato_id,
+        "storage_path": pdf_path, "nome_original": "contrato-gerado-v1.pdf",
+        "mime_type": "application/pdf", "tamanho_bytes": 13,
+        "tipo_documento": svc.TIPO_VERSAO, "numero": 1, "rotulo": None,
+        "origem": "gerado", "enviado_por": None, "deleted_at": None,
+        "delete_motivo": None, "delete_solicitado_por": None,
+        "created_at": "2026-09-16T00:00:00+00:00",
+        "contexto_sha256": "a" * 64,
+        "docx_storage_path": docx_path, "docx_tamanho_bytes": 18,
+    }])
+    scoped.set_table_data("atendimento_contrato_versao_acessos", [])
+    return {"contrato_id": contrato_id, "versao_id": versao_id}
 
 
 class TestCreatingAContract:
@@ -350,6 +390,67 @@ class TestUrlAndAccessLog:
         )
         rows = scoped.table("atendimento_contrato_versao_acessos").select("*").execute().data
         assert rows[0]["acao"] == "download"
+
+
+class TestDocxFormat:
+    """`?formato=docx` (migration 120) — the editable sibling of a gerado
+    version's PDF, downloadable through the SAME url endpoint, same
+    access-log rules."""
+
+    def test_formato_docx_signs_the_docx_sibling_and_logs_the_access(
+        self, client, scoped, fake_storage
+    ):
+        cid, aid = _seed(scoped)
+        ids = _seed_gerado(scoped, fake_storage, aid)
+        r = client.get(
+            f"/api/clientes/{cid}/contratos/{ids['contrato_id']}"
+            f"/versoes/{ids['versao_id']}/url?formato=docx",
+            headers=_auth(),
+        )
+        assert r.status_code == 200, r.text
+        assert "url" in r.json()
+
+        rows = scoped.table("atendimento_contrato_versao_acessos").select("*").execute().data
+        assert len(rows) == 1
+        assert rows[0]["acao"] == "view"
+        assert rows[0]["documento_id"] == ids["versao_id"]
+
+    def test_formato_docx_download_intent_is_logged_distinctly(
+        self, client, scoped, fake_storage
+    ):
+        cid, aid = _seed(scoped)
+        ids = _seed_gerado(scoped, fake_storage, aid)
+        client.get(
+            f"/api/clientes/{cid}/contratos/{ids['contrato_id']}"
+            f"/versoes/{ids['versao_id']}/url?formato=docx&intent=download",
+            headers=_auth(),
+        )
+        rows = scoped.table("atendimento_contrato_versao_acessos").select("*").execute().data
+        assert rows[0]["acao"] == "download"
+
+    def test_formato_docx_on_an_upload_version_is_a_404(self, client, scoped, fake_storage):
+        """An upload's `docx_storage_path` is always NULL (migration 120's
+        CHECK) — asking for its docx is asking for something that never
+        existed, not a server error."""
+        cid, aid = _seed(scoped)
+        body = _criar(client, cid).json()
+        versao_id = body["versao_atual"]["id"]
+        r = client.get(
+            f"/api/clientes/{cid}/contratos/{body['id']}/versoes/{versao_id}"
+            "/url?formato=docx",
+            headers=_auth(),
+        )
+        assert r.status_code == 404, r.text
+
+    def test_an_unknown_formato_is_refused(self, client, scoped, fake_storage):
+        cid, aid = _seed(scoped)
+        ids = _seed_gerado(scoped, fake_storage, aid)
+        r = client.get(
+            f"/api/clientes/{cid}/contratos/{ids['contrato_id']}"
+            f"/versoes/{ids['versao_id']}/url?formato=txt",
+            headers=_auth(),
+        )
+        assert r.status_code == 400, r.text
 
 
 class TestOrgIsolation:

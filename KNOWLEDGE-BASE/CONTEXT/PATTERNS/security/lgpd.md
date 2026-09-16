@@ -271,3 +271,20 @@ A certidão de matrícula, a certidão de casamento, a CND — any document a ca
 **LGPD flag filed for this class:** matrícula transcription text (CPF, estado civil, cônjuge of every owner in the chain of title) — basis Art. 7 V (cumprimento de obrigação legal, corretor de imóveis) + Art. 7 IX (legítimo interesse — evidenciar o negócio), retention per the `documento_retencao_politicas` "imovel" surface (§2 above), LLM transcription of the CPF-bearing PDF is itself a processing operation under Art. 5º X. See `noctus.dev.lgpd_flag` output for `app/modules/matriculas/service.py::processar_extracao`.
 
 **Reference implementation:** `products/therapy-platform/backend/app/services/ai_pipeline.py` — `_notify_therapist_ai_skipped(...)` helper + `try/except AIConsentRequired` blocks around each AI step in `process_session_end`, `on_observation_change`, `on_patient_note_change`. Tests in `tests/services/test_ai_pipeline_service.py § TestPatientConsentGuards` show the granted-path autouse fixture pattern + per-test selective-revoke pattern.
+
+## 11. Withheld-then-activated identity documents (rg/cpf, social-wiring, 2026-09)
+
+A data category can be **built, wired end-to-end, and deliberately not turned on** — migration `057_card_hub_documentos.sql` seeded `cliente_documento_tipos.rg`/`.cpf` with `ativo = false` explicitly *because* the intake below had not been filed yet, not because the code was incomplete. `identidade_extracao_service.TIPOS_EXTRAIVEIS` already listed both types the whole time; the single `ativo` gate at upload (`documentos_service._require_tipo_documento`) was the only thing stopping either from ever reaching storage or the extraction pipeline. **The register entry for a withheld category belongs here, filed BEFORE the flip, so the activation migration only ever needs to point at it — never re-derive it.**
+
+**Register entry:**
+
+| Field | Value |
+|---|---|
+| Data category | `identidade` — RG number, CPF number, and (when the same document states them) nome oficial / data de nascimento / estado civil. Direct personal identifiers, Art. 5 I/II. |
+| Purpose | Civil qualification (qualificação civil) of the parties on the Promessa de Compra e Venda — the F5 contract generator (`card_hub/contrato_gerador`) requires it before a contract is `pronto`. |
+| Retention | 1825 days (5 years) — the SAME window every other `cliente_documento_tipos` row already carries (migration 057); the activation migration does not touch `retencao_dias`. |
+| Legal basis | Art. 7 V — execução de contrato do qual o titular é parte, ou de procedimentos preliminares relacionados a ele (the qualificação civil clause the contract generator gates on). |
+| Access logging | `cliente_documento_acessos`, already wired — `acao` in `view` / `extract` / `delete` (migration 057/068), unchanged by activation. |
+| Owner decision | User, 2026-09-16 (roadmap `social-wiring-contract-automation-2026-09.md`, question Q-identity-docs). |
+
+**Activation ships as data, never as code.** `119_cliente_identidade_ativacao.sql` is a single `UPDATE ... SET ativo = true WHERE tipo_documento IN ('rg', 'cpf')` — no `CREATE TABLE`, no `ALTER TABLE`, no new CHECK. The lesson generalizes: when a category is withheld pending an intake, wire everything downstream of the gate FIRST (extraction, retention, access log) and leave literally one boolean for the activation migration to flip once the register entry above exists — a withheld category with unfinished downstream wiring would make "flip the flag" the wrong migration to write.

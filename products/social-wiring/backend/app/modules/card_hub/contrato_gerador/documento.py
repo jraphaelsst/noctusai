@@ -1,7 +1,13 @@
 """Build the template .docx, render it through the seed `docx_render` adapter,
 read the result back — then (`gerar_pdf`) turn that `.docx` into the ABNT
 PDF the user actually receives (contract `projects/abnt-formatting-CONTRACT.md`
-§5: the `.docx` is now an INTERNAL intermediate).
+§5). Both encodings of the SAME rendering are now stored versions —
+`contratos_service.nova_versao_gerada` saves the rendered `.docx` alongside
+the PDF this module derives from it (2026-09-16, roadmap
+`social-wiring-contract-automation-2026-09.md` question Q-artifact), so the
+office can mark up the editable file without a second generation. This
+module itself is unaware of storage either way — it only renders and
+converts; see `contratos_service.py` for what happens to the bytes.
 
 - The template is BUILT from `modelo_texto` with python-docx at runtime and
   cached — the wording stays reviewable text in git, no binary blob.
@@ -89,8 +95,9 @@ def _classificar_paragrafo(estilo: str, _texto: str) -> ParagraphKind:
 
 
 def gerar_pdf(docx: bytes) -> bytes:
-    """The rendered `.docx` (internal intermediate) -> ABNT PDF bytes. The
-    PDF's metadata title is the already-rendered TITLE paragraph's own
+    """The rendered `.docx` -> ABNT PDF bytes — the SAME rendering, converted;
+    both are stored (see this module's header). The PDF's metadata title is
+    the already-rendered TITLE paragraph's own
     text — one source, never a second hand-built title string to drift
     from it. Raises `UnsupportedGlyphError` (from `render_abnt_pdf`) for a
     character the core Times font cannot represent; `service.gerar`
