@@ -39,6 +39,7 @@ def test_protocol_declares_the_expected_surface():
         "get_property",
         "get_imovel",
         "list_imoveis",
+        "list_imovel_fotos",
     }
 
 
