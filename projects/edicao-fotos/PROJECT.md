@@ -1,7 +1,11 @@
 # Edição de Fotos — AI photo editing for real estate
 
-> **Status:** Wave 1 (seed organs) SHIPPED to `dev` @ `ce5538dc`, 2026-09-16.
-> Waves 2-4 not started. No engine, no product module, no migrations applied.
+> **Status (2026-09-16, later):**
+> - **On `dev`:** Wave 1 seed organs, S3b `image_edit` (`99e6b40c`), S9 FE organs (`9f129aae`), and the S8 engine (`edf7ae64`).
+> - **Migrations applied to prod:** Core `046` and SW `121`–`128` (the SW 119/120 slots went to the social-wiring contract work).
+> - **In prod:** the seed code shipped with the `9e22d7e7` promote; the engine did not.
+> - **Not started:** the SW module (W2+), its pages, the MCP tool and billing (R2).
+> - **Blocked:** the OpenAI account has no credits, so nothing has run live.
 > **Base:** `7e5f5ad6` (origin/dev at 2026-09-16).
 > **Spec:** `../../genesis vision/README.md` (sibling, spec-only — no code).
 > **Approved plan:** `~/.claude/plans/hey-claude-i-need-gentle-spring.md` (2026-09-15).

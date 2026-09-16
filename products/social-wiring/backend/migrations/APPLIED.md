@@ -489,3 +489,12 @@ by name, and `texto_extraido` starts NULL on every existing row.
 **Follow-up (not done by this apply).** The 5 matrículas whose `texto_extraido` still carries
 literal `**bold**` / `<u>` markers keep `formatacao = '[]'` until re-transcribed — see the
 migration header and `NOC-REMEDIATE[transcricao-formatacao-backfill]`.
+
+## 114–128 — applied 2026-09-16 (owner-approved)
+
+- **114–118** (contract F6 data wave): present in the live schema before the F6 deploy. The `supabase_migrations` ledger is incomplete for this product, so this was confirmed by probing the tables and columns each file creates.
+- **119** `cliente_identidade_ativacao` and **120** `contrato_versao_docx_artifact`: applied before the image that writes `docx_storage_path` was deployed (`9e22d7e7`).
+- **121–128** (edição-fotos R1: jobs, `llm_usage`, `fotos_*`, buckets, `status_pagina`): applied after core `046`.
+  - **123 failed on first apply** with 42P01: `fotos_lote_visivel` was created before `fotos_lotes`. The script rolled back whole, so nothing was half-applied. It was fixed in `71d279e5` and re-applied cleanly, followed by 124–128.
+
+All were applied one file per request (each request is one implicit transaction) and recorded in `social_wiring.schema_migrations`.

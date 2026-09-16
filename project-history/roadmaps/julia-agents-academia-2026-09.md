@@ -397,6 +397,23 @@ The decision log keeps every step.
   - **Not done, by design:** no migration applied, no prod compose service, no ingress hostname, no DNS. Those are the cutover, gated on the user's consent sentences.
   - **Open follow-ups:** the CLI's real memory use per slot is still unmeasured (no API key in CI), so `mem_limit` may need raising above 1 GiB; the seed `ApiError` still exposes no response headers, so the UI cannot show a `Retry-After` countdown.
 
+- **2026-09-16 (cutover, in progress)**:
+  - **Done:**
+    - Consent recorded (`cd4508d7`, `9747db4f`).
+    - Prod compose, tunnel ingress and build scope landed (`a9dfb9e6`, `9e22d7e7`), and prod was promoted to `9e22d7e7`.
+    - DNS: proxied CNAMEs for `academia.noctusai.com` and `agents.noctusai.com`.
+    - Migrations: academia 001–009, agents 001–009, erp `046`, and core `045`.
+    - Julia's agent rows exist for `noctusai` (`julia` = `f2cdaa2b-13e1-4acd-8d94-cf7dae0e3452`).
+    - VPS `.env`: `APPROVAL_ASSERTION_SECRETS` generated on the host, plus explicit `PRODUCT_URL_ACADEMIA_DE_RECICLAGEM` / `PRODUCT_URL_AGENTS` overrides (the pattern would have produced `academia-de-reciclagem.noctusai.com`).
+    - Core redeployed with the new CORS roster.
+  - **academia is live:** the shell, bundle and deep link return 200, health is ok, unauthenticated API calls get 401, and the SSO preflight passes.
+  - **Still owed:**
+    - The agents container. It refuses to boot without `SOCIAL_WIRING_API_TOKEN`.
+    - Minting `ACADEMIA_API_TOKEN` + `SOCIAL_WIRING_API_TOKEN` on the host and registering their hashes. The permission classifier blocked an agent from doing this, so the owner must run it.
+    - `JULIA_ANTHROPIC_API_KEY`. The user asked to reuse the existing Anthropic key instead of a dedicated one (a deviation from §E.5), but no Anthropic key was found on the VPS, in the local `.env` files, or in the DB credential tables.
+    - The sibling-history import (M2) and the G checks.
+  - **Tool drift (wrong-tree family, N≥5):** `tunnel_config check` and `migrate_product` read the MCP server's stale primary checkout. The first reported `in_sync` while the live tunnel lacked both hosts; the second listed no agents `009`. Both were re-run pinned to a dev-tip tree. `spa_smoke` and `sso_cors_smoke` derive hosts from the slug pattern, so they cannot check a short-name host such as `academia`.
+
 ## Retrospective (filled at first trigger fire)
 
 *To be filled when T1–T6 fire.*
