@@ -60,6 +60,9 @@ class ModelEntry:
     # a rolling alias. None when the catalog `id` already IS the pinned
     # snapshot (no separate rolling alias exists).
     snapshot: Optional[str] = None
+    # UI recommendation tag: "performance" (quality-first) | "economico"
+    # (cost-first) | None. Pure presentation — never a capability gate.
+    tag_performance: Optional[str] = None
 
 
 MODELS: Tuple[ModelEntry, ...] = (
@@ -144,12 +147,15 @@ MODELS: Tuple[ModelEntry, ...] = (
     #: Both 2.5-generation edit models share the same published rates.
     #: `supports_batch=False` — neither has async Batch API availability
     #: yet, so the "Econômico" speed-mode UI lock stays engaged for them.
-    #: NOC-REMEDIATE[llm-model-unpriced]: the older `gpt-image-2` (and prior)
-    #: generation IS Batch-capable (per vendor docs, 50% discount) but no
-    #: published per-1M-token rate was available to verify at the same
-    #: 2026-09-15 pass as the two entries below — a guessed number in a
-    #: billing catalog is worse than a declared gap. Add the `ModelEntry`
-    #: once the rate is confirmed; do not price it from inference.
+    #: The older `gpt-image-2` (and prior) generation IS Batch-capable (per
+    #: vendor docs, 50% discount) but no published per-1M-token rate was
+    #: available to verify at the 2026-09-15 pass — a guessed number in a
+    #: billing catalog is worse than a declared gap, so it is NOT a static
+    #: row. Resolved 2026-09-16 (edicao-fotos W8, C8) through the runtime
+    #: overlay instead: a platform admin enters the rate + the batch flag in
+    #: the product UI (`catalog_overrides.ModelCatalogStore`), and an
+    #: unpriced model is refused at selection and at submission
+    #: (`is_priced`) rather than billed at a silent $0.
     ModelEntry(
         id="gpt-image-2.5-sunburst",
         label="GPT Image 2.5 Sunburst",
@@ -399,9 +405,45 @@ MODELS: Tuple[ModelEntry, ...] = (
 )
 
 
-def models_for(provider: str, kind: Optional[ModelKind] = None) -> list[ModelEntry]:
-    """Return the catalog entries for a provider, optionally filtered by kind."""
+def base_models_for(provider: str, kind: Optional[ModelKind] = None) -> list[ModelEntry]:
+    """The STATIC catalog rows only — no runtime overlay. Admin surfaces use
+    it to show what a row looked like before an operator changed it."""
     return [m for m in MODELS if m.provider == provider and (kind is None or m.kind == kind)]
+
+
+def models_for(provider: str, kind: Optional[ModelKind] = None) -> list[ModelEntry]:
+    """Return the EFFECTIVE catalog entries for a provider, optionally
+    filtered by kind: the static rows with the process-wide operator overlay
+    applied (`catalog_overrides`) — an overridden row takes the operator's
+    prices/flags, a disabled row disappears, an operator-added row appears.
+    Every catalog consumer (pricing, `capabilities_for_model`, cost records)
+    goes through here, so one overlay reaches all of them."""
+    from .catalog_overrides import apply_overlay
+
+    return apply_overlay(base_models_for(provider, kind), provider, kind)
+
+
+def is_priced(entry: ModelEntry) -> bool:
+    """True when every leg this model's calls bill has a rate.
+
+    `image_edit`: text-in + image-in + image-out (an edit always sends a
+    prompt and an image and returns an image). `chat`/`vision`: in + out.
+    `embedding`: in. Anything else (audio) is never considered priced —
+    there is no token rate that describes it."""
+    rates: tuple[Optional[float], ...]
+    if entry.kind == "image_edit":
+        rates = (
+            entry.cost_per_1m_input_tokens,
+            entry.cost_per_1m_image_input_tokens,
+            entry.cost_per_1m_image_output_tokens,
+        )
+    elif entry.kind in ("chat", "vision"):
+        rates = (entry.cost_per_1m_input_tokens, entry.cost_per_1m_output_tokens)
+    elif entry.kind == "embedding":
+        rates = (entry.cost_per_1m_input_tokens,)
+    else:
+        return False
+    return all(r is not None for r in rates)
 
 
 def all_providers() -> list[str]:

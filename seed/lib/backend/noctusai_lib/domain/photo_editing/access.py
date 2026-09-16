@@ -38,15 +38,27 @@ async def compute_capabilities(
     agency_admin = actor.is_agency_admin
     member = agency_admin or actor.org_role in CORRETOR_ROLES
     model = settings.modelo_editor_id
+    caps = capabilities(model) if model else None
+    # Why a configured model still cannot run (W8): switched off in the
+    # catalog, or missing a rate. Either one blocks batch creation.
+    if caps is None:
+        modelo_motivo: str | None = "sem_modelo"
+    elif not caps.known:
+        modelo_motivo = "modelo_desativado"
+    elif not caps.priced:
+        modelo_motivo = "modelo_sem_preco"
+    else:
+        modelo_motivo = None
+    modelo_ok = modelo_motivo is None
     if not model:
         economico, motivo = False, "sem_modelo"
-    elif not capabilities(model).supports_batch:
+    elif not caps.supports_batch:
         economico, motivo = False, "modelo_sem_batch"
     else:
         economico, motivo = True, None
     tipos = list(t.value for t in settings.tipos_edicao_ativos)
     return {
-        "pode_criar_lote": (admin or member) and bool(model) and bool(tipos),
+        "pode_criar_lote": (admin or member) and modelo_ok and bool(tipos),
         "pode_ver_veredito": admin or agency_admin,
         "pode_gerir_pool": admin or is_curator,
         "pode_aprovar_regras": admin or agency_admin,
@@ -54,7 +66,10 @@ async def compute_capabilities(
         # 'platform' | 'org' | None — the literal set the seed FE
         # (`photo-editing/permissions.ts`) is typed against.
         "dashboard": "platform" if admin else ("org" if agency_admin else None),
-        "modelo_configurado": bool(model),
+        "modelo_configurado": modelo_ok,
+        "modelo_bloqueado_motivo": modelo_motivo,
+        # Platform-admin-only admin surfaces (model catalog, processing).
+        "pode_administrar_plataforma": admin,
         "economico_disponivel": economico,
         "economico_bloqueado_motivo": motivo,
         "tipos_edicao_ativos": tipos,

@@ -207,6 +207,28 @@ factory,openai_adapter,batch}.py`.
 
 ## 5. Gaps & follow-ups
 
+**Pricing gap — resolved 2026-09-16 (edicao-fotos W8).** The catalog has a
+runtime operator overlay (`noctusai_lib.integrations.llm.catalog_overrides`:
+`ModelOverride` + `ModelCatalogStore` Protocol/InMemory/Supabase/factory,
+table template `llm/migrations/llm_model_overrides.sql.template`, SW 130).
+`models_for()` applies it, so `capabilities_for_model` — and therefore W4's
+default `PhotoEditingPorts.capabilities` port (`catalog_capabilities`) —
+`estimate_cost_usd` and the engine's cost records all see an
+operator-entered row. No parallel gate: a platform admin enters
+`gpt-image-2`'s rates + batch flag in social-wiring's "Modelos" page and
+Econômico unlocks through the one capabilities port.
+`ImageEditCapabilities.priced` (`llm.models.is_priced`, set by
+`capabilities_for_model`; hand-built capabilities default `True`) refuses a
+model with a missing rate at org selection and at submission
+(`modelo_sem_preco`) instead of billing $0.
+
+**Credit probe.** `noctusai_lib.integrations.llm.credit_probe`
+(`classify_provider_failure` + `CreditProbe` Protocol / Fake / OpenAI
+one-token probe / factory) is the ONE "no credit vs rate limit vs bad key"
+classifier. Migration backlog (N=2 older copies of the marker list):
+`integrations/documents/transcription._classify_failure` and
+social-wiring `routers/settings_router._test_openai_key`.
+
 **Batch ("Econômico") — built in edicao-fotos W4 (2026-09-16).** The owner
 chose to build it before any batch-capable model is priced, so it works the
 moment the catalog marks one `supports_batch=True`. Protocol, Fake and Real

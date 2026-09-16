@@ -61,8 +61,14 @@ async def put_org_settings_route(
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
 ) -> dict:
     model = (body.modelo_editor_imagem or "").strip() or None
-    if model is not None and not ports.capabilities(model).known:
-        raise api_error(422, "modelo_desconhecido", f"Modelo {model} não está no catálogo.")
+    if model is not None:
+        caps = ports.capabilities(model)
+        if not caps.known:
+            raise api_error(422, "modelo_desconhecido", f"Modelo {model} não está no catálogo.")
+        if not caps.priced:
+            # W8: a model without every rate would bill a silent $0 — refused
+            # here; the platform admin sets the price in "Modelos".
+            raise api_error(422, "modelo_sem_preco", f"Modelo {model} não tem preço cadastrado.")
     refuse_economico(ports, body.velocidade_padrao, model)
     platform = await ports.repo.get_platform_settings()
     override = None

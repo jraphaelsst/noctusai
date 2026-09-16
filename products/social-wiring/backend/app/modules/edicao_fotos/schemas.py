@@ -66,6 +66,45 @@ class GuiaCreateBody(StrictHttpModel):
     texto: str = Field(min_length=1, max_length=20_000)
 
 
+PrecoField = Optional[Decimal]
+
+
+class ModeloCatalogoBody(StrictHttpModel):
+    """`PUT /modelos/catalogo/{modelo_id}` — one FULL catalog row (W8).
+
+    A null price means "no published rate" (the model is then refused
+    where it would be billed), never "keep the old one". `suporta_batch`
+    only means something for `image_edit`."""
+
+    kind: Literal["image_edit", "vision", "chat"]
+    nome: Optional[str] = Field(default=None, max_length=120)
+    descricao: Optional[str] = Field(default=None, max_length=500)
+    snapshot: Optional[str] = Field(default=None, max_length=60)
+    habilitado: bool = True
+    preco_entrada_texto_1m: PrecoField = Field(default=None, ge=0, le=100_000)
+    preco_saida_texto_1m: PrecoField = Field(default=None, ge=0, le=100_000)
+    preco_entrada_imagem_1m: PrecoField = Field(default=None, ge=0, le=100_000)
+    preco_saida_imagem_1m: PrecoField = Field(default=None, ge=0, le=100_000)
+    suporta_batch: bool = False
+    tag_performance: Optional[Literal["performance", "economico"]] = None
+
+
+class ModelosEtapasBody(StrictHttpModel):
+    """`PUT /modelos/etapas` — the model per engine step. Only the keys SENT
+    are written; `null` resets a step to the engine default."""
+
+    guia: Optional[str] = Field(default=None, max_length=120)
+    avaliador: Optional[str] = Field(default=None, max_length=120)
+    regras: Optional[str] = Field(default=None, max_length=120)
+    notas: Optional[str] = Field(default=None, max_length=120)
+
+
+class ProcessamentoBody(StrictHttpModel):
+    """`PUT /processamento` — the live pause switch."""
+
+    ativo: bool
+
+
 RoomLiteral = Literal[
     "sala", "quarto", "cozinha", "banheiro", "area_externa",
     "fachada", "varanda", "escritorio", "outro",
@@ -78,8 +117,11 @@ __all__ = [
     "GuiaCreateBody",
     "ImovelRef",
     "LoteCreateBody",
+    "ModeloCatalogoBody",
+    "ModelosEtapasBody",
     "OrgSettingsBody",
     "PlatformSettingsBody",
+    "ProcessamentoBody",
     "RoomLiteral",
     "VistaIngestBody",
 ]

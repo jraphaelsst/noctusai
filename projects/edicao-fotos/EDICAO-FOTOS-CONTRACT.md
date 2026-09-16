@@ -161,7 +161,19 @@ admin's decision.
 
 - `GET|PUT /configuracoes` — org edit types, image model, speed override.
 - `GET /modelos` — catalog: name, version, performance/cheap tag, batch-capable tag,
-  live metrics (approval rate, AI score, cost per approved photo) + AI-written notes.
+  live metrics (approval rate, AI score, cost per approved photo) + AI-written notes
+  (metrics/notes: agency + platform admins only; `null` for corretores).
+- W8, platform admin only: `GET /modelos/catalogo` · `PUT /modelos/catalogo/{id}` (full
+  row: `kind`, `nome`, `snapshot`, `habilitado`, four per-1M prices as decimal strings —
+  `null` = no rate ⇒ refused where billed —, `suporta_batch`, `tag_performance`; every save
+  is a version) · `GET /modelos/catalogo/{id}/versoes?kind=` · `GET|PUT /modelos/etapas`
+  (model per step `guia`/`avaliador`/`regras`/`notas`; only keys sent are written; `null`
+  = default) · `POST /modelos/notas/gerar` (202).
+- W8, platform admin only: `GET|PUT /processamento` (`{"ativo": bool}` = live pause;
+  health: worker of this process, shared queue counts, last error, `sem_creditos`, last
+  probe) · `POST /processamento/sonda` (one-token OpenAI probe).
+- `GET /capacidades` gained `modelo_bloqueado_motivo` and `pode_administrar_plataforma`.
+  Wire shapes pinned in `seed/lib/frontend/src/photo-editing/contract.fixture.json`.
 - `GET|POST|DELETE /curadores` — curator grants (platform admin only).
 - `GET /painel` — dashboard: pipeline throughput · queue & health · activity ·
   learning loop · costs. Scope follows `capacidades.dashboard`.

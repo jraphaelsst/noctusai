@@ -18,7 +18,7 @@ statement — no consumer-side read-then-write race window.
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
 
@@ -53,6 +53,27 @@ class LeaseLostError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Protocol
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class QueueStats:
+    """Operator snapshot of a job table (health panels).
+
+    `pending` counts PENDING jobs (due now or scheduled later — `due` is
+    the subset claimable right now); `running` counts RUNNING jobs with a
+    live lease; `lease_expired` counts RUNNING jobs whose lease lapsed (a
+    worker died — the next claim reclaims them). `last_error` is the most
+    recently updated job carrying an error (any status)."""
+
+    pending: int = 0
+    due: int = 0
+    running: int = 0
+    lease_expired: int = 0
+    dead_letter: int = 0
+    last_error: str | None = None
+    last_error_type: str | None = None
+    last_error_at: datetime | None = None
+    active_workers: tuple[str, ...] = ()
 
 
 @runtime_checkable
@@ -154,6 +175,10 @@ class JobRepository(Protocol):
         """Move a DEAD_LETTER job back to PENDING and reset retry_count.
         Operator escape hatch.
         """
+
+    async def queue_stats(self, *, job_types: list[str] | None = None) -> QueueStats:
+        """Counts per state + the latest error, for operator health panels.
+        Read-only; never claims or mutates."""
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +396,48 @@ class FakeJobRepository:
         )
         self._jobs[job_id] = revived
         return revived
+
+    async def queue_stats(self, *, job_types: list[str] | None = None) -> QueueStats:
+        return _stats_of(self._jobs.values(), job_types=job_types, now=self._now())
+
+
+#: Upper bound on rows a `queue_stats` read pulls per state.
+STATS_ROW_CAP = 5000
+
+
+def _stats_of(jobs: Any, *, job_types: list[str] | None, now: datetime) -> QueueStats:
+    pending = due = running = expired = dead = 0
+    workers: set[str] = set()
+    last: Job | None = None
+    for job in jobs:
+        if job_types is not None and job.type not in job_types:
+            continue
+        if job.status is JobStatus.PENDING:
+            pending += 1
+            if job.scheduled_for is None or job.scheduled_for <= now:
+                due += 1
+        elif job.status is JobStatus.RUNNING:
+            if job.lease_expires_at is not None and job.lease_expires_at <= now:
+                expired += 1
+            else:
+                running += 1
+                if job.worker_id:
+                    workers.add(job.worker_id)
+        elif job.status is JobStatus.DEAD_LETTER:
+            dead += 1
+        if job.last_error and (last is None or job.updated_at > last.updated_at):
+            last = job
+    return QueueStats(
+        pending=pending,
+        due=due,
+        running=running,
+        lease_expired=expired,
+        dead_letter=dead,
+        last_error=last.last_error if last else None,
+        last_error_type=last.type if last else None,
+        last_error_at=last.updated_at if last else None,
+        active_workers=tuple(sorted(workers)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -675,6 +742,56 @@ class RealSupabaseJobRepository:
         if not rows:
             raise KeyError(f"Job not found after requeue: {job_id}")
         return self._row_to_job(rows[0])
+
+    async def queue_stats(self, *, job_types: list[str] | None = None) -> QueueStats:
+        # Active rows are bounded by the live queue; terminal rows are not,
+        # so only DEAD_LETTER (an operator's to-do list) is read, capped.
+        def scoped(builder: Any) -> Any:
+            return builder.in_("type", job_types) if job_types is not None else builder
+
+        active = await self._execute(
+            scoped(
+                self._table_builder()
+                .select("*")
+                .in_("status", [JobStatus.PENDING.value, JobStatus.RUNNING.value])
+                .limit(STATS_ROW_CAP)
+            )
+        )
+        dead = await self._execute(
+            scoped(
+                self._table_builder()
+                .select("*")
+                .eq("status", JobStatus.DEAD_LETTER.value)
+                .limit(STATS_ROW_CAP)
+            )
+        )
+        errored = await self._execute(
+            scoped(
+                self._table_builder()
+                .select("*")
+                .not_.is_("last_error", "null")
+                .order("updated_at", desc=True)
+                .limit(1)
+            )
+        )
+        rows = [
+            *(getattr(active, "data", None) or []),
+            *(getattr(dead, "data", None) or []),
+        ]
+        stats = _stats_of(
+            (self._row_to_job(r) for r in rows),
+            job_types=job_types,
+            now=datetime.now(timezone.utc),
+        )
+        latest = [self._row_to_job(r) for r in (getattr(errored, "data", None) or [])]
+        if latest and latest[0].last_error:
+            stats = replace(
+                stats,
+                last_error=latest[0].last_error,
+                last_error_type=latest[0].type,
+                last_error_at=latest[0].updated_at,
+            )
+        return stats
 
 
 def _parse_dt(value: Any) -> datetime:

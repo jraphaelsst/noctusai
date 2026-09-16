@@ -1,0 +1,108 @@
+-- ============================================================================
+-- llm_model_overrides — operator overlay over the static model catalog
+-- ============================================================================
+--
+-- Source: noctusai_lib/integrations/llm/migrations/llm_model_overrides.sql.template
+--
+-- Backs `noctusai_lib.integrations.llm.catalog_overrides.SupabaseModelCatalogStore`.
+-- One CURRENT row per (provider, kind, model_id) plus an APPEND-ONLY
+-- history of every save. `models_for()` applies the current rows over
+-- `models.MODELS`: an override replaces the static row's prices/flags, a
+-- disabled row hides the model, a row with no static counterpart adds one.
+--
+-- Copy into `products/<your-product>/backend/migrations/NNN_*.sql`,
+-- substitute `{{SCHEMA_NAME}}`, renumber (use `noctus.dev.next_migration_number`)
+-- — same recipe as `llm_usage.sql.template` and `domain/jobs/migrations/jobs.sql.template`.
+--
+-- Writes happen through the service role only (a platform-admin API route).
+-- Prices are USD per 1M tokens. A NULL price means "no published rate" —
+-- `llm.models.is_priced` then refuses the model instead of billing $0.
+-- ============================================================================
+
+SET search_path = {{SCHEMA_NAME}}, public;
+
+CREATE TABLE IF NOT EXISTS {{SCHEMA_NAME}}.llm_model_overrides (
+    provider                        TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 40),
+    kind                            TEXT NOT NULL
+                                        CHECK (kind IN ('chat', 'embedding', 'audio', 'vision', 'image_edit')),
+    model_id                        TEXT NOT NULL CHECK (length(model_id) BETWEEN 1 AND 120),
+    enabled                         BOOLEAN NOT NULL DEFAULT true,
+    label                           TEXT CHECK (label IS NULL OR length(label) <= 120),
+    description                     TEXT CHECK (description IS NULL OR length(description) <= 500),
+    snapshot                        TEXT CHECK (snapshot IS NULL OR length(snapshot) <= 60),
+    cost_per_1m_input_tokens        NUMERIC(12, 4) CHECK (cost_per_1m_input_tokens IS NULL OR cost_per_1m_input_tokens >= 0),
+    cost_per_1m_output_tokens       NUMERIC(12, 4) CHECK (cost_per_1m_output_tokens IS NULL OR cost_per_1m_output_tokens >= 0),
+    cost_per_1m_image_input_tokens  NUMERIC(12, 4) CHECK (cost_per_1m_image_input_tokens IS NULL OR cost_per_1m_image_input_tokens >= 0),
+    cost_per_1m_image_output_tokens NUMERIC(12, 4) CHECK (cost_per_1m_image_output_tokens IS NULL OR cost_per_1m_image_output_tokens >= 0),
+    supports_batch                  BOOLEAN NOT NULL DEFAULT false,
+    tag_performance                 TEXT CHECK (tag_performance IS NULL OR tag_performance IN ('performance', 'economico')),
+    version                         INTEGER NOT NULL CHECK (version > 0),
+    updated_by                      UUID,
+    updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider, kind, model_id)
+);
+
+CREATE TABLE IF NOT EXISTS {{SCHEMA_NAME}}.llm_model_override_versions (
+    id                              BIGSERIAL PRIMARY KEY,
+    provider                        TEXT NOT NULL,
+    kind                            TEXT NOT NULL,
+    model_id                        TEXT NOT NULL,
+    enabled                         BOOLEAN NOT NULL,
+    label                           TEXT,
+    description                     TEXT,
+    snapshot                        TEXT,
+    cost_per_1m_input_tokens        NUMERIC(12, 4),
+    cost_per_1m_output_tokens       NUMERIC(12, 4),
+    cost_per_1m_image_input_tokens  NUMERIC(12, 4),
+    cost_per_1m_image_output_tokens NUMERIC(12, 4),
+    supports_batch                  BOOLEAN NOT NULL,
+    tag_performance                 TEXT,
+    version                         INTEGER NOT NULL CHECK (version > 0),
+    updated_by                      UUID,
+    updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- The optimistic lock: two concurrent saves cannot both claim version N.
+    UNIQUE (provider, kind, model_id, version)
+);
+
+-- History is append-only: a price that was in force must stay provable.
+CREATE OR REPLACE FUNCTION {{SCHEMA_NAME}}.llm_model_override_versions_imutavel()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+    RAISE EXCEPTION 'llm_model_override_versions is append-only'
+        USING ERRCODE = 'P0001';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_llm_model_override_versions_imutavel
+    ON {{SCHEMA_NAME}}.llm_model_override_versions;
+CREATE TRIGGER trg_llm_model_override_versions_imutavel
+    BEFORE UPDATE OR DELETE ON {{SCHEMA_NAME}}.llm_model_override_versions
+    FOR EACH ROW
+    EXECUTE FUNCTION {{SCHEMA_NAME}}.llm_model_override_versions_imutavel();
+
+REVOKE EXECUTE ON FUNCTION {{SCHEMA_NAME}}.llm_model_override_versions_imutavel() FROM PUBLIC;
+
+ALTER TABLE {{SCHEMA_NAME}}.llm_model_overrides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE {{SCHEMA_NAME}}.llm_model_override_versions ENABLE ROW LEVEL SECURITY;
+
+-- Platform scope (not org data): platform admins may read; nobody but the
+-- service role writes.
+CREATE POLICY "llm_model_overrides_select_platform_admin" ON {{SCHEMA_NAME}}.llm_model_overrides
+    FOR SELECT TO authenticated
+    USING (public.is_platform_admin());
+
+CREATE POLICY "service_role_bypass" ON {{SCHEMA_NAME}}.llm_model_overrides
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "llm_model_override_versions_select_platform_admin" ON {{SCHEMA_NAME}}.llm_model_override_versions
+    FOR SELECT TO authenticated
+    USING (public.is_platform_admin());
+
+CREATE POLICY "service_role_bypass" ON {{SCHEMA_NAME}}.llm_model_override_versions
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE INDEX IF NOT EXISTS ix_llm_model_override_versions_model
+    ON {{SCHEMA_NAME}}.llm_model_override_versions (provider, kind, model_id, version DESC);

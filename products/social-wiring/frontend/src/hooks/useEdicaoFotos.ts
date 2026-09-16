@@ -40,6 +40,15 @@ export const {
   useConfiguracoes,
   useAtualizarConfiguracoes,
   useModelos,
+  useModelosCatalogo,
+  useSalvarModeloCatalogo,
+  useModeloVersoes,
+  useModelosEtapas,
+  useAtualizarModelosEtapas,
+  useGerarNotasModelos,
+  useProcessamento,
+  useAtualizarProcessamento,
+  useSondarOpenAI,
 } = createEdicaoFotosHooks(api);
 
 export type {
@@ -71,6 +80,21 @@ export type {
   LoteDetalhe,
   OrgConfiguracoes,
   ModeloCatalogoItem,
+  TagPerformance,
+  ModeloPrecos,
+  ModeloKind,
+  ModeloCatalogoAdmin,
+  ModelosCatalogoPage,
+  ModeloCatalogoBody,
+  ModeloCatalogoSalvo,
+  ModeloCatalogoVersao,
+  EtapaModelo,
+  ModelosEtapas,
+  ModelosEtapasBody,
+  SondaStatus,
+  SondaResultado,
+  ProcessamentoPainel,
+  ProcessamentoBody,
 } from '@noctusai/lib/photo-editing/hooks';
 
 export * as fotosPermissions from '@noctusai/lib/photo-editing/permissions';
