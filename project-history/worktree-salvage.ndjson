@@ -741,3 +741,4 @@
 {"ts": "2026-09-16", "event": "worktree-sweep", "path": ".claude/worktrees/ef-w2-sw-module", "branch": "feat/ef-w2-sw-module", "sha": "c536e01bfc67d32d37bc0d19411392d503455cc8", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-16", "event": "worktree-sweep", "path": ".claude/worktrees/ef-fe-rascunho-state", "branch": "feat/ef-fe-rascunho-state", "sha": "69fddf09e6c21952bdde943a8cfccfa5917f150e", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-16", "event": "worktree-sweep", "path": ".claude/worktrees/fix-api-download-blob-test", "branch": "feat/fix-api-download-blob-test", "sha": "b084e801895c108a84cfd8b230b778a7d8c0bc47", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-16", "event": "worktree-sweep", "path": ".claude/worktrees/ef-w6-pool-guides", "branch": "feat/ef-w6-pool-guides", "sha": "2a1c53c53b410b684c6e3bd68c2f5766496fb100", "reason": "task_branch cleanup (learn-before-delete)"}
