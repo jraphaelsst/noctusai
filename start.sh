@@ -65,6 +65,7 @@ PRODUCTS=(
   "p-studio:P Studio:8014:8180"
   "academia-de-reciclagem:Academia de Reciclagem:8015:8190"
   "agents:Agentes:8016:8200"
+  "community:Community:8017:8210"
 )
 # END_PRODUCTS_REGISTRY
 

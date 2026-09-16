@@ -48,6 +48,7 @@ include:
   - products/igig/docker-compose.yml
   - products/academia-de-reciclagem/docker-compose.yml
   - products/agents/docker-compose.yml
+  - products/community/docker-compose.yml
   # END_PRODUCTS_INCLUDE
 
 networks:
