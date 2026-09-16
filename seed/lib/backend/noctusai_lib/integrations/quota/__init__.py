@@ -17,6 +17,9 @@ counter (or didn't track at all).
 - `RedisQuotaTracker` — ZSET sliding window via Lua script (atomic
   check-and-consume). Production.
 - `make_quota_tracker(kind='memory'|'redis', redis_client=...)`.
+- `DefaultingQuotaTracker(inner, default=QuotaConfig(...))` — registers a
+  declared default the first time a per-tenant key is seen (keys nobody
+  can enumerate up front, e.g. `f"fotos.edit:{org_id}"`).
 
 **Sliding window, not fixed window** — see `types.py` for the
 rationale (vendor contracts universally read "≤ N in last X seconds";
@@ -46,6 +49,7 @@ Wire pattern (production):
         raise QuotaExceeded(...)
 """
 
+from noctusai_lib.integrations.quota.defaulting import DefaultingQuotaTracker
 from noctusai_lib.integrations.quota.factory import make_quota_tracker
 from noctusai_lib.integrations.quota.in_memory import InMemoryQuotaTracker
 from noctusai_lib.integrations.quota.protocol import QuotaTracker
@@ -53,6 +57,7 @@ from noctusai_lib.integrations.quota.redis_backend import RedisQuotaTracker
 from noctusai_lib.integrations.quota.types import QuotaCheck, QuotaConfig
 
 __all__ = [
+    "DefaultingQuotaTracker",
     "InMemoryQuotaTracker",
     "QuotaCheck",
     "QuotaConfig",

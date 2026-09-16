@@ -121,3 +121,68 @@ class TestMakePermissionGrantRepository:
         client = MockSupabaseClient(validate_schema=False)
         repo = make_permission_grant_repository(use_fake=False, supabase_client=client)
         assert isinstance(repo, RealSupabasePermissionGrantRepository)
+
+
+class TestFakeGrantAdministration:
+    def test_add_list_remove_round_trip(self):
+        repo = FakePermissionGrantRepository()
+        grant = _run(repo.add_grant(user_id=_USER_A, permission=_PERMISSION, granted_by=_USER_B))
+        assert grant.user_id == _USER_A and grant.granted_by == _USER_B
+        assert _run(repo.has_permission(user_id=_USER_A, permission=_PERMISSION)) is True
+        listed = _run(repo.list_grants(permission=_PERMISSION))
+        assert [g.user_id for g in listed] == [_USER_A]
+        assert _run(repo.list_grants(permission="other:grant")) == []
+        assert _run(repo.remove_grant(user_id=_USER_A, permission=_PERMISSION)) is True
+        assert _run(repo.has_permission(user_id=_USER_A, permission=_PERMISSION)) is False
+        assert _run(repo.remove_grant(user_id=_USER_A, permission=_PERMISSION)) is False
+
+    def test_add_grant_is_idempotent_and_keeps_original_grantor(self):
+        repo = FakePermissionGrantRepository()
+        first = _run(repo.add_grant(user_id=_USER_A, permission=_PERMISSION, granted_by=_USER_B))
+        again = _run(repo.add_grant(user_id=_USER_A, permission=_PERMISSION, granted_by="someone-else"))
+        assert again == first
+        assert len(_run(repo.list_grants(permission=_PERMISSION))) == 1
+
+    def test_seeded_grants_are_listed(self):
+        repo = FakePermissionGrantRepository([(_USER_A, _PERMISSION)])
+        assert [g.user_id for g in _run(repo.list_grants(permission=_PERMISSION))] == [_USER_A]
+
+
+class TestRealGrantAdministration:
+    def _repo(self):
+        client = MockSupabaseClient(validate_schema=False)
+        return client, RealSupabasePermissionGrantRepository(client)
+
+    def test_add_grant_inserts_bare_table_row(self):
+        client, repo = self._repo()
+        grant = _run(repo.add_grant(user_id=_USER_A, permission=_PERMISSION, granted_by=_USER_B))
+        assert grant.user_id == _USER_A
+        assert grant.granted_by == _USER_B
+        rows = client.table("user_permission_grants").inserted_payloads
+        assert rows == [{"user_id": _USER_A, "permission": _PERMISSION, "granted_by": _USER_B}]
+
+    def test_add_grant_returns_existing_without_insert(self):
+        client, repo = self._repo()
+        client.set_table_data(
+            "user_permission_grants",
+            [{"user_id": _USER_A, "permission": _PERMISSION, "granted_by": None,
+              "created_at": "2026-09-16T10:00:00Z"}],
+        )
+        grant = _run(repo.add_grant(user_id=_USER_A, permission=_PERMISSION, granted_by=_USER_B))
+        assert grant.granted_by is None
+        assert grant.created_at is not None and grant.created_at.tzinfo is not None
+        assert client.table("user_permission_grants").inserted_payloads == []
+
+    def test_list_grants_decodes_rows(self):
+        client, repo = self._repo()
+        client.set_table_data(
+            "user_permission_grants",
+            [{"user_id": _USER_A, "permission": _PERMISSION, "granted_by": _USER_B,
+              "created_at": "2026-09-16T10:00:00+00:00"}],
+        )
+        grants = _run(repo.list_grants(permission=_PERMISSION))
+        assert [(g.user_id, g.granted_by) for g in grants] == [(_USER_A, _USER_B)]
+
+    def test_remove_grant_reports_absence(self):
+        _client, repo = self._repo()
+        assert _run(repo.remove_grant(user_id=_USER_A, permission=_PERMISSION)) is False

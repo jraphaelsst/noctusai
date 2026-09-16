@@ -35,7 +35,8 @@ or for a raw edit call without review (`integrations.image_edit` directly).
 | PTAX venda/fechamento | `integrations.fx` → `KB § INTEGRATIONS/fx-ptax.md` |
 | Worker, `RetryPolicy`, dedupe keys, leases | `domain.jobs` |
 | Curator grant (`photo_curator`) | `domain.permissions` |
-| Optional per-org edit cap | `integrations.quota` |
+| Optional per-org edit cap | `integrations.quota` (`DefaultingQuotaTracker` — per-org keys need no registration step) |
+| Photo bytes in a bucket | `integrations.storage` (via `BucketPhotoStorage`) |
 
 ---
 
@@ -54,7 +55,7 @@ or for a raw edit call without review (`integrations.image_edit` directly).
 | `access.py` | `compute_capabilities` → contract §2 `/capacidades` (server-computed, never SSO metadata) |
 | `pipeline.py` | route entry points: `add_photo_bytes`, `submit_batch`, `retry_photo`, debounced `schedule_*`, `enqueue_*` |
 | `handlers.py` | one idempotent handler per job type · `build_handlers` · `build_worker` |
-| `ports.py` | `PhotoEditingPorts` (the one DI seam) + `PhotoStorage`, `StructuredLlm`, `BatchReadyNotifier` ports with in-memory fakes + real adapters |
+| `ports.py` | `PhotoEditingPorts` (the one DI seam) + `PhotoStorage` (`InMemoryPhotoStorage` / `BucketPhotoStorage` over `integrations.storage`, with `signed_url`), `StructuredLlm`, `BatchReadyNotifier` ports with in-memory fakes + real adapters |
 | `repository.py` | `PhotoEditingRepository` Protocol + `InMemoryPhotoEditingRepository` + `SupabasePhotoEditingRepository` + `make_photo_editing_repository` |
 
 ---
@@ -66,9 +67,9 @@ or for a raw edit call without review (`integrations.image_edit` directly).
 ```python
 @dataclass(frozen=True)
 class PhotoEditingPorts:
-    repo: PhotoEditingRepository          # make_photo_editing_repository(supabase_client=admin, schema="social_wiring")
-    jobs: JobRepository                   # make_job_repository(supabase_client=admin, schema_name="social_wiring")
-    storage: PhotoStorage                 # consumer adapter over the private bucket
+    repo: PhotoEditingRepository          # make_photo_editing_repository(supabase_client=<PUBLIC-default service role>, schema="social_wiring")
+    jobs: JobRepository                   # make_job_repository(supabase_client=<product-schema-default admin>, schema_name="social_wiring")
+    storage: PhotoStorage                 # BucketPhotoStorage(make_storage_backend(kind="supabase", client=admin), bucket="edicao-fotos")
     imaging: ImagingAdapter               # get_imaging_adapter()
     image_edit: ImageEditFactory          # (org_id, model_id) -> ImageEditAdapter; openai_image_edit_factory(key_provider)
     llm: StructuredLlm                    # LlmStructuredAdapter()
@@ -78,6 +79,15 @@ class PhotoEditingPorts:
     clock: Callable[[], datetime] = utcnow
     edit_quota: QuotaTracker | None = None  # key f"fotos.edit:{org_id}", registered by the consumer
 ```
+
+🔴 **Two clients, not one.** The repository reaches pipeline tables with
+`.schema(schema)` but `cost_ledger` (`cost_schema="public"`) with the bare
+`client.table(...)` — so it needs a client whose DEFAULT schema is `public`
+(a product's `get_core_client()`); a product-schema-default admin client
+sends every cost row to `<product>.cost_ledger`. The job repository is the
+opposite: its RPCs are bare calls, so it needs the client whose default IS
+the schema hosting `claim_next_job` & co. Social-wiring's
+`services/ports.py` is the reference wiring.
 
 `openai_image_edit_factory` REFUSES (`ImageEditNotConfigured`, fatal) when
 no key resolves — unlike `get_image_edit_adapter`, which falls back to the
@@ -112,7 +122,10 @@ Every validation error carries a `code` for the contract's error envelope
 
 ### 4.4 Repository
 
-`PhotoEditingRepository` groups: settings · batches · photos (`transition_photo`
+`PhotoEditingRepository` groups: settings (`get_*`, `save_org_settings`,
+`update_platform_settings`) · batches (incl. `list_batches(org_id=,
+criado_por=, limit=, offset=) -> (page, total)`, newest first, explicit
+range) · photos (`transition_photo`
 is the ONLY status writer: read, legality check, compare-and-set on the read
 status, event append; `None` ⇒ lost race) · edits / evaluations / decisions /
 dataset · pool / guides / rules / rule sets / effective guides / proposal
@@ -122,6 +135,18 @@ The Supabase implementation targets social-wiring migrations 123-126 (plus
 in `cost_schema`.
 
 ---
+
+### 4.5 First consumer — social-wiring (W2, 2026-09-16)
+
+`products/social-wiring/backend/app/modules/edicao_fotos/`: routes under
+`/api/edicao-fotos` (capacidades · configuracoes · curadores · lotes ·
+revisao), authorization + org scoping in `deps.py` (the engine's service-role
+client bypasses RLS, so visibility is enforced there), the worker behind
+`EDICAO_FOTOS_WORKER_ENABLED` (default OFF), and the in-app batch-ready
+notifier. Curator grants use `domain.permissions`' `list_grants` /
+`add_grant` / `remove_grant`. Tests drive the routes and the real seed
+Worker on `InMemoryPhotoEditingRepository(id_factory=...)` (UUID ids for
+UUID path params).
 
 ## 5. Invariants
 

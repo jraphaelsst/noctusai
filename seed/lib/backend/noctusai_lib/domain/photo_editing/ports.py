@@ -14,9 +14,10 @@ Ports the seed already ships are consumed as-is:
 - ``fx``          → ``noctusai_lib.integrations.fx.FxRateAdapter``
 - ``edit_quota``  → optional ``noctusai_lib.integrations.quota.QuotaTracker``
 
-Ports defined here (no seed organ covers them yet): object storage for
-photo bytes, a structured-LLM call that returns usage, and the
-batch-ready notifier.
+Ports defined here: object storage for photo bytes (``PhotoStorage``;
+``BucketPhotoStorage`` bridges it onto one bucket of
+``integrations.storage``), a structured-LLM call that returns usage, and
+the batch-ready notifier.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from noctusai_lib.integrations.image_edit import (
 )
 from noctusai_lib.integrations.imaging import ImagingAdapter
 from noctusai_lib.integrations.quota import QuotaTracker
+from noctusai_lib.integrations.storage import StorageBackend
 
 # ---------------------------------------------------------------------------
 # Object storage
@@ -67,6 +69,41 @@ class InMemoryPhotoStorage:
 
     async def delete(self, path: str) -> None:
         self.objects.pop(path, None)
+
+
+class BucketPhotoStorage:
+    """Real ``PhotoStorage`` over one bucket of the seed ``StorageBackend``
+    (``integrations.storage`` — Supabase in production).
+
+    ``get`` RAISES ``FileNotFoundError`` for a missing object: the backend
+    answers ``None``, but a photo the engine expects and cannot find is a
+    failure, never an empty image.
+    """
+
+    def __init__(self, backend: StorageBackend, *, bucket: str) -> None:
+        if not bucket:
+            raise ValueError("BucketPhotoStorage requires a bucket name")
+        self._backend = backend
+        self.bucket = bucket
+
+    async def get(self, path: str) -> bytes:
+        blob = await self._backend.get(bucket=self.bucket, key=path)
+        if blob is None:
+            raise FileNotFoundError(f"{self.bucket}/{path}")
+        return blob.data
+
+    async def put(self, path: str, data: bytes, *, content_type: str) -> None:
+        await self._backend.put(
+            bucket=self.bucket, key=path, data=data, content_type=content_type
+        )
+
+    async def delete(self, path: str) -> None:
+        await self._backend.delete(bucket=self.bucket, key=path)
+
+    async def signed_url(self, path: str, *, expires_in_seconds: int = 3600) -> str:
+        return await self._backend.signed_url(
+            bucket=self.bucket, key=path, expires_in_seconds=expires_in_seconds
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +362,7 @@ class PhotoEditingPorts:
 
 __all__ = [
     "BatchReadyNotice",
+    "BucketPhotoStorage",
     "BatchReadyNotifier",
     "FakeStructuredLlm",
     "ImageEditFactory",

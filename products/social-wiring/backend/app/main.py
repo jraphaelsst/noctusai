@@ -247,6 +247,7 @@ from app.modules.permutas import register as _permutas
 from app.modules.certidoes import register as _certidoes
 from app.modules.matriculas import register as _matriculas
 from app.modules.youtube import register as _youtube
+from app.modules.edicao_fotos import register as _edicao_fotos
 
 # Append W2.2 (email_marketing) / W2.3 (scheduling) / W2.4 (media_creation)
 # / Phase 8 (youtube) / Leads-module (leads) / Meta-Ads-console (meta_ads)
@@ -305,6 +306,12 @@ MODULES = [
     # prefix. Its OWN internal order matters and is handled inside its router
     # (`/matches` and `/gerar` are declared before `/{ativo_id}`), not here.
     _permutas,
+    # Edição de Fotos (R1). `/api/edicao-fotos/<section>` is a unique literal
+    # prefix with no 1-segment dynamic path at its root, so its position is
+    # free. Declares one upload route (see `_MAX_BODY_PATH_OVERRIDES`) and
+    # schedules no APScheduler job — its job worker starts from
+    # app/lifespan.py behind EDICAO_FOTOS_WORKER_ENABLED.
+    _edicao_fotos,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───
@@ -497,6 +504,27 @@ _MAX_BODY_PATH_OVERRIDES = {
     # above: inert until a router serves the path, and its absence is what
     # blocks the module's own branch from committing at all.
     "/api/certidoes/resultados/*/upload": 25 * 1024 * 1024,  # 25 MB
+    # Edição de Fotos photo upload (POST /api/edicao-fotos/lotes/{lote_id}/fotos
+    # — `app.modules.edicao_fotos.routers.lotes`). `{lote_id}` is a dynamic
+    # segment before the one needing the ceiling, hence the `*`: a plain
+    # `/api/edicao-fotos/lotes` prefix would also raise the cap on every JSON
+    # batch route (create/submit/retry/vista).
+    #
+    # Derived, not guessed: the route accepts at most
+    # `MAX_FILES_PER_REQUEST` (10) files per call, each capped by the
+    # business limit of 25 MB (`noctusai_lib.domain.photo_editing.types.
+    # MAX_BYTES_PER_PHOTO`, owner decision) → 250 MB of payload plus
+    # multipart framing = `UPLOAD_ROUTE_MAX_BODY_BYTES` (256 MB). Starlette
+    # spools each part to disk and the route reads one file at a time, so
+    # memory stays bounded by one photo, not by this ceiling.
+    "/api/edicao-fotos/lotes/*/fotos": 256 * 1024 * 1024,  # 256 MB
+    # Edição de Fotos reference-pair upload (POST /api/edicao-fotos/referencias
+    # — contract §5, the before+after pair of the platform pool). Declared
+    # AHEAD of its router (the pool lands in a later slice), which is inert —
+    # the same reasoning as the matrícula entry above: the middleware only
+    # fires for a path a router serves, and the boot-time derivation refuses an
+    # upload route without a ceiling. Two photos of ≤ 25 MB each plus framing.
+    "/api/edicao-fotos/referencias": 52 * 1024 * 1024,  # 52 MB
 }
 
 # ─── Tier 0: the operator-entered, encrypted key store ───────────────

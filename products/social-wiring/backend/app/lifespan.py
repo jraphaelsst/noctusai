@@ -135,6 +135,17 @@ async def on_startup() -> None:
 
     schedule_clientes_catch_up()
 
+    # Edição de Fotos job worker — OFF unless EDICAO_FOTOS_WORKER_ENABLED.
+    # Isolated so a wiring failure here (it builds Supabase/Redis/storage
+    # adapters) is logged at ERROR and never skips the steps above or aborts
+    # startup: the worker is a side effect, not a precondition for serving.
+    from app.modules.edicao_fotos.services.worker import start_worker as start_fotos_worker
+
+    try:
+        await start_fotos_worker(settings)
+    except Exception:
+        logger.exception("edicao_fotos: worker NÃO iniciado — os lotes ficam na fila.")
+
     logger.info(
         "Social Wiring lifespan startup: ConversationModule ready (org_id=%s).",
         org_id,
@@ -143,6 +154,9 @@ async def on_startup() -> None:
 
 async def on_shutdown() -> None:
     """Stop the worker. Safe to call when startup short-circuited."""
+    from app.modules.edicao_fotos.services.worker import stop_worker as stop_fotos_worker
+
+    await stop_fotos_worker()
     await stop_worker()
     stop_scheduler()
     logger.info("Social Wiring lifespan shutdown complete.")

@@ -81,6 +81,9 @@ _PHOTO_MUTABLE = frozenset(
         "falha_motivo",
     }
 )
+_PLATFORM_MUTABLE = frozenset(
+    {"velocidade_default", "notificacoes_globais_ativas", "preco_storage_gb_mes_usd"}
+)
 _EDIT_MUTABLE = frozenset(
     {"status", "erro", "llm_usage_id", "modelo_versao", "concluida_at"}
 )
@@ -101,6 +104,8 @@ class PhotoEditingRepository(Protocol):
     # --- settings -----------------------------------------------------
     async def get_org_settings(self, org_id: str) -> OrgSettings | None: ...
     async def get_platform_settings(self) -> PlatformSettings: ...
+    async def save_org_settings(self, settings: OrgSettings) -> OrgSettings: ...
+    async def update_platform_settings(self, **changes: Any) -> PlatformSettings: ...
 
     # --- batches ------------------------------------------------------
     async def create_batch(
@@ -116,6 +121,17 @@ class PhotoEditingRepository(Protocol):
     ) -> Batch: ...
     async def get_batch(self, lote_id: str) -> Batch | None: ...
     async def update_batch(self, lote_id: str, **changes: Any) -> Batch: ...
+    async def list_batches(
+        self,
+        *,
+        org_id: str,
+        criado_por: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Batch], int]:
+        """Newest first, scoped to ``org_id`` (and to ``criado_por`` when
+        given). Returns ``(page, total)``."""
+        ...
 
     # --- photos -------------------------------------------------------
     async def add_photo(
@@ -260,13 +276,21 @@ def _utcnow() -> datetime:
 class InMemoryPhotoEditingRepository:
     """Deterministic in-memory repository for dev + tests.
 
-    Ids are ``"<kind>-<n>"`` (stable across runs); ``now`` is injectable.
+    Ids are ``"<kind>-<n>"`` (stable across runs) unless ``id_factory``
+    (``kind -> id``) is given — a consumer whose routes take UUID path
+    params passes one that mints UUIDs. ``now`` is injectable.
     Seed settings / pool / guides with the ``seed_*`` helpers — they are
     test-arrangement conveniences, not Protocol methods.
     """
 
-    def __init__(self, *, now: Callable[[], datetime] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        now: Callable[[], datetime] | None = None,
+        id_factory: Callable[[str], str] | None = None,
+    ) -> None:
         self._now = now or _utcnow
+        self._id_factory = id_factory
         self._seq = itertools.count(1)
         self.org_settings: dict[str, OrgSettings] = {}
         self.platform_settings = PlatformSettings()
@@ -287,6 +311,8 @@ class InMemoryPhotoEditingRepository:
         self.costs: dict[int, CostLedgerRow] = {}
 
     def _id(self, kind: str) -> str:
+        if self._id_factory is not None:
+            return self._id_factory(kind)
         return f"{kind}-{next(self._seq)}"
 
     # --- arrangement helpers ------------------------------------------
@@ -303,6 +329,15 @@ class InMemoryPhotoEditingRepository:
         return self.org_settings.get(org_id)
 
     async def get_platform_settings(self) -> PlatformSettings:
+        return self.platform_settings
+
+    async def save_org_settings(self, settings: OrgSettings) -> OrgSettings:
+        self.org_settings[settings.org_id] = settings
+        return settings
+
+    async def update_platform_settings(self, **changes: Any) -> PlatformSettings:
+        _check_fields("update_platform_settings", changes, _PLATFORM_MUTABLE)
+        self.platform_settings = dataclasses.replace(self.platform_settings, **changes)
         return self.platform_settings
 
     # --- batches ------------------------------------------------------
@@ -339,6 +374,24 @@ class InMemoryPhotoEditingRepository:
         updated = dataclasses.replace(self.batches[lote_id], **changes)
         self.batches[lote_id] = updated
         return updated
+
+    async def list_batches(
+        self,
+        *,
+        org_id: str,
+        criado_por: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Batch], int]:
+        matching = [
+            b
+            for b in self.batches.values()
+            if b.org_id == org_id and (criado_por is None or b.criado_por == criado_por)
+        ]
+        # Newest first; the insertion sequence breaks created_at ties.
+        order = {bid: n for n, bid in enumerate(self.batches)}
+        matching.sort(key=lambda b: (b.created_at or datetime.min, order[b.id]), reverse=True)
+        return matching[offset : offset + limit], len(matching)
 
     # --- photos -------------------------------------------------------
     async def add_photo(
@@ -992,6 +1045,32 @@ class SupabasePhotoEditingRepository:
             decimals=("preco_storage_gb_mes_usd",),
         )
 
+    async def save_org_settings(self, settings: OrgSettings) -> OrgSettings:
+        row = _row_of(settings)
+        row["updated_at"] = self._now().isoformat()
+        rows = await self._execute(
+            self._t("fotos_org_settings").upsert(row, on_conflict="org_id")
+        )
+        if not rows:
+            raise RepositoryError("upsert fotos_org_settings returned no row")
+        return _decode(
+            OrgSettings,
+            rows[0],
+            enums={"velocidade_override": Speed},
+            enum_tuples={"tipos_edicao_ativos": EditType},
+        )
+
+    async def update_platform_settings(self, **changes: Any) -> PlatformSettings:
+        _check_fields("update_platform_settings", changes, _PLATFORM_MUTABLE)
+        changes["updated_at"] = self._now()
+        row = await self._update("fotos_platform_settings", 1, changes)
+        return _decode(
+            PlatformSettings,
+            row,
+            enums={"velocidade_default": Speed},
+            decimals=("preco_storage_gb_mes_usd",),
+        )
+
     # --- batches ------------------------------------------------------
     async def create_batch(
         self,
@@ -1028,6 +1107,26 @@ class SupabasePhotoEditingRepository:
         _check_fields("update_batch", changes, _BATCH_MUTABLE)
         changes["updated_at"] = self._now()
         return _batch(await self._update("fotos_lotes", lote_id, changes))
+
+    async def list_batches(
+        self,
+        *,
+        org_id: str,
+        criado_por: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Batch], int]:
+        # Explicit range: an unbounded select silently caps at 1 000 rows
+        # (KB § PATTERNS/backend/postgrest-row-cap.md).
+        query = self._t("fotos_lotes").select("*", count="exact").eq("org_id", org_id)
+        if criado_por is not None:
+            query = query.eq("criado_por", criado_por)
+        result = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+        if hasattr(result, "__await__"):
+            result = await result
+        data = getattr(result, "data", None) or []
+        total = getattr(result, "count", None)
+        return [_batch(r) for r in data], int(total if total is not None else len(data))
 
     # --- photos -------------------------------------------------------
     async def add_photo(

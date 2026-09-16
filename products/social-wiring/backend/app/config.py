@@ -237,6 +237,18 @@ class SocialWiringSettings(ProductSettings):
     vista_base_url: str = ""
     vista_api_key: str = ""
 
+    # ─── Edição de Fotos (app/modules/edicao_fotos) ─────────────────────
+    # The photo-editing job worker (seed `domain.jobs.Worker` over the
+    # engine's handlers). OFF by default and meant to stay off in prod until
+    # the OpenAI account has credits: every job it would run is an OpenAI
+    # call. With it off, batches can still be created, filled and submitted —
+    # the jobs wait in `social_wiring.jobs` and drain once it is enabled.
+    edicao_fotos_worker_enabled: bool = False
+    edicao_fotos_worker_poll_seconds: float = 2.0
+    # Per-org cap on AI edits in a rolling 24h window (C6 — cost exposure).
+    # A finite default, never "unlimited by omission"; 0 blocks every edit.
+    edicao_fotos_edicoes_por_dia: int = 300
+
     # ─── WhatsApp inbound (Phase 5) ────────────────────────────────────
     # Comma-separated E.164 phone numbers authorized to trigger uploads
     whatsapp_authorized_numbers: str = "+5511974693365"

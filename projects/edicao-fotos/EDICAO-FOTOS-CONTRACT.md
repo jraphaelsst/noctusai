@@ -12,8 +12,13 @@
   rule) and `403` when the role matrix denies.
 - Org scoping: every resource is `org_id`-scoped and RLS-enforced except the two
   documented platform-scope tables (reference pool, style guides).
-- Errors: typed envelope `{"detail": {"code": "...", "message": "..."}}`. No silent
-  fallbacks; a missing dependency returns `503` with a named cause.
+- Errors: typed envelope `{"detail": "<pt-BR message>", "code": "<machine code>"}` —
+  the seed's machine-error shape (`noctusai_lib.primitives.exceptions.
+  http_exception_handler` passes it through flat; the seed FE `ApiError.code` reads
+  it). *Corrected 2026-09-16 (W2): the draft said `{"detail": {"code", "message"}}`,
+  which the seed handler stringifies — the code never reached the client.* No silent
+  fallbacks; a missing dependency returns `503` with a named cause. Request-shape
+  validation failures keep the seed's `422 VALIDATION_ERROR` envelope.
 - Pagination: `?page=1&page_size=50` → `{items, page, page_size, total}`.
 - Timestamps: ISO-8601 UTC. Money: integer cents + explicit `currency`.
 
