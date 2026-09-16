@@ -308,9 +308,11 @@ MODULES = [
     _permutas,
     # Edição de Fotos (R1). `/api/edicao-fotos/<section>` is a unique literal
     # prefix with no 1-segment dynamic path at its root, so its position is
-    # free. Declares one upload route (see `_MAX_BODY_PATH_OVERRIDES`) and
-    # schedules no APScheduler job — its job worker starts from
-    # app/lifespan.py behind EDICAO_FOTOS_WORKER_ENABLED.
+    # free. Declares one upload route (see `_MAX_BODY_PATH_OVERRIDES`),
+    # registers its own two seed-scheduler jobs from `register()` (W8: daily
+    # model notes + PTAX backfill), and its job worker starts from
+    # app/lifespan.py (EDICAO_FOTOS_WORKER_ENABLED = kill switch; the live
+    # pause is the `processamento_ativo` platform setting).
     _edicao_fotos,
 ]
 

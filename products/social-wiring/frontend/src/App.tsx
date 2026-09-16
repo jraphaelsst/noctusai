@@ -64,6 +64,7 @@ import {
   ImagePlus,
   Images,
   BookOpen,
+  Cpu,
   Plus,
 } from "lucide-react";
 
@@ -125,6 +126,8 @@ const EdicaoFotosLoteRevisao = lazyWithReload(() => import("@/pages/edicao-fotos
 const EdicaoFotosConfiguracoes = lazyWithReload(() => import("@/pages/edicao-fotos/Configuracoes"));
 const EdicaoFotosReferencias = lazyWithReload(() => import("@/pages/edicao-fotos/Referencias"));
 const EdicaoFotosGuiasEstilo = lazyWithReload(() => import("@/pages/edicao-fotos/GuiasEstilo"));
+const EdicaoFotosModelos = lazyWithReload(() => import("@/pages/edicao-fotos/Modelos"));
+const EdicaoFotosProcessamento = lazyWithReload(() => import("@/pages/edicao-fotos/Processamento"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -249,7 +252,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     // `pode_ativar_guia`). LoteRevisao (`/edicao-fotos/lotes/:loteId/revisao`)
     // is a detail route reached from a Lotes card, not a standalone nav item
     // — same shape as `/imoveis/:codigo` next to the `imoveis` nav entry.
-    // Modelos, Regras, Curadores, Painel are later slices; their
+    // W8 added Modelos + Processamento. Regras, Curadores, Painel are later slices; their
     // `status_pagina` rows already exist (migration 128) but no nav entries
     // point at them yet. Route slugs below match
     // migration 128's `nome_pagina` values EXACTLY (its own explicit
@@ -269,6 +272,16 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       },
       { name: "Referências", href: "/edicao-fotos/referencias", icon: Images, route: "edicao-fotos-referencias" },
       { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen, route: "edicao-fotos-guias" },
+      // W8 — platform-admin pages (they lock themselves without
+      // `pode_administrar_plataforma`). `edicao-fotos-modelos` is migration
+      // 128's row; `edicao-fotos-processamento` is migration 130's.
+      { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu, route: "edicao-fotos-modelos" },
+      {
+        name: "Processamento",
+        href: "/edicao-fotos/processamento",
+        icon: Activity,
+        route: "edicao-fotos-processamento",
+      },
     ],
   },
   {
@@ -394,6 +407,8 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Configurações", href: "/edicao-fotos/configuracoes", icon: Settings2 },
       { name: "Referências", href: "/edicao-fotos/referencias", icon: Images },
       { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen },
+      { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu },
+      { name: "Processamento", href: "/edicao-fotos/processamento", icon: Activity },
     ],
   },
   {
@@ -448,6 +463,8 @@ export default createProductApp({
     { path: "/edicao-fotos/configuracoes", component: EdicaoFotosConfiguracoes },
     { path: "/edicao-fotos/referencias", component: EdicaoFotosReferencias },
     { path: "/edicao-fotos/guias", component: EdicaoFotosGuiasEstilo },
+    { path: "/edicao-fotos/modelos", component: EdicaoFotosModelos },
+    { path: "/edicao-fotos/processamento", component: EdicaoFotosProcessamento },
     { path: "/clientes", component: ClientesBoard },
     { path: "/clientes/revisao", component: RevisaoFila },
     { path: "/email-marketing/listas", component: EmailListas },

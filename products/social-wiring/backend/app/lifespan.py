@@ -135,16 +135,23 @@ async def on_startup() -> None:
 
     schedule_clientes_catch_up()
 
-    # Edição de Fotos job worker — OFF unless EDICAO_FOTOS_WORKER_ENABLED.
+    # Edição de Fotos job worker — started unless EDICAO_FOTOS_WORKER_ENABLED
+    # is false (the kill switch); it claims nothing while the platform
+    # setting `processamento_ativo` is off (the live pause, W8).
     # Isolated so a wiring failure here (it builds Supabase/Redis/storage
     # adapters) is logged at ERROR and never skips the steps above or aborts
     # startup: the worker is a side effect, not a precondition for serving.
+    from app.modules.edicao_fotos.services.scheduler import (
+        schedule_catch_up as schedule_fotos_catch_up,
+    )
     from app.modules.edicao_fotos.services.worker import start_worker as start_fotos_worker
 
     try:
         await start_fotos_worker(settings)
     except Exception:
         logger.exception("edicao_fotos: worker NÃO iniciado — os lotes ficam na fila.")
+    # Daily model-notes catch-up — same reason and shape as the Vista one.
+    schedule_fotos_catch_up()
 
     logger.info(
         "Social Wiring lifespan startup: ConversationModule ready (org_id=%s).",

@@ -34,6 +34,7 @@ def _concrete(path: str) -> str:
         .replace("{user_id}", _ID)
         .replace("{referencia_id}", _ID)
         .replace("{versao}", "1")
+        .replace("{modelo_id}", "gpt-image-2")
     )
 
 
@@ -46,7 +47,7 @@ def test_module_is_mounted_on_the_app() -> None:
 
 def test_every_route_requires_auth(anon_client) -> None:
     routes = _routes()
-    assert len(routes) == 27, sorted(routes)
+    assert len(routes) == 36, sorted(routes)
     for method, path in sorted(routes):
         # No body at all: a JSON body on the multipart route (or a missing
         # one on a JSON route) must not be what decides the status.
@@ -86,6 +87,17 @@ _FORBIDDEN = [
     ("post", "/api/edicao-fotos/guias/regenerar", None, "corretor"),
     ("post", "/api/edicao-fotos/guias/{versao}/ativar", None, "admin"),
     ("post", "/api/edicao-fotos/guias/{versao}/restaurar", None, "viewer"),
+    # W8 — model catalog admin + processing: platform admin only; an agency
+    # admin (org owner) and a curator are both refused.
+    ("get", "/api/edicao-fotos/modelos/catalogo", None, "admin"),
+    ("put", "/api/edicao-fotos/modelos/catalogo/{modelo_id}", {"kind": "image_edit"}, "admin"),
+    ("get", "/api/edicao-fotos/modelos/catalogo/{modelo_id}/versoes", None, "curador"),
+    ("get", "/api/edicao-fotos/modelos/etapas", None, "gerente"),
+    ("put", "/api/edicao-fotos/modelos/etapas", {}, "admin"),
+    ("post", "/api/edicao-fotos/modelos/notas/gerar", None, "admin"),
+    ("get", "/api/edicao-fotos/processamento", None, "admin"),
+    ("put", "/api/edicao-fotos/processamento", {"ativo": True}, "admin"),
+    ("post", "/api/edicao-fotos/processamento/sonda", None, "curador"),
 ]
 
 

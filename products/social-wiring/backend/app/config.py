@@ -239,12 +239,25 @@ class SocialWiringSettings(ProductSettings):
 
     # ─── Edição de Fotos (app/modules/edicao_fotos) ─────────────────────
     # The photo-editing job worker (seed `domain.jobs.Worker` over the
-    # engine's handlers). OFF by default and meant to stay off in prod until
-    # the OpenAI account has credits: every job it would run is an OpenAI
-    # call. With it off, batches can still be created, filled and submitted —
-    # the jobs wait in `social_wiring.jobs` and drain once it is enabled.
-    edicao_fotos_worker_enabled: bool = False
+    # engine's handlers). Two switches, deliberately different:
+    #
+    # - `EDICAO_FOTOS_WORKER_ENABLED` — the HARD kill switch (env, needs a
+    #   restart). Default ON since W8: the owner wants the worker built and
+    #   running, ready for when OpenAI has credits. Set it false to keep the
+    #   worker from even starting in a process.
+    # - `fotos_platform_settings.processamento_ativo` — the LIVE pause switch
+    #   (UI toggle "Processamento ativo", no redeploy). Default OFF (migration
+    #   130; a pre-130 database also reads as off). While it is off the worker
+    #   runs but claims nothing: batches can be created, filled and submitted,
+    #   and their jobs wait in `social_wiring.jobs`.
+    edicao_fotos_worker_enabled: bool = True
     edicao_fotos_worker_poll_seconds: float = 2.0
+    # How long the worker trusts its last read of `processamento_ativo`
+    # (a toggle reaches other processes within this many seconds).
+    edicao_fotos_gate_ttl_seconds: float = 10.0
+    # How often each process reloads the model-catalog overrides the platform
+    # admin edits in the UI (a save refreshes its own process immediately).
+    edicao_fotos_catalog_refresh_seconds: float = 60.0
     # Per-org cap on AI edits in a rolling 24h window (C6 — cost exposure).
     # A finite default, never "unlimited by omission"; 0 blocks every edit.
     edicao_fotos_edicoes_por_dia: int = 300

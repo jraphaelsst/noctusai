@@ -20,6 +20,7 @@ from noctusai_lib.domain.photo_editing.costs import CATEGORY_OPENAI_TEXT, record
 from noctusai_lib.domain.photo_editing.guide import normalize_text
 from noctusai_lib.domain.photo_editing.ports import PhotoEditingPorts
 from noctusai_lib.domain.photo_editing.prompts import render_rule_proposer_prompt
+from noctusai_lib.domain.photo_editing.steps import Step, resolve_step_model
 from noctusai_lib.domain.photo_editing.types import (
     AGENCY_ADMIN_ROLES,
     JobType,
@@ -141,11 +142,12 @@ async def propose_rules(ports: PhotoEditingPorts, org_id: str) -> list[OrgRule]:
     ]
     comments = [d.comentario or "" for d in rejections]
     rendered = render_rule_proposer_prompt(comments, [r.texto for r in existing])
+    model = await resolve_step_model(ports, Step.REGRAS)
     result = await ports.llm.analyze(
         images=[],
         prompt=rendered.text,
         response_schema=rendered.response_schema or {},
-        model=cfg.rule_proposer_model,
+        model=model,
         org_id=org_id,
         schema_name="propor_regras",
     )
@@ -158,7 +160,7 @@ async def propose_rules(ports: PhotoEditingPorts, org_id: str) -> list[OrgRule]:
             category=CATEGORY_OPENAI_TEXT,
             operation="chat",
             kind="chat",
-            model=cfg.rule_proposer_model,
+            model=model,
             usage=result.usage,
             model_version=result.model_version,
         )

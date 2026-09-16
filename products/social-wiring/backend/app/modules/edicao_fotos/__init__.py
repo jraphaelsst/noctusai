@@ -10,12 +10,14 @@ storage bucket, notification fan-out and the worker lifecycle. Contract:
 
     deps.py                 actor + role guards + DI seams (ports, grants, Vista)
     services/ports.py       engine ports → real adapters
-    services/worker.py      seed Worker, behind EDICAO_FOTOS_WORKER_ENABLED (default OFF)
+    services/worker.py      seed Worker: EDICAO_FOTOS_WORKER_ENABLED = kill switch (default ON);
+                            `processamento_ativo` = live pause (default OFF) · catalog refresher
+    services/scheduler.py   00:05 model notes + PTAX backfill (seed scheduler, lease, catch-up)
     services/notifier.py    batch-ready in-app notification
     services/vista_fotos.py Vista gallery → batch
     services/review.py      FotoRevisao rows (verdict read only for admins) + URL signing
     routers/                capacidades · configuracoes · curadores · modelos · lotes · revisao
-                            · referencias · guias
+                            · referencias · guias · processamento
 
 Response shapes are the seed FE hook types
 (`seed/lib/frontend/src/photo-editing/hooks.ts`), pinned by
@@ -30,7 +32,16 @@ Routes (all under ``/api/edicao-fotos``; every one requires auth → 401):
     GET    /curadores                                platform admin
     POST   /curadores                                platform admin
     DELETE /curadores/{user_id}                      platform admin
-    GET    /modelos                                  member (catalog; metrics/notes null until W8)
+    GET    /modelos                                  member (catalog; metrics + notes for admins)
+    GET    /modelos/catalogo                         platform admin (every row, incl. disabled)
+    PUT    /modelos/catalogo/{modelo_id}             platform admin (versioned override)
+    GET    /modelos/catalogo/{modelo_id}/versoes     platform admin
+    GET    /modelos/etapas                           platform admin (model per engine step)
+    PUT    /modelos/etapas                           platform admin
+    POST   /modelos/notas/gerar                      platform admin (enqueue fotos.notas_modelos)
+    GET    /processamento                            platform admin (switch · worker · queue · probe)
+    PUT    /processamento                            platform admin (pause/resume, live)
+    POST   /processamento/sonda                      platform admin (OpenAI key/credit probe)
     GET    /lotes                                    member (corretor: own)
     POST   /lotes                                    member
     GET    /lotes/{id}                               member, batch visible
@@ -50,7 +61,7 @@ Routes (all under ``/api/edicao-fotos``; every one requires auth → 401):
     POST   /guias/{versao}/ativar                    platform admin ∨ curator
     POST   /guias/{versao}/restaurar                 platform admin ∨ curator (clone as new draft)
 
-Not in R1 here (later slices): learning rules, model metrics/notes,
+Not in R1 here (later slices): learning rules,
 dashboard, email/WhatsApp notifications, Econômico (C8).
 
 Seam contract
@@ -77,9 +88,14 @@ def register() -> Any:
         guias,
         lotes,
         modelos,
+        processamento,
         referencias,
         revisao,
     )
+    from app.modules.edicao_fotos.services import scheduler as fotos_scheduler
+
+    # W8: daily model notes (00:05) + PTAX backfill, on the seed scheduler.
+    fotos_scheduler.configure()
 
     return ModuleRegistration(
         routers=[
@@ -91,6 +107,7 @@ def register() -> Any:
             revisao.router,
             referencias.router,
             guias.router,
+            processamento.router,
         ],
         standard_routers=(),
     )
