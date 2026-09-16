@@ -1,0 +1,14 @@
+consented_by: joaoraphaelsst@gmail.com
+consented_on: 2026-09-16
+consent_ref: 'project-history/roadmaps/julia-agents-academia-2026-09.md#M6: prod promote'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "I authorize academia-de-reciclagem to be published to production."
+  prompt_source: queued
+  tier: performative
+  evidence_rank: canonical-exact/other
+  candidates_considered: 1
+  session_id: 19ace9aa-6aa8-4c95-8003-b6247731ebf7
+  transcript_sha256: 34b399025cfdb3c4374f7296d5e835b54e7ddf1ee497598122eab4bdc322e1b4
+  recorded_at: 2026-09-16T16:03:36+00:00
