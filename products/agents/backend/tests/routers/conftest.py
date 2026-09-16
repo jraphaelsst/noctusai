@@ -186,17 +186,29 @@ def seed_active_agent_and_persona(agents_client, *, ativo: bool = True):
     return agent
 
 
-def install_runtime(agents_client, script, *, timeout_seconds: float = 30.0):
+def install_runtime(
+    agents_client, script, *, timeout_seconds: float = 30.0, capacity: int | None = None
+):
     """Override the runtime/broker dependency seams with G2's REAL
     implementations: a scripted ``FakeAgentRuntime`` (never a G1b stand-in)
     and a ``StoreApprovalBroker`` bound to THIS test's own approvals store.
     Returns ``(runtime, broker)`` — tests that need to drive a real
     ``broker.request()``/``resolve()`` round-trip use the returned broker
     only for introspection; the actual `resolve()` call happens through
-    the HTTP endpoint, exactly like a real caller."""
+    the HTTP endpoint, exactly like a real caller.
+
+    ``capacity`` (contract §E.11) sizes the runtime's internal
+    ``FakeSlotPool`` — ``None`` keeps ``FakeAgentRuntime``'s own default
+    (``DEFAULT_SLOT_COUNT``, matching the real deploy's 3 slots). B4's
+    capacity/429 tests pass a small explicit value so the pool exhausts
+    with few requests."""
     from app.main import app
 
-    runtime = FakeAgentRuntime(script)
+    runtime = (
+        FakeAgentRuntime(script, capacity=capacity)
+        if capacity is not None
+        else FakeAgentRuntime(script)
+    )
     broker = StoreApprovalBroker(
         agents_client.stores.approvals, timeout_seconds=timeout_seconds, instance_id="test-instance"
     )

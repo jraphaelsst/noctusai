@@ -51,8 +51,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 9 | 0 | 15 | 8 | 18 | 146 |
-| Agents | 4 | 0 | 12 | 9 | 31 | 247 |
-| **Total** | **232** | **235** | **464** | **299** | **728** | **9,924** |
+| Agents | 4 | 0 | 12 | 9 | 32 | 254 |
+| **Total** | **232** | **235** | **464** | **299** | **729** | **9,931** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

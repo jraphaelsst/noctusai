@@ -9,7 +9,7 @@ per field (``NOC-REMEDIATE[config-merge]`` closed).
 """
 from __future__ import annotations
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 
 from noctusai_lib.config.csv_settings import parse_csv_setting, reject_json_array
 from noctusai_seed import ProductSettings
@@ -29,7 +29,11 @@ class SeedSettings(ProductSettings):
     # ── Approvals (contract §E.2 / §D) ──────────────────────────────────
     # An unanswered approval request becomes `expirada` after this many
     # seconds; the waiting tool call is then denied (app/runtime/broker.py).
-    approval_timeout_seconds: int = 900
+    # Default 300 (user decision 2026-09-15, down from 900, contract
+    # §E.11 "Timeout") — a waiting approval holds one of Julia's three
+    # slots, so the timeout also bounds how long a pending approval can
+    # block a slot from returning to the pool.
+    approval_timeout_seconds: int = 300
 
     # Contract §E.10 (security review 2026-09-14): the escrita handler
     # refuses `approval_invalid` once `decided_at` is older than this —
@@ -120,5 +124,39 @@ class SeedSettings(ProductSettings):
     # env var, then to 3) to discover the fixed slot set. User decision
     # 2026-09-15: 3 slots.
     julia_cli_slots: int = 3
+
+    # ── Turn deadline + lock TTL (contract §E.11 "Route order") ─────────
+    # A turn's whole `run_turn(...)` iteration is wrapped in
+    # `asyncio.timeout(turn_timeout_seconds)` (app/routers/
+    # conversations_router.py::_run_turn_background). Default 600 —
+    # generous headroom over a real Julia turn, bounded so a stuck
+    # subprocess can never hold a slot forever.
+    turn_timeout_seconds: int = 600
+
+    # How long `POST .../messages` holds the per-conversation turn lock
+    # before another request is allowed to reclaim it (crash recovery).
+    # Was a bare module constant in conversations_router.py; moved here
+    # so the invariant below can be enforced once, at settings
+    # construction, instead of scattered across call sites.
+    turn_lock_ttl_seconds: int = 900
+
+    @model_validator(mode="after")
+    def _turn_lock_ttl_outlives_turn_timeout(self) -> "SeedSettings":
+        """Fail loud at boot (contract §E.11 "Route order": "`_TURN_LOCK_
+        TTL_SECONDS` must stay greater than `TURN_TIMEOUT_SECONDS`") — a
+        lock TTL at or below the turn deadline would let a SECOND request
+        reclaim the lock via crash-recovery while the FIRST turn is still
+        legitimately running (merely slow, not crashed), corrupting the
+        "at most one live turn per conversation" invariant this lock
+        exists to enforce."""
+        if self.turn_lock_ttl_seconds <= self.turn_timeout_seconds:
+            raise ValueError(
+                "turn_lock_ttl_seconds "
+                f"({self.turn_lock_ttl_seconds}) must be greater than "
+                f"turn_timeout_seconds ({self.turn_timeout_seconds}) — a "
+                "turn that legitimately runs right up to its own deadline "
+                "must never have its lock reclaimed as if it had crashed."
+            )
+        return self
 
 settings = SeedSettings()

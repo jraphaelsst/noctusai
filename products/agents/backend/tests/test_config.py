@@ -78,3 +78,36 @@ class TestApprovalAssertionSecretsCsvBoot:
         monkeypatch.setenv("APPROVAL_ASSERTION_SECRETS", '["k1","k2"]')
         with pytest.raises(ValueError, match="APPROVAL_ASSERTION_SECRETS"):
             _fresh_import_app_config()
+
+
+class TestTurnDeadlineAndLockTtlSettings:
+    """Contract §E.11 "Route order": `_TURN_LOCK_TTL_SECONDS` (now
+    `settings.turn_lock_ttl_seconds`) must stay greater than
+    `settings.turn_timeout_seconds`. Also pins the user decision
+    (2026-09-15) dropping `approval_timeout_seconds` from 900 to 300."""
+
+    def test_defaults(self) -> None:
+        from app.config import SeedSettings
+
+        s = SeedSettings()
+        assert s.approval_timeout_seconds == 300
+        assert s.turn_timeout_seconds == 600
+        assert s.turn_lock_ttl_seconds == 900
+
+    def test_lock_ttl_equal_to_turn_timeout_fails_loud(self) -> None:
+        from app.config import SeedSettings
+
+        with pytest.raises(ValueError, match="turn_lock_ttl_seconds"):
+            SeedSettings(turn_lock_ttl_seconds=600, turn_timeout_seconds=600)
+
+    def test_lock_ttl_below_turn_timeout_fails_loud(self) -> None:
+        from app.config import SeedSettings
+
+        with pytest.raises(ValueError, match="turn_lock_ttl_seconds"):
+            SeedSettings(turn_lock_ttl_seconds=100, turn_timeout_seconds=600)
+
+    def test_lock_ttl_above_turn_timeout_boots(self) -> None:
+        from app.config import SeedSettings
+
+        s = SeedSettings(turn_lock_ttl_seconds=601, turn_timeout_seconds=600)
+        assert s.turn_lock_ttl_seconds == 601

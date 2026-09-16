@@ -1,5 +1,5 @@
 """``/api/conversations`` — list/create/read + the turn loop + SSE stream
-(contract §E.2, §E.3, §E.9, ``projects/julia-agents-academia-CONTRACT.md``).
+(contract §E.2, §E.3, §E.9, §E.11, ``projects/julia-agents-academia-CONTRACT.md``).
 
 The turn loop (``_run_turn_background``) is the sole consumer of the E.9
 runtime seam. It imports the STABLE, dependency-free ``TurnContext``
@@ -8,7 +8,9 @@ runtime/broker/spec-builder INSTANCES via the lazy dependency functions in
 ``app/dependencies.py`` — ``get_agent_runtime``'s real branch conditionally
 imports ``claude_agent_sdk``, a cost worth deferring to the first request
 that actually needs it. Drives exactly the sequence contract §E.9 "What
-the routes must do with a turn" describes.
+the routes must do with a turn" describes, per the §E.11 "Route order"
+revision: reserve a slot, THEN acquire the turn lock, THEN persist the
+user message, THEN start the task under a turn deadline.
 """
 # NOTE: deliberately NO `from __future__ import annotations` here — this
 # router has `@limiter.limit(...)`-decorated routes, and with postponed
@@ -69,10 +71,6 @@ router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 #: what "this instance" means. A module-level constant (not per-request)
 #: because the lock/expiry semantics are process-scoped, not request-scoped.
 INSTANCE_ID = f"agents-{uuid4().hex[:12]}"
-
-#: Generous upper bound on how long a turn may hold the lock before another
-#: request is allowed to reclaim it (crash recovery — see migration header).
-_TURN_LOCK_TTL_SECONDS = 15 * 60
 
 _NOT_FOUND = {"detail": "Conversa não encontrada.", "code": "not_found"}
 
@@ -268,36 +266,71 @@ async def post_message(
             detail={"detail": "O agente Julia está desligado.", "code": "agent_off"},
         )
 
-    # Contract §E.9 point 1: persist the user message, THEN try_acquire_turn.
-    user_message = msg_store.add(ctx.org_id, conversation_id, "user", payload.texto)
-    await publish_event(conversation_id, "message.new", _message_payload(user_message), bus=bus)
-
-    acquired = conv_store.try_acquire_turn(
-        ctx.org_id, conversation_id, INSTANCE_ID, _TURN_LOCK_TTL_SECONDS
-    )
-    if not acquired:
+    # Contract §E.11 "Route order", step 1: reserve a slot BEFORE the turn
+    # lock and BEFORE persisting anything. A 429 here leaves zero trace —
+    # no user message, no lock taken.
+    slot = runtime.try_reserve()
+    if slot is None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"detail": "Já existe um turno em andamento.", "code": "turn_in_progress"},
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "detail": (
+                    "A Julia está atendendo o número máximo de conversas "
+                    "agora. Tente novamente em instantes."
+                ),
+                "code": "julia_capacidade",
+            },
+            headers={"Retry-After": "10"},
         )
 
-    task = asyncio.create_task(
-        _run_turn_background(
-            org_id=ctx.org_id,
-            conversation_id=conversation_id,
-            agent_id=agent.id,
-            owner_user_id=ctx.user_id,
-            prompt=payload.texto,
-            runtime=runtime,
-            broker=broker,
-            build_spec=build_spec,
-            conv_store=conv_store,
-            msg_store=msg_store,
-            persona_store=persona_store,
-            bus=bus,
+    # Steps 2-4: acquire the turn lock, THEN persist the user message,
+    # THEN start the task (fixes the orphan-message bug: the message used
+    # to persist before the lock, so a 409 could leave an orphan user
+    # message with no turn ever started for it). Any failure in this
+    # block — including the 409 raised below — must release the slot;
+    # once the lock is also held, it must be released too, since the
+    # background task (the only OTHER thing that releases it) never got
+    # to start.
+    acquired = False
+    try:
+        acquired = conv_store.try_acquire_turn(
+            ctx.org_id, conversation_id, INSTANCE_ID, settings.turn_lock_ttl_seconds
         )
-    )
-    _track_background_task(request.app.state, task)
+        if not acquired:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"detail": "Já existe um turno em andamento.", "code": "turn_in_progress"},
+            )
+
+        user_message = msg_store.add(ctx.org_id, conversation_id, "user", payload.texto)
+        await publish_event(conversation_id, "message.new", _message_payload(user_message), bus=bus)
+
+        task = asyncio.create_task(
+            _run_turn_background(
+                org_id=ctx.org_id,
+                conversation_id=conversation_id,
+                agent_id=agent.id,
+                owner_user_id=ctx.user_id,
+                prompt=payload.texto,
+                runtime=runtime,
+                broker=broker,
+                build_spec=build_spec,
+                conv_store=conv_store,
+                msg_store=msg_store,
+                persona_store=persona_store,
+                bus=bus,
+                slot=slot,
+            )
+        )
+        _track_background_task(request.app.state, task)
+    except BaseException:
+        # `BaseException`, not `Exception` — a cancelled request (the
+        # client disconnecting mid-handler) must release the slot too;
+        # cleanup-then-propagate is correct for a cancellation as well.
+        if acquired:
+            conv_store.release_turn(ctx.org_id, conversation_id, INSTANCE_ID)
+        await slot.release()
+        raise
 
     return MessagePostResponse(mensagem=_message_out(user_message), status="processando")
 
@@ -446,8 +479,11 @@ async def _run_turn_background(
     msg_store: Any,
     persona_store: Any,
     bus: Any,
+    slot: Any,
 ) -> None:
-    """Contract §E.9 "What the routes must do with a turn", points 2-6.
+    """Contract §E.9 "What the routes must do with a turn", points 2-6,
+    wrapped per §E.11 "Route order" in a turn deadline
+    (``asyncio.timeout(settings.turn_timeout_seconds)``).
 
     Every collaborator (``runtime`` / ``broker`` / ``build_spec`` / the
     three stores) is resolved by the caller (the route handler) via
@@ -455,110 +491,139 @@ async def _run_turn_background(
     never calls a store factory itself, so it works identically against
     the real runtime (``app.runtime.claude_runtime.ClaudeAgentSdkRuntime``)
     and against G2's ``app.runtime.fake_runtime.FakeAgentRuntime`` over a
-    test's own shared, stateful Fake store."""
+    test's own shared, stateful Fake store.
+
+    ``slot`` is the :class:`~app.runtime.slots.TurnSlot` the route already
+    reserved (contract §E.11) — this function's ``finally`` releases the
+    turn lock FIRST, then the slot, on every exit path: normal
+    completion, a runtime exception, the turn deadline, or task
+    cancellation."""
     current_message_id: UUID | None = None
     current_blocks: list[dict[str, Any]] = []
 
     try:
-        persona = persona_store.get_active(org_id, agent_id)
-        conversation = conv_store.get_owned(org_id, conversation_id, owner_user_id)
+        async with asyncio.timeout(settings.turn_timeout_seconds):
+            persona = persona_store.get_active(org_id, agent_id)
+            conversation = conv_store.get_owned(org_id, conversation_id, owner_user_id)
 
-        spec = build_spec(persona)
-        turn_ctx = TurnContext(
-            org_id=org_id,
-            conversation_id=conversation_id,
-            requested_by=owner_user_id,
-            instance_id=INSTANCE_ID,
-            sdk_session_id=conversation.sdk_session_id,
-        )
+            spec = build_spec(persona)
+            turn_ctx = TurnContext(
+                org_id=org_id,
+                conversation_id=conversation_id,
+                requested_by=owner_user_id,
+                instance_id=INSTANCE_ID,
+                sdk_session_id=conversation.sdk_session_id,
+            )
 
-        # Contract §E.3 canonical fixture — bookends the turn's
-        # `session.status` transitions the same way the failure branch
-        # below bookends `erro`: the runtime only ever yields its OWN
-        # final status (it has no reason to know the turn is starting
-        # before it starts), so the route publishes the opening
-        # "pensando" itself. Ephemeral — never persisted, same as
-        # `message.delta`.
-        await publish_event(conversation_id, "session.status", {"status": "pensando"}, bus=bus)
+            # Contract §E.3 canonical fixture — bookends the turn's
+            # `session.status` transitions the same way the failure branch
+            # below bookends `erro`: the runtime only ever yields its OWN
+            # final status (it has no reason to know the turn is starting
+            # before it starts), so the route publishes the opening
+            # "pensando" itself. Ephemeral — never persisted, same as
+            # `message.delta`.
+            await publish_event(conversation_id, "session.status", {"status": "pensando"}, bus=bus)
 
-        async for event in runtime.run_turn(spec, turn_ctx, prompt, broker):
-            kind = event["event"]
-            evt_payload = event["payload"]
+            async for event in runtime.run_turn(spec, turn_ctx, prompt, broker, slot=slot):
+                kind = event["event"]
+                evt_payload = event["payload"]
 
-            if kind == "message.new":
-                record = msg_store.add(
-                    org_id, conversation_id, "assistant", evt_payload.get("texto", ""),
-                    blocks=[],
-                )
-                current_message_id = record.id
-                current_blocks = []
-                await publish_event(
-                    conversation_id, "message.new", _message_payload(record), bus=bus
-                )
-            elif kind == "message.delta":
-                # Contract §E.9 point 4: published only, never persisted.
-                await publish_event(conversation_id, "message.delta", evt_payload, bus=bus)
-            elif kind in ("tool.started", "tool.finished"):
-                current_message_id, current_blocks = await _apply_and_publish_block_event(
-                    org_id=org_id,
-                    conversation_id=conversation_id,
-                    kind=kind,
-                    evt_payload=evt_payload,
-                    current_message_id=current_message_id,
-                    current_blocks=current_blocks,
-                    msg_store=msg_store,
-                    bus=bus,
-                    apply_fn=_apply_tool_event,
-                )
-            elif kind in ("approval.requested", "approval.resolved"):
-                current_message_id, current_blocks = await _apply_and_publish_block_event(
-                    org_id=org_id,
-                    conversation_id=conversation_id,
-                    kind=kind,
-                    evt_payload=evt_payload,
-                    current_message_id=current_message_id,
-                    current_blocks=current_blocks,
-                    msg_store=msg_store,
-                    bus=bus,
-                    apply_fn=_apply_approval_event,
-                )
-            elif kind == "session.resume_fallback":
-                # Contract §E.9 "Resume after a restart" — a distinct
-                # `system` message, deliberately NOT threaded through the
-                # assistant-message block accumulator above (it isn't a
-                # tool/approval block, and it must render as its own
-                # message per the fixed PT-BR text).
-                system_record = msg_store.add(
-                    org_id, conversation_id, "system", evt_payload.get("texto", "")
-                )
-                await publish_event(
-                    conversation_id, "message.new", _message_payload(system_record), bus=bus
-                )
-            elif kind == "session.status":
-                sdk_session_id = evt_payload.get("sdk_session_id")
-                await publish_event(conversation_id, "session.status", evt_payload, bus=bus)
-                if sdk_session_id:
-                    # Canonical fixture: `conversation.upsert` follows the
-                    # terminal `session.status` — the route re-publishes
-                    # the conversation row it just persisted so list views
-                    # pick up the new `sdk_session_id` live, without a
-                    # refetch.
-                    updated_conv = conv_store.set_sdk_session_id(
-                        org_id, conversation_id, sdk_session_id
+                if kind == "message.new":
+                    record = msg_store.add(
+                        org_id, conversation_id, "assistant", evt_payload.get("texto", ""),
+                        blocks=[],
+                    )
+                    current_message_id = record.id
+                    current_blocks = []
+                    await publish_event(
+                        conversation_id, "message.new", _message_payload(record), bus=bus
+                    )
+                elif kind == "message.delta":
+                    # Contract §E.9 point 4: published only, never persisted.
+                    await publish_event(conversation_id, "message.delta", evt_payload, bus=bus)
+                elif kind in ("tool.started", "tool.finished"):
+                    current_message_id, current_blocks = await _apply_and_publish_block_event(
+                        org_id=org_id,
+                        conversation_id=conversation_id,
+                        kind=kind,
+                        evt_payload=evt_payload,
+                        current_message_id=current_message_id,
+                        current_blocks=current_blocks,
+                        msg_store=msg_store,
+                        bus=bus,
+                        apply_fn=_apply_tool_event,
+                    )
+                elif kind in ("approval.requested", "approval.resolved"):
+                    current_message_id, current_blocks = await _apply_and_publish_block_event(
+                        org_id=org_id,
+                        conversation_id=conversation_id,
+                        kind=kind,
+                        evt_payload=evt_payload,
+                        current_message_id=current_message_id,
+                        current_blocks=current_blocks,
+                        msg_store=msg_store,
+                        bus=bus,
+                        apply_fn=_apply_approval_event,
+                    )
+                elif kind == "session.resume_fallback":
+                    # Contract §E.9 "Resume after a restart" — a distinct
+                    # `system` message, deliberately NOT threaded through the
+                    # assistant-message block accumulator above (it isn't a
+                    # tool/approval block, and it must render as its own
+                    # message per the fixed PT-BR text).
+                    system_record = msg_store.add(
+                        org_id, conversation_id, "system", evt_payload.get("texto", "")
                     )
                     await publish_event(
-                        conversation_id,
-                        "conversation.upsert",
-                        _conversation_payload(updated_conv),
-                        bus=bus,
+                        conversation_id, "message.new", _message_payload(system_record), bus=bus
                     )
-            elif kind == "conversation.upsert":
-                await publish_event(conversation_id, "conversation.upsert", evt_payload, bus=bus)
-            else:
-                logger.warning(
-                    "agents.turn.unknown_event org_id=%s conversation_id=%s kind=%s",
-                    org_id, conversation_id, kind,
-                )
+                elif kind == "session.status":
+                    sdk_session_id = evt_payload.get("sdk_session_id")
+                    await publish_event(conversation_id, "session.status", evt_payload, bus=bus)
+                    if sdk_session_id:
+                        # Canonical fixture: `conversation.upsert` follows the
+                        # terminal `session.status` — the route re-publishes
+                        # the conversation row it just persisted so list views
+                        # pick up the new `sdk_session_id` live, without a
+                        # refetch.
+                        updated_conv = conv_store.set_sdk_session_id(
+                            org_id, conversation_id, sdk_session_id
+                        )
+                        await publish_event(
+                            conversation_id,
+                            "conversation.upsert",
+                            _conversation_payload(updated_conv),
+                            bus=bus,
+                        )
+                elif kind == "conversation.upsert":
+                    await publish_event(conversation_id, "conversation.upsert", evt_payload, bus=bus)
+                else:
+                    logger.warning(
+                        "agents.turn.unknown_event org_id=%s conversation_id=%s kind=%s",
+                        org_id, conversation_id, kind,
+                    )
+    except TimeoutError:
+        # Contract §E.11 "Route order" — the turn exceeded
+        # `settings.turn_timeout_seconds`. Generic PT-BR message, no
+        # exception text (same posture as the generic-failure branch
+        # below): `asyncio.timeout` cancels whatever the runtime was
+        # awaiting and raises `TimeoutError` here, so this is reached for
+        # a genuinely stuck turn regardless of where inside `run_turn`
+        # it was stuck.
+        logger.error(
+            "agents.turn.deadline_exceeded org_id=%s conversation_id=%s timeout_s=%s",
+            org_id, conversation_id, settings.turn_timeout_seconds,
+        )
+        try:
+            msg_store.add(org_id, conversation_id, "system", "O turno excedeu o tempo limite.")
+            await publish_event(
+                conversation_id, "session.status", {"status": "erro"}, bus=bus
+            )
+        except Exception:
+            logger.exception(
+                "agents.turn.deadline_reporting_failed org_id=%s conversation_id=%s",
+                org_id, conversation_id,
+            )
     except Exception:
         # Contract §E.9 point 6 — generic message, NEVER exception text.
         logger.exception(
@@ -575,7 +640,13 @@ async def _run_turn_background(
                 org_id, conversation_id,
             )
     finally:
+        # Contract §E.11 "Route order": the turn lock releases FIRST,
+        # THEN the slot — on every exit path (this `finally` runs for
+        # normal completion, the deadline branch above, the generic
+        # failure branch above, AND a bare task cancellation that skips
+        # both `except` clauses entirely).
         conv_store.release_turn(org_id, conversation_id, INSTANCE_ID)
+        await slot.release()
 
 
 # ── SSE stream (contract §E.3) ──────────────────────────────────────────────

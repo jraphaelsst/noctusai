@@ -1,5 +1,5 @@
 """Tests for ``/api/conversations`` — CRUD, the turn loop, SSE auth
-(contract §E.2, §E.3, §E.9).
+(contract §E.2, §E.3, §E.9, §E.11).
 
 The turn-loop tests drive G2's REAL runtime/broker
 (``app.runtime.fake_runtime.FakeAgentRuntime`` /
@@ -14,6 +14,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from app.dependencies import get_agent_runtime_dep, get_approval_broker_dep
+from app.realtime import conversation_scope
 from app.runtime.broker import StoreApprovalBroker
 from tests.routers.conftest import (
     DEFAULT_ORG_ID,
@@ -23,6 +24,7 @@ from tests.routers.conftest import (
     seed_org_role,
     wait_for_pending_approval,
     wait_turn_released,
+    wait_until,
 )
 
 
@@ -249,8 +251,19 @@ class TestFullScriptedTurn:
         agent = seed_active_agent_and_persona(agents_client)
         conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
 
+        class _ExplodingSlot:
+            """Minimal stand-in for `app.runtime.slots.TurnSlot` — B4's
+            route/turn-loop now always reserves + releases a slot, so
+            even a hand-rolled runtime double needs one."""
+
+            async def release(self) -> None:
+                return None
+
         class _ExplodingRuntime:
-            async def run_turn(self, spec, ctx, prompt, broker):
+            def try_reserve(self):
+                return _ExplodingSlot()
+
+            async def run_turn(self, spec, ctx, prompt, broker, slot=None):
                 raise RuntimeError("segredo-interno-nao-deve-vazar")
                 yield  # pragma: no cover — makes this an async generator
 
@@ -275,6 +288,213 @@ class TestFullScriptedTurn:
         assert len(system_messages) == 1
         assert system_messages[0].texto == "O turno falhou."
         assert "segredo-interno-nao-deve-vazar" not in system_messages[0].texto
+
+
+def _session_status_payloads(agents_client, conversation_id) -> list[dict]:
+    """The ``session.status`` payloads a conversation's stream published,
+    in publish order — same internal-introspection idiom as the
+    canonical-fixture test's ``_published_events`` (no public "dump"
+    method exists on ``FakeRealtimeBus``)."""
+    scope = conversation_scope(conversation_id)
+    stream = agents_client.stores.bus._streams.get(scope, [])
+    return [e.payload for e in stream if e.event == "session.status"]
+
+
+class TestSlotCapacityAndReleaseEveryPath:
+    """Contract §E.11 "Route order" + "Slot pool" — every exit path
+    releases the reserved slot (and, once acquired, the turn lock)
+    exactly once. Asserted on the pool's own ``try_reserve()`` /
+    ``health()`` — never a mock of our own code."""
+
+    def test_429_at_capacity_flat_body_retry_after_no_persist_no_lock(
+        self, agents_client
+    ):
+        seed_org_role(agents_client, role="member")
+        agent = seed_active_agent_and_persona(agents_client)
+        conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
+        runtime, _broker = install_runtime(agents_client, [], capacity=1)
+
+        # Exhaust the single slot directly — isolates the 429 branch from
+        # any timing dependency on a first HTTP request.
+        held = runtime.try_reserve()
+        assert held is not None
+
+        resp = agents_client.post(
+            f"/api/conversations/{conv.id}/messages", json={"texto": "oi"}
+        )
+        assert resp.status_code == 429, resp.text
+        assert resp.json() == {
+            "detail": (
+                "A Julia está atendendo o número máximo de conversas agora. "
+                "Tente novamente em instantes."
+            ),
+            "code": "julia_capacidade",
+        }
+        assert resp.headers["retry-after"] == "10"
+
+        # No user message persisted.
+        messages = agents_client.stores.messages.list(DEFAULT_ORG_ID, conv.id, limite=50)
+        assert messages == []
+
+        # No lock taken — a probe acquires it immediately.
+        conv_store = agents_client.stores.conversations
+        probe_acquired = conv_store.try_acquire_turn(DEFAULT_ORG_ID, conv.id, "probe-429", 1)
+        assert probe_acquired
+        conv_store.release_turn(DEFAULT_ORG_ID, conv.id, "probe-429")
+
+    def test_409_turn_in_progress_releases_the_reserved_slot_no_persist(
+        self, agents_client
+    ):
+        seed_org_role(agents_client, role="member")
+        agent = seed_active_agent_and_persona(agents_client)
+        conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
+        runtime, _broker = install_runtime(agents_client, [], capacity=1)
+
+        # Simulate an already in-flight turn (another instance holds the lock).
+        agents_client.stores.conversations.try_acquire_turn(
+            DEFAULT_ORG_ID, conv.id, "some-other-instance", 600
+        )
+
+        resp = agents_client.post(
+            f"/api/conversations/{conv.id}/messages", json={"texto": "oi"}
+        )
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["code"] == "turn_in_progress"
+
+        messages = agents_client.stores.messages.list(DEFAULT_ORG_ID, conv.id, limite=50)
+        assert messages == [], "the orphan-message bug: no message may persist on a 409"
+
+        # Capacity is 1 — a second reservation succeeding proves the
+        # first one (consumed by the 429... here, the 409 branch) was
+        # released back to the pool.
+        assert runtime.try_reserve() is not None
+
+    def test_normal_completion_releases_the_slot(self, agents_client):
+        seed_org_role(agents_client, role="member")
+        agent = seed_active_agent_and_persona(agents_client)
+        conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
+        runtime, _broker = install_runtime(agents_client, [], capacity=1)
+
+        resp = agents_client.post(
+            f"/api/conversations/{conv.id}/messages", json={"texto": "oi"}
+        )
+        assert resp.status_code == 202, resp.text
+
+        conv_store = agents_client.stores.conversations
+        assert wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
+        assert wait_until(lambda: runtime.try_reserve() is not None), (
+            "slot never returned to the pool after a normal turn"
+        )
+
+    def test_runtime_exception_releases_the_slot(self, agents_client):
+        """Same shape as ``TestFullScriptedTurn::
+        test_exception_turn_yields_generic_system_message``, but asserts
+        the SLOT side of release (contract §E.11) via a hand-rolled
+        double that owns its own real ``FakeSlotPool`` — never the
+        default-capacity shared runtime, so ``try_reserve()`` after
+        release is a genuine capacity-exhaustion proof."""
+        from app.runtime.slots import FakeSlotPool
+
+        seed_org_role(agents_client, role="member")
+        agent = seed_active_agent_and_persona(agents_client)
+        conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
+
+        class _ExplodingRuntime:
+            def __init__(self) -> None:
+                self.pool = FakeSlotPool(1)
+
+            def try_reserve(self):
+                return self.pool.try_reserve()
+
+            async def run_turn(self, spec, ctx, prompt, broker, slot=None):
+                raise RuntimeError("segredo-interno-nao-deve-vazar")
+                yield  # pragma: no cover — makes this an async generator
+
+        runtime = _ExplodingRuntime()
+        from app.main import app
+
+        app.dependency_overrides[get_agent_runtime_dep] = lambda: runtime
+        app.dependency_overrides[get_approval_broker_dep] = lambda: StoreApprovalBroker(
+            agents_client.stores.approvals, timeout_seconds=5, instance_id="test-instance"
+        )
+
+        resp = agents_client.post(
+            f"/api/conversations/{conv.id}/messages", json={"texto": "vai falhar"}
+        )
+        assert resp.status_code == 202, resp.text
+
+        conv_store = agents_client.stores.conversations
+        assert wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
+        assert wait_until(lambda: runtime.pool.health()["free"] == 1), runtime.pool.health()
+
+    def test_turn_deadline_persists_generic_message_erro_status_and_releases_slot(
+        self, agents_client, monkeypatch
+    ):
+        seed_org_role(agents_client, role="member")
+        agent = seed_active_agent_and_persona(agents_client)
+        conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
+
+        # An escrita entry blocks on a REAL, un-resolved broker future — a
+        # broker timeout generous enough (5s) that the OUTER turn deadline
+        # below (0.05s) fires first.
+        script = [("escrita", "mcp__academia__kb_escrever", {"slug": "exemplo", "corpo_md": "x"})]
+        runtime, _broker = install_runtime(agents_client, script, timeout_seconds=5, capacity=1)
+        monkeypatch.setattr(
+            "app.routers.conversations_router.settings.turn_timeout_seconds", 0.05
+        )
+
+        resp = agents_client.post(
+            f"/api/conversations/{conv.id}/messages", json={"texto": "oi"}
+        )
+        assert resp.status_code == 202, resp.text
+
+        conv_store = agents_client.stores.conversations
+        assert wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
+
+        messages = agents_client.stores.messages.list(DEFAULT_ORG_ID, conv.id, limite=50)
+        system_messages = [m for m in messages if m.role == "system"]
+        assert len(system_messages) == 1
+        assert system_messages[0].texto == "O turno excedeu o tempo limite."
+
+        statuses = _session_status_payloads(agents_client, conv.id)
+        assert statuses[-1] == {"status": "erro"}
+
+        assert wait_until(lambda: runtime.try_reserve() is not None), (
+            "slot never returned to the pool after the turn deadline"
+        )
+
+    def test_task_cancellation_releases_lock_and_slot(self, agents_client):
+        seed_org_role(agents_client, role="member")
+        agent = seed_active_agent_and_persona(agents_client)
+        conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
+
+        # Same blocking shape as the deadline test, but nobody shortens
+        # `turn_timeout_seconds` here — the task is cancelled from OUTSIDE
+        # while genuinely suspended inside `broker.request()`, distinct
+        # from the deadline firing on its own.
+        script = [("escrita", "mcp__academia__kb_escrever", {"slug": "exemplo", "corpo_md": "x"})]
+        runtime, _broker = install_runtime(agents_client, script, timeout_seconds=30, capacity=1)
+
+        resp = agents_client.post(
+            f"/api/conversations/{conv.id}/messages", json={"texto": "oi"}
+        )
+        assert resp.status_code == 202, resp.text
+
+        # Proves the task is genuinely suspended (not merely unscheduled)
+        # before cancelling it.
+        wait_for_pending_approval(agents_client.stores.approvals, DEFAULT_ORG_ID)
+
+        from app.main import app
+
+        tasks = list(getattr(app.state, "agents_background_tasks", ()))
+        assert len(tasks) == 1
+        tasks[0].get_loop().call_soon_threadsafe(tasks[0].cancel)
+
+        conv_store = agents_client.stores.conversations
+        assert wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
+        assert wait_until(lambda: runtime.try_reserve() is not None), (
+            "slot never returned to the pool after task cancellation"
+        )
 
 
 class TestSSEStreamAuth:
