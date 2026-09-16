@@ -235,6 +235,16 @@ export interface ClienteCardDialogProps {
    * thunks — the container already knows its own id.
    */
   renderQualificacaoDoTitular?: () => ReactNode;
+  /**
+   * The TITULAR's own structured certidões (contract automation F6,
+   * migration 116) — `renderCertidoesDaParte`'s titular sibling, keyed the
+   * same way `renderQualificacaoDoTitular` is: a thunk, because this
+   * component is never handed the titular's raw id, only their `nome`. The
+   * titular has no `atendimento_partes` row to key a per-parte fetch off
+   * (migration 073's header), which is exactly why migration 116 added the
+   * sibling cliente-scoped routes this panel reaches instead.
+   */
+  renderCertidoesDoTitular?: () => ReactNode;
 
   /**
    * The Negociação and Financiamento/Escritura subpages.
@@ -894,6 +904,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     saving={props.dadosPessoaisSaving}
                     saveError={props.dadosPessoaisError}
                   />
+                  {props.renderCertidoesDoTitular?.() ?? null}
                   {props.renderQualificacaoDoTitular?.() ?? null}
                 </>
               )}
@@ -1039,7 +1050,17 @@ const PAPEL_LABEL: Record<string, string> = {
   // map would duplicate them so that a label fix could land on one side only.
   proprietario: "Proprietário",
   inventariante: "Inventariante",
+  // Contract-automation F6: a PREVIOUS owner, not today's seller — see
+  // `PAPEIS_POR_LADO.vendedor`'s own docblock (`@/types/cardHub`).
+  antigo_proprietario: "Antigo proprietário",
 };
+
+/** The one role whose label alone does not say WHY it exists on the card —
+ *  every other role signs the contract; this one exists purely so its
+ *  certidões can be attached to the deal's due diligence. Read by
+ *  `PapelSelect` as a per-option hint (native `title` tooltip). */
+const PAPEL_ANTIGO_PROPRIETARIO_HINT =
+  "Não assina o contrato — usado apenas para anexar as certidões do antigo proprietário.";
 
 /** The ONE place a role becomes words. Exported for the test that pins every
  *  `PAPEIS_POR_LADO` value against it. */
@@ -1346,7 +1367,11 @@ function PapelSelect({
       data-testid={`papel-select-${testId}`}
     >
       {valores.map((p) => (
-        <option key={p} value={p}>
+        <option
+          key={p}
+          value={p}
+          title={p === "antigo_proprietario" ? PAPEL_ANTIGO_PROPRIETARIO_HINT : undefined}
+        >
           {rotuloDePapel(p)}
         </option>
       ))}

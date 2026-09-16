@@ -792,10 +792,23 @@ export type LadoParte = "comprador" | "vendedor";
  * `proprietario`, because the person a deal is made with IS the owner — "the
  * vendedor is the property owner", stated as data. `inventariante` is
  * seller-only (an estate sells, it never buys) and `fiador` buyer-only.
+ *
+ * `antigo_proprietario` (contract-automation F6): a PREVIOUS owner, not the
+ * seller today — due diligence needs their certidões whenever the last
+ * registered sale is under 5 years old, but they sign nothing on this deal.
+ * Seller-side only, same reasoning as `inventariante` — a buyer has no
+ * "previous" analogue.
  */
 export const PAPEIS_POR_LADO: Record<LadoParte, readonly string[]> = {
   comprador: ["comprador", "conjuge", "fiador", "procurador", "outro"],
-  vendedor: ["proprietario", "conjuge", "procurador", "inventariante", "outro"],
+  vendedor: [
+    "proprietario",
+    "conjuge",
+    "procurador",
+    "inventariante",
+    "antigo_proprietario",
+    "outro",
+  ],
 } as const;
 
 export interface CompradoresResponse {

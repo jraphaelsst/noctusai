@@ -1,27 +1,35 @@
 /**
- * `<CertidoesPartePanel/>` — one party's structured certidões, contract
- * automation F1.
+ * `<CertidoesPartePanel/>` — one person's structured certidões, contract
+ * automation F1 + F6.
  *
- * Self-contained: the only thing a caller supplies is `atendimentoParteId`
- * (`atendimento_partes.id`) — every fetch and mutation on this panel keys off
- * it. Intended mount point is `ClienteCardDialog`'s per-parte section
- * (tech-lead wires the tab at integration, per this slice's brief); the panel
- * itself does not know or care what dialog it lives in, the same way
- * `PessoaDocumentosPanel` does not.
+ * Self-contained: a caller supplies EXACTLY ONE of `atendimentoParteId`
+ * (`atendimento_partes.id`, any other party) or `clienteId`
+ * (`atendimentos.cliente_id`, the card's TITULAR) — every fetch and mutation
+ * on this panel keys off whichever one it got. The titular has no
+ * `atendimento_partes` row at all (migration 073's header), so migration 116
+ * added the sibling cliente-scoped routes this panel now also speaks.
+ * Intended mount points are `ClienteCardDialog`'s per-parte section AND its
+ * titular ("Dados do cliente") tab; the panel itself does not know or care
+ * what dialog it lives in, the same way `PessoaDocumentosPanel` does not.
  *
  * Four states, honestly (`KB § PATTERNS/frontend/lying-loading-state.md`):
  * `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`
  * (an indicator only — the table stays mounted through a background poll),
  * an error banner that keeps showing stale data when there is any, and an
- * empty state offering the one action that gets a party its first resultado:
- * linking an already-created consulta.
+ * empty state offering the one action that gets a person their first
+ * resultado: linking an already-created consulta.
  *
  * IA/api-derived values are rendered as suggestions (a muted "Sugestão — a
  * confirmar" caption) until a human opens the edit dialog and submits —
  * even an unedited submit is a valid confirmation, per
  * `PATCH /resultados/{id}`'s own contract.
+ *
+ * 🔴 BOTH `useResultadosPorParte` AND `useResultadosPorCliente` ARE ALWAYS
+ * CALLED (rules-of-hooks forbids picking WHICH hook to call at runtime).
+ * Each is `enabled` only for its own id (`@/hooks/useCertidoes`), so the
+ * unused one never fires a request — only its inert query object exists.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -66,13 +74,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  useAtualizarSituacaoCadastral,
   useCertidaoConsultas,
   useConfirmarResultado,
   useCopiarTranscricao,
   useDownloadTranscricaoPdf,
   useMintResultadoUrl,
+  useResultadosPorCliente,
   useResultadosPorParte,
   useUploadResultadoManual,
+  useVincularCliente,
   useVincularParte,
 } from "@/hooks/useCertidoes";
 import type { CertidaoResultado } from "@/hooks/useCertidoes";
@@ -82,10 +93,16 @@ import {
   RESULTADO_ORIGEM_LABELS,
   RESULTADO_VALOR_LABELS,
   RESULTADO_VALOR_VARIANT,
+  SITUACAO_CADASTRAL_BADGE_VARIANT,
+  SITUACAO_CADASTRAL_LABELS,
+  isEmissaoAntiga,
   isValidadeVencendo,
   isValidadeVencida,
+  situacaoCadastralBadge,
   type ResultadoPatchInput,
   type ResultadoValor,
+  type SituacaoCadastral,
+  type SituacaoCadastralPatchInput,
 } from "@/types/certidoesEstruturadas";
 
 const UPLOAD_INPUT_TESTID = "certidoes-parte-upload-input";
@@ -104,19 +121,36 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export interface CertidoesPartePanelProps {
-  /** `atendimento_partes.id` — the only required input. */
-  atendimentoParteId: string;
+  /** `atendimento_partes.id` — any party OTHER than the titular. Exactly one
+   *  of this and `clienteId` must be supplied. */
+  atendimentoParteId?: string;
+  /** `atendimentos.cliente_id` — the card's TITULAR (migration 116), who has
+   *  no `atendimento_partes` row to key off (migration 073's header).
+   *  Exactly one of this and `atendimentoParteId` must be supplied. */
+  clienteId?: string;
   /** Optional label for the empty-state copy; the panel works without it —
    * a linked consulta's own `nome`/`documento` cover the rest once one exists. */
   nomeParte?: string;
 }
 
-export function CertidoesPartePanel({ atendimentoParteId, nomeParte }: CertidoesPartePanelProps) {
-  const resultados = useResultadosPorParte(atendimentoParteId);
+export function CertidoesPartePanel({
+  atendimentoParteId,
+  clienteId,
+  nomeParte,
+}: CertidoesPartePanelProps) {
+  // See this file's docblock: both hooks always run; only the one matching
+  // the id this instance was given is `enabled`.
+  const resultadosParte = useResultadosPorParte(atendimentoParteId);
+  const resultadosCliente = useResultadosPorCliente(clienteId);
+  const resultados = clienteId ? resultadosCliente : resultadosParte;
+
   const consultas = useCertidaoConsultas();
-  const vincular = useVincularParte();
-  const confirmar = useConfirmarResultado(atendimentoParteId);
-  const upload = useUploadResultadoManual(atendimentoParteId);
+  const vincularParte = useVincularParte();
+  const vincularCliente = useVincularCliente();
+  const vincular = clienteId ? vincularCliente : vincularParte;
+  const confirmar = useConfirmarResultado({ atendimentoParteId, clienteId });
+  const upload = useUploadResultadoManual({ atendimentoParteId, clienteId });
+  const situacaoCadastral = useAtualizarSituacaoCadastral({ atendimentoParteId, clienteId });
   const mintUrl = useMintResultadoUrl();
   // ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6) —
   // shared with `pages/Certidoes.tsx`'s own detail table so the fetch +
@@ -144,19 +178,43 @@ export function CertidoesPartePanel({ atendimentoParteId, nomeParte }: Certidoes
   const isRefreshing = resultados.isFetching && !!resultados.data;
   const data = resultados.data ?? [];
 
-  const consultasDisponiveis = (consultas.data ?? []).filter((c) => !c.atendimento_parte_id);
+  // `situacao_cadastral` is a fact about the CONSULTA (migration 116), not
+  // any one resultado — every resultado row of the same consulta carries the
+  // identical denormalized value, so this de-dupes to one editor per CNPJ
+  // consulta linked to this person, however many resultado rows it fanned
+  // out into.
+  const consultasCnpj = useMemo(() => {
+    const porConsulta = new Map<string, CertidaoResultado>();
+    for (const r of data) {
+      if (r.consulta_tipo_documento === "cnpj" && !porConsulta.has(r.consulta_id)) {
+        porConsulta.set(r.consulta_id, r);
+      }
+    }
+    return [...porConsulta.values()];
+  }, [data]);
+
+  // Neither linkage set — a fully unlinked ad-hoc consulta. `vincular_parte`
+  // and `vincular_cliente` BOTH denormalize `cliente_id` onto the consulta
+  // (migration 107/116), so checking `atendimento_parte_id` alone would
+  // re-offer a consulta already claimed by a titular via `vincular_cliente`.
+  const consultasDisponiveis = (consultas.data ?? []).filter(
+    (c) => !c.atendimento_parte_id && !c.cliente_id,
+  );
 
   const handleVincular = () => {
     if (!consultaEscolhida) return;
-    vincular.mutate(
-      { consultaId: consultaEscolhida, atendimentoParteId },
-      {
-        onSuccess: () => {
-          setVincularAberto(false);
-          setConsultaEscolhida("");
-        },
-      },
-    );
+    const onSuccess = () => {
+      setVincularAberto(false);
+      setConsultaEscolhida("");
+    };
+    if (clienteId) {
+      vincularCliente.mutate({ consultaId: consultaEscolhida, clienteId }, { onSuccess });
+    } else if (atendimentoParteId) {
+      vincularParte.mutate(
+        { consultaId: consultaEscolhida, atendimentoParteId },
+        { onSuccess },
+      );
+    }
   };
 
   const handleUploadClick = (resultadoId: string) => {
@@ -230,6 +288,21 @@ export function CertidoesPartePanel({ atendimentoParteId, nomeParte }: Certidoes
           Falha ao atualizar — mostrando os últimos dados carregados.
         </p>
       )}
+
+      {/* One editor per CNPJ consulta linked to this person (migration 116)
+          — a fact about the company, shown above its own certidões rather
+          than repeated on every resultado row. */}
+      {consultasCnpj.map((consulta) => (
+        <SituacaoCadastralEditor
+          key={consulta.consulta_id}
+          consultaId={consulta.consulta_id}
+          situacaoCadastral={consulta.consulta_situacao_cadastral ?? null}
+          dataSituacao={consulta.consulta_data_situacao ?? null}
+          situacaoOrigem={consulta.consulta_situacao_origem ?? null}
+          onSalvar={(patch) => situacaoCadastral.mutate({ consultaId: consulta.consulta_id, patch })}
+          saving={situacaoCadastral.isPending}
+        />
+      ))}
 
       {data.length === 0 ? (
         <div className="space-y-3 py-6 text-center" data-testid="certidoes-parte-empty">
@@ -307,7 +380,25 @@ export function CertidoesPartePanel({ atendimentoParteId, nomeParte }: Certidoes
                     </TableCell>
                     <TableCell className="text-sm">
                       {resultado.numero && <div>Nº {resultado.numero}</div>}
-                      {resultado.emitida_em && <div>Emitida {formatDate(resultado.emitida_em)}</div>}
+                      {resultado.emitida_em && (
+                        <div
+                          className={
+                            isEmissaoAntiga(resultado.emitida_em)
+                              ? "flex items-center gap-1 text-amber-600"
+                              : ""
+                          }
+                        >
+                          {isEmissaoAntiga(resultado.emitida_em) && (
+                            <AlertTriangle className="h-3 w-3" />
+                          )}
+                          Emitida {formatDate(resultado.emitida_em)}
+                          {/* "Every certidão must be emitted < 30 days before
+                              signing" — a plain age flag, independent of
+                              `validade_ate` (a certidão can still be valid
+                              while already too old to sign with). */}
+                          {isEmissaoAntiga(resultado.emitida_em) && " (emitida há 30+ dias)"}
+                        </div>
+                      )}
                       {resultado.validade_ate && (
                         <div
                           className={
@@ -587,6 +678,13 @@ function ResultadoEditForm({
             value={emitidaEm}
             onChange={(e) => setEmitidaEm(e.target.value)}
           />
+          {/* Serasa/CENPROT carry no printed emission date of their own —
+              the office's rule is to use the date the consulta was made. */}
+          {(resultado.tipo === "serasa" || resultado.tipo === "cenprot") && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Para Serasa/CENPROT, use a data da consulta.
+            </p>
+          )}
         </div>
         <div>
           <Label htmlFor="certidoes-parte-validade-ate">Validade até</Label>
@@ -608,5 +706,124 @@ function ResultadoEditForm({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+/**
+ * One CNPJ consulta's manual registration-status entry (migration 116) —
+ * `PATCH /consultas/{id}/situacao-cadastral`. A fact about the company being
+ * investigated, not any one certidão, so this renders once per consulta
+ * (`CertidoesPartePanel` de-dupes by `consulta_id` before mounting it) with
+ * its own derived pt-BR verdict badge alongside the editable fields.
+ *
+ * Local `situacao`/`data` state mirrors `ResultadoEditForm`'s pattern: only
+ * the fields that actually changed ride the PATCH, and the backend refuses
+ * an entirely-unchanged (empty) body with a 422 rather than treating it as
+ * a confirmation — unlike `ResultadoPatch`, there is no automated writer for
+ * this field to lock out today, so an empty PATCH has nothing to confirm.
+ */
+function SituacaoCadastralEditor({
+  consultaId,
+  situacaoCadastral,
+  dataSituacao,
+  situacaoOrigem,
+  onSalvar,
+  saving,
+}: {
+  consultaId: string;
+  situacaoCadastral: SituacaoCadastral | null;
+  dataSituacao: string | null;
+  situacaoOrigem: "api" | "ia" | "manual" | null;
+  onSalvar: (patch: SituacaoCadastralPatchInput) => void;
+  saving: boolean;
+}) {
+  const [situacao, setSituacao] = useState<SituacaoCadastral | "">(situacaoCadastral ?? "");
+  const [data, setData] = useState(dataSituacao ?? "");
+  const [erro, setErro] = useState<string | null>(null);
+
+  const badge = situacaoCadastralBadge(situacaoCadastral, dataSituacao);
+
+  const handleSalvar = () => {
+    // "baixada" without a date leaves the 5-year window uncomputable — the
+    // office's own rule cannot be applied blind, so this is refused
+    // client-side rather than saved as an unusable half-answer.
+    if (situacao === "baixada" && !data) {
+      setErro("Informe a data da baixa para uma empresa baixada.");
+      return;
+    }
+    const patch: SituacaoCadastralPatchInput = {};
+    if (situacao !== (situacaoCadastral ?? "")) {
+      patch.situacao_cadastral = (situacao || undefined) as SituacaoCadastral | undefined;
+    }
+    if (data !== (dataSituacao ?? "")) patch.data_situacao = data || undefined;
+    if (Object.keys(patch).length === 0) return;
+    setErro(null);
+    onSalvar(patch);
+  };
+
+  return (
+    <div
+      className="space-y-2 rounded-md border p-3"
+      data-testid={`situacao-cadastral-${consultaId}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Situação cadastral
+        </Label>
+        <Badge
+          variant={SITUACAO_CADASTRAL_BADGE_VARIANT[badge.kind]}
+          data-testid={`situacao-cadastral-badge-${consultaId}`}
+        >
+          {badge.label}
+        </Badge>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-[10rem]">
+          <Select
+            value={situacao}
+            onValueChange={(v) => setSituacao(v as SituacaoCadastral)}
+          >
+            <SelectTrigger aria-label="Situação cadastral">
+              <SelectValue placeholder="Selecione" />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(SITUACAO_CADASTRAL_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label htmlFor={`situacao-cadastral-data-${consultaId}`} className="sr-only">
+            Data da situação
+          </Label>
+          <Input
+            id={`situacao-cadastral-data-${consultaId}`}
+            type="date"
+            value={data}
+            onChange={(e) => setData(e.target.value)}
+            // "≥5 years ago" needs the date only when the office's rule
+            // actually reads it — for every other status it is inert.
+            required={situacao === "baixada"}
+          />
+        </div>
+        <Button size="sm" variant="outline" onClick={handleSalvar} disabled={saving}>
+          {saving && <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />}
+          Salvar
+        </Button>
+      </div>
+      {erro && (
+        <p className="text-xs text-destructive" data-testid={`situacao-cadastral-erro-${consultaId}`}>
+          {erro}
+        </p>
+      )}
+      {situacaoOrigem && (
+        <p className="text-xs text-muted-foreground">
+          Origem: {RESULTADO_ORIGEM_LABELS[situacaoOrigem]}
+        </p>
+      )}
+    </div>
   );
 }

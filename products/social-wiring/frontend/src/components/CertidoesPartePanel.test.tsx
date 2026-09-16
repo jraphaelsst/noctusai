@@ -1,5 +1,6 @@
 /**
- * CertidoesPartePanel.test.tsx — contract automation F1's per-parte panel.
+ * CertidoesPartePanel.test.tsx — contract automation F1 + F6's per-
+ * parte/per-cliente panel.
  *
  * What these protect:
  *   1. The four states, honestly: skeleton only while genuinely empty-handed,
@@ -13,6 +14,11 @@
  *      submit still confirms with an empty patch.
  *   5. View/download route through `useMintResultadoUrl`, never `arquivo_url`
  *      directly.
+ *   6. Titular routing (migration 116): `clienteId` reaches the cliente-
+ *      scoped hooks/routes, never the per-parte ones, and vice versa.
+ *   7. The situação cadastral editor's derived pt-BR badge, including the
+ *      5-year `baixada` boundary.
+ *   8. `negativa_com_homonimos` is offered as a `resultado` option.
  *
  * Mock strategy mirrors `pages/Certidoes.test.tsx`: one `vi.mock` per module,
  * hooks configured per-test. `Select` is re-mocked here (not the page's
@@ -28,20 +34,29 @@ afterEach(async () => {
 // ─── Hook mocks ─────────────────────────────────────────────────────────────
 
 const mockUseResultadosPorParte = vi.fn();
+const mockUseResultadosPorCliente = vi.fn();
 const mockUseCertidaoConsultas = vi.fn();
-const mockVincular = vi.fn();
+const mockVincularParte = vi.fn();
+const mockVincularCliente = vi.fn();
 const mockConfirmar = vi.fn();
 const mockUpload = vi.fn();
+const mockAtualizarSituacaoCadastral = vi.fn();
 const mockMintUrl = vi.fn();
 const mockDownloadTranscricaoPdf = vi.fn();
 const mockCopiarTranscricao = vi.fn();
 
 vi.mock("@/hooks/useCertidoes", () => ({
   useResultadosPorParte: (...a: any[]) => mockUseResultadosPorParte(...a),
+  useResultadosPorCliente: (...a: any[]) => mockUseResultadosPorCliente(...a),
   useCertidaoConsultas: (...a: any[]) => mockUseCertidaoConsultas(...a),
-  useVincularParte: () => ({ mutate: mockVincular, isPending: false }),
+  useVincularParte: () => ({ mutate: mockVincularParte, isPending: false }),
+  useVincularCliente: () => ({ mutate: mockVincularCliente, isPending: false }),
   useConfirmarResultado: () => ({ mutate: mockConfirmar, isPending: false }),
   useUploadResultadoManual: () => ({ mutate: mockUpload, isPending: false }),
+  useAtualizarSituacaoCadastral: () => ({
+    mutate: mockAtualizarSituacaoCadastral,
+    isPending: false,
+  }),
   useMintResultadoUrl: () => ({ mutate: mockMintUrl, isPending: false }),
   // ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6).
   useDownloadTranscricaoPdf: () => ({ mutate: mockDownloadTranscricaoPdf, isPending: false }),
@@ -116,6 +131,11 @@ const queryStub = (overrides: Record<string, any> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseCertidaoConsultas.mockReturnValue(queryStub({ data: [] }));
+  // Both hooks are ALWAYS called (rules-of-hooks — see the component's own
+  // docblock); the one not selected by `clienteId`/`atendimentoParteId`
+  // still needs a well-shaped stub so accessing it never throws.
+  mockUseResultadosPorParte.mockReturnValue(queryStub({ data: undefined }));
+  mockUseResultadosPorCliente.mockReturnValue(queryStub({ data: undefined }));
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -124,10 +144,11 @@ async function renderPanel(props: Record<string, any> = {}) {
   const React = (await import("react")).default;
   const { CertidoesPartePanel } = await import("./CertidoesPartePanel");
   const rtl = await import("@testing-library/react");
+  // A test that passes `clienteId` is exercising the titular path — it must
+  // NOT also inherit the parte default, or the panel would receive both.
+  const defaults = "clienteId" in props ? {} : { atendimentoParteId: "parte-1" };
   return {
-    ...rtl.render(
-      React.createElement(CertidoesPartePanel, { atendimentoParteId: "parte-1", ...props }),
-    ),
+    ...rtl.render(React.createElement(CertidoesPartePanel, { ...defaults, ...props })),
     fireEvent: rtl.fireEvent,
     waitFor: rtl.waitFor,
     screen: rtl.screen,
@@ -245,7 +266,7 @@ describe("CertidoesPartePanel — vincular consulta", () => {
     fireEvent.click(getByTestId("certidoes-parte-empty").querySelector("button")!);
     fireEvent.change(getByTestId("mock-select"), { target: { value: "c1" } });
     fireEvent.click(getByTestId("dialog").querySelectorAll("button")[1]);
-    expect(mockVincular).toHaveBeenCalledWith(
+    expect(mockVincularParte).toHaveBeenCalledWith(
       { consultaId: "c1", atendimentoParteId: "parte-1" },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
@@ -356,5 +377,159 @@ describe("CertidoesPartePanel — transcrição (Transcrição PDF / Copiar)", (
     const { getByLabelText, fireEvent } = await renderPanel();
     fireEvent.click(getByLabelText("Copiar transcrição Certidão TJSP"));
     expect(mockCopiarTranscricao).toHaveBeenCalledWith("res-1", expect.any(Function));
+  });
+});
+
+// ─── Titular vs. parte routing (migration 116, contract F6) ─────────────────
+
+describe("CertidoesPartePanel — titular routing (clienteId)", () => {
+  it("reads through useResultadosPorCliente, never useResultadosPorParte, when given clienteId", async () => {
+    mockUseResultadosPorCliente.mockReturnValue(
+      queryStub({ data: [makeResultado({ id: "res-titular" })] }),
+    );
+    const { getByTestId } = await renderPanel({ clienteId: "cliente-1", atendimentoParteId: undefined });
+    expect(mockUseResultadosPorCliente).toHaveBeenCalledWith("cliente-1");
+    // The unused hook is still called (rules-of-hooks) but with no id —
+    // its inert `enabled: false` shape must never be what the table reads.
+    expect(mockUseResultadosPorParte).toHaveBeenCalledWith(undefined);
+    expect(getByTestId("certidoes-parte-row-tjsp")).toBeTruthy();
+  });
+
+  it("shows the titular empty state and vincula through useVincularCliente", async () => {
+    mockUseResultadosPorCliente.mockReturnValue(queryStub({ data: [] }));
+    mockUseCertidaoConsultas.mockReturnValue(
+      queryStub({
+        data: [{ id: "c1", nome: "Maria", documento: "111", atendimento_parte_id: null, cliente_id: null }],
+      }),
+    );
+    const { getByTestId, fireEvent } = await renderPanel({ clienteId: "cliente-1" });
+    fireEvent.click(getByTestId("certidoes-parte-empty").querySelector("button")!);
+    fireEvent.change(getByTestId("mock-select"), { target: { value: "c1" } });
+    fireEvent.click(getByTestId("dialog").querySelectorAll("button")[1]);
+    expect(mockVincularCliente).toHaveBeenCalledWith(
+      { consultaId: "c1", clienteId: "cliente-1" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    expect(mockVincularParte).not.toHaveBeenCalled();
+  });
+
+  it("excludes a consulta already claimed by ANY linkage (parte OR cliente) from the vincular list", async () => {
+    mockUseResultadosPorCliente.mockReturnValue(queryStub({ data: [] }));
+    mockUseCertidaoConsultas.mockReturnValue(
+      queryStub({
+        data: [
+          { id: "c1", nome: "Livre", documento: "000", atendimento_parte_id: null, cliente_id: null },
+          { id: "c2", nome: "JaVinculadaParte", documento: "111", atendimento_parte_id: "outra-parte", cliente_id: "outra-parte-cliente" },
+          { id: "c3", nome: "JaVinculadaTitular", documento: "222", atendimento_parte_id: null, cliente_id: "outro-cliente" },
+        ],
+      }),
+    );
+    const { getByTestId, getByText, queryByText, fireEvent } = await renderPanel({ clienteId: "cliente-1" });
+    fireEvent.click(getByTestId("certidoes-parte-empty").querySelector("button")!);
+    expect(getByText(/Livre/)).toBeTruthy();
+    expect(queryByText(/JaVinculadaParte/)).toBeFalsy();
+    expect(queryByText(/JaVinculadaTitular/)).toBeFalsy();
+  });
+});
+
+// ─── Situação cadastral editor (migration 116, contract F6) ─────────────────
+
+describe("CertidoesPartePanel — situação cadastral (CNPJ only)", () => {
+  it("does not render the editor for a CPF consulta", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ consulta_tipo_documento: "cpf" })] }),
+    );
+    const { container } = await renderPanel();
+    expect(container.querySelector('[data-testid^="situacao-cadastral-"]')).toBeFalsy();
+  });
+
+  it("renders one editor per unique CNPJ consulta linked to this person", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({
+        data: [
+          makeResultado({ id: "r1", tipo: "cnd_federal", consulta_id: "cnpj-1", consulta_tipo_documento: "cnpj" }),
+          makeResultado({ id: "r2", tipo: "tjsp", consulta_id: "cnpj-1", consulta_tipo_documento: "cnpj" }),
+        ],
+      }),
+    );
+    const { container } = await renderPanel();
+    // The prefix also matches this consulta's OWN badge/erro sibling
+    // testids (`situacao-cadastral-badge-cnpj-1`, `-erro-cnpj-1`) — the
+    // exact wrapper testid is the one that must appear exactly once.
+    expect(container.querySelectorAll('[data-testid="situacao-cadastral-cnpj-1"]').length).toBe(1);
+  });
+
+  it("shows the derived badge for the current situação", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({
+        data: [
+          makeResultado({
+            consulta_id: "cnpj-1",
+            consulta_tipo_documento: "cnpj",
+            consulta_situacao_cadastral: "ativa",
+          }),
+        ],
+      }),
+    );
+    const { getByTestId } = await renderPanel();
+    expect(getByTestId("situacao-cadastral-badge-cnpj-1").textContent).toBe("Exigida no contrato");
+  });
+
+  it("refuses to save 'baixada' without a date, client-side", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ consulta_id: "cnpj-1", consulta_tipo_documento: "cnpj" })] }),
+    );
+    const { getByTestId, fireEvent } = await renderPanel();
+    fireEvent.change(getByTestId("mock-select"), { target: { value: "baixada" } });
+    fireEvent.click(getByTestId("situacao-cadastral-cnpj-1").querySelector("button")!);
+    expect(getByTestId("situacao-cadastral-erro-cnpj-1")).toBeTruthy();
+    expect(mockAtualizarSituacaoCadastral).not.toHaveBeenCalled();
+  });
+
+  it("saves only the changed fields through useAtualizarSituacaoCadastral", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({
+        data: [
+          makeResultado({
+            consulta_id: "cnpj-1",
+            consulta_tipo_documento: "cnpj",
+            consulta_situacao_cadastral: null,
+          }),
+        ],
+      }),
+    );
+    const { getByTestId, fireEvent } = await renderPanel();
+    fireEvent.change(getByTestId("mock-select"), { target: { value: "ativa" } });
+    fireEvent.click(getByTestId("situacao-cadastral-cnpj-1").querySelector("button")!);
+    expect(mockAtualizarSituacaoCadastral).toHaveBeenCalledWith({
+      consultaId: "cnpj-1",
+      patch: { situacao_cadastral: "ativa" },
+    });
+  });
+});
+
+// ─── negativa_com_homonimos (migration 116) ─────────────────────────────────
+
+describe("CertidoesPartePanel — negativa_com_homonimos", () => {
+  it("offers the homônimos option in the edit dialog's resultado select", async () => {
+    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [makeResultado()] }));
+    const { getByLabelText, getByText, fireEvent } = await renderPanel();
+    fireEvent.click(getByLabelText("Editar Certidão TJSP"));
+    expect(getByText("Negativa c/ homônimos")).toBeTruthy();
+  });
+
+  it("renders a confirmed negativa_com_homonimos row distinctly from a clean negativa", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({
+        data: [
+          makeResultado({
+            resultado: "negativa_com_homonimos",
+            resultado_origem: "manual",
+          }),
+        ],
+      }),
+    );
+    const { getByText } = await renderPanel();
+    expect(getByText("Negativa c/ homônimos")).toBeTruthy();
   });
 });

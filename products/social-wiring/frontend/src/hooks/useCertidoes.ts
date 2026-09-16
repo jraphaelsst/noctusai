@@ -34,6 +34,8 @@ import type {
   ResultadoOrigem,
   ResultadoPatchInput,
   ResultadoValor,
+  SituacaoCadastral,
+  SituacaoCadastralPatchInput,
 } from "@/types/certidoesEstruturadas";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -71,11 +73,24 @@ export interface CertidaoResultado {
   resultado_origem?: ResultadoOrigem | null;
   confirmado_por?: string | null;
   confirmado_em?: string | null;
-  /** Only populated by `GET /partes/{id}/resultados` — the consulta this
-   * resultado's row belongs to, denormalized so the per-parte panel does not
+  /** Only populated by `GET /partes/{id}/resultados` and its titular
+   * sibling `GET /clientes/{id}/resultados` — the consulta this resultado's
+   * row belongs to, denormalized so the per-parte/per-cliente panel does not
    * need a second fetch to label its own list. `null`/absent elsewhere. */
   consulta_nome?: string | null;
   consulta_documento?: string | null;
+  /** The consulta's `tipo_documento` (migration 116) — the contract
+   * generator groups a person's PF (cpf) and company (cnpj) certidões by
+   * it, and `CertidoesPartePanel` gates the situação-cadastral editor on
+   * `"cnpj"` the same way — never guessed from the document's digit count. */
+  consulta_tipo_documento?: "cpf" | "cnpj" | null;
+  /** The consulta's registration-status fields (migration 116) — a fact
+   * about the CNPJ/CPF being investigated, denormalized onto every
+   * resultado row of that consulta so this panel needs no second fetch.
+   * See `@/types/certidoesEstruturadas::situacaoCadastralBadge`. */
+  consulta_situacao_cadastral?: SituacaoCadastral | null;
+  consulta_data_situacao?: string | null; // YYYY-MM-DD
+  consulta_situacao_origem?: ResultadoOrigem | null;
   /** Migration 113 (ABNT formatting project, `projects/abnt-formatting-
    *  CONTRACT.md` § 4) — `GENERATED ALWAYS AS (texto_extraido IS NOT NULL)`.
    *  Gates the "Transcrição PDF" / "Copiar" actions; `false`/absent hides
@@ -129,9 +144,20 @@ export interface CertidaoConsulta {
   resultados?: CertidaoResultado[];
   /** Contract automation F1 (migration 107) — nullable linkage to a party of
    * an atendimento, set together by `POST /consultas/{id}/vincular-parte`.
-   * `null` for ad-hoc consultas not tied to any deal. */
+   * `null` for ad-hoc consultas not tied to any deal. Migration 116's
+   * `POST /consultas/{id}/vincular-cliente` sets `cliente_id` ALONE (the
+   * titular has no `atendimento_partes` row to resolve one off) — so a
+   * consulta with `cliente_id` set and `atendimento_parte_id` still `null`
+   * is a titular linkage, not a stale write. */
   cliente_id?: string | null;
   atendimento_parte_id?: string | null;
+  /** Migration 116's manual registration-status entry — see
+   * `@/types/certidoesEstruturadas::situacaoCadastralBadge`. Present on the
+   * full consulta row (`GET /consultas/{id}` selects `"*"`); absent from
+   * the list endpoint's summary read. */
+  situacao_cadastral?: SituacaoCadastral | null;
+  data_situacao?: string | null; // YYYY-MM-DD
+  situacao_origem?: ResultadoOrigem | null;
 }
 
 export interface ConsultaCreateData {
@@ -329,6 +355,31 @@ export function useResultadosPorParte(atendimentoParteId?: string) {
   });
 }
 
+/** `GET /clientes/{id}/resultados` (migration 116) — `useResultadosPorParte`'s
+ * sibling for a card's TITULAR, who has no `atendimento_parte_id` to key
+ * off (migration 073's header). Same shape, same polling contract. */
+export function useResultadosPorCliente(clienteId?: string) {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["certidao-resultados-cliente", clienteId],
+    queryFn: async () => {
+      const result = await api.get(`/api/certidoes/clientes/${clienteId}/resultados`);
+      return (result.data || []) as CertidaoResultado[];
+    },
+    enabled: !!user && !!clienteId,
+    staleTime: 5 * 1000,
+    refetchInterval: (query) => {
+      const data = query.state.data as CertidaoResultado[] | undefined;
+      if (data?.some((r) => r.status === "pendente" || r.status === "processando")) {
+        return 3000;
+      }
+      return false;
+    },
+    placeholderData: (prev) => prev,
+  });
+}
+
 export function useVincularParte() {
   const queryClient = useQueryClient();
 
@@ -358,9 +409,67 @@ export function useVincularParte() {
   });
 }
 
-/** `atendimentoParteId` scopes cache invalidation only — the mutation itself
- * targets a resultado id, not a parte. */
-export function useConfirmarResultado(atendimentoParteId?: string) {
+/** `POST /consultas/{id}/vincular-cliente` (migration 116) —
+ * `useVincularParte`'s sibling for a card's TITULAR: `cliente_id` is sent
+ * directly rather than resolved off an `atendimento_partes` row, because
+ * the titular has none. */
+export function useVincularCliente() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      consultaId,
+      clienteId,
+    }: {
+      consultaId: string;
+      clienteId: string;
+    }) => {
+      const result = await api.post(`/api/certidoes/consultas/${consultaId}/vincular-cliente`, {
+        cliente_id: clienteId,
+      });
+      return result.data as CertidaoConsulta;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["certidao-resultados-cliente", variables.clienteId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+      toast.success("Consulta vinculada ao titular!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao vincular consulta", { description: error.message });
+    },
+  });
+}
+
+/** Which cache to invalidate after a mutation that touches one resultado or
+ * one consulta's shared fields — exactly one of the two is ever set, mirroring
+ * `CertidoesPartePanel`'s own titular-vs-parte routing. Both are optional so
+ * a caller with neither (there is none today) still compiles. */
+export interface CertidoesInvalidationScope {
+  atendimentoParteId?: string;
+  clienteId?: string;
+}
+
+function invalidateCertidoesScope(
+  queryClient: ReturnType<typeof useQueryClient>,
+  scope: CertidoesInvalidationScope,
+) {
+  if (scope.atendimentoParteId) {
+    queryClient.invalidateQueries({
+      queryKey: ["certidao-resultados-parte", scope.atendimentoParteId],
+    });
+  }
+  if (scope.clienteId) {
+    queryClient.invalidateQueries({
+      queryKey: ["certidao-resultados-cliente", scope.clienteId],
+    });
+  }
+}
+
+/** `scope` scopes cache invalidation only — the mutation itself targets a
+ * resultado id, not a parte/cliente. */
+export function useConfirmarResultado(scope: CertidoesInvalidationScope = {}) {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -375,9 +484,7 @@ export function useConfirmarResultado(atendimentoParteId?: string) {
       return result.data as CertidaoResultado;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["certidao-resultados-parte", atendimentoParteId],
-      });
+      invalidateCertidoesScope(queryClient, scope);
       toast.success("Resultado confirmado!");
     },
     onError: (error: Error) => {
@@ -387,10 +494,10 @@ export function useConfirmarResultado(atendimentoParteId?: string) {
 }
 
 /** Same `/resultados/{id}/upload` endpoint `pages/Certidoes.tsx` calls
- * directly — wrapped here so the per-parte panel gets the same PDF-only
- * guard + toast + cache-invalidation as a mutation, instead of a second
- * hand-rolled `handleFileSelected`. */
-export function useUploadResultadoManual(atendimentoParteId?: string) {
+ * directly — wrapped here so the per-parte/per-cliente panel gets the same
+ * PDF-only guard + toast + cache-invalidation as a mutation, instead of a
+ * second hand-rolled `handleFileSelected`. */
+export function useUploadResultadoManual(scope: CertidoesInvalidationScope = {}) {
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -405,15 +512,45 @@ export function useUploadResultadoManual(atendimentoParteId?: string) {
       await api.upload(`/api/certidoes/resultados/${resultadoId}/upload`, formData);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["certidao-resultados-parte", atendimentoParteId],
-      });
+      invalidateCertidoesScope(queryClient, scope);
       queryClient.invalidateQueries({ queryKey: ["certidao-consulta"] });
       queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
       toast.success("Certidão enviada com sucesso!");
     },
     onError: (error: Error) => {
       toast.error("Erro ao enviar certidão", { description: error.message });
+    },
+  });
+}
+
+/** `PATCH /consultas/{id}/situacao-cadastral` (migration 116) — a human's
+ * manual entry of the CNPJ/CPF's registration status. Lives on the
+ * CONSULTA, not any one resultado, so `scope` invalidates whichever
+ * per-parte/per-cliente listing is currently open (both fields denormalize
+ * onto every resultado row of that consulta — see `CertidaoResultado`). */
+export function useAtualizarSituacaoCadastral(scope: CertidoesInvalidationScope = {}) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      consultaId,
+      patch,
+    }: {
+      consultaId: string;
+      patch: SituacaoCadastralPatchInput;
+    }) => {
+      const result = await api.patch(
+        `/api/certidoes/consultas/${consultaId}/situacao-cadastral`,
+        patch,
+      );
+      return result.data as CertidaoConsulta;
+    },
+    onSuccess: () => {
+      invalidateCertidoesScope(queryClient, scope);
+      toast.success("Situação cadastral atualizada!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar situação cadastral", { description: error.message });
     },
   });
 }

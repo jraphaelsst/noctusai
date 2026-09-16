@@ -1859,6 +1859,26 @@ describe("a aba Dados do cliente ganhou um editor", () => {
     expect(screen.getByTestId("qualificacao-do-titular")).toBeTruthy();
   });
 
+  it("🔴 mounts the titular's own certidões panel beside the editor (migration 116, contract F6)", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderCertidoes = vi.fn(() => <div data-testid="certidoes-do-titular" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          ...COM_REGISTRO,
+          onSaveDadosPessoais: vi.fn(),
+          renderCertidoesDoTitular: renderCertidoes,
+        })}
+      />,
+    );
+    // Same tab-scoped-fetching discipline as every other subpage: no query
+    // for a tab nobody opened.
+    expect(renderCertidoes).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+    expect(renderCertidoes).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("certidoes-do-titular")).toBeTruthy();
+  });
+
   it("surfaces the server's message when a save is rejected", async () => {
     const { fireEvent, render, screen } = await import("@testing-library/react");
     render(
@@ -2245,6 +2265,9 @@ describe("ClienteCardDialog — o papel da parte é editável no lugar", () => {
       "conjuge",
       "procurador",
       "inventariante",
+      // Contract-automation F6: a previous owner, not today's seller — see
+      // `PAPEIS_POR_LADO.vendedor`'s own docblock (`@/types/cardHub`).
+      "antigo_proprietario",
       "outro",
     ]);
   });
