@@ -27,7 +27,7 @@ credentials-file: <PATH>      # e.g. /etc/cloudflared/<TUNNEL_ID>.json
 protocol: http2
 no-autoupdate: true
 
-# ── ingress (generated from ingress.yml, snapshot 2026-05-25) ──────────
+# ── ingress (generated from ingress.yml, snapshot 2026-09-16) ──────────
 # Order matters: cloudflared matches top-to-bottom; the final catch-all
 # MUST be last. The service target is the in-network name on noctus-net
 # (== compose service == noctus-<slug> container), reached by name because
@@ -40,12 +40,10 @@ ingress:
     service: http://core:8000
   - hostname: seed.noctusai.com
     service: http://seed:8004
-  # UN-EXPOSED 2026-08-17 (owner's decision): personal-finance:8002 ·
-  # therapy-platform:8003 · daily-life:8005 · adconnect:8007 · dev-team:8009.
-  # All ativo=false yet publicly answering 200 on images 27 seed-changes
-  # stale. Rationale + the reversal recipe live in ingress.yml — this file is
-  # the second derived artifact of the same route table, so the two must move
-  # together (check_tunnel_ingress_snapshot_sync).
+  - hostname: academia.noctusai.com
+    service: http://academia-de-reciclagem:8015
+  - hostname: agents.noctusai.com
+    service: http://agents:8016
   - hostname: orbity.noctusai.com
     service: http://orbity:8010
   - hostname: igig.noctusai.com

@@ -54,6 +54,17 @@ routes:
   - hostname: seed.noctusai.com
     service:  http://seed:8004
 
+  # ── academia-de-reciclagem + agents (roadmap julia-agents-academia-2026-09,
+  # M6 cutover). Hostnames are the user's decision (2026-09-15): the full
+  # product words, not abbreviated short names — matching the two contract
+  # hostnames catalog migration 045 (HELD until cutover) sets as url_base.
+  - hostname: academia.noctusai.com
+    service:  http://academia-de-reciclagem:8015
+    note:     Julia's real-life project knowledge base — API + SPA on one port
+  - hostname: agents.noctusai.com
+    service:  http://agents:8016
+    note:     Julia chat, approvals, persona; lists One Chat's toggle
+
   # ── UN-EXPOSED 2026-08-17 (owner's decision) ───────────────────────────
   # personal-finance:8002 · therapy-platform:8003 · daily-life:8005 ·
   # adconnect:8007 · dev-team:8009
