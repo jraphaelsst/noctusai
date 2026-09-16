@@ -62,11 +62,20 @@ const mockUseAtos = vi.fn();
 const mockUseFontes = vi.fn();
 const mockUseDefinirFontes = vi.fn();
 
-vi.mock("@/hooks/useMatriculaEstrutura", () => ({
-  useMatriculaAtos: mockUseAtos,
-  useMatriculaFontes: mockUseFontes,
-  useDefinirFontes: mockUseDefinirFontes,
-}));
+const mockUseConfirmarDetalhes = vi.fn();
+vi.mock("@/hooks/useMatriculaEstrutura", async (importOriginal) => {
+  // `importOriginal` — the page now also reads the real NATUREZAS_ATO /
+  // NATUREZA_LABEL vocabulary through the act-details editor, and a bare
+  // factory would replace those constants with undefined.
+  const actual = await importOriginal<typeof import("@/hooks/useMatriculaEstrutura")>();
+  return {
+    ...actual,
+    useMatriculaAtos: mockUseAtos,
+    useMatriculaFontes: mockUseFontes,
+    useDefinirFontes: mockUseDefinirFontes,
+    useConfirmarDetalhesAto: mockUseConfirmarDetalhes,
+  };
+});
 
 // ─── Component mocks ─────────────────────────────────────────────────────────
 
@@ -142,6 +151,7 @@ const mockUploadMutate = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockRefetch = vi.fn();
 const mockDefinirFontesMutate = vi.fn();
+const mockConfirmarDetalhesMutate = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -154,6 +164,13 @@ beforeEach(() => {
     makeQuery({ data: { sugestoes: { titulo_aquisitivo: null, onus: [] }, titulo_aquisitivo: null, onus: null } }),
   );
   mockUseDefinirFontes.mockReturnValue({ mutate: mockDefinirFontesMutate, isPending: false });
+  mockUseConfirmarDetalhes.mockReturnValue({
+    mutate: mockConfirmarDetalhesMutate,
+    isPending: false,
+    isError: false,
+    error: null,
+    variables: undefined,
+  });
 });
 
 async function renderPage(initialPath = "/matriculas") {

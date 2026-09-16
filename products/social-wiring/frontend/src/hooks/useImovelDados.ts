@@ -139,6 +139,24 @@ export interface ImovelDocumento {
   extracao_confianca: string | null;
   extracao_rotulo: string | null;
   extracao_erro: string | null;
+
+  // ─── Structured read (migration 118) ───────────────────────────────────
+  // A SECOND, independent read of the same PDF: the certidão's own número,
+  // dates and resultado — a different question from the número de matrícula
+  // above, which is why it has its own fields and its own confirmation.
+  // Which of these a document carries depends on its `tipo_documento`
+  // (`CAMPOS_POR_TIPO` in `useImovelContrato.ts`); the rest stay null.
+  numero?: string | null;
+  /** The date printed ON the certidão — the office's 30-day rule runs from
+   *  here, never from `created_at`. */
+  emitida_em?: string | null;
+  validade_ate?: string | null;
+  resultado?: string | null;
+  inscricao_imobiliaria?: string | null;
+  /** `'ia'` (the read) | `'manual'` (an operator confirmed/corrected it). */
+  origem?: string | null;
+  confirmado_por?: Ator | null;
+  confirmado_em?: string | null;
 }
 
 export interface DocumentoUrlResponse {
@@ -151,10 +169,16 @@ interface ItemsEnvelope<T> {
   total: number;
 }
 
-/** The document types this surface offers, in the order they are asked for. */
+/**
+ * The document types this surface offers, in the order they are asked for.
+ * Mirrors `documentos_service.TIPOS_DOCUMENTO`; `cnd_iptu`/`cnd_condominio`
+ * joined in migration 118 — the contract's imóvel CND group.
+ */
 export const TIPOS_DOCUMENTO = [
   { value: "matricula", label: "Matrícula" },
   { value: "guia_iptu", label: "Guia de IPTU" },
+  { value: "cnd_iptu", label: "CND de IPTU" },
+  { value: "cnd_condominio", label: "CND de condomínio" },
 ] as const;
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
@@ -237,6 +261,12 @@ export function useImovelDocumentoMutations(codigo: string) {
     // An uploaded matrícula can fill `numero_matricula` moments later, so
     // the dados card is stale too.
     qc.invalidateQueries({ queryKey: DADOS_KEY(codigo) });
+    // Migration 118: a CND upload changes the certidões group, and an
+    // uploaded/removed matrícula moves the título/ônus reads — all of them
+    // live under the `imovel-contrato` family (`useImovelContrato.ts`).
+    // Invalidated here rather than in that file so ONE place knows what an
+    // upload makes stale.
+    qc.invalidateQueries({ queryKey: ["sw", "imovel-contrato", codigo] });
   };
 
   // Multipart bypasses the JSON-only seed `api` client — raw fetch with the

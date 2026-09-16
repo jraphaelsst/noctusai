@@ -132,7 +132,14 @@ export function ContratosContainer({
         }
       }}
       renderMatriculaAtos={(contratoId) => (
-        <MatriculaAtosContainer contratoId={contratoId} codigo={imovelCodigo} />
+        // `clienteId` is what lets the picker offer one section per PERMUTA
+        // ativo of this deal (migration 115): the ativos come from the deal's
+        // negociação estruturada, which is keyed by cliente, not by contract.
+        <MatriculaAtosContainer
+          contratoId={contratoId}
+          codigo={imovelCodigo}
+          clienteId={clienteId}
+        />
       )}
       renderGeradorContrato={(contratoId, aberto) => (
         <GeradorContratoContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />

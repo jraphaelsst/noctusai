@@ -93,6 +93,18 @@ export interface MatriculaAtosSelectorProps {
 
   saving: boolean;
   onSave: (input: { extracaoId: string; atoIds: string[] }) => void;
+
+  /**
+   * OPTIONALLY CONTROLLED. Omit both and this component owns its draft (the
+   * original behaviour, still used by every existing caller). Pass them and
+   * the PARENT owns it — which is what the permuta flow needs: `PUT
+   * /contratos/{id}/atos` replaces the object's quote AND every permuta's in
+   * one body, so whoever composes that body has to know both drafts.
+   */
+  draftAtoIds?: string[];
+  onDraftAtoIdsChange?: (atoIds: string[]) => void;
+  /** The server's refusal, verbatim — it names the imóvel mismatch. */
+  errorMessage?: string | null;
 }
 
 const KIND_LABEL: Record<MatriculaAto["kind"], string> = {
@@ -135,8 +147,22 @@ export default function MatriculaAtosSelector({
   selecionadoEm,
   saving,
   onSave,
+  draftAtoIds: draftAtoIdsProp,
+  onDraftAtoIdsChange,
+  errorMessage,
 }: MatriculaAtosSelectorProps) {
-  const [draftAtoIds, setDraftAtoIds] = useState<string[]>([]);
+  // Controlled-or-not, decided by whether the prop was PASSED — not by
+  // whether it is empty: `[]` is a real draft (nothing selected), so
+  // `draftAtoIdsProp || draftInterno` would silently hand control back to
+  // this component the moment the parent cleared the selection.
+  const [draftInterno, setDraftInterno] = useState<string[]>([]);
+  const controlado = draftAtoIdsProp !== undefined;
+  const draftAtoIds = controlado ? draftAtoIdsProp : draftInterno;
+  const setDraftAtoIds = (next: string[] | ((atual: string[]) => string[])) => {
+    const valor = typeof next === "function" ? next(draftAtoIds) : next;
+    if (controlado) onDraftAtoIdsChange?.(valor);
+    else setDraftInterno(valor);
+  };
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
 
   // Re-seed the draft from the PERSISTED selection whenever it changes AND
@@ -148,6 +174,9 @@ export default function MatriculaAtosSelector({
   // an edit in progress.
   const persistedIds = (selecao ?? []).map((a) => a.ato_id).join(",");
   useEffect(() => {
+    // In controlled mode the parent seeds (and re-seeds) the draft — doing it
+    // here too would fight it on every refetch.
+    if (controlado) return;
     if (extracaoSelecionadaId && extracaoSelecionadaId === selecaoExtracaoId) {
       setDraftAtoIds(persistedIds ? persistedIds.split(",") : []);
     } else {
@@ -425,6 +454,16 @@ export default function MatriculaAtosSelector({
               </p>
             )}
           </div>
+
+          {errorMessage && (
+            // Verbatim: the 400 names WHICH rule refused (a matrícula from
+            // another imóvel, an extraction not linked to one, a transcription
+            // still running). A generic "erro ao salvar" would hide the only
+            // part the operator can act on.
+            <p className="text-xs text-destructive" data-testid="matricula-atos-erro-salvar">
+              {errorMessage}
+            </p>
+          )}
 
           <Button
             type="button"

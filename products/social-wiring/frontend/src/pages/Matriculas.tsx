@@ -42,13 +42,16 @@ import {
   useMatriculaExtracao,
   useUploadMatricula,
   useDeleteExtracao,
+  readableError,
 } from '@/hooks/useMatriculas';
 import {
+  useConfirmarDetalhesAto,
   useDefinirFontes,
   useMatriculaAtos,
   useMatriculaFontes,
 } from '@/hooks/useMatriculaEstrutura';
 import type { MatriculaAto } from '@/hooks/useMatriculaEstrutura';
+import MatriculaAtoDetalhesEditor from '@/components/matricula/MatriculaAtoDetalhesEditor';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -603,6 +606,10 @@ function MatriculaAtosEFontes({ extracaoId }: { extracaoId: string }) {
   const atosQuery = useMatriculaAtos(extracaoId);
   const fontesQuery = useMatriculaFontes(extracaoId);
   const definirFontes = useDefinirFontes(extracaoId);
+  // One mutation for every act on the page; `variables.atoId` is what tells
+  // the editors WHICH of them is saving, so a confirmation on R-3 does not
+  // spin the button on R-1.
+  const confirmarDetalhes = useConfirmarDetalhesAto(extracaoId);
 
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [outroTitulo, setOutroTitulo] = useState('');
@@ -695,6 +702,30 @@ function MatriculaAtosEFontes({ extracaoId }: { extracaoId: string }) {
                         >
                           {ato.texto}
                         </p>
+                        {/* What we READ out of that text, for the operator to
+                            confirm or fix (migration 115). Under the literal
+                            text on purpose: the reading is a claim ABOUT the
+                            text above it, and the two must be comparable
+                            without scrolling between screens. */}
+                        <div className="mt-2">
+                          <MatriculaAtoDetalhesEditor
+                            ato={ato}
+                            detalhes={ato.detalhes}
+                            saving={
+                              confirmarDetalhes.isPending &&
+                              confirmarDetalhes.variables?.atoId === ato.id
+                            }
+                            errorMessage={
+                              confirmarDetalhes.isError &&
+                              confirmarDetalhes.variables?.atoId === ato.id
+                                ? readableError(confirmarDetalhes.error as Error)
+                                : null
+                            }
+                            onConfirmar={(patch) =>
+                              confirmarDetalhes.mutate({ atoId: ato.id, patch })
+                            }
+                          />
+                        </div>
                       </CollapsibleContent>
                     </Collapsible>
                   </li>

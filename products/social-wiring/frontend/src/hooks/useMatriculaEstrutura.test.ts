@@ -56,6 +56,7 @@ vi.mock("@tanstack/react-query", () => {
 });
 
 import {
+  useConfirmarDetalhesAto,
   useContratoAtos,
   useDefinirContratoAtos,
   useDefinirFontes,
@@ -143,6 +144,9 @@ describe("useDefinirContratoAtos", () => {
     expect(mockPut).toHaveBeenCalledWith("/api/matriculas/contratos/contrato-1/atos", {
       extracao_id: "extracao-1",
       ato_ids: ["ato-2", "ato-1"],
+      // Always sent, even empty: the PUT REPLACES the whole selection, so an
+      // omitted `permutas` would be indistinguishable from "delete them".
+      permutas: [],
     });
   });
 
@@ -154,6 +158,108 @@ describe("useDefinirContratoAtos", () => {
     expect(mockPut).toHaveBeenCalledWith("/api/matriculas/contratos/contrato-1/atos", {
       extracao_id: undefined,
       ato_ids: [],
+      permutas: [],
+    });
+  });
+
+  it("🔴 sends every permuta group in the SAME body as the object's quote", async () => {
+    // One PUT replaces the object's acts AND every permuta's, so a group left
+    // out of this body is a group deleted — which is why the container holds
+    // all the drafts and composes them here.
+    mockPut.mockResolvedValue({ data: { atos: [], permutas: [] } });
+    const hook = useDefinirContratoAtos("contrato-1") as any;
+    hook.mutate({
+      extracaoId: "extracao-1",
+      atoIds: ["ato-1"],
+      permutas: [
+        { permutaAtivoId: "ativo-1", extracaoId: "extracao-7", atoIds: ["ato-9", "ato-8"] },
+      ],
+    });
+    await vi.waitFor(() => expect(mockPut).toHaveBeenCalled());
+    expect(mockPut).toHaveBeenCalledWith("/api/matriculas/contratos/contrato-1/atos", {
+      extracao_id: "extracao-1",
+      ato_ids: ["ato-1"],
+      permutas: [
+        { permuta_ativo_id: "ativo-1", extracao_id: "extracao-7", ato_ids: ["ato-9", "ato-8"] },
+      ],
+    });
+  });
+});
+
+describe("useConfirmarDetalhesAto", () => {
+  it("🔴 PUTs an EMPTY body to confirm the suggestion as it stands", async () => {
+    // `{}` means "I reviewed this and it is correct". Sending the current
+    // values instead would re-stamp every field as human-typed and erase the
+    // extractor's own confidence.
+    mockPut.mockResolvedValue({ data: { ato_id: "ato-1", detalhes: {} } });
+    const hook = useConfirmarDetalhesAto("extracao-1") as any;
+    hook.mutate({ atoId: "ato-1", patch: {} });
+    await vi.waitFor(() => expect(mockPut).toHaveBeenCalled());
+    expect(mockPut).toHaveBeenCalledWith("/api/matriculas/atos/ato-1/detalhes", {});
+  });
+
+  it("🔴 passes a cleared field through as null, not as an omitted key", async () => {
+    // Absent = keep the suggestion; null = clear it. Collapsing the two would
+    // make "the extractor read something that is not there" unfixable.
+    mockPut.mockResolvedValue({ data: { ato_id: "ato-1", detalhes: {} } });
+    const hook = useConfirmarDetalhesAto("extracao-1") as any;
+    hook.mutate({ atoId: "ato-1", patch: { valor: null, transmitentes: [] } });
+    await vi.waitFor(() => expect(mockPut).toHaveBeenCalled());
+    expect(mockPut).toHaveBeenCalledWith("/api/matriculas/atos/ato-1/detalhes", {
+      valor: null,
+      transmitentes: [],
+    });
+  });
+
+  it("patches the one act in the cached list and invalidates the imóvel reads", async () => {
+    mockPut.mockResolvedValue({
+      data: { ato_id: "ato-1", detalhes: { origem: "confirmado" } },
+    });
+    const hook = useConfirmarDetalhesAto("extracao-1") as any;
+    hook.mutate({ atoId: "ato-1", patch: {} });
+    await vi.waitFor(() => expect(setQueryDataMock).toHaveBeenCalled());
+
+    // The cache update is an updater FUNCTION (the response carries only the
+    // act it wrote), so re-reading the whole list would collapse every open
+    // editor on the page.
+    const [chave, updater] = setQueryDataMock.mock.calls[0];
+    expect(chave).toEqual(["matricula-atos", "extracao-1"]);
+    const antes = {
+      atos: [
+        { id: "ato-1", detalhes: { origem: "sugestao" } },
+        { id: "ato-2", detalhes: { origem: "sugestao" } },
+      ],
+    };
+    expect((updater as (v: unknown) => any)(antes).atos).toEqual([
+      { id: "ato-1", detalhes: { origem: "confirmado" } },
+      { id: "ato-2", detalhes: { origem: "sugestao" } },
+    ]);
+    // The título/ônus/antigos reads are DERIVED from these details.
+    await vi.waitFor(() =>
+      expect(invalidateQueriesMock).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ["sw", "imovel-contrato"] }),
+      ),
+    );
+  });
+
+  it("leaves the cache alone when there is nothing cached yet", async () => {
+    mockPut.mockResolvedValue({ data: { ato_id: "ato-1", detalhes: {} } });
+    const hook = useConfirmarDetalhesAto("extracao-1") as any;
+    hook.mutate({ atoId: "ato-1", patch: {} });
+    await vi.waitFor(() => expect(setQueryDataMock).toHaveBeenCalled());
+    const [, updater] = setQueryDataMock.mock.calls[0];
+    expect((updater as (v: unknown) => unknown)(undefined)).toBeUndefined();
+  });
+
+  it("surfaces the server's refusal without the status prefix", async () => {
+    mockPut.mockRejectedValue(
+      new Error("[400] A abertura da matrícula não é um ato — não tem detalhes."),
+    );
+    const hook = useConfirmarDetalhesAto("extracao-1") as any;
+    hook.mutate({ atoId: "ato-0", patch: {} });
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(toastError).toHaveBeenCalledWith("Não foi possível confirmar os detalhes", {
+      description: "A abertura da matrícula não é um ato — não tem detalhes.",
     });
   });
 });

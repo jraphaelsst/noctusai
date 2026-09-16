@@ -45,6 +45,33 @@ vi.mock("@/hooks/useImovelDados", async (importOriginal) => {
 const mockUseTeamMembers = vi.fn();
 vi.mock("@/hooks/useTeam", () => ({ useTeamMembers: mockUseTeamMembers }));
 
+// The contract reads this page now mounts (`ImovelContratoContainer`,
+// migrations 115/118). Mocked for the same reason the cartório hooks are:
+// this harness renders without a QueryClientProvider, so a real `useQuery`
+// here would throw. The cards themselves are covered by their own colocated
+// tests; what matters at THIS level is that mounting them does not break the
+// page, which is exactly what these inert hooks exercise.
+vi.mock("@/hooks/useImovelContrato", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useImovelContrato")>();
+  const query = () => ({ data: undefined, isPending: false, isFetching: false, isError: false });
+  const mutation = () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    error: null,
+    variables: undefined,
+  });
+  return {
+    ...actual,
+    useTituloAquisitivo: query,
+    useOnusCredor: query,
+    useAntigosProprietarios: query,
+    useImovelCertidoes: query,
+    useConfirmarTitulo: mutation,
+    useConfirmarOnusCredor: mutation,
+    useConfirmarDocumentoExtracao: mutation,
+  };
+});
+
 const mockToastInfo = vi.fn();
 vi.mock("sonner", () => ({
   toast: { info: (...a: unknown[]) => mockToastInfo(...a), success: vi.fn(), error: vi.fn() },

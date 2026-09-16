@@ -49,6 +49,9 @@ export const TIPO_LABEL_IMOVEL: Record<string, string> = {
   matricula: "Matrícula do imóvel",
   guia_iptu: "Guia de IPTU",
   texto_extraido: "Texto transcrito da matrícula",
+  // Migration 118 — the contract's imóvel CND group.
+  cnd_iptu: "CND de IPTU",
+  cnd_condominio: "CND de condomínio",
 };
 
 /**

@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
+import { ImovelContratoContainer } from "@/components/ImovelContratoContainer";
 import EditPlaceholderButton from "@/components/imovel/EditPlaceholderButton";
 import ImovelAreasSection from "@/components/imovel/ImovelAreasSection";
 import ImovelCartorioCard from "@/components/imovel/ImovelCartorioCard";
@@ -387,6 +388,13 @@ export default function ImovelDetalhes() {
               if (res?.url) window.open(res.url, "_blank", "noopener,noreferrer");
             }}
           />
+
+          {/* What the CONTRACT needs from this imóvel's matrícula + its CND
+              group (migrations 115/118). Its own container: these are
+              readings OF a matrícula, served by the matrículas module, with a
+              different lifecycle from the cartório row the cards above edit
+              (confirming one act's details makes all three of them stale). */}
+          {codigo && <ImovelContratoContainer codigo={codigo} />}
 
           {/* § 5.13 Metadados */}
           <ImovelMetadadosSection

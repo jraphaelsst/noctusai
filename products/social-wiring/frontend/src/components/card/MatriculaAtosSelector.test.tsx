@@ -26,6 +26,10 @@ function ato(over: Partial<MatriculaAto> = {}): MatriculaAto {
     header_fim: null,
     rotulo: "R-1 Compra e venda",
     texto: "R-1 Compra  e venda a Joao da Silva, CPF 000.000.000-00, contrate.",
+    // Migration 115 — the act's typed reading. `null` here: this component
+    // selects acts for a quote and never renders their details (that is
+    // `MatriculaAtoDetalhesEditor`, on the matrículas page).
+    detalhes: null,
     ...over,
   };
 }
