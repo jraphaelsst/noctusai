@@ -54,6 +54,23 @@ def _priced(provider: str, model: str) -> bool:
     return False
 
 
+def _image_edit_fully_priced(provider: str, model: str) -> bool:
+    """`image_edit` models bill THREE independent rates (text-in / image-in
+    / image-out) — `_priced()` above only checks the text-in leg, so a model
+    priced on text alone but zero on the two image rates would still pass
+    it while silently costing 0 for every image token, which is most of an
+    image-edit call's actual spend. This is the S2 extension of the same
+    no-silent-errors invariant `_priced()` enforces for the text-only shape."""
+    for entry in MODELS:
+        if entry.provider == provider and entry.id == model and entry.kind == "image_edit":
+            return (
+                (entry.cost_per_1m_input_tokens or 0) > 0
+                and (entry.cost_per_1m_image_input_tokens or 0) > 0
+                and (entry.cost_per_1m_image_output_tokens or 0) > 0
+            )
+    return False
+
+
 #: NOC-REMEDIATE[llm-model-unpriced]: `gemini-2.0-flash` is selectable today
 #: and priced nowhere, so an org that switches to Gemini gets the exact
 #: silent-zero this file exists to prevent. It is listed rather than fixed
@@ -125,3 +142,54 @@ def test_a_registered_model_prices_a_million_tokens() -> None:
         prompt_tokens=1_000_000,
         completion_tokens=0,
     ) == pytest.approx(5.00)
+
+
+# ── S2: image_edit models — three independently-priced legs ──────────────
+#
+# `ModelEntry` gained `cost_per_1m_image_input_tokens` /
+# `cost_per_1m_image_output_tokens` / `supports_batch` / `snapshot` for the
+# image-edit catalog rows. The pricing invariant this whole file exists to
+# enforce extends to the two new rate fields exactly the same way it already
+# covers `cost_per_1m_output_tokens` — a rate silently left at `None` is a
+# silently-free leg, not a documented gap.
+
+@pytest.mark.parametrize(
+    "provider,model",
+    [
+        ("openai", "gpt-image-2.5-sunburst"),
+        ("openai", "gpt-image-2.5-flare"),
+    ],
+)
+def test_image_edit_models_carry_all_three_rates(provider: str, model: str) -> None:
+    assert _image_edit_fully_priced(provider, model), (
+        f"{provider}/{model} is a selectable image_edit model missing one "
+        f"of its three rates (text-in / image-in / image-out)"
+    )
+
+
+def test_estimate_cost_usd_prices_image_tokens_at_the_dedicated_rate() -> None:
+    """Image tokens must price against `cost_per_1m_image_input_tokens` /
+    `..._output_tokens`, not silently fall through to the text rates (or to
+    zero, the failure this whole file exists to catch)."""
+    cost = estimate_cost_usd(
+        provider="openai",
+        model="gpt-image-2.5-sunburst",
+        prompt_tokens=1_000_000,
+        completion_tokens=0,
+        image_input_tokens=1_000_000,
+        image_output_tokens=1_000_000,
+    )
+    assert cost == pytest.approx(5.00 + 8.00 + 30.00)
+
+
+def test_image_edit_models_declare_no_batch_support() -> None:
+    """`supports_batch` is a real capability field, not a comment — the
+    UI's 'Econômico' speed-mode lock reads it directly. Both 2.5-generation
+    edit models verified 2026-09-15 have NO async Batch API availability."""
+    for model_id in ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare"):
+        entries = [
+            m for m in MODELS
+            if m.provider == "openai" and m.id == model_id and m.kind == "image_edit"
+        ]
+        assert entries, f"{model_id} missing from the catalog"
+        assert entries[0].supports_batch is False

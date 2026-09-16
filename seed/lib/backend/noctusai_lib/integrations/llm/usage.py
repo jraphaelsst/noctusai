@@ -33,8 +33,19 @@ class UsageEvent:
       may be `None` if the provider doesn't expose them (e.g. some audio
       APIs don't return token counts).
     - `cost_estimate_usd`: computed locally from `prompt_tokens *
-      cost_per_1m_input / 1e6 + completion_tokens * cost_per_1m_output / 1e6`.
-      Not a billing source of truth — treat as an approximation.
+      cost_per_1m_input / 1e6 + completion_tokens * cost_per_1m_output / 1e6`
+      (plus the image-token legs below, when present). Not a billing source
+      of truth — treat as an approximation.
+    - `model_version`: the provider-reported dated snapshot actually served
+      (e.g. "gpt-4o-2026-08-06"), distinct from `model` (the requested
+      alias, which can roll to a new snapshot server-side without the
+      caller changing anything). Recording both is what lets model
+      comparisons stay trustworthy over time — `model` alone silently
+      conflates two different served models under one label.
+    - `batch`: True when this event was recorded from the provider's async
+      Batch API (discounted rate) rather than a real-time call. NOT the
+      same concept as a `generate_embeddings_batch`-shaped synchronous
+      multi-input call — see `models.ModelEntry.supports_batch` docstring.
     """
     provider: str
     model: str
@@ -43,8 +54,16 @@ class UsageEvent:
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    # Image-token counts — populated by `image_edit` / multi-image vision
+    # calls. Additive to (never a re-use of) `prompt_tokens`/
+    # `completion_tokens` above, because `ModelEntry` prices image tokens at
+    # a separate published rate from text tokens.
+    image_input_tokens: Optional[int] = None
+    image_output_tokens: Optional[int] = None
     cost_estimate_usd: float = 0.0
     at: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    model_version: Optional[str] = None
+    batch: bool = False
     # Hook for callers that want to attach a correlation id without mutating
     # the rest of the event. Opaque to the sink.
     extra: dict[str, Any] = field(default_factory=dict)
@@ -86,6 +105,16 @@ class SupabaseUsageSink:
 
     LGPD: this sink writes counts + provider/model identifiers + `org_id`
     only — never prompt content. See `UsageEvent` docstring.
+
+    NOC-REMEDIATE[llm-usage-image-columns]: `image_input_tokens` /
+    `image_output_tokens` / `model_version` / `batch` are computed on every
+    `UsageEvent` (S2) but intentionally NOT written to `row` below — the
+    `<schema>.llm_usage` table doesn't carry those columns yet, and
+    inserting unknown keys would fail (or, if PostgREST silently ignores
+    extras, would look like it worked while dropping the very fields this
+    slice exists to preserve). Add the migration + these four keys to `row`
+    together, in whichever product/slice actually owns writing to
+    `llm_usage` next — S2 is the seed-lib schema only.
     """
 
     def __init__(self, db_client: Any, schema: str, table: str = "llm_usage") -> None:
@@ -154,12 +183,22 @@ def estimate_cost_usd(
     model: str,
     prompt_tokens: Optional[int],
     completion_tokens: Optional[int],
+    image_input_tokens: Optional[int] = None,
+    image_output_tokens: Optional[int] = None,
 ) -> float:
     """Compute a rough cost estimate from the model catalog.
 
+    `image_input_tokens` / `image_output_tokens` price against the model's
+    dedicated image rates (`ModelEntry.cost_per_1m_image_input_tokens` /
+    `..._output_tokens`) — additive to the text `prompt_tokens` /
+    `completion_tokens` legs, never a substitute for them. Omitting them
+    (every pre-S2 caller) reproduces the exact prior text-only result.
+
     Returns 0.0 when any input is missing or the model has no price in the
-    catalog (common for stubs + future models). Never raises — pricing
-    should never break a successful LLM call.
+    catalog (common for stubs + future models). A rate missing for just ONE
+    leg (e.g. an `image_edit` model priced on text-in but not yet on
+    image-in) zeroes only that leg's contribution, not the whole estimate.
+    Never raises — pricing should never break a successful LLM call.
     """
     from .models import models_for
 
@@ -170,9 +209,15 @@ def estimate_cost_usd(
         entry = entries[0]
         in_rate = getattr(entry, "cost_per_1m_input_tokens", None) or 0.0
         out_rate = getattr(entry, "cost_per_1m_output_tokens", None) or 0.0
+        img_in_rate = getattr(entry, "cost_per_1m_image_input_tokens", None) or 0.0
+        img_out_rate = getattr(entry, "cost_per_1m_image_output_tokens", None) or 0.0
         pt = prompt_tokens or 0
         ct = completion_tokens or 0
-        return (pt * in_rate + ct * out_rate) / 1_000_000.0
+        ipt = image_input_tokens or 0
+        ipo = image_output_tokens or 0
+        return (
+            pt * in_rate + ct * out_rate + ipt * img_in_rate + ipo * img_out_rate
+        ) / 1_000_000.0
     except Exception as exc:
         logger.debug("estimate_cost_usd failed for %s/%s: %s", provider, model, exc)
         return 0.0
@@ -189,9 +234,17 @@ async def record_usage(
     completion_tokens: Optional[int],
     total_tokens: Optional[int],
     org_id: Optional[str] = None,
+    image_input_tokens: Optional[int] = None,
+    image_output_tokens: Optional[int] = None,
+    model_version: Optional[str] = None,
+    batch: bool = False,
 ) -> None:
     """Provider-side convenience — builds a `UsageEvent` and dispatches to
     the active sink. Safe to call with `sink=None` (no-op). Never raises.
+
+    `image_input_tokens` / `image_output_tokens` / `model_version` / `batch`
+    are additive, keyword-only, defaulted params — every pre-S2 call site
+    (which passes none of them) behaves identically to before.
 
     Imported lazily inside provider methods to avoid a circular import
     (provider → client → usage → ...).
@@ -210,6 +263,8 @@ async def record_usage(
         model=model,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        image_input_tokens=image_input_tokens,
+        image_output_tokens=image_output_tokens,
     )
     try:
         await sink.record(UsageEvent(
@@ -220,7 +275,11 @@ async def record_usage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            image_input_tokens=image_input_tokens,
+            image_output_tokens=image_output_tokens,
             cost_estimate_usd=cost,
+            model_version=model_version,
+            batch=batch,
         ))
     except Exception as exc:
         logger.warning("usage_sink.record failed: %s", exc)

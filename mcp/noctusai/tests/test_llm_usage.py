@@ -139,6 +139,36 @@ class TestCostEstimation:
         )
         assert cost == 0.0
 
+    def test_image_edit_model_prices_all_three_legs(self):
+        """`image_edit` models bill text-in / image-in / image-out at THREE
+        independently-priced rates — an estimate that only looked at
+        `prompt_tokens`/`completion_tokens` would silently zero the image
+        legs, which are most of an image-edit call's actual spend."""
+        from noctusai_lib.integrations.llm import estimate_cost_usd
+
+        cost = estimate_cost_usd(
+            provider="openai",
+            model="gpt-image-2.5-sunburst",
+            prompt_tokens=1_000_000,
+            completion_tokens=0,
+            image_input_tokens=1_000_000,
+            image_output_tokens=1_000_000,
+        )
+        # text-in $5 + image-in $8 + image-out $30 per 1M tokens
+        assert cost == pytest.approx(5.00 + 8.00 + 30.00)
+
+    def test_omitted_image_tokens_do_not_change_pre_s2_results(self):
+        """Backward-compat: a caller that never passes image token counts
+        (every pre-S2 call site) gets the exact same result as before —
+        the new parameters are additive defaults, not a behavior change."""
+        from noctusai_lib.integrations.llm import estimate_cost_usd
+
+        cost = estimate_cost_usd(
+            provider="openai", model="gpt-4o-mini",
+            prompt_tokens=1000, completion_tokens=500,
+        )
+        assert abs(cost - 0.00045) < 1e-9
+
 
 # ── record_usage goes to the configured sink ───────────────────
 
@@ -166,6 +196,41 @@ class TestRecordUsageDispatch:
         assert event.prompt_tokens == 200
         # Cost computed via catalog: 200 * 0.15/1M + 100 * 0.60/1M
         expected = (200 * 0.15 + 100 * 0.60) / 1_000_000.0
+        assert abs(event.cost_estimate_usd - expected) < 1e-9
+        # New S2 fields default safely when the caller doesn't pass them.
+        assert event.image_input_tokens is None
+        assert event.image_output_tokens is None
+        assert event.model_version is None
+        assert event.batch is False
+
+    def test_record_usage_carries_image_tokens_and_model_version(self):
+        """`model_version` + `batch` + image-token counts must reach the
+        persisted `UsageEvent` unchanged — this is what lets a model be
+        compared over time (`model` alone conflates snapshot rolls) and
+        lets an image_edit call's actual spend be priced correctly."""
+        from noctusai_lib.integrations.llm import InMemoryUsageSink, record_usage
+
+        sink = InMemoryUsageSink()
+        _install_with_sink(sink)
+
+        async def run():
+            await record_usage(
+                provider="openai", model="gpt-image-2.5-sunburst",
+                operation="vision", org_id="org-xyz",
+                prompt_tokens=100, completion_tokens=0, total_tokens=100,
+                image_input_tokens=50, image_output_tokens=25,
+                model_version="gpt-image-2.5-sunburst-2026-09-08",
+                batch=True,
+            )
+
+        asyncio.run(run())
+        assert len(sink.events) == 1
+        event = sink.events[0]
+        assert event.image_input_tokens == 50
+        assert event.image_output_tokens == 25
+        assert event.model_version == "gpt-image-2.5-sunburst-2026-09-08"
+        assert event.batch is True
+        expected = (100 * 5.00 + 50 * 8.00 + 25 * 30.00) / 1_000_000.0
         assert abs(event.cost_estimate_usd - expected) < 1e-9
 
     def test_record_usage_noop_when_sink_is_none(self):
