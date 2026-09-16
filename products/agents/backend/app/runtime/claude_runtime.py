@@ -490,6 +490,12 @@ RESUME_TRUNCATED_TEXT = (
     "nova sessão e não tem mais acesso ao contexto anterior."
 )
 
+#: contract §E.11 / ``LGPD-WARNINGS.md`` (2026-09-15 retention mitigation):
+#: an abandoned session (nothing will ever resume from it again) — as
+#: opposed to a merely MISSING transcript, which was never stored at all
+#: and has nothing to delete.
+_ABANDONED_ESTADOS = ("truncado", "incompleto", "invalido")
+
 
 class ClaudeAgentSdkRuntime:
     """Real :class:`~app.runtime.types.AgentRuntime`."""
@@ -539,21 +545,30 @@ class ClaudeAgentSdkRuntime:
     ) -> tuple[ConversationTranscriptMirror, list[dict[str, Any]] | None, str | None]:
         """Contract §E.11 "Durable transcripts" / "Inbound": decides, BEFORE
         any CLI is spawned, whether ``ctx.sdk_session_id``'s stored
-        transcript is a usable resume target. Never mutates the store —
-        only reads.
+        transcript is a usable resume target.
 
         Returns ``(mirror, handoff_entries, fallback_text)``:
 
         - a genuinely fresh conversation (``ctx.sdk_session_id is None``)
           → a fresh mirror, ``None`` entries, ``None`` fallback text (no
-          fallback message — there was never anything to resume).
+          fallback message — there was never anything to resume; nothing
+          is deleted — there is no old session to abandon).
         - a usable transcript (``estado == "ok"`` and it has stored
           entries) → a mirror already pinned to ``ctx.sdk_session_id``,
-          its entries, ``None`` fallback text.
-        - missing (no stored entries despite ``estado == "ok"``),
-          ``truncado``, ``incompleto`` or ``invalido`` → a fresh mirror,
-          ``None`` entries, and the PT-BR fallback text (`truncado` gets
-          its own; every other case gets the generic one).
+          its entries, ``None`` fallback text. Never mutates the store.
+        - missing (no stored entries despite ``estado == "ok"``) → a
+          fresh mirror, ``None`` entries, the generic fallback text.
+          Nothing is deleted — there is nothing TO delete.
+        - ``truncado``, ``incompleto`` or ``invalido`` (an ABANDONED
+          session, contract §E.11 / ``LGPD-WARNINGS.md`` 2026-09-15:
+          retention is bounded by the conversation, so an abandoned
+          session's entries have no purpose and no way to be reached
+          once a fresh session starts) → :meth:`_abandon_old_session`
+          deletes ``ctx.sdk_session_id``'s rows and resets
+          ``transcript_estado`` back to ``"ok"`` for the NEW session,
+          then this returns a fresh mirror, ``None`` entries, and the
+          PT-BR fallback text (`truncado` gets its own; the other two
+          get the generic one).
         """
         if ctx.sdk_session_id is None:
             fresh = ConversationTranscriptMirror(
@@ -572,10 +587,62 @@ class ClaudeAgentSdkRuntime:
         fallback_text = (
             RESUME_TRUNCATED_TEXT if estado == "truncado" else RESUME_LOST_CONTEXT_TEXT
         )
+        if estado in _ABANDONED_ESTADOS:
+            self._abandon_old_session(ctx, old_sdk_session_id=ctx.sdk_session_id, estado=estado)
         fresh = ConversationTranscriptMirror(
             self._transcripts, ctx.org_id, ctx.conversation_id, None
         )
         return fresh, None, fallback_text
+
+    def _abandon_old_session(
+        self, ctx: TurnContext, *, old_sdk_session_id: str, estado: str
+    ) -> None:
+        """Deletes an abandoned (``truncado``/``incompleto``/``invalido``)
+        session's rows and resets ``transcript_estado`` back to ``"ok"``,
+        so the fresh session about to start is never judged by the
+        abandoned one's state (contract §E.11; ``LGPD-WARNINGS.md``
+        2026-09-15 retention mitigation — an abandoned session's entries
+        must not linger once a fresh session starts).
+
+        Neither call is allowed to kill the turn — a store failure is
+        logged loudly (no silent pass) and the fresh session proceeds
+        regardless; a delete failure leaves the orphaned rows to be
+        retried the next time THIS conversation abandons a session, and
+        an estado-reset failure is surfaced so the next turn's resume
+        decision reading a stale estado is a known, logged condition,
+        never a silent one.
+        """
+        try:
+            self._transcripts.delete_session(
+                ctx.org_id, ctx.conversation_id, old_sdk_session_id
+            )
+        except Exception:
+            logger.error(
+                "run_turn: delete_session failed for the abandoned "
+                "sdk_session_id=%s (estado=%s, conversation=%s, org=%s); "
+                "continuing with a fresh session regardless — the "
+                "orphaned rows will be retried on a future abandonment",
+                old_sdk_session_id,
+                estado,
+                ctx.conversation_id,
+                ctx.org_id,
+                exc_info=True,
+            )
+
+        try:
+            self._transcripts.set_estado(ctx.org_id, ctx.conversation_id, "ok")
+        except Exception:
+            logger.error(
+                "run_turn: failed to reset transcript_estado to 'ok' "
+                "after abandoning sdk_session_id=%s (conversation=%s, "
+                "org=%s); the next turn's resume decision may still see "
+                "estado=%s",
+                old_sdk_session_id,
+                ctx.conversation_id,
+                ctx.org_id,
+                estado,
+                exc_info=True,
+            )
 
     async def _connect_or_fresh(
         self,
