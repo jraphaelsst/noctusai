@@ -30,6 +30,17 @@ function make(opts: Partial<CreateApiClientOptions> = {}) {
   return { client, onUnauthenticated };
 }
 
+/** Read a Blob from either realm: jsdom's has no .text(), undici's does. */
+async function readBlobText(blob: Blob): Promise<string> {
+  if (typeof blob.text === 'function') return blob.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
 describe('createApiClient — onUnauthenticated on a dead session', () => {
   beforeEach(() => vi.restoreAllMocks());
   afterEach(() => vi.restoreAllMocks());
@@ -242,8 +253,12 @@ describe('api.upload', () => {
 
 describe('api.download', () => {
   it('GETs and resolves the raw Blob, with the auth header set', async () => {
-    const blob = new Blob(['zip-bytes'], { type: 'application/zip' });
-    const fetchMock = vi.fn().mockResolvedValue(new Response(blob, { status: 200 }));
+    // Raw bytes, not a Blob: under jsdom the global Blob is jsdom's, and an
+    // undici Response stringifies a foreign Blob to "[object Blob]" (seen on CI).
+    const bytes = new TextEncoder().encode('zip-bytes');
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(bytes, { status: 200, headers: { 'Content-Type': 'application/zip' } }),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     const client = createApiClient({
@@ -258,7 +273,9 @@ describe('api.download', () => {
     expect(init.method).toBeUndefined(); // GET (default)
     expect(init.headers['Authorization']).toBe('Bearer tok');
     expect(init.headers['Content-Type']).toBeUndefined(); // no body on a GET
-    expect(result).toBeInstanceOf(Blob);
+    // Duck-typed: the Blob class differs between realms (jsdom vs undici).
+    expect(result.size).toBe(bytes.byteLength);
+    expect(await readBlobText(result)).toBe('zip-bytes');
   });
 
   it('throws a structured ApiError (with .status) on a non-2xx response, e.g. 409 not-ready', async () => {
