@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional, Tuple
 
-ModelKind = Literal["chat", "embedding", "audio", "vision"]
+ModelKind = Literal["chat", "embedding", "audio", "vision", "image_edit"]
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,30 @@ class ModelEntry:
     # None = no published price / unknown. Zero cost recorded at lookup.
     cost_per_1m_input_tokens: Optional[float] = None
     cost_per_1m_output_tokens: Optional[float] = None
+    # `image_edit` models bill THREE independent rates, not two:
+    # `cost_per_1m_input_tokens` above prices the TEXT instruction tokens;
+    # these two price the reference-image tokens and the generated/edited
+    # image tokens respectively — each at a different published rate. None
+    # = no published price for that leg; `estimate_cost_usd` treats a
+    # missing rate as a zero contribution for that component only (same
+    # silent-zero-for-unknown contract the text rates already have).
+    cost_per_1m_image_input_tokens: Optional[float] = None
+    cost_per_1m_image_output_tokens: Optional[float] = None
+    # True when the vendor's async Batch API (submit-a-job, ~24h turnaround,
+    # ~50% discount) is available for this model. This is NOT the same
+    # concept as `generate_embeddings_batch` (a single synchronous
+    # multi-input round-trip) — that batches many REQUESTS into one HTTP
+    # call; this flag is about the separate async discounted job queue.
+    # Load-bearing beyond pricing: it drives a UI capability gate (e.g. an
+    # "Econômico" speed mode is disabled when the org's selected image model
+    # has no Batch support). Conservative default — unknown/unverified
+    # support is False, never silently advertised as available.
+    supports_batch: bool = False
+    # Provider-native dated snapshot suffix (e.g. "-2026-09-08") when the
+    # vendor pins this catalog id to a specific dated release distinct from
+    # a rolling alias. None when the catalog `id` already IS the pinned
+    # snapshot (no separate rolling alias exists).
+    snapshot: Optional[str] = None
 
 
 MODELS: Tuple[ModelEntry, ...] = (
@@ -114,6 +138,115 @@ MODELS: Tuple[ModelEntry, ...] = (
         provider="openai",
         kind="audio",
         description="Speech-to-text transcription.",
+    ),
+
+    # ── OpenAI (image-edit — Phase S2, verified 2026-09-15) ───────────
+    #: Both 2.5-generation edit models share the same published rates.
+    #: `supports_batch=False` — neither has async Batch API availability
+    #: yet, so the "Econômico" speed-mode UI lock stays engaged for them.
+    #: NOC-REMEDIATE[llm-model-unpriced]: the older `gpt-image-2` (and prior)
+    #: generation IS Batch-capable (per vendor docs, 50% discount) but no
+    #: published per-1M-token rate was available to verify at the same
+    #: 2026-09-15 pass as the two entries below — a guessed number in a
+    #: billing catalog is worse than a declared gap. Add the `ModelEntry`
+    #: once the rate is confirmed; do not price it from inference.
+    ModelEntry(
+        id="gpt-image-2.5-sunburst",
+        label="GPT Image 2.5 Sunburst",
+        provider="openai",
+        kind="image_edit",
+        description="Image editing — multi-turn, reference-image aware.",
+        snapshot="-2026-09-08",
+        cost_per_1m_input_tokens=5.00,
+        cost_per_1m_image_input_tokens=8.00,
+        cost_per_1m_image_output_tokens=30.00,
+        supports_batch=False,
+    ),
+    ModelEntry(
+        id="gpt-image-2.5-flare",
+        label="GPT Image 2.5 Flare",
+        provider="openai",
+        kind="image_edit",
+        description="Image editing — 2.5-generation sibling of Sunburst.",
+        snapshot="-2026-09-08",
+        cost_per_1m_input_tokens=5.00,
+        cost_per_1m_image_input_tokens=8.00,
+        cost_per_1m_image_output_tokens=30.00,
+        supports_batch=False,
+    ),
+
+    # ── OpenAI (text + vision — Phase S2, verified 2026-09-15) ────────
+    ModelEntry(
+        id="gpt-6-astra",
+        label="GPT-6 Astra",
+        provider="openai",
+        kind="chat",
+        description="OpenAI flagship — next-generation reasoning tier.",
+        cost_per_1m_input_tokens=10.00,
+        cost_per_1m_output_tokens=50.00,
+    ),
+    ModelEntry(
+        id="gpt-6-astra",
+        label="GPT-6 Astra (Vision)",
+        provider="openai",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=10.00,
+        cost_per_1m_output_tokens=50.00,
+    ),
+    ModelEntry(
+        id="gpt-5.6-sol",
+        label="GPT-5.6 Sol",
+        provider="openai",
+        kind="chat",
+        description="OpenAI mid-tier — balanced accuracy and cost.",
+        cost_per_1m_input_tokens=4.00,
+        cost_per_1m_output_tokens=20.00,
+    ),
+    ModelEntry(
+        id="gpt-5.6-sol",
+        label="GPT-5.6 Sol (Vision)",
+        provider="openai",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=4.00,
+        cost_per_1m_output_tokens=20.00,
+    ),
+    ModelEntry(
+        id="gpt-5.6-terra",
+        label="GPT-5.6 Terra",
+        provider="openai",
+        kind="chat",
+        description="OpenAI cost-tier — high-volume use cases.",
+        cost_per_1m_input_tokens=2.00,
+        cost_per_1m_output_tokens=12.00,
+    ),
+    ModelEntry(
+        id="gpt-5.6-terra",
+        label="GPT-5.6 Terra (Vision)",
+        provider="openai",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=2.00,
+        cost_per_1m_output_tokens=12.00,
+    ),
+    ModelEntry(
+        id="gpt-5.6-luna",
+        label="GPT-5.6 Luna",
+        provider="openai",
+        kind="chat",
+        description="OpenAI economy tier — fastest and cheapest.",
+        cost_per_1m_input_tokens=0.20,
+        cost_per_1m_output_tokens=1.20,
+    ),
+    ModelEntry(
+        id="gpt-5.6-luna",
+        label="GPT-5.6 Luna (Vision)",
+        provider="openai",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=0.20,
+        cost_per_1m_output_tokens=1.20,
     ),
 
     # ── Anthropic (real — Phase 13) ──────────────────────────────────

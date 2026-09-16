@@ -97,6 +97,27 @@ class LLMProvider(Protocol):
         """
         ...
 
+    # `analyze_images` (plural) — OPTIONAL per provider, same duck-typed
+    # rule as `generate_embeddings_batch` above: the high-level
+    # `noctusai_lib.integrations.llm.vision.analyze_images` funnel dispatches
+    # via `getattr(prov, "analyze_images", None)` and raises
+    # `NotImplementedError` for a provider that hasn't implemented it —
+    # there's no safe generic degrade path the way batch-embeddings has one
+    # (looping `analyze_image` per image and merging the results would not
+    # satisfy a caller-supplied STRICT JSON schema; the schema describes ONE
+    # structured object across the whole image set, not N independent free-
+    # text answers). Intentionally NOT declared here for the same reason
+    # `generate_embeddings_batch` isn't: it would force a stub on every
+    # provider, including ones with no multi-image structured-output support
+    # at all. OpenAI implements it via Structured Outputs
+    # (`response_format={"type": "json_schema", ...}`) over a multi-part
+    # vision message. Signature (for providers that add it):
+    #
+    #   async def analyze_images(
+    #       self, images: list[Union[bytes, str]], prompt: str, *,
+    #       response_schema: dict, model: str, api_key: str, **kwargs: Any,
+    #   ) -> dict: ...   # parsed JSON conforming to `response_schema`
+
     async def close(self) -> None:
         """Release any pooled connections / resources. Called on app shutdown."""
         ...

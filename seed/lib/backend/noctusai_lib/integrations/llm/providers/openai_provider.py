@@ -82,6 +82,7 @@ class OpenAIProvider:
                 prompt_tokens=getattr(usage, "prompt_tokens", None),
                 completion_tokens=getattr(usage, "completion_tokens", None),
                 total_tokens=getattr(usage, "total_tokens", None),
+                model_version=getattr(response, "model", None),
             )
             return content.strip()
         except OpenAIError as exc:
@@ -121,6 +122,7 @@ class OpenAIProvider:
                 prompt_tokens=getattr(usage, "prompt_tokens", None),
                 completion_tokens=None,
                 total_tokens=getattr(usage, "total_tokens", None),
+                model_version=getattr(response, "model", None),
             )
             return response.data[0].embedding
         except OpenAIError as exc:
@@ -175,6 +177,7 @@ class OpenAIProvider:
                 prompt_tokens=getattr(usage, "prompt_tokens", None),
                 completion_tokens=None,
                 total_tokens=getattr(usage, "total_tokens", None),
+                model_version=getattr(response, "model", None),
             )
             ordered = sorted(response.data, key=lambda d: d.index)
             return [d.embedding for d in ordered]
@@ -213,6 +216,9 @@ class OpenAIProvider:
             )
             # Whisper doesn't return token counts — record a call with None.
             # The usage sink sees the operation happened; cost stays zero.
+            # `response.model` is also absent on the basic-format Whisper
+            # response (only `verbose_json` carries extra fields) — the
+            # `getattr` default keeps this safe either way.
             await record_usage(
                 provider="openai",
                 model=model,
@@ -221,6 +227,7 @@ class OpenAIProvider:
                 prompt_tokens=None,
                 completion_tokens=None,
                 total_tokens=None,
+                model_version=getattr(response, "model", None),
             )
             return (response.text or "").strip()
         except OpenAIError as exc:
@@ -275,11 +282,104 @@ class OpenAIProvider:
                 prompt_tokens=getattr(usage, "prompt_tokens", None),
                 completion_tokens=getattr(usage, "completion_tokens", None),
                 total_tokens=getattr(usage, "total_tokens", None),
+                model_version=getattr(response, "model", None),
             )
             return (response.choices[0].message.content or "").strip()
         except OpenAIError as exc:
             logger.error("OpenAI analyze_image failed: %s", exc)
             raise LLMAPIError("openai", str(exc)) from exc
+
+    async def analyze_images(
+        self,
+        images: list[Union[bytes, str]],
+        prompt: str,
+        *,
+        response_schema: dict,
+        model: str,
+        api_key: str,
+        org_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> dict:
+        """Multi-image vision analysis constrained to a strict JSON schema.
+
+        Unblocks S3b (the image_edit organ) and structured cost accounting:
+        callers get a parsed dict guaranteed to conform to `response_schema`
+        instead of free text they'd have to parse/validate themselves. Each
+        entry in `images` becomes its own `image_url` content block in ONE
+        user message — the model reasons over the whole set together, which
+        is the point (comparing/aligning several images), not N independent
+        single-image calls.
+
+        Uses OpenAI Structured Outputs (`response_format={"type":
+        "json_schema", ...}` with `"strict": True`) rather than the looser
+        `{"type": "json_object"}` mode used elsewhere in the fleet — strict
+        mode has the SDK/model enforce the schema server-side instead of the
+        caller hoping the model's free-form JSON happens to match.
+
+        `response_schema` is the bare JSON Schema `schema` object (no outer
+        `{"type": "json_schema", ...}` envelope — this method builds that).
+        An optional `schema_name` kwarg (popped before forwarding the rest
+        of `**kwargs` to the SDK) names it; defaults to "image_analysis".
+
+        Raises:
+            LLMAPIError: the SDK call failed, OR the model's response body
+                wasn't valid JSON (structured-output mode should prevent
+                the latter, but a caller must never trust that blindly).
+        """
+        import json
+
+        from ..inputs import image_bytes_to_data_url
+        from ..usage import record_usage
+
+        client = self._client_for(api_key)
+        schema_name = kwargs.pop("schema_name", "image_analysis")
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for image in images:
+            if isinstance(image, bytes):
+                image_url = image_bytes_to_data_url(image, "image/jpeg")
+            else:
+                image_url = image
+            content.append({"type": "image_url", "image_url": {"url": image_url}})
+
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": content}],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema_name,
+                        "schema": response_schema,
+                        "strict": True,
+                    },
+                },
+                **kwargs,
+            )
+            usage = getattr(response, "usage", None)
+            await record_usage(
+                provider="openai",
+                model=model,
+                operation="vision",
+                org_id=org_id,
+                prompt_tokens=getattr(usage, "prompt_tokens", None),
+                completion_tokens=getattr(usage, "completion_tokens", None),
+                total_tokens=getattr(usage, "total_tokens", None),
+                model_version=getattr(response, "model", None),
+            )
+        except OpenAIError as exc:
+            logger.error(
+                "OpenAI analyze_images failed (%d images): %s", len(images), exc,
+            )
+            raise LLMAPIError("openai", str(exc)) from exc
+
+        raw = (response.choices[0].message.content or "").strip()
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.error("OpenAI analyze_images returned invalid JSON: %s", exc)
+            raise LLMAPIError(
+                "openai", f"analyze_images returned invalid JSON: {exc}"
+            ) from exc
 
     async def chat_completion_stream(
         self,
@@ -316,6 +416,7 @@ class OpenAIProvider:
         payload.update(kwargs)
 
         prompt_tokens = completion_tokens = total_tokens = None
+        model_version = None
         try:
             stream = await client.chat.completions.create(**payload)
             async for chunk in stream:
@@ -323,6 +424,7 @@ class OpenAIProvider:
                     delta = chunk.choices[0].delta.content
                     if delta:
                         yield delta
+                model_version = getattr(chunk, "model", None) or model_version
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:
                     prompt_tokens = getattr(usage, "prompt_tokens", None)
@@ -340,6 +442,7 @@ class OpenAIProvider:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            model_version=model_version,
         )
 
     async def close(self) -> None:

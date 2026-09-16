@@ -57,7 +57,7 @@ from .client import (
 )
 from .config import KeyProvider, LLMConfig
 from .embeddings import generate_embedding, generate_embeddings_batch
-from .vision import analyze_image
+from .vision import analyze_image, analyze_images
 from .refusal import analyze_image_with_refusal_retry, looks_like_refusal
 from .budget import (
     compute_spend_usd,
@@ -148,6 +148,7 @@ __all__ = [
     "generate_embeddings_batch",
     "transcribe_audio",
     "analyze_image",
+    "analyze_images",
     "looks_like_refusal",
     "analyze_image_with_refusal_retry",
     # Response cache (Phase 8)
