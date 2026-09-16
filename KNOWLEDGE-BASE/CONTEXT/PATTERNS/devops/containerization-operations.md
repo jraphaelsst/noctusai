@@ -267,6 +267,7 @@ Eight learnings codified this session. Each row: **symptom · root · fix
 - **Symptom:** Ran `noctus.dev.propagate` from a worktree; it operated on the **primary** tree instead.
 - **Root:** `mcp/noctusai/settings.py` `REPO_ROOT = get_noctusai_home()` resolves to a fixed path (primary), not the caller's `cwd`.
 - **Fix:** `--worktree-path <path>` flag explicitly targets the worktree. Generalizable to other MCP write tools that touch the FS.
+- **Deeper gap found + fixed 2026-09-16 (BUG 2):** `--worktree-path` only ever fixed WHERE canon/output files are read/written (`_resolve_root`). The PRODUCT SET itself — `propagate.PRODUCTS`, the `(slug, backend_port)` list `_propagate()` iterates — was still computed ONCE at MODULE IMPORT from the MCP server's own `REPO_ROOT` (the primary checkout), ignoring `worktree_path` entirely. A product registered only in a worktree's start.sh (e.g. a fresh scaffold) got silently omitted from `wrote` while the call still reported `status="written"` — a silent-omission shape, not a crash. Fixed by re-deriving the product set from the EFFECTIVE root (`_load_products(root)`) inside `_propagate()` on every call, not from the frozen module-level snapshot. See `mcp/noctusai/tools/noctus/dev/propagate.py::_load_products` + its colocated tests.
 - **Pointer:** `feedback_mcp_write_tools_resolve_caller_root`.
 
 ### 3.16 §9a — concurrent agents NEVER share one checkout

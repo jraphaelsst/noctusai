@@ -20,12 +20,32 @@ from tools.noctus.dev import propagate as P  # noqa: E402
 REPO = Path(__file__).resolve().parents[3]
 
 
+def _write_registry_start_sh(root: Path, entries: list[tuple[str, str]]) -> None:
+    """Write a synthetic start.sh carrying a BEGIN/END_PRODUCTS_REGISTRY
+    block for the given (slug, backend_port) rows — the same shape
+    `noctusai_lib.config.cors_registry.parse_products_registry` parses.
+    Frontend ports are synthesized (backend + 10000); `_load_products`
+    only reads `backend_port`, so their exact value is irrelevant here."""
+    lines = ["# BEGIN_PRODUCTS_REGISTRY", "PRODUCTS=("]
+    for slug, backend_port in entries:
+        frontend_port = int(backend_port) + 10000
+        lines.append(f'  "{slug}:{slug.title()}:{backend_port}:{frontend_port}"')
+    lines += [")", "# END_PRODUCTS_REGISTRY"]
+    (root / "start.sh").write_text("\n".join(lines) + "\n")
+
+
 def _make_temp_repo(tmp_path: Path, kind: str) -> Path:
     """Copy the real canonical seed file into a throwaway repo root so the
     native propagate fn sees real input. (scripts/propagate-*.sh was
     absorbed into noctus.dev.propagate + deleted — scripts-mcp-absorption
     2026-05-18; byte-parity vs the .sh was proven green at port time, the
-    durable check is native idempotency below.)"""
+    durable check is native idempotency below.)
+
+    Also stamps a synthetic start.sh registry mirroring `P.PRODUCTS`
+    (BUG 2 fix, 2026-09-16): `_propagate()` now re-derives its product set
+    from the EFFECTIVE root's start.sh on every call rather than the
+    module-import-time `P.PRODUCTS` snapshot, so the temp repo needs its
+    own registry for that derivation to find anything."""
     root = tmp_path / "repo"
     if kind == "composes":
         canon_src = REPO / "products/seed/docker-compose.yml"
@@ -37,6 +57,7 @@ def _make_temp_repo(tmp_path: Path, kind: str) -> Path:
     shutil.copy2(canon_src, canon_dst)
     for slug, _ in P.PRODUCTS:
         (root / "products" / slug / "backend").mkdir(parents=True, exist_ok=True)
+    _write_registry_start_sh(root, P.PRODUCTS)
     return root
 
 
@@ -163,3 +184,62 @@ def test_dockerfile_backend_extras_are_product_scoped():
     assert "ffmpeg" not in core
     assert "COPY dev_team /opt/dev_team" not in core
     assert "# (no product extras)" in core, "no-extra products get the placeholder"
+
+
+# ── BUG 2 regression (2026-09-16): product set must derive from the
+# EFFECTIVE root, not a module-import-time snapshot ────────────────────────
+@pytest.mark.parametrize(
+    "kind,fn,out_tpl",
+    [
+        ("composes", P.propagate_composes, "products/{slug}/docker-compose.yml"),
+        ("dockerfiles", P.propagate_dockerfiles, "products/{slug}/backend/Dockerfile"),
+    ],
+)
+def test_propagate_derives_products_from_effective_root(tmp_path, kind, fn, out_tpl):
+    """Before the fix: `PRODUCTS` was computed ONCE at module import from
+    the MCP server's own `REPO_ROOT` (the primary checkout); `_propagate()`
+    iterated that frozen snapshot regardless of any `repo_root`/
+    `worktree_path` the caller passed. A product registered ONLY in the
+    override root's start.sh (e.g. a fresh worktree-only scaffold like
+    `community`) was silently omitted from `wrote` while the call still
+    reported `status="written"` — a silent-omission shape, not a crash.
+
+    Simulates that scenario: a temp repo whose start.sh registers an EXTRA
+    product `P.PRODUCTS` (the module-level snapshot) does not know about.
+    A correct fix regenerates + reports that product; the old code would
+    silently drop it from `wrote`/`products` yet still report success."""
+    root = _make_temp_repo(tmp_path, kind)
+    extra_slug = "worktree-only-product"
+    assert extra_slug not in {slug for slug, _ in P.PRODUCTS}, (
+        "test fixture must pick a slug the module-level snapshot does NOT carry"
+    )
+    registry_path = root / "start.sh"
+    text = registry_path.read_text()
+    text = text.replace(
+        "# END_PRODUCTS_REGISTRY",
+        f'  "{extra_slug}:Worktree Only:8999:18999"\n# END_PRODUCTS_REGISTRY',
+    )
+    registry_path.write_text(text)
+    (root / "products" / extra_slug / "backend").mkdir(parents=True, exist_ok=True)
+
+    res = fn(repo_root=str(root))
+    assert res["ok"] is True
+    assert res["status"] == "written"
+    assert extra_slug in res["products"], (
+        "propagate must derive its product set from the EFFECTIVE root's "
+        "start.sh — a registry-only product must not be silently omitted"
+    )
+    rel = out_tpl.format(slug=extra_slug)
+    assert rel in res["wrote"]
+    assert (root / rel).exists()
+
+
+def test_load_products_raises_on_empty_registry(tmp_path):
+    """No start.sh (or an empty/missing registry block) at the effective
+    root must raise loudly, never silently regenerate an empty set while
+    reporting success (mirrors the module-import-time guard, now exercised
+    per-call against an arbitrary root)."""
+    root = tmp_path / "no-start-sh"
+    root.mkdir()
+    with pytest.raises(RuntimeError, match="PRODUCTS registry parsed empty"):
+        P._load_products(root)

@@ -51,19 +51,35 @@ from workspace import resolve_caller_root
 # both generators read from, never a generated target. It is the only
 # registry row that must not appear here, and dropping it preserves the old
 # list's exact order.
-def _load_products() -> list[tuple[str, str]]:
+#
+# `repo_root` (2026-09-16, BUG 2 fix): parameterized so the EFFECTIVE root
+# (`worktree_path`/`repo_root` override, resolved by `_resolve_root`) can be
+# re-derived per call, not just at module import. Before this, `PRODUCTS`
+# below was computed ONCE at import from the MCP server's own `REPO_ROOT`
+# (the primary checkout) and `_propagate()`'s loop iterated that frozen
+# snapshot regardless of any `worktree_path` the caller passed — a product
+# registered ONLY in a worktree's start.sh (e.g. a fresh `community`
+# scaffold) was silently omitted from `wrote` while the call still reported
+# `status="written"` (success). A silent-omission shape, not a crash.
+def _load_products(repo_root: pathlib.Path | None = None) -> list[tuple[str, str]]:
     from noctusai_lib.config.cors_registry import parse_products_registry
 
-    entries = parse_products_registry(REPO_ROOT / "start.sh")
+    root = repo_root if repo_root is not None else REPO_ROOT
+    entries = parse_products_registry(root / "start.sh")
     if not entries:
         raise RuntimeError(
-            "start.sh PRODUCTS registry parsed empty — refusing to propagate "
-            "against an unknown product set. A silent empty list here would "
-            "regenerate nothing and report success."
+            f"start.sh PRODUCTS registry parsed empty at {root} — refusing to "
+            "propagate against an unknown product set. A silent empty list "
+            "here would regenerate nothing and report success."
         )
     return [(e["slug"], str(e["backend_port"])) for e in entries if e["slug"] != "seed"]
 
 
+# Module-import-time snapshot — kept for back-compat with callers that
+# reference `propagate.PRODUCTS` directly (`compliance.py`, `cli.py`, the
+# colocated test suite's parametrization/assertions). `_propagate()` itself
+# no longer reads this constant: it re-derives the product set from the
+# EFFECTIVE root on every call (see `_load_products`'s docstring above).
 PRODUCTS: list[tuple[str, str]] = _load_products()
 
 # ── compose substitution constants (verbatim from propagate-composes.sh) ──
@@ -700,7 +716,17 @@ def _propagate(
 ) -> dict[str, Any]:
     """Shared engine for both codegens. Mirrors the script loop exactly:
     `check` reports STALE (no write); `dry` reports planned writes (no
-    write); default WRITES every regenerated file."""
+    write); default WRITES every regenerated file.
+
+    The product set is re-derived from the EFFECTIVE root (`root`, below —
+    `repo_root`/`worktree_path` if given, else `REPO_ROOT`) on every call
+    via `_load_products(root)`, NOT read from the module-level `PRODUCTS`
+    snapshot. BUG 2 fix (2026-09-16): `PRODUCTS` is computed once at module
+    import from the MCP server's own startup `REPO_ROOT` (the primary
+    checkout); a caller passing `worktree_path` got its canon/output FILES
+    resolved to the worktree correctly, but the product LIST stayed the
+    primary's — a worktree-only product silently never got a Dockerfile/
+    compose, while the call still reported `status="written"`."""
     root = _resolve_root(repo_root, worktree_path)
     canon_path = root / canon_rel
     if not canon_path.exists():
@@ -711,11 +737,12 @@ def _propagate(
             "executed": False,
         }
     canon = canon_path.read_text()
+    products = _load_products(root)
 
     stale: list[str] = []
     written: list[str] = []
     planned: list[str] = []
-    for slug, port in PRODUCTS:
+    for slug, port in products:
         rendered = renderer(canon, slug, port)
         out = root / out_rel_tpl.format(slug=slug)
         rel = out_rel_tpl.format(slug=slug)
@@ -738,7 +765,7 @@ def _propagate(
             "status": "stale" if stale else "in-sync",
             "stale": stale,
             "exit_code": 1 if stale else 0,
-            "products": [s for s, _ in PRODUCTS],
+            "products": [s for s, _ in products],
         }
     if dry:
         return {
@@ -748,7 +775,7 @@ def _propagate(
             "status": "drift" if planned else "in-sync",
             "planned_writes": planned,
             "wrote": [],
-            "products": [s for s, _ in PRODUCTS],
+            "products": [s for s, _ in products],
         }
     return {
         "ok": True,
@@ -756,8 +783,8 @@ def _propagate(
         "mode": "write",
         "status": "written",
         "wrote": written,
-        "ports": {s: p for s, p in PRODUCTS},
-        "products": [s for s, _ in PRODUCTS],
+        "ports": {s: p for s, p in products},
+        "products": [s for s, _ in products],
     }
 
 

@@ -1553,3 +1553,138 @@ class TestScaffoldProductNeverTouchesProdExposureSurfaces:
         next_steps = result["next_steps"]
         assert any("consent-gated step" in s for s in next_steps), next_steps
         assert any("Only the user may author" in s for s in next_steps), next_steps
+
+
+class TestPortsDerivedFromRegistry:
+    """BUG 1 regression (2026-09-16): `_scan_start_sh_ports`'s `--port <N>`
+    regex scan went dead once start.sh moved product registration to
+    `PRODUCTS=(...)` registry rows (`"slug:Name:backend:frontend"`) and
+    per-product launch commands became shell-variable-driven
+    (`--port "$bp"` / `--port "$fp"`, never a literal digit). With the
+    scan silently returning empty sets, `RESERVED_RANGES` — itself
+    missing academia-de-reciclagem (8015/8190) and agents (8016/8200) —
+    was the ONLY source left, so `reserve_port_range(product_slug=
+    'community')` handed out academia's already-claimed 8015/8190 to the
+    new scaffold. Ports must now derive from the canonical registry parser
+    (`noctusai_lib.config.cors_registry.parse_products_registry`), the
+    SAME one `noctus.dev.propagate` uses — not the dead regex scan.
+    """
+
+    def _make_fake_worktree_with_registry_only_start_sh(
+        self, root: Path, entries: list[tuple[str, str, int, int]],
+    ) -> Path:
+        """A worktree-shaped root (`.git` + `.noctusai-workspace`) whose
+        start.sh carries ONLY a `PRODUCTS=(...)` registry block — no
+        literal `--port <N>` anywhere, mirroring the real start.sh
+        (per-product launch is `--port "$bp"` / `--port "$fp"`, shell
+        variables, never a literal digit)."""
+        root.mkdir(parents=True, exist_ok=True)
+        (root / ".git").write_text(
+            "gitdir: /tmp/fake/.git/worktrees/agent-test\n", encoding="utf-8"
+        )
+        (root / ".noctusai-workspace").write_text(
+            "workspace_kind=primary\n"
+            "workspace_name=fake-worktree\n"
+            f"noctusai_home={root}\n"
+            "bootstrap_version=1\n",
+            encoding="utf-8",
+        )
+        lines = ["#!/usr/bin/env bash", "", "# BEGIN_PRODUCTS_REGISTRY", "PRODUCTS=("]
+        for slug, name, bp, fp in entries:
+            lines.append(f'  "{slug}:{name}:{bp}:{fp}"')
+        lines += [")", "# END_PRODUCTS_REGISTRY", ""]
+        # No literal `--port <digits>` anywhere — the shape that made the
+        # old regex scan go silently dead.
+        lines.append('"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port "$bp" --reload &')
+        (root / "start.sh").write_text("\n".join(lines) + "\n")
+        return root
+
+    def test_registry_row_only_start_sh_blocks_its_ports(self, tmp_path):
+        """`list_available_ports(worktree_path=...)` must mark a
+        registry-only product's ports as used — proves the fix reads the
+        registry (not the dead `--port <N>` scan) AND that `worktree_path`
+        routes to the SUPPLIED root, not the MCP server's own REPO_ROOT."""
+        wt = self._make_fake_worktree_with_registry_only_start_sh(
+            tmp_path / "wt",
+            [("academia-de-reciclagem", "Academia de Reciclagem", 8015, 8190)],
+        )
+        avail = list_available_ports(worktree_path=wt)
+        assert 8015 in avail["used_backend"]
+        assert 8190 in avail["used_frontend"]
+        # RESERVED_RANGES alone tops out at 8014/8180 (p-studio) — the
+        # registry-only row is what pushes both allocations past it.
+        assert avail["next_backend_port"] == 8016
+        assert avail["next_frontend_port"] == 8200
+
+    def test_reserve_port_range_accepts_and_honors_worktree_path(self, tmp_path):
+        """`reserve_port_range` must accept `worktree_path` like
+        `available_ports` already does (parity gap found alongside BUG 1),
+        and the returned block must respect the registry-only row —
+        the exact scenario that handed academia's 8015/8190 to `community`
+        on 2026-09-16."""
+        wt = self._make_fake_worktree_with_registry_only_start_sh(
+            tmp_path / "wt",
+            [("academia-de-reciclagem", "Academia de Reciclagem", 8015, 8190)],
+        )
+        result = reserve_port_range(product_slug="community", worktree_path=wt)
+        assert "error" not in result, result
+        assert result["backend_ports"] == [8016]
+        assert result["frontend_ports"] == [8200]
+
+
+class TestScaffoldIconDedupe:
+    """BUG 3 regression (2026-09-16): `{{PRODUCT_ICON}}` mechanical
+    substitution used to insert the caller's chosen icon verbatim into
+    `import { ... } from "lucide-react";` lines that already carried that
+    exact identifier (`App.tsx`: LayoutDashboard/Users/Home/Boxes;
+    `Dashboard.tsx`: Users/CheckCircle2). `icon="Users"` produced
+    `import { LayoutDashboard, Users, Home, Users, Boxes } from
+    "lucide-react";` (App.tsx) and `import { Users, Users, CheckCircle2 }`
+    (Dashboard.tsx) — Vite/esbuild refuses to build either
+    ("Identifier 'Users' has already been declared.").
+    """
+
+    def test_dedupe_collapses_duplicate_specifier_preserving_order(self):
+        src = 'import { LayoutDashboard, Users, Home, Users, Boxes } from "lucide-react";\n'
+        out = scaffold_module._dedupe_lucide_imports(src)
+        assert out == 'import { LayoutDashboard, Users, Home, Boxes } from "lucide-react";\n'
+
+    def test_dedupe_is_no_op_when_specifiers_already_unique(self):
+        src = 'import { Home, ArrowLeft } from "lucide-react";\n'
+        assert scaffold_module._dedupe_lucide_imports(src) == src
+
+    def test_dedupe_ignores_non_lucide_imports(self):
+        # Same duplicate shape, different module — must be left alone; this
+        # is a lucide-react-scoped fix, not a general import de-duplicator.
+        src = 'import { Users, Users } from "@noctusai/lib";\n'
+        assert scaffold_module._dedupe_lucide_imports(src) == src
+
+    def test_scaffold_with_colliding_icon_produces_no_duplicate_import(self, tmp_path):
+        """End-to-end: scaffolding with `icon="Users"` (colliding with both
+        App.tsx's and Dashboard.tsx's own lucide-react imports) must leave
+        neither file with a duplicate named import."""
+        result = scaffold_product(
+            "Icon Collide",
+            "icon-collide-temp",
+            "icon_collide",
+            8099,
+            8199,
+            "Users",
+            brief={},
+            products_dir=tmp_path,
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        assert result["created"] is True, result
+        target = tmp_path / "icon-collide-temp"
+
+        app_tsx = (target / "frontend" / "src" / "App.tsx").read_text()
+        dashboard_tsx = (target / "frontend" / "src" / "pages" / "Dashboard.tsx").read_text()
+
+        for content, fname in ((app_tsx, "App.tsx"), (dashboard_tsx, "Dashboard.tsx")):
+            m = re.search(r'import \{([^}]+)\} from "lucide-react";', content)
+            assert m, f"{fname}: expected a lucide-react import"
+            specifiers = [s.strip() for s in m.group(1).split(",") if s.strip()]
+            assert len(specifiers) == len(set(specifiers)), (
+                f"{fname}: duplicate lucide-react import specifier(s): {specifiers}"
+            )
+            assert "Users" in specifiers

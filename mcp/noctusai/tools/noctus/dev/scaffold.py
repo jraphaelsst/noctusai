@@ -415,11 +415,28 @@ PRODUCTS_DIR = REPO_ROOT / "products"
 TEMPLATE_DIR = get_noctusai_home() / "templates" / "product-seed"
 
 
-# Reserved port ranges — derived from `start.sh` per-product allocations.
-# Each entry is (port, product_owner). When extending, also update start.sh
-# AND `KB § CONTEXT/02-LANDSCAPE.md` Products table. The `reserve_port_range`
-# function uses this list to skip occupied blocks; `list_available_ports`
-# uses it to compute the next free port.
+# Reserved port ranges. Each entry is (port, product_owner).
+#
+# NARROWED PURPOSE (2026-09-16, `derive-don't-sync-by-hand` fix): the
+# ACTIVE-product source of truth is now derived live from start.sh's
+# canonical `PRODUCTS` registry via :func:`_registry_ports` (same parser
+# `noctus.dev.propagate` uses) — `reserve_port_range` / `list_available_ports`
+# union THIS table with that live derivation. This table's own job going
+# forward is HISTORICAL + deleted-product reservations only — a port a
+# retired product once held and that must stay quarantined even after its
+# registry row is gone (a live product's port never needs a manual entry
+# here anymore; the registry already covers it). Before this fix, this
+# table was the ONLY source (the old `--port <N>` regex scan of start.sh
+# had gone dead — start.sh stopped emitting literal `--port` digits once
+# products moved to registry rows), so every product's allocation had to
+# be hand-backfilled here or risk a silent re-issue; that hand-maintained
+# state itself drifted twice (see the 2026-08-09 / 2026-09-04 backfill
+# comments below) and was found missing academia-de-reciclagem (8015/8190)
+# and agents (8016/8200) on 2026-09-16 — `reserve_port_range` handed out
+# academia's already-claimed 8015/8190 to a new `community` scaffold as a
+# result. Not backfilled here: both are ACTIVE registry rows, so the live
+# derivation already covers them; adding them here too would just be the
+# hand-synced duplication this fix removes.
 RESERVED_RANGES: list[tuple[int, str]] = [
     # Backend ports (8000-range)
     (8000, "core"),
@@ -478,6 +495,37 @@ _BINARY_SUFFIXES: frozenset[str] = frozenset({
     ".mp3", ".mp4", ".webm", ".mov", ".wav", ".ogg",
     ".so", ".dylib", ".dll", ".exe", ".class", ".pyc",
 })
+
+
+# `{{PRODUCT_ICON}}` mechanical substitution (§3 below) inserts the caller's
+# chosen icon verbatim into single-line `import { ... } from "lucide-react";`
+# statements. Several template files also import OTHER lucide icons on the
+# same line as `{{PRODUCT_ICON}}` (`App.tsx`: LayoutDashboard/Users/Home/
+# Boxes; `Dashboard.tsx`: Users/CheckCircle2). Whenever the caller's icon
+# collides with one of those literals (e.g. `icon="Users"`), the naive
+# str.replace produces `import { ..., Users, ..., Users, ... }` — a
+# duplicate named import — which Vite/esbuild refuses to build:
+# "Identifier 'Users' has already been declared." Found 2026-09-16
+# scaffolding `community` with `icon="Users"`. Scoped to the ONE pattern
+# substitution can actually produce (a single-line lucide-react import),
+# not a general import-rewriter.
+_LUCIDE_IMPORT_RE = re.compile(r'import\s*\{\s*([^}]+?)\s*\}\s*from\s*"lucide-react";')
+
+
+def _dedupe_lucide_imports(content: str) -> str:
+    """Collapse duplicate named specifiers in `lucide-react` import
+    statements, preserving first-occurrence order. No-op when the file
+    has no `lucide-react` import (the common case — cheap regex scan)."""
+
+    def _dedupe(match: re.Match) -> str:
+        names = [n.strip() for n in match.group(1).split(",") if n.strip()]
+        deduped: list[str] = []
+        for n in names:
+            if n not in deduped:
+                deduped.append(n)
+        return "import { " + ", ".join(deduped) + ' } from "lucide-react";'
+
+    return _LUCIDE_IMPORT_RE.sub(_dedupe, content)
 
 
 def _canonicalize_seed_migration(target: Path, slug: str, schema: str) -> dict:
@@ -713,6 +761,7 @@ def scaffold_product(
                 new_content = new_content.replace(placeholder, value)
             for literal, value in literal_rewrites.items():
                 new_content = new_content.replace(literal, value)
+            new_content = _dedupe_lucide_imports(new_content)
             if f.name == "Dockerfile":
                 # Insertion order matters: `products/seed/` is rewritten
                 # FIRST, so the header's replacement text — which cites
@@ -1404,34 +1453,38 @@ def _sql_text_or_null(value: str | None) -> str:
     return _sql_text(value)
 
 
-def _scan_start_sh_ports(repo_root: Path | None = None) -> tuple[set[int], set[int]]:
-    """Parse start.sh for `--port <N>` occurrences. Returns (backend, frontend).
+def _registry_ports(repo_root: Path | None = None) -> tuple[set[int], set[int]]:
+    """Derive (backend, frontend) ports currently claimed by start.sh's
+    canonical `PRODUCTS=(...)` registry — the SAME parser
+    ``noctusai_lib.config.cors_registry.parse_products_registry`` that
+    ``noctus.dev.propagate``'s ``_load_products`` already uses, per the
+    "derive, don't sync by hand" rule (`KB § PATTERNS/devops/
+    product-lockfile-and-slug-drift.md`).
 
-    Heuristic: ports < 8100 (and != 5173) → backend; everything else → frontend.
-    Kept tolerant — start.sh missing returns empty sets, never raises.
+    Replaces the former ``_scan_start_sh_ports``'s ``--port <N>`` regex
+    scan. start.sh no longer registers products via literal ``--port``
+    flags — it moved to registry-row entries
+    (``"slug:Name:backend:frontend"``) between ``BEGIN_PRODUCTS_REGISTRY``/
+    ``END_PRODUCTS_REGISTRY``, and the per-product launch commands became
+    shell-variable-driven (``--port "$bp"`` / ``--port "$fp"``, never a
+    literal digit) — confirmed dead: zero literal ``--port <digits>``
+    occurrences remain in start.sh. With the scan silently returning empty
+    sets, the hand-maintained :data:`RESERVED_RANGES` table (itself
+    missing academia-de-reciclagem and agents) was the ONLY source left,
+    so ``reserve_port_range`` handed out academia's already-claimed
+    8015/8190 to a new ``community`` scaffold. Found 2026-09-16.
 
     Args:
         repo_root: Override (test seam, also wired by ``list_available_ports``
-            when called with a caller-aware ``worktree_path``). Defaults to
-            module-level :data:`REPO_ROOT`.
+            / ``reserve_port_range`` when called with a caller-aware
+            ``worktree_path``). Defaults to module-level :data:`REPO_ROOT`.
     """
-    used_backend: set[int] = set()
-    used_frontend: set[int] = set()
+    from noctusai_lib.config.cors_registry import parse_products_registry
+
     base_root = repo_root if repo_root is not None else REPO_ROOT
-    start_sh = base_root / "start.sh"
-    if not start_sh.exists():
-        return used_backend, used_frontend
-    content = start_sh.read_text()
-    for match in re.finditer(r"--port (\d+)", content):
-        port = int(match.group(1))
-        if port == 5173 or port >= 8080 and port < 8100 or port >= 8100:
-            # 5173 is the Vite default for Core frontend; 8080+ are frontends
-            if port < 8080:
-                used_backend.add(port)
-            else:
-                used_frontend.add(port)
-        else:
-            used_backend.add(port)
+    entries = parse_products_registry(base_root / "start.sh")
+    used_backend = {e["backend_port"] for e in entries}
+    used_frontend = {e["frontend_port"] for e in entries}
     return used_backend, used_frontend
 
 
@@ -1527,9 +1580,10 @@ def list_available_ports(worktree_path: str | Path | None = None) -> dict:
     """Find the next available backend and frontend ports.
 
     The set of "used" ports unions the static :data:`RESERVED_RANGES` table
-    with whatever `start.sh` actually wires (defensive — methodology says the
-    table IS the source of truth, but products land in start.sh first when
-    docs lag).
+    (historical + deleted-product reservations) with whatever start.sh's
+    canonical `PRODUCTS` registry actually claims RIGHT NOW (derived via
+    :func:`_registry_ports` — defensive: methodology says the table IS the
+    source of truth, but products land in start.sh first when docs lag).
 
     Args:
         worktree_path: Caller-aware path resolution — read start.sh from
@@ -1540,9 +1594,9 @@ def list_available_ports(worktree_path: str | Path | None = None) -> dict:
     used_frontend: set[int] = {p for p, _ in RESERVED_RANGES if p == 5173 or p >= 8080}
 
     scan_root = resolve_caller_root(worktree_path) if worktree_path is not None else REPO_ROOT
-    sh_backend, sh_frontend = _scan_start_sh_ports(scan_root)
-    used_backend |= sh_backend
-    used_frontend |= sh_frontend
+    reg_backend, reg_frontend = _registry_ports(scan_root)
+    used_backend |= reg_backend
+    used_frontend |= reg_frontend
 
     next_backend = max(used_backend) + 1 if used_backend else 8000
     next_frontend = max(used_frontend) + 10 if used_frontend else 8080
@@ -1576,6 +1630,7 @@ def reserve_port_range(
     product_slug: str,
     count_backend: int = 1,
     count_frontend: int = 1,
+    worktree_path: str | Path | None = None,
 ) -> dict:
     """Reserve a contiguous backend block + a contiguous frontend block.
 
@@ -1586,10 +1641,22 @@ def reserve_port_range(
     backend + one frontend port equivalent to `list_available_ports()`'s
     `next_*` keys.
 
+    The set of "used" ports unions the static :data:`RESERVED_RANGES` table
+    (historical + deleted-product reservations) with whatever start.sh's
+    canonical `PRODUCTS` registry actually claims RIGHT NOW (derived via
+    :func:`_registry_ports` — same source `list_available_ports` and
+    `noctus.dev.propagate` use; "derive, don't sync by hand").
+
     Does NOT mutate :data:`RESERVED_RANGES` — caller is responsible for
     landing the allocation in start.sh + KB landscape table + this constant.
     The function's contract is "tell me the next free block"; persistence
     stays a human/architect step.
+
+    Args:
+        worktree_path: Caller-aware path resolution — read start.sh from
+            the caller's worktree, not the server's startup workspace. Omit
+            for the noc-main default. See ``resolve_caller_root``. Mirrors
+            ``list_available_ports``'s parameter of the same name.
 
     Returns:
         {
@@ -1609,9 +1676,10 @@ def reserve_port_range(
 
     used_backend: set[int] = {p for p, _ in RESERVED_RANGES if p < 8080 and p != 5173}
     used_frontend: set[int] = {p for p, _ in RESERVED_RANGES if p == 5173 or p >= 8080}
-    sh_backend, sh_frontend = _scan_start_sh_ports()
-    used_backend |= sh_backend
-    used_frontend |= sh_frontend
+    scan_root = resolve_caller_root(worktree_path) if worktree_path is not None else REPO_ROOT
+    reg_backend, reg_frontend = _registry_ports(scan_root)
+    used_backend |= reg_backend
+    used_frontend |= reg_frontend
 
     # Backend search starts at the next slot above the highest used backend.
     backend_start = (max(used_backend) + 1) if used_backend else 8000
@@ -1874,16 +1942,20 @@ def register(server) -> None:
         description=(
             "Reserve a contiguous backend block + frontend block for a new "
             "product. Returns the first free contiguous N-port slot in each "
-            "range. Default count=1 mirrors `available_ports`."
+            "range. Default count=1 mirrors `available_ports`. Pass "
+            "`worktree_path` to scan the caller's worktree's start.sh "
+            "instead of the MCP server's startup workspace."
         ),
     )
     def _reserve_port_range(
         product_slug: str,
         count_backend: int = 1,
         count_frontend: int = 1,
+        worktree_path: str | None = None,
     ) -> dict:
         return reserve_port_range(
             product_slug=product_slug,
             count_backend=count_backend,
             count_frontend=count_frontend,
+            worktree_path=worktree_path,
         )
