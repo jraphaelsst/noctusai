@@ -6,9 +6,19 @@ unauthenticated, rate-limited via the product limiter, and org-scoped
 via `resolve_public_org_id()` (this product is single-tenant; see that
 function's docstring in `app/dependencies.py`). Every other route
 requires `Depends(get_current_user_org)`; writes are `admin`-only.
-"""
-from __future__ import annotations
 
+Deliberately NO ``from __future__ import annotations`` here (unlike its
+sibling routers): combined with ``@limiter.limit(...)`` (slowapi), a
+postponed/string annotation on a Pydantic body param resolves against
+the WRAPPER's ``__globals__`` (``slowapi.extension``, where the model
+name doesn't exist) rather than this module's — FastAPI silently falls
+back to treating the body model as an unresolved ``Query(...)`` param
+instead of the request body. Confirmed via `openapi()` raising
+`PydanticUserError: ... is not fully defined` for `payload`. Every other
+rate-limited router in the fleet (``core/routers/auth.py``,
+``community/routers/webhook_router.py``, …) already avoids this import
+for the same reason.
+"""
 import logging
 
 from fastapi import APIRouter, Depends, Query, Request, status
