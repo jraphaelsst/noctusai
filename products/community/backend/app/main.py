@@ -1,8 +1,9 @@
 """
-NoctusAI Community — Reference Implementation
+NoctusAI Community — online community management center
 
-The simplest possible product. Just the spine, no domain code.
-Proves that the seed framework works end-to-end.
+Members, tiers, payments, WhatsApp groups, feed/forum/chat, content,
+events, engagement and moderation for one paid community. Built on the
+seed framework; see products/community/MASTER-PROMPT.md.
 
 Run with: uvicorn app.main:app --reload --port 8017
 

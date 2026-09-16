@@ -1,9 +1,9 @@
 -- Seed: add accepted_at + accepted_by to invitations
 -- Lockstep with noctusai_lib.domain.invitations.accept_invitation kwarg
--- (Phase 2 of community-team-router-accept-real-adapter, 2026-05-11).
+-- (Phase 2 of seed-team-router-accept-real-adapter, 2026-05-11).
 --
 -- This is the canonical-scaffold migration that propagates to every new
--- product via the community → templates/product-community sync (see pre-commit hook).
+-- product via the seed → templates/product-seed sync (see pre-commit hook).
 
 ALTER TABLE community.invitations
     ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ,

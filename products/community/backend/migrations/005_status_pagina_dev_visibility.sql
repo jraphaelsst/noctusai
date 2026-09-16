@@ -3,12 +3,12 @@
 --
 -- SEED/TEMPLATE LEG of the status_pagina dev-visibility fan-out (pilot:
 -- social-wiring migration 026/032, feat/status-pagina-dev-visibility).
--- Every product scaffolded FROM this community copies 001_seed.sql (which ships
+-- Every product scaffolded FROM this seed copies 001_seed.sql (which ships
 -- only "todos_veem_producao", USING status='producao') — so without this
 -- migration every NEW product inherits the same defect: a 'desenvolvimento'
 -- row is never returned to anyone (not even dev/owner) through the FE's
--- authenticated product-client read (community/lib/frontend/src/page-status.ts
--- usePageStatus). This migration makes the community canonical shape correct
+-- authenticated product-client read (seed/lib/frontend/src/page-status.ts
+-- usePageStatus). This migration makes the seed canonical shape correct
 -- day-1 for future products.
 --
 -- THE FIX: a SECOND, additive SELECT policy (Postgres OR's permissive
@@ -24,11 +24,11 @@
 -- current_org_id()) — CREATE OR REPLACE is idempotent across every product
 -- migration chain that (re)declares it; one definition serves the fleet.
 --
--- Forward-only + idempotent. products/community/ and templates/product-community/
--- MUST stay in sync (pre-commit hook mirrors products/community → templates on
+-- Forward-only + idempotent. products/seed/ and templates/product-seed/
+-- MUST stay in sync (pre-commit hook mirrors products/seed → templates on
 -- staged change) — this file has a byte-identical sibling in
--- templates/product-community/backend/migrations/ with community in place
--- of the literal `community` schema.
+-- templates/product-seed/backend/migrations/ with {{SCHEMA_NAME}} in place
+-- of the literal `seed` schema.
 
 SET search_path = community, public;
 
@@ -54,6 +54,6 @@ CREATE POLICY "dev_veem_desenvolvimento" ON community.status_pagina
     );
 
 -- 🔴 PARITY CONTRACT: the role array above MUST stay identical to the FE
--- DEV_ROLES const (community/lib/frontend/src/roles.ts). There is no shared
+-- DEV_ROLES const (seed/lib/frontend/src/roles.ts). There is no shared
 -- source between this SQL literal and that TS const today; keeping them in
 -- lockstep is a manual contract until a keeper enforces it.
