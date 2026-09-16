@@ -89,30 +89,39 @@ services:
       retries: 3
       start_period: 20s
     # D1 hardening (roadmap julia-agents-academia-2026-09, row D1;
-    # tech-lead + security-advisor review 2026-09-14). Prod is first
-    # contact for this image (dev fleet dormant — KB § PATTERNS/devops/
-    # dev-fleet-dormant.md). `bin/entrypoint.sh` FAILS CLOSED if any of
-    # these three are missing — verified empirically, not asserted.
+    # revised for §E.11 per-conversation isolation, 2026-09-15). Prod
+    # is first contact for this image (dev fleet dormant — KB §
+    # PATTERNS/devops/dev-fleet-dormant.md). `bin/entrypoint.sh` FAILS
+    # CLOSED if any of these are missing — verified empirically.
     cap_drop:
       - ALL
-    # SETUID/SETGID/KILL — nothing else. contract §E.5 spawns the Julia
-    # CLI subprocess under a DIFFERENT, dedicated uid
-    # (`user="julia-cli"` on ClaudeAgentOptions); dropping to that uid
-    # AT EXEC (`bin/entrypoint.sh`'s own `setpriv`, not a bare `USER`
-    # directive — verified empirically that `USER` alone never
-    # populates AMBIENT caps for a non-root process, moby#45491) needs
-    # CAP_SETUID + CAP_SETGID effective on the process making that
-    # switch. CAP_KILL: `noctus` must be able to signal the Julia CLI
-    # subprocess (uid 1001, a DIFFERENT uid) on turn-timeout/SDK-close —
-    # verified empirically that signalling a different uid without it
-    # is denied (EPERM), leaking a hung CLI process for the container's
-    # whole lifetime. NOT CAP_SETPCAP: every `setpriv --bounding-set=`
+    # SETUID/SETGID/KILL — nothing else. I4 (contract §E.11): never
+    # CHOWN, FOWNER or DAC_OVERRIDE. contract §E.11 spawns the Julia CLI
+    # subprocess under a per-conversation slot uid (`user="julia-cli-
+    # <K>"` on ClaudeAgentOptions); dropping to that uid AT EXEC
+    # (`bin/entrypoint.sh`'s own `setpriv`, not a bare `USER` directive
+    # — verified empirically that `USER` alone never populates AMBIENT
+    # caps for a non-root process, moby#45491) needs CAP_SETUID +
+    # CAP_SETGID effective on the process making that switch — the
+    # SAME two caps also let `bin/julia-cli-exec`'s own `setpriv
+    # --clear-groups` run for ANY slot uid (setgroups always needs
+    # CAP_SETGID, even for an already-matching uid). CAP_KILL: `noctus`
+    # must be able to signal a slot uid's CLI subprocess (a DIFFERENT
+    # uid) on turn-timeout/SDK-close — verified empirically that
+    # signalling a different uid without it is denied (EPERM), leaking
+    # a hung CLI process for the container's whole lifetime. Nothing
+    # wider is ever added: no CAP_CHOWN/FOWNER/DAC_OVERRIDE — the slot
+    # sweep (`bin/julia-cli-slot`) only ever chmod/rm's files the
+    # sweeping uid already OWNS (only that uid can ever create a file
+    # under its own mode-0700 tmpfs), so no capability is needed for
+    # that either. NOT CAP_SETPCAP: every `setpriv --bounding-set=`
     # clause was removed from every script in this image (wrapper +
-    # entrypoint) — verified empirically that it needs CAP_SETPCAP
-    # (`setpriv: apply bounding set: Operation not permitted`), and
-    # `cap_drop`/`cap_add` already fix the bounding-set ceiling with
-    # zero in-container action needed; `no-new-privileges` keeps the
-    # leftover bounding bits inert regardless.
+    # slot script + entrypoint) — verified empirically that it needs
+    # CAP_SETPCAP (`setpriv: apply bounding set: Operation not
+    # permitted`), and `cap_drop`/`cap_add` already fix the
+    # bounding-set ceiling with zero in-container action needed;
+    # `no-new-privileges` keeps the leftover bounding bits inert
+    # regardless.
     cap_add:
       - SETUID
       - SETGID
@@ -120,35 +129,51 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true
-    # A dedicated tmpfs for the Julia CLI's own HOME/TMPDIR — owned by
-    # `julia-cli` (uid/gid 1001) alone, mode 0700: `noctus` cannot read
-    # or write into it, and `julia-cli` cannot read or write this
-    # product's `/tmp` (below) — verified empirically both ways.
-    # size-capped; the CLI's own scratch needs are small.
+    # One dedicated tmpfs PER SLOT for the Julia CLI's own per-
+    # conversation HOME/TMPDIR — each owned by its own `julia-cli-K`
+    # uid/gid alone, mode 0700 (I3: nothing from one conversation's
+    # slot is readable by another slot's uid — verified empirically
+    # both ways, and by neither slot uid). 40m each (24 MiB transcript
+    # cap plus working space, contract §E.11 user decision 2026-09-15).
+    # `/run/julia-handoff` is the ONE shared mount across slots —
+    # owned by `noctus` (uid/gid 1000), mode 0711 (traversable by every
+    # slot uid — "other" — but not LISTABLE, so a slot can only ever
+    # reach a file whose exact path it already expects, never discover
+    # a sibling slot's files by listing); `noctus` writes each slot's
+    # handoff file with mode 0640 and group `julia-cli-K`, so only that
+    # one slot uid (via its own primary group after `--clear-groups`)
+    # can read it.
     #
     # This product's `/tmp` belongs to `noctus` ONLY —
     # uid=0,gid=1000,mode=1770 (owner root rwx, group `noctus` rwx +
-    # sticky, other/`julia-cli` NO access at all). agents has no
+    # sticky, other/any slot uid NO access at all). agents has no
     # multipart-upload route (unlike academia's `/tmp:mode=1777`, kept
     # as-is there — see `_C_HARDENING_ACADEMIA`'s own comment), so
     # nothing needs `/tmp` to be world-writable here, and locking it to
-    # `noctus` closes the one path `julia-cli` could otherwise have
+    # `noctus` closes the one path a slot uid could otherwise have
     # used to leave a file `noctus` might later trust.
     tmpfs:
-      - /run/julia:uid=1001,gid=1001,mode=0700,size=32m
+      - /run/julia-0:uid=2000,gid=2000,mode=0700,size=40m
+      - /run/julia-1:uid=2001,gid=2001,mode=0700,size=40m
+      - /run/julia-2:uid=2002,gid=2002,mode=0700,size=40m
+      - /run/julia-handoff:uid=1000,gid=1000,mode=0711,size=80m
       - /tmp:mode=1770,uid=0,gid=1000,size=64m
     # A small explicit /dev/shm — python/uvicorn have no real shared-
     # memory need here; explicit + small beats an unexamined default.
     shm_size: 64m
+    # Worst-case tmpfs is 3×40 + 80 = 200 MiB of this 1 GiB limit
+    # (contract §E.11) — the CLI's own RSS has not been measured
+    # (CI has no API key); SEC-C records it at the first prod turn. If
+    # three concurrent CLIs plus uvicorn exceed the limit, raise this
+    # rather than shrink the tmpfs caps.
     mem_limit: 1g
-    # `init: true` — a minimal PID-1 init (tini) reaps zombies from the
-    # Julia CLI subprocess tree so a killed-but-unreaped child (see
-    # `bin/entrypoint.sh`'s CAP_KILL comment above) never accumulates;
-    # without it `noctus` (not PID 1 here — the entrypoint execs INTO
-    # it, so it IS PID 1) would have to reap its own children, which
-    # the SDK's client-close path already does on the happy path but
-    # should not be the ONLY thing standing between a hung turn and a
-    # zombie leak.
+    # `init: true` — a minimal PID-1 init (tini) reaps zombies from any
+    # slot's Julia CLI subprocess tree so a killed-but-unreaped child
+    # (see the CAP_KILL comment above) never accumulates; without it
+    # `noctus` (not PID 1 here — the entrypoint execs INTO it, so it IS
+    # PID 1) would have to reap its own children, which the SDK's
+    # client-close path already does on the happy path but should not
+    # be the ONLY thing standing between a hung turn and a zombie leak.
     init: true
     # AGENTS_INSTANCE_ID (contract §E.9, roadmap D1) is deliberately
     # left UNSET here, not baked as a fixed literal: `app/runtime/

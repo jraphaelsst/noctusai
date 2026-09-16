@@ -1,0 +1,183 @@
+#!/bin/sh
+# julia-cli-slot — root-owned, executed AS the slot uid, NO capabilities
+# (contract §E.11; roadmap D1, per-conversation slot isolation, architect
+# review 2026-09-15). Reached two ways:
+#   1. via `bin/julia-cli-exec` (the SDK's `cli_path`) for a real Julia
+#      turn — the wrapper has already self-switched to this uid, cleared
+#      supplementary groups, and stripped all caps before exec'ing here.
+#   2. directly, as `julia-cli-slot --julia-sweep`, spawned by uvicorn (as
+#      `noctus`, using its own AMBIENT SETUID/SETGID caps to launch under
+#      `user="julia-cli-<K>"`) at slot RELEASE time and at container
+#      startup — a sweep-only invocation that never touches the CLI at
+#      all. Both paths land here already running as the slot uid; this
+#      script never needs to know or care which one it is.
+#
+# WHY ROOT-OWNED: this file must never be writable by the slot uid it runs
+# as, nor by `noctus` — a slot uid that could rewrite its own launcher
+# could re-point the exec target or widen the env allowlist for its own
+# next invocation, defeating I3 for every future turn on any slot (once a
+# root-owned file is compromised, root itself is compromised — but a
+# non-root-owned one is compromised by the FIRST turn that runs under it).
+#
+# WHY THE SWEEP NEEDS NO CAPABILITY (I4: only SETUID+SETGID+KILL are ever
+# granted to this image — never CHOWN, FOWNER, or DAC_OVERRIDE): the slot
+# tmpfs (`/run/julia-<K>`, mode 0700, owned by this exact uid/gid) can only
+# ever have had files created in it BY this uid — no other uid can write
+# into a mode-0700 directory it doesn't own. `chmod` as the file's OWNER
+# always succeeds regardless of the file's CURRENT mode (Linux's chmod
+# permission check is ownership-based, not mode-based) — so a leftover
+# chmod-000 file or directory from a SIGKILLed prior turn is still fully
+# choweable/removable by this same uid with zero elevated privilege.
+#
+# WHY THE HANDOFF COPY IS THIS PARANOID (contract §E.11 "Durable
+# transcripts" / "Inbound"): `/run/julia-handoff/<K>/` is written by
+# `noctus` (a DIFFERENT, more-trusted uid) under a compromised-CLI threat
+# model — a prior turn's compromised CLI subprocess cannot itself have
+# planted anything there (it never had write access — mode 0711, owned by
+# noctus), but this script still refuses anything that isn't EXACTLY one
+# regular, non-symlink, UUID-named `<sid>.jsonl` file, because "trust the
+# directory's owner" and "trust every entry's shape unconditionally" are
+# not the same claim, and the second one is free to assert given how cheap
+# the checks are.
+#
+# POSIX `sh`, not bash — this only ever runs inside the Linux container.
+set -eu
+
+umask 077
+
+REAL_UID="$(id -u)"
+case "$REAL_UID" in
+  ''|*[!0-9]*)
+    echo "julia-cli-slot: refusing — unreadable real uid '$REAL_UID'" >&2
+    exit 126
+    ;;
+esac
+
+SLOTS="${JULIA_CLI_SLOTS:-3}"
+case "$SLOTS" in
+  ''|*[!0-9]*)
+    echo "julia-cli-slot: refusing — JULIA_CLI_SLOTS must be a positive integer, got '${JULIA_CLI_SLOTS:-<unset>}'" >&2
+    exit 126
+    ;;
+esac
+
+MIN_UID=2000
+MAX_UID=$((MIN_UID + SLOTS))
+# Defence in depth — `bin/julia-cli-exec` already enforces this range
+# before it ever hands off here, but this file is ALSO reachable directly
+# (uvicorn's `--julia-sweep` spawn, see header), so it re-derives and
+# re-checks its own slot rather than trusting a caller that might not be
+# the wrapper.
+if [ "$REAL_UID" -lt "$MIN_UID" ] || [ "$REAL_UID" -ge "$MAX_UID" ]; then
+  echo "julia-cli-slot: refusing — uid $REAL_UID is outside the slot range [$MIN_UID, $MAX_UID)" >&2
+  exit 126
+fi
+SLOT=$((REAL_UID - MIN_UID))
+
+SLOT_DIR="/run/julia-${SLOT}"
+HANDOFF_DIR="/run/julia-handoff/${SLOT}"
+PROJECT_DIR="${SLOT_DIR}/home/.claude/projects/-app"
+
+# Shared by both entry points (the numbered step 1 sweep, and the
+# `--julia-sweep`-only mode): fails closed — a non-empty slot dir after
+# the sweep is a bug worth refusing on, never a silent partial cleanup.
+sweep() {
+  if [ -d "$SLOT_DIR" ]; then
+    # Top-down chmod pass FIRST: `find` visits (and -exec's on) a
+    # directory before descending into it, so a nested chmod-000
+    # directory from a SIGKILLed prior turn gets ITS OWN traversal bit
+    # restored before find tries to read its contents — the standard
+    # "fix permissions top-down before deleting" idiom. `|| true`: a
+    # single already-gone entry (e.g. a symlink race) must not abort the
+    # whole sweep — the emptiness check below is the real fail-closed
+    # gate, not this pass.
+    find "$SLOT_DIR" -mindepth 1 -exec chmod u+rwx {} + 2>/dev/null || true
+    # `-delete` implies depth-first traversal (children removed before
+    # their parent directory) — required for a directory to ever be
+    # removable at all.
+    find "$SLOT_DIR" -mindepth 1 -delete 2>/dev/null || true
+  fi
+  leftover="$(find "$SLOT_DIR" -mindepth 1 2>/dev/null || true)"
+  if [ -n "$leftover" ]; then
+    echo "julia-cli-slot: refusing — $SLOT_DIR is not empty after sweep:" >&2
+    echo "$leftover" >&2
+    return 1
+  fi
+  return 0
+}
+
+# `--julia-sweep` mode: sweep only, exit code reflects success. Never
+# proceeds to create fresh state or exec the CLI — this is the
+# release-time / startup-time cleanup call, not a turn.
+if [ "${1:-}" = "--julia-sweep" ]; then
+  if sweep; then
+    exit 0
+  fi
+  exit 1
+fi
+
+# A real turn: sweep first (removes anything a prior SIGKILLed turn left
+# behind — the same guarantee `--julia-sweep` gives, but inline so a turn
+# started without a preceding explicit sweep is still safe), then build
+# fresh state.
+sweep
+
+mkdir -p "$PROJECT_DIR" "${SLOT_DIR}/tmp"
+
+# Handoff: at most ONE regular, non-symlink, UUID-named `<sid>.jsonl` file
+# under this slot's handoff subdirectory. A missing directory (no resume
+# data staged for this turn) is the normal fresh-session case, not an
+# error.
+if [ -d "$HANDOFF_DIR" ]; then
+  handoff_count=0
+  handoff_file=""
+  for entry in "$HANDOFF_DIR"/*; do
+    # Unmatched glob (empty directory) leaves the literal pattern string —
+    # `-e` on that non-existent literal path is false, so this is the
+    # standard nullglob-free POSIX idiom.
+    [ -e "$entry" ] || continue
+    handoff_count=$((handoff_count + 1))
+    handoff_file="$entry"
+  done
+
+  if [ "$handoff_count" -gt 1 ]; then
+    echo "julia-cli-slot: refusing handoff — more than one entry in $HANDOFF_DIR" >&2
+    exit 1
+  fi
+
+  if [ "$handoff_count" -eq 1 ]; then
+    handoff_base="$(basename "$handoff_file")"
+    if ! printf '%s\n' "$handoff_base" \
+        | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.jsonl$'; then
+      echo "julia-cli-slot: refusing handoff — '$handoff_base' is not a UUID-named .jsonl file" >&2
+      exit 1
+    fi
+    # `-L` (symlink) is checked BEFORE `-f` (which follows symlinks and
+    # would report true for a symlink pointing at a real regular file) —
+    # order matters here.
+    if [ -L "$handoff_file" ]; then
+      echo "julia-cli-slot: refusing handoff — '$handoff_file' is a symlink" >&2
+      exit 1
+    fi
+    if [ ! -f "$handoff_file" ]; then
+      echo "julia-cli-slot: refusing handoff — '$handoff_file' is not a regular file" >&2
+      exit 1
+    fi
+    cp -- "$handoff_file" "${PROJECT_DIR}/${handoff_base}"
+  fi
+fi
+
+# The exec that keeps the SDK's pid equal to the CLI's own pid — there is
+# no supervisor. Absolute paths only; the 9-key allowlist is the ENTIRE
+# environment the real bundled CLI ever sees (contract §E.11).
+exec /usr/bin/env -i \
+  HOME="${SLOT_DIR}/home" \
+  TMPDIR="${SLOT_DIR}/tmp" \
+  CLAUDE_CONFIG_DIR="${SLOT_DIR}/home/.claude" \
+  PATH=/usr/bin:/bin \
+  ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+  CLAUDE_CODE_ENTRYPOINT="${CLAUDE_CODE_ENTRYPOINT:-}" \
+  CLAUDE_AGENT_SDK_VERSION="${CLAUDE_AGENT_SDK_VERSION:-}" \
+  DISABLE_AUTOUPDATER=1 \
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+  /usr/local/bin/claude-bundled "$@"

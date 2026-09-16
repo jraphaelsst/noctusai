@@ -1,64 +1,60 @@
 #!/bin/sh
 # julia-cli-exec — the wrapper the Claude Agent SDK spawns as its
-# `cli_path` (contract §E.5, SEC-C; roadmap D1, tech-lead + security-
-# advisor review 2026-09-14, ACCEPT-WITH-CHANGES over the first cut).
+# `cli_path` (contract §E.11, supersedes §E.5; roadmap D1, per-conversation
+# slot isolation, architect review 2026-09-15, checked against SDK
+# 0.2.152 and bundled CLI 2.1.259).
 #
-# WHY THE UID SWITCH LIVES HERE, NOT ONLY AT THE CALLER (found live
-# against the installed SDK, `_internal/transport/subprocess_cli.py:1151`
-# — the version-check spawn `[cli_path, "-v"]` runs WITHOUT `user=` at
-# all): the SDK does not ALWAYS pass `user="julia-cli"` when it spawns
-# `cli_path` — the one-off version probe does not. Relying only on the
-# CALLER's `Popen(user=...)` would leave that specific spawn running as
-# whatever uid called it (the app process, `noctus`), never switching to
-# `julia-cli` at all. This wrapper is therefore the single, caller-
-# independent place the uid switch happens — `app/runtime/claude_runtime.py`
-# still passes `user="julia-cli"` too (a separate slice owns that file;
-# harmless here — a `setpriv --reuid=1001` onto a process ALREADY uid 1001
-# is an allowed no-op self-setresuid, needing no capability at all).
+# WHY THIS FILE STILL EXISTS (§E.11 moved the sweep/handoff/exec logic to
+# the new `bin/julia-cli-slot`): this wrapper is the ONE place that reads
+# the kernel-set real uid the SDK actually launched the process as — the
+# single trustworthy signal for "which slot am I." `julia-cli-slot` is
+# root-owned and could in principle be invoked directly (uvicorn's own
+# release-time `--julia-sweep` spawn does exactly that, deliberately
+# bypassing this wrapper since no CLI transport is needed for a sweep) —
+# but the CLI's OWN spawn path always goes through this wrapper first,
+# because it is what `ClaudeAgentOptions.cli_path` points at.
 #
-# WHY THE CAP DROP IS STILL MANDATORY EVEN AFTER THE SWITCH: whichever way
-# this process arrived here, it can carry CAP_SETUID/CAP_SETGID/CAP_KILL
-# in its AMBIENT set (inherited across a non-root->non-root uid change, or
-# never dropped at all on the no-`user=` version-check path) — verified
-# empirically against a real container matching the compose hardening
-# (`cap_drop: ALL` + `cap_add: SETUID,SETGID,KILL` + `no-new-privileges`).
-# Left alone, the CLI binary (and anything it spawns) would inherit those
-# on its own exec and could `setuid`/`setgid` to become `noctus`, or
-# `kill` it — defeating SEC-C. `--inh-caps=-all --ambient-caps=-all`
-# strips both before the final exec. No `--bounding-set=` clause: it needs
-# CAP_SETPCAP, which this process never has (verified empirically —
-# `setpriv: apply bounding set: Operation not permitted`); Docker's own
-# `cap_drop`/`cap_add` already bounds the set, and `--no-new-privs` keeps
-# the leftover bounding bits inert (nothing can ever re-raise them without
-# CAP_SETPCAP, and `no_new_privs` blocks any privilege gain via a future
-# exec of a setuid/file-capability binary regardless).
+# WHY THE UID IS NEVER READ FROM AN ARGUMENT OR ENV VAR (contract §E.11):
+# an argument or env var is something a compromised parent (or a stale
+# copy-paste of `ClaudeAgentOptions`) could get wrong or spoof. The real
+# uid this process is running as is kernel-set on the spawn path
+# (`Popen(user="julia-cli-<K>")` — verified against
+# `_internal/transport/subprocess_cli.py:1151`, the same file that showed
+# the SDK's one-off version-check spawn `[cli_path, "-v"]` runs WITHOUT
+# `user=` at all under §E.5). `CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK=1`
+# (Dockerfile `ENV`, `_internal/transport/subprocess_cli.py:799`) means
+# that specific no-`user=` spawn never happens any more; this wrapper's
+# own range check is what would refuse it anyway if it ever did (uid 1000,
+# `noctus`, is outside `[2000, 2000+JULIA_CLI_SLOTS)`).
 #
-# WHY A HARDCODED ABSOLUTE PATH, NOT `JULIA_CLAUDE_BIN`: the previous cut
-# read the CLI binary's path from an env var (a test seam). Dropped
-# deliberately — an env-var-controlled exec target is an extra thing an
-# `env`-polluting caller could influence. `/usr/local/bin/claude-bundled`
-# is a symlink the Dockerfile creates at BUILD time (root-owned, resolved
-# via python from the pinned `claude-agent-sdk==0.2.152`'s bundled binary
-# — see the Dockerfile's `_D_AGENTS_EXTRA` block); this wrapper always
-# execs that one fixed path. Tests that need a stub CLI point the SDK's
-# `cli_path` option at an entirely different stub script instead of this
-# wrapper (a separate slice's test seam) — or, for THIS wrapper's own
-# tests, run a temp COPY of this file with that one line substituted
-# (`tests/runtime/test_wrapper.py`), never an env var.
+# WHY THE CLAUDE_CONFIG_DIR CHECK IS A DRIFT CHECK ONLY, NOT A SOURCE OF
+# TRUTH: the expected value is RECOMPUTED from the trusted uid-derived
+# slot below — the inherited env var is only ever compared against that
+# recomputed value, never used to decide the slot number itself. A
+# mismatch means the SDK's `ClaudeAgentOptions.env` for this turn disagrees
+# with the uid it actually spawned under (a bug worth refusing loudly on,
+# not silently trusting one side).
 #
-# WHY HOME/TMPDIR POINT AT /run/julia, NOT /tmp: compose gives this
-# product's `/tmp` to `noctus` only (`mode=1770,uid=0,gid=1000` — `other`,
-# i.e. `julia-cli`, has NO access at all) and a SEPARATE, dedicated tmpfs
-# at `/run/julia` (`uid=1001,gid=1001,mode=0700`) for the CLI's own
-# scratch space — so `julia-cli` can never read or leave a file in
-# `noctus`'s `/tmp`, and vice versa.
-#
-# DISABLE_AUTOUPDATER=1 / CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1: the
-# CLI must never phone home to check for updates or emit telemetry from
-# inside this sandboxed, network-egress-constrained subprocess — an
-# update check is itself a mechanism this uid has no business using, and
-# it would silently depend on network access this container's threat
-# model does not assume for `julia-cli`.
+# WHY THE SELF-SETRESUID PLUS --clear-groups STILL RUNS EVEN THOUGH THE UID
+# IS ALREADY CORRECT: `--reuid=$REAL_UID --regid=$REAL_UID` onto an
+# already-matching uid is an allowed same-uid no-op needing no capability
+# at all — but `--clear-groups` calls setgroups(2), which ALWAYS needs
+# CAP_SETGID regardless of whether the uid itself is changing (the
+# original single-slot guard's bug: it accepted euid in (0, 1001), and
+# GitHub's ubuntu CI runner user IS uid 1001, so the test ran unprivileged
+# and failed with "setpriv: setgroups failed: Operation not permitted" —
+# dev CI run 34914554800, 2026-09-14; fixed by deciding the skip from the
+# kernel's own CapEff answer, never from a uid comparison — see
+# tests/runtime/test_wrapper.py). Whichever way this process arrived at
+# its slot uid, it can still carry CAP_SETUID/CAP_SETGID/CAP_KILL in its
+# AMBIENT set (inherited across the entrypoint's own root->noctus->
+# Popen(user=...) chain) — `--inh-caps=-all --ambient-caps=-all` strips
+# both before the handoff to the root-owned, uid-K, no-capabilities
+# `julia-cli-slot`. No `--bounding-set=` clause: it needs CAP_SETPCAP,
+# which this process never has (verified empirically — `setpriv: apply
+# bounding set: Operation not permitted`); Docker's own `cap_drop`/
+# `cap_add` already bounds the set, and `--no-new-privs` keeps the
+# leftover bounding bits inert regardless.
 #
 # `setpriv` is util-linux (present in the python:3.11-slim / Debian trixie
 # base — verified live) and Linux-only; this script only ever runs inside
@@ -68,18 +64,50 @@ set -eu
 
 umask 077
 
+REAL_UID="$(id -u)"
+
+# 1. Range check — never trust the slot number from an argument or env
+#    var (contract §E.11). Any non-numeric or empty `id -u` output is
+#    itself a refusal, not a comparison that could coerce to 0.
+case "$REAL_UID" in
+  ''|*[!0-9]*)
+    echo "julia-cli-exec: refusing — unreadable real uid '$REAL_UID'" >&2
+    exit 126
+    ;;
+esac
+
+SLOTS="${JULIA_CLI_SLOTS:-3}"
+case "$SLOTS" in
+  ''|*[!0-9]*)
+    echo "julia-cli-exec: refusing — JULIA_CLI_SLOTS must be a positive integer, got '${JULIA_CLI_SLOTS:-<unset>}'" >&2
+    exit 126
+    ;;
+esac
+
+MIN_UID=2000
+MAX_UID=$((MIN_UID + SLOTS))
+if [ "$REAL_UID" -lt "$MIN_UID" ] || [ "$REAL_UID" -ge "$MAX_UID" ]; then
+  echo "julia-cli-exec: refusing — uid $REAL_UID is outside the slot range [$MIN_UID, $MAX_UID)" >&2
+  exit 126
+fi
+SLOT=$((REAL_UID - MIN_UID))
+
+# 2. Drift check ONLY (see header). The expected value is recomputed from
+#    the trusted, uid-derived $SLOT — never taken from the inherited var.
+EXPECTED_CONFIG_DIR="/run/julia-${SLOT}/home/.claude"
+if [ "${CLAUDE_CONFIG_DIR:-}" != "$EXPECTED_CONFIG_DIR" ]; then
+  echo "julia-cli-exec: refusing — CLAUDE_CONFIG_DIR='${CLAUDE_CONFIG_DIR:-<unset>}' does not match the expected '$EXPECTED_CONFIG_DIR' for uid $REAL_UID" >&2
+  exit 126
+fi
+
+# 3. Self-switch (same-uid, no capability needed for the uid/gid change
+#    itself) + clear supplementary groups (needs CAP_SETGID — see header)
+#    + strip inherited caps, THEN hand off via an absolute path to the
+#    root-owned slot script, which does the sweep/handoff-copy/exec as
+#    this same uid, no capabilities, no PATH lookup ambiguity.
 exec /usr/bin/setpriv \
-  --reuid=1001 --regid=1001 --clear-groups \
+  --reuid="$REAL_UID" --regid="$REAL_UID" --clear-groups \
   --inh-caps=-all --ambient-caps=-all \
   --no-new-privs \
   -- \
-  /usr/bin/env -i \
-  HOME=/run/julia \
-  TMPDIR=/run/julia \
-  PATH=/usr/bin:/bin \
-  ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
-  CLAUDE_CODE_ENTRYPOINT="${CLAUDE_CODE_ENTRYPOINT:-}" \
-  CLAUDE_AGENT_SDK_VERSION="${CLAUDE_AGENT_SDK_VERSION:-}" \
-  DISABLE_AUTOUPDATER=1 \
-  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
-  /usr/local/bin/claude-bundled "$@"
+  /app/bin/julia-cli-slot "$@"

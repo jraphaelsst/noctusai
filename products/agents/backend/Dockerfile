@@ -67,14 +67,42 @@ COPY products/agents/backend/requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     grep -v '^-e seed/' /tmp/requirements.txt > /tmp/req.clean.txt \
     && pip install -r /tmp/req.clean.txt
-# agents: Julia's dedicated non-login uid + the CLI she is launched
-# through (contract §E.5, SEC-A/SEC-C; roadmap D1). `--no-create-home`:
-# there is no home dir to protect (nothing is ever baked there) — the
-# wrapper points HOME/TMPDIR at a dedicated tmpfs instead (compose
-# `tmpfs: [/run/julia]`, uid/gid-owned by this uid — this product's
-# `/tmp` belongs to `noctus` only).
-RUN useradd --system --no-create-home --shell /usr/sbin/nologin \
-        --uid 1001 --user-group julia-cli
+# agents: Julia's dedicated per-conversation slot uids/gids + the CLI
+# she is launched through (contract §E.11, supersedes §E.5's single
+# shared uid 1001). `--no-create-home`: there is no home dir to
+# protect (nothing is ever baked there) — the slot script points
+# HOME/TMPDIR at a dedicated per-slot tmpfs instead (compose `tmpfs:
+# [/run/julia-0, /run/julia-1, /run/julia-2]`, each uid/gid-owned by
+# its own slot uid — this product's `/tmp` belongs to `noctus` only).
+# Fixed at 3 slots (uid/gid 2000-2002), matching `ENV JULIA_CLI_SLOTS`
+# below — I3: nothing from one conversation is readable by another
+# slot's uid, so each slot gets its OWN dedicated uid/gid, never a
+# shared one (that was §E.5's whole problem: one compromised turn
+# could read every other conversation's transcript under the same
+# shared uid 1001/HOME=/run/julia).
+# `--user-group` (tried first, real-image check 2026-09-15) auto-
+# assigns the GROUP an arbitrary next-free SYSTEM gid (999, 998, 997
+# on the real image) and ignores `--uid` for it entirely — `useradd`
+# only ever pins the uid it was given to the USER, never to the group
+# `--user-group` creates alongside it. Explicit `groupadd --gid`
+# FIRST, then `useradd --gid` to join that exact group, is what
+# actually makes gid == uid == 2000+K for every slot (contract §E.11
+# requires BOTH, not uid alone).
+RUN for _slot in 0 1 2; do \
+        _uid=$((2000 + _slot)); \
+        groupadd --system --gid "$_uid" "julia-cli-$_slot"; \
+        useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --uid "$_uid" --gid "$_uid" "julia-cli-$_slot"; \
+    done
+ENV JULIA_CLI_SLOTS=3
+# The SDK's one-off version-check spawn (`_internal/transport/
+# subprocess_cli.py:799`, `[cli_path, "-v"]`) runs WITHOUT `user=` at
+# all — it would launch as whatever uid called it (`noctus`), which
+# `bin/julia-cli-exec` would then refuse with exit 126 (uid 1000 is
+# outside the [2000, 2000+JULIA_CLI_SLOTS) slot range). Skipping the
+# version check entirely avoids that spawn altogether; the CLI
+# version is already pinned by the wheel (contract §E.11).
+ENV CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK=1
 
 # Bundled Claude Code CLI — NOT a `curl .../install.sh | bash` step
 # (tech-lead review 2026-09-14: unpinned, pulled at build time, drifts
@@ -95,17 +123,22 @@ RUN CLAUDE_BUNDLED="$(python3 -c 'import claude_agent_sdk, pathlib; print(pathli
     && test -x "$CLAUDE_BUNDLED" || { echo "bundled claude CLI not found/executable at $CLAUDE_BUNDLED (claude-agent-sdk version drift?)" >&2; exit 1; } \
     && ln -s "$CLAUDE_BUNDLED" /usr/local/bin/claude-bundled
 
-# The wrapper + entrypoint (contract §E.5, SEC-A/SEC-C) — placed here
-# (root context, BEFORE the non-root-user step below) so a plain COPY
-# lands them root:root by Docker's default. Their FINAL ownership/mode
-# is reasserted after the canonical `chown -R noctus:noctus /app` a
-# few lines down — that recursive chown would otherwise flip them to
-# `noctus`, silently undoing "root-owned, not app-writable" (see the
-# ownership reassertion a few lines down — that same block also drops
-# the canonical `USER noctus` for this product only; see the
-# ENTRYPOINT at the bottom).
+# The wrapper + entrypoint + slot script (contract §E.11) — placed
+# here (root context, BEFORE the non-root-user step below) so a plain
+# COPY lands them root:root by Docker's default. Their FINAL
+# ownership/mode is reasserted after the canonical `chown -R
+# noctus:noctus /app` a few lines down — that recursive chown would
+# otherwise flip them to `noctus`, silently undoing "root-owned, not
+# app-writable" (see the ownership reassertion a few lines down —
+# that same block also drops the canonical `USER noctus` for this
+# product only; see the ENTRYPOINT at the bottom). `julia-cli-slot`
+# is root-owned for the same reason as the other two: it runs the
+# per-conversation sweep + handoff-copy + CLI exec AS the slot uid
+# (no capabilities), so it must never be writable by that uid or by
+# `noctus`.
 COPY products/agents/backend/bin/julia-cli-exec /app/bin/julia-cli-exec
 COPY products/agents/backend/bin/entrypoint.sh /app/bin/entrypoint.sh
+COPY products/agents/backend/bin/julia-cli-slot /app/bin/julia-cli-slot
 
 # Strip every setuid/setgid bit in the image (roadmap D1) — defence in
 # depth ORTHOGONAL to the capability model above: a setuid/setgid file
@@ -114,7 +147,7 @@ COPY products/agents/backend/bin/entrypoint.sh /app/bin/entrypoint.sh
 # process's capability set — our `cap_drop`/`cap_add` restrictions say
 # nothing about what a setuid-root binary could still do if exec'd.
 # None of these binaries are used by this product at runtime (uvicorn/
-# python + the two scripts above only).
+# python + the three scripts above only).
 RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + || true
 
 # Product backend code + the built SPA.
@@ -130,9 +163,20 @@ ENV SERVE_SPA_DIR=/app/products/agents/frontend/dist
 # layer (measured 2026-05-19) — defeating base sharing for zero benefit
 # (venv is world-readable from `python -m venv`; noctus only needs read+exec).
 # Anti-pattern: never `chown -R` a large inherited base path. ~2.5GB fleet.
-RUN useradd -m -u 1000 noctus && chown -R noctus:noctus /app \
-    && chown root:root /app/bin/julia-cli-exec /app/bin/entrypoint.sh \
-    && chmod 0755 /app/bin/julia-cli-exec /app/bin/entrypoint.sh
+RUN useradd -m -u 1000 -G julia-cli-0,julia-cli-1,julia-cli-2 noctus \
+    && chown -R noctus:noctus /app \
+    && chown root:root /app/bin/julia-cli-exec /app/bin/entrypoint.sh /app/bin/julia-cli-slot \
+    && chmod 0755 /app/bin/julia-cli-exec /app/bin/entrypoint.sh /app/bin/julia-cli-slot
+# `noctus` is a supplementary member of exactly the 3 slot groups
+# (contract §E.11) — `--init-groups` in `bin/entrypoint.sh`'s own
+# `setpriv` call picks them up at the root->noctus drop. This is what
+# lets `noctus` (writing the durable-transcript handoff file as part
+# of a future slice's turn setup) set that file's GROUP to
+# `julia-cli-K` with a plain chown(path, -1, gid) — Linux only requires
+# the calling process to be a MEMBER of the target group for a
+# group-only chown, never CAP_CHOWN, so this membership is what makes
+# "no CHOWN capability is ever needed" literally true, not just
+# asserted.
 # No `USER noctus` here (deviates from the canonical shape, agents-only,
 # roadmap D1): the ENTRYPOINT below does the uid switch AT EXEC via
 # `setpriv` instead, which is what actually populates AMBIENT caps for
@@ -160,7 +204,10 @@ ENTRYPOINT ["/app/bin/entrypoint.sh"]
 # env + an EACCES/EPERM access-check battery instead of talking to
 # Anthropic. `bin/julia-cli-exec` and `bin/entrypoint.sh` are otherwise
 # BYTE-IDENTICAL to `runtime` (asserted by `run_proof.py` via sha256) —
-# only the one symlink target changes.
+# only the one symlink target changes. `bin/julia-cli-slot` (contract
+# §E.11, roadmap D1) is a third root-owned script in this same image;
+# extending the sha256 proof to cover it too is roadmap D2's row, not
+# yet done here (D1 declares it, does not fix the harness).
 # 🔴 This stage must NEVER be tagged, pushed, or deployed:
 # `scripts/infra/build-and-push.sh` / `.github/workflows/build-and-push.yml`
 # build + push `--target runtime` only, never `secc-proof`
@@ -171,12 +218,13 @@ USER root
 RUN rm -f /usr/local/bin/claude-bundled
 COPY products/agents/backend/secc/probe.py /usr/local/bin/claude-bundled
 # probe.py's `#!/usr/bin/env python3` shebang resolves through `env`'s OWN
-# PATH lookup — and the wrapper's `env -i PATH=/usr/bin:/bin ...` handoff
-# (bin/julia-cli-exec, unchanged) deliberately does NOT include
+# PATH lookup — and the `env -i PATH=/usr/bin:/bin ...` handoff (now in
+# `bin/julia-cli-slot`, contract §E.11 — `bin/julia-cli-exec` only
+# switches identity and hands off to it) deliberately does NOT include
 # `/opt/venv/bin` (the real bundled CLI is a native binary, not a python
 # script, so it never needed it). Symlinking the venv's python3 onto that
 # same restricted PATH is proof-harness-only plumbing, not a change to
-# the allowlist the wrapper actually enforces for the real CLI.
+# the allowlist the slot script actually enforces for the real CLI.
 RUN ln -sf "$(command -v python3)" /usr/bin/python3 \
     && chown root:root /usr/local/bin/claude-bundled \
     && chmod 0755 /usr/local/bin/claude-bundled
@@ -192,9 +240,9 @@ RUN ln -sf "$(command -v python3)" /usr/bin/python3 \
 FROM runtime AS runtime-watch
 # SEC-A/SEC-C do NOT apply to this stage (roadmap D1, declared not
 # fixed — dev fleet is dormant): the node-install step below re-runs
-# `chown -R noctus:noctus /app`, flipping the wrapper/entrypoint back
-# to `noctus`-owned, and ends on a plain `USER noctus` + the
-# `local-watch` ENTRYPOINT, not `bin/entrypoint.sh`. Harmless only
+# `chown -R noctus:noctus /app`, flipping the wrapper/entrypoint/slot
+# script back to `noctus`-owned, and ends on a plain `USER noctus` +
+# the `local-watch` ENTRYPOINT, not `bin/entrypoint.sh`. Harmless only
 # because `get_agent_runtime` never returns the real SDK runtime
 # without a configured `ANTHROPIC_API_KEY`, which local dev never
 # sets — there is no live Julia turn to isolate in this stage today.
