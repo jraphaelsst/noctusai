@@ -35,6 +35,8 @@ dependencies = [
     "pgvector>=0.2.5",
     # organ_knowledge.py + find_reusable_component.py parse sidecar YAML.
     "PyYAML>=6.0",
+    # dep_preflight.py — Requirement/specifier matching at server startup.
+    "packaging>=23.0",
 ]
 
 [project.optional-dependencies]

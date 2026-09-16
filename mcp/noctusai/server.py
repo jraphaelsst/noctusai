@@ -17,6 +17,7 @@ import logging
 import sys
 from pathlib import Path
 
+import anyio
 import anyio.to_thread
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -235,7 +236,37 @@ def build_server() -> FastMCP:
     return server
 
 
+async def serve_stdio(server: FastMCP, rpc_in, rpc_out) -> None:
+    """``FastMCP.run_stdio_async`` with the transport bound to explicit streams
+    (the isolated channel from ``stdio_guard``) instead of ``sys.stdin/stdout``."""
+    from mcp.server.stdio import stdio_server
+
+    async with stdio_server(anyio.wrap_file(rpc_in), anyio.wrap_file(rpc_out)) as (
+        read_stream,
+        write_stream,
+    ):
+        await server._mcp_server.run(
+            read_stream,
+            write_stream,
+            server._mcp_server.create_initialization_options(),
+        )
+
+
 def run() -> None:
+    # 🔴 stdin-inheritance guard (2026-09-16) — FIRST, before any subprocess can
+    # be spawned: move JSON-RPC onto private fds so an ssh/git/node child can
+    # never flip the channel to O_NONBLOCK (→ spurious EOF → silent clean exit).
+    # See stdio_guard's docstring for the mechanism + reproduction.
+    from stdio_guard import isolate_stdio_channel
+    rpc_in, rpc_out = isolate_stdio_channel()
+
+    # 🔴 venv-drift guard (2026-09-16) — install any dep the seed lib / toolkit
+    # declares but this venv lacks, BEFORE build_server imports tool modules
+    # (a missing one crashed every restart: `No module named 'pillow_heif'`).
+    from dep_preflight import ensure_declared_deps
+    from settings import REPO_ROOT
+    ensure_declared_deps(Path(REPO_ROOT), logging.getLogger(__name__))
+
     # 🔴 GIL-starvation guard (2026-08-31) — flips noc_graph_cache.refresh()'s
     # rebuild branch to a subprocess for the lifetime of THIS process only.
     # See offload_blocking's docstring above + noc_graph_cache.refresh()'s
@@ -244,7 +275,8 @@ def run() -> None:
     # flips it; only actually running the stdio server does.
     from tools.noctus.dev import noc_graph_cache
     noc_graph_cache.IN_MCP_SERVER = True
-    build_server().run("stdio")
+    server = build_server()
+    anyio.run(serve_stdio, server, rpc_in, rpc_out)
 
 
 if __name__ == "__main__":
