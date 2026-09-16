@@ -10,7 +10,13 @@ import { renderHook, waitFor, act, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
-import { createEdicaoFotosHooks, type Capacidades, type FotoRevisao } from './hooks';
+import {
+  createEdicaoFotosHooks,
+  type Capacidades,
+  type FotoRevisao,
+  type LoteResumo,
+  type LotesPage,
+} from './hooks';
 import type { ApiClient } from '../api';
 
 afterEach(cleanup);
@@ -23,6 +29,7 @@ function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
     put: vi.fn(),
     delete: vi.fn(),
     upload: vi.fn(),
+    download: vi.fn(),
     ...overrides,
   } as unknown as ApiClient;
 }
@@ -148,5 +155,120 @@ describe('useRevisao: batch-key change never drops to empty', () => {
     const { useRevisao } = createEdicaoFotosHooks(api);
     renderHook(() => useRevisao(undefined), { wrapper: wrapper() });
     expect(get).not.toHaveBeenCalled();
+  });
+});
+
+// ── useLotes — paginated list, placeholderData across a page change ────────
+
+describe('useLotes: list + placeholderData', () => {
+  const LOTE_A: LoteResumo = {
+    id: 'l1',
+    nome: 'Lote 1',
+    criado_em: '2026-09-16T00:00:00Z',
+    imovel: null,
+    velocidade: 'urgente',
+    estado_agregado: 'processando',
+    total_fotos: 10,
+    fotos_decididas: 0,
+  };
+  const PAGE_1: LotesPage = { items: [LOTE_A], page: 1, page_size: 50, total: 1 };
+
+  it('requests page/page_size and exposes items/total, showSkeleton only on first load', async () => {
+    const get = vi.fn().mockResolvedValue(PAGE_1);
+    const api = makeApi({ get });
+    const { useLotes } = createEdicaoFotosHooks(api);
+    const { result } = renderHook(() => useLotes(), { wrapper: wrapper() });
+
+    expect(result.current.showSkeleton).toBe(true);
+    await waitFor(() => expect(result.current.lotes).toEqual([LOTE_A]));
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/lotes', { page: 1, page_size: 50 });
+    expect(result.current.total).toBe(1);
+    expect(result.current.showSkeleton).toBe(false);
+  });
+
+  it('keeps the previous page as placeholder data across a page change (never an empty flash)', async () => {
+    let resolvePage2: (v: LotesPage) => void;
+    const page2Promise = new Promise<LotesPage>((resolve) => {
+      resolvePage2 = resolve;
+    });
+    const get = vi.fn((_path: string, params: any): Promise<any> => {
+      if (params.page === 1) return Promise.resolve(PAGE_1);
+      return page2Promise;
+    });
+    const api = makeApi({ get });
+    const { useLotes } = createEdicaoFotosHooks(api);
+
+    const { result, rerender } = renderHook(({ page }) => useLotes({ page }), {
+      wrapper: wrapper(),
+      initialProps: { page: 1 },
+    });
+
+    await waitFor(() => expect(result.current.lotes).toEqual([LOTE_A]));
+
+    rerender({ page: 2 });
+
+    expect(result.current.lotes).toEqual([LOTE_A]);
+    expect(result.current.isRefreshing).toBe(true);
+    expect(result.current.showSkeleton).toBe(false);
+
+    resolvePage2!({ items: [], page: 2, page_size: 50, total: 1 });
+    await waitFor(() => expect(result.current.lotes).toEqual([]));
+  });
+});
+
+// ── useUploadFotos — multipart field shape ──────────────────────────────────
+
+describe('useUploadFotos: multipart field name', () => {
+  it('appends every file under the "fotos" field and posts to the lote-scoped route', async () => {
+    const upload = vi.fn().mockResolvedValue({ ok: true });
+    const api = makeApi({ upload });
+    const { useUploadFotos } = createEdicaoFotosHooks(api);
+    const { result } = renderHook(() => useUploadFotos(), { wrapper: wrapper() });
+
+    const file = new File(['x'], 'foto.jpg', { type: 'image/jpeg' });
+    await act(async () => {
+      await result.current.mutateAsync({ loteId: 'lote-1', files: [file] });
+    });
+
+    expect(upload).toHaveBeenCalledTimes(1);
+    const [path, form] = upload.mock.calls[0];
+    expect(path).toBe('/api/edicao-fotos/lotes/lote-1/fotos');
+    expect(form).toBeInstanceOf(FormData);
+    expect((form as FormData).getAll('fotos')).toEqual([file]);
+  });
+});
+
+// ── useBaixarZip — download + 409 "not ready" surfaces as ApiError ─────────
+
+describe('useBaixarZip: zip download', () => {
+  it('downloads via api.download() and triggers a browser save', async () => {
+    const blob = new Blob(['zip-bytes']);
+    const download = vi.fn().mockResolvedValue(blob);
+    const api = makeApi({ download });
+    const { useBaixarZip } = createEdicaoFotosHooks(api);
+    const { result } = renderHook(() => useBaixarZip(), { wrapper: wrapper() });
+
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    await act(async () => {
+      await result.current.mutateAsync({ loteId: 'lote-1', nomeArquivo: 'lote-1.zip' });
+    });
+
+    expect(download).toHaveBeenCalledWith('/api/edicao-fotos/lotes/lote-1/zip');
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    clickSpy.mockRestore();
+  });
+
+  it('propagates a 409 (fotos ainda sem decisão) as a rejected mutation', async () => {
+    const { ApiError } = await import('../api');
+    const download = vi.fn().mockRejectedValue(new ApiError(409, 'pendente'));
+    const api = makeApi({ download });
+    const { useBaixarZip } = createEdicaoFotosHooks(api);
+    const { result } = renderHook(() => useBaixarZip(), { wrapper: wrapper() });
+
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({ loteId: 'lote-1', nomeArquivo: 'lote-1.zip' }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
   });
 });

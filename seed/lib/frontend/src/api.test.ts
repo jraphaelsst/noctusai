@@ -239,3 +239,47 @@ describe('api.upload', () => {
     expect(headers['Authorization']).toBe('Bearer tok');
   });
 });
+
+describe('api.download', () => {
+  it('GETs and resolves the raw Blob, with the auth header set', async () => {
+    const blob = new Blob(['zip-bytes'], { type: 'application/zip' });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(blob, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = createApiClient({
+      getBaseUrl: () => 'http://api.test',
+      getAuthToken: async () => 'tok',
+    });
+
+    const result = await client.download('/api/edicao-fotos/lotes/l1/zip');
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://api.test/api/edicao-fotos/lotes/l1/zip');
+    expect(init.method).toBeUndefined(); // GET (default)
+    expect(init.headers['Authorization']).toBe('Bearer tok');
+    expect(init.headers['Content-Type']).toBeUndefined(); // no body on a GET
+    expect(result).toBeInstanceOf(Blob);
+  });
+
+  it('throws a structured ApiError (with .status) on a non-2xx response, e.g. 409 not-ready', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: 'Ainda há fotos sem decisão.' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    const client = createApiClient({
+      getBaseUrl: () => 'http://api.test',
+      getAuthToken: async () => 'tok',
+    });
+
+    await expect(client.download('/api/edicao-fotos/lotes/l1/zip')).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining('Ainda há fotos sem decisão.'),
+    });
+  });
+});

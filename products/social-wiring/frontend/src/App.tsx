@@ -6,9 +6,10 @@
  * This file only defines pages and nav — zero boilerplate.
  *
  * Nav:
- *   Principal     · Dashboard / Criação de mídia / Contatos / Leads / YouTube / Meta / WhatsApp
- *   Conexões      · Marcas / Monitor
- *   Configuração  · Configurações / Equipe
+ *   Principal      · Dashboard / Criação de mídia / Contatos / Leads / YouTube / Meta / WhatsApp
+ *   Edição de Fotos · Lotes / Novo Lote / Configurações (W10a — admin pages are a later slice)
+ *   Conexões       · Marcas / Monitor
+ *   Configuração   · Configurações / Equipe
  *
  * The former "Integrações" nav item is folded into "Conexões" — both the
  * /conexoes and /integrations routes point to the same Conexoes page.
@@ -60,6 +61,8 @@ import {
   Landmark,
   ScrollText,
   ShieldCheck,
+  ImagePlus,
+  Plus,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -112,6 +115,12 @@ const Matriculas = lazyWithReload(() => import("@/pages/Matriculas"));
 const AgentesFinanceiros = lazyWithReload(
   () => import("@/pages/AgentesFinanceiros"),
 );
+// Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias,
+// Modelos, Regras, Curadores, Painel) are a later slice.
+const EdicaoFotosLotes = lazyWithReload(() => import("@/pages/edicao-fotos/Lotes"));
+const EdicaoFotosNovoLote = lazyWithReload(() => import("@/pages/edicao-fotos/NovoLote"));
+const EdicaoFotosLoteRevisao = lazyWithReload(() => import("@/pages/edicao-fotos/LoteRevisao"));
+const EdicaoFotosConfiguracoes = lazyWithReload(() => import("@/pages/edicao-fotos/Configuracoes"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -230,6 +239,31 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     ],
   },
   {
+    // Edição de Fotos — W10a (plan §4/§7): Lotes/Novo Lote/Configurações
+    // only. LoteRevisao (`/edicao-fotos/lotes/:loteId/revisao`) is a detail
+    // route reached from a Lotes card, not a standalone nav item — same
+    // shape as `/imoveis/:codigo` next to the `imoveis` nav entry. Admin
+    // pages (Referências, Guias, Modelos, Regras, Curadores, Painel) are a
+    // later slice; their `status_pagina` rows already exist (migration 128)
+    // but no nav entries point at them yet. Route slugs below match
+    // migration 128's `nome_pagina` values EXACTLY (its own explicit
+    // instruction) — kebab-case, unlike this file's usual snake_case.
+    key: "edicao-fotos",
+    label: "Edição de Fotos",
+    icon: ImagePlus,
+    defaultOpen: false,
+    items: [
+      { name: "Lotes", href: "/edicao-fotos", icon: ImagePlus, route: "edicao-fotos" },
+      { name: "Novo Lote", href: "/edicao-fotos/novo", icon: Plus, route: "edicao-fotos-novo-lote" },
+      {
+        name: "Configurações",
+        href: "/edicao-fotos/configuracoes",
+        icon: Settings2,
+        route: "edicao-fotos-configuracoes",
+      },
+    ],
+  },
+  {
     key: "conexoes",
     label: "Conexões",
     icon: Smartphone,
@@ -342,6 +376,17 @@ const NAV_FALLBACK: NavGroup[] = [
     ],
   },
   {
+    key: "edicao-fotos",
+    label: "Edição de Fotos",
+    icon: ImagePlus,
+    defaultOpen: false,
+    items: [
+      { name: "Lotes", href: "/edicao-fotos", icon: ImagePlus },
+      { name: "Novo Lote", href: "/edicao-fotos/novo", icon: Plus },
+      { name: "Configurações", href: "/edicao-fotos/configuracoes", icon: Settings2 },
+    ],
+  },
+  {
     key: "conexoes",
     label: "Conexões",
     icon: Smartphone,
@@ -387,6 +432,10 @@ export default createProductApp({
     { path: "/certidoes", component: Certidoes },
     { path: "/matriculas", component: Matriculas },
     { path: "/agentes-financeiros", component: AgentesFinanceiros },
+    { path: "/edicao-fotos", component: EdicaoFotosLotes },
+    { path: "/edicao-fotos/novo", component: EdicaoFotosNovoLote },
+    { path: "/edicao-fotos/lotes/:loteId/revisao", component: EdicaoFotosLoteRevisao },
+    { path: "/edicao-fotos/configuracoes", component: EdicaoFotosConfiguracoes },
     { path: "/clientes", component: ClientesBoard },
     { path: "/clientes/revisao", component: RevisaoFila },
     { path: "/email-marketing/listas", component: EmailListas },

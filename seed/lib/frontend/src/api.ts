@@ -107,6 +107,18 @@ export interface ApiClient {
    * `{}` this whole time.
    */
   upload<T = any>(path: string, form: FormData): Promise<T>;
+  /**
+   * GET a binary response (e.g. a generated zip/PDF) as a `Blob`. Use for ANY
+   * endpoint that doesn't return JSON — `get`'s response handling always
+   * calls `response.json()`, which throws on binary content (the same class
+   * of silent-shaped mismatch `upload` exists to prevent on the write side).
+   * Shares the same auth header + 401-retry path as every other method; on a
+   * non-2xx response it still extracts `{error:{code,message}}`/FastAPI
+   * `detail` from the body when present, so a caller branching on
+   * `err.status` (e.g. 409 "not ready yet") gets the same `ApiError` shape
+   * every other method throws.
+   */
+  download(path: string): Promise<Blob>;
 }
 
 export interface CreateApiClientOptions {
@@ -296,6 +308,21 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
         body: body ? JSON.stringify(body) : undefined,
       });
       return handleResponse<T>(response);
+    },
+
+    async download(path: string): Promise<Blob> {
+      const headers = await buildHeaders();
+      delete headers['Content-Type']; // GET has no body — no reason to declare one
+      const base = getBaseUrl();
+      const response = await fetchWithRetry(`${base}${path}`, { headers });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        const message = data
+          ? extractErrorMessage(data, response.status)
+          : `Erro HTTP ${response.status}`;
+        throw new ApiError(response.status, message, data ?? undefined);
+      }
+      return response.blob();
     },
   };
 }

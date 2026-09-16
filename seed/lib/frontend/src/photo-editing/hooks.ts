@@ -22,12 +22,13 @@
  * queries key on `loteId`; `placeholderData` keeps a key change from
  * unmounting a grid that already has content (contract §9, last line).
  *
- * Scope: this factory covers the routes the S9 seed organs
- * (`PhotoReviewGrid` / `BeforeAfterCompare` / `ReferencePairCard`) consume —
- * capabilities, review + decisions, and the reference pool. The remaining
- * contract surface (lotes CRUD/upload/vista/zip, guias, regras, modelos,
- * curadores, painel) belongs to the SW module waves (W3-W9) that wire the
- * real backend; they extend this same factory rather than forking a new one.
+ * Scope: originally just the S9 seed organs' routes (capacidades, review +
+ * decisions, reference pool). W10a (SW frontend, `pages/edicao-fotos/`)
+ * extended this SAME factory with lotes CRUD/upload/vista/submeter/zip and
+ * configurações/modelos — per `CLAUDE.md` §1 "products consume canonical
+ * organs" this is the required shape (extend, never fork). Guias, regras,
+ * curadores and painel remain out of scope — they belong to the later admin
+ * slice (plan §7 W10b-e) and extend this factory in turn when built.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiClient } from '../api';
@@ -127,6 +128,96 @@ export interface NovaReferenciaBody {
   comodo: string;
   tipos_edicao: string[];
   nota?: string | null;
+}
+
+/** Contract §3 — speed mode (Urgente = sync; Econômico = Batch API, 50% off, ≤24h). */
+export type LoteVelocidade = 'urgente' | 'economico';
+
+/** Optional link to a Vista/CRM imóvel carried on a batch (contract §3 `POST /lotes` body). */
+export interface LoteImovelRef {
+  org_id: string;
+  codigo: string;
+}
+
+/**
+ * Aggregate batch status for the list view. NOT literally typed by the
+ * contract (§3 lists routes, not the list-row shape) — inferred from the
+ * per-photo state machine. 🔴 FLAG: the backend (built in parallel) may
+ * compute + return a differently-named/shaped field — if `GET /lotes` ships
+ * something else, update this type + `Lotes.tsx`'s badge mapping together.
+ */
+export type EstadoLoteAgregado = 'processando' | 'aguardando_revisao' | 'concluido' | 'com_falhas';
+
+/** One row from `GET /lotes` (contract §3) — batch list. */
+export interface LoteResumo {
+  id: string;
+  nome: string;
+  criado_em: string;
+  imovel: LoteImovelRef | null;
+  velocidade: LoteVelocidade;
+  estado_agregado: EstadoLoteAgregado;
+  total_fotos: number;
+  fotos_decididas: number;
+}
+
+/** Paginated envelope — contract §0 convention (`?page=&page_size=` → `{items,page,page_size,total}`). */
+export interface LotesPage {
+  items: LoteResumo[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
+/** `POST /lotes` body (contract §3) — metadata only; photos follow via upload or Vista pull. */
+export interface NovoLoteBody {
+  nome: string;
+  imovel: LoteImovelRef | null;
+}
+
+/** `POST /lotes` response — minimal id so the caller can chain upload/vista/submeter. */
+export interface LoteCriado {
+  id: string;
+  nome: string;
+}
+
+/**
+ * `POST /lotes/{id}/vista` body (contract §10, C5 resolved) — `codigo` only;
+ * `org_id` is resolved server-side from the session, never sent by the FE.
+ */
+export interface VistaLoteBody {
+  codigo: string;
+}
+
+/** `GET /lotes/{id}` (contract §3) — batch header + per-photo state, reusing `FotoRevisao`. */
+export interface LoteDetalhe {
+  id: string;
+  nome: string;
+  velocidade: LoteVelocidade;
+  imovel: LoteImovelRef | null;
+  criado_em: string;
+  fotos: FotoRevisao[];
+}
+
+/** `GET|PUT /configuracoes` (contract §8) — org edit types, image model, speed override. */
+export interface OrgConfiguracoes {
+  tipos_edicao_ativos: string[];
+  modelo_editor_imagem: string | null;
+  velocidade_padrao: LoteVelocidade;
+}
+
+/** `GET /modelos` (contract §8) — the image-model catalog; drives Configuracoes' picker + the Econômico lock. */
+export interface ModeloCatalogoItem {
+  id: string;
+  nome: string;
+  versao: string;
+  tag_performance: 'performance' | 'economico' | null;
+  suporta_batch: boolean;
+  nota_recomendacao: string | null;
+  metricas: {
+    taxa_aprovacao: number | null;
+    score_medio_ia: number | null;
+    custo_por_foto_aprovada: number | null;
+  } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +330,191 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     });
   }
 
+  // ---------------------------------------------------------------------
+  // Lotes — list/create/upload/vista/submeter/zip (contract §3), W10a
+  // ---------------------------------------------------------------------
+
+  /** `GET /lotes` — batch list (contract §3). Paginated per contract §0. */
+  function useLotes(params: { page?: number; pageSize?: number } = {}) {
+    const { page = 1, pageSize = 50 } = params;
+    const query = useQuery<LotesPage>({
+      queryKey: ['edicao-fotos', 'lotes', page, pageSize],
+      queryFn: () => api.get('/api/edicao-fotos/lotes', { page, page_size: pageSize }),
+      placeholderData: (prev) => prev,
+    });
+    return {
+      lotes: query.data?.items ?? [],
+      total: query.data?.total ?? 0,
+      page: query.data?.page ?? page,
+      pageSize: query.data?.page_size ?? pageSize,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  /** `GET /lotes/{id}` — batch header + per-photo state (contract §3). */
+  function useLote(loteId: string | null | undefined) {
+    const query = useQuery<LoteDetalhe>({
+      queryKey: ['edicao-fotos', 'lote', loteId],
+      queryFn: () => api.get(`/api/edicao-fotos/lotes/${loteId}`),
+      enabled: !!loteId,
+      placeholderData: (prev) => prev,
+    });
+    return {
+      lote: query.data,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  /** `POST /lotes` — create batch metadata (contract §3). Photos follow via `useUploadFotos`/`useLoteVista`. */
+  function useCriarLote() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (body: NovoLoteBody) => api.post<LoteCriado>('/api/edicao-fotos/lotes', body),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lotes'] });
+      },
+    });
+  }
+
+  /**
+   * `POST /lotes/{id}/fotos` — multipart upload (contract §3). Takes
+   * `loteId` as a MUTATION VARIABLE (not a hook-instantiation parameter,
+   * unlike `useRevisao`/`useDecidirFoto`) — the id is typically only known
+   * mid-flow, right after `useCriarLote()` resolves (the "create batch, then
+   * feed it photos" sequence `NovoLote.tsx` drives), so a hook-time
+   * parameter would close over a stale `undefined`. Field name `fotos`
+   * (repeated) — 🔴 FLAG: not specified by the contract; mirrors the
+   * FastAPI `List[UploadFile] = File(...)` convention every other seed
+   * multi-file upload uses (e.g. igig's `usePautas.ts`). Confirm against the
+   * real router once W3 lands.
+   */
+  function useUploadFotos() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: ({ loteId, files }: { loteId: string; files: File[] }) => {
+        const form = new FormData();
+        files.forEach((file) => form.append('fotos', file));
+        return api.upload(`/api/edicao-fotos/lotes/${loteId}/fotos`, form);
+      },
+      onSuccess: (_data, { loteId }) => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lote', loteId] });
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lotes'] });
+      },
+    });
+  }
+
+  /**
+   * `POST /lotes/{id}/vista` — pull photos from a Vista imóvel by `codigo`
+   * (contract §3, §10 C5). `loteId` is a mutation variable — same
+   * just-created-mid-flow reasoning as `useUploadFotos`.
+   */
+  function useLoteVista() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: ({ loteId, body }: { loteId: string; body: VistaLoteBody }) =>
+        api.post(`/api/edicao-fotos/lotes/${loteId}/vista`, body),
+      onSuccess: (_data, { loteId }) => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lote', loteId] });
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lotes'] });
+      },
+    });
+  }
+
+  /**
+   * `POST /lotes/{id}/submeter` — snapshot the effective guide + enqueue
+   * jobs (contract §3). `loteId` is a mutation variable — same reasoning.
+   */
+  function useSubmeterLote() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (loteId: string) => api.post(`/api/edicao-fotos/lotes/${loteId}/submeter`, {}),
+      onSuccess: (_data, loteId) => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lote', loteId] });
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lotes'] });
+      },
+    });
+  }
+
+  /**
+   * `GET /lotes/{id}/zip` — binary download, **409 until every photo is
+   * decided** (contract §3). Goes through `api.download()` (the `ApiClient`
+   * binary-GET primitive — see `../api.ts`) rather than a raw `fetch`, so it
+   * gets the SAME auth header + 401-retry path as every JSON call, and a
+   * 409 surfaces as a normal `ApiError` with `.status === 409` the caller
+   * can branch on (e.g. "ainda há fotos sem decisão"). Triggers the browser
+   * download itself (`URL.createObjectURL` + a synthetic `<a download>`
+   * click) — no Social-Wiring-specific helper involved, keeping this organ
+   * portable.
+   */
+  function useBaixarZip() {
+    return useMutation({
+      mutationFn: async ({ loteId, nomeArquivo }: { loteId: string; nomeArquivo: string }) => {
+        const blob = await api.download(`/api/edicao-fotos/lotes/${loteId}/zip`);
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = nomeArquivo;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Configurações + catálogo de modelos (contract §8), W10a
+  // ---------------------------------------------------------------------
+
+  /** `GET /configuracoes` — org edit types, image model, speed override (contract §8). */
+  function useConfiguracoes() {
+    const query = useQuery<OrgConfiguracoes>({
+      queryKey: ['edicao-fotos', 'configuracoes'],
+      queryFn: () => api.get('/api/edicao-fotos/configuracoes'),
+    });
+    return {
+      configuracoes: query.data,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  /** `PUT /configuracoes` — agency admin / platform admin only server-side (contract §1, §8). */
+  function useAtualizarConfiguracoes() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (body: OrgConfiguracoes) => api.put('/api/edicao-fotos/configuracoes', body),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'configuracoes'] });
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'capacidades'] });
+      },
+    });
+  }
+
+  /** `GET /modelos` — image-model catalog (contract §8); drives the Configuracoes picker. */
+  function useModelos() {
+    const query = useQuery<ModeloCatalogoItem[]>({
+      queryKey: ['edicao-fotos', 'modelos'],
+      queryFn: () => api.get('/api/edicao-fotos/modelos'),
+      staleTime: 60 * 1000,
+    });
+    return {
+      modelos: query.data ?? [],
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
   return {
     useCapacidades,
     useRevisao,
@@ -247,6 +523,16 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     useReferencias,
     useCriarReferencia,
     useArquivarReferencia,
+    useLotes,
+    useLote,
+    useCriarLote,
+    useUploadFotos,
+    useLoteVista,
+    useSubmeterLote,
+    useBaixarZip,
+    useConfiguracoes,
+    useAtualizarConfiguracoes,
+    useModelos,
   };
 }
 
