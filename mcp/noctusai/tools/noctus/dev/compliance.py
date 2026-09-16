@@ -6081,6 +6081,7 @@ _IMPORT_TO_DIST: dict[str, tuple[str, ...]] = {
     "PIL": ("pillow",),
     "dateutil": ("python-dateutil",),
     "apscheduler": ("apscheduler",),            # case-only difference (APScheduler)
+    "livekit": ("livekit-api",),                # livekit-api ships the `livekit` namespace
 }
 
 #: Modules a seed package may import that belong to its CONSUMER, not to it.

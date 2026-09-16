@@ -189,6 +189,17 @@ dependencies = [
     # this organ) — same floor, kept in lock-step on purpose. Added
     # 2026-09-16 (edicao-fotos-contract Slice S5, ef-s5-payments).
     "stripe>=7.0.0",
+    # LiveKit server SDK — noctusai_lib.integrations.live_rooms.real_livekit's
+    # RealLiveKitProvider (room + egress management, join-token signing,
+    # webhook verification). Same monolithic-install / lazy-import
+    # convention as stripe above: every product image gets it, but this
+    # module (and the Fake path) stay importable without it. Re-points
+    # `products/therapy-platform/backend/app/services/livekit_service.py`,
+    # which previously vendored its own ad-hoc LiveKit calls against a
+    # pre-1.0 SDK shape (`RoomServiceClient`/`EgressServiceClient` — both
+    # removed in 1.x, replaced by `LiveKitAPI.room`/`.egress`). Added
+    # 2026-09-16 (Slice L, seed-live-rooms-livekit).
+    "livekit-api>=1.0.0",
 ]
 
 

@@ -30,10 +30,18 @@ class TherapySettings(ProductSettings):
     stripe_secret_key: Optional[str] = None
     therapy_stripe_connect_client_id: Optional[str] = None
 
-    # LiveKit (product-specific)
+    # LiveKit (product-specific) — provider built via
+    # `noctusai_lib.integrations.live_rooms.make_live_room_provider` in
+    # `app.services.livekit_service`.
     therapy_livekit_url: Optional[str] = None
     therapy_livekit_api_key: Optional[str] = None
     therapy_livekit_api_secret: Optional[str] = None
+    # Explicit fake-provider selection (Slice L, 2026-09-16). NEVER
+    # inferred from missing THERAPY_LIVEKIT_* vars — a prod deploy
+    # missing them now raises `LiveRoomNotConfigured` instead of
+    # silently degrading to mock data (the bug this slice fixes). The
+    # test suite sets this explicitly via `tests/conftest.py`.
+    therapy_use_fake_live_rooms: bool = False
 
     # Google OAuth + Calendar.
     # Dev convention (2026-05-11): platform-wide creds live at root `.env` as

@@ -2,7 +2,30 @@
 Session Service — Lifecycle management for video therapy sessions.
 
 Orchestrates start, pause, resume, end, auto-finalization, and reopen
-of sessions. Delegates to LiveKit for room/recording operations.
+of sessions. Delegates to LiveKit (via `livekit_service`, a thin mapper
+over `noctusai_lib.integrations.live_rooms`) for room/recording
+operations.
+
+**LiveKit failure handling (Slice L, 2026-09-16 fix-on-contact).** The
+provider now RAISES `livekit_service.LiveRoomError` instead of silently
+returning mock data on a real failure. This module handles that
+explicitly, split by whether the call is fatal to the session:
+
+* `create_room` / `generate_token` are FATAL — no room means no video
+  call, no token means no join access — so a failure surfaces as a
+  visible `HTTPException(503, ...)` via `_create_room_or_503` /
+  `_generate_token_or_503`.
+* `start_recording` DEGRADES the session to unrecorded rather than
+  blocking it — a therapy session should still happen even if egress is
+  down — via `_start_recording_degraded`, which returns
+  `{"recording_failed": True, "error": ...}` instead of a
+  `recording_id`. The segment's `recording_id` column then stays NULL,
+  its natural "no recording" state; no schema change needed.
+* `stop_recording` / `close_room` are best-effort cleanup calls used
+  during pause/end/auto-finalize/reopen — a LiveKit hiccup must not
+  block a therapist from pausing or ending a session, so failures are
+  logged (never silently swallowed) via `_stop_recording_best_effort` /
+  `_close_room_best_effort` and the lifecycle transition proceeds.
 """
 from __future__ import annotations
 
@@ -17,6 +40,66 @@ from app.dependencies import first_or_none
 from app.services import livekit_service
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# LiveKit failure-handling wrappers (see module docstring)
+# ---------------------------------------------------------------------------
+
+async def _create_room_or_503(room_name: str, *, appointment_id: str) -> Dict[str, Any]:
+    try:
+        return await livekit_service.create_room(room_name)
+    except livekit_service.LiveRoomError as exc:
+        logger.error("LiveKit create_room failed for appointment %s: %s", appointment_id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Serviço de videochamada indisponível no momento. Tente novamente em instantes.",
+        ) from exc
+
+
+async def _generate_token_or_503(room_name: str, *, appointment_id: str, user_id: str) -> str:
+    try:
+        return await livekit_service.generate_token(
+            room_name,
+            participant_identity=user_id,
+            participant_name="Terapeuta",
+        )
+    except livekit_service.LiveRoomError as exc:
+        logger.error("LiveKit generate_token failed for appointment %s: %s", appointment_id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível gerar o acesso à videochamada. Tente novamente em instantes.",
+        ) from exc
+
+
+async def _start_recording_degraded(
+    room_name: str, segment_id: str, *, appointment_id: str
+) -> Dict[str, Any]:
+    try:
+        return await livekit_service.start_recording(room_name, segment_id)
+    except livekit_service.LiveRoomError as exc:
+        logger.error(
+            "LiveKit start_recording failed for appointment %s segment %s: %s",
+            appointment_id, segment_id, exc,
+        )
+        return {"recording_failed": True, "error": str(exc)}
+
+
+async def _stop_recording_best_effort(recording_id: str, *, appointment_id: str) -> None:
+    try:
+        await livekit_service.stop_recording(recording_id)
+    except livekit_service.LiveRoomError as exc:
+        logger.error(
+            "LiveKit stop_recording failed for appointment %s recording %s: %s",
+            appointment_id, recording_id, exc,
+        )
+
+
+async def _close_room_best_effort(room_name: str, *, appointment_id: str) -> None:
+    try:
+        await livekit_service.close_room(room_name)
+    except livekit_service.LiveRoomError as exc:
+        logger.error("LiveKit close_room failed for appointment %s: %s", appointment_id, exc)
 
 SP_TZ = timezone(timedelta(hours=-3))
 
@@ -146,7 +229,7 @@ async def start_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     }).eq("id", room["id"]).execute()
 
     # Create LiveKit room
-    lk_room = await livekit_service.create_room(room["livekit_room_name"])
+    lk_room = await _create_room_or_503(room["livekit_room_name"], appointment_id=appointment_id)
 
     # Create first audio segment
     segment_data = {
@@ -161,9 +244,10 @@ async def start_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     # Start recording
     rec_info = {}
     if segment:
-        rec_info = await livekit_service.start_recording(
+        rec_info = await _start_recording_degraded(
             room["livekit_room_name"],
             segment["id"],
+            appointment_id=appointment_id,
         )
         if rec_info.get("recording_id"):
             db.table("session_audio_segments").update({
@@ -176,10 +260,8 @@ async def start_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     }).eq("id", appointment_id).execute()
 
     # Generate token for therapist
-    token = await livekit_service.generate_token(
-        room["livekit_room_name"],
-        participant_identity=user_id,
-        participant_name="Terapeuta",
+    token = await _generate_token_or_503(
+        room["livekit_room_name"], appointment_id=appointment_id, user_id=user_id,
     )
 
     return {
@@ -246,7 +328,9 @@ async def pause_session(
 
         # Stop LiveKit recording
         if active_segment.get("recording_id"):
-            await livekit_service.stop_recording(active_segment["recording_id"])
+            await _stop_recording_best_effort(
+                active_segment["recording_id"], appointment_id=appointment_id,
+            )
 
     # Log interruption
     db.table("session_interruptions").insert({
@@ -317,9 +401,10 @@ async def resume_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     # Start new recording
     rec_info = {}
     if segment:
-        rec_info = await livekit_service.start_recording(
+        rec_info = await _start_recording_degraded(
             room["livekit_room_name"],
             segment["id"],
+            appointment_id=appointment_id,
         )
         if rec_info.get("recording_id"):
             db.table("session_audio_segments").update({
@@ -388,7 +473,9 @@ async def end_session(appointment_id: str, user_id: str, db: Any) -> Dict:
         }).eq("id", active_segment["id"]).execute()
 
         if active_segment.get("recording_id"):
-            await livekit_service.stop_recording(active_segment["recording_id"])
+            await _stop_recording_best_effort(
+                active_segment["recording_id"], appointment_id=appointment_id,
+            )
 
     # Update appointment
     db.table("appointments").update({
@@ -405,7 +492,7 @@ async def end_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     }).execute()
 
     # Close LiveKit room
-    await livekit_service.close_room(room["livekit_room_name"])
+    await _close_room_best_effort(room["livekit_room_name"], appointment_id=appointment_id)
 
     return {
         "appointment_id": appointment_id,
@@ -453,7 +540,9 @@ async def auto_finalize_session(appointment_id: str, db: Any) -> Dict:
             "ended_at": now_iso,
         }).eq("id", active_segment["id"]).execute()
         if active_segment.get("recording_id"):
-            await livekit_service.stop_recording(active_segment["recording_id"])
+            await _stop_recording_best_effort(
+                active_segment["recording_id"], appointment_id=appointment_id,
+            )
 
     # Update video room
     db.table("video_rooms").update({
@@ -469,7 +558,7 @@ async def auto_finalize_session(appointment_id: str, db: Any) -> Dict:
     }).eq("id", appointment_id).execute()
 
     # Close LiveKit room
-    await livekit_service.close_room(room["livekit_room_name"])
+    await _close_room_best_effort(room["livekit_room_name"], appointment_id=appointment_id)
 
     # Log auto-finalization
     db.table("session_interruptions").insert({
@@ -532,7 +621,7 @@ async def reopen_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     }).eq("id", appointment_id).execute()
 
     # Create LiveKit room again
-    lk_room = await livekit_service.create_room(room["livekit_room_name"])
+    lk_room = await _create_room_or_503(room["livekit_room_name"], appointment_id=appointment_id)
 
     # Count existing segments
     existing_segs = (
@@ -558,9 +647,10 @@ async def reopen_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     # Start recording
     rec_info = {}
     if segment:
-        rec_info = await livekit_service.start_recording(
+        rec_info = await _start_recording_degraded(
             room["livekit_room_name"],
             segment["id"],
+            appointment_id=appointment_id,
         )
         if rec_info.get("recording_id"):
             db.table("session_audio_segments").update({
@@ -576,10 +666,8 @@ async def reopen_session(appointment_id: str, user_id: str, db: Any) -> Dict:
     }).execute()
 
     # Generate token for therapist
-    token = await livekit_service.generate_token(
-        room["livekit_room_name"],
-        participant_identity=user_id,
-        participant_name="Terapeuta",
+    token = await _generate_token_or_503(
+        room["livekit_room_name"], appointment_id=appointment_id, user_id=user_id,
     )
 
     return {

@@ -64,6 +64,12 @@ _own_test_env(
         "SUPABASE_URL": "http://test.local",
         "SUPABASE_ANON_KEY": _FAKE_JWT,
         "SUPABASE_SERVICE_ROLE_KEY": _FAKE_JWT,
+        # Explicit fake-provider selection (Slice L, 2026-09-16) —
+        # `app.services.livekit_service` now raises `LiveRoomError`
+        # instead of silently mock-degrading when THERAPY_LIVEKIT_* are
+        # unset, so the test suite must opt into the Fake provider
+        # explicitly rather than relying on missing-credential inference.
+        "THERAPY_USE_FAKE_LIVE_ROOMS": "true",
     }
 )
 
@@ -109,6 +115,26 @@ __all__ = [
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
+
+
+@pytest.fixture(autouse=True)
+def _reset_livekit_provider():
+    """Reset `app.services.livekit_service`'s cached `FakeLiveRoomProvider`
+    between tests.
+
+    The module caches its provider at module scope (mirrors the real
+    `RealLiveKitProvider`'s intended long-lived-per-process construction);
+    without this reset, `FakeLiveRoomProvider`'s in-memory `rooms`/
+    `recordings` dicts would accumulate across every test in the
+    session — a room name reused verbatim across fixtures (e.g.
+    `"therapy-appt-001"`) would carry stale state from an earlier test
+    into a later one.
+    """
+    from app.services import livekit_service
+
+    livekit_service._provider = None
+    yield
+    livekit_service._provider = None
 
 
 def _make_client_context(role="therapist", clinic_id=None):
