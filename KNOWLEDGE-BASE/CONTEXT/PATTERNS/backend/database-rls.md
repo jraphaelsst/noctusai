@@ -23,6 +23,7 @@
 3. **All SECURITY DEFINER functions include `SET search_path = public, <schema>`** — prevents search-path hijacking attacks.
 4. **HaveIBeenPwned check enabled** on Supabase Auth (org-wide policy).
 5. **Service role bypasses RLS** via `get_admin_client()`. Use sparingly — cross-tenant leaks start here.
+6. **A tooling-created bookkeeping table is not exempt from rule 1** — see § Migration ledger RLS below. Every product schema is PostgREST-exposed with default grants, so ANY table without RLS is readable/writable over REST, whether or not it holds "real" domain data.
 
 ## Policy patterns
 
@@ -181,6 +182,55 @@ The replay-log invariant is that **applying `001_<product>.sql` alone to a fresh
 **Why not just bigger 001s without patches?** Because Supabase's migration log records what was applied — if you're past 001 and want to add a column, you can't re-apply 001 without dropping the schema. The 002 patch records the delta in the live-DB log; the 001 mirror keeps fresh-start clean.
 
 **Anti-pattern (don't):** N numbered files for a greenfield product where 001 has only framework tables and 002-007 are domain phases. Collapse them into a single 001 before merge to main. AdConnect's May 2026 collapse from 7 files → 1 is the reference fix.
+
+### Migration ledger (`schema_migrations`) RLS — 2026-09-16
+
+`noctus.dev.migrate_product` creates a `<schema>.schema_migrations` bookkeeping table per product (filename, applied_at, checksum). Rule 1 above ("all tables have RLS enabled — no exceptions") applies to it too: every product schema is PostgREST-exposed (see § PostgREST schema exposure below) with Postgres' default grants intact, so a bare bookkeeping table is readable AND writable over REST by `anon`/`authenticated` — including inserting a fake filename to make a future `migrate_product` run silently skip a real migration.
+
+**Fix:** `ALTER TABLE <schema>.schema_migrations ENABLE ROW LEVEL SECURITY;` + `REVOKE ALL ON <schema>.schema_migrations FROM anon, authenticated;` — both idempotent, emitted by `_ensure_tracking_table_sql` for every newly created ledger and codified fleet-wide by `products/core/backend/migrations/048_lock_schema_migrations_ledgers.sql`. Full detail: `KB § PATTERNS/backend/migrate-product-mcp-tool.md § Ledger RLS hardening`.
+
+### PostgREST schema exposure — the sibling gate to RLS
+
+RLS controls WHO can read/write within a schema PostgREST already serves. A SEPARATE gate controls WHETHER PostgREST serves the schema at all: `authenticator`'s `pgrst.db_schemas` GUC, a comma-separated allowlist. A schema absent from it fails every REST call with `PGRST106` regardless of how correct its RLS policies are — the two gates are independent and both must be satisfied.
+
+**Never overwrite this GUC with a literal list.** It's one shared value across the whole fleet; every product's onboarding migration appends to the SAME list. A migration that writes the full list as a hand-copied literal can silently DROP a schema added between when the literal was copied and when the migration runs — no error, just that product's REST API going down fleet-wide (memory `feedback_postgrest_exposed_schema_drop`; near-miss in `products/p-studio/backend/migrations/002_plataforma_e_seeds.sql`, which would have dropped `igig`).
+
+**Canonical read-then-append shape:**
+
+```sql
+DO $$
+DECLARE
+    v_current text;
+BEGIN
+    SELECT substring(cfg FROM 'pgrst[.]db_schemas=(.*)') INTO v_current
+    FROM (
+        SELECT unnest(setconfig) AS cfg
+        FROM pg_db_role_setting s
+        JOIN pg_roles r ON r.oid = s.setrole
+        WHERE r.rolname = 'authenticator'
+    ) t
+    WHERE cfg LIKE 'pgrst.db_schemas=%';
+
+    v_current := COALESCE(v_current, 'public, graphql_public');
+
+    IF v_current !~ '(^|,)\s*<schema>\s*(,|$)' THEN
+        EXECUTE format(
+            'ALTER ROLE authenticator SET pgrst.db_schemas = %L',
+            v_current || ', <schema>'
+        );
+        NOTIFY pgrst, 'reload config';
+        NOTIFY pgrst, 'reload schema';
+    END IF;
+END
+$$;
+```
+
+- Reads the CURRENT value (never a literal copy) via `pg_db_role_setting` joined to `pg_roles`.
+- `COALESCE`s to Supabase's own defaults (`public, graphql_public`) when the GUC is entirely unset — safe on a brand-new project too.
+- Appends the target schema ONLY if a word-boundary regex says it's absent — never drops or reorders existing entries.
+- `NOTIFY pgrst` (both `reload config` + `reload schema`) so PostgREST picks it up without a restart.
+
+**Where this lives in the platform:** `noctus.dev.scaffold_product` emits this DO block automatically inside every new product's seed-row migration (`_pgrst_schema_exposure_sql` in `mcp/noctusai/tools/noctus/dev/scaffold.py`) — see `KB § GUIDES/new-product.md § PostgREST schema exposure`. The fleet-wide list as verified live on `nyplttplcoyiiqjrvtiw` (2026-09-16) is codified in `products/core/backend/migrations/049_reconcile_postgrest_exposed_schemas.sql`, using the same read-then-append logic per schema so a fresh DB reproduces the live state without ever risking a drop.
 
 ### Authoring helpers — `noctusai_lib.domain.sql_templates`
 

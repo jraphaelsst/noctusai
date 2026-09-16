@@ -155,6 +155,29 @@ class TestSqlBuilders:
         assert 'CREATE SCHEMA IF NOT EXISTS "personal-finance"' in sql
         assert '"personal-finance".schema_migrations' in sql
 
+    def test_ensure_tracking_table_locks_down_rls(self):
+        """schema_migrations is exposed via PostgREST like any other table in
+        the schema — without RLS + a revoke, anon/authenticated can read or
+        edit the ledger over REST (e.g. insert a filename to make a future
+        migrate_product run silently skip a real migration). Verified live
+        on nyplttplcoyiiqjrvtiw 2026-09-16: an anon REST call returned 42501
+        after this fix; the Management-API executor (table owner) was
+        unaffected."""
+        sql = _ensure_tracking_table_sql("orbity")
+        assert 'ALTER TABLE "orbity".schema_migrations ENABLE ROW LEVEL SECURITY' in sql
+        assert 'REVOKE ALL ON "orbity".schema_migrations FROM anon, authenticated' in sql
+
+    def test_ensure_tracking_table_locks_down_rls_hyphenated_schema(self):
+        sql = _ensure_tracking_table_sql("personal-finance")
+        assert (
+            'ALTER TABLE "personal-finance".schema_migrations ENABLE ROW LEVEL SECURITY'
+            in sql
+        )
+        assert (
+            'REVOKE ALL ON "personal-finance".schema_migrations FROM anon, authenticated'
+            in sql
+        )
+
     def test_fetch_applied_selects_filename(self):
         sql = _fetch_applied_sql("orbity")
         assert "SELECT filename" in sql

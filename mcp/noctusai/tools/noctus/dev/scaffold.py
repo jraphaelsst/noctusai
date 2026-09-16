@@ -813,6 +813,7 @@ def scaffold_product(
         color=color,
         backend_port=backend_port,
         products_dir=base_products_dir,
+        schema=schema,
     )
 
     start_sh_registration = _register_in_start_sh(
@@ -1087,6 +1088,86 @@ def _remove_product_directory(
     return {"path": str(target)}
 
 
+def _pgrst_schema_exposure_sql(schema: str) -> str:
+    """DO block: idempotently APPEND `schema` to authenticator's
+    `pgrst.db_schemas` GUC — the PostgREST schema-exposure list.
+
+    A new product's schema not in this list makes EVERY data call against
+    it fail with `PGRST106` (memory
+    `feedback_new_product_schema_must_be_postgrest_exposed`) — scaffolding
+    a product without this step ships a product whose backend can never
+    reach its own tables over REST.
+
+    Append-only + idempotent by construction, mirroring the pattern
+    already proven live in
+    `products/p-studio/backend/migrations/002_plataforma_e_seeds.sql`
+    (itself hardened after a near-miss: an earlier version of that
+    migration wrote the FULL list as a literal, which would have DROPPED
+    `igig` — added to the live list between when that literal was copied
+    and when the migration ran — memory
+    `feedback_postgrest_exposed_schema_drop`. Dropping an exposed schema
+    from PostgREST's config is a fleet-wide REST outage, not a scoped one,
+    because PostgREST rebuilds its schema cache from the WHOLE exposed
+    list on every reload.):
+
+      1. Read the CURRENT `pgrst.db_schemas` value off `authenticator`'s
+         role-level GUC storage (`pg_db_role_setting` joined to
+         `pg_roles`) — never a value hand-copied into the migration file,
+         which goes stale the moment a sibling product's migration runs
+         first.
+      2. Append `schema` ONLY if it is not already present (word-boundary
+         regex against the comma-separated list — a plain substring check
+         would false-negative-skip `pilates` if the list already contained
+         `pilates_x`, or vice-versa false-positive).
+      3. Never drop or reorder existing entries — the append is a single
+         `... || ', ' || schema`, nothing else is rewritten.
+      4. `ALTER ROLE`, then `NOTIFY pgrst, 'reload config'` (config change)
+         + `NOTIFY pgrst, 'reload schema'` (schema-cache rebuild) so
+         PostgREST picks up the new schema without a restart.
+
+    A fresh DB with no `pgrst.db_schemas` GUC set at all (no product has
+    ever run this) falls back to Supabase's own defaults
+    (`public, graphql_public`) rather than raising — so this is safe to
+    run as the FIRST product's onboarding migration on a brand-new
+    project, not just the Nth.
+    """
+    safe_schema = schema.replace("'", "''")
+    return f"""\
+-- Expose `{schema}` to PostgREST by APPENDING to authenticator's
+-- pgrst.db_schemas — a schema absent from this list makes every REST call
+-- against it fail with PGRST106. Idempotent + append-only: reads the
+-- CURRENT list (never a literal copy, which goes stale — see
+-- products/p-studio/backend/migrations/002_plataforma_e_seeds.sql for the
+-- near-miss this pattern exists to prevent), appends `{schema}` only if
+-- absent, and never drops or reorders existing entries.
+DO $$
+DECLARE
+    v_current text;
+BEGIN
+    SELECT substring(cfg FROM 'pgrst[.]db_schemas=(.*)') INTO v_current
+    FROM (
+        SELECT unnest(setconfig) AS cfg
+        FROM pg_db_role_setting s
+        JOIN pg_roles r ON r.oid = s.setrole
+        WHERE r.rolname = 'authenticator'
+    ) t
+    WHERE cfg LIKE 'pgrst.db_schemas=%';
+
+    v_current := COALESCE(v_current, 'public, graphql_public');
+
+    IF v_current !~ '(^|,)\\s*{safe_schema}\\s*(,|$)' THEN
+        EXECUTE format(
+            'ALTER ROLE authenticator SET pgrst.db_schemas = %L',
+            v_current || ', {safe_schema}'
+        );
+        NOTIFY pgrst, 'reload config';
+        NOTIFY pgrst, 'reload schema';
+    END IF;
+END
+$$;
+"""
+
+
 def _emit_products_seed_row_migration(
     *,
     slug: str,
@@ -1096,6 +1177,7 @@ def _emit_products_seed_row_migration(
     color: str,
     backend_port: int,
     products_dir: Path,
+    schema: str | None = None,
 ) -> dict:
     """Emit a numbered migration that seeds the new product into `public.products`.
 
@@ -1115,6 +1197,14 @@ def _emit_products_seed_row_migration(
     migration on a DB that already has the row is a no-op. Operator still
     applies via Supabase MCP — the file is the durable record, the apply is
     the runtime effect.
+
+    When `schema` is given, the migration ALSO idempotently appends `schema`
+    to `authenticator`'s PostgREST schema-exposure list (see
+    `_pgrst_schema_exposure_sql`) — without this, every REST call the new
+    product's backend makes against its own tables fails with `PGRST106`
+    (memory `feedback_new_product_schema_must_be_postgrest_exposed`). Omitted
+    only when the caller genuinely has no schema to declare (kept optional
+    for back-compat with any direct caller that predates this leg).
     """
     core_migrations = products_dir / "core" / "backend" / "migrations"
     if not core_migrations.is_dir():
@@ -1126,6 +1216,7 @@ def _emit_products_seed_row_migration(
     path = core_migrations / filename
 
     desc_sql = _sql_text_or_null(description)
+    pgrst_block = f"\n{_pgrst_schema_exposure_sql(schema)}" if schema else ""
     body = f"""\
 -- ============================================================
 -- {next_number:03d} — Seed {name} product row
@@ -1147,7 +1238,7 @@ VALUES (
     true
 )
 ON CONFLICT (slug) DO NOTHING;
-"""
+{pgrst_block}"""
     try:
         path.write_text(body, encoding="utf-8")
     except OSError as exc:

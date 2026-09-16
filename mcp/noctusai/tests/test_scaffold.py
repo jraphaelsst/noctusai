@@ -14,7 +14,9 @@ from tools.noctus.dev.scaffold import (
     INTERROGATION_QUESTIONS,
     PROSE_SURFACES,
     RESERVED_RANGES,
+    _emit_products_seed_row_migration,
     _patch_workspace_docker_files,
+    _pgrst_schema_exposure_sql,
     delete_product,
     list_available_ports,
     reserve_port_range,
@@ -464,6 +466,15 @@ class TestScaffoldEmitsProductsSeedRow:
         assert "ON CONFLICT (slug) DO NOTHING" in body
         # next_steps surfaces the apply-via-MCP follow-up first.
         assert any("Apply seed-row migration" in step for step in result["next_steps"])
+        # PostgREST schema-exposure leg: the new product's schema (here
+        # "auto_register", the 3rd positional arg) must be idempotently
+        # appended to authenticator's pgrst.db_schemas — else every REST
+        # call the product's backend makes 404s with PGRST106 (memory
+        # feedback_new_product_schema_must_be_postgrest_exposed).
+        assert "pgrst.db_schemas" in body
+        assert "auto_register" in body
+        assert "NOTIFY pgrst, 'reload config'" in body
+        assert "NOTIFY pgrst, 'reload schema'" in body
 
     def test_skips_when_no_core_migrations_dir(self, tmp_path):
         # Workspace without products/core/backend/migrations/ (e.g., template
@@ -491,6 +502,92 @@ class TestScaffoldEmitsProductsSeedRow:
             "Manually emit products-seed-row migration" in step
             for step in result["next_steps"]
         )
+
+
+class TestPgrstSchemaExposureSql:
+    """`_pgrst_schema_exposure_sql` — the append-only, idempotent DO block
+    that exposes a product's schema to PostgREST. See memories
+    `feedback_new_product_schema_must_be_postgrest_exposed` (schema absent
+    ⇒ every data call 404s with PGRST106) and
+    `feedback_postgrest_exposed_schema_drop` (dropping/reordering the list
+    is a fleet-wide REST outage — never rewrite the whole list)."""
+
+    def test_reads_current_list_never_a_literal(self):
+        sql = _pgrst_schema_exposure_sql("orbity")
+        # Reads authenticator's LIVE pgrst.db_schemas off role-level GUC
+        # storage — never a hand-copied literal (the p-studio near-miss
+        # this pattern exists to prevent).
+        assert "pg_db_role_setting" in sql
+        assert "pg_roles" in sql
+        assert "authenticator" in sql
+
+    def test_appends_only_when_absent(self):
+        sql = _pgrst_schema_exposure_sql("orbity")
+        assert "v_current || ', ' || v_current" not in sql  # sanity: no self-concat typo
+        assert "IF v_current !~" in sql
+        assert "ALTER ROLE authenticator SET pgrst.db_schemas" in sql
+        assert "orbity" in sql
+
+    def test_falls_back_to_supabase_defaults_on_fresh_db(self):
+        sql = _pgrst_schema_exposure_sql("orbity")
+        assert "COALESCE(v_current, 'public, graphql_public')" in sql
+
+    def test_reloads_postgrest_config_and_schema(self):
+        sql = _pgrst_schema_exposure_sql("orbity")
+        assert "NOTIFY pgrst, 'reload config'" in sql
+        assert "NOTIFY pgrst, 'reload schema'" in sql
+
+    def test_hyphenated_schema_name(self):
+        # "personal-finance" — a hyphen isn't a word-boundary problem for
+        # the SQL identifier here (it's a *string value* inside the GUC,
+        # not an unquoted identifier), but the regex anchors must still
+        # match it exactly, not a schema that merely contains it as a
+        # substring.
+        sql = _pgrst_schema_exposure_sql("personal-finance")
+        assert "personal-finance" in sql
+
+    def test_escapes_embedded_single_quote(self):
+        # Defense in depth: a schema name can't legitimately contain a
+        # single quote, but the SQL-text escaping must not be skippable.
+        sql = _pgrst_schema_exposure_sql("weird'schema")
+        assert "weird''schema" in sql
+
+    def test_emit_seed_row_migration_omits_block_when_schema_none(self, tmp_path):
+        products_dir = tmp_path / "products"
+        core_migrations = products_dir / "core" / "backend" / "migrations"
+        core_migrations.mkdir(parents=True)
+
+        result = _emit_products_seed_row_migration(
+            slug="no-schema-test",
+            name="No Schema",
+            description=None,
+            icon="Box",
+            color="#000000",
+            backend_port=8200,
+            products_dir=products_dir,
+            schema=None,
+        )
+        body = Path(result["path"]).read_text()
+        assert "pgrst.db_schemas" not in body
+
+    def test_emit_seed_row_migration_includes_block_when_schema_given(self, tmp_path):
+        products_dir = tmp_path / "products"
+        core_migrations = products_dir / "core" / "backend" / "migrations"
+        core_migrations.mkdir(parents=True)
+
+        result = _emit_products_seed_row_migration(
+            slug="with-schema-test",
+            name="With Schema",
+            description=None,
+            icon="Box",
+            color="#000000",
+            backend_port=8201,
+            products_dir=products_dir,
+            schema="with_schema",
+        )
+        body = Path(result["path"]).read_text()
+        assert "pgrst.db_schemas" in body
+        assert "with_schema" in body
 
 
 _FIXTURE_START_SH = """\

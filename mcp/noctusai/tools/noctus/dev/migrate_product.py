@@ -442,7 +442,29 @@ def make_sql_executor(
 
 
 def _ensure_tracking_table_sql(schema: str) -> str:
-    """DDL to create the schema_migrations tracking table (idempotent)."""
+    """DDL to create the schema_migrations tracking table (idempotent) —
+    LOCKED DOWN against PostgREST.
+
+    Product schemas are exposed via PostgREST (``authenticator``'s
+    ``pgrst.db_schemas``) with default grants to ``anon``/``authenticated``,
+    so a bare ``schema_migrations`` table is readable AND writable over the
+    REST API by anyone — including inserting a fake filename so a future
+    ``migrate_product`` run silently skips a real migration. Verified live
+    on Supabase project ``nyplttplcoyiiqjrvtiw`` 2026-09-16: before the fix,
+    an anon REST call could read the ledger; after ``ENABLE ROW LEVEL
+    SECURITY`` + revoking the PostgREST roles, the same call returns
+    ``42501`` while the Management-API executor (the table owner, which
+    RLS never restricts) still reads/writes it fine.
+
+    Both statements are idempotent: re-enabling RLS on an already-RLS'd
+    table is a no-op (no error), and ``REVOKE`` on a role that already
+    lacks the privilege is also a no-op — so re-running this on an
+    already-hardened schema is safe.
+
+    KB § PATTERNS/backend/database-rls.md § schema_migrations ledger
+    hardening (2026-09-16); codified fleet-wide in
+    ``products/core/backend/migrations/048_lock_schema_migrations_ledgers.sql``.
+    """
     q = _quote_ident(schema)
     return (
         f"CREATE SCHEMA IF NOT EXISTS {q};\n"
@@ -450,7 +472,9 @@ def _ensure_tracking_table_sql(schema: str) -> str:
         f"    filename   TEXT        PRIMARY KEY,\n"
         f"    applied_at TIMESTAMPTZ DEFAULT now() NOT NULL,\n"
         f"    checksum   TEXT        NOT NULL\n"
-        f");"
+        f");\n"
+        f"ALTER TABLE {q}.schema_migrations ENABLE ROW LEVEL SECURITY;\n"
+        f"REVOKE ALL ON {q}.schema_migrations FROM anon, authenticated;"
     )
 
 

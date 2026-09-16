@@ -1,6 +1,6 @@
 -- ============================================================================
 -- {{PRODUCT_NAME}} schema
--- Schema: {{SCHEMA_NAME}}
+-- Schema: seed
 -- Description: Minimal product schema that proves the entire shared stack works.
 --
 -- Future migrations should use the canonical helpers from

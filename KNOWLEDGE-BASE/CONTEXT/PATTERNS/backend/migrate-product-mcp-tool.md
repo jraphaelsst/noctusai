@@ -56,6 +56,46 @@ CREATE TABLE IF NOT EXISTS <schema>.schema_migrations (
   every other schema.
 - Each applied file is recorded with a SHA-256 checksum of its content.
 - `ON CONFLICT (filename) DO NOTHING` makes recording idempotent.
+- **RLS-locked against PostgREST (2026-09-16)** — see § Ledger RLS hardening
+  below; every product schema is PostgREST-exposed with default grants to
+  `anon`/`authenticated`, so a bare tracking table is readable AND writable
+  over REST by anyone unless explicitly locked down.
+
+## Ledger RLS hardening (2026-09-16)
+
+**The bug.** `_ensure_tracking_table_sql` created `<schema>.schema_migrations`
+with no RLS and Postgres' default grants intact. Every product schema is
+exposed via PostgREST (`authenticator`'s `pgrst.db_schemas`, see
+`KB § GUIDES/new-product.md` § PostgREST schema exposure), so the bare
+table was readable AND writable over the REST API by `anon` /
+`authenticated` — including inserting a fake filename to make a future
+`migrate_product` run silently skip a real migration (the ledger is
+trusted as "already applied").
+
+**The fix.** `_ensure_tracking_table_sql` now emits two extra statements
+after the `CREATE TABLE IF NOT EXISTS`:
+
+```sql
+ALTER TABLE <schema>.schema_migrations ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON <schema>.schema_migrations FROM anon, authenticated;
+```
+
+Both are idempotent — re-enabling RLS on an already-RLS'd table is a
+no-op, and revoking a privilege a role doesn't hold is also a no-op — so
+re-running this on an already-hardened schema is safe.
+
+**Verified live** on Supabase project `nyplttplcoyiiqjrvtiw`, 2026-09-16:
+an anon REST call against `<schema>.schema_migrations` now returns `42501`;
+the Management-API executor (the table owner — RLS never restricts the
+owner) still reads/writes it fine, so `migrate_product` itself is
+unaffected.
+
+**Codified fleet-wide** by
+`products/core/backend/migrations/048_lock_schema_migrations_ledgers.sql`
+— an idempotent DO-loop over every `schema_migrations` table outside the
+Supabase-internal schemas (`auth`, `realtime`, `supabase_migrations`),
+skipping the `ENABLE` leg for a table whose `pg_class.relrowsecurity` is
+already `true` and always running the (idempotent) `REVOKE`.
 
 ## Schema derivation (fixed 2026-09)
 
@@ -239,4 +279,7 @@ produces). Files without a leading numeric prefix are silently skipped (logged a
 - `KB § PATTERNS/backend/database-rls.md` — migration conventions + RLS
 - `KB § PATTERNS/backend/seed-fake-real-adapter.md` — IO seam shape
 - `KB § PATTERNS/architect/mcp-first-scripts.md` — MCP-first principle
+- `KB § GUIDES/new-product.md` — PostgREST schema-exposure onboarding leg
+  (the sibling gap: a new product's DATA schema must ALSO be exposed, or
+  every REST call 404s with `PGRST106`)
 - `noctus.dev.scaffold_migration` — creates the next numbered migration file

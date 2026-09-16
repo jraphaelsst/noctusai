@@ -67,6 +67,47 @@ The noc dashboard (`products/core/frontend/src/pages/Dashboard.tsx`) reads produ
 
 **When the auto-emit is skipped** (e.g., a template workspace where `products/core/backend/migrations/` doesn't exist — "templates can't modify noc" rule), the scaffold response surfaces the gap in `next_steps` and the operator emits the migration manually in noc.
 
+## PostgREST schema exposure (2026-09-16)
+
+**A new product's DATA schema is a SEPARATE registration from the dashboard
+row above.** Registering in `public.products` (§ Auto-registration) makes
+the product appear on the dashboard; it says nothing about whether
+PostgREST will actually serve the product's own tables. That's a second,
+independent gate: `authenticator`'s `pgrst.db_schemas` GUC — the
+PostgREST schema-exposure allowlist. A schema absent from that list makes
+**every** REST call against it fail with `PGRST106`, even though the
+schema, its tables, and its RLS policies are all correct (memory
+`feedback_new_product_schema_must_be_postgrest_exposed`).
+
+**Rule.** `noctus.dev.scaffold_product` closes this gap by construction:
+the seed-row migration it emits (`NNN_seed_<slug>_product.sql`) ALSO
+carries an idempotent DO block that appends the product's schema to
+`pgrst.db_schemas` (see `_pgrst_schema_exposure_sql` in
+`mcp/noctusai/tools/noctus/dev/scaffold.py`). Applying that one migration
+via Supabase MCP therefore does both jobs — the dashboard row AND the
+REST exposure — in one step.
+
+**Append-only — NEVER overwrite the list with a literal.** `pgrst.db_schemas`
+is a single shared GUC on one role; every product that has ever onboarded
+appended to the SAME list. A migration that writes the full list as a
+hand-copied literal can DROP a schema that was added between when the
+literal was copied and when the migration runs — a fleet-wide REST outage
+for that dropped product, with **no error at all** (`ALTER ROLE ... SET`
+always "succeeds"). This is not hypothetical: an earlier version of
+`products/p-studio/backend/migrations/002_plataforma_e_seeds.sql` did
+exactly this and would have dropped `igig` (memory
+`feedback_postgrest_exposed_schema_drop`). The canonical shape reads the
+CURRENT value off `authenticator`'s role-level GUC storage
+(`pg_db_role_setting` joined to `pg_roles`), appends the new schema only
+if absent, and never touches anything else — see
+`products/core/backend/migrations/049_reconcile_postgrest_exposed_schemas.sql`
+for the fleet-wide catch-up codifying the list as of 2026-09-16, and
+`KB § PATTERNS/backend/database-rls.md § PostgREST schema exposure` for
+the full mechanism.
+
+**Verify after applying:** a REST call against the new schema's tables
+should return real data (or an RLS-shaped empty result), never `PGRST106`.
+
 ## Propagate-set registration (compose + Dockerfile regeneration)
 
 A product's `docker-compose.yml` + `backend/Dockerfile` are **regenerated from the canonical `products/seed/` shape** by `noctus.dev.propagate` (`target='composes'|'dockerfiles'`), and the pre-commit drift gate enforces it. The set propagate operates on is a **hardcoded list** — `PRODUCTS` (+ the per-product `_C_VITE` arg map) in `mcp/noctusai/tools/noctus/dev/propagate.py`, which by its own contract must stay in **parity with `start.sh` `PRODUCTS` and `vite.config.factory` `PRODUCT_MAP`** (the same slug→port list hardcoded in three places).
@@ -95,6 +136,7 @@ A product's `docker-compose.yml` + `backend/Dockerfile` are **regenerated from t
 - [ ] Added to `CLAUDE.md` product table AND `02-LANDSCAPE.md`.
 - [ ] Per-product KB doc created (`CONTEXT/backend/0X-<NAME>.md`, `CONTEXT/frontend/0X-<NAME>.md`).
 - [ ] Seed-row migration emitted by scaffold + applied to live DB via Supabase MCP — verify with `SELECT slug FROM public.products WHERE slug = '<slug>'`.
+- [ ] Product's DATA schema exposed to PostgREST (the SAME seed-row migration's pgrst.db_schemas DO block — see "PostgREST schema exposure" above) — a REST call against the new schema returns data, never `PGRST106`.
 
 ## Don't do
 
@@ -105,6 +147,7 @@ A product's `docker-compose.yml` + `backend/Dockerfile` are **regenerated from t
 - ❌ Don't hand-write a `docker-compose.yml`, `start.sh`, `stop.sh`, or any docker artifact for a workspace product. Source of truth is `templates/seed-workspace-docker/`. Re-run `bash scripts/bootstrap/bootstrap-seed-workspace.sh --target <workspace>` if any are missing.
 - ❌ Don't delete the inherited `example_router.py` + `Example.tsx` skeleton until you have a real router/page to replace it with — those are the canonical reference for the auth pattern, the schema/service split, and the design tokens.
 - ❌ Don't wire `Depends(get_org_id)` / `Depends(get_user_role)` directly. Always use `Depends(get_current_user_org)` from the product's `dependencies.py` (the factory-bound shape inherited from the seed). The deprecated shape emits a frame-aware DeprecationWarning at request time — see `../PATTERNS/backend/backend.md § Auth — canonical pattern`.
+- ❌ Don't hand-write a migration that sets `pgrst.db_schemas` to a literal, hard-coded list. Always read-then-append (see "PostgREST schema exposure" above) — a literal list can silently DROP a sibling product's schema and take its REST API down fleet-wide with no error (memory `feedback_postgrest_exposed_schema_drop`).
 
 ---
 

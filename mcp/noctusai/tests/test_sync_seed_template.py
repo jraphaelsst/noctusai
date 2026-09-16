@@ -135,6 +135,55 @@ def test_validation_counts_expected_placeholders(tmp_path, monkeypatch):
     assert r["message"] == "Sync complete!"
 
 
+def test_sql_comments_are_not_over_substituted(tmp_path, monkeypatch):
+    """The bare-word `\\bseed\\b` regex used for .sql files must not rewrite
+    the English word "seed" inside `--`-comment prose. Regression for the
+    templates/product-seed/backend/migrations/002/004/005.sql defect: a
+    comment like "the seed → templates/product-seed sync" became "the
+    {{SCHEMA_NAME}} → templates/product-{{SCHEMA_NAME}} sync" — nonsense,
+    since the comment was talking about the seed product/directory, not
+    the schema literal. A comment-line (stripped form starts with `--`)
+    must survive verbatim; a code line's `seed` schema references still
+    get placeholderized correctly."""
+    _mk_seed(tmp_path)
+    seed = tmp_path / "products" / "seed"
+    (seed / "backend" / "migrations" / "002_comment_case.sql").write_text(
+        "-- Lockstep with the seed-team-router (see the seed → templates/\n"
+        "-- product-seed sync for background).\n"
+        "--\n"
+        "-- This migration propagates to every new product via the seed\n"
+        "-- sync (see pre-commit hook).\n"
+        "\n"
+        "ALTER TABLE seed.invitations ADD COLUMN IF NOT EXISTS x TEXT;\n"
+        "CREATE INDEX idx_seed_org ON seed.t (org);\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sst, "REPO_ROOT", tmp_path)
+    r = sst.sync_seed_template(dry=False)
+    assert r["ok"] is True, r
+
+    sql = (
+        tmp_path
+        / "templates"
+        / "product-seed"
+        / "backend"
+        / "migrations"
+        / "002_comment_case.sql"
+    ).read_text()
+
+    # Comment lines survive VERBATIM — "seed" stays "seed", never rewritten.
+    assert "-- Lockstep with the seed-team-router (see the seed → templates/" in sql
+    assert "-- product-seed sync for background).\n" in sql
+    assert "-- This migration propagates to every new product via the seed" in sql
+    assert "-- sync (see pre-commit hook).\n" in sql
+    assert "{{SCHEMA_NAME}}" not in sql.split("\n\n")[0]
+
+    # Code lines still get the schema literal placeholderized correctly.
+    assert "ALTER TABLE {{SCHEMA_NAME}}.invitations" in sql
+    assert "idx_{{SCHEMA_NAME}}_org" in sql
+    assert "{{SCHEMA_NAME}}.t" in sql
+
+
 def test_template_backup_preserved_across_resync(tmp_path, monkeypatch):
     _mk_seed(tmp_path)
     monkeypatch.setattr(sst, "REPO_ROOT", tmp_path)

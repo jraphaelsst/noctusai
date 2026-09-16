@@ -182,8 +182,31 @@ def _apply_placeholders(text: str, filename: str, is_compose: bool, is_dockerfil
         text = text.replace("`seed`", "`{{SCHEMA_NAME}}`")
 
     if filename.endswith(".sql"):
-        text = re.sub(r"\bseed\b", "{{SCHEMA_NAME}}", text)
-        text = text.replace("idx_seed_", "idx_{{SCHEMA_NAME}}_")
+        # `\bseed\b` is a BARE-WORD regex — deliberately broad so it
+        # catches every quoting style a migration author might use for
+        # the schema literal (`seed.table`, `seed`.invitations, etc.).
+        # Applied to the WHOLE file that breadth also rewrites the
+        # English WORD "seed" inside `--`-comment prose, producing
+        # nonsense like "the {{SCHEMA_NAME}} → templates/product-
+        # {{SCHEMA_NAME}} sync" (found in the template's own
+        # 002/004/005 migrations — the comment never mentioned the
+        # schema at all, it meant the literal word "seed"). Restrict the
+        # substitution to non-comment lines: a line whose STRIPPED form
+        # starts with `--` is a full-line SQL comment and is copied
+        # through untouched. This does not handle a trailing inline
+        # comment on a code line (`ALTER ... ; -- seed note`) — no
+        # instance of that shape exists in the current seed migrations
+        # (verified empirically), so a narrower per-line split isn't
+        # warranted; if one appears, this comment is the pointer to
+        # revisit.
+        lines = text.splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            if line.strip().startswith("--"):
+                continue
+            line = re.sub(r"\bseed\b", "{{SCHEMA_NAME}}", line)
+            line = line.replace("idx_seed_", "idx_{{SCHEMA_NAME}}_")
+            lines[i] = line
+        text = "".join(lines)
 
     return text
 
