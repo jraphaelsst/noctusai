@@ -51,17 +51,17 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
-| Academia De Reciclagem | 9 | 0 | 15 | 8 | 18 | 146 |
-| Agents | 4 | 0 | 12 | 9 | 33 | 302 |
+| Academia De Reciclagem | 9 | 0 | 15 | 8 | 19 | 150 |
+| Agents | 6 | 1 | 15 | 13 | 38 | 357 |
 | Community | 2 | 1 | 8 | 1 | 6 | 19 |
-| **Total** | **234** | **236** | **486** | **301** | **758** | **10,241** |
+| **Total** | **236** | **237** | **489** | **305** | **764** | **10,300** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (16):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `therapy`.
-- **Tables: 538** declared across those schemas.
+- **Tables: 540** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or

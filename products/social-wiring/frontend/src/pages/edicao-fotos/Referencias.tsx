@@ -97,6 +97,7 @@ function PoolReferenciasView({ ehPlataforma }: { ehPlataforma: boolean }) {
 
       {pool && <OcupacaoPool pool={pool} />}
       {ehPlataforma && <LimitePool />}
+      {ehPlataforma && <NotificacoesPlataforma />}
 
       {opcoes && <NovoParForm opcoes={opcoes} bloqueado={!!pool?.cheio} />}
 
@@ -225,6 +226,52 @@ function LimitePool() {
           </Button>
           <p className="text-xs text-muted-foreground">Vazio ou 0 = sem limite. Pares arquivados não contam.</p>
         </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Plan §1 "Notifications": "the platform admin can switch the whole
+ * notification off/on" — the `fotos_platform_settings.
+ * notificacoes_globais_ativas` cascade root (org switch lives on
+ * `Configuracoes.tsx`; the per-user opt-in on `/notificacoes/preferencias`,
+ * every member's own settings). Lives here, not a dedicated page, because
+ * this IS the platform-settings surface for Edição de Fotos (same as
+ * `LimitePool` above) — a `Configuracoes de Plataforma` nav item does not
+ * exist yet.
+ */
+function NotificacoesPlataforma() {
+  const { configuracoes, showSkeleton } = useConfiguracoesPlataforma();
+  const atualizar = useAtualizarConfiguracoesPlataforma();
+
+  if (showSkeleton || !configuracoes) return <Skeleton className="h-16 w-full" />;
+
+  async function handleToggle(ativo: boolean) {
+    if (!configuracoes) return;
+    try {
+      await atualizar.mutateAsync({ ...configuracoes, notificacoes_globais_ativas: ativo });
+      toast.success(ativo ? "Notificações de lote pronto ligadas." : "Notificações de lote pronto desligadas.");
+    } catch (err) {
+      toast.error("Não foi possível salvar.", { description: mensagemErro(err, "") });
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex items-center justify-between gap-3 p-4">
+        <div>
+          <p className="text-sm font-medium">Notificações de "lote pronto"</p>
+          <p className="text-xs text-muted-foreground">
+            Desligar aqui bloqueia in-app, email e WhatsApp para TODAS as organizações.
+          </p>
+        </div>
+        <Switch
+          id="notificacoes-globais-ativas"
+          checked={configuracoes.notificacoes_globais_ativas}
+          disabled={atualizar.isPending}
+          onCheckedChange={handleToggle}
+        />
       </CardContent>
     </Card>
   );

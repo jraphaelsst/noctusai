@@ -44,6 +44,7 @@ from noctusai_lib.domain.photo_editing import (
     build_worker,
     create_draft,
 )
+from noctusai_lib.domain.photo_editing.types import AGENCY_ADMIN_ROLES
 from noctusai_lib.domain.real_estate.imovel import ImovelFoto
 from noctusai_lib.integrations.fx import FakeFxRateAdapter
 from noctusai_lib.integrations.image_edit import FakeImageEditAdapter, ImageEditCapabilities
@@ -55,10 +56,14 @@ from app.modules.edicao_fotos.deps import (
     RoleInfo,
     get_edicao_ports,
     get_grant_repository,
+    get_preferences_repository,
     get_role_resolver,
     get_vista_photo_source,
 )
 from app.modules.edicao_fotos.routers.curadores import get_user_directory
+from app.modules.edicao_fotos.services.notificacoes_preferencias import (
+    InMemoryNotificationPreferencesRepository,
+)
 from app.modules.edicao_fotos.services.vista_fotos import VistaFotoDownloadError
 
 ORG_RAW = "test-org-123"
@@ -128,6 +133,7 @@ class Harness:
     grants: FakePermissionGrantRepository
     vista: FakeVistaSource
     notifier: RecordingNotifier
+    preferences: "InMemoryNotificationPreferencesRepository"
     directory: dict[str, dict] = field(default_factory=dict)
     current: TestUser = USERS["admin"]
 
@@ -269,9 +275,20 @@ def edicao(client):
     notifier = RecordingNotifier()
     ports = build_ports(repo, backend, notifier)
     grants = FakePermissionGrantRepository([(USERS["curador"].id, "photo_curator")])
+    preferences = InMemoryNotificationPreferencesRepository()
+    # Every AGENCY_ADMIN_ROLES test user is a candidate admin recipient —
+    # `services.notifier` only fans out to those who ALSO opted in
+    # (`ativo=True`, set per-test via `harness.preferences.save(...)`).
+    for key, user in USERS.items():
+        if user.roles.org_role in AGENCY_ADMIN_ROLES:
+            preferences.seed_admin(
+                user.id, org_id=user.org, nome=user.nome, email=f"{key}@example.com",
+                org_role=user.roles.org_role,
+            )
     harness = Harness(
         http=client, app=app, ports=ports, repo=repo, backend=backend,
         grants=grants, vista=FakeVistaSource(), notifier=notifier,
+        preferences=preferences,
         directory={u.id: {"nome": u.nome, "email": f"{k}@example.com"} for k, u in USERS.items()},
     )
 
@@ -285,6 +302,7 @@ def edicao(client):
         # Read through the harness so `enable_economico()` can swap ports.
         get_edicao_ports: lambda: harness.ports,
         get_grant_repository: lambda: grants,
+        get_preferences_repository: lambda: preferences,
         get_vista_photo_source: lambda: harness.vista,
         get_user_directory: lambda: (
             lambda ids: {i: harness.directory[i] for i in ids if i in harness.directory}

@@ -468,3 +468,56 @@ describe('regras de aprendizado hooks (W7)', () => {
     expect(result.current.total).toBe(0);
   });
 });
+
+describe('curadores hooks', () => {
+  it('useCuradores exposes the roster', async () => {
+    const get = vi.fn().mockResolvedValue({
+      items: [{ user_id: 'u1', nome: 'Cris', email: 'cris@x.com', concedido_por: null, created_at: null }],
+      total: 1,
+    });
+    const { useCuradores } = createEdicaoFotosHooks(makeApi({ get }));
+    const { result } = renderHook(() => useCuradores(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.showSkeleton).toBe(false));
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/curadores');
+    expect(result.current.curadores).toHaveLength(1);
+    expect(result.current.total).toBe(1);
+  });
+
+  it('useAdicionarCurador / useRemoverCurador hit the contract routes', async () => {
+    const post = vi.fn().mockResolvedValue({});
+    const del = vi.fn().mockResolvedValue({});
+    const hooks = createEdicaoFotosHooks(makeApi({ post, delete: del }));
+    const w = wrapper();
+    const adicionar = renderHook(() => hooks.useAdicionarCurador(), { wrapper: w }).result;
+    const remover = renderHook(() => hooks.useRemoverCurador(), { wrapper: w }).result;
+    await act(async () => {
+      await adicionar.current.mutateAsync({ user_id: 'u2' });
+      await remover.current.mutateAsync('u1');
+    });
+    expect(post).toHaveBeenCalledWith('/api/edicao-fotos/curadores', { user_id: 'u2' });
+    expect(del).toHaveBeenCalledWith('/api/edicao-fotos/curadores/u1');
+  });
+});
+
+describe('notificação preferência hooks (self-service opt-in)', () => {
+  it('useNotificacaoPreferencia fetches the caller own row', async () => {
+    const get = vi.fn().mockResolvedValue({ ativo: true, whatsapp_number: '+5511999998888' });
+    const { useNotificacaoPreferencia } = createEdicaoFotosHooks(makeApi({ get }));
+    const { result } = renderHook(() => useNotificacaoPreferencia(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.showSkeleton).toBe(false));
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/notificacoes/preferencias');
+    expect(result.current.preferencia).toEqual({ ativo: true, whatsapp_number: '+5511999998888' });
+  });
+
+  it('useAtualizarNotificacaoPreferencia PUTs the whole object', async () => {
+    const put = vi.fn().mockResolvedValue({ ativo: true, whatsapp_number: null });
+    const { useAtualizarNotificacaoPreferencia } = createEdicaoFotosHooks(makeApi({ put }));
+    const { result } = renderHook(() => useAtualizarNotificacaoPreferencia(), { wrapper: wrapper() });
+    await act(async () => {
+      await result.current.mutateAsync({ ativo: true, whatsapp_number: null });
+    });
+    expect(put).toHaveBeenCalledWith('/api/edicao-fotos/notificacoes/preferencias', {
+      ativo: true, whatsapp_number: null,
+    });
+  });
+});

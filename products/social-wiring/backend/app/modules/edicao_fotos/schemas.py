@@ -59,6 +59,16 @@ class CuradorCreateBody(StrictHttpModel):
     user_id: UUID
 
 
+class NotificacaoPreferenciaBody(StrictHttpModel):
+    """`PUT /notificacoes/preferencias` (self-service, plan §1: "agency
+    admins opt in per user"). `whatsapp_number` must be E.164
+    (`+5511999998888`) or omitted/null to clear it — validated again by
+    `services/notificacoes_preferencias.validate_whatsapp_number`."""
+
+    ativo: bool = False
+    whatsapp_number: Optional[str] = Field(default=None, max_length=20)
+
+
 class GuiaCreateBody(StrictHttpModel):
     """A manually written guide draft (contract §6). Becomes a new
     version in `rascunho`; activation is a separate call."""
@@ -93,6 +103,7 @@ __all__ = [
     "GuiaCreateBody",
     "ImovelRef",
     "LoteCreateBody",
+    "NotificacaoPreferenciaBody",
     "OrgSettingsBody",
     "PlatformSettingsBody",
     "RegraCreateBody",

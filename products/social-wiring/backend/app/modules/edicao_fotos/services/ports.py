@@ -13,7 +13,7 @@ backs each engine port (`KB § PATTERNS/backend/photo-editing-seed.md` §4):
 | image_edit  | `openai_image_edit_factory(resolve_credential("openai_api_key", org))` — REFUSES without a key; never the Fake. |
 | llm         | `LlmStructuredAdapter()`. |
 | fx          | `get_fx_rate_adapter(live=True)` (BCB PTAX). |
-| notifier    | `InAppBatchReadyNotifier`. |
+| notifier    | `MultiChannelBatchReadyNotifier` — in-app + the seed email integration + social-wiring's existing WAHA sender (`cfg.waha_base_url/waha_api_key/waha_session`), fanned out to the creator + every opted-in agency admin via `SupabaseNotificationPreferencesRepository` (migration 131). |
 | edit_quota  | `DefaultingQuotaTracker` (Redis when `REDIS_URL` resolves) capped by `EDICAO_FOTOS_EDICOES_POR_DIA`. |
 
 Built lazily and cached: nothing here runs at import time.
@@ -47,7 +47,11 @@ from noctusai_lib.integrations.quota import (
 )
 from noctusai_lib.integrations.storage import make_storage_backend
 
-from app.modules.edicao_fotos.services.notifier import InAppBatchReadyNotifier
+from app.modules.edicao_fotos.services.notificacoes_preferencias import (
+    NotificationPreferencesRepository,
+    SupabaseNotificationPreferencesRepository,
+)
+from app.modules.edicao_fotos.services.notifier import MultiChannelBatchReadyNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +100,20 @@ def _clients() -> tuple[Any, Any]:
     return get_admin_client(), get_core_client()
 
 
+def build_preferences_repository() -> NotificationPreferencesRepository:
+    admin, core = _clients()
+    return SupabaseNotificationPreferencesRepository(admin_client=lambda: admin, core_client=lambda: core)
+
+
 def build_ports(cfg: Any) -> PhotoEditingPorts:
     admin, core = _clients()
     repo = make_photo_editing_repository(
         supabase_client=core, schema=SCHEMA, cost_schema=COST_SCHEMA
     )
     backend = make_storage_backend(kind="supabase", client=admin)
+    preferences = SupabaseNotificationPreferencesRepository(
+        admin_client=lambda: admin, core_client=lambda: core
+    )
     return PhotoEditingPorts(
         repo=repo,
         jobs=make_job_repository(supabase_client=admin, schema_name=SCHEMA),
@@ -111,7 +123,14 @@ def build_ports(cfg: Any) -> PhotoEditingPorts:
         image_edit=openai_image_edit_factory(openai_key_for_org),
         llm=LlmStructuredAdapter(),
         fx=get_fx_rate_adapter(live=True),
-        notifier=InAppBatchReadyNotifier(core_client=lambda: core, repo=repo),
+        notifier=MultiChannelBatchReadyNotifier(
+            core_client=lambda: core,
+            repo=repo,
+            preferences=preferences,
+            waha_base_url=getattr(cfg, "waha_base_url", "") or "",
+            waha_api_key=getattr(cfg, "waha_api_key", "") or "",
+            waha_session=getattr(cfg, "waha_session", "default") or "default",
+        ),
         edit_quota=build_edit_quota(cfg),
     )
 
@@ -124,6 +143,7 @@ def build_grant_repository() -> PermissionGrantRepository:
 _lock = threading.Lock()
 _ports: Optional[PhotoEditingPorts] = None
 _grants: Optional[PermissionGrantRepository] = None
+_preferences: Optional[NotificationPreferencesRepository] = None
 
 
 def get_ports(cfg: Any) -> PhotoEditingPorts:
@@ -143,6 +163,14 @@ def get_grant_repository() -> PermissionGrantRepository:
         return _grants
 
 
+def get_preferences_repository() -> NotificationPreferencesRepository:
+    global _preferences
+    with _lock:
+        if _preferences is None:
+            _preferences = build_preferences_repository()
+        return _preferences
+
+
 __all__ = [
     "BUCKET_FOTOS",
     "BUCKET_REFERENCIAS",
@@ -150,7 +178,9 @@ __all__ = [
     "build_edit_quota",
     "build_grant_repository",
     "build_ports",
+    "build_preferences_repository",
     "get_grant_repository",
     "get_ports",
+    "get_preferences_repository",
     "openai_key_for_org",
 ]

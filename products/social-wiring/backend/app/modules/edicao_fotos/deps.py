@@ -41,6 +41,9 @@ from noctusai_lib.domain.photo_editing.types import (
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_settings
 from app.modules.edicao_fotos.errors import api_error
 from app.modules.edicao_fotos.services import ports as ports_service
+from app.modules.edicao_fotos.services.notificacoes_preferencias import (
+    NotificationPreferencesRepository,
+)
 from app.modules.edicao_fotos.services.vista_fotos import (
     RealVistaPhotoSource,
     VistaPhotoSource,
@@ -129,6 +132,13 @@ def get_grant_repository() -> PermissionGrantRepository:
         raise api_error(503, exc.code, str(exc)) from exc
 
 
+def get_preferences_repository() -> NotificationPreferencesRepository:
+    try:
+        return ports_service.get_preferences_repository()
+    except ports_service.EdicaoFotosUnavailable as exc:
+        raise api_error(503, exc.code, str(exc)) from exc
+
+
 async def require_pool_manager(
     actor: Actor = Depends(get_actor),
     grants: PermissionGrantRepository = Depends(get_grant_repository),
@@ -201,6 +211,7 @@ __all__ = [
     "get_actor",
     "get_edicao_ports",
     "get_grant_repository",
+    "get_preferences_repository",
     "get_role_resolver",
     "get_vista_photo_source",
     "is_member",

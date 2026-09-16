@@ -198,6 +198,13 @@ def guia_efetivo_out(guide: EffectiveGuide) -> dict[str, Any]:
     }
 
 
+def notificacao_preferencia_out(pref: Any) -> dict[str, Any]:
+    """FE `NotificacaoPreferencia` (contract, "batch ready" self-service
+    opt-in) — `pref` is a `services.notificacoes_preferencias.
+    NotificationPreference`."""
+    return {"ativo": pref.ativo, "whatsapp_number": pref.whatsapp_number}
+
+
 def referencia_out(
     pair: ReferencePair, *, antes_url: Optional[str], depois_url: Optional[str]
 ) -> dict[str, Any]:

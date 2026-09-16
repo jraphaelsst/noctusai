@@ -10,7 +10,7 @@ known_facts:
   - "TanStack Query hook factory for `/api/edicao-fotos/...` (EDICAO-FOTOS-CONTRACT.md), same `createXHooks(api)` shape as `../llm.ts` — `api` is injected so each product's own authenticated `createApiClient()` drives every call."
   - "Every read hook (useCapacidades / useRevisao / useReferencias) returns `showSkeleton`/`isRefreshing` ALREADY COMPUTED (`isPending && !data` / `isFetching && !!data`) rather than the raw `useQuery` result — the two-signal loading contract is enforced once here, not re-derived per consumer (CLAUDE.md §1 / contract §9, binding)."
   - "`useRevisao(loteId)` and any future batch-keyed hook MUST carry `placeholderData: (prev) => prev` — contract §9's explicit requirement that a `lote_id` key change never unmounts a grid that already has content."
-  - "Scope is deliberately narrow: only the routes the S9 seed organs consume (capacidades, review + decisions, reference pool). The rest of the contract surface (lotes CRUD/upload/vista/zip, guias, regras, modelos, curadores, painel) is out of this slice; the SW module waves extend this same factory rather than forking a new one."
+  - "Scope grew wave by wave — capacidades/review/decisions/reference-pool (S9), lotes CRUD/upload/vista/zip + configuracoes/modelos (W10a), guias de estilo + platform settings (W6), curadores + notificacoes/preferencias (this slice) — same factory extended each time rather than forked. Regras and painel are the remaining out-of-scope admin surfaces."
   - "Zero Social-Wiring coupling — travels unchanged to the owner's phase-2 standalone rebuild of the engine."
 
 errors_encountered: []

@@ -29,9 +29,11 @@
  * organs" this is the required shape (extend, never fork). W6 extended it
  * again with the reference-pool upload (multipart), guias de estilo and the
  * platform settings the pool limit lives in. W7 extended it again with the
- * per-agency learning loop (`/regras`) + the effective-guide view. Curadores
- * and painel remain out of scope — they belong to later admin slices (plan
- * §7 W10c-e) and extend this factory in turn when built.
+ * per-agency learning loop (`/regras`) + the effective-guide view; this
+ * slice added curadores (`photo_curator` grants) and notificacoes/
+ * preferencias (per-user opt-in, plan §1 "Notifications"). Painel remains
+ * out of scope — it belongs to a later admin slice (plan §7 W10e) and
+ * extends this factory in turn when built.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiClient } from '../api';
@@ -360,6 +362,45 @@ export interface OrgConfiguracoes {
   tipos_edicao_ativos: string[];
   modelo_editor_imagem: string | null;
   velocidade_padrao: LoteVelocidade;
+  /** Plan §1 "Notifications" — the org-level on/off layer (agency admin ∨
+   * platform admin); the platform switch lives on `PlataformaConfiguracoes`,
+   * the per-user opt-in on `NotificacaoPreferencia`. */
+  notificacoes_ativas: boolean;
+}
+
+/** `GET|POST /curadores` row — a `photo_curator` grant (Core
+ * `public.user_permission_grants`), platform admin only. */
+export interface Curador {
+  user_id: string;
+  nome: string | null;
+  email: string | null;
+  concedido_por: string | null;
+  created_at: string | null;
+}
+
+/** `GET /curadores` — not paginated (the roster is small; platform admin only). */
+export interface CuradoresPage {
+  items: Curador[];
+  total: number;
+}
+
+/** `POST /curadores` body — grants `photo_curator` to this user. */
+export interface CuradorCreateBody {
+  user_id: string;
+}
+
+/**
+ * `GET|PUT /notificacoes/preferencias` — self-service per-user opt-in for
+ * the "batch ready" notification (plan §1 "Notifications"). The creator of
+ * a batch is ALWAYS notified regardless of `ativo`; this only decides
+ * whether an AGENCY ADMIN also gets notified for batches they did not
+ * create. `whatsapp_number` (E.164, e.g. `+5511999998888`) is used for
+ * BOTH the WhatsApp channel when opted in AND — if this member later
+ * creates a batch themselves — their own creator notification.
+ */
+export interface NotificacaoPreferencia {
+  ativo: boolean;
+  whatsapp_number: string | null;
 }
 
 /** `GET /modelos` (contract §8) — the image-model catalog; drives Configuracoes' picker + the Econômico lock. */
@@ -920,6 +961,80 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     };
   }
 
+  // ---------------------------------------------------------------------
+  // Curadores (contract §1/§8, platform admin only)
+  // ---------------------------------------------------------------------
+
+  /** `GET /curadores` — the `photo_curator` grant roster. */
+  function useCuradores() {
+    const query = useQuery<CuradoresPage>({
+      queryKey: ['edicao-fotos', 'curadores'],
+      queryFn: () => api.get('/api/edicao-fotos/curadores'),
+      placeholderData: (prev) => prev,
+    });
+    return {
+      curadores: query.data?.items ?? [],
+      total: query.data?.total ?? 0,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  /** `POST /curadores` — grant `photo_curator` to a user. */
+  function useAdicionarCurador() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (body: CuradorCreateBody) => api.post<Curador>('/api/edicao-fotos/curadores', body),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'curadores'] });
+      },
+    });
+  }
+
+  /** `DELETE /curadores/{user_id}` — revoke `photo_curator`. */
+  function useRemoverCurador() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (userId: string) => api.delete(`/api/edicao-fotos/curadores/${userId}`),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'curadores'] });
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Notificações — per-user opt-in (plan §1 "Notifications")
+  // ---------------------------------------------------------------------
+
+  /** `GET /notificacoes/preferencias` — the caller's OWN opt-in row. */
+  function useNotificacaoPreferencia() {
+    const query = useQuery<NotificacaoPreferencia>({
+      queryKey: ['edicao-fotos', 'notificacoes-preferencias'],
+      queryFn: () => api.get('/api/edicao-fotos/notificacoes/preferencias'),
+    });
+    return {
+      preferencia: query.data,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  /** `PUT /notificacoes/preferencias` — send the whole object (read, change, write). */
+  function useAtualizarNotificacaoPreferencia() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (body: NotificacaoPreferencia) =>
+        api.put<NotificacaoPreferencia>('/api/edicao-fotos/notificacoes/preferencias', body),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'notificacoes-preferencias'] });
+      },
+    });
+  }
+
   return {
     useCapacidades,
     useRevisao,
@@ -952,6 +1067,11 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     useConfiguracoes,
     useAtualizarConfiguracoes,
     useModelos,
+    useCuradores,
+    useAdicionarCurador,
+    useRemoverCurador,
+    useNotificacaoPreferencia,
+    useAtualizarNotificacaoPreferencia,
   };
 }
 

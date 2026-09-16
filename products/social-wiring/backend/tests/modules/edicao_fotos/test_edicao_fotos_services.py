@@ -186,6 +186,7 @@ def test_build_ports_wires_real_adapters(override_settings, client) -> None:
     assert type(ports.llm).__name__ == "LlmStructuredAdapter"
     assert isinstance(ports.edit_quota, DefaultingQuotaTracker)
     assert ports.edit_quota.default.cap == settings.edicao_fotos_edicoes_por_dia
+    assert type(ports.notifier).__name__ == "MultiChannelBatchReadyNotifier"
 
 
 def test_image_edit_factory_refuses_without_a_key(client) -> None:

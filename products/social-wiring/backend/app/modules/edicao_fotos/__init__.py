@@ -8,14 +8,15 @@ The engine owns the pipeline; this module owns routes, authorization, the
 storage bucket, notification fan-out and the worker lifecycle. Contract:
 ``projects/edicao-fotos/EDICAO-FOTOS-CONTRACT.md``.
 
-    deps.py                 actor + role guards + DI seams (ports, grants, Vista)
+    deps.py                 actor + role guards + DI seams (ports, grants, prefs, Vista)
     services/ports.py       engine ports → real adapters
     services/worker.py      seed Worker, behind EDICAO_FOTOS_WORKER_ENABLED (default OFF)
-    services/notifier.py    batch-ready in-app notification
+    services/notifier.py    batch-ready fan-out: in-app + email + WhatsApp
+    services/notificacoes_preferencias.py  per-user opt-in storage (migration 131)
     services/vista_fotos.py Vista gallery → batch
     services/review.py      FotoRevisao rows (verdict read only for admins) + URL signing
     routers/                capacidades · configuracoes · curadores · modelos · lotes · revisao
-                            · referencias · guias · regras
+                            · referencias · guias · regras · notificacoes
 
 Response shapes are the seed FE hook types
 (`seed/lib/frontend/src/photo-editing/hooks.ts`), pinned by
@@ -56,9 +57,13 @@ Routes (all under ``/api/edicao-fotos``; every one requires auth → 401):
     POST   /regras/{id}/rejeitar                      agency admin ∨ platform admin (+"archive")
     POST   /regras/propor-agora                       agency admin ∨ platform admin (enqueue now)
     GET    /regras/guia-efetivo                       agency admin ∨ platform admin (current + history)
+    GET    /notificacoes/preferencias                 member (own row)
+    PUT    /notificacoes/preferencias                 member (own row)
 
 Not in R1 here (later slices): model metrics/notes, dashboard,
-email/WhatsApp notifications, Econômico (C8).
+Econômico (C8). Batch-ready notifications (in-app + email + WhatsApp,
+per-user agency-admin opt-in) ship in THIS slice — resolves
+NOC-REMEDIATE[edicao-fotos-notify-channels].
 
 Seam contract
 ─────────────
@@ -84,6 +89,7 @@ def register() -> Any:
         guias,
         lotes,
         modelos,
+        notificacoes,
         referencias,
         regras,
         revisao,
@@ -100,6 +106,7 @@ def register() -> Any:
             referencias.router,
             guias.router,
             regras.router,
+            notificacoes.router,
         ],
         standard_routers=(),
     )

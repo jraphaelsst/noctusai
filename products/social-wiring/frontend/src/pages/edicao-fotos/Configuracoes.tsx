@@ -18,14 +18,21 @@
  *
  * Loading-state contract (CLAUDE.md §1 / contract §9): `showSkeleton` comes
  * pre-computed off `useConfiguracoes()`/`useModelos()` — never `.isLoading`.
+ *
+ * Notifications (plan §1): this page owns the ORG switch
+ * (`notificacoes_ativas`) plus, below it, EVERY member's own per-user
+ * opt-in (`MinhasNotificacoes` — not admin-gated, self-service). The
+ * platform-wide switch lives on `Referencias.tsx` (the platform-settings
+ * surface for this feature).
  */
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertCircle, Lock } from "lucide-react";
+import { AlertCircle, Bell, Lock } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -35,14 +42,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 
 import {
   useAtualizarConfiguracoes,
+  useAtualizarNotificacaoPreferencia,
   useCapacidades,
   useConfiguracoes,
   useModelos,
+  useNotificacaoPreferencia,
   fotosPermissions,
   type LoteVelocidade,
+  type NotificacaoPreferencia,
   type OrgConfiguracoes,
 } from "@/hooks/useEdicaoFotos";
 // Shared with the admin pages. Fixes `virtual_staging` → `staging_virtual`,
@@ -85,7 +96,16 @@ export default function Configuracoes() {
   async function handleSalvar() {
     if (!draft) return;
     try {
-      await atualizar.mutateAsync(draft);
+      // Explicit whitelist, NOT `draft` verbatim — `GET /configuracoes`
+      // returns extra fields (`org_id`, `segue_padrao_plataforma`,
+      // `limites`) this page never edits; `OrgSettingsBody` is a
+      // `StrictHttpModel` (`extra="forbid"`) that 422s on an unknown key.
+      await atualizar.mutateAsync({
+        tipos_edicao_ativos: draft.tipos_edicao_ativos,
+        modelo_editor_imagem: draft.modelo_editor_imagem,
+        velocidade_padrao: draft.velocidade_padrao,
+        notificacoes_ativas: draft.notificacoes_ativas,
+      });
       toast.success("Configurações salvas.");
     } catch (err) {
       toast.error("Não foi possível salvar as configurações.", {
@@ -187,12 +207,29 @@ export default function Configuracoes() {
               )}
             </div>
 
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <Label htmlFor="notificacoes-ativas">Notificações de "lote pronto"</Label>
+                <p className="text-xs text-muted-foreground">
+                  Desliga in-app, email e WhatsApp para esta organização (o criador continua sendo
+                  notificado — este switch só afeta administradores que optaram por receber avisos).
+                </p>
+              </div>
+              <Switch
+                id="notificacoes-ativas"
+                checked={draft.notificacoes_ativas}
+                onCheckedChange={(v) => setDraft({ ...draft, notificacoes_ativas: v })}
+              />
+            </div>
+
             <Button onClick={handleSalvar} disabled={atualizar.isPending}>
               {atualizar.isPending ? "Salvando…" : "Salvar"}
             </Button>
           </CardContent>
         </Card>
       )}
+
+      <MinhasNotificacoes />
     </div>
   );
 }
@@ -239,6 +276,93 @@ function SomenteLeitura({ draft }: { draft: OrgConfiguracoes }) {
             : "nenhum"}
         </p>
         <p className="text-sm">Velocidade padrão: {draft.velocidade_padrao === "urgente" ? "Urgente" : "Econômico"}</p>
+        <p className="text-sm">
+          Notificações de lote pronto: {draft.notificacoes_ativas ? "ligadas" : "desligadas"}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Plan §1: "agency admins opt in per user" + "the creator is always
+ * notified". Self-service — ANY authenticated member (not admin-gated):
+ * `ativo` only matters if the caller IS an agency admin (the fan-out
+ * ignores it otherwise, `services/notifier.py`), but every member can
+ * register a WhatsApp number here for when THEY create a batch.
+ */
+function MinhasNotificacoes() {
+  const { preferencia, showSkeleton, error, refetch } = useNotificacaoPreferencia();
+  const atualizar = useAtualizarNotificacaoPreferencia();
+  const [draft, setDraft] = useState<NotificacaoPreferencia | null>(null);
+
+  useEffect(() => {
+    if (preferencia) setDraft(preferencia);
+  }, [preferencia]);
+
+  async function handleSalvar() {
+    if (!draft) return;
+    try {
+      await atualizar.mutateAsync(draft);
+      toast.success("Preferência de notificação salva.");
+    } catch (err) {
+      toast.error("Não foi possível salvar.", {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-6">
+        <div className="flex items-center gap-2">
+          <Bell className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-base font-semibold">Minhas notificações</h2>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Quando um lote que VOCÊ criou fica pronto você é sempre avisado. Ligue abaixo para
+          também ser avisado de lotes de outras pessoas da organização (só tem efeito se você for
+          administrador da agência).
+        </p>
+        {error ? (
+          <ErrorState onRetry={() => refetch()} />
+        ) : showSkeleton || !draft ? (
+          <div data-testid="minhas-notificacoes-loading">
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="notificacao-preferencia-ativo">
+                Avisar sobre lotes de outras pessoas
+              </Label>
+              <Switch
+                id="notificacao-preferencia-ativo"
+                checked={draft.ativo}
+                onCheckedChange={(v) => setDraft({ ...draft, ativo: v })}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="notificacao-preferencia-whatsapp">Número de WhatsApp</Label>
+              <Input
+                id="notificacao-preferencia-whatsapp"
+                type="tel"
+                placeholder="+5511999998888"
+                value={draft.whatsapp_number ?? ""}
+                onChange={(e) => setDraft({ ...draft, whatsapp_number: e.target.value || null })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Formato internacional (E.164), ex.: +5511999998888. Deixe em branco para não
+                receber avisos por WhatsApp.
+              </p>
+            </div>
+            <div>
+              <Button onClick={handleSalvar} disabled={atualizar.isPending} variant="outline">
+                {atualizar.isPending ? "Salvando…" : "Salvar preferência"}
+              </Button>
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

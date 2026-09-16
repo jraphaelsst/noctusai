@@ -15,6 +15,8 @@ const mockUseCapacidades = vi.fn();
 const mockUseConfiguracoes = vi.fn();
 const mockUseModelos = vi.fn();
 const mockAtualizar = vi.fn();
+const mockUseNotificacaoPreferencia = vi.fn();
+const mockAtualizarNotificacaoPreferencia = vi.fn();
 
 vi.mock("@/hooks/useEdicaoFotos", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useEdicaoFotos")>("@/hooks/useEdicaoFotos");
@@ -24,6 +26,11 @@ vi.mock("@/hooks/useEdicaoFotos", async () => {
     useConfiguracoes: (...a: any[]) => mockUseConfiguracoes(...a),
     useModelos: (...a: any[]) => mockUseModelos(...a),
     useAtualizarConfiguracoes: () => ({ mutateAsync: mockAtualizar, isPending: false }),
+    useNotificacaoPreferencia: (...a: any[]) => mockUseNotificacaoPreferencia(...a),
+    useAtualizarNotificacaoPreferencia: () => ({
+      mutateAsync: mockAtualizarNotificacaoPreferencia,
+      isPending: false,
+    }),
   };
 });
 
@@ -31,6 +38,7 @@ const CONFIG = {
   tipos_edicao_ativos: ["cor_luz", "ceu"],
   modelo_editor_imagem: "gpt-image-2",
   velocidade_padrao: "urgente" as const,
+  notificacoes_ativas: true,
 };
 
 function capacidades(overrides: Partial<any> = {}) {
@@ -64,6 +72,12 @@ async function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseModelos.mockReturnValue({ modelos: [], showSkeleton: false, error: null, refetch: vi.fn() });
+  mockUseNotificacaoPreferencia.mockReturnValue({
+    preferencia: { ativo: false, whatsapp_number: null },
+    showSkeleton: false,
+    error: null,
+    refetch: vi.fn(),
+  });
 });
 
 describe("Configuracoes — loading", () => {
@@ -128,5 +142,36 @@ describe("Configuracoes — admin (editable)", () => {
 
     const { getByTestId } = await renderPage();
     expect(getByTestId("modelos-vazio")).toBeTruthy();
+  });
+});
+
+describe("Configuracoes — minhas notificações (self-service, any role)", () => {
+  it("renders for a corretor (dashboard null) and saves the draft on its own Salvar", async () => {
+    mockUseCapacidades.mockReturnValue({ capacidades: capacidades({ dashboard: null }) });
+    mockUseConfiguracoes.mockReturnValue({ configuracoes: CONFIG, showSkeleton: false, error: null, refetch: vi.fn() });
+    mockAtualizarNotificacaoPreferencia.mockResolvedValue(undefined);
+
+    const { getByText, getByLabelText, fireEvent } = await renderPage();
+    fireEvent.change(getByLabelText("Número de WhatsApp"), { target: { value: "+5511999998888" } });
+    fireEvent.click(getByLabelText("Avisar sobre lotes de outras pessoas"));
+    fireEvent.click(getByText("Salvar preferência"));
+
+    await vi.waitFor(() =>
+      expect(mockAtualizarNotificacaoPreferencia).toHaveBeenCalledWith({
+        ativo: true,
+        whatsapp_number: "+5511999998888",
+      }),
+    );
+  });
+
+  it("shows its own skeleton independently of the org form's loading state", async () => {
+    mockUseCapacidades.mockReturnValue({ capacidades: capacidades({ dashboard: "org" }) });
+    mockUseConfiguracoes.mockReturnValue({ configuracoes: CONFIG, showSkeleton: false, error: null, refetch: vi.fn() });
+    mockUseNotificacaoPreferencia.mockReturnValue({
+      preferencia: undefined, showSkeleton: true, error: null, refetch: vi.fn(),
+    });
+
+    const { getByTestId } = await renderPage();
+    expect(getByTestId("minhas-notificacoes-loading")).toBeTruthy();
   });
 });
