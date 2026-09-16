@@ -268,6 +268,8 @@ jobs:
     # so a product joins the matrix the same commit it gets its first test.
     # 2026-08-31: `igig` added — the refetch-unmount fleet-audit fix landed
     # its first `*.test.ts(x)` files (hook + page regression suites).
+    # 2026-09-16: `community` added — module 1 (Membros/Planos/Inscrições)
+    # frontend landed its first hook + page test suites.
     # `fail-fast: false` so one product's red doesn't mask others.
     name: Product Frontend Tests (vitest)
     runs-on: ubuntu-latest
@@ -288,6 +290,7 @@ jobs:
           - igig
           - academia-de-reciclagem
           - agents
+          - community
 
     steps:
       - uses: actions/checkout@v7

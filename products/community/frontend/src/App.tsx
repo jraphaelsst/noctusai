@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, UsersRound, Boxes } from "lucide-react";
+import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -25,6 +25,15 @@ const NotFound = lazy(() => import("@/pages/NotFound"));
 // `app/routers/example_router.py`.
 const Example = lazy(() => import("@/pages/Example"));
 
+// Module 1 — Membros + Planos + Inscrições (community-m1-contract.md).
+// Backend mirror at `app/routers/{membros,planos,aplicacoes}_router.py`.
+const Membros = lazy(() => import("@/pages/Membros"));
+const Planos = lazy(() => import("@/pages/Planos"));
+const Inscricoes = lazy(() => import("@/pages/Inscricoes"));
+// PUBLIC — the application form, mounted below as a `publicRoute` (no
+// auth, no Layout — a visitor with no session must be able to reach it).
+const Inscrever = lazy(() => import("@/pages/Inscrever"));
+
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
   {
@@ -34,6 +43,9 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
+      { name: "Membros", href: "/membros", icon: UserRound, route: "membros" },
+      { name: "Planos", href: "/planos", icon: Wallet, route: "planos" },
+      { name: "Inscrições", href: "/inscricoes", icon: ClipboardList, route: "inscricoes" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
@@ -48,6 +60,9 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
+      { name: "Membros", href: "/membros", icon: UserRound },
+      { name: "Planos", href: "/planos", icon: Wallet },
+      { name: "Inscrições", href: "/inscricoes", icon: ClipboardList },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
@@ -66,6 +81,9 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
+    { path: "/membros", component: Membros },
+    { path: "/planos", component: Planos },
+    { path: "/inscricoes", component: Inscricoes },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
   ],
@@ -76,4 +94,7 @@ export default createProductApp({
   AcceptInvite,
   ForgotPassword,
   NotFound,
+  // PUBLIC — no auth, no Layout. The public application form must render
+  // for a visitor with no session (community-m1-contract.md §Frontend).
+  publicRoutes: [{ path: "/inscrever", component: Inscrever }],
 });
