@@ -51,6 +51,7 @@ from .real_asaas import DEFAULT_TIMEOUT_SECONDS as ASAAS_DEFAULT_TIMEOUT_SECONDS
 from .real_asaas import AsaasPaymentGateway
 from .real_stripe import StripePaymentGateway
 from .types import BillingCycle, BillingMethod, Money, PaymentGatewayName, SubscriptionRequest
+from .webhook_events import _stripe_field
 
 logger = logging.getLogger(__name__)
 
@@ -184,8 +185,10 @@ class StripeHostedCheckout:
             checkout_url=session["url"],
             customer_id_at_gateway=customer.id_at_gateway,
             external_reference=request.external_reference,
-            subscription_id_at_gateway=session.get("subscription"),
-            raw=dict(session),
+            # A real StripeObject has no .get() and dict() fails on it;
+            # _stripe_field / to_dict() work for the real SDK type.
+            subscription_id_at_gateway=_stripe_field(session, "subscription"),
+            raw=session.to_dict(),
         )
 
 

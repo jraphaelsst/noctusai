@@ -9,6 +9,7 @@ end-to-end.
 from __future__ import annotations
 
 import json as json_lib
+import sys
 import types
 from typing import Any, Callable
 
@@ -27,6 +28,7 @@ from noctusai_lib.integrations.payments.errors import PaymentGatewayError
 from noctusai_lib.integrations.payments.real_asaas import AsaasPaymentGateway
 from noctusai_lib.integrations.payments.real_stripe import StripePaymentGateway
 from noctusai_lib.integrations.payments.types import Money
+from stripe import StripeObject  # the real SDK type, bound before the fixture swaps the module
 
 
 class _FakeStripeError(Exception):
@@ -49,7 +51,13 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
     customers: dict[str, dict] = {}
     sessions: dict[str, dict] = {}
 
+    real_stripe = sys.modules["stripe"]
     module = types.ModuleType("stripe")
+    # Keep the double a PACKAGE that falls back to the real module: the real
+    # `StripeObject` lazily imports `stripe._invoice` and friends while
+    # building an object, which fails against a bare stand-in module.
+    module.__path__ = real_stripe.__path__
+    module.__getattr__ = lambda name: getattr(real_stripe, name)
     module.api_key = None
     module.StripeError = _FakeStripeError
     module.SignatureVerificationError = type("SignatureVerificationError", (_FakeStripeError,), {})
@@ -86,7 +94,9 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     class _CheckoutSession:
         @staticmethod
-        def create(**kwargs: Any) -> dict:
+        def create(**kwargs: Any) -> StripeObject:
+            # Return the REAL StripeObject type (no .get(), dict() fails) so a
+            # dict-only access pattern in the adapter fails here, not in prod.
             calls.append(("checkout.Session.create", kwargs))
             sid = f"cs_{len(sessions) + 1:03d}"
             record = {
@@ -97,7 +107,7 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
                 "metadata": kwargs.get("metadata", {}),
             }
             sessions[sid] = record
-            return record
+            return StripeObject.construct_from(record, "sk_test_double")
 
     module.checkout = types.SimpleNamespace(Session=_CheckoutSession)
 
@@ -141,7 +151,16 @@ def test_stripe_checkout_never_calls_create_subscription(
 ) -> None:
     stripe_checkout.create_checkout(_valid_stripe_request())
     assert not any(call[0].startswith("Subscription.") for call in stripe_double.calls)
-    assert not hasattr(stripe_double.module, "Subscription")
+    # Every recorded call is a Customer lookup or the Checkout Session create:
+    # nothing creates a subscription directly (Stripe does that when the payer
+    # completes checkout). Asserting on the recorded calls rather than on the
+    # double's attributes, because the double now falls back to the real
+    # `stripe` module so that real StripeObjects can be built.
+    assert {call[0] for call in stripe_double.calls} <= {
+        "Customer.search",
+        "Customer.create",
+        "checkout.Session.create",
+    }
 
 
 def test_stripe_checkout_reuses_existing_customer(
