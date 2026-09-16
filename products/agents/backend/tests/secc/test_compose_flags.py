@@ -13,9 +13,16 @@ import pytest
 
 from secc.compose_flags import (
     GATE_NAMES,
+    HANDOFF_MOUNT,
     derive_security_flags,
     expected_capbnd_mask,
+    handoff_tmpfs_spec,
     load_service,
+    mutate_tmpfs_flag,
+    normalize_octal_mode,
+    normalize_size_to_kib,
+    slot_count,
+    slot_tmpfs_specs,
 )
 
 _COMPOSE_PATH = Path(__file__).resolve().parents[3] / "docker-compose.yml"
@@ -45,10 +52,101 @@ def test_derive_security_flags_full_hardening() -> None:
     assert "--security-opt=no-new-privileges:true" in flags
     assert "--read-only" in flags
     assert "--init" in flags
-    assert any(f.startswith("--tmpfs=/run/julia:") for f in flags)
+    # contract §E.11: one tmpfs per slot, plus the shared handoff mount —
+    # NOT the old single shared `/run/julia:` mount.
+    assert any(f.startswith("--tmpfs=/run/julia-0:") for f in flags)
+    assert any(f.startswith("--tmpfs=/run/julia-1:") for f in flags)
+    assert any(f.startswith("--tmpfs=/run/julia-2:") for f in flags)
+    assert any(f.startswith(f"--tmpfs={HANDOFF_MOUNT}:") for f in flags)
+    assert not any(f.startswith("--tmpfs=/run/julia:") for f in flags), (
+        "the old single shared /run/julia mount must be gone under §E.11"
+    )
     assert any(f.startswith("--tmpfs=/tmp:") for f in flags)
     assert any(f.startswith("--shm-size=") for f in flags)
     assert any(f.startswith("--memory=") for f in flags)
+
+
+def test_slot_tmpfs_specs_derives_three_contiguous_slots() -> None:
+    specs = slot_tmpfs_specs(_COMPOSE_PATH, "agents")
+    assert [s["index"] for s in specs] == ["0", "1", "2"]
+    for k, spec in enumerate(specs):
+        assert spec["mount"] == f"/run/julia-{k}"
+        assert spec["uid"] == str(2000 + k)
+        assert spec["gid"] == str(2000 + k)
+        assert spec["mode"] == "0700"
+        assert spec["size"] == "40m"
+        assert spec["raw"] == (
+            f"/run/julia-{k}:uid={2000 + k},gid={2000 + k},mode=0700,size=40m"
+        )
+
+
+def test_slot_count_matches_derived_specs() -> None:
+    assert slot_count(_COMPOSE_PATH, "agents") == 3
+
+
+def test_handoff_tmpfs_spec() -> None:
+    spec = handoff_tmpfs_spec(_COMPOSE_PATH, "agents")
+    assert spec["mount"] == HANDOFF_MOUNT
+    assert spec["uid"] == "1000"
+    assert spec["gid"] == "1000"
+    assert spec["mode"] == "0711"
+
+
+def test_handoff_tmpfs_spec_missing_raises_keyerror(tmp_path: Path) -> None:
+    bogus = tmp_path / "compose.yml"
+    bogus.write_text(
+        "services:\n  agents:\n    tmpfs:\n      - /run/julia-0:uid=2000,gid=2000,mode=0700,size=40m\n"
+    )
+    with pytest.raises(KeyError, match="julia-handoff"):
+        handoff_tmpfs_spec(bogus, "agents")
+
+
+def test_slot_tmpfs_specs_rejects_non_contiguous_indices(tmp_path: Path) -> None:
+    bogus = tmp_path / "compose.yml"
+    bogus.write_text(
+        "services:\n  agents:\n    tmpfs:\n"
+        "      - /run/julia-0:uid=2000,gid=2000,mode=0700,size=40m\n"
+        "      - /run/julia-2:uid=2002,gid=2002,mode=0700,size=40m\n"
+    )
+    with pytest.raises(ValueError, match="contiguous"):
+        slot_tmpfs_specs(bogus, "agents")
+
+
+def test_normalize_octal_mode() -> None:
+    assert normalize_octal_mode("0700") == "700"
+    assert normalize_octal_mode("0711") == "711"
+
+
+def test_normalize_size_to_kib() -> None:
+    assert normalize_size_to_kib("40m") == "40960k"
+    assert normalize_size_to_kib("80m") == "81920k"
+    assert normalize_size_to_kib("64m") == "65536k"
+
+
+def test_mutate_tmpfs_flag_replaces_only_the_named_mount() -> None:
+    flags = derive_security_flags(_COMPOSE_PATH, "agents")
+    mutated = mutate_tmpfs_flag(
+        flags, "/run/julia-0", "/run/julia-0:uid=9999,gid=9999,mode=0700,size=40m"
+    )
+    assert "--tmpfs=/run/julia-0:uid=9999,gid=9999,mode=0700,size=40m" in mutated
+    assert not any(f == "--tmpfs=/run/julia-0:uid=2000,gid=2000,mode=0700,size=40m" for f in mutated)
+    # every other flag survives byte-identical
+    others_before = [f for f in flags if not f.startswith("--tmpfs=/run/julia-0:")]
+    others_after = [f for f in mutated if not f.startswith("--tmpfs=/run/julia-0:")]
+    assert others_before == others_after
+
+
+def test_mutate_tmpfs_flag_can_remove_a_mount_entirely() -> None:
+    flags = derive_security_flags(_COMPOSE_PATH, "agents")
+    mutated = mutate_tmpfs_flag(flags, "/run/julia-1", None)
+    assert not any(f.startswith("--tmpfs=/run/julia-1:") for f in mutated)
+    assert len(mutated) == len(flags) - 1
+
+
+def test_mutate_tmpfs_flag_unknown_mount_raises() -> None:
+    flags = derive_security_flags(_COMPOSE_PATH, "agents")
+    with pytest.raises(ValueError, match="no --tmpfs flag"):
+        mutate_tmpfs_flag(flags, "/run/julia-99", None)
 
 
 @pytest.mark.parametrize("gate", GATE_NAMES)

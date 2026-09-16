@@ -51,7 +51,11 @@ jobs:
   secc-proof:
     name: Real-image isolation proof (amd64)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Bumped 30 -> 35 (roadmap D2, contract §E.11): the nine per-slot
+    # checks add several more docker-exec round trips (two sequenced
+    # driver scripts plus the pool driver) on top of the original
+    # single-slot proof — comfortable margin on a cold-cache CI runner.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
 
