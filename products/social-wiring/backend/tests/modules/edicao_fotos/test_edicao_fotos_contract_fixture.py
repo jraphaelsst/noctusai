@@ -247,6 +247,23 @@ def test_guia_efetivo_shape(edicao) -> None:
     assert_shape(FIXTURE["guia_efetivo"], view["atual"])
 
 
+def test_painel_shape(edicao) -> None:
+    edicao.configure_org()
+    edicao.activate_guide()
+    edicao.as_user("corretor")
+    lote = edicao.make_batch("corretor")
+    edicao.upload(lote)
+    edicao.http.post(f"/api/edicao-fotos/lotes/{lote}/submeter", json={})
+    edicao.drain()
+    foto = edicao.http.get(f"/api/edicao-fotos/revisao/{lote}").json()[0]["id"]
+    edicao.http.post(
+        f"/api/edicao-fotos/revisao/{lote}/fotos/{foto}/decisao", json=FIXTURE["decisao_body_aprovar"]
+    )
+    resp = edicao.as_user("admin").http.get("/api/edicao-fotos/painel")
+    assert resp.status_code == 200, resp.text
+    assert_shape(FIXTURE["painel"], resp.json())
+
+
 def test_configuracoes_plataforma_round_trip(edicao) -> None:
     edicao.as_user("plataforma")
     got = edicao.http.get("/api/edicao-fotos/configuracoes/plataforma").json()

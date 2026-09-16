@@ -118,9 +118,9 @@ const Matriculas = lazyWithReload(() => import("@/pages/Matriculas"));
 const AgentesFinanceiros = lazyWithReload(
   () => import("@/pages/AgentesFinanceiros"),
 );
-// Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias,
-// Regras, Curadores) shipped in W6/W7/this slice; Modelos, Painel are a
-// later slice.
+// Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —
+// W6; Regras — W7; Curadores — notify slice; Painel — W9) are shipped;
+// Modelos is the only later slice.
 const EdicaoFotosLotes = lazyWithReload(() => import("@/pages/edicao-fotos/Lotes"));
 const EdicaoFotosNovoLote = lazyWithReload(() => import("@/pages/edicao-fotos/NovoLote"));
 const EdicaoFotosLoteRevisao = lazyWithReload(() => import("@/pages/edicao-fotos/LoteRevisao"));
@@ -129,6 +129,7 @@ const EdicaoFotosReferencias = lazyWithReload(() => import("@/pages/edicao-fotos
 const EdicaoFotosGuiasEstilo = lazyWithReload(() => import("@/pages/edicao-fotos/GuiasEstilo"));
 const EdicaoFotosRegras = lazyWithReload(() => import("@/pages/edicao-fotos/Regras"));
 const EdicaoFotosCuradores = lazyWithReload(() => import("@/pages/edicao-fotos/Curadores"));
+const EdicaoFotosPainel = lazyWithReload(() => import("@/pages/edicao-fotos/Painel"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -249,17 +250,17 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
   {
     // Edição de Fotos — W10a (plan §4/§7): Lotes/Novo Lote/Configurações;
     // W6 added the platform-scope admin pages Referências + Guias, W7 added
-    // Regras, this slice added Curadores (their pages lock themselves for
-    // anyone without `pode_gerir_pool` / `pode_ativar_guia` /
-    // `pode_aprovar_regras` / `dashboard === "platform"` — granting a
-    // curator is a platform decision, contract §1). LoteRevisao
-    // (`/edicao-fotos/lotes/:loteId/revisao`) is a detail route reached
-    // from a Lotes card, not a standalone nav item — same shape as
-    // `/imoveis/:codigo` next to the `imoveis` nav entry. Modelos, Painel
-    // remain later slices; their `status_pagina` rows already exist
-    // (migration 128) but no nav entries point at them yet. Route slugs
-    // below match migration 128's `nome_pagina` values EXACTLY (its own
-    // explicit instruction) — kebab-case, unlike this file's usual
+    // Regras, the notify slice added Curadores, W9 added Painel (their
+    // pages lock themselves for anyone without `pode_gerir_pool` /
+    // `pode_ativar_guia` / `pode_aprovar_regras` / `dashboard ===
+    // "platform"` (curator grants) / a non-null `capacidades.dashboard`
+    // (painel)). LoteRevisao (`/edicao-fotos/lotes/:loteId/revisao`) is a
+    // detail route reached from a Lotes card, not a standalone nav item —
+    // same shape as `/imoveis/:codigo` next to the `imoveis` nav entry.
+    // Modelos is the only later slice; its `status_pagina` row already
+    // exists (migration 128) but no nav entry points at it yet. Route
+    // slugs below match migration 128's `nome_pagina` values EXACTLY (its
+    // own explicit instruction) — kebab-case, unlike this file's usual
     // snake_case.
     key: "edicao-fotos",
     label: "Edição de Fotos",
@@ -278,6 +279,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen, route: "edicao-fotos-guias" },
       { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText, route: "edicao-fotos-regras" },
       { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog, route: "edicao-fotos-curadores" },
+      { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3, route: "edicao-fotos-painel" },
     ],
   },
   {
@@ -405,6 +407,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen },
       { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText },
       { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog },
+      { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3 },
     ],
   },
   {
@@ -461,6 +464,7 @@ export default createProductApp({
     { path: "/edicao-fotos/guias", component: EdicaoFotosGuiasEstilo },
     { path: "/edicao-fotos/regras", component: EdicaoFotosRegras },
     { path: "/edicao-fotos/curadores", component: EdicaoFotosCuradores },
+    { path: "/edicao-fotos/painel", component: EdicaoFotosPainel },
     { path: "/clientes", component: ClientesBoard },
     { path: "/clientes/revisao", component: RevisaoFila },
     { path: "/email-marketing/listas", component: EmailListas },

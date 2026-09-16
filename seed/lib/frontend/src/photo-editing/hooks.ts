@@ -419,6 +419,106 @@ export interface ModeloCatalogoItem {
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard (contract §8 `GET /painel`, W9)
+// ---------------------------------------------------------------------------
+
+/** One point of `pipeline.pontos` — a photo count for one state on one day. */
+export interface PainelPipelinePonto {
+  data: string;
+  estado: string;
+  total: number;
+}
+
+/**
+ * Queue & health. ALWAYS platform-wide (`escopo: 'plataforma'`) regardless
+ * of the caller's own dashboard scope — `jobs`/`fotos_por_estado` are
+ * EXHAUSTIVE maps (every known status/state key present, `0` when there
+ * are none), never sparse.
+ */
+export interface PainelFila {
+  escopo: 'plataforma';
+  jobs: Record<string, number>;
+  travados: number;
+  fotos_por_estado: Record<string, number>;
+}
+
+export interface PainelAtividadeSerie {
+  data: string;
+  lotes: number;
+  fotos: number;
+  decisoes: number;
+}
+
+export interface PainelAtividade {
+  lotes_criados: number;
+  fotos_enviadas: number;
+  /** Exhaustive: `{ aprovar, rejeitar }`, always both keys. */
+  decisoes: Record<string, number>;
+  usuarios_ativos: number;
+  serie_diaria: PainelAtividadeSerie[];
+}
+
+export interface PainelAprendizado {
+  taxa_aprovacao: number;
+  /** Exhaustive: `{ aprovar, rejeitar }`, always both keys. */
+  veredito_ia: Record<string, number>;
+  /** `null` when there is no photo with BOTH a decision and an AI verdict in the window. */
+  acerto_ia_pct: number | null;
+  regras: { aprovadas: number; pendentes: number };
+}
+
+export interface PainelCustoCategoria {
+  categoria: string;
+  total_brl: number;
+}
+
+/**
+ * Revenue is billing-sourced (Core, not shipped yet as of W9) —
+ * `disponivel` is always `false` and `total_brl` always `0`; render the
+ * `nota`, never a fabricated number (contract's "no silent errors" rule).
+ */
+export interface PainelReceita {
+  disponivel: boolean;
+  total_brl: number;
+  nota: string | null;
+}
+
+export interface PainelCustos {
+  moeda_base: 'BRL';
+  por_categoria: PainelCustoCategoria[];
+  total_brl: number;
+  fx_pendentes: number;
+  receita: PainelReceita;
+  margem_brl: number;
+}
+
+/**
+ * `GET /painel` (contract §8, W9) — pipeline throughput · queue & health ·
+ * activity · learning loop · costs. Scope follows `capacidades.dashboard`:
+ * a platform admin may pass `org_id` to filter to one org (`escopo` flips
+ * to `'organizacao'`); an agency admin always sees their own org
+ * (`org_id` is ignored server-side for them, never trusted from the query
+ * string) and gets `escopo: 'organizacao'` unconditionally.
+ */
+export interface Painel {
+  periodo: { desde: string; ate: string };
+  escopo: 'plataforma' | 'organizacao';
+  pipeline: { pontos: PainelPipelinePonto[] };
+  fila: PainelFila;
+  atividade: PainelAtividade;
+  aprendizado: PainelAprendizado;
+  custos: PainelCustos;
+}
+
+/** `usePainel` filter — an omitted `desde`/`ate` defaults server-side to the last 30 days. */
+export interface PainelFiltro {
+  desde?: string;
+  ate?: string;
+  /** Platform admin only; ignored server-side for an agency admin caller. */
+  org_id?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Hook factory — takes an api client, returns bound hooks
 // ---------------------------------------------------------------------------
 
@@ -982,6 +1082,46 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     };
   }
 
+  // ---------------------------------------------------------------------
+  // Dashboard (contract §8 `GET /painel`), W9
+  // ---------------------------------------------------------------------
+
+  /**
+   * `GET /painel` — contract §8. `filtro.org_id` matters only for a
+   * platform admin caller — an agency admin's request always resolves to
+   * their own org server-side (migration 133's header). `placeholderData`
+   * so switching the date range or the org filter never blanks the
+   * dashboard mid-fetch (contract §9, binding).
+   */
+  function usePainel(filtro: PainelFiltro = {}) {
+    const params: Record<string, string> = {};
+    if (filtro.desde) params.desde = filtro.desde;
+    if (filtro.ate) params.ate = filtro.ate;
+    if (filtro.org_id) params.org_id = filtro.org_id;
+    const query = useQuery<Painel>({
+      queryKey: [
+        'edicao-fotos',
+        'painel',
+        filtro.desde ?? null,
+        filtro.ate ?? null,
+        filtro.org_id ?? null,
+      ],
+      queryFn: () => api.get('/api/edicao-fotos/painel', params),
+      placeholderData: (prev) => prev,
+    });
+    return {
+      painel: query.data,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Curadores (contract §1/§8, platform admin only), continued
+  // ---------------------------------------------------------------------
+
   /** `POST /curadores` — grant `photo_curator` to a user. */
   function useAdicionarCurador() {
     const queryClient = useQueryClient();
@@ -1072,6 +1212,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     useRemoverCurador,
     useNotificacaoPreferencia,
     useAtualizarNotificacaoPreferencia,
+    usePainel,
   };
 }
 

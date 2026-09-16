@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -56,6 +56,7 @@ from app.modules.edicao_fotos.deps import (
     RoleInfo,
     get_edicao_ports,
     get_grant_repository,
+    get_painel_client,
     get_preferences_repository,
     get_role_resolver,
     get_vista_photo_source,
@@ -244,6 +245,175 @@ class Harness:
         return self.http.post(f"/api/edicao-fotos/lotes/{lote_id}/fotos", files=files)
 
 
+# --- W9: `fotos_painel` RPC simulator (migration 133) -----------------
+#
+# Same shape as `tests/modules/leads/conftest.py::_install_rpc_simulator`
+# (see that module's docstring for why): the SQL function is not
+# runnable against `InMemoryPhotoEditingRepository`, so this is a
+# line-for-line Python re-derivation of `133_fotos_painel.sql`'s
+# aggregation, read directly off the SAME in-memory ports the routes use
+# — not a separate fixture dataset. Raises loudly (AssertionError) for
+# any RPC name it doesn't recognize.
+
+
+_JOB_STATUSES = ("pending", "running", "completed", "failed", "dead_letter")
+_FOTO_STATUSES = (
+    "recebida", "normalizando", "pronta", "editando", "em_lote_openai",
+    "editada", "avaliando", "aguardando_decisao", "aprovada", "rejeitada", "falhou",
+)
+_DECISAO_VALUES = ("aprovar", "rejeitar")
+
+
+def _zero_filled(domain: tuple, counts: dict) -> dict:
+    """Same exhaustive-map shape `133_fotos_painel.sql` returns — every
+    key present, `0` default, never a sparse map."""
+    return {k: counts.get(k, 0) for k in domain}
+
+
+def _simulate_fotos_painel(harness: "Harness", params: dict) -> dict:
+    org_id = params.get("p_org_id")
+    p_desde, p_ate = params.get("p_desde"), params.get("p_ate")
+    hoje = date.today()
+    desde = date.fromisoformat(p_desde) if p_desde else hoje - timedelta(days=30)
+    ate = date.fromisoformat(p_ate) if p_ate else hoje
+
+    def _v(x: Any) -> Any:
+        return getattr(x, "value", x)
+
+    def _in_org(x_org: str) -> bool:
+        return org_id is None or x_org == org_id
+
+    def _in_window(dt: Any) -> bool:
+        return dt is not None and desde <= dt.date() <= ate
+
+    repo = harness.repo
+    jobs = getattr(harness.ports.jobs, "_jobs", {})
+
+    # 1. pipeline
+    buckets: dict[tuple, int] = {}
+    for e in repo.events:
+        if e.estado_para is None:
+            continue
+        if not (_in_org(e.org_id) and _in_window(e.created_at)):
+            continue
+        key = (e.created_at.date().isoformat(), e.estado_para)
+        buckets[key] = buckets.get(key, 0) + 1
+    pontos = [{"data": d, "estado": estado, "total": t} for (d, estado), t in sorted(buckets.items())]
+
+    # 2. fila (platform-wide, jobs carry no org_id)
+    job_counts: dict[str, int] = {}
+    travados = 0
+    now = datetime.now(timezone.utc)
+    for j in jobs.values():
+        if not getattr(j, "type", "").startswith("fotos."):
+            continue
+        status = _v(j.status)
+        job_counts[status] = job_counts.get(status, 0) + 1
+        lease = getattr(j, "lease_expires_at", None)
+        if status == "running" and lease is not None and lease < now:
+            travados += 1
+    foto_counts: dict[str, int] = {}
+    for f in repo.photos.values():
+        if _in_org(f.org_id) and _in_window(f.created_at):
+            foto_counts[_v(f.status)] = foto_counts.get(_v(f.status), 0) + 1
+    fila = {
+        "escopo": "plataforma",
+        "jobs": _zero_filled(_JOB_STATUSES, job_counts),
+        "travados": travados,
+        "fotos_por_estado": _zero_filled(_FOTO_STATUSES, foto_counts),
+    }
+
+    # 3. atividade
+    lotes_in = [b for b in repo.batches.values() if _in_org(b.org_id) and _in_window(b.created_at)]
+    fotos_in = [f for f in repo.photos.values() if _in_org(f.org_id) and _in_window(f.created_at)]
+    decisoes_in = [d for d in repo.decisions if _in_org(d.org_id) and _in_window(d.created_at)]
+    decisoes_counts: dict[str, int] = {}
+    for d in decisoes_in:
+        decisoes_counts[_v(d.decisao)] = decisoes_counts.get(_v(d.decisao), 0) + 1
+    serie: dict[str, dict[str, int]] = {}
+    for kind, rows in (("lotes", lotes_in), ("fotos", fotos_in), ("decisoes", decisoes_in)):
+        for row in rows:
+            k = row.created_at.date().isoformat()
+            serie.setdefault(k, {"lotes": 0, "fotos": 0, "decisoes": 0})[kind] += 1
+    atividade = {
+        "lotes_criados": len(lotes_in),
+        "fotos_enviadas": len(fotos_in),
+        "decisoes": _zero_filled(_DECISAO_VALUES, decisoes_counts),
+        "usuarios_ativos": len({d.decidido_por for d in decisoes_in}),
+        "serie_diaria": [{"data": k, **v} for k, v in sorted(serie.items())],
+    }
+
+    # 4. aprendizado — latest decision / evaluation per foto_id
+    ultima_decisao: dict[str, str] = {}
+    for d in sorted(decisoes_in, key=lambda d: d.created_at):
+        ultima_decisao[d.foto_id] = _v(d.decisao)
+    avaliacoes_in = [a for a in repo.evaluations if _in_org(a.org_id) and _in_window(a.created_at)]
+    ultima_avaliacao: dict[str, str] = {}
+    for a in sorted(avaliacoes_in, key=lambda a: a.created_at):
+        ultima_avaliacao[a.foto_id] = _v(a.recomendacao)
+    veredito_counts: dict[str, int] = {}
+    for v in ultima_avaliacao.values():
+        veredito_counts[v] = veredito_counts.get(v, 0) + 1
+    matches = [ultima_decisao[fid] == rec for fid, rec in ultima_avaliacao.items() if fid in ultima_decisao]
+    regras_in = [r for r in repo.rules.values() if _in_org(r.org_id)]
+    aprendizado = {
+        "taxa_aprovacao": (
+            sum(1 for v in ultima_decisao.values() if v == "aprovar") / len(ultima_decisao)
+            if ultima_decisao else 0
+        ),
+        "veredito_ia": _zero_filled(_DECISAO_VALUES, veredito_counts),
+        "acerto_ia_pct": (sum(matches) / len(matches) * 100) if matches else None,
+        "regras": {
+            "aprovadas": sum(1 for r in regras_in if _v(r.status) == "aprovada"),
+            "pendentes": sum(1 for r in regras_in if _v(r.status) == "proposta"),
+        },
+    }
+
+    # 5. custos
+    custos_in = [
+        c for c in repo.costs.values()
+        if _in_org(c.org_id) and _in_window(c.created_at) and (c.step or "").startswith("fotos.")
+    ]
+    por_categoria: dict[str, float] = {}
+    for c in custos_in:
+        por_categoria[c.category] = por_categoria.get(c.category, 0.0) + float(c.amount_brl or 0)
+    total_brl = round(sum(por_categoria.values()), 2)
+    custos = {
+        "moeda_base": "BRL",
+        "por_categoria": [
+            {"categoria": cat, "total_brl": round(val, 2)} for cat, val in sorted(por_categoria.items())
+        ],
+        "total_brl": total_brl,
+        "fx_pendentes": sum(1 for c in custos_in if c.fx_pending),
+        "receita": {"disponivel": False, "total_brl": 0, "nota": "sem dados de faturamento"},
+        "margem_brl": 0 - total_brl,
+    }
+
+    return {
+        "periodo": {"desde": desde.isoformat(), "ate": ate.isoformat()},
+        "escopo": "plataforma" if org_id is None else "organizacao",
+        "pipeline": {"pontos": pontos},
+        "fila": fila,
+        "atividade": atividade,
+        "aprendizado": aprendizado,
+        "custos": custos,
+    }
+
+
+class _FakePainelClient:
+    """`.rpc(name, params).execute()` double — the ONLY RPC this module's
+    tests need to simulate is `fotos_painel` (migration 133)."""
+
+    def __init__(self, harness: "Harness") -> None:
+        self._harness = harness
+
+    def rpc(self, name: str, params: dict | None = None) -> Any:
+        if name != "fotos_painel":
+            raise AssertionError(f"unsimulated RPC in edicao_fotos tests: {name!r}")
+        data = _simulate_fotos_painel(self._harness, params or {})
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data=data))
+
+
 def build_ports(repo: InMemoryPhotoEditingRepository, backend: FakeStorageBackend,
                 notifier: RecordingNotifier) -> PhotoEditingPorts:
     return PhotoEditingPorts(
@@ -307,6 +477,7 @@ def edicao(client):
         get_user_directory: lambda: (
             lambda ids: {i: harness.directory[i] for i in ids if i in harness.directory}
         ),
+        get_painel_client: lambda: _FakePainelClient(harness),
     }
     previous = {k: app.dependency_overrides.get(k) for k in overrides}
     app.dependency_overrides.update(overrides)

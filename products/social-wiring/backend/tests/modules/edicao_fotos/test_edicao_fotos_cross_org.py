@@ -134,6 +134,34 @@ def test_regras_list_and_effective_guide_never_leak_another_org(edicao) -> None:
     assert guia["atual"] is None  # no active company guide yet — never raises
 
 
+def test_painel_agency_admin_is_pinned_to_own_org(edicao) -> None:
+    """W9: an agency admin's `org_id` query param is IGNORED — they always
+    see their own org, never another one they might pass."""
+    edicao.make_batch("admin", nome="meu")
+    edicao.make_batch("outra_admin", nome="alheio")
+    resp = edicao.as_user("admin").http.get(
+        "/api/edicao-fotos/painel", params={"org_id": OTHER_ORG}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["escopo"] == "organizacao"
+    assert body["atividade"]["lotes_criados"] == 1  # only "meu", never "alheio"
+
+
+def test_painel_platform_admin_org_filter_vs_platform_wide(edicao) -> None:
+    edicao.make_batch("admin", nome="meu")
+    edicao.make_batch("outra_admin", nome="alheio")
+    plataforma = edicao.as_user("plataforma")
+    everyone = plataforma.http.get("/api/edicao-fotos/painel").json()
+    assert everyone["escopo"] == "plataforma"
+    assert everyone["atividade"]["lotes_criados"] == 2
+    filtered = plataforma.http.get(
+        "/api/edicao-fotos/painel", params={"org_id": OTHER_ORG}
+    ).json()
+    assert filtered["escopo"] == "organizacao"
+    assert filtered["atividade"]["lotes_criados"] == 1
+
+
 def test_curator_routes_404_for_unknown_user_and_grant(edicao) -> None:
     edicao.as_user("plataforma")
     add = edicao.http.post("/api/edicao-fotos/curadores", json={"user_id": str(uuid4())})

@@ -47,7 +47,7 @@ def test_module_is_mounted_on_the_app() -> None:
 
 def test_every_route_requires_auth(anon_client) -> None:
     routes = _routes()
-    assert len(routes) == 36, sorted(routes)
+    assert len(routes) == 37, sorted(routes)
     for method, path in sorted(routes):
         # No body at all: a JSON body on the multipart route (or a missing
         # one on a JSON route) must not be what decides the status.
@@ -98,6 +98,9 @@ _FORBIDDEN = [
     ("get", "/api/edicao-fotos/regras/guia-efetivo", None, "corretor"),
     ("get", "/api/edicao-fotos/notificacoes/preferencias", None, "viewer"),
     ("put", "/api/edicao-fotos/notificacoes/preferencias", {"ativo": True}, "viewer"),
+    # Dashboard (contract §8, W9): agency admin ∨ platform admin — a
+    # corretor is not in the role matrix's "dashboard" rows at all.
+    ("get", "/api/edicao-fotos/painel", None, "corretor"),
 ]
 
 

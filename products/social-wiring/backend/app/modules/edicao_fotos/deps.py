@@ -164,6 +164,19 @@ def get_edicao_ports(cfg: Any = Depends(get_settings)) -> PhotoEditingPorts:
         raise api_error(503, exc.code, str(exc)) from exc
 
 
+def get_painel_client() -> Any:
+    """FastAPI dependency — the `social_wiring`-scoped admin (service-role)
+    client used ONLY by the dashboard RPC (`fotos_painel`, migration 133,
+    contract §8 `GET /painel`). Reuses the platform's own formalized
+    schema-scoped-client cache (`app.dependencies.get_scoped_admin_client`)
+    rather than re-deriving a fourth local copy of that cache — see that
+    function's docstring for the `MockSupabaseClient.schema()` data-loss
+    defect it fixes."""
+    from app.dependencies import get_scoped_admin_client
+
+    return get_scoped_admin_client("social_wiring")
+
+
 def get_vista_photo_source(cfg: Any = Depends(get_settings)) -> VistaPhotoSource:
     """The product's EXISTING Vista credentials (`VISTA_API_KEY` →
     `crm_api_key`). Missing → 503, never a fallback."""
@@ -211,6 +224,7 @@ __all__ = [
     "get_actor",
     "get_edicao_ports",
     "get_grant_repository",
+    "get_painel_client",
     "get_preferences_repository",
     "get_role_resolver",
     "get_vista_photo_source",

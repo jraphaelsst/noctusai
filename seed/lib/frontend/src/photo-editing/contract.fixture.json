@@ -315,5 +315,79 @@
       "page_size": 20,
       "total": 1
     }
+  },
+  "painel": {
+    "periodo": {
+      "desde": "2026-08-17",
+      "ate": "2026-09-16"
+    },
+    "escopo": "organizacao",
+    "pipeline": {
+      "pontos": [
+        {
+          "data": "2026-09-16",
+          "estado": "aprovada",
+          "total": 3
+        }
+      ]
+    },
+    "fila": {
+      "escopo": "plataforma",
+      "jobs": {
+        "pending": 0,
+        "running": 0,
+        "completed": 5,
+        "failed": 0,
+        "dead_letter": 0
+      },
+      "travados": 0,
+      "fotos_por_estado": {
+        "aprovada": 3
+      }
+    },
+    "atividade": {
+      "lotes_criados": 1,
+      "fotos_enviadas": 3,
+      "decisoes": {
+        "aprovar": 3
+      },
+      "usuarios_ativos": 1,
+      "serie_diaria": [
+        {
+          "data": "2026-09-16",
+          "lotes": 1,
+          "fotos": 3,
+          "decisoes": 3
+        }
+      ]
+    },
+    "aprendizado": {
+      "taxa_aprovacao": 1.0,
+      "veredito_ia": {
+        "aprovar": 3
+      },
+      "acerto_ia_pct": 100.0,
+      "regras": {
+        "aprovadas": 0,
+        "pendentes": 0
+      }
+    },
+    "custos": {
+      "moeda_base": "BRL",
+      "por_categoria": [
+        {
+          "categoria": "openai_edit",
+          "total_brl": 4.5
+        }
+      ],
+      "total_brl": 4.5,
+      "fx_pendentes": 0,
+      "receita": {
+        "disponivel": false,
+        "total_brl": 0,
+        "nota": "sem dados de faturamento"
+      },
+      "margem_brl": -4.5
+    }
   }
 }

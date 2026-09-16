@@ -52,6 +52,7 @@ export const {
   useRemoverCurador,
   useNotificacaoPreferencia,
   useAtualizarNotificacaoPreferencia,
+  usePainel,
 } = createEdicaoFotosHooks(api);
 
 export type {
@@ -94,6 +95,16 @@ export type {
   CuradoresPage,
   CuradorCreateBody,
   NotificacaoPreferencia,
+  Painel,
+  PainelPipelinePonto,
+  PainelFila,
+  PainelAtividade,
+  PainelAtividadeSerie,
+  PainelAprendizado,
+  PainelCustos,
+  PainelCustoCategoria,
+  PainelReceita,
+  PainelFiltro,
 } from '@noctusai/lib/photo-editing/hooks';
 
 export * as fotosPermissions from '@noctusai/lib/photo-editing/permissions';
