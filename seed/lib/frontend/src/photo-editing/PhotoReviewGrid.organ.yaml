@@ -1,0 +1,32 @@
+name: PhotoReviewGrid
+path: seed/lib/frontend/src/photo-editing/PhotoReviewGrid.tsx
+phase: pilot-seed
+registered_at: "2026-09-16"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "The review-screen core organ for Edição de Fotos (contract §4 `/revisao`). Expandable thumbnails (click toggles an in-grid expanded card using BeforeAfterCompare), ✓/✗ decision per photo, ✗ gated behind a non-empty comment (client-side mirror of the backend's 422 on `decisao=rejeitar` with no `comentario`). Decisions are always changeable — re-clicking ✓/✗ re-submits, including after a decided photo already has a comment."
+  - "The AI verdict is gated EXCLUSIVELY by the caller-supplied `podeVerVeredito` prop (sourced from `capacidades.pode_ver_veredito`, never derived locally from role/SSO) AND the presence of `foto.avaliacao` — the backend already withholds `avaliacao` from a corretor by table separation (contract §1: `fotos_avaliacoes` is its own table), so this is defense-in-depth, not the security boundary."
+  - "`falhou` photos (a TECHNICAL failure per contract §3, already auto-retried once server-side) render their `falha_motivo` plus a manual retry button instead of the ✓/✗ controls, via the `onRetry` callback."
+  - "Pure presentational — no data fetching. Consumes `showSkeleton`/`isRefreshing` as props, already computed by `createEdicaoFotosHooks(api).useRevisao(loteId)` in `./hooks.ts` per the two-signal loading contract (CLAUDE.md §1 / contract §9). Zero `.isLoading` anywhere in this file."
+  - "Seed-portable: built for the owner's phase-2 standalone rebuild of the engine as much as for the current Social-Wiring integration — no product coupling anywhere in the file."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "A modal/Dialog confirm for rejection was considered and rejected in favour of an inline textarea + Confirmar/Cancelar pair — the comment IS the confirmation step (contract requires it unconditionally on ✗), so a second modal would be a redundant click."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

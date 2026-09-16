@@ -1,0 +1,30 @@
+name: BeforeAfterCompare
+path: seed/lib/frontend/src/photo-editing/BeforeAfterCompare.tsx
+phase: pilot-seed
+registered_at: "2026-09-16"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Drag-to-reveal before/after image comparison — the 'depois' (edited) image renders full-bleed, the 'antes' (original) image is clipped over it via CSS `clip-path` driven by a slider position (0-100). Control is a native `<input type=\"range\">`, stretched transparently over the card, so drag/touch/keyboard all work without a custom pointer-event implementation."
+  - "geradaComIA prop renders the 'Imagem gerada com IA' Badge overlay for virtual-staging output (contract §1: staging edits get a watermark baked into the file PLUS this on-screen badge)."
+  - "Pure presentational — takes urlAntes/urlDepois as props, no data fetching, no product coupling. Consumed by PhotoReviewGrid's expanded-thumbnail state; any product page can use it directly."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "A JS pointermove-driven slider (drag anywhere on the image) was considered and rejected in favour of a native range input — same visual result, but free keyboard accessibility and no custom event-listener lifecycle to manage/test."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

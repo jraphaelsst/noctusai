@@ -1,0 +1,31 @@
+name: edicaoFotosPermissions
+kind: helper
+path: seed/lib/frontend/src/photo-editing/permissions.ts
+phase: pilot-seed
+registered_at: "2026-09-16"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Pure guard functions (`podeVerVeredito`, `podeCriarLote`, `podeGerirPool`, `podeAprovarRegras`, `podeAtivarGuia`, `economicoDisponivel`, `modeloConfigurado`, ...) over a `Capacidades` object from `GET /capacidades` (contract §2) — the ONLY source of truth for what a caller may do in this feature. No SSO/role derivation anywhere in this file, by construction (no import of `../roles` or `../sso`)."
+  - "`podeVerVeredito` is the gate `PhotoReviewGrid` receives as a prop for the AI-verdict block — the actual security boundary is server-side (table separation on `fotos_avaliacoes`, contract §1); this guard exists so no FE consumer has a reason to branch on the field's mere presence."
+  - "Every guard defaults CLOSED (`false`/`null`) while `capacidades` is `null`/`undefined` (still loading or the query failed) — never optimistically open."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "A single `usePermissions()` hook wrapping `useCapacidades()` + these guards was considered and rejected in favour of keeping this module react-query-free and pure — callers already have `capacidades` from `hooks.ts`; coupling the two files would block reusing these guards outside a component (e.g. a route guard)."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

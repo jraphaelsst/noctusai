@@ -1,0 +1,33 @@
+name: createEdicaoFotosHooks
+kind: hook
+path: seed/lib/frontend/src/photo-editing/hooks.ts
+phase: pilot-seed
+registered_at: "2026-09-16"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "TanStack Query hook factory for `/api/edicao-fotos/...` (EDICAO-FOTOS-CONTRACT.md), same `createXHooks(api)` shape as `../llm.ts` — `api` is injected so each product's own authenticated `createApiClient()` drives every call."
+  - "Every read hook (useCapacidades / useRevisao / useReferencias) returns `showSkeleton`/`isRefreshing` ALREADY COMPUTED (`isPending && !data` / `isFetching && !!data`) rather than the raw `useQuery` result — the two-signal loading contract is enforced once here, not re-derived per consumer (CLAUDE.md §1 / contract §9, binding)."
+  - "`useRevisao(loteId)` and any future batch-keyed hook MUST carry `placeholderData: (prev) => prev` — contract §9's explicit requirement that a `lote_id` key change never unmounts a grid that already has content."
+  - "Scope is deliberately narrow: only the routes the S9 seed organs consume (capacidades, review + decisions, reference pool). The rest of the contract surface (lotes CRUD/upload/vista/zip, guias, regras, modelos, curadores, painel) is out of this slice; the SW module waves extend this same factory rather than forking a new one."
+  - "Zero Social-Wiring coupling — travels unchanged to the owner's phase-2 standalone rebuild of the engine."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Returning the raw `UseQueryResult` (like most existing seed hooks, e.g. `llm.ts`) was considered and rejected for the read hooks here — the binding contract §9 loading-state rule made pre-computing showSkeleton/isRefreshing in the hook itself the higher-leverage choice for this feature specifically."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

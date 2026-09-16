@@ -121,3 +121,40 @@ export type {
   UseRealtimeStreamOptions,
 } from './realtime';
 export { lazyWithReload } from "./lazyWithReload";
+
+// ─── Edição de Fotos (seed feature) ──────────────────────────────────────────
+// Seed-portable AI photo-editing organs — no Social-Wiring coupling. See
+// `projects/edicao-fotos/EDICAO-FOTOS-CONTRACT.md` for the API contract this
+// hook factory + capability guards are typed to.
+export { PhotoReviewGrid } from "./photo-editing/PhotoReviewGrid";
+export type { PhotoReviewGridProps } from "./photo-editing/PhotoReviewGrid";
+export { BeforeAfterCompare } from "./photo-editing/BeforeAfterCompare";
+export type { BeforeAfterCompareProps } from "./photo-editing/BeforeAfterCompare";
+export { ReferencePairCard } from "./photo-editing/ReferencePairCard";
+export type { ReferencePairCardProps } from "./photo-editing/ReferencePairCard";
+export { createEdicaoFotosHooks } from "./photo-editing/hooks";
+export type {
+  EdicaoFotosHooks,
+  Capacidades,
+  EstadoFoto,
+  DecisaoTipo,
+  AvaliacaoIA,
+  FotoRevisao,
+  DecisaoBody,
+  ReferenciaPar,
+  NovaReferenciaBody,
+} from "./photo-editing/hooks";
+export {
+  podeCriarLote,
+  podeVerVeredito,
+  podeGerirPool,
+  podeAprovarRegras,
+  podeAtivarGuia,
+  economicoDisponivel,
+  economicoBloqueadoMotivo,
+  dashboardScope,
+  modeloConfigurado,
+  tiposEdicaoAtivos,
+  limiteFotosPorLote,
+  limiteBytesPorFoto,
+} from "./photo-editing/permissions";

@@ -1,0 +1,31 @@
+name: ReferencePairCard
+path: seed/lib/frontend/src/photo-editing/ReferencePairCard.tsx
+phase: pilot-seed
+registered_at: "2026-09-16"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "One before/after pair from the global reference pool (contract §5 `/referencias`, platform scope). Renders the pair as two static side-by-side thumbnails (not `BeforeAfterCompare` — the pool is a scan-many-cards grid, not a single-photo focus view), plus room (comodo) tag, edit-type tags, free-text note, and an archive action."
+  - "Archive is a soft delete (contract §5: kept for history, excluded from the pair-limit count) implemented as a two-step INLINE confirm (click 'Arquivar' → 'Confirmar'/'Cancelar'), not a modal — deliberately reads as reversible rather than destructive."
+  - "Omitting the `onArquivar` prop renders the card read-only (no archive control) — for a non-curator viewer of the pool."
+  - "Already-archived pairs (`arquivada_em` set) render at reduced opacity with an 'Arquivada' badge and no archive control."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Embedding BeforeAfterCompare per card was considered and rejected — see this component's own known_facts for the reasoning (grid-scan vs single-photo-focus)."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
