@@ -23,7 +23,6 @@ from app.dependencies import get_current_user_org
 from app.modules.card_hub.auth import auth_parts
 from app.modules.card_hub.contrato_gerador import service
 from app.modules.card_hub.contrato_gerador.deps import (
-    get_complementos_contrato,
     get_contrato_docx_adapter,
     get_politica_contrato,
 )
@@ -33,7 +32,9 @@ router = APIRouter()
 
 
 class GerarContratoBody(StrictHttpModel):
-    #: Date printed as the signing date; defaults to today in São Paulo.
+    #: Dates the instrument. Absent falls back to the date stored on the
+    #: contract (migration 114), then to today in São Paulo — see
+    #: `service.data_assinatura`.
     assinatura_data: Optional[date] = None
 
 
@@ -43,7 +44,6 @@ async def get_contrato_geracao_route(
     contrato_id: UUID,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
-    complementos=Depends(get_complementos_contrato),
     politica=Depends(get_politica_contrato),
 ) -> dict:
     user, org_id = auth_parts(auth)
@@ -53,7 +53,6 @@ async def get_contrato_geracao_route(
         cliente_id,
         contrato_id,
         usuario_id=getattr(user, "id", None),
-        complementos=complementos,
         politica=politica,
     )
 
@@ -67,7 +66,6 @@ async def post_contrato_gerar_route(
     client=Depends(get_card_hub_client),
     storage=Depends(get_storage_backend),
     adapter=Depends(get_contrato_docx_adapter),
-    complementos=Depends(get_complementos_contrato),
     politica=Depends(get_politica_contrato),
 ) -> dict:
     user, org_id = auth_parts(auth)
@@ -80,7 +78,6 @@ async def post_contrato_gerar_route(
         contrato_id,
         assinatura=body.assinatura_data if body else None,
         usuario_id=getattr(user, "id", None),
-        complementos=complementos,
         politica=politica,
     )
 

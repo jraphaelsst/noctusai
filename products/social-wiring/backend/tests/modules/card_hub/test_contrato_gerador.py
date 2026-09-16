@@ -160,19 +160,47 @@ class TestTextoRenderizado:
 
 
 class TestGate:
-    def test_production_today_refuses_naming_every_missing_field(self):
-        _d, _pol, _sw, av = _avaliar(1, fx.sem_complementos(fx.variante(1)))
+    def test_a_deal_with_no_termos_filled_refuses_naming_every_clause(self):
+        # Migration 114 gave every one of these a home, so what is missing is
+        # an un-filled FORM — which is why each names the screen that fixes it.
+        _d, _pol, _sw, av = _avaliar(1, fx.sem_termos(fx.variante(1)))
         assert not av.pronto
         assert {f["campo"] for f in av.faltando} == {
-            "contrato.titulo_aquisitivo_texto",
-            "contrato.posse_prazo_dias",
-            "contrato.posse_marco",
-            "contrato.intermediario.int-1.favorecido",
-            "contrato.corretagem_contratantes",
-            "contrato.corretagem_parcelas_marco",
+            "negociacao.posse_prazo_dias",
+            "negociacao.posse_marco",
+            "negociacao.corretagem_contratantes",
         }
         assert all(f["onde"] in {"partes", "certidoes", "imovel", "matricula", "negociacao",
                                  "financiamento", "imobiliaria", "contrato"} for f in av.faltando)
+
+    def test_every_missing_field_carries_a_destino_the_ui_can_link_to(self):
+        _d, _pol, _sw, av = _avaliar(1, fx.sem_termos(fx.variante(1)))
+        for f in av.faltando:
+            assert set(f) == {"campo", "rotulo", "onde", "parte_id", "destino"}
+            destino = f["destino"]
+            assert set(destino) == {"tela", "rota", "ancora", "ids"}
+            assert destino["rota"].startswith("/")
+            assert destino["ids"]["contrato_id"] == "contrato-1"
+        # The termos clauses are all fixed on the card's Negociação subpage.
+        destino = av.faltando[0]["destino"]
+        assert destino["tela"] == "card_negociacao"
+        assert (destino["rota"], destino["ancora"]) == ("/clientes", "negociacao")
+        assert destino["ids"]["cliente_id"] == "c1"
+
+    def test_a_party_destino_points_at_that_partys_own_side_and_id(self):
+        d = fx.variante(1)
+        sem_genero = replace(d.vendedores[0], genero=None)
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[sem_genero]))
+        item = next(f for f in av.faltando if f["campo"] == "qualificacao.genero")
+        assert item["destino"]["ancora"] == "vendedor"
+        assert item["destino"]["ids"]["parte_id"] == "parte-v1"
+
+    def test_an_imovel_destino_deep_links_to_that_imovel(self):
+        d = fx.variante(1)
+        _d, _pol, _sw, av = _avaliar(1, replace(d, imovel=replace(d.imovel, situacao_onus=None)))
+        item = next(f for f in av.faltando if f["campo"] == "imovel.situacao_onus")
+        assert item["destino"]["rota"] == "/imoveis/EX001"
+        assert item["destino"]["ids"]["imovel_codigo"] == "EX001"
 
     def test_soma_das_parcelas_diferente_do_preco_blocks(self):
         d = replace(fx.variante(1), valor_negociado=Decimal("500000.01"))
@@ -200,11 +228,16 @@ class TestGate:
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
         assert "CONJUGE_FORA_DO_LADO" in [b["codigo"] for b in av.bloqueios]
 
-    def test_titular_certidoes_are_missing_when_the_buyer_side_must_certify(self):
+    def test_the_titular_is_certified_like_any_other_party(self):
+        # Migration 116 reaches a titular's certidões (`certidoes_por_cliente`),
+        # so having no parte row is no longer an unreachable-data refusal: an
+        # empty list is "none issued yet" and each tipo is named.
         d = fx.variante(5)
-        titular = replace(d.compradores[0], parte_id=None, certidoes=None)
+        titular = replace(d.compradores[0], parte_id=None, certidoes=[])
         _d, _pol, _sw, av = _avaliar(5, replace(d, compradores=[titular]))
-        assert [f["campo"] for f in av.faltando] == ["certidoes.titular.c1"]
+        campos = {f["campo"] for f in av.faltando}
+        assert campos == {f"certidao.{tipo}" for tipo in derivacao.tipos_exigidos("cpf")}
+        assert all(f["onde"] == "certidoes" for f in av.faltando)
 
     @pytest.mark.parametrize("n", range(1, 7))
     def test_no_pending_policy_question_aviso_survives_the_answers(self, n):

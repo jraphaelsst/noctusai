@@ -29,9 +29,11 @@ from app.modules.card_hub.contrato_gerador.concordancia import (
 from app.modules.card_hub.contrato_gerador.dados import (
     AtoCitado,
     Certidao,
+    CertidaoImovel,
     Endereco,
     Favorecido,
     Imobiliaria,
+    Intermediario,
     Parcela,
     Pessoa,
 )
@@ -309,7 +311,16 @@ RESULTADO_ROTULO = {
     "negativa": "Negativa",
     "positiva": "Positiva",
     "positiva_com_efeito_de_negativa": "Positiva com Efeito de Negativa",
+    # [§6.1 #15] Migration 116's fifth value, and the wording contracts 03/08
+    # already use: nada consta for THIS identity, but records under a
+    # same-name/CPF third party could not be ruled out. Deliberately NOT
+    # collapsed into "Negativa" — it is different due-diligence information.
+    "negativa_com_homonimos": "Negativa com apontamentos de Homônimos",
 }
+
+#: Results the esclarecimentos paragraph is about: a positiva, and a negativa
+#: whose homônimo apontamentos are precisely what has to be explained away.
+RESULTADOS_COM_APONTAMENTO: tuple[str, ...] = ("positiva", "negativa_com_homonimos")
 
 
 def rotulo_certidao(tipo: str, resultado: Optional[str]) -> str:
@@ -339,6 +350,25 @@ def item_matricula_imovel(numero: str, emitida_em) -> str:
         f"Visualização da Certidão da Matrícula do imóvel nº {matricula_numero(numero)}, "
         f"emitida em {formatar_data_br(emitida_em)}"
     )
+
+
+#: [§6.1 #14] The imóvel certidão group's label per tipo (migration 118). The
+#: `matricula` tipo is absent on purpose — it names the MATRÍCULA's number
+#: rather than the document's, so it keeps `item_matricula_imovel`'s wording.
+CERTIDOES_IMOVEL_ROTULO: dict[str, str] = {
+    "cnd_iptu": "Certidão Negativa de Débitos Municipais (IPTU)",
+    "cnd_condominio": "Certidão Negativa de Débitos Condominiais",
+}
+
+
+def item_certidao_imovel(c: CertidaoImovel, *, numero_matricula: Optional[str]) -> str:
+    """One line of the imóvel's own certidão group (migration 118)."""
+    if c.tipo == "matricula":
+        return item_matricula_imovel(numero_matricula or "", c.emitida_em)
+    texto = CERTIDOES_IMOVEL_ROTULO[c.tipo]
+    if c.numero:
+        texto += f" nº {c.numero}"
+    return f"{texto} - emitida em {formatar_data_br(c.emitida_em)}"  # type: ignore[arg-type] — gated
 
 
 # ─── pendências (spec §2.5) ───────────────────────────────────────────────
@@ -376,7 +406,21 @@ def pendencia_certidao(tipo: str, nome: str) -> str:
 # ─── ônus / posse / rescisão / tributos (spec §2.6–2.9) ───────────────────
 
 QUITACOES_ONUS: tuple[str, ...] = ("compradores_prazo", "interveniente_quitante", "parcela")
-MARCOS_POSSE: tuple[str, ...] = ("assinatura", "parcela_financiamento", "protocolo_registro")
+
+#: Stored by migration 114, but NO sample contract carries a clause for it
+#: (spec §6.1 #11's "already paid, has termo" state). The gate refuses it by
+#: name rather than inventing wording — see `derivacao._imovel`.
+QUITACAO_ONUS_SEM_REDACAO = "ja_quitado"
+
+#: 🔴 THE STORAGE VOCABULARY, VERBATIM (`atendimento_negociacao_termos.
+#: posse_marco`, migration 114). The generator used to say
+#: `parcela_financiamento`, which ASSUMED the marco parcela was the
+#: financiamento one — true of one sample contract, false in general. Storage
+#: generalised it correctly: a marco of `parcela` NAMES its parcela
+#: (`posse_marco_parcela_id`), and `posse_marco_texto` prints THAT parcela's
+#: computed number. Mapping the other way would have silently printed the
+#: wrong parcela whenever the marco was not the financiamento.
+MARCOS_POSSE: tuple[str, ...] = ("assinatura", "parcela", "protocolo_registro")
 
 
 def ato_rotulo(a: AtoCitado) -> str:
@@ -397,11 +441,13 @@ def onus_quitacao_texto(quitacao: str, *, C: Concordancia, ref_saldo: str, ref_c
     return f"o qual deverá ser quitado conforme determinado na Parcela {ref_saldo} da {ref_clausula_preco}"
 
 
-def posse_marco_texto(marco: str, *, ref_financiamento: str) -> str:
+def posse_marco_texto(marco: str, *, ref_parcela: str) -> str:
+    """`ref_parcela` is the NAMED marco parcela's computed number (migration
+    114's `*_marco_parcela_id`), never an assumption about which parcela it is."""
     if marco == "assinatura":
         return "da assinatura do presente contrato"
-    if marco == "parcela_financiamento":
-        return f"do recebimento da parcela {ref_financiamento}"
+    if marco == "parcela":
+        return f"do recebimento da parcela {ref_parcela}"
     return "da apresentação do protocolo de entrada do registro de imóveis e pagamento da guia de ITBI"
 
 
@@ -445,10 +491,42 @@ def qualificacao_imobiliaria(org: Imobiliaria) -> str:
     return texto + "."
 
 
-def corretagem_contratantes(quem: str, *, V: Concordancia) -> tuple[str, str, str]:
-    """(texto, texto capitalizado, verbo 'contrata')."""
+def qualificacao_intermediario(it: Intermediario) -> str:
+    """[§6.1 #21] An EXTERNAL intermediário's qualification (migration 114).
+
+    The office's own intermediação (`corretor_id` set) is qualified from
+    `Imobiliaria` by `qualificacao_imobiliaria` instead — same clause, but the
+    data lives on the org row, not on the intermediário.
+    """
+    rotulo, numero = documento(it.documento)
+    if it.pessoa_tipo == "pj":
+        texto = f"{it.nome}, pessoa jurídica inscrita no {rotulo} sob o nº {numero}"
+    else:
+        texto = f"{it.nome}, corretor de imóveis inscrito no {rotulo} sob o nº {numero}"
+    if it.creci:
+        texto += f", com inscrição no CRECI sob o nº {it.creci}"
+    if it.representante_nome:
+        texto += f", neste ato representada por {it.representante_nome}"
+        if it.representante_cpf:
+            texto += f", CPF {documento(it.representante_cpf)[1]}"
+    if it.email:
+        texto += f", endereço eletrônico: {it.email.strip().lower()}"
+    if it.endereco.logradouro:
+        texto += f", com sede na {endereco_texto(it.endereco)}"
+    return texto + "."
+
+
+def corretagem_contratantes(quem: str, *, V: Concordancia, C: Concordancia) -> tuple[str, str, str]:
+    """(texto, texto capitalizado, verbo 'contrata').
+
+    `compradores` is migration 114's third payer — the mirror of `vendedores`
+    on the other side of the table, so it takes the BUYERS' own agreement
+    rather than a second spelling of the sellers'.
+    """
     if quem == "vendedores":
         return f"{V.art} {V.NOME}", f"{V.ART} {V.NOME}", V.pl("contrata", "contratam")
+    if quem == "compradores":
+        return f"{C.art} {C.NOME}", f"{C.ART} {C.NOME}", C.pl("contrata", "contratam")
     return "as PARTES", "As PARTES", "contratam"
 
 

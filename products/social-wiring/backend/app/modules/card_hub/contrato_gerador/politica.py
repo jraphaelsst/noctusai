@@ -50,6 +50,14 @@ SITUACAO_PJ_BAIXADA = "baixada"
 #: certidões the contract presents.
 PAPEL_ANTIGO_PROPRIETARIO = "antigo_proprietario"
 
+#: [Q12 / §6.1 #12] The posse marco vocabulary is the STORAGE one (migration
+#: 114): 'assinatura' | 'parcela' | 'protocolo_registro', where 'parcela'
+#: NAMES its parcela. The generator's earlier 'parcela_financiamento' was an
+#: answer inferred from ONE sample contract; it is gone rather than mapped,
+#: because a mapping would have had to assume the marco parcela IS the
+#: financiamento parcela and would print the wrong number when it is not.
+#: The vocabulary itself lives in `frases.MARCOS_POSSE`.
+
 
 @dataclass(frozen=True)
 class Politica:

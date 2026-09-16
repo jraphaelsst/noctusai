@@ -2,17 +2,27 @@
 
 Pure over `DadosContrato`. Three outputs, never mixed:
 
-- `faltando`  — a value the contract needs and nobody has entered (or the
-                system cannot hold yet, spec §6.1). Named field + pt-BR label
-                + where in the card it is fixed.
-- `bloqueios` — the data is there but contradicts itself or the law of the
-                instrument (Σ parcelas ≠ preço, RG = CPF, old certidão…).
+- `faltando`  — a value the contract needs and nobody has entered. Named field
+                + pt-BR label + where in the card it is fixed + a machine-usable
+                `destino` the UI links to.
+- `bloqueios` — the data is there but contradicts itself, the law of the
+                instrument, or the wording the office actually wrote
+                (Σ parcelas ≠ preço, RG = CPF, old certidão, a stored enum with
+                no clause).
 - `avisos`    — generation proceeds, but a human should know.
 
 `pronto` is `not faltando and not bloqueios`. A switch that needs a MISSING
 field adds a `faltando`; optional wording whose switch is off is omitted.
 The office's policy answers (spec §6.2, answered 2026-09-15) are cited as
 [Qn] next to the rule that implements each — see `politica.py`.
+
+🔴 NOTHING HERE IS "NOT IN THE SYSTEM" ANY MORE. Migrations 114-118 gave every
+spec §6.1 field real storage (see `dados`'s module docstring), so a gap is now
+always an un-filled FORM, never a missing column — which is why every refusal
+can name a screen. The two things still genuinely absent are named as such:
+procurador/inventariante wording (`PAPEIS_SEM_REDACAO`) and the stored-but-
+unwritten clauses (`ja_quitado`, `obrigacoes_vendedor`,
+`permuta_obrigacoes_entrega`).
 """
 from __future__ import annotations
 
@@ -31,9 +41,11 @@ from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
 from app.modules.card_hub.contrato_gerador.dados import (
     PAPEIS_SEM_REDACAO,
     Certidao,
+    CertidaoImovel,
     DadosContrato,
     Parcela,
     Pessoa,
+    parcela_permuta,
     signatarios,
 )
 from app.modules.card_hub.contrato_gerador.numeracao import num2
@@ -67,9 +79,8 @@ ROTULO_QUALIFICACAO = {
     "conjuge": "Cônjuge vinculado",
     "conjuge_qualificacao": "Qualificação do cônjuge",
     "genero": "Gênero",
+    "data_casamento": "Data do casamento",
 }
-
-SUFIXO_SEM_CAMPO = " — campo ainda não existe no sistema"
 
 #: [Q9] `classificar_grupo_pj` outcomes.
 PJ_EXIGIDO = "exigido"
@@ -82,22 +93,104 @@ PJ_SITUACAO_DESCONHECIDA = "situacao_desconhecida"
 #: [Q9] The title suffix of a recently-closed company's certidão group.
 SUFIXO_PJ_BAIXADA = "Baixada"
 
+#: The imóvel certidão group's print order (spec §2.5).
+ORDEM_CERTIDOES_IMOVEL: tuple[str, ...] = ("matricula", "cnd_iptu", "cnd_condominio")
+
+
+# ─── destino: where a missing field is fixed ──────────────────────────────
+#
+# `onde` already grouped the readiness list by screen; `destino` makes that
+# machine-usable so the UI can LINK instead of asking the operator to find it.
+#
+# `rota` is a REAL route from the SPA's own table (`frontend/src/App.tsx`);
+# `ancora` is an in-screen target the screen already switches on — a card
+# subpage key (`CardSubpageKey`, `frontend/src/components/card/
+# CardSidebarNav.tsx`) or a Settings tab value.
+#
+# 🔴 A card destino names `/clientes` + the subpage, NOT a deep link. The card
+# is a dialog the board opens with `open`/`onClose` props and it owns its
+# subpage in local state (`ClienteCardDialog`), so there is no URL that opens
+# it today. Emitting `?cliente=…` would be inventing a parameter the SPA
+# ignores — the honest answer is the route that CAN show it plus the subpage
+# to select. If deep-linking lands later, only this table changes.
+
+#: onde -> (tela, rota, ancora padrão)
+_DESTINO_POR_ONDE: dict[str, tuple[str, str, Optional[str]]] = {
+    "partes": ("card_partes", "/clientes", "geral"),
+    "certidoes": ("certidoes", "/certidoes", None),
+    "matricula": ("matriculas", "/matriculas", None),
+    "imovel": ("imovel", "/imoveis", None),
+    "negociacao": ("card_negociacao", "/clientes", "negociacao"),
+    "financiamento": ("card_financiamento", "/clientes", "financiamento"),
+    "contrato": ("card_contratos", "/clientes", "contratos"),
+    "imobiliaria": ("configuracoes", "/configuracoes", "imobiliaria"),
+}
+
+#: The card subpage each side's parties live on — a vendedor is fixed on the
+#: `vendedor` subpage, a comprador on `geral` (which carries the buyer panel).
+_ANCORA_POR_LADO: dict[str, str] = {"vendedor": "vendedor", "comprador": "geral"}
+
+
+@dataclass(frozen=True)
+class Destinos:
+    """The ids every `destino` needs to point somewhere concrete."""
+
+    cliente_id: Optional[str] = None
+    contrato_id: Optional[str] = None
+    imovel_codigo: Optional[str] = None
+
+    def para(
+        self, onde: str, *, parte_id: Optional[str] = None, ancora: Optional[str] = None
+    ) -> dict:
+        tela, rota, ancora_padrao = _DESTINO_POR_ONDE[onde]
+        escopo_imovel = onde in ("imovel", "matricula")
+        if onde == "imovel" and self.imovel_codigo:
+            rota = f"/imoveis/{self.imovel_codigo}"
+        ids = {
+            chave: valor
+            for chave, valor in (
+                ("cliente_id", self.cliente_id),
+                ("contrato_id", self.contrato_id),
+                ("parte_id", parte_id),
+                ("imovel_codigo", self.imovel_codigo if escopo_imovel else None),
+            )
+            if valor
+        }
+        return {"tela": tela, "rota": rota, "ancora": ancora or ancora_padrao, "ids": ids}
+
 
 @dataclass
 class Avaliacao:
     faltando: list[dict] = field(default_factory=list)
     bloqueios: list[dict] = field(default_factory=list)
     avisos: list[dict] = field(default_factory=list)
+    destinos: Destinos = field(default_factory=Destinos)
 
     @property
     def pronto(self) -> bool:
         return not self.faltando and not self.bloqueios
 
-    def falta(self, campo: str, rotulo: str, onde: str, parte_id: Optional[str] = None) -> None:
+    def falta(
+        self,
+        campo: str,
+        rotulo: str,
+        onde: str,
+        parte_id: Optional[str] = None,
+        *,
+        ancora: Optional[str] = None,
+    ) -> None:
         chave = (campo, parte_id)
         if any((f["campo"], f["parte_id"]) == chave for f in self.faltando):
             return
-        self.faltando.append({"campo": campo, "rotulo": rotulo, "onde": onde, "parte_id": parte_id})
+        self.faltando.append(
+            {
+                "campo": campo,
+                "rotulo": rotulo,
+                "onde": onde,
+                "parte_id": parte_id,
+                "destino": self.destinos.para(onde, parte_id=parte_id, ancora=ancora),
+            }
+        )
 
     def bloqueia(self, codigo: str, mensagem: str) -> None:
         if not any(b["codigo"] == codigo and b["mensagem"] == mensagem for b in self.bloqueios):
@@ -133,7 +226,59 @@ def parcelas_ordenadas(d: DadosContrato) -> list[Parcela]:
 
 
 def todas_certidoes(pessoas: list[Pessoa]) -> list[Certidao]:
-    return [c for p in pessoas for c in (p.certidoes or [])]
+    return [c for p in pessoas for c in p.certidoes]
+
+
+def numero_da_parcela(d: DadosContrato, parcela_id: Optional[str]) -> Optional[str]:
+    """The printed number (`num2`) of the parcela an id NAMES, or None when it
+    names one that is not in this deal. Used for [§6.1 #12]'s posse marco:
+    the clause cites a COMPUTED number, never a typed one."""
+    if not parcela_id:
+        return None
+    for i, p in enumerate(parcelas_ordenadas(d), start=1):
+        if p.id == parcela_id:
+            return num2(i)
+    return None
+
+
+def parcelas_antes_de(d: DadosContrato, parcela_id: Optional[str]) -> list[str]:
+    """The numbers of the parcelas that fall BEFORE the marco parcela — the
+    posse condition ("com a condição que as parcelas 01 e 02 …")."""
+    numeros: list[str] = []
+    for i, p in enumerate(parcelas_ordenadas(d), start=1):
+        if p.id == parcela_id:
+            return numeros
+        numeros.append(num2(i))
+    return []
+
+
+def corretagem_marcos(d: DadosContrato) -> list[str]:
+    """[§6.1 #23] The parcelas whose receipt triggers the corretagem payment,
+    as computed numbers — the marco is `Parcela.dispara_corretagem` (114),
+    never a typed parcela index."""
+    return [
+        num2(i) for i, p in enumerate(parcelas_ordenadas(d), start=1) if p.dispara_corretagem
+    ]
+
+
+def certidoes_imovel(d: DadosContrato) -> tuple[CertidaoImovel, ...]:
+    """[§6.1 #14] The imóvel certidões the contract PRESENTS, in print order.
+
+    A `matricula` row (migration 118) answers when there is one. When there is
+    not, `imovel_dados.onus_certidao_em` + `numero_matricula` answer the SAME
+    question for every card that predates 118 — the same fact from an older
+    source, so it is composed here rather than making the contract ask for a
+    matrícula certidão the office already has on file.
+    """
+    im = d.imovel
+    if im is None:
+        return ()
+    por_tipo = {c.tipo: c for c in im.certidoes if c.emitida_em}
+    if "matricula" not in por_tipo and im.onus_certidao_em and im.numero_matricula:
+        por_tipo["matricula"] = CertidaoImovel(
+            tipo="matricula", numero=im.numero_matricula, emitida_em=im.onus_certidao_em
+        )
+    return tuple(por_tipo[tipo] for tipo in ORDEM_CERTIDOES_IMOVEL if tipo in por_tipo)
 
 
 def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
@@ -141,8 +286,10 @@ def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
     tipos = {p.tipo for p in d.parcelas}
     tem_financiamento = "financiamento" in tipos
     tem_parcelas_diretas = "direta" in tipos
-    tem_permuta = d.permuta_ativo_id is not None
-    comp = d.complementos
+    # 🔴 114: a permuta IS a parcela of tipo 'permuta' paid with linked
+    # `permuta_ativos` — not the legacy one-asset `negociacao.permuta_ativo_id`.
+    tem_permuta = parcela_permuta(d) is not None
+    termos = d.termos
     partes = signatarios(d.vendedores) + signatarios(d.compradores)
     return {
         "tem_financiamento": tem_financiamento,
@@ -155,8 +302,8 @@ def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
         "a_vista": not (tem_financiamento or "fgts" in tipos or tem_parcelas_diretas),
         "tem_saldo_devedor": bool(d.imovel and d.imovel.situacao_onus in ONUS_COM_SALDO),
         "tem_intermediacao": bool(d.intermediarios),
-        "tem_itens_integrantes": bool((comp.itens_integrantes or "").strip()),
-        "ad_corpus": bool(comp.ad_corpus),
+        "tem_itens_integrantes": bool((termos.itens_integrantes or "").strip()),
+        "ad_corpus": bool(termos.ad_corpus),
         "tem_pj_certidoes": any(
             c.consulta_tipo_documento == "cnpj" for c in todas_certidoes(partes)
         ),
@@ -212,7 +359,7 @@ def indice_certidoes(certidoes: list[Certidao], tipo_documento: str) -> dict[str
 def grupos_pj(pessoa: Pessoa) -> dict[str, list[Certidao]]:
     """documento -> results of each CNPJ consulta linked to this person."""
     grupos: dict[str, list[Certidao]] = {}
-    for c in pessoa.certidoes or []:
+    for c in pessoa.certidoes:
         if c.consulta_tipo_documento == "cnpj":
             grupos.setdefault(c.consulta_documento or "", []).append(c)
     return grupos
@@ -288,11 +435,15 @@ def _doc_norm(valor: Optional[str]) -> str:
     return re.sub(r"\W", "", (valor or "").upper())
 
 
+def _ancora(p: Pessoa) -> str:
+    return _ANCORA_POR_LADO.get(p.lado, "geral")
+
+
 def _partes(av: Avaliacao, d: DadosContrato) -> None:
     vend, comp = signatarios(d.vendedores), signatarios(d.compradores)
     antigos = antigos_proprietarios(d)
     if not vend:
-        av.falta("partes.vendedores", "Ao menos um vendedor (proprietário) no card", "partes")
+        av.falta("partes.vendedores", "Ao menos um vendedor (proprietário) no card", "partes", ancora="vendedor")
     if not comp:
         av.falta("partes.compradores", "Ao menos um comprador no card", "partes")
     for p in d.vendedores + d.compradores:
@@ -315,15 +466,20 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                     f"{ROTULO_QUALIFICACAO.get(chave, chave)} — {_nome(p)}",
                     "partes",
                     p.parte_id,
+                    ancora=_ancora(p),
                 )
             if normalizar_genero(p.genero) is None:
-                av.falta("qualificacao.genero", f"Gênero — {_nome(p)}", "partes", p.parte_id)
+                av.falta("qualificacao.genero", f"Gênero — {_nome(p)}", "partes", p.parte_id, ancora=_ancora(p))
             if p.papel in PAPEIS_SEM_REDACAO:
+                # [§6.1 #20] Genuinely absent: no sample contract qualifies a
+                # procurador/inventariante, so there is no wording to generate.
                 av.falta(
                     f"qualificacao.{p.papel}",
-                    f"Dados e redação de {p.papel} (procuração/inventário) — {_nome(p)}{SUFIXO_SEM_CAMPO}",
+                    f"Redação de {p.papel} (procuração/inventário) — {_nome(p)}: "
+                    "o gerador não tem texto para este papel",
                     "partes",
                     p.parte_id,
+                    ancora=_ancora(p),
                 )
             # [Q14] the e-mail is printed beside the name in the signature block.
             if not p.email:
@@ -368,6 +524,7 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                             f"Data do casamento (Lei 6.515/77) — {_nome(p)}",
                             "partes",
                             p.parte_id,
+                            ancora=_ancora(p),
                         )
                     elif conjuge.data_casamento is not None and conjuge.data_casamento != p.data_casamento:
                         av.bloqueia(
@@ -376,7 +533,7 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                         )
 
 
-def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
+def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Politica, assinatura: date) -> None:
     im = d.imovel
     if im is None:
         av.falta("negociacao.imovel", "Imóvel negociado no card", "negociacao")
@@ -406,10 +563,11 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
         )
     if not im.titulo_aquisitivo_confirmado:
         av.falta("matricula.titulo_aquisitivo", "Título aquisitivo confirmado na matrícula", "matricula")
-    if not (d.complementos.titulo_aquisitivo_texto or "").strip():
+    # [§6.1 #8] Migration 115 stores the CONFIRMED wording on the imóvel.
+    if not (im.titulo_aquisitivo_texto or "").strip():
         av.falta(
-            "contrato.titulo_aquisitivo_texto",
-            "Redação do título aquisitivo (instrumento, data, livro/folhas, tabelionato)" + SUFIXO_SEM_CAMPO,
+            "matricula.titulo_aquisitivo_texto",
+            "Redação confirmada do título aquisitivo (instrumento, data, livro/folhas, tabelionato)",
             "matricula",
         )
 
@@ -421,22 +579,68 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
             f"O gerador não tem redação para ônus do tipo '{im.situacao_onus}'.",
         )
 
+    _certidoes_do_imovel(av, d, politica, assinatura)
+
     if sw["tem_saldo_devedor"]:
-        comp = d.complementos
+        termos = d.termos
         if not im.onus_fonte_atos:
             av.falta("matricula.onus_fonte", "Atos da matrícula que registram o ônus", "matricula")
         elif any(a.kind not in ("R", "AV") or a.numero is None for a in im.onus_fonte_atos):
             av.bloqueia("ONUS_FONTE_INVALIDA", "O ônus aponta para um ato sem número (abertura).")
-        if not comp.onus_credor:
-            av.falta("contrato.onus_credor", "Credor do financiamento que onera o imóvel" + SUFIXO_SEM_CAMPO, "imovel")
-        if not comp.onus_quitacao:
-            av.falta("contrato.onus_quitacao", "Forma de quitação do saldo devedor" + SUFIXO_SEM_CAMPO, "imovel")
-        elif comp.onus_quitacao not in frases.QUITACOES_ONUS:
-            av.bloqueia("ONUS_QUITACAO_INVALIDA", f"Forma de quitação desconhecida: {comp.onus_quitacao}.")
-        elif comp.onus_quitacao == "compradores_prazo" and not comp.onus_prazo_dias:
-            av.falta("contrato.onus_prazo_dias", "Prazo (dias) para os compradores quitarem o saldo" + SUFIXO_SEM_CAMPO, "imovel")
-        elif comp.onus_quitacao == "parcela" and not any(p.tipo == "saldo" for p in d.parcelas):
+        # [§6.1 #11] Migration 115 stores the confirmed creditor on the imóvel,
+        # read off the ônus acts — so it is fixed on the matrícula surface.
+        if not im.onus_credor:
+            av.falta("matricula.onus_credor", "Credor confirmado do financiamento que onera o imóvel", "matricula")
+        if not termos.onus_quitacao:
+            av.falta("negociacao.onus_quitacao", "Forma de quitação do saldo devedor", "negociacao")
+        elif termos.onus_quitacao == frases.QUITACAO_ONUS_SEM_REDACAO:
+            # Stored by 114, but no sample contract has this clause — refusing
+            # by name beats printing a paragraph the office never wrote.
+            av.bloqueia(
+                "ONUS_QUITACAO_SEM_REDACAO",
+                "A quitação do ônus está marcada como 'já quitado (com termo)', e o gerador "
+                "ainda não tem redação para esse caso — nenhum contrato modelo o traz.",
+            )
+        elif termos.onus_quitacao not in frases.QUITACOES_ONUS:
+            av.bloqueia("ONUS_QUITACAO_INVALIDA", f"Forma de quitação desconhecida: {termos.onus_quitacao}.")
+        elif termos.onus_quitacao == "compradores_prazo" and not termos.onus_prazo_dias:
+            av.falta("negociacao.onus_prazo_dias", "Prazo (dias) para os compradores quitarem o saldo", "negociacao")
+        elif termos.onus_quitacao == "parcela" and not any(p.tipo == "saldo" for p in d.parcelas):
             av.bloqueia("ONUS_QUITACAO_SEM_PARCELA_SALDO", "A quitação do ônus é por parcela, mas não há parcela de saldo.")
+
+
+def _certidoes_do_imovel(
+    av: Avaliacao, d: DadosContrato, politica: Politica, assinatura: date
+) -> None:
+    """[§6.1 #14 / Q10] The imóvel's own certidões (migration 118) answer to
+    the SAME 30-day rule as a party's — an old IPTU CND is as stale on the
+    signing table as an old federal one."""
+    for c in certidoes_imovel(d):
+        rotulo = (
+            "Certidão da matrícula"
+            if c.tipo == "matricula"
+            else frases.CERTIDOES_IMOVEL_ROTULO[c.tipo]
+        )
+        if c.emitida_em is None:  # pragma: no cover — `certidoes_imovel` filters these out
+            continue
+        if c.emitida_em > assinatura:
+            av.bloqueia(
+                "CERTIDAO_IMOVEL_EMITIDA_APOS_ASSINATURA",
+                f"{rotulo} do imóvel tem emissão posterior à assinatura.",
+            )
+        elif (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
+            av.bloqueia(
+                "CERTIDAO_IMOVEL_EMISSAO_ANTIGA",
+                f"{rotulo} do imóvel foi emitida há {(assinatura - c.emitida_em).days} dias; "
+                f"precisa ter menos de {politica.certidao_max_dias} dias na data da assinatura.",
+            )
+        if c.validade_ate is not None and c.validade_ate < assinatura:
+            av.bloqueia("CERTIDAO_IMOVEL_VENCIDA", f"{rotulo} do imóvel está vencida na data da assinatura.")
+        if c.resultado in frases.RESULTADOS_COM_APONTAMENTO:
+            av.avisa(
+                "CERTIDAO_IMOVEL_COM_APONTAMENTO",
+                f"{rotulo} do imóvel não é negativa; exige esclarecimentos.",
+            )
 
 
 def _negociacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], assinatura: date) -> None:
@@ -451,6 +655,10 @@ def _negociacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], assinatura
             av.falta("negociacao.parcela_sinal", "Parcela de sinal", "negociacao")
         elif len(sinais) > 1:
             av.bloqueia("MAIS_DE_UM_SINAL", "O contrato admite exatamente uma parcela de sinal.")
+        if len([p for p in parcelas if p.tipo == "permuta"]) > 1:
+            # The permuta clauses speak about "the" permuta parcela; with two,
+            # which one they mean is a guess.
+            av.bloqueia("MAIS_DE_UMA_PARCELA_PERMUTA", "O contrato admite no máximo uma parcela de permuta.")
 
     favorecidos = {f.id: f for f in d.favorecidos}
     cpfs_vendedores = {frases.so_digitos(p.cpf) for p in signatarios(d.vendedores) if p.cpf}
@@ -459,7 +667,9 @@ def _negociacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], assinatura
         rot = f"Parcela {num2(i)}"
         if p.valor is None or p.valor <= 0:
             av.falta(f"negociacao.parcela.{p.id}.valor", f"Valor da {rot}", "negociacao")
-        if not p.vencimento and not (p.evento or "").strip():
+        if not p.vencimento and not (p.evento or "").strip() and p.tipo != "permuta":
+            # A permuta parcela is settled by the deed, not on a date: its
+            # wording carries the imóveis, never a vencimento/evento.
             av.falta(f"negociacao.parcela.{p.id}.momento", f"Vencimento ou evento da {rot}", "negociacao")
         if p.tipo in TIPOS_PAGOS_A_FAVORECIDO:
             if not p.favorecido_id:
@@ -489,31 +699,22 @@ def _negociacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], assinatura
                 av.bloqueia("VENCIMENTOS_FORA_DE_ORDEM", f"O vencimento da {rot} não é posterior ao da parcela anterior.")
             ultimo_venc = p.vencimento
 
-    # [Q15] Σ parcelas must equal the price — the sample-contract errors were data.
+    # [Q15] Σ parcelas must equal the price — the sample-contract errors were
+    # data. The permuta value is one of the parcelas now (114), so it is in
+    # this sum by construction rather than added on the side.
     if d.valor_negociado is not None and parcelas and all(p.valor is not None for p in parcelas):
         soma = sum((p.valor for p in parcelas), Decimal("0"))  # type: ignore[misc]
-        permuta = d.complementos.permuta_parcela_valor
-        if not sw["tem_permuta"] or permuta is not None:
-            soma += permuta or Decimal("0")
-            if soma != d.valor_negociado:
-                av.bloqueia(
-                    "SOMA_PARCELAS_DIFERENTE_DO_PRECO",
-                    f"As parcelas somam {formatar_brl(soma)}, mas o preço é {formatar_brl(d.valor_negociado)}.",
-                )
+        if soma != d.valor_negociado:
+            av.bloqueia(
+                "SOMA_PARCELAS_DIFERENTE_DO_PRECO",
+                f"As parcelas somam {formatar_brl(soma)}, mas o preço é {formatar_brl(d.valor_negociado)}.",
+            )
 
-    comp = d.complementos
-    if not comp.posse_prazo_dias:
-        av.falta("contrato.posse_prazo_dias", "Prazo de entrega da posse (dias)" + SUFIXO_SEM_CAMPO, "negociacao")
-    if not comp.posse_marco:
-        av.falta("contrato.posse_marco", "Marco inicial do prazo da posse" + SUFIXO_SEM_CAMPO, "negociacao")
-    elif comp.posse_marco not in frases.MARCOS_POSSE:
-        av.bloqueia("POSSE_MARCO_INVALIDO", f"Marco da posse desconhecido: {comp.posse_marco}.")
-    elif comp.posse_marco == "parcela_financiamento" and not sw["tem_financiamento"]:
-        av.bloqueia("POSSE_MARCO_SEM_FINANCIAMENTO", "A posse conta do financiamento, mas não há parcela de financiamento.")
+    _posse(av, d, d.termos.posse_marco, d.termos.posse_prazo_dias, d.termos.posse_marco_parcela_id, escopo="posse")
 
     if sw["tem_confissao"]:
-        if comp.juros_am_confissao is None:
-            av.falta("contrato.juros_am_confissao", "Juros remuneratórios ao mês da confissão de dívida" + SUFIXO_SEM_CAMPO, "negociacao")
+        if d.termos.confissao_juros_am is None:
+            av.falta("negociacao.confissao_juros_am", "Juros remuneratórios ao mês da confissão de dívida", "negociacao")
         for i, p in enumerate(parcelas, start=1):
             if not p.confissao_divida:
                 continue
@@ -521,6 +722,34 @@ def _negociacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], assinatura
                 av.falta(f"negociacao.parcela.{p.id}.vencimento", f"Vencimento da Parcela {num2(i)} (confissão de dívida)", "negociacao")
             elif p.vencimento <= assinatura:
                 av.bloqueia("CONFISSAO_VENCIMENTO_PASSADO", f"A Parcela {num2(i)} da confissão vence antes da assinatura.")
+
+
+def _posse(
+    av: Avaliacao,
+    d: DadosContrato,
+    marco: Optional[str],
+    prazo: Optional[int],
+    marco_parcela_id: Optional[str],
+    *,
+    escopo: str,
+) -> None:
+    """[§6.1 #12] One rule for both posse clauses (the imóvel's and, in a
+    permuta, the exchanged imóvel's) — they are the same clause pointed at
+    different properties, so a second copy would be a second thing to drift."""
+    rotulo = "da posse" if escopo == "posse" else "da posse do imóvel da permuta"
+    if not prazo:
+        av.falta(f"negociacao.{escopo}_prazo_dias", f"Prazo de entrega {rotulo} (dias)", "negociacao")
+    if not marco:
+        av.falta(f"negociacao.{escopo}_marco", f"Marco inicial do prazo {rotulo}", "negociacao")
+    elif marco not in frases.MARCOS_POSSE:
+        av.bloqueia("POSSE_MARCO_INVALIDO", f"Marco {rotulo} desconhecido: {marco}.")
+    elif marco == "parcela" and numero_da_parcela(d, marco_parcela_id) is None:
+        # 114's CHECK guarantees the id is SET when the marco is 'parcela'; it
+        # cannot guarantee the parcela still belongs to this deal's schedule.
+        av.bloqueia(
+            "POSSE_MARCO_PARCELA_DESCONHECIDA",
+            f"O marco {rotulo} aponta para uma parcela que não está no preço deste contrato.",
+        )
 
 
 def _financiamento(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
@@ -547,17 +776,44 @@ def _financiamento(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None
 def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     if not sw["tem_permuta"]:
         return
-    comp = d.complementos
-    if comp.permuta_parcela_valor is None:
-        av.falta("contrato.permuta_parcela", "Parcela de permuta (valor do imóvel dado em permuta)" + SUFIXO_SEM_CAMPO, "negociacao")
-    if not comp.permuta_imoveis:
-        av.falta("contrato.permuta_imoveis", "Descrição e matrícula do imóvel dado em permuta" + SUFIXO_SEM_CAMPO, "matricula")
-    if not comp.permuta_posse_prazo_dias:
-        av.falta("contrato.permuta_posse_prazo_dias", "Prazo de entrega da posse do imóvel da permuta" + SUFIXO_SEM_CAMPO, "negociacao")
-    if not comp.permuta_posse_marco:
-        av.falta("contrato.permuta_posse_marco", "Marco da posse do imóvel da permuta" + SUFIXO_SEM_CAMPO, "negociacao")
-    elif comp.permuta_posse_marco not in frases.MARCOS_POSSE:
-        av.bloqueia("POSSE_MARCO_INVALIDO", f"Marco da posse da permuta desconhecido: {comp.permuta_posse_marco}.")
+    parcela = parcela_permuta(d)
+    assert parcela is not None  # the switch IS this parcela
+    if not parcela.permuta_ativo_ids:
+        av.falta(
+            "negociacao.permuta_imoveis",
+            "Imóvel(is) de permuta vinculado(s) à parcela de permuta",
+            "negociacao",
+        )
+    for imovel in d.permuta_imoveis:
+        alvo = f"negociacao.permuta.{imovel.permuta_ativo_id}"
+        if imovel.num_atos == 0 or not (imovel.descricao_matricula or "").strip():
+            av.falta(
+                f"matricula.permuta.{imovel.permuta_ativo_id}.atos",
+                "Atos da matrícula do imóvel dado em permuta selecionados para o contrato",
+                "matricula",
+            )
+        for campo, rotulo in (
+            ("inscricao_municipal", "Inscrição municipal do imóvel da permuta"),
+            ("matricula_numero", "Número da matrícula do imóvel da permuta"),
+            ("cartorio", "Cartório de registro do imóvel da permuta"),
+        ):
+            if not getattr(imovel, campo):
+                av.falta(f"{alvo}.{campo}", rotulo, "imovel")
+        for campo, rotulo in (
+            ("logradouro", "Logradouro do imóvel da permuta"),
+            ("numero", "Número do imóvel da permuta"),
+            ("cidade", "Cidade do imóvel da permuta"),
+        ):
+            if not getattr(imovel.endereco, campo):
+                av.falta(f"{alvo}.{campo}", rotulo, "imovel")
+    _posse(
+        av,
+        d,
+        d.termos.permuta_posse_marco,
+        d.termos.permuta_posse_prazo_dias,
+        d.termos.permuta_posse_marco_parcela_id,
+        escopo="permuta_posse",
+    )
 
 
 def _certidoes(
@@ -566,7 +822,7 @@ def _certidoes(
     signatarios_certificados = signatarios(d.vendedores) + (
         signatarios(d.compradores) if sw["tem_permuta"] else []
     )
-    positivas: list[str] = []
+    com_apontamento: list[str] = []
 
     def conferir(p: Pessoa, certs: list[Certidao], tipo_documento: str, nome_grupo: str) -> None:
         idx = indice_certidoes(certs, tipo_documento)
@@ -594,18 +850,16 @@ def _certidoes(
                 )
             if c.validade_ate is not None and c.validade_ate < assinatura:
                 av.bloqueia("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")
-            if c.resultado == "positiva":
-                positivas.append(f"{rotulo} ({nome_grupo})")
+            # [§6.1 #15] A positiva AND a negativa-com-homônimos both need the
+            # esclarecimentos paragraph — the homônimo apontamentos are exactly
+            # what has to be explained away (migration 116).
+            if c.resultado in frases.RESULTADOS_COM_APONTAMENTO:
+                com_apontamento.append(f"{rotulo} ({nome_grupo})")
 
     def conferir_pessoa(p: Pessoa) -> None:
-        if p.certidoes is None:
-            av.falta(
-                f"certidoes.titular.{p.cliente_id}",
-                f"Certidões de {_nome(p)} (titular do card) — não vinculáveis ao titular hoje",
-                "certidoes",
-                None,
-            )
-            return
+        # Migration 116 reaches EVERY party's certidões, the titular included,
+        # so an empty list is "none issued yet" and each tipo is named below —
+        # it is no longer an unreachable-data refusal.
         conferir(p, p.certidoes, "cpf", _nome(p))
         # [Q9] which of the person's companies are certified.
         for documento, certs in grupos_pj(p).items():
@@ -640,9 +894,10 @@ def _certidoes(
         if emitida is None:
             av.falta(
                 "qualificacao.certidao_estado_civil_emissao",
-                f"Data de emissão da certidão de estado civil — {_nome(p)}",
+                f"Certidão de estado civil com data de emissão — {_nome(p)}",
                 "partes",
                 p.parte_id,
+                ancora=_ancora(p),
             )
         elif emitida > assinatura:
             av.bloqueia(
@@ -668,17 +923,20 @@ def _certidoes(
             )
         elif exige:
             if not antigos:
+                nomes = ", ".join(d.imovel.ultima_transferencia_transmitentes)
+                quem = f" — consta(m) na matrícula: {nomes}" if nomes else ""
                 av.falta(
                     "partes.antigo_proprietario",
                     "Antigo(s) proprietário(s) do imóvel no card — a última compra e venda foi registrada há "
-                    f"menos de {politica.antigo_proprietario_janela_anos} anos",
+                    f"menos de {politica.antigo_proprietario_janela_anos} anos{quem}",
                     "partes",
+                    ancora="vendedor",
                 )
             for a in antigos:
                 if not a.nome:
-                    av.falta("qualificacao.nome_oficial", f"Nome oficial — {_nome(a)} (antigo proprietário)", "partes", a.parte_id)
+                    av.falta("qualificacao.nome_oficial", f"Nome oficial — {_nome(a)} (antigo proprietário)", "partes", a.parte_id, ancora="vendedor")
                 if normalizar_genero(a.genero) is None:
-                    av.falta("qualificacao.genero", f"Gênero — {_nome(a)} (antigo proprietário)", "partes", a.parte_id)
+                    av.falta("qualificacao.genero", f"Gênero — {_nome(a)} (antigo proprietário)", "partes", a.parte_id, ancora="vendedor")
                 conferir_pessoa(a)
         elif antigos:
             av.avisa(
@@ -687,8 +945,11 @@ def _certidoes(
                 "as certidões do(s) antigo(s) proprietário(s) não entram no contrato.",
             )
 
-    if positivas:
-        av.avisa("CERTIDOES_POSITIVAS", "Certidões positivas exigem esclarecimentos: " + "; ".join(positivas) + ".")
+    if com_apontamento:
+        av.avisa(
+            "CERTIDOES_POSITIVAS",
+            "Certidões positivas exigem esclarecimentos: " + "; ".join(com_apontamento) + ".",
+        )
 
 
 def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
@@ -735,43 +996,45 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
 def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     if not sw["tem_intermediacao"]:
         return
-    comp = d.complementos
+    termos = d.termos
     favorecidos = {f.id: f for f in d.favorecidos}
     for it in d.intermediarios:
         if not it.creci:
             av.falta(f"negociacao.intermediario.{it.id}.creci", f"CRECI de {it.nome}", "negociacao")
         if it.valor is None:
             av.falta(f"negociacao.intermediario.{it.id}.valor", f"Valor da corretagem de {it.nome}", "negociacao")
-        if not it.corretor_id and it.id not in comp.intermediarios_qualificacao:
+        # [§6.1 #21] An EXTERNAL intermediário carries its own qualification
+        # (114); the office's own is qualified from `Imobiliaria`.
+        if not it.corretor_id and not (it.pessoa_tipo and it.documento):
             av.falta(
-                f"contrato.intermediario.{it.id}.qualificacao",
-                f"Qualificação (PF/PJ, documento, endereço) do intermediário externo {it.nome}" + SUFIXO_SEM_CAMPO,
+                f"negociacao.intermediario.{it.id}.qualificacao",
+                f"Qualificação (PF/PJ e CPF/CNPJ) do intermediário externo {it.nome}",
                 "negociacao",
             )
-        fav_id = comp.corretagem_favorecidos.get(it.id)
-        if not fav_id:
+        # [§6.1 #22] The favorecido link now lives ON the intermediário.
+        if not it.favorecido_id:
             av.falta(
-                f"contrato.intermediario.{it.id}.favorecido",
-                f"Favorecido que recebe a corretagem de {it.nome}" + SUFIXO_SEM_CAMPO,
+                f"negociacao.intermediario.{it.id}.favorecido",
+                f"Favorecido que recebe a corretagem de {it.nome}",
                 "negociacao",
             )
-        elif fav_id not in favorecidos:
+        elif it.favorecido_id not in favorecidos:
             av.bloqueia("FAVORECIDO_INEXISTENTE", f"O favorecido da corretagem de {it.nome} não existe.")
-        elif not favorecidos[fav_id].conta and not favorecidos[fav_id].pix:
-            fav = favorecidos[fav_id]
+        elif not favorecidos[it.favorecido_id].conta and not favorecidos[it.favorecido_id].pix:
+            fav = favorecidos[it.favorecido_id]
             av.falta(f"negociacao.favorecido.{fav.id}.conta", f"Conta ou chave PIX de {fav.nome}", "negociacao")
-    if not comp.corretagem_contratantes:
-        av.falta("contrato.corretagem_contratantes", "Quem paga a corretagem (vendedores ou partes)" + SUFIXO_SEM_CAMPO, "negociacao")
-    elif comp.corretagem_contratantes not in ("vendedores", "partes"):
-        av.bloqueia("CORRETAGEM_CONTRATANTES_INVALIDO", f"Pagador de corretagem desconhecido: {comp.corretagem_contratantes}.")
-    if not comp.corretagem_parcelas_marco:
+    if not termos.corretagem_contratantes:
+        av.falta("negociacao.corretagem_contratantes", "Quem paga a corretagem (vendedores, compradores ou ambas as partes)", "negociacao")
+    elif termos.corretagem_contratantes not in ("vendedores", "compradores", "partes"):
+        av.bloqueia("CORRETAGEM_CONTRATANTES_INVALIDO", f"Pagador de corretagem desconhecido: {termos.corretagem_contratantes}.")
+    # [§6.1 #23] The marco is the parcela's own `dispara_corretagem` flag.
+    if not corretagem_marcos(d):
         av.falta(
-            "contrato.corretagem_parcelas_marco",
-            "Parcelas cujo recebimento dispara o pagamento da corretagem" + SUFIXO_SEM_CAMPO,
+            "negociacao.corretagem_parcelas_marco",
+            "Parcela(s) cujo recebimento dispara o pagamento da corretagem "
+            "(marque-a na parcela, em Negociação)",
             "negociacao",
         )
-    elif any(not 1 <= n <= len(d.parcelas) for n in comp.corretagem_parcelas_marco):
-        av.bloqueia("CORRETAGEM_MARCO_INEXISTENTE", "A corretagem cita uma parcela que não existe.")
     # [Q5] the corretagem % owed on rescisão is the deal's commission.
     if d.pct_comissao is None:
         av.falta("negociacao.pct_comissao", "Percentual de comissão", "negociacao")
@@ -785,10 +1048,22 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     derivado = modelo_derivado(sw)
     if d.modelo != derivado:
         av.avisa("MODELO_DIVERGENTE", f"O modelo do contrato é '{d.modelo}', mas os dados indicam '{derivado}'.")
-    if d.complementos.itens_integrantes is None:
+    if d.termos.itens_integrantes is None:
         av.avisa("ITENS_INTEGRANTES_NAO_INFORMADOS", "Itens integrantes não informados; o parágrafo foi omitido.")
-    if d.complementos.ad_corpus is None:
+    if d.termos.ad_corpus is None:
         av.avisa("AD_CORPUS_NAO_INFORMADO", "Venda ad corpus não informada; a expressão foi omitida.")
+    # Stored by 114, with no clause in any sample contract — announced so the
+    # operator knows the text they typed is NOT on the instrument.
+    for valor, codigo, rotulo in (
+        (d.termos.obrigacoes_vendedor, "OBRIGACOES_VENDEDOR_SEM_REDACAO", "As obrigações do vendedor"),
+        (
+            d.termos.permuta_obrigacoes_entrega,
+            "PERMUTA_OBRIGACOES_SEM_REDACAO",
+            "As obrigações de entrega do imóvel da permuta",
+        ),
+    ):
+        if (valor or "").strip():
+            av.avisa(codigo, f"{rotulo} foram preenchidas, mas o gerador ainda não tem cláusula para elas; o texto não entra no contrato.")
     if d.imovel is not None:
         av.avisa("FORO_PELA_CIDADE", "O foro usa a cidade do imóvel como comarca.")
 
@@ -796,9 +1071,15 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
 def avaliar(
     d: DadosContrato, switches: dict[str, bool], politica: Politica, assinatura: date
 ) -> Avaliacao:
-    av = Avaliacao()
+    av = Avaliacao(
+        destinos=Destinos(
+            cliente_id=d.cliente_id,
+            contrato_id=d.contrato_id,
+            imovel_codigo=d.imovel.codigo if d.imovel else None,
+        )
+    )
     _partes(av, d)
-    _imovel(av, d, switches)
+    _imovel(av, d, switches, politica, assinatura)
     _negociacao(av, d, switches, assinatura)
     _financiamento(av, d, switches)
     _permuta(av, d, switches)
@@ -811,14 +1092,18 @@ def avaliar(
 
 __all__ = [
     "Avaliacao",
+    "Destinos",
     "MODELO_A_VISTA",
     "MODELO_COMPRA_VENDA",
     "MODELO_PERMUTA",
+    "ORDEM_CERTIDOES_IMOVEL",
     "SUFIXO_PJ_BAIXADA",
     "anos_antes",
     "antigos_proprietarios",
     "avaliar",
+    "certidoes_imovel",
     "classificar_grupo_pj",
+    "corretagem_marcos",
     "derivar_switches",
     "exige_antigo_proprietario",
     "grupos_pj",
@@ -826,6 +1111,8 @@ __all__ = [
     "ha_menos_de_anos",
     "indice_certidoes",
     "modelo_derivado",
+    "numero_da_parcela",
+    "parcelas_antes_de",
     "parcelas_ordenadas",
     "pessoas_certificadas",
     "prazo_pendencias",

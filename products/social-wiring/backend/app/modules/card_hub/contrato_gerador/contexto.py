@@ -2,6 +2,10 @@
 
 Only reached after `derivacao.avaliar` returned `pronto` — every value used
 here has been gated present. Money stays `Decimal` until `brl()` prints it.
+
+The placeholder KEYS are unchanged by the F6 wiring: what moved is where each
+value is read FROM (`termos` / `permuta_imoveis` / the imóvel's own certidões
+instead of a side-car), which is why `modelo_texto` needed no edit at all.
 """
 from __future__ import annotations
 
@@ -27,9 +31,13 @@ from app.modules.card_hub.contrato_gerador.concordancia import lado, normalizar_
 from app.modules.card_hub.contrato_gerador.dados import DadosContrato, Pessoa, signatarios
 from app.modules.card_hub.contrato_gerador.derivacao import (
     antigos_proprietarios,
+    certidoes_imovel,
+    corretagem_marcos,
     exige_antigo_proprietario,
     grupos_pj_exigidos,
     indice_certidoes,
+    numero_da_parcela,
+    parcelas_antes_de,
     parcelas_ordenadas,
     pessoas_certificadas,
     prazo_pendencias,
@@ -53,13 +61,14 @@ def _generos(pessoas: list[Pessoa]) -> list[str]:
 
 
 def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C) -> str:
-    """The permuta parcela (spec §2.3 `p.tipo == 'permuta'`). Its value and the
-    permuta imóvel description are §6.1 Complementos."""
-    imoveis = d.complementos.permuta_imoveis
+    """The permuta parcela (spec §2.3 `p.tipo == 'permuta'`) — its value is the
+    parcela's own, and each imóvel is one `permuta_ativos` link (114) carrying
+    its own matrícula quote (115)."""
+    imoveis = d.permuta_imoveis
     nomes = juntar([(p.nome or "").upper() for p in signatarios(d.compradores)])
     descricoes = " E ".join(
         f"{i.descricao_matricula} Imóvel devidamente cadastrado pela Prefeitura Municipal de "
-        f"{i.cidade} sob nº {i.inscricao_municipal} e caracterizado na Matrícula Nº "
+        f"{i.endereco.cidade} sob nº {i.inscricao_municipal} e caracterizado na Matrícula Nº "
         f"{frases.matricula_numero(i.matricula_numero)} do {i.cartorio}."
         for i in imoveis
     )
@@ -97,7 +106,7 @@ def montar_contexto(
     cl = numerar_clausulas(sw)
     vend, comp_pessoas = signatarios(d.vendedores), signatarios(d.compradores)
     V, C = lado(_generos(vend), "vendedor"), lado(_generos(comp_pessoas), "comprador")
-    comp = d.complementos
+    termos = d.termos
     im = d.imovel
     assert im is not None and d.valor_negociado is not None  # gated
 
@@ -112,13 +121,20 @@ def montar_contexto(
         "sinal": refs("sinal"),
         "financiamento": refs("financiamento"),
         "saldo": refs("saldo"),
-        "permuta": num2(len(parcelas) + 1) if sw["tem_permuta"] else "",
+        # The permuta parcela is one of `parcelas` now (114), so it has its own
+        # computed number instead of one appended past the end of the schedule.
+        "permuta": refs("permuta"),
     }
     favorecidos = {f.id: f for f in d.favorecidos}
     cpf_vendedor = {frases.so_digitos(p.cpf): p for p in vend if p.cpf}
     ja_usados: set[str] = set()
     linhas_parcelas = []
     for p in parcelas:
+        if p.tipo == "permuta":
+            linhas_parcelas.append(
+                {"num": nums[p.id], "texto": _texto_parcela_permuta(p.valor, d, C)}  # type: ignore[arg-type] — gated
+            )
+            continue
         fav = favorecidos.get(p.favorecido_id or "") if p.tipo in {"sinal", "intermediaria", "direta", "saldo"} else None
         linhas_parcelas.append(
             {
@@ -133,16 +149,12 @@ def montar_contexto(
                     favorecido=fav,
                     favorecido_repetido=bool(fav and fav.id in ja_usados),
                     vendedor_favorecido=cpf_vendedor.get(frases.so_digitos(fav.cpf_cnpj)) if fav else None,
-                    juros_am=comp.juros_am_confissao if p.confissao_divida else None,
+                    juros_am=termos.confissao_juros_am if p.confissao_divida else None,
                 ),
             }
         )
         if fav is not None:
             ja_usados.add(fav.id)
-    if sw["tem_permuta"]:
-        linhas_parcelas.append(
-            {"num": p_ref["permuta"], "texto": _texto_parcela_permuta(comp.permuta_parcela_valor, d, C)}  # type: ignore[arg-type]
-        )
 
     sinal = next(p for p in parcelas if p.tipo == "sinal")
     confissao_parcelas = [p for p in parcelas if p.confissao_divida]
@@ -173,7 +185,7 @@ def montar_contexto(
     grupos, pendentes_cert = [], []
     n = 0
     for p in pessoas_cert:
-        idx = indice_certidoes(p.certidoes or [], "cpf")
+        idx = indice_certidoes(p.certidoes, "cpf")
         n += 1
         grupos.append(
             {
@@ -199,22 +211,37 @@ def montar_contexto(
                 }
             )
             pendentes_cert += [frases.pendencia_certidao(t, nome_pj) for t in tipos if idx[t].resultado == "nao_emitida"]
+
+    # [§6.1 #14] The imóvel's own group (migration 118): matrícula + IPTU CND +
+    # condominial CND, whichever are on file.
+    cert_imovel = certidoes_imovel(d)
+    apresentadas = {c.tipo for c in cert_imovel}
     grupos_imovel = []
-    if im.onus_certidao_em and im.numero_matricula:
+    if cert_imovel:
         n += 1
         grupos_imovel.append(
-            {"num": n, "titulo": imovel["endereco_curto"], "itens": [frases.item_matricula_imovel(im.numero_matricula, im.onus_certidao_em)]}
+            {
+                "num": n,
+                "titulo": imovel["endereco_curto"],
+                "itens": [
+                    frases.item_certidao_imovel(c, numero_matricula=im.numero_matricula)
+                    for c in cert_imovel
+                ],
+            }
         )
 
+    # A document already PRESENTED above is not also requested below (spec
+    # §2.5: the IPTU CND is a pendência "only when not already listed").
     pendencias: list[str] = []
-    if em_condominio:
+    if em_condominio and "cnd_condominio" not in apresentadas:
         pendencias.append(frases.PENDENCIA_CONDOMINIO_PERMUTA if sw["tem_permuta"] else frases.PENDENCIA_CONDOMINIO)
     pendencias.append(frases.pendencia_estado_civil(politica.certidao_estado_civil_max_dias))
     pendencias.append(frases.PENDENCIA_DOCUMENTOS)
-    if not grupos_imovel:
+    if "matricula" not in apresentadas:
         pendencias.append(frases.PENDENCIA_MATRICULA)
     pendencias.append(frases.PENDENCIA_CONTAS_CONSUMO)
-    pendencias.append(frases.PENDENCIA_IPTU)
+    if "cnd_iptu" not in apresentadas:
+        pendencias.append(frases.PENDENCIA_IPTU)
     if sw["tem_saldo_devedor"]:
         pendencias.append(frases.pendencia_baixa_onus(im.situacao_onus or ""))
     pendencias += pendentes_cert
@@ -241,29 +268,33 @@ def montar_contexto(
     onus: dict[str, Any] = {"quitacao": None}
     if sw["tem_saldo_devedor"]:
         onus = {
-            "credor": comp.onus_credor,
+            "credor": im.onus_credor,
             "fonte_texto": frases.onus_fonte_texto(im.onus_fonte_atos),
-            "quitacao": comp.onus_quitacao,
+            "quitacao": termos.onus_quitacao,
             "quitacao_texto": frases.onus_quitacao_texto(
-                comp.onus_quitacao or "",
+                termos.onus_quitacao or "",
                 C=C,
                 ref_saldo=p_ref["saldo"],
-                ref_clausula_preco=cl["preco"].ref if comp.onus_quitacao == "parcela" else "",
+                ref_clausula_preco=cl["preco"].ref if termos.onus_quitacao == "parcela" else "",
             ),
-            "prazo_dias": comp.onus_prazo_dias,
+            "prazo_dias": termos.onus_prazo_dias,
         }
 
-    marco = comp.posse_marco or ""
-    if marco == "parcela_financiamento":
-        primeira_fin = next(i for i, p in enumerate(parcelas) if p.tipo == "financiamento")
-        condicao = frases.condicao_posse_frase([nums[p.id] for p in parcelas[:primeira_fin]], todas=False)
+    # [§6.1 #12] The marco names its parcela (114); the clause prints THAT
+    # parcela's computed number, and the condition covers what precedes it.
+    marco = termos.posse_marco or ""
+    ref_marco = numero_da_parcela(d, termos.posse_marco_parcela_id) or ""
+    if marco == "parcela":
+        condicao = frases.condicao_posse_frase(
+            parcelas_antes_de(d, termos.posse_marco_parcela_id), todas=False
+        )
     elif marco != "assinatura" and sw["a_vista"]:
         condicao = frases.condicao_posse_frase([], todas=True)
     else:
         condicao = ""
     posse = {
-        "prazo": comp.posse_prazo_dias,
-        "marco_texto": frases.posse_marco_texto(marco, ref_financiamento=p_ref["financiamento"]),
+        "prazo": termos.posse_prazo_dias,
+        "marco_texto": frases.posse_marco_texto(marco, ref_parcela=ref_marco),
         "condicao_frase": condicao,
         # [Q12] the office's value — same daily fine for each party in a permuta.
         "multa_diaria": d.imobiliaria.posse_multa_diaria,
@@ -271,10 +302,11 @@ def montar_contexto(
     permuta: dict[str, Any] = {}
     if sw["tem_permuta"]:
         permuta = {
-            "endereco_curto": comp.permuta_imoveis[0].endereco_curto,
-            "posse_prazo": comp.permuta_posse_prazo_dias,
+            "endereco_curto": frases.endereco_curto(d.permuta_imoveis[0].endereco),
+            "posse_prazo": termos.permuta_posse_prazo_dias,
             "posse_marco_texto": frases.posse_marco_texto(
-                comp.permuta_posse_marco or "", ref_financiamento=p_ref["financiamento"]
+                termos.permuta_posse_marco or "",
+                ref_parcela=numero_da_parcela(d, termos.permuta_posse_marco_parcela_id) or "",
             ),
         }
 
@@ -284,15 +316,20 @@ def montar_contexto(
         qualificados = []
         if any(i.corretor_id for i in d.intermediarios):
             qualificados.append(frases.qualificacao_imobiliaria(d.imobiliaria))
-        qualificados += [comp.intermediarios_qualificacao[i.id] for i in d.intermediarios if not i.corretor_id]
-        texto, texto_cap, contrata = frases.corretagem_contratantes(comp.corretagem_contratantes or "", V=V)
+        # [§6.1 #21] Each external intermediário is qualified from its OWN row.
+        qualificados += [
+            frases.qualificacao_intermediario(i) for i in d.intermediarios if not i.corretor_id
+        ]
+        texto, texto_cap, contrata = frases.corretagem_contratantes(
+            termos.corretagem_contratantes or "", V=V, C=C
+        )
         valores = []
         for it in d.intermediarios:
             if it.tipo == "percentual":
                 valor = (d.valor_negociado * it.valor / Decimal(100)).quantize(CENTAVO, rounding=ROUND_HALF_UP)  # type: ignore[operator]
             else:
                 valor = it.valor  # type: ignore[assignment]
-            valores.append((valor, favorecidos[comp.corretagem_favorecidos[it.id]]))
+            valores.append((valor, favorecidos[it.favorecido_id]))  # type: ignore[index] — gated
         plural_emp = len(qualificados) > 1
         corretagem = {
             "qualificados": qualificados,
@@ -302,8 +339,9 @@ def montar_contexto(
             "empresas_texto": "as empresas a seguir qualificadas" if plural_emp else "a empresa a seguir qualificada",
             "contratadas_texto": "as empresas contratadas" if plural_emp else "a empresa contratada",
             "total": sum((v for v, _ in valores), Decimal("0")),
-            "parcelamento_texto": frases.parcelamento_texto(comp.corretagem_num_parcelas),
-            "marcos_texto": frases.marcos_texto([num2(x) for x in comp.corretagem_parcelas_marco]),
+            "parcelamento_texto": frases.parcelamento_texto(termos.corretagem_num_parcelas),
+            # [§6.1 #23] The marco parcelas are the ones flagged on the schedule.
+            "marcos_texto": frases.marcos_texto(corretagem_marcos(d)),
             "splits": [frases.split_corretagem(v, fav) for v, fav in valores],
             "pct_rescisao": frases.pct_simples(d.pct_comissao),  # type: ignore[arg-type] — [Q5]
         }
@@ -322,16 +360,16 @@ def montar_contexto(
         "V_signatarios": [frases.signatario_linha(p) for p in vend],
         "C_signatarios": [frases.signatario_linha(p) for p in comp_pessoas],
         "imovel": imovel,
-        "titulo_aquisitivo": (comp.titulo_aquisitivo_texto or "").strip(),
-        "itens_integrantes": (comp.itens_integrantes or "").strip(),
+        "titulo_aquisitivo": (im.titulo_aquisitivo_texto or "").strip(),
+        "itens_integrantes": (termos.itens_integrantes or "").strip(),
         "preco": d.valor_negociado,
         "parcelas": linhas_parcelas,
         "p_ref": p_ref,
         "confissao": {
             "parcelas_nums": juntar([nums[p.id] for p in confissao_parcelas]),
             "total": sum((p.valor for p in confissao_parcelas), Decimal("0")),  # type: ignore[misc]
-            "juros_am": comp.juros_am_confissao,
-            "garantia_texto": (comp.garantia_confissao or "").strip(),
+            "juros_am": termos.confissao_juros_am,
+            "garantia_texto": (termos.confissao_garantia or "").strip(),
         },
         "certidoes": certidoes,
         "prazo_pendencias": prazo_pendencias(d, politica),

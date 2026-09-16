@@ -6,23 +6,36 @@
 | titular + partes by lado      | `services.ensure_cliente`, `compradores_service.listar` |
 | qualificação gate per person  | `documento_checklist_service.completude_contratual`  |
 | certidões per parte           | `certidoes.service.certidoes_por_parte`              |
-| negociação / parcelas / …     | `negociacao_service.obter`, `negociacao_estruturada_service.obter_estruturada` |
+| certidões do titular (116)    | `certidoes.service.certidoes_por_cliente`            |
+| negociação / parcelas / termos| `negociacao_service.obter`, `negociacao_estruturada_service.obter_estruturada` |
 | financiamento                 | `financiamento_service.obter`                        |
 | imóvel address                | `imovel_hub.busca_service.enriquecer`                |
 | imóvel matrícula/ônus/título  | `imovel_hub.dados_service.obter`                     |
+| imóvel certidões (118)        | `imovel_hub.documentos_service.certidoes`            |
+| última compra e venda (115)   | `matriculas.titulo_service.antigos_proprietarios`    |
 | matrícula literal text        | `matriculas.estrutura_service.obter_selecao` (logs the text read) |
 | ônus source acts (kind/nº)    | `matriculas.estrutura_service.listar_atos` (logs the text read)   |
+| permuta ativos (114)          | `permuta_ativos` rows via `table_reads.in_batched_rows` |
 | org cadastral + testemunhas   | `settings_router.get_dados_imobiliaria` / `list_testemunhas`      |
 
-🔴 LGPD: both matrícula reads append a `text_view` access row for the
-requesting user — the generator reads the CPF-bearing transcription on their
-behalf, exactly as the selection panel does.
+Services are called DIRECTLY (Python), never over HTTP — one request, one
+transaction-shaped read, and no self-call that would need a token.
+
+🔴 LGPD: the matrícula reads append a `text_view` access row, and the
+última-compra-e-venda read a `detalhes_view` row, for the requesting user —
+the generator reads the CPF-bearing transcription and its typed details on
+their behalf, exactly as the selection panel does.
+
+🔴 THIS MODULE NEVER FORMATS AND NEVER INVENTS. It carries values across
+(coercing only types: ISO string -> `date`, numeric string -> `Decimal`).
+Wording belongs to `frases`/`contexto`; a value nobody entered stays None so
+`derivacao` can NAME it. That is why there is no `or ""` anywhere below.
 """
 from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 from uuid import UUID
 
 from noctusai_lib.integrations.documents.formatting import ranges_from_json
@@ -37,7 +50,7 @@ from app.modules.card_hub import services as svc
 from app.modules.card_hub.contrato_gerador.dados import (
     AtoCitado,
     Certidao,
-    Complementos,
+    CertidaoImovel,
     DadosContrato,
     Endereco,
     Favorecido,
@@ -47,12 +60,20 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Intermediario,
     Matricula,
     Parcela,
+    PermutaImovel,
     Pessoa,
+    Termos,
     Testemunha,
 )
 from app.modules.certidoes import service as certidoes_svc
 from app.modules.imovel_hub import busca_service, dados_service
-from app.modules.matriculas import estrutura_service
+from app.modules.imovel_hub import documentos_service as imovel_docs_svc
+from app.modules.matriculas import estrutura_service, titulo_service
+from app.services import table_reads
+
+#: `permuta_ativos`' own address snapshot (migration 101) — bare column names,
+#: same spelling the `imoveis` mirror uses, so ONE `_endereco` call reads either.
+_CAMPOS_ENDERECO = ("logradouro", "numero", "complemento", "bairro", "cidade", "uf", "cep")
 
 
 def _data(valor: Any) -> Optional[date]:
@@ -67,6 +88,16 @@ def _dec(valor: Any) -> Optional[Decimal]:
     return Decimal(str(valor))
 
 
+def _int(valor: Any) -> Optional[int]:
+    if valor is None or valor == "":
+        return None
+    return int(valor)
+
+
+def _id(valor: Any) -> Optional[str]:
+    return str(valor) if valor else None
+
+
 def _endereco(fonte: dict, prefixo: str = "endereco_") -> Endereco:
     return Endereco(
         logradouro=fonte.get(f"{prefixo}logradouro"),
@@ -79,26 +110,38 @@ def _endereco(fonte: dict, prefixo: str = "endereco_") -> Endereco:
     )
 
 
+def _certidao(r: dict) -> Certidao:
+    return Certidao(
+        tipo=r["tipo"],
+        resultado=r.get("resultado"),
+        numero=r.get("numero"),
+        emitida_em=_data(r.get("emitida_em")),
+        validade_ate=_data(r.get("validade_ate")),
+        consulta_tipo_documento=r.get("consulta_tipo_documento") or "cpf",
+        consulta_nome=r.get("consulta_nome"),
+        consulta_documento=r.get("consulta_documento"),
+        # Migration 116 — the CNPJ/CPF's registration state, denormalised onto
+        # each resultado by `_resultados_das_consultas`.
+        consulta_situacao_cadastral=r.get("consulta_situacao_cadastral"),
+        consulta_data_situacao=_data(r.get("consulta_data_situacao")),
+    )
+
+
 def _pessoa(
     client: Any, org_id: UUID, cliente_id: str, lado: str, papel: str, parte_id: Optional[str]
 ) -> Pessoa:
     row = svc.ensure_cliente(client, org_id, UUID(cliente_id))
     completude = checklist_svc.completude_contratual(client, org_id, UUID(cliente_id))
-    certidoes: Optional[list[Certidao]] = None
-    if parte_id:
-        certidoes = [
-            Certidao(
-                tipo=r["tipo"],
-                resultado=r.get("resultado"),
-                numero=r.get("numero"),
-                emitida_em=_data(r.get("emitida_em")),
-                validade_ate=_data(r.get("validade_ate")),
-                consulta_tipo_documento=r.get("consulta_tipo_documento") or "cpf",
-                consulta_nome=r.get("consulta_nome"),
-                consulta_documento=r.get("consulta_documento"),
-            )
-            for r in certidoes_svc.certidoes_por_parte(client, org_id, parte_id)
-        ]
+    # Migration 116 closed spec §6.1 #18. A parte's certidões stay DEAL-scoped
+    # (`atendimento_parte_id`); the TITULAR has no parte row at all, and
+    # `certidoes_por_cliente` is what 116 added to reach them.
+    brutas = (
+        certidoes_svc.certidoes_por_parte(client, org_id, parte_id)
+        if parte_id
+        else certidoes_svc.certidoes_por_cliente(client, org_id, cliente_id)
+    )
+    # Migration 117 — the document's OWN emission date, not its upload date.
+    certidao_ec = completude.get("certidao_estado_civil") or {}
     return Pessoa(
         cliente_id=cliente_id,
         lado=lado,
@@ -116,9 +159,11 @@ def _pessoa(
         rg_orgao=row.get("rg_orgao_expedidor"),
         email=row.get("email"),
         endereco=_endereco(row),
-        conjuge_cliente_id=(str(row["conjuge_cliente_id"]) if row.get("conjuge_cliente_id") else None),
+        conjuge_cliente_id=_id(row.get("conjuge_cliente_id")),
+        data_casamento=_data(row.get("data_casamento")),
+        certidao_estado_civil_emitida_em=_data(certidao_ec.get("emitida_em")),
         faltando_qualificacao=list(completude.get("faltando") or []),
-        certidoes=certidoes,
+        certidoes=[_certidao(r) for r in brutas],
     )
 
 
@@ -139,6 +184,13 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
             if ato is not None:
                 atos.append(AtoCitado(kind=ato["kind"], numero=ato.get("numero")))
 
+    # Migration 115. Only `data_registro` + `transmitentes` are read: the
+    # service's own `exige_certidoes` is computed against TODAY, while the
+    # contract's [Q9] rule runs against the ASSINATURA date — `derivacao`
+    # recomputes it there rather than inheriting a differently-dated answer.
+    antigos = titulo_service.antigos_proprietarios(client, org_id, codigo, usuario_id=usuario_id)
+    ultima = antigos.get("ultima_transferencia") or {}
+
     fonte_titulo = dados.get("titulo_aquisitivo_fonte") or {}
     return Imovel(
         codigo=codigo,
@@ -152,6 +204,109 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
         onus_certidao_em=_data(dados.get("onus_certidao_em")),
         onus_fonte_atos=atos,
         titulo_aquisitivo_confirmado=bool(fonte_titulo.get("confirmado_em")),
+        # Migration 115 — the operator's CONFIRMED wording, never the suggestion.
+        titulo_aquisitivo_texto=dados.get("titulo_aquisitivo_texto"),
+        onus_credor=dados.get("onus_credor"),
+        ultima_transferencia_em=_data(ultima.get("data_registro")),
+        ultima_transferencia_transmitentes=tuple(
+            t["nome"] for t in antigos.get("transmitentes") or [] if t.get("nome")
+        ),
+        # Migration 118 — the imóvel's own CND / matrícula certidões.
+        certidoes=tuple(
+            CertidaoImovel(
+                tipo=i["tipo"],
+                numero=i.get("numero"),
+                emitida_em=_data(i.get("emitida_em")),
+                validade_ate=_data(i.get("validade_ate")),
+                resultado=i.get("resultado"),
+                inscricao_imobiliaria=i.get("inscricao_imobiliaria"),
+                confirmado=bool(i.get("confirmado")),
+            )
+            for i in imovel_docs_svc.certidoes(client, org_id, codigo)["items"]
+        ),
+    )
+
+
+def _permuta_imoveis(
+    client: Any,
+    org_id: UUID,
+    ativo_ids: Iterable[str],
+    selecao: dict,
+) -> list[PermutaImovel]:
+    """One `PermutaImovel` per ativo the permuta parcela is paid with, in link
+    order (migration 114), each carrying ITS OWN matrícula quote —
+    `obter_selecao()['permutas']`, keyed by `permuta_ativo_id` (migration 115's
+    `papel='permuta'`). That keying IS the per-imóvel act role: a contract
+    swapping two matrículas quotes each under its own ativo."""
+    ids = [str(a) for a in ativo_ids]
+    if not ids:
+        return []
+    citacoes = {str(p["permuta_ativo_id"]): p for p in selecao.get("permutas") or []}
+    ativos = {
+        str(r["id"]): r
+        for r in table_reads.in_batched_rows(client, "permuta_ativos", org_id, "id", ids)
+    }
+
+    saida: list[PermutaImovel] = []
+    for ativo_id in ids:
+        ativo = ativos.get(ativo_id) or {}
+        citacao = citacoes.get(ativo_id) or {}
+        codigo = ativo.get("imovel_codigo")
+        imovel_dados: dict = {}
+        catalogo: dict = {}
+        if codigo:
+            imovel_dados = dados_service.obter(client, org_id, codigo)
+            catalogo = (
+                busca_service.enriquecer(client, org_id, [codigo]).get(
+                    busca_service.canonical(codigo)
+                )
+                or {}
+            )
+        # The catalog imóvel answers when it holds the field; otherwise the
+        # ativo's own snapshot does. A permuta ativo is often NOT a catalog
+        # listing (migration 101 carries its profile for exactly that case),
+        # and a registered-but-empty mirror row must not blank the address.
+        fonte_endereco = {
+            **{campo: ativo.get(campo) for campo in _CAMPOS_ENDERECO},
+            **{campo: catalogo[campo] for campo in _CAMPOS_ENDERECO if catalogo.get(campo)},
+        }
+        texto = (citacao.get("texto") or "").strip()
+        saida.append(
+            PermutaImovel(
+                permuta_ativo_id=ativo_id,
+                descricao_matricula=texto or None,
+                endereco=_endereco(fonte_endereco, prefixo=""),
+                inscricao_municipal=imovel_dados.get("prefeitura_cadastro_imobiliario"),
+                matricula_numero=imovel_dados.get("numero_matricula"),
+                cartorio=imovel_dados.get("numero_registro_imoveis"),
+                num_atos=len(citacao.get("atos") or []),
+            )
+        )
+    return saida
+
+
+def _termos(bruto: dict) -> Termos:
+    """`atendimento_negociacao_termos` (114) as read. `ad_corpus` stays
+    TRI-STATE: None = never answered (an aviso), False = answered "not ad
+    corpus" (the expression is omitted) — collapsing them would silently turn
+    an unanswered question into an answer."""
+    return Termos(
+        posse_prazo_dias=_int(bruto.get("posse_prazo_dias")),
+        posse_marco=bruto.get("posse_marco"),
+        posse_marco_parcela_id=_id(bruto.get("posse_marco_parcela_id")),
+        permuta_posse_prazo_dias=_int(bruto.get("permuta_posse_prazo_dias")),
+        permuta_posse_marco=bruto.get("permuta_posse_marco"),
+        permuta_posse_marco_parcela_id=_id(bruto.get("permuta_posse_marco_parcela_id")),
+        permuta_obrigacoes_entrega=bruto.get("permuta_obrigacoes_entrega"),
+        itens_integrantes=bruto.get("itens_integrantes"),
+        ad_corpus=bruto.get("ad_corpus"),
+        obrigacoes_vendedor=bruto.get("obrigacoes_vendedor"),
+        onus_quitacao=bruto.get("onus_quitacao"),
+        onus_prazo_dias=_int(bruto.get("onus_prazo_dias")),
+        confissao_juros_am=_dec(bruto.get("confissao_juros_am")),
+        confissao_garantia=bruto.get("confissao_garantia"),
+        corretagem_contratantes=bruto.get("corretagem_contratantes"),
+        corretagem_num_parcelas=_int(bruto.get("corretagem_num_parcelas")),
     )
 
 
@@ -173,6 +328,11 @@ def _imobiliaria(client: Any, org_id: UUID) -> tuple[Imobiliaria, list[Testemunh
             responsavel_creci=org.get("responsavel_creci"),
             email=org.get("email"),
             endereco=_endereco(org),
+            # Migration 117 — the office's own operational answers.
+            posse_multa_diaria=_dec(org.get("posse_multa_diaria")),
+            plataforma_assinatura_nome=org.get("plataforma_assinatura_nome"),
+            plataforma_assinatura_url=org.get("plataforma_assinatura_url"),
+            prazo_pendencias_padrao_dias=_int(org.get("prazo_pendencias_padrao_dias")),
         ),
         [Testemunha(nome=t.get("nome"), rg=t.get("rg"), cpf=t.get("cpf")) for t in testemunhas],
     )
@@ -185,7 +345,6 @@ def carregar(
     contrato_id: UUID,
     *,
     usuario_id: Optional[Any],
-    complementos: Complementos,
 ) -> tuple[DadosContrato, UUID]:
     """Returns (dados, atendimento_id). 404 (NotFoundError) for a deleted or
     foreign contract, before anything else is read."""
@@ -213,8 +372,32 @@ def carregar(
     selecao = estrutura_service.obter_selecao(client, org_id, contrato_id, usuario_id=usuario_id)
     imobiliaria, testemunhas = _imobiliaria(client, org_id)
 
+    parcelas = [
+        Parcela(
+            id=str(p["id"]),
+            tipo=p["tipo"],
+            valor=_dec(p.get("valor")),
+            vencimento=_data(p.get("vencimento")),
+            evento=p.get("evento"),
+            forma_pagamento=p.get("forma_pagamento"),
+            favorecido_id=_id(p.get("favorecido_id")),
+            confissao_divida=bool(p.get("confissao_divida")),
+            ordem=int(p.get("ordem") or 0),
+            # Migration 114.
+            dispara_corretagem=bool(p.get("dispara_corretagem")),
+            permuta_ativo_ids=tuple(str(a) for a in p.get("permuta_ativo_ids") or ()),
+        )
+        for p in estruturada.get("parcelas") or []
+    ]
+    # 🔴 Permuta is the `tipo='permuta'` PARCELA (114) — not the legacy
+    # `atendimento_negociacao.permuta_ativo_id`, which held ONE asset and
+    # which `negociacao_estruturada_service` marks superseded.
+    permutas = [p for p in parcelas if p.tipo == "permuta"]
+    ativos_permuta = [a for p in permutas for a in p.permuta_ativo_ids]
+
     dados = DadosContrato(
         contrato_id=str(contrato_id),
+        cliente_id=str(cliente_id),
         modelo=contrato["modelo"],
         vendedores=vendedores,
         compradores=compradores,
@@ -227,20 +410,7 @@ def carregar(
         ),
         valor_negociado=_dec(estruturada.get("valor_negociado")),
         pct_comissao=_dec(negociacao.get("pct_comissao")),
-        parcelas=[
-            Parcela(
-                id=str(p["id"]),
-                tipo=p["tipo"],
-                valor=_dec(p.get("valor")),
-                vencimento=_data(p.get("vencimento")),
-                evento=p.get("evento"),
-                forma_pagamento=p.get("forma_pagamento"),
-                favorecido_id=(str(p["favorecido_id"]) if p.get("favorecido_id") else None),
-                confissao_divida=bool(p.get("confissao_divida")),
-                ordem=int(p.get("ordem") or 0),
-            )
-            for p in estruturada.get("parcelas") or []
-        ],
+        parcelas=parcelas,
         favorecidos=[
             Favorecido(
                 id=str(f["id"]), nome=f["nome"], cpf_cnpj=f.get("cpf_cnpj"), banco=f.get("banco"),
@@ -252,10 +422,17 @@ def carregar(
             Intermediario(
                 id=str(i["id"]), corretor_id=i.get("corretor_id"), nome=i["nome"], creci=i.get("creci"),
                 tipo=i.get("tipo") or "percentual", valor=_dec(i.get("valor")),
+                # Migration 114 — the favorecido link + PF/PJ qualification.
+                favorecido_id=_id(i.get("favorecido_id")),
+                pessoa_tipo=i.get("pessoa_tipo"),
+                documento=i.get("documento"),
+                email=i.get("email"),
+                endereco=_endereco(i),
+                representante_nome=i.get("representante_nome"),
+                representante_cpf=i.get("representante_cpf"),
             )
             for i in estruturada.get("intermediarios") or []
         ],
-        permuta_ativo_id=(str(negociacao["permuta_ativo_id"]) if negociacao.get("permuta_ativo_id") else None),
         financiamento=Financiamento(
             existe=bool(financiamento.get("existe")),
             situacao=financiamento.get("situacao") or "pendente",
@@ -263,7 +440,11 @@ def carregar(
         ),
         imobiliaria=imobiliaria,
         testemunhas=testemunhas,
-        complementos=complementos,
+        termos=_termos(estruturada.get("termos") or {}),
+        permuta_imoveis=_permuta_imoveis(client, org_id, ativos_permuta, selecao),
+        # Migration 114.
+        prazo_pendencias_dias=_int(contrato.get("prazo_pendencias_dias")),
+        assinatura_data=_data(contrato.get("assinatura_data")),
     )
     return dados, atendimento_id
 

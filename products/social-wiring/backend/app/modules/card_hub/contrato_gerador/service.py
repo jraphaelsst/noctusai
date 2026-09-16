@@ -20,7 +20,7 @@ from noctusai_lib.primitives.exceptions import AppException
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub.contrato_gerador.carregador import carregar
 from app.modules.card_hub.contrato_gerador.contexto import snapshot_sha256
-from app.modules.card_hub.contrato_gerador.dados import Complementos
+from app.modules.card_hub.contrato_gerador.dados import DadosContrato
 from app.modules.card_hub.contrato_gerador.derivacao import (
     avaliar,
     derivar_switches,
@@ -37,6 +37,20 @@ def hoje() -> date:
     """The office's calendar date — a contract signed at 22h in São Paulo is
     not dated tomorrow because the server runs on UTC."""
     return datetime.now(FUSO).date()
+
+
+def data_assinatura(dados: DadosContrato, pedida: Optional[date]) -> date:
+    """Which date the instrument is dated, and which the gate measures every
+    certidão's age against.
+
+    Precedence, most specific first: the date the operator asked for in THIS
+    request, then the date STORED on the contract
+    (`atendimento_contratos.assinatura_data`, migration 114), then today in
+    São Paulo. A stored date beats "today" because the office sets it when the
+    signing is scheduled; an explicit request beats the stored one because
+    that is an operator dating this generation deliberately.
+    """
+    return pedida or dados.assinatura_data or hoje()
 
 
 class ContratoIncompleto(AppException):
@@ -82,14 +96,15 @@ def obter_geracao(
     contrato_id: UUID,
     *,
     usuario_id: Optional[Any],
-    complementos: Complementos,
     politica: Politica,
 ) -> dict:
-    dados, _ = carregar(
-        client, org_id, cliente_id, contrato_id, usuario_id=usuario_id, complementos=complementos
-    )
+    dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
     switches = derivar_switches(dados, politica)
-    avaliacao = avaliar(dados, switches, politica, hoje())
+    # No date is "asked for" on a GET, so this is the stored one or today —
+    # the same value `gerar` will use for a POST with no explicit date, which
+    # is what makes this answer the POST's precondition rather than an
+    # approximation of it.
+    avaliacao = avaliar(dados, switches, politica, data_assinatura(dados, None))
     derivado = modelo_derivado(switches)
     return {
         "contrato_id": str(contrato_id),
@@ -113,19 +128,16 @@ async def gerar(
     *,
     assinatura: Optional[date],
     usuario_id: Optional[Any],
-    complementos: Complementos,
     politica: Politica,
 ) -> dict:
-    data_assinatura = assinatura or hoje()
-    dados, atendimento_id = carregar(
-        client, org_id, cliente_id, contrato_id, usuario_id=usuario_id, complementos=complementos
-    )
+    dados, atendimento_id = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
+    data = data_assinatura(dados, assinatura)
     switches = derivar_switches(dados, politica)
-    avaliacao = avaliar(dados, switches, politica, data_assinatura)
+    avaliacao = avaliar(dados, switches, politica, data)
     if not avaliacao.pronto:
         raise ContratoIncompleto(avaliacao.faltando, avaliacao.bloqueios)
 
-    renderizado = renderizar(adapter, dados, switches, politica, data_assinatura)
+    renderizado = renderizar(adapter, dados, switches, politica, data)
     achados = lint(
         renderizado.paragrafos,
         referencias=renderizado.referencias,
@@ -150,7 +162,7 @@ async def gerar(
         contrato_id,
         data=pdf,
         content_type=MIME_PDF,
-        contexto_sha256=snapshot_sha256(dados, politica, data_assinatura),
+        contexto_sha256=snapshot_sha256(dados, politica, data),
         usuario_id=usuario_id,
     )
     return {"versao": versao, "avisos": avaliacao.avisos}
@@ -160,6 +172,7 @@ __all__ = [
     "ContratoIncompleto",
     "ContratoPdfNaoGerado",
     "ContratoReprovadoNaRevisao",
+    "data_assinatura",
     "gerar",
     "hoje",
     "obter_geracao",

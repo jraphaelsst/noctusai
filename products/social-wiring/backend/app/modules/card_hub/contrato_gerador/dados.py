@@ -1,33 +1,53 @@
 """The generator's pure input — every value a contract can print, already read.
 
 `carregador.carregar` fills this from the existing card_hub / matrículas /
-certidões / settings services; everything downstream (`derivacao`,
+certidões / imóvel / settings services; everything downstream (`derivacao`,
 `contexto`, rendering, lint) is pure over it. That split is what lets the
 6 variants of spec §1.3 be tested with synthetic fixtures and no database.
 
-`Complementos` is the honest name for spec §6.1: fields the contracts USE and
-the system does not HOLD. Production passes an empty `Complementos()` (see
-`deps.get_complementos_contrato`), so every switch that needs one of them
-reports it as `faltando` — never a blank, never an invented value.
-NOC-REMEDIATE[contrato-f6-campos-missing]: each field below moves to real
-storage (the F6 data-model slice); the provider then reads it — 2026-09-14
+WHERE EACH VALUE LIVES, AND WHY THERE
+-------------------------------------
+Spec §6.1 listed 28 fields the contracts USE and the system did not HOLD. Six
+backend slices (migrations 114-118) gave every one of them real storage, so
+each now lives on the ENTITY IT DESCRIBES rather than in a side-car:
 
-The fields the office's policy answers added (spec §6.2, answered 2026-09-15)
-live on the entity they describe — `Pessoa.data_casamento` /
-`certidao_estado_civil_emitida_em`, `Certidao.consulta_situacao_cadastral` /
-`consulta_data_situacao`, `Imovel.ultima_transferencia_em`, the
-`Imobiliaria` office settings and `DadosContrato.prazo_pendencias_dias`. Each
-defaults to None = UNKNOWN, so a loader that does not read it yet still builds
-a `DadosContrato`; the gate then names it as `faltando`.
-NOC-REMEDIATE[contrato-f6-campos-missing]: `carregador` fills these (the F6
-wiring slice) — 2026-09-15
+- `Termos`              <- `atendimento_negociacao_termos` (114): the per-deal
+  clauses (posse, itens/ad corpus, ônus, confissão, corretagem).
+- `Parcela.dispara_corretagem` / `.permuta_ativo_ids` <- the parcela row (114).
+- `Intermediario.*` qualification <- `atendimento_intermediarios` (114).
+- `Imovel.titulo_aquisitivo_texto` / `.onus_credor` <- `imovel_dados` (115),
+  the operator's CONFIRMED wording (never the recomputed suggestion).
+- `Imovel.ultima_transferencia_em` / `.ultima_transferencia_transmitentes`
+  <- the matrícula's last compra e venda (115).
+- `PermutaImovel`       <- the `tipo='permuta'` parcela's `permuta_ativos`
+  (114) + each ativo's own imóvel + that ativo's matrícula quote (115).
+- `Certidao.consulta_situacao_cadastral` / `.consulta_data_situacao`
+  <- `certidao_consultas` (116).
+- `Pessoa.certidoes`    <- reachable for EVERY party incl. the titular (116).
+- `Pessoa.data_casamento` / `.certidao_estado_civil_emitida_em` <- 117.
+- `Imobiliaria` office settings <- `org_dados_cadastrais` (117).
+- `Imovel.certidoes`    <- `GET /api/imoveis/{codigo}/certidoes` (118).
+- `DadosContrato.prazo_pendencias_dias` <- the contract row (114).
+
+Every field still defaults to None/empty = UNKNOWN, so a partially-filled card
+builds a `DadosContrato`; the gate then NAMES what is missing (`faltando`)
+with a machine-usable `destino`. Nothing here is ever invented.
+
+WHAT REMAINS WITHOUT A HOME (spec §6.1, named refusals — see `derivacao`)
+------------------------------------------------------------------------
+- #20 procurador / inventariante qualification wording (`PAPEIS_SEM_REDACAO`):
+  no sample contract has it, so there is no wording to generate.
+- `Termos.onus_quitacao='ja_quitado'` (#11's "already paid, has termo" state)
+  and `Termos.obrigacoes_vendedor` / `.permuta_obrigacoes_entrega`: stored by
+  114, but the sample contracts carry no clause for them — the gate refuses by
+  name rather than printing a clause the office never wrote.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Mapping, Optional
+from typing import Optional
 
 from noctusai_lib.integrations.documents.formatting import FormatRange
 
@@ -64,6 +84,21 @@ class Certidao:
 
 
 @dataclass
+class CertidaoImovel:
+    """One row of `GET /api/imoveis/{codigo}/certidoes` (migration 118) — the
+    contract's imóvel certidão group. Subject to the same [Q10] 30-day rule as
+    a party's certidões."""
+
+    tipo: str  # "cnd_iptu" | "cnd_condominio" | "matricula"
+    numero: Optional[str] = None
+    emitida_em: Optional[date] = None
+    validade_ate: Optional[date] = None
+    resultado: Optional[str] = None
+    inscricao_imobiliaria: Optional[str] = None
+    confirmado: bool = False
+
+
+@dataclass
 class Pessoa:
     cliente_id: str
     lado: str  # "vendedor" | "comprador"
@@ -90,9 +125,10 @@ class Pessoa:
     certidao_estado_civil_emitida_em: Optional[date] = None
     #: Keys from `documento_checklist_service.completude_contratual`.
     faltando_qualificacao: list[str] = field(default_factory=list)
-    #: None = unreachable, not "none issued": the titular has no parte row,
-    #: and certidões are linked by parte (spec §6.1 #18).
-    certidoes: Optional[list[Certidao]] = None
+    #: Migration 116 closed spec §6.1 #18: certidões are reachable for EVERY
+    #: party, the titular included (`certidoes_por_cliente`). An empty list is
+    #: therefore "none issued yet" — a real, nameable gap — never "unreachable".
+    certidoes: list[Certidao] = field(default_factory=list)
 
 
 @dataclass
@@ -106,6 +142,12 @@ class Parcela:
     favorecido_id: Optional[str]
     confissao_divida: bool
     ordem: int
+    #: [§6.1 #23] Receiving THIS parcela is what triggers the corretagem
+    #: payment — the marco is a fact about the parcela, not a typed number.
+    dispara_corretagem: bool = False
+    #: [§6.1 #1, #2] The `permuta_ativos` this `tipo='permuta'` parcela is paid
+    #: with. More than one is normal (contract 01 swaps two matrículas).
+    permuta_ativo_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -127,6 +169,16 @@ class Intermediario:
     creci: Optional[str]
     tipo: str  # "percentual" | "valor_fixo"
     valor: Optional[Decimal]
+    #: [§6.1 #22] Which favorecido receives this intermediário's corretagem.
+    favorecido_id: Optional[str] = None
+    #: [§6.1 #21] Qualification of an EXTERNAL intermediário (no `corretor_id`):
+    #: the office's own intermediação is qualified from `Imobiliaria` instead.
+    pessoa_tipo: Optional[str] = None  # "pf" | "pj"
+    documento: Optional[str] = None  # CPF (11) or CNPJ (14)
+    email: Optional[str] = None
+    endereco: Endereco = field(default_factory=Endereco)
+    representante_nome: Optional[str] = None
+    representante_cpf: Optional[str] = None
 
 
 @dataclass
@@ -148,10 +200,21 @@ class Imovel:
     onus_certidao_em: Optional[date] = None
     onus_fonte_atos: list[AtoCitado] = field(default_factory=list)
     titulo_aquisitivo_confirmado: bool = False
+    #: [§6.1 #8] The operator's CONFIRMED título-aquisitivo wording
+    #: (`imovel_dados.titulo_aquisitivo_texto`, migration 115) — never the
+    #: recomputed suggestion, which may differ from what was confirmed.
+    titulo_aquisitivo_texto: Optional[str] = None
+    #: [§6.1 #11] The confirmed creditor of the ônus (`imovel_dados.onus_credor`).
+    onus_credor: Optional[str] = None
     #: [Q9] Registration date of the LAST compra e venda on the matrícula.
     #: < 5 years before the assinatura → the previous owner(s) must present
     #: certidões. None = unknown (faltando).
     ultima_transferencia_em: Optional[date] = None
+    #: Who sold in that last transfer — so the "add the antigo proprietário"
+    #: refusal can NAME them instead of leaving the operator to find them.
+    ultima_transferencia_transmitentes: tuple[str, ...] = ()
+    #: [§6.1 #14] The imóvel's own certidões (migration 118).
+    certidoes: tuple[CertidaoImovel, ...] = ()
 
 
 @dataclass
@@ -167,6 +230,31 @@ class Matricula:
     #: for a selection made before the source was (re-)transcribed with
     #: formatting — the quote still renders, just unformatted.
     formatacao: tuple[FormatRange, ...] = ()
+
+
+@dataclass
+class PermutaImovel:
+    """[§6.1 #2, #3] One property given in permuta: the `permuta_ativos` row,
+    the imóvel behind it, and THAT imóvel's own matrícula quote
+    (`obter_selecao()['permutas']`, `papel='permuta'` — migration 115).
+
+    Every printable field is Optional so a half-linked ativo is NAMED by the
+    gate rather than rendered with a blank.
+    """
+
+    permuta_ativo_id: str
+    descricao_matricula: Optional[str] = None
+    #: The catalog imóvel's address when the ativo points at one, otherwise the
+    #: ativo's OWN address snapshot — a property brought as swap currency is
+    #: often not a catalog listing at all (migration 101's `permuta_ativos`
+    #: carries its own profile for exactly that case). `contexto` derives the
+    #: printed short form; the loader never formats.
+    endereco: Endereco = field(default_factory=Endereco)
+    inscricao_municipal: Optional[str] = None
+    matricula_numero: Optional[str] = None
+    cartorio: Optional[str] = None
+    #: How many acts this imóvel's quote is built from — 0 = no quote selected.
+    num_atos: int = 0
 
 
 @dataclass
@@ -206,43 +294,46 @@ class Testemunha:
 
 
 @dataclass
-class PermutaImovel:
-    descricao_matricula: str
-    cidade: str
-    inscricao_municipal: str
-    matricula_numero: str
-    cartorio: str
-    endereco_curto: str
+class Termos:
+    """`atendimento_negociacao_termos` (migration 114) — the per-deal clauses
+    the instrument prints. One row per atendimento; every field nullable,
+    because terms are drafted over several sittings.
 
+    🔴 `posse_marco` / `permuta_posse_marco` use the STORAGE vocabulary
+    ('assinatura' | 'parcela' | 'protocolo_registro'), and `parcela` NAMES its
+    parcela via `*_marco_parcela_id`. The generator prints that parcela's
+    computed NUMBER — it never assumes which parcela the marco is.
+    """
 
-@dataclass
-class Complementos:
-    """Spec §6.1 — used by the contracts, not held by the system (see module doc)."""
-
-    titulo_aquisitivo_texto: Optional[str] = None  # §6.1 #8
-    itens_integrantes: Optional[str] = None  # §6.1 #9
-    ad_corpus: Optional[bool] = None  # §6.1 #10
-    onus_credor: Optional[str] = None  # §6.1 #11
-    onus_quitacao: Optional[str] = None  # §6.1 #11 compradores_prazo|interveniente_quitante|parcela
-    onus_prazo_dias: Optional[int] = None  # §6.1 #11
-    posse_prazo_dias: Optional[int] = None  # §6.1 #12
-    posse_marco: Optional[str] = None  # §6.1 #12 assinatura|parcela_financiamento|protocolo_registro
-    permuta_parcela_valor: Optional[Decimal] = None  # §6.1 #1
-    permuta_imoveis: tuple[PermutaImovel, ...] = ()  # §6.1 #2, #3
-    permuta_posse_prazo_dias: Optional[int] = None  # §6.1 #12
-    permuta_posse_marco: Optional[str] = None  # §6.1 #12
-    juros_am_confissao: Optional[Decimal] = None  # §6.1 #6
-    garantia_confissao: Optional[str] = None  # §6.1 #6
-    corretagem_contratantes: Optional[str] = None  # §6.1 #23 vendedores|partes
-    corretagem_parcelas_marco: tuple[int, ...] = ()  # §6.1 #23
-    corretagem_num_parcelas: Optional[int] = None  # §6.1 #23
-    corretagem_favorecidos: Mapping[str, str] = field(default_factory=dict)  # §6.1 #22
-    intermediarios_qualificacao: Mapping[str, str] = field(default_factory=dict)  # §6.1 #21
+    posse_prazo_dias: Optional[int] = None
+    posse_marco: Optional[str] = None
+    posse_marco_parcela_id: Optional[str] = None
+    permuta_posse_prazo_dias: Optional[int] = None
+    permuta_posse_marco: Optional[str] = None
+    permuta_posse_marco_parcela_id: Optional[str] = None
+    #: Stored by 114; no sample contract has a clause for it (see module doc).
+    permuta_obrigacoes_entrega: Optional[str] = None
+    itens_integrantes: Optional[str] = None
+    ad_corpus: Optional[bool] = None
+    #: Stored by 114; no sample contract has a clause for it (see module doc).
+    obrigacoes_vendedor: Optional[str] = None
+    #: 'compradores_prazo' | 'interveniente_quitante' | 'parcela' | 'ja_quitado'
+    onus_quitacao: Optional[str] = None
+    onus_prazo_dias: Optional[int] = None
+    confissao_juros_am: Optional[Decimal] = None
+    confissao_garantia: Optional[str] = None
+    #: 'vendedores' | 'compradores' | 'partes'
+    corretagem_contratantes: Optional[str] = None
+    corretagem_num_parcelas: Optional[int] = None
 
 
 @dataclass
 class DadosContrato:
     contrato_id: str
+    #: The card's titular (`atendimentos.cliente_id`) — what every `faltando`
+    #: item's `destino.ids` navigates by. Optional so a synthetic fixture can
+    #: omit it; a destino then simply carries no `cliente_id`.
+    cliente_id: Optional[str]
     modelo: str
     vendedores: list[Pessoa]
     compradores: list[Pessoa]
@@ -253,14 +344,23 @@ class DadosContrato:
     parcelas: list[Parcela]
     favorecidos: list[Favorecido]
     intermediarios: list[Intermediario]
-    permuta_ativo_id: Optional[str]
     financiamento: Financiamento
     imobiliaria: Imobiliaria
     testemunhas: list[Testemunha]
-    complementos: Complementos = field(default_factory=Complementos)
+    termos: Termos = field(default_factory=Termos)
+    #: The imóveis the `tipo='permuta'` parcela is paid with, in link order.
+    #: 🔴 Permuta is driven by that PARCELA (114), not by the legacy
+    #: `atendimento_negociacao.permuta_ativo_id` that service marks superseded.
+    permuta_imoveis: list[PermutaImovel] = field(default_factory=list)
     #: [Q11] Per-contract pendências prazo (days), overriding the office's
     #: `Imobiliaria.prazo_pendencias_padrao_dias`; None = use that default.
     prazo_pendencias_dias: Optional[int] = None
+    #: The signing date STORED on the contract (`atendimento_contratos.
+    #: assinatura_data`, migration 114). It wins over "today"; today in
+    #: São Paulo stays the fallback (`service.hoje`). An explicit
+    #: `assinatura_data` in the POST body still wins over both — that is an
+    #: operator asking for a specific date at generation time.
+    assinatura_data: Optional[date] = None
 
 
 #: Papéis that sign the instrument. `fiador`/`outro` are parties to the deal
@@ -268,7 +368,8 @@ class DadosContrato:
 PAPEIS_SIGNATARIOS: frozenset[str] = frozenset(
     {"proprietario", "comprador", "conjuge", "procurador", "inventariante"}
 )
-#: Papéis whose qualification wording/data does not exist (spec §6.1 #20).
+#: Papéis whose qualification wording/data does not exist (spec §6.1 #20) —
+#: no sample contract carries it, so there is nothing to generate.
 PAPEIS_SEM_REDACAO: frozenset[str] = frozenset({"procurador", "inventariante"})
 
 
@@ -276,10 +377,20 @@ def signatarios(pessoas: list[Pessoa]) -> list[Pessoa]:
     return [p for p in pessoas if p.papel in PAPEIS_SIGNATARIOS]
 
 
+def parcela_permuta(d: DadosContrato) -> Optional[Parcela]:
+    """The deal's permuta parcela (spec §2.3 `tipo == 'permuta'`), or None.
+
+    One per deal: `derivacao` blocks a second one rather than guessing which
+    of them the permuta clauses are about.
+    """
+    permutas = [p for p in d.parcelas if p.tipo == "permuta"]
+    return permutas[0] if permutas else None
+
+
 __all__ = [
     "AtoCitado",
     "Certidao",
-    "Complementos",
+    "CertidaoImovel",
     "DadosContrato",
     "Endereco",
     "Favorecido",
@@ -293,6 +404,8 @@ __all__ = [
     "Parcela",
     "PermutaImovel",
     "Pessoa",
+    "Termos",
     "Testemunha",
+    "parcela_permuta",
     "signatarios",
 ]
