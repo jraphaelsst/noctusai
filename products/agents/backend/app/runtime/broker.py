@@ -40,14 +40,21 @@ class StoreApprovalBroker:
         self,
         store: ApprovalStore,
         *,
-        timeout_seconds: int = 900,
+        timeout_seconds: int | Callable[[], int] = 900,
         instance_id: str | None = None,
     ) -> None:
         self._store = store
+        # An int, or a zero-arg provider read at EACH request — the
+        # Configurações do agente page changes the timeout without a
+        # restart (app/services/runtime_settings.py).
         self._timeout_seconds = timeout_seconds
         self.instance_id = instance_id or uuid4().hex
         # approval_id -> the Future `request()` is awaiting on.
         self._pending: dict[UUID, "asyncio.Future[ApprovalDecision]"] = {}
+
+    def _current_timeout(self) -> int:
+        value = self._timeout_seconds
+        return int(value() if callable(value) else value)
 
     async def request(
         self,
@@ -75,16 +82,17 @@ class StoreApprovalBroker:
         # executing (an instant human click racing the SSE publish) always
         # finds a live future here and resolves normally; never `Orphaned`.
         self._pending[record.id] = future
+        timeout = self._current_timeout()
         try:
             await on_created(record)
-            return await asyncio.wait_for(future, timeout=self._timeout_seconds)
+            return await asyncio.wait_for(future, timeout=timeout)
         except (asyncio.TimeoutError, TimeoutError):
             self._pending.pop(record.id, None)
             self._store.expire_one(record.id)
             logger.warning(
                 "approval %s timed out after %ss (tool=%s, conversation=%s)",
                 record.id,
-                self._timeout_seconds,
+                timeout,
                 tool_name,
                 ctx.conversation_id,
             )

@@ -49,7 +49,6 @@ Real+factory shape this whole module composes.
 from __future__ import annotations
 
 import logging
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
@@ -64,10 +63,11 @@ from noctusai_lib.api.auth.session import (
     LegacyJwtResolver,
     SessionRevoker,
     SessionStore,
-    hash_token,
+    build_api_token_row,
     make_get_auth_context,
     make_session_revoker,
     make_session_store,
+    mint_token_secret,
     resolve_org_role,
 )
 
@@ -238,11 +238,12 @@ class ApiTokenListItem(BaseModel):
 
 
 def _mint_secret() -> tuple[str, str]:
-    """Return ``(raw_secret, prefix)`` for a fresh ``pk_*`` token."""
-    secret_body = secrets.token_hex(32)  # 64-hex-char body → 256 bits entropy
-    raw = f"pk_{secret_body}"
-    prefix = raw[:11]  # ``pk_`` + 8 hex chars (UI display)
-    return raw, prefix
+    """Return ``(raw_secret, prefix)`` for a fresh ``pk_*`` token.
+
+    Delegates to ``noctusai_lib.api.auth.session.mint_token_secret`` — the
+    single source shared with the service-side ``ProductTokenAdmin`` (a
+    control plane renewing a token it holds for another product)."""
+    return mint_token_secret()
 
 
 def _coerce_org_uuid(raw_org: Any) -> UUID:
@@ -506,33 +507,28 @@ def create_auth_router(
 
         raw_secret, prefix = _mint_secret()
         token_id = uuid4()
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
         expires_at_iso = body.expires_at.isoformat()
-        minted_by = str(ctx.user_id) if ctx.user_id else None
 
         sb = deps.get_admin_client()
-        insert_payload = {
-            "id": str(token_id),
-            "org_id": str(ctx.org_id),
-            "label": body.label,
-            "token_hash": hash_token(raw_secret),
-            "token_prefix": prefix,
-            "scopes": list(body.scopes or []),
-            "created_by": minted_by,
-            "created_at": now_iso,
-            "last_used_at": None,
-            "revoked_at": None,
-            # SEED-1 (contract §B.0) — every new token gets an expiry;
-            # `minted_by` records the human who minted it regardless of
-            # whether the token is later used for `human_personal` or
-            # agent-principal writes.
-            "expires_at": expires_at_iso,
-            "principal_agent_id": (
-                str(body.principal_agent_id) if body.principal_agent_id else None
-            ),
-            "human_personal": body.human_personal,
-            "minted_by": minted_by,
-        }
+        # SEED-1 (contract §B.0) — every new token gets an expiry;
+        # `minted_by` records the human who minted it regardless of
+        # whether the token is later used for `human_personal` or
+        # agent-principal writes. Row shape single-sourced with the
+        # service-side `ProductTokenAdmin` (`build_api_token_row`).
+        insert_payload = build_api_token_row(
+            token_id=token_id,
+            raw_secret=raw_secret,
+            org_id=ctx.org_id,
+            label=body.label,
+            scopes=list(body.scopes or []),
+            expires_at=body.expires_at,
+            created_at=now,
+            principal_agent_id=body.principal_agent_id,
+            human_personal=body.human_personal,
+            minted_by=ctx.user_id,
+        )
         try:
             sb.table(_TOKENS_TABLE).insert(insert_payload).execute()
         except Exception as exc:

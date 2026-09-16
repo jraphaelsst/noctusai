@@ -42,6 +42,7 @@ from app.dependencies import (
     require_member,
 )
 from app.config import settings
+from app.services.runtime_settings import get_runtime_settings_service
 from app.rate_limit import limiter
 from app.realtime import conversation_scope, get_bus, publish_event
 from app.schemas.agents import (
@@ -236,7 +237,11 @@ def _track_background_task(app_state: Any, task: "asyncio.Task") -> None:
     response_model=MessagePostResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-@limiter.limit(lambda: settings.messages_rate_limit, key_func=_caller_key)
+# Evaluated per request by slowapi — the admin override (Configurações do
+# agente) applies without a restart; env `MESSAGES_RATE_LIMIT` is the default.
+@limiter.limit(
+    lambda: get_runtime_settings_service(settings).messages_rate_limit(), key_func=_caller_key
+)
 async def post_message(
     request: Request,
     conversation_id: UUID,

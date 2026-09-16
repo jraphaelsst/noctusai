@@ -33,6 +33,13 @@ wiring — depends on)
   Returns ``RealAppConfigStore`` when BOTH ``client`` and ``fernet_key``
   are provided; otherwise ``FakeAppConfigStore`` (default-Fake mirrors
   `make_credential_store` / `google_maps` / `google_calendar`).
+- ``CachedAppConfigStore(inner, ttl_seconds=)`` — a short-TTL read
+  cache over any store, invalidated on this process's own writes, so a
+  runtime can read a secret per use without a DB round-trip per call and
+  still pick up a value changed in-app without a redeploy.
+- ``resolve_app_config_value(store, key, *, env_value)`` — the general
+  DB-first / env-fallback resolver (returns the value AND where it came
+  from, for status UIs).
 - ``resolve_meta_app_credentials(store, *, env_app_id, env_app_secret)``
   — pure helper: DB value wins per key, falls back to the env value for
   that key independently (partial DB config is honored, not
@@ -58,8 +65,10 @@ schema-agnostic beyond these columns)::
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import datetime, timezone
-from typing import Optional, Protocol
+from typing import Callable, Literal, Optional, Protocol
 
 from noctusai_lib.security.encrypted_tokens import decrypt, encrypt
 
@@ -228,6 +237,111 @@ class RealAppConfigStore(AppConfigStore):
         return sorted(r["key"] for r in (resp.data or []))
 
 
+#: Where a resolved value came from. ``None`` = neither tier had one.
+ConfigSource = Literal["db", "env"]
+
+_MISS = object()
+
+
+class CachedAppConfigStore(AppConfigStore):
+    """Short-TTL read cache in front of any :class:`AppConfigStore`.
+
+    WHY
+    ---
+    A runtime that must pick up a credential changed in-app WITHOUT a
+    redeploy has two honest options: read the store on every use, or read
+    it through a cache whose staleness is bounded and small. Per-use reads
+    put a DB round-trip (plus a Fernet decrypt) on every request; this
+    wrapper bounds the staleness to ``ttl_seconds`` instead.
+
+    Semantics
+    ---------
+    - ``get`` caches hits AND misses for ``ttl_seconds`` (a miss means
+      "fall back to env", which is itself a value worth caching).
+    - ``put`` / ``delete`` write through and invalidate that key at once,
+      so the process that made the change never serves the stale value.
+      OTHER processes see it within ``ttl_seconds``.
+    - A decrypt failure (``AppConfigDecryptError``) is NEVER cached — it
+      propagates every time, loudly, like the inner store's own contract.
+    - ``list_keys`` is not cached (status UIs only; never a hot path).
+
+    ``clock`` is a DI seam (monotonic seconds) so tests advance time
+    without sleeping.
+    """
+
+    def __init__(
+        self,
+        inner: AppConfigStore,
+        *,
+        ttl_seconds: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if ttl_seconds < 0:
+            raise ValueError("ttl_seconds must be >= 0")
+        self._inner = inner
+        self._ttl = ttl_seconds
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._entries: dict[str, tuple[float, object]] = {}
+
+    def get(self, key: str) -> Optional[str]:
+        now = self._clock()
+        with self._lock:
+            entry = self._entries.get(key)
+        if entry is not None and now - entry[0] < self._ttl:
+            cached = entry[1]
+            return None if cached is _MISS else cached  # type: ignore[return-value]
+        value = self._inner.get(key)
+        with self._lock:
+            self._entries[key] = (now, _MISS if value is None else value)
+        return value
+
+    def put(self, key: str, value: str) -> None:
+        self._inner.put(key, value)
+        self.invalidate(key)
+
+    def delete(self, key: str) -> bool:
+        removed = self._inner.delete(key)
+        self.invalidate(key)
+        return removed
+
+    def list_keys(self) -> list[str]:
+        return self._inner.list_keys()
+
+    def invalidate(self, key: Optional[str] = None) -> None:
+        """Drop one cached key (or every key when ``key`` is ``None``)."""
+        with self._lock:
+            if key is None:
+                self._entries.clear()
+            else:
+                self._entries.pop(key, None)
+
+
+def resolve_app_config_value(
+    store: AppConfigStore,
+    key: str,
+    *,
+    env_value: Optional[str],
+) -> tuple[Optional[str], Optional[ConfigSource]]:
+    """DB value wins; the env value is the fallback. Returns ``(value, source)``.
+
+    The general form of :func:`resolve_meta_app_credentials` — one key,
+    resolved independently. An empty-string env value counts as unset (a
+    compose ``${VAR:-}`` expansion yields ``""``, never ``None``).
+
+    A stored row that cannot be decrypted raises ``AppConfigDecryptError``
+    — it does NOT silently fall back to env: an operator who stored a new
+    value believes it is in effect, and serving the old env value instead
+    would be a false green.
+    """
+    value = store.get(key)
+    if value:
+        return value, "db"
+    if env_value:
+        return env_value, "env"
+    return None, None
+
+
 def build_app_config_store(
     *,
     client=None,
@@ -265,10 +379,8 @@ def resolve_meta_app_credentials(
         ``(app_id, app_secret)`` — either element may be ``None`` if
         neither the DB nor the env supplied a value for that key.
     """
-    app_id = store.get(META_APP_ID_KEY)
-    if app_id is None:
-        app_id = env_app_id
-    app_secret = store.get(META_APP_SECRET_KEY)
-    if app_secret is None:
-        app_secret = env_app_secret
+    app_id, _ = resolve_app_config_value(store, META_APP_ID_KEY, env_value=env_app_id)
+    app_secret, _ = resolve_app_config_value(
+        store, META_APP_SECRET_KEY, env_value=env_app_secret
+    )
     return app_id, app_secret

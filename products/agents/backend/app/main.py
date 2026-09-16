@@ -45,11 +45,15 @@ from app.dependencies import (
     auth_router_deps,
 )
 from app.rate_limit import limiter
+from app.routers.admin_credentials_router import router as admin_credentials_router
+from app.routers.agent_settings_router import router as agent_settings_router
 from app.routers.agents_router import router as agents_router
 from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
 from app.routers.persona_router import router as persona_router
 from app.runtime.slots import get_slot_pool
+from app.scheduler import configure as configure_scheduler
+from noctusai_lib.api.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +87,14 @@ async def on_startup() -> None:
     await slot_pool.sweep_all_on_startup()
     logger.info("agents.startup.slot_pool_swept health=%s", slot_pool.health())
 
+    # Daily credential maintenance (expiry notifications + §D ring prune).
+    # Fires only where `NOCTUS_SCHEDULERS_ENABLED` is set (prod compose).
+    start_scheduler()
+
+
+async def on_shutdown() -> None:
+    stop_scheduler()
+
 
 async def _slot_pool_health() -> tuple[bool, str | None]:
     """Liveness hook (contract §E.11): degrades `/_health` — never
@@ -95,6 +107,8 @@ async def _slot_pool_health() -> tuple[bool, str | None]:
         return False, f"slots quarantined: {quarantined}"
     return True, None
 
+
+configure_scheduler()
 
 app = create_product_app(
     name="Agentes",
@@ -109,11 +123,17 @@ app = create_product_app(
         persona_router,
         conversations_router,
         approvals_router,
+        admin_credentials_router,
+        agent_settings_router,
     ],
     lifespan_startup=on_startup,
+    lifespan_shutdown=on_shutdown,
     health_config=HealthEndpointConfig(liveness_hooks=[_slot_pool_health]),
     # Contract §D / §E.5: the approval-assertion signing key + the
-    # social-wiring bridge token must both be set in a deploy context —
+    # social-wiring bridge token must both be set in a deploy context.
+    # Since 2026-09-16 both resolve DB-first (Credenciais page) and these
+    # env values are the BOOTSTRAP fallback — keep them in `.env`; a stored
+    # value overrides them without a redeploy (deploy/fleet/README.md) —
     # an unset key would silently disable the whole escrita-approval
     # flow's ability to ever call academia (§D), and would let the
     # product boot with no way to reach social-wiring's One Chat bridge.

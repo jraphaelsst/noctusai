@@ -51,6 +51,33 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_config_stores():
+    """Bind the app's credential store + runtime-settings service to Fakes
+    for every test (explicit install seams, not patches) — with a local
+    `.env` the factories would otherwise pick the REAL Supabase-backed
+    stores and a unit test would read production config."""
+    from noctusai_lib.security.app_config import CachedAppConfigStore, FakeAppConfigStore
+
+    from app.config import settings
+    from app.credentials import resolver
+    from app.services import runtime_settings
+    from app.stores.runtime_settings import FakeRuntimeSettingsStore
+
+    resolver.install_config_store_handle(
+        settings,
+        resolver.ConfigStoreHandle(
+            store=CachedAppConfigStore(FakeAppConfigStore(), ttl_seconds=0), persistent=True
+        ),
+    )
+    runtime_settings.install_runtime_settings_service(
+        runtime_settings.RuntimeSettingsService(FakeRuntimeSettingsStore(), settings, ttl_seconds=0)
+    )
+    yield
+    resolver.reset_for_testing()
+    runtime_settings.reset_for_testing()
+
+
 @pytest.fixture
 def client():
     mock_sb = MockSupabaseClient()

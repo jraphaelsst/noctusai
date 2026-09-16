@@ -156,6 +156,7 @@ def build_launch_options(
     cli_path: str = DEFAULT_CLI_PATH,
     plugin_path: str,
     approval_use_window_seconds: int = 120,
+    anthropic_api_key: str | None = None,
 ) -> ClaudeAgentOptions:
     """Build the exact ``ClaudeAgentOptions`` for one turn — pure,
     synchronous, no subprocess spawned. ``can_use_tool`` is threaded in
@@ -220,7 +221,7 @@ def build_launch_options(
         allowed_tools=allowed_tools,
         disallowed_tools=list(DISALLOWED_TOOLS),
         can_use_tool=can_use_tool,
-        env={"CLAUDE_CONFIG_DIR": slot.config_dir},
+        env=_launch_env(slot, anthropic_api_key),
         user=slot.user_name,
         include_partial_messages=True,
         max_turns=spec.max_turns,
@@ -229,6 +230,23 @@ def build_launch_options(
         session_store=mirror,
         session_store_flush="batched",
     )
+
+
+def _launch_env(slot: TurnSlot, anthropic_api_key: str | None) -> dict[str, str]:
+    """``ClaudeAgentOptions.env`` for one turn.
+
+    The Anthropic key now resolves DB-first (Credenciais page), so the
+    inherited ``os.environ`` may carry a stale value or none at all. The SDK
+    builds the spawn env as ``{**os.environ, **options.env}``, so setting it
+    here overrides the inherited one for THIS spawn only. §E.5 still holds:
+    the spawned process is the ``env -i`` wrapper, which re-exports only its
+    allowlist (``ANTHROPIC_API_KEY`` among them) to the real CLI — no other
+    control-plane secret is ever added here.
+    """
+    env = {"CLAUDE_CONFIG_DIR": slot.config_dir}
+    if anthropic_api_key:
+        env["ANTHROPIC_API_KEY"] = anthropic_api_key
+    return env
 
 
 def _ensure_handoff_dir(handoff_dir: str, gid: int) -> None:
@@ -513,7 +531,9 @@ class ClaudeAgentSdkRuntime:
         cli_path: str = DEFAULT_CLI_PATH,
         approval_use_window_seconds: int = 120,
         transport_factory: Any = None,
+        anthropic_api_key: str | None = None,
     ) -> None:
+        self._anthropic_api_key = anthropic_api_key
         self._academia_api = academia_api
         self._agent_id = agent_id
         self._approval_secret = approval_secret
@@ -751,6 +771,7 @@ class ClaudeAgentSdkRuntime:
             cli_path=self._cli_path,
             plugin_path=self._plugin_path,
             approval_use_window_seconds=self._approval_use_window_seconds,
+            anthropic_api_key=self._anthropic_api_key,
         )
 
         client, resumed_fresh, active_mirror = await self._connect_or_fresh(

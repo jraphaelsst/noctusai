@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import uuid as _uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -47,7 +48,15 @@ from noctusai_lib.api.auth.session import (
     make_get_auth_context,
     require_scopes,
 )
+from noctusai_lib.security.app_config import (
+    AppConfigStore,
+    CachedAppConfigStore,
+    FakeAppConfigStore,
+    build_app_config_store,
+)
+from noctusai_lib.security.key_ring import resolve_key_ring
 from noctusai_seed.auth_router import get_session_store as _seed_get_session_store
+from cryptography.fernet import Fernet
 
 from app.auth.roles import ADMIN, READ, WRITE
 from app.config import settings
@@ -331,15 +340,65 @@ require_import_admin = require_scopes(
 # ─── Knowledge store seam (contract §A.11) ───────────────────────────────
 
 
+_approval_ring_store: AppConfigStore | None = None
+
+
+class _AgentsSchemaClient:
+    """Late-binding ``.table()`` over the admin client scoped to the ring's
+    schema (`agents`) — resolved per call, so a test that swaps
+    ``_db.get_admin_client`` is honoured and no client is built at import."""
+
+    def table(self, name: str):
+        return _db.get_admin_client().schema(settings.approval_assertion_ring_schema).table(name)
+
+
+def _get_approval_ring_store() -> AppConfigStore:
+    """Process singleton: the `agents`-published ring, behind a 30 s cache.
+
+    Fake (always-empty ⇒ env fallback) when there is no service-role key or
+    no valid ``ENCRYPTION_KEY`` — never a boot failure, never plaintext."""
+    global _approval_ring_store
+    if _approval_ring_store is None:
+        inner: AppConfigStore = FakeAppConfigStore()
+        key = settings.encryption_key
+        if settings.supabase_service_role_key and key:
+            try:
+                Fernet(key.encode("utf-8"))
+            except (ValueError, TypeError):
+                logger.error(
+                    "approval_ring_store_disabled reason=invalid_encryption_key "
+                    "— accepting only APPROVAL_ASSERTION_SECRETS from env"
+                )
+            else:
+                inner = build_app_config_store(
+                    client=_AgentsSchemaClient(), fernet_key=key.encode("utf-8")
+                )
+        _approval_ring_store = CachedAppConfigStore(inner, ttl_seconds=30)
+    return _approval_ring_store
+
+
 def get_approval_assertion_keys() -> list[str]:
-    """FastAPI dependency returning `settings.approval_assertion_secrets_list`
-    (contract §D). An explicit seam — routers `Depends(...)` this and pass
-    the result to `app.auth.provenance.build_write_provenance(keys=...)` —
-    so a test overrides `app.dependency_overrides[get_approval_assertion_keys]`
+    """FastAPI dependency returning every §D key academia accepts right now.
+
+    The ring `agents` publishes (DB) wins over
+    `settings.approval_assertion_secrets_list` (env); staged keys are
+    accepted before `agents` starts signing with them, retired keys are not
+    (`noctusai_lib.security.key_ring`). An explicit seam — routers
+    `Depends(...)` this and pass the result to
+    `app.auth.provenance.build_write_provenance(keys=...)` — so a test
+    overrides `app.dependency_overrides[get_approval_assertion_keys]`
     instead of `monkeypatch.setattr(settings, "approval_assertion_secrets",
     ...)`, which trips `check_no_self_monkeypatch` (CLAUDE.md §1: no
     monkey-patching our own code, incl. tests)."""
-    return settings.approval_assertion_secrets_list
+    return approval_assertion_keys_from(
+        _get_approval_ring_store(), env_value=settings.approval_assertion_secrets
+    )
+
+
+def approval_assertion_keys_from(store: AppConfigStore, *, env_value: str) -> list[str]:
+    """Pure resolution step behind :func:`get_approval_assertion_keys`."""
+    ring = resolve_key_ring(store, settings.approval_assertion_ring_key, env_value=env_value)
+    return ring.accepted(datetime.now(timezone.utc))
 
 
 def get_store() -> KnowledgeStore:
@@ -361,6 +420,7 @@ __all__ = [
     "coerce_org_uuid",
     "first_or_none",
     "get_admin_client",
+    "approval_assertion_keys_from",
     "get_approval_assertion_keys",
     "get_auth_context",
     "get_core_client",

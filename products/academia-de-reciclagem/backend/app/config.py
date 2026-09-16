@@ -47,6 +47,19 @@ class SeedSettings(ProductSettings):
         (see the field docstring for why it isn't `list[str]`)."""
         return reject_json_array(v, "APPROVAL_ASSERTION_SECRETS")
 
+    # ── Rotating ring published by `agents` (contract §D "Rotation") ───
+    # The `agents` control plane stores the §D key ring encrypted in
+    # `agents.app_integration_config` under `approval_assertion_ring_key`
+    # (Fernet, the fleet-wide `ENCRYPTION_KEY`). When that row exists it
+    # WINS over `approval_assertion_secrets` above — the SAME DB-first /
+    # env-fallback rule `agents` signs with
+    # (`noctusai_lib.security.key_ring.resolve_key_ring`), which is what
+    # keeps a UI-driven rotation consistent on both sides by construction.
+    # A missing/invalid `ENCRYPTION_KEY` degrades to the env list (logged).
+    encryption_key: str = ""
+    approval_assertion_ring_schema: str = "agents"
+    approval_assertion_ring_key: str = "approval_assertion_secrets:academia-de-reciclagem"
+
     # ── Primary-source host allowlist (contract §B.5 `POST /api/sources`) ──
     # Comma-separated hostnames (same raw-`str` CSV-setting idiom as
     # `approval_assertion_secrets` above). Empty by

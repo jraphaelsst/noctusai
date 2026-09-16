@@ -328,6 +328,10 @@ class TurnSlot:
 
 
 class SlotPool(Protocol):
+    #: True only for a pool that really isolates turns (per-slot uid +
+    #: tmpfs). The real runtime refuses to start on a pool without it.
+    isolated: bool
+
     def try_reserve(self) -> TurnSlot | None: ...
 
     async def sweep_all_on_startup(self) -> None: ...
@@ -477,6 +481,8 @@ class RealSlotPool(_BaseSlotPool):
     ``/run/julia-K`` mounts. A slot whose mount is missing is excluded —
     quarantined from construction, never silently used — and logged."""
 
+    isolated = True
+
     def __init__(
         self,
         settings: Any,
@@ -523,6 +529,8 @@ class FakeSlotPool(_BaseSlotPool):
     defaults to its Fake implementation but can be overridden to script a
     specific release scenario."""
 
+    isolated = False
+
     def __init__(
         self,
         capacity: int,
@@ -566,11 +574,19 @@ def get_slot_pool(settings: Any) -> SlotPool:
     """Process singleton, mirroring ``app.runtime.get_approval_broker``'s
     shape: :class:`RealSlotPool` when running for real,
     :class:`FakeSlotPool` in tests/dev — same signal every other agents
-    runtime factory uses (an unconfigured ``anthropic_api_key``)."""
+    runtime factory uses (an unresolvable Anthropic key), plus: always
+    real in a deploy context."""
     global _slot_pool_singleton
     if _slot_pool_singleton is None:
-        anthropic_key = getattr(settings, "anthropic_api_key", "") or ""
-        if anthropic_key:
+        from noctusai_lib.config.deploy_config import is_deploy_context
+
+        from app.credentials.resolver import get_credential_resolver
+
+        # The key now resolves DB-first (Credenciais page), so an env-less
+        # deploy must still get the real pool: a deploy context always
+        # does, regardless of whether the key is set yet.
+        anthropic_key = get_credential_resolver(settings).anthropic_api_key() or ""
+        if anthropic_key or is_deploy_context():
             _slot_pool_singleton = RealSlotPool(settings)
         else:
             _slot_pool_singleton = FakeSlotPool(_resolve_slot_count(settings))

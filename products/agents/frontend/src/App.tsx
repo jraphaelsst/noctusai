@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2 } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -25,6 +25,9 @@ const Julia = lazy(() => import("@/pages/Julia"));
 const Agentes = lazy(() => import("@/pages/Agentes"));
 const JuliaPersona = lazy(() => import("@/pages/JuliaPersona"));
 const Aprovacoes = lazy(() => import("@/pages/Aprovacoes"));
+// Platform-admin pages (server-enforced by `require_platform_admin`).
+const Credenciais = lazy(() => import("@/pages/Credenciais"));
+const ConfiguracoesAgente = lazy(() => import("@/pages/ConfiguracoesAgente"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -39,6 +42,8 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Agentes", href: "/agentes", icon: Bot, route: "agentes" },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2, route: "aprovacoes" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+      { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal, route: "configuracoes-agente" },
+      { name: "Credenciais", href: "/credenciais", icon: KeyRound, route: "credenciais" },
     ],
   },
 ];
@@ -55,6 +60,8 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Agentes", href: "/agentes", icon: Bot },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2 },
       { name: "Equipe", href: "/equipe", icon: Users },
+      { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal },
+      { name: "Credenciais", href: "/credenciais", icon: KeyRound },
     ],
   },
 ];
@@ -76,6 +83,8 @@ export default createProductApp({
     { path: "/agentes/julia/persona", component: JuliaPersona },
     { path: "/aprovacoes", component: Aprovacoes },
     { path: "/equipe", component: Equipe },
+    { path: "/credenciais", component: Credenciais },
+    { path: "/configuracoes-agente", component: ConfiguracoesAgente },
   ],
   Layout,
   ...infra.appConfig,

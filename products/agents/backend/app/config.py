@@ -102,6 +102,36 @@ class SeedSettings(ProductSettings):
     # (contract §E "Rate limit ... per user with the product limiter").
     messages_rate_limit: str = "20/minute"
 
+    # ── Credential store (contract §B.0 / §E.5 notes, 2026-09-16) ───────
+    # Every secret above is resolved DB-first (`agents.app_integration_
+    # config`, Fernet-encrypted with this key — the fleet-wide
+    # `ENCRYPTION_KEY`) with the env value as fallback; see
+    # `app/credentials/`. Empty/invalid key => the store is disabled
+    # (env-only) and writes from the Credenciais page are refused (503).
+    encryption_key: str = ""
+
+    # How stale a DB-stored credential may be in ANOTHER worker process
+    # after an in-app change (the writing process sees it at once). Bounds
+    # "picks up a changed value without a redeploy".
+    credential_cache_ttl_seconds: int = 30
+
+    # Days before expiry at which a product token raises the in-app
+    # warning + the platform-admin notification (contract D1 deferral).
+    credential_expiry_warning_days: int = 30
+
+    # §D rotation timing (Credenciais page). The new key is staged and
+    # accepted by academia at once but only SIGNED with after
+    # `approval_key_activation_delay_seconds` (> both products' credential
+    # cache TTL); the old key stays accepted for
+    # `approval_key_retire_after_seconds` after the switch.
+    approval_key_activation_delay_seconds: int = 120
+    approval_key_retire_after_seconds: int = 86400
+
+    # Contract §E.5 `max_turns=<config, default 40>`. `None` => the value
+    # in `agents/julia/spec.yaml`. An admin override lives in
+    # `agents.runtime_settings` (Configurações do agente page) and wins.
+    julia_max_turns: int | None = None
+
     # ── Julia CLI path (contract §E.5, roadmap D1) ──────────────────────
     # Where the `env -i` wrapper (`bin/julia-cli-exec`) lands inside the
     # image. Was a bare Python literal duplicated in two places with no

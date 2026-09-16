@@ -1,6 +1,7 @@
 import { useAuthStore } from '@noctusai/seed/infra';
 import { resolveSSOContext } from "@noctusai/lib";
 import { Bot, Users, CheckCircle2 } from "lucide-react";
+import { CredentialExpiryBanner } from "@/components/CredentialExpiryBanner";
 
 export default function Dashboard() {
   const { user } = useAuthStore();
@@ -18,6 +19,8 @@ export default function Dashboard() {
           </p>
         </div>
       </div>
+
+      <CredentialExpiryBanner />
 
       {/* Status Card */}
       <div className="rounded-lg border border-border bg-card p-6 space-y-4">

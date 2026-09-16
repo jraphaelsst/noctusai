@@ -12,11 +12,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import yaml
-
-from noctusai_lib.config.deploy_config import require_prod_config
 
 from app.runtime import gate
 from app.runtime.broker import StoreApprovalBroker
@@ -68,25 +66,37 @@ def get_approval_broker(settings: Any) -> ApprovalBroker:
     if _broker_singleton is None:
         from app.stores.approvals import get_approval_store
 
+        from app.services.runtime_settings import get_runtime_settings_service
+
         store = get_approval_store(settings)
-        timeout = int(getattr(settings, "approval_timeout_seconds", 900) or 900)
+        runtime_settings = get_runtime_settings_service(settings)
+        # A provider, not a number: the admin override (Configurações do
+        # agente) applies to the next approval without a restart.
         _broker_singleton = StoreApprovalBroker(
-            store, timeout_seconds=timeout, instance_id=_resolve_instance_id()
+            store,
+            timeout_seconds=runtime_settings.approval_timeout_seconds,
+            instance_id=_resolve_instance_id(),
         )
     return _broker_singleton
 
 
 def get_agent_runtime(settings: Any) -> AgentRuntime:
-    """``ClaudeAgentSdkRuntime`` when ``ANTHROPIC_API_KEY`` is configured,
-    ``FakeAgentRuntime`` in tests/dev. In a deploy context an unconfigured
-    key (or a missing ``APPROVAL_ASSERTION_SECRETS`` /
-    ``ACADEMIA_API_TOKEN``) raises at startup — there is no silent Fake
-    in prod (contract §E.9)."""
-    require_prod_config(
-        ["ANTHROPIC_API_KEY", "APPROVAL_ASSERTION_SECRETS", "ACADEMIA_API_TOKEN", "JULIA_AGENT_ID"]
-    )
+    """``ClaudeAgentSdkRuntime`` when the Anthropic key resolves,
+    ``FakeAgentRuntime`` in tests/dev. In a deploy context an unresolvable
+    key (or approval signing key / ``ACADEMIA_API_TOKEN`` /
+    ``JULIA_AGENT_ID``) raises — there is no silent Fake in prod (contract
+    §E.9).
 
-    anthropic_key = getattr(settings, "anthropic_api_key", "") or ""
+    Built per request (``get_agent_runtime_dep``), so every secret below is
+    resolved at USE time, DB-first with env fallback
+    (``app/credentials/resolver.py``) — a value changed on the Credenciais
+    page reaches the next turn without a redeploy."""
+    from app.credentials.resolver import get_credential_resolver, require_resolved_prod_config
+
+    credentials = get_credential_resolver(settings)
+    require_resolved_prod_config(credentials)
+
+    anthropic_key = credentials.anthropic_api_key() or ""
     if not anthropic_key:
         return FakeAgentRuntime([])
 
@@ -97,16 +107,29 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
     from app.stores.transcripts import get_transcript_store
     from noctusai_lib.config.product_urls import resolve_product_url
 
-    secrets = getattr(settings, "approval_assertion_secrets_list", []) or []
+    slot_pool = get_slot_pool(settings)
+    if not slot_pool.isolated:
+        # The pool was chosen before any key resolved (dev process that got
+        # a key later). Never run the REAL CLI without per-slot isolation
+        # (contract §E.11) — refuse loudly; a restart picks the real pool.
+        raise RuntimeError(
+            "Julia slot pool was created without isolation; restart the "
+            "agents process after configuring the Anthropic key."
+        )
+
+    signing_secret = credentials.approval_signing_secret()
+    if not signing_secret:
+        raise RuntimeError("no active approval assertion key (contract §D)")
     academia_api = make_academia_api(
         base_url=resolve_product_url("academia-de-reciclagem"),
-        token=getattr(settings, "academia_api_token", "") or "",
+        token=credentials.academia_api_token() or "",
     )
 
     return ClaudeAgentSdkRuntime(
         academia_api=academia_api,
-        agent_id=_julia_agent_id(settings),
-        approval_secret=secrets[0],
+        agent_id=credentials.julia_agent_id() or _NIL_AGENT_ID,
+        approval_secret=signing_secret,
+        anthropic_api_key=anthropic_key,
         plugin_path=_JULIA_PLUGIN_PATH,
         # Contract §E.10 — the escrita handler (app/runtime/tools.py) needs
         # the SAME approvals store the broker decides against; both read
@@ -119,7 +142,7 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
         # turn this process serves, and the SAME TranscriptStore both
         # writes durable transcripts (session_store) and reads them back
         # (the resume decision), like the approval broker's store.
-        slot_pool=get_slot_pool(settings),
+        slot_pool=slot_pool,
         transcripts=get_transcript_store(settings),
         approval_use_window_seconds=int(
             getattr(settings, "approval_use_window_seconds", 120) or 120
@@ -130,27 +153,17 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
     )
 
 
-def _julia_agent_id(settings: Any) -> Any:
-    """The `agents.agents` row id for the `julia` key — contract §D `sub`.
-
-    A process-WIDE constant, not per-org: `agents` holds exactly ONE
-    `ACADEMIA_API_TOKEN` (contract §B.0 — a single product token, not
-    minted per-org), and that token's `principal_agent_id` was set once
-    when it was minted. `settings.julia_agent_id` must equal it exactly.
-    `require_prod_config` above already refuses to start in a deploy
-    context without `JULIA_AGENT_ID` set, so reaching this line with an
-    empty value only happens in dev/test — the deterministic nil UUID
-    there is a visibly-fake placeholder, never mistaken for a real id.
-    """
-    from uuid import UUID
-
-    raw = getattr(settings, "julia_agent_id", "") or ""
-    if raw:
-        return UUID(raw)
-    return UUID("00000000-0000-0000-0000-000000000000")
+#: `JULIA_AGENT_ID` — the `agents.agents` row id for the `julia` key,
+#: contract §D `sub`. A process-WIDE constant, not per-org: `agents` holds
+#: exactly ONE `ACADEMIA_API_TOKEN` (contract §B.0) whose
+#: `principal_agent_id` was set when it was minted, and the resolved value
+#: must equal it exactly. `require_resolved_prod_config` refuses a deploy
+#: context without it, so this visibly-fake nil UUID only ever reaches a
+#: dev/test runtime.
+_NIL_AGENT_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
-def build_julia_spec(persona_row: Any) -> AgentSpec:
+def build_julia_spec(persona_row: Any, *, max_turns: int | None = None) -> AgentSpec:
     """Merge Julia's static spec (``agents/julia/spec.yaml`` + ``JULIA.md``)
     with the active persona row into one :class:`AgentSpec` (contract
     §E.9). ``persona_row`` is anything with the
@@ -202,5 +215,6 @@ def build_julia_spec(persona_row: Any) -> AgentSpec:
         prompt_append=prompt_append,
         skills=tuple(spec_data.get("skills", [])),
         tools=tools,
-        max_turns=int(spec_data.get("max_turns", 40)),
+        # An admin override (Configurações do agente) wins over spec.yaml.
+        max_turns=int(max_turns) if max_turns else int(spec_data.get("max_turns", 40)),
     )

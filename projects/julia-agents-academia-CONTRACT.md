@@ -212,6 +212,8 @@ class KnowledgeStore(Protocol):
 
 **How the agents product gets its academia token.** Tokens are minted in the TARGET product by an org admin via the seed route `POST /api/settings/api-tokens {label, scopes}` (`auth_router.py:173,266`), extended with `expires_at` (required, ≤ 90 days) and `principal_agent_id`. The secret is shown once and stored as the agents secret `ACADEMIA_API_TOKEN` (deploy secret, slice D1). It never goes into the Julia CLI's `env`.
 
+**Renewal from the agents UI (2026-09-16).** Both product tokens `agents` holds (`ACADEMIA_API_TOKEN`, `SOCIAL_WIRING_API_TOKEN`) now resolve DB-first (`agents.app_integration_config`, Fernet-encrypted with the fleet `ENCRYPTION_KEY`) with the env value as fallback, and a platform admin (`noctus_users.role = 'admin'`) renews them on **Agentes → Credenciais e integrações** (`POST /api/admin/credentials/{name}/renew`). The renewal does NOT go through the route above — product tokens may not mint, and the operator's session is scoped to the `agents` origin — but through the seed `ProductTokenAdmin` (`noctusai_lib.api.auth.session.token_admin`): a service-role insert into `<target_schema>.api_tokens` with the SAME row shape (`build_api_token_row`, shared with the route) and the same `pk_` generator (`mint_token_secret`). Order: find the current row by hash → mint (same org, registry-fixed scopes, `principal_agent_id` = `JULIA_AGENT_ID`, `issuer = 'agents'`, 90 days) → probe the NEW token live → store it → revoke the old one. A failed probe revokes the new token and leaves the old one in use; a failed revoke is reported, never dropped. Scopes/principal/issuer come from `app/credentials/registry.py`, never from the request. The page also shows expiry, days left and `last_used_at` read from the target's `api_tokens`, and a daily job notifies platform admins at 30/14/7/3/1/0 days — this closes the "alert 30 days before any token expires" item above for the tokens `agents` holds.
+
 **Two caller kinds, both org-scoped:**
 - **SSO user**: browser session or JWT. Terminal-Julia uses a personal product token minted without `principal_agent_id`.
 - **Product token** `pk_…` held by the `agents` control plane, with `principal_agent_id` = Julia's agent id and the scopes below.
@@ -379,6 +381,8 @@ The stdio server stays at `mcp/academia/`, rebuilt as a thin HTTP client: base U
 - **agents** signs with element `[0]`.
 - **academia** accepts any element. Rotation = prepend the new key, deploy both, then drop the old one.
 - **Missing or empty list:** the product refuses to start in prod (`required_prod_config`, `create_product_app` `app.py:57`). The key is never in the Julia CLI's `env`.
+
+**Rotation from the agents UI (2026-09-16) — supersedes the manual "prepend, deploy both, drop" for this audience.** The key list is now a key RING stored once, encrypted, in `agents.app_integration_config` under `approval_assertion_secrets:academia-de-reciclagem` (seed `noctusai_lib.security.key_ring`). Both sides resolve it with the same rule — the stored ring wins, `APPROVAL_ASSERTION_SECRETS` is the fallback — `agents` signing with the newest ACTIVE key, academia accepting every key not yet retired (academia reads the row through its own service-role client, `get_approval_assertion_keys`, 30 s cache). "Rotacionar chave" stages a new key that academia accepts immediately but `agents` only signs with after `APPROVAL_KEY_ACTIVATION_DELAY_SECONDS` (default 120 s, above both caches' TTL); the previous keys retire `APPROVAL_KEY_RETIRE_AFTER_SECONDS` (default 24 h) after the switch, and the daily job prunes them. The env value stays as the bootstrap for `required_prod_config`; once the ring is in the DB it is ignored on both sides. Precondition: academia deployed at or after this change, or it will not accept a staged key.
 
 **One key list per audience.** `approval_assertion_secrets` is keyed by `aud`. Before a second target product accepts assertions, it gets its own list; a key for `academia-de-reciclagem` must never validate for another audience.
 
@@ -557,6 +561,8 @@ resume=<conversations.sdk_session_id>
 - It asserts that the CLI's `init` message lists exactly the E.4 tools, and nothing else.
 
 `ANTHROPIC_API_KEY` is a dedicated, spend-capped key for Julia's workspace, never shared with any other product.
+
+**Credential source (2026-09-16).** `ANTHROPIC_API_KEY`, `ACADEMIA_API_TOKEN`, `SOCIAL_WIRING_API_TOKEN`, the §D ring and `JULIA_AGENT_ID` resolve DB-first, env-fallback (`products/agents/backend/app/credentials/resolver.py`, over the seed `AppConfigStore` + `CachedAppConfigStore`, 30 s TTL), read at USE time (runtime and bridge client are built per request), so a value changed on the Credenciais page reaches the next turn without a redeploy. The seed `resolve_credential` chain is deliberately NOT used: its `platform_settings` tier would hand Julia a shared `anthropic_api_key` before her dedicated one. The invariant above is unchanged: the Anthropic key reaches the CLI only through the wrapper — it is now passed as `ClaudeAgentOptions.env["ANTHROPIC_API_KEY"]` (overriding the inherited value for that spawn), which the `env -i` wrapper re-exports like before; no other secret is ever added to `options.env` (pinned by `tests/runtime/test_claude_runtime.py`). Julia's runtime specs (approval timeout, max turns, message rate limit) are likewise DB-overridable on **Configurações do agente** (`agents.runtime_settings`, env default); the slot count stays structural.
 
 ### E.6 social-wiring One Chat toggle (slice SW1 — a new route, the existing route unchanged)
 
@@ -852,6 +858,7 @@ The task's `finally` releases the turn lock, then the slot. `_TURN_LOCK_TTL_SECO
 | academia-de-reciclagem | `009_status_pagina_pages.sql`: `status_pagina` rows for the A3 UI routes (status `desenvolvimento`) | A3 |
 | agents | `008_status_pagina_pages.sql`: `status_pagina` rows for the G4 UI routes (status `desenvolvimento`) | G4 |
 | agents | `009_session_transcripts.sql`: `agents.session_transcript_entries` plus `conversations.transcript_estado` (§E.11) | B2 |
+| agents | `010_credentials_and_runtime_settings.sql`: `agents.app_integration_config` (encrypted credentials + the §D ring) and `agents.runtime_settings`, both service-role only, plus `status_pagina` rows `credenciais` / `configuracoes-agente`. Apply before deploying the image that reads them (reads degrade to env until then; writes 500). | agents-credentials-ui |
 
 **Deploy order is mandatory for 105 and 046.** Apply both migrations to the database BEFORE any social-wiring or erp-imobiliario image containing the SEED-1 resolver is deployed. The resolver selects `expires_at`, so the reverse order breaks every live product token.
 

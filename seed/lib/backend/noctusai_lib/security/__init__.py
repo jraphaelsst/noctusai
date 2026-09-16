@@ -16,9 +16,11 @@ limiters) live here too.
 from noctusai_lib.security.app_config import (
     AppConfigDecryptError,
     AppConfigStore,
+    CachedAppConfigStore,
     FakeAppConfigStore,
     RealAppConfigStore,
     build_app_config_store,
+    resolve_app_config_value,
     resolve_meta_app_credentials,
 )
 from noctusai_lib.security.encrypted_tokens import (
@@ -57,6 +59,7 @@ from noctusai_lib.security.token_store import (
 __all__ = [
     "AppConfigDecryptError",
     "AppConfigStore",
+    "CachedAppConfigStore",
     "CredentialDecryptError",
     "CredentialStore",
     "DEFAULT_MAX_AGE_SECONDS",
@@ -80,6 +83,7 @@ __all__ = [
     "generate_key",
     "has_secret",
     "oauth",
+    "resolve_app_config_value",
     "resolve_meta_app_credentials",
     "rotate_key",
     "static_secret_resolver",

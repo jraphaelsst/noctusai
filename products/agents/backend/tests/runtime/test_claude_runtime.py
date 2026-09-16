@@ -146,6 +146,18 @@ class TestBuildLaunchOptions:
         opts = _build(slot=slot)
         assert opts.env == {"CLAUDE_CONFIG_DIR": slot.config_dir}
 
+    def test_resolved_anthropic_key_reaches_only_the_wrapper_env(self):
+        """The key resolves DB-first now (Credenciais page); it is handed to
+        the `env -i` wrapper through `options.env` — and nothing else is
+        (contract §E.5: no other control-plane secret in the spawn env)."""
+        slot = _slot()
+        opts = _build(slot=slot, anthropic_api_key="sk-ant-api03-db-value")
+        assert opts.env == {
+            "CLAUDE_CONFIG_DIR": slot.config_dir,
+            "ANTHROPIC_API_KEY": "sk-ant-api03-db-value",
+        }
+        assert "s3cr3t" not in repr(opts.env)  # the approval key never rides along
+
     def test_user_is_the_slot_user_name(self):
         slot = _slot()
         opts = _build(slot=slot)

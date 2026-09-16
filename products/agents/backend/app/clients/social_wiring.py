@@ -173,9 +173,13 @@ class HttpSocialWiringClient:
 
 
 def get_social_wiring_client(settings: Any) -> SocialWiringClient:
-    """Real when a bridge token is configured; ``FakeSocialWiringClient``
-    otherwise (dev/test — no product token minted yet)."""
-    token = getattr(settings, "social_wiring_api_token", "") or ""
+    """Real when a bridge token resolves (DB-first, env fallback —
+    ``app/credentials/resolver.py``); ``FakeSocialWiringClient`` otherwise
+    (dev/test — no product token minted yet). Built per request, so a token
+    renewed on the Credenciais page is used by the next call."""
+    from app.credentials.resolver import get_credential_resolver
+
+    token = get_credential_resolver(settings).social_wiring_api_token() or ""
     if not token:
         return FakeSocialWiringClient()
 

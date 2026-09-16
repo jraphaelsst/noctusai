@@ -267,6 +267,32 @@ boot-time refusal — verify at first real use, not just `/api/health`):
 | `JULIA_AGENT_ID` | agents only | must equal `ACADEMIA_API_TOKEN`'s minted `principal_agent_id` exactly (contract §D step 5) — a mismatch fails every academia-side principal check, not just an empty-string default. |
 | `PRIMARY_SOURCE_ALLOWLIST` | academia-de-reciclagem only | comma-separated hostnames (contract §B.5 `POST /api/sources`); empty means every host triggers the AVISO warn-path, never a hard block. |
 
+**Managed from the UI since 2026-09-16 (Agentes → Credenciais e integrações).**
+`ANTHROPIC_API_KEY` (Julia), `ACADEMIA_API_TOKEN`, `SOCIAL_WIRING_API_TOKEN`,
+`APPROVAL_ASSERTION_SECRETS` and `JULIA_AGENT_ID` now resolve DB-first
+(`agents.app_integration_config`, Fernet with the fleet `ENCRYPTION_KEY`),
+env-fallback. The `.env` values above stay as the bootstrap —
+`required_prod_config` still reads `APPROVAL_ASSERTION_SECRETS` and
+`SOCIAL_WIRING_API_TOKEN` from env at boot — but a stored value wins over
+them without a redeploy (≤ 30 s across workers), so never rotate them by
+hand again. One-time move, as a platform admin (`noctus_users.role = 'admin'`):
+
+1. Apply `products/agents/backend/migrations/010_credentials_and_runtime_settings.sql`
+   (`noctus.dev.migrate_product product=agents`, dry-run first).
+2. Confirm `ENCRYPTION_KEY` is set in the root `.env` (social-wiring already
+   requires it), then deploy the agents AND academia-de-reciclagem images from
+   the same commit (academia must read the ring before a rotation).
+3. On **Credenciais e integrações**, press **Importar do ambiente** on each of
+   the five cards (the value is copied server-side; it never reaches the
+   browser). Each card then shows source `banco`.
+4. Press **Testar** on the three live credentials; expect `OK`.
+5. From now on: **Renovar** the two product tokens (mints a 90-day token in
+   the target product, verifies it, stores it, revokes the old one);
+   **Substituir** the Anthropic key; **Rotacionar chave** for §D (staged 120 s,
+   old keys retire 24 h later, pruned by the daily job). A daily 09:00 job
+   notifies platform admins 30/14/7/3/1/0 days before a token expires; the
+   dashboard shows the same warning.
+
 **Already covered by `x-prod-env`/compose, no `.env` action needed:**
 `NOCTUS_SCHEDULERS_ENABLED`, `DEBUG`, `NOCTUS_CACHE_BACKEND`,
 `NOCTUS_CACHE_POSTGRES_DSN` (from `NOCTUS_CACHE_PG_PASSWORD`, already

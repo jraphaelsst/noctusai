@@ -35,6 +35,7 @@ from noctusai_lib.api.auth import (
     make_get_current_user_org,
     resolve_sso_role,  # noqa: F401 — re-exported for product imports
 )
+from noctusai_lib.api.auth.platform import require_platform_admin as _require_platform_admin
 from noctusai_lib.api.auth.session import (
     AuthContext,
     FakeApiTokenResolver,
@@ -224,6 +225,31 @@ require_member = require_scopes(
 )
 
 
+# Credenciais e integrações + Configurações do agente (2026-09-16): the
+# NoctusAI OPERATOR only — `noctus_users.role == 'admin'`, never an org
+# owner/admin (seed `noctusai_lib.api.auth.platform`). These pages hold the
+# control plane's cross-product secrets. A missing credential still 401s
+# from `get_auth_context`; a product token has no user and gets 403.
+require_platform_admin = _require_platform_admin(
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
+
+
+def get_credential_service_dep():
+    """DI seam over ``app.credentials.build_credential_service`` — tests
+    override it with a service over Fake store/admin/prober."""
+    from app.credentials import build_credential_service
+
+    return build_credential_service(settings)
+
+
+def get_runtime_settings_service_dep():
+    from app.services.runtime_settings import get_runtime_settings_service
+
+    return get_runtime_settings_service(settings)
+
+
 # ── Runtime seam (contract §E.9) ────────────────────────────────────────────
 #
 # `app/runtime/` is G2's slice (`get_agent_runtime` / `get_approval_broker`
@@ -309,8 +335,16 @@ def get_build_julia_spec_dep():
     discipline as the two deps above; overridden in tests with a stand-in
     spec-builder so the turn loop never needs a real ``AgentSpec``."""
     from app.runtime import build_julia_spec
+    from app.services.runtime_settings import get_runtime_settings_service
 
-    return build_julia_spec
+    runtime_settings = get_runtime_settings_service(settings)
+
+    def _build(persona_row):
+        # `max_turns` resolved per turn: the admin override
+        # (Configurações do agente) applies without a restart.
+        return build_julia_spec(persona_row, max_turns=runtime_settings.max_turns())
+
+    return _build
 
 
 __all__ = [
@@ -328,6 +362,7 @@ __all__ = [
     "get_auth_context",
     "get_build_julia_spec_dep",
     "get_conversation_store_dep",
+    "get_credential_service_dep",
     "get_core_client",
     "get_current_user",
     "get_current_user_org",
@@ -335,11 +370,13 @@ __all__ = [
     "get_org_id",
     "get_persona_store_dep",
     "get_realtime_bus_dep",
+    "get_runtime_settings_service_dep",
     "get_settings",
     "get_social_wiring_client_dep",
     "get_user_client",
     "get_user_role",
     "require_admin",
     "require_member",
+    "require_platform_admin",
     "resolve_sso_role",
 ]
