@@ -369,6 +369,22 @@ if [[ -n "$STAGED_TUNNEL" ]] && have_py; then
     fi
 fi
 
+# ── prod compose hardening blocks stay in lockstep with the propagate source ──
+# agents' + academia-de-reciclagem's deploy/fleet/docker-compose.prod.yml
+# security blocks (cap_drop/read_only/tmpfs/...) must be byte-identical to
+# noctus.dev.propagate's _C_HARDENING_AGENTS/_C_HARDENING_ACADEMIA — the ONE
+# source the dev-shape composes already reuse (roadmap
+# julia-agents-academia-2026-09, D1 review: "generated from one propagate
+# source ... with a keeper parity check").
+STAGED_PROD_COMPOSE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(deploy/fleet/docker-compose\.prod\.yml|mcp/noctusai/tools/noctus/dev/propagate\.py)$' || true)
+if [[ -n "$STAGED_PROD_COMPOSE" ]] && have_py; then
+    echo "[pre-commit] prod compose / propagate staged — verifying hardening parity..."
+    if ! "$PY" "$CLI" --check-prod-compose-hardening-parity --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] PROD-COMPOSE-HARDENING drift. Paste propagate.py's _C_HARDENING_AGENTS / _C_HARDENING_ACADEMIA verbatim into the matching deploy/fleet/docker-compose.prod.yml service block — never hand-retype a security control. See KB § PATTERNS/devops/containerization.md." >&2
+        exit 1
+    fi
+fi
+
 # (consent commits must be isolated).
 STAGED_PROD_EXPOSURE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(deploy/fleet/docker-compose\.prod\.yml|deploy/tunnel/ingress\.yml|scripts/infra/build-and-push\.sh|deploy/consent/.*\.prod\.yml)$' || true)
 if [[ -n "$STAGED_PROD_EXPOSURE" ]] && have_py; then

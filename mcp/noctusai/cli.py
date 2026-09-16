@@ -166,6 +166,7 @@ def main():
     parser.add_argument("--check-pre-deploy-gate", action="store_true", help="Composite pre-deploy gate: runs reachable + backend-env + drift-shield + slip-shield in sequence. Use in CI / pre-deploy automation. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-tunnel-ingress-snapshot-sync", action="store_true", help="deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this asserts the committed config.yml.template ingress snapshot is derived from it (2026-08-10: it was 2 routes stale, and the LIVE config was a gitignored deploy-local copy nothing derived from). Severity high. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
     parser.add_argument("--check-prod-exposure-consent", action="store_true", help="Prod-promotion consent gate: a product's FIRST arrival on deploy/fleet/docker-compose.prod.yml, deploy/tunnel/ingress.yml, or ALL_SLUGS in scripts/infra/build-and-push.sh IS the production-promotion decision (:latest ships it with no later gate) — requires a user-authored deploy/consent/<slug>.prod.yml in an isolated prior commit. Severity high. KB § PATTERNS/devops/prod-exposure-consent.md.")
+    parser.add_argument("--check-prod-compose-hardening-parity", action="store_true", help="deploy/fleet/docker-compose.prod.yml's agents + academia-de-reciclagem security blocks (cap_drop/cap_add/security_opt/read_only/tmpfs/mem_limit) must stay byte-identical to noctus.dev.propagate's _C_HARDENING_AGENTS/_C_HARDENING_ACADEMIA — the one propagate source the dev-shape composes already reuse. A hand-copy into the separate prod compose can silently drift a security control. Severity high. KB § PATTERNS/devops/containerization.md.")
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
     parser.add_argument("--check-canonical-organ-consumption", action="store_true", help="Keeper: products must consume canonical cached organs from @noctusai/lib — no local re-implementations. Named-seam extensions allowed when declared. Severity high. KB § PATTERNS/architect/products-consume-canonical-organs.md.")
     parser.add_argument("--check-auth-boundary-false-green", action="store_true", help="Keeper: auth-boundary test assertions must NOT pair 401 with a maskable code — `status_code in (401, 404)` or `in (401, 422)` is a false-green escape hatch (route-absent ⇒ 404, or body-validation-before-auth ⇒ 422; test passes even when auth never fired). Only static AST analysis catches this class. Severity warning (advisory). KB § PATTERNS/compliance/auth-boundary-false-green.md.")
@@ -772,6 +773,17 @@ def main():
             print(f"  {GREEN}✓ tunnel ingress snapshot derived from ingress.yml.{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} tunnel-ingress drift issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_prod_compose_hardening_parity:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_prod_compose_hardening_parity
+        issues = check_prod_compose_hardening_parity(repo_root=REPO_ROOT)
+        if not issues:
+            print(f"  {GREEN}✓ prod compose hardening blocks match the propagate source.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} prod-compose-hardening-parity issue(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)

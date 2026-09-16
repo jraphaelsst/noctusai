@@ -203,10 +203,59 @@ tunnel is the only public ingress.
 | erp-imobiliario | 8001 | |
 | personal-finance | 8002 | |
 | therapy-platform | 8003 | |
+| seed | 8004 | canonical living reference / canary |
 | daily-life | 8005 | |
 | adconnect | 8007 | |
 | dev-team | 8009 | needs `ANTHROPIC_API_KEY` (runtime); `dev_team/` engine baked into image (no mount) |
 | social-wiring | 8011 | |
+| orbity | 8010 | |
+| academia-de-reciclagem | 8015 | see § Julia/agents env keys below |
+| igig | 8013 | |
+| p-studio | 8014 | |
+| agents | 8016 | see § Julia/agents env keys below |
+
+### Julia / agents + academia-de-reciclagem env keys (root `.env`)
+
+Roadmap `julia-agents-academia-2026-09`, M6 cutover. Both containers are
+hardened (`cap_drop: ALL`, `read_only: true`, per-slug tmpfs — see the
+service comments in `docker-compose.prod.yml`); the env keys below are the
+only NEW ones this cutover adds on top of the fleet-wide keys already
+documented in Step 0 (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, etc.).
+
+**REFUSES TO BOOT without these** (`required_prod_config` — the container
+starts, fails its own guard, and exits; `docker compose up` reports it as
+crash-looping, not merely degraded):
+
+| Key | Used by | Notes |
+|---|---|---|
+| `APPROVAL_ASSERTION_SECRETS` | agents **and** academia-de-reciclagem | comma-separated HS256 signing keys (contract §D). Raw CSV string, NOT a JSON array — a `["a","b"]`-shaped value fails loud at boot by design. `agents` signs with element `[0]`; either side accepts any element. |
+| `SOCIAL_WIRING_API_TOKEN` | agents only | the `social-wiring:one-chat:read`+`:toggle`-scoped product token for the One Chat bridge (contract §E.6). |
+
+**Boots without these, but the feature they gate silently degrades** (no
+boot-time refusal — verify at first real use, not just `/api/health`):
+
+| Key | Used by | Effect if unset |
+|---|---|---|
+| `JULIA_ANTHROPIC_API_KEY` | agents (mapped to the container's `ANTHROPIC_API_KEY` in `docker-compose.prod.yml` — **never** the bare/shared `ANTHROPIC_API_KEY` dev-team reads, contract §E.5) | every Julia turn fails at the CLI-spawn step. |
+| `ACADEMIA_API_TOKEN` | agents only | agents' in-process MCP tool proxies can't authenticate to academia's API — Julia's academia-scoped tools 401. |
+| `JULIA_AGENT_ID` | agents only | must equal `ACADEMIA_API_TOKEN`'s minted `principal_agent_id` exactly (contract §D step 5) — a mismatch fails every academia-side principal check, not just an empty-string default. |
+| `PRIMARY_SOURCE_ALLOWLIST` | academia-de-reciclagem only | comma-separated hostnames (contract §B.5 `POST /api/sources`); empty means every host triggers the AVISO warn-path, never a hard block. |
+
+**Already covered by `x-prod-env`/compose, no `.env` action needed:**
+`NOCTUS_SCHEDULERS_ENABLED`, `DEBUG`, `NOCTUS_CACHE_BACKEND`,
+`NOCTUS_CACHE_POSTGRES_DSN` (from `NOCTUS_CACHE_PG_PASSWORD`, already
+required fleet-wide).
+
+**CORS / PRODUCT_URL — no repo change needed.** Both slugs' `cors_origins`
+default to `@registry:own:<slug>` and both are already rows in the
+`start.sh` `PRODUCTS` registry, so `noctusai_lib.config.cors_registry`
+resolves their origin automatically via the existing `PRODUCT_URL_PATTERN`
+(or a per-slug `PRODUCT_URL_AGENTS` / `PRODUCT_URL_ACADEMIA_DE_RECICLAGEM`
+override) the VPS `.env` already carries for every other product. At
+cutover, run `noctus.dev.ensure_product_url_roster` (dry-run first) so
+core's CORS allowlist and each product's SSO origin close by construction —
+same step every prior product promotion used, nothing agents/academia-
+specific to add here.
 
 ### Infra
 

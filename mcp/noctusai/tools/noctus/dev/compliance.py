@@ -17381,6 +17381,80 @@ def check_tunnel_ingress_snapshot_sync(
     }]
 
 
+# Slugs whose `deploy/fleet/docker-compose.prod.yml` security block MUST be
+# byte-identical to `noctus.dev.propagate`'s own hardening constant — the
+# ONE propagate source `products/<slug>/docker-compose.yml` (the dev shape)
+# already reuses. Keep in lockstep with `propagate._C_HARDENING_EXTRA`.
+_PROD_COMPOSE_HARDENING_SOURCE: dict[str, str] = {
+    "academia-de-reciclagem": "_C_HARDENING_ACADEMIA",
+    "agents": "_C_HARDENING_AGENTS",
+}
+
+
+def check_prod_compose_hardening_parity(repo_root: Path | None = None) -> list[dict]:
+    """`deploy/fleet/docker-compose.prod.yml`'s per-service security block
+    (`cap_drop` / `cap_add` / `security_opt` / `read_only` / `tmpfs` /
+    `mem_limit` / `init`) for `agents` and `academia-de-reciclagem` MUST stay
+    byte-identical to `noctus.dev.propagate`'s own `_C_HARDENING_AGENTS` /
+    `_C_HARDENING_ACADEMIA` constants — the ONE canonical propagate source
+    `products/agents/docker-compose.yml` and
+    `products/academia-de-reciclagem/docker-compose.yml` (the DEV shape)
+    already reuse via `_C_HARDENING_EXTRA`.
+
+    Deferred at D1 with a named destination (roadmap
+    julia-agents-academia-2026-09, D1 review): "the security block is
+    generated from one propagate source and reused by the M6
+    `docker-compose.prod.yml` entry, with a keeper parity check." A hand-
+    copy into the PROD compose (a separate file from the dev shape by
+    design — `KB § PATTERNS/devops/dev-prod-parity.md`) can silently drift
+    from the propagate source the moment either changes, and this hardening
+    block is a security control, not cosmetic YAML — a drifted `cap_add` or
+    a dropped `read_only: true` in prod is a silent widening of Julia's
+    per-conversation isolation guarantee (contract
+    `projects/julia-agents-academia-CONTRACT.md` §E.11), never a build
+    failure.
+    """
+    root = Path(repo_root) if repo_root is not None else Path(REPO_ROOT)
+    prod_compose = root / "deploy" / "fleet" / "docker-compose.prod.yml"
+    if not prod_compose.is_file():
+        return []  # not a noc tree / prod fleet compose not present yet
+    try:
+        from .propagate import _C_HARDENING_AGENTS, _C_HARDENING_ACADEMIA
+    except Exception as e:  # propagate module itself broken — its own gate
+        return [{
+            "file": "mcp/noctusai/tools/noctus/dev/propagate.py",
+            "issue": f"could not import the hardening constants: {e}",
+            "severity": "high",
+            "symbol": "prod-compose-hardening-source-unimportable",
+        }]
+    sources = {
+        "academia-de-reciclagem": _C_HARDENING_ACADEMIA,
+        "agents": _C_HARDENING_AGENTS,
+    }
+    text = prod_compose.read_text(encoding="utf-8")
+    issues: list[dict] = []
+    for slug, block in sources.items():
+        if block not in text:
+            const_name = _PROD_COMPOSE_HARDENING_SOURCE[slug]
+            issues.append({
+                "file": "deploy/fleet/docker-compose.prod.yml",
+                "issue": (
+                    f"'{slug}' service's security block is missing or has "
+                    f"DRIFTED from propagate.{const_name} — the canonical "
+                    f"hardening source `products/{slug}/docker-compose.yml` "
+                    "(the dev shape) already reuses. Paste "
+                    f"`propagate.{const_name}` verbatim into this service's "
+                    "block (never hand-retype it); if the hardening genuinely "
+                    "changed, edit the constant in propagate.py first so both "
+                    "the dev and prod shapes move together. "
+                    "KB § PATTERNS/devops/containerization.md."
+                ),
+                "severity": "high",
+                "symbol": "prod-compose-hardening-drift",
+            })
+    return issues
+
+
 def _prod_exposure_consent_message(slug: str, reason: str) -> str:
     """The self-explanatory failure message — teaches the boundary, not
     just names the violation."""
