@@ -22,5 +22,11 @@ class SeedSettings(ProductSettings):
     # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
     webhook_rate_limit: str = "60/minute"
 
+    # ── Public application form (contract §Aplicações, PUBLIC routes) ──
+    # `GET /api/aplicacoes/formulario` and `POST /api/aplicacoes` are
+    # genuinely unauthenticated — a human filling out a real form won't
+    # hit this, so a tighter cap than the webhook default is fine.
+    aplicacoes_rate_limit: str = "20/minute"
+
 
 settings = SeedSettings()

@@ -17,6 +17,8 @@ import uuid as _uuid
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException
+
 from noctusai_seed import (
     create_database_module,
     create_dependencies,
@@ -26,6 +28,7 @@ from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
     make_get_current_user,
     make_get_current_user_org,
+    make_resolve_platform_role,
     resolve_sso_role,  # noqa: F401 — re-exported for product imports
 )
 from app.config import settings
@@ -74,6 +77,130 @@ def get_user_client(token: str):
 
 def get_admin_client():
     return _db.get_admin_client()
+
+
+# ── Community role gate — admin / moderador (contract §Conventions) ─────
+#
+# Reuses the seed's trusted-first platform-admin cascade
+# (``noctusai_lib.api.auth.make_resolve_platform_role``) — the same
+# mechanism ``ProductDependencies.get_user_role`` composes for the
+# "team" standard router — rather than inventing a parallel role store.
+_resolve_platform_role = make_resolve_platform_role(lambda: _db.get_core_client())
+
+
+def get_community_role(user: Any) -> str:
+    """Resolve the caller's role for THIS product: ``"admin"`` or ``"moderador"``.
+
+    Community defines its own two-tier vocabulary (contract-confirmed:
+    "Manager roles: `admin` (everything) and `moderador` (moderation +
+    content)"), distinct from the generic org-role vocabulary
+    (``owner``/``admin``/``manager``/``member``) the seed's ``team``
+    router (``noctusai_seed.routers._create_team_router``) uses for
+    invites. A community manager is invited through that SAME router
+    with ``role="admin"`` or ``role="moderador"`` in the invite body —
+    an arbitrary string the seed's ``attach_user_to_org`` writes
+    verbatim to the trusted ``public.noctus_users.org_role`` column.
+
+    Resolution order:
+    1. NoctusAI platform admin OR org owner/admin (the seed's
+       trusted-first cascade, ``make_resolve_platform_role``) →
+       ``"admin"`` — mirrors every other product's role-cascade-trusted
+       convention: a platform/org admin is never locked out of a
+       product's back office.
+    2. Otherwise, read the trusted ``public.noctus_users.org_role`` for
+       this user DIRECTLY (not through
+       ``ProductDependencies.get_user_role``, which collapses any
+       non-admin ``org_role`` to the metadata ``"role"`` key — a
+       different, non-mirrored field — and would silently lose the
+       "moderador" distinction). The literal value ``"admin"`` maps to
+       ``"admin"``; anything else (including an absent row, a stale
+       metadata-only member, or a value this product hasn't defined)
+       degrades to ``"moderador"`` — the least-privileged of the two
+       tiers, so an unrecognized value can read but never write.
+    """
+    if _resolve_platform_role(user) == "platform_admin":
+        return "admin"
+    core = _db.get_core_client()
+    result = (
+        core.table("noctus_users")
+        .select("org_role")
+        .eq("id", str(getattr(user, "id", "")))
+        .limit(1)
+        .execute()
+    )
+    rows = result.data or []
+    org_role = rows[0].get("org_role") if rows else None
+    return "admin" if org_role == "admin" else "moderador"
+
+
+def require_admin(role: str, *, action: str) -> None:
+    """403 unless ``role == "admin"`` — the contract's write gate.
+
+    ``action`` is a pt-BR infinitive phrase so the message matches the
+    contract's ``"Apenas administradores podem …"`` shape verbatim
+    (e.g. ``action="criar planos"`` → "Apenas administradores podem
+    criar planos.").
+    """
+    if role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Apenas administradores podem {action}.",
+        )
+
+
+# ── Public-endpoint org resolution (contract §Aplicações, PUBLIC routes) ─
+#
+# Community is single-tenant by product decision (MASTER-PROMPT.md:
+# "Single community (no multi-tenancy beyond the seed's org scoping)"),
+# so its schema holds exactly one org's rows — but an anonymous request
+# carries no JWT, hence no `current_org_id()`. Rather than hardcode an
+# org id, this resolves the org the SAME way the platform already models
+# "which org licenses this product": `public.products.slug` joined to
+# `public.licenses` (status='active') — the exact table pair
+# `snapshot_product_usage()` (products/core/backend/migrations/
+# 001_noctusai_core.sql) already walks for per-product usage reporting.
+# No new table, no invented mechanism.
+_COMMUNITY_PRODUCT_SLUG = "community"
+
+
+def resolve_public_org_id() -> UUID:
+    """Resolve the single org licensed for this product, for anon routes.
+
+    Raises:
+        HTTPException(503): no product row, no active license, or more
+            than one active license (a genuine misconfiguration for a
+            single-tenant product) — surfaced loudly rather than
+            guessing which org an anonymous submission belongs to.
+    """
+    core = _db.get_core_client()
+    product = (
+        core.table("products")
+        .select("id")
+        .eq("slug", _COMMUNITY_PRODUCT_SLUG)
+        .limit(1)
+        .execute()
+    )
+    product_rows = product.data or []
+    if not product_rows:
+        raise HTTPException(
+            status_code=503,
+            detail="Formulário de inscrição indisponível no momento.",
+        )
+    product_id = product_rows[0]["id"]
+    licenses = (
+        core.table("licenses")
+        .select("org_id")
+        .eq("product_id", product_id)
+        .eq("status", "active")
+        .execute()
+    )
+    license_rows = licenses.data or []
+    if len(license_rows) != 1:
+        raise HTTPException(
+            status_code=503,
+            detail="Formulário de inscrição indisponível no momento.",
+        )
+    return coerce_org_uuid(license_rows[0]["org_id"])
 
 
 def coerce_org_uuid(raw_org: Any) -> UUID:
