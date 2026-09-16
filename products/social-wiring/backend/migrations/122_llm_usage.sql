@@ -1,0 +1,121 @@
+-- 122_llm_usage.sql -- social_wiring: per-org LLM token usage + cost
+--
+-- Numbering re-verified twice this slice: this SW series starts at 121
+-- (jobs), so llm_usage lands at 122 -- see 121_jobs.sql's header for the
+-- full renumbering trail (119/120 claimed by a parallel slice).
+--
+-- Instantiated from noctusai_lib/integrations/llm/migrations/llm_usage.sql.template
+-- (Wave 1, edicao-fotos W1 migrations slice), {{SCHEMA_NAME}} -> social_wiring,
+-- no other changes. This template SUPERSEDES the two pre-existing hand-copies
+-- (erp-imobiliario/020_llm_usage.sql, therapy-platform/006_llm_usage.sql) per
+-- CLAUDE.md §1's N=3 DRY rule (projects/edicao-fotos/PROJECT.md §C2).
+--
+-- FORWARD-ONLY. MIGRATION FILE ONLY -- not applied to any database by this
+-- change. Applying needs owner consent.
+
+-- ============================================================================
+-- llm_usage — per-org LLM token usage + cost (chat/embedding/audio/vision/image_edit)
+-- ============================================================================
+--
+-- Source: noctusai_lib/integrations/llm/migrations/llm_usage.sql.template
+--
+-- Written by `noctusai_lib.integrations.llm.usage.SupabaseUsageSink`
+-- (service role) after every successful provider call. Read via the
+-- product's own `/api/llm/usage` endpoint (org-scoped RLS) and the Core
+-- `/api/admin/llm-usage` endpoint (platform-admin, service role).
+--
+-- Copy this template into
+-- `products/<your-product>/backend/migrations/NNN_llm_usage.sql`,
+-- substitute `social_wiring` with the product schema, renumber if
+-- needed — same recipe as `domain/ai/migrations/tool_call_audits.sql.
+-- template` and `domain/jobs/migrations/jobs.sql.template`.
+--
+-- 🔴 REGISTER THE SCHEMA — a table with nobody reading it is half-shipped.
+-- After landing this migration, add `"<product-slug>": "<schema>"` to
+-- BOTH of these maps or the rows are invisible outside the product itself:
+--   - `products/core/backend/app/routers/admin_llm_usage.py`
+--     (`_PRODUCT_SCHEMAS`)
+--   - `noctusai_lib/integrations/llm/budget.py` (`_PRODUCT_SCHEMAS`)
+--
+-- Formalized 2026-09 (edicao-fotos Wave 1, W1 migrations slice) — the
+-- THIRD hand-copy (`erp-imobiliario/020_llm_usage.sql`,
+-- `therapy-platform/006_llm_usage.sql`) tripped the `CLAUDE.md` §1 N=3 DRY
+-- rule. This shape carries the four columns `SupabaseUsageSink` already
+-- computes on every `UsageEvent` (S2, this project's Wave 1) but could not
+-- write anywhere until now (`NOC-REMEDIATE[llm-usage-image-columns]`,
+-- resolved by this template + the SupabaseUsageSink.record() edit that
+-- lands with it): `image_input_tokens` / `image_output_tokens` /
+-- `model_version` / `batch`. erp-imobiliario's `020_llm_usage.sql` and
+-- therapy-platform's `006_llm_usage.sql` are pre-existing APPLIED
+-- migrations and stay forward-only — do not retrofit them from this
+-- template; widen each via its own `ALTER TABLE ... ADD COLUMN IF NOT
+-- EXISTS` follow-up migration when a consumer there needs the new columns
+-- too.
+--
+-- Apply via Supabase MCP per `KB § PATTERNS/database-rls.md`:
+--   1. Land this file in the product's migrations/.
+--   2. Apply via `mcp__claude_ai_Supabase__apply_migration`.
+--   3. Verify the table appeared with `mcp__claude_ai_Supabase__list_tables`.
+--
+-- LGPD: counts + provider/model/org_id + cost estimate only. NEVER prompt
+-- or response text — see `UsageEvent`'s docstring.
+-- ============================================================================
+
+SET search_path = social_wiring, public;
+
+CREATE TABLE IF NOT EXISTS social_wiring.llm_usage (
+    id                   BIGSERIAL PRIMARY KEY,
+    org_id               UUID,
+    provider             TEXT NOT NULL,
+    model                TEXT NOT NULL,
+    operation            TEXT NOT NULL,          -- 'chat' | 'embedding' | 'audio' | 'vision' | 'image_edit'
+    prompt_tokens        INTEGER,
+    completion_tokens    INTEGER,
+    total_tokens         INTEGER,
+    -- Image-token counts — populated by `image_edit` / multi-image vision
+    -- calls. Additive to (never a re-use of) prompt_tokens/completion_tokens,
+    -- because ModelEntry prices image tokens at a separate published rate
+    -- from text tokens. NULL for every non-image call.
+    image_input_tokens   INTEGER,
+    image_output_tokens  INTEGER,
+    cost_estimate_usd    NUMERIC(12, 6) NOT NULL DEFAULT 0,
+    -- Provider-reported dated snapshot actually served (e.g.
+    -- "gpt-image-2.5-sunburst-2026-09-08"), distinct from `model` (the
+    -- requested alias, which can roll to a new snapshot server-side).
+    model_version        TEXT,
+    -- True when recorded from the provider's async Batch API (discounted
+    -- rate) rather than a real-time call.
+    batch                BOOLEAN NOT NULL DEFAULT false,
+    at                   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE social_wiring.llm_usage ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: users see rows matching their JWT org (current_org_id()).
+-- Platform admin reads cross-product via the Core /api/admin/llm-usage
+-- endpoint (service role). Add a product-local admin-full policy here
+-- ONLY if the product's own /api/llm/usage endpoint needs org-admin
+-- visibility beyond "own rows" — omitted by default (mirrors
+-- therapy-platform's 006, the narrower of the two existing hand-copies).
+CREATE POLICY "llm_usage_select_own_org" ON social_wiring.llm_usage
+    FOR SELECT TO authenticated
+    USING (org_id IS NOT NULL AND org_id = public.current_org_id());
+
+-- INSERT: service role only (bypasses RLS). No user-facing INSERT policy —
+-- writes come from SupabaseUsageSink running under the admin client.
+CREATE POLICY "service_role_bypass" ON social_wiring.llm_usage
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE INDEX IF NOT EXISTS ix_llm_usage_org_at
+    ON social_wiring.llm_usage (org_id, at DESC);
+CREATE INDEX IF NOT EXISTS ix_llm_usage_provider_model
+    ON social_wiring.llm_usage (provider, model);
+CREATE INDEX IF NOT EXISTS ix_llm_usage_at
+    ON social_wiring.llm_usage (at DESC);
+-- The Batch-savings dashboard metric's read path.
+CREATE INDEX IF NOT EXISTS ix_llm_usage_batch
+    ON social_wiring.llm_usage (batch)
+    WHERE batch = true;
+
+COMMENT ON TABLE social_wiring.llm_usage IS
+    'LLM token usage + cost estimate per org, incl. image-edit tokens. Written by SupabaseUsageSink (service role). LGPD: no prompt/response text stored.';

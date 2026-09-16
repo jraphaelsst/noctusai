@@ -56,6 +56,7 @@ _BUDGET_KEY = "monthly_llm_budget_brl"
 _PRODUCT_SCHEMAS: dict[str, str] = {
     "erp-imobiliario": "erp",
     "therapy-platform": "therapy",
+    "social-wiring": "social_wiring",
 }
 
 

@@ -106,21 +106,37 @@ class SupabaseUsageSink:
     LGPD: this sink writes counts + provider/model identifiers + `org_id`
     only — never prompt content. See `UsageEvent` docstring.
 
-    NOC-REMEDIATE[llm-usage-image-columns]: `image_input_tokens` /
-    `image_output_tokens` / `model_version` / `batch` are computed on every
-    `UsageEvent` (S2) but intentionally NOT written to `row` below — the
-    `<schema>.llm_usage` table doesn't carry those columns yet, and
-    inserting unknown keys would fail (or, if PostgREST silently ignores
-    extras, would look like it worked while dropping the very fields this
-    slice exists to preserve). Add the migration + these four keys to `row`
-    together, in whichever product/slice actually owns writing to
-    `llm_usage` next — S2 is the seed-lib schema only.
+    `supports_image_columns` — was `NOC-REMEDIATE[llm-usage-image-columns]`
+    (resolved 2026-09, edicao-fotos Wave 1 W1 migrations slice):
+    `image_input_tokens` / `image_output_tokens` / `model_version` / `batch`
+    are computed on every `UsageEvent` (S2) but were withheld from `row`
+    because most `<schema>.llm_usage` tables don't carry those columns —
+    `erp-imobiliario/020_llm_usage.sql` and `therapy-platform/006_llm_usage.
+    sql` are pre-existing APPLIED migrations on the narrower shape, and
+    inserting unknown keys against them would fail (or, if PostgREST
+    silently ignored extras, would look like it worked while dropping the
+    very fields this flag exists to preserve). The canonical WIDE shape now
+    ships as `noctusai_lib/integrations/llm/migrations/llm_usage.sql.
+    template` (first instantiated by social-wiring's `122_llm_usage.sql`).
+    Pass `supports_image_columns=True` ONLY when the product's own
+    `llm_usage` table was created from that template (or an `ALTER TABLE
+    ... ADD COLUMN IF NOT EXISTS` follow-up that added the same four
+    columns) — default `False` keeps every existing consumer's insert shape
+    byte-identical.
     """
 
-    def __init__(self, db_client: Any, schema: str, table: str = "llm_usage") -> None:
+    def __init__(
+        self,
+        db_client: Any,
+        schema: str,
+        table: str = "llm_usage",
+        *,
+        supports_image_columns: bool = False,
+    ) -> None:
         self._db = db_client
         self._schema = schema
         self._table = table
+        self._supports_image_columns = supports_image_columns
 
     async def record(self, event: UsageEvent) -> None:
         row = {
@@ -134,6 +150,13 @@ class SupabaseUsageSink:
             "cost_estimate_usd": event.cost_estimate_usd,
             "at": event.at.isoformat(),
         }
+        if self._supports_image_columns:
+            row.update({
+                "image_input_tokens": event.image_input_tokens,
+                "image_output_tokens": event.image_output_tokens,
+                "model_version": event.model_version,
+                "batch": event.batch,
+            })
         try:
             # supabase-py is sync under the hood; dispatching to a thread
             # keeps the caller's event loop responsive under load.

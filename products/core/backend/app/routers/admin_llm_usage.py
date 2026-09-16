@@ -31,6 +31,7 @@ router = APIRouter(prefix="/api/admin/llm-usage", tags=["Admin · LLM Usage"])
 _PRODUCT_SCHEMAS: dict[str, str] = {
     "erp-imobiliario": "erp",
     "therapy-platform": "therapy",
+    "social-wiring": "social_wiring",
 }
 
 
