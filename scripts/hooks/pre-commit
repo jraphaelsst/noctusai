@@ -385,6 +385,21 @@ if [[ -n "$STAGED_PROD_COMPOSE" ]] && have_py; then
     fi
 fi
 
+# ── prod compose ${VAR} interpolation <-> deploy/fleet/env.fleet.keys ────
+# Keeper `check_prod_compose_env_manifest_sync` + `KB § GUIDES/production-
+# deploy.md § 6`. 2026-09-16: agents' ${JULIA_ANTHROPIC_API_KEY:-} resolved
+# to '' because that var was only ever documented as a root `.env` key —
+# ${VAR} interpolation reads deploy/fleet/.env.fleet, a DIFFERENT mechanism
+# from env_file:, at compose-parse time, before the container ever starts.
+STAGED_ENV_FLEET=$(git diff --cached --name-only 2>/dev/null | grep -E '^(deploy/fleet/(docker-compose\.prod\.yml|compose\.infra\.prod\.yml|env\.fleet\.keys))$' || true)
+if [[ -n "$STAGED_ENV_FLEET" ]] && have_py; then
+    echo "[pre-commit] prod compose / env.fleet.keys staged — verifying interpolation manifest sync..."
+    if ! "$PY" "$CLI" --check-prod-compose-env-manifest-sync --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] PROD-COMPOSE-ENV-MANIFEST-SYNC drift. Add any newly-interpolated \${VAR} name (no value) to deploy/fleet/env.fleet.keys, and verify a secret-shaped var (*_KEY/*_TOKEN/*_SECRET/*_PASSWORD) with an empty/absent default is actually set in deploy/fleet/.env.fleet on the VPS — or mark a reviewed, intentional degrade with an 'env-fleet-empty-ok' comment. See KB § GUIDES/production-deploy.md § 6." >&2
+        exit 1
+    fi
+fi
+
 # (consent commits must be isolated).
 STAGED_PROD_EXPOSURE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(deploy/fleet/docker-compose\.prod\.yml|deploy/tunnel/ingress\.yml|scripts/infra/build-and-push\.sh|deploy/consent/.*\.prod\.yml)$' || true)
 if [[ -n "$STAGED_PROD_EXPOSURE" ]] && have_py; then

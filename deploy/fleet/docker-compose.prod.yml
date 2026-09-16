@@ -222,12 +222,16 @@ services:
   # The engine (dev_team/) is BAKED into the image at build time
   #   (Dockerfile: `COPY dev_team /opt/dev_team` + `pip install -e`),
   # so NO /opt/dev_team bind-mount is needed in prod — it ships in the
-  # image. ANTHROPIC_API_KEY is read at runtime via os.getenv
-  #   (backend/app/services/agno_health.py); it comes from the root .env
-  # through env_file. If unset, dev-team runs healthy but returns
-  #   {status: "switch-not-flipped"} on /api/run (graceful, by design).
-  # `environment:` re-asserts it explicitly for operator visibility — it
-  # is already present via env_file; this just documents the dependency.
+  # image. `environment:` wins over `env_file:` in compose (see x-prod-env
+  #   above), so the explicit `ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}`
+  # line below is what the container actually gets — ${...} is INTERPOLATED
+  #   from deploy/fleet/.env.fleet (compose-parse time, in this directory),
+  # NOT read from the root `.env` via env_file, regardless of what the root
+  #   `.env` carries for that name (the JULIA_ANTHROPIC_API_KEY class below —
+  # this one is documented + reviewed, that one was not, 2026-09-16).
+  #   env-fleet-empty-ok — REVIEWED: if unset, dev-team runs healthy but
+  # returns {status: "switch-not-flipped"} on /api/run (graceful, by design;
+  #   backend/app/services/agno_health.py). See deploy/fleet/env.fleet.keys.
   dev-team:
     <<: *prod-defaults
     image: ghcr.io/jraphaelsst/noctus-dev-team:${NOCTUS_IMAGE_TAG:-latest}
@@ -237,7 +241,7 @@ services:
     # every other prod-defaults key — `NOCTUS_SCHEDULERS_ENABLED` among them.
     environment:
       <<: *prod-env
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}  # env-fleet-empty-ok — see block comment above
     expose:
       - "8009"
     healthcheck:
@@ -352,14 +356,27 @@ services:
     # Merge the FULL prod env, then map Julia's DEDICATED, spend-capped key
     # (contract §E.5 — never shared with any other product's LLM calls) onto
     # the container's ANTHROPIC_API_KEY. `JULIA_ANTHROPIC_API_KEY` is a
-    # SEPARATE root `.env` key from the bare `ANTHROPIC_API_KEY` dev-team
-    # reads above — the bare name must never reach this container. Re-merging
+    # SEPARATE deploy/fleet/.env.fleet key (compose ${...} INTERPOLATION, not
+    # env_file:) from the bare `ANTHROPIC_API_KEY` dev-team reads above — the
+    # bare name must never reach this container. 🔴 2026-09-16 incident: this
+    # key was only ever documented as a root `.env` entry, so it silently
+    # interpolated to '' — every Julia turn failed at the CLI-spawn step
+    # while /api/health stayed 200. Must be listed (names only) in
+    # deploy/fleet/env.fleet.keys AND actually set, with a value, in
+    # deploy/fleet/.env.fleet on the VPS — `check_prod_compose_env_manifest_
+    # sync` gates the former; the latter has no repo-only witness. Re-merging
     # `*prod-env` (not a hand-copied subset) means a key added to that anchor
     # later is never silently dropped here either (see the dev-team service's
     # own comment above for the incident this pattern already fixed once).
+    # REVIEWED: the tech-lead set this key's value in deploy/fleet/.env.fleet
+    #   on the VPS during the 2026-09-16 incident response (same session).
+    # The STATIC check ends there — whether the VALUE is still present on a
+    #   given VPS going forward is the live half no repo-only check can see;
+    # verify with the optional `env_fleet_manifest` leg in
+    #   noctus.dev.predeploy_check, fed a deploy/fleet/.env.fleet snapshot.
     environment:
       <<: *prod-env
-      ANTHROPIC_API_KEY: ${JULIA_ANTHROPIC_API_KEY:-}
+      ANTHROPIC_API_KEY: ${JULIA_ANTHROPIC_API_KEY:-}  # env-fleet-empty-ok — see REVIEWED comment above
     expose:
       - "8016"
     healthcheck:

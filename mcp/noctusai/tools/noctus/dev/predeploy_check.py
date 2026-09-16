@@ -53,6 +53,8 @@ DEFAULT_CHECKS: list[str] = [
     "prod_config_parity",  # value-correctness: prod env resolves a non-localhost URL per product
     "required_prod_env_present",  # newly-required-at-boot env keys (seed baseline) present in prod snapshot
     "cors_roster_complete",  # backstop: every registry slug has a CORS-resolvable origin
+    "schema_exposure",  # PGRST106 class — product's declared schema is in authenticator's pgrst.db_schemas
+    "env_fleet_manifest",  # every deploy/fleet/env.fleet.keys name has a non-empty value in a fed .env.fleet snapshot
 ]
 
 PROJECT_SLUG = "deploy-hardening-and-dev-isolation"
@@ -410,6 +412,71 @@ def audit_cors_roster_complete(
     }
 
 
+_ENV_FLEET_MANIFEST_REL = "deploy/fleet/env.fleet.keys"
+_ENV_FLEET_ENV_NAME = "NOCTUS_ENV_FLEET_FILE"
+
+
+def audit_env_fleet_manifest_present(
+    manifest_keys: list[str], env: dict[str, str] | None
+) -> dict[str, Any]:
+    """Pure: assert every ``deploy/fleet/env.fleet.keys`` name has a
+    non-empty VALUE in a live ``.env.fleet`` snapshot.
+
+    ``check_prod_compose_env_manifest_sync`` (the pre-commit keeper) proves
+    the manifest is a complete NAMES-ONLY list — it has no way to see
+    whether the VPS's actual ``.env.fleet`` carries a value for each name.
+    This is that live half, fed a snapshot the same way ``prod_config_
+    parity`` is fed one (opt-in — no repo-tracked ``.env.fleet`` exists to
+    default to; the caller passes ``env_fleet_path`` /
+    ``NOCTUS_ENV_FLEET_FILE`` or this check SKIPs loudly).
+
+    Returns ``{checked, violations}``.
+    """
+    env = dict(env or {})
+    violations: list[str] = []
+    for key in manifest_keys:
+        if not (env.get(key) or "").strip():
+            violations.append(
+                f"'{key}' is listed in {_ENV_FLEET_MANIFEST_REL} but missing/empty "
+                "in the .env.fleet snapshot — a compose ${VAR} interpolating it "
+                "will silently resolve to '' (the JULIA_ANTHROPIC_API_KEY class, "
+                "2026-09-16)."
+            )
+    return {"checked": len(manifest_keys), "violations": violations}
+
+
+def _resolve_env_fleet_path(
+    root: pathlib.Path, explicit: str | None = None
+) -> pathlib.Path | None:
+    """Resolve the ``.env.fleet`` snapshot to audit: explicit arg ->
+    ``NOCTUS_ENV_FLEET_FILE`` -> ``deploy/fleet/.env.fleet`` in ``root``
+    (present only when an operator placed one there deliberately — it is
+    gitignored, never checked in). Returns ``None`` when none exists (the
+    runner then SKIPs loudly)."""
+    if explicit:
+        explicit_path = pathlib.Path(explicit)
+        return explicit_path if explicit_path.exists() else None
+    from_env = os.environ.get(_ENV_FLEET_ENV_NAME)
+    if from_env and pathlib.Path(from_env).exists():
+        return pathlib.Path(from_env)
+    candidate = root / "deploy" / "fleet" / ".env.fleet"
+    return candidate if candidate.exists() else None
+
+
+def _load_env_fleet_manifest_keys(root: pathlib.Path) -> list[str]:
+    """Names-only lines of ``deploy/fleet/env.fleet.keys`` (blank/`#` lines
+    skipped). Returns ``[]`` when the manifest is absent so the caller SKIPs
+    loudly rather than crashing."""
+    p = root / _ENV_FLEET_MANIFEST_REL
+    if not p.exists():
+        return []
+    return [
+        line.strip()
+        for line in p.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
 def _parse_env_file(text: str) -> dict[str, str]:
     """Minimal ``.env`` parser (KEY=VALUE; ignores blanks / ``#`` comments /
     ``export `` prefix; strips one layer of matching quotes). Config-file
@@ -540,7 +607,11 @@ def load_product_required_prod_config(root: pathlib.Path, product: str) -> list[
 
 
 def _default_run_check(
-    check: str, product: str, root: pathlib.Path, prod_env_path: str | None = None
+    check: str,
+    product: str,
+    root: pathlib.Path,
+    prod_env_path: str | None = None,
+    env_fleet_path: str | None = None,
 ) -> tuple[bool, str]:
     """Real runner — shells the deploy-relevant build/test (mirrors
     noctus.dev.vite_build / pytest); framework_deps composes the existing
@@ -674,6 +745,62 @@ def _default_run_check(
             f"cors_roster_complete ok — {audit['checked']} product(s) have a "
             f"resolvable CORS origin ({env_path.name})"
         )
+    if check == "schema_exposure":
+        # Scoped to THIS product only (products=[product] bypasses the
+        # catalog-roster round-trip — predeploy_check already knows which
+        # one product it is gating). Unlike every other leg above, a
+        # not_configured/unavailable result here is a FAILURE, never a
+        # silent skip: "we couldn't check" must not read as "it's fine" for
+        # the gate that exists specifically to catch a PGRST106 before it
+        # ships (the 2026-09-16 agents/academia-de-reciclagem incident —
+        # /api/health stayed 200 while the startup hook failed).
+        from . import ensure_schema_exposure as _ese
+
+        result = _ese.check_schema_exposure(action="check", products=[product])
+        if result["status"] in ("not_configured", "unavailable", "error"):
+            return False, (
+                f"schema_exposure BLOCKED ({result['status']}) — "
+                f"{result.get('error') or 'could not verify pgrst.db_schemas exposure'}"
+            )
+        if result["missing"]:
+            return False, (
+                f"schema exposure VIOLATED — {product}'s schema not in "
+                f"authenticator's pgrst.db_schemas: {result['missing']}. Fix with "
+                f"noctus.dev.ensure_schema_exposure(action='apply', confirm=True, "
+                f"products=['{product}']). See KB § GUIDES/production-deploy.md § 6."
+            )
+        return True, (
+            f"schema_exposure ok — {product}'s schema is exposed to PostgREST "
+            f"({result['exposed_schemas']})"
+        )
+    if check == "env_fleet_manifest":
+        # Platform-wide (product arg unused), opt-in: SKIPs loudly (ok=True)
+        # when no deploy/fleet/env.fleet.keys manifest or no .env.fleet
+        # snapshot is available — same pattern as prod_config_parity. This
+        # is the live half check_prod_compose_env_manifest_sync (repo-only)
+        # cannot cover: a name can be correctly LISTED and still be empty on
+        # the actual VPS .env.fleet.
+        manifest_keys = _load_env_fleet_manifest_keys(root)
+        if not manifest_keys:
+            return True, (
+                f"env_fleet_manifest SKIPPED — {_ENV_FLEET_MANIFEST_REL} missing "
+                "or empty."
+            )
+        env_path = _resolve_env_fleet_path(root, env_fleet_path)
+        if env_path is None:
+            return True, (
+                "env_fleet_manifest SKIPPED — no .env.fleet snapshot resolvable "
+                f"(pass env_fleet_path, set {_ENV_FLEET_ENV_NAME}, or place "
+                "deploy/fleet/.env.fleet — gitignored, never checked in)."
+            )
+        env = _parse_env_file(env_path.read_text(encoding="utf-8"))
+        audit = audit_env_fleet_manifest_present(manifest_keys, env)
+        if audit["violations"]:
+            return False, "env-fleet manifest VALUES missing: " + "; ".join(audit["violations"])
+        return True, (
+            f"env_fleet_manifest ok — {audit['checked']} key(s) have a value "
+            f"in the .env.fleet snapshot ({env_path.name})"
+        )
     return False, f"unknown check '{check}'"
 
 
@@ -708,6 +835,7 @@ def predeploy_check(
     checks: list[str] | None = None,
     auto_fix: bool = False,
     prod_env_path: str | None = None,
+    env_fleet_path: str | None = None,
     run_check: Callable[[str, str, pathlib.Path], tuple[bool, str]] | None = None,
     write_report: Callable[[str, str], str] | None = None,
     log_fn: Callable[..., int] | None = None,
@@ -721,9 +849,11 @@ def predeploy_check(
     'blocked' (≥1 fail). Never raises on a check failure — it returns it."""
     if not product or not product.strip():
         return {"ok": False, "status": "error", "error": "product required", "exit_code": 1}
-    # default runner threads the resolved prod env path; injected runners keep
-    # the 3-arg (check, product, root) contract the tests rely on.
-    runner = run_check or functools.partial(_default_run_check, prod_env_path=prod_env_path)
+    # default runner threads the resolved prod env + env-fleet paths; injected
+    # runners keep the 3-arg (check, product, root) contract the tests rely on.
+    runner = run_check or functools.partial(
+        _default_run_check, prod_env_path=prod_env_path, env_fleet_path=env_fleet_path
+    )
     logger = log_fn or _pl.log_learning
     fixer = fix_framework_deps or _default_fix_framework_deps
     clock = now or _dt.datetime.utcnow
@@ -810,14 +940,20 @@ def register(server) -> None:
             "deploy-config-contract: every product resolves a non-localhost "
             "prod URL, no PRODUCT_URL_*/CORS_ORIGINS value carries a loopback "
             "host; feed it a snapshot via prod_env_path / NOCTUS_PROD_ENV_FILE "
-            "/ a .env.prod, else it SKIPs loudly), CLASSIFIES any "
+            "/ a .env.prod, else it SKIPs loudly, schema_exposure — the "
+            "product's declared DB schema must be in the authenticator role's "
+            "pgrst.db_schemas exposed list (PGRST106 class; UNLIKE every other "
+            "leg this one FAILS, never skips, when it can't verify), and "
+            "env_fleet_manifest — every deploy/fleet/env.fleet.keys name has a "
+            "non-empty value in a .env.fleet snapshot fed via env_fleet_path / "
+            "NOCTUS_ENV_FLEET_FILE, else it SKIPs loudly), CLASSIFIES any "
             "failure against the known boundary-contract classes, AUTO-FIXES "
             "the framework-dep class when auto_fix=True (composes "
             "check_framework_deps), and for an UNKNOWN failure writes "
             "predeploy-reports/<utc>-<product>.md + logs phase_learnings (s1). "
             "status='ready' (all pass, exit 0) | 'blocked' (≥1 fail, exit 1). "
             "Pass worktree_path when called from inside a git worktree. "
-            "See KB § GUIDES/production-deploy.md § 2a + "
+            "See KB § GUIDES/production-deploy.md § 2a + § 6 + "
             "KB § PATTERNS/boundary-contract-tests.md."
         ),
     )
@@ -826,12 +962,14 @@ def register(server) -> None:
         auto_fix: bool = False,
         worktree_path: str | None = None,
         prod_env_path: str | None = None,
+        env_fleet_path: str | None = None,
     ) -> dict:
         return predeploy_check(
             product,
             auto_fix=auto_fix,
             worktree_path=worktree_path,
             prod_env_path=prod_env_path,
+            env_fleet_path=env_fleet_path,
         )
 
 
@@ -842,6 +980,7 @@ __all__ = [
     "audit_prod_config_parity",
     "audit_required_prod_env_present",
     "audit_cors_roster_complete",
+    "audit_env_fleet_manifest_present",
     "DEFAULT_CHECKS",
     "PROJECT_SLUG",
     "register",

@@ -97,6 +97,18 @@ docker compose -f docker-compose.prod.yml config | grep -c 'noctus_cache:@'
 > `deploy/fleet/.env` is gitignored, so this is HOST state. It does not
 > travel with the repo — re-create it on any rebuilt or additional VPS.
 
+`deploy/fleet/env.fleet.keys` is the tracked, names-only manifest of every
+`${VAR}` either prod compose file interpolates this way (no values — real
+values live only in the gitignored `.env.fleet`). `check_prod_compose_env_
+manifest_sync` (pre-commit-gated when either compose file or the manifest
+is staged) cross-checks it and flags a secret-shaped var (`*_KEY`/`*_TOKEN`/
+`*_SECRET`/`*_PASSWORD`) that has no enforced non-empty default — the exact
+`JULIA_ANTHROPIC_API_KEY` failure mode (§ "Julia / agents + academia-de-
+reciclagem env keys" below). It cannot see whether the VPS's `.env.fleet`
+actually carries a VALUE for a listed key — that live half has no repo-only
+witness; verify manually (or via `noctus.dev.predeploy_check`'s optional
+`env_fleet_manifest` leg, fed a `.env.fleet` snapshot).
+
 ## Step 1 — build + push images (on the BUILD HOST / CI, NOT the VPS)
 
 ```bash
@@ -214,13 +226,27 @@ tunnel is the only public ingress.
 | p-studio | 8014 | |
 | agents | 8016 | see § Julia/agents env keys below |
 
-### Julia / agents + academia-de-reciclagem env keys (root `.env`)
+### Julia / agents + academia-de-reciclagem env keys
 
 Roadmap `julia-agents-academia-2026-09`, M6 cutover. Both containers are
 hardened (`cap_drop: ALL`, `read_only: true`, per-slug tmpfs — see the
 service comments in `docker-compose.prod.yml`); the env keys below are the
 only NEW ones this cutover adds on top of the fleet-wide keys already
 documented in Step 0 (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, etc.).
+
+🔴 **All but one of these are root `.env` keys read through `env_file:`.**
+`JULIA_ANTHROPIC_API_KEY` is the ONE exception — `docker-compose.prod.yml`
+maps it onto the `agents` container as `ANTHROPIC_API_KEY: ${JULIA_ANTHROPIC_API_KEY:-}`,
+a compose `${...}` **interpolation**, resolved at compose-PARSE time from
+`deploy/fleet/.env.fleet` (see "🔴 `deploy/fleet/.env`" above) — `environment:`
+wins over `env_file:`, so it is NEVER read from the root `.env` regardless of
+what that file carries for the name. An earlier version of this table said
+"root `.env`" for it too; that mistake is exactly what shipped 2026-09-16 —
+the key silently interpolated to `''` and every Julia turn failed at the
+CLI-spawn step while `/api/health` stayed 200. It must be listed (names
+only) in `deploy/fleet/env.fleet.keys` — `check_prod_compose_env_manifest_
+sync` gates that — **and actually set, with a value, in
+`deploy/fleet/.env.fleet` on the VPS**, which no repo-only check can see.
 
 **REFUSES TO BOOT without these** (`required_prod_config` — the container
 starts, fails its own guard, and exits; `docker compose up` reports it as
@@ -236,7 +262,7 @@ boot-time refusal — verify at first real use, not just `/api/health`):
 
 | Key | Used by | Effect if unset |
 |---|---|---|
-| `JULIA_ANTHROPIC_API_KEY` | agents (mapped to the container's `ANTHROPIC_API_KEY` in `docker-compose.prod.yml` — **never** the bare/shared `ANTHROPIC_API_KEY` dev-team reads, contract §E.5) | every Julia turn fails at the CLI-spawn step. |
+| `JULIA_ANTHROPIC_API_KEY` 🔴 `deploy/fleet/.env.fleet`, NOT root `.env` — see callout above | agents (mapped to the container's `ANTHROPIC_API_KEY` in `docker-compose.prod.yml` — **never** the bare/shared `ANTHROPIC_API_KEY` dev-team reads, contract §E.5) | every Julia turn fails at the CLI-spawn step. |
 | `ACADEMIA_API_TOKEN` | agents only | agents' in-process MCP tool proxies can't authenticate to academia's API — Julia's academia-scoped tools 401. |
 | `JULIA_AGENT_ID` | agents only | must equal `ACADEMIA_API_TOKEN`'s minted `principal_agent_id` exactly (contract §D step 5) — a mismatch fails every academia-side principal check, not just an empty-string default. |
 | `PRIMARY_SOURCE_ALLOWLIST` | academia-de-reciclagem only | comma-separated hostnames (contract §B.5 `POST /api/sources`); empty means every host triggers the AVISO warn-path, never a hard block. |

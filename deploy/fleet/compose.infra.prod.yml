@@ -105,12 +105,19 @@ services:
   waha:
     # WhatsApp HTTP API — profile-gated. Absent ⇒ FakeWahaClient fallback.
     # On a Linux x86 VPS the default amd64 image runs native (no override
-    # needed). WAHA_API_KEY / dashboard creds come from the root .env.
+    # needed). ${...} below is compose ${VAR} INTERPOLATION (parse-time, from
+    #   deploy/fleet/.env.fleet in this directory) — NOT the root `.env` that
+    # env_file: loads (the earlier claim here was wrong, same class as the
+    #   JULIA_ANTHROPIC_API_KEY incident, KB § GUIDES/production-deploy.md § 6).
+    # REVIEWED — WAHA_API_KEY: this whole service is profile-gated
+    #   (`--profile waha`); an empty key has zero prod impact until an
+    # operator deliberately enables the profile, at which point they must
+    #   set it in deploy/fleet/.env.fleet first (`.env.fleet.example`).
     image: ${WAHA_IMAGE:-devlikeapro/waha:latest}
     platform: ${WAHA_PLATFORM:-linux/amd64}
     container_name: noctus-waha
     environment:
-      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WAHA_API_KEY: ${WAHA_API_KEY:-}  # env-fleet-empty-ok — see REVIEWED comment above
       WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
       WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
       WHATSAPP_DEFAULT_ENGINE: WEBJS

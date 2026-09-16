@@ -723,3 +723,137 @@ def test_required_prod_env_runner_skips_loudly_on_non_literal_declaration(monkey
     assert ok is True  # SKIP, not a pass-by-omission — the message says so
     assert "SKIPPED" in msg
     assert "widget" in msg
+
+
+# ── schema_exposure leg (2026-09-16 PGRST106 class) ───────────────
+def test_schema_exposure_runner_not_configured_is_a_failure(monkeypatch, tmp_path):
+    """UNLIKE every other snapshot-based leg, schema_exposure must FAIL, not
+    skip, when it cannot verify — "couldn't check" must never read as "it's
+    fine" for the one gate that exists to catch PGRST106 before it ships."""
+    from tools.noctus.dev import ensure_schema_exposure as ESE
+
+    monkeypatch.delenv("SUPABASE_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "noctusai_lib.config.credentials.resolve_credential", lambda *a, **k: None
+    )
+    ok, msg = PC._default_run_check("schema_exposure", "agents", tmp_path)
+    assert ok is False
+    assert "BLOCKED" in msg
+    assert "not_configured" in msg
+
+
+def test_schema_exposure_runner_passes_when_schema_exposed(monkeypatch, tmp_path):
+    from tools.noctus.dev import ensure_schema_exposure as ESE
+
+    monkeypatch.setattr(
+        ESE,
+        "check_schema_exposure",
+        lambda **kw: {
+            "status": "in_sync",
+            "missing": [],
+            "exposed_schemas": ["core", "agents"],
+        },
+    )
+    ok, msg = PC._default_run_check("schema_exposure", "agents", tmp_path)
+    assert ok is True
+    assert "schema_exposure ok" in msg
+
+
+def test_schema_exposure_runner_fails_when_schema_missing(monkeypatch, tmp_path):
+    from tools.noctus.dev import ensure_schema_exposure as ESE
+
+    monkeypatch.setattr(
+        ESE,
+        "check_schema_exposure",
+        lambda **kw: {
+            "status": "drift_detected",
+            "missing": ["agents"],
+            "exposed_schemas": ["core"],
+        },
+    )
+    ok, msg = PC._default_run_check("schema_exposure", "agents", tmp_path)
+    assert ok is False
+    assert "VIOLATED" in msg
+    assert "agents" in msg
+
+
+def test_schema_exposure_runner_scopes_to_the_one_product(monkeypatch, tmp_path):
+    """Must pass products=[product] — never the catalog-wide roster; a
+    single-product predeploy gate has no reason to pay for that round-trip."""
+    from tools.noctus.dev import ensure_schema_exposure as ESE
+
+    captured = {}
+
+    def _fake(**kw):
+        captured.update(kw)
+        return {"status": "in_sync", "missing": [], "exposed_schemas": ["core"]}
+
+    monkeypatch.setattr(ESE, "check_schema_exposure", _fake)
+    PC._default_run_check("schema_exposure", "orbity", tmp_path)
+    assert captured["products"] == ["orbity"]
+    assert captured["action"] == "check"
+
+
+# ── env_fleet_manifest leg (optional, live half of the manifest keeper) ──
+def test_env_fleet_manifest_skips_when_manifest_absent(tmp_path):
+    ok, msg = PC._default_run_check("env_fleet_manifest", "core", tmp_path)
+    assert ok is True
+    assert "SKIPPED" in msg
+
+
+def test_env_fleet_manifest_skips_when_no_snapshot(tmp_path, monkeypatch):
+    fleet_dir = tmp_path / "deploy" / "fleet"
+    fleet_dir.mkdir(parents=True)
+    (fleet_dir / "env.fleet.keys").write_text("JULIA_ANTHROPIC_API_KEY\n", encoding="utf-8")
+    monkeypatch.delenv("NOCTUS_ENV_FLEET_FILE", raising=False)
+    ok, msg = PC._default_run_check("env_fleet_manifest", "core", tmp_path)
+    assert ok is True
+    assert "SKIPPED" in msg
+
+
+def test_env_fleet_manifest_flags_missing_value(tmp_path):
+    fleet_dir = tmp_path / "deploy" / "fleet"
+    fleet_dir.mkdir(parents=True)
+    (fleet_dir / "env.fleet.keys").write_text(
+        "NOCTUS_IMAGE_TAG\nJULIA_ANTHROPIC_API_KEY\n", encoding="utf-8"
+    )
+    snap = tmp_path / ".env.fleet.snapshot"
+    snap.write_text("NOCTUS_IMAGE_TAG=abc123\n", encoding="utf-8")  # JULIA key absent
+
+    ok, msg = PC._default_run_check(
+        "env_fleet_manifest", "core", tmp_path, env_fleet_path=str(snap)
+    )
+    assert ok is False
+    assert "JULIA_ANTHROPIC_API_KEY" in msg
+
+
+def test_env_fleet_manifest_passes_when_all_present(tmp_path):
+    fleet_dir = tmp_path / "deploy" / "fleet"
+    fleet_dir.mkdir(parents=True)
+    (fleet_dir / "env.fleet.keys").write_text(
+        "NOCTUS_IMAGE_TAG\nJULIA_ANTHROPIC_API_KEY\n", encoding="utf-8"
+    )
+    snap = tmp_path / ".env.fleet.snapshot"
+    snap.write_text(
+        "NOCTUS_IMAGE_TAG=abc123\nJULIA_ANTHROPIC_API_KEY=sk-ant-xyz\n", encoding="utf-8"
+    )
+
+    ok, msg = PC._default_run_check(
+        "env_fleet_manifest", "core", tmp_path, env_fleet_path=str(snap)
+    )
+    assert ok is True
+    assert "env_fleet_manifest ok" in msg
+
+
+def test_audit_env_fleet_manifest_present_pure():
+    audit = PC.audit_env_fleet_manifest_present(
+        ["A", "B"], {"A": "value", "B": ""}
+    )
+    assert audit["checked"] == 2
+    assert len(audit["violations"]) == 1
+    assert "'B'" in audit["violations"][0]
+
+
+def test_default_checks_include_new_legs():
+    assert "schema_exposure" in PC.DEFAULT_CHECKS
+    assert "env_fleet_manifest" in PC.DEFAULT_CHECKS

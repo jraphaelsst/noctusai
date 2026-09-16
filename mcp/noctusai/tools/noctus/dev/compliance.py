@@ -17718,3 +17718,255 @@ def check_ledger_drain_after_settle(repo_root: Path | None = None) -> list[dict]
             })
 
     return issues
+
+
+# ---------------------------------------------------------------------------
+# Prod compose ${VAR} interpolation <-> deploy/fleet/env.fleet.keys manifest
+# ---------------------------------------------------------------------------
+
+# The two prod compose files that interpolate ${VAR} at compose-parse time
+# from a file named `.env` in `deploy/fleet/` (the `.env.fleet` symlink) —
+# NEVER from the root `.env` that `env_file:` loads inside the container.
+_PROD_COMPOSE_ENV_FILES: tuple[str, ...] = (
+    "deploy/fleet/docker-compose.prod.yml",
+    "deploy/fleet/compose.infra.prod.yml",
+)
+_ENV_FLEET_MANIFEST_PATH = "deploy/fleet/env.fleet.keys"
+
+# `${VAR}` / `${VAR:-default}` — group(1)=name, group(3)=default (None when
+# no `:-` clause at all; "" when the clause is present but empty).
+_COMPOSE_INTERPOLATION_RE = re.compile(
+    r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}"
+)
+
+# Var NAME looks secret-shaped — an empty/absent default on one of these is
+# the exact 2026-09-16 JULIA_ANTHROPIC_API_KEY failure mode: the container
+# boots, /api/health stays 200, and the feature the key gates fails silently
+# at first real use.
+_SECRET_SHAPED_ENV_NAME_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD)$", re.IGNORECASE)
+
+# Escape hatch (mirrors `postgrest-qualified-ok`): a same-line or up-to-3-
+# preceding-line comment marks an empty secret default as a REVIEWED,
+# intentional graceful-degradation (e.g. dev-team's ANTHROPIC_API_KEY —
+# documented to run healthy-but-switch-not-flipped when unset).
+_ENV_FLEET_EMPTY_DEFAULT_OK_RE = re.compile(r"env-fleet-empty-ok", re.IGNORECASE)
+_ENV_FLEET_ESCAPE_WINDOW = 3
+
+
+def _parse_env_fleet_manifest_keys(text: str) -> set[str]:
+    """One bare var name per non-comment, non-blank line."""
+    return {
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+
+
+def _strip_yaml_comment(line: str) -> str:
+    """Truncate ``line`` at the first un-quoted ``#`` — a docstring-simple
+    YAML comment strip (no escape handling beyond matching quotes; these
+    compose files never need more). Without this, a prose comment that
+    MENTIONS the exact ``${VAR:-}`` syntax (e.g. explaining the incident
+    inline, which this file's own comments now do) is indistinguishable
+    from a real interpolation site to a blind text scan."""
+    in_squote = in_dquote = False
+    for i, ch in enumerate(line):
+        if ch == "'" and not in_dquote:
+            in_squote = not in_squote
+        elif ch == '"' and not in_squote:
+            in_dquote = not in_dquote
+        elif ch == "#" and not in_squote and not in_dquote:
+            return line[:i]
+    return line
+
+
+def _parse_compose_interpolated_vars(
+    text: str,
+) -> dict[str, list[tuple[int, str | None]]]:
+    """``{name: [(line_no, default_or_None), ...]}`` for every ``${VAR}`` /
+    ``${VAR:-default}`` occurrence found OUTSIDE a comment (comment text is
+    stripped first — see ``_strip_yaml_comment`` — so a prose comment that
+    mentions the syntax never creates a phantom occurrence; the escape-hatch
+    scan below reads the UNSTRIPPED lines, since that marker legitimately
+    lives in a comment). ``default`` is ``None`` for a bare ``${VAR}`` (no
+    ``:-`` clause at all — compose still silently resolves an unset var to
+    the empty string, with only a stderr warning), and ``""`` for an
+    explicit empty default (``${VAR:-}``)."""
+    out: dict[str, list[tuple[int, str | None]]] = {}
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        line = _strip_yaml_comment(raw_line)
+        for m in _COMPOSE_INTERPOLATION_RE.finditer(line):
+            name = m.group(1)
+            default = m.group(3) if m.group(2) is not None else None
+            out.setdefault(name, []).append((lineno, default))
+    return out
+
+
+def check_prod_compose_env_manifest_sync(repo_root: Path | None = None) -> list[dict]:
+    """`deploy/fleet/env.fleet.keys` must document every `${VAR}` the prod
+    compose files interpolate — and a secret-shaped var must never rely on
+    a silently-empty default.
+
+    **The incident (2026-09-16, agents/academia-de-reciclagem cutover).**
+    `docker-compose.prod.yml` maps `ANTHROPIC_API_KEY: ${JULIA_ANTHROPIC_API_KEY:-}`
+    for `agents`. `${VAR}` interpolation is resolved from a file literally
+    named `.env` in the compose PROJECT DIRECTORY (`deploy/fleet/` — the
+    `.env.fleet` symlink) at compose-PARSE time — a wholly different
+    mechanism from `env_file: ../../.env`, which feeds variables INSIDE the
+    already-started container. `JULIA_ANTHROPIC_API_KEY` was only ever
+    documented as a root-`.env` key (an earlier, wrong README table), so it
+    silently resolved to `''` and every Julia turn failed at the CLI-spawn
+    step while the container stayed healthy — the tech-lead had to copy it
+    into `.env.fleet` on the host, live. The identical mechanism already
+    bit the fleet once before, for `NOCTUS_CACHE_PG_PASSWORD`
+    (2026-08-18) — a hand-maintained-list failure mode this repo already
+    gates elsewhere (`KB § PATTERNS/devops/product-lockfile-and-slug-
+    drift.md`), just not yet for THIS list.
+
+    Two independent findings:
+
+    1. **`prod-compose-env-manifest-missing`** (high) — a `${VAR}` name
+       interpolated by either prod compose file is absent from the tracked,
+       names-only `deploy/fleet/env.fleet.keys` manifest. Catches a NEW
+       interpolated var landing without anyone adding it to the doc that
+       says "this belongs in `.env.fleet`, not the root `.env`".
+    2. **`prod-compose-secret-empty-default`** (high) — a secret-shaped
+       var name (`*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD`) has an
+       occurrence with an EXPLICIT empty `${VAR:-}` default (the exact
+       `JULIA_ANTHROPIC_API_KEY` shape) — regardless of manifest membership,
+       since being documented doesn't stop it resolving empty when the VPS
+       `.env.fleet` is missing the entry. A bare `${VAR}` with no `:-`
+       clause at all (e.g. `NOCTUS_CACHE_PG_PASSWORD`) is deliberately OUT
+       of scope here — a secret with no sensible default has no "safe"
+       shape to flag against; that is the correct, already-required form.
+       Escape hatch: a same-line or up-to-3-preceding-line comment
+       containing `env-fleet-empty-ok` (dev-team's `ANTHROPIC_API_KEY` uses
+       it — a REVIEWED, documented graceful degradation, unlike
+       `JULIA_ANTHROPIC_API_KEY`, which is a
+       hard requirement with no such review).
+
+    Scope, honestly: this is a repo-only check (like `check_tunnel_ingress_
+    snapshot_sync`'s split) — it cannot see whether the VPS `.env.fleet`
+    actually carries a value for a listed key. That live half is the
+    `env_fleet_manifest` leg in `noctus.dev.predeploy_check` (optional,
+    fed an env-fleet snapshot the same way `prod_config_parity` is fed a
+    prod-env snapshot).
+
+    Severity: high. Fast: two file reads + regex, no git/network.
+    KB § GUIDES/production-deploy.md § 6.
+    """
+    root = Path(repo_root) if repo_root is not None else Path(REPO_ROOT)
+    compose_paths = [root / p for p in _PROD_COMPOSE_ENV_FILES]
+    existing_compose = [p for p in compose_paths if p.is_file()]
+    if not existing_compose:
+        return []  # not a noc tree / fleet not configured — silent skip
+
+    manifest_p = root / _ENV_FLEET_MANIFEST_PATH
+    if not manifest_p.is_file():
+        return [{
+            "file": _ENV_FLEET_MANIFEST_PATH,
+            "issue": (
+                f"{_ENV_FLEET_MANIFEST_PATH} is missing — the tracked, names-only "
+                "manifest documenting every ${VAR} the prod compose files "
+                "interpolate from deploy/fleet/.env.fleet (NOT the root .env "
+                "env_file: loads). KB § GUIDES/production-deploy.md § 6."
+            ),
+            "severity": "high",
+            "symbol": "prod-compose-env-manifest-missing-file",
+        }]
+
+    try:
+        manifest_keys = _parse_env_fleet_manifest_keys(
+            manifest_p.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError) as exc:
+        return [{
+            "file": _ENV_FLEET_MANIFEST_PATH,
+            "issue": f"{_ENV_FLEET_MANIFEST_PATH} could not be read: {exc}",
+            "severity": "high",
+            "symbol": "prod-compose-env-manifest-unreadable",
+        }]
+
+    interpolated: dict[str, list[tuple[int, str | None]]] = {}
+    compose_lines: dict[str, list[str]] = {}
+    compose_rel: dict[Path, str] = {}
+    for p in existing_compose:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", p, exc)
+            continue
+        rel = str(p.relative_to(root))
+        compose_rel[p] = rel
+        compose_lines[rel] = text.splitlines()
+        for name, occs in _parse_compose_interpolated_vars(text).items():
+            interpolated.setdefault(name, []).extend(
+                (rel, lineno, default) for lineno, default in occs
+            )
+
+    issues: list[dict] = []
+
+    missing_from_manifest = sorted(set(interpolated) - manifest_keys)
+    if missing_from_manifest:
+        issues.append({
+            "file": _ENV_FLEET_MANIFEST_PATH,
+            "issue": (
+                "interpolated by the prod compose file(s) but not documented in "
+                f"{_ENV_FLEET_MANIFEST_PATH}: {missing_from_manifest}. Every "
+                "${VAR} the compose files substitute at parse time belongs in "
+                "deploy/fleet/.env.fleet, not the root .env env_file: loads — "
+                "add the name (no value) to the manifest. "
+                "KB § GUIDES/production-deploy.md § 6."
+            ),
+            "severity": "high",
+            "symbol": "prod-compose-env-manifest-missing",
+        })
+
+    def _escape_hatched(rel: str, line_no: int) -> bool:
+        lines = compose_lines.get(rel) or []
+        start = max(0, line_no - 1 - _ENV_FLEET_ESCAPE_WINDOW)
+        window = lines[start:line_no]
+        return any(_ENV_FLEET_EMPTY_DEFAULT_OK_RE.search(ln) for ln in window)
+
+    secret_unsafe: list[str] = []
+    for name, occs in sorted(interpolated.items()):
+        if not _SECRET_SHAPED_ENV_NAME_RE.search(name):
+            continue
+        # Scope: an EXPLICIT `${VAR:-}` empty-default clause only — the exact
+        # JULIA_ANTHROPIC_API_KEY shape. A bare `${VAR}` (no `:-` at all, e.g.
+        # NOCTUS_CACHE_PG_PASSWORD) is deliberately NOT flagged here: for a
+        # secret with no sensible default, "no default" is the correct,
+        # already-required shape — flagging it would be permanent noise on a
+        # var that can never satisfy this check by having a "safe" default
+        # (the noisy-keeper anti-pattern this repo's own docs warn against).
+        unsafe_occs = [
+            (rel, lineno)
+            for rel, lineno, default in occs
+            if default is not None and not default.strip()
+        ]
+        if not unsafe_occs:
+            continue
+        if all(_escape_hatched(rel, lineno) for rel, lineno in unsafe_occs):
+            continue
+        secret_unsafe.append(name)
+
+    if secret_unsafe:
+        issues.append({
+            "file": _PROD_COMPOSE_ENV_FILES[0],
+            "issue": (
+                f"secret-shaped var(s) interpolated with an EXPLICIT empty "
+                f"${{VAR:-}} default: {secret_unsafe}. Compose silently resolves "
+                "this to '' when deploy/fleet/.env.fleet is missing the key — "
+                "the container still boots and /api/health still reports 200 "
+                "while the feature the key gates fails at first real use (the "
+                "JULIA_ANTHROPIC_API_KEY class, 2026-09-16). Verify the key is "
+                "actually set in deploy/fleet/.env.fleet on the VPS, or mark a "
+                "REVIEWED, intentional graceful degradation with an "
+                "`env-fleet-empty-ok` comment on the same or a preceding line. "
+                "KB § GUIDES/production-deploy.md § 6."
+            ),
+            "severity": "high",
+            "symbol": "prod-compose-secret-empty-default",
+        })
+
+    return issues
