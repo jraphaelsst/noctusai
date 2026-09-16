@@ -91,7 +91,7 @@ async def get_platform_settings_route(
     _actor: Actor = Depends(require_platform_admin),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
 ) -> dict:
-    return platform_settings_out(await ports.repo.get_platform_settings())
+    return platform_settings_out(await ports.repo.get_platform_settings(), ports.config)
 
 
 @router.put("/plataforma")
@@ -113,4 +113,7 @@ async def put_platform_settings_route(
     if "limite_pares_referencia" in body.model_fields_set:
         changes["limite_pares_referencia"] = body.limite_pares_referencia or None
     saved = await ports.repo.update_platform_settings(**changes)
+    # No `config=` here: these engine tunables are not part of the writable
+    # body (see module docstring) — the PUT response mirrors exactly what
+    # was persisted, same as before W7.
     return platform_settings_out(saved)

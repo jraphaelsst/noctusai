@@ -225,6 +225,28 @@ def test_guias_shapes(edicao) -> None:
     assert_shape(FIXTURE["guia_regenerar"], regen.json())
 
 
+def test_regras_shapes(edicao) -> None:
+    edicao.as_user("admin")
+    created = edicao.http.post("/api/edicao-fotos/regras", json=FIXTURE["regra_body"])
+    assert created.status_code == 201, created.text
+    assert_shape(FIXTURE["regra"], created.json())
+    assert created.json()["texto"] == FIXTURE["regra_body"]["texto"]
+
+    page = edicao.http.get("/api/edicao-fotos/regras").json()
+    assert_shape(FIXTURE["regras_page"], page)
+
+    approved = edicao.http.post(f"/api/edicao-fotos/regras/{created.json()['id']}/aprovar")
+    assert_shape(FIXTURE["regra"], approved.json())
+
+
+def test_guia_efetivo_shape(edicao) -> None:
+    edicao.as_user("admin")
+    edicao.activate_guide()
+    view = edicao.http.get("/api/edicao-fotos/regras/guia-efetivo").json()
+    assert_shape(FIXTURE["guia_efetivo_view"], view)
+    assert_shape(FIXTURE["guia_efetivo"], view["atual"])
+
+
 def test_configuracoes_plataforma_round_trip(edicao) -> None:
     edicao.as_user("plataforma")
     got = edicao.http.get("/api/edicao-fotos/configuracoes/plataforma").json()

@@ -15,7 +15,7 @@ storage bucket, notification fan-out and the worker lifecycle. Contract:
     services/vista_fotos.py Vista gallery → batch
     services/review.py      FotoRevisao rows (verdict read only for admins) + URL signing
     routers/                capacidades · configuracoes · curadores · modelos · lotes · revisao
-                            · referencias · guias
+                            · referencias · guias · regras
 
 Response shapes are the seed FE hook types
 (`seed/lib/frontend/src/photo-editing/hooks.ts`), pinned by
@@ -49,9 +49,16 @@ Routes (all under ``/api/edicao-fotos``; every one requires auth → 401):
     POST   /guias/regenerar                          platform admin ∨ curator (enqueue fotos.regen_guia)
     POST   /guias/{versao}/ativar                    platform admin ∨ curator
     POST   /guias/{versao}/restaurar                 platform admin ∨ curator (clone as new draft)
+    GET    /regras                                   agency admin ∨ platform admin (own org)
+    POST   /regras                                   agency admin ∨ platform admin (manual, auto-approved)
+    PUT    /regras/{id}                               agency admin ∨ platform admin (edit text)
+    POST   /regras/{id}/aprovar                       agency admin ∨ platform admin
+    POST   /regras/{id}/rejeitar                      agency admin ∨ platform admin (+"archive")
+    POST   /regras/propor-agora                       agency admin ∨ platform admin (enqueue now)
+    GET    /regras/guia-efetivo                       agency admin ∨ platform admin (current + history)
 
-Not in R1 here (later slices): learning rules, model metrics/notes,
-dashboard, email/WhatsApp notifications, Econômico (C8).
+Not in R1 here (later slices): model metrics/notes, dashboard,
+email/WhatsApp notifications, Econômico (C8).
 
 Seam contract
 ─────────────
@@ -78,6 +85,7 @@ def register() -> Any:
         lotes,
         modelos,
         referencias,
+        regras,
         revisao,
     )
 
@@ -91,6 +99,7 @@ def register() -> Any:
             revisao.router,
             referencias.router,
             guias.router,
+            regras.router,
         ],
         standard_routers=(),
     )

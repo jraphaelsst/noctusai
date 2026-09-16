@@ -1098,6 +1098,11 @@ async def handle_regen_guia(ports: PhotoEditingPorts, job: Job) -> None:
 
 async def handle_propor_regras(ports: PhotoEditingPorts, job: Job) -> None:
     org_id = _payload(job, "org_id")
+    # A manual request (`pipeline.request_rule_proposal`, the "propor
+    # agora" button) runs now; only the automatic, rejection-triggered run
+    # waits for rejections to settle (mirrors `handle_regen_guia`'s
+    # `manual` branch).
+    manual = bool((job.payload or {}).get("manual"))
 
     async def body() -> None:
         now = ports.clock()
@@ -1111,7 +1116,7 @@ async def handle_propor_regras(ports: PhotoEditingPorts, job: Job) -> None:
         if not pending:
             return
         newest = pending[-1].created_at
-        if newest is not None and (now - newest).total_seconds() < window:
+        if not manual and newest is not None and (now - newest).total_seconds() < window:
             await schedule_rule_proposal(ports, org_id)  # rejections still arriving
             return
         await propose_rules(ports, org_id)

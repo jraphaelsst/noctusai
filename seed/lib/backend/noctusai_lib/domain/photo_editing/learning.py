@@ -59,12 +59,32 @@ class InvalidModelOutputError(ValueError):
     code = "resposta_invalida_modelo"
 
 
+class DuplicateRuleError(ValueError):
+    """A rule with the same (whitespace/case-insensitive) text already
+    applies to this org — manual create refuses rather than duplicate."""
+
+    code = "regra_duplicada"
+
+
+class RuleArchivedError(ValueError):
+    """A REJEITADA (archived) rule's text is frozen — edit it by creating a
+    fresh rule instead."""
+
+    code = "regra_arquivada"
+
+
 _DECIDED = (RuleStatus.APROVADA, RuleStatus.REJEITADA)
 
 
 def rule_key(texto: str) -> str:
     """Duplicate-detection key: whitespace- and case-insensitive."""
     return " ".join(normalize_text(texto).split()).casefold()
+
+
+def can_manage_rule(actor: Actor, org_id: str) -> bool:
+    """Authority for a MANUAL create/edit (not a proposal decision): a
+    platform admin, or the agency admin of ``org_id`` itself."""
+    return actor.is_platform_admin or (actor.org_id == org_id and actor.is_agency_admin)
 
 
 def can_decide_rule(actor: Actor, rule: OrgRule, target: RuleStatus) -> bool:
@@ -96,6 +116,47 @@ async def decide_rule(
         decidido_em=ports.clock(),
         override_platform_admin=override or rule.override_platform_admin,
     )
+
+
+async def create_manual_rule(
+    ports: PhotoEditingPorts, *, org_id: str, texto: str, actor: Actor
+) -> OrgRule:
+    """A human-authored "don't do this" rule, bypassing the AI proposer
+    (W7). Created directly ``APROVADA`` — the admin writing it down IS the
+    approval; a later ``decide_rule(approve=False)`` "archives" it under
+    the SAME authority as any other decided rule (only a platform admin
+    may flip an agency admin's own decision)."""
+    if not can_manage_rule(actor, org_id):
+        raise RuleDecisionForbiddenError("sem permissão para criar regras desta organização")
+    texto = texto.strip()
+    key = rule_key(texto)
+    existing = await ports.repo.list_rules(org_id)
+    if any(rule_key(r.texto) == key for r in existing if r.status is not RuleStatus.REJEITADA):
+        raise DuplicateRuleError("já existe uma regra equivalente para esta organização")
+    created = await ports.repo.add_rule(org_id=org_id, texto=texto, origem_comentarios=())
+    return await ports.repo.update_rule(
+        created.id,
+        status=RuleStatus.APROVADA,
+        decidido_por=actor.user_id,
+        decidido_em=ports.clock(),
+        override_platform_admin=False,
+    )
+
+
+async def edit_rule_text(
+    ports: PhotoEditingPorts, regra_id: str, *, texto: str, actor: Actor
+) -> OrgRule:
+    """Edit a rule's text in place (W7) — status/decision are untouched.
+    Shares authority with :func:`create_manual_rule`; an archived
+    (REJEITADA) rule's text is frozen — create a fresh rule instead."""
+    rule = await ports.repo.get_rule(regra_id)
+    if rule is None:
+        raise RuleNotFoundError(f"regra {regra_id} não encontrada")
+    if not can_manage_rule(actor, rule.org_id):
+        raise RuleDecisionForbiddenError("sem permissão para editar esta regra")
+    if rule.status is RuleStatus.REJEITADA:
+        raise RuleArchivedError("regra arquivada — não pode ser editada")
+    return await ports.repo.update_rule_text(regra_id, texto=texto.strip())
 
 
 def _parse_proposals(data: dict[str, Any], n_comments: int) -> list[tuple[str, list[int]]]:
@@ -199,11 +260,16 @@ async def propose_rules(ports: PhotoEditingPorts, org_id: str) -> list[OrgRule]:
 
 __all__ = [
     "Actor",
+    "DuplicateRuleError",
     "InvalidModelOutputError",
+    "RuleArchivedError",
     "RuleDecisionForbiddenError",
     "RuleNotFoundError",
     "can_decide_rule",
+    "can_manage_rule",
+    "create_manual_rule",
     "decide_rule",
+    "edit_rule_text",
     "propose_rules",
     "rule_key",
 ]

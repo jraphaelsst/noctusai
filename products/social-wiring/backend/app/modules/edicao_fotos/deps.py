@@ -35,6 +35,7 @@ from noctusai_lib.domain.photo_editing.types import (
     AGENCY_ADMIN_ROLES,
     CORRETOR_ROLES,
     PHOTO_CURATOR_PERMISSION,
+    OrgRule,
 )
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_settings
@@ -179,6 +180,19 @@ async def load_visible_batch(ports: PhotoEditingPorts, actor: Actor, lote_id: st
     return batch
 
 
+async def load_visible_rule(ports: PhotoEditingPorts, actor: Actor, regra_id: str) -> OrgRule:
+    """W7 (`/regras`) — same "R1 keeps every caller inside their own org"
+    rule as `load_visible_batch`, applied to platform admins too: a rule
+    from another org 404s rather than 403ing, so its existence never
+    leaks. `learning.decide_rule`'s own authority check (agency admin vs.
+    platform-admin override) runs AFTER this and stays in charge of
+    WITHIN-org decisions."""
+    rule = await ports.repo.get_rule(regra_id)
+    if rule is None or rule.org_id != actor.org_id:
+        raise api_error(404, "regra_nao_encontrada", "Regra não encontrada.")
+    return rule
+
+
 __all__ = [
     "RoleInfo",
     "RoleResolver",
@@ -191,6 +205,7 @@ __all__ = [
     "get_vista_photo_source",
     "is_member",
     "load_visible_batch",
+    "load_visible_rule",
     "require_member",
     "require_org_admin",
     "require_platform_admin",

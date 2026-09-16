@@ -72,6 +72,21 @@ RoomLiteral = Literal[
 ]
 
 
+class RegraCreateBody(StrictHttpModel):
+    """`POST /regras` — a manually written "don't do this" rule (contract
+    §7), created directly APROVADA. Same seam as `GuiaCreateBody`'s manual
+    path — a human-authored entry, no AI proposer involved."""
+
+    texto: str = Field(min_length=1, max_length=2000)
+
+
+class RegraUpdateBody(StrictHttpModel):
+    """`PUT /regras/{id}` — edit a rule's text in place; refused (422
+    `regra_arquivada`) once the rule is REJEITADA."""
+
+    texto: str = Field(min_length=1, max_length=2000)
+
+
 __all__ = [
     "CuradorCreateBody",
     "DecisaoBody",
@@ -80,6 +95,8 @@ __all__ = [
     "LoteCreateBody",
     "OrgSettingsBody",
     "PlatformSettingsBody",
+    "RegraCreateBody",
+    "RegraUpdateBody",
     "RoomLiteral",
     "VistaIngestBody",
 ]

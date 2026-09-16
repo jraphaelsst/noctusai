@@ -157,6 +157,29 @@ AI proposes "don't do this" rules from that agency's rejection comments; a human
 approves before they take effect. Only the platform admin may override an agency
 admin's decision.
 
+*Implemented 2026-09-16 (W7):* additionally `POST /regras` (manual create,
+auto-**APROVADA** — writing it down IS the approval) · `PUT /regras/{id}`
+(edit text; 422 `regra_arquivada` once REJEITADA) · `POST
+/regras/propor-agora` → **202** `{job_id, status}` (run the AI proposer NOW
+instead of waiting for the rejection-settling debounce) · `GET
+/regras/guia-efetivo?page&page_size` → `{atual: GuiaEfetivo | null,
+historico: {items, page, page_size, total}}` — the composed effective guide
+(company guide + this org's approved rules) + its per-org version history;
+`atual` is `null` while no company guide is active, never an error. "Archive"
+an approved rule reuses `POST /{id}/rejeitar` — no separate status; the SAME
+only-platform-admin-may-override authority applies whether the rule came
+from the AI proposer or a manual entry. Every route is `require_org_admin`
+(agency admin ∨ platform admin, never a corretor); a rule from another org
+**404**s for every caller, including the platform admin (same "stays inside
+your own org" shape as batches). 🔴 `rule_proposal_debounce_seconds` /
+`max_rejections_per_proposal` stayed `PhotoEditingConfig` engine tunables,
+not new `fotos_platform_settings` columns (this slice was told not to add a
+migration — SW 130-132 claimed by parallel slices): `GET
+/configuracoes/plataforma` surfaces them **READ-ONLY**; `PUT` refuses them.
+A `RegraOrg` is `{id, texto, status: proposta|aprovada|rejeitada,
+origem_comentarios[], decidido_por, decidido_em, override_platform_admin,
+criado_em}`.
+
 ## 8 · Settings, models, curators, dashboard
 
 - `GET|PUT /configuracoes` — org edit types, image model, speed override.

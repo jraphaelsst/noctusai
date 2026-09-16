@@ -101,6 +101,39 @@ def test_capabilities_read_the_callers_org_settings(edicao) -> None:
     assert caps["modelo_configurado"] is False and caps["pode_criar_lote"] is False
 
 
+_REGRA_ROUTES = [
+    ("put", "/api/edicao-fotos/regras/{regra_id}", {"texto": "x"}),
+    ("post", "/api/edicao-fotos/regras/{regra_id}/aprovar", None),
+    ("post", "/api/edicao-fotos/regras/{regra_id}/rejeitar", None),
+]
+
+
+@pytest.mark.parametrize("method,path,body", _REGRA_ROUTES, ids=lambda v: str(v))
+def test_other_org_rule_is_404_even_for_platform_admin(edicao, method, path, body) -> None:
+    """W7 — same shape as `_BATCH_ROUTES` above: `deps.load_visible_rule`
+    404s a rule from another org for EVERY caller, including the platform
+    admin (R1 keeps every caller inside their own org)."""
+    regra = edicao.run(
+        edicao.repo.add_rule(org_id=OTHER_ORG, texto="Regra alheia", origem_comentarios=())
+    )
+    url = path.replace("{regra_id}", regra.id)
+    kwargs = {"json": body} if body is not None else {}
+    for user in ("admin", "plataforma"):
+        resp = getattr(edicao.as_user(user).http, method)(url, **kwargs)
+        assert resp.status_code == 404, f"{user}: {method} {path} -> {resp.status_code}"
+        assert resp.json()["code"] == "regra_nao_encontrada"
+
+
+def test_regras_list_and_effective_guide_never_leak_another_org(edicao) -> None:
+    edicao.run(edicao.repo.add_rule(org_id=OTHER_ORG, texto="Regra alheia", origem_comentarios=()))
+    mine = edicao.as_user("admin").http.post("/api/edicao-fotos/regras", json={"texto": "Minha regra"})
+    assert mine.status_code == 201
+    items = edicao.http.get("/api/edicao-fotos/regras").json()["items"]
+    assert [r["texto"] for r in items] == ["Minha regra"]
+    guia = edicao.http.get("/api/edicao-fotos/regras/guia-efetivo").json()
+    assert guia["atual"] is None  # no active company guide yet — never raises
+
+
 def test_curator_routes_404_for_unknown_user_and_grant(edicao) -> None:
     edicao.as_user("plataforma")
     add = edicao.http.post("/api/edicao-fotos/curadores", json={"user_id": str(uuid4())})

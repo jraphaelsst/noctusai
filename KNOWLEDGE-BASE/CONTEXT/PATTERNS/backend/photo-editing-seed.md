@@ -51,7 +51,7 @@ or for a raw edit call without review (`integrations.image_edit` directly).
 | `zipper.py` | approved photos only · `BatchNotDecidedError` (409) until every non-failed photo is decided · `falhou` excluded, never blocking · byte-deterministic archive |
 | `dataset.py` | `record_decision`: append decision + append training record; a rejection bumps the proposal cursor and schedules the rule proposer |
 | `costs.py` | usage priced from the catalog at call time → `llm_usage` + `cost_ledger` (USD native, PTAX rate + quote date, BRL) · `fx_pending` when no bulletin · `backfill_fx` |
-| `learning.py` | rule proposer (cursor watermark, case-insensitive dedupe) · `decide_rule` authority (agency admin decides a proposal; only platform admin flips a decided rule) |
+| `learning.py` | rule proposer (cursor watermark, case-insensitive dedupe) · `decide_rule` authority (agency admin decides a proposal; only platform admin flips a decided rule) · `create_manual_rule` / `edit_rule_text` (W7 — manual create is auto-APROVADA, sharing authority via `can_manage_rule`; edit refuses once REJEITADA) |
 | `pool.py` | reference pool entry points: `add_reference_pair` (normalize both sides, GPS strip, store under `referencias/<token>/{antes,depois}.jpg`, pair limit, cleanup on a refused insert) · `archive_reference_pair` (idempotent) · `pool_status` (active count + limit, `None`/`0` = unlimited) |
 | `access.py` | `compute_capabilities` → contract §2 `/capacidades` (server-computed, never SSO metadata) |
 | `pipeline.py` | route entry points: `add_photo_bytes`, `submit_batch`, `retry_photo`, debounced `schedule_*`, `request_guide_regen` (manual, runs now), `enqueue_*` |
@@ -134,8 +134,12 @@ own last-attempt check assumes.
 ### 4.3 Route entry points (`pipeline.py`, `dataset.py`, `learning.py`, `guide.py`, `zipper.py`)
 
 `add_photo_bytes` · `submit_batch` · `retry_photo` · `record_decision` ·
-`build_batch_zip` · `decide_rule` · `create_draft` / `restore_version` /
-`activate_version` · `schedule_guide_regen` · `request_guide_regen` ·
+`build_batch_zip` · `decide_rule` · `create_manual_rule` · `edit_rule_text` ·
+`create_draft` / `restore_version` / `activate_version` ·
+`schedule_guide_regen` · `request_guide_regen` · `schedule_rule_proposal` /
+`request_rule_proposal` (W7 — the manual "propor agora" run-now twin,
+mirrors `request_guide_regen`; `handle_propor_regras` skips the
+rejection-settling debounce for `manual` payloads) ·
 `add_reference_pair` / `archive_reference_pair` / `pool_status` ·
 `compute_capabilities`.
 
@@ -203,6 +207,22 @@ scope). The pair limit is `PUT /configuracoes/plataforma`
 `limite_pares_referencia` (only written when sent, so an older client never
 resets it). The pool bucket is wired as `reference_storage`.
 
+W7 (2026-09-16) added `/regras` (list · manual create/edit · `aprovar` /
+`rejeitar` · `propor-agora` · `guia-efetivo`), behind `deps.require_org_admin`
+(agency admin ∨ platform admin — never a corretor) plus `deps.load_visible_rule`
+(a rule from another org 404s for EVERY caller including the platform admin —
+same "stay inside your own org" shape `load_visible_batch` already has).
+"Archive" an approved rule reuses `POST /{id}/rejeitar` — no new status;
+`decide_rule`'s existing only-platform-admin-may-override authority applies
+unchanged whether the rule came from the AI proposer or a manual entry.
+`GET /regras/guia-efetivo` calls `resolve_effective_guide` on a GET
+(idempotent by `(org_id, sha256)`, so safe) and returns `atual: null` rather
+than raising when no company guide is active yet. 🔴
+`rule_proposal_debounce_seconds` / `max_rejections_per_proposal` stayed
+`PhotoEditingConfig` engine tunables, NOT new `fotos_platform_settings`
+columns — this slice was told not to add a migration; `GET
+/configuracoes/plataforma` surfaces them READ-ONLY, `PUT` refuses them.
+
 **Wire shapes are the seed FE's.** Responses match the types in
 `seed/lib/frontend/src/photo-editing/hooks.ts` (`LoteResumo`,
 `LoteDetalhe`, `FotoRevisao`, `OrgConfiguracoes`, `ModeloCatalogoItem`),
@@ -260,6 +280,18 @@ the seed's flat `{"detail", "code"}` shape.
   PostgREST (missing column) and only the pre-check guards the pool.
 - No live OpenAI verification was possible (no credits, PROJECT.md § 4c):
   the suite runs on fakes only.
+- `NOC-REMEDIATE[fotos-rule-proposer-settings-migration]` (W7) — making
+  `rule_proposal_debounce_seconds` / `max_rejections_per_proposal` genuinely
+  editable in the UI needs a new `fotos_platform_settings` column (no spare
+  capacity today); this slice was told not to add a migration (SW 130-132
+  claimed by parallel slices), so they stay `PhotoEditingConfig` engine
+  tunables, surfaced READ-ONLY on `GET /configuracoes/plataforma`.
+- `NOC-REMEDIATE[mock-count-exact-ignores-predicates]` (seed
+  `noctusai_lib.testing.MockSupabaseClient`) — `select(..., count="exact")`
+  snapshots `len(table)` at `.select()` time, before any `.eq()` narrows it,
+  so a filtered Supabase-repo test cannot assert `total` against the mock
+  (assert on the returned rows instead — see
+  `test_repository.py::test_supabase_rule_edit_and_effective_guide_listing`).
 
 ---
 

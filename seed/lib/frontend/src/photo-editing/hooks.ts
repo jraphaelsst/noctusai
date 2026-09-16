@@ -28,9 +28,10 @@
  * configurações/modelos — per `CLAUDE.md` §1 "products consume canonical
  * organs" this is the required shape (extend, never fork). W6 extended it
  * again with the reference-pool upload (multipart), guias de estilo and the
- * platform settings the pool limit lives in. Regras, curadores and painel
- * remain out of scope — they belong to later admin slices (plan §7 W10c-e)
- * and extend this factory in turn when built.
+ * platform settings the pool limit lives in. W7 extended it again with the
+ * per-agency learning loop (`/regras`) + the effective-guide view. Curadores
+ * and painel remain out of scope — they belong to later admin slices (plan
+ * §7 W10c-e) and extend this factory in turn when built.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiClient } from '../api';
@@ -210,6 +211,78 @@ export interface PlataformaConfiguracoes {
   preco_storage_gb_mes_usd: string | null;
   /** Reference-pool limit in pairs; null (or 0 on write) = unlimited. */
   limite_pares_referencia: number | null;
+  /**
+   * 🔴 READ-ONLY (W7, contract §7) — `PhotoEditingConfig` engine tunables,
+   * not `PlatformSettings` DB columns (no spare capacity + this slice was
+   * told not to add a migration). `GET` includes them; `PUT` does not
+   * accept them — sending either 422s (`extra="forbid"`). Present ONLY on
+   * `GET`, so both are optional here.
+   */
+  rule_proposal_debounce_seconds?: number;
+  max_rejections_per_proposal?: number;
+}
+
+/** Contract §7 — status of a per-agency "don't do this" rule. */
+export type RegraStatus = 'proposta' | 'aprovada' | 'rejeitada';
+
+/**
+ * One learning rule (contract §7). Manual create (`POST /regras`) lands
+ * directly `aprovada` — the admin writing it down IS the approval;
+ * "archive" reuses `POST /{id}/rejeitar`. `override_platform_admin` is set
+ * the moment a SECOND decided-state change happens — i.e. someone (always
+ * a platform admin) is overriding a prior decision.
+ */
+export interface RegraOrg {
+  id: string;
+  texto: string;
+  status: RegraStatus;
+  /** `{decisao_id, foto_id, comentario}` snapshots the AI proposer drew this rule from; `[]` for a manual rule. */
+  origem_comentarios: Array<Record<string, unknown>>;
+  decidido_por: string | null;
+  decidido_em: string | null;
+  override_platform_admin: boolean;
+  criado_em: string | null;
+}
+
+/** `GET /regras` — unpaginated (org-scoped rule counts stay small, same shape as `/curadores`). */
+export interface RegrasPage {
+  items: RegraOrg[];
+  total: number;
+}
+
+/** `POST /regras` body — the manually written rule text. */
+export interface NovaRegraBody {
+  texto: string;
+}
+
+/** `POST /regras/propor-agora` → 202: the AI proposer was queued to run NOW. */
+export interface ProporRegrasResposta {
+  job_id: string;
+  status: string;
+}
+
+/**
+ * One effective-guide snapshot (contract §6/§7) — the composed company
+ * guide + this org's APPROVED rules, versioned by content sha256, the SAME
+ * shape `POST /lotes/{id}/submeter` freezes onto a batch.
+ */
+export interface GuiaEfetivo {
+  id: string;
+  guia_estilo_id: string;
+  conjunto_regras_id: string | null;
+  texto: string;
+  sha256: string;
+  criado_em: string | null;
+}
+
+/**
+ * `GET /regras/guia-efetivo` — the CURRENT effective guide (`atual: null`
+ * while no company guide is active yet — never an error) + this org's
+ * version history, newest first.
+ */
+export interface GuiaEfetivoView {
+  atual: GuiaEfetivo | null;
+  historico: { items: GuiaEfetivo[]; page: number; page_size: number; total: number };
 }
 
 /** Contract §3 — speed mode (Urgente = sync; Econômico = Batch API, 50% off, ≤24h). */
@@ -515,6 +588,116 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   }
 
   // ---------------------------------------------------------------------
+  // Regras de aprendizado (contract §7), W7
+  // ---------------------------------------------------------------------
+
+  /**
+   * `GET /regras` — proposed/approved/rejected rules for the caller's org;
+   * optional `status` filter. `placeholderData` keeps the list from
+   * unmounting while the filter/page changes.
+   */
+  function useRegras(params: { status?: RegraStatus } = {}) {
+    const { status } = params;
+    const query = useQuery<RegrasPage>({
+      queryKey: ['edicao-fotos', 'regras', status ?? null],
+      queryFn: () => api.get('/api/edicao-fotos/regras', status ? { status } : undefined),
+      placeholderData: (prev) => prev,
+    });
+    return {
+      regras: query.data?.items ?? [],
+      total: query.data?.total ?? 0,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  function invalidateRegras(queryClient: ReturnType<typeof useQueryClient>) {
+    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'regras'] });
+    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'guia-efetivo'] });
+  }
+
+  /**
+   * `POST /regras` — a manually written "don't do this" rule, created
+   * directly APROVADA (the admin writing it down IS the approval).
+   */
+  function useCriarRegra() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (body: NovaRegraBody) => api.post<RegraOrg>('/api/edicao-fotos/regras', body),
+      onSuccess: () => invalidateRegras(queryClient),
+    });
+  }
+
+  /** `PUT /regras/{id}` — edit a rule's text; 422 `regra_arquivada` once it is REJEITADA. */
+  function useEditarRegra() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: ({ regraId, texto }: { regraId: string; texto: string }) =>
+        api.put<RegraOrg>(`/api/edicao-fotos/regras/${regraId}`, { texto }),
+      onSuccess: () => invalidateRegras(queryClient),
+    });
+  }
+
+  /** `POST /regras/{id}/aprovar`. */
+  function useAprovarRegra() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (regraId: string) =>
+        api.post<RegraOrg>(`/api/edicao-fotos/regras/${regraId}/aprovar`, {}),
+      onSuccess: () => invalidateRegras(queryClient),
+    });
+  }
+
+  /**
+   * `POST /regras/{id}/rejeitar` — also the "archive" action for an
+   * already-approved rule (manual or AI-proposed): a decided rule can only
+   * be re-decided by a platform admin (403 otherwise).
+   */
+  function useRejeitarRegra() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (regraId: string) =>
+        api.post<RegraOrg>(`/api/edicao-fotos/regras/${regraId}/rejeitar`, {}),
+      onSuccess: () => invalidateRegras(queryClient),
+    });
+  }
+
+  /**
+   * `POST /regras/propor-agora` — the "propor agora" button: run the AI
+   * rule proposer NOW instead of waiting for the rejection-settling
+   * debounce (`PhotoEditingConfig.rule_proposal_debounce_seconds`).
+   */
+  function useProporRegrasAgora() {
+    return useMutation({
+      mutationFn: () => api.post<ProporRegrasResposta>('/api/edicao-fotos/regras/propor-agora', {}),
+    });
+  }
+
+  /**
+   * `GET /regras/guia-efetivo` — the current effective guide (company
+   * guide + this org's approved rules) + its version history.
+   */
+  function useGuiaEfetivo(params: { page?: number; pageSize?: number } = {}) {
+    const { page = 1, pageSize = 20 } = params;
+    const query = useQuery<GuiaEfetivoView>({
+      queryKey: ['edicao-fotos', 'guia-efetivo', page, pageSize],
+      queryFn: () => api.get('/api/edicao-fotos/regras/guia-efetivo', { page, page_size: pageSize }),
+      placeholderData: (prev) => prev,
+    });
+    return {
+      atual: query.data?.atual ?? null,
+      historico: query.data?.historico?.items ?? [],
+      total: query.data?.historico?.total ?? 0,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  // ---------------------------------------------------------------------
   // Configurações da plataforma (contract §8) — platform admin only
   // ---------------------------------------------------------------------
 
@@ -750,6 +933,13 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     useAtivarGuia,
     useRestaurarGuia,
     useRegenerarGuia,
+    useRegras,
+    useCriarRegra,
+    useEditarRegra,
+    useAprovarRegra,
+    useRejeitarRegra,
+    useProporRegrasAgora,
+    useGuiaEfetivo,
     useConfiguracoesPlataforma,
     useAtualizarConfiguracoesPlataforma,
     useLotes,

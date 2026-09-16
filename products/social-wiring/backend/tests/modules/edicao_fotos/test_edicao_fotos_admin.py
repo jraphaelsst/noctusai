@@ -147,6 +147,10 @@ def test_platform_settings_round_trip(edicao) -> None:
         "notificacoes_globais_ativas": True,
         "preco_storage_gb_mes_usd": None,
         "limite_pares_referencia": None,  # W6: reference-pool limit (null = unlimited)
+        # W7: `PhotoEditingConfig` engine tunables, read-only (no DB column
+        # — see `presenters.platform_settings_out`'s docstring).
+        "rule_proposal_debounce_seconds": 1800,
+        "max_rejections_per_proposal": 50,
     }
     resp = edicao.http.put(
         "/api/edicao-fotos/configuracoes/plataforma",

@@ -596,6 +596,12 @@ def dedupe_propor_regras(org_id: str, bucket: int) -> str:
     return f"{JobType.PROPOR_REGRAS}:{org_id}:{bucket}"
 
 
+def dedupe_propor_regras_manual(org_id: str, bucket: int) -> str:
+    """Manual "propor agora" button: one job per short window per org, so a
+    double click never enqueues two proposer calls."""
+    return f"{JobType.PROPOR_REGRAS}:manual:{org_id}:{bucket}"
+
+
 def dedupe_fx_backfill(day_iso: str) -> str:
     return f"{JobType.FX_BACKFILL}:{day_iso}"
 
@@ -664,6 +670,7 @@ __all__ = [
     "dedupe_lote_pronto",
     "dedupe_poll_openai_batch",
     "dedupe_propor_regras",
+    "dedupe_propor_regras_manual",
     "dedupe_regen_guia",
     "dedupe_regen_guia_manual",
     "dedupe_submit",

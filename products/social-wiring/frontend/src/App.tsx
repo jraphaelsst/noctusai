@@ -118,13 +118,14 @@ const AgentesFinanceiros = lazyWithReload(
   () => import("@/pages/AgentesFinanceiros"),
 );
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias,
-// Modelos, Regras, Curadores, Painel) are a later slice.
+// Regras) shipped in W6/W7; Modelos, Curadores, Painel are a later slice.
 const EdicaoFotosLotes = lazyWithReload(() => import("@/pages/edicao-fotos/Lotes"));
 const EdicaoFotosNovoLote = lazyWithReload(() => import("@/pages/edicao-fotos/NovoLote"));
 const EdicaoFotosLoteRevisao = lazyWithReload(() => import("@/pages/edicao-fotos/LoteRevisao"));
 const EdicaoFotosConfiguracoes = lazyWithReload(() => import("@/pages/edicao-fotos/Configuracoes"));
 const EdicaoFotosReferencias = lazyWithReload(() => import("@/pages/edicao-fotos/Referencias"));
 const EdicaoFotosGuiasEstilo = lazyWithReload(() => import("@/pages/edicao-fotos/GuiasEstilo"));
+const EdicaoFotosRegras = lazyWithReload(() => import("@/pages/edicao-fotos/Regras"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -244,16 +245,17 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
   },
   {
     // Edição de Fotos — W10a (plan §4/§7): Lotes/Novo Lote/Configurações;
-    // W6 added the platform-scope admin pages Referências + Guias (their
-    // pages lock themselves for anyone without `pode_gerir_pool` /
-    // `pode_ativar_guia`). LoteRevisao (`/edicao-fotos/lotes/:loteId/revisao`)
-    // is a detail route reached from a Lotes card, not a standalone nav item
-    // — same shape as `/imoveis/:codigo` next to the `imoveis` nav entry.
-    // Modelos, Regras, Curadores, Painel are later slices; their
-    // `status_pagina` rows already exist (migration 128) but no nav entries
-    // point at them yet. Route slugs below match
-    // migration 128's `nome_pagina` values EXACTLY (its own explicit
-    // instruction) — kebab-case, unlike this file's usual snake_case.
+    // W6 added the platform-scope admin pages Referências + Guias, W7 added
+    // Regras (their pages lock themselves for anyone without
+    // `pode_gerir_pool` / `pode_ativar_guia` / `pode_aprovar_regras`).
+    // LoteRevisao (`/edicao-fotos/lotes/:loteId/revisao`) is a detail route
+    // reached from a Lotes card, not a standalone nav item — same shape as
+    // `/imoveis/:codigo` next to the `imoveis` nav entry. Modelos,
+    // Curadores, Painel are later slices; their `status_pagina` rows
+    // already exist (migration 128) but no nav entries point at them yet.
+    // Route slugs below match migration 128's `nome_pagina` values EXACTLY
+    // (its own explicit instruction) — kebab-case, unlike this file's usual
+    // snake_case.
     key: "edicao-fotos",
     label: "Edição de Fotos",
     icon: ImagePlus,
@@ -269,6 +271,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       },
       { name: "Referências", href: "/edicao-fotos/referencias", icon: Images, route: "edicao-fotos-referencias" },
       { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen, route: "edicao-fotos-guias" },
+      { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText, route: "edicao-fotos-regras" },
     ],
   },
   {
@@ -394,6 +397,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Configurações", href: "/edicao-fotos/configuracoes", icon: Settings2 },
       { name: "Referências", href: "/edicao-fotos/referencias", icon: Images },
       { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen },
+      { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText },
     ],
   },
   {
@@ -448,6 +452,7 @@ export default createProductApp({
     { path: "/edicao-fotos/configuracoes", component: EdicaoFotosConfiguracoes },
     { path: "/edicao-fotos/referencias", component: EdicaoFotosReferencias },
     { path: "/edicao-fotos/guias", component: EdicaoFotosGuiasEstilo },
+    { path: "/edicao-fotos/regras", component: EdicaoFotosRegras },
     { path: "/clientes", component: ClientesBoard },
     { path: "/clientes/revisao", component: RevisaoFila },
     { path: "/email-marketing/listas", component: EmailListas },

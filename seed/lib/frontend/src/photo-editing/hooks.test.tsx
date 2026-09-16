@@ -411,3 +411,60 @@ describe('guias de estilo hooks', () => {
     expect(get).not.toHaveBeenCalled();
   });
 });
+
+describe('regras de aprendizado hooks (W7)', () => {
+  it('useRegras sends the status filter only when set', async () => {
+    const get = vi.fn().mockResolvedValue({ items: [{ id: 'r1' }], total: 1 });
+    const { useRegras } = createEdicaoFotosHooks(makeApi({ get }));
+    const { result } = renderHook(() => useRegras({ status: 'proposta' }), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.showSkeleton).toBe(false));
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/regras', { status: 'proposta' });
+    expect(result.current.regras).toHaveLength(1);
+    expect(result.current.total).toBe(1);
+
+    get.mockClear();
+    renderHook(() => useRegras(), { wrapper: wrapper() });
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/regras', undefined);
+  });
+
+  it('mutations hit the contract routes and invalidate regras + guia-efetivo', async () => {
+    const post = vi.fn().mockResolvedValue({});
+    const put = vi.fn().mockResolvedValue({});
+    const api = makeApi({ post, put });
+    const hooks = createEdicaoFotosHooks(api);
+    const w = wrapper();
+    const criar = renderHook(() => hooks.useCriarRegra(), { wrapper: w }).result;
+    const editar = renderHook(() => hooks.useEditarRegra(), { wrapper: w }).result;
+    const aprovar = renderHook(() => hooks.useAprovarRegra(), { wrapper: w }).result;
+    const rejeitar = renderHook(() => hooks.useRejeitarRegra(), { wrapper: w }).result;
+    const proporAgora = renderHook(() => hooks.useProporRegrasAgora(), { wrapper: w }).result;
+    await act(async () => {
+      await criar.current.mutateAsync({ texto: 'Não X' });
+      await editar.current.mutateAsync({ regraId: 'r1', texto: 'Não X revisado' });
+      await aprovar.current.mutateAsync('r1');
+      await rejeitar.current.mutateAsync('r1');
+      await proporAgora.current.mutateAsync();
+    });
+    expect(post.mock.calls).toEqual([
+      ['/api/edicao-fotos/regras', { texto: 'Não X' }],
+      ['/api/edicao-fotos/regras/r1/aprovar', {}],
+      ['/api/edicao-fotos/regras/r1/rejeitar', {}],
+      ['/api/edicao-fotos/regras/propor-agora', {}],
+    ]);
+    expect(put).toHaveBeenCalledWith('/api/edicao-fotos/regras/r1', { texto: 'Não X revisado' });
+  });
+
+  it('useGuiaEfetivo exposes the current guide + history, and tolerates atual=null', async () => {
+    const get = vi.fn().mockResolvedValue({
+      atual: null,
+      historico: { items: [], page: 1, page_size: 20, total: 0 },
+    });
+    const { useGuiaEfetivo } = createEdicaoFotosHooks(makeApi({ get }));
+    const { result } = renderHook(() => useGuiaEfetivo(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.showSkeleton).toBe(false));
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/regras/guia-efetivo', { page: 1, page_size: 20 });
+    expect(result.current.atual).toBeNull();
+    expect(result.current.historico).toEqual([]);
+    expect(result.current.total).toBe(0);
+  });
+});

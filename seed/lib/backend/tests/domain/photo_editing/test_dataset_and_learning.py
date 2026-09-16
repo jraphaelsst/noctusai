@@ -6,14 +6,18 @@ from noctusai_lib.domain.photo_editing import (
     Actor,
     CommentRequiredError,
     Decision,
+    DuplicateRuleError,
     InvalidModelOutputError,
     PhotoNotDecidableError,
     PhotoStatus,
+    RuleArchivedError,
     RuleDecisionForbiddenError,
     RuleNotFoundError,
     RuleStatus,
     Speed,
+    create_manual_rule,
     decide_rule,
+    edit_rule_text,
     propose_rules,
     record_decision,
 )
@@ -178,5 +182,60 @@ def test_rule_decision_authority(ports) -> None:
             RuleStatus.REJEITADA, True, "plat")
         with pytest.raises(RuleNotFoundError):
             await decide_rule(ports, "nope", approve=True, actor=PLATFORM)
+
+    run(scenario())
+
+
+def test_create_manual_rule_is_auto_approved_and_deduped(ports) -> None:
+    async def scenario() -> None:
+        with pytest.raises(RuleDecisionForbiddenError):
+            await create_manual_rule(ports, org_id=ORG, texto="Não X", actor=CORRETOR)
+        with pytest.raises(RuleDecisionForbiddenError):
+            await create_manual_rule(ports, org_id=ORG, texto="Não X", actor=OTHER_ADMIN)
+
+        created = await create_manual_rule(ports, org_id=ORG, texto="  Não X  ", actor=ADMIN)
+        assert (created.texto, created.status, created.decidido_por) == ("Não X", RuleStatus.APROVADA, "adm")
+
+        with pytest.raises(DuplicateRuleError):
+            await create_manual_rule(ports, org_id=ORG, texto="não x", actor=ADMIN)
+
+        # A platform admin may create for any org.
+        by_platform = await create_manual_rule(ports, org_id=ORG, texto="Não Y", actor=PLATFORM)
+        assert by_platform.status is RuleStatus.APROVADA
+
+        # Archiving reuses `decide_rule`'s existing authority — the SAME
+        # agency admin who wrote it cannot flip their own decided rule.
+        with pytest.raises(RuleDecisionForbiddenError):
+            await decide_rule(ports, created.id, approve=False, actor=ADMIN)
+        archived = await decide_rule(ports, created.id, approve=False, actor=PLATFORM)
+        assert archived.status is RuleStatus.REJEITADA
+
+        # An archived rule's text no longer collides with a new manual rule.
+        recreated = await create_manual_rule(ports, org_id=ORG, texto="Não X", actor=ADMIN)
+        assert recreated.id != created.id
+
+    run(scenario())
+
+
+def test_edit_rule_text_authority_and_frozen_archive(ports) -> None:
+    async def scenario() -> None:
+        rule = await create_manual_rule(ports, org_id=ORG, texto="Não X", actor=ADMIN)
+
+        with pytest.raises(RuleDecisionForbiddenError):
+            await edit_rule_text(ports, rule.id, texto="Não X revisado", actor=CORRETOR)
+        with pytest.raises(RuleDecisionForbiddenError):
+            await edit_rule_text(ports, rule.id, texto="Não X revisado", actor=OTHER_ADMIN)
+
+        edited = await edit_rule_text(ports, rule.id, texto="  Não X revisado  ", actor=ADMIN)
+        assert edited.texto == "Não X revisado"
+        assert edited.status is RuleStatus.APROVADA  # status/decision untouched
+
+        archived = await decide_rule(ports, rule.id, approve=False, actor=PLATFORM)
+        assert archived.status is RuleStatus.REJEITADA
+        with pytest.raises(RuleArchivedError):
+            await edit_rule_text(ports, rule.id, texto="tentativa pós-arquivamento", actor=PLATFORM)
+
+        with pytest.raises(RuleNotFoundError):
+            await edit_rule_text(ports, "nope", texto="x", actor=PLATFORM)
 
     run(scenario())

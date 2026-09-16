@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from noctusai_lib.domain.photo_editing import (
     BatchNotDecidedError,
     CommentRequiredError,
+    DuplicateRuleError,
     GuideNotActiveError,
     GuideVersionNotFoundError,
     NotFoundError,
@@ -24,6 +25,9 @@ from noctusai_lib.domain.photo_editing import (
     ReferenceImageError,
     ReferenceNotFoundError,
     ReferenceStorageNotConfigured,
+    RuleArchivedError,
+    RuleDecisionForbiddenError,
+    RuleNotFoundError,
     SubmissionError,
 )
 from noctusai_lib.integrations.imaging import UnsupportedImageFormatError
@@ -77,6 +81,15 @@ def engine_error(exc: Exception) -> HTTPException:
         return api_error(404, exc.code, str(exc))
     if isinstance(exc, ReferenceStorageNotConfigured):
         return api_error(503, exc.code, "Armazenamento de referências indisponível.")
+    # --- learning rules (W7) ---
+    if isinstance(exc, RuleNotFoundError):
+        return api_error(404, exc.code, str(exc))
+    if isinstance(exc, RuleDecisionForbiddenError):
+        return api_error(403, exc.code, str(exc))
+    if isinstance(exc, DuplicateRuleError):
+        return api_error(409, exc.code, str(exc))
+    if isinstance(exc, RuleArchivedError):
+        return api_error(422, exc.code, str(exc))
     raise exc
 
 
@@ -96,6 +109,10 @@ ENGINE_ERRORS = (
     ReferenceNotFoundError,
     GuideVersionNotFoundError,
     ReferenceStorageNotConfigured,
+    RuleNotFoundError,
+    RuleDecisionForbiddenError,
+    DuplicateRuleError,
+    RuleArchivedError,
 )
 
 __all__ = ["ENGINE_ERRORS", "api_error", "engine_error"]

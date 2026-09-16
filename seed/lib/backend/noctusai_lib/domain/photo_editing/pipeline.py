@@ -50,6 +50,7 @@ from noctusai_lib.domain.photo_editing.types import (
     dedupe_lote_pronto,
     dedupe_poll_openai_batch,
     dedupe_propor_regras,
+    dedupe_propor_regras_manual,
     dedupe_regen_guia,
     dedupe_regen_guia_manual,
     dedupe_submit,
@@ -232,6 +233,22 @@ async def schedule_rule_proposal(ports: PhotoEditingPorts, org_id: str) -> Job:
         {"org_id": org_id},
         dedupe_propor_regras(org_id, debounce_bucket(now, window)),
         scheduled_for=_window_end(now, window),
+    )
+
+
+async def request_rule_proposal(ports: PhotoEditingPorts, org_id: str, *, requested_by: str) -> Job:
+    """Manual "propor agora" button (W7): enqueue ``fotos.propor_regras`` to
+    run NOW — the handler skips the rejection-settling debounce for
+    ``manual`` payloads (mirrors :func:`request_guide_regen`). A double
+    click within the window enqueues once. Unlike the guide's manual
+    rebuild, an empty rejection queue is not refused — the handler already
+    no-ops on nothing pending."""
+    now = ports.clock()
+    return await _enqueue(
+        ports,
+        JobType.PROPOR_REGRAS,
+        {"org_id": org_id, "manual": True, "por": requested_by},
+        dedupe_propor_regras_manual(org_id, debounce_bucket(now, MANUAL_REGEN_WINDOW_SECONDS)),
     )
 
 
@@ -441,6 +458,7 @@ __all__ = [
     "enqueue_openai_batch_submit",
     "enqueue_photo_work",
     "request_guide_regen",
+    "request_rule_proposal",
     "retry_photo",
     "schedule_guide_regen",
     "schedule_rule_proposal",

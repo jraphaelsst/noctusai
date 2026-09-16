@@ -14,9 +14,12 @@ from datetime import datetime
 from typing import Any, Iterable, Optional
 
 from noctusai_lib.domain.photo_editing import Batch, Photo, PhotoStatus
+from noctusai_lib.domain.photo_editing.ports import PhotoEditingConfig
 from noctusai_lib.domain.photo_editing.types import (
     BatchStatus,
+    EffectiveGuide,
     Evaluation,
+    OrgRule,
     OrgSettings,
     PlatformSettings,
     ReferencePair,
@@ -143,13 +146,55 @@ def org_configuracoes_out(settings: OrgSettings, platform: PlatformSettings) -> 
     }
 
 
-def platform_settings_out(settings: PlatformSettings) -> dict[str, Any]:
+def platform_settings_out(
+    settings: PlatformSettings, config: PhotoEditingConfig | None = None
+) -> dict[str, Any]:
+    """🔴 `rule_proposal_debounce_seconds` / `max_rejections_per_proposal`
+    (W7) are `PhotoEditingConfig` engine tunables, not `PlatformSettings`
+    DB columns — `fotos_platform_settings` has no spare capacity and this
+    slice was told not to add a migration (SW 130-132 claimed by parallel
+    slices). Surfaced here READ-ONLY when `config` is passed; `PUT
+    /configuracoes/plataforma` does NOT accept them (see `schemas.
+    PlatformSettingsBody`, `extra="forbid"`) — making them writable needs a
+    migration, surfaced to the tech-lead rather than silently worked
+    around."""
     price = settings.preco_storage_gb_mes_usd
-    return {
+    out = {
         "velocidade_default": _v(settings.velocidade_default),
         "notificacoes_globais_ativas": settings.notificacoes_globais_ativas,
         "preco_storage_gb_mes_usd": str(price) if price is not None else None,
         "limite_pares_referencia": settings.limite_pares_referencia or None,
+    }
+    if config is not None:
+        out["rule_proposal_debounce_seconds"] = config.rule_proposal_debounce_seconds
+        out["max_rejections_per_proposal"] = config.max_rejections_per_proposal
+    return out
+
+
+def regra_out(rule: OrgRule) -> dict[str, Any]:
+    """FE `RegraOrg` (contract §7)."""
+    return {
+        "id": str(rule.id),
+        "texto": rule.texto,
+        "status": _v(rule.status),
+        "origem_comentarios": list(rule.origem_comentarios),
+        "decidido_por": str(rule.decidido_por) if rule.decidido_por else None,
+        "decidido_em": _iso(rule.decidido_em),
+        "override_platform_admin": rule.override_platform_admin,
+        "criado_em": _iso(rule.created_at),
+    }
+
+
+def guia_efetivo_out(guide: EffectiveGuide) -> dict[str, Any]:
+    """FE `GuiaEfetivo` — the composed company-guide-plus-rules text
+    snapshotted onto a batch at submit (contract §6/§7)."""
+    return {
+        "id": str(guide.id),
+        "guia_estilo_id": str(guide.guia_estilo_id),
+        "conjunto_regras_id": str(guide.conjunto_regras_id) if guide.conjunto_regras_id else None,
+        "texto": guide.texto,
+        "sha256": guide.sha256,
+        "criado_em": _iso(guide.created_at),
     }
 
 

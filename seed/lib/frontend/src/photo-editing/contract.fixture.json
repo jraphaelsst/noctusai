@@ -254,5 +254,66 @@
   "erro_pool_cheio": {
     "detail": "O pool de referências está cheio — arquive um par ou aumente o limite.",
     "code": "pool_cheio"
+  },
+  "regra_body": {
+    "texto": "Não escurecer o céu"
+  },
+  "regra": {
+    "id": "aa11bb22-cc33-4dd4-8ee8-ff9900aa11bb",
+    "texto": "Não escurecer o céu",
+    "status": "aprovada",
+    "origem_comentarios": [],
+    "decidido_por": "00000000-0000-4000-8000-0000000000a5",
+    "decidido_em": "2026-09-16T18:00:00+00:00",
+    "override_platform_admin": false,
+    "criado_em": "2026-09-16T18:00:00+00:00"
+  },
+  "regras_page": {
+    "items": [
+      {
+        "id": "aa11bb22-cc33-4dd4-8ee8-ff9900aa11bb",
+        "texto": "Não escurecer o céu",
+        "status": "aprovada",
+        "origem_comentarios": [],
+        "decidido_por": "00000000-0000-4000-8000-0000000000a5",
+        "decidido_em": "2026-09-16T18:00:00+00:00",
+        "override_platform_admin": false,
+        "criado_em": "2026-09-16T18:00:00+00:00"
+      }
+    ],
+    "total": 1
+  },
+  "guia_efetivo": {
+    "id": "bb22cc33-dd44-4ee5-9ff9-00aa11bb22cc",
+    "guia_estilo_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+    "conjunto_regras_id": null,
+    "texto": "# Guia de estilo da empresa (versão 1)\n\n- Luz natural\n",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "criado_em": "2026-09-16T18:00:00+00:00"
+  },
+  "guia_efetivo_view": {
+    "atual": {
+      "id": "bb22cc33-dd44-4ee5-9ff9-00aa11bb22cc",
+      "guia_estilo_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+      "conjunto_regras_id": null,
+      "texto": "# Guia de estilo da empresa (versão 1)\n\n- Luz natural\n",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "criado_em": "2026-09-16T18:00:00+00:00"
+    },
+    "historico": {
+      "items": [
+        {
+          "id": "bb22cc33-dd44-4ee5-9ff9-00aa11bb22cc",
+          "guia_estilo_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+          "conjunto_regras_id": null,
+          "texto": "# Guia de estilo da empresa (versão 1)\n\n- Luz natural\n",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "criado_em": "2026-09-16T18:00:00+00:00"
+        }
+      ],
+      "page": 1,
+      "page_size": 20,
+      "total": 1
+    }
   }
 }

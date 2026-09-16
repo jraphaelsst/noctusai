@@ -84,6 +84,24 @@ def test_resolve_versions_rule_sets_and_is_idempotent(ports) -> None:
     run(scenario())
 
 
+def test_list_effective_guides_is_org_scoped_newest_first_paged(ports) -> None:
+    async def scenario() -> None:
+        await activate_guide(ports)
+        first = await resolve_effective_guide(ports, ORG)
+        r = await ports.repo.add_rule(org_id=ORG, texto="Não escurecer", origem_comentarios=())
+        await ports.repo.update_rule(r.id, status=RuleStatus.APROVADA, decidido_por=USER,
+                                     decidido_em=ports.clock(), override_platform_admin=False)
+        second = await resolve_effective_guide(ports, ORG)
+        await resolve_effective_guide(ports, "org-2")  # another org — must not leak in
+
+        page, total = await ports.repo.list_effective_guides(ORG, limit=1, offset=0)
+        assert total == 2 and [g.id for g in page] == [second.id]
+        page2, total2 = await ports.repo.list_effective_guides(ORG, limit=1, offset=1)
+        assert total2 == 2 and [g.id for g in page2] == [first.id]
+
+    run(scenario())
+
+
 def test_versions_are_immutable_restore_clones_activation_swaps(ports) -> None:
     async def scenario() -> None:
         v1 = await create_draft(ports, texto="um", gerado_de_versao=None, criado_por=USER)

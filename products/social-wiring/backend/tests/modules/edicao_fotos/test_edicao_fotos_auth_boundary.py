@@ -34,6 +34,7 @@ def _concrete(path: str) -> str:
         .replace("{user_id}", _ID)
         .replace("{referencia_id}", _ID)
         .replace("{versao}", "1")
+        .replace("{regra_id}", _ID)
     )
 
 
@@ -46,7 +47,7 @@ def test_module_is_mounted_on_the_app() -> None:
 
 def test_every_route_requires_auth(anon_client) -> None:
     routes = _routes()
-    assert len(routes) == 27, sorted(routes)
+    assert len(routes) == 34, sorted(routes)
     for method, path in sorted(routes):
         # No body at all: a JSON body on the multipart route (or a missing
         # one on a JSON route) must not be what decides the status.
@@ -86,6 +87,15 @@ _FORBIDDEN = [
     ("post", "/api/edicao-fotos/guias/regenerar", None, "corretor"),
     ("post", "/api/edicao-fotos/guias/{versao}/ativar", None, "admin"),
     ("post", "/api/edicao-fotos/guias/{versao}/restaurar", None, "viewer"),
+    # Learning rules (W7) — agency admin ∨ platform admin only; corretor is
+    # the sharpest refusal (contract §7 role matrix has no corretor row).
+    ("get", "/api/edicao-fotos/regras", None, "corretor"),
+    ("post", "/api/edicao-fotos/regras", {"texto": "x"}, "corretor"),
+    ("put", "/api/edicao-fotos/regras/{regra_id}", {"texto": "x"}, "corretor"),
+    ("post", "/api/edicao-fotos/regras/{regra_id}/aprovar", None, "corretor"),
+    ("post", "/api/edicao-fotos/regras/{regra_id}/rejeitar", None, "corretor"),
+    ("post", "/api/edicao-fotos/regras/propor-agora", None, "corretor"),
+    ("get", "/api/edicao-fotos/regras/guia-efetivo", None, "corretor"),
 ]
 
 

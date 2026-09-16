@@ -302,6 +302,9 @@ class PhotoEditingRepository(Protocol):
         decidido_em: datetime,
         override_platform_admin: bool,
     ) -> OrgRule: ...
+    async def update_rule_text(self, regra_id: str, *, texto: str) -> OrgRule:
+        """Manual edit (W7) — status/decision fields are untouched."""
+        ...
     async def latest_rule_set(self, org_id: str) -> RuleSet | None: ...
     async def create_rule_set(
         self, *, org_id: str, versao: int, regra_ids: tuple[str, ...], sha256: str
@@ -316,6 +319,12 @@ class PhotoEditingRepository(Protocol):
         sha256: str,
     ) -> EffectiveGuide: ...
     async def get_effective_guide(self, guia_efetivo_id: str) -> EffectiveGuide | None: ...
+    async def list_effective_guides(
+        self, org_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[EffectiveGuide], int]:
+        """Newest first, explicit range; returns ``(page, total)`` (W7 —
+        the guide-history view)."""
+        ...
     async def get_cursor(self, org_id: str) -> ProposalCursor | None: ...
     async def save_cursor(self, cursor: ProposalCursor) -> None: ...
 
@@ -849,6 +858,11 @@ class InMemoryPhotoEditingRepository:
         self.rules[regra_id] = updated
         return updated
 
+    async def update_rule_text(self, regra_id: str, *, texto: str) -> OrgRule:
+        updated = dataclasses.replace(self.rules[regra_id], texto=texto)
+        self.rules[regra_id] = updated
+        return updated
+
     async def latest_rule_set(self, org_id: str) -> RuleSet | None:
         mine = [s for s in self.rule_sets if s.org_id == org_id]
         return max(mine, key=lambda s: s.versao) if mine else None
@@ -895,6 +909,14 @@ class InMemoryPhotoEditingRepository:
 
     async def get_effective_guide(self, guia_efetivo_id: str) -> EffectiveGuide | None:
         return self.effective_guides.get(guia_efetivo_id)
+
+    async def list_effective_guides(
+        self, org_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[EffectiveGuide], int]:
+        order = {eid: n for n, eid in enumerate(self.effective_guides)}
+        matching = [g for g in self.effective_guides.values() if g.org_id == org_id]
+        matching.sort(key=lambda g: (g.created_at or datetime.min, order[g.id]), reverse=True)
+        return matching[offset : offset + limit], len(matching)
 
     async def get_cursor(self, org_id: str) -> ProposalCursor | None:
         return self.cursors.get(org_id)
@@ -1826,6 +1848,9 @@ class SupabasePhotoEditingRepository:
             )
         )
 
+    async def update_rule_text(self, regra_id: str, *, texto: str) -> OrgRule:
+        return _rule(await self._update("fotos_regras_org", regra_id, {"texto": texto}))
+
     async def latest_rule_set(self, org_id: str) -> RuleSet | None:
         row = await self._one(
             self._t("fotos_conjuntos_regras")
@@ -1893,6 +1918,17 @@ class SupabasePhotoEditingRepository:
             self._t("fotos_guias_efetivos").select("*").eq("id", guia_efetivo_id).limit(1)
         )
         return _effective(row) if row else None
+
+    async def list_effective_guides(
+        self, org_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[EffectiveGuide], int]:
+        return await self._paged(
+            self._t("fotos_guias_efetivos").select("*", count="exact").eq("org_id", org_id),
+            order="created_at",
+            limit=limit,
+            offset=offset,
+            decode=_effective,
+        )
 
     async def get_cursor(self, org_id: str) -> ProposalCursor | None:
         row = await self._one(
