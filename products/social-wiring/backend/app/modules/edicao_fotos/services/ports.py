@@ -8,6 +8,7 @@ backs each engine port (`KB § PATTERNS/backend/photo-editing-seed.md` §4):
 | repo        | `make_photo_editing_repository` over a PUBLIC-default service-role client (`get_core_client`) — the pipeline tables are reached through `.schema("social_wiring")`, and `cost_ledger` (Core 046) through the bare `public` table. The product's admin client defaults to `social_wiring`, which would send `cost_ledger` writes to the wrong schema. |
 | jobs        | `make_job_repository` over the `social_wiring`-default admin client — `claim_next_job` & co. live in `social_wiring` (migration 121) and are called as bare RPCs. |
 | storage     | `BucketPhotoStorage` over the seed Supabase `StorageBackend`, bucket `edicao-fotos` (migration 127). |
+| reference_storage | `BucketPhotoStorage`, bucket `edicao-fotos-referencias` (migration 127) — the global reference pool; pairs store keys here. |
 | imaging     | `get_imaging_adapter()` (Pillow). |
 | image_edit  | `openai_image_edit_factory(resolve_credential("openai_api_key", org))` — REFUSES without a key; never the Fake. |
 | llm         | `LlmStructuredAdapter()`. |
@@ -100,12 +101,12 @@ def build_ports(cfg: Any) -> PhotoEditingPorts:
     repo = make_photo_editing_repository(
         supabase_client=core, schema=SCHEMA, cost_schema=COST_SCHEMA
     )
+    backend = make_storage_backend(kind="supabase", client=admin)
     return PhotoEditingPorts(
         repo=repo,
         jobs=make_job_repository(supabase_client=admin, schema_name=SCHEMA),
-        storage=BucketPhotoStorage(
-            make_storage_backend(kind="supabase", client=admin), bucket=BUCKET_FOTOS
-        ),
+        storage=BucketPhotoStorage(backend, bucket=BUCKET_FOTOS),
+        reference_storage=BucketPhotoStorage(backend, bucket=BUCKET_REFERENCIAS),
         imaging=get_imaging_adapter(),
         image_edit=openai_image_edit_factory(openai_key_for_org),
         llm=LlmStructuredAdapter(),

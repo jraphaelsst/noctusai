@@ -24,13 +24,21 @@ export interface ReferencePairCardProps {
   /** Omit to render the card read-only (no archive control) — e.g. for a non-curator viewer. */
   onArquivar?: (id: string) => void;
   isArquivando?: boolean;
+  /** Display label for the room literal (e.g. `area_externa` → "Área externa"). Default: the raw value. */
+  formatComodo?: (comodo: string) => string;
+  /** Display label for an edit-type literal. Default: the raw value. */
+  formatTipoEdicao?: (tipo: string) => string;
   className?: string;
 }
+
+const identity = (value: string) => value;
 
 export function ReferencePairCard({
   referencia,
   onArquivar,
   isArquivando = false,
+  formatComodo = identity,
+  formatTipoEdicao = identity,
   className,
 }: ReferencePairCardProps) {
   const [confirmando, setConfirmando] = useState(false);
@@ -64,10 +72,10 @@ export function ReferencePairCard({
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge variant="outline">{referencia.comodo}</Badge>
+        <Badge variant="outline">{formatComodo(referencia.comodo)}</Badge>
         {referencia.tipos_edicao.map((tipo) => (
           <Badge key={tipo} variant="muted">
-            {tipo}
+            {formatTipoEdicao(tipo)}
           </Badge>
         ))}
         {arquivada && <Badge variant="destructive">Arquivada</Badge>}

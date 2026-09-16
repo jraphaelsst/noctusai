@@ -213,6 +213,17 @@ class IllegalTransitionError(ValueError):
     """A photo transition not in the legal set was requested."""
 
 
+class PoolFullError(RuntimeError):
+    """The reference pool already holds ``limite_pares_referencia`` active
+    pairs — uploads are blocked until one is archived or the limit raised.
+
+    Raised by the pool entry point (``pool.add_reference_pair``) and by a
+    repository whose storage enforces the limit at write time (the
+    Supabase implementation maps the migration-129 trigger's error here)."""
+
+    code = "pool_cheio"
+
+
 # ---------------------------------------------------------------------------
 # Records (one per consumer table; field names == column names)
 # ---------------------------------------------------------------------------
@@ -234,6 +245,9 @@ class PlatformSettings:
     velocidade_default: Speed = Speed.URGENTE
     notificacoes_globais_ativas: bool = True
     preco_storage_gb_mes_usd: Decimal | None = None
+    #: Reference-pool size limit, counted in PAIRS. ``None`` or ``0`` =
+    #: unlimited; archived pairs never count (contract §5).
+    limite_pares_referencia: int | None = None
 
 
 @dataclass(frozen=True)
@@ -516,6 +530,12 @@ def dedupe_regen_guia(bucket: int) -> str:
     return f"{JobType.REGEN_GUIA}:{bucket}"
 
 
+def dedupe_regen_guia_manual(bucket: int) -> str:
+    """Manual "regenerate" button: one job per short window, so a double
+    click never enqueues two builder calls."""
+    return f"{JobType.REGEN_GUIA}:manual:{bucket}"
+
+
 def dedupe_propor_regras(org_id: str, bucket: int) -> str:
     return f"{JobType.PROPOR_REGRAS}:{org_id}:{bucket}"
 
@@ -555,6 +575,7 @@ __all__ = [
     "PhotoEvent",
     "PhotoStatus",
     "PlatformSettings",
+    "PoolFullError",
     "ProposalCursor",
     "ReferencePair",
     "ReviewDecision",
@@ -573,6 +594,7 @@ __all__ = [
     "dedupe_lote_pronto",
     "dedupe_propor_regras",
     "dedupe_regen_guia",
+    "dedupe_regen_guia_manual",
     "dedupe_submit",
     "sha256_text",
     "sources_for",

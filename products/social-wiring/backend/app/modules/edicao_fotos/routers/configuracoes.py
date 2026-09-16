@@ -102,9 +102,15 @@ async def put_platform_settings_route(
     # A platform default has no model of its own: Econômico is refused
     # outright while the engine has no path for it.
     refuse_economico(body.velocidade_default, None)
-    saved = await ports.repo.update_platform_settings(
-        velocidade_default=Speed(body.velocidade_default),
-        notificacoes_globais_ativas=body.notificacoes_globais_ativas,
-        preco_storage_gb_mes_usd=body.preco_storage_gb_mes_usd,
-    )
+    changes: dict = {
+        "velocidade_default": Speed(body.velocidade_default),
+        "notificacoes_globais_ativas": body.notificacoes_globais_ativas,
+        "preco_storage_gb_mes_usd": body.preco_storage_gb_mes_usd,
+    }
+    # The pool limit is only touched when sent: an older client that does not
+    # know the field must not silently reset it to "unlimited". 0 is stored
+    # as NULL — both mean unlimited (contract §5).
+    if "limite_pares_referencia" in body.model_fields_set:
+        changes["limite_pares_referencia"] = body.limite_pares_referencia or None
+    saved = await ports.repo.update_platform_settings(**changes)
     return platform_settings_out(saved)

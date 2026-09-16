@@ -19,7 +19,9 @@ from noctusai_lib.domain.photo_editing.types import (
     Evaluation,
     OrgSettings,
     PlatformSettings,
+    ReferencePair,
     ReviewDecision,
+    StyleGuide,
 )
 
 _DECIDED = {PhotoStatus.APROVADA, PhotoStatus.REJEITADA}
@@ -147,6 +149,52 @@ def platform_settings_out(settings: PlatformSettings) -> dict[str, Any]:
         "velocidade_default": _v(settings.velocidade_default),
         "notificacoes_globais_ativas": settings.notificacoes_globais_ativas,
         "preco_storage_gb_mes_usd": str(price) if price is not None else None,
+        "limite_pares_referencia": settings.limite_pares_referencia or None,
+    }
+
+
+def referencia_out(
+    pair: ReferencePair, *, antes_url: Optional[str], depois_url: Optional[str]
+) -> dict[str, Any]:
+    """FE `ReferenciaPar` (+ `criado_em`, `criado_por`). The stored
+    `antes_url`/`depois_url` are PRIVATE bucket keys; the wire carries
+    short-lived signed URLs in their place, never the key."""
+    return {
+        "id": str(pair.id),
+        "antes_url": antes_url,
+        "depois_url": depois_url,
+        "comodo": _v(pair.comodo),
+        "tipos_edicao": [_v(t) for t in pair.tipos_edicao],
+        "nota": pair.nota,
+        "arquivada_em": _iso(pair.arquivado_em),
+        "criado_em": _iso(pair.created_at),
+        "criado_por": str(pair.criado_por) if pair.criado_por else None,
+    }
+
+
+def guia_origem(guide: StyleGuide) -> str:
+    """How a version came to be — derived from the immutable row:
+    `ia` (builder: no author) · `restaurada` (an author cloned an older
+    version) · `manual` (an author wrote it)."""
+    if not guide.criado_por:
+        return "ia"
+    return "restaurada" if guide.gerado_de_versao is not None else "manual"
+
+
+def guia_out(guide: StyleGuide) -> dict[str, Any]:
+    """FE `GuiaEstiloVersao`."""
+    return {
+        "id": str(guide.id),
+        "versao": guide.versao,
+        "status": _v(guide.status),
+        "texto": guide.texto,
+        "sha256": guide.sha256,
+        "gerado_de_versao": guide.gerado_de_versao,
+        "origem": guia_origem(guide),
+        "criado_por": str(guide.criado_por) if guide.criado_por else None,
+        "criado_em": _iso(guide.created_at),
+        "ativado_por": str(guide.ativado_por) if guide.ativado_por else None,
+        "ativado_em": _iso(guide.ativado_em),
     }
 
 

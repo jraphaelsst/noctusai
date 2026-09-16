@@ -7,8 +7,8 @@ Every external edge is replaced through the module's OWN DI seams
 - `get_current_user_org` → the identity the test selected with `as_user`;
 - `get_role_resolver`    → trusted roles per user (no `noctus_users` read);
 - `get_edicao_ports`     → the seed engine on in-memory/fake ports
-  (UUID-minting repo, fake jobs, `BucketPhotoStorage` over the seed
-  `FakeStorageBackend`, fake imaging / image-edit / fx, scripted LLM,
+  (UUID-minting repo, fake jobs, two `BucketPhotoStorage`s — batch photos
+  and the reference pool — over the seed `FakeStorageBackend`, fake imaging / image-edit / fx, scripted LLM,
   recording notifier);
 - `get_grant_repository` → the seed `FakePermissionGrantRepository`;
 - `get_vista_photo_source` → `FakeVistaSource`;
@@ -138,6 +138,10 @@ class Harness:
     def run(self, coro: Any) -> Any:
         return asyncio.run(coro)
 
+    def llm_calls(self) -> list[dict]:
+        """Every structured-LLM call the engine made (the scripted fake records them)."""
+        return self.ports.llm.calls
+
     # --- arrangement --------------------------------------------------
     def configure_org(self, org: str = ORG, **changes: Any) -> None:
         base = OrgSettings(
@@ -185,6 +189,20 @@ class Harness:
 
         return self.run(_go())
 
+    def upload_referencia(self, *, comodo: str = "sala", tipos: tuple[str, ...] = ("ceu",),
+                          nota: str | None = "céu limpo", antes: bytes = JPEG, depois: bytes = JPEG):
+        data: dict[str, Any] = {"comodo": comodo, "tipos_edicao": list(tipos)}
+        if nota is not None:
+            data["nota"] = nota
+        return self.http.post(
+            "/api/edicao-fotos/referencias",
+            data=data,
+            files=[
+                ("antes", ("antes.jpg", antes, "image/jpeg")),
+                ("depois", ("depois.jpg", depois, "image/jpeg")),
+            ],
+        )
+
     def upload(self, lote_id: str, count: int = 1, *, name: str = "foto.jpg", data: bytes = JPEG):
         files = [("fotos", (f"{i}-{name}", data, "image/jpeg")) for i in range(count)]
         return self.http.post(f"/api/edicao-fotos/lotes/{lote_id}/fotos", files=files)
@@ -196,10 +214,15 @@ def build_ports(repo: InMemoryPhotoEditingRepository, backend: FakeStorageBacken
         repo=repo,
         jobs=FakeJobRepository(),
         storage=BucketPhotoStorage(backend, bucket="edicao-fotos"),
+        reference_storage=BucketPhotoStorage(backend, bucket="edicao-fotos-referencias"),
         imaging=FakeImagingAdapter(),
         image_edit=lambda _org, _model: FakeImageEditAdapter(),
         llm=FakeStructuredLlm(
-            {"avaliacao_foto": good_evaluation, "propor_regras": {"regras": []}}
+            {
+                "avaliacao_foto": good_evaluation,
+                "propor_regras": {"regras": []},
+                "guia_estilo": {"guia": "- Luz natural\n- Céu azul limpo"},
+            }
         ),
         fx=FakeFxRateAdapter({date(2026, 9, 16): Decimal("5.4321")}),
         notifier=notifier,

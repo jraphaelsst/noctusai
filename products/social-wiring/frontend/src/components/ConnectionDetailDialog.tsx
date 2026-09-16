@@ -313,9 +313,13 @@ function BoundChatsEditor({
 
   const {
     data: availableChats,
-    isLoading: chatsLoading,
+    isPending: chatsPending,
     isError: chatsError,
   } = useConnectionChats(lineId);
+  // Two-signal loading contract: skeleton only while there is nothing to
+  // show (`isLoading` is false mid-refetch). The query is disabled for an
+  // empty id, where `isPending` stays true forever — never a spinner then.
+  const chatsLoading = !!lineId && chatsPending && !availableChats;
 
   const addFromDropdown = useCallback(() => {
     if (!selectedDropdown || !availableChats) return;

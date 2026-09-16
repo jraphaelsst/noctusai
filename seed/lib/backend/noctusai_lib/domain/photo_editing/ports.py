@@ -355,6 +355,12 @@ class PhotoEditingPorts:
     config: PhotoEditingConfig = field(default_factory=PhotoEditingConfig)
     clock: Callable[[], datetime] = _utcnow
     edit_quota: QuotaTracker | None = None
+    #: Bytes of the global reference pool. When set, a pair's
+    #: ``antes_url`` / ``depois_url`` are KEYS in this storage (a private
+    #: bucket) and the style-guide builder sends the bytes; when ``None``
+    #: they are fetchable URLs passed through as-is. Required by
+    #: ``pool.add_reference_pair``.
+    reference_storage: PhotoStorage | None = None
 
     def with_config(self, **changes: Any) -> "PhotoEditingPorts":
         return dataclasses.replace(self, config=dataclasses.replace(self.config, **changes))

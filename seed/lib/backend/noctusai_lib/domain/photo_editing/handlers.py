@@ -629,11 +629,15 @@ async def handle_lote_pronto(ports: PhotoEditingPorts, job: Job) -> None:
 
 
 async def handle_regen_guia(ports: PhotoEditingPorts, job: Job) -> None:
+    # A manual request (``pool.request_guide_regen``) runs now; only the
+    # automatic, pool-change-triggered run waits for the pool to settle.
+    manual = bool((job.payload or {}).get("manual"))
+
     async def body() -> None:
         now = ports.clock()
         window = ports.config.guide_regen_debounce_seconds
         last = await ports.repo.last_pool_change_at()
-        if last is not None and (now - last).total_seconds() < window:
+        if not manual and last is not None and (now - last).total_seconds() < window:
             await schedule_guide_regen(ports)  # pool still settling
             return
         await generate_draft_from_pool(ports)

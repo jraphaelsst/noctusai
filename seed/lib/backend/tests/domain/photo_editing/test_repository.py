@@ -286,3 +286,87 @@ def test_supabase_fx_pending_list_and_resolve() -> None:
         assert await repo.list_fx_pending() == []  # guarded update applied
 
     run(scenario())
+
+
+def test_supabase_reference_pool_and_guide_listing() -> None:
+    """W6: pool writes + archive CAS + paged listings, schema-validated
+    against migrations 124 + 129."""
+    from noctusai_lib.domain.photo_editing import PoolFullError, Room
+    from noctusai_lib.domain.photo_editing.repository import POOL_FULL_DB_MARKER
+
+    async def scenario() -> None:
+        client = SchemaStableClient()
+        clock = Clock()
+        repo = SupabasePhotoEditingRepository(client, now=clock)
+        pair = await repo.add_reference(
+            antes_url="referencias/t/antes.jpg", depois_url="referencias/t/depois.jpg",
+            comodo=Room.COZINHA, tipos_edicao=(EditType.CEU,), nota="n", criado_por=USER,
+        )
+        sent = client.sw("fotos_referencias").inserted_payloads[0]
+        assert (sent["comodo"], sent["tipos_edicao"]) == ("cozinha", ["ceu"])
+        assert pair.comodo is Room.COZINHA
+        client.sw("fotos_referencias")._data[0]["arquivado_em"] = None
+        assert (await repo.get_reference(pair.id)).id == pair.id
+        assert await repo.count_active_references() == 1
+
+        archived = await repo.archive_reference(pair.id, at=clock())
+        assert archived is not None and archived.arquivado_em == clock()
+        upd = client.sw("fotos_referencias").updated_payloads[-1]
+        assert set(upd) == {"arquivado_em"}
+        assert await repo.archive_reference(pair.id, at=clock()) is None  # CAS: already archived
+
+        page, total = await repo.list_references(include_archived=True, limit=10)
+        assert total == 1 and page[0].id == pair.id
+        active, _ = await repo.list_references(limit=10)
+        assert active == []
+
+        for v in (1, 2):
+            await repo.create_guide(versao=v, texto=f"t{v}", sha256=f"s{v}",
+                                    gerado_de_versao=None, criado_por=USER)
+        guides, total = await repo.list_guides(limit=1)
+        # The mock applies range() but not order(); ordering is pinned by
+        # the in-memory test (test_pool.py::test_list_guides_is_newest_first_and_paged).
+        assert total == 2 and len(guides) == 1
+
+        # The singleton row migration 123 inserts.
+        client.sw("fotos_platform_settings")._data.append(
+            {"id": 1, "velocidade_default": "urgente", "notificacoes_globais_ativas": True}
+        )
+        settings = await repo.update_platform_settings(limite_pares_referencia=3)
+        assert settings.limite_pares_referencia == 3
+        assert client.sw("fotos_platform_settings").updated_payloads[-1]["limite_pares_referencia"] == 3
+
+        # The migration-129 trigger's refusal surfaces as PoolFullError;
+        # any other write failure propagates untouched.
+        for message, expected in (
+            (f"{POOL_FULL_DB_MARKER}: pool de referências cheio (3 pares)", PoolFullError),
+            ("connection reset", ConnectionError),
+        ):
+            refusing = SupabasePhotoEditingRepository(_RefusingInsertClient(message, expected))
+            with pytest.raises(expected):
+                await refusing.add_reference(
+                    antes_url="a", depois_url="d", comodo=Room.SALA, tipos_edicao=(),
+                    nota=None, criado_por=USER,
+                )
+
+    run(scenario())
+
+
+class _RefusingInsertClient:
+    """Minimal PostgREST-shaped client whose insert fails like a trigger
+    ``RAISE EXCEPTION`` does (the seed mock cannot raise from a write)."""
+
+    def __init__(self, message: str, exc_type: type) -> None:
+        self._exc = ConnectionError(message) if exc_type is ConnectionError else RuntimeError(message)
+
+    def schema(self, _name: str) -> "_RefusingInsertClient":
+        return self
+
+    def from_(self, _table: str) -> "_RefusingInsertClient":
+        return self
+
+    def insert(self, _row: dict) -> "_RefusingInsertClient":
+        return self
+
+    def execute(self) -> None:
+        raise self._exc

@@ -7,6 +7,7 @@ WORKER calls):
 - ``submit_batch``      — validate, snapshot the effective guide, enqueue.
 - ``retry_photo``       — manual retry of a ``falhou`` photo.
 - ``schedule_guide_regen`` / ``schedule_rule_proposal`` — trailing debounce.
+- ``request_guide_regen`` — manual guide rebuild (runs now).
 - ``enqueue_fx_backfill`` — daily PTAX backfill.
 
 Every enqueue carries a dedupe key (``types.dedupe_*``), so a double click,
@@ -43,6 +44,7 @@ from noctusai_lib.domain.photo_editing.types import (
     dedupe_lote_pronto,
     dedupe_propor_regras,
     dedupe_regen_guia,
+    dedupe_regen_guia_manual,
     dedupe_submit,
 )
 from noctusai_lib.integrations.image_edit import capabilities_for_model
@@ -145,6 +147,31 @@ async def schedule_guide_regen(ports: PhotoEditingPorts) -> Job:
         {},
         dedupe_regen_guia(debounce_bucket(now, window)),
         scheduled_for=_window_end(now, window),
+    )
+
+
+#: Double-click window for the manual "regenerate guide" button.
+MANUAL_REGEN_WINDOW_SECONDS = 60
+
+
+class PoolEmptyError(RuntimeError):
+    """No active reference pair — there is nothing to build a guide from."""
+
+    code = "pool_vazio"
+
+
+async def request_guide_regen(ports: PhotoEditingPorts, *, requested_by: str) -> Job:
+    """Manual rebuild: enqueue ``fotos.regen_guia`` to run NOW (the handler
+    skips the pool-settling debounce for ``manual`` payloads). The result is
+    a DRAFT that still needs activation. Refuses on an empty pool."""
+    if await ports.repo.count_active_references() == 0:
+        raise PoolEmptyError("o pool de referências está vazio")
+    now = ports.clock()
+    return await _enqueue(
+        ports,
+        JobType.REGEN_GUIA,
+        {"manual": True, "por": requested_by},
+        dedupe_regen_guia_manual(debounce_bucket(now, MANUAL_REGEN_WINDOW_SECONDS)),
     )
 
 
@@ -352,8 +379,10 @@ async def retry_photo(ports: PhotoEditingPorts, foto_id: str, *, requested_by: s
 
 __all__ = [
     "ECONOMICO_IMPLEMENTED",
+    "MANUAL_REGEN_WINDOW_SECONDS",
     "NotFoundError",
     "PhotoNotRetryableError",
+    "PoolEmptyError",
     "SubmissionError",
     "SubmissionPlan",
     "add_photo_bytes",
@@ -362,6 +391,7 @@ __all__ = [
     "enqueue_evaluation",
     "enqueue_fx_backfill",
     "enqueue_ingest",
+    "request_guide_regen",
     "retry_photo",
     "schedule_guide_regen",
     "schedule_rule_proposal",

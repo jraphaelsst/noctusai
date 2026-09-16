@@ -16,9 +16,16 @@ SIGNED_URL_TTL_SECONDS = 3600
 
 
 async def signed_url(ports: PhotoEditingPorts, path: Optional[str]) -> Optional[str]:
+    """A signed URL for a batch photo (the `edicao-fotos` bucket)."""
+    return await signed_url_in(ports.storage, path)
+
+
+async def signed_url_in(storage: Any, path: Optional[str]) -> Optional[str]:
+    """A signed URL for `path` in `storage` — shared by batch photos and the
+    reference pool (`edicao-fotos-referencias`)."""
     if not path:
         return None
-    sign = getattr(ports.storage, "signed_url", None)
+    sign = getattr(storage, "signed_url", None)
     if sign is None:
         # A storage port that cannot sign cannot serve review images; that
         # is a wiring error, not an empty preview.
@@ -51,4 +58,4 @@ async def review_rows(
     return rows
 
 
-__all__ = ["SIGNED_URL_TTL_SECONDS", "review_rows", "signed_url"]
+__all__ = ["SIGNED_URL_TTL_SECONDS", "review_rows", "signed_url", "signed_url_in"]

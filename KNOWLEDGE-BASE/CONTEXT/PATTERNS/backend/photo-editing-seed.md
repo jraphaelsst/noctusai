@@ -52,8 +52,9 @@ or for a raw edit call without review (`integrations.image_edit` directly).
 | `dataset.py` | `record_decision`: append decision + append training record; a rejection bumps the proposal cursor and schedules the rule proposer |
 | `costs.py` | usage priced from the catalog at call time → `llm_usage` + `cost_ledger` (USD native, PTAX rate + quote date, BRL) · `fx_pending` when no bulletin · `backfill_fx` |
 | `learning.py` | rule proposer (cursor watermark, case-insensitive dedupe) · `decide_rule` authority (agency admin decides a proposal; only platform admin flips a decided rule) |
+| `pool.py` | reference pool entry points: `add_reference_pair` (normalize both sides, GPS strip, store under `referencias/<token>/{antes,depois}.jpg`, pair limit, cleanup on a refused insert) · `archive_reference_pair` (idempotent) · `pool_status` (active count + limit, `None`/`0` = unlimited) |
 | `access.py` | `compute_capabilities` → contract §2 `/capacidades` (server-computed, never SSO metadata) |
-| `pipeline.py` | route entry points: `add_photo_bytes`, `submit_batch`, `retry_photo`, debounced `schedule_*`, `enqueue_*` |
+| `pipeline.py` | route entry points: `add_photo_bytes`, `submit_batch`, `retry_photo`, debounced `schedule_*`, `request_guide_regen` (manual, runs now), `enqueue_*` |
 | `handlers.py` | one idempotent handler per job type · `build_handlers` · `build_worker` |
 | `ports.py` | `PhotoEditingPorts` (the one DI seam) + `PhotoStorage` (`InMemoryPhotoStorage` / `BucketPhotoStorage` over `integrations.storage`, with `signed_url`), `StructuredLlm`, `BatchReadyNotifier` ports with in-memory fakes + real adapters |
 | `repository.py` | `PhotoEditingRepository` Protocol + `InMemoryPhotoEditingRepository` + `SupabasePhotoEditingRepository` + `make_photo_editing_repository` |
@@ -78,7 +79,16 @@ class PhotoEditingPorts:
     config: PhotoEditingConfig = PhotoEditingConfig()
     clock: Callable[[], datetime] = utcnow
     edit_quota: QuotaTracker | None = None  # key f"fotos.edit:{org_id}", registered by the consumer
+    reference_storage: PhotoStorage | None = None  # BucketPhotoStorage(..., bucket="edicao-fotos-referencias")
 ```
+
+**Reference pairs store KEYS, not URLs.** With `reference_storage` wired,
+`ReferencePair.antes_url` / `depois_url` hold keys in that (private) bucket;
+the style-guide builder reads the BYTES (`guide.reference_images`) and a
+missing object raises — a guide is never built from a partial pool. Routes
+sign the keys for display; a key never reaches the wire. Without the port the
+columns are treated as fetchable URLs (legacy/test shape) and
+`add_reference_pair` refuses (`ReferenceStorageNotConfigured`).
 
 🔴 **Two clients, not one.** The repository reaches pipeline tables with
 `.schema(schema)` but `cost_ledger` (`cost_schema="public"`) with the bare
@@ -114,7 +124,26 @@ own last-attempt check assumes.
 
 `add_photo_bytes` · `submit_batch` · `retry_photo` · `record_decision` ·
 `build_batch_zip` · `decide_rule` · `create_draft` / `restore_version` /
-`activate_version` · `schedule_guide_regen` · `compute_capabilities`.
+`activate_version` · `schedule_guide_regen` · `request_guide_regen` ·
+`add_reference_pair` / `archive_reference_pair` / `pool_status` ·
+`compute_capabilities`.
+
+**Pool limit — two halves.** `add_reference_pair` checks
+`PlatformSettings.limite_pares_referencia` first (friendly `PoolFullError`,
+code `pool_cheio`); the repository WRITE refuses too (in-memory mirrors it;
+Supabase maps social-wiring migration 129's `BEFORE INSERT` trigger — which
+row-locks the settings singleton, so concurrent uploads serialize — to the
+same error via `POOL_FULL_DB_MARKER`). A pre-check alone races.
+
+**Manual vs automatic rebuild.** Every pool change calls
+`schedule_guide_regen` (trailing debounce; the handler re-schedules while the
+pool is still changing). The "regenerate" button calls
+`request_guide_regen`: payload `{"manual": true}`, unscheduled, a 60 s
+dedupe window (double click = one job), refused with `PoolEmptyError`
+(`pool_vazio`) on an empty pool; the handler skips the settle check for it.
+Both produce a DRAFT — only `activate_version` makes a guide active.
+A hand-written draft is just `create_draft(..., gerado_de_versao=None,
+criado_por=<user>)` — the no-AI path.
 Every validation error carries a `code` for the contract's error envelope
 (`SubmissionError.code` ∈ `modelo_nao_configurado`, `modelo_desconhecido`,
 `sem_tipos_edicao`, `economico_indisponivel`, `lote_vazio`, `lote_cheio`,
@@ -128,8 +157,10 @@ criado_por=, limit=, offset=) -> (page, total)`, newest first, explicit
 range) · photos (`transition_photo`
 is the ONLY status writer: read, legality check, compare-and-set on the read
 status, event append; `None` ⇒ lost race) · edits / evaluations / decisions /
-dataset · pool / guides / rules / rule sets / effective guides / proposal
-cursor · costs (`add_llm_usage`, `add_cost`, `list_fx_pending`, `resolve_fx`).
+dataset · pool (`add_reference`, `get_reference`, `archive_reference` CAS,
+`count_active_references`, paged `list_references(include_archived=)`) ·
+guides (paged `list_guides`, highest version first) · rules / rule sets /
+effective guides / proposal cursor · costs (`add_llm_usage`, `add_cost`, `list_fx_pending`, `resolve_fx`).
 The Supabase implementation targets social-wiring migrations 123-126 (plus
 121 jobs and 122 `llm_usage`) in `schema`, and Core 046 `public.cost_ledger`
 in `cost_schema`.
@@ -148,6 +179,15 @@ notifier. Curator grants use `domain.permissions`' `list_grants` /
 Worker on `InMemoryPhotoEditingRepository(id_factory=...)` (UUID ids for
 UUID path params). List views read `photo_states_for_batches` (one paged
 read per page, not one per batch).
+
+W6 (2026-09-16) added `/referencias` (multipart `antes` + `depois` +
+`comodo` + repeated `tipos_edicao` + `nota`; `DELETE` archives) and `/guias`
+(list · manual `POST` draft · `regenerar` · `{versao}/ativar` ·
+`{versao}/restaurar`), both behind `deps.require_pool_manager` (platform
+admin ∨ `photo_curator` grant — never an agency admin; the pool is platform
+scope). The pair limit is `PUT /configuracoes/plataforma`
+`limite_pares_referencia` (only written when sent, so an older client never
+resets it). The pool bucket is wired as `reference_storage`.
 
 **Wire shapes are the seed FE's.** Responses match the types in
 `seed/lib/frontend/src/photo-editing/hooks.ts` (`LoteResumo`,
@@ -190,6 +230,9 @@ the seed's flat `{"detail", "code"}` shape.
   Econômico path.
 - Style-guide regeneration is platform scope: no `org_id`, so no
   `cost_ledger` row (the column is NOT NULL).
+- The pool limit's write-time half lives in social-wiring migration 129 —
+  until that file is applied (owner consent), setting the limit fails at
+  PostgREST (missing column) and only the pre-check guards the pool.
 - No live OpenAI verification was possible (no credits, PROJECT.md § 4c):
   the suite runs on fakes only.
 

@@ -14,12 +14,19 @@ from noctusai_lib.domain.photo_editing import (
     BatchNotDecidedError,
     CommentRequiredError,
     GuideNotActiveError,
+    GuideVersionNotFoundError,
     NotFoundError,
     NothingApprovedError,
     PhotoNotDecidableError,
     PhotoNotRetryableError,
+    PoolEmptyError,
+    PoolFullError,
+    ReferenceImageError,
+    ReferenceNotFoundError,
+    ReferenceStorageNotConfigured,
     SubmissionError,
 )
+from noctusai_lib.integrations.imaging import UnsupportedImageFormatError
 
 
 def api_error(status: int, code: str, message: str) -> HTTPException:
@@ -32,6 +39,7 @@ _SUBMISSION_STATUS = {
     "lote_cheio": 409,
     "lote_vazio": 409,
     "arquivo_grande_demais": 413,
+    "arquivo_vazio": 422,
     "formato_nao_suportado": 415,
 }
 
@@ -54,6 +62,21 @@ def engine_error(exc: Exception) -> HTTPException:
         return api_error(409, exc.code, "Nenhum guia de estilo ativo — a plataforma precisa ativar um.")
     if isinstance(exc, NotFoundError):
         return api_error(404, exc.code, str(exc))
+    # --- reference pool + guides (W6) ---
+    if isinstance(exc, PoolFullError):
+        return api_error(
+            409, exc.code, "O pool de referências está cheio — arquive um par ou aumente o limite."
+        )
+    if isinstance(exc, PoolEmptyError):
+        return api_error(409, exc.code, "O pool de referências está vazio — envie pares primeiro.")
+    if isinstance(exc, ReferenceImageError):
+        return api_error(_SUBMISSION_STATUS.get(exc.code, 422), exc.code, str(exc))
+    if isinstance(exc, UnsupportedImageFormatError):
+        return api_error(415, "formato_nao_suportado", "Imagem ilegível ou em formato não suportado.")
+    if isinstance(exc, (ReferenceNotFoundError, GuideVersionNotFoundError)):
+        return api_error(404, exc.code, str(exc))
+    if isinstance(exc, ReferenceStorageNotConfigured):
+        return api_error(503, exc.code, "Armazenamento de referências indisponível.")
     raise exc
 
 
@@ -66,6 +89,13 @@ ENGINE_ERRORS = (
     BatchNotDecidedError,
     NothingApprovedError,
     NotFoundError,
+    PoolFullError,
+    PoolEmptyError,
+    ReferenceImageError,
+    UnsupportedImageFormatError,
+    ReferenceNotFoundError,
+    GuideVersionNotFoundError,
+    ReferenceStorageNotConfigured,
 )
 
 __all__ = ["ENGINE_ERRORS", "api_error", "engine_error"]

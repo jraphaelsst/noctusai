@@ -11,7 +11,16 @@
  * to re-polyfill `localStorage` by hand (a workaround that also raced the
  * import-time store construction). Provisioned here ONCE so no test re-does it.
  *
- * Idempotent + non-destructive: only installs the shim when the global is
+ * Also `ResizeObserver`, which jsdom does not implement at all: every Radix
+ * primitive that measures itself (Switch thumb, Checkbox indicator, Popover)
+ * calls it on mount, so a product test that renders a real one crashed with
+ * `ResizeObserver is not defined` — and each file re-declared its own no-op
+ * class (N=3 by 2026-09-16: Settings, Referencias, GuiasEstilo). A no-op is
+ * the correct stand-in: jsdom has no layout, so there is nothing to observe.
+ * A test that needs real size callbacks (recharts) installs its own stub,
+ * which this leaves in place.
+ *
+ * Idempotent + non-destructive: only installs a shim when the global is
  * absent or incomplete, so a real DOM env (or a test that supplies its own)
  * is left untouched.
  */
@@ -52,3 +61,19 @@ function ensureStorage(name: "localStorage" | "sessionStorage"): void {
 ensureStorage("localStorage");
 ensureStorage("sessionStorage");
 
+
+function ensureResizeObserver(): void {
+  if (typeof (globalThis as Record<string, unknown>).ResizeObserver === "function") return;
+  class NoopResizeObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    value: NoopResizeObserver,
+    writable: true,
+    configurable: true,
+  });
+}
+
+ensureResizeObserver();

@@ -28,7 +28,13 @@ def _routes() -> set[tuple[str, str]]:
 
 
 def _concrete(path: str) -> str:
-    return path.replace("{lote_id}", _ID).replace("{foto_id}", _ID).replace("{user_id}", _ID)
+    return (
+        path.replace("{lote_id}", _ID)
+        .replace("{foto_id}", _ID)
+        .replace("{user_id}", _ID)
+        .replace("{referencia_id}", _ID)
+        .replace("{versao}", "1")
+    )
 
 
 def test_module_is_mounted_on_the_app() -> None:
@@ -40,7 +46,7 @@ def test_module_is_mounted_on_the_app() -> None:
 
 def test_every_route_requires_auth(anon_client) -> None:
     routes = _routes()
-    assert len(routes) == 19, sorted(routes)
+    assert len(routes) == 27, sorted(routes)
     for method, path in sorted(routes):
         # No body at all: a JSON body on the multipart route (or a missing
         # one on a JSON route) must not be what decides the status.
@@ -70,6 +76,16 @@ _FORBIDDEN = [
     ("get", "/api/edicao-fotos/revisao/{lote_id}", None, "viewer"),
     ("post", "/api/edicao-fotos/revisao/{lote_id}/fotos/{foto_id}/decisao",
      {"decisao": "aprovar"}, "curador"),
+    # Reference pool + guides: platform admin ∨ curator — an AGENCY admin
+    # (org owner) is the sharpest refusal to pin.
+    ("get", "/api/edicao-fotos/referencias", None, "admin"),
+    ("post", "/api/edicao-fotos/referencias", "ref_files", "admin"),
+    ("delete", "/api/edicao-fotos/referencias/{referencia_id}", None, "gerente"),
+    ("get", "/api/edicao-fotos/guias", None, "admin"),
+    ("post", "/api/edicao-fotos/guias", {"texto": "x"}, "admin"),
+    ("post", "/api/edicao-fotos/guias/regenerar", None, "corretor"),
+    ("post", "/api/edicao-fotos/guias/{versao}/ativar", None, "admin"),
+    ("post", "/api/edicao-fotos/guias/{versao}/restaurar", None, "viewer"),
 ]
 
 
@@ -83,6 +99,10 @@ def test_role_matrix_denies(edicao, method, path, body, user) -> None:
     kwargs = {}
     if body == "files":
         kwargs["files"] = [("fotos", ("a.jpg", b"x", "image/jpeg"))]
+    elif body == "ref_files":
+        kwargs["data"] = {"comodo": "sala"}
+        kwargs["files"] = [("antes", ("a.jpg", b"x", "image/jpeg")),
+                           ("depois", ("d.jpg", b"x", "image/jpeg"))]
     elif body is not None:
         kwargs["json"] = body
     resp = getattr(edicao.http, method)(_concrete(path), **kwargs)
@@ -91,6 +111,7 @@ def test_role_matrix_denies(edicao, method, path, body, user) -> None:
         "sem_acesso_edicao_fotos",
         "restrito_admin_organizacao",
         "restrito_admin_plataforma",
+        "restrito_curadoria",
     }
 
 

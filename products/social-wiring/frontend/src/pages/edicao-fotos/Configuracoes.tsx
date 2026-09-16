@@ -45,13 +45,10 @@ import {
   type LoteVelocidade,
   type OrgConfiguracoes,
 } from "@/hooks/useEdicaoFotos";
+// Shared with the admin pages. Fixes `virtual_staging` → `staging_virtual`,
+// the backend literal (the old value was refused with 422 on save).
+import { TIPOS_EDICAO } from "./rotulos";
 
-const TIPOS_EDICAO: Array<{ value: string; label: string }> = [
-  { value: "cor_luz", label: "Cor e luz" },
-  { value: "ceu", label: "Substituição de céu" },
-  { value: "declutter", label: "Declutter" },
-  { value: "virtual_staging", label: "Virtual staging" },
-];
 
 export default function Configuracoes() {
   const { capacidades } = useCapacidades();

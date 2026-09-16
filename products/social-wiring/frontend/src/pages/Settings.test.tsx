@@ -28,17 +28,9 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// jsdom has no ResizeObserver — the default-active "Notificacoes" tab renders
-// a real (unmocked) Radix Switch, whose thumb-sizing hook requires it.
-// Local polyfill scoped to this file (no other suite in this product mounts
-// a real Radix Switch yet — see the scoped-improvement footer).
-if (typeof (globalThis as any).ResizeObserver === "undefined") {
-  (globalThis as any).ResizeObserver = class {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
-  };
-}
+// The default-active "Notificacoes" tab renders a real (unmocked) Radix
+// Switch; the `ResizeObserver` it needs is provisioned by the shared seed
+// setup (`seed/framework/frontend/vitest.setup.ts`).
 
 afterEach(async () => {
   (await import("@testing-library/react")).cleanup();

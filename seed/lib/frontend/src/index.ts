@@ -143,6 +143,15 @@ export type {
   DecisaoBody,
   ReferenciaPar,
   NovaReferenciaBody,
+  PoolReferencias,
+  ReferenciasPage,
+  GuiaStatus,
+  GuiaOrigem,
+  GuiaEstiloVersao,
+  GuiasPage,
+  NovoGuiaBody,
+  RegenerarGuiaResposta,
+  PlataformaConfiguracoes,
 } from "./photo-editing/hooks";
 export {
   podeCriarLote,

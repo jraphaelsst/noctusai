@@ -13,8 +13,9 @@ storage bucket, notification fan-out and the worker lifecycle. Contract:
     services/worker.py      seed Worker, behind EDICAO_FOTOS_WORKER_ENABLED (default OFF)
     services/notifier.py    batch-ready in-app notification
     services/vista_fotos.py Vista gallery → batch
-    services/review.py      FotoRevisao rows (verdict read only for admins)
+    services/review.py      FotoRevisao rows (verdict read only for admins) + URL signing
     routers/                capacidades · configuracoes · curadores · modelos · lotes · revisao
+                            · referencias · guias
 
 Response shapes are the seed FE hook types
 (`seed/lib/frontend/src/photo-editing/hooks.ts`), pinned by
@@ -40,17 +41,25 @@ Routes (all under ``/api/edicao-fotos``; every one requires auth → 401):
     GET    /lotes/{id}/zip                           member, batch visible
     GET    /revisao/{lote_id}                        member, batch visible (verdict: admins only)
     POST   /revisao/{lote_id}/fotos/{foto_id}/decisao member, batch visible
+    GET    /referencias                              platform admin ∨ curator (pool, platform scope)
+    POST   /referencias                              platform admin ∨ curator (UploadFile ×2)
+    DELETE /referencias/{referencia_id}              platform admin ∨ curator (archive)
+    GET    /guias                                    platform admin ∨ curator
+    POST   /guias                                    platform admin ∨ curator (manual draft)
+    POST   /guias/regenerar                          platform admin ∨ curator (enqueue fotos.regen_guia)
+    POST   /guias/{versao}/ativar                    platform admin ∨ curator
+    POST   /guias/{versao}/restaurar                 platform admin ∨ curator (clone as new draft)
 
-Not in R1 here (later slices): reference pool, style guides, learning rules,
-model metrics/notes, dashboard, email/WhatsApp notifications, Econômico (C8).
+Not in R1 here (later slices): learning rules, model metrics/notes,
+dashboard, email/WhatsApp notifications, Econômico (C8).
 
 Seam contract
 ─────────────
 ``app/main.py`` iterates ``MODULES``; this module exposes :func:`register`.
 Its prefix ``/api/edicao-fotos`` is a unique literal with no 1-segment
 dynamic path at its root, so it cannot shadow or be shadowed by the
-``clientes_router`` hazard documented there. One upload route →
-one ``_MAX_BODY_PATH_OVERRIDES`` entry. The worker is started from
+``clientes_router`` hazard documented there. Two upload routes (batch
+photos, reference pairs) → two ``_MAX_BODY_PATH_OVERRIDES`` entries. The worker is started from
 ``app/lifespan.py``.
 """
 from __future__ import annotations
@@ -65,8 +74,10 @@ def register() -> Any:
         capacidades,
         configuracoes,
         curadores,
+        guias,
         lotes,
         modelos,
+        referencias,
         revisao,
     )
 
@@ -78,6 +89,8 @@ def register() -> Any:
             modelos.router,
             lotes.router,
             revisao.router,
+            referencias.router,
+            guias.router,
         ],
         standard_routers=(),
     )

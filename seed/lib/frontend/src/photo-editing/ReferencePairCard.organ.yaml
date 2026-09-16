@@ -10,6 +10,8 @@ known_facts:
   - "Archive is a soft delete (contract §5: kept for history, excluded from the pair-limit count) implemented as a two-step INLINE confirm (click 'Arquivar' → 'Confirmar'/'Cancelar'), not a modal — deliberately reads as reversible rather than destructive."
   - "Omitting the `onArquivar` prop renders the card read-only (no archive control) — for a non-curator viewer of the pool."
   - "Already-archived pairs (`arquivada_em` set) render at reduced opacity with an 'Arquivada' badge and no archive control."
+  - "`formatComodo` / `formatTipoEdicao` (optional, default identity) translate the backend literals (`area_externa`, `staging_virtual`) for display — the declared seam for product copy, so a consumer never forks the card to relabel badges (W6, 2026-09-16)."
+  - "`antes_url`/`depois_url` are short-lived SIGNED URLs: the pool bucket (`edicao-fotos-referencias`) is private and the row stores bucket keys, which never reach the wire (W6)."
 
 errors_encountered: []
 
@@ -20,7 +22,7 @@ alternatives_considered:
 
 manual_validation_log: []
 
-integration_test_status: unknown
+integration_test_status: "first consumer: social-wiring pages/edicao-fotos/Referencias.tsx (W6) — page tests render the real card"
 
 e2e_test:
   path: null

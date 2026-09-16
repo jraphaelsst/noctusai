@@ -26,9 +26,11 @@
  * decisions, reference pool). W10a (SW frontend, `pages/edicao-fotos/`)
  * extended this SAME factory with lotes CRUD/upload/vista/submeter/zip and
  * configurações/modelos — per `CLAUDE.md` §1 "products consume canonical
- * organs" this is the required shape (extend, never fork). Guias, regras,
- * curadores and painel remain out of scope — they belong to the later admin
- * slice (plan §7 W10b-e) and extend this factory in turn when built.
+ * organs" this is the required shape (extend, never fork). W6 extended it
+ * again with the reference-pool upload (multipart), guias de estilo and the
+ * platform settings the pool limit lives in. Regras, curadores and painel
+ * remain out of scope — they belong to later admin slices (plan §7 W10c-e)
+ * and extend this factory in turn when built.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiClient } from '../api';
@@ -113,21 +115,101 @@ export interface DecisaoBody {
 /** Contract §5 — reference pool pair (platform scope, not `org_id`-scoped). */
 export interface ReferenciaPar {
   id: string;
+  /** Short-lived signed URL (the pool bucket is private). */
   antes_url: string;
+  /** Short-lived signed URL (the pool bucket is private). */
   depois_url: string;
   comodo: string;
   tipos_edicao: string[];
   nota: string | null;
   /** Set once archived — archived pairs are kept for history and excluded from the pair-limit count (contract §5). */
   arquivada_em?: string | null;
+  criado_em?: string | null;
+  criado_por?: string | null;
 }
 
+/**
+ * `POST /referencias` — multipart: the two image FILES plus the tags
+ * (contract §5). Sent via `api.upload`, never `api.post` (FormData through
+ * `post` silently becomes `{}` — see `../api.ts`).
+ */
 export interface NovaReferenciaBody {
-  antes_url: string;
-  depois_url: string;
+  antes: File;
+  depois: File;
+  /** One of `ReferenciasPage.opcoes.comodos` (fixed list). */
   comodo: string;
+  /** Subset of `ReferenciasPage.opcoes.tipos_edicao`. */
   tipos_edicao: string[];
   nota?: string | null;
+}
+
+/** Pool occupancy — the limit is counted in PAIRS; `limite_pares: null` = unlimited (contract §5). */
+export interface PoolReferencias {
+  pares_ativos: number;
+  limite_pares: number | null;
+  /** `true` ⇒ uploads are refused with 409 `pool_cheio` until a pair is archived or the limit raised. */
+  cheio: boolean;
+}
+
+/** `GET /referencias` — paginated pairs + pool occupancy + the fixed upload vocabularies. */
+export interface ReferenciasPage {
+  items: ReferenciaPar[];
+  page: number;
+  page_size: number;
+  total: number;
+  pool: PoolReferencias;
+  opcoes: { comodos: string[]; tipos_edicao: string[] };
+}
+
+/** Contract §6 — style-guide version lifecycle. */
+export type GuiaStatus = 'rascunho' | 'ativa' | 'substituida';
+
+/** How a version came to be: AI builder, hand-written, or a restore (clone of an older version). */
+export type GuiaOrigem = 'ia' | 'manual' | 'restaurada';
+
+/** One company style-guide version (contract §6). Versions are immutable. */
+export interface GuiaEstiloVersao {
+  id: string;
+  versao: number;
+  status: GuiaStatus;
+  texto: string;
+  sha256: string;
+  gerado_de_versao: number | null;
+  origem: GuiaOrigem;
+  criado_por: string | null;
+  criado_em: string | null;
+  ativado_por: string | null;
+  ativado_em: string | null;
+}
+
+/** `GET /guias` — versions newest first + the active version number (null = none active ⇒ batches cannot be submitted). */
+export interface GuiasPage {
+  items: GuiaEstiloVersao[];
+  page: number;
+  page_size: number;
+  total: number;
+  versao_ativa: number | null;
+}
+
+/** `POST /guias` — a manually written DRAFT (activation is a separate call). */
+export interface NovoGuiaBody {
+  texto: string;
+}
+
+/** `POST /guias/regenerar` → 202: the AI rebuild was queued; the draft shows up in `GET /guias` once it runs. */
+export interface RegenerarGuiaResposta {
+  job_id: string;
+  status: string;
+}
+
+/** `GET|PUT /configuracoes/plataforma` (contract §8) — platform admin only. */
+export interface PlataformaConfiguracoes {
+  velocidade_default: LoteVelocidade;
+  notificacoes_globais_ativas: boolean;
+  /** Decimal as string (USD per GB-month); null = not configured. */
+  preco_storage_gb_mes_usd: string | null;
+  /** Reference-pool limit in pairs; null (or 0 on write) = unlimited. */
+  limite_pares_referencia: number | null;
 }
 
 /** Contract §3 — speed mode (Urgente = sync; Econômico = Batch API, 50% off, ≤24h). */
@@ -292,15 +374,32 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     });
   }
 
-  /** `GET /referencias` — platform-scope reference pool (contract §5). */
-  function useReferencias() {
-    const query = useQuery<ReferenciaPar[]>({
-      queryKey: ['edicao-fotos', 'referencias'],
-      queryFn: () => api.get('/api/edicao-fotos/referencias'),
+  /**
+   * `GET /referencias` — platform-scope reference pool (contract §5), paged,
+   * with pool occupancy + the fixed upload vocabularies. Keyed on the page
+   * and the archived toggle, with `placeholderData` so flipping either never
+   * unmounts a grid that already has content.
+   */
+  function useReferencias(
+    params: { page?: number; pageSize?: number; incluirArquivadas?: boolean } = {},
+  ) {
+    const { page = 1, pageSize = 50, incluirArquivadas = false } = params;
+    const query = useQuery<ReferenciasPage>({
+      queryKey: ['edicao-fotos', 'referencias', page, pageSize, incluirArquivadas],
+      queryFn: () =>
+        api.get('/api/edicao-fotos/referencias', {
+          page,
+          page_size: pageSize,
+          incluir_arquivadas: incluirArquivadas,
+        }),
       staleTime: 30 * 1000,
+      placeholderData: (prev) => prev,
     });
     return {
-      referencias: query.data ?? [],
+      referencias: query.data?.items ?? [],
+      total: query.data?.total ?? 0,
+      pool: query.data?.pool,
+      opcoes: query.data?.opcoes,
       showSkeleton: query.isPending && !query.data,
       isRefreshing: query.isFetching && !!query.data,
       error: query.error,
@@ -308,11 +407,23 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     };
   }
 
-  /** `POST /referencias` — 409 `pool_cheio` when the pair limit is reached (contract §5). */
+  /**
+   * `POST /referencias` — multipart pair upload; 409 `pool_cheio` when the
+   * pair limit is reached (contract §5). Fields: `antes`, `depois` (files),
+   * `comodo`, `tipos_edicao` (repeated), `nota`.
+   */
   function useCriarReferencia() {
     const queryClient = useQueryClient();
     return useMutation({
-      mutationFn: (body: NovaReferenciaBody) => api.post('/api/edicao-fotos/referencias', body),
+      mutationFn: (body: NovaReferenciaBody) => {
+        const form = new FormData();
+        form.append('antes', body.antes);
+        form.append('depois', body.depois);
+        form.append('comodo', body.comodo);
+        body.tipos_edicao.forEach((tipo) => form.append('tipos_edicao', tipo));
+        if (body.nota) form.append('nota', body.nota);
+        return api.upload<ReferenciaPar>('/api/edicao-fotos/referencias', form);
+      },
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'referencias'] });
       },
@@ -323,8 +434,117 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   function useArquivarReferencia() {
     const queryClient = useQueryClient();
     return useMutation({
-      mutationFn: (id: string) => api.delete(`/api/edicao-fotos/referencias/${id}`),
+      mutationFn: (id: string) => api.delete<ReferenciaPar>(`/api/edicao-fotos/referencias/${id}`),
       onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'referencias'] });
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Guias de estilo (contract §6), W6
+  // ---------------------------------------------------------------------
+
+  /** `GET /guias` — every version, newest first; `placeholderData` across page changes. */
+  function useGuias(params: { page?: number; pageSize?: number } = {}) {
+    const { page = 1, pageSize = 20 } = params;
+    const query = useQuery<GuiasPage>({
+      queryKey: ['edicao-fotos', 'guias', page, pageSize],
+      queryFn: () => api.get('/api/edicao-fotos/guias', { page, page_size: pageSize }),
+      placeholderData: (prev) => prev,
+    });
+    return {
+      guias: query.data?.items ?? [],
+      total: query.data?.total ?? 0,
+      versaoAtiva: query.data?.versao_ativa ?? null,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  function invalidateGuias(queryClient: ReturnType<typeof useQueryClient>) {
+    queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'guias'] });
+  }
+
+  /** `POST /guias` — a manually written DRAFT (the no-AI path, contract §6). */
+  function useCriarGuia() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (body: NovoGuiaBody) =>
+        api.post<GuiaEstiloVersao>('/api/edicao-fotos/guias', body),
+      onSuccess: () => invalidateGuias(queryClient),
+    });
+  }
+
+  /** `POST /guias/{versao}/ativar` — this version becomes the one new batches snapshot. */
+  function useAtivarGuia() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (versao: number) =>
+        api.post<GuiaEstiloVersao>(`/api/edicao-fotos/guias/${versao}/ativar`, {}),
+      onSuccess: () => invalidateGuias(queryClient),
+    });
+  }
+
+  /** `POST /guias/{versao}/restaurar` — clones the version as a NEW draft (versions are immutable). */
+  function useRestaurarGuia() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (versao: number) =>
+        api.post<GuiaEstiloVersao>(`/api/edicao-fotos/guias/${versao}/restaurar`, {}),
+      onSuccess: () => invalidateGuias(queryClient),
+    });
+  }
+
+  /**
+   * `POST /guias/regenerar` — queue the AI rebuild from the pool (202). The
+   * draft appears only after the worker runs it; 409 `pool_vazio` on an
+   * empty pool.
+   */
+  function useRegenerarGuia() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: () =>
+        api.post<RegenerarGuiaResposta>('/api/edicao-fotos/guias/regenerar', {}),
+      onSuccess: () => invalidateGuias(queryClient),
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Configurações da plataforma (contract §8) — platform admin only
+  // ---------------------------------------------------------------------
+
+  /** `GET /configuracoes/plataforma`. Pass `enabled: false` for callers that cannot read it (curators get 403). */
+  function useConfiguracoesPlataforma(options: { enabled?: boolean } = {}) {
+    const { enabled = true } = options;
+    const query = useQuery<PlataformaConfiguracoes>({
+      queryKey: ['edicao-fotos', 'configuracoes-plataforma'],
+      queryFn: () => api.get('/api/edicao-fotos/configuracoes/plataforma'),
+      enabled,
+    });
+    return {
+      configuracoes: query.data,
+      showSkeleton: enabled && query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+      error: query.error,
+      refetch: query.refetch,
+    };
+  }
+
+  /**
+   * `PUT /configuracoes/plataforma` — send the WHOLE object (read, change,
+   * write): omitted fields fall back to server defaults, except
+   * `limite_pares_referencia`, which is left untouched when absent.
+   */
+  function useAtualizarConfiguracoesPlataforma() {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (body: PlataformaConfiguracoes) =>
+        api.put<PlataformaConfiguracoes>('/api/edicao-fotos/configuracoes/plataforma', body),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'configuracoes-plataforma'] });
         queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'referencias'] });
       },
     });
@@ -523,6 +743,13 @@ export function createEdicaoFotosHooks(api: ApiClient) {
     useReferencias,
     useCriarReferencia,
     useArquivarReferencia,
+    useGuias,
+    useCriarGuia,
+    useAtivarGuia,
+    useRestaurarGuia,
+    useRegenerarGuia,
+    useConfiguracoesPlataforma,
+    useAtualizarConfiguracoesPlataforma,
     useLotes,
     useLote,
     useCriarLote,

@@ -48,18 +48,35 @@ class PlatformSettingsBody(StrictHttpModel):
     velocidade_default: SpeedLiteral = "urgente"
     notificacoes_globais_ativas: bool = True
     preco_storage_gb_mes_usd: Optional[Decimal] = Field(default=None, ge=0)
+    #: Reference-pool size limit in PAIRS; null/0 = unlimited (contract §5).
+    limite_pares_referencia: Optional[int] = Field(default=None, ge=0, le=100_000)
 
 
 class CuradorCreateBody(StrictHttpModel):
     user_id: UUID
 
 
+class GuiaCreateBody(StrictHttpModel):
+    """A manually written guide draft (contract §6). Becomes a new
+    version in `rascunho`; activation is a separate call."""
+
+    texto: str = Field(min_length=1, max_length=20_000)
+
+
+RoomLiteral = Literal[
+    "sala", "quarto", "cozinha", "banheiro", "area_externa",
+    "fachada", "varanda", "escritorio", "outro",
+]
+
+
 __all__ = [
     "CuradorCreateBody",
     "DecisaoBody",
+    "GuiaCreateBody",
     "ImovelRef",
     "LoteCreateBody",
     "OrgSettingsBody",
     "PlatformSettingsBody",
+    "RoomLiteral",
     "VistaIngestBody",
 ]

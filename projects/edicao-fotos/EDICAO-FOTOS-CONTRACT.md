@@ -109,12 +109,37 @@ no longer counts toward the limit). A pair is `{antes_url, depois_url, comodo,
 tipos_edicao[], nota}`. `POST` returns **409 `pool_cheio`** when the pair limit is
 reached (limit counted **in pairs**; blank/0 = unlimited).
 
+*Implemented 2026-09-16 (W6):*
+- `GET /referencias?page&page_size&incluir_arquivadas` →
+  `{items, page, page_size, total, pool: {pares_ativos, limite_pares, cheio},
+  opcoes: {comodos[], tipos_edicao[]}}` (`limite_pares: null` = unlimited).
+- `POST /referencias` is **multipart**: files `antes` + `depois` (≤ 25 MB each),
+  form `comodo` (fixed list), `tipos_edicao` (repeated), `nota` (≤ 2000). Both
+  images are normalized (JPEG, GPS stripped) and stored in the private
+  `edicao-fotos-referencias` bucket; `antes_url`/`depois_url` in responses are
+  short-lived **signed** URLs. `DELETE` returns the archived pair (idempotent).
+- The limit is `limite_pares_referencia` on `PUT /configuracoes/plataforma`
+  (0/null = unlimited; omitted = unchanged). Enforced before the write and by a
+  DB trigger (social-wiring 129).
+- Who: platform admin ∨ `photo_curator` → otherwise **403 `restrito_curadoria`**.
+
 ## 6 · Style guides — `/guias` (platform scope)
 
 `GET /guias` · `POST /guias/regenerar` (manual) · `POST /guias/{versao}/ativar` ·
 `POST /guias/{versao}/restaurar` (clones as a **new** version — versions are
 immutable). Every new version is a **draft** until a platform admin or curator
 activates it. Regeneration is also automatic, debounced after pool changes settle.
+
+*Implemented 2026-09-16 (W6):* `GET /guias?page&page_size` →
+`{items: GuiaEstiloVersao[], page, page_size, total, versao_ativa}`;
+**`POST /guias {"texto"}`** creates a hand-written draft (the no-AI path — R1
+has no OpenAI credits); `POST /guias/regenerar` → **202** `{job_id, status}`
+(409 `pool_vazio` on an empty pool; the draft appears after the worker runs);
+`ativar` → 200, `restaurar` → 201; unknown version → 404
+`guia_versao_inexistente`. A version is
+`{id, versao, status: rascunho|ativa|substituida, texto, sha256,
+gerado_de_versao, origem: ia|manual|restaurada, criado_por, criado_em,
+ativado_por, ativado_em}`. Same guard as §5.
 
 Effective guide for an org = **active company guide + that org's approved rules**,
 deterministic text + `sha256`, **snapshotted onto the batch at submit** so an

@@ -11,10 +11,19 @@
     "modelo_configurado": true,
     "economico_disponivel": false,
     "economico_bloqueado_motivo": "modelo_sem_batch",
-    "tipos_edicao_ativos": ["cor_luz", "ceu"],
-    "limites": { "fotos_por_lote": 100, "bytes_por_foto": 26214400 }
+    "tipos_edicao_ativos": [
+      "cor_luz",
+      "ceu"
+    ],
+    "limites": {
+      "fotos_por_lote": 100,
+      "bytes_por_foto": 26214400
+    }
   },
-  "novo_lote_body": { "nome": "Apto 12 — Rua das Flores", "imovel": null },
+  "novo_lote_body": {
+    "nome": "Apto 12 — Rua das Flores",
+    "imovel": null
+  },
   "lote_criado": {
     "id": "7b0c7f7e-3f55-4a53-9d7c-6a1d6f0e2a10",
     "nome": "Apto 12 — Rua das Flores",
@@ -42,7 +51,9 @@
     "page_size": 50,
     "total": 1
   },
-  "vista_body": { "codigo": "CA2830" },
+  "vista_body": {
+    "codigo": "CA2830"
+  },
   "foto_revisao_corretor": {
     "id": "0a6c3c55-2f6a-4f7b-9b53-1f1a2b3c4d5e",
     "url_antes": "https://storage.example/edicao-fotos/org/lote/foto/original.jpg?token=x",
@@ -62,7 +73,11 @@
     "falha_motivo": null,
     "decisao": null,
     "comentario": null,
-    "avaliacao": { "veredito": "aprovar", "score": 8.5, "motivo": "Cores naturais." }
+    "avaliacao": {
+      "veredito": "aprovar",
+      "score": 8.5,
+      "motivo": "Cores naturais."
+    }
   },
   "lote_detalhe": {
     "id": "7b0c7f7e-3f55-4a53-9d7c-6a1d6f0e2a10",
@@ -83,15 +98,28 @@
       }
     ]
   },
-  "decisao_body_rejeitar": { "decisao": "rejeitar", "comentario": "Céu artificial demais" },
-  "decisao_body_aprovar": { "decisao": "aprovar", "comentario": null },
+  "decisao_body_rejeitar": {
+    "decisao": "rejeitar",
+    "comentario": "Céu artificial demais"
+  },
+  "decisao_body_aprovar": {
+    "decisao": "aprovar",
+    "comentario": null
+  },
   "configuracoes": {
-    "tipos_edicao_ativos": ["cor_luz", "ceu"],
+    "tipos_edicao_ativos": [
+      "cor_luz",
+      "ceu"
+    ],
     "modelo_editor_imagem": "gpt-image-2.5-sunburst",
     "velocidade_padrao": "urgente"
   },
   "configuracoes_body": {
-    "tipos_edicao_ativos": ["cor_luz", "ceu", "declutter"],
+    "tipos_edicao_ativos": [
+      "cor_luz",
+      "ceu",
+      "declutter"
+    ],
     "modelo_editor_imagem": "gpt-image-2.5-flare",
     "velocidade_padrao": "urgente"
   },
@@ -104,5 +132,127 @@
     "nota_recomendacao": null,
     "metricas": null
   },
-  "erro": { "detail": "Nenhum modelo de edição configurado para a organização.", "code": "modelo_nao_configurado" }
+  "erro": {
+    "detail": "Nenhum modelo de edição configurado para a organização.",
+    "code": "modelo_nao_configurado"
+  },
+  "referencia_upload": {
+    "file_fields": [
+      "antes",
+      "depois"
+    ],
+    "form": {
+      "comodo": "sala",
+      "tipos_edicao": [
+        "cor_luz",
+        "ceu"
+      ],
+      "nota": "Céu azul limpo, sem saturar a madeira"
+    }
+  },
+  "referencia": {
+    "id": "5d1b2c3a-7e8f-4a9b-8c7d-6e5f4a3b2c1d",
+    "antes_url": "https://storage.example/edicao-fotos-referencias/referencias/abc/antes.jpg?token=x",
+    "depois_url": "https://storage.example/edicao-fotos-referencias/referencias/abc/depois.jpg?token=x",
+    "comodo": "sala",
+    "tipos_edicao": [
+      "cor_luz",
+      "ceu"
+    ],
+    "nota": "Céu azul limpo, sem saturar a madeira",
+    "arquivada_em": null,
+    "criado_em": "2026-09-16T18:00:00+00:00",
+    "criado_por": null
+  },
+  "referencias_page": {
+    "items": [
+      {
+        "id": "5d1b2c3a-7e8f-4a9b-8c7d-6e5f4a3b2c1d",
+        "antes_url": "https://storage.example/edicao-fotos-referencias/referencias/abc/antes.jpg?token=x",
+        "depois_url": "https://storage.example/edicao-fotos-referencias/referencias/abc/depois.jpg?token=x",
+        "comodo": "sala",
+        "tipos_edicao": [
+          "cor_luz",
+          "ceu"
+        ],
+        "nota": "Céu azul limpo, sem saturar a madeira",
+        "arquivada_em": null,
+        "criado_em": "2026-09-16T18:00:00+00:00",
+        "criado_por": null
+      }
+    ],
+    "page": 1,
+    "page_size": 50,
+    "total": 1,
+    "pool": {
+      "pares_ativos": 1,
+      "limite_pares": null,
+      "cheio": false
+    },
+    "opcoes": {
+      "comodos": [
+        "sala"
+      ],
+      "tipos_edicao": [
+        "cor_luz"
+      ]
+    }
+  },
+  "guia_body": {
+    "texto": "- Luz natural\n- Céu azul limpo"
+  },
+  "guia": {
+    "id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+    "versao": 1,
+    "status": "rascunho",
+    "texto": "- Luz natural\n- Céu azul limpo\n",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "gerado_de_versao": null,
+    "origem": "manual",
+    "criado_por": "00000000-0000-4000-8000-0000000000a5",
+    "criado_em": "2026-09-16T18:00:00+00:00",
+    "ativado_por": null,
+    "ativado_em": null
+  },
+  "guias_page": {
+    "items": [
+      {
+        "id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+        "versao": 1,
+        "status": "rascunho",
+        "texto": "- Luz natural\n- Céu azul limpo\n",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "gerado_de_versao": null,
+        "origem": "manual",
+        "criado_por": "00000000-0000-4000-8000-0000000000a5",
+        "criado_em": "2026-09-16T18:00:00+00:00",
+        "ativado_por": null,
+        "ativado_em": null
+      }
+    ],
+    "page": 1,
+    "page_size": 20,
+    "total": 1,
+    "versao_ativa": null
+  },
+  "guia_regenerar": {
+    "job_id": "fake-job-1",
+    "status": "pending"
+  },
+  "configuracoes_plataforma": {
+    "velocidade_default": "urgente",
+    "notificacoes_globais_ativas": true,
+    "preco_storage_gb_mes_usd": null,
+    "limite_pares_referencia": null
+  },
+  "configuracoes_plataforma_body": {
+    "velocidade_default": "urgente",
+    "notificacoes_globais_ativas": true,
+    "preco_storage_gb_mes_usd": "0.021",
+    "limite_pares_referencia": 40
+  },
+  "erro_pool_cheio": {
+    "detail": "O pool de referências está cheio — arquive um par ou aumente o limite.",
+    "code": "pool_cheio"
+  }
 }

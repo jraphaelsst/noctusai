@@ -166,3 +166,71 @@ def test_zip_is_a_binary_get(edicao) -> None:
     resp = edicao.http.get(f"/api/edicao-fotos/lotes/{lote}/zip")
     assert resp.status_code == 200 and resp.headers["content-type"] == "application/zip"
     assert resp.content[:2] == b"PK"
+
+
+# --- W6: reference pool + guides + platform settings -----------------------
+
+
+def _upload_fixture_pair(edicao):
+    spec = FIXTURE["referencia_upload"]
+    form = spec["form"]
+    return edicao.http.post(
+        "/api/edicao-fotos/referencias",
+        data={"comodo": form["comodo"], "tipos_edicao": form["tipos_edicao"], "nota": form["nota"]},
+        files=[(name, (f"{name}.jpg", b"\xff\xd8jpeg", "image/jpeg")) for name in spec["file_fields"]],
+    )
+
+
+def test_referencias_shapes(edicao) -> None:
+    edicao.as_user("curador")
+    created = _upload_fixture_pair(edicao)
+    assert created.status_code == 201, created.text
+    assert_shape(FIXTURE["referencia"], created.json())
+    assert created.json()["tipos_edicao"] == FIXTURE["referencia_upload"]["form"]["tipos_edicao"]
+    page = edicao.http.get("/api/edicao-fotos/referencias", params={"page": 1, "page_size": 50})
+    assert_shape(FIXTURE["referencias_page"], page.json())
+    archived = edicao.http.delete(f"/api/edicao-fotos/referencias/{created.json()['id']}")
+    assert_shape(FIXTURE["referencia"], archived.json())
+    assert isinstance(archived.json()["arquivada_em"], str)
+
+
+def test_pool_cheio_error_shape(edicao) -> None:
+    edicao.as_user("plataforma")
+    edicao.http.put(
+        "/api/edicao-fotos/configuracoes/plataforma",
+        json={**FIXTURE["configuracoes_plataforma_body"], "limite_pares_referencia": 1},
+    )
+    assert _upload_fixture_pair(edicao).status_code == 201
+    full = _upload_fixture_pair(edicao)
+    assert full.status_code == 409
+    assert full.json() == FIXTURE["erro_pool_cheio"]
+
+
+def test_guias_shapes(edicao) -> None:
+    edicao.as_user("plataforma")
+    created = edicao.http.post("/api/edicao-fotos/guias", json=FIXTURE["guia_body"])
+    assert created.status_code == 201, created.text
+    assert_shape(FIXTURE["guia"], created.json())
+    assert created.json()["origem"] == FIXTURE["guia"]["origem"]
+    for action, status in (("ativar", 200), ("restaurar", 201)):
+        resp = edicao.http.post(f"/api/edicao-fotos/guias/1/{action}", json={})
+        assert resp.status_code == status, resp.text
+        assert_shape(FIXTURE["guia"], resp.json())
+    page = edicao.http.get("/api/edicao-fotos/guias", params={"page": 1, "page_size": 20}).json()
+    assert_shape(FIXTURE["guias_page"], page)
+    assert page["versao_ativa"] == 1
+    _upload_fixture_pair(edicao)
+    regen = edicao.http.post("/api/edicao-fotos/guias/regenerar", json={})
+    assert regen.status_code == 202
+    assert_shape(FIXTURE["guia_regenerar"], regen.json())
+
+
+def test_configuracoes_plataforma_round_trip(edicao) -> None:
+    edicao.as_user("plataforma")
+    got = edicao.http.get("/api/edicao-fotos/configuracoes/plataforma").json()
+    assert_shape(FIXTURE["configuracoes_plataforma"], got)
+    put = edicao.http.put(
+        "/api/edicao-fotos/configuracoes/plataforma", json=FIXTURE["configuracoes_plataforma_body"]
+    )
+    assert put.status_code == 200, put.text
+    assert put.json() == FIXTURE["configuracoes_plataforma_body"]

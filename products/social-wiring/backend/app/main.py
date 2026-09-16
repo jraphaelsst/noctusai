@@ -519,11 +519,11 @@ _MAX_BODY_PATH_OVERRIDES = {
     # memory stays bounded by one photo, not by this ceiling.
     "/api/edicao-fotos/lotes/*/fotos": 256 * 1024 * 1024,  # 256 MB
     # Edição de Fotos reference-pair upload (POST /api/edicao-fotos/referencias
-    # — contract §5, the before+after pair of the platform pool). Declared
-    # AHEAD of its router (the pool lands in a later slice), which is inert —
-    # the same reasoning as the matrícula entry above: the middleware only
-    # fires for a path a router serves, and the boot-time derivation refuses an
-    # upload route without a ceiling. Two photos of ≤ 25 MB each plus framing.
+    # — contract §5, the before+after pair of the platform pool;
+    # `app.modules.edicao_fotos.routers.referencias`). Derived: exactly two
+    # files per call (`antes` + `depois`), each capped at
+    # `MAX_BYTES_PER_SIDE` (25 MB, the photo business limit) → 50 MB of
+    # payload plus multipart framing = `UPLOAD_ROUTE_MAX_BODY_BYTES` (52 MB).
     "/api/edicao-fotos/referencias": 52 * 1024 * 1024,  # 52 MB
 }
 

@@ -48,6 +48,7 @@ from noctusai_lib.domain.photo_editing.types import (
     PhotoEvent,
     PhotoStatus,
     PlatformSettings,
+    PoolFullError,
     ProposalCursor,
     ReferencePair,
     ReviewDecision,
@@ -81,11 +82,18 @@ _PHOTO_MUTABLE = frozenset(
         "falha_motivo",
     }
 )
+#: Substring of the migration-129 trigger error raised when the pool is full.
+POOL_FULL_DB_MARKER = "pool_cheio"
 #: Ids per `.in_()` filter — keeps the query string far from URL limits.
 _IN_CHUNK = 100
 
 _PLATFORM_MUTABLE = frozenset(
-    {"velocidade_default", "notificacoes_globais_ativas", "preco_storage_gb_mes_usd"}
+    {
+        "velocidade_default",
+        "notificacoes_globais_ativas",
+        "preco_storage_gb_mes_usd",
+        "limite_pares_referencia",
+    }
 )
 _EDIT_MUTABLE = frozenset(
     {"status", "erro", "llm_usage_id", "modelo_versao", "concluida_at"}
@@ -217,9 +225,38 @@ class PhotoEditingRepository(Protocol):
     # --- pool / guides / rules ----------------------------------------
     async def list_active_references(self, *, limit: int) -> list[ReferencePair]: ...
     async def last_pool_change_at(self) -> datetime | None: ...
+    async def add_reference(
+        self,
+        *,
+        antes_url: str,
+        depois_url: str,
+        comodo: Room,
+        tipos_edicao: tuple[EditType, ...],
+        nota: str | None,
+        criado_por: str,
+    ) -> ReferencePair:
+        """Insert one pair. A storage that enforces the pool limit at write
+        time raises :class:`PoolFullError`."""
+        ...
+    async def get_reference(self, referencia_id: str) -> ReferencePair | None: ...
+    async def archive_reference(self, referencia_id: str, *, at: datetime) -> ReferencePair | None:
+        """Compare-and-set ``arquivado_em`` on a still-active pair; ``None``
+        when the pair is missing or already archived."""
+        ...
+    async def count_active_references(self) -> int: ...
+    async def list_references(
+        self, *, include_archived: bool = False, limit: int = 50, offset: int = 0
+    ) -> tuple[list[ReferencePair], int]:
+        """Newest first, explicit range; returns ``(page, total)``."""
+        ...
     async def get_active_guide(self) -> StyleGuide | None: ...
     async def get_guide(self, versao: int) -> StyleGuide | None: ...
     async def latest_guide_version(self) -> int: ...
+    async def list_guides(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[StyleGuide], int]:
+        """Highest version first, explicit range; returns ``(page, total)``."""
+        ...
     async def create_guide(
         self,
         *,
@@ -632,6 +669,57 @@ class InMemoryPhotoEditingRepository:
         ]
         return max(stamps) if stamps else None
 
+    async def add_reference(
+        self,
+        *,
+        antes_url: str,
+        depois_url: str,
+        comodo: Room,
+        tipos_edicao: tuple[EditType, ...],
+        nota: str | None,
+        criado_por: str,
+    ) -> ReferencePair:
+        limit = self.platform_settings.limite_pares_referencia
+        if limit and await self.count_active_references() >= limit:
+            # Mirrors the migration-129 trigger: the write itself refuses.
+            raise PoolFullError(f"pool de referências cheio ({limit} pares)")
+        pair = ReferencePair(
+            id=self._id("referencia"),
+            antes_url=antes_url,
+            depois_url=depois_url,
+            comodo=Room(comodo),
+            criado_por=criado_por,
+            tipos_edicao=tuple(EditType(t) for t in tipos_edicao),
+            nota=nota,
+            created_at=self._now(),
+        )
+        self.references[pair.id] = pair
+        return pair
+
+    async def get_reference(self, referencia_id: str) -> ReferencePair | None:
+        return self.references.get(referencia_id)
+
+    async def archive_reference(self, referencia_id: str, *, at: datetime) -> ReferencePair | None:
+        current = self.references.get(referencia_id)
+        if current is None or current.arquivado_em is not None:
+            return None
+        archived = dataclasses.replace(current, arquivado_em=at)
+        self.references[referencia_id] = archived
+        return archived
+
+    async def count_active_references(self) -> int:
+        return sum(1 for r in self.references.values() if r.arquivado_em is None)
+
+    async def list_references(
+        self, *, include_archived: bool = False, limit: int = 50, offset: int = 0
+    ) -> tuple[list[ReferencePair], int]:
+        order = {rid: n for n, rid in enumerate(self.references)}
+        matching = [
+            r for r in self.references.values() if include_archived or r.arquivado_em is None
+        ]
+        matching.sort(key=lambda r: (r.created_at or datetime.min, order[r.id]), reverse=True)
+        return matching[offset : offset + limit], len(matching)
+
     async def get_active_guide(self) -> StyleGuide | None:
         for g in self.guides.values():
             if g.status is GuideStatus.ATIVA:
@@ -643,6 +731,12 @@ class InMemoryPhotoEditingRepository:
 
     async def latest_guide_version(self) -> int:
         return max(self.guides, default=0)
+
+    async def list_guides(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[StyleGuide], int]:
+        ordered = [self.guides[v] for v in sorted(self.guides, reverse=True)]
+        return ordered[offset : offset + limit], len(ordered)
 
     async def create_guide(
         self,
@@ -1437,6 +1531,109 @@ class SupabasePhotoEditingRepository:
             if r and r.get(k)
         ]
         return max(stamps) if stamps else None
+
+    async def add_reference(
+        self,
+        *,
+        antes_url: str,
+        depois_url: str,
+        comodo: Room,
+        tipos_edicao: tuple[EditType, ...],
+        nota: str | None,
+        criado_por: str,
+    ) -> ReferencePair:
+        row = {
+            "antes_url": antes_url,
+            "depois_url": depois_url,
+            "comodo": Room(comodo).value,
+            "tipos_edicao": [EditType(t).value for t in tipos_edicao],
+            "nota": nota,
+            "criado_por": criado_por,
+        }
+        try:
+            inserted = await self._insert("fotos_referencias", row)
+        except Exception as exc:
+            # Migration 129's BEFORE INSERT trigger serializes inserts on the
+            # settings row and refuses past the limit with this marker — the
+            # race-free half of the check `pool.add_reference_pair` makes first.
+            if POOL_FULL_DB_MARKER in str(exc):
+                raise PoolFullError("pool de referências cheio") from exc
+            raise
+        return _reference(inserted)
+
+    async def get_reference(self, referencia_id: str) -> ReferencePair | None:
+        row = await self._one(
+            self._t("fotos_referencias").select("*").eq("id", referencia_id).limit(1)
+        )
+        return _reference(row) if row else None
+
+    async def archive_reference(self, referencia_id: str, *, at: datetime) -> ReferencePair | None:
+        rows = await self._execute(
+            self._t("fotos_referencias")
+            .update({"arquivado_em": at.isoformat()})
+            .eq("id", referencia_id)
+            .is_("arquivado_em", "null")
+        )
+        return _reference(rows[0]) if rows else None
+
+    async def count_active_references(self) -> int:
+        result = (
+            self._t("fotos_referencias")
+            .select("id", count="exact")
+            .is_("arquivado_em", "null")
+            .limit(1)
+            .execute()
+        )
+        if hasattr(result, "__await__"):
+            result = await result
+        total = getattr(result, "count", None)
+        if total is None:
+            raise RepositoryError("count_active_references: PostgREST returned no count")
+        return int(total)
+
+    async def list_references(
+        self, *, include_archived: bool = False, limit: int = 50, offset: int = 0
+    ) -> tuple[list[ReferencePair], int]:
+        return await self._paged(
+            self._t("fotos_referencias").select("*", count="exact")
+            if include_archived
+            else self._t("fotos_referencias")
+            .select("*", count="exact")
+            .is_("arquivado_em", "null"),
+            order="created_at",
+            limit=limit,
+            offset=offset,
+            decode=_reference,
+        )
+
+    async def list_guides(
+        self, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[StyleGuide], int]:
+        return await self._paged(
+            self._t("fotos_guias_estilo").select("*", count="exact"),
+            order="versao",
+            limit=limit,
+            offset=offset,
+            decode=_guide,
+        )
+
+    async def _paged(
+        self,
+        query: Any,
+        *,
+        order: str,
+        limit: int,
+        offset: int,
+        decode: Callable[[dict[str, Any]], Any],
+    ) -> tuple[list[Any], int]:
+        # Explicit range: an unbounded select silently caps at 1 000 rows
+        # (KB § PATTERNS/backend/postgrest-row-cap.md).
+        result = query.order(order, desc=True).range(offset, offset + limit - 1).execute()
+        if hasattr(result, "__await__"):
+            result = await result
+        data = getattr(result, "data", None) or []
+        total = getattr(result, "count", None)
+        return [decode(r) for r in data], int(total if total is not None else len(data))
 
     async def get_active_guide(self) -> StyleGuide | None:
         row = await self._one(

@@ -17,11 +17,12 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from noctusai_lib.domain.photo_editing.ports import PhotoEditingPorts
+from noctusai_lib.domain.photo_editing.ports import ImageInput, PhotoEditingPorts
 from noctusai_lib.domain.photo_editing.prompts import render_style_guide_prompt
 from noctusai_lib.domain.photo_editing.types import (
     EffectiveGuide,
     OrgRule,
+    ReferencePair,
     RuleStatus,
     StyleGuide,
     sha256_text,
@@ -153,6 +154,21 @@ async def activate_version(ports: PhotoEditingPorts, versao: int, *, ativado_por
     return await ports.repo.activate_guide(versao, ativado_por=ativado_por, at=ports.clock())
 
 
+async def reference_images(
+    ports: PhotoEditingPorts, pairs: Sequence[ReferencePair]
+) -> list[ImageInput]:
+    """``[antes, depois]`` per pair, in order: bytes read from
+    ``ports.reference_storage`` when it is wired (private bucket keys),
+    else the stored URLs as-is. A missing object RAISES — a guide built
+    from a partial pool would silently misrepresent the standard."""
+    storage = ports.reference_storage
+    images: list[ImageInput] = []
+    for p in pairs:
+        for ref in (p.antes_url, p.depois_url):
+            images.append(await storage.get(ref) if storage is not None else ref)
+    return images
+
+
 async def generate_draft_from_pool(ports: PhotoEditingPorts) -> StyleGuide | None:
     """Style-guide builder: pool pairs → AI-written DRAFT. ``None`` when the
     pool is empty (nothing to learn from; logged, not an error).
@@ -167,9 +183,7 @@ async def generate_draft_from_pool(ports: PhotoEditingPorts) -> StyleGuide | Non
         logger.info("photo_editing.guide.regen_skipped reason=empty_pool")
         return None
     rendered = render_style_guide_prompt(pairs)
-    images: list[str] = []
-    for p in pairs:
-        images += [p.antes_url, p.depois_url]
+    images = await reference_images(ports, pairs)
     result = await ports.llm.analyze(
         images=images,
         prompt=rendered.text,
@@ -200,6 +214,7 @@ __all__ = [
     "generate_draft_from_pool",
     "normalize_text",
     "order_rules",
+    "reference_images",
     "resolve_effective_guide",
     "restore_version",
     "rule_set_sha256",

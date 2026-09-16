@@ -127,6 +127,7 @@ def test_platform_settings_round_trip(edicao) -> None:
         "velocidade_default": "urgente",
         "notificacoes_globais_ativas": True,
         "preco_storage_gb_mes_usd": None,
+        "limite_pares_referencia": None,  # W6: reference-pool limit (null = unlimited)
     }
     resp = edicao.http.put(
         "/api/edicao-fotos/configuracoes/plataforma",

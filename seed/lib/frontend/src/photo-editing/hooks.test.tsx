@@ -272,3 +272,142 @@ describe('useBaixarZip: zip download', () => {
     });
   });
 });
+
+// ── W6: reference pool (multipart + pool state) + guias de estilo ─────────
+
+describe('useCriarReferencia: multipart pair upload', () => {
+  it('uploads both files + tags through api.upload (never api.post)', async () => {
+    const upload = vi.fn().mockResolvedValue({ id: 'r1' });
+    const post = vi.fn();
+    const api = makeApi({ upload, post });
+    const { useCriarReferencia } = createEdicaoFotosHooks(api);
+    const { result } = renderHook(() => useCriarReferencia(), { wrapper: wrapper() });
+
+    const antes = new File(['a'], 'antes.jpg', { type: 'image/jpeg' });
+    const depois = new File(['d'], 'depois.jpg', { type: 'image/jpeg' });
+    await act(async () => {
+      await result.current.mutateAsync({
+        antes,
+        depois,
+        comodo: 'sala',
+        tipos_edicao: ['cor_luz', 'ceu'],
+        nota: 'Céu limpo',
+      });
+    });
+
+    expect(post).not.toHaveBeenCalled();
+    const [path, form] = upload.mock.calls[0];
+    expect(path).toBe('/api/edicao-fotos/referencias');
+    const data = form as FormData;
+    expect(data.get('antes')).toEqual(antes);
+    expect(data.get('depois')).toEqual(depois);
+    expect(data.get('comodo')).toBe('sala');
+    expect(data.getAll('tipos_edicao')).toEqual(['cor_luz', 'ceu']);
+    expect(data.get('nota')).toBe('Céu limpo');
+  });
+
+  it('omits an empty note', async () => {
+    const upload = vi.fn().mockResolvedValue({ id: 'r1' });
+    const { useCriarReferencia } = createEdicaoFotosHooks(makeApi({ upload }));
+    const { result } = renderHook(() => useCriarReferencia(), { wrapper: wrapper() });
+    const f = new File(['x'], 'x.jpg');
+    await act(async () => {
+      await result.current.mutateAsync({ antes: f, depois: f, comodo: 'outro', tipos_edicao: [], nota: null });
+    });
+    expect((upload.mock.calls[0][1] as FormData).has('nota')).toBe(false);
+  });
+});
+
+describe('useReferencias: paged pool with occupancy', () => {
+  it('passes page + archived toggle and exposes items, pool and opcoes', async () => {
+    const page = {
+      items: [{ id: 'r1', antes_url: 'a', depois_url: 'd', comodo: 'sala', tipos_edicao: [], nota: null }],
+      page: 1,
+      page_size: 24,
+      total: 1,
+      pool: { pares_ativos: 1, limite_pares: 5, cheio: false },
+      opcoes: { comodos: ['sala'], tipos_edicao: ['ceu'] },
+    };
+    const get = vi.fn().mockResolvedValue(page);
+    const { useReferencias } = createEdicaoFotosHooks(makeApi({ get }));
+    const { result } = renderHook(() => useReferencias({ page: 1, pageSize: 24, incluirArquivadas: true }), {
+      wrapper: wrapper(),
+    });
+    expect(result.current.showSkeleton).toBe(true);
+    await waitFor(() => expect(result.current.showSkeleton).toBe(false));
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/referencias', {
+      page: 1,
+      page_size: 24,
+      incluir_arquivadas: true,
+    });
+    expect(result.current.referencias).toHaveLength(1);
+    expect(result.current.pool).toEqual(page.pool);
+    expect(result.current.opcoes).toEqual(page.opcoes);
+  });
+
+  it('keeps the previous page as placeholder while the archived toggle flips', async () => {
+    const first = { items: [{ id: 'r1' }], page: 1, page_size: 50, total: 1, pool: { pares_ativos: 1, limite_pares: null, cheio: false }, opcoes: { comodos: [], tipos_edicao: [] } };
+    let resolveSecond: (v: unknown) => void = () => {};
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce(first)
+      .mockImplementationOnce(() => new Promise((r) => { resolveSecond = r; }));
+    const { useReferencias } = createEdicaoFotosHooks(makeApi({ get }));
+    const { result, rerender } = renderHook(
+      ({ arquivadas }: { arquivadas: boolean }) => useReferencias({ incluirArquivadas: arquivadas }),
+      { wrapper: wrapper(), initialProps: { arquivadas: false } },
+    );
+    await waitFor(() => expect(result.current.referencias).toHaveLength(1));
+    rerender({ arquivadas: true });
+    await waitFor(() => expect(result.current.isRefreshing).toBe(true));
+    expect(result.current.showSkeleton).toBe(false);
+    expect(result.current.referencias).toHaveLength(1);
+    await act(async () => {
+      resolveSecond({ ...first, items: [{ id: 'r1' }, { id: 'r0' }], total: 2 });
+    });
+    await waitFor(() => expect(result.current.referencias).toHaveLength(2));
+  });
+});
+
+describe('guias de estilo hooks', () => {
+  it('useGuias exposes versions + the active version number', async () => {
+    const get = vi.fn().mockResolvedValue({ items: [{ versao: 1 }], page: 1, page_size: 20, total: 1, versao_ativa: null });
+    const { useGuias } = createEdicaoFotosHooks(makeApi({ get }));
+    const { result } = renderHook(() => useGuias(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.showSkeleton).toBe(false));
+    expect(get).toHaveBeenCalledWith('/api/edicao-fotos/guias', { page: 1, page_size: 20 });
+    expect(result.current.guias).toHaveLength(1);
+    expect(result.current.versaoAtiva).toBeNull();
+  });
+
+  it('mutations hit the contract routes', async () => {
+    const post = vi.fn().mockResolvedValue({});
+    const api = makeApi({ post });
+    const hooks = createEdicaoFotosHooks(api);
+    const w = wrapper();
+    const criar = renderHook(() => hooks.useCriarGuia(), { wrapper: w }).result;
+    const ativar = renderHook(() => hooks.useAtivarGuia(), { wrapper: w }).result;
+    const restaurar = renderHook(() => hooks.useRestaurarGuia(), { wrapper: w }).result;
+    const regenerar = renderHook(() => hooks.useRegenerarGuia(), { wrapper: w }).result;
+    await act(async () => {
+      await criar.current.mutateAsync({ texto: '- Luz' });
+      await ativar.current.mutateAsync(2);
+      await restaurar.current.mutateAsync(1);
+      await regenerar.current.mutateAsync();
+    });
+    expect(post.mock.calls).toEqual([
+      ['/api/edicao-fotos/guias', { texto: '- Luz' }],
+      ['/api/edicao-fotos/guias/2/ativar', {}],
+      ['/api/edicao-fotos/guias/1/restaurar', {}],
+      ['/api/edicao-fotos/guias/regenerar', {}],
+    ]);
+  });
+
+  it('useConfiguracoesPlataforma stays idle (no skeleton, no request) when disabled', () => {
+    const get = vi.fn();
+    const { useConfiguracoesPlataforma } = createEdicaoFotosHooks(makeApi({ get }));
+    const { result } = renderHook(() => useConfiguracoesPlataforma({ enabled: false }), { wrapper: wrapper() });
+    expect(result.current.showSkeleton).toBe(false);
+    expect(get).not.toHaveBeenCalled();
+  });
+});

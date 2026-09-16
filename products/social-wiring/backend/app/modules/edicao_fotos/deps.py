@@ -7,7 +7,7 @@ Every route resolves, in this order:
    runs) + the trusted-DB role read (`get_role_resolver`). Roles NEVER come
    from SSO metadata (contract §1).
 2. A role guard (`require_member` / `require_org_admin` /
-   `require_platform_admin`) — 403 with a named code.
+   `require_platform_admin` / `require_pool_manager`) — 403 with a named code.
 3. The engine ports / grant repository / Vista source — 503 with a named
    cause when this process cannot build them.
 
@@ -31,7 +31,11 @@ from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
 from noctusai_lib.domain.permissions import PermissionGrantRepository
 from noctusai_lib.domain.photo_editing import Actor, Batch, PhotoEditingPorts
-from noctusai_lib.domain.photo_editing.types import AGENCY_ADMIN_ROLES, CORRETOR_ROLES
+from noctusai_lib.domain.photo_editing.types import (
+    AGENCY_ADMIN_ROLES,
+    CORRETOR_ROLES,
+    PHOTO_CURATOR_PERMISSION,
+)
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_settings
 from app.modules.edicao_fotos.errors import api_error
@@ -117,16 +121,34 @@ def require_platform_admin(actor: Actor = Depends(get_actor)) -> Actor:
     return actor
 
 
-def get_edicao_ports(cfg: Any = Depends(get_settings)) -> PhotoEditingPorts:
+def get_grant_repository() -> PermissionGrantRepository:
     try:
-        return ports_service.get_ports(cfg)
+        return ports_service.get_grant_repository()
     except ports_service.EdicaoFotosUnavailable as exc:
         raise api_error(503, exc.code, str(exc)) from exc
 
 
-def get_grant_repository() -> PermissionGrantRepository:
+async def require_pool_manager(
+    actor: Actor = Depends(get_actor),
+    grants: PermissionGrantRepository = Depends(get_grant_repository),
+) -> Actor:
+    """Contract §1: reference pool CRUD + guide lifecycle — platform admin
+    or a `photo_curator` grant holder (Core `user_permission_grants`),
+    whatever their org role. Platform scope: never an agency admin."""
+    if actor.is_platform_admin or await grants.has_permission(
+        user_id=actor.user_id, permission=PHOTO_CURATOR_PERMISSION
+    ):
+        return actor
+    raise api_error(
+        403,
+        "restrito_curadoria",
+        "Restrito a administradores da plataforma e curadores de fotos.",
+    )
+
+
+def get_edicao_ports(cfg: Any = Depends(get_settings)) -> PhotoEditingPorts:
     try:
-        return ports_service.get_grant_repository()
+        return ports_service.get_ports(cfg)
     except ports_service.EdicaoFotosUnavailable as exc:
         raise api_error(503, exc.code, str(exc)) from exc
 
@@ -172,4 +194,5 @@ __all__ = [
     "require_member",
     "require_org_admin",
     "require_platform_admin",
+    "require_pool_manager",
 ]
