@@ -18,6 +18,35 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// The real `Select` is a Radix popover (pointer-capture + portal) that jsdom
+// does not model faithfully — same mock convention `ContratosPanel.test.tsx`
+// uses: every `SelectItem` renders inline (no open/close step) so a click
+// reaches `onValueChange` directly.
+vi.mock("@/components/ui/select", async () => {
+  const React = await import("react");
+  const Ctx = React.createContext<{ onValueChange?: (v: string) => void }>({});
+  return {
+    Select: ({ value, onValueChange, children }: any) =>
+      React.createElement(
+        Ctx.Provider,
+        { value: { onValueChange } },
+        React.createElement("div", { "data-value": value }, children),
+      ),
+    SelectTrigger: ({ children, ...rest }: any) =>
+      React.createElement("div", { role: "combobox", ...rest }, children),
+    SelectValue: () => null,
+    SelectContent: ({ children }: any) => React.createElement("div", null, children),
+    SelectItem: ({ value, children }: any) => {
+      const ctx = React.useContext(Ctx);
+      return React.createElement(
+        "button",
+        { type: "button", onClick: () => ctx.onValueChange?.(value) },
+        children,
+      );
+    },
+  };
+});
+
 const mockUseNegociacaoEstruturada = vi.fn();
 const mockCreateParcela = vi.fn();
 const mockUpdateParcela = vi.fn();
@@ -30,6 +59,7 @@ const mockCreateIntermediario = vi.fn();
 const mockUpdateIntermediario = vi.fn();
 const mockDeleteIntermediario = vi.fn();
 const mockPosseMutation = vi.fn();
+const mockAtualizarTermos = vi.fn();
 
 vi.mock("@/hooks/useNegociacaoEstruturada", async () => {
   const actual = await vi.importActual<
@@ -70,6 +100,10 @@ vi.mock("@/hooks/useNegociacaoEstruturada", async () => {
       mutate: mockPosseMutation,
       isPending: false,
     }),
+    useAtualizarTermos: () => ({
+      mutate: mockAtualizarTermos,
+      isPending: false,
+    }),
   };
 });
 
@@ -97,6 +131,27 @@ function query(over: Record<string, unknown> = {}) {
   };
 }
 
+function termosVazios() {
+  return {
+    posse_prazo_dias: null,
+    posse_marco: null,
+    posse_marco_parcela_id: null,
+    permuta_posse_prazo_dias: null,
+    permuta_posse_marco: null,
+    permuta_posse_marco_parcela_id: null,
+    permuta_obrigacoes_entrega: null,
+    itens_integrantes: null,
+    ad_corpus: null,
+    obrigacoes_vendedor: null,
+    onus_quitacao: null,
+    onus_prazo_dias: null,
+    confissao_juros_am: null,
+    confissao_garantia: null,
+    corretagem_contratantes: null,
+    corretagem_num_parcelas: null,
+  };
+}
+
 function aggregate(over: Record<string, unknown> = {}) {
   return {
     atendimento_id: "at-1",
@@ -108,6 +163,7 @@ function aggregate(over: Record<string, unknown> = {}) {
     parcelas: [],
     favorecidos: [],
     intermediarios: [],
+    termos: termosVazios(),
     completude: { completo: true, faltando: [] },
     ...over,
   };
@@ -259,5 +315,162 @@ describe("dividir saldo — o caminho de erro 400", () => {
     const call = (toast.error as unknown as { mock: { calls: unknown[][] } })
       .mock.calls[0];
     expect(String(call[0])).toContain("saldo não alocado para dividir");
+  });
+});
+
+describe("nova parcela — fgts removido, permuta e corretagem", () => {
+  it("🔴 'fgts' não aparece nas opções de uma parcela NOVA", async () => {
+    const { getByTestId, queryByText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-parcela-nova"));
+
+    expect(queryByText("FGTS (legado — junte ao financiamento)")).toBeNull();
+  });
+
+  it("uma parcela EXISTENTE de tipo fgts mantém 'fgts' selecionável na sua própria edição", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          parcelas: [
+            {
+              id: "pf1",
+              tipo: "fgts",
+              valor: "10000.00",
+              vencimento: null,
+              evento: null,
+              forma_pagamento: null,
+              favorecido_id: null,
+              confissao_divida: false,
+              dispara_corretagem: false,
+              permuta_ativo_ids: [],
+              ordem: 1,
+              created_at: null,
+              updated_at: null,
+            },
+          ],
+        }),
+      }),
+    );
+    const { getByLabelText, getByRole } = await render();
+    const { fireEvent, within } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText("Editar parcela"));
+
+    const dialog = within(getByRole("dialog"));
+    expect(dialog.queryByText("FGTS (legado — junte ao financiamento)")).toBeTruthy();
+  });
+
+  it("🔴 uma parcela legada de tipo fgts mostra o aviso na tabela", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          parcelas: [
+            {
+              id: "pf1",
+              tipo: "fgts",
+              valor: "10000.00",
+              vencimento: null,
+              evento: null,
+              forma_pagamento: null,
+              favorecido_id: null,
+              confissao_divida: false,
+              dispara_corretagem: false,
+              permuta_ativo_ids: [],
+              ordem: 1,
+              created_at: null,
+              updated_at: null,
+            },
+          ],
+        }),
+      }),
+    );
+    const { getByTestId } = await render();
+    expect(getByTestId("parcela-fgts-aviso-pf1")).toBeTruthy();
+  });
+
+  it("o multi-select de imóveis de permuta só aparece quando tipo = permuta", async () => {
+    mockUsePermutaAtivos.mockReturnValue(
+      query({
+        data: [
+          {
+            id: "ativo-1",
+            natureza: "permuta_imovel",
+            imovel_codigo: "IM-01",
+            codigo: null,
+            corretor_id: null,
+            proprietario_nome: null,
+            proprietario_telefone: null,
+            tipo_imovel: "Casa",
+            cidade: "Sorocaba",
+            bairro: null,
+            uf: null,
+            zona: null,
+            valor: null,
+            observacoes: null,
+            status: "disponivel",
+            origem: "manual",
+            tem_embedding: false,
+            tem_embedding_interesses: false,
+            interesses: [],
+          },
+        ],
+      }),
+    );
+    const { getByTestId, getByText, queryByTestId } = await render();
+    const { fireEvent, within } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-parcela-nova"));
+    expect(queryByTestId("parc-permuta-ativos")).toBeNull();
+
+    fireEvent.click(getByText("Permuta"));
+    const grupo = getByTestId("parc-permuta-ativos");
+    expect(grupo).toBeTruthy();
+    expect(within(grupo).getByText(/IM-01/)).toBeTruthy();
+  });
+
+  it("🔴 o payload de criação inclui dispara_corretagem e permuta_ativo_ids", async () => {
+    mockUsePermutaAtivos.mockReturnValue(
+      query({
+        data: [
+          {
+            id: "ativo-1",
+            natureza: "permuta_imovel",
+            imovel_codigo: "IM-01",
+            codigo: null,
+            corretor_id: null,
+            proprietario_nome: null,
+            proprietario_telefone: null,
+            tipo_imovel: "Casa",
+            cidade: "Sorocaba",
+            bairro: null,
+            uf: null,
+            zona: null,
+            valor: null,
+            observacoes: null,
+            status: "disponivel",
+            origem: "manual",
+            tem_embedding: false,
+            tem_embedding_interesses: false,
+            interesses: [],
+          },
+        ],
+      }),
+    );
+    const { getByTestId, getByText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-parcela-nova"));
+    fireEvent.change(getByTestId("parc-valor"), { target: { value: "1000" } });
+    fireEvent.click(getByText("Permuta"));
+    fireEvent.click(getByTestId("parc-permuta-ativo-ativo-1"));
+    fireEvent.click(getByTestId("parc-dispara-corretagem"));
+    fireEvent.click(getByTestId("negest-parcela-salvar"));
+
+    expect(mockCreateParcela).toHaveBeenCalledTimes(1);
+    const payload = mockCreateParcela.mock.calls[0][0];
+    expect(payload.tipo).toBe("permuta");
+    expect(payload.permuta_ativo_ids).toEqual(["ativo-1"]);
+    expect(payload.dispara_corretagem).toBe(true);
   });
 });

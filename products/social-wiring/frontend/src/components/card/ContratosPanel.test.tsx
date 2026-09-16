@@ -76,6 +76,8 @@ function contrato(over: Partial<ContratoOut> = {}): ContratoOut {
     updated_at: "2026-02-01T00:00:00+00:00",
     versao_atual: v,
     versoes: v ? [v] : [],
+    assinatura_data: null,
+    prazo_pendencias_dias: null,
     ...over,
   };
 }
@@ -91,6 +93,7 @@ function baseProps(over: Record<string, unknown> = {}) {
     onNovoContrato: vi.fn(),
     onAddVersao: vi.fn(),
     onPatchStatus: vi.fn(),
+    onPatchPrazos: vi.fn(),
     onDeleteVersao: vi.fn(),
     onDeleteContrato: vi.fn(),
     onOpen: vi.fn(),
@@ -359,5 +362,87 @@ describe("ContratosPanel", () => {
     fireEvent.click(screen.getByTestId("contrato-baixar-c1"));
     expect(onOpen).toHaveBeenCalledWith("c1", "v9");
     expect(onDownload).toHaveBeenCalledWith("c1", "v9");
+  });
+});
+
+describe("data de assinatura e prazo de pendências (migration 114)", () => {
+  it("pré-carrega os valores existentes do contrato", async () => {
+    const { screen } = await render({
+      contratos: [
+        contrato({ assinatura_data: "2026-03-01", prazo_pendencias_dias: 15 }),
+      ],
+    });
+    expect(
+      (screen.getByTestId("contrato-assinatura-data-c1") as HTMLInputElement).value,
+    ).toBe("2026-03-01");
+    expect(
+      (screen.getByTestId("contrato-prazo-pendencias-c1") as HTMLInputElement).value,
+    ).toBe("15");
+  });
+
+  it("o placeholder do prazo nomeia o padrão do escritório quando null", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ prazo_pendencias_dias: null })],
+    });
+    expect(
+      (screen.getByTestId("contrato-prazo-pendencias-c1") as HTMLInputElement).placeholder,
+    ).toContain("10");
+  });
+
+  it("🔴 Salvar fica desabilitado até algo mudar, e envia AMBOS os campos juntos", async () => {
+    const onPatchPrazos = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ assinatura_data: null, prazo_pendencias_dias: null })],
+      onPatchPrazos,
+    });
+    const salvar = screen.getByTestId("contrato-prazos-salvar-c1");
+    expect(salvar).toHaveProperty("disabled", true);
+
+    fireEvent.change(screen.getByTestId("contrato-assinatura-data-c1"), {
+      target: { value: "2026-04-10" },
+    });
+    expect(salvar).toHaveProperty("disabled", false);
+
+    fireEvent.click(salvar);
+    expect(onPatchPrazos).toHaveBeenCalledWith("c1", {
+      assinatura_data: "2026-04-10",
+      prazo_pendencias_dias: null,
+    });
+  });
+
+  it("🔴 um prazo <= 0 bloqueia o salvar com a mensagem do backend", async () => {
+    const onPatchPrazos = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [contrato()],
+      onPatchPrazos,
+    });
+    fireEvent.change(screen.getByTestId("contrato-prazo-pendencias-c1"), {
+      target: { value: "0" },
+    });
+    expect(screen.getByTestId("contrato-prazo-erro-c1").textContent).toContain(
+      "maior que zero",
+    );
+    expect(screen.getByTestId("contrato-prazos-salvar-c1")).toHaveProperty(
+      "disabled",
+      true,
+    );
+    fireEvent.click(screen.getByTestId("contrato-prazos-salvar-c1"));
+    expect(onPatchPrazos).not.toHaveBeenCalled();
+  });
+
+  it("string vazia no prazo envia null — restaura o padrão do escritório", async () => {
+    const onPatchPrazos = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ prazo_pendencias_dias: 20 })],
+      onPatchPrazos,
+    });
+    fireEvent.change(screen.getByTestId("contrato-prazo-pendencias-c1"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByTestId("contrato-prazos-salvar-c1"));
+    expect(onPatchPrazos).toHaveBeenCalledWith(
+      "c1",
+      expect.objectContaining({ prazo_pendencias_dias: null }),
+    );
   });
 });

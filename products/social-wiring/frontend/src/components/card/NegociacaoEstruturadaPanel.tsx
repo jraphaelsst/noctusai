@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertCircle,
+  AlertTriangle,
   Handshake,
   Loader2,
   Pencil,
@@ -30,6 +31,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -60,6 +62,7 @@ import {
 } from "@noctusai/seed/components/ui/table";
 
 import { usePermutaAtivos } from "@/hooks/usePermutas";
+import type { PermutaAtivo } from "@/hooks/usePermutas";
 import {
   useCreateFavorecido,
   useCreateIntermediario,
@@ -76,6 +79,7 @@ import {
 } from "@/hooks/useNegociacaoEstruturada";
 import {
   INTERMEDIARIO_TIPO_LABELS,
+  PARCELA_TIPOS_CRIAVEIS,
   PARCELA_TIPO_LABELS,
   type DividirSaldoPayload,
   type FavorecidoCreate,
@@ -88,7 +92,9 @@ import {
   type NegociacaoParcela,
   type ParcelaCreate,
   type ParcelaTipo,
+  type PessoaTipo,
 } from "@/types/negociacaoEstruturada";
+import TermosNegocioSection from "@/components/card/TermosNegocioSection";
 
 interface Props {
   clienteId: string;
@@ -203,8 +209,10 @@ export default function NegociacaoEstruturadaPanel({ clienteId }: Props) {
       <IntermediariosSection
         clienteId={clienteId}
         intermediarios={data.intermediarios}
+        favorecidos={data.favorecidos}
       />
       <PosseSection clienteId={clienteId} data={data} />
+      <TermosNegocioSection clienteId={clienteId} data={data} />
     </div>
   );
 }
@@ -249,6 +257,9 @@ function ParcelasSection({
   const atualizar = useUpdateParcela(clienteId);
   const excluir = useDeleteParcela(clienteId);
   const dividir = useDividirSaldo(clienteId);
+  // Only the swap-CURRENCY ativos (natureza permuta_imovel) — a catalog
+  // listing or an automóvel is not something a parcela can be "paid" with.
+  const permutaAtivos = usePermutaAtivos("permuta_imovel");
 
   const [formOpen, setFormOpen] = useState(false);
   const [editando, setEditando] = useState<NegociacaoParcela | null>(null);
@@ -327,7 +338,20 @@ function ParcelasSection({
             <TableBody>
               {parcelasOrdenadas.map((p) => (
                 <TableRow key={p.id} data-testid={`parcela-${p.id}`}>
-                  <TableCell>{PARCELA_TIPO_LABELS[p.tipo]}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      {PARCELA_TIPO_LABELS[p.tipo]}
+                      {p.tipo === "fgts" && (
+                        <span
+                          className="flex items-center gap-1 text-amber-600"
+                          title="Parcela de FGTS separada — o gerador de contrato bloqueia isso; junte o valor à parcela de financiamento."
+                          data-testid={`parcela-fgts-aviso-${p.id}`}
+                        >
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>{exibirMoeda(p.valor)}</TableCell>
                   <TableCell>{exibirData(p.vencimento) ?? p.evento ?? "—"}</TableCell>
                   <TableCell>{favorecidoNome(p.favorecido_id)}</TableCell>
@@ -368,6 +392,7 @@ function ParcelasSection({
         onOpenChange={setFormOpen}
         parcela={editando}
         favorecidos={data.favorecidos}
+        permutaAtivos={permutaAtivos.data ?? []}
         saving={criar.isPending || atualizar.isPending}
         onSubmit={(payload) => {
           const onSuccess = () => setFormOpen(false);
@@ -409,6 +434,8 @@ interface ParcelaDraft {
   forma_pagamento: string;
   favorecido_id: string;
   confissao_divida: boolean;
+  dispara_corretagem: boolean;
+  permuta_ativo_ids: string[];
 }
 
 function toParcelaDraft(p: NegociacaoParcela | null): ParcelaDraft {
@@ -420,6 +447,8 @@ function toParcelaDraft(p: NegociacaoParcela | null): ParcelaDraft {
     forma_pagamento: p?.forma_pagamento ?? "",
     favorecido_id: p?.favorecido_id ?? "",
     confissao_divida: p?.confissao_divida ?? false,
+    dispara_corretagem: p?.dispara_corretagem ?? false,
+    permuta_ativo_ids: p?.permuta_ativo_ids ?? [],
   };
 }
 
@@ -428,6 +457,7 @@ function ParcelaFormDialog({
   onOpenChange,
   parcela,
   favorecidos,
+  permutaAtivos,
   onSubmit,
   saving,
 }: {
@@ -435,6 +465,7 @@ function ParcelaFormDialog({
   onOpenChange: (v: boolean) => void;
   parcela: NegociacaoParcela | null;
   favorecidos: NegociacaoFavorecido[];
+  permutaAtivos: PermutaAtivo[];
   onSubmit: (payload: ParcelaCreate) => void;
   saving: boolean;
 }) {
@@ -453,10 +484,29 @@ function ParcelaFormDialog({
       forma_pagamento: draft.forma_pagamento.trim() || null,
       favorecido_id: draft.favorecido_id || null,
       confissao_divida: draft.confissao_divida,
+      dispara_corretagem: draft.dispara_corretagem,
+      permuta_ativo_ids: draft.tipo === "permuta" ? draft.permuta_ativo_ids : [],
     });
   }
 
   const podeSalvar = lerValorDigitado(draft.valorTexto).trim() !== "";
+
+  // `fgts` is no longer offered on a NEW parcela (the office folded it into
+  // `financiamento`) — but an existing `fgts` row keeps its tipo selectable
+  // in ITS OWN edit dialog, so opening it does not force an unrelated change.
+  const tiposDisponiveis: ParcelaTipo[] =
+    parcela?.tipo === "fgts"
+      ? ["fgts", ...PARCELA_TIPOS_CRIAVEIS]
+      : PARCELA_TIPOS_CRIAVEIS;
+
+  function alternarAtivo(id: string) {
+    setDraft((d) => ({
+      ...d,
+      permuta_ativo_ids: d.permuta_ativo_ids.includes(id)
+        ? d.permuta_ativo_ids.filter((a) => a !== id)
+        : [...d.permuta_ativo_ids, id],
+    }));
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -477,7 +527,7 @@ function ParcelaFormDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(Object.keys(PARCELA_TIPO_LABELS) as ParcelaTipo[]).map((t) => (
+                {tiposDisponiveis.map((t) => (
                   <SelectItem key={t} value={t}>
                     {PARCELA_TIPO_LABELS[t]}
                   </SelectItem>
@@ -485,10 +535,41 @@ function ParcelaFormDialog({
               </SelectContent>
             </Select>
           </div>
+          {draft.tipo === "permuta" && (
+            <div className="space-y-1.5" data-testid="parc-permuta-ativos">
+              <Label>Imóveis de permuta que pagam esta parcela</Label>
+              {permutaAtivos.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Nenhum imóvel de permuta cadastrado.
+                </p>
+              ) : (
+                <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border p-2">
+                  {permutaAtivos.map((a) => (
+                    <div key={a.id} className="flex items-center gap-2">
+                      <Checkbox
+                        id={`parc-permuta-ativo-${a.id}`}
+                        checked={draft.permuta_ativo_ids.includes(a.id)}
+                        onCheckedChange={() => alternarAtivo(a.id)}
+                        data-testid={`parc-permuta-ativo-${a.id}`}
+                      />
+                      <Label
+                        htmlFor={`parc-permuta-ativo-${a.id}`}
+                        className="font-normal"
+                      >
+                        {a.imovel_codigo ?? a.codigo ?? a.id}
+                        {a.cidade ? ` — ${a.cidade}` : ""}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="parc-valor">Valor (R$)</Label>
             <Input
               id="parc-valor"
+              data-testid="parc-valor"
               value={draft.valorTexto}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, valorTexto: e.target.value }))
@@ -563,6 +644,19 @@ function ParcelaFormDialog({
               }
             />
             <Label htmlFor="parc-confissao">Confissão de dívida</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="parc-dispara-corretagem"
+              data-testid="parc-dispara-corretagem"
+              checked={draft.dispara_corretagem}
+              onCheckedChange={(v) =>
+                setDraft((d) => ({ ...d, dispara_corretagem: v }))
+              }
+            />
+            <Label htmlFor="parc-dispara-corretagem">
+              Pagamento dispara a corretagem
+            </Label>
           </div>
         </div>
         <DialogFooter>
@@ -1003,9 +1097,11 @@ function FavorecidoFormDialog({
 function IntermediariosSection({
   clienteId,
   intermediarios,
+  favorecidos,
 }: {
   clienteId: string;
   intermediarios: NegociacaoIntermediario[];
+  favorecidos: NegociacaoFavorecido[];
 }) {
   const criar = useCreateIntermediario(clienteId);
   const atualizar = useUpdateIntermediario(clienteId);
@@ -1099,6 +1195,7 @@ function IntermediariosSection({
         open={open}
         onOpenChange={setOpen}
         intermediario={editando}
+        favorecidos={favorecidos}
         saving={criar.isPending || atualizar.isPending}
         onSubmit={(payload) => {
           const onSuccess = () => setOpen(false);
@@ -1126,6 +1223,20 @@ interface IntermediarioDraft {
   tipo: IntermediarioTipo;
   valorTexto: string;
   corretor_id: string;
+  favorecido_id: string;
+  /** "" = automático (o backend infere a partir do documento). */
+  pessoaTipo: PessoaTipo | "";
+  documento: string;
+  email: string;
+  endereco_cep: string;
+  endereco_logradouro: string;
+  endereco_numero: string;
+  endereco_complemento: string;
+  endereco_bairro: string;
+  endereco_cidade: string;
+  endereco_uf: string;
+  representante_nome: string;
+  representante_cpf: string;
 }
 
 function toIntermediarioDraft(
@@ -1137,19 +1248,65 @@ function toIntermediarioDraft(
     tipo: i?.tipo ?? "percentual",
     valorTexto: i?.valor ?? "",
     corretor_id: i?.corretor_id ?? "",
+    favorecido_id: i?.favorecido_id ?? "",
+    pessoaTipo: i?.pessoa_tipo ?? "",
+    documento: i?.documento ?? "",
+    email: i?.email ?? "",
+    endereco_cep: i?.endereco_cep ?? "",
+    endereco_logradouro: i?.endereco_logradouro ?? "",
+    endereco_numero: i?.endereco_numero ?? "",
+    endereco_complemento: i?.endereco_complemento ?? "",
+    endereco_bairro: i?.endereco_bairro ?? "",
+    endereco_cidade: i?.endereco_cidade ?? "",
+    endereco_uf: i?.endereco_uf ?? "",
+    representante_nome: i?.representante_nome ?? "",
+    representante_cpf: i?.representante_cpf ?? "",
   };
 }
+
+/** Strips mask separators — the CLEANED value is what gets sent; the backend
+ *  normalises/validates it further (CPF/CNPJ check digits, 400 not 422). */
+function limparDocumento(v: string): string {
+  return v.replace(/[.\-/\s]/g, "").toUpperCase();
+}
+
+/** Progressive CPF/CNPJ mask — position-based, not digit-only, since a CNPJ
+ *  may be alphanumeric (since July 2026). */
+function formatarDocumento(bruto: string): string {
+  const s = limparDocumento(bruto).slice(0, 14);
+  if (s.length <= 11) {
+    const partes = [s.slice(0, 3), s.slice(3, 6), s.slice(6, 9), s.slice(9, 11)].filter(
+      Boolean,
+    );
+    let out = partes[0] ?? "";
+    if (partes[1]) out += `.${partes[1]}`;
+    if (partes[2]) out += `.${partes[2]}`;
+    if (partes[3]) out += `-${partes[3]}`;
+    return out;
+  }
+  const partes = [s.slice(0, 2), s.slice(2, 5), s.slice(5, 8), s.slice(8, 12), s.slice(12, 14)];
+  let out = partes[0] ?? "";
+  if (partes[1]) out += `.${partes[1]}`;
+  if (partes[2]) out += `.${partes[2]}`;
+  if (partes[3]) out += `/${partes[3]}`;
+  if (partes[4]) out += `-${partes[4]}`;
+  return out;
+}
+
+const SEM_FAVORECIDO = "__none__";
 
 function IntermediarioFormDialog({
   open,
   onOpenChange,
   intermediario,
+  favorecidos,
   onSubmit,
   saving,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   intermediario: NegociacaoIntermediario | null;
+  favorecidos: NegociacaoFavorecido[];
   onSubmit: (payload: IntermediarioCreate) => void;
   saving: boolean;
 }) {
@@ -1162,18 +1319,39 @@ function IntermediarioFormDialog({
   }, [open, intermediario]);
 
   function submit() {
-    onSubmit({
+    // 🔴 `pessoa_tipo` IS OMITTED (not sent as `null`) when "automático" is
+    // selected — the service only infers it from `documento` when the KEY IS
+    // ABSENT from the body (`"pessoa_tipo" not in valores`). Sending an
+    // explicit `null` blocks that inference on a PATCH. See
+    // `IntermediarioCreate`'s doc comment.
+    const payload: IntermediarioCreate = {
       nome: draft.nome.trim(),
       creci: draft.creci.trim() || null,
       tipo: draft.tipo,
       valor: draft.valorTexto.trim() || null,
       corretor_id: draft.corretor_id.trim() || null,
-    });
+      favorecido_id: draft.favorecido_id || null,
+      documento: limparDocumento(draft.documento) || null,
+      email: draft.email.trim() || null,
+      endereco_cep: draft.endereco_cep.trim() || null,
+      endereco_logradouro: draft.endereco_logradouro.trim() || null,
+      endereco_numero: draft.endereco_numero.trim() || null,
+      endereco_complemento: draft.endereco_complemento.trim() || null,
+      endereco_bairro: draft.endereco_bairro.trim() || null,
+      endereco_cidade: draft.endereco_cidade.trim() || null,
+      endereco_uf: draft.endereco_uf.trim() || null,
+      representante_nome: draft.representante_nome.trim() || null,
+      representante_cpf: draft.representante_cpf.trim() || null,
+    };
+    if (draft.pessoaTipo) payload.pessoa_tipo = draft.pessoaTipo;
+    onSubmit(payload);
   }
+
+  const ehPj = draft.pessoaTipo === "pj";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {intermediario ? "Editar intermediário" : "Novo intermediário"}
@@ -1231,6 +1409,173 @@ function IntermediarioFormDialog({
                 }
               />
             </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="int-favorecido">Favorecido da comissão</Label>
+            <Select
+              value={draft.favorecido_id || SEM_FAVORECIDO}
+              onValueChange={(v) =>
+                setDraft((d) => ({
+                  ...d,
+                  favorecido_id: v === SEM_FAVORECIDO ? "" : v,
+                }))
+              }
+            >
+              <SelectTrigger id="int-favorecido">
+                <SelectValue placeholder="Nenhum" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SEM_FAVORECIDO}>Nenhum</SelectItem>
+                {favorecidos.map((f) => (
+                  <SelectItem key={f.id} value={f.id}>
+                    {f.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="int-pessoa-tipo">Pessoa</Label>
+              <Select
+                value={draft.pessoaTipo || "__auto__"}
+                onValueChange={(v) =>
+                  setDraft((d) => ({
+                    ...d,
+                    pessoaTipo: v === "__auto__" ? "" : (v as PessoaTipo),
+                  }))
+                }
+              >
+                <SelectTrigger id="int-pessoa-tipo">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__auto__">Automático (pelo documento)</SelectItem>
+                  <SelectItem value="pf">Pessoa física (PF)</SelectItem>
+                  <SelectItem value="pj">Pessoa jurídica (PJ)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="int-documento">CPF/CNPJ</Label>
+              <Input
+                id="int-documento"
+                value={formatarDocumento(draft.documento)}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, documento: e.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="int-email">E-mail</Label>
+            <Input
+              id="int-email"
+              type="email"
+              value={draft.email}
+              onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))}
+            />
+          </div>
+          {ehPj && (
+            <div className="grid grid-cols-2 gap-3" data-testid="int-representante">
+              <div className="space-y-1.5">
+                <Label htmlFor="int-rep-nome">Nome do representante</Label>
+                <Input
+                  id="int-rep-nome"
+                  value={draft.representante_nome}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, representante_nome: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="int-rep-cpf">CPF do representante</Label>
+                <Input
+                  id="int-rep-cpf"
+                  value={formatarDocumento(draft.representante_cpf)}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, representante_cpf: e.target.value }))
+                  }
+                />
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="int-cep">CEP</Label>
+              <Input
+                id="int-cep"
+                value={draft.endereco_cep}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, endereco_cep: e.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="int-uf">UF</Label>
+              <Input
+                id="int-uf"
+                maxLength={2}
+                value={draft.endereco_uf}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, endereco_uf: e.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-[2fr_1fr] gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="int-logradouro">Logradouro</Label>
+              <Input
+                id="int-logradouro"
+                value={draft.endereco_logradouro}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, endereco_logradouro: e.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="int-numero">Número</Label>
+              <Input
+                id="int-numero"
+                value={draft.endereco_numero}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, endereco_numero: e.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="int-complemento">Complemento</Label>
+              <Input
+                id="int-complemento"
+                value={draft.endereco_complemento}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, endereco_complemento: e.target.value }))
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="int-bairro">Bairro</Label>
+              <Input
+                id="int-bairro"
+                value={draft.endereco_bairro}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, endereco_bairro: e.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="int-cidade">Cidade</Label>
+            <Input
+              id="int-cidade"
+              value={draft.endereco_cidade}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, endereco_cidade: e.target.value }))
+              }
+            />
           </div>
         </div>
         <DialogFooter>

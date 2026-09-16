@@ -28,7 +28,7 @@
  * call those hooks directly. The caller supplies `MatriculaAtosContainer`
  * (in `components/`, not `components/card/`) through this callback instead.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
 import {
   AlertCircle,
@@ -51,6 +51,8 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -83,6 +85,14 @@ interface Props {
   deletingContratoId?: string | null;
   onAddVersao: (contratoId: string, file: File) => void;
   onPatchStatus: (contratoId: string, status: ContratoStatus) => void;
+  /** Migration 114. `assinatura_data`: `YYYY-MM-DD` or `null` to clear.
+   *  `prazo_pendencias_dias`: `null` restores the office default (10 days) —
+   *  see `ContratoPatch`. Always sends BOTH fields together (the row's whole
+   *  editable pair), never a bare single-field PATCH. */
+  onPatchPrazos: (
+    contratoId: string,
+    patch: { assinatura_data: string | null; prazo_pendencias_dias: number | null },
+  ) => void;
   onDeleteVersao: (contratoId: string, versaoId: string, motivo: string) => void;
   onDeleteContrato: (contratoId: string, motivo: string) => void;
   onOpen: (contratoId: string, versaoId: string) => void;
@@ -114,6 +124,7 @@ export default function ContratosPanel({
   deletingContratoId,
   onAddVersao,
   onPatchStatus,
+  onPatchPrazos,
   onDeleteVersao,
   onDeleteContrato,
   onOpen,
@@ -184,6 +195,7 @@ export default function ContratosPanel({
               deletingContrato={deletingContratoId === contrato.id}
               onAddVersao={(file) => onAddVersao(contrato.id, file)}
               onPatchStatus={(status) => onPatchStatus(contrato.id, status)}
+              onPatchPrazos={(patch) => onPatchPrazos(contrato.id, patch)}
               onDeleteVersao={(versaoId, motivo) => onDeleteVersao(contrato.id, versaoId, motivo)}
               onDeleteContrato={(motivo) => onDeleteContrato(contrato.id, motivo)}
               onOpen={(versaoId) => onOpen(contrato.id, versaoId)}
@@ -206,6 +218,7 @@ function ContratoCard({
   deletingContrato,
   onAddVersao,
   onPatchStatus,
+  onPatchPrazos,
   onDeleteVersao,
   onDeleteContrato,
   onOpen,
@@ -220,6 +233,10 @@ function ContratoCard({
   deletingContrato: boolean;
   onAddVersao: (file: File) => void;
   onPatchStatus: (status: ContratoStatus) => void;
+  onPatchPrazos: (patch: {
+    assinatura_data: string | null;
+    prazo_pendencias_dias: number | null;
+  }) => void;
   onDeleteVersao: (versaoId: string, motivo: string) => void;
   onDeleteContrato: (motivo: string) => void;
   onOpen: (versaoId: string) => void;
@@ -232,6 +249,33 @@ function ContratoCard({
   const [historicoAberto, setHistoricoAberto] = useState(false);
   const [matriculaAberta, setMatriculaAberta] = useState(false);
   const [geradorAberto, setGeradorAberto] = useState(false);
+
+  // Local drafts for the two migration-114 fields — a plain string, parsed
+  // only on save. `prazo_pendencias_dias` null reads as "" (the placeholder
+  // below names the office default, never a fake "0").
+  const [assinaturaData, setAssinaturaData] = useState(contrato.assinatura_data ?? "");
+  const [prazoPendencias, setPrazoPendencias] = useState(
+    contrato.prazo_pendencias_dias == null ? "" : String(contrato.prazo_pendencias_dias),
+  );
+  useEffect(() => {
+    setAssinaturaData(contrato.assinatura_data ?? "");
+    setPrazoPendencias(
+      contrato.prazo_pendencias_dias == null ? "" : String(contrato.prazo_pendencias_dias),
+    );
+  }, [contrato.assinatura_data, contrato.prazo_pendencias_dias]);
+
+  const prazoInvalido = prazoPendencias.trim() !== "" && Number(prazoPendencias) <= 0;
+  const prazosSujo =
+    assinaturaData !== (contrato.assinatura_data ?? "") ||
+    prazoPendencias !== (contrato.prazo_pendencias_dias == null ? "" : String(contrato.prazo_pendencias_dias));
+
+  function salvarPrazos() {
+    if (prazoInvalido) return;
+    onPatchPrazos({
+      assinatura_data: assinaturaData || null,
+      prazo_pendencias_dias: prazoPendencias.trim() === "" ? null : Number(prazoPendencias),
+    });
+  }
 
   const atual = contrato.versao_atual;
   // numero DESC — the newest revision reads first.
@@ -347,6 +391,56 @@ function ContratoCard({
         ) : (
           <p className="text-xs text-muted-foreground">Sem versão enviada.</p>
         )}
+
+        <div
+          className="grid gap-3 rounded-md border p-2.5 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+          data-testid={`contrato-prazos-${contrato.id}`}
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor={`contrato-assinatura-data-${contrato.id}`}>
+              Data de assinatura
+            </Label>
+            <Input
+              id={`contrato-assinatura-data-${contrato.id}`}
+              type="date"
+              value={assinaturaData}
+              onChange={(e) => setAssinaturaData(e.target.value)}
+              data-testid={`contrato-assinatura-data-${contrato.id}`}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`contrato-prazo-pendencias-${contrato.id}`}>
+              Prazo de pendências (dias)
+            </Label>
+            <Input
+              id={`contrato-prazo-pendencias-${contrato.id}`}
+              type="number"
+              min={1}
+              placeholder="Padrão do escritório (10)"
+              value={prazoPendencias}
+              onChange={(e) => setPrazoPendencias(e.target.value)}
+              data-testid={`contrato-prazo-pendencias-${contrato.id}`}
+            />
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!prazosSujo || prazoInvalido || patching}
+            onClick={salvarPrazos}
+            data-testid={`contrato-prazos-salvar-${contrato.id}`}
+          >
+            {patching ? "Salvando…" : "Salvar"}
+          </Button>
+          {prazoInvalido && (
+            <p
+              className="text-xs text-destructive sm:col-span-3"
+              data-testid={`contrato-prazo-erro-${contrato.id}`}
+            >
+              O prazo de pendências deve ser um número inteiro de dias maior que zero.
+            </p>
+          )}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <Button

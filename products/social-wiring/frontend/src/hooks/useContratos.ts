@@ -71,12 +71,22 @@ export interface ContratoOut {
   updated_at: string | null;
   versao_atual: VersaoOut | null;
   versoes: VersaoOut[];
+  /** Migration 114. `YYYY-MM-DD`, or `null` (not set yet). */
+  assinatura_data: string | null;
+  /** Migration 114. `null` = the office default (10 days) — never rendered
+   *  as "0" or blank, see `ContratosPanel`'s placeholder. */
+  prazo_pendencias_dias: number | null;
 }
 
 export interface ContratoPatch {
   titulo?: string;
   modelo?: ContratoModelo;
   status?: ContratoStatus;
+  /** Migration 114. `YYYY-MM-DD`; `null`/`""` clears it. */
+  assinatura_data?: string | null;
+  /** Migration 114. Must be `> 0` when set; `null` restores the office
+   *  default (10 days) — the service's own 400, not a 422. */
+  prazo_pendencias_dias?: number | null;
 }
 
 // ─── Contract generation (F5) ────────────────────────────────────────────
