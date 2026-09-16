@@ -364,6 +364,8 @@ def test_public_plans_lists_only_sellable_prices_and_no_secrets(env):
     data = resp.json()["data"]
     assert data["gateways"] == ["stripe", "asaas"]
     assert data["plans"][0]["prices"][0]["amount_cents"] == 9900
+    # The Pricing page renders its feature list from these.
+    assert {"max_users", "max_products", "features"} <= set(data["plans"][0])
     assert "stripe_price_id" not in resp.text
 
 

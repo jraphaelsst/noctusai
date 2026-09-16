@@ -38,6 +38,9 @@ export interface BillingPlan {
   trial_days: number;
   grace_days?: number;
   ativo?: boolean;
+  max_users?: number | null;
+  max_products?: number | null;
+  features?: Record<string, unknown> | null;
   prices: PlanPrice[];
 }
 

@@ -1,19 +1,18 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { mockPricingAPIs } from '../fixtures/api-mocks';
+import { mockCheckoutUrl } from '../fixtures/mock-data';
 
 /**
- * Pricing was rewritten to Tailwind cards in the seed migration — the bespoke
- * `.pricing-card` / `.pricing-price-value` / `.pricing-cta` / `.pricing-toggle-btn`
- * / `.pricing-popular-tag` classes are gone. We anchor each plan card to its
- * `<h3>` heading and assert role/text semantics. A card is the heading's nearest
- * ancestor that also contains the price + CTA, so we scope via a filtered locator.
+ * Pricing reads `GET /api/billing/plans` (sellable plans + active prices in
+ * cents + offered gateways) and starts a subscription with
+ * `POST /api/billing/subscribe`, then redirects to the gateway's page.
+ * Each plan card is an `<article>` labelled with the plan name.
  */
 
-/** Locate the plan card <div> that contains the given plan-name heading. */
-function planCard(page: import('@playwright/test').Page, name: string) {
-  return page
-    .locator('div.relative.flex.flex-col')
-    .filter({ has: page.getByRole('heading', { name }) });
+type Page = import('@playwright/test').Page;
+
+function planCard(page: Page, name: string) {
+  return page.getByRole('article', { name });
 }
 
 test.describe('Pricing', () => {
@@ -22,7 +21,6 @@ test.describe('Pricing', () => {
     await page.goto('/pricing');
 
     await expect(page.getByRole('heading', { name: 'Escolha seu plano' })).toBeVisible();
-
     await expect(page.getByRole('heading', { name: 'Gratuito' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Profissional' })).toBeVisible();
   });
@@ -32,8 +30,7 @@ test.describe('Pricing', () => {
     await page.goto('/pricing');
 
     const freeCard = planCard(page, 'Gratuito');
-    // exact:true so the price span "Grátis" is distinct from the
-    // "Começar Grátis" CTA button.
+    // exact:true so the price "Grátis" is distinct from the "Começar Grátis" CTA.
     await expect(freeCard.getByText('Grátis', { exact: true })).toBeVisible();
     await expect(freeCard.getByRole('button', { name: 'Começar Grátis' })).toBeVisible();
   });
@@ -50,15 +47,15 @@ test.describe('Pricing', () => {
     await mockPricingAPIs(page);
     await page.goto('/pricing');
 
-    // Default is monthly — Pro plan shows the monthly price + /mês period.
+    // Default is monthly. Prices are Intl-formatted (pt-BR), so match loosely
+    // on the separators rather than on the exact space character.
     const proCard = planCard(page, 'Profissional');
-    await expect(proCard.getByText('R$ 199,90')).toBeVisible();
+    await expect(proCard.getByText(/R\$\s*199,90/)).toBeVisible();
     await expect(proCard.getByText('/mês')).toBeVisible();
 
-    // Switch to yearly.
     await page.getByRole('button', { name: /Anual/ }).click();
 
-    await expect(proCard.getByText('R$ 1999,90')).toBeVisible();
+    await expect(proCard.getByText(/R\$\s*1\.999,90/)).toBeVisible();
     await expect(proCard.getByText('/ano')).toBeVisible();
   });
 
@@ -66,7 +63,8 @@ test.describe('Pricing', () => {
     await mockPricingAPIs(page);
     await page.goto('/pricing');
 
-    await expect(page.getByText('Mais Popular')).toBeVisible();
+    await expect(planCard(page, 'Profissional').getByText('Mais Popular')).toBeVisible();
+    await expect(planCard(page, 'Gratuito').getByText('Mais Popular')).toHaveCount(0);
   });
 
   test('shows feature list on plan cards', async ({ authenticatedPage: page }) => {
@@ -76,6 +74,7 @@ test.describe('Pricing', () => {
     const proCard = planCard(page, 'Profissional');
     await expect(proCard.getByText('10 usuários')).toBeVisible();
     await expect(proCard.getByText('5 produtos')).toBeVisible();
+    await expect(proCard.getByText('Suporte prioritario')).toBeVisible();
   });
 
   test('checkout button triggers redirect', async ({ authenticatedPage: page }) => {
@@ -83,6 +82,14 @@ test.describe('Pricing', () => {
     await page.goto('/pricing');
 
     const proCard = planCard(page, 'Profissional');
-    await expect(proCard.getByRole('button', { name: 'Assinar' })).toBeVisible();
+    await proCard.getByRole('button', { name: 'Assinar' }).click();
+
+    const subscribe = page.waitForRequest('**/api/billing/subscribe');
+    await page.getByRole('button', { name: 'Continuar para o pagamento' }).click();
+    const body = (await subscribe).postDataJSON();
+    expect(body).toMatchObject({ plan_price_id: 'price-002-m', gateway: 'stripe', billing_method: 'card' });
+
+    await page.waitForURL(`${mockCheckoutUrl}**`);
+    await expect(page.getByRole('heading', { name: 'Stripe Checkout (mock)' })).toBeVisible();
   });
 });

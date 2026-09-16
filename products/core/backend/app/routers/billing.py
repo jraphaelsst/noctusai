@@ -170,7 +170,7 @@ async def public_plans(request: Request, ctx: BillingContext = Depends(get_billi
     """
     plans = list(iter_paged_rows(
         lambda start, end: ctx.db.table("plans").select(
-            "id, nome, slug, descricao, audience, trial_days, product_id, features, max_users, created_at"
+            "id, nome, slug, descricao, audience, trial_days, product_id, features, max_users, max_products, created_at"
         ).eq("ativo", True).order("id").range(start, end).execute().data,
         label="sellable plans",
     ))
@@ -183,7 +183,9 @@ async def public_plans(request: Request, ctx: BillingContext = Depends(get_billi
     plans.sort(key=lambda p: str(p.get("created_at") or ""))
     # Explicit projection: a public response must never grow a column
     # (e.g. a Stripe price id) because someone widened the select.
-    plan_keys = ("id", "nome", "slug", "descricao", "audience", "trial_days", "product_id", "features", "max_users")
+    plan_keys = (
+        "id", "nome", "slug", "descricao", "audience", "trial_days", "product_id", "features", "max_users", "max_products",
+    )
     price_keys = ("id", "billing_cycle", "currency", "amount_cents")
     by_plan: dict[str, list] = {}
     for price in prices:

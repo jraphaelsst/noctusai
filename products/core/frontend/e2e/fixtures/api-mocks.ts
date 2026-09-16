@@ -4,6 +4,8 @@ import {
   mockSubscription,
   mockProducts,
   mockPlans,
+  mockBillingCatalog,
+  mockCheckoutUrl,
   mockTeamMembers,
   mockInvitations,
   mockRoles,
@@ -42,8 +44,17 @@ export async function mockTeamAPIs(page: Page) {
 }
 
 export async function mockPricingAPIs(page: Page) {
+  // /api/plans still feeds Onboarding's plan step.
   await page.route('**/api/plans', jsonResponse({ data: mockPlans }));
-  await page.route('**/api/billing/checkout', jsonResponse({ checkout_url: 'https://checkout.stripe.com/test' }));
+  await page.route('**/api/billing/plans', jsonResponse({ data: mockBillingCatalog }));
+  await page.route('**/api/billing/subscribe', jsonResponse({
+    data: { subscription_id: 'sub-e2e', checkout_url: mockCheckoutUrl, gateway: 'stripe', mode: 'test', pix_qr: null },
+  }));
+  // The hosted checkout page itself — answered locally so the redirect is
+  // observable without leaving the test sandbox.
+  await page.route(`${mockCheckoutUrl}**`, (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: '<h1>Stripe Checkout (mock)</h1>' }),
+  );
 }
 
 export async function mockOnboardingAPIs(page: Page) {

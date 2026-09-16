@@ -8,6 +8,12 @@
  *
  * The previous version posted `billing_period` to `/api/billing/checkout`,
  * whose strict schema only accepts `billing_cycle` — every click was a 422.
+ *
+ * Kept from that version (asserted by `e2e/tests/pricing.spec.ts`): the
+ * monthly/yearly toggle, a zero-price plan shown as "Grátis" with a
+ * "Começar Grátis" CTA (no payment — every org starts free), the
+ * "Mais Popular" highlight (`features.mais_popular`, or the `pro` slug the
+ * old page keyed on), and the per-plan feature list.
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -29,6 +35,30 @@ type Method = 'card' | 'pix' | 'boleto';
 const AUDIENCE_LABEL = { individual: 'Para corretores', company: 'Para imobiliárias', any: '' } as const;
 const GATEWAY_METHODS: Record<Gateway, Method[]> = { stripe: ['card'], asaas: ['pix', 'boleto', 'card'] };
 const METHOD_LABEL: Record<Method, string> = { card: 'Cartão', pix: 'Pix', boleto: 'Boleto' };
+const POPULAR_FEATURE = 'mais_popular';
+
+function isPopular(plan: BillingPlan): boolean {
+  return Boolean(plan.features?.[POPULAR_FEATURE]) || plan.slug === 'pro';
+}
+
+function formatLimit(value: number | null | undefined, one: string, many: string): string | null {
+  if (value == null) return null;
+  if (value === -1) return `${many.charAt(0).toUpperCase()}${many.slice(1)} ilimitados`;
+  return `${value} ${value === 1 ? one : many}`;
+}
+
+export function featureList(plan: BillingPlan): string[] {
+  const items = [
+    formatLimit(plan.max_users, 'usuário', 'usuários'),
+    formatLimit(plan.max_products, 'produto', 'produtos'),
+  ].filter((x): x is string => Boolean(x));
+  for (const [key, value] of Object.entries(plan.features ?? {})) {
+    if (key === POPULAR_FEATURE) continue;
+    if (value === true) items.push(key.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()));
+    else if (typeof value === 'string' && value) items.push(value);
+  }
+  return items;
+}
 
 export function redirectTo(url: string) {
   window.location.assign(url);
@@ -139,39 +169,64 @@ export function Pricing({ onRedirect = redirectTo }: { onRedirect?: (url: string
         ) : (
           <>
             {hasYearly && (
-              <div role="radiogroup" aria-label="Ciclo" className="flex justify-center gap-2">
-                {(['monthly', 'yearly'] as BillingCycle[]).map((c) => (
-                  <Button key={c} role="radio" aria-checked={cycle === c}
-                    variant={cycle === c ? 'primary' : 'outline'} onClick={() => setCycle(c)}>
-                    {c === 'monthly' ? 'Mensal' : 'Anual'}
-                  </Button>
-                ))}
+              <div aria-label="Ciclo de cobrança" className="flex items-center justify-center gap-2">
+                <Button aria-pressed={cycle === 'monthly'} variant={cycle === 'monthly' ? 'primary' : 'outline'}
+                  onClick={() => setCycle('monthly')}>
+                  Mensal
+                </Button>
+                <Button aria-pressed={cycle === 'yearly'} variant={cycle === 'yearly' ? 'primary' : 'outline'}
+                  onClick={() => setCycle('yearly')}>
+                  Anual <span className="rounded-full bg-primary/15 px-2 text-xs">Economize</span>
+                </Button>
               </div>
             )}
 
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
               {plans.map((plan) => {
                 const price = priceFor(plan);
+                const free = price?.amount_cents === 0;
+                const popular = isPopular(plan);
+                const chosen = selected?.id === plan.id;
                 return (
-                  <div key={plan.id}
-                    className={`flex flex-col rounded-lg border bg-card p-6 ${selected?.id === plan.id ? 'border-primary ring-2 ring-primary' : 'border-border'}`}>
+                  <article key={plan.id} aria-label={plan.nome}
+                    className={`relative flex flex-col rounded-lg border bg-card p-6 ${chosen || popular ? 'border-primary ring-2 ring-primary' : 'border-border'}`}>
+                    {popular && (
+                      <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-primary px-4 py-1 text-xs font-semibold text-primary-foreground">
+                        Mais Popular
+                      </span>
+                    )}
                     <h3 className="text-lg font-semibold">{plan.nome}</h3>
                     {AUDIENCE_LABEL[plan.audience] && (
                       <p className="text-xs text-muted-foreground">{AUDIENCE_LABEL[plan.audience]}</p>
                     )}
                     {plan.descricao && <p className="mt-2 text-sm text-muted-foreground">{plan.descricao}</p>}
                     <div className="my-4 text-3xl font-bold">
-                      {price ? formatCents(price.amount_cents, price.currency) : '—'}
-                      {price && <span className="ml-1 text-sm font-normal text-muted-foreground">/{cycle === 'monthly' ? 'mês' : 'ano'}</span>}
+                      {!price ? '—' : free ? 'Grátis' : formatCents(price.amount_cents, price.currency)}
+                      {price && !free && (
+                        <span className="ml-1 text-sm font-normal text-muted-foreground">/{cycle === 'monthly' ? 'mês' : 'ano'}</span>
+                      )}
                     </div>
-                    {plan.trial_days > 0 && (
+                    {plan.trial_days > 0 && !free && (
                       <p className="mb-4 text-sm">{plan.trial_days} dias grátis (cartão cadastrado no início)</p>
                     )}
-                    <Button className="mt-auto" disabled={!price} onClick={() => setSelected(plan)}
-                      variant={selected?.id === plan.id ? 'primary' : 'outline'}>
-                      {price ? (selected?.id === plan.id ? 'Selecionado' : 'Escolher') : 'Indisponível neste ciclo'}
-                    </Button>
-                  </div>
+                    <ul className="mb-6 flex-1 space-y-2">
+                      {featureList(plan).map((feature) => (
+                        <li key={feature} className="flex items-center gap-2 text-sm">
+                          <span aria-hidden="true" className="font-bold text-primary">✓</span>
+                          {feature}
+                        </li>
+                      ))}
+                    </ul>
+                    {free ? (
+                      // Every org starts on the free tier — nothing to pay.
+                      <Button className="mt-auto" variant="outline" onClick={() => navigate('/')}>Começar Grátis</Button>
+                    ) : (
+                      <Button className="mt-auto" disabled={!price} onClick={() => setSelected(plan)}
+                        variant={chosen || popular ? 'primary' : 'outline'}>
+                        {!price ? 'Indisponível neste ciclo' : chosen ? 'Selecionado' : 'Assinar'}
+                      </Button>
+                    )}
+                  </article>
                 );
               })}
             </div>

@@ -107,6 +107,46 @@ export const mockPlans = [
   },
 ];
 
+// `GET /api/billing/plans` — the public, sellable catalog the Pricing page
+// reads (plans with their active prices in integer cents + the gateways the
+// platform offers). Same two plans as `mockPlans`.
+export const mockBillingCatalog = {
+  gateways: ['stripe', 'asaas'],
+  plans: [
+    {
+      id: 'plan-001',
+      nome: 'Gratuito',
+      slug: 'free',
+      descricao: 'Para conhecer a plataforma',
+      audience: 'any',
+      trial_days: 0,
+      product_id: null,
+      max_users: 1,
+      max_products: 1,
+      features: { suporte_email: true },
+      prices: [{ id: 'price-001-m', billing_cycle: 'monthly', currency: 'BRL', amount_cents: 0 }],
+    },
+    {
+      id: 'plan-002',
+      nome: 'Profissional',
+      slug: 'pro',
+      descricao: 'Para equipes em crescimento',
+      audience: 'company',
+      trial_days: 14,
+      product_id: 'prod-001',
+      max_users: 10,
+      max_products: 5,
+      features: { suporte_email: true, suporte_prioritario: true, api_access: true },
+      prices: [
+        { id: 'price-002-m', billing_cycle: 'monthly', currency: 'BRL', amount_cents: 19990 },
+        { id: 'price-002-y', billing_cycle: 'yearly', currency: 'BRL', amount_cents: 199990 },
+      ],
+    },
+  ],
+};
+
+export const mockCheckoutUrl = 'https://checkout.stripe.com/c/pay/cs_test_e2e';
+
 export const mockTeamMembers = [
   {
     id: 'user-001',
