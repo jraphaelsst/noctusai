@@ -13,6 +13,11 @@ Ports the seed already ships are consumed as-is:
   (the adapter's model is fixed at construction, and the model is per-org)
 - ``fx``          → ``noctusai_lib.integrations.fx.FxRateAdapter``
 - ``edit_quota``  → optional ``noctusai_lib.integrations.quota.QuotaTracker``
+- ``capabilities`` → ``model -> ImageEditCapabilities``; defaults to the
+  catalog lookup ``integrations.image_edit.capabilities_for_model`` (resolved
+  at CALL time, so a catalog seam installed after import is honoured). It is
+  the engine's ONLY Econômico gate — routes, ``compute_capabilities`` and the
+  batch handlers all read it.
 
 Ports defined here: object storage for photo bytes (``PhotoStorage``;
 ``BucketPhotoStorage`` bridges it onto one bucket of
@@ -33,6 +38,7 @@ from noctusai_lib.domain.photo_editing.repository import PhotoEditingRepository
 from noctusai_lib.integrations.fx import FxRateAdapter
 from noctusai_lib.integrations.image_edit import (
     ImageEditAdapter,
+    ImageEditCapabilities,
     ImageEditNotConfigured,
     OpenAIImageEditAdapter,
 )
@@ -281,20 +287,28 @@ class RecordingNotifier:
 ImageEditFactory = Callable[[str, str], ImageEditAdapter]
 
 
-def openai_image_edit_factory(key_provider: Callable[..., str | None]) -> ImageEditFactory:
+def openai_image_edit_factory(
+    key_provider: Callable[..., str | None],
+    *,
+    capabilities: Callable[[str], ImageEditCapabilities] | None = None,
+) -> ImageEditFactory:
     """Real factory: resolves the org's OpenAI key per call and REFUSES
     (``ImageEditNotConfigured``, fatal) when none resolves.
 
     Deliberately NOT ``get_image_edit_adapter``: that factory falls back to
     the Fake on a missing key, which is right for dev wiring but would let
     a production batch "succeed" with placeholder bytes.
+
+    ``capabilities`` — pass the same lookup as ``PhotoEditingPorts.capabilities``
+    when it is not the default catalog, so the adapter's batch gate agrees
+    with the engine's.
     """
 
     def _factory(org_id: str, model_id: str) -> ImageEditAdapter:
         api_key = key_provider(org_id)
         if not api_key:
             raise ImageEditNotConfigured("openai")
-        return OpenAIImageEditAdapter(api_key, model=model_id)
+        return OpenAIImageEditAdapter(api_key, model=model_id, capabilities=capabilities)
 
     return _factory
 
@@ -328,6 +342,19 @@ class PhotoEditingConfig:
     edit_quota_key_prefix: str = "fotos.edit"
     #: Max rejection comments per rule-proposer call.
     max_rejections_per_proposal: int = 50
+    #: Econômico poll cadence (plan §6): the Nth poll runs this many
+    #: seconds after the previous one; the last entry repeats.
+    openai_batch_poll_schedule_seconds: tuple[int, ...] = (300, 900, 1800)
+    #: Give up on a provider batch this long after submission (the Batch
+    #: API window is 24h; +2h slack for finalizing).
+    openai_batch_max_wait_seconds: int = 26 * 3600
+
+    def poll_delay_seconds(self, consulta: int) -> int:
+        """Delay before poll number ``consulta`` (0-based)."""
+        schedule = self.openai_batch_poll_schedule_seconds
+        if not schedule or any(v <= 0 for v in schedule):
+            raise ValueError("openai_batch_poll_schedule_seconds must be positive and non-empty")
+        return schedule[min(max(consulta, 0), len(schedule) - 1)]
 
     def retry_policy(self) -> RetryPolicy:
         return RetryPolicy(
@@ -340,6 +367,13 @@ class PhotoEditingConfig:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def catalog_capabilities(model: str) -> ImageEditCapabilities:
+    """Default ``capabilities`` port — the catalog, looked up at call time."""
+    from noctusai_lib.integrations.image_edit import types as image_edit_types
+
+    return image_edit_types.capabilities_for_model(model)
 
 
 @dataclass(frozen=True)
@@ -361,6 +395,9 @@ class PhotoEditingPorts:
     #: they are fetchable URLs passed through as-is. Required by
     #: ``pool.add_reference_pair``.
     reference_storage: PhotoStorage | None = None
+    #: The Econômico gate (see module docstring). Tests / a consumer with
+    #: its own catalog seam inject a different lookup here.
+    capabilities: Callable[[str], ImageEditCapabilities] = catalog_capabilities
 
     def with_config(self, **changes: Any) -> "PhotoEditingPorts":
         return dataclasses.replace(self, config=dataclasses.replace(self.config, **changes))
@@ -382,5 +419,6 @@ __all__ = [
     "StructuredLlm",
     "StructuredResult",
     "TokenUsage",
+    "catalog_capabilities",
     "openai_image_edit_factory",
 ]

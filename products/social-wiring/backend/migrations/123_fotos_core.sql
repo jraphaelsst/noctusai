@@ -17,18 +17,11 @@
 -- the field is a leak waiting for a refactor." Do not fold this table
 -- into fotos_edicoes or fotos_fotos.
 --
--- NOC-REMEDIATE[fotos-lotes-openai-table] -- 2026-09-16: the Econômico-only
--- `fotos_lotes_openai` batch-metadata table from the approved plan is
--- SKIPPED in this migration. Cause: projects/edicao-fotos/PROJECT.md §C8 --
--- no OpenAI image-edit model in the catalog has BOTH `supports_batch=True`
--- and a published per-1M-token rate (verified against the built catalog:
--- 32 rows, batch-capable: []), so Econômico is permanently blocked for
--- every org until the owner supplies gpt-image-2's pricing or the toggle
--- is cut from v1. Building `fotos_lotes_openai` now would ship untested by
--- construction (nothing can exercise it end-to-end). `fotos_fotos.
--- openai_batch_id` below is a bare nullable TEXT pointer (no FK) so the
--- schema does not require this table to exist; re-add `fotos_lotes_openai`
--- + an FK in the same migration that resolves C8.
+-- `fotos_lotes_openai` (the Econômico batch-metadata table of the approved
+-- plan) was deferred here while C8 blocked Econômico; it now lives in
+-- 132_fotos_lotes_openai.sql (W4), together with the FK on
+-- `fotos_fotos.openai_batch_id` below. Comment-only note -- this file's
+-- DDL is unchanged since it was applied.
 --
 -- Every org table: org_id + RLS org_id = public.current_org_id() +
 -- service_role_bypass, per CLAUDE.md §1 and projects/edicao-fotos/
@@ -217,8 +210,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.fotos_fotos (
         )),
     tentativas               INTEGER NOT NULL DEFAULT 0,
     falha_motivo             TEXT,
-    -- See NOC-REMEDIATE[fotos-lotes-openai-table] in this file's header --
-    -- bare pointer, no FK, Econômico-only and unset in v1.
+    -- Econômico provider batch id; FK added by 132_fotos_lotes_openai.sql.
     openai_batch_id          TEXT,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),

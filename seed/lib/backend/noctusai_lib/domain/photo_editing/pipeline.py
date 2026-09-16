@@ -10,6 +10,12 @@ WORKER calls):
 - ``request_guide_regen`` — manual guide rebuild (runs now).
 - ``enqueue_fx_backfill`` — daily PTAX backfill.
 
+Speed routing (``enqueue_photo_work``): an Urgente photo gets its own
+``fotos.edit`` job; an Econômico photo joins the batch's next provider batch
+(``fotos.submit_openai_batch``), which ``fotos.poll_openai_batch`` then
+follows on the 5 / 15 / 30 min schedule. The Econômico gate is
+``ports.capabilities(model).supports_batch`` — nothing else.
+
 Every enqueue carries a dedupe key (``types.dedupe_*``), so a double click,
 a retried request or a re-run handler never creates a second job.
 Validation errors carry a ``code`` the consumer maps to its error envelope.
@@ -19,7 +25,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from noctusai_lib.domain.jobs import Job
 from noctusai_lib.domain.photo_editing.guide import resolve_effective_guide
@@ -42,15 +48,18 @@ from noctusai_lib.domain.photo_editing.types import (
     dedupe_fx_backfill,
     dedupe_ingest,
     dedupe_lote_pronto,
+    dedupe_poll_openai_batch,
     dedupe_propor_regras,
     dedupe_regen_guia,
     dedupe_regen_guia_manual,
     dedupe_submit,
+    dedupe_submit_openai_batch,
 )
-from noctusai_lib.integrations.image_edit import capabilities_for_model
 
-#: Econômico (Batch API) has no engine path in R1 — PROJECT.md C8.
-ECONOMICO_IMPLEMENTED = False
+#: The Econômico (Batch API) engine path exists (W4, resolves PROJECT.md C8).
+#: Kept as a public constant for consumers that imported it; whether a given
+#: org can USE Econômico is decided by ``ports.capabilities`` alone.
+ECONOMICO_IMPLEMENTED = True
 
 _UPLOAD_CONTENT_TYPES = {
     "jpg": "image/jpeg",
@@ -129,6 +138,45 @@ async def enqueue_batch_ready_check(ports: PhotoEditingPorts, lote_id: str) -> J
         {"lote_id": lote_id},
         dedupe_lote_pronto(lote_id, batch_state_signature(photos)),
     )
+
+
+async def enqueue_openai_batch_submit(ports: PhotoEditingPorts, lote_id: str) -> Job:
+    """Ask for the batch's ready photos to be sent as ONE provider batch.
+    Keyed by the batch state AND the number of provider batches already
+    opened for it: every ingest / retry that changes the photo set may
+    enqueue it, duplicates from one state collapse, and an automatic retry
+    (photos back to the SAME ``pronta`` state as the first round) still gets
+    a fresh key."""
+    photos = await ports.repo.list_photos(lote_id)
+    rounds = len(await ports.repo.list_openai_batches(lote_id))
+    return await _enqueue(
+        ports,
+        JobType.SUBMIT_OPENAI_BATCH,
+        {"lote_id": lote_id},
+        dedupe_submit_openai_batch(lote_id, f"{batch_state_signature(photos)}:{rounds}"),
+    )
+
+
+async def enqueue_openai_batch_poll(
+    ports: PhotoEditingPorts, lote_openai_id: str, consulta: int
+) -> Job:
+    """Schedule poll number ``consulta`` (0-based) of one provider batch,
+    ``config.poll_delay_seconds(consulta)`` from now."""
+    delay = ports.config.poll_delay_seconds(consulta)
+    return await _enqueue(
+        ports,
+        JobType.POLL_OPENAI_BATCH,
+        {"lote_openai_id": lote_openai_id, "consulta": consulta},
+        dedupe_poll_openai_batch(lote_openai_id, consulta),
+        scheduled_for=ports.clock() + timedelta(seconds=delay),
+    )
+
+
+async def enqueue_photo_work(ports: PhotoEditingPorts, batch: Batch, photo: Photo) -> Job:
+    """Route a ``pronta`` photo by the batch's speed."""
+    if Speed(batch.velocidade) is Speed.ECONOMICO:
+        return await enqueue_openai_batch_submit(ports, batch.id)
+    return await enqueue_edit(ports, photo)
 
 
 def _window_end(at: datetime, window_seconds: int) -> datetime:
@@ -281,16 +329,14 @@ async def validate_submission(ports: PhotoEditingPorts, batch: Batch) -> Submiss
         raise SubmissionError(
             "modelo_nao_configurado", "nenhum modelo de edição configurado para a organização"
         )
-    caps = capabilities_for_model(settings.modelo_editor_id)
+    caps = ports.capabilities(settings.modelo_editor_id)
     if not caps.known:
         raise SubmissionError(
             "modelo_desconhecido", f"modelo {settings.modelo_editor_id} não está no catálogo"
         )
     if not settings.tipos_edicao_ativos:
         raise SubmissionError("sem_tipos_edicao", "nenhum tipo de edição ativo")
-    if Speed(batch.velocidade) is Speed.ECONOMICO and not (
-        ECONOMICO_IMPLEMENTED and caps.supports_batch
-    ):
+    if Speed(batch.velocidade) is Speed.ECONOMICO and not caps.supports_batch:
         raise SubmissionError("economico_indisponivel", "modo Econômico indisponível")
     photos = await ports.repo.list_photos(batch.id)
     if not photos:
@@ -371,7 +417,7 @@ async def retry_photo(ports: PhotoEditingPorts, foto_id: str, *, requested_by: s
     if batch.status is BatchStatus.PRONTO:
         await ports.repo.update_batch(batch.id, status=BatchStatus.PROCESSANDO, pronto_at=None)
     if target is PhotoStatus.PRONTA:
-        await enqueue_edit(ports, moved)
+        await enqueue_photo_work(ports, batch, moved)
     else:
         await enqueue_ingest(ports, moved)
     return moved
@@ -391,6 +437,9 @@ __all__ = [
     "enqueue_evaluation",
     "enqueue_fx_backfill",
     "enqueue_ingest",
+    "enqueue_openai_batch_poll",
+    "enqueue_openai_batch_submit",
+    "enqueue_photo_work",
     "request_guide_regen",
     "retry_photo",
     "schedule_guide_regen",

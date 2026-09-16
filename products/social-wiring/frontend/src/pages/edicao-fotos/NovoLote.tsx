@@ -6,12 +6,17 @@
  * by pulling a Vista imóvel's gallery by `codigo` (§3 `POST /lotes/{id}
  * /vista`, §10 C5), then submits it (§3 `POST /lotes/{id}/submeter`).
  *
- * 🔴 Two v1 scope calls, both flagged so a later slice knows to revisit:
- *   1. **Speed is Urgente-only this release** (brief, explicit) — Econômico
- *      always renders locked, showing `capacidades.economico_bloqueado_motivo`
- *      when present. This is a v1 UI decision layered ON TOP of the
- *      capacidades gate, not a replacement for it.
- *   2. **No `imovel` link is sent on `POST /lotes`.** The contract's body
+ * Speed (W4): Urgente or Econômico, sent explicitly as `velocidade` on
+ * `POST /lotes`. Econômico is selectable ONLY when
+ * `capacidades.economico_disponivel` (server-computed from the org's editor
+ * model); otherwise it renders locked with
+ * `capacidades.economico_bloqueado_motivo`. The preselection is the org's
+ * `velocidade_padrao` (`GET /configuracoes`); an Econômico default the org
+ * cannot use is SAID, never silently swapped. If the org settings fail to
+ * load, nothing is preselected and the user must choose.
+ *
+ * 🔴 v1 scope call, flagged so a later slice knows to revisit:
+ *   **No `imovel` link is sent on `POST /lotes`.** The contract's body
  *      shape is `{"org_id": str, "codigo": str} | null`, but nothing in the
  *      SW frontend holds the caller's `org_id` client-side (every other
  *      hook lets the backend resolve org scope from the session) — so this
@@ -30,7 +35,6 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { AlertCircle, Lock, Upload, X } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -39,12 +43,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 import {
   useCapacidades,
+  useConfiguracoes,
   useCriarLote,
   useLoteVista,
   useSubmeterLote,
   useUploadFotos,
   fotosPermissions,
 } from "@/hooks/useEdicaoFotos";
+import type { LoteVelocidade } from "@/hooks/useEdicaoFotos";
 
 type Fonte = "upload" | "vista";
 
@@ -58,6 +64,11 @@ function formatBytes(bytes: number): string {
 export default function NovoLote() {
   const navigate = useNavigate();
   const { capacidades, showSkeleton, error, refetch } = useCapacidades();
+  const {
+    configuracoes,
+    showSkeleton: configuracoesCarregando,
+    error: configuracoesErro,
+  } = useConfiguracoes();
   const criarLote = useCriarLote();
   const uploadFotos = useUploadFotos();
   const loteVista = useLoteVista();
@@ -67,11 +78,25 @@ export default function NovoLote() {
   const [fonte, setFonte] = useState<Fonte>("upload");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [codigoVista, setCodigoVista] = useState("");
+  const [velocidadeEscolhida, setVelocidadeEscolhida] = useState<LoteVelocidade | null>(null);
   const [etapa, setEtapa] = useState<null | "criando" | "enviando_fotos" | "puxando_vista" | "submetendo">(null);
 
   const limiteFotos = fotosPermissions.limiteFotosPorLote(capacidades) ?? DEFAULT_LIMITE_FOTOS;
   const limiteBytes = fotosPermissions.limiteBytesPorFoto(capacidades) ?? DEFAULT_LIMITE_BYTES;
   const economicoBloqueadoMotivo = fotosPermissions.economicoBloqueadoMotivo(capacidades);
+  const economicoDisponivel = fotosPermissions.economicoDisponivel(capacidades);
+
+  const padraoEconomicoIndisponivel =
+    configuracoes?.velocidade_padrao === "economico" && !economicoDisponivel;
+  const velocidadePadrao: LoteVelocidade | null = configuracoes
+    ? padraoEconomicoIndisponivel
+      ? "urgente"
+      : configuracoes.velocidade_padrao
+    : null;
+  const velocidade: LoteVelocidade | null =
+    velocidadeEscolhida === "economico" && !economicoDisponivel
+      ? null
+      : velocidadeEscolhida ?? velocidadePadrao;
 
   const arquivosExcedeCount = arquivos.length > limiteFotos;
   const arquivoExcedeTamanho = arquivos.find((f) => f.size > limiteBytes) ?? null;
@@ -83,6 +108,7 @@ export default function NovoLote() {
   const podeSubmeter =
     podeCriar &&
     modeloConfigurado &&
+    velocidade !== null &&
     nome.trim().length > 0 &&
     (fonte === "upload"
       ? arquivos.length > 0 && !arquivosExcedeCount && !arquivoExcedeTamanho
@@ -99,9 +125,10 @@ export default function NovoLote() {
   }
 
   async function handleCriar() {
+    if (velocidade === null) return;
     setEtapa("criando");
     try {
-      const lote = await criarLote.mutateAsync({ nome: nome.trim(), imovel: null });
+      const lote = await criarLote.mutateAsync({ nome: nome.trim(), imovel: null, velocidade });
 
       if (fonte === "upload") {
         setEtapa("enviando_fotos");
@@ -255,17 +282,60 @@ export default function NovoLote() {
 
             <div className="space-y-2">
               <Label>Velocidade</Label>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="default">Urgente</Badge>
-                <span
-                  className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold text-muted-foreground"
-                  title={economicoBloqueadoMotivo ?? "Disponível em uma próxima etapa"}
-                >
-                  <Lock className="h-3 w-3" /> Econômico (bloqueado)
-                </span>
-              </div>
-              {economicoBloqueadoMotivo && (
+              {configuracoesCarregando ? (
+                <div data-testid="novo-lote-velocidade-loading">
+                  <Skeleton className="h-8 w-56" />
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant={velocidade === "urgente" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setVelocidadeEscolhida("urgente")}
+                    disabled={enviando}
+                    aria-pressed={velocidade === "urgente"}
+                  >
+                    Urgente
+                  </Button>
+                  {economicoDisponivel ? (
+                    <Button
+                      type="button"
+                      variant={velocidade === "economico" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setVelocidadeEscolhida("economico")}
+                      disabled={enviando}
+                      aria-pressed={velocidade === "economico"}
+                    >
+                      Econômico
+                    </Button>
+                  ) : (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold text-muted-foreground"
+                      title={economicoBloqueadoMotivo ?? "Indisponível para o modelo da organização"}
+                    >
+                      <Lock className="h-3 w-3" /> Econômico (bloqueado)
+                    </span>
+                  )}
+                </div>
+              )}
+              {velocidade === "economico" && (
+                <p className="text-xs text-muted-foreground">
+                  Econômico: processado em lote pela OpenAI, com 50% de desconto — pode levar até 24h.
+                </p>
+              )}
+              {!economicoDisponivel && economicoBloqueadoMotivo && (
                 <p className="text-xs text-muted-foreground">Motivo: {economicoBloqueadoMotivo}</p>
+              )}
+              {padraoEconomicoIndisponivel && (
+                <p role="status" className="text-xs text-amber-600">
+                  O padrão da organização é Econômico, mas ele está indisponível para o modelo atual — este lote usará Urgente.
+                </p>
+              )}
+              {configuracoesErro && velocidadeEscolhida === null && (
+                <p role="alert" className="text-xs text-destructive">
+                  Não foi possível carregar o padrão da organização — escolha a velocidade.
+                </p>
               )}
             </div>
 

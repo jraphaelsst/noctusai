@@ -201,32 +201,61 @@ exact `ImagesResponse.usage` shape against a real account before the
 first production edit call.**
 
 Tests: `seed/lib/backend/tests/integrations/image_edit/test_{fake_adapter,
-factory,openai_adapter}.py`.
+factory,openai_adapter,batch}.py`.
 
 ---
 
 ## 5. Gaps & follow-ups
 
-**Batch ("Econômico" speed mode) is NOT built — deliberate, not an
-oversight.** `NOC-REMEDIATE[image-edit-batch-c8]` (in `__init__.py`): no
-catalog `image_edit` model is `supports_batch=True` as of 2026-09-16.
-`gpt-image-2` IS Batch-capable per OpenAI's own docs (50% discount) but
-has no published per-1M-token rate — `NOC-REMEDIATE[llm-model-unpriced]`
-in `noctusai_lib/integrations/llm/models.py`. A batch code path here
-would ship untested and unreachable by construction. Owner decision
-(`projects/edicao-fotos/PROJECT.md` C8) is either:
-1. Supply `gpt-image-2`'s pricing → add the `ModelEntry` row → Econômico
-   ships.
-2. Cut Econômico from v1 → the toggle/lock never engages.
+**Batch ("Econômico") — built in edicao-fotos W4 (2026-09-16).** The owner
+chose to build it before any batch-capable model is priced, so it works the
+moment the catalog marks one `supports_batch=True`. Protocol, Fake and Real
+all carry:
 
-When unblocked, the batch extension is 3 new methods on a NEW
-`OpenAIImageEditBatchAdapter` (or an extension of `ImageEditAdapter` —
-architect call at that time): `submit_batch()` / `poll_batch()` /
-`fetch_batch_results()`, per the plan §4 architecture line. Do not retrofit
-them onto the sync-shaped `edit()` — batch submission and result
-retrieval are two separate round-trips with a job in between (the plan's
-`fotos.poll_openai_batch` self-rescheduling job type), not a single
-awaitable call.
+| method | returns | notes |
+|---|---|---|
+| `submit_batch(items: Sequence[BatchEditItem], *, org_id, metadata)` | `BatchSubmission` (`batch_id`, `state`, `item_count`, `input_file_id`) | REFUSES `ImageEditBatchUnsupported` (fatal) unless `capabilities(model).supports_batch` — before any network call |
+| `poll_batch(batch_id, *, org_id)` | `BatchPollResult` (`state: BatchState`, output/error file ids, request counts) | unknown provider status ⇒ `ImageEditServerError`, never a guess |
+| `fetch_batch_results(batch_id, *, org_id)` | `tuple[BatchItemResult, ...]` — per item exactly one of `result: ImageEditResult` / `error: ImageEditError` (carried, not raised) | non-terminal ⇒ `ImageEditBatchNotReady` (retryable); unknown id ⇒ `ImageEditBatchNotFound` (fatal); the Real may OMIT items (expired batch with no files) — the caller treats a missing `custom_id` as a retryable failure |
+
+`BatchState` mirrors the OpenAI status vocabulary 1:1 (`.is_terminal` for
+completed/failed/expired/cancelled). Item errors reuse the sync taxonomy:
+429 ⇒ `ImageEditRateLimited`, 5xx ⇒ `ImageEditServerError`,
+400+policy text ⇒ `ImageEditContentPolicyViolation`, other 4xx ⇒
+`ImageEditInvalidSize`, `batch_expired`/`batch_cancelled` ⇒
+`ImageEditTimeout` (retryable). `ImageEditResult.usage` is the provider's
+RAW token count — the 50% discount is the caller's pricing concern
+(`photo_editing.costs.BATCH_API_DISCOUNT`).
+
+**The gate.** `capabilities()` is the only Econômico gate. Both adapters
+resolve `capabilities_for_model` at CALL time (module attribute), so a
+catalog seam installed after import is honoured; the Real also takes
+`capabilities=` (and `photo_editing.openai_image_edit_factory(...,
+capabilities=)`) so a consumer whose engine gate is a different lookup can
+never have the adapter disagree with it. The Fake takes `batch_models=` —
+an explicit test arrangement for "this model is batch-capable" while the
+static catalog has none — plus `batch_pending_polls=`,
+`batch_item_errors=`, `set_batch_state()`; it records `batch_calls`.
+
+**Real (OpenAI Batch API), offline-verified only** — JSONL upload
+(`files.create(purpose="batch")`), `batches.create(endpoint=
+"/v1/images/edits", completion_window="24h", metadata=...)`,
+`batches.retrieve`, `files.content(output|error file)`. 🔴 UNVERIFIED
+against a live account (no credits), flagged in `openai_adapter.py`'s
+docstring for the first real smoke run: (1) the JSON image-input shape of
+a batch line — `body.images=[{"image_url": "data:<mime>;base64,..."}]`, the
+one place to change is `_batch_line` (e.g. to `file_id` references);
+(2) `/v1/images/edits` as a batch endpoint; (3) output-line body = the sync
+`ImagesResponse` JSON; (4) the 200 MB input-file cap
+(`MAX_BATCH_INPUT_BYTES`, refused up front). Tests:
+`seed/lib/backend/tests/integrations/image_edit/test_batch.py`.
+
+🔴 **`ImageEditRequest.extra` is forwarded to the provider VERBATIM** (sync
+`images.edit(**payload)` and every batch line body). Never put engine
+metadata there — the SDK rejects an unknown keyword with `TypeError`. The
+engine's sync edit once passed `extra={"prompt_ref": ...}`, which would have
+failed every real Urgente edit; fixed in W4, pinned by
+`test_sync_edit_sends_only_wire_parameters_to_the_provider`.
 
 **Budget accounting is not yet wired.** `edit()` returns `ImageEditUsage`
 but does NOT call `noctusai_lib.integrations.llm.usage.record_usage`

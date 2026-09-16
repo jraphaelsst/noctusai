@@ -63,9 +63,57 @@ def test_create_refuses_an_imovel_of_another_org(edicao) -> None:
 
 def test_create_rejects_unknown_fields(edicao) -> None:
     edicao.configure_org()
-    resp = _create(edicao.as_user("corretor"), velocidade="economico")
+    resp = _create(edicao.as_user("corretor"), prioridade="alta")
+    assert resp.status_code == 422
+    resp = _create(edicao, velocidade="turbo")
     assert resp.status_code == 422
     assert edicao.repo.batches == {}
+
+
+def test_create_refuses_explicit_economico_without_a_batch_model(edicao) -> None:
+    edicao.configure_org()
+    resp = _create(edicao.as_user("corretor"), velocidade="economico")
+    assert resp.status_code == 422 and resp.json()["code"] == "economico_indisponivel"
+    assert edicao.repo.batches == {}
+
+
+def test_create_accepts_economico_when_the_model_is_batch_capable(edicao) -> None:
+    edicao.configure_org()
+    edicao.enable_economico()
+    resp = _create(edicao.as_user("corretor"), velocidade="economico")
+    assert resp.status_code == 201, resp.text
+    assert edicao.repo.batches[resp.json()["id"]].velocidade is Speed.ECONOMICO
+    # The org default is honoured when the body omits the speed…
+    edicao.configure_org(velocidade_override=Speed.ECONOMICO)
+    resp = _create(edicao)
+    assert edicao.repo.batches[resp.json()["id"]].velocidade is Speed.ECONOMICO
+    # …and an explicit choice wins over it.
+    resp = _create(edicao, velocidade="urgente")
+    assert edicao.repo.batches[resp.json()["id"]].velocidade is Speed.URGENTE
+
+
+def test_economico_run_end_to_end_through_the_routes(edicao) -> None:
+    edicao.configure_org()
+    edicao.activate_guide()
+    edicao.enable_economico(pending_polls=1)
+    edicao.as_user("corretor")
+    lote = _create(edicao, velocidade="economico").json()["id"]
+    assert edicao.upload(lote, count=2).status_code == 201
+    resp = edicao.http.post(f"/api/edicao-fotos/lotes/{lote}/submeter")
+    assert resp.status_code in (200, 202), resp.text
+    edicao.drain()
+    (adapter,) = edicao.batch_adapters.values()
+    assert [c["op"] for c in adapter.batch_calls] == ["submit", "poll", "poll", "fetch"]
+    assert adapter.calls == []  # no synchronous edit
+    photos = edicao.run(edicao.repo.list_photos(lote))
+    assert [p.status for p in photos] == [PhotoStatus.AGUARDANDO_DECISAO] * 2
+    (record,) = edicao.repo.openai_batches.values()
+    assert record.openai_batch_id and {p.openai_batch_id for p in photos} == {
+        record.openai_batch_id
+    }
+    assert all(u.batch for u in edicao.repo.llm_usage.values() if u.operation == "image_edit")
+    detalhe = edicao.http.get(f"/api/edicao-fotos/lotes/{lote}").json()
+    assert detalhe["status"] == "pronto"
 
 
 def test_list_is_own_for_corretor_and_org_wide_for_admins(edicao) -> None:

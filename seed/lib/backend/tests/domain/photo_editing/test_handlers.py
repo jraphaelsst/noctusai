@@ -463,3 +463,36 @@ def test_openai_factory_refuses_without_key() -> None:
         factory(ORG, EDIT_MODEL)
     adapter = openai_image_edit_factory(lambda org_id=None: "sk-test")(ORG, EDIT_MODEL)
     assert isinstance(adapter, OpenAIImageEditAdapter)
+
+
+def test_sync_edit_sends_only_wire_parameters_to_the_provider(ports) -> None:
+    """`ImageEditRequest.extra` reaches `images.edit(**payload)` verbatim;
+    engine metadata there (it once carried `prompt_ref`) is an unknown SDK
+    keyword → TypeError on every real Urgente edit."""
+    import base64 as _b64
+    import types as _types
+
+    class _Images:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def edit(self, **kwargs):
+            self.calls.append(kwargs)
+            data = [_types.SimpleNamespace(b64_json=_b64.b64encode(b"out").decode("ascii"))]
+            usage = _types.SimpleNamespace(
+                output_tokens=10, total_tokens=20,
+                input_tokens_details=_types.SimpleNamespace(text_tokens=5, image_tokens=5),
+            )
+            return _types.SimpleNamespace(data=data, usage=usage)
+
+    images = _Images()
+    client = _types.SimpleNamespace(images=images)
+    real = OpenAIImageEditAdapter("sk-test", model=EDIT_MODEL, client=client)
+    wired = dataclasses.replace(ports, image_edit=EditFactory(real))
+
+    async def scenario() -> None:
+        await _edited_photo(wired)
+        (call,) = images.calls
+        assert set(call) == {"model", "image", "prompt", "size", "n"}
+
+    run(scenario())

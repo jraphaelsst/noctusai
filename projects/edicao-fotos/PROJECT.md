@@ -169,6 +169,17 @@ Resolution is an owner decision, and it is cheap either way:
 Until one is chosen, do NOT build the Econômico half of the pipeline — it cannot be
 exercised end-to-end, so it would ship untested by construction.
 
+**Decision (2026-09-16): build Econômico now (W4)** so it works the moment a
+batch-capable model is priced (W8's DB catalog feeds `capabilities_for_model`).
+Shipped: `image_edit` `submit_batch`/`poll_batch`/`fetch_batch_results` (Protocol +
+Fake + OpenAI Real, image-input shape of a batch line UNVERIFIED — no credits);
+engine `fotos.submit_openai_batch` + self-rescheduling `fotos.poll_openai_batch`
+(5/15/30 min), `em_lote_openai` transitions, 50% `BATCH_API_DISCOUNT`, the gate
+= `PhotoEditingPorts.capabilities` only; SW migration **132** `fotos_lotes_openai`
+(written, NOT applied — owner consent); `POST /lotes` `velocidade`; NovoLote unlock.
+Exercised end-to-end on fakes only; the real smoke run still needs credits + a
+priced batch-capable model.
+
 ### C9 — 🔴 DO NOT APPLY Core 045, and do not trust a tree you did not name
 **Core 045 is on the prod branch but deliberately UNAPPLIED.** It belongs to
 `noctusai-36`'s cutover. `deploy/fleet/build-scope.txt` derives from
@@ -252,9 +263,9 @@ promote will see them in the rebuild set.
    is four OpenAI steps (edit · evaluate · guide · rule-propose). **Nothing downstream of
    Wave 1 can be exercised end-to-end until this is resolved**, including the smoke run
    the plan gates release on.
-2. **C8 — Econômico has no batch-capable model** (§C8). Supply `gpt-image-2` pricing, or
-   cut Econômico from v1. Unbuilt deliberately: it cannot be exercised, so it would ship
-   untested by construction.
+2. **C8 — Econômico has no batch-capable model** (§C8). Built anyway by owner decision
+   (W4, fakes-only); it stays locked (`modelo_sem_batch`) until a batch-capable model is
+   priced in the catalog, and SW 132 must be applied (owner consent) before it runs.
 3. **Migrations are owner-gated.** SW starts at **119** (114-118 applied to prod
    2026-09-16); Core at **046/047** (045 is taken and must stay unapplied — §C9).
 4. **Secrets** — Stripe live, Asaas production, OpenAI. `VISTA_PHOTOS_API_KEY` is NO

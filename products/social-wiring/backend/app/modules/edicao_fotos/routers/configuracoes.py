@@ -5,8 +5,11 @@ Org settings: READ for every member (the FE shows corretores a read-only
 summary); WRITE for agency admin (owner/admin/manager) or platform admin —
 always the caller's OWN org. Platform settings: platform admin only.
 
-Econômico is refused with the contract code `economico_indisponivel` (C8 —
-no batch-capable priced model, no engine path in R1)."""
+Econômico (W4): an ORG default of `economico` is refused with the contract
+code `economico_indisponivel` unless the org's editor model is batch-capable
+(`ports.capabilities` — the engine's only gate). The PLATFORM default has no
+model of its own, so `economico` is accepted there; each org is still gated
+when it creates a batch (`POST /lotes`)."""
 from __future__ import annotations
 
 import dataclasses
@@ -14,15 +17,12 @@ import dataclasses
 from fastapi import APIRouter, Depends
 
 from noctusai_lib.domain.photo_editing import (
-    ECONOMICO_IMPLEMENTED,
     Actor,
     EditType,
     OrgSettings,
     PhotoEditingPorts,
     Speed,
 )
-from noctusai_lib.integrations.image_edit import capabilities_for_model
-
 from app.modules.edicao_fotos.deps import (
     get_edicao_ports,
     require_member,
@@ -36,11 +36,12 @@ from app.modules.edicao_fotos.schemas import OrgSettingsBody, PlatformSettingsBo
 router = APIRouter(prefix="/api/edicao-fotos/configuracoes", tags=["edicao-fotos"])
 
 
-def refuse_economico(speed: str | None, model: str | None) -> None:
+def refuse_economico(ports: PhotoEditingPorts, speed: str | None, model: str | None) -> None:
+    """422 `economico_indisponivel` when Econômico is asked for a model the
+    engine gate says has no Batch API support (or no model at all)."""
     if speed != Speed.ECONOMICO.value:
         return
-    batch_ok = bool(model) and capabilities_for_model(model).supports_batch
-    if not (ECONOMICO_IMPLEMENTED and batch_ok):
+    if not (model and ports.capabilities(model).supports_batch):
         raise api_error(422, "economico_indisponivel", "Modo Econômico indisponível.")
 
 
@@ -60,9 +61,9 @@ async def put_org_settings_route(
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
 ) -> dict:
     model = (body.modelo_editor_imagem or "").strip() or None
-    if model is not None and not capabilities_for_model(model).known:
+    if model is not None and not ports.capabilities(model).known:
         raise api_error(422, "modelo_desconhecido", f"Modelo {model} não está no catálogo.")
-    refuse_economico(body.velocidade_padrao, model)
+    refuse_economico(ports, body.velocidade_padrao, model)
     platform = await ports.repo.get_platform_settings()
     override = None
     if body.velocidade_padrao is not None and Speed(body.velocidade_padrao) is not Speed(
@@ -99,9 +100,8 @@ async def put_platform_settings_route(
     _actor: Actor = Depends(require_platform_admin),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
 ) -> dict:
-    # A platform default has no model of its own: Econômico is refused
-    # outright while the engine has no path for it.
-    refuse_economico(body.velocidade_default, None)
+    # A platform default has no model of its own: Econômico is accepted here
+    # and gated per org at batch creation (see the module docstring).
     changes: dict = {
         "velocidade_default": Speed(body.velocidade_default),
         "notificacoes_globais_ativas": body.notificacoes_globais_ativas,

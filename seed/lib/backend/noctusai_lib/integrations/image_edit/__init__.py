@@ -26,18 +26,15 @@ enabled folded into ONE prompt (the engine's job, not this adapter's).
   `ImageEditRetryableError` (429/5xx/timeout) vs `ImageEditFatalError`
   (content policy / invalid size / not-configured).
 
-**NOT shipped (C8, deliberate):**
-
-    NOC-REMEDIATE[image-edit-batch-c8]: batch submit/poll/fetch
-    ("Econômico" speed mode) is not implemented. No catalog
-    `image_edit` model is `supports_batch=True` as of 2026-09-16
-    (`gpt-image-2` IS Batch-capable per vendor docs but has no
-    published per-1M-token rate — see `NOC-REMEDIATE[llm-model-unpriced]`
-    in `noctusai_lib/integrations/llm/models.py`), so a batch code path
-    here would ship untested and unreachable by construction. Owner
-    must either price `gpt-image-2` or cut Econômico from v1 (see
-    `projects/edicao-fotos/PROJECT.md` C8) before this module grows
-    batch methods.
+**Batch ("Econômico", W4 — resolves the former image-edit-batch-c8
+deferral):** `submit_batch` / `poll_batch` /
+`fetch_batch_results` on the Protocol, the Fake and the OpenAI Real, gated
+by `capabilities(model).supports_batch` (the catalog is the only gate — a
+model becomes Econômico-capable the moment its catalog row says so). The
+OpenAI Real follows the documented Batch API (JSONL upload → `batches.create`
+on `/v1/images/edits` → `batches.retrieve` → `files.content`); the exact
+image-input field of an image-edit batch line is UNVERIFIED (no credits) —
+see `openai_adapter.py`'s module docstring.
 
 **Consume recipe** (per `KB § INTEGRATIONS/image-edit.md`):
 
@@ -72,6 +69,9 @@ from __future__ import annotations
 from typing import Callable
 
 from noctusai_lib.integrations.image_edit.exceptions import (
+    ImageEditBatchNotFound,
+    ImageEditBatchNotReady,
+    ImageEditBatchUnsupported,
     ImageEditContentPolicyViolation,
     ImageEditError,
     ImageEditFatalError,
@@ -85,6 +85,11 @@ from noctusai_lib.integrations.image_edit.exceptions import (
 from noctusai_lib.integrations.image_edit.fake_adapter import FakeImageEditAdapter
 from noctusai_lib.integrations.image_edit.openai_adapter import OpenAIImageEditAdapter
 from noctusai_lib.integrations.image_edit.types import (
+    BatchEditItem,
+    BatchItemResult,
+    BatchPollResult,
+    BatchState,
+    BatchSubmission,
     EditedImage,
     ImageEditAdapter,
     ImageEditCapabilities,
@@ -142,9 +147,17 @@ def get_image_edit_adapter(
 
 
 __all__ = [
+    "BatchEditItem",
+    "BatchItemResult",
+    "BatchPollResult",
+    "BatchState",
+    "BatchSubmission",
     "EditedImage",
     "FakeImageEditAdapter",
     "ImageEditAdapter",
+    "ImageEditBatchNotFound",
+    "ImageEditBatchNotReady",
+    "ImageEditBatchUnsupported",
     "ImageEditCapabilities",
     "ImageEditContentPolicyViolation",
     "ImageEditError",

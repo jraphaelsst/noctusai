@@ -95,3 +95,18 @@ class ImageEditServerError(ImageEditRetryableError):
 class ImageEditTimeout(ImageEditRetryableError):
     """Request timed out / connection failed before a response arrived —
     safe to retry with backoff."""
+
+
+class ImageEditBatchUnsupported(ImageEditFatalError):
+    """``submit_batch`` for a model whose catalog capabilities say
+    ``supports_batch=False`` (the Econômico gate) — never sent upstream."""
+
+
+class ImageEditBatchNotFound(ImageEditFatalError):
+    """The provider does not know this batch id (or the Fake never
+    issued it)."""
+
+
+class ImageEditBatchNotReady(ImageEditRetryableError):
+    """``fetch_batch_results`` before the batch reached a terminal state —
+    poll again later."""

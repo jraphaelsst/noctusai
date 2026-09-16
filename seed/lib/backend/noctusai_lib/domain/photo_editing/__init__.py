@@ -35,13 +35,19 @@ catalog, ``estimate_cost_usd``), ``integrations.fx`` (PTAX),
     worker = build_worker(ports, worker_id="fotos-1")
     await worker.run_forever(stop_event=stop)
 
-**Not in R1 (C8):** the Econômico / Batch-API path (``em_lote_openai``,
-``fotos.poll_openai_batch``). ``submit_batch`` refuses Econômico with
-``economico_indisponivel``.
+**Econômico (W4, resolves C8):** a batch with ``velocidade='economico'`` sends
+its photos as ONE provider batch (``fotos.submit_openai_batch`` → photos
+``em_lote_openai`` → ``fotos_lotes_openai`` row), polls it on the
+5 / 15 / 30 min schedule (``fotos.poll_openai_batch``), then applies each
+item like a synchronous edit with the cost at ``BATCH_API_DISCOUNT``. The
+ONLY gate is ``PhotoEditingPorts.capabilities(model).supports_batch`` (the
+catalog by default): ``submit_batch`` refuses with ``economico_indisponivel``
+when it is false.
 """
 
 from noctusai_lib.domain.photo_editing.access import compute_capabilities
 from noctusai_lib.domain.photo_editing.costs import (
+    BATCH_API_DISCOUNT,
     BackfillReport,
     RecordedCost,
     UnpricedModelError,
@@ -78,9 +84,11 @@ from noctusai_lib.domain.photo_editing.handlers import (
     handle_fx_backfill,
     handle_ingest,
     handle_lote_pronto,
+    handle_poll_openai_batch,
     handle_propor_regras,
     handle_regen_guia,
     handle_submit_lote,
+    handle_submit_openai_batch,
     is_retryable,
 )
 from noctusai_lib.domain.photo_editing.learning import (
@@ -105,6 +113,8 @@ from noctusai_lib.domain.photo_editing.pipeline import (
     SubmissionError,
     add_photo_bytes,
     enqueue_fx_backfill,
+    enqueue_openai_batch_poll,
+    enqueue_openai_batch_submit,
     request_guide_regen,
     retry_photo,
     schedule_guide_regen,
@@ -135,6 +145,7 @@ from noctusai_lib.domain.photo_editing.ports import (
     StructuredLlm,
     StructuredResult,
     TokenUsage,
+    catalog_capabilities,
     openai_image_edit_factory,
 )
 from noctusai_lib.domain.photo_editing.repository import (
@@ -150,6 +161,8 @@ from noctusai_lib.domain.photo_editing.types import (
     Decision,
     EditType,
     JobType,
+    OpenAIBatchRecord,
+    OpenAIBatchStatus,
     OrgSettings,
     GuideStatus,
     Photo,
@@ -172,6 +185,7 @@ from noctusai_lib.domain.photo_editing.zipper import (
 
 __all__ = [
     "Actor",
+    "BATCH_API_DISCOUNT",
     "BackfillReport",
     "Batch",
     "BatchNotDecidedError",
@@ -197,6 +211,8 @@ __all__ = [
     "LlmStructuredAdapter",
     "NotFoundError",
     "NothingApprovedError",
+    "OpenAIBatchRecord",
+    "OpenAIBatchStatus",
     "OrgSettings",
     "Photo",
     "PhotoEditingConfig",
@@ -242,20 +258,25 @@ __all__ = [
     "build_handlers",
     "build_worker",
     "build_zip",
+    "catalog_capabilities",
     "compose_effective_guide",
     "compute_capabilities",
     "create_draft",
     "decide_rule",
     "enqueue_fx_backfill",
+    "enqueue_openai_batch_poll",
+    "enqueue_openai_batch_submit",
     "generate_draft_from_pool",
     "handle_avaliar",
     "handle_edit",
     "handle_fx_backfill",
     "handle_ingest",
     "handle_lote_pronto",
+    "handle_poll_openai_batch",
     "handle_propor_regras",
     "handle_regen_guia",
     "handle_submit_lote",
+    "handle_submit_openai_batch",
     "is_retryable",
     "make_photo_editing_repository",
     "openai_image_edit_factory",

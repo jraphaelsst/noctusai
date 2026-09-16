@@ -15,6 +15,11 @@ Per AI call:
 
 A model missing from the catalog, or priced on none of the legs its usage
 consumed, raises ``UnpricedModelError`` instead of recording a silent $0.
+
+Econômico (``batch=True``): the catalog price × ``BATCH_API_DISCOUNT`` — the
+provider's async Batch API bills half the real-time rate (plan §1/§3). The
+discount is applied HERE, once, and the ``llm_usage`` row carries
+``batch=True`` so the discounted amount is always explainable.
 """
 
 from __future__ import annotations
@@ -40,6 +45,9 @@ CURRENCY_BRL = "BRL"
 CATEGORY_OPENAI_EDIT = "openai_edit"
 CATEGORY_OPENAI_VISION = "openai_vision"
 CATEGORY_OPENAI_TEXT = "openai_text"
+
+#: Multiplier on the catalog price for a Batch-API call (50% off).
+BATCH_API_DISCOUNT = Decimal("0.5")
 
 _MONEY_Q = Decimal("0.000001")  # NUMERIC(14, 6)
 _RATE_Q = Decimal("0.00001")  # NUMERIC(12, 5)
@@ -72,8 +80,9 @@ def _require_priced(entry: ModelEntry, usage: TokenUsage) -> None:
         )
 
 
-def price_usage_usd(entry: ModelEntry, usage: TokenUsage) -> Decimal:
-    """Catalog price of ``usage`` in USD, quantized to the ledger's scale."""
+def price_usage_usd(entry: ModelEntry, usage: TokenUsage, *, batch: bool = False) -> Decimal:
+    """Catalog price of ``usage`` in USD, quantized to the ledger's scale.
+    ``batch=True`` applies ``BATCH_API_DISCOUNT``."""
     _require_priced(entry, usage)
     amount = estimate_cost_usd(
         provider=entry.provider,
@@ -83,7 +92,10 @@ def price_usage_usd(entry: ModelEntry, usage: TokenUsage) -> Decimal:
         image_input_tokens=usage.image_input_tokens,
         image_output_tokens=usage.image_output_tokens,
     )
-    return Decimal(repr(amount)).quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
+    price = Decimal(repr(amount))
+    if batch:
+        price = price * BATCH_API_DISCOUNT
+    return price.quantize(_MONEY_Q, rounding=ROUND_HALF_UP)
 
 
 def build_cost_row(
@@ -166,7 +178,7 @@ async def record_ai_cost(
         ports.config.image_edit_provider if kind == "image_edit" else ports.config.llm_provider
     )
     entry = catalog_entry(provider, model, kind)
-    amount = price_usage_usd(entry, usage)
+    amount = price_usage_usd(entry, usage, batch=batch)
     now = ports.clock()
     usage_id = await ports.repo.add_llm_usage(
         LlmUsageRow(
@@ -246,6 +258,7 @@ async def backfill_fx(ports: PhotoEditingPorts, *, limit: int = 200) -> Backfill
 
 
 __all__ = [
+    "BATCH_API_DISCOUNT",
     "BackfillReport",
     "CATEGORY_OPENAI_EDIT",
     "CATEGORY_OPENAI_TEXT",

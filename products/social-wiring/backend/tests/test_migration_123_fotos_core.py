@@ -4,7 +4,7 @@ Pins: fotos_avaliacoes is a SEPARATE table (never folded into fotos_
 edicoes/fotos_fotos — contract §1's table-separation privacy guarantee),
 every org table carries org_id + RLS + service_role_bypass, batch
 visibility gates on fotos_lote_visivel(), and fotos_lotes_openai is
-deliberately absent with a named NOC-REMEDIATE.
+not created here (132 owns it).
 """
 from __future__ import annotations
 
@@ -104,11 +104,11 @@ def test_fotos_fotos_ordem_unique_per_lote(flat: str):
     assert "UNIQUE (lote_id, ordem)" in flat
 
 
-def test_fotos_lotes_openai_is_deliberately_absent_with_named_remediation(sql: str):
-    """fotos_lotes_openai is mentioned only in the explanatory header/
-    comments (Econômico-only, blocked by C8) — never actually created."""
-    assert "fotos_lotes_openai" in sql
-    assert "NOC-REMEDIATE[fotos-lotes-openai-table]" in sql
+def test_fotos_lotes_openai_is_not_created_here_but_points_at_132(sql: str):
+    """fotos_lotes_openai is created by 132 (W4), never by this applied
+    file; the header points there and the deferral marker is gone."""
+    assert "132_fotos_lotes_openai.sql" in sql
+    assert "NOC-REMEDIATE[fotos-lotes-openai-table]" not in sql
     assert "CREATE TABLE IF NOT EXISTS social_wiring.fotos_lotes_openai" not in sql
 
 

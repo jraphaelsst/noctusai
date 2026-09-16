@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -46,7 +46,7 @@ from noctusai_lib.domain.photo_editing import (
 )
 from noctusai_lib.domain.real_estate.imovel import ImovelFoto
 from noctusai_lib.integrations.fx import FakeFxRateAdapter
-from noctusai_lib.integrations.image_edit import FakeImageEditAdapter
+from noctusai_lib.integrations.image_edit import FakeImageEditAdapter, ImageEditCapabilities
 from noctusai_lib.integrations.imaging import FakeImagingAdapter
 from noctusai_lib.integrations.storage import FakeStorageBackend
 
@@ -151,6 +151,36 @@ class Harness:
         )
         self.repo.seed_org_settings(OrgSettings(**{**base.__dict__, **changes}))
 
+    def enable_economico(self, *, pending_polls: int = 0) -> None:
+        """Declare EDIT_MODEL batch-capable on BOTH gates the engine reads —
+        the ports' capability lookup and the Fake adapter — since the static
+        catalog has no batch-capable image model (PROJECT.md C8). One shared
+        Fake per model, so a batch submitted by one job is polled by the next."""
+        import dataclasses
+
+        adapters: dict[str, FakeImageEditAdapter] = {}
+
+        def factory(_org: str, model: str) -> FakeImageEditAdapter:
+            if model not in adapters:
+                adapters[model] = FakeImageEditAdapter(
+                    model=model, batch_models={EDIT_MODEL}, batch_pending_polls=pending_polls
+                )
+            return adapters[model]
+
+        def capabilities(model: str) -> ImageEditCapabilities:
+            return ImageEditCapabilities(
+                model=model, supports_batch=model == EDIT_MODEL, known=model == EDIT_MODEL
+            )
+
+        # The engine schedules polls `ports.clock() + 5 min`; the fake job
+        # queue claims against the wall clock, so pin the engine clock to a
+        # past instant (the day the fake PTAX covers) to make polls due now.
+        pinned = datetime(2026, 9, 16, 15, 0, tzinfo=timezone.utc)
+        self.ports = dataclasses.replace(
+            self.ports, image_edit=factory, capabilities=capabilities, clock=lambda: pinned
+        )
+        self.batch_adapters = adapters
+
     def activate_guide(self) -> None:
         async def _go() -> None:
             draft = await create_draft(
@@ -252,7 +282,8 @@ def edicao(client):
     overrides = {
         get_current_user_org: _current_user_org,
         get_role_resolver: lambda: (lambda uid: next(u.roles for u in USERS.values() if u.id == uid)),
-        get_edicao_ports: lambda: ports,
+        # Read through the harness so `enable_economico()` can swap ports.
+        get_edicao_ports: lambda: harness.ports,
         get_grant_repository: lambda: grants,
         get_vista_photo_source: lambda: harness.vista,
         get_user_directory: lambda: (

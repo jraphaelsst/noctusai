@@ -254,6 +254,8 @@ export interface LotesPage {
 export interface NovoLoteBody {
   nome: string;
   imovel: LoteImovelRef | null;
+  /** Per-batch speed (W4). Omitted = the org default. `economico` needs `capacidades.economico_disponivel`. */
+  velocidade?: LoteVelocidade;
 }
 
 /** `POST /lotes` response — minimal id so the caller can chain upload/vista/submeter. */

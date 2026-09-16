@@ -79,7 +79,12 @@ default image model**, deliberately, so models can be compared across orgs).
 | `POST` | `/lotes/{id}/fotos/{foto_id}/retentar` | Manual retry of a `falhou` photo |
 | `GET` | `/lotes/{id}/zip` | Download approved `.zip` — 409 until every photo is decided |
 
-`POST /lotes` body: `{"nome": str, "imovel": {"org_id": str, "codigo": str} | null}`.
+`POST /lotes` body: `{"nome": str, "imovel": {"org_id": str, "codigo": str} | null,
+"velocidade"?: "urgente" | "economico"}`. `velocidade` omitted = the org override,
+else the platform default (W4). `economico` without a batch-capable editor model
+(`capacidades.economico_disponivel=false`) ⇒ 422 `economico_indisponivel` — never
+silently downgraded. The platform default may be `economico`; each org is gated at
+creation.
 
 Photo state machine (every transition writes `fotos_eventos`, which is what the
 throughput charts read):

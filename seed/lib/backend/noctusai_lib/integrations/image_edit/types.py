@@ -22,7 +22,9 @@ its Real backend uses OpenAI's `AsyncOpenAI` client.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -137,6 +139,101 @@ class ImageEditCapabilities:
     known: bool  # False when `model` is not a catalog `image_edit` entry
 
 
+# ---------------------------------------------------------------------------
+# Batch (Econômico) value objects — W4, resolves image-edit-batch-c8
+# ---------------------------------------------------------------------------
+
+
+class BatchState(str, Enum):
+    """Provider batch lifecycle, mirroring the OpenAI Batch API ``status``
+    vocabulary one-to-one (``validating`` → ``in_progress`` →
+    ``finalizing`` → ``completed``; or ``failed`` / ``expired`` /
+    ``cancelling`` → ``cancelled``)."""
+
+    VALIDATING = "validating"
+    IN_PROGRESS = "in_progress"
+    FINALIZING = "finalizing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    EXPIRED = "expired"
+    CANCELLING = "cancelling"
+    CANCELLED = "cancelled"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in _TERMINAL_BATCH_STATES
+
+
+_TERMINAL_BATCH_STATES = frozenset(
+    {BatchState.COMPLETED, BatchState.FAILED, BatchState.EXPIRED, BatchState.CANCELLED}
+)
+
+
+@dataclass(frozen=True)
+class BatchEditItem:
+    """One edit inside a provider batch. ``custom_id`` is the caller's
+    correlation key — echoed back on the matching ``BatchItemResult`` and
+    unique within one batch (the provider rejects duplicates)."""
+
+    custom_id: str
+    request: ImageEditRequest
+
+    def __post_init__(self) -> None:
+        if not self.custom_id:
+            raise ValueError("BatchEditItem.custom_id must be non-empty")
+
+
+@dataclass(frozen=True)
+class BatchSubmission:
+    """Receipt of ``submit_batch``. ``batch_id`` is the provider's id —
+    the only handle ``poll_batch`` / ``fetch_batch_results`` need."""
+
+    batch_id: str
+    model: str
+    item_count: int
+    state: BatchState
+    input_file_id: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BatchPollResult:
+    """One ``poll_batch`` observation. ``output_file_id`` /
+    ``error_file_id`` are set once the provider has produced them (an
+    ``expired`` batch may still carry partial output)."""
+
+    batch_id: str
+    state: BatchState
+    output_file_id: str | None = None
+    error_file_id: str | None = None
+    total: int | None = None
+    completed: int | None = None
+    failed: int | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BatchItemResult:
+    """Outcome of one ``BatchEditItem``: exactly one of ``result`` /
+    ``error`` is set. ``error`` is a typed ``ImageEditError`` instance
+    (carried, not raised) so the caller branches on ``error.retryable``
+    exactly as it does for a synchronous ``edit``. ``usage`` inside
+    ``result`` is the provider's raw (undiscounted) token count — the
+    batch discount is a pricing concern of the caller."""
+
+    custom_id: str
+    result: ImageEditResult | None = None
+    error: Exception | None = None
+
+    def __post_init__(self) -> None:
+        if (self.result is None) == (self.error is None):
+            raise ValueError("BatchItemResult needs exactly one of result / error")
+
+    @property
+    def ok(self) -> bool:
+        return self.result is not None
+
+
 def capabilities_for_model(model: str) -> ImageEditCapabilities:
     """Catalog-driven capability lookup — the ONLY implementation of
     "does `model` support Batch/Econômico" this module has.
@@ -166,9 +263,10 @@ class ImageEditAdapter(Protocol):
     ``FakeImageEditAdapter`` so absence of configuration is loud (the
     Fake returns deterministic-but-fake bytes the caller can detect).
 
-    Batch (Econômico speed-mode: submit/poll/fetch) is deliberately NOT
-    part of this Protocol in S3b — see the
-    `NOC-REMEDIATE[image-edit-batch-c8]` marker in `__init__.py`.
+    Batch (Econômico speed-mode, W4): ``submit_batch`` → ``poll_batch`` →
+    ``fetch_batch_results``. Gated by ``capabilities(model).supports_batch``
+    — an adapter REFUSES (``ImageEditBatchUnsupported``, fatal) to submit
+    for a model the catalog does not mark batch-capable.
     """
 
     backend: str
@@ -178,3 +276,19 @@ class ImageEditAdapter(Protocol):
     ) -> ImageEditResult: ...
 
     def capabilities(self, model: str) -> ImageEditCapabilities: ...
+
+    async def submit_batch(
+        self,
+        items: Sequence[BatchEditItem],
+        *,
+        org_id: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> BatchSubmission: ...
+
+    async def poll_batch(
+        self, batch_id: str, *, org_id: str | None = None
+    ) -> BatchPollResult: ...
+
+    async def fetch_batch_results(
+        self, batch_id: str, *, org_id: str | None = None
+    ) -> tuple[BatchItemResult, ...]: ...

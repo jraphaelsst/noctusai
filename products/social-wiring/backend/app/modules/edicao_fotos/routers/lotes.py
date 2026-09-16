@@ -103,8 +103,15 @@ async def create_lote_route(
     if not settings.tipos_edicao_ativos:
         raise api_error(422, "sem_tipos_edicao", "Nenhum tipo de edição ativo.")
     platform = await ports.repo.get_platform_settings()
-    speed = Speed(settings.velocidade_override or platform.velocidade_default)
-    if speed is Speed.ECONOMICO:
+    # An explicit per-batch choice wins; otherwise the org override, then the
+    # platform default. Econômico is gated by the engine's capability port
+    # alone — never silently downgraded to Urgente.
+    speed = Speed(
+        body.velocidade or settings.velocidade_override or platform.velocidade_default
+    )
+    if speed is Speed.ECONOMICO and not ports.capabilities(
+        settings.modelo_editor_id
+    ).supports_batch:
         raise api_error(422, "economico_indisponivel", "Modo Econômico indisponível.")
     if body.imovel is not None and str(body.imovel.org_id) != actor.org_id:
         raise api_error(

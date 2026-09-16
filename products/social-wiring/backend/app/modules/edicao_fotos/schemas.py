@@ -22,6 +22,9 @@ class ImovelRef(StrictHttpModel):
 class LoteCreateBody(StrictHttpModel):
     nome: str = Field(min_length=1, max_length=200)
     imovel: Optional[ImovelRef] = None
+    #: Per-batch speed (W4). Omitted = the org override, else the platform
+    #: default. `economico` needs a batch-capable editor model.
+    velocidade: Optional[SpeedLiteral] = None
 
 
 class VistaIngestBody(StrictHttpModel):

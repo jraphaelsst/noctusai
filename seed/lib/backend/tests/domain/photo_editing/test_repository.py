@@ -370,3 +370,41 @@ class _RefusingInsertClient:
 
     def execute(self) -> None:
         raise self._exc
+
+
+def test_supabase_openai_batch_roundtrip() -> None:
+    """Econômico bookkeeping (`fotos_lotes_openai`, SW migration 132) —
+    every written column is validated against the real migrations."""
+    from noctusai_lib.domain.photo_editing.types import OpenAIBatchStatus
+
+    async def scenario() -> None:
+        client = SchemaStableClient()
+        repo = SupabasePhotoEditingRepository(client, now=Clock())
+        b = await repo.create_batch(org_id=ORG, nome="Eco", criado_por=USER, origem="upload",
+                                    velocidade=Speed.ECONOMICO)
+        itens = ({"foto_id": "f1", "edicao_id": "e1", "custom_id": "f1:e1", "tentativas": 0},)
+        rec = await repo.create_openai_batch(
+            org_id=ORG, lote_id=b.id, modelo_id="gpt-image-2", itens=itens
+        )
+        assert rec.status is OpenAIBatchStatus.PREPARANDO and rec.itens == itens
+        written = client.sw("fotos_lotes_openai").inserted_payloads[0]
+        assert written["status"] == "preparando" and written["itens"] == [dict(itens[0])]
+
+        sent = await repo.update_openai_batch(
+            rec.id, status=OpenAIBatchStatus.ENVIADO, openai_batch_id="batch_1",
+            openai_status="validating", submetido_at=Clock()(),
+        )
+        assert sent.status is OpenAIBatchStatus.ENVIADO and sent.openai_batch_id == "batch_1"
+        assert client.sw("fotos_lotes_openai").updated_payloads[-1]["status"] == "enviado"
+        with pytest.raises(ValueError, match="not updatable"):
+            await repo.update_openai_batch(rec.id, lote_id="other")
+
+        assert (await repo.get_openai_batch(rec.id)).openai_batch_id == "batch_1"
+        assert [r.id for r in await repo.list_openai_batches(b.id)] == [rec.id]
+        assert await repo.get_openai_batch("00000000-0000-4000-8000-000000000000") is None
+
+        p = await repo.add_photo(org_id=ORG, lote_id=b.id, ordem=1, storage_path_original="x")
+        await repo.update_photo(p.id, openai_batch_id="batch_1")
+        assert client.sw("fotos_fotos").updated_payloads[-1]["openai_batch_id"] == "batch_1"
+
+    run(scenario())

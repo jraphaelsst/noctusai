@@ -39,6 +39,25 @@ def test_curator_without_org_role_gets_capabilities_but_no_batches(edicao) -> No
     assert edicao.http.get("/api/edicao-fotos/lotes").status_code == 403
 
 
+def test_batch_capable_model_unlocks_economico(edicao) -> None:
+    edicao.configure_org()
+    edicao.enable_economico()
+    caps = edicao.as_user("corretor").http.get("/api/edicao-fotos/capacidades").json()
+    assert caps["economico_disponivel"] is True
+    assert caps["economico_bloqueado_motivo"] is None
+
+
+def test_org_default_economico_is_saved_when_capable(edicao) -> None:
+    edicao.enable_economico()
+    resp = edicao.as_user("admin").http.put(
+        "/api/edicao-fotos/configuracoes",
+        json={"tipos_edicao_ativos": ["ceu"], "modelo_editor_imagem": EDIT_MODEL,
+              "velocidade_padrao": "economico"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert edicao.run(edicao.repo.get_org_settings(ORG)).velocidade_override is Speed.ECONOMICO
+
+
 def test_no_model_reports_sem_modelo(edicao) -> None:
     caps = edicao.as_user("admin").http.get("/api/edicao-fotos/capacidades").json()
     assert caps["modelo_configurado"] is False
@@ -140,12 +159,19 @@ def test_platform_settings_round_trip(edicao) -> None:
     assert stored.preco_storage_gb_mes_usd == Decimal("0.021")
 
 
-def test_platform_default_economico_is_refused(edicao) -> None:
+def test_platform_default_economico_is_accepted_and_gated_per_org(edicao) -> None:
     resp = edicao.as_user("plataforma").http.put(
         "/api/edicao-fotos/configuracoes/plataforma", json={"velocidade_default": "economico"}
     )
+    assert resp.status_code == 200, resp.text
+    assert edicao.repo.platform_settings.velocidade_default is Speed.ECONOMICO
+    # An org whose model has no Batch API cannot create on that default…
+    edicao.configure_org()
+    resp = edicao.as_user("corretor").http.post("/api/edicao-fotos/lotes", json={"nome": "x"})
     assert resp.status_code == 422 and resp.json()["code"] == "economico_indisponivel"
-    assert edicao.repo.platform_settings.velocidade_default is Speed.URGENTE
+    # …but can still choose Urgente explicitly.
+    resp = edicao.http.post("/api/edicao-fotos/lotes", json={"nome": "x", "velocidade": "urgente"})
+    assert resp.status_code == 201
 
 
 # --- curadores ---------------------------------------------------------------

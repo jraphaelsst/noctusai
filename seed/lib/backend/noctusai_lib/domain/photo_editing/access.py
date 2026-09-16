@@ -7,17 +7,18 @@ comes from ``noctusai_lib.domain.permissions``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from noctusai_lib.domain.permissions import PermissionGrantRepository
 from noctusai_lib.domain.photo_editing.learning import Actor
-from noctusai_lib.domain.photo_editing.pipeline import ECONOMICO_IMPLEMENTED
+from noctusai_lib.domain.photo_editing.ports import catalog_capabilities
 from noctusai_lib.domain.photo_editing.types import (
     CORRETOR_ROLES,
     PHOTO_CURATOR_PERMISSION,
     OrgSettings,
 )
-from noctusai_lib.integrations.image_edit import capabilities_for_model
+from noctusai_lib.integrations.image_edit import ImageEditCapabilities
 
 
 async def compute_capabilities(
@@ -25,7 +26,10 @@ async def compute_capabilities(
     actor: Actor,
     settings: OrgSettings | None,
     grants: PermissionGrantRepository,
+    capabilities: Callable[[str], ImageEditCapabilities] = catalog_capabilities,
 ) -> dict[str, Any]:
+    """``capabilities`` is the Econômico gate — pass ``ports.capabilities``
+    so the answer matches what ``submit_batch`` will enforce."""
     settings = settings or OrgSettings(org_id=actor.org_id or "")
     is_curator = await grants.has_permission(
         user_id=actor.user_id, permission=PHOTO_CURATOR_PERMISSION
@@ -36,10 +40,8 @@ async def compute_capabilities(
     model = settings.modelo_editor_id
     if not model:
         economico, motivo = False, "sem_modelo"
-    elif not capabilities_for_model(model).supports_batch:
+    elif not capabilities(model).supports_batch:
         economico, motivo = False, "modelo_sem_batch"
-    elif not ECONOMICO_IMPLEMENTED:
-        economico, motivo = False, "nao_implementado"
     else:
         economico, motivo = True, None
     tipos = list(t.value for t in settings.tipos_edicao_ativos)

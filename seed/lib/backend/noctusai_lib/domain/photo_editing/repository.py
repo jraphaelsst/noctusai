@@ -42,6 +42,8 @@ from noctusai_lib.domain.photo_editing.types import (
     GuideStatus,
     IllegalTransitionError,
     LlmUsageRow,
+    OpenAIBatchRecord,
+    OpenAIBatchStatus,
     OrgRule,
     OrgSettings,
     Photo,
@@ -80,6 +82,21 @@ _PHOTO_MUTABLE = frozenset(
         "largura_original",
         "altura_original",
         "falha_motivo",
+        "openai_batch_id",
+    }
+)
+_OPENAI_BATCH_MUTABLE = frozenset(
+    {
+        "status",
+        "openai_batch_id",
+        "openai_status",
+        "input_file_id",
+        "output_file_id",
+        "error_file_id",
+        "consultas",
+        "erro",
+        "submetido_at",
+        "concluido_at",
     }
 )
 #: Substring of the migration-129 trigger error raised when the pool is full.
@@ -310,6 +327,19 @@ class PhotoEditingRepository(Protocol):
         self, cost_id: int, *, fx_rate: Decimal, fx_quote_date: date, amount_brl: Decimal
     ) -> None: ...
 
+    # --- Econômico provider batches (fotos_lotes_openai) --------------
+    async def create_openai_batch(
+        self,
+        *,
+        org_id: str,
+        lote_id: str,
+        modelo_id: str,
+        itens: tuple[dict[str, Any], ...],
+    ) -> OpenAIBatchRecord: ...
+    async def get_openai_batch(self, lote_openai_id: str) -> OpenAIBatchRecord | None: ...
+    async def update_openai_batch(self, lote_openai_id: str, **changes: Any) -> OpenAIBatchRecord: ...
+    async def list_openai_batches(self, lote_id: str) -> list[OpenAIBatchRecord]: ...
+
 
 # ---------------------------------------------------------------------------
 # In-memory implementation
@@ -356,6 +386,7 @@ class InMemoryPhotoEditingRepository:
         self.cursors: dict[str, ProposalCursor] = {}
         self.llm_usage: dict[int, LlmUsageRow] = {}
         self.costs: dict[int, CostLedgerRow] = {}
+        self.openai_batches: dict[str, OpenAIBatchRecord] = {}
 
     def _id(self, kind: str) -> str:
         if self._id_factory is not None:
@@ -903,6 +934,40 @@ class InMemoryPhotoEditingRepository:
             amount_brl=amount_brl,
         )
 
+    # --- Econômico provider batches -----------------------------------
+    async def create_openai_batch(
+        self,
+        *,
+        org_id: str,
+        lote_id: str,
+        modelo_id: str,
+        itens: tuple[dict[str, Any], ...],
+    ) -> OpenAIBatchRecord:
+        record = OpenAIBatchRecord(
+            id=self._id("lote_openai"),
+            org_id=org_id,
+            lote_id=lote_id,
+            modelo_id=modelo_id,
+            itens=tuple(dict(i) for i in itens),
+            created_at=self._now(),
+        )
+        self.openai_batches[record.id] = record
+        return record
+
+    async def get_openai_batch(self, lote_openai_id: str) -> OpenAIBatchRecord | None:
+        return self.openai_batches.get(lote_openai_id)
+
+    async def update_openai_batch(self, lote_openai_id: str, **changes: Any) -> OpenAIBatchRecord:
+        _check_fields("update_openai_batch", changes, _OPENAI_BATCH_MUTABLE)
+        if "status" in changes:
+            changes["status"] = OpenAIBatchStatus(changes["status"])
+        updated = dataclasses.replace(self.openai_batches[lote_openai_id], **changes)
+        self.openai_batches[lote_openai_id] = updated
+        return updated
+
+    async def list_openai_batches(self, lote_id: str) -> list[OpenAIBatchRecord]:
+        return [r for r in self.openai_batches.values() if r.lote_id == lote_id]
+
 
 # ---------------------------------------------------------------------------
 # Row codec (dataclass <-> PostgREST JSON)
@@ -1056,6 +1121,16 @@ def _cost(row: dict[str, Any]) -> CostLedgerRow:
         decimals=("amount_native", "fx_rate", "amount_brl"),
         dates=("fx_quote_date",),
         datetimes=("created_at",),
+    )
+
+
+def _openai_batch(row: dict[str, Any]) -> OpenAIBatchRecord:
+    return _decode(
+        OpenAIBatchRecord,
+        row,
+        enums={"status": OpenAIBatchStatus},
+        datetimes=("submetido_at", "concluido_at", "created_at"),
+        tuples=("itens",),
     )
 
 
@@ -1872,6 +1947,48 @@ class SupabasePhotoEditingRepository:
             .eq("id", cost_id)
             .eq("fx_pending", True)
         )
+
+    # --- Econômico provider batches -----------------------------------
+    async def create_openai_batch(
+        self,
+        *,
+        org_id: str,
+        lote_id: str,
+        modelo_id: str,
+        itens: tuple[dict[str, Any], ...],
+    ) -> OpenAIBatchRecord:
+        row = await self._insert(
+            "fotos_lotes_openai",
+            _encode(
+                {
+                    "org_id": org_id,
+                    "lote_id": lote_id,
+                    "modelo_id": modelo_id,
+                    "itens": [dict(i) for i in itens],
+                    "status": OpenAIBatchStatus.PREPARANDO,
+                }
+            ),
+        )
+        return _openai_batch(row)
+
+    async def get_openai_batch(self, lote_openai_id: str) -> OpenAIBatchRecord | None:
+        row = await self._one(
+            self._t("fotos_lotes_openai").select("*").eq("id", lote_openai_id).limit(1)
+        )
+        return _openai_batch(row) if row else None
+
+    async def update_openai_batch(self, lote_openai_id: str, **changes: Any) -> OpenAIBatchRecord:
+        _check_fields("update_openai_batch", changes, _OPENAI_BATCH_MUTABLE)
+        return _openai_batch(await self._update("fotos_lotes_openai", lote_openai_id, changes))
+
+    async def list_openai_batches(self, lote_id: str) -> list[OpenAIBatchRecord]:
+        rows = await self._execute(
+            self._t("fotos_lotes_openai")
+            .select("*")
+            .eq("lote_id", lote_id)
+            .order("created_at", desc=False)
+        )
+        return [_openai_batch(r) for r in rows]
 
 
 def make_photo_editing_repository(

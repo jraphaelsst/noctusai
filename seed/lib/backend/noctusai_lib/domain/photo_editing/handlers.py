@@ -22,6 +22,14 @@ dedupe key; every status change is a compare-and-set.
 
 Events never carry the AI verdict or costs: ``fotos_eventos`` is readable
 by the corretor, who must never see either.
+
+Econômico (W4): ``fotos.submit_openai_batch`` sends every ``pronta`` photo
+of a batch as ONE provider batch (photos → ``em_lote_openai``, one
+``fotos_lotes_openai`` row), ``fotos.poll_openai_batch`` polls it on the
+5 / 15 / 30 min schedule and, once terminal, applies each item exactly like
+a synchronous edit (same output path, cost at the batch discount). A
+transient per-item failure sends the photo back to ``pronta`` for the next
+provider batch ONCE; a second one (or a fatal one) fails the photo.
 """
 
 from __future__ import annotations
@@ -59,6 +67,9 @@ from noctusai_lib.domain.photo_editing.pipeline import (
     enqueue_batch_ready_check,
     enqueue_edit,
     enqueue_evaluation,
+    enqueue_openai_batch_poll,
+    enqueue_openai_batch_submit,
+    enqueue_photo_work,
     schedule_guide_regen,
     schedule_rule_proposal,
     validate_submission,
@@ -77,15 +88,27 @@ from noctusai_lib.domain.photo_editing.types import (
     Batch,
     BatchStatus,
     Decision,
+    EditAttempt,
+    EditType,
     EffectiveGuide,
     IllegalTransitionError,
     JobType,
+    OpenAIBatchRecord,
+    OpenAIBatchStatus,
     OrgSettings,
     Photo,
     PhotoEvent,
     PhotoStatus,
+    Speed,
 )
-from noctusai_lib.integrations.image_edit import ImageEditError, ImageEditRequest
+from noctusai_lib.integrations.image_edit import (
+    BatchEditItem,
+    BatchItemResult,
+    ImageEditError,
+    ImageEditRequest,
+    ImageEditResult,
+    ImageEditTimeout,
+)
 from noctusai_lib.integrations.imaging import UnsupportedImageFormatError
 from noctusai_lib.integrations.llm.exceptions import LLMAPIError, LLMNotConfigured
 from noctusai_lib.primitives.image_sizing import compute_edit_size
@@ -316,7 +339,7 @@ async def handle_ingest(ports: PhotoEditingPorts, job: Job) -> None:
             return
         batch = await _load_batch(ports, ready.lote_id)
         if batch.status in (BatchStatus.SUBMETIDO, BatchStatus.PROCESSANDO):
-            await enqueue_edit(ports, ready)
+            await enqueue_photo_work(ports, batch, ready)
 
     await _photo_step(ports, job, photo.id, body)
 
@@ -347,9 +370,14 @@ async def handle_submit_lote(ports: PhotoEditingPorts, job: Job) -> None:
             batch = await ports.repo.update_batch(lote_id, modelo_editor_id=plan.model_id)
         if batch.status is BatchStatus.SUBMETIDO:
             batch = await ports.repo.update_batch(lote_id, status=BatchStatus.PROCESSANDO)
-        for photo in plan.photos:
-            if photo.status is PhotoStatus.PRONTA:
-                await enqueue_edit(ports, photo)
+        if Speed(batch.velocidade) is Speed.ECONOMICO:
+            # One provider batch for everything already ingested; photos still
+            # ingesting re-enqueue it when they land (the handler waits).
+            await enqueue_openai_batch_submit(ports, lote_id)
+        else:
+            for photo in plan.photos:
+                if photo.status is PhotoStatus.PRONTA:
+                    await enqueue_edit(ports, photo)
         await enqueue_batch_ready_check(ports, lote_id)
 
     await _plain_step(body)
@@ -395,18 +423,9 @@ async def handle_edit(ports: PhotoEditingPorts, job: Job) -> None:
                     f"limite de edições atingido; libera em {check.reset_at.isoformat()}"
                 )
 
-        edit = await ports.repo.latest_edit(current.id)
-        attempt_no = current.tentativas + 1
-        if edit is None or edit.tentativa != attempt_no or edit.status != "pendente":
-            edit = await ports.repo.create_edit(
-                org_id=current.org_id,
-                lote_id=current.lote_id,
-                foto_id=current.id,
-                tentativa=attempt_no,
-                tipos_edicao=tipos,
-                modelo_id=model,
-                velocidade=batch.velocidade,
-            )
+        edit = await _pending_edit(
+            ports, current, tipos=tipos, model=model, velocidade=batch.velocidade
+        )
 
         original = await ports.storage.get(current.storage_path_original)
         edit_w, edit_h = compute_edit_size(width, height)
@@ -420,59 +439,491 @@ async def handle_edit(ports: PhotoEditingPorts, job: Job) -> None:
                 images=(edit_input,),
                 prompt=prompt.text,
                 size=f"{edit_w}x{edit_h}",
+                # `extra` is forwarded to the provider VERBATIM — never put
+                # engine metadata there (the prompt ref is recorded on the
+                # `editada` transition event instead).
                 request_id=f"{current.id}:{edit.id}",
-                extra={"prompt_ref": prompt.ref},
             ),
             org_id=current.org_id,
         )
-        if not result.images:
-            raise InvalidModelOutputError("o modelo não devolveu imagem")
-
-        entry = catalog_entry(ports.config.image_edit_provider, model, "image_edit")
-        model_version = f"{model}{entry.snapshot}" if entry.snapshot else None
-        usage_id = await _record_cost_or_note(
+        await _store_edit_output(
             ports,
             current,
-            TokenUsage(
-                prompt_tokens=result.usage.prompt_tokens,
-                image_input_tokens=result.usage.image_input_tokens,
-                image_output_tokens=result.usage.image_output_tokens,
-                total_tokens=result.usage.total_tokens,
-            ),
-            step=JobType.EDIT,
-            category=CATEGORY_OPENAI_EDIT,
-            operation="image_edit",
-            kind="image_edit",
+            edit,
+            result,
             model=model,
-            model_version=model_version,
+            tipos=tipos,
+            prompt_ref=prompt.ref,
+            step=JobType.EDIT,
+            batch=False,
         )
-
-        # Back to the exact input size (Lanczos), JPEG — plus the visible
-        # AI watermark when virtual staging was applied.
-        output = await _cpu(
-            ports.imaging.resize, result.images[0].image_bytes, width=width, height=height
-        )
-        if is_staged(tipos):
-            output = await _cpu(ports.imaging.apply_watermark, output, text=STAGING_WATERMARK_TEXT)
-        edited_path = storage_path(current.org_id, current.lote_id, current.id, EDITED_NAME)
-        await ports.storage.put(edited_path, output, content_type="image/jpeg")
-        await ports.repo.update_edit(
-            edit.id,
-            status="concluida",
-            llm_usage_id=usage_id,
-            modelo_versao=model_version,
-            concluida_at=ports.clock(),
-        )
-        await ports.repo.update_photo(current.id, storage_path_editada=edited_path)
-        done = await ports.repo.transition_photo(
-            current.id,
-            PhotoStatus.EDITADA,
-            detalhe={"edicao_id": edit.id, "prompt": prompt.ref},
-        )
-        if done is not None:
-            await enqueue_evaluation(ports, current.id, edit.id)
 
     await _photo_step(ports, job, photo.id, body)
+
+
+async def _pending_edit(
+    ports: PhotoEditingPorts,
+    photo: Photo,
+    *,
+    tipos: tuple[EditType, ...],
+    model: str,
+    velocidade: Speed,
+) -> EditAttempt:
+    """The photo's open edit attempt for its current round — reused when a
+    retried job re-enters, created otherwise."""
+    edit = await ports.repo.latest_edit(photo.id)
+    attempt_no = photo.tentativas + 1
+    if edit is None or edit.tentativa != attempt_no or edit.status != "pendente":
+        edit = await ports.repo.create_edit(
+            org_id=photo.org_id,
+            lote_id=photo.lote_id,
+            foto_id=photo.id,
+            tentativa=attempt_no,
+            tipos_edicao=tipos,
+            modelo_id=model,
+            velocidade=velocidade,
+        )
+    return edit
+
+
+async def _store_edit_output(
+    ports: PhotoEditingPorts,
+    photo: Photo,
+    edit: EditAttempt,
+    result: ImageEditResult,
+    *,
+    model: str,
+    tipos: tuple[EditType, ...],
+    prompt_ref: str,
+    step: str,
+    batch: bool,
+) -> None:
+    """Shared tail of an edit, synchronous or batch: record the cost, bring
+    the output back to the input size, watermark staging, store, move the
+    photo to ``editada`` and enqueue its evaluation."""
+    if not result.images:
+        raise InvalidModelOutputError("o modelo não devolveu imagem")
+    if photo.largura_original is None or photo.altura_original is None:
+        raise PhotoEditingConfigError("foto_nao_normalizada", f"foto {photo.id}")
+    width, height = photo.largura_original, photo.altura_original
+
+    entry = catalog_entry(ports.config.image_edit_provider, model, "image_edit")
+    model_version = f"{model}{entry.snapshot}" if entry.snapshot else None
+    usage_id = await _record_cost_or_note(
+        ports,
+        photo,
+        TokenUsage(
+            prompt_tokens=result.usage.prompt_tokens,
+            image_input_tokens=result.usage.image_input_tokens,
+            image_output_tokens=result.usage.image_output_tokens,
+            total_tokens=result.usage.total_tokens,
+        ),
+        step=step,
+        category=CATEGORY_OPENAI_EDIT,
+        operation="image_edit",
+        kind="image_edit",
+        model=model,
+        model_version=model_version,
+        batch=batch,
+    )
+
+    # Back to the exact input size (Lanczos), JPEG — plus the visible
+    # AI watermark when virtual staging was applied.
+    output = await _cpu(
+        ports.imaging.resize, result.images[0].image_bytes, width=width, height=height
+    )
+    if is_staged(tipos):
+        output = await _cpu(ports.imaging.apply_watermark, output, text=STAGING_WATERMARK_TEXT)
+    edited_path = storage_path(photo.org_id, photo.lote_id, photo.id, EDITED_NAME)
+    await ports.storage.put(edited_path, output, content_type="image/jpeg")
+    await ports.repo.update_edit(
+        edit.id,
+        status="concluida",
+        llm_usage_id=usage_id,
+        modelo_versao=model_version,
+        concluida_at=ports.clock(),
+    )
+    await ports.repo.update_photo(photo.id, storage_path_editada=edited_path)
+    done = await ports.repo.transition_photo(
+        photo.id,
+        PhotoStatus.EDITADA,
+        detalhe={"edicao_id": edit.id, "prompt": prompt_ref},
+    )
+    if done is not None:
+        await enqueue_evaluation(ports, photo.id, edit.id)
+
+
+# ---------------------------------------------------------------------------
+# fotos.submit_openai_batch / fotos.poll_openai_batch (Econômico)
+# ---------------------------------------------------------------------------
+
+_INGESTING = frozenset({PhotoStatus.RECEBIDA, PhotoStatus.NORMALIZANDO})
+
+
+def _custom_id(foto_id: str, edicao_id: str) -> str:
+    return f"{foto_id}:{edicao_id}"
+
+
+async def _open_openai_batch(
+    ports: PhotoEditingPorts, batch: Batch, model: str, ready: list[Photo]
+) -> OpenAIBatchRecord | None:
+    """Gate + price + guide checks (all before any spend), then one edit
+    attempt per photo, the ``preparando`` record, and ``pronta →
+    em_lote_openai``. Returns ``None`` when no photo is left to send."""
+    settings = await ports.repo.get_org_settings(batch.org_id)
+    tipos = tuple(settings.tipos_edicao_ativos) if settings else ()
+    if not tipos:
+        raise PhotoEditingConfigError("sem_tipos_edicao", "nenhum tipo de edição ativo")
+    if not ports.capabilities(model).supports_batch:
+        raise PhotoEditingConfigError(
+            "economico_indisponivel", f"modelo {model} não suporta a Batch API"
+        )
+    catalog_entry(ports.config.image_edit_provider, model, "image_edit")  # fail before spend
+    guide = await _snapshot_guide(ports, batch)
+    prompt_ref = render_edit_prompt(tipos, guia_texto=guide.texto, guia_sha256=guide.sha256).ref
+
+    itens: list[dict[str, Any]] = []
+    for photo in ready:
+        if ports.edit_quota is not None:
+            check = await ports.edit_quota.consume(
+                key=f"{ports.config.edit_quota_key_prefix}:{photo.org_id}"
+            )
+            if not check.allowed:
+                await _fail_photo(
+                    ports,
+                    photo.id,
+                    failure_reason(
+                        EditQuotaExceededError(
+                            f"limite de edições atingido; libera em {check.reset_at.isoformat()}"
+                        )
+                    ),
+                )
+                continue
+        edit = await _pending_edit(
+            ports, photo, tipos=tipos, model=model, velocidade=Speed.ECONOMICO
+        )
+        itens.append(
+            {
+                "foto_id": photo.id,
+                "edicao_id": edit.id,
+                "custom_id": _custom_id(photo.id, edit.id),
+                "tentativas": photo.tentativas,
+                "prompt": prompt_ref,
+            }
+        )
+    if not itens:
+        return None
+    record = await ports.repo.create_openai_batch(
+        org_id=batch.org_id, lote_id=batch.id, modelo_id=model, itens=tuple(itens)
+    )
+    for item in itens:
+        # A photo a concurrent writer moved first is simply not sent
+        # (`_send_openai_batch` skips anything not `em_lote_openai`).
+        await ports.repo.transition_photo(
+            item["foto_id"],
+            PhotoStatus.EM_LOTE_OPENAI,
+            detalhe={"lote_openai_id": record.id},
+        )
+    return record
+
+
+async def _send_openai_batch(
+    ports: PhotoEditingPorts, batch: Batch, record: OpenAIBatchRecord
+) -> None:
+    """Build the provider requests from the record and submit them. Safe to
+    re-run from ``preparando`` (a crash or transient error before the
+    provider confirmed): the requests are rebuilt deterministically."""
+    guide = await _snapshot_guide(ports, batch)
+    items: list[BatchEditItem] = []
+    sent: list[str] = []
+    for item in record.itens:
+        photo = await ports.repo.get_photo(item["foto_id"])
+        if photo is None or photo.status is not PhotoStatus.EM_LOTE_OPENAI:
+            continue
+        edit = await ports.repo.get_edit(item["edicao_id"])
+        if edit is None:
+            raise PhotoEditingConfigError("edicao_inexistente", item["edicao_id"])
+        if photo.largura_original is None or photo.altura_original is None:
+            raise PhotoEditingConfigError("foto_nao_normalizada", f"foto {photo.id}")
+        original = await ports.storage.get(photo.storage_path_original)
+        edit_w, edit_h = compute_edit_size(photo.largura_original, photo.altura_original)
+        edit_input = await _cpu(ports.imaging.resize, original, width=edit_w, height=edit_h)
+        prompt = render_edit_prompt(
+            edit.tipos_edicao, guia_texto=guide.texto, guia_sha256=guide.sha256
+        )
+        items.append(
+            BatchEditItem(
+                custom_id=item["custom_id"],
+                request=ImageEditRequest(
+                    images=(edit_input,),
+                    prompt=prompt.text,
+                    size=f"{edit_w}x{edit_h}",
+                    request_id=item["custom_id"],
+                ),
+            )
+        )
+        sent.append(photo.id)
+    if not items:
+        await ports.repo.update_openai_batch(
+            record.id,
+            status=OpenAIBatchStatus.FALHOU,
+            erro="sem_itens: nenhuma foto do lote OpenAI continua aguardando envio",
+            concluido_at=ports.clock(),
+        )
+        return
+    adapter = ports.image_edit(record.org_id, record.modelo_id)
+    submission = await adapter.submit_batch(
+        items,
+        org_id=record.org_id,
+        metadata={"lote_id": record.lote_id, "lote_openai_id": record.id},
+    )
+    await ports.repo.update_openai_batch(
+        record.id,
+        status=OpenAIBatchStatus.ENVIADO,
+        openai_batch_id=submission.batch_id,
+        openai_status=submission.state.value,
+        input_file_id=submission.input_file_id,
+        submetido_at=ports.clock(),
+        erro=None,
+    )
+    for foto_id in sent:
+        await ports.repo.update_photo(foto_id, openai_batch_id=submission.batch_id)
+    await ports.repo.add_event(
+        PhotoEvent(
+            org_id=record.org_id,
+            lote_id=record.lote_id,
+            tipo="lote_openai_enviado",
+            detalhe={"lote_openai_id": record.id, "fotos": len(items), "modelo": record.modelo_id},
+        )
+    )
+    await enqueue_openai_batch_poll(ports, record.id, 0)
+
+
+async def handle_submit_openai_batch(ports: PhotoEditingPorts, job: Job) -> None:
+    """Send an Econômico batch's ``pronta`` photos as ONE provider batch.
+
+    Waits (returns) while any photo is still being ingested — the last
+    ingest re-enqueues this job. A ``preparando`` record (a previous run
+    moved the photos but the provider never confirmed) is resumed first.
+    Transient failure → retried once; final failure → every involved photo
+    ``falhou`` and the record ``falhou``.
+    """
+    lote_id = _payload(job, "lote_id")
+    involved: list[str] = []
+    state: dict[str, Any] = {}
+
+    async def body() -> None:
+        batch = await _load_batch(ports, lote_id)
+        state["batch"] = batch
+        if batch.status not in (BatchStatus.SUBMETIDO, BatchStatus.PROCESSANDO):
+            return
+        if Speed(batch.velocidade) is not Speed.ECONOMICO:
+            return
+        photos = await ports.repo.list_photos(lote_id)
+        if any(p.status in _INGESTING for p in photos):
+            return
+        records = await ports.repo.list_openai_batches(lote_id)
+        record = next((r for r in records if r.status is OpenAIBatchStatus.PREPARANDO), None)
+        if record is None:
+            ready = [p for p in photos if p.status is PhotoStatus.PRONTA]
+            if not ready:
+                return
+            involved[:] = [p.id for p in ready]
+            model = batch.modelo_editor_id
+            if not model:
+                raise PhotoEditingConfigError(
+                    "modelo_nao_configurado", f"lote {batch.id} sem modelo"
+                )
+            record = await _open_openai_batch(ports, batch, model, ready)
+            if record is None:
+                return
+        state["record"] = record
+        involved[:] = [item["foto_id"] for item in record.itens]
+        await _send_openai_batch(ports, batch, record)
+
+    try:
+        await body()
+    except DeadLetterError:
+        raise
+    except Exception as exc:
+        reason = failure_reason(exc)
+        batch = state.get("batch")
+        if is_retryable(exc) and not _is_last_attempt(ports, job):
+            if batch is not None:
+                await ports.repo.add_event(
+                    PhotoEvent(
+                        org_id=batch.org_id,
+                        lote_id=lote_id,
+                        tipo="falha_transitoria",
+                        detalhe={"etapa": job.type, "erro": reason},
+                    )
+                )
+            raise
+        logger.warning(
+            "photo_editing.openai_batch_submit_failed lote_id=%s reason=%s", lote_id, reason
+        )
+        record = state.get("record")
+        if record is not None:
+            await ports.repo.update_openai_batch(
+                record.id,
+                status=OpenAIBatchStatus.FALHOU,
+                erro=reason,
+                concluido_at=ports.clock(),
+            )
+        for foto_id in involved:
+            await _fail_photo(ports, foto_id, reason)
+        raise DeadLetterError(reason) from exc
+
+
+async def _fail_record_photos(
+    ports: PhotoEditingPorts, record: OpenAIBatchRecord, reason: str
+) -> None:
+    for item in record.itens:
+        photo = await ports.repo.get_photo(item["foto_id"])
+        if photo is not None and photo.status is PhotoStatus.EM_LOTE_OPENAI:
+            await _fail_photo(ports, photo.id, reason)
+    await ports.repo.update_openai_batch(
+        record.id, status=OpenAIBatchStatus.FALHOU, erro=reason, concluido_at=ports.clock()
+    )
+
+
+def _tries_of(records: list[OpenAIBatchRecord], item: dict[str, Any]) -> int:
+    """How many provider batches carried this photo in this attempt round."""
+    return sum(
+        1
+        for r in records
+        for i in r.itens
+        if i.get("foto_id") == item["foto_id"] and i.get("tentativas") == item.get("tentativas")
+    )
+
+
+async def _apply_openai_batch_results(
+    ports: PhotoEditingPorts,
+    job: Job,
+    record: OpenAIBatchRecord,
+    results: tuple[BatchItemResult, ...],
+) -> None:
+    by_id = {r.custom_id: r for r in results}
+    records = await ports.repo.list_openai_batches(record.lote_id)
+    resubmit = False
+    for item in record.itens:
+        photo = await ports.repo.get_photo(item["foto_id"])
+        if photo is None or photo.status is not PhotoStatus.EM_LOTE_OPENAI:
+            continue  # already applied (re-run) or moved by someone else
+        outcome = by_id.get(item["custom_id"])
+        error: BaseException
+        if outcome is None:
+            error = ImageEditTimeout("item ausente no resultado do lote OpenAI")
+        elif outcome.error is not None:
+            error = outcome.error
+        else:
+            try:
+                edit = await ports.repo.get_edit(item["edicao_id"])
+                if edit is None:
+                    raise PhotoEditingConfigError("edicao_inexistente", item["edicao_id"])
+                await _store_edit_output(
+                    ports,
+                    photo,
+                    edit,
+                    outcome.result,
+                    model=record.modelo_id,
+                    tipos=tuple(edit.tipos_edicao),
+                    prompt_ref=str(item.get("prompt") or ""),
+                    step=JobType.POLL_OPENAI_BATCH,
+                    batch=True,
+                )
+                continue
+            except Exception as exc:
+                if is_retryable(exc) and not _is_last_attempt(ports, job):
+                    raise  # the whole poll re-runs; applied photos are skipped
+                error = exc
+        reason = failure_reason(error)
+        if is_retryable(error) and _tries_of(records, item) <= ports.config.max_auto_retries:
+            edit = await ports.repo.get_edit(item["edicao_id"])
+            if edit is not None and edit.status == "pendente":
+                await ports.repo.update_edit(edit.id, status="falhou", erro=reason)
+            moved = await ports.repo.transition_photo(
+                photo.id,
+                PhotoStatus.PRONTA,
+                event_tipo="falha_transitoria",
+                detalhe={"etapa": job.type, "erro": reason},
+            )
+            resubmit = resubmit or moved is not None
+        else:
+            logger.warning(
+                "photo_editing.photo_failed foto_id=%s job=%s reason=%s",
+                photo.id,
+                job.type,
+                reason,
+            )
+            await _fail_photo(ports, photo.id, reason)
+    await ports.repo.update_openai_batch(
+        record.id, status=OpenAIBatchStatus.CONCLUIDO, concluido_at=ports.clock()
+    )
+    if resubmit:
+        await enqueue_openai_batch_submit(ports, record.lote_id)
+    await enqueue_batch_ready_check(ports, record.lote_id)
+
+
+async def handle_poll_openai_batch(ports: PhotoEditingPorts, job: Job) -> None:
+    """Poll one provider batch; reschedule (5 / 15 / 30 min) until terminal,
+    then apply its results. A failing POLL never strands the batch: a
+    transient error reschedules the next poll, and past
+    ``openai_batch_max_wait_seconds`` every waiting photo fails."""
+    lote_openai_id = _payload(job, "lote_openai_id")
+    consulta = job.payload.get("consulta")
+    if not isinstance(consulta, int) or consulta < 0:
+        raise DeadLetterError(f"job {job.id} ({job.type}) payload lacks 'consulta'")
+    record = await ports.repo.get_openai_batch(lote_openai_id)
+    if record is None:
+        raise DeadLetterError(f"lote openai {lote_openai_id} não existe")
+    if record.status is not OpenAIBatchStatus.ENVIADO or not record.openai_batch_id:
+        return  # already applied / failed — idempotent
+    now = ports.clock()
+    overdue = (
+        record.submetido_at is not None
+        and (now - record.submetido_at).total_seconds() > ports.config.openai_batch_max_wait_seconds
+    )
+    try:
+        adapter = ports.image_edit(record.org_id, record.modelo_id)
+        polled = await adapter.poll_batch(record.openai_batch_id, org_id=record.org_id)
+        await ports.repo.update_openai_batch(
+            record.id,
+            openai_status=polled.state.value,
+            output_file_id=polled.output_file_id,
+            error_file_id=polled.error_file_id,
+            consultas=consulta + 1,
+        )
+        if not polled.state.is_terminal:
+            if overdue:
+                await _fail_record_photos(
+                    ports,
+                    record,
+                    f"lote_openai_prazo_excedido: {polled.state.value} após "
+                    f"{ports.config.openai_batch_max_wait_seconds}s",
+                )
+                await enqueue_batch_ready_check(ports, record.lote_id)
+                return
+            await enqueue_openai_batch_poll(ports, record.id, consulta + 1)
+            return
+        results = await adapter.fetch_batch_results(record.openai_batch_id, org_id=record.org_id)
+    except DeadLetterError:
+        raise
+    except Exception as exc:
+        reason = failure_reason(exc)
+        if is_retryable(exc) and not overdue:
+            logger.warning(
+                "photo_editing.openai_batch_poll_retry lote_openai_id=%s reason=%s",
+                record.id,
+                reason,
+            )
+            await ports.repo.update_openai_batch(record.id, consultas=consulta + 1, erro=reason)
+            await enqueue_openai_batch_poll(ports, record.id, consulta + 1)
+            return
+        await _fail_record_photos(ports, record, reason)
+        await enqueue_batch_ready_check(ports, record.lote_id)
+        raise DeadLetterError(reason) from exc
+    await _apply_openai_batch_results(ports, job, record, results)
 
 
 # ---------------------------------------------------------------------------
@@ -700,6 +1151,8 @@ HANDLERS: dict[str, HandlerFn] = {
     JobType.REGEN_GUIA: handle_regen_guia,
     JobType.PROPOR_REGRAS: handle_propor_regras,
     JobType.FX_BACKFILL: handle_fx_backfill,
+    JobType.SUBMIT_OPENAI_BATCH: handle_submit_openai_batch,
+    JobType.POLL_OPENAI_BATCH: handle_poll_openai_batch,
 }
 
 
@@ -744,9 +1197,11 @@ __all__ = [
     "handle_fx_backfill",
     "handle_ingest",
     "handle_lote_pronto",
+    "handle_poll_openai_batch",
     "handle_propor_regras",
     "handle_regen_guia",
     "handle_submit_lote",
+    "handle_submit_openai_batch",
     "is_retryable",
     "parse_evaluation",
 ]

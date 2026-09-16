@@ -35,4 +35,6 @@ async def capacidades_route(
             403, "sem_acesso_edicao_fotos", "Seu papel na organização não dá acesso à Edição de Fotos."
         )
     settings = await ports.repo.get_org_settings(actor.org_id)
-    return await compute_capabilities(actor=actor, settings=settings, grants=grants)
+    return await compute_capabilities(
+        actor=actor, settings=settings, grants=grants, capabilities=ports.capabilities
+    )

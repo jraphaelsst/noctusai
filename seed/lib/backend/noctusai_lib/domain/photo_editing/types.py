@@ -32,9 +32,9 @@ class PhotoStatus(str, Enum):
     NORMALIZANDO = "normalizando"
     PRONTA = "pronta"
     EDITANDO = "editando"
-    # Econômico-only (Batch API). Present because the SQL CHECK carries it;
-    # no engine path enters it in R1 — see NOC-REMEDIATE[image-edit-batch-c8]
-    # in `noctusai_lib.integrations.image_edit`.
+    # Econômico-only (Batch API, W4): the photo's edit request is inside
+    # a provider batch (`fotos_lotes_openai`) waiting for
+    # `fotos.poll_openai_batch`.
     EM_LOTE_OPENAI = "em_lote_openai"
     EDITADA = "editada"
     AVALIANDO = "avaliando"
@@ -101,7 +101,9 @@ class Room(str, Enum):
 class JobType:
     """Job-type names the engine registers on `domain.jobs.Worker`.
 
-    `fotos.poll_openai_batch` (Econômico) is deliberately absent — C8.
+    Econômico (W4) adds two: `fotos.submit_openai_batch` (collects a
+    batch's ready photos into ONE provider batch) and
+    `fotos.poll_openai_batch` (self-rescheduling 5 / 15 / 30 min poll).
     """
 
     INGEST = "fotos.ingest"
@@ -112,6 +114,8 @@ class JobType:
     REGEN_GUIA = "fotos.regen_guia"
     PROPOR_REGRAS = "fotos.propor_regras"
     FX_BACKFILL = "fotos.fx_backfill"
+    SUBMIT_OPENAI_BATCH = "fotos.submit_openai_batch"
+    POLL_OPENAI_BATCH = "fotos.poll_openai_batch"
 
     ALL: tuple[str, ...] = (
         INGEST,
@@ -122,6 +126,8 @@ class JobType:
         REGEN_GUIA,
         PROPOR_REGRAS,
         FX_BACKFILL,
+        SUBMIT_OPENAI_BATCH,
+        POLL_OPENAI_BATCH,
     )
 
 
@@ -167,6 +173,9 @@ _LEGAL_PHOTO_TRANSITIONS: frozenset[tuple[PhotoStatus, PhotoStatus]] = frozenset
         (_P.PRONTA, _P.EM_LOTE_OPENAI),
         (_P.EDITANDO, _P.EDITADA),
         (_P.EM_LOTE_OPENAI, _P.EDITADA),
+        # Econômico automatic retry: a transient per-item batch failure
+        # sends the photo back to `pronta` for the next provider batch.
+        (_P.EM_LOTE_OPENAI, _P.PRONTA),
         (_P.EDITADA, _P.AVALIANDO),
         (_P.AVALIANDO, _P.AGUARDANDO_DECISAO),
         (_P.AGUARDANDO_DECISAO, _P.APROVADA),
@@ -283,6 +292,53 @@ class Photo:
     altura_original: int | None = None
     tentativas: int = 0
     falha_motivo: str | None = None
+    #: Provider id of the Econômico batch that last carried this photo
+    #: (FK to ``fotos_lotes_openai.openai_batch_id``, migration 132).
+    openai_batch_id: str | None = None
+    created_at: datetime | None = None
+
+
+class OpenAIBatchStatus(str, Enum):
+    """Engine-side lifecycle of one ``fotos_lotes_openai`` row.
+
+    ``preparando`` — row + photo transitions written, provider submit not
+    yet confirmed (a crashed/retried submit resumes from here) ·
+    ``enviado`` — provider accepted it; polling · ``concluido`` — results
+    applied · ``falhou`` — submission or polling failed for good.
+    """
+
+    PREPARANDO = "preparando"
+    ENVIADO = "enviado"
+    CONCLUIDO = "concluido"
+    FALHOU = "falhou"
+
+
+@dataclass(frozen=True)
+class OpenAIBatchRecord:
+    """One provider batch (``fotos_lotes_openai``, migration 132).
+
+    ``itens`` is the frozen list of what was sent — one dict per photo:
+    ``{"foto_id", "edicao_id", "custom_id", "tentativas"}``. It is the
+    correlation table for the results AND the automatic-retry counter
+    (a photo's (id, tentativas) pair appearing in N records = N tries).
+    ``openai_status`` mirrors the provider's own status string.
+    """
+
+    id: str
+    org_id: str
+    lote_id: str
+    modelo_id: str
+    itens: tuple[dict[str, Any], ...] = ()
+    status: OpenAIBatchStatus = OpenAIBatchStatus.PREPARANDO
+    openai_batch_id: str | None = None
+    openai_status: str | None = None
+    input_file_id: str | None = None
+    output_file_id: str | None = None
+    error_file_id: str | None = None
+    consultas: int = 0
+    erro: str | None = None
+    submetido_at: datetime | None = None
+    concluido_at: datetime | None = None
     created_at: datetime | None = None
 
 
@@ -544,6 +600,18 @@ def dedupe_fx_backfill(day_iso: str) -> str:
     return f"{JobType.FX_BACKFILL}:{day_iso}"
 
 
+def dedupe_submit_openai_batch(lote_id: str, signature: str) -> str:
+    """One provider-batch submission per batch STATE: every ingest / retry
+    that changes the photo set yields a fresh key, a duplicate enqueue
+    from the same state is a no-op."""
+    return f"{JobType.SUBMIT_OPENAI_BATCH}:{lote_id}:{signature}"
+
+
+def dedupe_poll_openai_batch(lote_openai_id: str, consulta: int) -> str:
+    """One job per poll round of one provider batch."""
+    return f"{JobType.POLL_OPENAI_BATCH}:{lote_openai_id}:{consulta}"
+
+
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -567,6 +635,8 @@ __all__ = [
     "LlmUsageRow",
     "MAX_BYTES_PER_PHOTO",
     "MAX_PHOTOS_PER_BATCH",
+    "OpenAIBatchRecord",
+    "OpenAIBatchStatus",
     "OrgRule",
     "OrgSettings",
     "PHOTO_CURATOR_PERMISSION",
@@ -592,10 +662,12 @@ __all__ = [
     "dedupe_fx_backfill",
     "dedupe_ingest",
     "dedupe_lote_pronto",
+    "dedupe_poll_openai_batch",
     "dedupe_propor_regras",
     "dedupe_regen_guia",
     "dedupe_regen_guia_manual",
     "dedupe_submit",
+    "dedupe_submit_openai_batch",
     "sha256_text",
     "sources_for",
 ]

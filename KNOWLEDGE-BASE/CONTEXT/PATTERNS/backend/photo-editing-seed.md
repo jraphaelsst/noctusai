@@ -80,7 +80,16 @@ class PhotoEditingPorts:
     clock: Callable[[], datetime] = utcnow
     edit_quota: QuotaTracker | None = None  # key f"fotos.edit:{org_id}", registered by the consumer
     reference_storage: PhotoStorage | None = None  # BucketPhotoStorage(..., bucket="edicao-fotos-referencias")
+    capabilities: Callable[[str], ImageEditCapabilities] = catalog_capabilities  # the Econômico gate
 ```
+
+**`capabilities` is the ONLY Econômico gate** (W4). `submit_batch`,
+`compute_capabilities(..., capabilities=ports.capabilities)`, the batch
+handlers and the consumer's routes all read it. The default resolves
+`image_edit.capabilities_for_model` at CALL time, so a catalog seam
+installed after import is honoured. A consumer that injects a different
+lookup passes the same callable to `openai_image_edit_factory(...,
+capabilities=)` so the adapter's own batch refusal agrees.
 
 **Reference pairs store KEYS, not URLs.** With `reference_storage` wired,
 `ReferencePair.antes_url` / `depois_url` hold keys in that (private) bucket;
@@ -108,8 +117,10 @@ Fake and would let a production batch "succeed" with placeholder bytes.
 | Job type | Payload | Does |
 |---|---|---|
 | `fotos.ingest` | `foto_id` | `recebida → normalizando → pronta`; stores the GPS-stripped JPEG as `original.jpg`, deletes the raw upload; enqueues the edit if the batch is already submitted |
-| `fotos.submit_lote` | `lote_id` | `submetido → processando`; re-validates; enqueues edits for `pronta` photos |
+| `fotos.submit_lote` | `lote_id` | `submetido → processando`; re-validates; Urgente ⇒ enqueues edits for `pronta` photos · Econômico ⇒ enqueues ONE `fotos.submit_openai_batch` |
 | `fotos.edit` | `foto_id` | Urgente only · `pronta → editando → editada`; one combined edit at `compute_edit_size`, Lanczos back to the input size, watermark when staging; cost recorded; enqueues evaluation |
+| `fotos.submit_openai_batch` | `lote_id` | Econômico · waits while any photo is still ingesting (the last ingest re-enqueues it) · gate + price + guide checked before spend · one edit attempt per photo, a `preparando` `fotos_lotes_openai` row, `pronta → em_lote_openai`, then `adapter.submit_batch` → `enviado` + poll #0 in 5 min. A `preparando` row (crash / transient error before the provider confirmed) is RESUMED, never duplicated. Final failure ⇒ every involved photo `falhou`, row `falhou` |
+| `fotos.poll_openai_batch` | `lote_openai_id`, `consulta` | Econômico · self-rescheduling poll: 5 → 15 → 30 → 30… min (`PhotoEditingConfig.openai_batch_poll_schedule_seconds`). A transient POLL error reschedules instead of failing; past `openai_batch_max_wait_seconds` (26 h) every waiting photo fails. Terminal ⇒ `fetch_batch_results` and each item goes through the SAME output path as `fotos.edit` (`em_lote_openai → editada`, cost with `batch=True` at `BATCH_API_DISCOUNT`) → evaluation. Transient item failure (incl. missing / expired) ⇒ back to `pronta` for ONE more provider batch (counted per `(foto_id, tentativas)` across `itens`); a second or fatal one ⇒ `falhou` |
 | `fotos.avaliar` | `foto_id`, `edicao_id` | `editada → avaliando → aguardando_decisao`; `[original, edited]` → strict JSON; structural infidelity FORCES `rejeitar` |
 | `fotos.lote_pronto` | `lote_id` | all photos done → notify, then `processando → pronto` (at-least-once) |
 | `fotos.regen_guia` | — | trailing debounce on pool changes → AI-written DRAFT |
@@ -160,8 +171,11 @@ status, event append; `None` ⇒ lost race) · edits / evaluations / decisions /
 dataset · pool (`add_reference`, `get_reference`, `archive_reference` CAS,
 `count_active_references`, paged `list_references(include_archived=)`) ·
 guides (paged `list_guides`, highest version first) · rules / rule sets /
-effective guides / proposal cursor · costs (`add_llm_usage`, `add_cost`, `list_fx_pending`, `resolve_fx`).
-The Supabase implementation targets social-wiring migrations 123-126 (plus
+effective guides / proposal cursor · costs (`add_llm_usage`, `add_cost`, `list_fx_pending`, `resolve_fx`) ·
+Econômico provider batches (`create_openai_batch`, `get_openai_batch`,
+`update_openai_batch`, `list_openai_batches` → `fotos_lotes_openai`, SW 132;
+`OpenAIBatchRecord.itens` = `{foto_id, edicao_id, custom_id, tentativas, prompt}`).
+The Supabase implementation targets social-wiring migrations 123-126 and 132 (plus
 121 jobs and 122 `llm_usage`) in `schema`, and Core 046 `public.cost_ledger`
 in `cost_schema`.
 
@@ -215,8 +229,14 @@ the seed's flat `{"detail", "code"}` shape.
 - **Idempotent everywhere** — dedupe key per enqueue, state check before work,
   compare-and-set per transition. `fotos.lote_pronto` keys on a digest of
   every photo's state, so the last completion of a round always fires.
-- **Econômico** — `submit_batch` refuses it (`ECONOMICO_IMPLEMENTED = False`);
-  `compute_capabilities` reports `modelo_sem_batch` / `nao_implementado`.
+- **Econômico** (W4) — allowed exactly when `ports.capabilities(model).supports_batch`;
+  otherwise `submit_batch` refuses `economico_indisponivel` and
+  `compute_capabilities` reports `modelo_sem_batch`. Never silently
+  downgraded to Urgente. Dedupe: `fotos.submit_openai_batch` keys on the
+  photo-state digest + the number of provider batches already opened (an
+  automatic retry returns photos to the SAME `pronta` state).
+- **`ImageEditRequest.extra` reaches the provider verbatim** — engine
+  metadata (prompt refs, ids) goes on events / rows, never there.
 
 ---
 
@@ -226,8 +246,13 @@ the seed's flat `{"detail", "code"}` shape.
   returns no usage, so evaluator / rule-proposer calls through
   `LlmStructuredAdapter` record no `cost_ledger` row (only the llm organ's
   process-wide sink sees them). Fix at the organ.
-- `NOC-REMEDIATE[image-edit-batch-c8]` (`integrations.image_edit`) — the
-  Econômico path.
+- Econômico is at-least-once at the provider edge: a crash AFTER the
+  provider accepted a batch but BEFORE the row turned `enviado` resubmits
+  the same photos on resume (double spend for that batch). Closing it needs
+  a provider-side lookup by `metadata.lote_openai_id` — not built.
+- A fatal `fotos.submit_lote` (e.g. the model vanished from the catalog
+  between submit and the job) dead-letters the job but leaves the batch
+  `submetido` with `pronta` photos — pre-existing, speed-independent.
 - Style-guide regeneration is platform scope: no `org_id`, so no
   `cost_ledger` row (the column is NOT NULL).
 - The pool limit's write-time half lives in social-wiring migration 129 —
@@ -243,7 +268,9 @@ the seed's flat `{"detail", "code"}` shape.
 `seed/lib/backend/tests/domain/photo_editing/` — a full upload-to-zip run
 driven by the real `domain.jobs.Worker` on in-memory ports; real-pixel runs
 (720x1080, 1620x1080) proving JPEG output at the input size; retry-once,
-fatal, manual retry, quota, debounce, cost and fx paths; the Supabase
+fatal, manual retry, quota, debounce, cost and fx paths; the Econômico
+run (`test_economico.py`: submit → poll pending → poll done → evaluate →
+ready, auto-retry, expiry, overdue, resume, discount); the Supabase
 repository against `MockSupabaseClient(validate_schema=True)`, which checks
 every column against the real migrations. DI only — no monkeypatching.
 

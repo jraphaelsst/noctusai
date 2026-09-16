@@ -65,9 +65,16 @@ def test_status_literals_match_the_sql_check() -> None:
     ]
 
 
-def test_job_types_exclude_the_c8_batch_poller() -> None:
-    assert "fotos.poll_openai_batch" not in JobType.ALL
-    assert len(JobType.ALL) == 8
+def test_job_types_include_the_economico_pair() -> None:
+    assert JobType.SUBMIT_OPENAI_BATCH == "fotos.submit_openai_batch"
+    assert JobType.POLL_OPENAI_BATCH == "fotos.poll_openai_batch"
+    assert len(JobType.ALL) == len(set(JobType.ALL)) == 10
+
+
+def test_economico_auto_retry_returns_the_photo_to_pronta() -> None:
+    assert can_transition(PhotoStatus.EM_LOTE_OPENAI, PhotoStatus.PRONTA)
+    assert can_transition(PhotoStatus.PRONTA, PhotoStatus.EM_LOTE_OPENAI)
+    assert can_transition(PhotoStatus.EM_LOTE_OPENAI, PhotoStatus.EDITADA)
 
 
 def test_dedupe_keys_are_stable_and_distinct() -> None:
