@@ -80,10 +80,19 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # shared one (that was §E.5's whole problem: one compromised turn
 # could read every other conversation's transcript under the same
 # shared uid 1001/HOME=/run/julia).
+# `--user-group` (tried first, real-image check 2026-09-15) auto-
+# assigns the GROUP an arbitrary next-free SYSTEM gid (999, 998, 997
+# on the real image) and ignores `--uid` for it entirely — `useradd`
+# only ever pins the uid it was given to the USER, never to the group
+# `--user-group` creates alongside it. Explicit `groupadd --gid`
+# FIRST, then `useradd --gid` to join that exact group, is what
+# actually makes gid == uid == 2000+K for every slot (contract §E.11
+# requires BOTH, not uid alone).
 RUN for _slot in 0 1 2; do \
         _uid=$((2000 + _slot)); \
+        groupadd --system --gid "$_uid" "julia-cli-$_slot"; \
         useradd --system --no-create-home --shell /usr/sbin/nologin \
-            --uid "$_uid" --user-group "julia-cli-$_slot"; \
+            --uid "$_uid" --gid "$_uid" "julia-cli-$_slot"; \
     done
 ENV JULIA_CLI_SLOTS=3
 # The SDK's one-off version-check spawn (`_internal/transport/
