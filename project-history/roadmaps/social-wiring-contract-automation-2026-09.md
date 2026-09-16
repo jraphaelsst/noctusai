@@ -16,11 +16,11 @@ The template spec derived from the 8 samples (no personal data) is kept locally,
 |---|---|---|---|
 | T1 | Office answers the 15 policy questions | Answers saved on the office page (artifact republished with non-empty answers) | Each answer is a one-line change in `contrato_gerador/politica.py`; until then the generator emits an aviso per pending decision |
 | T2 | User approves the F6 data wave | User request, or the first real generation attempt refused for a `Complementos` field | Every one of the 6 contract variants is refused today; F6 is what makes a contract actually come out |
-| T3 | Next social-wiring deploy | `noc-ship` / `predeploy_check` run for social-wiring | Migrations 105–112 are on `dev` but unapplied; the Contratos, certidões, matrícula, qualificação and negociação screens error until they are |
+| T3 | Next social-wiring deploy | `noc-ship` / `predeploy_check` run for social-wiring | **Corrected 2026-09-16**: the live schema is current through 113 (the `supabase_migrations` ledger is incomplete for social-wiring and must never be used to judge applied state — probe the schema). The migrations this deploy applies are **114–118**; until then the termos, ato-detalhes, certidão-situação, data-casamento and imóvel-certidão surfaces error |
 | T0 | Already fired — recurrence N=3 | Three retention-sweep primitives with no scheduler (`NOC-REMEDIATE[retention-sweep-scheduler]`) | DRY rule: N=3 must formalize; retention dates are stamped but nothing purges, so the user's LGPD retention choice is not enforced |
 | T4 | A third copy of a card/matrícula route helper appears | `_auth_parts` duplicated in `imovel_hub/router.py` + `matriculas/router.py` (N=2 left after card_hub consolidated) | Consolidate before the third copy ships |
 
-**Today's status**: T0 fired (not yet worked). T1, T2, T3, T4 not fired.
+**Today's status (2026-09-16)**: T1 **fired and applied** — the office answered all 15 questions on 2026-09-15 and each answer is now generator behavior. T2 **fired and delivered** — the F6 data wave shipped (migrations 114–118 + panels), and all six contract variants generate. T3 **fired** — this deploy. T0 still open (three retention sweeps, no scheduler). T4 still open (`_auth_parts` duplicated, N=2).
 
 > **Every slice carries TWO recipes.** Test-recipes are green at merge (numbers in the decision log). The verify-recipes below are live-state checks — none can run until T3 applies the migrations.
 
@@ -45,29 +45,30 @@ The template spec derived from the 8 samples (no personal data) is kept locally,
 
 **Why ship now**: the data entry is useful on its own (it replaces free-text fields the office types today), and the generator's refusal list is the F6 work order.
 
-## Phase 2 — F6 data wave: store what the contracts use (DEFERRED — fires on T2)
+## Phase 2 — F6 data wave: store what the contracts use (SHIPPED 2026-09-16 — T2 fired)
 
-| # | Title | Files | Trigger | Verify recipe (write it now, run it when it ships) |
+| # | Title | Files | Status | Verify recipe (live-state proof) |
 |---|---|---|---|---|
-| P2.1 | Replace the empty `Complementos` provider (`NOC-REMEDIATE[contrato-f6-campos-missing]`) with stored fields: título aquisitivo phrase, posse prazo/marco/prorrogação/multa diária, ônus credor/quitação, signing platform, corretagem payer/marcos/favorecido link, intermediário qualification | `app/modules/card_hub/contrato_gerador/dados.py` provider + new migration + panels | T2 | Generate a contract for each of the 6 variants on staging data; each opens in Word with no lint findings |
-| P2.2 | Permuta as a parcela tipo, several permuta imóveis per deal, per-imóvel act selection role, permuta deed/ITBI payer | negociação estruturada + matrículas selection | T2 | A permuta deal renders both imóveis' literal descriptions in Preço and Posse |
-| P2.3 | Titular as an `atendimento_partes` row (or a titular certidões path) so the titular's certidões reach the generator | card_hub partes + certidões routes | T2 | A card whose titular is the seller renders the seller's 12 certidões |
-| P2.4 | Certidões the contracts cite but the system lacks: IPTU and condomínio CND, company and previous-owner certidões, "negativa com apontamentos de homônimos" | certidões registry + migration | T2 | The certidões clause lists the imóvel group with IPTU number and date |
+| P2.1 | Per-deal contract terms: posse (prazo/marco/parcela), permuta reverse posse, itens integrantes, ad corpus, seller obligations, ônus payoff, confissão juros/garantia, corretagem payer + trigger parcelas; parcela tipo `permuta` with a multi-ativo link; intermediário qualification (pessoa_tipo, documento, e-mail, endereço, representante, favorecido); contract `assinatura_data` + per-contract `prazo_pendencias_dias` | `app/modules/card_hub/negociacao_estruturada_*.py`, `contratos_service.py`, `migrations/114`, `frontend/src/components/card/TermosNegocioSection.tsx` | **shipped** (a1a735e6, 8f862966) | On a real deal: fill Termos, add a permuta parcela carrying two imóveis, mark a parcela as triggering corretagem; those items leave the readiness list |
+| P2.2 | Matrícula act details: seed deterministic extractor (natureza, date, parties + CPF, creditor, instrument, referenced acts, per-field confidence), `matricula_ato_detalhes`, título-aquisitivo phrase, ônus creditor, previous owners + last-sale date, per-imóvel act roles (objeto/permuta) | `seed/.../documents/matricula_ato_detalhes.py`, `app/modules/matriculas/{ato_detalhes,titulo}_service.py`, `migrations/115`, `frontend/src/components/matricula/MatriculaAtoDetalhesEditor.tsx` | **shipped** (86ee5e52, b4b84842) | Transcribe a matrícula; each act shows extracted details with confidence; confirm the título phrase; previous owners appear with the 5-year certidão requirement |
+| P2.3 | Titular certidões + previous-owner role: `certidoes_por_cliente`, `GET /api/certidoes/clientes/{id}/resultados`, `vincular-cliente`, papel `antigo_proprietario`, `negativa_com_homonimos`, company situação cadastral | `app/modules/certidoes/**`, `migrations/116`, `frontend/src/components/CertidoesPartePanel.tsx` | **shipped** (6d4fc934, cc7ec83a) | The card titular gets its own certidões panel; a CNPJ consulta carries situação and shows "exigida no contrato" per the office rule |
+| P2.4 | Imóvel certidões group + identity dates: `cnd_iptu`/`cnd_condominio` types with structured extraction, IPTU inscrição, matrícula certidão date, `GET /api/imoveis/{codigo}/certidoes`; marriage date + estado-civil certidão emission date through the real extraction ladder; office settings (signing platform, posse daily fine, pendências prazo) | `app/modules/imovel_hub/documentos_service.py`, `migrations/118`, `seed/.../documents/{types,civil_status,real,fake}.py`, `migrations/117`, `app/routers/settings_router.py` | **shipped** (224c9ee0, 13bbea97, dc51654d) | Upload an IPTU CND → número/emissão extracted; upload a certidão de casamento → marriage date suggested; Settings carries the platform + daily fine |
+| P2.5 | Generator wired to real storage: every former `Complementos` field read from its table, `Complementos` (dataclass, provider, seam, marker) deleted, titular certidões resolved so `Pessoa.certidoes` is no longer optional, readiness items carry a `destino` screen target | `app/modules/card_hub/contrato_gerador/**` | **shipped** (ec27a505) | **All six spec §1.3 variants generate** with `faltando == []` and `bloqueios == []` (`TestVariantes::test_each_variant_generates_end_to_end[1..6]`); the saved version opens with consecutive clause numbers, correct cross-references and literal matrícula text |
 
-**Why not now**: the office's answers (T1) change several of these fields (e.g. Q4 encargo, Q12 multa diária, Q13 permuta despesas); building them before the answers risks rework.
+**What shipped instead of the original plan**: P2.1–P2.4 were written as deferred rows gated on T2; the office's answers (T1) arrived first, so the wave was built with the answers already applied — which is why no rework was needed. P2.5 was not in the original plan: it is the wiring slice that turned stored data into a generated contract.
 
-## Phase 3 — apply the office's policy answers (DEFERRED — fires on T1)
+## Phase 3 — apply the office's policy answers (SHIPPED 2026-09-15/16 — T1 fired)
 
-| # | Title | Files | Trigger | Verify recipe |
+| # | Title | Files | Status | Verify recipe |
 |---|---|---|---|---|
-| P3.1 | Turn each answered question into its `politica.py` value; remove the matching aviso | `app/modules/card_hub/contrato_gerador/politica.py` | T1 | The readiness panel no longer shows the aviso for an answered question |
-| P3.2 | Confirm the correct prices of sample contracts 01 and 08 (Q15) and use them as the first real generation check | local samples only (never committed) | T1 | Generating those deals from their card data matches the agreed price |
+| P3.1 | All 15 answers turned into generator behavior: Lei 6.515 chosen by marriage date (before/after 26/12/1977); rescisão = multa (= sinal) + proven costs; one FGTS+financiamento parcela (a separate `fgts` parcela is refused); company certidões when ativa/inapta/baixada < 5 years; previous-owner certidões when the last registered sale is < 5 years; certidão freshness < 30 days; estado-civil certidão < 90 days; office daily fine, applied to each party in permuta; the receiving party pays ITBI + registry; witnesses identified by CPF | `app/modules/card_hub/contrato_gerador/{politica,derivacao,contexto,frases,modelo_texto}.py` | **shipped** (1a96d726) | Readiness shows no pending-question avisos; answers that ruled out an alternative became fixed rules, so only the Q1 items, the Lei 6.515 cut-off and the day/year limits remain configurable |
+| P3.2 | Confirm the correct prices of sample contracts 01 and 08 (Q15) | local samples only (never committed) | **answered, data fix outstanding** | The office confirmed: contract 01's declared price is right and its parcel split is wrong; contract 08's contract price is right and **the card's value is wrong**. Correcting that card is a production-data edit for the office, not a code change; the gate already blocks Σ parcelas ≠ price |
 
 ## Phase 4 — go-live of Phase 1 (DEFERRED — fires on T3)
 
 | # | Title | Files | Trigger | Verify recipe |
 |---|---|---|---|---|
-| P4.1 | Apply migrations 105–112 in order through the deploy flow, then run every P1.x verify recipe | `products/social-wiring/backend/migrations/105…112` | T3 | `supabase_migration_list` shows 105–112; each P1.x recipe passes |
+| P4.1 | Apply migrations **114–118** in order, then run every P1.x and P2.x verify recipe | `products/social-wiring/backend/migrations/114…118` | T3 — **firing 2026-09-16** | The live schema carries `atendimento_negociacao_termos`, `matricula_ato_detalhes`, `certidao_consultas.situacao_cadastral`, `clientes.data_casamento` and the `imovel_documentos` extraction columns; each recipe passes. **Judge applied state from the schema, never from `supabase_migrations`** — that ledger is incomplete for social-wiring (its last row is 101 while the schema was current through 113) |
 
 ## Phase 5 — enforce retention (T0 already fired — schedule next)
 
@@ -83,12 +84,18 @@ The template spec derived from the 8 samples (no personal data) is kept locally,
 - ❌ "Foreign-key social_wiring into `erp.*` for parcelas." `erp.parcelas_contrato` is a post-signing ledger in another live product.
 - ❌ "Apply these migrations outside a deploy." User decision (2026-09-14).
 - ❌ "Commit or quote the real contract samples." They carry real CPF/RG/bank data; the folder is gitignored.
+- ❌ "Believe a pytest timeout taken under parallel load." Gates run with `--timeout=180`; a timeout is re-run before it is called a verdict. Under a six-agent dispatch the 60s default produced two confident, wrong "deterministic hang" diagnoses.
+- ❌ "Run a gate against whatever tree the primary happens to be in." `predeploy_check` defaults to the primary checkout: pinned at a worktree it is evidence, unpinned it silently measured a tree 40 commits behind and returned green.
 
 ## Open questions (to revisit at trigger time)
 
-- **Q-office**: the 15 policy questions on the office page (canonical wording, Lei 6.515/77, multa rescisória, rescisão encargo, corretagem on rescisão, FGTS parcela shape, meaning of `saldo`, TJSP/TRF3 mapping, company and previous-owner certidões, certidão validity, pendência deadlines, posse daily fine, permuta costs, signature block, prices of contracts 01 and 08).
-- **Q-template**: does the office want to edit the clause wording in Word later? Today the wording is reviewable text in `contrato_gerador/modelo_texto.py`, built into `.docx` at runtime.
-- **Q-titular**: model the titular as a parte, or give certidões a titular path (P2.3)?
+- ~~**Q-office**~~: **answered 2026-09-15** — all 15, applied in P3.1.
+- ~~**Q-titular**~~: **answered** — certidões got a titular path (`certidoes_por_cliente`), not a parte row.
+- **Q-artifact** 🔴 **open, user's decision**: the saved version is an **ABNT PDF**, while the 2026-09-14 decision was an editable `.docx` (PDF only at signing). The `.docx` is now an internal intermediate — contract §5 and the pre-existing tests make PDF the stored artifact. Keep PDF, or store both?
+- **Q-template**: does the office want to edit the clause wording in Word later? Today the wording is reviewable text in `contrato_gerador/modelo_texto.py`.
+- **Q-identity-docs** 🔴 **open, user's decision**: the `rg` and `cpf` upload types are still `ativo = false` (migration 057 withholds them pending a human LGPD intake), so identity extraction runs only from certidões de casamento/nascimento. Run the intake and enable them, or leave as is?
+- **Q-procuração**: procurador/inventariante contracts stay refused — no sample carries that wording. The office owes a sample before it can be built.
+- **Still homeless by design** (named refusals, never invented values): `onus_quitacao='ja_quitado'` (stored by 114, no sample clause → `ONUS_QUITACAO_SEM_REDACAO`), `obrigacoes_vendedor` and `permuta_obrigacoes_entrega` (stored, no clause prints → aviso), and the permuta quote rendering without rich-text formatting.
 
 ## Decision log
 
@@ -99,10 +106,25 @@ The template spec derived from the 8 samples (no personal data) is kept locally,
 - **2026-09-14**: Imóvel documents and matrícula text follow the same retention mechanism as card documents.
 - **2026-09-14**: F5 = build the generator now and gate the gaps (not "data wave first", not "wait for the office").
 - **2026-09-14**: Merged-tip gates at the end of Phase 1 — social-wiring backend 3823 passed; seed domain + documents + docx_render 910 passed; frontend tsc clean, vitest 1354 passed across 110 files, vite build clean.
+- **2026-09-15**: The office answered all 15 policy questions. Answers that ruled out an alternative became fixed rules rather than switches; only the Q1 items, the Lei 6.515 cut-off date and the day/year limits stayed configurable.
+- **2026-09-16**: **Storage vocabulary is canonical.** The generator's `posse_marco='parcela_financiamento'` was dropped rather than mapped — it assumed the marco parcela *is* the financiamento parcela, true of one sample and false in general. The marco now names its parcela (`posse_marco_parcela_id`) and the printed number is computed.
+- **2026-09-16**: **Readiness carries a screen target.** `faltando[].destino = {tela, rota, ancora, ids}` from one table; the card is not deep-linkable (the dialog owns its subpage in local state), so a card destino returns `/clientes` plus the subpage to select rather than inventing a query param the SPA ignores.
+- **2026-09-16**: The permuta value is the permuta parcela's own `valor` — no side-car field, so it sits inside Σ parcelas by construction.
+- **2026-09-16**: The `supabase_migrations` ledger is incomplete for social-wiring; applied state is judged by probing the live schema. Prod was current through 113, so this deploy applies 114–118 only.
+- **2026-09-16**: Merged-tip gates at the end of Phase 2 (tip ec27a505) — social-wiring backend 4151 passed; seed documents + domain 1199 passed; frontend tsc clean, vitest 1504 passed across 117 files, vite build clean. Deploy cut at `7e5f5ad6` with CI green on both workflows.
+- **2026-09-16**: Deploy coordination across four concurrent sessions — one owner blesses, the others hold pushes to a declared cut sha. Another session's migrations (core 045, academia/agents 006-009) ride to the prod branch **unapplied**; applying them early would break every product's next build, because `build-scope.txt` is derived from `deploy_scope='live'` and the build refuses a slug with no compose service.
 
-## Retrospective (filled at first trigger fire)
+## Retrospective (T1, T2 and T3 all fired 2026-09-15/16)
 
-*To be filled when T1, T2 or T3 fires.*
+**What the plan got right.** Shipping the gated generator first (Phase 1) made the refusal list the work order for Phase 2: every `Complementos` field was already named, typed and consumed, so the data wave had a contract to build against instead of a guess. Six parallel slices landed with no substantive collision.
+
+**What the plan got wrong.** Phase 2 was written as four deferred rows waiting on T2, and Phase 3 as the answers arriving later. In practice the office answered first, so the wave was built with the answers in hand — the deferral bought nothing, and the one row nobody had planned (P2.5, the wiring slice) was the row that actually produced a contract. Lesson: when a phase's only blocker is someone else's answer, plan the shape of the work anyway; it costs nothing and the phase ships intact when the answer lands.
+
+**What nearly went wrong, twice, for the same reason — a verdict measured against the wrong thing.**
+1. Two confident "deterministic hang" diagnoses came from a 60-second per-test timeout tripping under six concurrent agents. The test was fine; the machine was loaded. A timeout is not a verdict.
+2. `predeploy_check` defaults to the primary checkout. Three green "ready" verdicts had been computed against a tree 40 commits behind with uncommitted files, and a peer session independently made the same class of error (asserting a stale-tree read as fact about migration 045) within the same hour. The tool's docstring already warns about it — the gap is that the dangerous behavior is the default and the failure mode is a green verdict. That is a silent error in the §1 sense and wants a refuse-not-null: the gate should refuse when the tree it is about to measure is behind its remote or dirty.
+
+**Tooling drift worth fixing.** `branch_pointer` commits its ledger row to the primary's local `dev` *before* discovering the tree is dirty, stranding the commit and blocking every later push; `task_branch start` leaves a worktree without `node_modules`, so every frontend engineer hand-links three package directories; `noctus.dev.catalog` writes into the primary checkout as a side effect of a read-shaped call.
 
 ## Composes with
 

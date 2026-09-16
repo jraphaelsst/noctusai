@@ -67,24 +67,18 @@ COMMENT ON COLUMN social_wiring.clientes.data_casamento_confirmado_por IS
     'data_casamento means the extractor wrote it unattended at high '
     'confidence, or an operator typed it directly (origem=''manual'').';
 
--- Pending-suggestion lookup, widened to also catch data_casamento readings
--- -- same predicate 110 built for estado_civil/regime_bens, same index.
-DROP INDEX IF EXISTS social_wiring.idx_sw_cliente_documentos_sugestao_doc_pendente;
-CREATE INDEX IF NOT EXISTS idx_sw_cliente_documentos_sugestao_doc_pendente
-    ON social_wiring.cliente_documentos (cliente_id, extracao_em DESC)
-    WHERE deleted_at IS NULL
-      AND extracao_descartada_em IS NULL
-      AND (
-          extracao_cpf IS NOT NULL
-          OR extracao_rg IS NOT NULL
-          OR extracao_estado_civil IS NOT NULL
-          OR extracao_regime_bens IS NOT NULL
-          OR extracao_data_casamento IS NOT NULL
-      );
-
 -- ----------------------------------------------------------------------------
 -- 2. cliente_documentos -- the extractor's own readings, data_casamento AND
 --    the document-scoped (never promoted) data_emissao
+--
+-- 🔴 ORDER MATTERS: these columns are added BEFORE the partial index below,
+-- whose predicate names `extracao_data_casamento`. The first version of this
+-- file rebuilt that index in section 1, ahead of the ALTER that creates the
+-- column, and failed on the live database with
+-- `42703: column "extracao_data_casamento" does not exist` (2026-09-16).
+-- The whole script rolled back, so nothing was half-applied — but the file
+-- was unrunnable against ANY database, and the suite never caught it because
+-- `test_migration_*` asserts on the SQL TEXT and never executes it.
 -- ----------------------------------------------------------------------------
 ALTER TABLE social_wiring.cliente_documentos
     ADD COLUMN IF NOT EXISTS extracao_data_casamento            DATE,
@@ -107,6 +101,23 @@ COMMENT ON COLUMN social_wiring.cliente_documentos.extracao_data_emissao IS
     'promoted to clientes; read back by identidade_extracao_service.'
     'certidao_estado_civil_mais_recente for the office''s 90-day-freshness '
     'rule. Populated for both certidao_casamento and certidao_nascimento.';
+
+-- Pending-suggestion lookup, widened to also catch data_casamento readings
+-- -- same predicate 110 built for estado_civil/regime_bens, same index.
+-- Rebuilt HERE, after the ALTER above, because its predicate names
+-- `extracao_data_casamento` (see the section header).
+DROP INDEX IF EXISTS social_wiring.idx_sw_cliente_documentos_sugestao_doc_pendente;
+CREATE INDEX IF NOT EXISTS idx_sw_cliente_documentos_sugestao_doc_pendente
+    ON social_wiring.cliente_documentos (cliente_id, extracao_em DESC)
+    WHERE deleted_at IS NULL
+      AND extracao_descartada_em IS NULL
+      AND (
+          extracao_cpf IS NOT NULL
+          OR extracao_rg IS NOT NULL
+          OR extracao_estado_civil IS NOT NULL
+          OR extracao_regime_bens IS NOT NULL
+          OR extracao_data_casamento IS NOT NULL
+      );
 
 -- Freshness lookup: the client's certidões, newest emission first. Partial
 -- on the two document types that carry this field, same reasoning the
