@@ -13,6 +13,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.runtime import gate
+from app.runtime.slots import DEFAULT_SLOT_COUNT, FakeSlotPool, TurnSlot
 from app.runtime.types import (
     AgentEvent,
     AgentSpec,
@@ -38,10 +39,24 @@ ScriptItem = (
 
 class FakeAgentRuntime:
     """``AgentRuntime`` for dev/test. Never spawns a subprocess, never
-    calls any LLM."""
+    calls any LLM.
 
-    def __init__(self, script: list[ScriptItem]) -> None:
+    Contract §E.11: ``try_reserve()`` leases from an internal
+    :class:`~app.runtime.slots.FakeSlotPool` sized by ``capacity``
+    (default :data:`~app.runtime.slots.DEFAULT_SLOT_COUNT`, matching the
+    real deploy's 3 slots) — dependency-inversion mirror of how the real
+    runtime will hold its own :class:`~app.runtime.slots.RealSlotPool`
+    (B3). ``run_turn``'s ``slot`` parameter is accepted for signature
+    parity with the real runtime; this fake never spawns a subprocess, so
+    it has nothing to do with the slot beyond accepting it.
+    """
+
+    def __init__(self, script: list[ScriptItem], *, capacity: int = DEFAULT_SLOT_COUNT) -> None:
         self._script = list(script)
+        self._pool = FakeSlotPool(capacity)
+
+    def try_reserve(self) -> TurnSlot | None:
+        return self._pool.try_reserve()
 
     async def run_turn(
         self,
@@ -49,6 +64,7 @@ class FakeAgentRuntime:
         ctx: TurnContext,
         prompt: str,
         broker: ApprovalBroker,
+        slot: TurnSlot | None = None,
     ) -> AsyncIterator[AgentEvent]:
         for item in self._script:
             if isinstance(item, tuple):
