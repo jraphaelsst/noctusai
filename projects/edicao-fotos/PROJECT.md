@@ -1,6 +1,7 @@
 # Edição de Fotos — AI photo editing for real estate
 
-> **Status:** S0 — contract only. No engine code written. Not started.
+> **Status:** Wave 1 (seed organs) SHIPPED to `dev` @ `ce5538dc`, 2026-09-16.
+> Waves 2-4 not started. No engine, no product module, no migrations applied.
 > **Base:** `7e5f5ad6` (origin/dev at 2026-09-16).
 > **Spec:** `../../genesis vision/README.md` (sibling, spec-only — no code).
 > **Approved plan:** `~/.claude/plans/hey-claude-i-need-gentle-spring.md` (2026-09-15).
@@ -211,6 +212,66 @@ Relevant to Phase 2 (write-back) and to the probe design:
 > strict `== 401`"*. That rule is about **our** routes. A Vista-facing adapter must
 > discriminate on message; do not let the keeper's shape push a status-only read into
 > the adapter.
+
+## 4b · Wave 1 — shipped 2026-09-16 (`dev` @ `ce5538dc`)
+
+Seven seed slices, built in parallel worktrees off `7e5f5ad6`, merged to one tip, and
+gated on the MERGED result — not seven per-branch greens.
+
+| slice | organ | independent verification |
+|---|---|---|
+| S1 | `domain/jobs` hardened + `migrations/jobs.sql.template` | `retry_policy.py` byte-identical (blob `513f182a`) — its 3 live consumers untouched |
+| S2 | `integrations/llm` + image-edit catalog | pricing exact: $4.00 back-compat, $38 image-only, $43 mixed |
+| S3 | `primitives/image_sizing` + `integrations/imaging` | GPS strip proven on a real EXIF fixture; `gps_stripped` False on a GPS-less control |
+| S4 | `integrations/fx` (BCB PTAX) | 33 tests in 0.05s (offline by proof); `Decimal`; no `LLM_USD_TO_BRL` fallback |
+| S5 | `integrations/payments` + `domain/payments` | `products/core/` zero bytes touched; duplicate-webhook no-op proven |
+| S6 | `domain/permissions` + `api/auth/platform` | strict `== 401`; org-admin→platform gate denied (the escalation trap) |
+| S7 | `integrations/vista.list_imovel_fotos` | verified against the REAL production wire shape |
+
+**Merged-tip gates:** seed lib **4469 passed / 1 skipped / 0 failed** · seed framework
+**203 passed** · `verify-kb-sync` · `check-claude-md-router` · `check-seed-declared-imports`
+· `check-seed-test-root-ci-coverage` — all clean.
+
+**Integration conflicts, all additive keep-both** (`backend-engineer.md` owns_kb +
+`INDEX.md` + `pyproject.toml`). Three slices designed as file-disjoint were textually
+coupled by the `owns_kb` gate and a shared dependency list — *file-disjoint is not
+effect-disjoint*, and this is the cheap version of that lesson.
+
+**New seed dependencies reaching prod at the NEXT promote** (they change a build input
+for every product): `Pillow`, `pillow-heif` (S3), `stripe` (S5). Whoever runs that
+promote will see them in the rebuild set.
+
+## 4c · 🔴 Blockers for Wave 2+ — none are solvable by an agent
+
+1. **The OpenAI account has no credits.** Every cache refresh this session returned
+   `429 — "You have no credits remaining"`. This is not a side issue: the entire product
+   is four OpenAI steps (edit · evaluate · guide · rule-propose). **Nothing downstream of
+   Wave 1 can be exercised end-to-end until this is resolved**, including the smoke run
+   the plan gates release on.
+2. **C8 — Econômico has no batch-capable model** (§C8). Supply `gpt-image-2` pricing, or
+   cut Econômico from v1. Unbuilt deliberately: it cannot be exercised, so it would ship
+   untested by construction.
+3. **Migrations are owner-gated.** SW starts at **119** (114-118 applied to prod
+   2026-09-16); Core at **046/047** (045 is taken and must stay unapplied — §C9).
+4. **Secrets** — Stripe live, Asaas production, OpenAI. `VISTA_PHOTOS_API_KEY` is NO
+   LONGER needed (§C5).
+5. **Release shape** (§C7) — recommendation stands: R1 = engine + review + zip, R2 =
+   billing. Wave 2 refactors *live* billing with real customers; pairing it with a new
+   AI pipeline doubles the blast radius for no validation benefit.
+
+## 4d · Leftovers
+
+- **8 worktrees not torn down** (`ef-s1..s7`, `ef-wave1-integration`, `edicao-fotos-contract`).
+  Deliberate: `task_branch action=cleanup` pushes a salvage pointer, which cancels an
+  in-flight CI run. Tear down after the `dev` run is green.
+- `NOC-REMEDIATE[llm-usage-image-columns]` — `SupabaseUsageSink` can't write the new
+  image-token columns yet. That migration is the one that must become the **seed template**
+  (§C2, N=3), not a fourth hand-copy.
+- `NOC-REMEDIATE[llm-model-unpriced]` — `gpt-image-2` (see C8).
+- `mcp/noctusai/tests/test_llm_providers.py` is effectively frozen to edits: a pre-existing
+  unannotated self-monkeypatch at line ~356 makes the guard refuse any edit to the file.
+  Annotate or rewire before a later slice needs to touch it.
+- N=2 triage: a fake-core-client shim duplicated across two auth test files.
 
 ## 5 · Owner-consent gates (from the approved plan §7, unchanged)
 
