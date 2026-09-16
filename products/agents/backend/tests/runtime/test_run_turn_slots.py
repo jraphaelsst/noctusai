@@ -83,6 +83,30 @@ def _broker() -> StoreApprovalBroker:
     return StoreApprovalBroker(FakeApprovalStore(), timeout_seconds=5, instance_id="inst-1")
 
 
+class _CountingTranscriptStore(FakeTranscriptStore):
+    """A real :class:`FakeTranscriptStore` (never a monkeypatch — a proper
+    test double via subclassing) that additionally records every
+    ``delete_session`` call, so a test can assert exactly which session
+    was targeted (or that none was)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.delete_calls: list[tuple] = []
+
+    def delete_session(self, org_id, conversation_id, sdk_session_id) -> int:
+        self.delete_calls.append((org_id, conversation_id, sdk_session_id))
+        return super().delete_session(org_id, conversation_id, sdk_session_id)
+
+
+class _DeleteAlwaysFailsStore(FakeTranscriptStore):
+    """A real :class:`FakeTranscriptStore` whose ``delete_session`` always
+    raises — scripts "the abandoned-session cleanup's delete call fails"
+    without touching any production code."""
+
+    def delete_session(self, org_id, conversation_id, sdk_session_id) -> int:
+        raise RuntimeError("boom-delete")
+
+
 def _runtime(*, transport_factory, transcripts=None, slot_pool=None) -> ClaudeAgentSdkRuntime:
     return ClaudeAgentSdkRuntime(
         academia_api=FakeAcademiaApi(),
@@ -435,3 +459,131 @@ class TestMirrorError:
         assert transcripts.get_estado(ctx.org_id, ctx.conversation_id) == "incompleto"
         # The mirror_error frame itself never becomes a published AgentEvent.
         assert all(e["event"] != "mirror_error" for e in events)
+
+
+class TestAbandonedSessionCleanup:
+    """Contract §E.11 / ``LGPD-WARNINGS.md`` (2026-09-15): an abandoned
+    (``truncado``/``incompleto``/``invalido``) session's rows are deleted
+    and its conversation's ``transcript_estado`` reset to ``"ok"`` before
+    the fresh session starts — never for a merely MISSING transcript
+    (nothing to delete), never for a brand-new conversation, and never in
+    a way that can kill the turn.
+
+    The deletion/reset assertions call ``_resolve_resume`` directly
+    (sync, no transport involved) rather than draining a full
+    ``run_turn()``: a full turn's OWN ``finalize()`` unconditionally
+    marks a never-pinned mirror ``invalido`` at turn end under this fake
+    ``Transport`` (nothing here drives the SDK's real local-disk-to-
+    mirror batching that would otherwise pin it) — a HARNESS artifact,
+    not a claim about this cleanup, that would otherwise clobber the
+    very ``"ok"`` reset under test. See the note in
+    ``TestFreshTurnHappyPath`` for the same caveat."""
+
+    @pytest.mark.parametrize("estado", ["truncado", "incompleto", "invalido"])
+    def test_abandoned_estado_deletes_exactly_that_session_and_resets_estado(
+        self, estado
+    ):
+        transcripts = _CountingTranscriptStore()
+        ctx = _ctx(sdk_session_id="old-sess")
+        transcripts.register_conversation(ctx.org_id, ctx.conversation_id, estado)
+        transcripts.append_entries(
+            ctx.org_id, ctx.conversation_id, "old-sess", [{"type": "assistant", "uuid": "u1"}]
+        )
+
+        # A second, unrelated conversation (same org) — must stay untouched.
+        other_conv_id = uuid4()
+        transcripts.register_conversation(ctx.org_id, other_conv_id, "ok")
+        transcripts.append_entries(
+            ctx.org_id, other_conv_id, "other-sess", [{"type": "assistant", "uuid": "z1"}]
+        )
+
+        runtime = _runtime(transport_factory=lambda: _ScriptedTransport([]), transcripts=transcripts)
+        mirror, entries, fallback_text = runtime._resolve_resume(ctx)
+
+        assert entries is None
+        assert fallback_text is not None
+        assert transcripts.delete_calls == [(ctx.org_id, ctx.conversation_id, "old-sess")]
+        assert transcripts.load(ctx.org_id, ctx.conversation_id, "old-sess") is None
+        assert transcripts.get_estado(ctx.org_id, ctx.conversation_id) == "ok"
+
+        # The unrelated conversation's own session and estado are intact.
+        assert transcripts.load(ctx.org_id, other_conv_id, "other-sess") == [
+            {"type": "assistant", "uuid": "z1"}
+        ]
+        assert transcripts.get_estado(ctx.org_id, other_conv_id) == "ok"
+
+    def test_a_missing_transcript_deletes_nothing(self):
+        transcripts = _CountingTranscriptStore()
+        ctx = _ctx(sdk_session_id="never-stored-sess")
+        transcripts.register_conversation(ctx.org_id, ctx.conversation_id, "ok")
+
+        runtime = _runtime(transport_factory=lambda: _ScriptedTransport([]), transcripts=transcripts)
+        _mirror, entries, fallback_text = runtime._resolve_resume(ctx)
+
+        assert entries is None
+        assert fallback_text == RESUME_LOST_CONTEXT_TEXT
+        assert transcripts.delete_calls == []
+        # estado was already "ok" — untouched, not reset (nothing to reset).
+        assert transcripts.get_estado(ctx.org_id, ctx.conversation_id) == "ok"
+
+    def test_a_fresh_conversation_never_attempts_a_delete(self):
+        transcripts = _CountingTranscriptStore()
+        ctx = _ctx(sdk_session_id=None)
+        transcripts.register_conversation(ctx.org_id, ctx.conversation_id, "ok")
+
+        runtime = _runtime(transport_factory=lambda: _ScriptedTransport([]), transcripts=transcripts)
+        _mirror, entries, fallback_text = runtime._resolve_resume(ctx)
+
+        assert entries is None
+        assert fallback_text is None
+        assert transcripts.delete_calls == []
+
+    def test_a_usable_transcript_never_attempts_a_delete(self):
+        """The happy path — a usable resume must never touch delete or
+        estado at all."""
+        transcripts = _CountingTranscriptStore()
+        ctx = _ctx(sdk_session_id="good-sess")
+        transcripts.register_conversation(ctx.org_id, ctx.conversation_id, "ok")
+        transcripts.append_entries(
+            ctx.org_id, ctx.conversation_id, "good-sess", [{"type": "assistant", "uuid": "u1"}]
+        )
+
+        runtime = _runtime(transport_factory=lambda: _ScriptedTransport([]), transcripts=transcripts)
+        _mirror, entries, fallback_text = runtime._resolve_resume(ctx)
+
+        assert entries == [{"type": "assistant", "uuid": "u1"}]
+        assert fallback_text is None
+        assert transcripts.delete_calls == []
+        assert transcripts.get_estado(ctx.org_id, ctx.conversation_id) == "ok"
+
+class TestFullTurnSurvivesADeleteFailure:
+    pytestmark = _asyncio_mark
+
+    async def test_a_delete_failure_still_yields_a_working_fresh_turn(self, tmp_path):
+        transcripts = _DeleteAlwaysFailsStore()
+        ctx = _ctx(sdk_session_id="capped-sess")
+        transcripts.register_conversation(ctx.org_id, ctx.conversation_id, "truncado")
+        slot = _slot(tmp_path)
+
+        def factory():
+            return _ScriptedTransport(
+                [
+                    _assistant("oi", session_id="fresh-despite-failure"),
+                    _result(session_id="fresh-despite-failure"),
+                ]
+            )
+
+        runtime = _runtime(transport_factory=factory, transcripts=transcripts)
+        events = await _drain(runtime.run_turn(_spec(), ctx, "oi", _broker(), slot=slot))
+
+        # The delete raised RuntimeError (logged, never a silent pass —
+        # see `_abandon_old_session`), yet the turn still completed: the
+        # fallback event fired and the fresh session's result landed.
+        assert events[0] == {
+            "event": "session.resume_fallback",
+            "payload": {"texto": RESUME_TRUNCATED_TEXT},
+        }
+        assert events[-1] == {
+            "event": "session.status",
+            "payload": {"status": "ociosa", "sdk_session_id": "fresh-despite-failure"},
+        }
