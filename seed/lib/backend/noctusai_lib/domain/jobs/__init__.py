@@ -7,21 +7,29 @@ YouTube uploads, scheduling tasks, AI batches, and any future
 long-running products consume one shape.
 
 **What ships:**
-- `Job` frozen dataclass + `JobStatus` enum + pure-function state
-  machine (`next_status`, `should_retry`, `with_status_transition`).
-- `RetryPolicy` + `next_retry_at` exponential-backoff helper.
+- `Job` frozen dataclass (+ `dedupe_key` for idempotent re-enqueue,
+  `worker_id` + `lease_expires_at` for crash-recoverable claims) +
+  `JobStatus` enum + pure-function state machine (`next_status`,
+  `should_retry`, `with_status_transition`).
+- `RetryPolicy` + `next_retry_at` exponential-backoff helper — the
+  authority `mark_failed` consults for the retry-vs-dead-letter call.
 - `JobRepository` Protocol + `FakeJobRepository` (in-memory, dev/tests)
-  + `RealSupabaseJobRepository` (shape-only — consumer ships the
-  migration that creates the `jobs` table + the `claim_next_job` RPC
-  for atomic FOR UPDATE SKIP LOCKED claim).
+  + `RealSupabaseJobRepository`, backed by `migrations/jobs.sql.template`
+  (copy into your product's `migrations/`, substitute `{{SCHEMA_NAME}}`)
+  which ships the `jobs` table AND the four atomic RPCs:
+  `claim_next_job` (FOR UPDATE SKIP LOCKED, reclaims expired leases too),
+  `fail_job` (single-UPDATE retry-vs-dead-letter decision), `complete_job`,
+  `extend_lease` (heartbeat).
 - `make_job_repository(*, use_fake=False, supabase_client=None, ...)`
   factory mirroring the canonical Protocol+Fake+Real+factory pattern
   per `KB § PATTERNS/seed-fake-real-adapter.md`.
-- `Worker` async polling worker — claims one job, dispatches to the
-  matching handler, translates outcome to repo calls. `run_once` for
-  test harnesses; `run_forever(stop_event=...)` for production.
+- `Worker` async polling worker — claims one job under a lease,
+  heartbeats it in the background while the handler runs, dispatches
+  to the matching handler, translates outcome to repo calls. `run_once`
+  for test harnesses; `run_forever(stop_event=...)` for production.
 - `DeadLetterError` — handler-side escape hatch for non-retryable
-  failures.
+  failures. `LeaseLostError` — raised when a worker's lease was
+  reclaimed by another worker (it must abandon in-flight work).
 
 **Wiring recipe:**
 
@@ -62,6 +70,7 @@ from noctusai_lib.domain.jobs.repo import (
     DeadLetterError,
     FakeJobRepository,
     JobRepository,
+    LeaseLostError,
     RealSupabaseJobRepository,
     make_job_repository,
 )
@@ -84,6 +93,7 @@ __all__ = [
     "JobOutcome",
     "JobRepository",
     "JobStatus",
+    "LeaseLostError",
     "RealSupabaseJobRepository",
     "RetryPolicy",
     "Worker",

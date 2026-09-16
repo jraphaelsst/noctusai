@@ -37,6 +37,7 @@ Differences from `ConversationWorker`:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -45,6 +46,7 @@ from noctusai_lib.domain.jobs.entity import Job
 from noctusai_lib.domain.jobs.repo import (
     DeadLetterError,
     JobRepository,
+    LeaseLostError,
 )
 from noctusai_lib.domain.jobs.retry_policy import (
     DEFAULT_POLICY,
@@ -81,6 +83,8 @@ class Worker:
         handlers: dict[str, JobHandler],
         retry_policy: RetryPolicy = DEFAULT_POLICY,
         poll_interval_seconds: float = 1.0,
+        lease_seconds: float = 600.0,
+        heartbeat_interval_seconds: float | None = None,
     ) -> None:
         self._repo = repo
         self._worker_id = worker_id
@@ -88,6 +92,18 @@ class Worker:
         self._retry_policy = retry_policy
         self._poll_interval = poll_interval_seconds
         self._job_types: list[str] = sorted(self._handlers.keys())
+        # Lease + heartbeat: a claimed job is reclaimable by another
+        # worker once `lease_seconds` elapses without a heartbeat — the
+        # crash-recovery path for a worker that dies mid-photo. The
+        # heartbeat fires at half the lease window by default, so two
+        # missed heartbeats (not one) are needed before a live worker's
+        # job gets stolen.
+        self._lease_seconds = lease_seconds
+        self._heartbeat_interval = (
+            heartbeat_interval_seconds
+            if heartbeat_interval_seconds is not None
+            else lease_seconds / 2
+        )
 
     # --- public surface ----------------------------------------------
 
@@ -98,13 +114,14 @@ class Worker:
         job = await self._repo.claim_next(
             worker_id=self._worker_id,
             job_types=self._job_types,
+            lease_seconds=self._lease_seconds,
         )
         if job is None:
             return False
 
         handler = self._handlers.get(job.type)
         if handler is None:
-            # No handler for this type → mark failed (no retry, this
+            # No handler for this type → dead-letter (no retry, this
             # worker won't suddenly grow a handler). Operator should
             # reroute or requeue manually after wiring.
             error = (
@@ -112,7 +129,7 @@ class Worker:
                 f"available={self._job_types}"
             )
             logger.error("worker.no_handler job_id=%s type=%s", job.id, job.type)
-            await self._repo.mark_failed(job.id, error, retry=False)
+            await self._repo.mark_failed(job.id, error, dead_letter=True)
             return True
 
         await self._dispatch(job, handler)
@@ -153,61 +170,105 @@ class Worker:
 
     # --- internals ---------------------------------------------------
 
+    async def _heartbeat_loop(self, job_id: str) -> None:
+        """Extend the claimed job's lease at `_heartbeat_interval` while
+        the handler runs, so a legitimately slow (but alive) worker
+        never loses its job to another worker's `claim_next` reclaim.
+        Cancelled by `_dispatch` once the handler returns.
+
+        If `extend_lease` reports `LeaseLostError` (another worker has
+        already reclaimed the job — this worker was too slow, or hung
+        long enough for two missed heartbeats), the loop stops; the
+        in-flight handler's eventual `mark_completed`/`mark_failed`
+        call is still made (see `_dispatch`) but is now a race against
+        the reclaiming worker, which the repo's own atomicity resolves
+        (e.g. `complete_job` is a no-op once already COMPLETED).
+        """
+        try:
+            while True:
+                await asyncio.sleep(self._heartbeat_interval)
+                try:
+                    await self._repo.extend_lease(
+                        job_id,
+                        worker_id=self._worker_id,
+                        lease_seconds=self._lease_seconds,
+                    )
+                except LeaseLostError:
+                    logger.warning(
+                        "worker.lease_lost job_id=%s worker_id=%s",
+                        job_id,
+                        self._worker_id,
+                    )
+                    return
+        except asyncio.CancelledError:
+            raise
+
     async def _dispatch(self, job: Job, handler: JobHandler) -> None:
-        """Run the handler and translate its outcome into repo calls.
+        """Run the handler (with a background lease-heartbeat) and
+        translate its outcome into repo calls.
 
         Failure modes (in order of catch):
         - `DeadLetterError`: handler explicitly signaled "give up" →
-          mark_failed(retry=False) → DEAD_LETTER.
+          mark_failed(dead_letter=True) → DEAD_LETTER.
         - `Exception` (anything else): retryable failure →
-          mark_failed(retry=True) → FAILED → PENDING (if retries left)
-          or DEAD_LETTER (if exhausted).
-        - `BaseException` (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
-          mark_failed(retry=True) so the job isn't lost on shutdown,
-          then re-raise so the loop unwinds.
+          mark_failed(policy=self._retry_policy) → FAILED → PENDING
+          (if retries remain under the policy) or DEAD_LETTER
+          (if exhausted).
+        - `BaseException` (KeyboardInterrupt, SystemExit,
+          asyncio.CancelledError): mark_failed(...) so the job isn't
+          lost on shutdown, then re-raise so the loop unwinds.
         """
+        heartbeat_task = asyncio.ensure_future(self._heartbeat_loop(job.id))
         try:
-            await handler(job)
-        except DeadLetterError as exc:
-            logger.warning(
-                "worker.dead_letter job_id=%s type=%s reason=%s",
-                job.id,
-                job.type,
-                exc,
-            )
-            await self._repo.mark_failed(job.id, str(exc), retry=False)
-            return
-        except Exception as exc:
-            logger.warning(
-                "worker.retry job_id=%s type=%s retry_count=%d/%d error=%s",
-                job.id,
-                job.type,
-                job.retry_count,
-                job.max_retries,
-                exc,
-            )
-            await self._repo.mark_failed(job.id, str(exc), retry=True)
-            return
-        except BaseException as exc:
-            # Shutdown signals — surface the failure for diagnostics
-            # but DO NOT swallow; let the loop unwind cleanly.
-            logger.warning(
-                "worker.interrupted job_id=%s type=%s exc=%s",
-                job.id,
-                job.type,
-                type(exc).__name__,
-            )
             try:
-                await self._repo.mark_failed(job.id, str(exc), retry=True)
-            except Exception:
-                logger.exception(
-                    "worker.mark_failed_after_interrupt_failed job_id=%s",
+                await handler(job)
+            except DeadLetterError as exc:
+                logger.warning(
+                    "worker.dead_letter job_id=%s type=%s reason=%s",
                     job.id,
+                    job.type,
+                    exc,
                 )
-            raise
+                await self._repo.mark_failed(job.id, str(exc), dead_letter=True)
+                return
+            except Exception as exc:
+                logger.warning(
+                    "worker.retry job_id=%s type=%s retry_count=%d error=%s",
+                    job.id,
+                    job.type,
+                    job.retry_count,
+                    exc,
+                )
+                await self._repo.mark_failed(
+                    job.id, str(exc), policy=self._retry_policy
+                )
+                return
+            except BaseException as exc:
+                # Shutdown signals — surface the failure for diagnostics
+                # but DO NOT swallow; let the loop unwind cleanly.
+                logger.warning(
+                    "worker.interrupted job_id=%s type=%s exc=%s",
+                    job.id,
+                    job.type,
+                    type(exc).__name__,
+                )
+                try:
+                    await self._repo.mark_failed(
+                        job.id, str(exc), policy=self._retry_policy
+                    )
+                except Exception:
+                    logger.exception(
+                        "worker.mark_failed_after_interrupt_failed job_id=%s",
+                        job.id,
+                    )
+                raise
 
-        # Success path.
-        await self._repo.mark_completed(job.id)
+            # Success path.
+            await self._repo.mark_completed(job.id)
+        finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
 
 
 __all__ = [

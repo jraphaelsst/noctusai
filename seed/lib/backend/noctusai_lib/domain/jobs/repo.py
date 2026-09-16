@@ -6,33 +6,47 @@ Mirrors the canonical Protocol+Fake+Real+factory shape per
 `make_job_repository(supabase_client=client, schema_name=...)` in
 production.
 
-The Real implementation is **shape-only at this phase**: it exercises
-the canonical Supabase Python-client query-builder calls (table /
-filter / update / rpc), but the consumer ships the migration that
-creates the `jobs` table. Per-product wiring (which schema, which
-worker_id allocation, which RPC name) is consumer-side and out of scope
-for the seed.
+The seed ships `migrations/jobs.sql.template` (copy into your product's
+`migrations/`, substitute `{{SCHEMA_NAME}}`, renumber — same recipe as
+`domain/ai/migrations/tool_call_audits.sql.template`). It creates the
+`jobs` table AND the four RPCs this Real implementation calls:
+`claim_next_job` / `fail_job` / `complete_job` / `extend_lease`. Every
+one of those RPCs does its work in a SINGLE `UPDATE ... RETURNING *`
+statement — no consumer-side read-then-write race window.
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, replace
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
 
 from noctusai_lib.domain.jobs.entity import (
     Job,
     JobStatus,
-    next_status,
     with_status_transition,
+)
+from noctusai_lib.domain.jobs.retry_policy import (
+    DEFAULT_POLICY,
+    RetryPolicy,
+    next_retry_at,
 )
 
 
 class DeadLetterError(RuntimeError):
     """Raised by handlers that want to skip retries and land directly
     on DEAD_LETTER. Worker catches this and marks the job
-    `mark_failed(retry=False)`.
+    `mark_failed(..., dead_letter=True)`.
+    """
+
+
+class LeaseLostError(RuntimeError):
+    """Raised by `extend_lease` when the caller no longer holds the
+    job's lease — another worker's `claim_next` already reclaimed it
+    after the lease window elapsed (this worker died, hung, or was too
+    slow to heartbeat). The caller MUST stop processing and discard any
+    in-progress work; the reclaiming worker owns the job now.
     """
 
 
@@ -48,7 +62,7 @@ class JobRepository(Protocol):
     Implementations:
     - `FakeJobRepository` — in-memory dict-of-jobs for dev + tests.
     - `RealSupabaseJobRepository` — production-shaped Supabase-client
-      backed implementation. Consumer ships a `jobs` table migration.
+      backed implementation. Consumer ships `migrations/jobs.sql.template`.
 
     Concurrency contract: `claim_next` MUST be atomic — two workers
     racing on the same pending job MUST NOT both receive it. Real
@@ -62,27 +76,52 @@ class JobRepository(Protocol):
         *,
         worker_id: str,
         job_types: list[str] | None = None,
+        lease_seconds: float = 600.0,
     ) -> Job | None:
-        """Atomically pick the oldest eligible PENDING job and transition
-        it to RUNNING. Returns the claimed Job or None if the queue
-        is empty / nothing matches `job_types`.
+        """Atomically pick the oldest eligible job and transition/reclaim
+        it to RUNNING under a fresh lease of `lease_seconds`. Returns the
+        claimed Job or None if nothing is eligible.
 
-        Eligible = `status == PENDING` AND
-        (`scheduled_for is None` OR `scheduled_for <= now`).
+        Eligible = (`status == PENDING` AND (`scheduled_for is None` OR
+        `scheduled_for <= now`)) OR (`status == RUNNING` AND
+        `lease_expires_at <= now` — a worker died mid-job without
+        completing, failing, or heartbeating via `extend_lease`).
+        """
+
+    async def extend_lease(
+        self, job_id: str, *, worker_id: str, lease_seconds: float = 600.0
+    ) -> Job:
+        """Heartbeat: push a RUNNING job's `lease_expires_at` forward by
+        `lease_seconds` from now. Only succeeds while `worker_id` still
+        owns the job (status RUNNING AND `worker_id` matches) —
+        otherwise raises `LeaseLostError`: another worker already
+        reclaimed the job and the caller must abandon its work.
         """
 
     async def mark_completed(self, job_id: str) -> None:
-        """Transition job to COMPLETED. Idempotent on COMPLETED (no-op
-        if already terminal). Raises if job is missing.
+        """Transition job to COMPLETED + release the lease. Idempotent
+        on COMPLETED (no-op if already terminal). Raises if job is
+        missing.
         """
 
-    async def mark_failed(self, job_id: str, error: str, *, retry: bool) -> None:
-        """Transition job to FAILED (when `retry=True` AND retries
-        remain) or DEAD_LETTER (otherwise).
+    async def mark_failed(
+        self,
+        job_id: str,
+        error: str,
+        *,
+        policy: RetryPolicy = DEFAULT_POLICY,
+        dead_letter: bool = False,
+    ) -> Job:
+        """Atomically decide retry-vs-dead-letter against `policy` and
+        transition in ONE step — never a prior read of `retry_count`.
 
-        `retry=True` increments `retry_count` and flips status back to
-        PENDING so the next `claim_next` picks it up. `retry=False`
-        lands on DEAD_LETTER unconditionally — operator escape hatch.
+        `dead_letter=True` forces DEAD_LETTER unconditionally (the
+        handler explicitly raised `DeadLetterError`; no retries
+        wanted). Otherwise: retry while `retry_count < policy.max_retries`
+        — flips back to PENDING with `retry_count` bumped and
+        `scheduled_for` set via `next_retry_at(retry_count, policy,
+        now)`; lands on DEAD_LETTER once exhausted. Releases the lease
+        either way. Returns the updated Job.
         """
 
     async def enqueue(
@@ -92,8 +131,16 @@ class JobRepository(Protocol):
         payload: dict,
         max_retries: int = 3,
         scheduled_for: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> Job:
-        """Insert a new PENDING job and return it."""
+        """Insert a new PENDING job and return it.
+
+        When `dedupe_key` is given and a job with that key already
+        exists, this is a NO-OP: the pre-existing Job is returned
+        unchanged and no new row is created. This is the idempotency
+        contract for re-enqueueing the same logical unit of work
+        (e.g. a retried upstream webhook, a duplicate submit click).
+        """
 
     async def list_dead_letters(
         self,
@@ -124,12 +171,16 @@ class FakeJobRepository:
       (`fake-job-<n>`) so test assertions don't depend on uuid4.
 
     Single-process only. No locking — relies on Python's GIL +
-    cooperative async (no `await` in the critical sections).
+    cooperative async (no `await` in the critical sections), which is
+    also why every method here is a genuinely atomic transition: there
+    is no `await` between reading `self._jobs[job_id]` and writing it
+    back.
     """
 
     def __init__(self) -> None:
         self._jobs: dict[str, Job] = {}
         self._next_id: int = 1
+        self._dedupe_index: dict[str, str] = {}
 
     # --- helpers -----------------------------------------------------
 
@@ -150,7 +201,13 @@ class FakeJobRepository:
         payload: dict,
         max_retries: int = 3,
         scheduled_for: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> Job:
+        if dedupe_key is not None:
+            existing_id = self._dedupe_index.get(dedupe_key)
+            if existing_id is not None:
+                return self._jobs[existing_id]
+
         now = self._now()
         job = Job(
             id=self._allocate_id(),
@@ -163,8 +220,11 @@ class FakeJobRepository:
             created_at=now,
             updated_at=now,
             scheduled_for=scheduled_for,
+            dedupe_key=dedupe_key,
         )
         self._jobs[job.id] = job
+        if dedupe_key is not None:
+            self._dedupe_index[dedupe_key] = job.id
         return job
 
     async def claim_next(
@@ -172,19 +232,49 @@ class FakeJobRepository:
         *,
         worker_id: str,
         job_types: list[str] | None = None,
+        lease_seconds: float = 600.0,
     ) -> Job | None:
         now = self._now()
+        lease_expires_at = now + timedelta(seconds=lease_seconds)
         for job_id, job in self._jobs.items():
-            if job.status is not JobStatus.PENDING:
-                continue
             if job_types is not None and job.type not in job_types:
                 continue
-            if job.scheduled_for is not None and job.scheduled_for > now:
+            eligible_pending = job.status is JobStatus.PENDING and (
+                job.scheduled_for is None or job.scheduled_for <= now
+            )
+            eligible_reclaim = (
+                job.status is JobStatus.RUNNING
+                and job.lease_expires_at is not None
+                and job.lease_expires_at <= now
+            )
+            if not (eligible_pending or eligible_reclaim):
                 continue
             claimed = with_status_transition(job, JobStatus.RUNNING, now=now)
+            claimed = replace(
+                claimed, worker_id=worker_id, lease_expires_at=lease_expires_at
+            )
             self._jobs[job_id] = claimed
             return claimed
         return None
+
+    async def extend_lease(
+        self, job_id: str, *, worker_id: str, lease_seconds: float = 600.0
+    ) -> Job:
+        job = self._jobs.get(job_id)
+        if job is None:
+            raise KeyError(f"Job not found: {job_id}")
+        if job.status is not JobStatus.RUNNING or job.worker_id != worker_id:
+            raise LeaseLostError(
+                f"Job {job_id} is no longer held by worker {worker_id!r} "
+                f"(status={job.status.value}, worker_id={job.worker_id!r})"
+            )
+        now = self._now()
+        extended = with_status_transition(job, JobStatus.RUNNING, now=now)
+        extended = replace(
+            extended, lease_expires_at=now + timedelta(seconds=lease_seconds)
+        )
+        self._jobs[job_id] = extended
+        return extended
 
     async def mark_completed(self, job_id: str) -> None:
         job = self._jobs.get(job_id)
@@ -193,33 +283,51 @@ class FakeJobRepository:
         if job.status is JobStatus.COMPLETED:
             return  # idempotent
         completed = with_status_transition(job, JobStatus.COMPLETED, now=self._now())
+        completed = replace(completed, worker_id=None, lease_expires_at=None)
         self._jobs[job_id] = completed
 
-    async def mark_failed(self, job_id: str, error: str, *, retry: bool) -> None:
+    async def mark_failed(
+        self,
+        job_id: str,
+        error: str,
+        *,
+        policy: RetryPolicy = DEFAULT_POLICY,
+        dead_letter: bool = False,
+    ) -> Job:
         job = self._jobs.get(job_id)
         if job is None:
             raise KeyError(f"Job not found: {job_id}")
-        outcome = "retry" if retry else "exhausted"
-        target = next_status(job, outcome)
+
         now = self._now()
-        # Transition RUNNING → FAILED / DEAD_LETTER (records error).
-        transitioned = with_status_transition(
-            job, target, error=error, now=now
+        # Single decision point, computed off the CURRENT (pre-write)
+        # retry_count — no separate read call, no window for another
+        # coroutine to interleave (no `await` between the read above
+        # and the writes below).
+        will_retry = (not dead_letter) and job.retry_count < policy.max_retries
+        target = JobStatus.FAILED if will_retry else JobStatus.DEAD_LETTER
+
+        transitioned = with_status_transition(job, target, error=error, now=now)
+
+        if target is JobStatus.DEAD_LETTER:
+            final = replace(transitioned, worker_id=None, lease_expires_at=None)
+            self._jobs[job_id] = final
+            return final
+
+        # Retry path: FAILED → PENDING is one logical transition (no
+        # observer can see the intermediate FAILED row from another
+        # coroutine — same atomicity guarantee as the DEAD_LETTER arm
+        # above), scheduled via the policy's backoff math.
+        requeued = with_status_transition(
+            transitioned, JobStatus.PENDING, now=now, increment_retry=True
         )
-        self._jobs[job_id] = transitioned
-        # When the policy says "retry" AND retries remain (target ==
-        # FAILED), flip back to PENDING and bump retry_count. This
-        # keeps the FSM as RUNNING → FAILED → PENDING, which mirrors
-        # the operator-visible state machine and exposes a FAILED
-        # snapshot for diagnostics.
-        if target is JobStatus.FAILED:
-            requeued = with_status_transition(
-                transitioned,
-                JobStatus.PENDING,
-                now=now,
-                increment_retry=True,
-            )
-            self._jobs[job_id] = requeued
+        requeued = replace(
+            requeued,
+            scheduled_for=next_retry_at(job.retry_count, policy, now),
+            worker_id=None,
+            lease_expires_at=None,
+        )
+        self._jobs[job_id] = requeued
+        return requeued
 
     async def list_dead_letters(
         self,
@@ -251,10 +359,16 @@ class FakeJobRepository:
         moved = with_status_transition(job, JobStatus.PENDING, now=now)
         # `with_status_transition` doesn't reset retry_count by design;
         # we reset it explicitly here because requeue is the operator
-        # "give-it-another-N-tries" surface.
-        from dataclasses import replace as _replace
-
-        revived = _replace(moved, retry_count=0, last_error=None)
+        # "give-it-another-N-tries" surface. Lease fields are already
+        # None on a DEAD_LETTER job (mark_failed clears them), but
+        # reset defensively in case of a future direct-construction path.
+        revived = replace(
+            moved,
+            retry_count=0,
+            last_error=None,
+            worker_id=None,
+            lease_expires_at=None,
+        )
         self._jobs[job_id] = revived
         return revived
 
@@ -264,11 +378,24 @@ class FakeJobRepository:
 # ---------------------------------------------------------------------------
 
 
+def _is_unique_violation(exc: Exception) -> bool:
+    """True when `exc` is Postgres error 23505 (unique_violation) — the
+    `dedupe_key` uniqueness constraint firing on a concurrent duplicate
+    `enqueue`. Duck-typed on `.code` so it recognizes both
+    `postgrest.exceptions.APIError` (the real supabase-py client's
+    error shape) and a lookalike test double, without an import
+    coupling to the `postgrest` package.
+    """
+    return getattr(exc, "code", None) == "23505"
+
+
 class RealSupabaseJobRepository:
     """Supabase-client backed `JobRepository`.
 
-    **Shape-only at this phase.** Consumer ships a `jobs` table
-    migration matching this implementation's column expectations:
+    Consumer ships `migrations/jobs.sql.template` (copy into your
+    product's `migrations/`, substitute `{{SCHEMA_NAME}}`, renumber —
+    the shape it declares matches this class's column + RPC
+    expectations 1:1):
 
         create table jobs (
             id uuid primary key default gen_random_uuid(),
@@ -280,16 +407,32 @@ class RealSupabaseJobRepository:
             last_error text,
             created_at timestamptz not null default now(),
             updated_at timestamptz not null default now(),
-            scheduled_for timestamptz
+            scheduled_for timestamptz,
+            dedupe_key text,               -- UNIQUE index; NULLs distinct
+            worker_id text,
+            lease_expires_at timestamptz
         );
 
-    `claim_next` calls a Postgres function `claim_next_job(p_worker_id,
-    p_job_types)` that runs `SELECT ... FROM jobs WHERE status='pending'
-    AND (scheduled_for IS NULL OR scheduled_for <= now()) AND (p_job_types
-    IS NULL OR type = ANY(p_job_types)) ORDER BY created_at FOR UPDATE
-    SKIP LOCKED LIMIT 1` then transitions the picked row to RUNNING in a
-    single transaction. The function is owned by the consumer's
-    migration (the seed ships the contract, not the SQL).
+    Four RPCs, each a single `UPDATE ... RETURNING *` — no
+    consumer-side read-then-write race window:
+
+    - `claim_next_job(p_worker_id, p_job_types, p_lease_seconds)` —
+      `FOR UPDATE SKIP LOCKED` pick of the oldest eligible job
+      (PENDING-and-due, OR RUNNING-with-an-expired-lease), transitioned
+      to RUNNING under a fresh lease.
+    - `fail_job(p_job_id, p_error, p_max_retries, p_backoff_seconds,
+      p_backoff_multiplier, p_max_backoff_seconds, p_dead_letter)` —
+      the retry-vs-dead-letter decision AND the backoff-scheduled
+      requeue, computed against the row's own current `retry_count`
+      inside the one UPDATE.
+    - `complete_job(p_job_id)` — terminal status + lease release.
+    - `extend_lease(p_job_id, p_worker_id, p_lease_seconds)` — heartbeat;
+      returns zero rows (⇒ `LeaseLostError`) once another worker has
+      reclaimed the job.
+
+    The RPC functions are owned by the consumer's migration (the seed
+    ships the contract + the reference SQL template, not a live
+    migration against any particular product's schema).
     """
 
     def __init__(
@@ -299,11 +442,17 @@ class RealSupabaseJobRepository:
         schema_name: str = "public",
         table_name: str = "jobs",
         rpc_name: str = "claim_next_job",
+        fail_rpc_name: str = "fail_job",
+        complete_rpc_name: str = "complete_job",
+        extend_lease_rpc_name: str = "extend_lease",
     ) -> None:
         self._client = client
         self._schema = schema_name
         self._table = table_name
         self._rpc = rpc_name
+        self._fail_rpc = fail_rpc_name
+        self._complete_rpc = complete_rpc_name
+        self._extend_lease_rpc = extend_lease_rpc_name
 
     # --- helpers -----------------------------------------------------
 
@@ -328,6 +477,11 @@ class RealSupabaseJobRepository:
             scheduled_for=_parse_dt(row.get("scheduled_for"))
             if row.get("scheduled_for")
             else None,
+            dedupe_key=row.get("dedupe_key"),
+            worker_id=row.get("worker_id"),
+            lease_expires_at=_parse_dt(row.get("lease_expires_at"))
+            if row.get("lease_expires_at")
+            else None,
         )
 
     def _job_to_insert_row(self, job: Job) -> dict[str, Any]:
@@ -344,6 +498,11 @@ class RealSupabaseJobRepository:
             "scheduled_for": job.scheduled_for.isoformat()
             if job.scheduled_for
             else None,
+            "dedupe_key": job.dedupe_key,
+            "worker_id": job.worker_id,
+            "lease_expires_at": job.lease_expires_at.isoformat()
+            if job.lease_expires_at
+            else None,
         }
 
     async def _execute(self, builder: Any) -> Any:
@@ -355,6 +514,14 @@ class RealSupabaseJobRepository:
             return await result
         return result
 
+    async def _find_by_dedupe_key(self, dedupe_key: str) -> Job | None:
+        builder = (
+            self._table_builder().select("*").eq("dedupe_key", dedupe_key).limit(1)
+        )
+        result = await self._execute(builder)
+        rows: list[dict[str, Any]] = getattr(result, "data", None) or []
+        return self._row_to_job(rows[0]) if rows else None
+
     # --- Protocol methods --------------------------------------------
 
     async def enqueue(
@@ -364,6 +531,7 @@ class RealSupabaseJobRepository:
         payload: dict,
         max_retries: int = 3,
         scheduled_for: datetime | None = None,
+        dedupe_key: str | None = None,
     ) -> Job:
         now = datetime.now(timezone.utc)
         new_id = str(uuid.uuid4())
@@ -378,9 +546,20 @@ class RealSupabaseJobRepository:
             created_at=now,
             updated_at=now,
             scheduled_for=scheduled_for,
+            dedupe_key=dedupe_key,
         )
         builder = self._table_builder().insert(self._job_to_insert_row(job))
-        result = await self._execute(builder)
+        try:
+            result = await self._execute(builder)
+        except Exception as exc:
+            if dedupe_key is not None and _is_unique_violation(exc):
+                # Another enqueue() already claimed this dedupe_key —
+                # the idempotency contract: return the pre-existing job
+                # as the no-op result instead of raising.
+                existing = await self._find_by_dedupe_key(dedupe_key)
+                if existing is not None:
+                    return existing
+            raise
         # Real Supabase returns inserted row(s) on `result.data`. We
         # trust our own `Job` instance because it's what we sent.
         _ = result  # Keep linter happy without assuming response shape.
@@ -391,11 +570,15 @@ class RealSupabaseJobRepository:
         *,
         worker_id: str,
         job_types: list[str] | None = None,
+        lease_seconds: float = 600.0,
     ) -> Job | None:
-        # Use the consumer-shipped RPC for atomic FOR UPDATE SKIP LOCKED.
         rpc_builder = self._client.rpc(
             self._rpc,
-            {"p_worker_id": worker_id, "p_job_types": job_types},
+            {
+                "p_worker_id": worker_id,
+                "p_job_types": job_types,
+                "p_lease_seconds": lease_seconds,
+            },
         )
         result = await self._execute(rpc_builder)
         rows: list[dict[str, Any]] = getattr(result, "data", None) or []
@@ -403,52 +586,55 @@ class RealSupabaseJobRepository:
             return None
         return self._row_to_job(rows[0])
 
-    async def mark_completed(self, job_id: str) -> None:
-        now = datetime.now(timezone.utc)
-        builder = (
-            self._table_builder()
-            .update(
-                {
-                    "status": JobStatus.COMPLETED.value,
-                    "updated_at": now.isoformat(),
-                }
+    async def extend_lease(
+        self, job_id: str, *, worker_id: str, lease_seconds: float = 600.0
+    ) -> Job:
+        rpc_builder = self._client.rpc(
+            self._extend_lease_rpc,
+            {
+                "p_job_id": job_id,
+                "p_worker_id": worker_id,
+                "p_lease_seconds": lease_seconds,
+            },
+        )
+        result = await self._execute(rpc_builder)
+        rows: list[dict[str, Any]] = getattr(result, "data", None) or []
+        if not rows:
+            raise LeaseLostError(
+                f"Job {job_id} is no longer held by worker {worker_id!r} "
+                "(lease expired and reclaimed, or job is not RUNNING)"
             )
-            .eq("id", job_id)
-        )
-        await self._execute(builder)
+        return self._row_to_job(rows[0])
 
-    async def mark_failed(self, job_id: str, error: str, *, retry: bool) -> None:
-        # Two-step in the Real impl: read current row to compute retry
-        # math (consumer can replace with an RPC for true atomicity at
-        # their wiring boundary). The shape-only contract is: hits the
-        # right table with the right update.
-        select_builder = (
-            self._table_builder().select("*").eq("id", job_id).limit(1)
+    async def mark_completed(self, job_id: str) -> None:
+        rpc_builder = self._client.rpc(self._complete_rpc, {"p_job_id": job_id})
+        await self._execute(rpc_builder)
+
+    async def mark_failed(
+        self,
+        job_id: str,
+        error: str,
+        *,
+        policy: RetryPolicy = DEFAULT_POLICY,
+        dead_letter: bool = False,
+    ) -> Job:
+        rpc_builder = self._client.rpc(
+            self._fail_rpc,
+            {
+                "p_job_id": job_id,
+                "p_error": error,
+                "p_max_retries": policy.max_retries,
+                "p_backoff_seconds": policy.backoff_seconds,
+                "p_backoff_multiplier": policy.backoff_multiplier,
+                "p_max_backoff_seconds": policy.max_backoff_seconds,
+                "p_dead_letter": dead_letter,
+            },
         )
-        select_result = await self._execute(select_builder)
-        rows: list[dict[str, Any]] = getattr(select_result, "data", None) or []
+        result = await self._execute(rpc_builder)
+        rows: list[dict[str, Any]] = getattr(result, "data", None) or []
         if not rows:
             raise KeyError(f"Job not found: {job_id}")
-        job = self._row_to_job(rows[0])
-
-        outcome = "retry" if retry else "exhausted"
-        target = next_status(job, outcome)
-        now = datetime.now(timezone.utc)
-        update_payload: dict[str, Any] = {
-            "status": target.value,
-            "updated_at": now.isoformat(),
-            "last_error": error,
-        }
-        if target is JobStatus.FAILED:
-            # Bump retry count + flip back to PENDING in a single update
-            # (the FAILED snapshot is observable via `updated_at` if the
-            # consumer wants it; the seed contract focuses on the
-            # observable terminal-or-eligible state).
-            update_payload["status"] = JobStatus.PENDING.value
-            update_payload["retry_count"] = job.retry_count + 1
-
-        builder = self._table_builder().update(update_payload).eq("id", job_id)
-        await self._execute(builder)
+        return self._row_to_job(rows[0])
 
     async def list_dead_letters(
         self,
@@ -474,6 +660,8 @@ class RealSupabaseJobRepository:
             "status": JobStatus.PENDING.value,
             "retry_count": 0,
             "last_error": None,
+            "worker_id": None,
+            "lease_expires_at": None,
             "updated_at": now.isoformat(),
         }
         builder = self._table_builder().update(update_payload).eq("id", job_id)
@@ -520,6 +708,9 @@ def make_job_repository(
     schema_name: str = "public",
     table_name: str = "jobs",
     rpc_name: str = "claim_next_job",
+    fail_rpc_name: str = "fail_job",
+    complete_rpc_name: str = "complete_job",
+    extend_lease_rpc_name: str = "extend_lease",
 ) -> JobRepository:
     """Construct a `JobRepository` for a consumer.
 
@@ -531,8 +722,11 @@ def make_job_repository(
             `use_fake=False`.
         schema_name: Postgres schema hosting the `jobs` table.
         table_name: table name (default `jobs`).
-        rpc_name: name of the consumer-shipped `claim_next_job` RPC
-            function.
+        rpc_name: name of the consumer-shipped `claim_next_job` RPC.
+        fail_rpc_name: name of the consumer-shipped `fail_job` RPC.
+        complete_rpc_name: name of the consumer-shipped `complete_job` RPC.
+        extend_lease_rpc_name: name of the consumer-shipped
+            `extend_lease` RPC.
 
     Returns:
         Concrete `JobRepository` implementation.
@@ -548,6 +742,9 @@ def make_job_repository(
         schema_name=schema_name,
         table_name=table_name,
         rpc_name=rpc_name,
+        fail_rpc_name=fail_rpc_name,
+        complete_rpc_name=complete_rpc_name,
+        extend_lease_rpc_name=extend_lease_rpc_name,
     )
 
 
@@ -555,6 +752,7 @@ __all__ = [
     "DeadLetterError",
     "FakeJobRepository",
     "JobRepository",
+    "LeaseLostError",
     "RealSupabaseJobRepository",
     "make_job_repository",
 ]

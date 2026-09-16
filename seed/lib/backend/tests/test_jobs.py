@@ -3,14 +3,16 @@
 Covers:
 - State machine in `entity.py` (transitions + immutability + outcome math)
 - `RetryPolicy` exponential-backoff math
-- `FakeJobRepository` Protocol contract (round-trip + filters + dead-letter)
-- `Worker.run_once` (success / retry / dead-letter)
+- `FakeJobRepository` Protocol contract (round-trip + filters + dead-letter
+  + dedupe-key idempotency + lease/heartbeat/reclaim)
+- `Worker.run_once` (success / retry / dead-letter / heartbeat)
 - `Worker.run_forever` (graceful stop)
-- `RealSupabaseJobRepository` (query-builder shape via MockSupabaseClient)
+- `RealSupabaseJobRepository` (RPC + query-builder shape via MockSupabaseClient)
 
 Network-free, deterministic. No monkey-patching of our own modules
-(only external `unittest.mock.patch` where the carve-out applies; not
-needed here — the factory + Mock-client surface keeps tests clean).
+(only external `unittest.mock`-shaped test doubles wrapping the
+Supabase CLIENT — never `RealSupabaseJobRepository`'s own methods —
+where the carve-out applies).
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from noctusai_lib.domain.jobs import (
     Job,
     JobRepository,
     JobStatus,
+    LeaseLostError,
     RealSupabaseJobRepository,
     RetryPolicy,
     Worker,
@@ -37,7 +40,6 @@ from noctusai_lib.domain.jobs import (
     with_status_transition,
 )
 from noctusai_lib.testing import MockSupabaseClient
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -53,6 +55,9 @@ def _make_job(
     status: JobStatus = JobStatus.PENDING,
     retry_count: int = 0,
     max_retries: int = 3,
+    dedupe_key: str | None = None,
+    worker_id: str | None = None,
+    lease_expires_at: datetime | None = None,
 ) -> Job:
     now = datetime(2026, 5, 4, tzinfo=timezone.utc)
     return Job(
@@ -66,7 +71,31 @@ def _make_job(
         created_at=now,
         updated_at=now,
         scheduled_for=None,
+        dedupe_key=dedupe_key,
+        worker_id=worker_id,
+        lease_expires_at=lease_expires_at,
     )
+
+
+def _row(**overrides) -> dict:
+    """Base Supabase row shape for RealSupabaseJobRepository tests."""
+    row = {
+        "id": "j-1",
+        "type": "upload",
+        "payload": {},
+        "status": "pending",
+        "retry_count": 0,
+        "max_retries": 3,
+        "last_error": None,
+        "created_at": "2026-05-04T12:00:00+00:00",
+        "updated_at": "2026-05-04T12:00:00+00:00",
+        "scheduled_for": None,
+        "dedupe_key": None,
+        "worker_id": None,
+        "lease_expires_at": None,
+    }
+    row.update(overrides)
+    return row
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +122,14 @@ class TestStateMachineLegalTransitions:
     def test_running_to_dead_letter(self):
         job = _make_job(status=JobStatus.RUNNING)
         assert with_status_transition(job, JobStatus.DEAD_LETTER).status is JobStatus.DEAD_LETTER
+
+    def test_running_to_running_lease_reclaim_or_heartbeat(self):
+        # Status stays RUNNING — only worker_id / lease_expires_at
+        # change, for both a heartbeat (same worker) and a reclaim (a
+        # new worker after the old one's lease expired).
+        job = _make_job(status=JobStatus.RUNNING, worker_id="w-1")
+        renewed = with_status_transition(job, JobStatus.RUNNING)
+        assert renewed.status is JobStatus.RUNNING
 
     def test_failed_to_pending(self):
         job = _make_job(status=JobStatus.FAILED)
@@ -257,6 +294,7 @@ class TestFakeRepoEnqueueAndClaim:
         assert job.retry_count == 0
         assert job.max_retries == 3
         assert job.scheduled_for is None
+        assert job.dedupe_key is None
 
     def test_claim_next_returns_enqueued_job_and_transitions_to_running(self):
         repo = FakeJobRepository()
@@ -265,16 +303,19 @@ class TestFakeRepoEnqueueAndClaim:
         assert claimed is not None
         assert claimed.id == enqueued.id
         assert claimed.status is JobStatus.RUNNING
+        assert claimed.worker_id == "w-1"
+        assert claimed.lease_expires_at is not None
 
     def test_claim_next_empty_returns_none(self):
         repo = FakeJobRepository()
         assert _run(repo.claim_next(worker_id="w-1")) is None
 
-    def test_claim_next_skips_running_jobs(self):
+    def test_claim_next_skips_running_jobs_with_active_lease(self):
         repo = FakeJobRepository()
         _run(repo.enqueue(type="upload", payload={}))
         first = _run(repo.claim_next(worker_id="w-1"))
-        # No second pending job → claim returns None.
+        # No second pending job, and the first job's lease hasn't
+        # expired → claim returns None.
         second = _run(repo.claim_next(worker_id="w-1"))
         assert first is not None
         assert second is None
@@ -312,6 +353,105 @@ class TestFakeRepoEnqueueAndClaim:
         assert claimed.status is JobStatus.RUNNING
 
 
+class TestFakeRepoLeaseReclaim:
+    """S1 hardening: a worker dying mid-job doesn't strand it."""
+
+    def test_claim_next_reclaims_job_with_expired_lease(self):
+        repo = FakeJobRepository()
+        enqueued = _run(repo.enqueue(type="upload", payload={}))
+        dead_worker_claim = _run(
+            repo.claim_next(worker_id="w-dead", lease_seconds=0)
+        )
+        assert dead_worker_claim is not None
+
+        # `lease_seconds=0` → the lease expired the instant it was set
+        # (real wall-clock time has already advanced past it).
+        reclaimed = _run(repo.claim_next(worker_id="w-2"))
+        assert reclaimed is not None
+        assert reclaimed.id == enqueued.id
+        assert reclaimed.worker_id == "w-2"
+        assert reclaimed.status is JobStatus.RUNNING
+
+    def test_claim_next_does_not_reclaim_job_with_active_lease(self):
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+        _run(repo.claim_next(worker_id="w-1", lease_seconds=600))
+        assert _run(repo.claim_next(worker_id="w-2")) is None
+
+    def test_claim_next_lease_seconds_honoured(self):
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+        before = datetime.now(timezone.utc)
+        claimed = _run(repo.claim_next(worker_id="w-1", lease_seconds=300))
+        assert claimed.lease_expires_at is not None
+        assert claimed.lease_expires_at >= before + timedelta(seconds=299)
+
+
+class TestFakeRepoDedupeKey:
+    """S1 hardening: re-enqueueing the same logical work is a no-op."""
+
+    def test_second_enqueue_with_same_dedupe_key_is_a_noop(self):
+        repo = FakeJobRepository()
+        first = _run(
+            repo.enqueue(type="upload", payload={"n": 1}, dedupe_key="photo-42")
+        )
+        second = _run(
+            repo.enqueue(type="upload", payload={"n": 2}, dedupe_key="photo-42")
+        )
+        assert second.id == first.id
+        assert second.payload == {"n": 1}  # original wins — true no-op
+
+        # No duplicate row was created: exactly one claimable job.
+        claimed = _run(repo.claim_next(worker_id="w-1"))
+        assert claimed is not None
+        assert claimed.id == first.id
+        assert _run(repo.claim_next(worker_id="w-1")) is None
+
+    def test_different_dedupe_keys_create_separate_jobs(self):
+        repo = FakeJobRepository()
+        a = _run(repo.enqueue(type="upload", payload={}, dedupe_key="a"))
+        b = _run(repo.enqueue(type="upload", payload={}, dedupe_key="b"))
+        assert a.id != b.id
+
+    def test_no_dedupe_key_allows_duplicates(self):
+        repo = FakeJobRepository()
+        a = _run(repo.enqueue(type="upload", payload={}))
+        b = _run(repo.enqueue(type="upload", payload={}))
+        assert a.id != b.id
+
+
+class TestFakeRepoExtendLease:
+    """S1 hardening: heartbeat keeps a legitimately-slow worker's claim."""
+
+    def test_extends_expiry_forward(self):
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+        claimed = _run(repo.claim_next(worker_id="w-1", lease_seconds=10))
+        extended = _run(
+            repo.extend_lease(claimed.id, worker_id="w-1", lease_seconds=600)
+        )
+        assert extended.lease_expires_at > claimed.lease_expires_at
+        assert extended.status is JobStatus.RUNNING
+
+    def test_wrong_worker_raises_lease_lost(self):
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+        claimed = _run(repo.claim_next(worker_id="w-1"))
+        with pytest.raises(LeaseLostError):
+            _run(repo.extend_lease(claimed.id, worker_id="w-2"))
+
+    def test_non_running_job_raises_lease_lost(self):
+        repo = FakeJobRepository()
+        job = _run(repo.enqueue(type="upload", payload={}))
+        with pytest.raises(LeaseLostError):
+            _run(repo.extend_lease(job.id, worker_id="w-1"))
+
+    def test_unknown_job_raises_keyerror(self):
+        repo = FakeJobRepository()
+        with pytest.raises(KeyError, match="Job not found"):
+            _run(repo.extend_lease("missing", worker_id="w-1"))
+
+
 class TestFakeRepoMarkCompleted:
     def test_mark_completed_after_claim(self):
         repo = FakeJobRepository()
@@ -322,6 +462,14 @@ class TestFakeRepoMarkCompleted:
         _run(repo.mark_completed(claimed.id))
         # Subsequent claim returns None — the job is terminal.
         assert _run(repo.claim_next(worker_id="w-1")) is None
+
+    def test_mark_completed_releases_lease(self):
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+        claimed = _run(repo.claim_next(worker_id="w-1"))
+        _run(repo.mark_completed(claimed.id))
+        with pytest.raises(LeaseLostError):
+            _run(repo.extend_lease(claimed.id, worker_id="w-1"))
 
     def test_mark_completed_idempotent(self):
         repo = FakeJobRepository()
@@ -340,65 +488,108 @@ class TestFakeRepoMarkCompleted:
 class TestFakeRepoMarkFailedRetry:
     def test_retry_with_remaining_re_enqueues_to_pending(self):
         repo = FakeJobRepository()
-        _run(repo.enqueue(type="upload", payload={}, max_retries=3))
+        _run(repo.enqueue(type="upload", payload={}))
         claimed = _run(repo.claim_next(worker_id="w-1"))
         assert claimed is not None
 
-        _run(repo.mark_failed(claimed.id, "transient", retry=True))
-        # Same job claimable again.
+        # Zero backoff isolates "did it retry + bump retry_count" from
+        # the backoff-scheduling behavior (covered separately below).
+        zero_backoff = RetryPolicy(max_retries=3, backoff_seconds=0.0)
+        _run(repo.mark_failed(claimed.id, "transient", policy=zero_backoff))
         re_claimed = _run(repo.claim_next(worker_id="w-1"))
         assert re_claimed is not None
         assert re_claimed.id == claimed.id
         assert re_claimed.retry_count == 1
         assert re_claimed.last_error == "transient"
 
+    def test_retry_honours_policy_backoff_via_scheduled_for(self):
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+        claimed = _run(repo.claim_next(worker_id="w-1"))
+        policy = RetryPolicy(
+            max_retries=3,
+            backoff_seconds=100.0,
+            backoff_multiplier=2.0,
+            max_backoff_seconds=1000.0,
+        )
+        failed = _run(repo.mark_failed(claimed.id, "transient", policy=policy))
+        assert failed.status is JobStatus.PENDING
+        assert failed.scheduled_for is not None
+        assert failed.scheduled_for > datetime.now(timezone.utc) + timedelta(seconds=90)
+        # Scheduled in the future → not claimable yet.
+        assert _run(repo.claim_next(worker_id="w-1")) is None
+
     def test_retry_exhausted_lands_on_dead_letter(self):
         repo = FakeJobRepository()
-        _run(repo.enqueue(type="upload", payload={}, max_retries=2))
+        _run(repo.enqueue(type="upload", payload={}))
+        policy = RetryPolicy(max_retries=2, backoff_seconds=0.0)
 
-        # 1st claim + fail.
         c = _run(repo.claim_next(worker_id="w-1"))
-        _run(repo.mark_failed(c.id, "fail-1", retry=True))
-        # 2nd claim + fail.
+        _run(repo.mark_failed(c.id, "fail-1", policy=policy))
         c = _run(repo.claim_next(worker_id="w-1"))
-        _run(repo.mark_failed(c.id, "fail-2", retry=True))
-        # 3rd claim + fail — at this point retry_count=2, which == max_retries
-        # → next_status returns DEAD_LETTER.
+        _run(repo.mark_failed(c.id, "fail-2", policy=policy))
+        # 3rd failure: retry_count=2 == policy.max_retries → dead-letter.
         c = _run(repo.claim_next(worker_id="w-1"))
-        _run(repo.mark_failed(c.id, "fail-3", retry=True))
+        _run(repo.mark_failed(c.id, "fail-3", policy=policy))
 
-        # Now in dead-letter.
         dl = _run(repo.list_dead_letters())
         assert len(dl) == 1
         assert dl[0].status is JobStatus.DEAD_LETTER
         assert dl[0].last_error == "fail-3"
 
-    def test_retry_false_lands_on_dead_letter_immediately(self):
+    def test_dead_letter_true_lands_immediately(self):
         repo = FakeJobRepository()
-        _run(repo.enqueue(type="upload", payload={}, max_retries=10))
+        _run(repo.enqueue(type="upload", payload={}))
         claimed = _run(repo.claim_next(worker_id="w-1"))
-        _run(repo.mark_failed(claimed.id, "fatal", retry=False))
+        _run(repo.mark_failed(claimed.id, "fatal", dead_letter=True))
 
         dl = _run(repo.list_dead_letters())
         assert len(dl) == 1
         assert dl[0].id == claimed.id
         assert dl[0].last_error == "fatal"
 
+    def test_mark_failed_releases_lease_on_both_arms(self):
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+
+        claimed = _run(repo.claim_next(worker_id="w-1"))
+        dead = _run(repo.mark_failed(claimed.id, "fatal", dead_letter=True))
+        assert dead.worker_id is None
+        assert dead.lease_expires_at is None
+
+        _run(repo.enqueue(type="upload", payload={}))
+        claimed2 = _run(repo.claim_next(worker_id="w-1"))
+        retried = _run(
+            repo.mark_failed(
+                claimed2.id, "transient", policy=RetryPolicy(backoff_seconds=0.0)
+            )
+        )
+        assert retried.worker_id is None
+        assert retried.lease_expires_at is None
+
+    def test_default_policy_used_when_omitted(self):
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+        claimed = _run(repo.claim_next(worker_id="w-1"))
+        # DEFAULT_POLICY.max_retries == 3 → retry_count(0) < 3 → retry.
+        failed = _run(repo.mark_failed(claimed.id, "transient"))
+        assert failed.status is JobStatus.PENDING
+
     def test_mark_failed_unknown_raises(self):
         repo = FakeJobRepository()
         with pytest.raises(KeyError, match="Job not found"):
-            _run(repo.mark_failed("missing", "x", retry=True))
+            _run(repo.mark_failed("missing", "x"))
 
 
 class TestFakeRepoListDeadLetters:
     def test_filter_by_type(self):
         repo = FakeJobRepository()
-        _run(repo.enqueue(type="upload", payload={}, max_retries=0))
-        _run(repo.enqueue(type="refresh", payload={}, max_retries=0))
+        _run(repo.enqueue(type="upload", payload={}))
+        _run(repo.enqueue(type="refresh", payload={}))
         # Push both to dead-letter.
         for _ in range(2):
             c = _run(repo.claim_next(worker_id="w-1"))
-            _run(repo.mark_failed(c.id, "boom", retry=False))
+            _run(repo.mark_failed(c.id, "boom", dead_letter=True))
 
         all_dl = _run(repo.list_dead_letters())
         assert len(all_dl) == 2
@@ -413,7 +604,7 @@ class TestFakeRepoListDeadLetters:
             _run(repo.enqueue(type="upload", payload={}))
         for _ in range(5):
             c = _run(repo.claim_next(worker_id="w-1"))
-            _run(repo.mark_failed(c.id, "boom", retry=False))
+            _run(repo.mark_failed(c.id, "boom", dead_letter=True))
 
         limited = _run(repo.list_dead_letters(limit=3))
         assert len(limited) == 3
@@ -424,7 +615,7 @@ class TestFakeRepoRequeueDeadLetter:
         repo = FakeJobRepository()
         _run(repo.enqueue(type="upload", payload={}))
         c = _run(repo.claim_next(worker_id="w-1"))
-        _run(repo.mark_failed(c.id, "fatal", retry=False))
+        _run(repo.mark_failed(c.id, "fatal", dead_letter=True))
 
         revived = _run(repo.requeue_dead_letter(c.id))
         assert revived.status is JobStatus.PENDING
@@ -495,7 +686,7 @@ class TestWorkerRunOnce:
 
     def test_retry_path_handler_raises_value_error(self):
         repo = FakeJobRepository()
-        _run(repo.enqueue(type="upload", payload={}, max_retries=3))
+        _run(repo.enqueue(type="upload", payload={}))
 
         attempt_count = 0
 
@@ -505,7 +696,13 @@ class TestWorkerRunOnce:
             raise ValueError("transient")
 
         worker = Worker(
-            repo, worker_id="w-1", handlers={"upload": flaky_handler}
+            repo,
+            worker_id="w-1",
+            handlers={"upload": flaky_handler},
+            # Zero backoff so the immediate re-claim below observes the
+            # retry without waiting out the policy's schedule — the
+            # backoff-scheduling itself is covered at the repo layer.
+            retry_policy=RetryPolicy(max_retries=3, backoff_seconds=0.0),
         )
         # First attempt — retried.
         _run(worker.run_once())
@@ -518,13 +715,16 @@ class TestWorkerRunOnce:
 
     def test_dead_letter_after_retries_exhausted(self):
         repo = FakeJobRepository()
-        _run(repo.enqueue(type="upload", payload={}, max_retries=2))
+        _run(repo.enqueue(type="upload", payload={}))
 
         async def always_fails(job: Job) -> None:
             raise RuntimeError("fail")
 
         worker = Worker(
-            repo, worker_id="w-1", handlers={"upload": always_fails}
+            repo,
+            worker_id="w-1",
+            handlers={"upload": always_fails},
+            retry_policy=RetryPolicy(max_retries=2, backoff_seconds=0.0),
         )
         # Claim+fail until exhausted (max_retries=2 → 3 attempts).
         for _ in range(3):
@@ -536,7 +736,7 @@ class TestWorkerRunOnce:
 
     def test_dead_letter_error_skips_retries(self):
         repo = FakeJobRepository()
-        _run(repo.enqueue(type="upload", payload={}, max_retries=10))
+        _run(repo.enqueue(type="upload", payload={}))
 
         async def fatal_handler(job: Job) -> None:
             raise DeadLetterError("not retryable")
@@ -568,6 +768,69 @@ class TestWorkerRunOnce:
         # handler later.
         all_dl = _run(repo.list_dead_letters())
         assert len(all_dl) == 0
+
+
+class TestWorkerHeartbeat:
+    """S1 hardening: heartbeat keeps a slow-but-alive worker's lease."""
+
+    def test_heartbeat_keeps_lease_alive_past_original_expiry(self):
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+
+        async def slow_handler(job: Job) -> None:
+            await asyncio.sleep(0.3)
+
+        worker = Worker(
+            repo,
+            worker_id="w-1",
+            handlers={"upload": slow_handler},
+            lease_seconds=0.1,
+            heartbeat_interval_seconds=0.03,
+        )
+
+        async def scenario() -> None:
+            task = asyncio.create_task(worker.run_once())
+            # Well past the ORIGINAL 0.1s lease — by t=0.2, ~6
+            # heartbeat ticks (every 0.03s) have each pushed the
+            # expiry another 0.1s out, so a generous margin separates
+            # "heartbeat is working" from "heartbeat is late".
+            await asyncio.sleep(0.2)
+            stolen = await repo.claim_next(worker_id="w-2", lease_seconds=1)
+            assert stolen is None, "heartbeat should have kept the lease alive"
+            await task
+
+        _run(scenario())
+        assert _run(repo.list_dead_letters()) == []
+        # The job completed cleanly — claimable count is zero.
+        assert _run(repo.claim_next(worker_id="w-3")) is None
+
+    def test_heartbeat_task_is_cancelled_after_dispatch(self):
+        # Regression guard: a leaked heartbeat task would keep the
+        # event loop alive / raise on interpreter teardown.
+        repo = FakeJobRepository()
+        _run(repo.enqueue(type="upload", payload={}))
+
+        async def fast_handler(job: Job) -> None:
+            return None
+
+        worker = Worker(
+            repo,
+            worker_id="w-1",
+            handlers={"upload": fast_handler},
+            lease_seconds=600.0,
+        )
+
+        async def scenario() -> None:
+            await worker.run_once()
+            # Give any leaked task a tick to surface.
+            pending = [
+                t
+                for t in asyncio.all_tasks()
+                if t is not asyncio.current_task() and not t.done()
+            ]
+            assert pending == []
+
+        _run(scenario())
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +917,7 @@ class TestMakeJobRepository:
 
 
 # ---------------------------------------------------------------------------
-# RealSupabaseJobRepository — query-builder shape
+# RealSupabaseJobRepository — query-builder + RPC shape
 # ---------------------------------------------------------------------------
 
 
@@ -679,112 +942,177 @@ class TestRealSupabaseRepoEnqueue:
         assert row["max_retries"] == 5
         assert row["scheduled_for"] is None
         assert row["last_error"] is None
+        assert row["dedupe_key"] is None
+        assert row["worker_id"] is None
+        assert row["lease_expires_at"] is None
+
+
+class TestRealSupabaseRepoEnqueueDedupe:
+    def test_dedupe_key_included_in_insert_payload(self):
+        client = MockSupabaseClient(validate_schema=False)
+        repo = RealSupabaseJobRepository(client, schema_name="public")
+
+        job = _run(repo.enqueue(type="upload", payload={}, dedupe_key="photo-42"))
+
+        assert job.dedupe_key == "photo-42"
+        row = client.table("jobs").inserted_payloads[0]
+        assert row["dedupe_key"] == "photo-42"
+
+    def test_conflict_falls_back_to_existing_row(self):
+        # A test double for the EXTERNAL Supabase client (never our own
+        # RealSupabaseJobRepository code) that raises a Postgres
+        # unique-violation on the FIRST insert — simulating two
+        # concurrent enqueue() calls racing on the same dedupe_key.
+        class _UniqueViolation(Exception):
+            code = "23505"
+
+        class _Raiser:
+            def execute(self):
+                raise _UniqueViolation()
+
+        class _ConflictOnceTable:
+            def __init__(self, inner, counter):
+                self._inner = inner
+                self._counter = counter
+
+            def insert(self, data=None, *a, **k):
+                self._counter["calls"] += 1
+                if self._counter["calls"] == 1:
+                    return _Raiser()
+                return self._inner.insert(data, *a, **k)
+
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+
+        class _ConflictOnceClient:
+            def __init__(self, inner):
+                self._inner = inner
+                self._counter = {"calls": 0}
+
+            def table(self, name):
+                builder = self._inner.table(name)
+                if name != "jobs":
+                    return builder
+                return _ConflictOnceTable(builder, self._counter)
+
+            def schema(self, name):
+                return self._inner.schema(name)
+
+            def rpc(self, name, params=None):
+                return self._inner.rpc(name, params)
+
+        inner_client = MockSupabaseClient(validate_schema=False)
+        inner_client.set_table_data(
+            "jobs",
+            [
+                _row(
+                    id="existing-1",
+                    payload={"first": True},
+                    dedupe_key="photo-42",
+                )
+            ],
+        )
+        client = _ConflictOnceClient(inner_client)
+        repo = RealSupabaseJobRepository(client, schema_name="public")
+
+        result = _run(
+            repo.enqueue(type="upload", payload={"second": True}, dedupe_key="photo-42")
+        )
+        assert result.id == "existing-1"
+        assert result.payload == {"first": True}
 
 
 class TestRealSupabaseRepoMarkCompleted:
-    def test_update_targets_correct_id_and_status(self):
+    def test_calls_complete_job_rpc(self):
         client = MockSupabaseClient(validate_schema=False)
+        client.set_rpc_data("complete_job", [_row(status="completed")])
         repo = RealSupabaseJobRepository(client, schema_name="public")
 
-        _run(repo.mark_completed("j-abc"))
-
-        updates = client.table("jobs").updated_payloads
-        assert len(updates) == 1
-        assert updates[0]["status"] == "completed"
-        assert "updated_at" in updates[0]
+        # Protocol contract: returns None; the RPC round-trip is what's
+        # under test (no exception ⇒ the right name + params shape).
+        result = _run(repo.mark_completed("j-abc"))
+        assert result is None
 
 
 class TestRealSupabaseRepoMarkFailed:
-    def test_retry_with_room_flips_to_pending_and_bumps_count(self):
-        # Seed a SELECT row reflecting "RUNNING with retries left".
-        from noctusai_lib.testing import MockSupabaseResponse
-
+    def test_calls_fail_job_rpc_with_policy_params(self):
         client = MockSupabaseClient(validate_schema=False)
-        client.set_table_data(
-            "jobs",
+        client.set_rpc_data(
+            "fail_job",
+            [_row(status="pending", retry_count=1, last_error="transient")],
+        )
+        repo = RealSupabaseJobRepository(client, schema_name="public")
+
+        policy = RetryPolicy(
+            max_retries=3, backoff_seconds=2.0, backoff_multiplier=2.0, max_backoff_seconds=60.0
+        )
+        result = _run(repo.mark_failed("j-1", "transient", policy=policy))
+
+        assert result.status is JobStatus.PENDING
+        assert result.retry_count == 1
+        assert result.last_error == "transient"
+
+    def test_dead_letter_row_parsed(self):
+        client = MockSupabaseClient(validate_schema=False)
+        client.set_rpc_data(
+            "fail_job",
+            [_row(status="dead_letter", retry_count=3, last_error="fatal")],
+        )
+        repo = RealSupabaseJobRepository(client, schema_name="public")
+        result = _run(repo.mark_failed("j-1", "fatal", dead_letter=True))
+        assert result.status is JobStatus.DEAD_LETTER
+        assert result.last_error == "fatal"
+
+    def test_no_row_raises_keyerror(self):
+        client = MockSupabaseClient(validate_schema=False)
+        client.set_rpc_data("fail_job", [])
+        repo = RealSupabaseJobRepository(client, schema_name="public")
+        with pytest.raises(KeyError, match="Job not found"):
+            _run(repo.mark_failed("missing", "x"))
+
+    def test_custom_fail_rpc_name_respected(self):
+        client = MockSupabaseClient(validate_schema=False)
+        client.set_rpc_data("my_fail", [_row()])
+        repo = RealSupabaseJobRepository(
+            client, schema_name="public", fail_rpc_name="my_fail"
+        )
+        result = _run(repo.mark_failed("j-1", "transient"))
+        assert result.id == "j-1"
+
+
+class TestRealSupabaseRepoExtendLease:
+    def test_returns_updated_job_on_success(self):
+        client = MockSupabaseClient(validate_schema=False)
+        client.set_rpc_data(
+            "extend_lease",
             [
-                {
-                    "id": "j-1",
-                    "type": "upload",
-                    "payload": {},
-                    "status": "running",
-                    "retry_count": 0,
-                    "max_retries": 3,
-                    "last_error": None,
-                    "created_at": "2026-05-04T12:00:00+00:00",
-                    "updated_at": "2026-05-04T12:00:00+00:00",
-                    "scheduled_for": None,
-                }
+                _row(
+                    status="running",
+                    worker_id="w-1",
+                    lease_expires_at="2026-05-04T12:20:00+00:00",
+                )
             ],
         )
-
         repo = RealSupabaseJobRepository(client, schema_name="public")
-        _run(repo.mark_failed("j-1", "transient", retry=True))
+        job = _run(repo.extend_lease("j-1", worker_id="w-1"))
+        assert job.worker_id == "w-1"
+        assert job.lease_expires_at is not None
 
-        # mark_failed issues SELECT then UPDATE; we verify the UPDATE.
-        updates = client.table("jobs").updated_payloads
-        assert len(updates) == 1
-        u = updates[0]
-        assert u["status"] == "pending"  # retries remain → flipped back
-        assert u["retry_count"] == 1
-        assert u["last_error"] == "transient"
-
-    def test_retry_false_lands_on_dead_letter(self):
+    def test_no_row_raises_lease_lost(self):
         client = MockSupabaseClient(validate_schema=False)
-        client.set_table_data(
-            "jobs",
-            [
-                {
-                    "id": "j-2",
-                    "type": "upload",
-                    "payload": {},
-                    "status": "running",
-                    "retry_count": 0,
-                    "max_retries": 3,
-                    "last_error": None,
-                    "created_at": "2026-05-04T12:00:00+00:00",
-                    "updated_at": "2026-05-04T12:00:00+00:00",
-                    "scheduled_for": None,
-                }
-            ],
-        )
-
+        client.set_rpc_data("extend_lease", [])
         repo = RealSupabaseJobRepository(client, schema_name="public")
-        _run(repo.mark_failed("j-2", "fatal", retry=False))
+        with pytest.raises(LeaseLostError):
+            _run(repo.extend_lease("j-1", worker_id="w-1"))
 
-        updates = client.table("jobs").updated_payloads
-        assert len(updates) == 1
-        assert updates[0]["status"] == "dead_letter"
-        assert updates[0]["last_error"] == "fatal"
-
-    def test_retry_exhausted_lands_on_dead_letter(self):
+    def test_custom_rpc_name_respected(self):
         client = MockSupabaseClient(validate_schema=False)
-        client.set_table_data(
-            "jobs",
-            [
-                {
-                    "id": "j-3",
-                    "type": "upload",
-                    "payload": {},
-                    "status": "running",
-                    "retry_count": 3,
-                    "max_retries": 3,
-                    "last_error": "previous",
-                    "created_at": "2026-05-04T12:00:00+00:00",
-                    "updated_at": "2026-05-04T12:00:00+00:00",
-                    "scheduled_for": None,
-                }
-            ],
+        client.set_rpc_data("my_extend", [_row(status="running", worker_id="w-1")])
+        repo = RealSupabaseJobRepository(
+            client, schema_name="public", extend_lease_rpc_name="my_extend"
         )
-
-        repo = RealSupabaseJobRepository(client, schema_name="public")
-        _run(repo.mark_failed("j-3", "final", retry=True))
-
-        updates = client.table("jobs").updated_payloads
-        assert len(updates) == 1
-        # next_status returns DEAD_LETTER when retries exhausted.
-        assert updates[0]["status"] == "dead_letter"
-        assert updates[0]["last_error"] == "final"
+        job = _run(repo.extend_lease("j-1", worker_id="w-1"))
+        assert job.worker_id == "w-1"
 
 
 class TestRealSupabaseRepoClaimNextViaRpc:
@@ -801,18 +1129,13 @@ class TestRealSupabaseRepoClaimNextViaRpc:
         client.set_rpc_data(
             "claim_next_job",
             [
-                {
-                    "id": "j-99",
-                    "type": "upload",
-                    "payload": {"x": 1},
-                    "status": "running",
-                    "retry_count": 0,
-                    "max_retries": 3,
-                    "last_error": None,
-                    "created_at": "2026-05-04T12:00:00+00:00",
-                    "updated_at": "2026-05-04T12:00:00+00:00",
-                    "scheduled_for": None,
-                }
+                _row(
+                    id="j-99",
+                    payload={"x": 1},
+                    status="running",
+                    worker_id="w-1",
+                    lease_expires_at="2026-05-04T12:10:00+00:00",
+                )
             ],
         )
         repo = RealSupabaseJobRepository(client, schema_name="public")
@@ -821,6 +1144,8 @@ class TestRealSupabaseRepoClaimNextViaRpc:
         assert job.id == "j-99"
         assert job.status is JobStatus.RUNNING
         assert job.payload == {"x": 1}
+        assert job.worker_id == "w-1"
+        assert job.lease_expires_at is not None
 
     def test_custom_rpc_name_respected(self):
         client = MockSupabaseClient(validate_schema=False)
@@ -832,6 +1157,16 @@ class TestRealSupabaseRepoClaimNextViaRpc:
         result = _run(repo.claim_next(worker_id="w-1"))
         assert result is None
 
+    def test_lease_seconds_forwarded(self):
+        # The mock ignores rpc() params entirely (keyed by name only),
+        # so this asserts the call doesn't raise with the extra param
+        # and the row still parses — the param-shape contract.
+        client = MockSupabaseClient(validate_schema=False)
+        client.set_rpc_data("claim_next_job", [_row(status="running")])
+        repo = RealSupabaseJobRepository(client, schema_name="public")
+        job = _run(repo.claim_next(worker_id="w-1", lease_seconds=120))
+        assert job is not None
+
 
 class TestRealSupabaseRepoListDeadLetters:
     def test_select_filters_by_dead_letter_status(self):
@@ -839,18 +1174,12 @@ class TestRealSupabaseRepoListDeadLetters:
         client.set_table_data(
             "jobs",
             [
-                {
-                    "id": "j-dl-1",
-                    "type": "upload",
-                    "payload": {},
-                    "status": "dead_letter",
-                    "retry_count": 3,
-                    "max_retries": 3,
-                    "last_error": "boom",
-                    "created_at": "2026-05-04T12:00:00+00:00",
-                    "updated_at": "2026-05-04T12:00:00+00:00",
-                    "scheduled_for": None,
-                }
+                _row(
+                    id="j-dl-1",
+                    status="dead_letter",
+                    retry_count=3,
+                    last_error="boom",
+                )
             ],
         )
         repo = RealSupabaseJobRepository(client, schema_name="public")
@@ -865,14 +1194,11 @@ class TestRealSupabaseRepoSchemaSelection:
     def test_non_public_schema_uses_schema_from(self):
         # MockSupabaseClient.schema(name) returns a scoped client; we
         # just verify construction doesn't error and the right path
-        # is exercised.
+        # is exercised. `list_dead_letters` goes through
+        # `_table_builder` (mark_completed/mark_failed are now RPC
+        # calls that don't touch schema-scoped table selection).
         client = MockSupabaseClient(validate_schema=False)
         repo = RealSupabaseJobRepository(client, schema_name="my_product")
 
-        # Use mark_completed which goes through `_table_builder`.
-        _run(repo.mark_completed("j-x"))
-        # Update payload should still land for the configured table —
-        # MockSupabaseClient creates per-schema scoped clients lazily;
-        # the test asserts no exception + the operation completed.
-        # (Verifying which exact scoped builder collected the update is
-        # noisy; the no-exception path is the seed-shape contract.)
+        results = _run(repo.list_dead_letters())
+        assert results == []

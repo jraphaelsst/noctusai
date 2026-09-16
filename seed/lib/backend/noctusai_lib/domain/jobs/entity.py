@@ -49,6 +49,12 @@ _LEGAL_TRANSITIONS: frozenset[tuple[JobStatus, JobStatus]] = frozenset(
         (JobStatus.RUNNING, JobStatus.COMPLETED),
         (JobStatus.RUNNING, JobStatus.FAILED),
         (JobStatus.RUNNING, JobStatus.DEAD_LETTER),
+        # Lease reclaim + heartbeat: status stays RUNNING while only
+        # `worker_id` / `lease_expires_at` change. Reclaim = a new
+        # worker picks up a job whose lease expired (the old worker
+        # died mid-processing). Heartbeat = the owning worker extends
+        # its own lease via `extend_lease` while work is in flight.
+        (JobStatus.RUNNING, JobStatus.RUNNING),
         # Retry path: a FAILED job becomes PENDING again so the next
         # poll picks it up via `claim_next`.
         (JobStatus.FAILED, JobStatus.PENDING),
@@ -66,6 +72,10 @@ class Job:
     Frozen by design: every transition produces a new Job via
     `with_status_transition`. Repos return new instances; mutations are
     never in-place.
+
+    Hardened (S1, edicao-fotos) for a long-running AI pipeline:
+    `dedupe_key` for idempotent re-enqueue, `worker_id` +
+    `lease_expires_at` so a worker dying mid-job doesn't strand it.
     """
 
     id: str
@@ -73,11 +83,28 @@ class Job:
     payload: dict
     status: JobStatus
     retry_count: int
+    # Recorded at enqueue time for operator visibility / back-compat.
+    # NOT the retry-vs-dead-letter authority: `JobRepository.mark_failed`
+    # decides that against the `RetryPolicy` passed to that call, so a
+    # worker's policy governs even jobs enqueued before it changed.
     max_retries: int
     last_error: str | None
     created_at: datetime
     updated_at: datetime
     scheduled_for: datetime | None = None
+    # Idempotency key: two `enqueue()` calls with the same `dedupe_key`
+    # resolve to ONE job row — the second is a no-op that returns the
+    # first. `None` means "no dedupe for this job" (every job type in a
+    # pipeline that re-enqueues on retry-from-upstream should set one).
+    dedupe_key: str | None = None
+    # Lease ownership: the worker currently processing this RUNNING job.
+    # `None` when PENDING / terminal.
+    worker_id: str | None = None
+    # Lease expiry: a RUNNING job whose lease has elapsed is eligible for
+    # `claim_next` to reclaim (the crash-recovery path — the worker that
+    # held it died without completing, failing, or heartbeating via
+    # `extend_lease`). `None` when PENDING / terminal.
+    lease_expires_at: datetime | None = None
 
     # Internal: keep the dataclass hashable-friendly even with `dict`
     # field — we never hash Job; this just silences any tooling that
