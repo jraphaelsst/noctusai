@@ -18,9 +18,15 @@ integration tests against a live tenant, which is the failure
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
-from noctusai_lib.domain.real_estate import Imovel, ImovelPage, PropertyData
+from noctusai_lib.domain.real_estate import (
+    Imovel,
+    ImovelFoto,
+    ImovelPage,
+    PropertyData,
+    parse_imovel_fotos,
+)
 
 
 class FakeVistaAdapter:
@@ -39,9 +45,14 @@ class FakeVistaAdapter:
         self,
         data: dict[str, PropertyData] | None = None,
         imoveis: dict[str, Imovel] | None = None,
+        fotos: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self._data: dict[str, PropertyData] = dict(data or {})
         self._imoveis: dict[str, Imovel] = dict(imoveis or {})
+        # Dict-shaped like the real ``Foto`` payload (keyed by photo code),
+        # NOT pre-parsed `ImovelFoto`s — so `list_imovel_fotos` exercises
+        # `parse_imovel_fotos`'s dict-keyed normalization on the Fake too.
+        self._fotos: dict[str, dict[str, Any]] = dict(fotos or {})
 
     # ── PropertyData surface ──
 
@@ -63,6 +74,19 @@ class FakeVistaAdapter:
 
     async def get_imovel(self, code: str) -> Optional[Imovel]:
         return self._imoveis.get(code)
+
+    # ── Foto surface ──
+
+    def add_imovel_fotos(self, codigo: str, fotos_raw: dict[str, Any]) -> None:
+        """Seed one imóvel's gallery with a raw, dict-keyed-by-photo-code
+        payload — the same wire shape Vista sends, e.g.
+        ``{"1": {"Codigo": "1", "Foto": "https://...", "Destaque": "Sim"}}``.
+        """
+        self._fotos[codigo] = fotos_raw
+
+    async def list_imovel_fotos(self, codigo: str) -> list[ImovelFoto]:
+        """Read-only photo gallery for one imóvel; ``[]`` when unseeded."""
+        return parse_imovel_fotos(self._fotos.get(codigo, {}))
 
     async def list_imoveis(
         self, *, page: int = 1, page_size: int = 50, with_detalhes: bool = False

@@ -33,8 +33,10 @@ import httpx
 
 from noctusai_lib.domain.real_estate import (
     Imovel,
+    ImovelFoto,
     ImovelPage,
     PropertyData,
+    parse_imovel_fotos,
     validate_product_code,
 )
 from noctusai_lib.integrations.vista.calibration import calibrator
@@ -234,6 +236,52 @@ class VistaRESTAdapter:
             return None
         items, _ = extract_items(result.data)
         return items[0] if items else None
+
+    async def list_imovel_fotos(self, codigo: str) -> list[ImovelFoto]:
+        """Read-only photo gallery for one imóvel.
+
+        🔴 Contract proven live 2026-09-16 (`CA2830`: 200, 28 photos):
+        ``GET /imoveis/detalhes?imovel=<codigo>&pesquisa={"fields":
+        ["Codigo",{"Foto":["Codigo","Foto","FotoPequena","Destaque","Tipo",
+        "Descricao"]}]}``. Three traps, all proven, all encoded here:
+
+        - ``Foto`` is DETALHES-only. It is NOT ``fotos`` (lowercase) and it
+          is NOT on ``listar`` — `{"fotos": ...}` on `listar` errors
+          identically to a nonexistent relation; `{"Foto": ...}` on
+          `listar` errors with "não está disponível **para este método**".
+          Hence this always calls `detalhes_imovel`, never `listar_imoveis`.
+        - The `Foto` payload is a DICT keyed by photo code, not a list —
+          `parse_imovel_fotos` (shared with `Corretor`'s shape) normalizes
+          it; this method never indexes the raw payload.
+        - `GET /imoveis/fotos` is 405 (write-only — `Allow: POST, PUT,
+          DELETE`, and can DELETE live listing photos). It is never called
+          from this read path.
+
+        Vista returns 401 for BOTH permission-denial and missing
+        parameters — status alone cannot tell them apart. Validating
+        `codigo` up front keeps this call from ever emitting the
+        missing-parameter variant; a genuine `VistaPermissionDenied` still
+        propagates with Vista's own message on `.body`; a 404 (imóvel
+        doesn't exist) yields an empty gallery rather than an error.
+        """
+        if not validate_product_code(codigo):
+            logger.warning("invalid product code format: %s", codigo)
+            return []
+
+        client = self._client()
+        fields: list[Any] = [
+            "Codigo",
+            {"Foto": ["Codigo", "Foto", "FotoPequena", "Destaque", "Tipo", "Descricao"]},
+        ]
+        try:
+            result = await client.detalhes_imovel(codigo, fields=fields)
+        except VistaNotFound:
+            logger.info("Vista: imóvel %s not found (404) — no photos", codigo)
+            return []
+
+        if not isinstance(result.data, dict):
+            return []
+        return parse_imovel_fotos(result.data.get("Foto"))
 
     async def list_imoveis(
         self, *, page: int = 1, page_size: int = 50, with_detalhes: bool = False

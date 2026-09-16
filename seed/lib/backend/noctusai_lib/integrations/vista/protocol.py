@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Optional, Protocol
 
-from noctusai_lib.domain.real_estate import Imovel, ImovelPage, PropertyData
+from noctusai_lib.domain.real_estate import Imovel, ImovelFoto, ImovelPage, PropertyData
 
 
 class VistaCRMAdapter(Protocol):
@@ -46,6 +46,11 @@ class VistaCRMAdapter(Protocol):
     because the Fake has no equivalent. Widening the Protocol keeps the
     seam honest — and per `KB § PATTERNS/backend/seed-fake-real-adapter.md`
     both sides ship it in the same commit, never Protocol-only.
+
+    **Why `list_imovel_fotos` was added (2026-09-16, roadmap S7).** A
+    read-only photo gallery, proven live against `/imoveis/detalhes` with a
+    nested `{"Foto": [...]}` field — distinct from `listar`'s
+    `FotoDestaque` and from the write-only (405-on-GET) `/imoveis/fotos`.
     """
 
     async def get_property(self, code: str) -> PropertyData | None:
@@ -63,6 +68,17 @@ class VistaCRMAdapter(Protocol):
         `with_detalhes` costs one extra HTTP call per imóvel and is what
         populates `caracteristicas` + `FinalidadeStatus`-derived
         `finalidades`, both of which are detalhes-only on the wire.
+        """
+        ...
+
+    async def list_imovel_fotos(self, codigo: str) -> list[ImovelFoto]:
+        """Read-only photo gallery for one imóvel code.
+
+        Returns an empty list when the imóvel doesn't exist or has no
+        photos. Never mutates — there is deliberately no
+        add/update/delete-photo method on this Protocol; the equivalent
+        Vista endpoint (`/imoveis/fotos`) is write-only and can DELETE
+        photos from a live listing.
         """
         ...
 

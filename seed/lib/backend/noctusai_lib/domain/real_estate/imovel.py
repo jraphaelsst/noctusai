@@ -397,6 +397,56 @@ def parse_corretores(raw: Any) -> list[Corretor]:
     return out
 
 
+class ImovelFoto(BaseModel):
+    """One photo in an imóvel's gallery.
+
+    ``Foto`` (capital, ``/imoveis/detalhes``-only) arrives on the wire as a
+    DICT keyed by photo code — the same shape trap as `Corretor`. Indexing
+    the raw payload directly is a silent-error shape:
+    ``payload["Foto"][0]`` yields a dict KEY (a string), not a photo. Go
+    through `parse_imovel_fotos`, never the raw payload.
+    """
+
+    codigo: Optional[str] = None
+    url: Optional[str] = None
+    url_thumb: Optional[str] = None
+    destaque: bool = False
+    tipo: Optional[str] = None
+    descricao: Optional[str] = None
+
+
+def parse_imovel_fotos(raw: Any) -> list[ImovelFoto]:
+    """Normalize Vista's ``Foto`` gallery — dict-keyed by photo code.
+
+    Deterministic ordering: the cover photo (``Destaque == "Sim"`` on the
+    wire) sorts first, then by ``codigo`` — so callers never depend on
+    whatever key order the dict happened to arrive in.
+    """
+    if isinstance(raw, dict):
+        entries: Iterable[Any] = raw.values()
+    elif isinstance(raw, list):
+        entries = raw
+    else:
+        return []
+
+    out: list[ImovelFoto] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        out.append(
+            ImovelFoto(
+                codigo=_clean(entry.get("Codigo")),
+                url=_clean(entry.get("Foto")),
+                url_thumb=_clean(entry.get("FotoPequena")),
+                destaque=bool(_sim_nao(entry.get("Destaque"))),
+                tipo=_clean(entry.get("Tipo")),
+                descricao=_clean(entry.get("Descricao")),
+            )
+        )
+    out.sort(key=lambda foto: (not foto.destaque, foto.codigo or ""))
+    return out
+
+
 # ─── The model ────────────────────────────────────────────────────────────
 
 
