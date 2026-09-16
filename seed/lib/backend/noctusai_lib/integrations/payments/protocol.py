@@ -1,7 +1,7 @@
 """The `PaymentGateway` Protocol both Real adapters and the Fake implement."""
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 from .types import (
     FeeBreakdown,
@@ -40,10 +40,26 @@ class PaymentGateway(Protocol):
     name: PaymentGatewayName
 
     def ensure_customer(
-        self, *, external_reference: str, email: str, name: str
+        self,
+        *,
+        external_reference: str,
+        email: str,
+        name: str,
+        tax_id: Optional[str] = None,
     ) -> GatewayCustomer:
         """Create the payer, reusing an existing gateway customer when
-        one already exists for `external_reference`."""
+        one already exists for `external_reference`.
+
+        `tax_id` is the payer's CPF/CNPJ (digits only). Asaas refuses to
+        bill a customer without one; Stripe ignores it."""
+        ...
+
+    def verify_credentials(self) -> None:
+        """Prove the configured key authenticates, with a read-only call.
+
+        Returns None on success; raises `PaymentGatewayError` otherwise.
+        Backs an operator's "test connection" button — it must never
+        create or change anything at the gateway."""
         ...
 
     def create_subscription(self, request: SubscriptionRequest) -> GatewaySubscription:

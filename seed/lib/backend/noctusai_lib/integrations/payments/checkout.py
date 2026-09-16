@@ -51,7 +51,7 @@ from .real_asaas import DEFAULT_TIMEOUT_SECONDS as ASAAS_DEFAULT_TIMEOUT_SECONDS
 from .real_asaas import AsaasPaymentGateway
 from .real_stripe import StripePaymentGateway
 from .types import BillingCycle, BillingMethod, Money, PaymentGatewayName, SubscriptionRequest
-from .webhook_events import _stripe_field
+from ._stripe_fields import stripe_field, stripe_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,13 @@ class CheckoutRequest:
     success_url: Optional[str] = None  # Stripe: REQUIRED
     cancel_url: Optional[str] = None  # Stripe: REQUIRED
     metadata: dict[str, Any] = field(default_factory=dict)
+    #: Free days before the first charge. Stripe: `trial_period_days`, and
+    #: the hosted page still collects the card up front. Asaas: the first
+    #: due date moves forward (`SubscriptionRequest.trial_days`).
+    trial_days: int = 0
+    #: Payer CPF/CNPJ (digits). Asaas refuses to charge a customer without
+    #: one; Stripe ignores it.
+    tax_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -165,19 +172,27 @@ class StripeHostedCheckout:
             external_reference=request.external_reference,
             email=request.email,
             name=request.name,
+            tax_id=request.tax_id,
         )
 
         stripe = self._gateway._stripe()
         metadata = {"external_reference": request.external_reference, **request.metadata}
+        subscription_data: dict[str, Any] = {"metadata": metadata}
+        if request.trial_days > 0:
+            subscription_data["trial_period_days"] = request.trial_days
         session = self._gateway._call(
             lambda: stripe.checkout.Session.create(
                 mode="subscription",
                 customer=customer.id_at_gateway,
+                client_reference_id=request.external_reference,
                 line_items=[{"price": request.plan_ref, "quantity": 1}],
+                # Card up front even when the trial makes the first
+                # invoice $0 (Stripe's default would skip collection).
+                payment_method_collection="always",
                 success_url=request.success_url,
                 cancel_url=request.cancel_url,
                 metadata=metadata,
-                subscription_data={"metadata": metadata},
+                subscription_data=subscription_data,
             )
         )
         return CheckoutSession(
@@ -186,9 +201,9 @@ class StripeHostedCheckout:
             customer_id_at_gateway=customer.id_at_gateway,
             external_reference=request.external_reference,
             # A real StripeObject has no .get() and dict() fails on it;
-            # _stripe_field / to_dict() work for the real SDK type.
-            subscription_id_at_gateway=_stripe_field(session, "subscription"),
-            raw=session.to_dict(),
+            # see `._stripe_fields`.
+            subscription_id_at_gateway=stripe_field(session, "subscription"),
+            raw=stripe_to_dict(session),
         )
 
 
@@ -210,12 +225,13 @@ class AsaasHostedCheckout:
         self._gateway = gateway
 
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
-        if request.billing_method not in ("pix", "boleto"):
+        if request.billing_method not in ("pix", "boleto", "card"):
             raise PaymentGatewayError(
                 "asaas",
-                "create_checkout requires billing_method='pix' or 'boleto' "
-                f"— Asaas has no hosted-checkout page for {request.billing_method!r} "
-                "(card checkout is a Stripe-only hosted flow in this package).",
+                "create_checkout requires billing_method='pix', 'boleto' or "
+                f"'card' — got {request.billing_method!r} (Asaas' invoice page "
+                "for an UNDEFINED billing type lets the payer switch methods, "
+                "which breaks the method the subscription was sold with).",
                 retryable=False,
             )
 
@@ -223,6 +239,7 @@ class AsaasHostedCheckout:
             external_reference=request.external_reference,
             email=request.email,
             name=request.name,
+            tax_id=request.tax_id,
         )
         subscription = self._gateway.create_subscription(
             SubscriptionRequest(
@@ -232,6 +249,7 @@ class AsaasHostedCheckout:
                 billing_cycle=request.billing_cycle,
                 billing_method=request.billing_method,
                 metadata=request.metadata,
+                trial_days=request.trial_days,
             )
         )
 

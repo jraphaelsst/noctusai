@@ -45,6 +45,21 @@ def _mask(value: Optional[str]) -> Optional[str]:
     return "*" * (len(value) - 4) + value[-4:]
 
 
+def _trusted_profile(db, user_id) -> dict:
+    """role / org_role / org_id from `public.noctus_users` — never from
+    `user_metadata`, which the user can rewrite with `auth.updateUser`."""
+    rows = (
+        db.table("noctus_users")
+        .select("role, org_role, org_id")
+        .eq("id", str(user_id))
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return rows[0] if rows else {}
+
+
 def _fetch_key(db, table: str, key: str, org_id: Optional[str] = None) -> Optional[str]:
     """Fetch one value from org_settings or platform_settings. Silent None on miss."""
     try:
@@ -72,7 +87,7 @@ async def obter_credentials(authorization: Optional[str] = Header(None)):
     user, _ = await get_current_user(authorization)
     db = get_admin_client()
 
-    org_id = (user.user_metadata or {}).get("org_id")
+    org_id = _trusted_profile(db, user.id).get("org_id")
     out: dict = {}
     for provider in _LLM_PROVIDERS:
         key_name = f"{provider}_api_key"
@@ -106,11 +121,11 @@ async def salvar_credentials(
     user, _ = await get_current_user(authorization)
     db = get_admin_client()
 
-    noctus_role = (user.user_metadata or {}).get("noctus_role")
-    org_role = (user.user_metadata or {}).get("org_role")
-    org_id = (user.user_metadata or {}).get("org_id")
+    profile = _trusted_profile(db, user.id)
+    org_role = profile.get("org_role")
+    org_id = profile.get("org_id")
 
-    is_platform_admin = noctus_role == "admin"
+    is_platform_admin = profile.get("role") == "admin"
     can_write_org = org_role in ("owner", "admin")
 
     if not is_platform_admin and not can_write_org:

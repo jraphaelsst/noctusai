@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Optional, TypeVar
 
+from ._stripe_fields import stripe_field, stripe_to_dict
 from .errors import PaymentGatewayError
 from .types import (
     FeeBreakdown,
@@ -100,7 +101,9 @@ class StripePaymentGateway:
         return _STATUS_MAP.get(raw_status, "incomplete")
 
     def _to_gateway_subscription(self, sub: Any) -> GatewaySubscription:
-        latest_invoice = sub.get("latest_invoice")
+        # `sub` is a real `StripeObject`: no `.get()`, and `dict(sub)`
+        # raises — every read goes through `stripe_field`/`stripe_to_dict`.
+        latest_invoice = stripe_field(sub, "latest_invoice")
         charge_id: Optional[str] = None
         if latest_invoice is not None:
             # `latest_invoice` may be an id (str) or an expanded object,
@@ -108,27 +111,38 @@ class StripePaymentGateway:
             charge_id = (
                 latest_invoice
                 if isinstance(latest_invoice, str)
-                else latest_invoice.get("charge")
+                else stripe_field(latest_invoice, "charge")
             )
+            if charge_id is not None and not isinstance(charge_id, str):
+                charge_id = stripe_field(charge_id, "id")
+        period_end = stripe_field(sub, "current_period_end")
+        if period_end is None:
+            # API 2025-03+ moved the billing period onto the items.
+            items = stripe_field(stripe_field(sub, "items"), "data") or []
+            period_end = stripe_field(items[0], "current_period_end") if items else None
         return GatewaySubscription(
             id_at_gateway=sub["id"],
             customer_id_at_gateway=sub["customer"],
-            external_reference=(sub.get("metadata") or {}).get("external_reference"),
+            external_reference=stripe_field(stripe_field(sub, "metadata"), "external_reference"),
             status=self._map_status(sub["status"]),
-            current_period_end=(
-                None
-                if sub.get("current_period_end") is None
-                else str(sub["current_period_end"])
-            ),
+            current_period_end=None if period_end is None else str(period_end),
             latest_charge_id_at_gateway=charge_id,
-            raw=dict(sub),
+            raw=stripe_to_dict(sub),
         )
 
     # ── PaymentGateway ───────────────────────────────────────────────
 
     def ensure_customer(
-        self, *, external_reference: str, email: str, name: str
+        self,
+        *,
+        external_reference: str,
+        email: str,
+        name: str,
+        tax_id: Optional[str] = None,
     ) -> GatewayCustomer:
+        # `tax_id` is accepted for Protocol parity and deliberately not
+        # sent: Stripe tax ids are typed objects (`br_cpf`/`br_cnpj`) with
+        # their own validation lifecycle, and nothing here bills off them.
         stripe = self._stripe()
         existing = self._call(
             lambda: stripe.Customer.search(
@@ -140,8 +154,8 @@ class StripePaymentGateway:
             return GatewayCustomer(
                 id_at_gateway=found["id"],
                 external_reference=external_reference,
-                email=found.get("email") or email,
-                name=found.get("name") or name,
+                email=stripe_field(found, "email") or email,
+                name=stripe_field(found, "name") or name,
             )
         created = self._call(
             lambda: stripe.Customer.create(
@@ -171,18 +185,19 @@ class StripePaymentGateway:
                 retryable=False,
             )
         stripe = self._stripe()
-        sub = self._call(
-            lambda: stripe.Subscription.create(
-                customer=request.customer_id_at_gateway,
-                items=[{"price": request.plan_ref}],
-                metadata={
-                    "external_reference": request.external_reference,
-                    **request.metadata,
-                },
-                payment_behavior="default_incomplete",
-                expand=["latest_invoice"],
-            )
-        )
+        params: dict[str, Any] = {
+            "customer": request.customer_id_at_gateway,
+            "items": [{"price": request.plan_ref}],
+            "metadata": {
+                "external_reference": request.external_reference,
+                **request.metadata,
+            },
+            "payment_behavior": "default_incomplete",
+            "expand": ["latest_invoice"],
+        }
+        if request.trial_days > 0:
+            params["trial_period_days"] = request.trial_days
+        sub = self._call(lambda: stripe.Subscription.create(**params))
         return self._to_gateway_subscription(sub)
 
     def get_subscription(self, id_at_gateway: str) -> GatewaySubscription:
@@ -197,6 +212,12 @@ class StripePaymentGateway:
         sub = self._call(lambda: stripe.Subscription.cancel(id_at_gateway))
         return self._to_gateway_subscription(sub)
 
+    def verify_credentials(self) -> None:
+        # `Balance.retrieve` is read-only and needs no object id — the
+        # cheapest call that still proves the key authenticates.
+        stripe = self._stripe()
+        self._call(lambda: stripe.Balance.retrieve())
+
     def get_fee_breakdown(self, charge_id_at_gateway: str) -> FeeBreakdown:
         stripe = self._stripe()
         charge = self._call(
@@ -205,6 +226,9 @@ class StripePaymentGateway:
             )
         )
         txn = charge["balance_transaction"]
+        if isinstance(txn, str):
+            # Not expanded (older API pin / expansion dropped): fetch it.
+            txn = self._call(lambda: stripe.BalanceTransaction.retrieve(txn))
         currency = str(txn["currency"]).upper()
         return FeeBreakdown(
             gross=Money(int(txn["amount"]), currency),

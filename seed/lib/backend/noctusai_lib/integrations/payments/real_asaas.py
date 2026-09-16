@@ -21,9 +21,10 @@ way `products/p-studio` already does for one-off charges.
 """
 from __future__ import annotations
 
+import datetime
 import logging
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -86,9 +87,13 @@ class AsaasPaymentGateway:
         base_url: str = DEFAULT_BASE_URL,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         transport: Optional[httpx.BaseTransport] = None,
+        today: Optional[Callable[[], datetime.date]] = None,
     ) -> None:
         if not api_key:
             raise ValueError("AsaasPaymentGateway requires a non-empty api_key")
+        # Clock seam: `nextDueDate` is computed from "today", and a trial
+        # pushes it forward — tests pin the date instead of racing it.
+        self._today = today or datetime.date.today
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
         self._client = httpx.Client(
@@ -154,7 +159,12 @@ class AsaasPaymentGateway:
     # ── PaymentGateway ───────────────────────────────────────────────
 
     def ensure_customer(
-        self, *, external_reference: str, email: str, name: str
+        self,
+        *,
+        external_reference: str,
+        email: str,
+        name: str,
+        tax_id: Optional[str] = None,
     ) -> GatewayCustomer:
         found = self._request(
             "GET", "/customers", params={"externalReference": external_reference}
@@ -168,15 +178,17 @@ class AsaasPaymentGateway:
                 email=row.get("email") or email,
                 name=row.get("name") or name,
             )
-        created = self._request(
-            "POST",
-            "/customers",
-            json={
-                "name": name,
-                "email": email,
-                "externalReference": external_reference,
-            },
-        )
+        body: dict[str, Any] = {
+            "name": name,
+            "email": email,
+            "externalReference": external_reference,
+        }
+        if tax_id:
+            # Asaas refuses to issue a charge for a customer without a
+            # CPF/CNPJ — the customer row itself is accepted without one,
+            # which is why the failure otherwise surfaces far later.
+            body["cpfCnpj"] = tax_id
+        created = self._request("POST", "/customers", json=body)
         return GatewayCustomer(
             id_at_gateway=created["id"],
             external_reference=external_reference,
@@ -185,18 +197,37 @@ class AsaasPaymentGateway:
         )
 
     def create_subscription(self, request: SubscriptionRequest) -> GatewaySubscription:
-        import datetime
-
+        # Asaas has no trial concept: a trial is the first due date moved
+        # forward by `trial_days`.
+        first_due = self._today() + datetime.timedelta(days=request.trial_days)
         payload = {
             "customer": request.customer_id_at_gateway,
             "billingType": _BILLING_METHOD_MAP[request.billing_method],
             "value": float(request.price.to_decimal()),
             "cycle": _CYCLE_MAP[request.billing_cycle],
-            "nextDueDate": datetime.date.today().isoformat(),
+            "nextDueDate": first_due.isoformat(),
             "externalReference": request.external_reference,
         }
         created = self._request("POST", "/subscriptions", json=payload)
-        return self._to_gateway_subscription(created)
+        subscription = self._to_gateway_subscription(created)
+        if request.trial_days > 0:
+            # Asaas reports ACTIVE; in our vocabulary a subscription whose
+            # first charge is still days away is trialing.
+            subscription = GatewaySubscription(
+                id_at_gateway=subscription.id_at_gateway,
+                customer_id_at_gateway=subscription.customer_id_at_gateway,
+                external_reference=subscription.external_reference,
+                status="trialing",
+                current_period_end=subscription.current_period_end,
+                latest_charge_id_at_gateway=None,
+                raw=subscription.raw,
+            )
+        return subscription
+
+    def verify_credentials(self) -> None:
+        # A one-row customer list: read-only, and 401s on a bad key (or
+        # `invalid_environment` when a production key hits the sandbox).
+        self._request("GET", "/customers", params={"limit": 1})
 
     def get_subscription(self, id_at_gateway: str) -> GatewaySubscription:
         raw = self._request("GET", f"/subscriptions/{id_at_gateway}")

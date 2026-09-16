@@ -26,10 +26,10 @@ from enum import Enum
 class SubscriptionState(str, Enum):
     """Lifecycle states for a subscription.
 
-    INCOMPLETE → ACTIVE | EXPIRED
-    TRIALING   → ACTIVE | CANCELED
+    INCOMPLETE → ACTIVE | EXPIRED | CANCELED | TRIALING
+    TRIALING   → ACTIVE | CANCELED | PAST_DUE | EXPIRED
     ACTIVE     → PAST_DUE | CANCELED
-    PAST_DUE   → ACTIVE | GRACE
+    PAST_DUE   → ACTIVE | GRACE | CANCELED | EXPIRED
     GRACE      → ACTIVE | CANCELED | EXPIRED
     CANCELED, EXPIRED — terminal.
 
@@ -76,6 +76,21 @@ _LEGAL_TRANSITIONS: frozenset[tuple[SubscriptionState, SubscriptionState]] = fro
         (SubscriptionState.ACTIVE, SubscriptionState.CANCELED),
         (SubscriptionState.PAST_DUE, SubscriptionState.ACTIVE),
         (SubscriptionState.PAST_DUE, SubscriptionState.GRACE),
+        # Gateway-observed moves (Stripe documents each): the first charge
+        # after a trial fails (trialing → past_due), a trial ends with no
+        # usable payment method (trialing → expired), the payer cancels
+        # while a charge is failing (past_due → canceled), retries run out
+        # with no grace configured (past_due → expired), and an unpaid
+        # first charge is abandoned (incomplete → canceled).
+        (SubscriptionState.TRIALING, SubscriptionState.PAST_DUE),
+        (SubscriptionState.TRIALING, SubscriptionState.EXPIRED),
+        (SubscriptionState.PAST_DUE, SubscriptionState.CANCELED),
+        (SubscriptionState.PAST_DUE, SubscriptionState.EXPIRED),
+        (SubscriptionState.INCOMPLETE, SubscriptionState.CANCELED),
+        # A consumer that records the subscription BEFORE the payer finishes
+        # a hosted checkout holds it as INCOMPLETE; a checkout that starts a
+        # trial then moves it straight to TRIALING.
+        (SubscriptionState.INCOMPLETE, SubscriptionState.TRIALING),
         (SubscriptionState.GRACE, SubscriptionState.ACTIVE),
         (SubscriptionState.GRACE, SubscriptionState.CANCELED),
         (SubscriptionState.GRACE, SubscriptionState.EXPIRED),

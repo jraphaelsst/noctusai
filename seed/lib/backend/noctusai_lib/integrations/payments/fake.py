@@ -8,6 +8,9 @@ consumer's tests run against this with no network and no keys.
 """
 from __future__ import annotations
 
+from typing import Optional
+
+from .errors import PaymentGatewayError
 from .types import (
     FeeBreakdown,
     GatewayCustomer,
@@ -41,6 +44,7 @@ class FakePaymentGateway:
         # Recorded calls, so tests can assert on intent, not just outcome.
         self.calls: list[tuple[str, object]] = []
         self._seq = 0
+        self._credentials_error: Exception | None = None
 
     # ── test helpers ─────────────────────────────────────────────────
 
@@ -51,7 +55,7 @@ class FakePaymentGateway:
     def set_status(self, id_at_gateway: str, status: GatewaySubscriptionStatus) -> GatewaySubscription:
         """Force a subscription into a status, simulating a webhook-driven
         change the consumer hasn't polled for yet."""
-        sub = self.subscriptions[id_at_gateway]
+        sub = self._require(id_at_gateway)
         updated = GatewaySubscription(
             id_at_gateway=sub.id_at_gateway,
             customer_id_at_gateway=sub.customer_id_at_gateway,
@@ -71,8 +75,17 @@ class FakePaymentGateway:
 
     # ── PaymentGateway ───────────────────────────────────────────────
 
+    def fail_credentials(self, error: Exception | None) -> None:
+        """Script the next `verify_credentials` outcome (None = succeed)."""
+        self._credentials_error = error
+
     def ensure_customer(
-        self, *, external_reference: str, email: str, name: str
+        self,
+        *,
+        external_reference: str,
+        email: str,
+        name: str,
+        tax_id: Optional[str] = None,
     ) -> GatewayCustomer:
         self.calls.append(("ensure_customer", external_reference))
         for existing in self.customers.values():
@@ -94,7 +107,7 @@ class FakePaymentGateway:
             id_at_gateway=self._next_id("sub"),
             customer_id_at_gateway=request.customer_id_at_gateway,
             external_reference=request.external_reference,
-            status="trialing",
+            status="trialing" if request.trial_days > 0 else "incomplete",
             latest_charge_id_at_gateway=charge_id,
             raw={
                 "price_cents": request.price.amount_cents,
@@ -102,19 +115,38 @@ class FakePaymentGateway:
                 "billing_cycle": request.billing_cycle,
                 "billing_method": request.billing_method,
                 "plan_ref": request.plan_ref,
+                "trial_days": request.trial_days,
                 "metadata": dict(request.metadata),
             },
         )
         self.subscriptions[subscription.id_at_gateway] = subscription
         return subscription
 
+    def _require(self, id_at_gateway: str) -> GatewaySubscription:
+        # Same failure shape as the Real adapters' 404 — a consumer that
+        # handles `PaymentGatewayError` must not meet a bare KeyError here.
+        try:
+            return self.subscriptions[id_at_gateway]
+        except KeyError:
+            raise PaymentGatewayError(
+                self.name.value if hasattr(self.name, "value") else str(self.name),
+                f"No such subscription: {id_at_gateway}",
+                status=404,
+                code="resource_missing",
+            ) from None
+
     def get_subscription(self, id_at_gateway: str) -> GatewaySubscription:
         self.calls.append(("get_subscription", id_at_gateway))
-        return self.subscriptions[id_at_gateway]
+        return self._require(id_at_gateway)
 
     def cancel_subscription(self, id_at_gateway: str) -> GatewaySubscription:
         self.calls.append(("cancel_subscription", id_at_gateway))
         return self.set_status(id_at_gateway, "canceled")
+
+    def verify_credentials(self) -> None:
+        self.calls.append(("verify_credentials", None))
+        if self._credentials_error is not None:
+            raise self._credentials_error
 
     def get_fee_breakdown(self, charge_id_at_gateway: str) -> FeeBreakdown:
         self.calls.append(("get_fee_breakdown", charge_id_at_gateway))

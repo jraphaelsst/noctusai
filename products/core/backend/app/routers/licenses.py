@@ -9,11 +9,11 @@ DELETE /api/licenses/{id}         — Revoke access (admin)
 GET    /api/licenses/check/{slug} — Check if current org has access to product
 """
 import logging
-from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 
 from app.database import get_admin_client
+from app.services import license_service
 from app.dependencies import get_current_user, get_current_admin, get_org_id
 from app.schemas.licenses import LicenseGrant
 
@@ -56,116 +56,42 @@ async def listar_licenses_por_produto(product_id: str, authorization: Optional[s
 async def grant_license(body: LicenseGrant, authorization: Optional[str] = Header(None)):
     """Grant a product license to an organization (platform admin).
 
-    Always inserts a new license record. Revoked/expired records are preserved
-    as history. The partial unique index prevents duplicate active licenses.
-    Requires migration 003_license_history.sql to have been applied.
+    Always inserts a new `source='manual'` record; revoked/expired records
+    are preserved as history. The partial unique index prevents duplicate
+    active licenses. Writes + side effects live in `license_service`.
     """
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    # Check for an existing ACTIVE license (prevent duplicates)
-    existing = db.table("licenses").select("id").eq(
-        "org_id", body.org_id
-    ).eq("product_id", body.product_id).eq("status", "active").execute()
-
-    if existing.data:
-        raise HTTPException(status_code=409, detail="Esta organização já possui uma licença ativa para este produto")
-
-    data = {
-        "org_id": body.org_id,
-        "product_id": body.product_id,
-        "status": "active",
-    }
-    if body.fim:
-        data["fim"] = body.fim
-    result = db.table("licenses").insert(data).execute()
-    if not result.data:
-        raise HTTPException(status_code=500, detail="Erro ao criar licença")
-
-    logger.info(f"License granted: org={body.org_id} product={body.product_id}")
-
-    # Audit log, notification, and webhook (best-effort)
     try:
-        from app.services import audit_service
-        await audit_service.log(
-            user_id=user.id, org_id=body.org_id,
-            action="grant", resource_type="license",
-            resource_id=result.data[0]["id"],
-        )
-    except Exception as exc:
-        logger.warning("licenses: grant audit log failed for license_id=%s (%s); grant succeeded", result.data[0]["id"], exc)
-    try:
-        from app.services import notification_service
-        await notification_service.notify_team(
+        result = license_service.grant_license(
+            db,
             org_id=body.org_id,
-            type="system",
-            title="Licença concedida",
-            message=f"Uma nova licença de produto foi ativada para sua organização.",
+            product_id=body.product_id,
+            source="manual",
+            fim=body.fim,
         )
-    except Exception as exc:
-        logger.warning("licenses: team notification on grant failed for org=%s (%s); grant succeeded", body.org_id, exc)
-    try:
-        from app.services import webhook_delivery
-        await webhook_delivery.dispatch(
-            org_id=body.org_id,
-            event_type="license.granted",
-            payload={"license_id": result.data[0]["id"], "product_id": body.product_id},
-        )
-    except Exception as exc:
-        logger.warning("licenses: webhook dispatch on grant failed for org=%s (%s); grant succeeded", body.org_id, exc)
+    except license_service.LicenseConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.error("licenses: grant failed for org=%s product=%s: %s", body.org_id, body.product_id, exc)
+        raise HTTPException(status_code=500, detail="Erro ao criar licença") from exc
 
-    return {"data": result.data[0]}
+    await license_service.announce_grant(actor_user_id=user.id, license_row=result.license)
+    return {"data": result.license}
 
 
 @router.delete("/{license_id}")
 async def revoke_license(license_id: str, authorization: Optional[str] = Header(None)):
-    """Revoke a license (set status to revoked)."""
+    """Revoke a license (set status to revoked). Admin action — any source."""
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    result = db.table("licenses").update(
-        {"status": "revoked", "fim": datetime.now(timezone.utc).isoformat()}
-    ).eq("id", license_id).execute()
-
-    if not result.data:
+    revoked_record = license_service.revoke_license(db, license_id)
+    if revoked_record is None:
         raise HTTPException(status_code=404, detail="Licença não encontrada")
 
-    logger.info(f"License revoked: {license_id}")
-
-    revoked_record = result.data[0]
-
-    # Flush cached SSO sessions so users feel the revocation within the next
-    # JWT refresh cycle, not at the end of the 5-min cache TTL.
-    # compliance-audit-reconciliation Phase 6 (finding 9).
-    try:
-        from app.routers.sso import invalidate_sso_cache_for_org
-        org_id_val = revoked_record.get("org_id")
-        if org_id_val:
-            invalidate_sso_cache_for_org(db, org_id_val)
-    except Exception as exc:
-        logger.warning("SSO cache invalidation after license revoke failed: %s", exc)
-
-    # Audit log and webhook (best-effort)
-    try:
-        from app.services import audit_service
-        await audit_service.log(
-            user_id=user.id, org_id=revoked_record.get("org_id"),
-            action="revoke", resource_type="license", resource_id=license_id,
-        )
-    except Exception as exc:
-        logger.warning("licenses: revoke audit log failed for license_id=%s (%s); revocation succeeded", license_id, exc)
-    try:
-        from app.services import webhook_delivery
-        org_id_val = revoked_record.get("org_id")
-        if org_id_val:
-            await webhook_delivery.dispatch(
-                org_id=org_id_val,
-                event_type="license.revoked",
-                payload={"license_id": license_id},
-            )
-    except Exception as exc:
-        logger.warning("licenses: webhook dispatch on revoke failed for license_id=%s (%s); revocation succeeded", license_id, exc)
-
+    await license_service.announce_revoke(actor_user_id=user.id, license_row=revoked_record)
     return {"data": revoked_record}
 
 

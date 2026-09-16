@@ -320,3 +320,23 @@ def test_make_fake_gateway_event_bypasses_verification() -> None:
 def test_make_fake_gateway_event_default_event_id_is_stable_shape() -> None:
     event = make_fake_gateway_event()
     assert event.event_id.startswith("evt_fake_stripe_")
+
+
+def test_asaas_top_level_event_id_is_preferred() -> None:
+    body = json.dumps(
+        {"id": "evt_abc&123", "event": "PAYMENT_RECEIVED", "payment": {"id": "pay_9", "status": "RECEIVED"}}
+    ).encode()
+    event = parse_webhook_event(body, _asaas_headers(), gateway="asaas", asaas_webhook_token=ASAAS_TOKEN)
+    assert event.event_id == "evt_abc&123"
+
+
+def test_asaas_subscription_events_for_different_subscriptions_get_different_keys() -> None:
+    keys = set()
+    for sub_id in ("sub_1", "sub_2"):
+        body = json.dumps(
+            {"event": "SUBSCRIPTION_DELETED", "subscription": {"id": sub_id, "status": "INACTIVE"}}
+        ).encode()
+        event = parse_webhook_event(body, _asaas_headers(), gateway="asaas", asaas_webhook_token=ASAAS_TOKEN)
+        assert event.subscription_id_at_gateway == sub_id
+        keys.add(event.inbox_key)
+    assert len(keys) == 2

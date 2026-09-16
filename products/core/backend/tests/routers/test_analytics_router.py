@@ -33,6 +33,22 @@ class TestAnalyticsOverview:
         assert "total_users" in data
         assert "churn_rate" in data
 
+    def test_overview_mrr_excludes_trials_and_normalizes_yearly(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("organizations", [{"id": "org-1"}])
+        mock_sb.set_table_data("noctus_users", [{"id": "u1"}])
+        mock_sb.set_table_data("subscriptions", [
+            {"id": "s1", "org_id": "o1", "plan_id": "plan-1", "status": "active"},
+            {"id": "s2", "org_id": "o2", "plan_id": "plan-1", "status": "trial"},
+            {"id": "s3", "org_id": "o3", "plan_id": "plan-1", "status": "active",
+             "amount_cents": 120000, "billing_cycle": "yearly", "currency": "BRL"},
+        ])
+        mock_sb.set_table_data("plans", [{"id": "plan-1", "price_monthly": 99}])
+        data = admin_client.get("/api/admin/analytics/overview").json()["data"]
+        # 99 (legacy list price) + 1200/12; the trial pays nothing.
+        assert data["mrr"] == 199.0
+        assert data["active_orgs"] == 3
+
     def test_overview_forbidden_for_non_admin(self, client):
         resp = client.get("/api/admin/analytics/overview")
         assert resp.status_code == 403

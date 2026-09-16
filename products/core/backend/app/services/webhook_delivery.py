@@ -87,7 +87,7 @@ def _get_sender() -> OutboundWebhookSender:
 DELIVERY_RETENTION_DAYS = 30
 
 
-async def dispatch(org_id: str, event_type: str, payload: dict) -> list[dict]:
+async def dispatch(org_id: str, event_type: str, payload: dict, db: Any = None) -> list[dict]:
     """
     Find all matching webhook endpoints for the org/event, send HTTP POST
     with HMAC-SHA256 signature, and log delivery results.
@@ -96,11 +96,13 @@ async def dispatch(org_id: str, event_type: str, payload: dict) -> list[dict]:
         org_id: The organization UUID that triggered the event.
         event_type: Event type string (e.g. 'subscription.created', 'user.invited').
         payload: The JSON-serializable event payload.
+        db: Client to read endpoints / write delivery logs with (defaults
+            to the service-role client).
 
     Returns:
         List of delivery log records.
     """
-    db = get_admin_client()
+    db = db if db is not None else get_admin_client()
 
     # Find active webhook endpoints for this org that listen to this event
     endpoints_result = db.table("webhook_endpoints").select("*").eq(

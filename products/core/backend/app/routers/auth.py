@@ -45,8 +45,22 @@ def _make_org_slug(base_name: str, org_type: str) -> str:
 @router.post("/signup")
 @limiter.limit("10/minute")
 async def signup(request: Request, body: SignupRequest):
-    """Register a new user and create their organization."""
+    """Register a new user and create their organization.
+
+    Self-serve billing: with `plan_price_id`, the chosen price is validated
+    (sellable, audience fits `org_type`) before anything is created, and the
+    response tells the client to continue to checkout.
+    """
     db = get_admin_client()
+
+    chosen_price = None
+    if body.plan_price_id:
+        from app.services.billing_subscriptions import BillingError, validate_price_for_org_type
+
+        try:
+            chosen_price = validate_price_for_org_type(db, body.plan_price_id, body.org_type)["price"]
+        except BillingError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     # 1. Create Supabase auth user
     try:
@@ -126,7 +140,10 @@ async def signup(request: Request, body: SignupRequest):
         # surrounding audit-log warnings (which all use user_id=%s).
         logger.warning("auth: welcome email send failed for user_id=%s (%s); request continues", user.id, exc)
 
-    return {"data": {"user_id": user.id, "org_id": org["id"]}}
+    data = {"user_id": user.id, "org_id": org["id"]}
+    if chosen_price is not None:
+        data["next_step"] = {"action": "subscribe", "plan_price_id": chosen_price["id"]}
+    return {"data": data}
 
 
 @router.post("/login")

@@ -14,7 +14,7 @@ from noctusai_seed import create_product_app
 
 from app.config import settings
 from app.rate_limit import limiter
-from app.scheduler import start_scheduler, stop_scheduler
+from app.scheduler import configure as configure_scheduler, start_scheduler, stop_scheduler
 from app.routers import auth, organizations, products, licenses, sso
 from app.routers import plans, subscriptions, api_keys, test_accounts, billing
 from app.routers import team, roles
@@ -30,6 +30,9 @@ from app.routers import users
 from app.routers import templates
 from app.routers import me_consents as me_consents_router
 from app.routers import fleet_control as fleet_control_router
+from app.routers import billing_admin as billing_admin_router
+
+configure_scheduler()
 
 app = create_product_app(
     name="Core",
@@ -71,6 +74,7 @@ app = create_product_app(
         templates.router,
         me_consents_router.router,
         fleet_control_router.router,
+        billing_admin_router.router,
     ],
 )
 

@@ -156,3 +156,31 @@ class TestRealSupabaseEventInboxShape:
         inbox = RealSupabaseEventInbox(_BrokenClient())
         with pytest.raises(_FakeAPIError):
             inbox.claim(gateway="stripe", event_id="evt_1")
+
+
+def test_release_makes_the_next_delivery_claimable_again() -> None:
+    inbox = FakeEventInbox()
+    assert inbox.claim(gateway="stripe", event_id="evt_9") is True
+    inbox.release(gateway="stripe", event_id="evt_9")
+    assert inbox.claim(gateway="stripe", event_id="evt_9") is True
+    assert inbox.releases == [("stripe", "evt_9")]
+
+
+def test_release_of_an_unclaimed_pair_is_a_no_op() -> None:
+    inbox = FakeEventInbox()
+    inbox.release(gateway="asaas", event_id="never")
+    assert inbox.claim(gateway="asaas", event_id="never") is True
+
+
+def test_real_release_deletes_the_claim_row() -> None:
+    from noctusai_lib.testing import MockSupabaseClient
+
+    client = MockSupabaseClient(validate_schema=False)
+    client.set_table_data(
+        "payment_gateway_events",
+        [{"gateway": "stripe", "event_id": "evt_1"}, {"gateway": "stripe", "event_id": "evt_2"}],
+    )
+    inbox = RealSupabaseEventInbox(client)
+    inbox.release(gateway="stripe", event_id="evt_1")
+    remaining = client.table("payment_gateway_events").select("*").execute().data
+    assert [r["event_id"] for r in remaining] == ["evt_2"]

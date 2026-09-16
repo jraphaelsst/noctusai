@@ -14,6 +14,24 @@ from fastapi import APIRouter, Header
 
 from app.database import get_admin_client
 from app.dependencies import get_current_admin
+from app.services import billing_metrics
+from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+
+
+def _count(query) -> int:
+    """Exact row count without transferring the rows (a 1-row page + count)."""
+    result = query.limit(1).execute()
+    if result.count is None:
+        raise RuntimeError("analytics: PostgREST returned no count for a count='exact' query")
+    return result.count
+
+
+def _all(db, table: str, columns: str) -> list[dict]:
+    """Every row of a table, paged past PostgREST's silent 1 000-row cap."""
+    return list(iter_paged_rows(
+        lambda start, end: db.table(table).select(columns).order("id").range(start, end).execute().data,
+        label=f"analytics {table}",
+    ))
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/analytics", tags=["Analytics"])
@@ -26,43 +44,35 @@ async def get_overview(authorization: Optional[str] = Header(None)):
     db = get_admin_client()
 
     # Total organizations
-    orgs_result = db.table("organizations").select("id", count="exact").execute()
-    total_orgs = orgs_result.count if orgs_result.count is not None else len(orgs_result.data or [])
+    total_orgs = _count(db.table("organizations").select("id", count="exact"))
 
     # Total users
-    users_result = db.table("noctus_users").select("id", count="exact").execute()
-    total_users = users_result.count if users_result.count is not None else len(users_result.data or [])
+    total_users = _count(db.table("noctus_users").select("id", count="exact"))
 
-    # Active subscriptions (status = 'active' or 'trial')
-    active_subs = db.table("subscriptions").select(
-        "id, plan_id, status"
-    ).in_("status", ["active", "trial"]).execute()
-    active_sub_list = active_subs.data or []
-    active_orgs = len(active_sub_list)
-
-    # Calculate MRR: sum price_monthly for all active subscriptions
-    mrr = 0.0
-    if active_sub_list:
-        plan_ids = list({s["plan_id"] for s in active_sub_list if s.get("plan_id")})
-        if plan_ids:
-            plans_result = db.table("plans").select("id, price_monthly").in_("id", plan_ids).execute()
-            plan_prices = {p["id"]: float(p.get("price_monthly", 0)) for p in (plans_result.data or [])}
-            for sub in active_sub_list:
-                mrr += plan_prices.get(sub.get("plan_id", ""), 0)
+    # MRR: what billing subscriptions actually pay per month (trials pay
+    # nothing; yearly counts /12; paged past the 1 000-row cap). See
+    # `app/services/billing_metrics.py` for the fix this replaced.
+    all_subs = billing_metrics.load_billing_subscriptions(db)
+    mrr_result = billing_metrics.compute_mrr(all_subs, billing_metrics.load_plan_prices(db))
+    mrr = float(mrr_result.as_dict()["mrr"])
+    # Orgs with access through a subscription (trial included).
+    active_orgs = len({
+        s.get("org_id") for s in all_subs
+        if s.get("status") in ("active", "trial", "past_due", "grace")
+    })
 
     # Churn rate: canceled subs in last 30 days / total subs that were active 30 days ago
     thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
-    canceled_recent = db.table("subscriptions").select(
-        "id", count="exact"
-    ).eq("status", "canceled").gte("updated_at", thirty_days_ago).execute()
-    canceled_count = canceled_recent.count if canceled_recent.count is not None else len(canceled_recent.data or [])
+    canceled_count = _count(
+        db.table("subscriptions").select("id", count="exact")
+        .eq("status", "canceled").gte("updated_at", thirty_days_ago)
+    )
 
     # Total subs that existed 30 days ago (created before 30 days ago)
-    all_subs = db.table("subscriptions").select(
-        "id", count="exact"
-    ).lte("created_at", thirty_days_ago).execute()
-    total_subs_30d = all_subs.count if all_subs.count is not None else len(all_subs.data or [])
+    total_subs_30d = _count(
+        db.table("subscriptions").select("id", count="exact").lte("created_at", thirty_days_ago)
+    )
 
     churn_rate = round((canceled_count / total_subs_30d * 100), 1) if total_subs_30d > 0 else 0.0
 
@@ -86,11 +96,12 @@ async def get_revenue(authorization: Optional[str] = Header(None)):
     # Fetch all subscriptions with plan data from last 12 months
     twelve_months_ago = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
 
-    subs_result = db.table("subscriptions").select(
-        "id, org_id, plan_id, status, started_at, canceled_at, created_at, plans(id, nome, price_monthly)"
-    ).gte("created_at", twelve_months_ago).order("created_at", desc=True).execute()
-
-    subs = subs_result.data or []
+    subs = list(iter_paged_rows(
+        lambda start, end: db.table("subscriptions").select(
+            "id, org_id, plan_id, status, started_at, canceled_at, created_at"
+        ).gte("created_at", twelve_months_ago).order("id").range(start, end).execute().data,
+        label="analytics subscriptions (12 months)",
+    ))
 
     # Build monthly revenue breakdown
     months: dict = {}
@@ -103,32 +114,29 @@ async def get_revenue(authorization: Optional[str] = Header(None)):
     for sub in subs:
         created = sub.get("created_at", "")[:7]  # YYYY-MM
         canceled = (sub.get("canceled_at") or "")[:7]
-        price = 0.0
-        if sub.get("plans") and isinstance(sub["plans"], dict):
-            price = float(sub["plans"].get("price_monthly", 0))
-
         if created in months:
             months[created]["new_subs"] += 1
 
         if canceled and canceled in months:
             months[canceled]["churned"] += 1
 
-    # Calculate cumulative MRR per month
-    # Get all active subs and their start dates
-    all_active = db.table("subscriptions").select(
-        "id, plan_id, status, started_at, canceled_at, plans(price_monthly)"
-    ).in_("status", ["active", "trial"]).execute()
-
-    active_subs = all_active.data or []
+    # MRR per month: every subscription that had started by that month and
+    # had not been canceled yet, at what it pays per month. A row still in
+    # trial/incomplete never paid, so it never counts.
+    history = billing_metrics.load_billing_subscriptions(db)
+    plan_prices = billing_metrics.load_plan_prices(db)
     for key in sorted(months.keys()):
         month_mrr = 0.0
-        for sub in active_subs:
-            started = (sub.get("started_at") or sub.get("created_at", ""))[:7]
-            if started <= key:
-                price = 0.0
-                if sub.get("plans") and isinstance(sub["plans"], dict):
-                    price = float(sub["plans"].get("price_monthly", 0))
-                month_mrr += price
+        for sub in history:
+            if sub.get("status") in ("trial", "incomplete"):
+                continue
+            started = (sub.get("started_at") or sub.get("created_at") or "")[:7]
+            ended = (sub.get("canceled_at") or "")[:7]
+            if not started or started > key or (ended and ended <= key):
+                continue
+            amount, currency = billing_metrics.monthly_amount(sub, plan_prices)
+            if currency == "BRL":
+                month_mrr += float(amount)
         months[key]["mrr"] = round(month_mrr, 2)
 
     # Return sorted by month descending
@@ -144,12 +152,11 @@ async def get_tenants(authorization: Optional[str] = Header(None)):
     db = get_admin_client()
 
     # Get all organizations
-    orgs_result = db.table("organizations").select("*").order("created_at", desc=True).execute()
-    orgs = orgs_result.data or []
+    orgs = _all(db, "organizations", "*")
+    orgs.sort(key=lambda o: str(o.get("created_at") or ""), reverse=True)
 
     # Get user counts per org
-    users_result = db.table("noctus_users").select("id, org_id").execute()
-    users = users_result.data or []
+    users = _all(db, "noctus_users", "id, org_id")
     user_counts: dict = {}
     for u in users:
         oid = u.get("org_id")
@@ -157,10 +164,7 @@ async def get_tenants(authorization: Optional[str] = Header(None)):
             user_counts[oid] = user_counts.get(oid, 0) + 1
 
     # Get subscriptions with plan info
-    subs_result = db.table("subscriptions").select(
-        "id, org_id, status, started_at, plans(nome, slug)"
-    ).execute()
-    subs = subs_result.data or []
+    subs = _all(db, "subscriptions", "id, org_id, status, started_at, plans(nome, slug)")
     sub_map: dict = {}
     for s in subs:
         oid = s.get("org_id")

@@ -4,7 +4,10 @@ Reads across every product's `<schema>.llm_usage` table via the service role
 (bypasses RLS). Returns a unified view filterable by product, org, and date
 window. Used by the Core admin dashboard to track platform-wide LLM spend.
 
-Access: `noctus_role == "admin"` only. Any non-admin call → 403.
+Access: platform admin only — `public.noctus_users.role == 'admin'`, read
+from the database. It used to read `user_metadata.noctus_role`, which any
+user can set on themselves with `auth.updateUser({data})`: a spoofable
+gate over every product's cross-org usage. Any non-admin call → 403.
 
 LGPD note: each `llm_usage` row carries counts + provider/model/org_id +
 cost estimate only — never prompt text. This endpoint inherits that
@@ -16,10 +19,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.database import get_admin_client
-from app.dependencies import get_current_user
+from noctusai_lib.api.auth.session.types import AuthContext
+
+from app.services.trusted_auth import get_trusted_db, require_platform_admin_dep
 from noctusai_lib.primitives.parsing import parse_iso_or_400 as _parse_iso
 
 logger = logging.getLogger(__name__)
@@ -35,16 +39,10 @@ _PRODUCT_SCHEMAS: dict[str, str] = {
 }
 
 
-async def _require_platform_admin(authorization: Optional[str]) -> None:
-    user, _ = await get_current_user(authorization)
-    noctus_role = (user.user_metadata or {}).get("noctus_role")
-    if noctus_role != "admin":
-        raise HTTPException(status_code=403, detail="Platform admin required")
-
-
 @router.get("")
 async def aggregate_llm_usage(
-    authorization: Optional[str] = Header(None),
+    _: AuthContext = Depends(require_platform_admin_dep),
+    db=Depends(get_trusted_db),
     product: Optional[str] = Query(
         None, description="Filter by product slug (default: all products)",
     ),
@@ -69,8 +67,6 @@ async def aggregate_llm_usage(
           "totals": { "calls": N, "total_tokens": N, "cost_estimate_usd": X }
         }
     """
-    await _require_platform_admin(authorization)
-
     now = datetime.now(tz=timezone.utc)
     start = _parse_iso(from_) or (now - timedelta(days=30))
     end = _parse_iso(to) or now
@@ -83,7 +79,6 @@ async def aggregate_llm_usage(
     if product and product not in _PRODUCT_SCHEMAS:
         raise HTTPException(status_code=400, detail=f"Unknown product: {product}")
 
-    db = get_admin_client()
     per_product: dict[str, dict] = {}
     totals = {"calls": 0, "total_tokens": 0, "cost_estimate_usd": 0.0}
 

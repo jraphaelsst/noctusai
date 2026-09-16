@@ -2,7 +2,6 @@
 Tests for Billing Router.
 
 POST  /api/billing/checkout   (authenticated)
-POST  /api/billing/webhook    (no auth, Stripe signature)
 POST  /api/billing/portal     (authenticated)
 GET   /api/billing/invoices   (authenticated)
 GET   /api/billing/status     (authenticated)
@@ -68,44 +67,9 @@ class TestCreateCheckout:
         assert resp.status_code == 401
 
 
-# ---------------------------------------------------------------------------
-# POST /api/billing/webhook
-# ---------------------------------------------------------------------------
-
-class TestStripeWebhook:
-    def test_webhook_missing_signature(self, client):
-        resp = client.raw().post(
-            "/api/billing/webhook",
-            content=b'{"type": "test"}',
-            headers={"Content-Type": "application/json"},
-        )
-        assert resp.status_code == 400
-
-    def test_webhook_with_valid_signature(self, client):
-        mock_event = {
-            "id": "evt_123",
-            "type": "checkout.session.completed",
-            "data": {"object": {"customer": "cus_123", "metadata": {"org_id": "org-1"}}},
-        }
-
-        with patch(
-            "app.routers.billing.stripe_service.construct_webhook_event",
-            return_value=mock_event,
-        ), patch(
-            "app.routers.billing.billing_service.handle_checkout_completed",
-        ), patch(
-            "app.routers.billing._log_billing_event",
-        ):
-            resp = client.raw().post(
-                "/api/billing/webhook",
-                content=b'{"type": "checkout.session.completed"}',
-                headers={
-                    "Content-Type": "application/json",
-                    "stripe-signature": "t=1234,v1=abc123",
-                },
-            )
-            assert resp.status_code == 200
-            assert resp.json()["received"] is True
+# POST /api/billing/webhook + /api/billing/webhooks/asaas → covered with real
+# signature verification and DI (no self-patching) in
+# tests/routers/test_billing_webhooks.py.
 
 
 # ---------------------------------------------------------------------------

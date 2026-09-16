@@ -41,6 +41,13 @@ class TestLegalTransitions:
             (SubscriptionState.GRACE, SubscriptionState.ACTIVE),
             (SubscriptionState.GRACE, SubscriptionState.CANCELED),
             (SubscriptionState.GRACE, SubscriptionState.EXPIRED),
+            # Gateway-observed moves Stripe produces on its own.
+            (SubscriptionState.TRIALING, SubscriptionState.PAST_DUE),
+            (SubscriptionState.TRIALING, SubscriptionState.EXPIRED),
+            (SubscriptionState.PAST_DUE, SubscriptionState.CANCELED),
+            (SubscriptionState.PAST_DUE, SubscriptionState.EXPIRED),
+            (SubscriptionState.INCOMPLETE, SubscriptionState.CANCELED),
+            (SubscriptionState.INCOMPLETE, SubscriptionState.TRIALING),
         ],
     )
     def test_legal_transition_succeeds(
@@ -62,8 +69,7 @@ class TestIllegalTransitions:
     @pytest.mark.parametrize(
         "source,target",
         [
-            (SubscriptionState.TRIALING, SubscriptionState.PAST_DUE),
-            (SubscriptionState.TRIALING, SubscriptionState.GRACE),
+            (SubscriptionState.TRIALING, SubscriptionState.GRACE),  # must pass through PAST_DUE
             (SubscriptionState.ACTIVE, SubscriptionState.GRACE),  # must pass through PAST_DUE
             (SubscriptionState.ACTIVE, SubscriptionState.TRIALING),
             (SubscriptionState.CANCELED, SubscriptionState.ACTIVE),  # terminal

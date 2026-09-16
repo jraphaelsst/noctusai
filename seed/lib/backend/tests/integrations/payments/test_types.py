@@ -67,3 +67,31 @@ class TestFeeBreakdown:
                 fee=Money(299, "USD"),
                 net=Money(9_701, "BRL"),
             )
+
+
+class TestSubscriptionRequestTrialDays:
+    def _req(self, trial_days):
+        from noctusai_lib.integrations.payments.types import SubscriptionRequest
+
+        return SubscriptionRequest(
+            external_reference="org-1",
+            customer_id_at_gateway="cus_1",
+            price=Money(100, "BRL"),
+            trial_days=trial_days,
+        )
+
+    def test_defaults_to_zero(self) -> None:
+        from noctusai_lib.integrations.payments.types import SubscriptionRequest
+
+        req = SubscriptionRequest(
+            external_reference="org-1", customer_id_at_gateway="cus_1", price=Money(1, "BRL")
+        )
+        assert req.trial_days == 0
+
+    def test_rejects_negative(self) -> None:
+        with pytest.raises(ValueError):
+            self._req(-1)
+
+    def test_rejects_non_int(self) -> None:
+        with pytest.raises(TypeError):
+            self._req(True)

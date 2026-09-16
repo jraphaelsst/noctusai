@@ -1,105 +1,129 @@
-"""Tests for Core's background scheduler.
+"""Core's background jobs on the seed scheduler primitive.
 
-Covers the webhook_retention_sweep_job + start/stop semantics.
-Pattern mirrors `products/personal-finance/backend/tests/services/test_scheduler.py`.
+No patching of our own code: job bodies take their dependencies as
+arguments (a Mock DB / a `BillingContext` of Fakes), and the start guard
+is exercised through the real environment variable it reads.
 """
-from unittest.mock import MagicMock, patch
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
 
 import pytest
 
+from noctusai_lib.api import scheduler as seed_scheduler
+from noctusai_lib.testing import MockSupabaseClient
 
-@pytest.mark.asyncio
-async def test_webhook_retention_sweep_job_no_expired_rows():
-    """Job completes gracefully when `run_retention_sweep` returns 0 purged."""
-    db = MagicMock()
+from app import scheduler as core_scheduler
+from tests.billing_fakes import NOW, make_ctx, managed_subscription, seed_catalog
 
-    with (
-        patch("app.scheduler.get_admin_client", return_value=db),
-        patch("app.scheduler.run_retention_sweep", return_value={"purged": 0}) as mock_sweep,
-    ):
-        from app.scheduler import webhook_retention_sweep_job
-        await webhook_retention_sweep_job()
-
-    mock_sweep.assert_called_once_with(db)
+JOB_IDS = {
+    core_scheduler.WEBHOOK_RETENTION_JOB,
+    core_scheduler.BILLING_AUTOMATIONS_JOB,
+    core_scheduler.PTAX_JOB,
+    core_scheduler.STORAGE_SNAPSHOT_JOB,
+}
 
 
-@pytest.mark.asyncio
-async def test_webhook_retention_sweep_job_logs_purge_count():
-    """Job logs purged count when non-zero."""
-    db = MagicMock()
-
-    with (
-        patch("app.scheduler.get_admin_client", return_value=db),
-        patch("app.scheduler.run_retention_sweep", return_value={"purged": 42}) as mock_sweep,
-        patch("app.scheduler.logger") as mock_logger,
-    ):
-        from app.scheduler import webhook_retention_sweep_job
-        await webhook_retention_sweep_job()
-
-    mock_sweep.assert_called_once_with(db)
-    mock_logger.info.assert_called_once()
-    call_args = mock_logger.info.call_args[0]
-    assert "42" in str(call_args) or 42 in call_args
+@pytest.fixture
+def fresh_scheduler():
+    seed_scheduler.reset_for_testing()
+    yield seed_scheduler
+    seed_scheduler.reset_for_testing()
 
 
-@pytest.mark.asyncio
-async def test_webhook_retention_sweep_job_swallows_errors():
-    """Job does not raise if the sweep fails — errors logged, scheduler continues."""
-    db = MagicMock()
+def test_configure_registers_every_core_job(fresh_scheduler):
+    core_scheduler.configure()
+    registered = {job.id for job in fresh_scheduler.scheduler.get_jobs()}
+    assert JOB_IDS <= registered
 
-    with (
-        patch("app.scheduler.get_admin_client", return_value=db),
-        patch("app.scheduler.run_retention_sweep", side_effect=RuntimeError("DB down")),
-        patch("app.scheduler.logger") as mock_logger,
-    ):
-        from app.scheduler import webhook_retention_sweep_job
-        # Must not raise
-        await webhook_retention_sweep_job()
 
-    mock_logger.error.assert_called_once()
-    assert "DB down" in str(mock_logger.error.call_args)
+def test_configure_is_idempotent(fresh_scheduler):
+    core_scheduler.configure()
+    core_scheduler.configure()
+    ids = [job.id for job in fresh_scheduler.scheduler.get_jobs()]
+    assert sorted(ids) == sorted(set(ids))
+
+
+def test_scheduler_refuses_to_start_without_the_deploy_marker(fresh_scheduler, monkeypatch):
+    # The env var is the guard's input, not our code — setting it is the
+    # honest way to drive the guard.
+    monkeypatch.delenv(seed_scheduler.SCHEDULERS_ENABLED_ENV, raising=False)
+    core_scheduler.configure()
+    core_scheduler.start_scheduler()
+    assert not fresh_scheduler.scheduler.running
 
 
 @pytest.mark.asyncio
-async def test_start_scheduler_registers_webhook_job():
-    """start_scheduler adds the retention job with a cron trigger."""
-    from app import scheduler as scheduler_module
-
-    if scheduler_module.scheduler.running:
-        scheduler_module.scheduler.shutdown(wait=False)
-
+async def test_scheduler_starts_with_the_deploy_marker(fresh_scheduler, monkeypatch):
+    monkeypatch.setenv(seed_scheduler.SCHEDULERS_ENABLED_ENV, "1")
+    core_scheduler.configure()
     try:
-        scheduler_module.start_scheduler()
-        job = scheduler_module.scheduler.get_job("core_webhook_retention_sweep")
-        assert job is not None
-        assert job.id == "core_webhook_retention_sweep"
+        core_scheduler.start_scheduler()
+        assert fresh_scheduler.scheduler.running
+        core_scheduler.start_scheduler()  # idempotent
+        assert fresh_scheduler.scheduler.running
     finally:
-        scheduler_module.stop_scheduler()
+        core_scheduler.stop_scheduler()
+
+
+def test_stop_is_safe_when_not_running(fresh_scheduler):
+    core_scheduler.stop_scheduler()
+    assert not fresh_scheduler.scheduler.running
 
 
 @pytest.mark.asyncio
-async def test_start_scheduler_is_idempotent():
-    """Calling start_scheduler twice does not raise."""
-    from app import scheduler as scheduler_module
+async def test_retention_job_purges_expired_rows():
+    db = MockSupabaseClient()
+    db.set_table_data(
+        "webhook_deliveries",
+        [
+            {"id": "d-old", "retention_until": "2000-01-01T00:00:00+00:00"},
+            {"id": "d-new", "retention_until": "2999-01-01T00:00:00+00:00"},
+        ],
+    )
+    result = await core_scheduler.webhook_retention_sweep_job(db)
+    assert result == {"purged": 1}
+    remaining = db.table("webhook_deliveries").select("id").execute().data
+    assert [r["id"] for r in remaining] == ["d-new"]
 
-    if scheduler_module.scheduler.running:
-        scheduler_module.scheduler.shutdown(wait=False)
 
-    try:
-        scheduler_module.start_scheduler()
-        assert scheduler_module.scheduler.running
-        scheduler_module.start_scheduler()
-        assert scheduler_module.scheduler.running
-    finally:
-        scheduler_module.stop_scheduler()
+class _BrokenDb:
+    def table(self, name):
+        raise RuntimeError("DB down")
 
 
-def test_stop_scheduler_is_safe_when_not_running():
-    """stop_scheduler does not raise when called on an inactive scheduler."""
-    from app import scheduler as scheduler_module
+@pytest.mark.asyncio
+async def test_retention_job_reports_errors_instead_of_raising(caplog):
+    result = await core_scheduler.webhook_retention_sweep_job(_BrokenDb())
+    assert result == {"error": "DB down"}
+    assert "DB down" in caplog.text
 
-    if scheduler_module.scheduler.running:
-        scheduler_module.scheduler.shutdown(wait=False)
 
-    scheduler_module.stop_scheduler()
-    assert not scheduler_module.scheduler.running
+@pytest.mark.asyncio
+async def test_billing_job_does_nothing_while_switched_off():
+    ctx, fakes = make_ctx(automations=False)
+    seed_catalog(fakes.db)
+    fakes.db.set_table_data("subscriptions", [managed_subscription(status="past_due", past_due_since=NOW.isoformat())])
+    reports = await core_scheduler.billing_automations_job(ctx)
+    assert reports and all(r["skipped"] for r in reports)
+    assert fakes.db.table("subscriptions").updated_payloads == []
+
+
+@pytest.mark.asyncio
+async def test_ptax_job_stores_the_bulletin_and_prices_pending_rows():
+    ctx, fakes = make_ctx(ptax={date(2026, 9, 16): Decimal("5.20000")})
+    fakes.db.set_table_data("fx_rates", [])
+    fakes.db.set_table_data(
+        "cost_ledger",
+        [{"id": 1, "org_id": "o", "category": "openai_edit", "amount_native": "2.000000",
+          "currency": "USD", "fx_pending": True, "created_at": NOW.isoformat()}],
+    )
+    fakes.db.set_table_data("billing_payments", [])
+    result = await core_scheduler.ptax_job(ctx)
+    assert result["stored_quote_date"] == "2026-09-16"
+    assert result["resolved_cost_rows"] == 1
+    row = fakes.db.table("cost_ledger").select("*").execute().data[0]
+    assert row["fx_pending"] is False
+    assert Decimal(row["amount_brl"]) == Decimal("10.400000")
+    assert row["fx_quote_date"] == "2026-09-16"

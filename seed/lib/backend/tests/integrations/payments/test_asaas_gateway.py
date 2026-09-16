@@ -112,6 +112,78 @@ def test_create_subscription_maps_active_status() -> None:
     assert subscription.external_reference == "org-1"
 
 
+def test_create_subscription_trial_moves_first_due_date_and_reports_trialing() -> None:
+    import datetime
+
+    seen: dict[str, Any] = {}
+
+    def create(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json_lib.loads(request.content)
+        return httpx.Response(
+            200,
+            content=json_lib.dumps(
+                {"id": "sub_9", "customer": "cus_1", "status": "ACTIVE", "nextDueDate": "2026-09-24"}
+            ).encode(),
+        )
+
+    transport = _routed_transport(
+        {
+            "POST /v3/subscriptions": create,
+        }
+    )
+    gateway = AsaasPaymentGateway(
+        api_key="key", transport=transport, today=lambda: datetime.date(2026, 9, 17)
+    )
+    subscription = gateway.create_subscription(
+        SubscriptionRequest(
+            external_reference="org-1",
+            customer_id_at_gateway="cus_1",
+            price=Money(9900, "BRL"),
+            billing_method="card",
+            trial_days=7,
+        )
+    )
+    assert seen["body"]["nextDueDate"] == "2026-09-24"
+    assert seen["body"]["billingType"] == "CREDIT_CARD"
+    assert subscription.status == "trialing"
+
+
+def test_ensure_customer_sends_tax_id_as_cpf_cnpj() -> None:
+    seen: dict[str, Any] = {}
+
+    def create(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json_lib.loads(request.content)
+        return httpx.Response(200, content=json_lib.dumps({"id": "cus_new"}).encode())
+
+    transport = _routed_transport(
+        {"GET /v3/customers": _json(200, {"data": []}), "POST /v3/customers": create}
+    )
+    gateway = AsaasPaymentGateway(api_key="key", transport=transport)
+    gateway.ensure_customer(
+        external_reference="org-1", email="a@b.com", name="Ana", tax_id="12345678909"
+    )
+    assert seen["body"]["cpfCnpj"] == "12345678909"
+
+
+def test_verify_credentials_ok() -> None:
+    transport = _routed_transport({"GET /v3/customers": _json(200, {"data": []})})
+    AsaasPaymentGateway(api_key="key", transport=transport).verify_credentials()
+
+
+def test_verify_credentials_bad_key_raises() -> None:
+    transport = _routed_transport(
+        {
+            "GET /v3/customers": _json(
+                401, {"errors": [{"code": "invalid_access_token", "description": "bad"}]}
+            )
+        }
+    )
+    with pytest.raises(PaymentGatewayError) as info:
+        AsaasPaymentGateway(api_key="key", transport=transport).verify_credentials()
+    assert info.value.status == 401
+    assert info.value.retryable is False
+
+
 def test_get_subscription_maps_expired_to_canceled() -> None:
     transport = _routed_transport(
         {

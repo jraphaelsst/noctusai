@@ -276,3 +276,59 @@ class TestOrgSlugPrefix:
         slug = _make_org_slug(long_name, "company")
         # prefix(4) + "_"(1) + base(<=44) = <=49 chars total
         assert len(slug) <= 49, f"Slug too long: {len(slug)} chars"
+
+
+# ===========================================================================
+# Self-serve signup with a chosen price (edicao-fotos R2)
+# ===========================================================================
+
+class TestSignupWithPlanPrice:
+    PRICE = "55555555-5555-5555-5555-555555555555"
+    PLAN = "44444444-4444-4444-4444-444444444444"
+
+    def _seed(self, mock_sb, audience="any", ativo=True):
+        mock_sb.set_table_data("plans", [{"id": self.PLAN, "nome": "P", "slug": "p", "ativo": True,
+                                          "audience": audience}])
+        mock_sb.set_table_data("plan_prices", [{"id": self.PRICE, "plan_id": self.PLAN, "ativo": ativo,
+                                                "billing_cycle": "monthly", "currency": "BRL",
+                                                "amount_cents": 9900}])
+        mock_sb.set_table_data("noctus_users", [])
+
+    def _body(self, **extra):
+        return {"nome": "Ana", "email": "ana@corp.com", "password": "s3cr3t123",
+                "empresa": "Corp", "plan_price_id": self.PRICE, **extra}
+
+    def test_valid_price_returns_the_subscribe_next_step(self, client):
+        mock_sb = client.mock_supabase
+        self._seed(mock_sb)
+        mock_sb.auth.admin.create_user = MagicMock(return_value=_make_auth_response(user_id="uid-9"))
+        resp = client.post("/api/auth/signup", json=self._body())
+        assert resp.status_code == 200
+        assert resp.json()["data"]["next_step"] == {"action": "subscribe", "plan_price_id": self.PRICE}
+
+    def test_audience_mismatch_fails_before_any_account_is_created(self, client):
+        mock_sb = client.mock_supabase
+        self._seed(mock_sb, audience="company")
+        mock_sb.auth.admin.create_user = MagicMock(return_value=_make_auth_response())
+        resp = client.post("/api/auth/signup", json=self._body(org_type="individual"))
+        assert resp.status_code == 422
+        mock_sb.auth.admin.create_user.assert_not_called()
+        assert mock_sb.table("organizations").inserted_payloads == []
+
+    def test_inactive_price_is_404_and_creates_nothing(self, client):
+        mock_sb = client.mock_supabase
+        self._seed(mock_sb, ativo=False)
+        mock_sb.auth.admin.create_user = MagicMock(return_value=_make_auth_response())
+        resp = client.post("/api/auth/signup", json=self._body())
+        assert resp.status_code == 404
+        mock_sb.auth.admin.create_user.assert_not_called()
+
+    def test_signup_without_price_has_no_next_step(self, client):
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", [])
+        mock_sb.auth.admin.create_user = MagicMock(return_value=_make_auth_response(user_id="uid-2"))
+        body = self._body()
+        body.pop("plan_price_id")
+        resp = client.post("/api/auth/signup", json=body)
+        assert resp.status_code == 200
+        assert "next_step" not in resp.json()["data"]

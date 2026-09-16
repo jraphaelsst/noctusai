@@ -22,6 +22,14 @@ class SignupRequest(StrictHttpModel):
         ge=1,
         description="Number of users — required (>=1) when org_type='company'.",
     )
+    plan_price_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Self-serve signup from the pricing page: the price the visitor chose. "
+            "Validated BEFORE the account is created; the client then calls "
+            "POST /api/billing/subscribe to reach the payment page."
+        ),
+    )
 
 
 class LoginRequest(StrictHttpModel):

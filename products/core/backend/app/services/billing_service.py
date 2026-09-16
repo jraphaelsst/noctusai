@@ -268,9 +268,9 @@ def get_billing_status(org_id: str) -> Dict[str, Any]:
 # Webhook event handlers
 # ---------------------------------------------------------------------------
 
-def handle_checkout_completed(event_data: dict) -> None:
+def handle_checkout_completed(event_data: dict, db: Optional[Any] = None) -> None:
     """Handle checkout.session.completed — activate subscription."""
-    db = get_admin_client()
+    db = db if db is not None else get_admin_client()
     session = event_data.get("object", {})
 
     org_id = session.get("metadata", {}).get("org_id")
@@ -310,9 +310,9 @@ def handle_checkout_completed(event_data: dict) -> None:
         logger.info("New subscription created from checkout for org %s", org_id)
 
 
-def handle_subscription_updated(event_data: dict) -> None:
+def handle_subscription_updated(event_data: dict, db: Optional[Any] = None) -> None:
     """Handle customer.subscription.updated — sync status changes."""
-    db = get_admin_client()
+    db = db if db is not None else get_admin_client()
     sub_obj = event_data.get("object", {})
     stripe_sub_id = sub_obj.get("id")
     stripe_status = sub_obj.get("status")  # active, past_due, canceled, unpaid, etc.
@@ -348,9 +348,9 @@ def handle_subscription_updated(event_data: dict) -> None:
     logger.info("Subscription %s synced: stripe_status=%s local_status=%s", stripe_sub_id, stripe_status, local_status)
 
 
-def handle_subscription_deleted(event_data: dict) -> None:
+def handle_subscription_deleted(event_data: dict, db: Optional[Any] = None) -> None:
     """Handle customer.subscription.deleted — mark as canceled."""
-    db = get_admin_client()
+    db = db if db is not None else get_admin_client()
     sub_obj = event_data.get("object", {})
     stripe_sub_id = sub_obj.get("id")
 
@@ -365,7 +365,7 @@ def handle_subscription_deleted(event_data: dict) -> None:
     logger.info("Subscription %s marked as canceled (deleted in Stripe)", stripe_sub_id)
 
 
-def handle_invoice_payment_failed(event_data: dict) -> None:
+def handle_invoice_payment_failed(event_data: dict, db: Optional[Any] = None) -> None:
     """Handle invoice.payment_failed — log for alerting.
 
     The subscription status will be updated by customer.subscription.updated

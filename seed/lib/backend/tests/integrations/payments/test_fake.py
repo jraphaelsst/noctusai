@@ -4,6 +4,8 @@ satisfy identically.
 """
 import pytest
 
+from noctusai_lib.integrations.payments.errors import PaymentGatewayError
+
 from noctusai_lib.integrations.payments.fake import FakePaymentGateway
 from noctusai_lib.integrations.payments.protocol import PaymentGateway
 from noctusai_lib.integrations.payments.types import (
@@ -37,7 +39,25 @@ def test_ensure_customer_reuses_existing(gateway: FakePaymentGateway) -> None:
     assert len(gateway.customers) == 1
 
 
-def test_create_subscription_starts_trialing(gateway: FakePaymentGateway) -> None:
+def test_create_subscription_with_trial_starts_trialing(gateway: FakePaymentGateway) -> None:
+    customer = gateway.ensure_customer(external_reference="org-1", email="a@b.com", name="Ana")
+    subscription = gateway.create_subscription(
+        SubscriptionRequest(
+            external_reference="org-1",
+            customer_id_at_gateway=customer.id_at_gateway,
+            price=Money(2990, "BRL"),
+            trial_days=7,
+        )
+    )
+    assert subscription.status == "trialing"
+    assert subscription.raw["trial_days"] == 7
+    assert subscription.customer_id_at_gateway == customer.id_at_gateway
+    assert subscription.latest_charge_id_at_gateway is not None
+
+
+def test_create_subscription_without_trial_is_incomplete(gateway: FakePaymentGateway) -> None:
+    # No trial ⇒ the first charge is pending, which is `incomplete` —
+    # reporting `trialing` here would claim a free period nobody granted.
     customer = gateway.ensure_customer(external_reference="org-1", email="a@b.com", name="Ana")
     subscription = gateway.create_subscription(
         SubscriptionRequest(
@@ -46,9 +66,18 @@ def test_create_subscription_starts_trialing(gateway: FakePaymentGateway) -> Non
             price=Money(2990, "BRL"),
         )
     )
-    assert subscription.status == "trialing"
-    assert subscription.customer_id_at_gateway == customer.id_at_gateway
-    assert subscription.latest_charge_id_at_gateway is not None
+    assert subscription.status == "incomplete"
+
+
+def test_verify_credentials_succeeds_by_default(gateway: FakePaymentGateway) -> None:
+    gateway.verify_credentials()
+    assert ("verify_credentials", None) in gateway.calls
+
+
+def test_verify_credentials_raises_scripted_error(gateway: FakePaymentGateway) -> None:
+    gateway.fail_credentials(PaymentGatewayError("stripe", "bad key", status=401))
+    with pytest.raises(PaymentGatewayError):
+        gateway.verify_credentials()
 
 
 def test_get_subscription_round_trips(gateway: FakePaymentGateway) -> None:
@@ -95,3 +124,12 @@ def test_get_fee_breakdown_scripted(gateway: FakePaymentGateway) -> None:
 def test_calls_are_recorded_for_intent_assertions(gateway: FakePaymentGateway) -> None:
     gateway.ensure_customer(external_reference="org-1", email="a@b.com", name="Ana")
     assert gateway.calls[0][0] == "ensure_customer"
+
+
+def test_unknown_subscription_raises_gateway_error_like_the_real_adapters(
+    gateway: FakePaymentGateway,
+) -> None:
+    for call in (gateway.get_subscription, gateway.cancel_subscription):
+        with pytest.raises(PaymentGatewayError) as info:
+            call("sub_missing")
+        assert info.value.status == 404

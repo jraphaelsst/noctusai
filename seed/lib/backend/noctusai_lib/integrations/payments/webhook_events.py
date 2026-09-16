@@ -49,6 +49,7 @@ from typing import Any, Literal, Mapping, Optional, Union
 
 from noctusai_lib.security.webhook_signatures import verify_basic_shared_secret
 
+from ._stripe_fields import stripe_field
 from .real_stripe import StripePaymentGateway
 from .types import GatewaySubscriptionStatus, PaymentGatewayName
 
@@ -137,24 +138,9 @@ _STRIPE_EVENT_KIND_MAP: dict[str, EventKind] = {
 }
 
 
-def _stripe_field(obj: Any, key: str, default: Any = None) -> Any:
-    """Safe field access for a real `stripe.Webhook.construct_event`
-    result.
-
-    The real SDK's `StripeObject` (unlike a plain `dict`, and unlike the
-    `sys.modules`-substituted double `test_stripe_gateway.py` uses
-    elsewhere in this package) implements `__contains__`/`__getitem__` but
-    NOT `.get()` — calling `.get(...)` on a genuine `StripeObject` raises
-    `AttributeError`, discovered by running this module's own webhook
-    tests against the real installed `stripe` package rather than a
-    scripted double (per this slice's brief: verify against real signed
-    payloads). `in` + `[]` is the common denominator both a `StripeObject`
-    and a plain `dict` support, so this helper works against either.
-    """
-    try:
-        return obj[key] if key in obj else default
-    except TypeError:
-        return default
+# Promoted to `._stripe_fields` (now shared with `real_stripe` and
+# `checkout`); the private name stays importable for existing callers.
+_stripe_field = stripe_field
 
 
 def _parse_stripe_event(
@@ -286,14 +272,27 @@ def _parse_asaas_event(
 
     event_name = payload.get("event", "")
     payment = payload.get("payment") or {}
+    subscription = payload.get("subscription") or {}
     kind = _ASAAS_EVENT_KIND_MAP.get(event_name, "ignored")
+
+    # Current Asaas deliveries carry a top-level `id` (`evt_...`) — the
+    # gateway's own dedupe key, preferred when present. The derivation is
+    # the fallback, and it must not collapse non-payment events: a
+    # `SUBSCRIPTION_*` delivery has no `payment`, so without the
+    # subscription snapshot every one of them would share one key and the
+    # inbox would drop all but the first.
+    event_id = payload.get("id") or (
+        _derive_asaas_event_id(event_name, payment)
+        if payment
+        else _derive_asaas_event_id(event_name, subscription)
+    )
 
     return GatewayEvent(
         gateway="asaas",
-        event_id=_derive_asaas_event_id(event_name, payment),
+        event_id=str(event_id),
         kind=kind,
         external_reference=payment.get("externalReference"),
-        subscription_id_at_gateway=payment.get("subscription"),
+        subscription_id_at_gateway=payment.get("subscription") or subscription.get("id"),
         charge_id_at_gateway=payment.get("id"),
         # No subscription-status field on an Asaas payment webhook — see
         # `_ASAAS_EVENT_KIND_MAP`'s docstring. A consumer that needs the

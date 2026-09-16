@@ -1,41 +1,28 @@
 """
 Billing Router — Stripe-powered billing for NoctusAI organizations.
 
-POST   /api/billing/checkout  — Create Stripe Checkout session (returns checkout_url)
-POST   /api/billing/webhook   — Stripe webhook handler (no auth, signature verified)
+GET    /api/billing/plans            — Public: sellable plans + prices + offered gateways
+POST   /api/billing/subscribe        — Org admin: start a managed subscription (hosted checkout)
+GET    /api/billing/subscription     — Org admin: the org's managed subscriptions + payments
+POST   /api/billing/checkout  — LEGACY Stripe Checkout off plans.stripe_price_id_* (returns checkout_url)
+POST   /api/billing/webhook   — Stripe webhook (no auth, signature verified, EventInbox-idempotent)
+POST   /api/billing/webhooks/asaas — Asaas webhook (no auth, asaas-access-token, EventInbox-idempotent)
 POST   /api/billing/portal    — Create Stripe Customer Portal session
 GET    /api/billing/invoices  — List invoices for current org
 GET    /api/billing/status    — Billing status (plan, next invoice, payment method)
 
--- Supabase SQL to create the billing_events table (immutable webhook log):
---
--- CREATE TABLE billing_events (
---   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
---   stripe_event_id text UNIQUE NOT NULL,
---   event_type text NOT NULL,
---   stripe_customer_id text,
---   org_id uuid REFERENCES organizations(id),
---   payload jsonb NOT NULL DEFAULT '{}',
---   processed_at timestamptz NOT NULL DEFAULT now(),
---   created_at timestamptz NOT NULL DEFAULT now()
--- );
---
--- CREATE INDEX idx_billing_events_type ON billing_events(event_type);
--- CREATE INDEX idx_billing_events_customer ON billing_events(stripe_customer_id);
--- CREATE INDEX idx_billing_events_org ON billing_events(org_id);
---
--- ALTER TABLE billing_events ENABLE ROW LEVEL SECURITY;
--- -- Only service role can insert; admins can read
--- CREATE POLICY "billing_events_admin_read" ON billing_events FOR SELECT USING (
---   auth.uid() IN (SELECT id FROM noctus_users WHERE role = 'admin')
--- );
--- -- No UPDATE or DELETE policies: events are immutable
+Webhook deliveries are recorded in `public.payment_events` (migration 050),
+which is also the idempotency inbox. `public.billing_events` (migration 029)
+is the pre-050 log; it is no longer written and stays as history.
 """
 import logging
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
-from pydantic import Field
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+
+from noctusai_lib.api.auth.session.types import AuthContext
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AUTH_RL
+from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 from noctusai_lib.primitives.tasks import NoRunningLoopError, schedule_coro
 
@@ -43,8 +30,17 @@ from app.config import settings
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_org_id
 from app.rate_limit import limiter
-from app.services import billing_service, stripe_service
+from app.services import billing_service, billing_subscriptions, billing_webhooks, stripe_service
+from app.services.trusted_auth import get_trusted_db, require_org_admin_dep
+from app.services.billing_context import BillingContext, get_billing_context
+from app.services.billing_events import (
+    ParsedGatewayEvent,
+    WebhookAuthError,
+    WebhookNotConfigured,
+    parse_for_any_mode,
+)
 from app.schemas.billing import CheckoutRequest, PortalRequest, CancelRequest
+from app.schemas.billing_admin import SubscribeRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/billing", tags=["Billing"])
@@ -56,7 +52,12 @@ router = APIRouter(prefix="/api/billing", tags=["Billing"])
 
 @router.post("/checkout")
 async def create_checkout(body: CheckoutRequest, authorization: Optional[str] = Header(None)):
-    """Create a Stripe Checkout session for the user's organization.
+    """LEGACY: Stripe Checkout off `plans.stripe_price_id_*` + env keys.
+
+    NOC-REMEDIATE[billing-legacy-checkout]: superseded by `POST
+    /api/billing/subscribe` (managed subscriptions, plan_prices, UI-set
+    keys). Kept until no client calls it; the admin UI and Pricing page
+    already use `/subscribe`. — 2026-09-16
 
     Returns a ``checkout_url`` that the frontend should redirect to.
     """
@@ -78,7 +79,7 @@ async def create_checkout(body: CheckoutRequest, authorization: Optional[str] = 
 # POST /api/billing/webhook
 # ---------------------------------------------------------------------------
 
-# Events we process; others are logged but ignored
+# Events whose org-facing side effects (outbound webhook, email) we fire.
 _HANDLED_EVENTS = {
     "checkout.session.completed",
     "customer.subscription.updated",
@@ -87,60 +88,186 @@ _HANDLED_EVENTS = {
 }
 
 
+def _run_event(ctx: BillingContext, event: ParsedGatewayEvent) -> billing_webhooks.EventOutcome:
+    try:
+        return billing_webhooks.process_event(ctx, event)
+    except Exception as exc:  # noqa: BLE001 — claim already released + logged
+        raise HTTPException(status_code=500, detail="Falha ao processar o evento; será reenviado.") from exc
+
+
 @router.post("/webhook")
 @limiter.limit(settings.webhook_rate_limit)
-async def stripe_webhook(request: Request):
+async def stripe_webhook(request: Request, ctx: BillingContext = Depends(get_billing_context)):
     """Receive and process Stripe webhook events.
 
-    This endpoint does NOT require authentication.  Instead it verifies the
-    Stripe-Signature header to ensure the payload was sent by Stripe.
-
-    Stripe SDK is the carve-out from the canonical
-    ``noctusai_lib.security.webhook_signatures.webhook_endpoint`` pattern
-    (Stripe ships its own verifier; don't wrap it). The remaining 4 pins
-    still apply — including this rate-limit decorator. See
-    ``KB § PATTERNS/webhook-signatures.md``.
+    No user auth: the Stripe-Signature header is verified with the Stripe
+    SDK (the documented carve-out from `webhook_endpoint`) against the
+    webhook secret of every configured mode. The rate-limit decorator is
+    webhook-compliance pin #4 (`KB § PATTERNS/webhook-signatures.md`).
+    A duplicate event id is a no-op (`payment_events` inbox).
     """
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature", "")
+    try:
+        event = parse_for_any_mode(
+            "stripe", payload, request.headers, ctx.config.secrets_by_mode("stripe", "webhook_secret")
+        )
+    except WebhookNotConfigured as exc:
+        logger.error("stripe webhook: %s", exc)
+        raise HTTPException(status_code=503, detail="Webhook secret não configurado.") from exc
+    except WebhookAuthError as exc:
+        raise HTTPException(status_code=400, detail=f"Assinatura do webhook inválida: {exc}") from exc
 
-    if not sig_header:
-        raise HTTPException(status_code=400, detail="Header Stripe-Signature ausente")
+    logger.info("Webhook received: type=%s id=%s mode=%s", event.event_type, event.event_id, event.mode)
+    outcome = _run_event(ctx, event)
 
-    # Verify signature — raises HTTPException on failure
-    event = stripe_service.construct_webhook_event(payload, sig_header)
+    if outcome.status == "processed" and event.event_type in _HANDLED_EVENTS:
+        event_data = event.payload.get("data", {})
+        if event.event_type == "invoice.payment_failed":
+            _notify_billing_event(event.event_type, event_data, ctx.db)
+        _dispatch_webhook(event.event_type, event_data, ctx.db)
 
-    event_type = event.get("type", "unknown")
-    event_id = event.get("id", "")
-    event_data = event.get("data", {})
-
-    logger.info("Webhook received: type=%s id=%s", event_type, event_id)
-
-    # Persist event to billing_events table (immutable log)
-    _log_billing_event(event_id, event_type, event_data)
-
-    # Dispatch to handler
-    if event_type == "checkout.session.completed":
-        billing_service.handle_checkout_completed(event_data)
-    elif event_type == "customer.subscription.updated":
-        billing_service.handle_subscription_updated(event_data)
-    elif event_type == "customer.subscription.deleted":
-        billing_service.handle_subscription_deleted(event_data)
-    elif event_type == "invoice.payment_failed":
-        billing_service.handle_invoice_payment_failed(event_data)
-        _notify_billing_event(event_type, event_data)
-    else:
-        logger.debug("Unhandled webhook event type: %s", event_type)
-
-    # Fire webhook delivery to org endpoints (best-effort)
-    if event_type in _HANDLED_EVENTS:
-        _dispatch_webhook(event_type, event_data)
-
-    # Always return 200 so Stripe does not retry handled events
-    return {"received": True}
+    # 200 for processed, ignored and duplicate alike: none should be retried.
+    return {"received": True, "status": outcome.status}
 
 
-def _dispatch_webhook(event_type: str, event_data: dict) -> None:
+@router.post("/webhooks/asaas")
+@limiter.limit(settings.webhook_rate_limit)
+async def asaas_webhook(request: Request, ctx: BillingContext = Depends(get_billing_context)):
+    """Receive Asaas notifications (static `asaas-access-token` header).
+
+    Asaas pauses a webhook's delivery queue after repeated non-2xx answers,
+    so only authentication/config failures are non-2xx; an event we don't
+    act on is a 200 `ignored`.
+    """
+    payload = await request.body()
+    try:
+        event = parse_for_any_mode(
+            "asaas", payload, request.headers, ctx.config.secrets_by_mode("asaas", "webhook_token")
+        )
+    except WebhookNotConfigured as exc:
+        logger.error("asaas webhook: %s", exc)
+        raise HTTPException(status_code=503, detail="Webhook Asaas não configurado.") from exc
+    except WebhookAuthError as exc:
+        raise HTTPException(status_code=401, detail="Token do webhook inválido.") from exc
+
+    logger.info("Asaas webhook: event=%s id=%s mode=%s", event.event_type, event.event_id, event.mode)
+    outcome = _run_event(ctx, event)
+    return {"received": True, "status": outcome.status}
+
+
+# ---------------------------------------------------------------------------
+# Public plans + managed self-serve subscription
+# ---------------------------------------------------------------------------
+
+
+@router.get("/plans")
+@limiter.limit(DEFAULT_AUTH_RL)
+async def public_plans(request: Request, ctx: BillingContext = Depends(get_billing_context)):
+    """Sellable plans with their active prices + which gateways are offered.
+
+    Public (the pricing page is shown before signup). Carries no secret and
+    no Stripe price id.
+    """
+    plans = list(iter_paged_rows(
+        lambda start, end: ctx.db.table("plans").select(
+            "id, nome, slug, descricao, audience, trial_days, product_id, features, max_users, created_at"
+        ).eq("ativo", True).order("id").range(start, end).execute().data,
+        label="sellable plans",
+    ))
+    prices = list(iter_paged_rows(
+        lambda start, end: ctx.db.table("plan_prices").select(
+            "id, plan_id, billing_cycle, currency, amount_cents"
+        ).eq("ativo", True).order("id").range(start, end).execute().data,
+        label="sellable prices",
+    ))
+    plans.sort(key=lambda p: str(p.get("created_at") or ""))
+    # Explicit projection: a public response must never grow a column
+    # (e.g. a Stripe price id) because someone widened the select.
+    plan_keys = ("id", "nome", "slug", "descricao", "audience", "trial_days", "product_id", "features", "max_users")
+    price_keys = ("id", "billing_cycle", "currency", "amount_cents")
+    by_plan: dict[str, list] = {}
+    for price in prices:
+        by_plan.setdefault(str(price["plan_id"]), []).append({k: price.get(k) for k in price_keys})
+    sellable = [
+        {**{k: plan.get(k) for k in plan_keys}, "prices": by_plan[str(plan["id"])]}
+        for plan in plans
+        if by_plan.get(str(plan["id"]))
+    ]
+    gateways = [g for g in ("stripe", "asaas") if ctx.config.gateway_enabled(g)]
+    return {"data": {"plans": sellable, "gateways": gateways}}
+
+
+def _safe_return_url(base_url: str, candidate: Optional[str], fallback_path: str) -> str:
+    """Only our own origin may be a post-checkout redirect (no open redirect)."""
+    base = base_url.rstrip("/")
+    if candidate and (candidate == base or candidate.startswith(base + "/")):
+        return candidate
+    return f"{base}{fallback_path}"
+
+
+@router.post("/subscribe")
+async def subscribe(
+    body: SubscribeRequest,
+    auth: AuthContext = Depends(require_org_admin_dep),
+    ctx: BillingContext = Depends(get_billing_context),
+    db: Any = Depends(get_trusted_db),
+):
+    """Start a managed subscription for the caller's org; returns the payment page."""
+    users = db.table("noctus_users").select("email").eq("id", str(auth.user_id)).limit(1).execute().data or []
+    payer_email = (users[0].get("email") if users else None) or ""
+    try:
+        result = billing_subscriptions.start_checkout(
+            ctx,
+            org_id=str(auth.org_id),
+            payer_email=payer_email,
+            plan_price_id=body.plan_price_id,
+            gateway=body.gateway,
+            billing_method=body.billing_method,
+            tax_id=body.tax_id,
+            success_url=_safe_return_url(ctx.settings.app_base_url, body.success_url, "/billing/success"),
+            cancel_url=_safe_return_url(ctx.settings.app_base_url, body.cancel_url, "/billing/cancel"),
+        )
+    except billing_subscriptions.BillingError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return {"data": result}
+
+
+@router.get("/subscription")
+async def my_subscription(
+    auth: AuthContext = Depends(require_org_admin_dep),
+    ctx: BillingContext = Depends(get_billing_context),
+):
+    """The org's managed subscriptions and their last payments (agency admin view)."""
+    org_id = str(auth.org_id)
+    rows = (
+        ctx.db.table("subscriptions")
+        .select(
+            "id, status, plan_id, gateway, billing_cycle, billing_method, currency, amount_cents, "
+            "current_period_end, trial_ends_at, grace_ends_at, cancel_at_period_end, payment_url, "
+            "created_at, plans(id, nome)"
+        )
+        .eq("org_id", org_id)
+        .eq("automation_managed", True)
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+        .data
+        or []
+    )
+    payments = (
+        ctx.db.table("billing_payments")
+        .select("id, status, gateway, billing_method, currency, gross_cents, fee_cents, net_cents, paid_at, created_at")
+        .eq("org_id", org_id)
+        .order("created_at", desc=True)
+        .limit(50)
+        .execute()
+        .data
+        or []
+    )
+    return {"data": {"subscriptions": rows, "payments": payments}}
+
+
+def _dispatch_webhook(event_type: str, event_data: dict, db: Any) -> None:
     """Dispatch billing event to registered webhook endpoints (best-effort, fire-and-forget)."""
     org_id = None
     try:
@@ -152,7 +279,6 @@ def _dispatch_webhook(event_type: str, event_data: dict) -> None:
         # Resolve org_id from metadata or subscription lookup
         org_id = session_obj.get("metadata", {}).get("org_id")
         if not org_id and stripe_customer_id:
-            db = get_admin_client()
             sub = (
                 db.table("subscriptions")
                 .select("org_id")
@@ -175,7 +301,7 @@ def _dispatch_webhook(event_type: str, event_data: dict) -> None:
         # (logs exceptions via add_done_callback — never silent).
         try:
             schedule_coro(
-                webhook_delivery.dispatch(org_id, event_type, payload),
+                webhook_delivery.dispatch(org_id, event_type, payload, db=db),
                 logger=logger,
                 name=f"billing_webhook_{event_type}",
             )
@@ -192,7 +318,7 @@ def _dispatch_webhook(event_type: str, event_data: dict) -> None:
         )
 
 
-def _notify_billing_event(event_type: str, event_data: dict) -> None:
+def _notify_billing_event(event_type: str, event_data: dict, db: Any) -> None:
     """Send email notification for billing events (best-effort)."""
     try:
         from app.services.email_service import send_billing_alert
@@ -202,7 +328,6 @@ def _notify_billing_event(event_type: str, event_data: dict) -> None:
         if not stripe_customer_id:
             return
 
-        db = get_admin_client()
         sub = (
             db.table("subscriptions")
             .select("org_id")
@@ -232,38 +357,6 @@ def _notify_billing_event(event_type: str, event_data: dict) -> None:
             "billing: notification send failed (%s); event %s for org=%s",
             exc, event_type, event_data.get("org_id"),
         )
-
-
-def _log_billing_event(event_id: str, event_type: str, event_data: dict) -> None:
-    """Insert an immutable record into billing_events for audit/debugging."""
-    try:
-        db = get_admin_client()
-        session_obj = event_data.get("object", {})
-        stripe_customer_id = session_obj.get("customer")
-
-        # Try to resolve org_id from metadata or subscription lookup
-        org_id = session_obj.get("metadata", {}).get("org_id")
-        if not org_id and stripe_customer_id:
-            sub = (
-                db.table("subscriptions")
-                .select("org_id")
-                .eq("stripe_customer_id", stripe_customer_id)
-                .limit(1)
-                .execute()
-            )
-            if sub.data:
-                org_id = sub.data[0]["org_id"]
-
-        db.table("billing_events").insert({
-            "stripe_event_id": event_id,
-            "event_type": event_type,
-            "stripe_customer_id": stripe_customer_id,
-            "org_id": org_id,
-            "payload": event_data,
-        }).execute()
-    except Exception as exc:
-        # Never let logging failures break webhook processing
-        logger.error("Failed to log billing event %s: %s", event_id, exc)
 
 
 # ---------------------------------------------------------------------------

@@ -119,18 +119,27 @@ only. `AsaasPaymentGateway` deliberately does NOT import
 the Asaas status vocabulary is lifted as a documented fact, not a shared
 import.
 
-## Why this is NOT `products/core`'s billing
+## Core consumes it (edicao-fotos R2, 2026-09-16)
 
-`products/core`'s `stripe_service.py` (thin SDK wrapper, Checkout
-Sessions, Customer Portal) and `billing_service.py` (org-scoped
-subscription bookkeeping against Supabase, webhook handlers) are LIVE
-with real customers. **Untouched by this slice.** The seed organ's
-`StripePaymentGateway` covers a narrower, gateway-agnostic surface
-(no Checkout Sessions, no Customer Portal — those are UI-adjacent flows
-a consumer builds on top) so it can also stand in for Asaas without a
-consumer ever branching on gateway name. Migrating Core onto this organ
-is future work requiring explicit consent (Core's billing is a
-prod-live surface — see `KB § PATTERNS/devops/prod-exposure-consent.md`).
+`products/core` bills through this organ since migration `050_billing_gateways`
+(written, not applied — owner consent). New subscriptions are
+`subscriptions.automation_managed = true`; every row that predates 050 stays
+`false` and keeps the old `billing_service.py` webhook handlers, so live legacy
+customers see no change. `licenses.source` (`legacy`/`manual`/`subscription`)
+is backfilled to `legacy` for every existing row, and the billing flow only
+ever revokes `source='subscription'` rows of the subscription being ended.
+
+Where things live in Core: `app/services/billing_context.py` (the DI seam:
+gateway + hosted-checkout factories built from UI-entered keys, the
+`payment_events` inbox, the PTAX adapter, a clock) ·
+`billing_subscriptions.py` (state changes through `transition()`, licenses,
+payments + fees) · `billing_webhooks.py` (inbox claim → dispatch → complete,
+or `release()` on failure) · `billing_automations.py` (clock-driven sweeps
+behind the `billing_automations_enabled` switch and `NOCTUS_SCHEDULERS_ENABLED`)
+· `billing_events.py` (tries each configured mode's secret; the mode that
+verifies travels with the event) · `routers/billing_admin.py` + `pages/admin/
+AdminBilling.tsx` (plans/prices, keys, mode, automations, subscriptions,
+payments, webhook URLs).
 
 ## Testing
 
@@ -161,14 +170,12 @@ All 86 tests run on Fakes/mocks — zero network, zero Stripe/Asaas keys:
   Supabase-client double (mirrors `RealSupabaseJobRepository`'s own
   shape-only test discipline — no live Postgres in this suite).
 
-## Gaps / not-yet-consumed
+## Gaps
 
-No product consumes this yet (Phase 1 seed lift only). One-off charges
-and Core's live billing migration are explicitly out of scope for this
-slice. `RealSupabaseEventInbox` and `RealSupabaseJobRepository`-style
-Supabase adapters are shape-only — the first consumer ships the
-`payment_gateway_events` migration (`primary key (gateway, event_id)`)
-documented in `event_inbox.py`.
+One-off charges stay out of scope (p-studio's `ProvedorCobranca`). Asaas has
+no trial: Core offers trials through Stripe only and charges Asaas
+subscriptions immediately. Stripe's `cancel_at_period_end` is called directly
+by Core (`billing_subscriptions.schedule_stripe_cancel`) — not in the Protocol.
 
 ## Checkout + webhook parsing (`checkout.py` / `webhook_events.py`)
 
@@ -281,3 +288,36 @@ substitution needed, `construct_event` does pure local verification;
 Asaas via a scripted `asaas-access-token` header). 129 payments tests
 total (integrations + domain), still zero network / zero real Stripe or
 Asaas keys.
+
+## Additions from Core R2 (2026-09-16) — all additive
+
+- `SubscriptionRequest.trial_days` (Stripe `trial_period_days`; Asaas moves the
+  first `nextDueDate`), `ensure_customer(..., tax_id=)` (Asaas `cpfCnpj`; it
+  refuses to charge a customer without one), `PaymentGateway.verify_credentials()`
+  (read-only: Stripe `Balance.retrieve`, Asaas `GET /customers?limit=1`) for the
+  admin "test connection" button. `AsaasPaymentGateway(today=...)` is the clock seam.
+- `CheckoutRequest.trial_days` + `tax_id`; Stripe checkout now sends
+  `payment_method_collection="always"` (card up front even when the trial makes
+  the first invoice zero) and `client_reference_id`; Asaas checkout accepts
+  `billing_method="card"` (the owner's rule: Asaas = Pix, boleto AND card).
+- **`StripeObject` has no `.get()` and `dict(obj)` raises** (stripe 15). All
+  Stripe field access goes through `payments/_stripe_fields.py`
+  (`stripe_field`, `stripe_to_dict`), shared by `real_stripe`, `checkout` and
+  `webhook_events`. `test_stripe_gateway.py`'s double now returns REAL
+  `StripeObject`s — against the old adapter it fails 9 tests, which is the point.
+- `real_stripe` reads `current_period_end` from the subscription items when the
+  top-level field is absent (API 2025-03+), and fetches the balance transaction
+  when it was not expanded.
+- `FakePaymentGateway` raises `PaymentGatewayError(status=404)` for an unknown
+  subscription (was a bare `KeyError`), matching the Real adapters.
+- `EventInbox.release(gateway, event_id)` — undo a claim whose processing
+  failed, so the gateway's retry is processed instead of read as a duplicate.
+- State machine: `trialing → past_due|expired`, `past_due → canceled|expired`,
+  `incomplete → canceled|trialing` are legal (Stripe produces each on its own).
+- **Asaas event id:** the top-level `id` is used when the payload carries one;
+  the derived key is the fallback, and for non-payment deliveries it is built
+  from the `subscription` object. Before this, every `SUBSCRIPTION_*` delivery
+  derived the same key (`SUBSCRIPTION_DELETED:::`) and the inbox would have
+  dropped all but the first. Core acts on `SUBSCRIPTION_DELETED` /
+  `SUBSCRIPTION_INACTIVATED` when they arrive; whether the live Asaas account
+  emits them is unverified.

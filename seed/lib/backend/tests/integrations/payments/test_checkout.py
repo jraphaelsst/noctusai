@@ -75,7 +75,9 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
                 for c in customers.values()
                 if (c.get("metadata") or {}).get("external_reference") == ext_ref
             ]
-            return types.SimpleNamespace(data=hits)
+            return types.SimpleNamespace(
+                data=[StripeObject.construct_from(h, "sk_test_double") for h in hits]
+            )
 
         @staticmethod
         def create(**kwargs: Any) -> dict:
@@ -88,7 +90,7 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
                 "metadata": kwargs.get("metadata", {}),
             }
             customers[cid] = record
-            return record
+            return StripeObject.construct_from(record, "sk_test_double")
 
     module.Customer = _Customer
 
@@ -293,8 +295,59 @@ def test_asaas_checkout_boleto_has_no_pix_qr() -> None:
     assert session.pix_qr is None
 
 
-@pytest.mark.parametrize("billing_method", ["card", "unspecified"])
-def test_asaas_checkout_requires_pix_or_boleto(billing_method: str) -> None:
+def test_stripe_checkout_trial_collects_card_up_front(
+    stripe_checkout: StripeHostedCheckout, stripe_double: Any
+) -> None:
+    stripe_checkout.create_checkout(_valid_stripe_request(trial_days=14))
+    kwargs = next(c for c in stripe_double.calls if c[0] == "checkout.Session.create")[1]
+    assert kwargs["subscription_data"]["trial_period_days"] == 14
+    assert kwargs["payment_method_collection"] == "always"
+    assert kwargs["client_reference_id"] == "org-1"
+
+
+def test_stripe_checkout_without_trial_sends_no_trial(
+    stripe_checkout: StripeHostedCheckout, stripe_double: Any
+) -> None:
+    stripe_checkout.create_checkout(_valid_stripe_request())
+    kwargs = next(c for c in stripe_double.calls if c[0] == "checkout.Session.create")[1]
+    assert "trial_period_days" not in kwargs["subscription_data"]
+
+
+def test_asaas_checkout_card_sends_tax_id_and_trial_due_date() -> None:
+    seen: dict[str, Any] = {}
+
+    def create_customer(request: httpx.Request) -> httpx.Response:
+        seen["customer"] = json_lib.loads(request.content)
+        return httpx.Response(200, content=json_lib.dumps({"id": "cus_003"}).encode())
+
+    def create_subscription(request: httpx.Request) -> httpx.Response:
+        seen["subscription"] = json_lib.loads(request.content)
+        return httpx.Response(200, content=json_lib.dumps(
+            {"id": "sub_003", "customer": "cus_003", "status": "ACTIVE", "nextDueDate": "2026-10-01"}
+        ).encode())
+
+    transport = _routed_transport(
+        {
+            "GET /v3/customers": _json(200, {"data": []}),
+            "POST /v3/customers": create_customer,
+            "POST /v3/subscriptions": create_subscription,
+            "GET /v3/subscriptions/sub_003/payments": _json(
+                200, {"data": [{"id": "pay_003", "invoiceUrl": "https://sandbox.asaas.com/i/pay_003"}]}
+            ),
+        }
+    )
+    checkout = _asaas_checkout(transport)
+    session = checkout.create_checkout(
+        _asaas_request(billing_method="card", tax_id="12345678909", trial_days=7)
+    )
+    assert session.checkout_url == "https://sandbox.asaas.com/i/pay_003"
+    assert session.pix_qr is None
+    assert seen["customer"]["cpfCnpj"] == "12345678909"
+    assert seen["subscription"]["billingType"] == "CREDIT_CARD"
+
+
+@pytest.mark.parametrize("billing_method", ["unspecified"])
+def test_asaas_checkout_requires_a_concrete_method(billing_method: str) -> None:
     checkout = _asaas_checkout(httpx.MockTransport(lambda r: httpx.Response(500)))
     with pytest.raises(PaymentGatewayError):
         checkout.create_checkout(_asaas_request(billing_method=billing_method))

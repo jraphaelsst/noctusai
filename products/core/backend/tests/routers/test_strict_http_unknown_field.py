@@ -36,10 +36,12 @@ def _assert_422_names_field(response, sentinel: str) -> None:
 
 class TestStrictHttpUnknownFieldRejected:
     def test_admin_cache_flush_rejects_unknown_field_with_422(self, admin_client):
-        # admin_cache.FlushBody — the route uses a separate admin-role check
-        # (`noctus_role == "admin"`) but the Pydantic body validation runs
-        # before the dependency, so 422 still fires for an admin caller.
-        # Using admin_client to bypass any pre-validation auth short-circuit.
+        # admin_cache.FlushBody — the route's platform-admin dependency reads
+        # the TRUSTED `noctus_users.role` (not user_metadata), and runs before
+        # body validation; seed the admin's row so the 422 is what's tested.
+        admin_client.mock_supabase.set_table_data(
+            "noctus_users", [{"id": "admin-user-456", "role": "admin", "org_role": "member"}]
+        )
         resp = admin_client.post(
             "/api/admin/llm-cache/flush",
             json={

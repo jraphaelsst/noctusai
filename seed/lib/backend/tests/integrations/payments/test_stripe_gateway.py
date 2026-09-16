@@ -13,6 +13,7 @@ import types
 from typing import Any
 
 import pytest
+from stripe import StripeObject  # the REAL SDK type — bound before the fixture swaps the module
 
 from noctusai_lib.integrations.payments.errors import PaymentGatewayError
 from noctusai_lib.integrations.payments.real_stripe import StripePaymentGateway
@@ -34,9 +35,19 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
     subscriptions: dict[str, dict] = {}
     charges: dict[str, dict] = {}
 
+    real_stripe = sys.modules["stripe"]
     module = types.ModuleType("stripe")
+    # A package that falls back to the real module: `StripeObject` lazily
+    # imports `stripe._...` submodules while constructing.
+    module.__path__ = real_stripe.__path__
+    module.__getattr__ = lambda name: getattr(real_stripe, name)
     module.api_key = None
     module.StripeError = _FakeStripeError
+
+    def real(record: dict) -> StripeObject:
+        # Every response is a REAL StripeObject (no .get(), dict() raises),
+        # so dict-only access in the adapter fails here instead of in prod.
+        return StripeObject.construct_from(record, "sk_test_double")
 
     class _Customer:
         @staticmethod
@@ -49,7 +60,7 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
                 for c in customers.values()
                 if (c.get("metadata") or {}).get("external_reference") == ext_ref
             ]
-            return types.SimpleNamespace(data=hits)
+            return types.SimpleNamespace(data=[real(h) for h in hits])
 
         @staticmethod
         def create(**kwargs: Any) -> dict:
@@ -62,7 +73,7 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
                 "metadata": kwargs.get("metadata", {}),
             }
             customers[cid] = record
-            return record
+            return real(record)
 
     module.Customer = _Customer
 
@@ -80,24 +91,24 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
                 "latest_invoice": {"charge": "ch_001"},
             }
             subscriptions[sid] = record
-            return record
+            return real(record)
 
         @staticmethod
-        def retrieve(sid: str, **kwargs: Any) -> dict:
+        def retrieve(sid: str, **kwargs: Any) -> StripeObject:
             calls.append(("Subscription.retrieve", sid))
             if sid not in subscriptions:
                 raise _FakeStripeError(
                     "No such subscription", http_status=404, code="resource_missing"
                 )
-            return subscriptions[sid]
+            return real(subscriptions[sid])
 
         @staticmethod
-        def cancel(sid: str) -> dict:
+        def cancel(sid: str) -> StripeObject:
             calls.append(("Subscription.cancel", sid))
             record = dict(subscriptions[sid])
             record["status"] = "canceled"
             subscriptions[sid] = record
-            return record
+            return real(record)
 
     module.Subscription = _Subscription
 
@@ -105,9 +116,21 @@ def stripe_double(monkeypatch: pytest.MonkeyPatch) -> Any:
         @staticmethod
         def retrieve(cid: str, **kwargs: Any) -> dict:
             calls.append(("Charge.retrieve", cid))
-            return charges[cid]
+            return real(charges[cid])
 
     module.Charge = _Charge
+
+    class _Balance:
+        fail: Exception | None = None
+
+        @staticmethod
+        def retrieve() -> dict:
+            calls.append(("Balance.retrieve", None))
+            if _Balance.fail is not None:
+                raise _Balance.fail
+            return real({"object": "balance"})
+
+    module.Balance = _Balance
 
     monkeypatch.setitem(sys.modules, "stripe", module)
     return types.SimpleNamespace(
@@ -211,3 +234,67 @@ def test_unknown_stripe_status_maps_to_incomplete(gateway: StripePaymentGateway,
     }
     subscription = gateway.get_subscription("sub_weird")
     assert subscription.status == "incomplete"
+
+
+def test_create_subscription_passes_trial_period_days(
+    gateway: StripePaymentGateway, stripe_double: Any
+) -> None:
+    gateway.create_subscription(
+        SubscriptionRequest(
+            external_reference="org-1",
+            customer_id_at_gateway="cus_1",
+            price=Money(2990, "BRL"),
+            plan_ref="price_1",
+            trial_days=14,
+        )
+    )
+    name, kwargs = [c for c in stripe_double.calls if c[0] == "Subscription.create"][0]
+    assert kwargs["trial_period_days"] == 14
+
+
+def test_create_subscription_omits_trial_when_zero(
+    gateway: StripePaymentGateway, stripe_double: Any
+) -> None:
+    gateway.create_subscription(
+        SubscriptionRequest(
+            external_reference="org-1",
+            customer_id_at_gateway="cus_1",
+            price=Money(2990, "BRL"),
+            plan_ref="price_1",
+        )
+    )
+    _, kwargs = [c for c in stripe_double.calls if c[0] == "Subscription.create"][0]
+    assert "trial_period_days" not in kwargs
+
+
+def test_verify_credentials_calls_balance(gateway: StripePaymentGateway, stripe_double: Any) -> None:
+    gateway.verify_credentials()
+    assert ("Balance.retrieve", None) in stripe_double.calls
+
+
+def test_verify_credentials_translates_auth_error(
+    gateway: StripePaymentGateway, stripe_double: Any
+) -> None:
+    stripe_double.module.Balance.fail = _FakeStripeError("Invalid API Key", http_status=401)
+    with pytest.raises(PaymentGatewayError) as info:
+        gateway.verify_credentials()
+    assert info.value.status == 401
+    assert info.value.retryable is False
+
+
+def test_subscription_raw_is_a_plain_dict_and_period_falls_back_to_items(
+    gateway: StripePaymentGateway, stripe_double: Any
+) -> None:
+    stripe_double.subscriptions["sub_new"] = {
+        "id": "sub_new",
+        "customer": "cus_1",
+        "status": "active",
+        "metadata": {"external_reference": "org-9"},
+        "latest_invoice": {"id": "in_1", "charge": "ch_9"},
+        "items": {"object": "list", "data": [{"id": "si_1", "current_period_end": 1790000000}]},
+    }
+    sub = gateway.get_subscription("sub_new")
+    assert isinstance(sub.raw, dict) and not isinstance(sub.raw, StripeObject)
+    assert sub.external_reference == "org-9"
+    assert sub.latest_charge_id_at_gateway == "ch_9"
+    assert sub.current_period_end == "1790000000"

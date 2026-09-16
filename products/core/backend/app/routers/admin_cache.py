@@ -4,17 +4,18 @@ Dispatches to the active `CacheBackend` via `flush_for_model` — which handles
 InMemoryCacheBackend (dev), RedisCacheBackend (prod), or any other backend
 that exposes a `flush_prefix(prefix)` method.
 
-Access: `noctus_role == "admin"` only (platform-level, not per-org). Any
-non-admin call → 403.
+Access: platform admin only — `public.noctus_users.role == 'admin'`, read
+from the database (never the user-writable `user_metadata`). Any non-admin
+call → 403.
 """
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from fastapi import APIRouter, Depends
 
-from fastapi import APIRouter, Header, HTTPException
+from noctusai_lib.api.auth.session.types import AuthContext
 
-from app.dependencies import get_current_user
+from app.services.trusted_auth import require_platform_admin_dep
 from app.schemas.admin_cache import FlushBody
 from noctusai_lib.integrations.llm import get_llm_config
 from noctusai_lib.integrations.llm.cache import flush_for_model
@@ -22,13 +23,6 @@ from noctusai_lib.integrations.llm.models import all_providers, models_for
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/llm-cache", tags=["Admin · LLM Cache"])
-
-
-async def _require_platform_admin(authorization: Optional[str]) -> None:
-    user, _ = await get_current_user(authorization)
-    noctus_role = (user.user_metadata or {}).get("noctus_role")
-    if noctus_role != "admin":
-        raise HTTPException(status_code=403, detail="Platform admin required")
 
 
 def _validate_target(provider: str, model: str) -> None:
@@ -52,15 +46,13 @@ def _validate_target(provider: str, model: str) -> None:
 @router.post("/flush")
 async def flush_llm_cache(
     body: FlushBody,
-    authorization: Optional[str] = Header(None),
+    _: AuthContext = Depends(require_platform_admin_dep),
 ):
     """Flush every cached response for `(product, provider, model)`.
 
-    Requires `noctus_role=admin`. Idempotent — flushing an already-empty
+    Requires a platform admin. Idempotent — flushing an already-empty
     bucket returns `{deleted: 0}` without error.
     """
-    await _require_platform_admin(authorization)
-
     config = get_llm_config()
     if config.cache_backend is None or not config.cache_enabled:
         return {"deleted": 0, "note": "cache disabled or no backend configured"}

@@ -172,6 +172,16 @@ class SubscriptionRequest:
     billing_method: BillingMethod = "unspecified"
     plan_ref: Optional[str] = None  # Stripe: a pre-created Price id
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Days before the first charge. 0 = charge now. Stripe maps it to
+    # `trial_period_days`; Asaas has no trial concept, so its adapter
+    # pushes the first `nextDueDate` forward by this many days instead.
+    trial_days: int = 0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.trial_days, int) or isinstance(self.trial_days, bool):
+            raise TypeError(f"trial_days must be an int, got {self.trial_days!r}")
+        if self.trial_days < 0:
+            raise ValueError(f"trial_days must be >= 0, got {self.trial_days}")
 
 
 @dataclass(frozen=True)

@@ -36,6 +36,15 @@ class Settings(ProductSettings):
     stripe_webhook_secret: str = ""
     app_base_url: str = "http://localhost:5173"
 
+    # Public origin Core's API is reachable at from the internet (gateway
+    # webhooks). Empty → `app_base_url` (Core serves API + SPA on one host).
+    public_api_base_url: str = ""
+
+    # Fernet key for `public.app_integration_config` (gateway API keys and
+    # webhook secrets entered in Admin > Faturamento). Empty → saving a key
+    # answers 503; nothing is ever stored in plaintext.
+    encryption_key: str = ""
+
     # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
     # Webhook-compliance pin #4 — see KB § PATTERNS/webhook-signatures.md.
     webhook_rate_limit: str = "60/minute"

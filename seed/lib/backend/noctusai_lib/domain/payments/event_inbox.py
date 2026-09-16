@@ -41,6 +41,14 @@ class EventInbox(Protocol):
         never an error condition."""
         ...
 
+    def release(self, *, gateway: str, event_id: str) -> None:
+        """Undo a claim whose processing failed.
+
+        Without this, a handler that crashes after `claim` turns the
+        gateway's retry into a "duplicate" and the event is lost. Call it
+        from the failure path only; releasing an unclaimed pair is a no-op."""
+        ...
+
 
 class FakeEventInbox:
     """In-memory `EventInbox` for dev + tests. Single-process only —
@@ -52,6 +60,7 @@ class FakeEventInbox:
         # Recorded calls, so a test can assert on intent (e.g. "claim was
         # called exactly twice for this event_id") and not just outcome.
         self.claims: list[tuple[str, str]] = []
+        self.releases: list[tuple[str, str]] = []
 
     def claim(self, *, gateway: str, event_id: str) -> bool:
         self.claims.append((gateway, event_id))
@@ -61,10 +70,15 @@ class FakeEventInbox:
         self._seen.add(key)
         return True
 
+    def release(self, *, gateway: str, event_id: str) -> None:
+        self._seen.discard((gateway, event_id))
+        self.releases.append((gateway, event_id))
+
     def clear(self) -> None:
         """Reset between test cases."""
         self._seen.clear()
         self.claims.clear()
+        self.releases.clear()
 
 
 class RealSupabaseEventInbox:
@@ -123,6 +137,15 @@ class RealSupabaseEventInbox:
                 return False
             raise
         return True
+
+    def release(self, *, gateway: str, event_id: str) -> None:
+        (
+            self._table_builder()
+            .delete()
+            .eq("gateway", gateway)
+            .eq("event_id", event_id)
+            .execute()
+        )
 
 
 def _is_unique_violation(exc: Exception) -> bool:
