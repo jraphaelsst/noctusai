@@ -95,26 +95,37 @@ spec does not, and anyone sizing Wave 2 from the spec will under-size it by a lo
 Refactoring **live billing** onto a brand-new seed organ is the highest-blast-radius
 slice in the project and is absent from the plan's §8 Risks.
 
-### C5 — Vista gallery read is still unproven, and is a v1 hard dependency 🔴
-"Pull photos from a Vista imóvel" is one of three v1 photo sources. Evidence as of
-2026-09-16:
+### C5 — Vista gallery read: ✅ RESOLVED 2026-09-16 (and the plan was wrong)
+"Pull photos from a Vista imóvel" is one of three v1 photo sources. It **works**, and
+needs no new credential.
 
-- `KB § INTEGRATIONS/vista.md:346` — `GET /imoveis/fotos` returns **405**
-  (`Allow: POST, PUT, DELETE`). The route is **write-only**. There is no GET read.
-- `vista.md:101` documents a nested `fotos` group on `/imoveis/listar`
-  (`Foto`, `FotoPequena`, `Destaque`, `Tipo`, `Descricao`) — **per public docs**.
-- `vista.md:398` — tenant calibration (2026-05) says `FotoDestaque` is *the only
-  photo field this tenant exposes*.
-- Live read-only probe of `CA2830` with our key (`…644c`) on 2026-09-16 returned
-  **`FotoDestaque` only** — a single cover photo, no `fotos` group. (The existing
-  adapter does not request the nested group, so this bounds the *current path*, not
-  the *capability*.)
-- `vista.md:883` — the `…bced` portal key is a superset of ours in both directions.
+**The approved plan said:** add `list_imovel_fotos()` reading a *"nested `fotos` group
+on `/imoveis/listar`"*. That is wrong on **both** the relation name and the method, and
+would have failed at build time with a misleading 400.
 
-**Open:** whether `fields: [{"fotos": [...]}]` on `/imoveis/listar` returns the full
-gallery, and on which key. This needs a raw probe the current MCP adapter cannot
-issue. **It is the first task of the Vista slice and it gates a v1 feature** — if it
-fails on both keys, the Vista photo source is dead and v1 degrades to computer-upload.
+Live-probed — sandbox first (`sandbox-rest.vistahost.com.br`, key published in Vista's
+own docs), then production read-only:
+
+| probe | result |
+|---|---|
+| `{"fotos":[…]}` on `/imoveis/listar` | `400` — *identical shape to a bogus relation* (control `{"naoExiste":["Xyz"]}` errors the same way) |
+| `{"Foto":[…]}` on `/imoveis/listar` | `400 "A tabela Foto não está disponível **para este método**"` — table real, method wrong |
+| `{"Foto":[…]}` on **`/imoveis/detalhes`** | ✅ `200` |
+| `GET /imoveis/fotos` | `405` — write-only, confirms `vista.md:346` |
+
+**Production, `CA2830`, with the ERP's existing key (`…644c`): 28 photos.**
+
+Consequences:
+1. ✅ The Vista photo source **ships in v1**. Route `POST /lotes/{id}/vista` is unblocked.
+2. ✅ **`VISTA_PHOTOS_API_KEY` is NOT needed for reads** — one owner-consent gate drops
+   off the critical path entirely. The `…bced` portal key is required only for photo
+   *writes* (Phase 2), which v1 does not do.
+3. ⚠️ **The payload is a DICT keyed by photo code, not a list** — the same shape trap as
+   `Corretor`. The adapter must `list(d.values())`; indexing `[0]` yields a key string.
+4. Entry keys: `Codigo`, `Foto` (full URL), `FotoPequena`, `Destaque` (`"Sim"` on exactly
+   one), `Tipo`, `Descricao`. `FotoDestaque` on `listar` is a *cover* field, not a gallery.
+5. `KB § INTEGRATIONS/vista.md` documented the wrong name and method; corrected in this
+   branch (drift-fix-on-contact).
 
 ### C6 — cost exposure is unbounded in v1 🟡
 At $30 / 1M output image tokens, 100-photo batches, no per-org cap, the dashboard is
@@ -166,7 +177,7 @@ None of these can be satisfied by an agent:
 
 ## 6 · Next actions
 
-1. Resolve C5 with a read-only gallery probe (sandbox first, then production read).
+1. ~~Resolve C5~~ ✅ done 2026-09-16 — gallery reads via `Foto` on `/imoveis/detalhes`.
 2. Apply C1–C3 to the plan document before opening Wave 1 worktrees.
 3. SW migrations 114–118 are **taken and land with the in-flight prod promote**
    (114 termos · 115 matrícula ato detalhes · 116 certidões situação · 117

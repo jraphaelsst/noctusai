@@ -68,7 +68,7 @@ default image model**, deliberately, so models can be compared across orgs).
 | `GET` | `/lotes` | List visible batches (own for corretor; org-wide for agency admin) |
 | `POST` | `/lotes` | Create a batch (metadata only) |
 | `POST` | `/lotes/{id}/fotos` | Upload photos (multipart) — needs `_MAX_BODY_PATH_OVERRIDES` |
-| `POST` | `/lotes/{id}/vista` | Pull photos from a Vista imóvel ⚠️ gated on C5 |
+| `POST` | `/lotes/{id}/vista` | Pull photos from a Vista imóvel ✅ proven |
 | `POST` | `/lotes/{id}/submeter` | Submit — snapshots the effective guide, enqueues jobs |
 | `GET` | `/lotes/{id}` | Batch detail + per-photo state |
 | `POST` | `/lotes/{id}/fotos/{foto_id}/retentar` | Manual retry of a `falhou` photo |
@@ -146,9 +146,11 @@ Batch-detail and review queries key on `lote_id`; a key change **must** carry
 
 ## 10 · Open — blocks implementation
 
-- 🔴 **C5** — `POST /lotes/{id}/vista` cannot be specified until the gallery read is
-  proven. If it fails on both keys, this route is cut from v1 and the Vista source
-  degrades to "link to imóvel" metadata only.
+- ✅ **C5 resolved** — `POST /lotes/{id}/vista` body `{"codigo": str}`. The adapter
+  reads `GET /imoveis/detalhes` with `fields: ["Codigo", {"Foto": ["Codigo","Foto",
+  "FotoPequena","Destaque","Tipo","Descricao"]}]` using the **existing** `VISTA_API_KEY`.
+  Response `Foto` is a **dict keyed by photo code** — normalize with `list(.values())`.
+  Ingest order follows `Destaque` first, then `Codigo`.
 - Plan prices, trial lengths, grace days (owner fills in admin UI).
 - Retention policy (currently "keep everything").
 - Whether rejected photos get an automatic re-edit (owner reviewing first).

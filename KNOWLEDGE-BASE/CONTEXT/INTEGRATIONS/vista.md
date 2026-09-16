@@ -98,7 +98,30 @@ relations:
 
 - `Corretor` → `Nome`, `Fone`, `Email`, `Creci`
 - `Agencia` → `Nome`, `Fone`, `Endereco`, `Numero`, `Complemento`, `Bairro`, `Cidade`
-- `fotos` (on `/imoveis/listar`) → `Foto`, `FotoPequena`, `Destaque`, `Tipo`, `Descricao`
+- `Foto` (on **`/imoveis/detalhes`**) → `Codigo`, `Foto`, `FotoPequena`, `Destaque`, `Tipo`, `Descricao`
+
+> 🔴 **Corrected 2026-09-16 — this row previously read `fotos` (lowercase) on
+> `/imoveis/listar`. Both halves were wrong** and the error was live-proven:
+>
+> - `{"fotos": [...]}` on `listar` → `400 "Origem fotos e campo Foto não está
+>   disponível"` — **byte-identical in shape to a made-up relation name** (control
+>   probe: `{"naoExiste":["Xyz"]}` → `"Origem naoExiste e campo Xyz não está
+>   disponível"`). `fotos` is not a relation.
+> - `{"Foto": [...]}` on `listar` → `400 "A tabela Foto não está disponível **para
+>   este método**"` — a *different* message: the table is real, the method is wrong.
+> - `{"Foto": [...]}` on **`detalhes`** → `200`. ✅
+>
+> **Live-verified on production 2026-09-16** with the ERP's own key (`…644c`):
+> `CA2830` returns **28 photos**. The gallery read needs **no portal key** — `…bced`
+> is required for photo *writes* (§ 4.7), not reads.
+>
+> ⚠️ **The payload is a DICT keyed by photo code, not a list** — same shape trap as
+> `Corretor` (§ 4.1). Normalize with `list(d.values())` before iterating; indexing
+> `[0]` on the raw response silently yields a key string.
+>
+> Entry keys: `Codigo`, `Foto` (full URL), `FotoPequena` (thumb), `Destaque`
+> (`"Sim"` on exactly one), `Tipo`, `Descricao`. `FotoDestaque` on `/imoveis/listar`
+> returns only that one cover photo — it is a *cover* field, not a gallery.
 
 > **Public-doc warning.** "Caso você não informe os campos que quer utilizar, a
 > API retornará apenas o código." — without explicit `fields`, only the primary
