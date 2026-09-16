@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol, TypedDict
 from uuid import UUID
 
+from app.runtime.slots import SlotPool, TurnSlot
 from app.stores.approvals import ApprovalRecord
 
 __all__ = [
@@ -20,6 +21,8 @@ __all__ = [
     "AgentEvent",
     "ApprovalDecision",
     "ApprovalBroker",
+    "TurnSlot",
+    "SlotPool",
     "AgentRuntime",
     "approval_event_payload",
 ]
@@ -102,13 +105,32 @@ class ApprovalBroker(Protocol):
 
 
 class AgentRuntime(Protocol):
+    """Contract §E.9, extended by §E.11 (per-conversation isolation)."""
+
+    def try_reserve(self) -> TurnSlot | None:
+        """Lease a free slot from this runtime's internal
+        :class:`SlotPool`, or ``None`` when every slot is busy (the
+        route's 429 ``julia_capacidade``). Synchronous — see
+        ``SlotPool.try_reserve``'s own docstring for why."""
+        ...
+
     def run_turn(
         self,
         spec: AgentSpec,
         ctx: TurnContext,
         prompt: str,
         broker: ApprovalBroker,
-    ) -> AsyncIterator[AgentEvent]: ...
+        slot: TurnSlot | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """``slot`` defaults to ``None`` for backward compatibility with
+        callers that predate contract §E.11 (the route wiring that
+        reserves a slot and threads it through lands in a later slice,
+        B4) — every REAL turn is expected to pass the slot
+        ``try_reserve()`` returned. Reported as a deliberate,
+        forward-compatible deviation from the contract's bare
+        ``run_turn(spec, ctx, prompt, broker, slot)`` signature; see B1's
+        delivery note."""
+        ...
 
 
 def _iso(value: Any) -> Any:

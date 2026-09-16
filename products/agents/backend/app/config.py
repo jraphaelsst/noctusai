@@ -113,4 +113,12 @@ class SeedSettings(ProductSettings):
     # changes without a code change.
     julia_cli_path: str = "/app/bin/julia-cli-exec"
 
+    # ── Per-conversation isolation (contract §E.11) ─────────────────────
+    # Fixed slot count: uid/gid `2000+K` for K in `range(julia_cli_slots)`,
+    # each with its own tmpfs mount `/run/julia-K`. `app.runtime.slots.
+    # RealSlotPool` reads this (falling back to the bare `JULIA_CLI_SLOTS`
+    # env var, then to 3) to discover the fixed slot set. User decision
+    # 2026-09-15: 3 slots.
+    julia_cli_slots: int = 3
+
 settings = SeedSettings()
