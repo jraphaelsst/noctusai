@@ -48,6 +48,13 @@ which has three live consumers:
 - `products/social-wiring/backend/app/modules/scheduling/retry.py:41`
 - `seed/lib/backend/noctusai_lib/integrations/outbound_webhook/__init__.py:37` — **a seed organ**
 
+Also inherited from `origin/dev` (not collisions — already landed, and Wave 1 builds on
+them): `primitives/exceptions.py` (`HTTPException.headers` no longer dropped fleet-wide,
+so `Retry-After` survives — relevant to the OpenAI 429 retry path), `config/csv_settings.py`
+(new), `security/secrets_scan.py` (new), and `seed/lib/frontend/src/api.ts`
+(`ApiError.code` now also reads a flat `{detail, code}` body — relevant to §0 of the
+contract's error envelope).
+
 Slice S1 explicitly changes `mark_failed` to honour `RetryPolicy`. S1 therefore
 carries a three-consumer blast radius including seed-on-seed coupling, and is a
 SEED-BE collision class — not the free-to-break slice the plan assumes.
@@ -61,10 +68,23 @@ shape), not a third copy — especially since the plan *widens* the schema (imag
 `model_version`, `batch`), which would silently drift the two existing copies.
 
 ### C3 — Core migration 045 is already taken 🔴
-Session `noctusai-36` is applying **core 045** as part of a consent-gated
-julia/academia fleet cutover, confirmed by direct message 2026-09-16. Its claim is
-older and about to land. **Renumber Core 045/046 → 046/047**, and re-verify against
-the merged tip at write time rather than trusting any number in the plan document.
+`products/core/backend/migrations/045_academia_agents_live_scope.sql` is **already
+on `origin/dev`** (verified at `7e5f5ad6`). It is a HELD file — written but applied to
+no database — belonging to `noctusai-36`'s consent-gated julia/academia cutover, and
+it flips `academia-de-reciclagem` + `agents` to `deploy_scope='live'`.
+
+**Renumber Core 045/046 → 046/047.**
+
+> 🔴 **Methodology note — this is why the primary checkout is not the source of truth.**
+> The first audit pass read `products/core/backend/migrations/` from the primary
+> checkout, which sits on a local `dev` that is **12 commits behind `origin/dev`**, and
+> concluded "next free is 045". That matched the plan document, so nothing looked wrong.
+> Both were stale in the same direction. Always number against `origin/dev` — or better,
+> against the merged tip at write time.
+
+Downstream: `deploy/fleet/build-scope.txt` is derived from `ativo=true AND
+deploy_scope='live'` (`mcp/noctusai/tools/noctus/dev/build_scope.py:111`), so the build
+set grows by two slugs when 045 is applied.
 
 ### C4 — billing is far less greenfield than the spec implies 🟡
 Spec §8 reads as if platform billing is new. Core already ships
