@@ -123,27 +123,6 @@ CREATE POLICY "fotos_platform_settings_select_platform_admin" ON social_wiring.f
 CREATE POLICY "service_role_bypass" ON social_wiring.fotos_platform_settings
     FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- ----------------------------------------------------------------------------
--- Shared visibility predicate -- creator OR org admin-tier role OR
--- platform admin, scoped to the lote's own org. Reused by every child
--- table's SELECT policy below (contract §1's batch-visibility rule).
--- ----------------------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION social_wiring.fotos_lote_visivel(p_lote_id UUID)
-RETURNS BOOLEAN
-LANGUAGE sql STABLE SECURITY DEFINER
-SET search_path = social_wiring, public
-AS $$
-    SELECT public.is_platform_admin() OR EXISTS (
-        SELECT 1 FROM social_wiring.fotos_lotes l
-        WHERE l.id = p_lote_id
-          AND l.org_id = public.current_org_id()
-          AND (
-              l.criado_por = (SELECT auth.uid())
-              OR public.current_org_role() = ANY (ARRAY['owner', 'admin', 'manager'])
-          )
-    );
-$$;
 
 -- ----------------------------------------------------------------------------
 -- 3. fotos_lotes -- batches
@@ -178,6 +157,32 @@ CREATE INDEX IF NOT EXISTS ix_fotos_lotes_org_created
     ON social_wiring.fotos_lotes (org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_fotos_lotes_criado_por
     ON social_wiring.fotos_lotes (criado_por);
+
+-- ----------------------------------------------------------------------------
+-- Shared visibility predicate -- creator OR org admin-tier role OR
+-- platform admin, scoped to the lote's own org. Reused by every child
+-- table's SELECT policy below (contract §1's batch-visibility rule).
+-- The predicate is created AFTER fotos_lotes: a LANGUAGE sql body is
+-- validated at CREATE time, so defining it first fails with 42P01 on a
+-- real database (caught applying this file to prod on 2026-09-16; the
+-- parse-only tests could not see it).
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION social_wiring.fotos_lote_visivel(p_lote_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = social_wiring, public
+AS $$
+    SELECT public.is_platform_admin() OR EXISTS (
+        SELECT 1 FROM social_wiring.fotos_lotes l
+        WHERE l.id = p_lote_id
+          AND l.org_id = public.current_org_id()
+          AND (
+              l.criado_por = (SELECT auth.uid())
+              OR public.current_org_role() = ANY (ARRAY['owner', 'admin', 'manager'])
+          )
+    );
+$$;
 
 ALTER TABLE social_wiring.fotos_lotes ENABLE ROW LEVEL SECURITY;
 

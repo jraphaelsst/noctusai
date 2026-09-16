@@ -137,3 +137,13 @@ def test_fotos_platform_settings_is_a_singleton(flat: str):
 def test_edit_type_vocabulary_is_the_fixed_four(flat: str):
     vocab = "ARRAY['cor_luz', 'ceu', 'declutter', 'staging_virtual']::TEXT[]"
     assert vocab in flat
+
+
+def test_visibility_predicate_is_created_after_the_table_it_reads(flat: str):
+    """A LANGUAGE sql body is validated at CREATE time, so the predicate
+    must come after `fotos_lotes` exists. The reverse order failed with
+    42P01 on the real database on 2026-09-16 while every parse test passed."""
+    lowered = flat.lower()
+    table_at = lowered.index("create table if not exists social_wiring.fotos_lotes ")
+    function_at = lowered.index("function social_wiring.fotos_lote_visivel")
+    assert table_at < function_at
