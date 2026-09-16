@@ -76,6 +76,13 @@ export function ContratosContainer({
           ? (mutations.deleteContrato.variables?.contratoId ?? null)
           : null
       }
+      // 🔴 Same `getUrl` mutation as Abrir/Baixar — narrowed to `formato
+      // === "docx"` so only the ".docx" button spins, not the PDF ones.
+      baixandoDocxVersaoId={
+        mutations.getUrl.isPending && mutations.getUrl.variables?.formato === "docx"
+          ? (mutations.getUrl.variables?.versaoId ?? null)
+          : null
+      }
       onAddVersao={(contratoId, file) =>
         mutations.addVersao.mutate(
           { contratoId, file },
@@ -109,22 +116,28 @@ export function ContratosContainer({
           { onError: (err) => toastServerError(err, "Não foi possível remover o contrato.") },
         )
       }
-      onOpen={async (contratoId, versaoId) => {
+      onOpen={async (contratoId, versaoId, formato) => {
         try {
           // 🔴 Fired only from an explicit click, same discipline as the
           // financiamento document URL — never pre-fetched or refreshed.
-          const res = await mutations.getUrl.mutateAsync({ contratoId, versaoId, intent: "view" });
+          const res = await mutations.getUrl.mutateAsync({
+            contratoId,
+            versaoId,
+            intent: "view",
+            formato,
+          });
           if (res?.url) window.open(res.url, "_blank", "noopener,noreferrer");
         } catch (err) {
           toastServerError(err, "Não foi possível abrir o contrato.");
         }
       }}
-      onDownload={async (contratoId, versaoId) => {
+      onDownload={async (contratoId, versaoId, formato) => {
         try {
           const res = await mutations.getUrl.mutateAsync({
             contratoId,
             versaoId,
             intent: "download",
+            formato,
           });
           if (res?.url) window.open(res.url, "_blank", "noopener,noreferrer");
         } catch (err) {

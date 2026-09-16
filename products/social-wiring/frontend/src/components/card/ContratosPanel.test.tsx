@@ -57,6 +57,7 @@ function versao(over: Partial<VersaoOut> = {}): VersaoOut {
     numero: 1,
     rotulo: null,
     origem: "upload",
+    docx_disponivel: false,
     ...over,
   };
 }
@@ -360,8 +361,66 @@ describe("ContratosPanel", () => {
     });
     fireEvent.click(screen.getByTestId("contrato-abrir-c1"));
     fireEvent.click(screen.getByTestId("contrato-baixar-c1"));
-    expect(onOpen).toHaveBeenCalledWith("c1", "v9");
-    expect(onDownload).toHaveBeenCalledWith("c1", "v9");
+    // Third arg (`formato`) is `undefined` for the plain pdf Abrir/Baixar
+    // click — only "Baixar .docx" passes `"docx"` explicitly.
+    expect(onOpen).toHaveBeenCalledWith("c1", "v9", undefined);
+    expect(onDownload).toHaveBeenCalledWith("c1", "v9", undefined);
+  });
+
+  // ─── "Baixar .docx" (migration 120) ────────────────────────────────────
+  it("🔴 'Baixar .docx' is hidden on the current-version row without docx_disponivel", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v9", docx_disponivel: false }) })],
+    });
+    expect(screen.queryByTestId("contrato-baixar-docx-c1")).toBeNull();
+  });
+
+  it("🔴 'Baixar .docx' shows on the current-version row and calls onDownload with formato: 'docx'", async () => {
+    const onDownload = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v9", docx_disponivel: true }) })],
+      onDownload,
+    });
+    const botao = screen.getByTestId("contrato-baixar-docx-c1");
+    expect(botao.textContent).toContain("Baixar .docx");
+    fireEvent.click(botao);
+    expect(onDownload).toHaveBeenCalledWith("c1", "v9", "docx");
+  });
+
+  it("🔴 'Baixar .docx' shows a pending state while baixandoDocxVersaoId matches this version", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v9", docx_disponivel: true }) })],
+      baixandoDocxVersaoId: "v9",
+    });
+    expect(screen.getByTestId("contrato-baixar-docx-c1")).toHaveProperty("disabled", true);
+  });
+
+  it("🔴 the histórico row hides 'Baixar .docx' without docx_disponivel and shows it — calling back with formato: 'docx' — when available", async () => {
+    const onDownload = vi.fn();
+    const v1 = versao({ id: "v1", numero: 1, docx_disponivel: false });
+    const v2 = versao({ id: "v2", numero: 2, docx_disponivel: true });
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ versao_atual: v2, versoes: [v1, v2] })],
+      onDownload,
+    });
+    fireEvent.click(screen.getByTestId("contrato-historico-toggle-c1"));
+    expect(screen.queryByTestId("contrato-versao-baixar-docx-v1")).toBeNull();
+    const botao = screen.getByTestId("contrato-versao-baixar-docx-v2");
+    fireEvent.click(botao);
+    expect(onDownload).toHaveBeenCalledWith("c1", "v2", "docx");
+  });
+
+  it("🔴 the histórico row's 'Baixar .docx' is disabled while its own download is pending", async () => {
+    const v1 = versao({ id: "v1", numero: 1, docx_disponivel: true });
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ versao_atual: v1, versoes: [v1] })],
+      baixandoDocxVersaoId: "v1",
+    });
+    fireEvent.click(screen.getByTestId("contrato-historico-toggle-c1"));
+    expect(screen.getByTestId("contrato-versao-baixar-docx-v1")).toHaveProperty(
+      "disabled",
+      true,
+    );
   });
 });
 

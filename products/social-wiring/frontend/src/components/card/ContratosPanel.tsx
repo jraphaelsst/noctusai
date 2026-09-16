@@ -35,6 +35,7 @@ import {
   ChevronDown,
   Download,
   Eye,
+  FileText,
   Loader2,
   Plus,
   RefreshCw,
@@ -83,6 +84,10 @@ interface Props {
   patchingContratoId?: string | null;
   deletingVersaoId?: string | null;
   deletingContratoId?: string | null;
+  /** The `versao.id` currently minting a .docx URL — narrower than a single
+   *  `isPending`, since Abrir/Baixar (pdf) and "Baixar .docx" share the same
+   *  underlying mutation. */
+  baixandoDocxVersaoId?: string | null;
   onAddVersao: (contratoId: string, file: File) => void;
   onPatchStatus: (contratoId: string, status: ContratoStatus) => void;
   /** Migration 114. `assinatura_data`: `YYYY-MM-DD` or `null` to clear.
@@ -95,8 +100,8 @@ interface Props {
   ) => void;
   onDeleteVersao: (contratoId: string, versaoId: string, motivo: string) => void;
   onDeleteContrato: (contratoId: string, motivo: string) => void;
-  onOpen: (contratoId: string, versaoId: string) => void;
-  onDownload: (contratoId: string, versaoId: string) => void;
+  onOpen: (contratoId: string, versaoId: string, formato?: "pdf" | "docx") => void;
+  onDownload: (contratoId: string, versaoId: string, formato?: "pdf" | "docx") => void;
   /** Renders the "Descrição do imóvel (matrícula)" section for one contract.
    *  Optional — omitted entirely (not even the collapsible header) while the
    *  caller has not wired it, so this panel never breaks when nobody has. */
@@ -122,6 +127,7 @@ export default function ContratosPanel({
   patchingContratoId,
   deletingVersaoId,
   deletingContratoId,
+  baixandoDocxVersaoId,
   onAddVersao,
   onPatchStatus,
   onPatchPrazos,
@@ -193,13 +199,14 @@ export default function ContratosPanel({
               patching={patchingContratoId === contrato.id}
               deletingVersaoId={deletingVersaoId}
               deletingContrato={deletingContratoId === contrato.id}
+              baixandoDocxVersaoId={baixandoDocxVersaoId}
               onAddVersao={(file) => onAddVersao(contrato.id, file)}
               onPatchStatus={(status) => onPatchStatus(contrato.id, status)}
               onPatchPrazos={(patch) => onPatchPrazos(contrato.id, patch)}
               onDeleteVersao={(versaoId, motivo) => onDeleteVersao(contrato.id, versaoId, motivo)}
               onDeleteContrato={(motivo) => onDeleteContrato(contrato.id, motivo)}
-              onOpen={(versaoId) => onOpen(contrato.id, versaoId)}
-              onDownload={(versaoId) => onDownload(contrato.id, versaoId)}
+              onOpen={(versaoId, formato) => onOpen(contrato.id, versaoId, formato)}
+              onDownload={(versaoId, formato) => onDownload(contrato.id, versaoId, formato)}
               renderMatriculaAtos={renderMatriculaAtos}
               renderGeradorContrato={renderGeradorContrato}
             />
@@ -216,6 +223,7 @@ function ContratoCard({
   patching,
   deletingVersaoId,
   deletingContrato,
+  baixandoDocxVersaoId,
   onAddVersao,
   onPatchStatus,
   onPatchPrazos,
@@ -231,6 +239,7 @@ function ContratoCard({
   patching: boolean;
   deletingVersaoId?: string | null;
   deletingContrato: boolean;
+  baixandoDocxVersaoId?: string | null;
   onAddVersao: (file: File) => void;
   onPatchStatus: (status: ContratoStatus) => void;
   onPatchPrazos: (patch: {
@@ -239,8 +248,8 @@ function ContratoCard({
   }) => void;
   onDeleteVersao: (versaoId: string, motivo: string) => void;
   onDeleteContrato: (motivo: string) => void;
-  onOpen: (versaoId: string) => void;
-  onDownload: (versaoId: string) => void;
+  onOpen: (versaoId: string, formato?: "pdf" | "docx") => void;
+  onDownload: (versaoId: string, formato?: "pdf" | "docx") => void;
   renderMatriculaAtos?: (contratoId: string) => ReactNode;
   renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
 }) {
@@ -350,44 +359,13 @@ function ContratoCard({
       </CardHeader>
       <CardContent className="space-y-3">
         {atual ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2.5">
-            <div className="min-w-0 space-y-0.5">
-              <p className="truncate text-sm">
-                Versão {atual.numero}
-                {atual.rotulo ? ` · ${atual.rotulo}` : ""}
-              </p>
-              <p className="truncate text-xs text-muted-foreground">
-                {atual.nome_original} · {formatBytes(atual.tamanho_bytes)}
-                {atual.enviado_por?.nome ? ` · ${atual.enviado_por.nome}` : ""} ·{" "}
-                {new Date(atual.created_at).toLocaleString("pt-BR")}
-              </p>
-              {atual.origem === "gerado" && (
-                <p className="text-[10px] text-muted-foreground">Gerado automaticamente</p>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => onOpen(atual.id)}
-                data-testid={`contrato-abrir-${contrato.id}`}
-              >
-                <Eye className="mr-1 h-3.5 w-3.5" />
-                Abrir
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => onDownload(atual.id)}
-                data-testid={`contrato-baixar-${contrato.id}`}
-              >
-                <Download className="mr-1 h-3.5 w-3.5" />
-                Baixar
-              </Button>
-            </div>
-          </div>
+          <_VersaoAtualRow
+            contratoId={contrato.id}
+            versao={atual}
+            baixandoDocx={baixandoDocxVersaoId === atual.id}
+            onOpen={onOpen}
+            onDownload={onDownload}
+          />
         ) : (
           <p className="text-xs text-muted-foreground">Sem versão enviada.</p>
         )}
@@ -506,8 +484,10 @@ function ContratoCard({
                   versao={versao}
                   deleting={deletingVersaoId === versao.id}
                   podeExcluir={!soUmaVersao}
+                  baixandoDocx={baixandoDocxVersaoId === versao.id}
                   onOpen={() => onOpen(versao.id)}
                   onDownload={() => onDownload(versao.id)}
+                  onDownloadDocx={() => onDownload(versao.id, "docx")}
                   onExcluir={() => excluirVersao(versao.id)}
                 />
               ))}
@@ -559,19 +539,103 @@ function ContratoCard({
   );
 }
 
+/**
+ * `_VersaoAtualRow` — the card's current-version block (Abrir / Baixar /
+ * "Baixar .docx"). Extracted from `ContratoCard` (migration 120) so the
+ * .docx button's pending state — narrower than `addingVersao`/`patching`,
+ * it tracks THIS version's own `getUrl` call — has somewhere to live without
+ * bloating the card's own prop list further.
+ */
+function _VersaoAtualRow({
+  contratoId,
+  versao,
+  baixandoDocx,
+  onOpen,
+  onDownload,
+}: {
+  contratoId: string;
+  versao: VersaoOut;
+  baixandoDocx: boolean;
+  onOpen: (versaoId: string, formato?: "pdf" | "docx") => void;
+  onDownload: (versaoId: string, formato?: "pdf" | "docx") => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2.5">
+      <div className="min-w-0 space-y-0.5">
+        <p className="truncate text-sm">
+          Versão {versao.numero}
+          {versao.rotulo ? ` · ${versao.rotulo}` : ""}
+        </p>
+        <p className="truncate text-xs text-muted-foreground">
+          {versao.nome_original} · {formatBytes(versao.tamanho_bytes)}
+          {versao.enviado_por?.nome ? ` · ${versao.enviado_por.nome}` : ""} ·{" "}
+          {new Date(versao.created_at).toLocaleString("pt-BR")}
+        </p>
+        {versao.origem === "gerado" && (
+          <p className="text-[10px] text-muted-foreground">Gerado automaticamente</p>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => onOpen(versao.id)}
+          data-testid={`contrato-abrir-${contratoId}`}
+        >
+          <Eye className="mr-1 h-3.5 w-3.5" />
+          Abrir
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => onDownload(versao.id)}
+          data-testid={`contrato-baixar-${contratoId}`}
+        >
+          <Download className="mr-1 h-3.5 w-3.5" />
+          Baixar
+        </Button>
+        {/* Migration 120 — only ever `true` on a `gerado` version. */}
+        {versao.docx_disponivel && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={baixandoDocx}
+            onClick={() => onDownload(versao.id, "docx")}
+            data-testid={`contrato-baixar-docx-${contratoId}`}
+          >
+            {baixandoDocx ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FileText className="mr-1 h-3.5 w-3.5" />
+            )}
+            Baixar .docx
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function VersaoRow({
   versao,
   deleting,
   podeExcluir,
+  baixandoDocx,
   onOpen,
   onDownload,
+  onDownloadDocx,
   onExcluir,
 }: {
   versao: VersaoOut;
   deleting: boolean;
   podeExcluir: boolean;
+  baixandoDocx: boolean;
   onOpen: () => void;
   onDownload: () => void;
+  onDownloadDocx: () => void;
   onExcluir: () => void;
 }) {
   return (
@@ -600,6 +664,25 @@ function VersaoRow({
         <Button type="button" size="icon" variant="ghost" className="h-7 w-7" onClick={onDownload}>
           <Download className="h-3.5 w-3.5" />
         </Button>
+        {versao.docx_disponivel && (
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7"
+            disabled={baixandoDocx}
+            onClick={onDownloadDocx}
+            title="Baixar .docx"
+            aria-label="Baixar .docx"
+            data-testid={`contrato-versao-baixar-docx-${versao.id}`}
+          >
+            {baixandoDocx ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FileText className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        )}
         {podeExcluir && (
           <Button
             type="button"

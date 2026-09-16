@@ -54,6 +54,10 @@ export interface VersaoOut {
   numero: number;
   rotulo: string | null;
   origem: ContratoOrigem;
+  /** Migration 120. Only ever `true` on a `gerado` version — the editable
+   *  .docx the ABNT PDF was rendered from, stored as a sibling artifact on
+   *  the same row. Drives whether "Baixar .docx" renders at all. */
+  docx_disponivel: boolean;
 }
 
 export interface ContratoOut {
@@ -429,19 +433,25 @@ export function useContratoMutations(clienteId: string) {
   });
 
   /** 🔴 Same shape as `useFinanciamentoDocumentoMutations.getUrl` — call only
-   *  on an explicit "Abrir"/"Baixar" click, never speculatively. */
+   *  on an explicit "Abrir"/"Baixar" click, never speculatively.
+   *
+   *  `formato` (migration 120) is omitted from the query string unless it is
+   *  `"docx"` — the backend already defaults `formato=pdf`, so every
+   *  pre-existing "Abrir"/"Baixar" call site stays byte-identical. */
   const getUrl = useMutation({
     mutationFn: ({
       contratoId,
       versaoId,
       intent = "view",
+      formato,
     }: {
       contratoId: string;
       versaoId: string;
       intent?: "view" | "download";
+      formato?: "pdf" | "docx";
     }) =>
       api.get<{ url: string; expires_at: string }>(
-        `${base(clienteId)}/${encodeURIComponent(contratoId)}/versoes/${encodeURIComponent(versaoId)}/url?intent=${intent}`,
+        `${base(clienteId)}/${encodeURIComponent(contratoId)}/versoes/${encodeURIComponent(versaoId)}/url?intent=${intent}${formato === "docx" ? "&formato=docx" : ""}`,
       ),
   });
 
