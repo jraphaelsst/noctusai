@@ -1,0 +1,288 @@
+"""Repository: Protocol conformance, in-memory semantics, and the Supabase
+implementation exercised against ``MockSupabaseClient`` with
+``validate_schema=True`` — every column the repo reads or writes is checked
+against the REAL consumer migrations (social-wiring 121-128, Core 046)."""
+
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+from typing import Any
+
+import pytest
+
+from noctusai_lib.domain.photo_editing import (
+    InMemoryPhotoEditingRepository,
+    PhotoEditingRepository,
+    PhotoStatus,
+    RepositoryError,
+    Speed,
+    SupabasePhotoEditingRepository,
+    make_photo_editing_repository,
+)
+from noctusai_lib.domain.photo_editing.types import (
+    CostLedgerRow,
+    DatasetRecord,
+    Decision,
+    EditType,
+    IllegalTransitionError,
+    LlmUsageRow,
+    ProposalCursor,
+    RuleStatus,
+)
+from noctusai_lib.testing import MockSupabaseClient, MockSupabaseResponse
+
+from .conftest import ORG, USER, Clock, run
+
+
+class SchemaStableClient:
+    """Composes the seed ``MockSupabaseClient`` so repeated
+    ``.schema(name)`` calls return the SAME scoped client (the mock builds a
+    fresh one per call, which would drop table state between statements)."""
+
+    def __init__(self) -> None:
+        self.base = MockSupabaseClient(validate_schema=True)
+        self._scoped: dict[str, Any] = {}
+
+    def schema(self, name: str) -> Any:
+        if name not in self._scoped:
+            self._scoped[name] = self.base.schema(name)
+        return self._scoped[name]
+
+    def table(self, name: str) -> Any:
+        return self.base.table(name)
+
+    def sw(self, table: str) -> Any:
+        return self.schema("social_wiring").from_(table)
+
+
+def test_protocol_conformance() -> None:
+    assert isinstance(InMemoryPhotoEditingRepository(), PhotoEditingRepository)
+    assert isinstance(SupabasePhotoEditingRepository(SchemaStableClient()), PhotoEditingRepository)
+
+
+def test_factory() -> None:
+    assert isinstance(make_photo_editing_repository(use_fake=True), InMemoryPhotoEditingRepository)
+    assert isinstance(
+        make_photo_editing_repository(supabase_client=SchemaStableClient()),
+        SupabasePhotoEditingRepository,
+    )
+    with pytest.raises(RuntimeError, match="supabase_client is required"):
+        make_photo_editing_repository()
+
+
+def test_in_memory_transition_is_guarded_and_evented() -> None:
+    async def scenario() -> None:
+        repo = InMemoryPhotoEditingRepository(now=Clock())
+        b = await repo.create_batch(org_id=ORG, nome="n", criado_por=USER, origem="upload",
+                                    velocidade=Speed.URGENTE)
+        p = await repo.add_photo(org_id=ORG, lote_id=b.id, ordem=1, storage_path_original="x")
+        with pytest.raises(ValueError):
+            await repo.add_photo(org_id=ORG, lote_id=b.id, ordem=1, storage_path_original="y")
+        with pytest.raises(IllegalTransitionError):
+            await repo.transition_photo(p.id, PhotoStatus.EDITANDO)
+        moved = await repo.transition_photo(p.id, PhotoStatus.NORMALIZANDO, detalhe={"k": 1})
+        assert moved.status is PhotoStatus.NORMALIZANDO
+        ev = (await repo.list_events(b.id))[0]
+        assert (ev.estado_de, ev.estado_para, ev.detalhe) == ("recebida", "normalizando", {"k": 1})
+        with pytest.raises(ValueError, match="not updatable"):
+            await repo.update_photo(p.id, status="pronta")
+        with pytest.raises(ValueError, match="not updatable"):
+            await repo.update_batch(b.id, org_id="evil")
+        with pytest.raises(KeyError):
+            await repo.transition_photo("missing", PhotoStatus.PRONTA)
+
+    run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Supabase implementation
+# ---------------------------------------------------------------------------
+
+
+def test_supabase_batch_photo_roundtrip_and_cas() -> None:
+    async def scenario() -> None:
+        client = SchemaStableClient()
+        repo = SupabasePhotoEditingRepository(client, now=Clock())
+        b = await repo.create_batch(org_id=ORG, nome="Casa", criado_por=USER, origem="upload",
+                                    velocidade=Speed.URGENTE)
+        assert b.velocidade is Speed.URGENTE and b.org_id == ORG
+        assert client.sw("fotos_lotes").inserted_payloads[0]["velocidade"] == "urgente"
+
+        p = await repo.add_photo(org_id=ORG, lote_id=b.id, ordem=1, storage_path_original="o/l/u")
+        # Mock rows carry no DB defaults; seed the ones Postgres would fill.
+        client.sw("fotos_fotos")._data[0].update({"status": "recebida", "tentativas": 0})
+        got = await repo.get_photo(p.id)
+        assert got.status is PhotoStatus.RECEBIDA
+
+        moved = await repo.transition_photo(p.id, PhotoStatus.NORMALIZANDO,
+                                            increment_tentativas=True)
+        assert moved.status is PhotoStatus.NORMALIZANDO and moved.tentativas == 1
+        upd = client.sw("fotos_fotos").updated_payloads[-1]
+        assert upd["status"] == "normalizando" and upd["tentativas"] == 1
+        event = client.sw("fotos_eventos").inserted_payloads[-1]
+        assert (event["estado_de"], event["estado_para"], event["tipo"]) == (
+            "recebida", "normalizando", "transicao_estado")
+
+        with pytest.raises(IllegalTransitionError):
+            await repo.transition_photo(p.id, PhotoStatus.APROVADA)
+
+        await repo.update_photo(p.id, largura_original=720, altura_original=1080)
+        await repo.update_batch(b.id, status="processando", guia_efetivo_sha256="s")
+        photos = await repo.list_photos(b.id)
+        assert [x.largura_original for x in photos] == [720]
+
+    run(scenario())
+
+
+def test_supabase_cas_lost_race_returns_none() -> None:
+    async def scenario() -> None:
+        client = SchemaStableClient()
+        repo = SupabasePhotoEditingRepository(client)
+        await repo.add_photo(org_id=ORG, lote_id="l", ordem=1, storage_path_original="x")
+        row = client.sw("fotos_fotos")._data[0]
+        row.update({"status": "recebida", "tentativas": 0})
+
+        class RacingUpdate:
+            """Reads see 'recebida'; the conditional UPDATE matches nothing,
+            as if another worker moved the row in between."""
+
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __getattr__(self, name):
+                return getattr(self.inner, name)
+
+            def schema(self, name):
+                scoped = self.inner.schema(name)
+                outer = self
+
+                class Scoped:
+                    def from_(self, table):
+                        builder = scoped.from_(table)
+                        if table != "fotos_fotos":
+                            return builder
+
+                        class B:
+                            def __getattr__(self, n):
+                                return getattr(builder, n)
+
+                            def update(self, data):
+                                row["status"] = "falhou"  # the concurrent writer
+                                return builder.update(data)
+
+                        return B()
+
+                return Scoped()
+
+        racing = SupabasePhotoEditingRepository(RacingUpdate(client))
+        assert await racing.transition_photo(row["id"], PhotoStatus.NORMALIZANDO) is None
+        assert client.sw("fotos_eventos").inserted_payloads == []
+
+    run(scenario())
+
+
+def test_supabase_writes_match_every_other_table() -> None:
+    """Exercises one write per table; schema validation raises on any
+    column that does not exist in the consumer migrations."""
+
+    async def scenario() -> None:
+        client = SchemaStableClient()
+        repo = SupabasePhotoEditingRepository(client, now=Clock())
+        e = await repo.create_edit(org_id=ORG, lote_id="l", foto_id="f", tentativa=1,
+                                   tipos_edicao=(EditType.CEU,), modelo_id="m",
+                                   velocidade=Speed.URGENTE)
+        assert e.tipos_edicao == (EditType.CEU,)
+        await repo.update_edit(e.id, status="concluida", llm_usage_id=7)
+        ev = await repo.add_evaluation(org_id=ORG, lote_id="l", foto_id="f", edicao_id=e.id,
+                                       recomendacao=Decision.APROVAR, score=Decimal("8.50"),
+                                       motivo="ok", modelo_id="m", modelo_versao=None)
+        assert ev.score == Decimal("8.50")
+        assert client.sw("fotos_avaliacoes").inserted_payloads[0]["score"] == "8.50"
+        d = await repo.add_decision(org_id=ORG, lote_id="l", foto_id="f",
+                                    decisao=Decision.REJEITAR, comentario="c", decidido_por=USER)
+        await repo.add_dataset_record(DatasetRecord(
+            org_id=ORG, lote_id="l", foto_id="f", decisao_id=d.id, tipos_edicao=(EditType.CEU,),
+            guia_efetivo_sha256="s", decisao_final=Decision.REJEITAR, storage_path_original="o"))
+        assert client.sw("fotos_dataset").inserted_payloads[0]["tipos_edicao"] == ["ceu"]
+        latest = await repo.latest_decisions("l")
+        assert latest["f"].decisao is Decision.REJEITAR
+
+        g = await repo.create_guide(versao=1, texto="t", sha256="s", gerado_de_versao=None,
+                                    criado_por=None)
+        client.sw("fotos_guias_estilo")._data[0]["status"] = "rascunho"
+        active = await repo.activate_guide(1, ativado_por=USER, at=Clock()())
+        assert active.ativado_por == USER
+        with pytest.raises(RepositoryError):
+            await repo.activate_guide(9, ativado_por=USER, at=Clock()())
+
+        r = await repo.add_rule(org_id=ORG, texto="Não X",
+                                origem_comentarios=({"decisao_id": d.id},))
+        client.sw("fotos_regras_org")._data[0]["status"] = "proposta"
+        upd = await repo.update_rule(r.id, status=RuleStatus.APROVADA, decidido_por=USER,
+                                     decidido_em=Clock()(), override_platform_admin=False)
+        assert upd.status is RuleStatus.APROVADA
+        rs = await repo.create_rule_set(org_id=ORG, versao=1, regra_ids=(r.id,), sha256="h")
+        assert rs.regra_ids == (r.id,)
+        eg = await repo.get_or_create_effective_guide(org_id=ORG, guia_estilo_id=g.id,
+                                                      conjunto_regras_id=rs.id, texto="t",
+                                                      sha256="h2")
+        again = await repo.get_or_create_effective_guide(org_id=ORG, guia_estilo_id=g.id,
+                                                         conjunto_regras_id=rs.id, texto="t",
+                                                         sha256="h2")
+        assert again.id == eg.id
+        assert len(client.sw("fotos_guias_efetivos").inserted_payloads) == 1
+
+        await repo.save_cursor(ProposalCursor(org_id=ORG, ultima_decisao_id=d.id,
+                                              ultima_execucao_em=Clock()()))
+        # llm_usage.id is BIGSERIAL: queue the int the database would return.
+        client.sw("llm_usage").set_responses([MockSupabaseResponse(data=[{"id": 7}])])
+        usage_id = await repo.add_llm_usage(LlmUsageRow(
+            provider="openai", model="m", operation="image_edit",
+            cost_estimate_usd=Decimal("0.1"), org_id=ORG, image_output_tokens=10))
+        assert usage_id == 7
+        sent = client.sw("llm_usage").inserted_payloads[-1]
+        assert (sent["cost_estimate_usd"], sent["image_output_tokens"], sent["batch"]) == (
+            "0.1", 10, False)
+        assert "at" not in sent  # DB default when the row carries no timestamp
+
+    run(scenario())
+
+
+def test_supabase_cost_ledger_targets_core_public_schema() -> None:
+    async def scenario() -> None:
+        client = SchemaStableClient()
+        repo = SupabasePhotoEditingRepository(client)
+        ledger = client.table("cost_ledger")  # public schema ⇒ client.table
+        ledger.set_responses([MockSupabaseResponse(data=[{"id": 41}])])
+        new_id = await repo.add_cost(CostLedgerRow(
+            org_id=ORG, category="openai_edit", amount_native=Decimal("0.1"),
+            currency="USD", fx_pending=True, step="fotos.edit"))
+        assert new_id == 41
+        sent = ledger.inserted_payloads[-1]
+        assert "id" not in sent
+        assert (sent["fx_pending"], sent["amount_native"], sent["amount_brl"]) == (
+            True, "0.1", None)
+
+    run(scenario())
+
+
+def test_supabase_fx_pending_list_and_resolve() -> None:
+    async def scenario() -> None:
+        client = SchemaStableClient()
+        client.base.set_table_data("cost_ledger", [{
+            "id": 41, "org_id": ORG, "category": "openai_edit", "amount_native": "0.1",
+            "currency": "USD", "fx_pending": True, "created_at": "2026-09-16T15:00:00+00:00",
+        }])
+        repo = SupabasePhotoEditingRepository(client)
+        pending = await repo.list_fx_pending()
+        assert [(p.id, p.amount_native, p.fx_pending) for p in pending] == [
+            (41, Decimal("0.1"), True)]
+        await repo.resolve_fx(41, fx_rate=Decimal("5.4"), fx_quote_date=date(2026, 9, 16),
+                              amount_brl=Decimal("0.54"))
+        upd = client.table("cost_ledger").updated_payloads[-1]
+        assert upd == {"fx_pending": False, "fx_rate": "5.4", "fx_quote_date": "2026-09-16",
+                       "amount_brl": "0.54"}
+        assert await repo.list_fx_pending() == []  # guarded update applied
+
+    run(scenario())
