@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList, CircleDollarSign } from "lucide-react";
+import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, Repeat, Megaphone } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -42,6 +42,14 @@ const Financeiro = lazy(() => import("@/pages/Financeiro"));
 // as `/inscrever` (no auth, no Layout).
 const Assinar = lazy(() => import("@/pages/Assinar"));
 
+// Module 3 — WhatsApp: grupos, sincronização, transmissões
+// (community-m3-contract.md). Backend mirror at
+// `app/routers/whatsapp_{grupos,lotes,transmissoes,flags}_router.py` +
+// `app/routers/webhooks_router.py` (`POST /api/webhooks/whatsapp`, PUBLIC).
+const WhatsApp = lazy(() => import("@/pages/WhatsApp"));
+const Sincronizacao = lazy(() => import("@/pages/whatsapp/Sincronizacao"));
+const Transmissoes = lazy(() => import("@/pages/whatsapp/Transmissoes"));
+
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
   {
@@ -55,6 +63,9 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Planos", href: "/planos", icon: Wallet, route: "planos" },
       { name: "Inscrições", href: "/inscricoes", icon: ClipboardList, route: "inscricoes" },
       { name: "Financeiro", href: "/financeiro", icon: CircleDollarSign, route: "financeiro" },
+      { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle, route: "whatsapp" },
+      { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat, route: "whatsapp-sincronizacao" },
+      { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone, route: "whatsapp-transmissoes" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
@@ -73,6 +84,9 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Planos", href: "/planos", icon: Wallet },
       { name: "Inscrições", href: "/inscricoes", icon: ClipboardList },
       { name: "Financeiro", href: "/financeiro", icon: CircleDollarSign },
+      { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle },
+      { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat },
+      { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
@@ -95,6 +109,9 @@ export default createProductApp({
     { path: "/planos", component: Planos },
     { path: "/inscricoes", component: Inscricoes },
     { path: "/financeiro", component: Financeiro },
+    { path: "/whatsapp", component: WhatsApp },
+    { path: "/whatsapp/sincronizacao", component: Sincronizacao },
+    { path: "/whatsapp/transmissoes", component: Transmissoes },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
   ],
