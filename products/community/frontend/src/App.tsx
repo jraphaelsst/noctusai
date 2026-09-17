@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList } from "lucide-react";
+import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList, CircleDollarSign } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -34,6 +34,14 @@ const Inscricoes = lazy(() => import("@/pages/Inscricoes"));
 // auth, no Layout — a visitor with no session must be able to reach it).
 const Inscrever = lazy(() => import("@/pages/Inscrever"));
 
+// Module 2 — Checkout + Pagamentos + Assinaturas (community-m2-contract.md).
+// Backend mirror at `app/routers/{checkout,webhooks,assinaturas,pagamentos,
+// gateway_refs}_router.py`.
+const Financeiro = lazy(() => import("@/pages/Financeiro"));
+// PUBLIC — the checkout form, mounted below as a `publicRoute`, same seam
+// as `/inscrever` (no auth, no Layout).
+const Assinar = lazy(() => import("@/pages/Assinar"));
+
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
   {
@@ -46,6 +54,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Membros", href: "/membros", icon: UserRound, route: "membros" },
       { name: "Planos", href: "/planos", icon: Wallet, route: "planos" },
       { name: "Inscrições", href: "/inscricoes", icon: ClipboardList, route: "inscricoes" },
+      { name: "Financeiro", href: "/financeiro", icon: CircleDollarSign, route: "financeiro" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
@@ -63,6 +72,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Membros", href: "/membros", icon: UserRound },
       { name: "Planos", href: "/planos", icon: Wallet },
       { name: "Inscrições", href: "/inscricoes", icon: ClipboardList },
+      { name: "Financeiro", href: "/financeiro", icon: CircleDollarSign },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
@@ -84,6 +94,7 @@ export default createProductApp({
     { path: "/membros", component: Membros },
     { path: "/planos", component: Planos },
     { path: "/inscricoes", component: Inscricoes },
+    { path: "/financeiro", component: Financeiro },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
   ],
@@ -96,5 +107,10 @@ export default createProductApp({
   NotFound,
   // PUBLIC — no auth, no Layout. The public application form must render
   // for a visitor with no session (community-m1-contract.md §Frontend).
-  publicRoutes: [{ path: "/inscrever", component: Inscrever }],
+  // `/assinar` is the module 2 public checkout page, same seam
+  // (community-m2-contract.md §Frontend).
+  publicRoutes: [
+    { path: "/inscrever", component: Inscrever },
+    { path: "/assinar", component: Assinar },
+  ],
 });

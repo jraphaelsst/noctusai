@@ -25,6 +25,7 @@ import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { formatBRLFromCents, centsToReais, reaisToCents } from "@/lib/money";
 import type { Plano } from "@/hooks/usePlanos";
+import { GatewayRefsBadges, GatewayRefsDialog } from "@/pages/planos/GatewayRefsDialog";
 
 const ENTITLEMENT_FIELDS = [
   { key: "ent_feed", entKey: "feed", label: "Feed" },
@@ -73,6 +74,11 @@ export default function Planos() {
   // Bumped after a reactivate side-channel mutation to force ResourceManager
   // to refetch (it owns its own fetch/reload cycle internally).
   const [reloadTick, setReloadTick] = useState(0);
+  // community-m2-contract.md: per-tier gateway reference dialog (Stripe
+  // Price id / Asaas ref) — a sub-resource on its own endpoint, so it opens
+  // from a row action rather than living inside ResourceManager's own
+  // create/edit form (which has no seam for a different backend call).
+  const [gatewayDialogFor, setGatewayDialogFor] = useState<Plano | null>(null);
 
   async function handleReativar(row: Plano) {
     try {
@@ -85,6 +91,7 @@ export default function Planos() {
   }
 
   return (
+    <>
     <ResourceManager<Plano>
       key={reloadTick}
       title="Planos"
@@ -116,6 +123,11 @@ export default function Planos() {
             <Badge variant={row.ativo ? "default" : "muted"}>{row.ativo ? "Ativo" : "Inativo"}</Badge>
           ),
         },
+        {
+          key: "gateways",
+          header: "Gateways",
+          render: (row) => <GatewayRefsBadges planoId={row.id} />,
+        },
       ]}
       fields={[
         { name: "nome", label: "Nome", required: true, placeholder: "Ex: Círculo" },
@@ -145,17 +157,34 @@ export default function Planos() {
           type: "checkbox" as const,
         })),
       ]}
-      rowActions={(row) =>
-        !row.ativo ? (
+      rowActions={(row) => (
+        <>
           <button
             type="button"
             className="text-sm border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
-            onClick={() => void handleReativar(row)}
+            onClick={() => setGatewayDialogFor(row)}
           >
-            Reativar
+            Gateways
           </button>
-        ) : null
-      }
+          {!row.ativo && (
+            <button
+              type="button"
+              className="text-sm border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+              onClick={() => void handleReativar(row)}
+            >
+              Reativar
+            </button>
+          )}
+        </>
+      )}
     />
+      {gatewayDialogFor && (
+        <GatewayRefsDialog
+          planoId={gatewayDialogFor.id}
+          planoNome={gatewayDialogFor.nome}
+          onClose={() => setGatewayDialogFor(null)}
+        />
+      )}
+    </>
   );
 }

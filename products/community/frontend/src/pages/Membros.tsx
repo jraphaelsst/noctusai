@@ -34,6 +34,8 @@ import { EntityDetailDialog } from "@noctusai/lib/components";
 import type { DetailSection } from "@noctusai/lib/components";
 import { EmptyState, ErrorState, Field, FormError, Select } from "@/components/FormControls";
 import { errorMessage } from "@/lib/errors";
+import { formatBRLFromCents } from "@/lib/money";
+import { useAssinaturas, type AssinaturaEstado } from "@/hooks/useAssinaturas";
 import {
   useMembros,
   useCreateMembro,
@@ -102,6 +104,92 @@ function membroDetailSections(m: Membro): DetailSection[] {
       ],
     },
   ];
+}
+
+const ASSINATURA_ESTADO_LABELS: Record<AssinaturaEstado, string> = {
+  iniciada: "Iniciada",
+  ativa: "Ativa",
+  inadimplente: "Inadimplente",
+  pausada: "Pausada",
+  cancelada: "Cancelada",
+};
+
+const ASSINATURA_METODO_LABELS: Record<string, string> = {
+  cartao: "Cartão",
+  pix: "Pix",
+  boleto: "Boleto",
+};
+
+/**
+ * Subscription summary — community-m2-contract.md §Frontend: "the detail
+ * dialog gains a subscription summary (tier, state, method, last payment)
+ * read from `GET /api/assinaturas?membro_id=`." Rendered via
+ * `<EntityDetailDialog/>`'s `children` slot (extra content between the
+ * field grid and the footer) rather than folded into `membroDetailSections`
+ * — those sections are synchronous/derived from the already-loaded
+ * `Membro`, while this needs its own async fetch keyed by `membro_id`.
+ * "Last payment" is read off the most recent subscription's `ativa_em`
+ * (assinaturas carries no direct payment date; `/api/pagamentos` is a
+ * separate, admin-only resource per amendment A16/P3 — out of scope for
+ * this summary).
+ */
+function MembroSubscriptionSummary({ membroId }: { membroId: string }) {
+  const { data, isPending, isFetching, error } = useAssinaturas({ membro_id: membroId, page_size: 10 });
+  const showSkeleton = isPending && !data;
+
+  if (showSkeleton) {
+    return (
+      <div className="mt-4 h-16 animate-pulse rounded-md bg-muted" data-testid="membro-assinatura-skeleton" />
+    );
+  }
+  if (error) {
+    return (
+      <p className="mt-4 text-sm text-destructive" data-testid="membro-assinatura-error">
+        {errorMessage(error)}
+      </p>
+    );
+  }
+  const assinatura = (data?.items ?? [])
+    .slice()
+    .sort((a, b) => (b.ativa_em ?? b.iniciada_em ?? "").localeCompare(a.ativa_em ?? a.iniciada_em ?? ""))[0];
+
+  if (!assinatura) {
+    return (
+      <p className="mt-4 text-sm text-muted-foreground" data-testid="membro-assinatura-vazio">
+        Nenhuma assinatura registrada para este membro.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-4 border-t border-border pt-4" data-testid="membro-assinatura-resumo">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Assinatura</h3>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <div>
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Plano</dt>
+          <dd className="mt-0.5 text-sm">{assinatura.plano_nome}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Estado</dt>
+          <dd className="mt-0.5 text-sm">
+            <Badge variant={assinatura.estado === "ativa" ? "default" : assinatura.estado === "cancelada" || assinatura.estado === "inadimplente" ? "destructive" : "outline"}>
+              {ASSINATURA_ESTADO_LABELS[assinatura.estado]}
+            </Badge>
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Método</dt>
+          <dd className="mt-0.5 text-sm">{ASSINATURA_METODO_LABELS[assinatura.metodo] ?? assinatura.metodo}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Última atividade</dt>
+          <dd className="mt-0.5 text-sm">{formatDateBR(assinatura.ativa_em ?? assinatura.iniciada_em)}</dd>
+        </div>
+      </dl>
+      {/* lying-loading-ok: text-only suffix, never unmounts the summary above */}
+      {isFetching && !isPending ? <p className="mt-1 text-xs text-muted-foreground">Atualizando…</p> : null}
+    </div>
+  );
 }
 
 export default function Membros() {
@@ -287,7 +375,9 @@ export default function Membros() {
             : []
         }
         testId="membro-detail-dialog"
-      />
+      >
+        {selected && <MembroSubscriptionSummary membroId={selected.id} />}
+      </EntityDetailDialog>
 
       {formOpen && (
         <MembroFormDialog
