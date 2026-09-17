@@ -213,11 +213,27 @@ class TestMapTimelineFile:
         assert entities[1].snapshot["data"] == "2026-02-15"
         assert entities[1].natural_key == "2026-02-15|Primeira entrega"
 
-    def test_section_without_title_is_allowed(self):
-        content = "## 2026-03-01\n\nSem titulo, so descricao.\n"
+    def test_section_without_title_takes_it_from_its_first_line(self):
+        """`timeline_events.titulo` is NOT NULL — an untitled section (it
+        exists in the real sibling history) must still carry one."""
+        content = (
+            "## 2026-09-12\n\n"
+            "- **Endurecimento do P2 — e um diagnóstico** que estava errado.\n"
+            "- Segundo item.\n"
+        )
         entities = map_timeline_file("KNOWLEDGE-BASE/HISTORICO/TIMELINE.md", content)
-        assert entities[0].snapshot["titulo"] is None
-        assert entities[0].natural_key == "2026-03-01|"
+        assert entities[0].snapshot["titulo"] == "Endurecimento do P2"
+        assert entities[0].natural_key == "2026-09-12|Endurecimento do P2"
+        assert entities[0].snapshot["descricao"].startswith("- **Endurecimento")
+
+    def test_section_without_title_or_text_gets_a_dated_title(self):
+        entities = map_timeline_file("KNOWLEDGE-BASE/HISTORICO/TIMELINE.md", "## 2026-03-01\n\n")
+        assert entities[0].snapshot["titulo"] == "Registro de 2026-03-01"
+
+    def test_a_long_first_line_is_capped(self):
+        content = "## 2026-03-01\n\n" + "palavra " * 40 + "\n"
+        titulo = map_timeline_file("KNOWLEDGE-BASE/HISTORICO/TIMELINE.md", content)[0].snapshot["titulo"]
+        assert len(titulo) <= 120 and titulo.endswith("…")
 
 
 # ---------------------------------------------------------------------------

@@ -51,10 +51,10 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
-| Academia De Reciclagem | 9 | 0 | 15 | 8 | 19 | 150 |
+| Academia De Reciclagem | 9 | 0 | 15 | 8 | 19 | 152 |
 | Agents | 6 | 1 | 15 | 13 | 38 | 357 |
 | Community | 9 | 10 | 23 | 17 | 21 | 187 |
-| **Total** | **244** | **257** | **518** | **321** | **789** | **10,665** |
+| **Total** | **244** | **257** | **518** | **321** | **789** | **10,667** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

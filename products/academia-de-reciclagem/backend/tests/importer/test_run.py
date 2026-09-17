@@ -215,10 +215,11 @@ class TestCodeCounterSeeding:
         store = FakeKnowledgeStore()
         decision_content = (
             "---\ncodigo: D-07\ntitulo: X\ndata: 2026-01-01\nestado: vigente\n---\n"
+            "## Decisão\n\nFazer X.\n\n## Motivo\n\nPorque sim.\n"
         )
         question_content = json.dumps(
             [{"codigo": "Q-03", "pergunta": "P?", "por_que_importa": "Importa",
-              "bloqueia": None, "destino_kb": None, "estado": "aberta",
+              "bloqueia": "Nada", "destino_kb": None, "estado": "aberta",
               "resposta": None, "respondida_em": None}]
         )
         task_content = json.dumps(
@@ -277,3 +278,29 @@ class TestIdempotentReplay:
         assert revisions_after_first_run == 1
         assert revisions_after_second_run == revisions_after_first_run
         assert len(store.kb_entries) == 1
+
+
+class TestFakeRefusesWhatPostgresRefuses:
+    """The fake store must refuse a NULL in a NOT NULL column, as the real
+    `import_bundle` RPC does (23502) — the first prod import failed on an
+    untitled timeline section the fake had accepted."""
+
+    @pytest.mark.asyncio
+    async def test_a_decision_without_decisao_or_motivo_is_refused(self):
+        from app.knowledge.errors import Invalid
+
+        store = FakeKnowledgeStore()
+        content = "---\ncodigo: D-09\ntitulo: X\ndata: 2026-01-01\n---\nsem secoes\n"
+        lines = [_line("KNOWLEDGE-BASE/DECISOES/0009-x.md", content,
+                       git_sha="sha1", committed_at="2026-01-01T00:00:00Z")]
+        with pytest.raises(Invalid, match="decisao"):
+            await run_import(store, ORG_ID, lines, USER_ID)
+
+    @pytest.mark.asyncio
+    async def test_an_untitled_timeline_section_imports(self):
+        store = FakeKnowledgeStore()
+        content = "## 2026-09-12\n\n- **Endurecimento do P2 — detalhe**\n"
+        lines = [_line("KNOWLEDGE-BASE/HISTORICO/TIMELINE.md", content,
+                       git_sha="sha1", committed_at="2026-01-01T00:00:00Z")]
+        await run_import(store, ORG_ID, lines, USER_ID)
+        assert [e["titulo"] for e in store.timeline_events] == ["Endurecimento do P2"]

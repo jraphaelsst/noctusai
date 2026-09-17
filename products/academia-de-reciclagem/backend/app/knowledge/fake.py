@@ -55,6 +55,22 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+#: NOT NULL columns without a default, per imported entity (migration 006) —
+#: what the real `import_bundle` RPC would refuse. `id`/`org_id`/timestamps
+#: and the natural-key column the fake sets itself are covered elsewhere.
+_IMPORT_REQUIRED: dict[str, tuple[str, ...]] = {
+    "kb_entry": ("titulo", "categoria", "corpo_md"),
+    "decision": ("data", "titulo", "decisao", "motivo"),
+    "open_question": ("pergunta", "por_que_importa", "bloqueia"),
+    # `ordem` is COALESCEd to 0 by the RPC — not a refusal.
+    "roadmap_phase": ("titulo", "objetivo", "concluida_quando"),
+    "task": ("titulo", "fase"),
+    "content_draft": ("tipo", "titulo", "corpo_md"),
+    "timeline_event": ("data", "titulo", "descricao"),
+    "research_source": ("titulo", "resumo", "trecho_citado", "accessed_at"),
+}
+
+
 class FakeKnowledgeStore:
     """In-memory `KnowledgeStore`. See module docstring for the invariants."""
 
@@ -571,6 +587,12 @@ class FakeKnowledgeStore:
         raise Invalid(f"import_entity: unknown entity_type {entity_type}")
 
     async def import_entity(self, org_id, entity_type: str, natural_key: str, snapshot: dict, prov: Provenance) -> dict:
+        """(see `KnowledgeStore.import_entity`)
+
+        🔴 Refuses what Postgres refuses: a NEW row missing a NOT NULL column
+        (migration 006, `_IMPORT_REQUIRED`). Without this the fake accepted an
+        untitled timeline section that the real `import_bundle` RPC rejected
+        (23502) on the first prod import, 2026-09-17."""
         if entity_type not in _ENTITY_TYPE_TABLE:
             raise Invalid(f"import_entity: unknown entity_type {entity_type}")
 
@@ -615,6 +637,12 @@ class FakeKnowledgeStore:
                     row.setdefault("estado", "pendente")
                 elif entity_type == "roadmap_phase":
                     row.setdefault("estado", "pendente")
+            # NULL only — Postgres NOT NULL accepts an empty string.
+            faltando = [c for c in _IMPORT_REQUIRED.get(entity_type, ()) if row.get(c) is None]
+            if faltando:
+                raise Invalid(
+                    f"import_entity: {entity_type} {natural_key!r} missing NOT NULL column(s) {faltando}"
+                )
             self._table(table).append(row)
         else:
             row = existing

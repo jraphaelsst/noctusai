@@ -254,17 +254,43 @@ _TIMELINE_SECTION_RE = re.compile(
 )
 
 
+_TITULO_MAX = 120
+_MD_LEAD_RE = re.compile(r"^[\s>*#+-]+")
+_MD_EMPHASIS_RE = re.compile(r"(\*\*|__|`)")
+
+
+def _titulo_da_descricao(descricao: str, data: str) -> str:
+    """A title for a ``## YYYY-MM-DD`` section that has none.
+
+    `timeline_events.titulo` is NOT NULL (migration 006), so an untitled
+    section must still carry one: the section's first line, stripped of
+    list/quote/heading markers and emphasis, cut at the first " — " (the
+    sibling's own "headline — detail" habit), capped at 120 chars. A
+    section with no text at all falls back to "Registro de <data>".
+    """
+    for linha in descricao.splitlines():
+        texto = _MD_EMPHASIS_RE.sub("", _MD_LEAD_RE.sub("", linha)).strip()
+        if texto:
+            texto = texto.split(" — ", 1)[0].strip()
+            if len(texto) > _TITULO_MAX:
+                texto = texto[: _TITULO_MAX - 1].rstrip() + "…"
+            return texto
+    return f"Registro de {data}"
+
+
 def map_timeline_file(path: str, content: str) -> list[MappedEntity]:
     """``KNOWLEDGE-BASE/HISTORICO/TIMELINE.md`` -> one ``timeline_event``
     per ``## YYYY-MM-DD[ — título]`` section. Natural key ``data|titulo``.
+    An untitled section gets a title derived from its first line
+    (``_titulo_da_descricao``) — the column is NOT NULL.
     """
     _, body = parse_frontmatter(content)
     entities: list[MappedEntity] = []
     for match in _TIMELINE_SECTION_RE.finditer(body):
         data, titulo_raw, descricao_raw = match.group(1), match.group(2), match.group(3)
-        titulo = (titulo_raw or "").strip() or None
         descricao = descricao_raw.strip()
-        natural_key = f"{data}|{titulo or ''}"
+        titulo = (titulo_raw or "").strip() or _titulo_da_descricao(descricao, data)
+        natural_key = f"{data}|{titulo}"
         snapshot = {"data": data, "titulo": titulo, "descricao": descricao}
         entities.append(
             MappedEntity(
