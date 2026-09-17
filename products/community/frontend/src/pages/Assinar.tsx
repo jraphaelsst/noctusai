@@ -8,16 +8,18 @@
  * pix/boleto), passes a Cloudflare Turnstile token (product decision P2),
  * and submits `POST /api/checkout`.
  *
- * CONTRACT GAP (flagged — see this delivery's `drift-found:`): module 2
- * defines no PUBLIC tier-listing endpoint. This page calls the existing
- * `usePlanos({ativo:true})` hook (module 1's `GET /api/planos`, currently
- * gated by `Depends(get_current_user_org)`) unauthenticated — exactly like
- * `/inscrever` calls `GET /api/aplicacoes/formulario` unauthenticated —
- * relying on the shared `api` client sending the request without a session
- * (`getAuthToken()` → `null` omits the header rather than failing). The
- * backend must mark this read PUBLIC for `ativo=true` (mirroring
- * `aplicacao_perguntas`'s anon-readable pattern) or this page's tier list
- * never loads for a real visitor.
+ * Tier listing (amendment A17): consumes `usePlanosPublicos` —
+ * `GET /api/planos/publicos`, a PUBLIC, narrower endpoint the tech-lead
+ * added after this engineer flagged that module 2 originally shipped no
+ * public way to list tiers (module 1's `GET /api/planos` is
+ * `Depends(get_current_user_org)`-gated and would 401 for a visitor). The
+ * authenticated `/planos` back-office page is UNCHANGED — it still
+ * consumes module 1's endpoint via `usePlanos` from `@/hooks/usePlanos`.
+ *
+ * `metodos_disponiveis` (per A17, derived server-side from
+ * `plano_gateway_refs`) drives which payment methods this page offers for
+ * the SELECTED tier — never all three unconditionally. A tier with `[]`
+ * renders as a disabled, explained option rather than being hidden.
  *
  * Response handling (amendment A2 — never reveals whether an e-mail is
  * already a member): `checkout_url === null` is a NORMAL friendly outcome
@@ -29,13 +31,13 @@
  * page-local `useState`, never in `localStorage`, never appended to a URL,
  * never logged.
  */
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { Button, Input } from "@noctusai/lib/design-system";
 import { Card, EmptyState, ErrorState, Field, FormError, Select } from "@/components/FormControls";
 import { errorMessage } from "@/lib/errors";
 import { formatBRLFromCents } from "@/lib/money";
-import { usePlanos, type Plano } from "@/hooks/usePlanos";
+import { usePlanosPublicos, type PlanoPublico } from "@/hooks/usePlanosPublicos";
 import {
   useCheckout,
   stripCpfPunctuation,
@@ -59,14 +61,15 @@ const METODO_LABELS: Record<CheckoutMetodo, string> = {
   boleto: "Boleto",
 };
 
-function planoLabel(p: Plano): string {
-  return `${p.nome} — ${formatBRLFromCents(p.preco_centavos)}/${p.ciclo === "mensal" ? "mês" : "ano"}`;
+function planoLabel(p: PlanoPublico): string {
+  const preco = `${formatBRLFromCents(p.preco_centavos)}/${p.ciclo === "mensal" ? "mês" : "ano"}`;
+  return p.metodos_disponiveis.length === 0 ? `${p.nome} — ${preco} (indisponível no momento)` : `${p.nome} — ${preco}`;
 }
 
 export default function Assinar() {
-  const { data, isPending, isFetching, error } = usePlanos({ ativo: true, page_size: 100 });
+  const { data, isPending, isFetching, error } = usePlanosPublicos();
   const [planoId, setPlanoId] = useState("");
-  const [metodo, setMetodo] = useState<CheckoutMetodo>("cartao");
+  const [metodo, setMetodo] = useState<CheckoutMetodo | "">("");
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
   const [telefone, setTelefone] = useState("");
@@ -82,11 +85,28 @@ export default function Assinar() {
 
   const planos = data?.items ?? [];
   const selectedPlano = useMemo(() => planos.find((p) => p.id === planoId), [planos, planoId]);
+  const metodosDisponiveis = selectedPlano?.metodos_disponiveis ?? [];
+
+  // A17: the offered payment methods are PER-TIER (`metodos_disponiveis`),
+  // never a fixed list of three — reset `metodo` whenever it falls outside
+  // what the newly-selected tier actually supports (including back to ""
+  // when nothing is available, which the disabled tier option should
+  // already prevent from being reachable).
+  useEffect(() => {
+    if (!metodo || !metodosDisponiveis.includes(metodo)) {
+      setMetodo(metodosDisponiveis[0] ?? "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPlano]);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
+    if (!metodo) {
+      setFormError("Escolha uma forma de pagamento disponível para o plano selecionado.");
+      return;
+    }
     if (requiresCpf && !isValidCpfLength(cpf)) {
       setFormError("Informe um CPF válido (11 dígitos) para pagamento por Pix ou boleto.");
       return;
@@ -171,27 +191,37 @@ export default function Assinar() {
                     Selecione um plano...
                   </option>
                   {planos.map((p) => (
-                    <option key={p.id} value={p.id}>
+                    <option key={p.id} value={p.id} disabled={p.metodos_disponiveis.length === 0}>
                       {planoLabel(p)}
                     </option>
                   ))}
                 </Select>
               </Field>
               <Field label="Forma de pagamento" required>
-                <div className="flex flex-wrap gap-3" role="radiogroup" aria-label="Forma de pagamento">
-                  {(Object.keys(METODO_LABELS) as CheckoutMetodo[]).map((m) => (
-                    <label key={m} className="flex items-center gap-2 text-sm text-foreground">
-                      <input
-                        type="radio"
-                        name="metodo"
-                        value={m}
-                        checked={metodo === m}
-                        onChange={() => setMetodo(m)}
-                      />
-                      {METODO_LABELS[m]}
-                    </label>
-                  ))}
-                </div>
+                {!selectedPlano ? (
+                  <p className="text-xs text-muted-foreground">
+                    Selecione um plano para ver as formas de pagamento disponíveis.
+                  </p>
+                ) : metodosDisponiveis.length === 0 ? (
+                  <p className="text-xs text-muted-foreground" data-testid="assinar-plano-indisponivel">
+                    Este plano ainda não está disponível para pagamento. Tente novamente em breve.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-3" role="radiogroup" aria-label="Forma de pagamento">
+                    {metodosDisponiveis.map((m) => (
+                      <label key={m} className="flex items-center gap-2 text-sm text-foreground">
+                        <input
+                          type="radio"
+                          name="metodo"
+                          value={m}
+                          checked={metodo === m}
+                          onChange={() => setMetodo(m)}
+                        />
+                        {METODO_LABELS[m]}
+                      </label>
+                    ))}
+                  </div>
+                )}
               </Field>
               <Field label="Nome" required>
                 <Input value={nome} onChange={(e) => setNome(e.target.value)} required />
@@ -227,7 +257,7 @@ export default function Assinar() {
               <Button
                 type="submit"
                 variant="primary"
-                disabled={checkout.isPending || !planoId || !turnstileToken}
+                disabled={checkout.isPending || !planoId || !metodo || !turnstileToken}
                 className="w-full"
               >
                 {checkout.isPending ? "Processando..." : "Assinar"}

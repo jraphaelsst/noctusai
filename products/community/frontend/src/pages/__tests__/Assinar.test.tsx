@@ -1,12 +1,16 @@
 /**
  * Assinar (public checkout) render tests — community-m2-contract.md
- * §Frontend, amendments A2/P2, product decision P1.
+ * §Frontend, amendments A2/A17/P2, product decision P1.
  *
  * Mounted as a `publicRoute` — no auth, no Layout, same seam as
  * `/inscrever` (module 1). `TurnstileWidget` is mocked to a plain button
  * that fires `onVerify("test-token")` — the real Cloudflare embed is out of
  * scope for a unit test; what matters here is the FE forwards whatever
  * token the widget hands back as `turnstile_token`.
+ *
+ * No `AuthProvider`/session is ever wired into `renderPage` — this suite
+ * proves the page (and its `usePlanosPublicos` tier fetch, A17) works with
+ * NO session at all, matching how a real unauthenticated visitor hits it.
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -53,18 +57,16 @@ function renderPage(ui: React.ReactElement) {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
+/** `PlanoPublico` (amendment A17) — deliberately narrower than module 1's
+ * `Plano`: no `ref_externo`, no `membros_ativos`, no timestamps. */
 const PLANO = {
   id: "p-1",
   nome: "Círculo",
   descricao: null,
   preco_centavos: 9900,
   ciclo: "mensal" as const,
-  entitlements: { feed: true, forum: true, chat: true, eventos: true, conteudo_ids: [], grupos_whatsapp: [], conteudo_todos: false },
-  ativo: true,
-  ordem: 0,
-  membros_ativos: 12,
-  created_at: "2026-09-16T20:00:00+00:00",
-  updated_at: "2026-09-16T20:00:00+00:00",
+  beneficios: { feed: true, forum: true, chat: true, eventos: true },
+  metodos_disponiveis: ["cartao", "pix", "boleto"] as const,
 };
 
 function fillCommonFields() {
@@ -106,6 +108,7 @@ describe("Assinar — CPF field per method (P1)", () => {
     const { default: Assinar } = await import("../Assinar");
     renderPage(<Assinar />);
     await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText(/^Plano/), { target: { value: "p-1" } });
 
     expect(screen.queryByLabelText(/^CPF/)).not.toBeInTheDocument();
 
@@ -211,5 +214,64 @@ describe("Assinar — amendment P2 (missing/expired Turnstile token)", () => {
         screen.getByText("Verificação de segurança falhou. Recarregue a página e tente novamente."),
       ).toBeInTheDocument(),
     );
+  });
+});
+
+describe("Assinar — per-tier payment methods (amendment A17)", () => {
+  const CARTAO_SOMENTE = {
+    id: "p-cartao",
+    nome: "Só Cartão",
+    descricao: null,
+    preco_centavos: 5900,
+    ciclo: "mensal" as const,
+    beneficios: { feed: true, forum: false, chat: false, eventos: false },
+    metodos_disponiveis: ["cartao"] as const,
+  };
+  const INDISPONIVEL = {
+    id: "p-indisponivel",
+    nome: "Ainda sem gateway",
+    descricao: null,
+    preco_centavos: 3900,
+    ciclo: "mensal" as const,
+    beneficios: { feed: true, forum: false, chat: false, eventos: false },
+    metodos_disponiveis: [] as const,
+  };
+
+  it("offers only cartao (not pix/boleto) for a tier whose metodos_disponiveis is ['cartao']", async () => {
+    mockGet.mockResolvedValue({ items: [CARTAO_SOMENTE], total: 1 });
+    const { default: Assinar } = await import("../Assinar");
+    renderPage(<Assinar />);
+    await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText(/^Plano/), { target: { value: "p-cartao" } });
+
+    expect(screen.getByLabelText("Cartão de crédito")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Pix")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Boleto")).not.toBeInTheDocument();
+  });
+
+  it("renders a tier with metodos_disponiveis:[] as a disabled, explained option — never hidden", async () => {
+    mockGet.mockResolvedValue({ items: [INDISPONIVEL], total: 1 });
+    const { default: Assinar } = await import("../Assinar");
+    renderPage(<Assinar />);
+    await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
+
+    const option = screen.getByRole("option", { name: /Ainda sem gateway/ });
+    expect(option).toBeDisabled();
+    expect(option).toHaveTextContent("indisponível no momento");
+
+    // Even if force-selected (bypassing the disabled option), the page
+    // explains unavailability rather than silently offering no methods.
+    fireEvent.change(screen.getByLabelText(/^Plano/), { target: { value: "p-indisponivel" } });
+    expect(screen.getByTestId("assinar-plano-indisponivel")).toBeInTheDocument();
+  });
+
+  it("loads tiers from the PUBLIC /api/planos/publicos endpoint (A17) with no session set up in the test", async () => {
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1 });
+    const { default: Assinar } = await import("../Assinar");
+    renderPage(<Assinar />);
+
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/api/planos/publicos"));
+    expect(mockGet).not.toHaveBeenCalledWith("/api/planos", expect.anything());
   });
 });
