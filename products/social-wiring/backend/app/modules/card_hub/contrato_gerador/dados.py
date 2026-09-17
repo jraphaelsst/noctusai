@@ -106,6 +106,9 @@ class Pessoa:
     #: `atendimento_partes.id`; None for the titular (`atendimentos.cliente_id`).
     parte_id: Optional[str]
     nome: Optional[str] = None  # clientes.nome_oficial
+    #: `clientes.nome` — the card's display name. ONLY labels the readiness
+    #: report (`derivacao._nome`); never printed in the instrument.
+    nome_cadastro: Optional[str] = None
     nacionalidade: Optional[str] = None
     genero: Optional[str] = None
     estado_civil: Optional[str] = None
@@ -355,6 +358,11 @@ class DadosContrato:
     #: [Q11] Per-contract pendências prazo (days), overriding the office's
     #: `Imobiliaria.prazo_pendencias_padrao_dias`; None = use that default.
     prazo_pendencias_dias: Optional[int] = None
+    #: `atendimento_contratos.origem`. 'gerado' = started by the card's
+    #: "Gerar contrato" button: its `modelo` is DERIVED, so `service.gerar`
+    #: keeps it in sync; an 'upload' contract's modelo is the user's label
+    #: and is only ever flagged, never overridden.
+    origem: str = "upload"
     #: The signing date STORED on the contract (`atendimento_contratos.
     #: assinatura_data`, migration 114). It wins over "today"; today in
     #: São Paulo stays the fallback (`service.hoje`). An explicit

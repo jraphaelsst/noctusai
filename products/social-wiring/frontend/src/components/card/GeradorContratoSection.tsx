@@ -138,7 +138,14 @@ export default function GeradorContratoSection({
         </span>
       </div>
 
-      {!status.modelo_confere && (
+      {!status.modelo_confere && status.modelo_automatico && (
+        <p className="text-xs text-muted-foreground" data-testid="gerador-contrato-modelo-atualiza">
+          Os dados do card mudaram: ao gerar, o modelo do contrato passa a ser{" "}
+          {MODELO_LABEL[status.modelo_derivado]}.
+        </p>
+      )}
+
+      {!status.modelo_confere && !status.modelo_automatico && (
         <p className="text-xs text-amber-700" data-testid="gerador-contrato-modelo-diverge">
           O modelo detectado ({MODELO_LABEL[status.modelo_derivado]}) é diferente do modelo
           atual do contrato. Confira antes de gerar.

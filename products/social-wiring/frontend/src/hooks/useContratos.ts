@@ -141,6 +141,9 @@ export interface ContratoGeracaoStatus {
   /** `false` = the derived model disagrees with the contract's own `modelo`
    *  — shown as a flag, never silently overridden. */
   modelo_confere: boolean;
+  /** `true` = a contract started by "Gerar contrato": generating sets its
+   *  `modelo` to `modelo_derivado`. `false` = an upload — only flagged. */
+  modelo_automatico: boolean;
   switches: Record<string, boolean>;
   faltando: GeracaoFaltando[];
   bloqueios: GeracaoBloqueio[];

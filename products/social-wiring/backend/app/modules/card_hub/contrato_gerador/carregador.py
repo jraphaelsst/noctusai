@@ -148,6 +148,7 @@ def _pessoa(
         papel=papel,
         parte_id=parte_id,
         nome=row.get("nome_oficial"),
+        nome_cadastro=row.get("nome"),
         nacionalidade=row.get("nacionalidade"),
         genero=row.get("genero"),
         # The canonical token (legacy "Casado(a)" mapped) — completude's reading.
@@ -445,6 +446,7 @@ def carregar(
         # Migration 114.
         prazo_pendencias_dias=_int(contrato.get("prazo_pendencias_dias")),
         assinatura_data=_data(contrato.get("assinatura_data")),
+        origem=contrato.get("origem") or "upload",
     )
     return dados, atendimento_id
 

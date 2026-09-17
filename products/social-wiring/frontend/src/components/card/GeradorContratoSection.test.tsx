@@ -22,6 +22,7 @@ function status(over: Partial<ContratoGeracaoStatus> = {}): ContratoGeracaoStatu
     pronto: true,
     modelo_derivado: "compra_venda",
     modelo_confere: true,
+    modelo_automatico: false,
     switches: {},
     faltando: [],
     bloqueios: [],
@@ -138,6 +139,20 @@ describe("GeradorContratoSection", () => {
     });
     expect(screen.getByTestId("gerador-contrato-modelo-diverge").textContent).toContain(
       "Compra e venda à vista",
+    );
+  });
+
+  it("a generated contract says its model will follow the data instead of warning", async () => {
+    const { screen } = await render({
+      status: status({
+        modelo_derivado: "compra_venda",
+        modelo_confere: false,
+        modelo_automatico: true,
+      }),
+    });
+    expect(screen.queryByTestId("gerador-contrato-modelo-diverge")).toBeNull();
+    expect(screen.getByTestId("gerador-contrato-modelo-atualiza").textContent).toContain(
+      "Compra e venda",
     );
   });
 

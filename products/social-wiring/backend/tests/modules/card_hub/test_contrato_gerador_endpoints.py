@@ -491,10 +491,14 @@ class TestGeracao:
         r = client.get(_url(ids, "geracao"), headers=_auth())
         assert r.status_code == 200, r.text
         body = r.json()
-        assert set(body) == {"contrato_id", "pronto", "modelo_derivado", "modelo_confere", "switches",
-                             "faltando", "bloqueios", "avisos"}
+        assert set(body) == {"contrato_id", "pronto", "modelo_derivado", "modelo_confere",
+                             "modelo_automatico", "switches", "faltando", "bloqueios", "avisos"}
         assert body["contrato_id"] == ids["contrato"] and body["pronto"] is False
-        assert body["modelo_derivado"] == "compra_venda_a_vista" and body["modelo_confere"] is False
+        # No parcelas is UNKNOWN, never "à vista" by absence.
+        assert body["switches"]["a_vista"] is False
+        assert body["modelo_derivado"] == "compra_venda" and body["modelo_confere"] is True
+        # An uploaded contract's modelo is the user's label — only flagged.
+        assert body["modelo_automatico"] is False
         campos = {f["campo"] for f in body["faltando"]}
         assert {"partes.vendedores", "negociacao.imovel", "negociacao.valor_negociado",
                 "negociacao.parcelas", "negociacao.posse_prazo_dias", "imobiliaria.razao_social",
@@ -712,11 +716,13 @@ class TestIniciar:
         assert contrato["versoes"] == [] and contrato["versao_atual"] is None
         assert _rows(scoped, "atendimento_contrato_versoes") == []
 
-        # The modelo is the DERIVED one (a sparse card derives à vista), so the
-        # generator never opens on a "modelo diverge" warning.
-        assert contrato["modelo"] == novo[0]["modelo"] == "compra_venda_a_vista"
+        # The modelo is the DERIVED one, so the generator never opens on a
+        # "modelo diverge" warning — and a sparse card derives the generic
+        # compra e venda, never "à vista" by absence of parcelas.
+        assert contrato["modelo"] == novo[0]["modelo"] == "compra_venda"
         assert geracao["contrato_id"] == contrato["id"]
         assert geracao["modelo_confere"] is True
+        assert geracao["modelo_automatico"] is True
         assert geracao["pronto"] is False and geracao["faltando"]
 
     def test_on_a_complete_card_only_the_per_contract_selection_is_missing(self, client, scoped, fake_storage):
@@ -736,3 +742,33 @@ class TestIniciar:
         assert r.status_code == 409, r.text
         assert r.json()["error"]["code"] == "AMBIGUOUS_ATENDIMENTO"
         assert _rows(scoped, "atendimento_contratos") == antes
+
+
+class TestModeloDeContratoGerado:
+    """A 'gerado' contract's modelo follows the data; an upload's never does."""
+
+    def test_generating_syncs_a_generated_contracts_modelo(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        _contrato_over(scoped, ids, origem="gerado", modelo="compra_venda_a_vista")
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert geracao["modelo_confere"] is False and geracao["modelo_automatico"] is True
+
+        r = client.post(_url(ids, "gerar"), json={"assinatura_data": hoje().isoformat()}, headers=_auth())
+        assert r.status_code == 201, r.text
+        assert _rows(scoped, "atendimento_contratos")[0]["modelo"] == "compra_venda"
+
+    def test_generating_never_overrides_an_uploaded_contracts_modelo(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        _contrato_over(scoped, ids, modelo="compra_venda_a_vista")
+        r = client.post(_url(ids, "gerar"), json={"assinatura_data": hoje().isoformat()}, headers=_auth())
+        assert r.status_code == 201, r.text
+        assert _rows(scoped, "atendimento_contratos")[0]["modelo"] == "compra_venda_a_vista"
+
+    def test_a_person_without_official_name_is_labelled_by_the_card_name(self, client, scoped):
+        ids = _seed_base(scoped)
+        titular = _rows(scoped, "clientes")[0]
+        scoped.set_table_data("clientes", [{**titular, "nome": "Beltrana do Card", "nome_oficial": None}])
+        body = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        rotulos = [f["rotulo"] for f in body["faltando"]] + [a["mensagem"] for a in body["avisos"]]
+        assert any("Beltrana do Card (sem nome oficial)" in r for r in rotulos), rotulos
+        assert not any(r.endswith("— (sem nome oficial)") for r in rotulos), rotulos

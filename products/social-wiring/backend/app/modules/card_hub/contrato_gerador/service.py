@@ -112,6 +112,9 @@ def obter_geracao(
         "pronto": avaliacao.pronto,
         "modelo_derivado": derivado,
         "modelo_confere": dados.modelo == derivado,
+        # True = `gerar` will set the contract's modelo to `modelo_derivado`
+        # (a 'gerado' contract); False = a mismatch is only flagged.
+        "modelo_automatico": dados.origem == "gerado",
         "switches": switches,
         "faltando": avaliacao.faltando,
         "bloqueios": avaliacao.bloqueios,
@@ -187,6 +190,13 @@ async def gerar(
     )
     if achados:
         raise ContratoReprovadoNaRevisao(achados)
+
+    # A 'gerado' contract's modelo is the derived one by construction — keep
+    # it in sync with the data this version was rendered from (the deal may
+    # have gained parcelas since `iniciar` set it).
+    derivado = modelo_derivado(switches)
+    if dados.origem == "gerado" and dados.modelo != derivado:
+        contratos_svc.definir_modelo(client, org_id, contrato_id, derivado)
 
     # `renderizado.docx` is the editable rendering; `gerar_pdf` derives the
     # ABNT PDF from it. BOTH are stored on the saved version (migration 120,

@@ -299,7 +299,12 @@ def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
         "tem_permuta": tem_permuta,
         "tem_parcelas_diretas": tem_parcelas_diretas,
         "tem_confissao": any(p.tipo == "direta" and p.confissao_divida for p in d.parcelas),
-        "a_vista": not (tem_financiamento or "fgts" in tipos or tem_parcelas_diretas),
+        # 🔴 No parcelas at all is UNKNOWN, not à vista: a deal whose payment
+        # still lives only in the legacy free-text field (e.g. a financed one)
+        # was derived "à vista" by absence. `negociacao.parcelas` is already
+        # `faltando` in that state, so the gate still blocks generation.
+        "a_vista": bool(tipos)
+        and not (tem_financiamento or "fgts" in tipos or tem_parcelas_diretas),
         "tem_saldo_devedor": bool(d.imovel and d.imovel.situacao_onus in ONUS_COM_SALDO),
         "tem_intermediacao": bool(d.intermediarios),
         "tem_itens_integrantes": bool((termos.itens_integrantes or "").strip()),
@@ -428,7 +433,14 @@ def pessoas_certificadas(
 
 
 def _nome(p: Pessoa) -> str:
-    return p.nome or "(sem nome oficial)"
+    """A person as the readiness report names them. Without `nome_oficial`
+    the card's own name still says WHO is meant — flagged, so it is never
+    mistaken for the official one (which is what the instrument prints)."""
+    if p.nome:
+        return p.nome
+    if p.nome_cadastro:
+        return f"{p.nome_cadastro} (sem nome oficial)"
+    return "(sem nome oficial)"
 
 
 def _doc_norm(valor: Optional[str]) -> str:
