@@ -123,6 +123,17 @@ vi.mock("@/hooks/useSettings", () => ({
   useTestApiKey: () => ({ mutateAsync: mockTestApiKey, isPending: false }),
 }));
 
+// Migration 117 (contract F6) — the office's operational answers. Defaults
+// to a filled-in fixture so every OTHER suite in this file renders the
+// Imobiliária tab without caring about it; the dedicated tests below
+// override per-case (skeleton / error / validation / save).
+const mockUseDadosImobiliaria = vi.fn();
+const mockSalvarImob = vi.fn();
+vi.mock("@/hooks/useDadosImobiliaria", () => ({
+  useDadosImobiliaria: mockUseDadosImobiliaria,
+  useSalvarDadosImobiliaria: () => ({ mutate: mockSalvarImob, isPending: false }),
+}));
+
 // `useMarcas` calls TanStack's `useQuery` directly, so without a
 // QueryClientProvider it throws for the whole tab. Mocked with the two real
 // clients so the recipient scope selector has something to render.
@@ -218,6 +229,31 @@ const API_KEYS_UNCONFIGURED = {
   total: 3,
 };
 
+// Migration 117 (contract F6) fixture — a filled-in row so the tab's
+// "success" state is what most suites in this file see by default.
+const IMOB_FIXTURE = {
+  razao_social: "Imobiliária Exemplo LTDA",
+  nome_fantasia: "Exemplo Imóveis",
+  cnpj: "12.345.678/0001-90",
+  creci_pj: "CRECI/SP J-12345",
+  responsavel_nome: "Maria Silva",
+  responsavel_creci: "CRECI/SP 98765",
+  telefone: "1140028922",
+  email: "contato@exemplo.com.br",
+  endereco_cep: "01310-100",
+  endereco_logradouro: "Av. Paulista",
+  endereco_numero: "1000",
+  endereco_complemento: null,
+  endereco_bairro: "Bela Vista",
+  endereco_cidade: "São Paulo",
+  endereco_uf: "SP",
+  plataforma_assinatura_nome: "ClickSign",
+  plataforma_assinatura_url: "https://app.clicksign.com",
+  posse_multa_diaria: 150.5,
+  prazo_pendencias_padrao_dias: 10,
+  updated_at: "2026-09-17T00:00:00Z",
+};
+
 const RETENCAO_CONTRATO = {
   ...RETENCAO_FGTS,
   superficie: "cliente" as const,
@@ -309,6 +345,14 @@ beforeEach(() => {
   mockTestApiKey.mockReset();
   mockUseApiKeys.mockReturnValue({
     data: API_KEYS_UNCONFIGURED,
+    showSkeleton: false,
+    isRefreshing: false,
+    isError: false,
+    refetch: vi.fn(),
+  });
+  mockSalvarImob.mockReset();
+  mockUseDadosImobiliaria.mockReturnValue({
+    data: IMOB_FIXTURE,
     showSkeleton: false,
     isRefreshing: false,
     isError: false,
@@ -1191,5 +1235,187 @@ describe("Settings — managed API keys loading + error states", () => {
     });
     const { getByText } = await renderSettingsOnKeysTab();
     expect(getByText("Nenhuma chave configuravel neste produto.")).toBeTruthy();
+  });
+});
+
+// ─── Dados da imobiliária tab — migration 117 (contract F6) fields ────────
+// The four operational answers the contract generator refuses without:
+// plataforma_assinatura_{nome,url}, posse_multa_diaria,
+// prazo_pendencias_padrao_dias.
+describe("DadosImobiliariaTab", () => {
+  it("shows a skeleton on the first load, before any data exists", async () => {
+    mockUseDadosImobiliaria.mockReturnValue({
+      data: undefined,
+      showSkeleton: true,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    expect(getByTestId("imob-skeleton")).toBeTruthy();
+    expect(queryByTestId("imob-plataforma-nome")).toBeNull();
+  });
+
+  it("shows the error state and retries on request", async () => {
+    const refetch = vi.fn();
+    mockUseDadosImobiliaria.mockReturnValue({
+      data: undefined,
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: true,
+      refetch,
+    });
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    expect(getByTestId("imob-error")).toBeTruthy();
+    fireEvent.click(getByTestId("imob-retry"));
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("shows the refreshing indicator without blanking the filled-in form", async () => {
+    mockUseDadosImobiliaria.mockReturnValue({
+      data: IMOB_FIXTURE,
+      showSkeleton: false,
+      isRefreshing: true,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    // 🔴 The regression this guards: gating on a bare `isFetching` would
+    // unmount the four migration-117 fields on every background refetch.
+    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    expect(getByTestId("imob-refreshing")).toBeTruthy();
+    expect(queryByTestId("imob-skeleton")).toBeNull();
+    expect(
+      (getByTestId("imob-plataforma-nome") as HTMLInputElement).value,
+    ).toBe("ClickSign");
+  });
+
+  it("renders the four migration-117 fields with the saved values", async () => {
+    const { getByTestId } = await renderSettingsOnKeysTab();
+    expect((getByTestId("imob-plataforma-nome") as HTMLInputElement).value).toBe(
+      "ClickSign",
+    );
+    expect((getByTestId("imob-plataforma-url") as HTMLInputElement).value).toBe(
+      "https://app.clicksign.com",
+    );
+    expect((getByTestId("imob-posse-multa") as HTMLInputElement).value).toBe(
+      "150.5",
+    );
+    expect(
+      (getByTestId("imob-prazo-pendencias") as HTMLInputElement).value,
+    ).toBe("10");
+  });
+
+  it("shows every field blank for an org that never saved this tab, and still lets it save", async () => {
+    mockUseDadosImobiliaria.mockReturnValue({
+      data: {
+        razao_social: null,
+        nome_fantasia: null,
+        cnpj: null,
+        creci_pj: null,
+        responsavel_nome: null,
+        responsavel_creci: null,
+        telefone: null,
+        email: null,
+        endereco_cep: null,
+        endereco_logradouro: null,
+        endereco_numero: null,
+        endereco_complemento: null,
+        endereco_bairro: null,
+        endereco_cidade: null,
+        endereco_uf: null,
+        plataforma_assinatura_nome: null,
+        plataforma_assinatura_url: null,
+        posse_multa_diaria: null,
+        prazo_pendencias_padrao_dias: null,
+        updated_at: null,
+      },
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId } = await renderSettingsOnKeysTab();
+    expect((getByTestId("imob-plataforma-nome") as HTMLInputElement).value).toBe("");
+    expect((getByTestId("imob-posse-multa") as HTMLInputElement).value).toBe("");
+    expect((getByTestId("imob-salvar") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("refuses a non-https signing-platform URL client-side, mirroring the backend", async () => {
+    const { toast } = await import("sonner");
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+
+    fireEvent.change(getByTestId("imob-plataforma-url"), {
+      target: { value: "http://app.clicksign.com" },
+    });
+    fireEvent.click(getByTestId("imob-salvar"));
+
+    expect(mockSalvarImob).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "A URL da plataforma de assinatura deve começar com https://.",
+    );
+  });
+
+  it("refuses a non-numeric daily holdover fine", async () => {
+    const { toast } = await import("sonner");
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+
+    fireEvent.change(getByTestId("imob-posse-multa"), {
+      target: { value: "abc" },
+    });
+    fireEvent.click(getByTestId("imob-salvar"));
+
+    expect(mockSalvarImob).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith("Informe um número válido.");
+  });
+
+  it("refuses a zero-or-negative default pendências window", async () => {
+    const { toast } = await import("sonner");
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+
+    fireEvent.change(getByTestId("imob-prazo-pendencias"), {
+      target: { value: "0" },
+    });
+    fireEvent.click(getByTestId("imob-salvar"));
+
+    expect(mockSalvarImob).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "O prazo padrão de pendências deve ser um número inteiro maior que 0.",
+    );
+  });
+
+  it("saves the migration-117 fields as numbers, not strings, comma-decimal included", async () => {
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+
+    fireEvent.change(getByTestId("imob-plataforma-nome"), {
+      target: { value: "D4Sign" },
+    });
+    fireEvent.change(getByTestId("imob-posse-multa"), {
+      target: { value: "200,50" },
+    });
+    fireEvent.change(getByTestId("imob-prazo-pendencias"), {
+      target: { value: "15" },
+    });
+    fireEvent.click(getByTestId("imob-salvar"));
+
+    expect(mockSalvarImob).toHaveBeenCalledTimes(1);
+    const payload = mockSalvarImob.mock.calls[0][0];
+    expect(payload).toEqual({
+      plataforma_assinatura_nome: "D4Sign",
+      posse_multa_diaria: 200.5,
+      prazo_pendencias_padrao_dias: 15,
+    });
+    expect(typeof payload.posse_multa_diaria).toBe("number");
+    expect(typeof payload.prazo_pendencias_padrao_dias).toBe("number");
+  });
+
+  it("clearing the daily fine sends null, not an empty string", async () => {
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+
+    fireEvent.change(getByTestId("imob-posse-multa"), { target: { value: "" } });
+    fireEvent.click(getByTestId("imob-salvar"));
+
+    expect(mockSalvarImob).toHaveBeenCalledTimes(1);
+    const payload = mockSalvarImob.mock.calls[0][0];
+    expect(payload).toEqual({ posse_multa_diaria: null });
   });
 });
