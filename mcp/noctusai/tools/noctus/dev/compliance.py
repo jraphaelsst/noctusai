@@ -16367,8 +16367,21 @@ def check_branch_tree_mirror(
         })
         return issues
 
-    _VALID_STATUSES = {"on_going", "shipped", "blocked", "canceled", "stale", "deferred"}
-    _TERMINAL_STATUSES = {"shipped", "canceled", "stale", "deferred"}
+    # Derived from branch_pointer's own enum — never hand-duplicated (the
+    # 2026-09-17 fix: a hand-maintained copy here is exactly the class of
+    # drift CLAUDE.md §1 "hand-maintained lists drift" warns about, and it
+    # would have silently rejected `integrated-worktree-live` as an
+    # "invalid status" the moment that status shipped). `deferred` is
+    # additionally terminal HERE (audit-scope: a parked pointer with a named
+    # destination is not a live collision zone this keeper needs to chase)
+    # even though branch_pointer.TERMINAL_STATUSES excludes it for the
+    # stricter live-pointer-removal-guard purpose — two different "terminal"
+    # meanings for two different consumers, both derived, never duplicated.
+    from tools.noctus.dev.branch_pointer import (
+        STATUSES as _VALID_STATUSES,
+        TERMINAL_STATUSES as _bp_terminal_statuses,
+    )
+    _TERMINAL_STATUSES = _bp_terminal_statuses | {"deferred"}
 
     # ── Determine which branches to check ────────────────────────────────────
     if branch is not None:

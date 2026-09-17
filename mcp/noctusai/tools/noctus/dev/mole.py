@@ -78,9 +78,11 @@ _SAFE_GATE = (
     "sweep deletes ONLY merged-to-dev (SHA-ancestry|patch-id) "
     "worktrees + regenerable artifacts; never uncommitted / "
     "unmerged / main / siblings / .env / migrations / a worktree "
-    "carrying a LIVE branch-tree pointer (never force-bypassable) "
-    "/ a worktree younger than min_age_minutes (force MAY bypass "
-    "this one). Caller MUST also confirm no agent is mid-flight in "
+    "carrying a LIVE OR UNRESOLVABLE branch-tree pointer (never "
+    "force-bypassable) / a worktree with a recently-touched tracked "
+    "file (never force-bypassable, independent of the ledger) / a "
+    "worktree younger than min_age_minutes (force MAY bypass this "
+    "one). Caller MUST also confirm no agent is mid-flight in "
     "a target worktree. Run scan first; sweep needs force=True "
     "(else dry-run)."
 )
@@ -274,14 +276,16 @@ def _scan_environments(root: Path) -> tuple[int, list[tuple[Path, int]]]:
 # `_classify_worktrees` + `_classify_emit_registered` exactly.
 #
 # Categories: STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM /
-# POINTER_BLOCKED / TOO_YOUNG (the latter two: 2026-09-16 incident guards,
-# shared with cleanup_stale_worktrees via _worktree_staleness — see that
-# module's docstring). Record shape: (category, path:str, branch:str, reason:str).
+# POINTER_BLOCKED / RECENTLY_ACTIVE / TOO_YOUNG (the latter three: the
+# 2026-09-16/17 incident guards, shared with cleanup_stale_worktrees via
+# _worktree_staleness — see that module's docstring). Record shape:
+# (category, path:str, branch:str, reason:str).
 def _classify_worktrees(
     root: Path,
     *,
     force: bool = False,
     min_age_minutes: float = wts.DEFAULT_MIN_AGE_MINUTES,
+    recent_mtime_minutes: float = wts.DEFAULT_RECENT_MTIME_MINUTES,
 ) -> list[tuple[str, str, str, str]]:
     worktree_dir = root / ".claude" / "worktrees"
     records: list[tuple[str, str, str, str]] = []
@@ -319,6 +323,7 @@ def _classify_worktrees(
                 root, worktree_dir, wt, branch, locked,
                 records, seen_paths, main_stashes, wts_run, base,
                 force=force, min_age_minutes=min_age_minutes,
+                recent_mtime_minutes=recent_mtime_minutes,
             )
 
     for line in lines:
@@ -391,6 +396,7 @@ def _classify_emit_registered(
     *,
     force: bool = False,
     min_age_minutes: float = wts.DEFAULT_MIN_AGE_MINUTES,
+    recent_mtime_minutes: float = wts.DEFAULT_RECENT_MTIME_MINUTES,
 ) -> None:
     # Filter: any worktree under WORKTREE_DIR (was `agent-*` only — left raw
     # `git worktree add` + `task_branch` self-branch worktrees un-swept).
@@ -475,11 +481,11 @@ def _classify_emit_registered(
             )
         )
     else:
-        # 🔴 2026-09-16 incident guards (shared with cleanup_stale_worktrees
+        # 🔴 2026-09-16/17 incident guards (shared with cleanup_stale_worktrees
         # via _worktree_staleness — see that module's docstring for the full
         # writeup). merged + clean + unlocked is NOT the same as "safe to
-        # remove right now". Guard 1 (live pointer) is NEVER force-
-        # bypassable; guard 2 (min age) is.
+        # remove right now". Guards 1 (live/unresolvable pointer) and 2
+        # (recent mtime) are NEVER force-bypassable; guard 3 (min age) is.
         blocks, pointer_status = wts.pointer_blocks_removal(branch, wts_run)
         if blocks:
             records.append(
@@ -487,9 +493,28 @@ def _classify_emit_registered(
                     "POINTER_BLOCKED",
                     wt,
                     branch,
-                    f"branch-tree pointer status={pointer_status!r} is not "
-                    "terminal — a live peer claim on this branch; "
-                    "force=True does NOT override this guard",
+                    wts.pointer_block_reason(pointer_status),
+                )
+            )
+            return
+
+        is_active, mtime_age_seconds, mtime_window_seconds = wts.is_recently_active(
+            Path(wt), window_minutes=recent_mtime_minutes,
+        )
+        if is_active:
+            records.append(
+                (
+                    "RECENTLY_ACTIVE",
+                    wt,
+                    branch,
+                    f"a tracked file under this worktree was touched "
+                    f"{mtime_age_seconds!r}s ago, below the "
+                    f"{mtime_window_seconds:.0f}s ({recent_mtime_minutes} "
+                    "min) recent-activity window (.git/node_modules/"
+                    "__pycache__/dist/.pytest_cache/venv excluded) — "
+                    "evidence of current activity, independent of the "
+                    "branch-tree ledger; force=True does NOT override "
+                    "this guard",
                 )
             )
             return
@@ -507,7 +532,8 @@ def _classify_emit_registered(
                     f"{min_age_seconds:.0f}s ({min_age_minutes} min) "
                     "minimum — too young to trust the 0-commits-ahead-"
                     "reads-as-merged signal; pass force=True to remove "
-                    "anyway (force never overrides the pointer guard)",
+                    "anyway (force never overrides the pointer or "
+                    "recent-mtime guards)",
                 )
             )
             return
@@ -527,12 +553,16 @@ def _scan_worktrees(
     *,
     force: bool = False,
     min_age_minutes: float = wts.DEFAULT_MIN_AGE_MINUTES,
+    recent_mtime_minutes: float = wts.DEFAULT_RECENT_MTIME_MINUTES,
 ) -> tuple[int, dict[str, int], list[tuple[str, str, str, str]]]:
     """Return (actionable_count, tally, records). Actionable = STALE+ORPHAN+PHANTOM."""
     worktree_dir = root / ".claude" / "worktrees"
     if not worktree_dir.is_dir():
         return 0, {}, []
-    records = _classify_worktrees(root, force=force, min_age_minutes=min_age_minutes)
+    records = _classify_worktrees(
+        root, force=force, min_age_minutes=min_age_minutes,
+        recent_mtime_minutes=recent_mtime_minutes,
+    )
     tally = {
         "STALE": 0,
         "STALE_LOCKED": 0,
@@ -541,6 +571,7 @@ def _scan_worktrees(
         "ORPHAN": 0,
         "PHANTOM": 0,
         "POINTER_BLOCKED": 0,
+        "RECENTLY_ACTIVE": 0,
         "TOO_YOUNG": 0,
     }
     for cat, *_rest in records:
@@ -561,15 +592,15 @@ def _sweep_worktrees(
         r for r in records
         if r[0] in (
             "STALE_LOCKED", "STALE_DIRTY", "ACTIVE",
-            "POINTER_BLOCKED", "TOO_YOUNG",
+            "POINTER_BLOCKED", "RECENTLY_ACTIVE", "TOO_YOUNG",
         )
     ]
     notes: list[str] = []
     # Surface WHY each guarded worktree was skipped — a silent skip reads as
     # "nothing to clean up here" and hides the exact signal an operator
-    # needs to decide whether to force past it (2026-09-16 incident).
+    # needs to decide whether to force past it (2026-09-16/17 incidents).
     for cat, path, branch, reason in skipped:
-        if cat in ("POINTER_BLOCKED", "TOO_YOUNG"):
+        if cat in ("POINTER_BLOCKED", "RECENTLY_ACTIVE", "TOO_YOUNG"):
             notes.append(f"[{cat}] {path} (branch: {branch}) — {reason}")
     if not target:
         return 0, 0, 0, len(skipped), notes
@@ -673,6 +704,7 @@ def run_mole(
     force: bool = False,
     worktree_path: str | None = None,
     min_age_minutes: float = wts.DEFAULT_MIN_AGE_MINUTES,
+    recent_mtime_minutes: float = wts.DEFAULT_RECENT_MTIME_MINUTES,
 ) -> dict[str, Any]:
     """Native-Python storage-hygiene mole. Behaviour-identical to the
     former `scripts/mole.sh` subprocess.
@@ -681,12 +713,14 @@ def run_mole(
     safe-gate (see module docstring) is the real guard. `scan` is always
     read-only. `sweep` without `force` is a dry-run.
 
-    Worktree classification also carries the 2026-09-16-incident guards
-    (see `_worktree_staleness.py`): a worktree with a LIVE (non-terminal)
+    Worktree classification also carries the 2026-09-16/17-incident guards
+    (see `_worktree_staleness.py`): a worktree with a LIVE OR UNRESOLVABLE
     branch-tree pointer is NEVER swept, even with `force=True`
-    (`POINTER_BLOCKED`); a worktree younger than `min_age_minutes` is
-    skipped unless `force=True` (`TOO_YOUNG`) — `force` bypasses the age
-    guard, never the pointer guard.
+    (`POINTER_BLOCKED`); a worktree with a recently-touched tracked file is
+    NEVER swept either, independent of the ledger (`RECENTLY_ACTIVE`); a
+    worktree younger than `min_age_minutes` is skipped unless `force=True`
+    (`TOO_YOUNG`) — `force` bypasses ONLY the age guard, never the pointer
+    or recent-mtime guards.
     """
     try:
         root = (
@@ -733,6 +767,7 @@ def run_mole(
             if do_worktrees:
                 worktrees_actionable, tally, records = _scan_worktrees(
                     root, force=force, min_age_minutes=min_age_minutes,
+                    recent_mtime_minutes=recent_mtime_minutes,
                 )
                 stderr_lines.append(
                     "WORKTREES: " + " ".join(f"{k}={v}" for k, v in tally.items())
@@ -756,6 +791,7 @@ def run_mole(
             if do_worktrees:
                 _, _tally, records = _scan_worktrees(
                     root, force=force, min_age_minutes=min_age_minutes,
+                    recent_mtime_minutes=recent_mtime_minutes,
                 )
                 removed, failed, ntarget, nskip, notes = _sweep_worktrees(
                     root, dry_run, records, log_lines
@@ -768,6 +804,7 @@ def run_mole(
                 # Recompute actionable post-sweep for the result figure.
                 worktrees_actionable, _, _ = _scan_worktrees(
                     root, force=force, min_age_minutes=min_age_minutes,
+                    recent_mtime_minutes=recent_mtime_minutes,
                 )
         else:
             return {
@@ -820,12 +857,17 @@ def register(server) -> None:
             "main / sibling / .env / migration content; removes a worktree "
             "only when its branch is merged-to-dev by SHA-ancestry OR "
             "patch-id (shares the _worktree_staleness predicate with "
-            "noctus.dev.cleanup_stale_worktrees). 🔴 2026-09-16: a "
+            "noctus.dev.cleanup_stale_worktrees). 🔴 2026-09-16/17: a "
             "freshly-forked worktree reads as trivially merged (0 commits "
-            "ahead) — two more guards, shared via _worktree_staleness: a "
-            "LIVE branch-tree pointer (POINTER_BLOCKED) is never "
-            "force-bypassable; a worktree younger than `min_age_minutes` "
-            "(default 60, TOO_YOUNG) is skipped unless force=True. Caller's "
+            "ahead) — three guards, shared via _worktree_staleness: a LIVE "
+            "OR UNRESOLVABLE branch-tree pointer (POINTER_BLOCKED — unknown "
+            "liveness is treated as blocking, not permission) is never "
+            "force-bypassable; a worktree with a recently-touched tracked "
+            "file within `recent_mtime_minutes` (default 60, "
+            "RECENTLY_ACTIVE — a raw filesystem walk, independent of the "
+            "ledger) is also never force-bypassable; a worktree younger "
+            "than `min_age_minutes` (default 60, TOO_YOUNG) is skipped "
+            "unless force=True. Caller's "
             "extra duty: confirm no other agent is mid-flight in a target "
             "worktree before force-sweeping. Project cleanup is the "
             "separate noctus.dev.archive tool. Pass worktree_path when "
@@ -839,10 +881,12 @@ def register(server) -> None:
         force: bool = False,
         worktree_path: str | None = None,
         min_age_minutes: float = wts.DEFAULT_MIN_AGE_MINUTES,
+        recent_mtime_minutes: float = wts.DEFAULT_RECENT_MTIME_MINUTES,
     ) -> dict:
         return run_mole(
             mode=mode, scope=scope, force=force, worktree_path=worktree_path,
             min_age_minutes=min_age_minutes,
+            recent_mtime_minutes=recent_mtime_minutes,
         )
 
 

@@ -125,6 +125,7 @@ def cleanup_stale_worktrees(
     worktree_path: str | Path | None = None,
     force: bool = False,
     min_age_minutes: float = wts.DEFAULT_MIN_AGE_MINUTES,
+    recent_mtime_minutes: float = wts.DEFAULT_RECENT_MTIME_MINUTES,
 ) -> dict:
     """Classify + (when ``force``) remove merged-to-dev agent worktrees.
 
@@ -132,25 +133,43 @@ def cleanup_stale_worktrees(
     ``scripts/cleanup-stale-worktrees.sh``. **Dry-run unless
     ``force=True``** — default classifies and returns the buckets but
     removes nothing. ``force=True`` performs ``git worktree remove --force``
-    on the stale set (NEVER overrides the dirty/locked/pointer safety gates).
+    on the stale set (NEVER overrides the dirty/locked/pointer/mtime safety
+    gates).
 
     🔴 2026-09-16 incident (see ``_worktree_staleness.py`` for the full
     writeup): a worktree freshly forked off ``origin/dev`` has ZERO commits
     ahead, and ``git merge-base --is-ancestor`` reads a 0-ahead branch as
     trivially "merged" — so a worktree created minutes ago, with two
     engineers actively working in it, was classified ``stale`` and removed
-    by ``force=True``. Two guards close that gap, checked AFTER the existing
-    dirty/stash/locked gates (a genuinely dirty tree is already protected by
-    those):
+    by ``force=True``. Three guards close that gap, checked AFTER the
+    existing dirty/stash/locked gates (a genuinely dirty tree is already
+    protected by those):
 
       1. **Live pointer guard** (``wts.pointer_blocks_removal``) — a
          non-terminal ``project-history/branch-tree.ndjson`` row for this
          branch is an explicit peer claim. NEVER bypassed by ``force``.
-      2. **Minimum age guard** (``wts.is_too_young``, default
+         🔴 2026-09-17: an UNRESOLVABLE pointer (no row published, ledger
+         unreadable, query failure) is now ALSO treated as blocking — a
+         branch the ledger has never heard of is exactly as unprovably-safe
+         as one carrying a live claim (see ``pointer_blocks_removal``'s
+         2026-09-17 fail-open fix). This is also the second-order fix for
+         the 2026-09-17 incident: session_end_sweep's auto-heal can no
+         longer flip a still-checked-out worktree's pointer straight to the
+         terminal ``shipped`` — it now writes the distinct non-terminal
+         ``integrated-worktree-live`` status instead, which this guard
+         refuses exactly like ``on_going``.
+      2. **Recent-mtime guard** (``wts.is_recently_active``, default
+         ``recent_mtime_minutes``) — a worktree whose most recent tracked
+         file mtime is within the window is refused, INDEPENDENT of the
+         ledger entirely (a raw filesystem walk, no pointer, no git-log
+         call — evidence that survives even a missing/wrong pointer).
+         NEVER bypassed by ``force`` — same rationale as guard 1: current
+         activity outranks an operator's blanket flag.
+      3. **Minimum age guard** (``wts.is_too_young``, default
          ``min_age_minutes``) — a worktree younger than the threshold is
-         refused even with no pointer at all (a raw ``git worktree add``
-         carries no pointer to check). ``force=True`` MAY bypass this one —
-         an operator asking to force-sweep has made the age call themselves.
+         refused even with no pointer/mtime signal at all. ``force=True``
+         MAY bypass this one — an operator asking to force-sweep has made
+         the age call themselves.
 
     Args:
         repo_root: repo-root override (test seam). Wins over
@@ -158,11 +177,14 @@ def cleanup_stale_worktrees(
         worktree_path: caller-aware path resolution (same contract as the
             sibling dev tools).
         force: ``False`` (default) → dry-run classification only; ``True``
-            → remove the stale set (dirty/locked/pointer gates still apply;
-            the age gate is the one guard ``force`` may bypass).
-        min_age_minutes: minimum worktree age (see guard 2 above) before it
+            → remove the stale set (dirty/locked/pointer/mtime gates still
+            apply; the age gate is the ONLY guard ``force`` may bypass).
+        min_age_minutes: minimum worktree age (see guard 3 above) before it
             is eligible for auto-removal at all. Default
             ``wts.DEFAULT_MIN_AGE_MINUTES`` (60 — documented there).
+        recent_mtime_minutes: recent-activity window (see guard 2 above).
+            Default ``wts.DEFAULT_RECENT_MTIME_MINUTES`` (60 — documented
+            there).
 
     Returns:
         ```
@@ -172,15 +194,23 @@ def cleanup_stale_worktrees(
           "dirty": [{"path": ..., "reason": ...}, ...],  # merged + work
           "locked": [...],          # merged + lock held — manual review
           "pointer_blocked": [{"path", "branch", "status", "reason"}, ...],
-                                     # merged + clean + LIVE pointer — never
+                                     # merged + clean + LIVE (or UNRESOLVABLE)
+                                     # pointer — never force-bypassable
+          "recently_active": [{"path", "branch", "age_seconds",
+                                "window_seconds", "reason"}, ...],
+                                     # merged + clean + no pointer block, but
+                                     # a tracked file was touched inside the
+                                     # recent-mtime window — never
                                      # force-bypassable
           "too_young": [{"path", "branch", "age_seconds",
                           "min_age_seconds", "reason"}, ...],
-                                     # merged + clean + no live pointer, but
-                                     # younger than min_age_minutes — force
-                                     # MAY bypass this one
+                                     # merged + clean + no live pointer + not
+                                     # recently active, but younger than
+                                     # min_age_minutes — force MAY bypass
+                                     # this one
           "stale": [...],           # safe to auto-remove (merged + clean +
-                                     # no live pointer + old enough)
+                                     # no live pointer + not recently active
+                                     # + old enough)
           "removed": int,           # 0 when dry_run
           "failed": int,
           "locked_skipped": [...],  # git refused (lock/active) — never rm'd
@@ -205,6 +235,7 @@ def cleanup_stale_worktrees(
             "dirty": [],
             "locked": [],
             "pointer_blocked": [],
+            "recently_active": [],
             "too_young": [],
             "stale": [],
             "removed": 0,
@@ -237,6 +268,7 @@ def cleanup_stale_worktrees(
     dirty: list[dict] = []
     locked: list[str] = []
     pointer_blocked: list[dict] = []
+    recently_active: list[dict] = []
     too_young: list[dict] = []
     stale: list[str] = []
 
@@ -304,20 +336,39 @@ def cleanup_stale_worktrees(
         elif nonlocal_locked:
             locked.append(wt)
         else:
-            # 🔴 2026-09-16 incident guards (see _worktree_staleness.py) —
+            # 🔴 2026-09-16/17 incident guards (see _worktree_staleness.py) —
             # merged + clean + unlocked is NOT the same as "safe to remove
-            # right now". Guard 1 (live pointer) is NEVER force-bypassable;
-            # guard 2 (min age) is, per the module docstring's rationale.
+            # right now". Guards 1 (live/unresolvable pointer) and 2 (recent
+            # mtime) are NEVER force-bypassable; guard 3 (min age) is, per
+            # the module docstring's rationale.
             blocks, pointer_status = wts.pointer_blocks_removal(branch, wts_run)
             if blocks:
                 pointer_blocked.append({
                     "path": wt,
                     "branch": branch,
                     "status": pointer_status,
+                    "reason": wts.pointer_block_reason(pointer_status),
+                })
+                return
+
+            is_active, mtime_age_seconds, mtime_window_seconds = wts.is_recently_active(
+                wt_path, window_minutes=recent_mtime_minutes,
+            )
+            if is_active:
+                recently_active.append({
+                    "path": wt,
+                    "branch": branch,
+                    "age_seconds": mtime_age_seconds,
+                    "window_seconds": mtime_window_seconds,
                     "reason": (
-                        f"branch-tree pointer status={pointer_status!r} is "
-                        "not terminal — a live peer claim on this branch; "
-                        "force=True does NOT override this guard"
+                        f"a tracked file under this worktree was touched "
+                        f"{mtime_age_seconds!r}s ago, below the "
+                        f"{mtime_window_seconds:.0f}s ({recent_mtime_minutes} "
+                        "min) recent-activity window (.git/node_modules/"
+                        "__pycache__/dist/.pytest_cache/venv excluded) — "
+                        "evidence of current activity, independent of the "
+                        "branch-tree ledger; force=True does NOT override "
+                        "this guard"
                     ),
                 })
                 return
@@ -336,7 +387,8 @@ def cleanup_stale_worktrees(
                         f"{min_age_seconds:.0f}s ({min_age_minutes} min) "
                         "minimum — too young to trust the 0-commits-ahead-"
                         "reads-as-merged signal; pass force=True to remove "
-                        "anyway (force never overrides the pointer guard)"
+                        "anyway (force never overrides the pointer or "
+                        "recent-mtime guards)"
                     ),
                 })
                 return
@@ -370,6 +422,7 @@ def cleanup_stale_worktrees(
             "dirty": dirty,
             "locked": locked,
             "pointer_blocked": pointer_blocked,
+            "recently_active": recently_active,
             "too_young": too_young,
             "stale": [],
             "removed": 0,
@@ -388,6 +441,7 @@ def cleanup_stale_worktrees(
             "dirty": dirty,
             "locked": locked,
             "pointer_blocked": pointer_blocked,
+            "recently_active": recently_active,
             "too_young": too_young,
             "stale": stale,
             "removed": 0,
@@ -457,6 +511,7 @@ def cleanup_stale_worktrees(
         "dirty": dirty,
         "locked": locked,
         "pointer_blocked": pointer_blocked,
+        "recently_active": recently_active,
         "too_young": too_young,
         "stale": stale,
         "removed": removed,
@@ -484,15 +539,23 @@ def register(server) -> None:
             "locked paths are surfaced, never rm-rf'd (THE-P10). Shared-stash "
             "subtraction + dead-pid auto-unlock (THE-P11). 🔴 2026-09-16: a "
             "freshly-forked worktree has 0 commits ahead of origin/dev, which "
-            "`merge-base --is-ancestor` reads as trivially merged — two more "
+            "`merge-base --is-ancestor` reads as trivially merged — three "
             "guards close that gap, checked after dirty/stash/lock: (1) a "
-            "LIVE branch-tree pointer (project-history/branch-tree.ndjson, "
-            "non-terminal status) blocks removal and is NEVER force-"
+            "LIVE OR UNRESOLVABLE branch-tree pointer (project-history/"
+            "branch-tree.ndjson non-terminal status, OR no pointer at all — "
+            "unknown liveness is treated as blocking, not permission, per "
+            "the 2026-09-17 fix) blocks removal and is NEVER force-"
             "bypassable — surfaced in `pointer_blocked`; (2) a worktree "
+            "whose most recent tracked-file mtime is within "
+            "`recent_mtime_minutes` (default 60) is refused, INDEPENDENT of "
+            "the ledger (a raw filesystem walk) and NEVER force-bypassable "
+            "— surfaced in `recently_active` (2026-09-17 fix, closes the "
+            "hole where session_end_sweep had already flipped a peer's live "
+            "worktree's pointer to a terminal status); (3) a worktree "
             "younger than `min_age_minutes` (default 60) is refused unless "
-            "force=True — surfaced in `too_young`. Both report WHY a "
+            "force=True — surfaced in `too_young`. All three report WHY a "
             "candidate was skipped in the result payload. Shares the "
-            "merged-base + merged predicate + both new guards with "
+            "merged-base + merged predicate + all three guards with "
             "noctus.dev.mole via _worktree_staleness. Pass worktree_path "
             "when called from inside a git worktree."
         ),
@@ -501,8 +564,10 @@ def register(server) -> None:
         worktree_path: str | None = None,
         force: bool = False,
         min_age_minutes: float = wts.DEFAULT_MIN_AGE_MINUTES,
+        recent_mtime_minutes: float = wts.DEFAULT_RECENT_MTIME_MINUTES,
     ) -> dict:
         return cleanup_stale_worktrees(
             worktree_path=worktree_path, force=force,
             min_age_minutes=min_age_minutes,
+            recent_mtime_minutes=recent_mtime_minutes,
         )

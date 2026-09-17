@@ -167,9 +167,12 @@ def test_worktree_classifier_categories(tmp_path):
     (orphan / "f.txt").write_text("x")
 
     # STALE: registered worktree whose branch is merged to origin/dev
-    # (created from dev, no new commits → ancestor of origin/dev).
+    # (created from dev, no new commits → ancestor of origin/dev). Publish a
+    # terminal `shipped` pointer so it isn't incidentally POINTER_BLOCKED
+    # (2026-09-17: unresolvable pointer now fails closed).
     stale = wt_dir / "agent-stale"
     _git(root, "worktree", "add", "-q", "-b", "merged-br", str(stale))
+    _publish_pointer_row(root, branch="merged-br", status="shipped")
 
     # ACTIVE: registered worktree with an unmerged commit.
     active = wt_dir / "agent-active"
@@ -183,10 +186,12 @@ def test_worktree_classifier_categories(tmp_path):
     _git(root, "worktree", "add", "-q", "-b", "dirty-br", str(dirty))
     (dirty / "untracked.txt").write_text("dirty")
 
-    # min_age_minutes=0: this test is about CATEGORY parity, not the
-    # (separately tested) min-age guard — every worktree here was just
-    # created in this test run.
-    recs = mole_tool._classify_worktrees(root, min_age_minutes=0)
+    # min_age_minutes=0 + recent_mtime_minutes=0: this test is about
+    # CATEGORY parity, not the (separately tested) age/mtime guards — every
+    # worktree here was just created in this test run.
+    recs = mole_tool._classify_worktrees(
+        root, min_age_minutes=0, recent_mtime_minutes=0,
+    )
     by_path = {Path(p).name: cat for cat, p, _b, _r in recs}
 
     assert by_path.get("agent-orphan") == "ORPHAN"
@@ -203,8 +208,11 @@ def test_scan_actionable_count_is_stale_orphan_phantom(tmp_path):
     (wt_dir / "agent-orphan").mkdir()
     stale = wt_dir / "agent-stale"
     _git(root, "worktree", "add", "-q", "-b", "m-br", str(stale))
+    _publish_pointer_row(root, branch="m-br", status="shipped")
 
-    actionable, tally, _recs = mole_tool._scan_worktrees(root, min_age_minutes=0)
+    actionable, tally, _recs = mole_tool._scan_worktrees(
+        root, min_age_minutes=0, recent_mtime_minutes=0,
+    )
     assert tally["ORPHAN"] == 1 and tally["STALE"] == 1
     assert actionable == tally["STALE"] + tally["ORPHAN"] + tally["PHANTOM"]
 
@@ -220,20 +228,26 @@ def test_sweep_worktrees_force_removes_only_target_set(tmp_path):
     (orphan / "f.txt").write_text("x")
     stale = wt_dir / "agent-stale"
     _git(root, "worktree", "add", "-q", "-b", "m-br", str(stale))
+    _publish_pointer_row(root, branch="m-br", status="shipped")
     dirty = wt_dir / "agent-dirty"
     _git(root, "worktree", "add", "-q", "-b", "d-br", str(dirty))
     (dirty / "u.txt").write_text("dirty")
 
     # Dry-run: nothing removed.
     out = mole_tool.run_mole(
-        mode="sweep", scope="worktrees", force=False, worktree_path=str(root)
+        mode="sweep", scope="worktrees", force=False, worktree_path=str(root),
+        recent_mtime_minutes=0,
     )
     assert out["dry_run"] is True
     assert orphan.exists() and stale.exists() and dirty.exists()
 
     # Force: STALE + ORPHAN gone, STALE_DIRTY preserved.
+    # recent_mtime_minutes=0: isolates this test from the (separately
+    # tested, never-force-bypassable) mtime guard — every worktree here
+    # was just created in this test run.
     out = mole_tool.run_mole(
-        mode="sweep", scope="worktrees", force=True, worktree_path=str(root)
+        mode="sweep", scope="worktrees", force=True, worktree_path=str(root),
+        recent_mtime_minutes=0,
     )
     assert out["executed_destructive"] is True
     assert not orphan.exists(), "ORPHAN swept"
@@ -335,16 +349,92 @@ def test_too_young_worktree_skipped_by_default_but_removable_with_force(tmp_path
     wt_dir.mkdir(parents=True)
     wt = wt_dir / "agent-fresh"
     _git(root, "worktree", "add", "-q", "-b", "feat/fresh", str(wt))
+    _publish_pointer_row(root, branch="feat/fresh", status="shipped")
 
-    # Default min_age_minutes — this worktree was created microseconds ago.
-    recs = mole_tool._classify_worktrees(root)
+    # Default min_age_minutes, recent_mtime_minutes=0 to isolate the age
+    # guard from the (separately tested) mtime guard — this worktree was
+    # created microseconds ago.
+    recs = mole_tool._classify_worktrees(root, recent_mtime_minutes=0)
     by_path = {Path(p).name: cat for cat, p, _b, _r in recs}
     assert by_path["agent-fresh"] == "TOO_YOUNG"
 
     out = mole_tool.run_mole(
         mode="sweep", scope="worktrees", force=True, worktree_path=str(root),
+        recent_mtime_minutes=0,
     )
     assert not wt.exists(), "force=True MAY bypass the age guard"
+
+
+def test_recently_active_worktree_skipped_even_with_force(tmp_path):
+    root = tmp_path
+    _init_repo(root)
+    wt_dir = root / ".claude" / "worktrees"
+    wt_dir.mkdir(parents=True)
+    wt = wt_dir / "agent-recent"
+    _git(root, "worktree", "add", "-q", "-b", "feat/recent", str(wt))
+    _publish_pointer_row(root, branch="feat/recent", status="shipped")
+
+    # Default recent_mtime_minutes — files just checked out are nowhere
+    # near stale.
+    recs = mole_tool._classify_worktrees(root, min_age_minutes=0)
+    by_path = {Path(p).name: cat for cat, p, _b, _r in recs}
+    assert by_path["agent-recent"] == "RECENTLY_ACTIVE"
+
+    out = mole_tool.run_mole(
+        mode="sweep", scope="worktrees", force=True, worktree_path=str(root),
+        min_age_minutes=0,
+    )
+    assert wt.exists(), "force=True must NEVER sweep a recently-active worktree"
+
+
+def test_unknown_pointer_blocks_removal_fail_closed(tmp_path):
+    root = tmp_path
+    _init_repo(root)
+    wt_dir = root / ".claude" / "worktrees"
+    wt_dir.mkdir(parents=True)
+    wt = wt_dir / "agent-unknown"
+    _git(root, "worktree", "add", "-q", "-b", "feat/unknown", str(wt))
+    # No pointer published at all — the genuinely-unknown-liveness case.
+
+    recs = mole_tool._classify_worktrees(
+        root, min_age_minutes=0, recent_mtime_minutes=0,
+    )
+    by_path = {Path(p).name: (cat, reason) for cat, p, _b, reason in recs}
+    cat, reason = by_path["agent-unknown"]
+    assert cat == "POINTER_BLOCKED"
+    assert "UNKNOWN" in reason or "unknown" in reason.lower()
+
+    out = mole_tool.run_mole(
+        mode="sweep", scope="worktrees", force=True, worktree_path=str(root),
+        min_age_minutes=0, recent_mtime_minutes=0,
+    )
+    assert wt.exists(), (
+        "force=True must NEVER sweep a worktree with unresolvable pointer "
+        "liveness"
+    )
+
+
+def test_actual_incident_shape_terminal_pointer_plus_live_dir_plus_recent_mtime(
+    tmp_path,
+):
+    """Reproduces the 2026-09-16→17 incident: a branch flipped to a TERMINAL
+    pointer status while its worktree directory is still on disk and its
+    files were touched moments ago — must be refused even with force=True."""
+    root = tmp_path
+    _init_repo(root)
+    wt_dir = root / ".claude" / "worktrees"
+    wt_dir.mkdir(parents=True)
+    wt = wt_dir / "agent-incident"
+    _git(root, "worktree", "add", "-q", "-b", "feat/incident", str(wt))
+    _publish_pointer_row(root, branch="feat/incident", status="shipped")
+
+    out = mole_tool.run_mole(
+        mode="sweep", scope="worktrees", force=True, worktree_path=str(root),
+    )
+    assert wt.exists(), (
+        "terminal pointer + live directory + recent mtime must be refused "
+        "even with force=True — this is the exact incident shape"
+    )
 
 
 def test_scan_worktrees_tally_includes_the_new_categories(tmp_path):
@@ -357,7 +447,23 @@ def test_scan_worktrees_tally_includes_the_new_categories(tmp_path):
     _publish_pointer_row(root, branch="feat/live2", status="deferred")
     fresh = wt_dir / "agent-fresh2"
     _git(root, "worktree", "add", "-q", "-b", "feat/fresh2", str(fresh))
+    _publish_pointer_row(root, branch="feat/fresh2", status="shipped")
 
-    _actionable, tally, _recs = mole_tool._scan_worktrees(root)
+    # recent_mtime_minutes=0 isolates POINTER_BLOCKED/TOO_YOUNG tally
+    # accounting from the (separately tested) mtime guard for "fresh2".
+    _actionable, tally, _recs = mole_tool._scan_worktrees(
+        root, recent_mtime_minutes=0,
+    )
     assert tally["POINTER_BLOCKED"] == 1
     assert tally["TOO_YOUNG"] == 1
+
+    # Default recent_mtime_minutes — the mtime guard runs BEFORE the age
+    # guard, so a freshly-touched worktree tallies RECENTLY_ACTIVE (not
+    # TOO_YOUNG) even though it would also qualify as too-young.
+    recent = wt_dir / "agent-recent2"
+    _git(root, "worktree", "add", "-q", "-b", "feat/recent2", str(recent))
+    _publish_pointer_row(root, branch="feat/recent2", status="shipped")
+    _actionable2, tally2, _recs2 = mole_tool._scan_worktrees(
+        root, min_age_minutes=0,
+    )
+    assert tally2["RECENTLY_ACTIVE"] >= 1

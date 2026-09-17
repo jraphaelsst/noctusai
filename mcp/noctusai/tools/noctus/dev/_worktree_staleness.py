@@ -32,6 +32,7 @@ default runner wraps ``subprocess.run`` at a given root.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -257,14 +258,150 @@ def pointer_status_for_branch(branch: str, run: GitRunner) -> str | None:
 
 def pointer_blocks_removal(branch: str, run: GitRunner) -> tuple[bool, str | None]:
     """``(blocks, status)`` — ``blocks`` is True iff ``branch`` carries a live
-    (non-terminal) branch-tree pointer. This is the STRONGER guard: an
-    explicit claim from a peer, never overridden by ``force=True``."""
+    (non-terminal) branch-tree pointer, OR its liveness could not be
+    resolved at all. This is the STRONGER guard: an explicit claim from a
+    peer, never overridden by ``force=True``.
+
+    🔴 2026-09-17 fail-open fix: this used to return ``blocks=False`` when
+    the pointer query yielded nothing — an unknown branch (never
+    published), an unreadable ledger, or the query itself raising. Absence
+    of information is NOT permission to delete: a worktree the ledger has
+    never heard of is exactly as unprovably-safe as one carrying a live
+    ``on_going`` claim, so unknown liveness is now treated as BLOCKING, the
+    same conservative-refusal shape :func:`is_too_young` already uses for an
+    unresolvable age (no-silent-errors, CLAUDE.md §1). To unblock a branch
+    with no pointer, publish one with a genuinely terminal status
+    (``noctus.dev.branch_pointer action=append/update status=shipped|...``)
+    — never a tool-side guess.
+    """
     from tools.noctus.dev.branch_pointer import TERMINAL_STATUSES
 
-    status = pointer_status_for_branch(branch, run)
+    try:
+        status = pointer_status_for_branch(branch, run)
+    except Exception:  # noqa: BLE001 — a query failure is UNKNOWN liveness,
+        # never permission to proceed as if it were terminal.
+        return True, None
     if status is None:
-        return False, None
+        return True, None
     return status not in TERMINAL_STATUSES, status
+
+
+def pointer_block_reason(status: str | None) -> str:
+    """Human-readable reason string for a pointer-blocked removal — shared by
+    both consumers (``cleanup_worktrees.py``, ``mole.py``) so the wording
+    never drifts between the two call sites (the exact DRY gap that let one
+    caller's base-ref edit silently diverge from the other, pre-extraction)."""
+    if status is None:
+        return (
+            "no branch-tree pointer could be resolved for this branch (never "
+            "published, ledger unreadable, or the query failed) — liveness is "
+            "UNKNOWN and is treated as blocking, never as permission to delete; "
+            "force=True does NOT override this guard"
+        )
+    return (
+        f"branch-tree pointer status={status!r} is not terminal — a live "
+        "peer claim on this branch; force=True does NOT override this guard"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔴 2026-09-17 incident — the LEDGER said "shipped"; the FILESYSTEM said
+# "somebody is still here". session_end_sweep's own auto-heal
+# (`_autoheal_branch_pointers`) flipped a peer session's live
+# ``ef-w8-models-worker`` pointer from ``on_going`` straight to the terminal
+# ``shipped`` the moment its branch became integrated into ``origin/dev`` —
+# without ever checking whether the ``.claude/worktrees/ef-w8-models-worker``
+# directory (and the session using it) still existed. `pointer_blocks_removal`
+# only ever reads the LEDGER; a terminal status there reads as "nobody's
+# claiming this" even while the worktree is somebody's live desk. Two
+# independent fixes close this, neither one alone sufficient:
+#
+#   1. A distinct NON-terminal status — `integrated-worktree-live` — for
+#      "the branch landed, but a worktree is still checked out for it".
+#      `session_end_sweep` writes this instead of `shipped` whenever the
+#      worktree directory still exists (see that module). It is NOT added to
+#      `branch_pointer.TERMINAL_STATUSES`, so `pointer_blocks_removal` keeps
+#      refusing removal for it exactly like `on_going` — never bypassed by
+#      `force=True` (this file's Leg-1 fix).
+#   2. A filesystem-mtime liveness probe (`is_recently_active`, below),
+#      INDEPENDENT of the ledger entirely — no pointer, no git-log call, a
+#      raw directory walk. Even if a pointer is missing, wrong, or stale, a
+#      worktree somebody touched a file in moments ago is not safe to
+#      remove. This is Leg-2: defense-in-depth that does not depend on any
+#      agent having correctly published or maintained a pointer at all.
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: Directory names pruned from the mtime walk — regenerable / vendored /
+#: cache content whose timestamps say nothing about whether a HUMAN (or
+#: agent) touched this worktree recently.
+IGNORED_DIR_NAMES: frozenset[str] = frozenset({
+    ".git", "node_modules", "__pycache__", "dist", ".pytest_cache", "venv",
+})
+
+#: Reasoning: paired with DEFAULT_MIN_AGE_MINUTES (60) — the two guards
+#: share a "give a working session its full grace period" default so an
+#: operator tuning one has an obvious analog for the other. Overridable
+#: per-call via ``window_minutes``.
+DEFAULT_RECENT_MTIME_MINUTES: float = 60.0
+
+
+def _latest_file_mtime(wt_path: Path) -> float | None:
+    """Most recent mtime (epoch seconds) among files under ``wt_path``, with
+    :data:`IGNORED_DIR_NAMES` pruned from the walk. Pure filesystem evidence
+    — no git call at all, so it is independent of anything the branch-tree
+    ledger claims (a stale/never-written/wrong pointer cannot hide a file
+    that was touched a minute ago). ``None`` when the path is not a
+    directory (already removed) or contains no readable files — the caller
+    treats that as "cannot prove this is stale", never as a silent green
+    light (mirrors :func:`worktree_age_seconds`'s ``None`` contract).
+    """
+    if not wt_path.is_dir():
+        return None
+    latest: float | None = None
+    try:
+        for dirpath, dirnames, filenames in os.walk(wt_path):
+            dirnames[:] = [d for d in dirnames if d not in IGNORED_DIR_NAMES]
+            for fname in filenames:
+                try:
+                    mtime = (Path(dirpath) / fname).stat().st_mtime
+                except OSError:
+                    continue
+                if latest is None or mtime > latest:
+                    latest = mtime
+    except OSError:
+        # Partial walk failure (permission error mid-tree, etc.) — return
+        # whatever we found so far rather than silently discarding evidence.
+        return latest
+    return latest
+
+
+def is_recently_active(
+    wt_path: Path,
+    *,
+    window_minutes: float = DEFAULT_RECENT_MTIME_MINUTES,
+    now: float | None = None,
+) -> tuple[bool, float | None, float]:
+    """``(recently_active, age_seconds, window_seconds)``.
+
+    ``recently_active`` is True when the most recent file mtime under
+    ``wt_path`` (noise dirs pruned) is younger than ``window_minutes``.
+    ``age_seconds`` unresolvable (``None`` — path already gone, or genuinely
+    empty of readable files) is conservatively treated as recently-active:
+    "cannot prove this is stale" refuses removal rather than assuming a safe
+    age (no-silent-errors, CLAUDE.md §1; mirrors :func:`is_too_young`'s
+    identical contract for the git-side age signal).
+
+    This guard is intentionally NEVER bypassed by ``force=True`` — evidence
+    of current activity outranks an operator's blanket flag (unlike
+    :func:`is_too_young`'s age guard, which force MAY override).
+    """
+    window_seconds = window_minutes * 60.0
+    latest = _latest_file_mtime(wt_path)
+    if latest is None:
+        return True, None, window_seconds
+    ref_now = now if now is not None else time.time()
+    age = ref_now - latest
+    return age < window_seconds, age, window_seconds
 
 
 __all__ = [
@@ -272,6 +409,8 @@ __all__ = [
     "PREFERRED_BASE",
     "FALLBACK_BASE",
     "DEFAULT_MIN_AGE_MINUTES",
+    "DEFAULT_RECENT_MTIME_MINUTES",
+    "IGNORED_DIR_NAMES",
     "make_subprocess_runner",
     "resolve_merged_base",
     "is_ancestor",
@@ -279,6 +418,8 @@ __all__ = [
     "is_merged",
     "worktree_age_seconds",
     "is_too_young",
+    "is_recently_active",
     "pointer_status_for_branch",
     "pointer_blocks_removal",
+    "pointer_block_reason",
 ]

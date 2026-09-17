@@ -64,9 +64,22 @@ def repo(tmp_path: Path) -> Path:
     return r
 
 
-def _add_worktree(repo: Path, name: str, branch: str) -> Path:
+def _add_worktree(
+    repo: Path, name: str, branch: str, *, publish_shipped_pointer: bool = True,
+) -> Path:
+    """Register a worktree. By default ALSO publishes a terminal `shipped`
+    pointer for its branch (2026-09-17: `pointer_blocks_removal` now fails
+    CLOSED on an unpublished/unknown pointer, so every test exercising a
+    DIFFERENT predicate — merge/dirty/age/mtime — needs its branch to carry
+    a resolvable terminal status or it would incidentally get POINTER_BLOCKED
+    instead of reaching the predicate under test). Tests that want to
+    exercise the pointer guard itself publish their own status afterwards
+    (later-appended row wins by ts tie-break) or pass
+    `publish_shipped_pointer=False` to test the genuinely-unknown case."""
     wt = repo / ".claude" / "worktrees" / name
     _git(repo, "worktree", "add", "-q", "-b", branch, str(wt))
+    if publish_shipped_pointer:
+        _publish_pointer_row(repo, branch=branch, status="shipped")
     return wt
 
 
@@ -100,11 +113,14 @@ class TestDryRunDefault:
 
     def test_merged_worktree_is_stale_but_dry_run_keeps_it(self, repo):
         # Branch with NO new commits beyond dev → merge-base ancestor → merged.
-        # min_age_minutes=0: this test is about the MERGE predicate, not the
-        # (separately tested) min-age guard — a freshly-created worktree is
-        # otherwise always "too young" under the real default.
+        # min_age_minutes=0 + recent_mtime_minutes=0: this test is about the
+        # MERGE predicate, not the (separately tested) age/mtime guards — a
+        # freshly-created worktree is otherwise always "too young" AND
+        # "recently active" under the real defaults.
         wt = _add_worktree(repo, "agent-merged", "wt-merged")
-        result = cleanup_stale_worktrees(repo_root=repo, min_age_minutes=0)  # force defaults False
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=0, recent_mtime_minutes=0,
+        )  # force defaults False
         assert str(wt) in result["stale"]
         assert result["dry_run"] is True
         assert result["status"] == "dry_run"
@@ -118,7 +134,9 @@ class TestDryRunDefault:
         # un-sweepable, the bare-`git worktree remove` hazard. They must now
         # sweep like any other; the merged + clean gates are the real safety.
         wt = _add_worktree(repo, "my-task", "feat/my-task")
-        result = cleanup_stale_worktrees(repo_root=repo, min_age_minutes=0)
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=0, recent_mtime_minutes=0,
+        )
         assert str(wt) in result["stale"], "merged non-agent worktree must be stale"
         assert wt.exists(), "dry-run must NOT remove it"
 
@@ -145,9 +163,12 @@ class TestMergePredicate:
         sha = _git(wt, "rev-parse", "HEAD").strip()
         _git(repo, "cherry-pick", sha)
         _git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
-        # min_age_minutes=0: isolates the patch-id predicate from the
-        # min-age guard (this worktree was just created in this test run).
-        result = cleanup_stale_worktrees(repo_root=repo, min_age_minutes=0)
+        # min_age_minutes=0 + recent_mtime_minutes=0: isolates the patch-id
+        # predicate from the age/mtime guards (this worktree was just
+        # created in this test run).
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=0, recent_mtime_minutes=0,
+        )
         assert str(wt) in result["stale"], (
             "cherry-picked-to-dev branch must classify as stale (patch-id)"
         )
@@ -167,7 +188,12 @@ class TestSafetyGates:
     def test_force_removes_clean_merged_worktree(self, repo):
         wt = _add_worktree(repo, "agent-clean", "wt-clean")
         assert wt.exists()
-        result = cleanup_stale_worktrees(repo_root=repo, force=True)
+        # recent_mtime_minutes=0: isolates force-removal from the mtime
+        # guard (never force-bypassable) — this test is about force
+        # overriding the age guard, tested separately below.
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, recent_mtime_minutes=0,
+        )
         assert result["status"] == "removed"
         assert result["removed"] >= 1
         assert not wt.exists(), "force=True must remove a clean merged worktree"
@@ -245,7 +271,9 @@ class TestLivePointerGuard:
     def test_shipped_pointer_does_not_block(self, repo):
         wt = _add_worktree(repo, "agent-done", "feat/done")
         _publish_pointer_row(repo, branch="feat/done", status="shipped")
-        result = cleanup_stale_worktrees(repo_root=repo, min_age_minutes=0)
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=0, recent_mtime_minutes=0,
+        )
         assert str(wt) in result["stale"]
         assert result["pointer_blocked"] == []
 
@@ -264,16 +292,25 @@ class TestMinAgeGuardTool:
     def test_fresh_worktree_is_too_young_by_default_not_stale(self, repo):
         # Uses the REAL DEFAULT min_age_minutes (60) — a worktree created
         # microseconds ago in this test run is nowhere near it.
+        # recent_mtime_minutes=0 isolates the age guard from the (separately
+        # tested) mtime guard, which would otherwise also fire here.
         wt = _add_worktree(repo, "agent-fresh", "feat/fresh")
-        result = cleanup_stale_worktrees(repo_root=repo)  # force=False
+        result = cleanup_stale_worktrees(
+            repo_root=repo, recent_mtime_minutes=0,
+        )  # force=False
         assert str(wt) not in result["stale"]
         young_paths = [p["path"] for p in result["too_young"]]
         assert str(wt) in young_paths
         assert wt.exists()
 
     def test_force_bypasses_the_age_guard_but_not_when_pointer_blocks(self, repo):
+        # recent_mtime_minutes=0: force MAY bypass age but never mtime — this
+        # test is isolated to the age guard (the mtime-never-bypassed case is
+        # covered separately in TestRecentMtimeGuardTool).
         wt = _add_worktree(repo, "agent-fresh-force", "feat/fresh-force")
-        result = cleanup_stale_worktrees(repo_root=repo, force=True)
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, recent_mtime_minutes=0,
+        )
         assert result["status"] == "removed"
         assert not wt.exists(), (
             "force=True MAY override the age guard (never the pointer guard)"
@@ -281,23 +318,142 @@ class TestMinAgeGuardTool:
 
     def test_min_age_zero_admits_a_fresh_worktree_to_stale(self, repo):
         wt = _add_worktree(repo, "agent-fresh-zero", "feat/fresh-zero")
-        result = cleanup_stale_worktrees(repo_root=repo, min_age_minutes=0)
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=0, recent_mtime_minutes=0,
+        )
         assert str(wt) in result["stale"]
         assert result["too_young"] == []
 
     def test_skip_reason_names_the_thresholds(self, repo):
         wt = _add_worktree(repo, "agent-young-reason", "feat/young-reason")
-        result = cleanup_stale_worktrees(repo_root=repo, min_age_minutes=45)
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=45, recent_mtime_minutes=0,
+        )
         row = next(p for p in result["too_young"] if p["path"] == str(wt))
         assert row["min_age_seconds"] == 45 * 60.0
         assert row["age_seconds"] is not None
         assert "45" in row["reason"]
 
 
+class TestRecentMtimeGuardTool:
+    """2026-09-17 incident fix (Leg 2): a recently-touched tracked file
+    blocks removal INDEPENDENT of the pointer/age guards, and is NEVER
+    bypassed by force=True."""
+
+    def test_fresh_worktree_is_recently_active_by_default(self, repo):
+        # Uses the REAL DEFAULT recent_mtime_minutes (60) — files checked
+        # out by `git worktree add` moments ago are nowhere near stale.
+        wt = _add_worktree(repo, "agent-recent", "feat/recent")
+        result = cleanup_stale_worktrees(repo_root=repo, min_age_minutes=0)
+        assert str(wt) not in result["stale"]
+        active_paths = [p["path"] for p in result["recently_active"]]
+        assert str(wt) in active_paths
+        assert wt.exists()
+
+    def test_force_does_not_bypass_the_mtime_guard(self, repo):
+        wt = _add_worktree(repo, "agent-recent-force", "feat/recent-force")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, min_age_minutes=0,
+        )
+        assert str(wt) not in result["stale"]
+        active_paths = [p["path"] for p in result["recently_active"]]
+        assert str(wt) in active_paths
+        assert wt.exists(), (
+            "force=True must NEVER remove a recently-touched worktree"
+        )
+
+    def test_recent_mtime_zero_admits_a_worktree_to_stale(self, repo):
+        wt = _add_worktree(repo, "agent-recent-zero", "feat/recent-zero")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=0, recent_mtime_minutes=0,
+        )
+        assert str(wt) in result["stale"]
+        assert result["recently_active"] == []
+
+    def test_skip_reason_names_the_window(self, repo):
+        wt = _add_worktree(repo, "agent-recent-reason", "feat/recent-reason")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=0, recent_mtime_minutes=45,
+        )
+        row = next(p for p in result["recently_active"] if p["path"] == str(wt))
+        assert row["window_seconds"] == 45 * 60.0
+        assert row["age_seconds"] is not None
+        assert "45" in row["reason"]
+
+    def test_pointer_guard_wins_over_mtime_when_both_apply(self, repo):
+        # Pointer guard runs first — a live pointer is reported as
+        # pointer_blocked, never recently_active, even though the worktree
+        # is ALSO freshly touched.
+        wt = _add_worktree(repo, "agent-both", "feat/both")
+        _publish_pointer_row(repo, branch="feat/both", status="on_going")
+        result = cleanup_stale_worktrees(repo_root=repo, min_age_minutes=0)
+        assert str(wt) not in result["stale"]
+        assert str(wt) not in [p["path"] for p in result["recently_active"]]
+        assert str(wt) in [p["path"] for p in result["pointer_blocked"]]
+
+
+# ═══════════ 2026-09-17 incident: unknown-pointer fail-closed + the actual
+# incident shape (terminal pointer + existing dir + recent mtime) ═══════════
+class TestUnknownPointerFailsClosed:
+    def test_no_pointer_at_all_blocks_removal(self, repo):
+        # No `_add_worktree` auto-publish here — the genuinely unknown case.
+        wt = _add_worktree(
+            repo, "agent-unknown", "feat/unknown",
+            publish_shipped_pointer=False,
+        )
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=0, recent_mtime_minutes=0,
+        )
+        assert str(wt) not in result["stale"]
+        blocked = next(p for p in result["pointer_blocked"] if p["path"] == str(wt))
+        assert blocked["status"] is None
+        assert wt.exists()
+
+    def test_force_does_not_bypass_the_unknown_pointer_guard(self, repo):
+        wt = _add_worktree(
+            repo, "agent-unknown-force", "feat/unknown-force",
+            publish_shipped_pointer=False,
+        )
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, min_age_minutes=0,
+            recent_mtime_minutes=0,
+        )
+        assert str(wt) not in result["stale"]
+        assert wt.exists(), (
+            "force=True must NEVER remove a worktree with unresolvable "
+            "pointer liveness"
+        )
+
+
+class TestActualIncidentShape:
+    """Reproduces the 2026-09-16→17 incident exactly: a branch already
+    flipped to a TERMINAL pointer status by auto-heal, its worktree
+    directory STILL on disk, and files touched moments ago. Must be refused
+    — this is precisely the scenario the old code waved through."""
+
+    def test_terminal_pointer_plus_existing_dir_plus_recent_mtime_is_refused(
+        self, repo,
+    ):
+        wt = _add_worktree(repo, "agent-incident", "feat/incident")
+        # `_add_worktree` already publishes `shipped` (the terminal status a
+        # buggy auto-heal would have written) — the worktree directory is
+        # still on disk (as-created) and its files were touched moments ago.
+        # Under the pre-fix code this would have classified STALE.
+        result = cleanup_stale_worktrees(repo_root=repo, force=True)
+        assert str(wt) not in result["stale"]
+        assert wt.exists(), (
+            "terminal pointer + live directory + recent mtime must be "
+            "refused even with force=True — this is the exact incident shape"
+        )
+        active_paths = [p["path"] for p in result["recently_active"]]
+        assert str(wt) in active_paths
+
+
 class TestGuardResultShape:
     def test_both_guard_keys_present_even_with_nothing_to_report(self, repo):
         result = cleanup_stale_worktrees(repo_root=repo)
         assert result["pointer_blocked"] == []
+        assert result["recently_active"] == []
         assert result["too_young"] == []
 
     def test_both_guard_keys_present_in_the_no_worktree_dir_shape(self, tmp_path):
@@ -306,4 +462,5 @@ class TestGuardResultShape:
         subprocess.run(["git", "init", "-q"], cwd=str(r), check=True)
         result = cleanup_stale_worktrees(repo_root=r)
         assert result["pointer_blocked"] == []
+        assert result["recently_active"] == []
         assert result["too_young"] == []

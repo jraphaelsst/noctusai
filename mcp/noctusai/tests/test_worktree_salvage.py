@@ -147,7 +147,15 @@ class TestSweepWritesLedger:
         _git(r, "config", "user.email", "t@t.t")
         _git(r, "config", "user.name", "t")
         (r / "f").write_text("base\n")
-        _git(r, "add", "f")
+        # An EMPTY project-history/branch-tree.ndjson so `pointer_status_for_branch`'s
+        # `git show origin/dev:project-history/branch-tree.ndjson` always
+        # succeeds from this fake repo instead of falling back to the REAL
+        # production ledger (`branch_pointer.LEDGER_PATH`, derived from the
+        # real `settings.REPO_ROOT`) — mirrors the same isolation fix in
+        # test_cleanup_worktrees.py's `repo` fixture.
+        (r / "project-history").mkdir(parents=True)
+        (r / "project-history" / "branch-tree.ndjson").write_text("")
+        _git(r, "add", "f", "project-history/branch-tree.ndjson")
         _git(r, "commit", "-qm", "base")
         _git(r, "update-ref", "refs/remotes/origin/dev", "HEAD")
         (r / ".claude" / "worktrees").mkdir(parents=True)
@@ -155,9 +163,34 @@ class TestSweepWritesLedger:
         _git(r, "worktree", "add", "-q", "-b", "wt-clean", str(wt))
         return r, wt
 
+    def _publish_shipped_pointer(self, r: Path, *, branch: str) -> None:
+        """Publish a terminal `shipped` pointer for `branch` — 2026-09-17:
+        `pointer_blocks_removal` now fails CLOSED on an unresolvable
+        pointer, so a real force-sweep integration test needs its branch to
+        carry a resolvable terminal status or it would incidentally block
+        on POINTER_BLOCKED instead of exercising the salvage-ledger leg."""
+        import json as _json
+
+        ledger = r / "project-history" / "branch-tree.ndjson"
+        row = _json.dumps({
+            "branch": branch, "status": "shipped",
+            "ts": "2026-09-17T00:00:00+00:00",
+        })
+        with ledger.open("a") as fh:
+            fh.write(row + "\n")
+        _git(r, "add", "project-history/branch-tree.ndjson")
+        _git(r, "commit", "-qm", f"pointer: {branch} shipped")
+        _git(r, "update-ref", "refs/remotes/origin/dev", "HEAD")
+
     def test_force_sweep_records_recovery_pointer(self, tmp_path):
         r, wt = self._repo_with_merged_worktree(tmp_path)
-        result = cleanup_stale_worktrees(repo_root=r, force=True)
+        self._publish_shipped_pointer(r, branch="wt-clean")
+        # recent_mtime_minutes=0: isolates the salvage-ledger leg under test
+        # from the (separately tested, never-force-bypassable) 2026-09-17
+        # recent-mtime guard — this worktree was just created in this run.
+        result = cleanup_stale_worktrees(
+            repo_root=r, force=True, recent_mtime_minutes=0,
+        )
         assert result["status"] == "removed"
         assert not wt.exists()
         # The extract-before-delete ledger leg fired:

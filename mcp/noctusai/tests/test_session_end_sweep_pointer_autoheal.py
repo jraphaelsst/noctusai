@@ -132,6 +132,89 @@ def test_empty_candidate_set_is_clean(monkeypatch):
     assert res == {"healed": [], "skipped_unproven": [], "errors": []}
 
 
+# ═══════════ 2026-09-17 incident — Leg 1: ledger CLAIM vs filesystem EVIDENCE
+# session_end_sweep's auto-heal used to flip an integrated branch straight to
+# `shipped` without ever checking whether its `.claude/worktrees/<slug>`
+# directory still existed — waving a still-checked-out worktree through as
+# terminal. These tests pin the fix: the worktree directory's presence is
+# looked up via `_worktree_branches` (monkeypatched here exactly like
+# `test_sweep_respects_heal_pointers_false` already does), and a LIVE
+# directory routes to the distinct non-terminal `integrated-worktree-live`
+# status instead of `shipped`.
+class TestWorktreeLivenessBeforeTerminalFlip:
+    def test_flips_to_integrated_worktree_live_when_directory_still_exists(
+        self, monkeypatch, tmp_path,
+    ):
+        live_dir = tmp_path / "ef-w8-models-worker"
+        live_dir.mkdir()
+        runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", "")})
+        monkeypatch.setattr(
+            SES, "_worktree_branches",
+            lambda root: [("ef-w8-models-worker", "feat/landed", live_dir)],
+        )
+        updates = _wire(
+            monkeypatch, runner=runner,
+            candidates=[{"branch": "feat/landed", "commit": "abc123"}],
+        )
+        res = SES._autoheal_branch_pointers(Path("/repo"))
+        assert [h["branch"] for h in res["healed"]] == ["feat/landed"]
+        assert res["errors"] == []
+        assert len(updates) == 1
+        assert updates[0]["branch"] == "feat/landed"
+        assert updates[0]["status"] == "integrated-worktree-live"
+        assert updates[0]["push_dev"] is False
+        assert "still exists" in res["healed"][0]["reason"]
+
+    def test_new_status_is_a_real_branch_pointer_status_and_non_terminal(self):
+        assert "integrated-worktree-live" in BP.STATUSES
+        assert "integrated-worktree-live" not in BP.TERMINAL_STATUSES
+
+    def test_new_status_still_blocks_removal_via_pointer_blocks_removal(self):
+        runner_row = (
+            '{"branch": "feat/x", "status": "integrated-worktree-live", '
+            '"ts": "2026-09-17T00:00:00Z"}'
+        )
+
+        def _run(cmd):
+            if cmd[:2] == ["git", "show"]:
+                return 0, runner_row + "\n", ""
+            return 0, "", ""
+
+        blocks, status = WTS.pointer_blocks_removal("feat/x", _run)
+        assert blocks is True
+        assert status == "integrated-worktree-live"
+
+    def test_still_flips_shipped_when_directory_absent(self, monkeypatch):
+        # No `_worktree_branches` monkeypatch — the real function resolves
+        # `/repo/.claude/worktrees` as non-existent (fake root), returning
+        # `[]`, exactly the existing (pre-fix) behaviour: preserved.
+        runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", "")})
+        updates = _wire(
+            monkeypatch, runner=runner,
+            candidates=[{"branch": "feat/landed", "commit": "abc123"}],
+        )
+        res = SES._autoheal_branch_pointers(Path("/repo"))
+        assert len(updates) == 1
+        assert updates[0]["status"] == "shipped"
+
+    def test_directory_present_but_for_a_different_branch_still_ships(
+        self, monkeypatch, tmp_path,
+    ):
+        other_dir = tmp_path / "some-other-worktree"
+        other_dir.mkdir()
+        runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", "")})
+        monkeypatch.setattr(
+            SES, "_worktree_branches",
+            lambda root: [("some-other-worktree", "feat/unrelated", other_dir)],
+        )
+        updates = _wire(
+            monkeypatch, runner=runner,
+            candidates=[{"branch": "feat/landed", "commit": "abc123"}],
+        )
+        res = SES._autoheal_branch_pointers(Path("/repo"))
+        assert updates[0]["status"] == "shipped"
+
+
 def test_sweep_respects_heal_pointers_false(monkeypatch, tmp_path):
     # heal_pointers=False must skip the heal entirely (no query/update touched).
     called = {"n": 0}

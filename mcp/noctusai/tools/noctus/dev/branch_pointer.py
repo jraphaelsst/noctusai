@@ -107,8 +107,22 @@ def changed_files_are_all_cache_exempt(changed: list[str]) -> bool:
 
 
 # ── Status enum ──────────────────────────────────────────────────────────────
+# `integrated-worktree-live` (2026-09-17): a DISTINCT non-terminal status
+# for "the branch landed in origin/dev, but a `.claude/worktrees/<slug>`
+# directory for it still exists" — session_end_sweep's auto-heal writes this
+# instead of `shipped` whenever the worktree directory is still on disk
+# (see `session_end_sweep._autoheal_branch_pointers` +
+# `_worktree_staleness.py`'s 2026-09-17 incident writeup). Deliberately NOT
+# in TERMINAL_STATUSES: `pointer_blocks_removal` must keep refusing removal
+# for it exactly like `on_going`, never bypassed by `force=True`. Every
+# consumer of the status enum (this module's own validation, the
+# `check_branch_tree_mirror` keeper in compliance.py, the CLI help text) is
+# derived from these two frozensets — never hand-duplicated — so a new
+# status here propagates by construction (KB § PATTERNS/devops/
+# product-lockfile-and-slug-drift.md — "hand-maintained lists drift").
 STATUSES: frozenset[str] = frozenset({
-    "on_going", "shipped", "blocked", "canceled", "stale", "deferred"
+    "on_going", "shipped", "blocked", "canceled", "stale", "deferred",
+    "integrated-worktree-live",
 })
 ROLES: frozenset[str] = frozenset({"orchestrator", "engineer"})
 # Statuses that represent "done" — excluded from the default list view.

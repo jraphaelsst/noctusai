@@ -210,8 +210,9 @@ def _has_uncommitted(repo_root: Path, worktree_path: Path) -> bool:
 
 
 def _autoheal_branch_pointers(repo_root: Path) -> dict[str, Any]:
-    """Flip stale `on_going` branch-tree pointers → `shipped` when their branch
-    is already integrated into origin/dev.
+    """Flip stale `on_going` branch-tree pointers → `shipped` (or, when the
+    worktree is still checked out, → `integrated-worktree-live`) when their
+    branch is already integrated into origin/dev.
 
     The backstop for the "engineers must flip on_going→shipped BEFORE merging"
     discipline: when a slice lands but its pointer was never updated, the global
@@ -226,6 +227,30 @@ def _autoheal_branch_pointers(repo_root: Path) -> dict[str, Any]:
         commit is an ancestor of origin/dev (the work demonstrably landed).
     A branch that's gone with an unreachable commit is left `on_going` (we can't
     prove it landed — never a silent false-heal).
+
+    🔴 2026-09-17 incident fix — the ledger is a CLAIM, the filesystem is
+    EVIDENCE. This pass used to flip straight to the terminal `shipped` the
+    moment a branch was integrated, WITHOUT ever checking whether its
+    `.claude/worktrees/<slug>` directory still existed. It flipped a peer
+    session's live `ef-w8-models-worker` pointer to `shipped` while that
+    worktree (and the session using it) still existed; `pointer_blocks_removal`
+    then read a terminal status and waved a sweep through, destroying the
+    session's disk state. Now: when the branch's worktree directory is STILL
+    ON DISK (looked up via `_worktree_branches` — the same
+    `git worktree list --porcelain` parse the rest of this module already
+    does; no second resolver invented), the pointer is flipped to the
+    distinct NON-terminal `integrated-worktree-live` status instead of
+    `shipped` — `pointer_blocks_removal` keeps refusing removal for it
+    exactly like `on_going`, never bypassed by `force=True`
+    (`branch_pointer.TERMINAL_STATUSES` deliberately excludes it).
+    NOC-REMEDIATE[integrated-worktree-live-reconcile]: once the worktree
+    directory is LATER removed by any means, this pointer stays at
+    `integrated-worktree-live` until an explicit re-heal — cleanup is never
+    blocked forever in practice (`cleanup_stale_worktrees`/`mole`'s own
+    PHANTOM path removes the git worktree registration once the directory is
+    gone, independent of pointer status), but the ledger value itself is not
+    auto-promoted back to `shipped` by this pass. A future sweep enhancement
+    can close that residual ledger-hygiene gap.
 
     Writes each flip with `push_dev=False`; the caller's `deliver_trailing_ledgers`
     step (which already lists `branch-tree.ndjson` + its mirror) delivers them in
@@ -247,6 +272,17 @@ def _autoheal_branch_pointers(repo_root: Path) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         return {"healed": [], "skipped_unproven": [], "errors": [f"query failed: {e}"[:200]]}
 
+    # branch -> worktree path, from the SAME `.claude/worktrees` registration
+    # `_worktree_branches` already parses elsewhere in this module — no second
+    # `git worktree list --porcelain` parser invented here. Best-effort: a
+    # resolution failure must never block the heal loop itself.
+    try:
+        branch_to_worktree = {
+            branch: path for (_slug, branch, path) in _worktree_branches(repo_root)
+        }
+    except Exception:  # noqa: BLE001
+        branch_to_worktree = {}
+
     for row in candidates:
         branch = row.get("branch", "")
         commit = (row.get("commit") or "").strip()
@@ -264,14 +300,26 @@ def _autoheal_branch_pointers(repo_root: Path) -> dict[str, Any]:
                 if not branch_exists:
                     skipped_unproven.append(branch)
                 continue
+
+            wt_path = branch_to_worktree.get(branch)
+            worktree_live = wt_path is not None and wt_path.is_dir()
+            if worktree_live:
+                new_status = "integrated-worktree-live"
+                reason = (
+                    f"{reason}; worktree directory {wt_path} still exists — "
+                    "NOT flipped to a terminal status (2026-09-17 fix)"
+                )
+            else:
+                new_status = "shipped"
+
             res = bp.update(
                 branch=branch,
-                status="shipped",
+                status=new_status,
                 notes=f"auto-healed by session_end_sweep: {reason}",
                 push_dev=False,
             )
             if res.get("ok"):
-                healed.append({"branch": branch, "reason": reason})
+                healed.append({"branch": branch, "reason": reason, "status": new_status})
             else:
                 errors.append(f"{branch}: {res.get('error', 'update failed')}"[:200])
         except Exception as e:  # noqa: BLE001

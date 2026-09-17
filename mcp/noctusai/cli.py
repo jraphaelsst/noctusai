@@ -375,7 +375,7 @@ def main():
     parser.add_argument("--bp-agent", metavar="AGENT", dest="bp_agent", help="With --branch-pointer-append/query: claude-tree node label.")
     parser.add_argument("--bp-parent", metavar="PARENT", dest="bp_parent", help="With --branch-pointer-append: who dispatched this (claude parent edge).")
     parser.add_argument("--bp-paths", metavar="PATH", nargs="+", dest="bp_paths", help="With --branch-pointer-append/update/query: collision-zone paths (or changed-file list for --branch-pointer-cache-exempt).")
-    parser.add_argument("--bp-status", metavar="STATUS", dest="bp_status", help="With --branch-pointer-append/update/query: on_going|shipped|blocked|canceled|stale|deferred.")
+    parser.add_argument("--bp-status", metavar="STATUS", dest="bp_status", help="With --branch-pointer-append/update/query: on_going|shipped|blocked|canceled|stale|deferred|integrated-worktree-live (branch landed but its worktree dir still exists — non-terminal, still blocks removal).")
     parser.add_argument("--bp-brief", metavar="TEXT", dest="bp_brief", help="With --branch-pointer-append/update: one-liner commit/branch description.")
     parser.add_argument("--bp-notes", metavar="TEXT", dest="bp_notes", help="With --branch-pointer-append/update: durable annotations / inter-agent comms.")
     parser.add_argument("--bp-worktree", metavar="PATH", dest="bp_worktree", help="With --branch-pointer-append: worktree path (or null).")
