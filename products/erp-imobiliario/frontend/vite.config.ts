@@ -1,5 +1,4 @@
 import { createViteConfig } from "../../../seed/framework/frontend/vite.config.factory";
-import { componentTagger } from "lovable-tagger";
 import { VitePWA } from "vite-plugin-pwa";
 
 // ── Service worker: RETIREMENT (self-destroying) ────────────────────────────
@@ -24,7 +23,6 @@ export default createViteConfig({
   extend: (config) => {
     config.plugins = [
       ...(config.plugins || []),
-      componentTagger(),
       VitePWA({
         selfDestroying: true,
       }),
