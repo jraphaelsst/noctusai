@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, Repeat, Megaphone } from "lucide-react";
+import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, Repeat, Megaphone, Settings2 } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -49,6 +49,16 @@ const Assinar = lazy(() => import("@/pages/Assinar"));
 const WhatsApp = lazy(() => import("@/pages/WhatsApp"));
 const Sincronizacao = lazy(() => import("@/pages/whatsapp/Sincronizacao"));
 const Transmissoes = lazy(() => import("@/pages/whatsapp/Transmissoes"));
+// Admin-only, not in NAV_GROUPS (linked from WhatsApp.tsx's own banner,
+// same seam as a detail route next to its list — no status_pagina row
+// needed since it's unreachable from nav).
+const WhatsAppConexoes = lazy(() => import("@/pages/whatsapp/Conexoes"));
+
+// Configurações — admin-only "Chaves de API" (community shares
+// social-wiring's mechanism for provider credentials). Nav entry visible
+// to all members (status_pagina row, migration 010); content is
+// in-page admin-gated (see Configuracoes.tsx).
+const Configuracoes = lazy(() => import("@/pages/Configuracoes"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -68,6 +78,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone, route: "whatsapp-transmissoes" },
       { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+      { name: "Configurações", href: "/configuracoes", icon: Settings2, route: "configuracoes" },
     ],
   },
 ];
@@ -89,6 +100,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone },
       { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
+      { name: "Configurações", href: "/configuracoes", icon: Settings2 },
     ],
   },
 ];
@@ -112,8 +124,10 @@ export default createProductApp({
     { path: "/whatsapp", component: WhatsApp },
     { path: "/whatsapp/sincronizacao", component: Sincronizacao },
     { path: "/whatsapp/transmissoes", component: Transmissoes },
+    { path: "/whatsapp/conexoes", component: WhatsAppConexoes },
     { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
+    { path: "/configuracoes", component: Configuracoes },
   ],
   Layout,
   ...infra.appConfig,

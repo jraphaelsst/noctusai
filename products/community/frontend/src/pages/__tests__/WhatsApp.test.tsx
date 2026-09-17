@@ -186,6 +186,30 @@ describe("WhatsApp — invite link role gating (D3)", () => {
   });
 });
 
+describe("WhatsApp — Conexões link banner (community-fe-apikeys-conexoes slice)", () => {
+  it("admin: sees the honest banner + link to /whatsapp/conexoes", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "admin" } } });
+    mockRoutes();
+    const { default: WhatsApp } = await import("../WhatsApp");
+    renderPage(<WhatsApp />);
+
+    await waitFor(() => expect(screen.getByTestId("whatsapp-conexoes-link-banner")).toBeInTheDocument());
+    expect(screen.getByTestId("whatsapp-conexoes-link-banner")).toHaveTextContent("Integração futura");
+    fireEvent.click(screen.getByTestId("whatsapp-conexoes-link"));
+    expect(mockNavigate).toHaveBeenCalledWith("/whatsapp/conexoes");
+  });
+
+  it("moderador: the Conexões link banner is ABSENT from the DOM, not merely hidden", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "moderador" } } });
+    mockRoutes();
+    const { default: WhatsApp } = await import("../WhatsApp");
+    renderPage(<WhatsApp />);
+
+    await waitFor(() => expect(screen.getByTestId("grupo-row-g-1")).toBeInTheDocument());
+    expect(screen.queryByTestId("whatsapp-conexoes-link-banner")).not.toBeInTheDocument();
+  });
+});
+
 describe("WhatsApp — errors", () => {
   it("renders the server's detail verbatim on a groups-list failure", async () => {
     const { ApiError } = await import("@noctusai/lib");

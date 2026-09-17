@@ -17,6 +17,14 @@
  *
  * Two loading signals, never `isLoading`:
  * `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`.
+ *
+ * Admin-only banner below the session banner links to `/whatsapp/conexoes`
+ * (`Conexoes.tsx`, not in nav) — the new, separate multi-line WAHA
+ * connection admin surface (`createWhatsAppConnectionsHooks` +
+ * `<WhatsAppConnectionsPage/>`, `@noctusai/lib/components`). Distinct from
+ * THIS page's own group-sync session above: WhatsApp is not connected
+ * through the new page yet (2026-09-17 user decision) — the banner and the
+ * new page say so honestly, in the same words.
  */
 import { useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
@@ -157,6 +165,27 @@ export default function WhatsApp() {
       </div>
 
       <SessionBanner />
+
+      {isAdmin && (
+        <div
+          className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/40 bg-amber-400/10 p-4"
+          data-testid="whatsapp-conexoes-link-banner"
+        >
+          <p className="text-sm text-foreground">
+            Integração futura — o WhatsApp ainda não está conectado a este produto pela nova área de
+            Conexões. A conexão será feita numa próxima etapa.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => navigate("/whatsapp/conexoes")}
+            data-testid="whatsapp-conexoes-link"
+          >
+            Ver Conexões WhatsApp
+          </Button>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filtro de grupos">
         <Button variant={ativoFiltro === "todos" ? "primary" : "outline"} size="sm" onClick={() => setAtivoFiltro("todos")}>
