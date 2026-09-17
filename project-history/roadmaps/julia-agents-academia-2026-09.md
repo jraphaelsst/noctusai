@@ -47,7 +47,7 @@ The decision log keeps every step.
   - KB / Decisions / Questions / Roadmap UI showing real data.
   - `mcp/academia` rebuilt as an HTTP client.
 
-  ⬜ built and tested; the sibling-history import into prod has not run yet (bundle stays outside the repo).
+  ✅ reached 2026-09-17. The sibling history was imported into prod for org `6dd73140…` and verified: 72 revisions (the bundle's per-entity count), 63 entities, a replay added 0 rows, and head state equals a same-bundle import into the fake store. The bundle stayed outside the repo.
 - **M3: seed uplift**
   - Product-token resolver + `require_scopes` + audit + expiry (N=3).
   - ChatWindow streaming / tool-card / approval seams.
@@ -64,15 +64,15 @@ The decision log keeps every step.
 
   ✅ reached 2026-09-16 (§E.11 isolation merged; SEC-C real-image proof 82/82, CI job green on amd64).
 - **M5: social-wiring toggle API** — a scoped product-token endpoint that flips One Chat's existing auto-reply flag, with audit; no other change to the live product. Ships alone, behind `predeploy_check`. ✅ reached 2026-09-16 (bridge route on the prod tip `7e5f5ad6`, running in prod).
-- **M6: prod promote** — ✅ authorized 2026-09-16 by the user in-session (consent records `cd4508d7`, `9747db4f`); cutover in progress, the live checks below are still owed.
-  - `academia-de-reciclagem` and `agents` public behind SSO.
-  - Knowledge imported.
-  - Julia usable in the browser.
-  - One Chat toggle works from Agents.
-  - `deploy_verify` + `spa_smoke` + `sso_cors_smoke` green.
-  - Needs explicit user consent per slug.
+- **M6: prod promote** — authorized 2026-09-16 by the user in-session (consent records `cd4508d7`, `9747db4f`).
+  - ✅ `academia-de-reciclagem` and `agents` public behind SSO (200 on shell/health, 401 unauthenticated, SSO preflight passes).
+  - ✅ Knowledge imported (M2, 2026-09-17).
+  - ⬜ Julia usable in the browser — not yet exercised end-to-end by a signed-in user.
+  - ⬜ One Chat toggle works from Agents — the scoped bridge answers from inside the agents container; the UI round-trip is unverified.
+  - ✅ `deploy_verify` green (prod `f2b516a5`). `spa_smoke` / `sso_cors_smoke` cannot target short hosts, so the same checks were run by hand with curl.
+  - ✅ Explicit user consent per slug.
 
-  ⬜
+  ⬜ live; two browser checks owed.
 
 ## Trigger conditions (the "when")
 
@@ -413,6 +413,13 @@ The decision log keeps every step.
     - `JULIA_ANTHROPIC_API_KEY`. The user asked to reuse the existing Anthropic key instead of a dedicated one (a deviation from §E.5), but no Anthropic key was found on the VPS, in the local `.env` files, or in the DB credential tables.
     - The sibling-history import (M2) and the G checks.
   - **Tool drift (wrong-tree family, N≥5):** `tunnel_config check` and `migrate_product` read the MCP server's stale primary checkout. The first reported `in_sync` while the live tunnel lacked both hosts; the second listed no agents `009`. Both were re-run pinned to a dev-tip tree. `spa_smoke` and `sso_cors_smoke` derive hosts from the slug pattern, so they cannot check a short-name host such as `academia`.
+
+- **2026-09-17 (M2 import)**:
+  - **Two defects blocked the import, both fixed at the root:**
+    - The seed secret scanner flagged a lowercase code path (`backend/app/services/agent_runner`) in the sibling's `docs/SPEC.md` as a high-entropy token, so both the export and the prod importer refused the bundle. Fixed in `secrets_scan` (`dc0b0d7f`); a security review then closed a hex-after-`/` false negative the fix had opened, and named the real Stripe key prefixes (`0409dd7f`).
+    - An untitled `## 2026-09-12` TIMELINE section mapped to `titulo=NULL`, and the RPC rolled the whole import back (23502, 0 rows). It now takes its title from the section's first line (`d02c9b7d`).
+  - **Fake-vs-real drift, twice:** the fake store accepted NULLs Postgres refuses, and duplicated timeline events because it compared a date string with a `date`. Both are fixed (`d02c9b7d`, `04b6a15a`), with regression tests.
+  - **How it ran:** an agent ran `run_import` inside the prod container for org `6dd73140…` as the platform owner. `POST /api/import` only accepts a signed-in admin, and the user asked the agent to execute. The container's rootfs is read-only, so the bundle went in over stdin.
 
 ## Retrospective (filled at first trigger fire)
 
