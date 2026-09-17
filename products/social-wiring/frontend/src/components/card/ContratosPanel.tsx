@@ -27,21 +27,46 @@
  * `useDefinirContratoAtos` all live behind it — and a `card/**` file may not
  * call those hooks directly. The caller supplies `MatriculaAtosContainer`
  * (in `components/`, not `components/card/`) through this callback instead.
+ *
+ * 🔴 ASSINATURA DIGITAL (signature-integration-CONTRACT §4)
+ * -----------------------------------------------------------
+ * `assinaturas` is a lookup by `contrato.id`, fetched by `ContratosContainer`
+ * (`useAssinaturas`) — same S3 discipline as everything above. Two DIFFERENT
+ * existence checks read it, on purpose (see `envelopeVivo`'s docblock in
+ * `useContratos.ts`):
+ *   - "Enviar para assinatura" shows only on a `gerado` current version AND
+ *     only while there is no LIVE envelope (`pendente`/`parcial`) — a
+ *     cancelled/expired one may be superseded by a fresh send.
+ *   - the status `<Select/>` is disabled the moment ANY envelope exists at
+ *     all, live or not — the manual `enviado_assinatura`/`assinado` picks are
+ *     retired for good once a contract enters this flow.
+ * The "Enviar para assinatura" DIALOG itself (`EnviarAssinaturaDialog`) is
+ * mounted by `ContratosContainer`, not here — it needs compradores/vendedores/
+ * testemunhas data this presentational file must not fetch; this panel only
+ * calls `onAbrirEnvioAssinatura` to open it. "Cancelar envio" is a plain
+ * motivo dialog (`_CancelarEnvioDialog` below) since it needs no such data —
+ * same reasoning as `excluirContrato`'s `window.prompt`, but with a length
+ * gate (§3.3: 3..500 chars) a bare `prompt()` cannot express well.
  */
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
 import {
   AlertCircle,
+  CheckCircle2,
   ChevronDown,
+  Clock3,
   Download,
+  ExternalLink,
   Eye,
   FileText,
   Loader2,
   Plus,
   RefreshCw,
+  Send,
   Sparkles,
   Trash2,
   Upload,
+  XCircle,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +77,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -61,13 +94,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 
-import type { ContratoOut, ContratoStatus, VersaoOut } from "@/hooks/useContratos";
+import type {
+  AssinaturaEntry,
+  AssinaturaOut,
+  ContratoOut,
+  ContratoStatus,
+  VersaoOut,
+} from "@/hooks/useContratos";
 import {
   CONTRATO_ACCEPT_ATTR,
   CONTRATO_STATUS_OPTIONS,
   MODELO_LABEL,
+  STATUS_ASSINATURA_LABEL,
   STATUS_LABEL,
+  envelopeVivo,
   formatBytes,
   validateContratoFile,
 } from "@/hooks/useContratos";
@@ -120,6 +162,16 @@ interface Props {
    *  by this callback being invoked at all. Same optional-omission discipline
    *  as `renderMatriculaAtos`. */
   renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
+  /** `contrato.id` → its `useAssinaturas` entry. A missing key means "never
+   *  eligible" (no `gerado` version ever existed) and reads the same as a
+   *  resolved `data: null` — see `_AssinaturaSection`. */
+  assinaturas?: Record<string, AssinaturaEntry>;
+  /** Opens `EnviarAssinaturaDialog` (mounted by the caller) for this contract
+   *  + version. Optional — the button is omitted while not wired, same
+   *  discipline as `onGerarContrato`. */
+  onAbrirEnvioAssinatura?: (contratoId: string, versaoId: string) => void;
+  onCancelarAssinatura?: (contratoId: string, motivo: string) => void;
+  cancelandoAssinaturaContratoId?: string | null;
 }
 
 export default function ContratosPanel({
@@ -147,6 +199,10 @@ export default function ContratosPanel({
   onDownload,
   renderMatriculaAtos,
   renderGeradorContrato,
+  assinaturas = {},
+  onAbrirEnvioAssinatura,
+  onCancelarAssinatura,
+  cancelandoAssinaturaContratoId,
 }: Props) {
   const lista = contratos ?? [];
 
@@ -237,6 +293,18 @@ export default function ContratosPanel({
               renderMatriculaAtos={renderMatriculaAtos}
               renderGeradorContrato={renderGeradorContrato}
               recemIniciado={contratoIniciadoId === contrato.id}
+              assinaturaEntry={assinaturas[contrato.id]}
+              onAbrirEnvioAssinatura={
+                onAbrirEnvioAssinatura
+                  ? (versaoId) => onAbrirEnvioAssinatura(contrato.id, versaoId)
+                  : undefined
+              }
+              onCancelarAssinatura={
+                onCancelarAssinatura
+                  ? (motivo) => onCancelarAssinatura(contrato.id, motivo)
+                  : undefined
+              }
+              cancelandoAssinatura={cancelandoAssinaturaContratoId === contrato.id}
             />
           ))}
         </div>
@@ -262,6 +330,10 @@ function ContratoCard({
   renderMatriculaAtos,
   renderGeradorContrato,
   recemIniciado = false,
+  assinaturaEntry,
+  onAbrirEnvioAssinatura,
+  onCancelarAssinatura,
+  cancelandoAssinatura = false,
 }: {
   contrato: ContratoOut;
   addingVersao: boolean;
@@ -282,6 +354,12 @@ function ContratoCard({
   renderMatriculaAtos?: (contratoId: string) => ReactNode;
   renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
   recemIniciado?: boolean;
+  /** This contract's `useAssinaturas` entry — `undefined` when the contract
+   *  was never eligible (no `gerado` version ever existed). */
+  assinaturaEntry?: AssinaturaEntry;
+  onAbrirEnvioAssinatura?: (versaoId: string) => void;
+  onCancelarAssinatura?: (motivo: string) => void;
+  cancelandoAssinatura?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -321,6 +399,14 @@ function ContratoCard({
   const versoesOrdenadas = [...contrato.versoes].sort((a, b) => b.numero - a.numero);
   const gerado = contrato.origem === "gerado";
   const soUmaVersao = contrato.versoes.length <= 1;
+  // 🔴 "does an envelope exist AT ALL" — deliberately NOT `envelopeVivo`. See
+  // this file's header note: the status select is retired for good the
+  // moment a contract enters the signature flow, live or not. Reads
+  // `!= null` on `.data`, not on the entry itself: while unresolved
+  // (`data === undefined`) the select stays enabled — disabling it on a
+  // guess would be the same lying-loading-state shape `showSkeleton`/
+  // `isRefreshing` exist to avoid.
+  const envelopeExiste = assinaturaEntry?.data != null;
 
   function handleArquivo(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -365,25 +451,35 @@ function ContratoCard({
                 Gerado automaticamente
               </Badge>
             )}
-            <Select
-              value={contrato.status}
-              onValueChange={(v) => onPatchStatus(v as ContratoStatus)}
-              disabled={patching}
-            >
-              <SelectTrigger
-                className="h-8 w-[200px]"
-                data-testid={`contrato-status-${contrato.id}`}
+            <div className="flex flex-col items-end gap-0.5">
+              <Select
+                value={contrato.status}
+                onValueChange={(v) => onPatchStatus(v as ContratoStatus)}
+                disabled={patching || envelopeExiste}
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CONTRATO_STATUS_OPTIONS.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {STATUS_LABEL[s]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                <SelectTrigger
+                  className="h-8 w-[200px]"
+                  data-testid={`contrato-status-${contrato.id}`}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CONTRATO_STATUS_OPTIONS.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {STATUS_LABEL[s]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {envelopeExiste && (
+                <p
+                  className="text-[10px] text-muted-foreground"
+                  data-testid={`contrato-status-assinatura-hint-${contrato.id}`}
+                >
+                  definido pela plataforma de assinatura
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -398,6 +494,17 @@ function ContratoCard({
           />
         ) : (
           <p className="text-xs text-muted-foreground">Sem versão enviada.</p>
+        )}
+
+        {atual && (
+          <_AssinaturaSection
+            contratoId={contrato.id}
+            versao={atual}
+            entry={assinaturaEntry}
+            onAbrirEnvio={onAbrirEnvioAssinatura}
+            onCancelar={onCancelarAssinatura}
+            cancelando={cancelandoAssinatura}
+          />
         )}
 
         <div
@@ -604,6 +711,16 @@ function _VersaoAtualRow({
         {versao.origem === "gerado" && (
           <p className="text-[10px] text-muted-foreground">Gerado automaticamente</p>
         )}
+        {versao.origem === "assinado" && (
+          <Badge
+            variant="secondary"
+            className="gap-1 text-[10px]"
+            data-testid={`contrato-assinado-${contratoId}`}
+          >
+            <CheckCircle2 className="h-3 w-3" />
+            Assinado
+          </Badge>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <Button
@@ -680,6 +797,14 @@ function VersaoRow({
           {versao.origem === "gerado" && (
             <span className="ml-1.5 text-muted-foreground">(gerado automaticamente)</span>
           )}
+          {versao.origem === "assinado" && (
+            <span
+              className="ml-1.5 text-muted-foreground"
+              data-testid={`contrato-versao-assinado-${versao.id}`}
+            >
+              (Assinado)
+            </span>
+          )}
         </p>
         <p className="truncate text-muted-foreground">
           {versao.nome_original} · {formatBytes(versao.tamanho_bytes)}
@@ -728,5 +853,196 @@ function VersaoRow({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * `_AssinaturaSection` — the envelope's own row (signature-integration-CONTRACT
+ * §4): either the "Enviar para assinatura" button, the pendente/parcial
+ * status block, or nothing at all once the envelope is `concluido` (the
+ * "Assinado" badge on the signed VERSION already covers that state — see
+ * `_VersaoAtualRow`/`VersaoRow`).
+ *
+ * 🔴 `envelopeVivo`, not bare truthiness — a `cancelado`/`expirado` envelope
+ * still lets "Enviar para assinatura" show again (§3.2's migration note: "a
+ * cancelled/expired one may be superseded").
+ *
+ * 🔴 WHILE `entry.data` IS UNRESOLVED (`isPending && data === undefined`)
+ * THIS RENDERS NOTHING — never the button, never the status block. Reading
+ * `undefined` as "no envelope" would flash "Enviar para assinatura" on a
+ * contract that already has a live one, the exact lying-loading-state shape
+ * `KB § PATTERNS/frontend/lying-loading-state.md` exists to rule out.
+ */
+function _AssinaturaSection({
+  contratoId,
+  versao,
+  entry,
+  onAbrirEnvio,
+  onCancelar,
+  cancelando = false,
+}: {
+  contratoId: string;
+  versao: VersaoOut;
+  entry?: AssinaturaEntry;
+  onAbrirEnvio?: (versaoId: string) => void;
+  onCancelar?: (motivo: string) => void;
+  cancelando?: boolean;
+}) {
+  const [cancelarAberto, setCancelarAberto] = useState(false);
+  const carregando = !!entry && entry.isPending && entry.data === undefined;
+
+  if (carregando) {
+    return (
+      <p
+        className="flex items-center gap-1.5 text-xs text-muted-foreground"
+        data-testid={`contrato-assinatura-carregando-${contratoId}`}
+      >
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Verificando status de assinatura…
+      </p>
+    );
+  }
+
+  const assinatura = entry?.data;
+  const vivo = envelopeVivo(assinatura);
+
+  if (!vivo) {
+    if (versao.origem !== "gerado" || !onAbrirEnvio) return null;
+    return (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => onAbrirEnvio(versao.id)}
+        data-testid={`contrato-enviar-assinatura-${contratoId}`}
+      >
+        <Send className="mr-1.5 h-3.5 w-3.5" />
+        Enviar para assinatura
+      </Button>
+    );
+  }
+
+  // `vivo` implies `assinatura` is set (see `envelopeVivo`).
+  const envelope = assinatura as AssinaturaOut;
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-2 rounded-md border p-2.5"
+      data-testid={`contrato-assinatura-status-${contratoId}`}
+    >
+      <Badge
+        variant="secondary"
+        className="gap-1 text-[11px]"
+        data-testid={`contrato-assinatura-chip-${contratoId}`}
+      >
+        <Clock3 className="h-3 w-3" />
+        {STATUS_ASSINATURA_LABEL[envelope.status]}
+      </Badge>
+      <a
+        href={envelope.link_assinatura}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+        data-testid={`contrato-abrir-provedor-${contratoId}`}
+      >
+        Abrir no {envelope.provedor}
+        <ExternalLink className="h-3 w-3" />
+      </a>
+      {onCancelar && (
+        <>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="text-destructive hover:text-destructive"
+            disabled={cancelando}
+            onClick={() => setCancelarAberto(true)}
+            data-testid={`contrato-cancelar-envio-${contratoId}`}
+          >
+            {cancelando ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <XCircle className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            Cancelar envio
+          </Button>
+          <_CancelarEnvioDialog
+            open={cancelarAberto}
+            onOpenChange={setCancelarAberto}
+            onConfirmar={(motivo) => {
+              onCancelar(motivo);
+              setCancelarAberto(false);
+            }}
+            enviando={cancelando}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+const MOTIVO_CANCELAMENTO_MIN = 3;
+const MOTIVO_CANCELAMENTO_MAX = 500;
+
+/**
+ * `_CancelarEnvioDialog` — §3.3's motivo, 3..500 chars. A plain `Dialog`
+ * (not lifted to `ClienteDetailModal`) rather than `window.prompt`: unlike
+ * `excluirContrato`'s prompt, this needs live length feedback a bare
+ * `prompt()` cannot give — see this file's header note on the "sibling
+ * dialog" discipline not applying here (no partes/testemunhas data needed).
+ */
+function _CancelarEnvioDialog({
+  open,
+  onOpenChange,
+  onConfirmar,
+  enviando,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirmar: (motivo: string) => void;
+  enviando: boolean;
+}) {
+  const [motivo, setMotivo] = useState("");
+
+  useEffect(() => {
+    if (!open) setMotivo("");
+  }, [open]);
+
+  const motivoValido =
+    motivo.trim().length >= MOTIVO_CANCELAMENTO_MIN &&
+    motivo.trim().length <= MOTIVO_CANCELAMENTO_MAX;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent data-testid="cancelar-envio-dialog">
+        <DialogHeader>
+          <DialogTitle>Cancelar envio para assinatura</DialogTitle>
+          <DialogDescription>
+            Explique por que este envio está sendo cancelado (3 a 500 caracteres).
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea
+          value={motivo}
+          maxLength={MOTIVO_CANCELAMENTO_MAX}
+          onChange={(e) => setMotivo(e.target.value)}
+          placeholder="Motivo do cancelamento"
+          data-testid="cancelar-envio-motivo"
+        />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={enviando}>
+            Voltar
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={!motivoValido || enviando}
+            onClick={() => onConfirmar(motivo.trim())}
+            data-testid="cancelar-envio-confirmar"
+          >
+            {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Cancelar envio
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -43,7 +43,7 @@ vi.mock("@/components/ui/select", async () => {
 });
 
 import ContratosPanel from "./ContratosPanel";
-import type { ContratoOut, VersaoOut } from "@/hooks/useContratos";
+import type { AssinaturaEntry, AssinaturaOut, ContratoOut, VersaoOut } from "@/hooks/useContratos";
 
 function versao(over: Partial<VersaoOut> = {}): VersaoOut {
   return {
@@ -539,5 +539,135 @@ describe("data de assinatura e prazo de pendências (migration 114)", () => {
       "c1",
       expect.objectContaining({ prazo_pendencias_dias: null }),
     );
+  });
+});
+
+describe("assinatura digital (signature-integration-CONTRACT §4)", () => {
+  function envelope(over: Partial<AssinaturaOut> = {}): AssinaturaOut {
+    return {
+      assinatura_id: "as1",
+      external_id: "ext1",
+      link_assinatura: "https://d4sign.example/ext1",
+      provedor: "d4sign",
+      status: "pendente",
+      signatarios: [],
+      enviado_em: "2026-09-17T20:00:00Z",
+      ...over,
+    };
+  }
+
+  function entry(over: Partial<AssinaturaEntry> = {}): AssinaturaEntry {
+    return { data: null, isPending: false, isFetching: false, isError: false, ...over };
+  }
+
+  it("🔴 'Enviar para assinatura' shows ONLY on a gerado current version with no envelope", async () => {
+    const onAbrirEnvioAssinatura = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v1", origem: "gerado" }) })],
+      assinaturas: { c1: entry({ data: null }) },
+      onAbrirEnvioAssinatura,
+    });
+    fireEvent.click(screen.getByTestId("contrato-enviar-assinatura-c1"));
+    expect(onAbrirEnvioAssinatura).toHaveBeenCalledWith("c1", "v1");
+  });
+
+  it("🔴 hides 'Enviar para assinatura' on an UPLOADED current version", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v1", origem: "upload" }) })],
+      assinaturas: { c1: entry({ data: null }) },
+      onAbrirEnvioAssinatura: vi.fn(),
+    });
+    expect(screen.queryByTestId("contrato-enviar-assinatura-c1")).toBeNull();
+  });
+
+  it("🔴 hides 'Enviar para assinatura' while a LIVE envelope exists, shows the status block instead", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v1", origem: "gerado" }) })],
+      assinaturas: { c1: entry({ data: envelope({ status: "pendente" }) }) },
+      onAbrirEnvioAssinatura: vi.fn(),
+    });
+    expect(screen.queryByTestId("contrato-enviar-assinatura-c1")).toBeNull();
+    expect(screen.getByTestId("contrato-assinatura-status-c1")).toBeTruthy();
+    expect(screen.getByTestId("contrato-assinatura-chip-c1").textContent).toContain("Pendente");
+    const link = screen.getByTestId("contrato-abrir-provedor-c1") as HTMLAnchorElement;
+    expect(link.textContent).toContain("Abrir no d4sign");
+    expect(link.href).toContain("https://d4sign.example/ext1");
+  });
+
+  it("🔴 a CANCELLED envelope lets 'Enviar para assinatura' show again (superseded, not permanently blocked)", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v1", origem: "gerado" }) })],
+      assinaturas: { c1: entry({ data: envelope({ status: "cancelado" }) }) },
+      onAbrirEnvioAssinatura: vi.fn(),
+    });
+    expect(screen.getByTestId("contrato-enviar-assinatura-c1")).toBeTruthy();
+    expect(screen.queryByTestId("contrato-assinatura-status-c1")).toBeNull();
+  });
+
+  it("🔴 shows nothing while the assinatura status is still unresolved — never guesses from `undefined`", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v1", origem: "gerado" }) })],
+      assinaturas: { c1: entry({ data: undefined, isPending: true }) },
+      onAbrirEnvioAssinatura: vi.fn(),
+    });
+    expect(screen.queryByTestId("contrato-enviar-assinatura-c1")).toBeNull();
+    expect(screen.queryByTestId("contrato-assinatura-status-c1")).toBeNull();
+    expect(screen.getByTestId("contrato-assinatura-carregando-c1")).toBeTruthy();
+  });
+
+  it("🔴 the status select is DISABLED once ANY envelope exists — even a concluído/cancelado one", async () => {
+    const { screen } = await render({
+      contratos: [contrato()],
+      assinaturas: { c1: entry({ data: envelope({ status: "concluido" }) }) },
+    });
+    const trigger = screen.getByTestId("contrato-status-c1");
+    expect(trigger.parentElement?.getAttribute("data-disabled")).toBe("true");
+    expect(screen.getByTestId("contrato-status-assinatura-hint-c1").textContent).toContain(
+      "definido pela plataforma de assinatura",
+    );
+  });
+
+  it("the status select stays ENABLED while there has never been an envelope", async () => {
+    const { screen } = await render({
+      contratos: [contrato()],
+      assinaturas: { c1: entry({ data: null }) },
+    });
+    const trigger = screen.getByTestId("contrato-status-c1");
+    expect(trigger.parentElement?.getAttribute("data-disabled")).toBe("false");
+    expect(screen.queryByTestId("contrato-status-assinatura-hint-c1")).toBeNull();
+  });
+
+  it("🔴 'Cancelar envio' requires a motivo 3..500 chars before it calls back", async () => {
+    const onCancelarAssinatura = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v1", origem: "gerado" }) })],
+      assinaturas: { c1: entry({ data: envelope({ status: "parcial" }) }) },
+      onCancelarAssinatura,
+    });
+    fireEvent.click(screen.getByTestId("contrato-cancelar-envio-c1"));
+    const confirmar = screen.getByTestId("cancelar-envio-confirmar") as HTMLButtonElement;
+    expect(confirmar.disabled).toBe(true);
+
+    fireEvent.change(screen.getByTestId("cancelar-envio-motivo"), { target: { value: "ok" } });
+    expect(confirmar.disabled).toBe(true);
+
+    fireEvent.change(screen.getByTestId("cancelar-envio-motivo"), {
+      target: { value: "Cliente desistiu do negócio" },
+    });
+    expect(confirmar.disabled).toBe(false);
+    fireEvent.click(confirmar);
+    expect(onCancelarAssinatura).toHaveBeenCalledWith("c1", "Cliente desistiu do negócio");
+  });
+
+  it("🔴 a version with origem 'assinado' shows the Assinado badge, current and historic", async () => {
+    const v1 = versao({ id: "v1", numero: 1, origem: "gerado" });
+    const v2 = versao({ id: "v2", numero: 2, origem: "assinado" });
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ versao_atual: v2, versoes: [v1, v2] })],
+    });
+    expect(screen.getByTestId("contrato-assinado-c1").textContent).toContain("Assinado");
+    fireEvent.click(screen.getByTestId("contrato-historico-toggle-c1"));
+    expect(screen.getByTestId("contrato-versao-v2").textContent).toContain("Assinado");
+    expect(screen.getByTestId("contrato-versao-v1").textContent).not.toContain("(Assinado)");
   });
 });

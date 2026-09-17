@@ -13,7 +13,7 @@
  * `api` client (raw `fetch` + the auth header pulled from supabase), JSON
  * mutations go through `api`.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@noctusai/lib";
 import { api, supabase } from "@noctusai/seed/infra";
 
@@ -37,6 +37,14 @@ export type ContratoModelo =
 
 export type ContratoOrigem = "upload" | "gerado";
 
+/**
+ * §2's migration widens ONLY `atendimento_contrato_versoes.origem`'s CHECK,
+ * not the contract's own `ContratoOrigem` — a contract does not become
+ * "assinado" just because one of its versions did; `ContratoOut.origem` still
+ * only ever answers "did this contract start as an upload or a generation".
+ */
+export type VersaoOrigem = ContratoOrigem | "assinado";
+
 /** Who touched the record last — same shape as the financiamento actor. */
 export interface ContratoActor {
   id: string;
@@ -53,7 +61,7 @@ export interface VersaoOut {
   created_at: string;
   numero: number;
   rotulo: string | null;
-  origem: ContratoOrigem;
+  origem: VersaoOrigem;
   /** Migration 120. Only ever `true` on a `gerado` version — the editable
    *  .docx the ABNT PDF was rendered from, stored as a sibling artifact on
    *  the same row. Drives whether "Baixar .docx" renders at all. */
@@ -194,6 +202,130 @@ export class ContratoGeracaoError extends Error {
   }
 }
 
+// ─── Assinatura digital (signature-integration-CONTRACT §3) ───────────────
+// One provider today (D4Sign); the shapes below are §3's request/response
+// bodies verbatim. The webhook (§3.4) is backend-only — nothing here calls
+// it; the FE re-fetches `assinatura` after its own mutations and otherwise
+// treats OUR table as the source of truth, never the provider (§3.2: "never
+// calls the provider").
+
+export type PapelSignatario =
+  | "comprador"
+  | "vendedor"
+  | "testemunha"
+  | "interveniente"
+  | "intermediario";
+
+export type StatusAssinatura = "pendente" | "parcial" | "concluido" | "cancelado" | "expirado";
+
+export const PAPEL_SIGNATARIO_LABEL: Record<PapelSignatario, string> = {
+  comprador: "Comprador",
+  vendedor: "Vendedor",
+  testemunha: "Testemunha",
+  interveniente: "Interveniente",
+  intermediario: "Intermediário",
+};
+
+export const STATUS_ASSINATURA_LABEL: Record<StatusAssinatura, string> = {
+  pendente: "Pendente",
+  parcial: "Parcialmente assinado",
+  concluido: "Assinado",
+  cancelado: "Cancelado",
+  expirado: "Expirado",
+};
+
+/** §3.1 request row. The CPF must already be digits-only before this is
+ *  sent — the dialog normalizes it; this type does not re-validate it. */
+export interface SignatarioInput {
+  nome: string;
+  email: string;
+  cpf: string;
+  papel: PapelSignatario;
+  ordem?: number;
+}
+
+/** §3.1/§3.2 response row — one signer's progress. */
+export interface SignatarioRemoto {
+  email: string;
+  external_id: string;
+  assinado_em: string | null;
+}
+
+/**
+ * §3.1 201 / §3.2 200 body. `concluido_em`/`versao_assinada_id`/
+ * `cancelado_motivo` are only ever populated on the §3.2 GET (a fresh §3.1
+ * 201 is always `pendente`) — typed optional rather than split into two
+ * interfaces, same discipline as `ContratoOut.updated_at`.
+ */
+export interface AssinaturaOut {
+  assinatura_id: string;
+  external_id: string;
+  link_assinatura: string;
+  provedor: string;
+  status: StatusAssinatura;
+  signatarios: SignatarioRemoto[];
+  enviado_em: string;
+  concluido_em?: string | null;
+  versao_assinada_id?: string | null;
+  cancelado_motivo?: string | null;
+}
+
+export interface EnviarParaAssinaturaInput {
+  contratoId: string;
+  versaoId: string;
+  signatarios: SignatarioInput[];
+  /** <= 500 chars per §3.1; empty/omitted sends nothing. */
+  mensagem?: string;
+}
+
+export interface CancelarAssinaturaInput {
+  contratoId: string;
+  /** 3..500 chars per §3.3 — the caller validates before calling. */
+  motivo: string;
+}
+
+interface AssinaturaErrorDetails {
+  /** 422 `ASSINATURA_PROVEDOR_NAO_CONFIGURADO`: which credentials are missing. */
+  faltando?: string[];
+  /** 502 `ASSINATURA_PROVEDOR_ERRO`: the provider's own refusal text. */
+  provedor_mensagem?: string;
+}
+
+/**
+ * Thrown by `enviarParaAssinatura`/`cancelarAssinatura` on every non-2xx
+ * §3.1/§3.2/§3.3 response — `ContratoGeracaoError`'s sibling, the typed view
+ * of the seed `ApiError`'s `code` + `details` so a caller reads them without
+ * a second round trip. `message` is the server's own pt-BR sentence (§3.1's
+ * error table), never a hand-rolled copy that could drift from it.
+ */
+export class AssinaturaError extends Error {
+  readonly code: string;
+  readonly details: AssinaturaErrorDetails | null;
+  constructor(code: string, message: string, details: AssinaturaErrorDetails | null) {
+    super(message);
+    this.name = "AssinaturaError";
+    this.code = code;
+    this.details = details;
+    // Restore prototype chain, same discipline as the seed `ApiError`.
+    Object.setPrototypeOf(this, AssinaturaError.prototype);
+  }
+}
+
+/** `status in ('pendente','parcial')` — the ONE thing migration 134's partial
+ *  unique index enforces per contract. Everything in §4 that gates on "is
+ *  there a LIVE envelope" (hiding "Enviar para assinatura", showing the
+ *  pendente/parcial block + "Cancelar envio") reads this, never bare
+ *  truthiness — a `concluido`/`cancelado`/`expirado` row is still a real
+ *  `AssinaturaOut`, not `null`, and must not read as "still in flight". The
+ *  DISABLED-status-select rule is deliberately different: it reads "does an
+ *  envelope exist AT ALL" (`!!assinatura`), because the manual
+ *  `enviado_assinatura`/`assinado` picks are retired for good the moment a
+ *  contract enters this flow, not just while a send is in flight.
+ */
+export function envelopeVivo(assinatura: AssinaturaOut | null | undefined): boolean {
+  return assinatura?.status === "pendente" || assinatura?.status === "parcial";
+}
+
 export const STATUS_LABEL: Record<ContratoStatus, string> = {
   rascunho: "Rascunho",
   em_revisao: "Em revisão",
@@ -293,6 +425,75 @@ export function useContratoGeracao(
   });
 }
 
+const ASSINATURA_KEY = (clienteId: string, contratoId: string) =>
+  [...KEY(clienteId), contratoId, "assinatura"] as const;
+
+/**
+ * §3.2 GET, with the ONE translation the FE owns: a 404
+ * `ASSINATURA_NAO_ENCONTRADA` means "never sent" — the expected shape of "no
+ * data", not an error state — so it resolves to `null` rather than rejecting.
+ * Anything else (network, 5xx) is a real query error.
+ */
+async function fetchAssinatura(
+  clienteId: string,
+  contratoId: string,
+): Promise<AssinaturaOut | null> {
+  try {
+    return await api.get<AssinaturaOut>(
+      `${base(clienteId)}/${encodeURIComponent(contratoId)}/assinatura`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+export interface AssinaturaEntry {
+  /** `undefined` = not yet resolved. `null` = resolved, no envelope ever
+   *  sent. A value = the most recent envelope regardless of status — see
+   *  `envelopeVivo` for "is it live right now". */
+  data: AssinaturaOut | null | undefined;
+  isPending: boolean;
+  isFetching: boolean;
+  isError: boolean;
+}
+
+/**
+ * One §3.2 GET per contract that could ever have gone through the signature
+ * flow. The caller (`ContratosContainer`) passes only the ids whose
+ * `versoes` include an `origem: "gerado"` row — an upload-only contract
+ * never fires a request that can only ever 404.
+ *
+ * `useQueries`, not a `.map()` of `useQuery`: `contratoIds.length` changes
+ * across renders (a card can gain a generated version), and a variable
+ * number of `useQuery` calls breaks the rules of hooks.
+ */
+export function useAssinaturas(
+  clienteId: string | null,
+  contratoIds: string[],
+): Record<string, AssinaturaEntry> {
+  const results = useQueries({
+    queries: contratoIds.map((contratoId) => ({
+      queryKey: ASSINATURA_KEY(clienteId ?? "__none__", contratoId),
+      queryFn: () => fetchAssinatura(clienteId as string, contratoId),
+      enabled: !!clienteId,
+    })),
+  });
+  const byContrato: Record<string, AssinaturaEntry> = {};
+  contratoIds.forEach((contratoId, i) => {
+    const r = results[i] as
+      | { data?: AssinaturaOut | null; isPending?: boolean; isFetching?: boolean; isError?: boolean }
+      | undefined;
+    byContrato[contratoId] = {
+      data: r?.data,
+      isPending: !!r?.isPending,
+      isFetching: !!r?.isFetching,
+      isError: !!r?.isError,
+    };
+  });
+  return byContrato;
+}
+
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
 async function getAuthHeader(): Promise<Record<string, string>> {
@@ -359,6 +560,30 @@ async function postGerarContrato(
         err.code ?? "erro_desconhecido",
         envelope?.error?.message ?? err.message,
         (err.details as ContratoIncompletoDetails | null) ?? null,
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * POST through the seed `api` client, translating its `ApiError` into
+ * `AssinaturaError` so `enviarParaAssinatura`/`cancelarAssinatura` callers
+ * read `code`/`details.{faltando,provedor_mensagem}` from the §3.1/§3.3
+ * error bodies. `message` prefers the server's own `error.message` over
+ * `ApiError.message` — the latter carries the `[status]` prefix — same
+ * discipline as `postGerarContrato`.
+ */
+async function postAssinatura<T>(url: string, body: unknown): Promise<T> {
+  try {
+    return await api.post<T>(url, body);
+  } catch (err) {
+    if (err instanceof ApiError) {
+      const envelope = err.body as { error?: { message?: string } } | undefined;
+      throw new AssinaturaError(
+        err.code ?? "erro_desconhecido",
+        envelope?.error?.message ?? err.message,
+        (err.details as AssinaturaErrorDetails | null) ?? null,
       );
     }
     throw err;
@@ -502,5 +727,62 @@ export function useContratoMutations(clienteId: string) {
     },
   });
 
-  return { create, addVersao, patch, deleteVersao, deleteContrato, getUrl, gerar, iniciar };
+  /**
+   * `enviarParaAssinatura` — POST §3.1. Seeds the `assinatura` cache with the
+   * fresh 201 body (no need to wait on a refetch to show the pendente chip)
+   * and invalidates the contratos list: §3.1's side-effect 3 says
+   * `atendimento_contratos.status` is ALREADY `enviado_assinatura` when this
+   * returns — the FE never sets it itself.
+   */
+  const enviarParaAssinatura = useMutation({
+    mutationFn: ({ contratoId, versaoId, signatarios, mensagem }: EnviarParaAssinaturaInput) =>
+      postAssinatura<AssinaturaOut>(
+        `${base(clienteId)}/${encodeURIComponent(contratoId)}/assinatura`,
+        {
+          versao_id: versaoId,
+          signatarios: signatarios.map((s) => ({
+            nome: s.nome,
+            email: s.email,
+            cpf: s.cpf,
+            papel: s.papel,
+            ordem: s.ordem ?? 0,
+          })),
+          mensagem: mensagem?.trim() ? mensagem.trim() : undefined,
+        },
+      ),
+    onSuccess: (data, variables) => {
+      qc.setQueryData(ASSINATURA_KEY(clienteId, variables.contratoId), data);
+      invalidate();
+    },
+  });
+
+  /**
+   * `cancelarAssinatura` — POST §3.3. §3.3's state-after returns
+   * `atendimento_contratos.status` to `em_revisao` — same reason `invalidate`
+   * runs here as it does on `enviarParaAssinatura`.
+   */
+  const cancelarAssinatura = useMutation({
+    mutationFn: ({ contratoId, motivo }: CancelarAssinaturaInput) =>
+      postAssinatura<AssinaturaOut>(
+        `${base(clienteId)}/${encodeURIComponent(contratoId)}/assinatura/cancelar`,
+        { motivo },
+      ),
+    onSuccess: (data, variables) => {
+      qc.setQueryData(ASSINATURA_KEY(clienteId, variables.contratoId), data);
+      invalidate();
+    },
+  });
+
+  return {
+    create,
+    addVersao,
+    patch,
+    deleteVersao,
+    deleteContrato,
+    getUrl,
+    gerar,
+    iniciar,
+    enviarParaAssinatura,
+    cancelarAssinatura,
+  };
 }
