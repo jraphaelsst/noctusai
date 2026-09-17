@@ -63,6 +63,14 @@ Public surface:
 See `KB § PATTERNS/whatsapp-chatbot-seed.md` for the wiring recipe.
 """
 
+from noctusai_lib.integrations.whatsapp.connection_store import (
+    WhatsAppConnectionRecord,
+    WhatsAppConnectionStore,
+    WhatsAppConnectionStoreError,
+    build_whatsapp_connection_store,
+    resolve_by_webhook_token,
+    whatsapp_connections_table_ddl,
+)
 from noctusai_lib.integrations.whatsapp.client import (
     WahaClient,
     WahaGroupError,
@@ -223,6 +231,9 @@ __all__ = [
     "WahaPayloadError",
     "WebhookDedup",
     "WhatsAppClient",
+    "WhatsAppConnectionRecord",
+    "WhatsAppConnectionStore",
+    "WhatsAppConnectionStoreError",
     "WhatsAppGroupClient",
     "WhatsAppIgnoredEvent",
     "WhatsAppInboundMessage",
@@ -231,6 +242,7 @@ __all__ = [
     "WhatsAppSettings",
     "build_lids_map_from_list",
     "build_send_text_body",
+    "build_whatsapp_connection_store",
     "chat_id_for_phone",
     "create_whatsapp_webhook_router",
     "extract_resolved_remote",
@@ -247,7 +259,9 @@ __all__ = [
     "parse_waha_inbound_message",
     "phone_from_chat_id",
     "remember_lid_phone",
+    "resolve_by_webhook_token",
     "resolve_canonical_session",
     "resolve_identity",
     "rewrite_vendor_media_url",
+    "whatsapp_connections_table_ddl",
 ]

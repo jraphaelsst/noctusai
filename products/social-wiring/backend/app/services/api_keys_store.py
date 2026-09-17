@@ -1,3 +1,4 @@
+# NOC-REMEDIATE[sw-consume-seed-api-keys]: generic mechanism lifted to `noctusai_lib.security.api_keys` + `noctusai_seed.api_keys_router`; migrate this module to consume it — 2026-09-17
 """Org-scoped API keys — the write-in-the-UI, encrypted-at-rest seam.
 
 WHAT

@@ -402,13 +402,6 @@ def _build_scheduler_router(deps, settings, product_name: str, version: str) -> 
     return create_scheduler_router(deps)
 
 
-def _build_whatsapp_admin_router(deps, settings, product_name: str, version: str) -> APIRouter:
-    # Deferred import — keeps the WhatsApp connector import cost off the
-    # hot path for products without a WhatsApp chatbot.
-    from noctusai_seed.whatsapp_admin_router import create_whatsapp_admin_router
-    return create_whatsapp_admin_router(deps, settings)
-
-
 def _build_status_paginas_router(deps, settings, product_name: str, version: str) -> APIRouter:
     # Deferred import — mirrors the other `_build_*` factories; keeps the
     # module import off the hot path for products that opt out.
@@ -442,7 +435,6 @@ _STANDARD_ROUTERS = {
     "ai_outputs":   _build_ai_outputs_router,
     "ai_feedback":  _build_ai_feedback_router,
     "scheduler":    _build_scheduler_router,
-    "whatsapp_admin": _build_whatsapp_admin_router,
     "status_paginas": _build_status_paginas_router,
     "auth":           _build_auth_router,
 }

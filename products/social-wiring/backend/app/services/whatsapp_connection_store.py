@@ -1,3 +1,4 @@
+# NOC-REMEDIATE[sw-consume-seed-wa-connections]: generic mechanism lifted to `noctusai_lib.integrations.whatsapp.connection_store` + `noctusai_seed.whatsapp_connections_router`; migrate this module to consume it — 2026-09-17
 """Per-ORG WAHA connection store — multi-session "lines" with the API key
 Fernet-encrypted at rest.
 

@@ -130,6 +130,51 @@ composes both.
 | `InboundHandler` | The handler protocol the router invokes per inbound message |
 | `WhatsAppSettings` | Pydantic settings model |
 
+### Multi-session connection store (`whatsapp.connection_store`)
+| Symbol | Role |
+|---|---|
+| `WhatsAppConnectionRecord` | One connection "line" (id, org_id, user_id=creator provenance, label, base_url, session_name, webhook_url/token, `extra` extension dict) |
+| `WhatsAppConnectionStore` | CRUD over `<schema>.<table>` — field-level Fernet encryption of the API key. `record_extension=` hook folds product-specific columns into `.extra`; `extra_fields=` on `create_connection`/`update_connection` writes them |
+| `build_whatsapp_connection_store(client, *, encryption_key, schema, table=, record_extension=)` | Factory — validates `ENCRYPTION_KEY` loudly via `noctusai_lib.security.api_keys.require_fernet` (the SAME check the api-keys store uses) |
+| `resolve_by_webhook_token(store, token)` | Named seam for a product's own `POST .../webhook/{token}` handler — thin pass-through to `store.get_by_webhook_token`, kept as one call site for the "never log the token; unknown -> generic 404" contract |
+| `whatsapp_connections_table_ddl(schema, *, table=)` | DDL-template helper (org-scoped RLS + service-role bypass) — a product copies the emitted SQL into its own migration |
+| `WhatsAppConnectionStoreError` | Decrypt failure (`ENCRYPTION_KEY` mismatch / tampered ciphertext) — fail-loud, never a silent `None` |
+
+Lifted 2026-09-17 (`community uses social-wiring's mechanisms`, Slice A)
+from `social-wiring`'s `app/services/whatsapp_connection_store.py` — CORE
+columns only (org_id/user_id/label/base_url/session_name/
+encrypted_api_key/webhook_url/webhook_token). `social-wiring`'s own
+`auto_reply_enabled` / `authorized_numbers` / `bound_chats` / `marca_id`
+columns stay product-local, reachable via `record_extension`/
+`extra_fields` rather than this module growing product-specific columns.
+`social-wiring` itself is unmodified by this lift (see the
+`NOC-REMEDIATE[sw-consume-seed-wa-connections]` marker at the top of its
+store module — it migrates to consume this seam in a later slice).
+
+The paired FastAPI router factory —
+`noctusai_seed.whatsapp_connections_router.create_whatsapp_connections_router(deps, settings, *, store_factory, get_current_user_org, waha_base_url, resolve_webhook_base_url, ...)`
+— ships the full `social-wiring` `/api/whatsapp/connections` CRUD +
+live-WAHA-ops contract (list/create/update/delete, `/status`, `/qr`,
+`/start`, `/restart`, `/logout`, `/recover`, `/webhook`) over this store.
+It is NOT a `_STANDARD_ROUTERS` entry (product-specific parameters don't
+fit the fixed builder signature — same as `auth`'s direct-call path, see
+`CONTEXT/03-SEED-ARCHITECTURE.md § Standard routers`) and supersedes the
+removed single-session `whatsapp_admin` standard router. Chat inbox /
+message threads / SSE / auto-reply toggle stay product-specific (chatbot
+concerns, not a generic connection-management mechanism) — see § 5 Gaps.
+
+### Managed API keys (`noctusai_lib.security.api_keys` — sibling package)
+The org-scoped, operator-managed key store (`ApiKeySpec`/`ApiKeyOption`,
+`build_api_key_store`, `resolve_api_key`/`resolve_api_key_detail`,
+`make_local_credential_override`, `require_fernet`/
+`EncryptionNotConfigured`) that shares its Fernet-key contract with the
+connection store above lives in `noctusai_lib.security.api_keys`, not
+this package (it is provider-agnostic — OpenAI/Anthropic/Gemini/
+InfoSimples keys, not a WhatsApp concern). Paired router factory:
+`noctusai_seed.api_keys_router.create_api_keys_router(...)`. Lifted the
+same slice, from `social-wiring`'s `app/services/api_keys_store.py` +
+`app/services/credential_vault.py`.
+
 ---
 
 ## 2. Consume recipe
