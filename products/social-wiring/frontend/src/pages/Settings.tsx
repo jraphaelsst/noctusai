@@ -124,16 +124,33 @@ const ORG_WIDE = "__org__";
  * typed. Completeness is the document generator's problem, at the moment it
  * actually needs a value — not this form's.
  */
+// Fields the contract generator reads as numbers, not free text — kept as a
+// set so `campo`/`submit` can branch on it without listing the field twice.
+const IMOB_CAMPOS_NUMERICOS = new Set<keyof DadosImobiliariaPatch>([
+  "posse_multa_diaria",
+  "prazo_pendencias_padrao_dias",
+]);
+
 function DadosImobiliariaTab() {
   const query = useDadosImobiliaria();
   const salvar = useSalvarDadosImobiliaria();
-  const [draft, setDraft] = useState<DadosImobiliariaPatch>({});
+  // Every field edits as a STRING regardless of the field's saved type — a
+  // numeric field mid-edit (e.g. "12." while typing "12.5") is not yet a
+  // valid number, so holding it as text until submit avoids fighting the
+  // user's own keystrokes. `submit()` parses/validates before it ever
+  // reaches the payload.
+  const [draft, setDraft] = useState<Partial<Record<keyof DadosImobiliariaPatch, string>>>(
+    {},
+  );
 
   // Seeded from the server, and re-seeded when it changes underneath. Local
   // edits win while they exist: `draft` holds only the keys actually touched,
   // so a field nobody typed in reads straight from the record.
-  const valor = (k: keyof DadosImobiliariaPatch): string =>
-    (k in draft ? draft[k] : query.data?.[k]) ?? "";
+  const valor = (k: keyof DadosImobiliariaPatch): string => {
+    if (k in draft) return draft[k] ?? "";
+    const v = query.data?.[k];
+    return v === null || v === undefined ? "" : String(v);
+  };
 
   function campo(k: keyof DadosImobiliariaPatch, v: string) {
     setDraft((d) => ({ ...d, [k]: v }));
@@ -143,10 +160,52 @@ function DadosImobiliariaTab() {
     // Empty strings become null — a blank box means "not recorded", and ""
     // would make every "do we have a CNPJ?" check answer yes.
     const payload: DadosImobiliariaPatch = {};
+    let erro: string | null = null;
     (Object.keys(draft) as Array<keyof DadosImobiliariaPatch>).forEach((k) => {
-      const v = (draft[k] ?? "").trim();
-      payload[k] = v || null;
+      if (erro) return;
+      const raw = (draft[k] ?? "").trim();
+
+      if (IMOB_CAMPOS_NUMERICOS.has(k)) {
+        if (!raw) {
+          (payload as Record<string, unknown>)[k] = null;
+          return;
+        }
+        const n = Number(raw.replace(",", "."));
+        if (Number.isNaN(n)) {
+          erro = "Informe um número válido.";
+          return;
+        }
+        if (k === "posse_multa_diaria" && n < 0) {
+          erro = "A multa diária de posse não pode ser negativa.";
+          return;
+        }
+        if (
+          k === "prazo_pendencias_padrao_dias" &&
+          (!Number.isInteger(n) || n <= 0)
+        ) {
+          erro = "O prazo padrão de pendências deve ser um número inteiro maior que 0.";
+          return;
+        }
+        (payload as Record<string, unknown>)[k] = n;
+        return;
+      }
+
+      if (k === "plataforma_assinatura_url" && raw && !raw.startsWith("https://")) {
+        // Mirrors the backend's own refusal (DadosImobiliariaBody /
+        // `_validar_https`) — this URL is printed verbatim into a legal
+        // instrument, so it is refused here too rather than round-tripped.
+        erro = "A URL da plataforma de assinatura deve começar com https://.";
+        return;
+      }
+
+      (payload as Record<string, unknown>)[k] = raw || null;
     });
+
+    if (erro) {
+      toast.error(erro);
+      return;
+    }
+
     salvar.mutate(payload, {
       onSuccess: () => {
         setDraft({});
@@ -165,22 +224,49 @@ function DadosImobiliariaTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Dados da imobiliária</CardTitle>
-        <CardDescription>
-          Usados nos documentos gerados — no cabeçalho que identifica quem
-          intermediou e na cláusula de corretagem.
-        </CardDescription>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <CardTitle>Dados da imobiliária</CardTitle>
+            <CardDescription>
+              Usados nos documentos gerados — no cabeçalho que identifica quem
+              intermediou e na cláusula de corretagem.
+            </CardDescription>
+          </div>
+          {/* 🔴 Two signals, never `isLoading`: the skeleton gates on
+              `showSkeleton` (nothing to show yet); this indicator is the
+              quiet refetch-over-data signal, never an early return.
+              → KB § PATTERNS/frontend/lying-loading-state.md */}
+          {query.isRefreshing && (
+            <span
+              className="flex items-center gap-1 text-xs text-muted-foreground"
+              data-testid="imob-refreshing"
+            >
+              <Loader2 className="h-3 w-3 animate-spin" />
+              atualizando
+            </span>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* 🔴 Two signals, never `isLoading`: a skeleton only while there is
-            genuinely nothing yet, so saving does not blank the form.
-            → KB § PATTERNS/frontend/lying-loading-state.md */}
-        {query.isPending && !query.data ? (
-          <p className="text-sm text-muted-foreground">Carregando…</p>
-        ) : query.isError ? (
-          <p className="text-sm text-destructive">
-            Não foi possível carregar os dados da imobiliária.
+        {query.showSkeleton ? (
+          <p className="text-sm text-muted-foreground" data-testid="imob-skeleton">
+            Carregando…
           </p>
+        ) : query.isError && !query.data ? (
+          <div className="space-y-2" data-testid="imob-error">
+            <p className="text-sm text-destructive">
+              Não foi possível carregar os dados da imobiliária.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void query.refetch()}
+              data-testid="imob-retry"
+            >
+              <RotateCcw className="mr-1 h-3.5 w-3.5" />
+              Tentar novamente
+            </Button>
+          </div>
         ) : (
           <>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -331,6 +417,94 @@ function DadosImobiliariaTab() {
                   }
                   data-testid="imob-uf"
                 />
+              </div>
+            </div>
+
+            {/* Migration 117 (contract F6) — the office's own operational
+                answers the contract generator refuses without. Until this
+                slice, `derivacao.py` pointed the operator at this exact
+                anchor (#imobiliaria) for a screen that could not satisfy
+                the refusal. */}
+            <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Configurações operacionais
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-plataforma-nome">
+                  Plataforma de assinatura eletrônica
+                </Label>
+                <Input
+                  id="imob-plataforma-nome"
+                  value={valor("plataforma_assinatura_nome")}
+                  onChange={(e) =>
+                    campo("plataforma_assinatura_nome", e.target.value)
+                  }
+                  placeholder="ClickSign, D4Sign…"
+                  data-testid="imob-plataforma-nome"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Impressa na Cláusula — Da Assinatura Digital do contrato
+                  gerado.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-plataforma-url">
+                  URL da plataforma de assinatura
+                </Label>
+                <Input
+                  id="imob-plataforma-url"
+                  type="url"
+                  value={valor("plataforma_assinatura_url")}
+                  onChange={(e) =>
+                    campo("plataforma_assinatura_url", e.target.value)
+                  }
+                  placeholder="https://app.clicksign.com"
+                  data-testid="imob-plataforma-url"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Impressa na Cláusula — Da Assinatura Digital. Precisa
+                  começar com https:// — é gravada em um instrumento legal.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-posse-multa">
+                  Multa diária por atraso na posse (R$)
+                </Label>
+                <Input
+                  id="imob-posse-multa"
+                  inputMode="decimal"
+                  value={valor("posse_multa_diaria")}
+                  onChange={(e) => campo("posse_multa_diaria", e.target.value)}
+                  placeholder="0,00"
+                  data-testid="imob-posse-multa"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Valor em reais cobrado por dia de atraso na entrega da
+                  posse após o prazo contratual.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-prazo-pendencias">
+                  Prazo padrão de pendências (dias)
+                </Label>
+                <Input
+                  id="imob-prazo-pendencias"
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={valor("prazo_pendencias_padrao_dias")}
+                  onChange={(e) =>
+                    campo("prazo_pendencias_padrao_dias", e.target.value)
+                  }
+                  placeholder="10"
+                  data-testid="imob-prazo-pendencias"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Janela padrão, em dias, até uma pendência ser considerada
+                  vencida. A plataforma usa 10 dias quando a organização
+                  nunca personalizou este valor.
+                </p>
               </div>
             </div>
 

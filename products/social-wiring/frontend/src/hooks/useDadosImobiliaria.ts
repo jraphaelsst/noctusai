@@ -35,6 +35,25 @@ export interface DadosImobiliaria {
   endereco_bairro: string | null;
   endereco_cidade: string | null;
   endereco_uf: string | null;
+  // ─── Migration 117 (contract F6) — the office's own operational answers,
+  // required by the contract generator (contrato_gerador/derivacao.py) and
+  // absent from the UI until this slice — see settings_router.py's
+  // `DadosImobiliariaBody` for the exact contract these mirror.
+  /** The e-signature platform's name (e.g. "ClickSign"), printed on the
+   *  generated instrument's signature clause. */
+  plataforma_assinatura_nome: string | null;
+  /** The e-signature platform's URL. HTTPS-only — embedded verbatim into a
+   *  legal document, so the backend refuses `http://` at the boundary; the
+   *  form mirrors that refusal instead of relying on the round-trip. */
+  plataforma_assinatura_url: string | null;
+  /** R$/day fine for a holdover after the contractual "posse" deadline.
+   *  Currency, not a percentage — `>= 0`. */
+  posse_multa_diaria: number | null;
+  /** Default window (days) a "pendência" gets before it is overdue. `> 0`.
+   *  The DB defaults this to 10 for a brand-new row, but a `GET` on an org
+   *  that has never saved this tab returns every field as `null` (the
+   *  no-row shape), this one included. */
+  prazo_pendencias_padrao_dias: number | null;
   updated_at: string | null;
 }
 
@@ -43,11 +62,25 @@ export type DadosImobiliariaPatch = Partial<Omit<DadosImobiliaria, "updated_at">
 const BASE = "/api/settings/imobiliaria";
 const KEY = ["sw", "settings", "imobiliaria"] as const;
 
+/**
+ * 🔴 TWO loading signals, never `isLoading` and never a bare `isFetching`:
+ * `showSkeleton` is true only on the FIRST load (nothing to show yet), and
+ * `isRefreshing` is the quiet indicator for a refetch over data that is
+ * already on screen — the save mutation re-seeds the cache directly (see
+ * `useSalvarDadosImobiliaria`), but a background refetch from elsewhere
+ * (tab refocus, another tab's invalidation) must not blank a filled-in
+ * form. → KB § PATTERNS/frontend/lying-loading-state.md
+ */
 export function useDadosImobiliaria() {
-  return useQuery({
+  const query = useQuery({
     queryKey: KEY,
     queryFn: () => api.get<DadosImobiliaria>(BASE),
   });
+  return {
+    ...query,
+    showSkeleton: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
 }
 
 export function useSalvarDadosImobiliaria() {
