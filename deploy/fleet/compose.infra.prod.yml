@@ -119,7 +119,11 @@ services:
     environment:
       WAHA_API_KEY: ${WAHA_API_KEY:-}  # env-fleet-empty-ok — see REVIEWED comment above
       WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
-      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-admin}
+      # No `admin` fallback: unset/empty makes WAHA generate a random dashboard
+      # password at startup (printed in its logs — docs "How to > Security").
+      # Not `:?` — interpolation covers profile-gated services too, so a
+      # required var here would break the WHOLE fleet up while `waha` is off.
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:-}  # env-fleet-empty-ok — see comment above
       WHATSAPP_DEFAULT_ENGINE: WEBJS
     # Internal only — products reach it as http://noctus-waha:3000 over
     # noctus-net; the dashboard (for QR-pairing) is reachable through the
