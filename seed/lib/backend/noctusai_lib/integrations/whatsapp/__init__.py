@@ -44,6 +44,12 @@ Public surface:
   `KB § PATTERNS/seed-fake-real-adapter.md`.
 - @lid auth: `is_authorized` (3-tier), `resolve_canonical_session`,
   `remember_lid_phone`, `get_lid_phone_cache` (Protocol+Fake+Real).
+- Identity resolution: `resolve_identity(client, raw_jid)` → `ResolvedIdentity`
+  (canonical phone-digits key unifying `@c.us` / `@s.whatsapp.net` / `@lid`
+  forms for one human, fail-soft on WAHA errors), `build_lids_map_from_list`
+  (one-shot `{lid: phone_digits}` map from `list_lids()` output). Promoted
+  2026-09-17 from `social-wiring`; that product's own module is now a
+  re-export shim — see `KB § CONTEXT/INTEGRATIONS/whatsapp.md`.
 - Webhook dedup: `WebhookDedup` Protocol + `RedisWebhookDedup`
   (SETNX pre-filter) + `InMemoryWebhookDedup` + `get_webhook_dedup`.
   DB UNIQUE backstop is the chatbot `message_store` seam (consumer
@@ -70,6 +76,11 @@ from noctusai_lib.integrations.whatsapp.dedup import (
     get_webhook_dedup,
 )
 from noctusai_lib.integrations.whatsapp.fake_adapter import FakeWahaClient
+from noctusai_lib.integrations.whatsapp.identity import (
+    ResolvedIdentity,
+    build_lids_map_from_list,
+    resolve_identity,
+)
 from noctusai_lib.integrations.whatsapp.lid_auth import (
     InMemoryLidPhoneCache,
     LidPhoneCache,
@@ -198,6 +209,7 @@ __all__ = [
     "PersistentResponseRegistry",
     "RedisLidPhoneCache",
     "RedisWebhookDedup",
+    "ResolvedIdentity",
     "ResponseRegistry",
     "ResponseSample",
     "ResponseSampleSink",
@@ -217,6 +229,7 @@ __all__ = [
     "WhatsAppMedia",
     "WhatsAppPayloadError",
     "WhatsAppSettings",
+    "build_lids_map_from_list",
     "build_send_text_body",
     "chat_id_for_phone",
     "create_whatsapp_webhook_router",
@@ -235,5 +248,6 @@ __all__ = [
     "phone_from_chat_id",
     "remember_lid_phone",
     "resolve_canonical_session",
+    "resolve_identity",
     "rewrite_vendor_media_url",
 ]

@@ -191,3 +191,19 @@ def test_retry_with_backoff_async_retries_then_succeeds():
     finally:
         rate_limit.reset_default_clock()
         rate_limit._reset_all_buckets()
+
+
+# ─── _DEFAULTS bucket registry ──────────────────────────────────────────────
+
+
+def test_whatsapp_groups_bucket_is_slow_and_additive():
+    """`whatsapp_groups` exists at 0.2 rps / burst 1 — far slower than the
+    5 rps / burst 10 `whatsapp` messaging bucket, which must stay unchanged.
+    """
+    groups_cfg = rate_limit._DEFAULTS["whatsapp_groups"]
+    assert groups_cfg.rate_per_sec == 0.2
+    assert groups_cfg.burst == 1.0
+
+    whatsapp_cfg = rate_limit._DEFAULTS["whatsapp"]
+    assert whatsapp_cfg.rate_per_sec == 5.0
+    assert whatsapp_cfg.burst == 10.0

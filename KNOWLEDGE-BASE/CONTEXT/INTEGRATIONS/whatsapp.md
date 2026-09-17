@@ -95,6 +95,15 @@ status-code assumption (`401`/`403` → `"invite_required"`) that most
 needs a live confirmation before this carries production bulk-add
 traffic.
 
+### Identity resolution (`whatsapp.identity`)
+| Symbol | Role |
+|---|---|
+| `resolve_identity(client, raw_jid)` | Async — resolves any raw JID (`@c.us` / `@s.whatsapp.net` / `@lid`) to a canonical `ResolvedIdentity` keyed on phone digits, not the LID; fail-soft (a WAHA error yields a partial result, never a raise) |
+| `ResolvedIdentity` | Value type — `phone`, `jid`, `lids: list[str]`, `name` |
+| `build_lids_map_from_list(lids_list)` | One-shot `{lid_jid: phone_digits}` map from `list_lids()` output — avoids N WAHA calls per chat during a bulk dedup pass |
+
+See § 4b for the 2026-09-17 promotion of this module from `social-wiring` to the seed.
+
 ### @lid auth (`whatsapp.lid_auth`)
 `is_authorized` (3-tier), `resolve_canonical_session`,
 `remember_lid_phone`, `get_lid_phone_cache`,
@@ -221,6 +230,50 @@ config-writing path routes through `client._session_config()`.
 - `fullSync` backfills history **at authentication**, so only a FRESH pairing
   (`logout` → `start` → scan) populates existing chats. Restarting an
   already-paired session will not re-pull history.
+
+## 4b. Identity-resolver seed promotion + group rate-limit bucket (2026-09-17)
+
+**Lift.** `resolve_identity` / `ResolvedIdentity` / `build_lids_map_from_list`
+moved from `products/social-wiring/backend/app/services/whatsapp_identity.py`
+to `noctusai_lib.integrations.whatsapp.identity` (part of the `community`
+module 3 seed slice — the tables/endpoints landing in `community` itself are
+a separate, later slice). The module was already pure WAHA shape with zero
+social-wiring domain (it imported only `lid_auth.is_lid` / `normalize_phone`),
+so the move is a straight file relocation, no rewrite. Both are exported from
+`whatsapp/__init__.py`'s `__all__` per § 1 above.
+
+**Shim.** social-wiring is a LIVE product, so its own
+`app/services/whatsapp_identity.py` is now an explicit-name re-export shim
+(`from noctusai_lib.integrations.whatsapp.identity import ResolvedIdentity,
+build_lids_map_from_list, resolve_identity`) — not a star-import, so a
+type-checker/IDE still resolves the exact names. Byte-equivalent runtime
+behaviour: `app/routers/whatsapp_router.py`'s `from app.services.whatsapp_identity
+import resolve_identity` and the product's own
+`tests/services/test_whatsapp_identity.py` are untouched and still pass
+against the shim. The shim is **deletable in a later, separate step** once
+social-wiring's call sites are re-pointed directly at the seed module — not
+done in this slice, to keep it a pure lift with zero call-site churn.
+
+**New rate-limit bucket.** `noctusai_lib.integrations.rate_limit._DEFAULTS`
+gained `"whatsapp_groups": BucketConfig(rate_per_sec=0.2, burst=1)`, purely
+additive — the existing `"whatsapp"` bucket (5 rps / burst 10, tuned for
+1:1 messaging) is far too hot for group administration (add/remove
+participant, invite-link get/revoke); pacing bulk participant adds at 5 rps
+is the WhatsApp-ban vector `community`'s ban-risk posture calls out. Every
+group-mutating call must route through
+`rate_limit.acquire_async("whatsapp_groups")`, never `"whatsapp"`.
+
+**Two-sessions note, for whoever wires a second WAHA session.** The WAHA
+instance's default `WHATSAPP_HOOK_URL` in
+`deploy/services/compose.services.yml` points inbound at **n8n**. A session
+that never calls `set_webhook` explicitly therefore delivers its messages to
+n8n silently — there is no error, no log line calling this out, just traffic
+arriving at the wrong consumer. Live-verified 2026-09-17: WAHA `2026.7.2`,
+engine NOWEB, tier CORE, exactly one session (`default`, `WORKING`) whose
+webhook already points at social-wiring. Tier CORE is single-session, so a
+product needing its own line (e.g. `community`, per its module-3 D4 decision)
+needs its own `waha-*` container + its own explicit `set_webhook` call — never
+assume the default session's webhook target is inherited.
 
 ## 5. Gaps / out-of-scope (with destinations)
 

@@ -75,6 +75,12 @@ _DEFAULTS: dict[str, BucketConfig] = {
     "google": BucketConfig(rate_per_sec=8.0, burst=16.0),
     "youtube": BucketConfig(rate_per_sec=3.0, burst=6.0),
     "whatsapp": BucketConfig(rate_per_sec=5.0, burst=10.0),
+    # WhatsApp GROUP administration (add/remove participant, invite-link
+    # get/revoke) — deliberately far slower than the "whatsapp" messaging
+    # bucket above. Bulk participant adds/removes paced at 5 rps / burst 10
+    # is the WhatsApp-ban vector for group ops; this bucket exists so
+    # products never reuse the hot messaging bucket for group mutation.
+    "whatsapp_groups": BucketConfig(rate_per_sec=0.2, burst=1.0),
     "mailchimp": BucketConfig(rate_per_sec=8.0, burst=10.0),
     "vista": BucketConfig(rate_per_sec=5.0, burst=10.0),
     "llm": BucketConfig(rate_per_sec=8.0, burst=16.0),
