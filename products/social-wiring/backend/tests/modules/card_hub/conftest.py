@@ -19,7 +19,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.dependencies import coerce_org_uuid
-from app.modules.card_hub.deps import get_card_hub_client, get_storage_backend
+from app.modules.card_hub.deps import (
+    get_card_hub_client,
+    get_signature_adapter_factory,
+    get_storage_backend,
+)
+from noctusai_lib.integrations.signature import FakeSignatureAdapter
 from noctusai_lib.integrations.storage import FakeStorageBackend
 from tests.conftest import (  # type: ignore[attr-defined]
     MockSupabaseClient,
@@ -80,6 +85,27 @@ def fake_storage(client):
         app.dependency_overrides.pop(get_storage_backend, None)
     else:
         app.dependency_overrides[get_storage_backend] = prev
+
+
+@pytest.fixture
+def fake_signature_adapter(client):
+    """Installs ONE `FakeSignatureAdapter` shared across every call the
+    running app makes through `get_signature_adapter_factory` — org-scoped
+    routes AND the unauthenticated webhook alike, since a test drives both
+    ends of the same envelope's lifecycle (send -> `marcar_assinado` ->
+    webhook). Per `KB § PATTERNS/backend/di-test-seam.md` Class-B: never
+    monkeypatch `make_signature_adapter` itself.
+    """
+    from app.main import app
+
+    adapter = FakeSignatureAdapter()
+    prev = app.dependency_overrides.get(get_signature_adapter_factory)
+    app.dependency_overrides[get_signature_adapter_factory] = lambda: (lambda org_id: adapter)
+    yield adapter
+    if prev is None:
+        app.dependency_overrides.pop(get_signature_adapter_factory, None)
+    else:
+        app.dependency_overrides[get_signature_adapter_factory] = prev
 
 
 # ─── row builders ────────────────────────────────────────────────────────

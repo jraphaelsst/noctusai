@@ -140,6 +140,30 @@ def exigir_contrato(
     return rows[0]
 
 
+def obter_contrato(client: Any, org_id: UUID, contrato_id: UUID) -> dict:
+    """The live contract row, scoped to this org only — no `atendimento_id`
+    required.
+
+    `exigir_contrato` stays the primary lookup for every card_hub ROUTE,
+    which always arrives with `cliente_id` in the URL and derives
+    `atendimento_id` from it. `assinatura_service` is a different shape of
+    caller: it reaches a contract by its OWN id first (an e-signature
+    webhook carries only `external_id` -> `atendimento_contrato_
+    assinaturas.contrato_id`, never a `cliente_id`), so it needs a lookup
+    that does not presuppose the atendimento is already known.
+    """
+    rows = (
+        _t(client, TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("id", str(contrato_id))
+        .execute()
+    ).data or []
+    if not rows or rows[0].get("deleted_at"):
+        raise NotFoundError(TABLE, str(contrato_id))
+    return rows[0]
+
+
 def _versao_out(row: dict, resolved: dict) -> dict:
     return {
         **documento_base(row, resolved),
@@ -344,6 +368,40 @@ def definir_modelo(client: Any, org_id: UUID, contrato_id: UUID, modelo: str) ->
     ).eq("id", str(contrato_id)).execute()
 
 
+def definir_status(
+    client: Any,
+    org_id: UUID,
+    contrato_id: UUID,
+    status: str,
+    *,
+    usuario_id: Optional[UUID] = None,
+) -> None:
+    """Set the contract's status directly — no `cliente_id` required.
+
+    `atualizar` stays the primary write path for card_hub ROUTES (they
+    always arrive with `cliente_id` in the URL and want the full validated
+    field set). This is the narrow slice of that write a caller that
+    reaches a contract by its OWN id first actually needs —
+    `assinatura_service`'s webhook path (§3.4) knows only `external_id` ->
+    `contrato_id`, never a `cliente_id` to re-derive the atendimento from.
+    Same `status_em`/`status_por` stamping `atualizar` does on a real
+    change; same vocabulary CHECK, raised here as the same named 400.
+    """
+    if status not in STATUSES:
+        raise ValidationError_(
+            f"status inválido: {status!r}. Permitidos: {', '.join(STATUSES)}",
+            field="status",
+        )
+    _t(client, TABLE).update(
+        {
+            "status": status,
+            "status_em": now_iso(),
+            "status_por": str(usuario_id) if usuario_id else None,
+            "updated_at": now_iso(),
+        }
+    ).eq("org_id", str(org_id)).eq("id", str(contrato_id)).execute()
+
+
 def saida(client: Any, org_id: UUID, row: dict) -> dict:
     """Public view of one contract row — the same shape `listar` returns."""
     return _contrato_saida(client, org_id, row)
@@ -493,6 +551,51 @@ async def nova_versao_gerada(
     inserida["docx_storage_path"] = docx_path
     inserida["docx_tamanho_bytes"] = len(docx)
 
+    resolved = table_reads.resolve_actors({inserida["enviado_por"]} - {None})
+    return _versao_out(inserida, resolved)
+
+
+async def nova_versao_assinada(
+    client: Any,
+    storage: StorageBackend,
+    org_id: UUID,
+    atendimento_id: UUID,
+    contrato_id: UUID,
+    *,
+    data: bytes,
+    content_type: str,
+    filename: str,
+    usuario_id: Optional[UUID],
+) -> dict:
+    """A version produced by e-signature completion (`card_hub.
+    assinatura_service`, migration 134): the signed copy an e-signature
+    webhook downloads and stores back as a normal version row —
+    `origem='assinado'`, same LGPD-logged path (`VERSOES_STORE`/
+    `_guardar_versao`) every other version in this contract already uses.
+
+    No docx sibling and no `contexto_sha256` — migration 134's widened
+    per-origem CHECKs give 'assinado' the same rule 'upload' has for both:
+    this is a downloaded PDF, not a rendering, so there is no context to
+    hash and no editable source to keep beside it (contrast
+    `nova_versao_gerada`, which owns both).
+
+    `usuario_id=None` is the expected caller shape (a webhook is a system
+    event, not an operator action) — same posture `DocumentoStore.
+    varrer_expirados` documents for its own unattended writes.
+    """
+    inserida, _ = await _guardar_versao(
+        client,
+        storage,
+        org_id,
+        atendimento_id,
+        contrato_id,
+        filename=filename,
+        content_type=content_type,
+        data=data,
+        rotulo=None,
+        usuario_id=usuario_id,
+        extra={"origem": "assinado"},
+    )
     resolved = table_reads.resolve_actors({inserida["enviado_por"]} - {None})
     return _versao_out(inserida, resolved)
 
@@ -704,10 +807,13 @@ __all__ = [
     "VERSOES_STORE",
     "atualizar",
     "criar",
+    "definir_status",
     "exigir_contrato",
     "listar",
     "nova_versao",
+    "nova_versao_assinada",
     "nova_versao_gerada",
+    "obter_contrato",
     "remover_contrato",
     "remover_versao",
     "url_versao",

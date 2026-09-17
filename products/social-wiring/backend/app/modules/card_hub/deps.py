@@ -18,6 +18,7 @@ from noctusai_lib.integrations.documents import (
     IdentityExtractor,
     make_identity_extractor,
 )
+from noctusai_lib.integrations.signature import SignatureAdapter, make_signature_adapter
 from noctusai_lib.integrations.storage import (
     FakeStorageBackend,
     StorageBackend,
@@ -102,10 +103,38 @@ def get_identity_extractor_factory() -> ExtractorFactory:
     return lambda org_id: make_identity_extractor(real=True, org_id=org_id)
 
 
+SignatureAdapterFactory = Callable[[Optional[str]], SignatureAdapter]
+
+
+def get_signature_adapter_factory() -> SignatureAdapterFactory:
+    """FastAPI dependency — builds the e-signature adapter for one org.
+
+    A FACTORY rather than an instance for the same reason
+    `get_identity_extractor_factory` is one, plus a second: building the
+    real D4Sign adapter (`real=True`) can raise `ProvedorNaoConfigurado`,
+    and that has to surface at the EXACT point `assinatura_service` is
+    about to call the provider — after every 400/404/409/422(versão)
+    precondition it checks first (contract §3.1's error-table order). If
+    this dependency built the adapter eagerly here, a credential-less org
+    would see 422 before a genuinely malformed request's own 400, which is
+    the wrong error to show first.
+
+    Tests MUST override this seam
+    (`app.dependency_overrides[get_signature_adapter_factory] = ...`) with
+    one returning a `FakeSignatureAdapter`
+    (`KB § PATTERNS/backend/di-test-seam.md` Class-B). The real one calls
+    D4Sign: an un-overridden test would either hit the provider or 422 on
+    missing credentials, and neither is the behaviour under test.
+    """
+    return lambda org_id: make_signature_adapter(real=True, org_id=org_id)
+
+
 __all__ = [
     "BUCKET",
     "ExtractorFactory",
+    "SignatureAdapterFactory",
     "get_card_hub_client",
     "get_identity_extractor_factory",
+    "get_signature_adapter_factory",
     "get_storage_backend",
 ]
