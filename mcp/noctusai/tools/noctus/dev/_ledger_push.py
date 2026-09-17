@@ -44,8 +44,10 @@ from typing import Any, Callable
 
 from tools.noctus.dev._benign_stash import (
     classify_dirty,
+    commit_ledger_rows,
     dirty_blocked_result,
     is_benign,
+    partition_ledger,
     pop_stash,
     stash_benign,
 )
@@ -165,9 +167,23 @@ def commit_and_ff_push_ledger(
         logger.warning("%s: real dirty file(s) block the rebase onto %s: %s",
                        _log_prefix, dev_ref, real)
         return dirty_blocked_result(real, dev_ref)
+    # `project-history/*.ndjson` rows are benign but must NEVER be stashed —
+    # the stash stack is shared with every other worktree (see
+    # `_benign_stash.is_ledger_ndjson`'s docstring for the 2026-09-16
+    # near-loss this closes). Commit them instead; only the genuinely
+    # derived remainder (cache files, KB-count docs) is still stashed.
+    ledger, stashable = partition_ledger(benign)
+    if ledger:
+        if commit_ledger_rows(g, ledger, log_prefix=_log_prefix) is None:
+            # Best-effort fell through (e.g. a pre-commit hook already staged
+            # the identical content moments earlier, so there is nothing left
+            # to commit yet the path still reports dirty via a git index
+            # quirk) — fall back to the historically-safe stash rather than
+            # leaving these paths unresolved and blocking the rebase.
+            stashable = ledger + stashable
     # The SHA, not a bool: the stash stack is shared with every other worktree,
     # so the entry we push is not necessarily the one on top when we restore.
-    benign_stash_ref = stash_benign(g, benign, log_prefix=_log_prefix)
+    benign_stash_ref = stash_benign(g, stashable, log_prefix=_log_prefix)
 
     try:
         return _push_leg(

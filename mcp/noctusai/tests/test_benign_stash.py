@@ -65,6 +65,116 @@ class TestClassification:
         assert benign == [] and real == ["<git-status-failed>"]
 
 
+# ── 2026-09-16: the ledger/cache split ──────────────────────────────────────
+# A `project-history/*.ndjson` ledger row is `is_benign()` too, but must be
+# COMMITTED — never STASHED. `.git/refs/stash` is one stack shared by every
+# worktree of the repo; sweeping an append-only ledger row into it is
+# loss-shaped even with a correct SHA-addressed restore (a real cross-session
+# near-loss — 25 unpushed rows, recovered by hand at `3789fefc`). A cache
+# file surviving a mis-restored stash is a cheap rebuild; a ledger row is not.
+class TestIsLedgerNdjson:
+    def test_ledger_paths_are_ledger(self):
+        for path in (
+            "project-history/vector-costs.ndjson",
+            "project-history/auto-improvement.ndjson",
+            "project-history/worktree-salvage.ndjson",
+            "project-history/branch-tree.ndjson",
+            "project-history/branch-tree.mirror.ndjson",
+            "project-history/some-brand-new-ledger.ndjson",
+        ):
+            assert BS.is_ledger_ndjson(path) is True, path
+
+    def test_non_ledger_benign_paths_are_not_ledger(self):
+        for path in (
+            ".claude/cache/noc-graph.sqlite",
+            "KNOWLEDGE-BASE/AGENT-CONTEXT.md",
+            "project-history/PROJECT-HISTORY.md",  # rendered md, not a ledger
+        ):
+            assert BS.is_ledger_ndjson(path) is False, path
+
+    def test_real_work_is_not_ledger(self):
+        assert BS.is_ledger_ndjson("products/social-wiring/backend/app/main.py") is False
+
+
+class TestPartitionLedger:
+    def test_splits_ledger_from_stashable(self):
+        paths = [
+            "project-history/auto-improvement.ndjson",
+            ".claude/cache/noc-graph.json",
+            "KNOWLEDGE-BASE/AGENT-CONTEXT.md",
+        ]
+        ledger, stashable = BS.partition_ledger(paths)
+        assert ledger == ["project-history/auto-improvement.ndjson"]
+        assert stashable == [".claude/cache/noc-graph.json", "KNOWLEDGE-BASE/AGENT-CONTEXT.md"]
+
+    def test_no_ledger_rows_leaves_stashable_unchanged(self):
+        paths = [".claude/cache/noc-graph.json", "KNOWLEDGE-BASE/AGENT-CONTEXT.md"]
+        ledger, stashable = BS.partition_ledger(paths)
+        assert ledger == [] and stashable == paths
+
+    def test_all_ledger_rows_leaves_stashable_empty(self):
+        paths = ["project-history/vector-costs.ndjson", "project-history/branch-tree.ndjson"]
+        ledger, stashable = BS.partition_ledger(paths)
+        assert ledger == paths and stashable == []
+
+
+class TestCommitLedgerRows:
+    def test_nothing_to_commit_returns_none(self):
+        calls = []
+        assert BS.commit_ledger_rows(lambda *a: calls.append(a) or (0, "", ""), []) is None
+        assert calls == [], "must not issue any git IO for an empty ledger set"
+
+    def test_commits_path_scoped_and_returns_the_sha(self):
+        calls = []
+
+        def run(*a):
+            calls.append(a)
+            if a[0] == "rev-parse":
+                return 0, SHA_A + "\n", ""
+            return 0, "", ""
+
+        got = BS.commit_ledger_rows(run, ["project-history/auto-improvement.ndjson"])
+        assert got == SHA_A, "the caller needs a stable handle, not a bare truthy flag"
+        add = calls[0]
+        assert add[0] == "add" and add[-1] == "project-history/auto-improvement.ndjson"
+        commit = calls[1]
+        assert commit[0] == "commit" and commit[-1] == "project-history/auto-improvement.ndjson"
+        assert BS.LEDGER_COMMIT_MESSAGE in commit
+
+    def test_commits_all_paths_in_one_scoped_commit(self):
+        calls = []
+        paths = ["project-history/a.ndjson", "project-history/b.ndjson"]
+        BS.commit_ledger_rows(lambda *a: calls.append(a) or (0, "", ""), paths)
+        add = next(c for c in calls if c[0] == "add")
+        assert list(add[-2:]) == paths
+        commit = next(c for c in calls if c[0] == "commit")
+        assert list(commit[-2:]) == paths
+
+    def test_unresolvable_sha_still_reports_success_not_failure(self):
+        """The add+commit succeeded; only the `rev-parse HEAD` lookup came back
+        empty (mirrors the same tolerated edge case `stash_benign` already
+        has for ITS SHA resolution). This must NOT read as a commit failure —
+        conflating the two would wrongly re-trigger the stash fallback for a
+        commit that actually landed."""
+        got = BS.commit_ledger_rows(
+            lambda *a: (0, "", ""), ["project-history/auto-improvement.ndjson"]
+        )
+        assert got is not None and got, "a resolvable-but-empty sha must still be truthy"
+
+    def test_add_failure_returns_none_not_raises(self):
+        assert BS.commit_ledger_rows(
+            lambda *a: (1, "", "boom"), ["project-history/auto-improvement.ndjson"]
+        ) is None
+
+    def test_commit_failure_returns_none(self):
+        def run(*a):
+            if a[0] == "commit":
+                return 1, "", "boom"
+            return 0, "", ""
+
+        assert BS.commit_ledger_rows(run, ["project-history/auto-improvement.ndjson"]) is None
+
+
 SHA_A = "a" * 40   # "our" stash entry
 SHA_B = "b" * 40   # a peer worktree's entry, pushed after ours
 

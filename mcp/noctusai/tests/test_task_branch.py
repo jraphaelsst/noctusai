@@ -13,6 +13,7 @@ load-bearing safety invariants:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -831,7 +832,7 @@ def test_two_worktrees_wire_env_never_contaminates_primary(tmp_path):
     fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
 
     for slug, wt in (("peer-one", wt1), ("peer-two", wt2)):
-        res = T.task_branch(action="start", slug=slug, confirm=True,
+        res = T.task_branch(action="start", slug=slug, confirm=True, verbose=True,
                             wire_env=True, primary_root=str(primary), run=fake)
         assert res["status"] == "started" and not res["wired"] == []
 
@@ -856,7 +857,7 @@ def test_start_wire_env_dry_run_reports_plan_without_creating(tmp_path):
     _seed_worktree_tree(wt_root)
     fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
 
-    res = T.task_branch(action="start", slug="feat-x", confirm=False,
+    res = T.task_branch(action="start", slug="feat-x", confirm=False, verbose=True,
                         wire_env=True, primary_root=str(primary), run=fake)
     assert res["status"] == "planned" and res["wire_env"] is True
     would_links = {w["link"] for w in res["would_wire"]}
@@ -875,7 +876,7 @@ def test_start_wire_env_confirm_creates_symlinks(tmp_path):
     _seed_worktree_tree(wt_root)
     fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
 
-    res = T.task_branch(action="start", slug="feat-y", confirm=True,
+    res = T.task_branch(action="start", slug="feat-y", confirm=True, verbose=True,
                         wire_env=True, primary_root=str(primary), run=fake)
     assert res["status"] == "started" and res["wire_env"] is True
     # seed node_modules: whole-dir symlink to primary (safe — nothing nests here)
@@ -909,7 +910,7 @@ def test_start_wire_env_skips_real_node_modules_never_clobbers(tmp_path):
     sentinel.write_text("real")
     fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
 
-    res = T.task_branch(action="start", slug="feat-z", confirm=True,
+    res = T.task_branch(action="start", slug="feat-z", confirm=True, verbose=True,
                         wire_env=True, primary_root=str(primary), run=fake)
     # untouched: still a real dir, sentinel intact, NOT a symlink
     assert real_nm.is_dir() and not real_nm.is_symlink()
@@ -924,6 +925,56 @@ def test_start_without_wire_env_is_unchanged(tmp_path):
     res = T.task_branch(action="start", slug="feat-x", confirm=False, run=fake)
     assert res["status"] == "planned"
     assert "wire_env" not in res and "would_wire" not in res
+
+
+# ── 2026-09-16: wire_env's would_wire/wired/skipped overflow the caller's ────
+# tool-result budget on a real repo (~18,840 entries / ~1.2MB — one per
+# symlinked node_modules path across every product frontend). Default output
+# is now compact ({count, sample} + a full_report path); verbose=True (see
+# the four tests above) restores the old full-list shape.
+class TestWireEnvCompactOutput:
+    def test_dry_run_default_output_is_compact_with_full_report(self, tmp_path):
+        primary = tmp_path / "primary"
+        wt_root = primary / ".claude" / "worktrees" / "feat-compact-plan"
+        _seed_primary(primary, slugs=("alpha",))
+        _seed_worktree_tree(wt_root)
+        fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+
+        res = T.task_branch(action="start", slug="feat-compact-plan", confirm=False,
+                            wire_env=True, primary_root=str(primary), run=fake)
+        assert res["status"] == "planned" and res["wire_env"] is True
+        assert isinstance(res["would_wire"], dict)
+        assert res["would_wire"]["count"] > 0
+        assert len(res["would_wire"]["sample"]) <= 5
+        assert isinstance(res["skipped"], dict) and "count" in res["skipped"]
+        report_path = Path(res["full_report"])
+        assert report_path.is_file()
+        full = json.loads(report_path.read_text())
+        assert len(full["would_wire"]) == res["would_wire"]["count"]
+
+    def test_confirm_default_output_is_compact_with_full_report(self, tmp_path):
+        primary = tmp_path / "primary"
+        wt_root = primary / ".claude" / "worktrees" / "feat-compact-confirm"
+        _seed_primary(primary, slugs=("alpha",))
+        _seed_worktree_tree(wt_root)
+        fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+
+        res = T.task_branch(action="start", slug="feat-compact-confirm", confirm=True,
+                            wire_env=True, primary_root=str(primary), run=fake)
+        assert res["status"] == "started" and res["wire_env"] is True
+        assert isinstance(res["wired"], dict)
+        assert res["wired"]["count"] >= 4  # real symlinks were still created on disk
+        assert len(res["wired"]["sample"]) <= 5
+        report_path = Path(res["full_report"])
+        assert report_path.is_file()
+        full = json.loads(report_path.read_text())
+        assert len(full["wired"]) == res["wired"]["count"]
+        # the message's "wired N symlink(s)" count is the REAL count, not the
+        # compacted dict's accidental len() (a dict has 3 keys, never the count)
+        assert f"wired {res['wired']['count']} env symlink" in res["message"]
+        # the symlinks themselves still landed — compacting the RETURN never
+        # skips the actual filesystem work
+        assert (wt_root / "seed/lib/frontend/node_modules").is_symlink()
 
 
 # ── Bug A: gitignored-only dirty worktree → cleanup succeeds (no manual --force) ──
@@ -1130,6 +1181,56 @@ def test_integrate_with_known_benign_dirty_files_succeeds():
     assert stash_pushed, "stash push must be called for benign artifacts"
 
 
+# ── 2026-09-16: a `project-history/*.ndjson` ledger row must NEVER be swept ──
+# into the shared stash stack — a real cross-session near-loss (25 unpushed
+# ledger rows, recovered by hand at `3789fefc`) came from exactly this path
+# (`.git/refs/stash` is one stack shared by every worktree of the repo). The
+# ledger is `is_benign()` too, so before this fix it silently rode along in
+# the SAME stash as a co-dirty cache file. Fix: commit the ledger rows
+# instead (append-only + merge=union ⇒ rebase-safe); only the genuinely
+# derived remainder is still stash-and-popped.
+def test_integrate_commits_ledger_rows_never_stashes_them():
+    calls = []
+
+    def runner(cmd, cwd=None):
+        calls.append(cmd)
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "-C":
+            return (0, "", "")
+        return fake(cmd, cwd)
+
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        status_output=(
+            " M project-history/auto-improvement.ndjson\n"
+            " M .claude/cache/noc-graph.sqlite\n"
+        ),
+    )
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner,
+                        verbose=True)
+    assert res["status"] == "integrated", f"expected integrated, got {res!r}"
+
+    ledger_adds = [c for c in calls
+                   if len(c) > 3 and c[3] == "add"
+                   and c[-1] == "project-history/auto-improvement.ndjson"]
+    ledger_commits = [c for c in calls
+                      if len(c) > 3 and c[3] == "commit"
+                      and c[-1] == "project-history/auto-improvement.ndjson"]
+    assert ledger_adds, "the ledger row must be `git add`ed, not stashed"
+    assert ledger_commits, "the ledger row must be committed (chore(ledger)), not stashed"
+
+    stash_pushes = [c for c in calls
+                    if len(c) > 3 and c[3] == "stash" and "push" in c]
+    assert stash_pushes, "the co-dirty cache file must still be stashed"
+    for push in stash_pushes:
+        assert "project-history/auto-improvement.ndjson" not in push, (
+            "the ledger row must never appear in a stash push")
+        assert ".claude/cache/noc-graph.sqlite" in push
+
+
 # ── 2026-09-16: label the stash entry with the worktree path + a content ────
 # fingerprint — a shared stack carrying 10+ identical "task_branch auto-stash:
 # benign refresh artifacts" entries is undistinguishable at a glance. Restore
@@ -1223,8 +1324,11 @@ def test_integrate_after_push_race_retries_once():
         logs={"d0..b0": "c1 x", "b0..d0": ""},
         head_sha="b0",
         push_rcs=[1, 0],  # first push rejected (peer beat us), second FFs
-        # Benign artifact present
-        status_output=" M project-history/auto-improvement.ndjson\n",
+        # Benign STASHABLE artifact present (a ledger row would be committed,
+        # not stashed — see TestWireEnvCompactOutput's ledger-aware sibling
+        # tests; this test is about the stash retry-loop invariant, not the
+        # ledger split, so it stays on a genuinely-derived artifact).
+        status_output=" M .claude/cache/noc-graph.sqlite\n",
     )
     res = T.task_branch(action="integrate", slug="x", confirm=True, run=runner)
     assert res["status"] == "integrated", f"expected integrated, got {res!r}"
@@ -1448,19 +1552,16 @@ def test_classify_dirty_files_worktree_salvage_ndjson_is_benign():
 
 def test_integrate_with_only_worktree_salvage_dirty_succeeds():
     """Bug A integration: a worktree dirty ONLY with worktree-salvage.ndjson
-    (churned by the tool's own post-checkout hooks) must NOT be blocked —
-    the ledger is auto-stashed and integrate returns status=integrated."""
-    stash_pushed = []
+    (churned by the tool's own post-checkout hooks) must NOT be blocked — the
+    ledger is auto-COMMITTED (never stashed — a `project-history/*.ndjson`
+    ledger row, see `_benign_stash.is_ledger_ndjson`) and integrate returns
+    status=integrated."""
+    calls = []
 
     def runner(cmd, cwd=None):
+        calls.append(cmd)
         sub = cmd[1] if len(cmd) > 1 else ""
         if sub == "-C":
-            inner_sub = cmd[3] if len(cmd) > 3 else ""
-            if inner_sub == "stash":
-                if "pop" in cmd:
-                    return (0, "", "")
-                stash_pushed.append(True)
-                return (0, "", "")
             return (0, "", "")
         return fake(cmd, cwd)
 
@@ -1476,7 +1577,12 @@ def test_integrate_with_only_worktree_salvage_dirty_succeeds():
     assert res["status"] == "integrated", (
         f"expected integrated, got {res!r} — worktree-salvage.ndjson should be benign")
     assert res["exit_code"] == 0
-    assert stash_pushed, "stash push must be called for the salvage ledger benign artifact"
+    ledger_commits = [c for c in calls
+                      if len(c) > 3 and c[3] == "commit"
+                      and c[-1] == "project-history/worktree-salvage.ndjson"]
+    assert ledger_commits, "the salvage ledger must be committed, not stashed"
+    stash_pushes = [c for c in calls if len(c) > 3 and c[3] == "stash" and "push" in c]
+    assert not stash_pushes, "a ledger-only dirty tree must never stash"
 
 
 def test_benign_patterns_contains_worktree_salvage():
@@ -1653,18 +1759,14 @@ def test_worktree_dirty_only_with_all_union_merge_ledgers_not_blocked():
     """(a) Regression: a worktree dirty ONLY with all four gitattributes
     merge=union append-only ledgers (vector-costs, auto-improvement,
     worktree-salvage, branch-tree) must NOT be blocked — they are all in
-    _BENIGN_REFRESH_PATTERNS, auto-stashed, and integrate returns integrated."""
-    stash_pushed = []
+    _BENIGN_REFRESH_PATTERNS, auto-COMMITTED (never stashed — see
+    `_benign_stash.is_ledger_ndjson`), and integrate returns integrated."""
+    calls = []
 
     def runner(cmd, cwd=None):
+        calls.append(cmd)
         sub = cmd[1] if len(cmd) > 1 else ""
         if sub == "-C":
-            inner_sub = cmd[3] if len(cmd) > 3 else ""
-            if inner_sub == "stash":
-                if "pop" in cmd:
-                    return (0, "", "")
-                stash_pushed.append(True)
-                return (0, "", "")
             return (0, "", "")
         return fake(cmd, cwd)
 
@@ -1686,7 +1788,17 @@ def test_worktree_dirty_only_with_all_union_merge_ledgers_not_blocked():
     assert res["status"] == "integrated", (
         f"expected integrated — all four union-merge ledgers are benign, got {res!r}")
     assert res["exit_code"] == 0
-    assert stash_pushed, "stash push must be called for the union-merge ledgers"
+    commits = [c for c in calls if len(c) > 3 and c[3] == "commit"]
+    assert commits, "the union-merge ledgers must be committed, not stashed"
+    committed_paths = {p for c in commits for p in c[c.index("--") + 1:]}
+    assert committed_paths == {
+        "project-history/vector-costs.ndjson",
+        "project-history/auto-improvement.ndjson",
+        "project-history/worktree-salvage.ndjson",
+        "project-history/branch-tree.ndjson",
+    }
+    stash_pushes = [c for c in calls if len(c) > 3 and c[3] == "stash" and "push" in c]
+    assert not stash_pushes, "a ledger-only dirty tree must never stash"
     # branch-tree.ndjson specifically is included in _BENIGN_REFRESH_PATTERNS
     assert any("branch-tree.ndjson" in p for p in T._BENIGN_REFRESH_PATTERNS), (
         "branch-tree.ndjson must be in _BENIGN_REFRESH_PATTERNS")
@@ -1918,14 +2030,17 @@ def test_migration_check_not_invoked_with_injected_run_and_no_explicit_check():
 
 def test_migration_collision_blocks_before_stash_leaves_worktree_clean():
     """A blocked migration-collision integrate must still pop any benign
-    auto-stash before returning — no orphan stash left behind."""
+    auto-stash before returning — no orphan stash left behind. The dirty
+    ledger row (`project-history/branch-tree.ndjson`) is committed, not
+    stashed (see `_benign_stash.is_ledger_ndjson`); a co-dirty cache file
+    keeps this test exercising the actual stash pop-on-block leg."""
     fake = FakeGit(
         refs={"origin/dev": "d0", "feat/x": "b0"},
         anc=_anc_pairs([]),
         logs={"d0..b0": "c1 x", "b0..d0": ""},
         head_sha="b0",
         porcelain="",
-        status_output=" M project-history/branch-tree.ndjson\n",
+        status_output=" M project-history/branch-tree.ndjson\n M .claude/cache/noc-graph.sqlite\n",
         diff_output=_migration_diff_output(
             "products/core/backend/migrations/050_x.sql"
         ),

@@ -131,11 +131,18 @@ def test_stale_primary_with_benign_dirt_still_lands_the_row(
     _rc, peer_out, _ = _git("show", "dev:PEER.md", cwd=origin)
     assert "peer work" in peer_out
 
-    # 4. the benign artifact was restored, not left stashed
+    # 4. the benign LEDGER artifact (`project-history/*.ndjson`) is COMMITTED,
+    #    never stashed — see `_benign_stash.is_ledger_ndjson`'s docstring for
+    #    the 2026-09-16 near-loss this closes (stashing a ledger row into the
+    #    stack shared by every worktree is loss-shaped; committing it is not).
+    #    The working tree is clean of it afterwards, and it rode into history
+    #    alongside the salvage row via a `chore(ledger)` commit.
     _rc, status, _ = _git("status", "--porcelain", cwd=primary)
-    assert COSTS in status, f"benign artifact not restored: {status!r}"
+    assert COSTS not in status, f"ledger artifact should be committed, not left dirty: {status!r}"
     _rc, stashes, _ = _git("stash", "list", cwd=primary)
     assert not stashes.strip(), f"a stash was left behind: {stashes!r}"
+    _rc, log_out, _ = _git("log", "--oneline", "-5", cwd=primary)
+    assert "chore(ledger)" in log_out, f"expected a chore(ledger) commit: {log_out!r}"
 
 
 def test_real_uncommitted_work_blocks_loudly_instead_of_diverging_silently(

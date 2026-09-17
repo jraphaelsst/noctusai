@@ -51,6 +51,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from settings import REPO_ROOT
+from workspace import resolve_caller_root
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 from .cache_backend import (
@@ -63,6 +64,26 @@ CACHE_DIR = _cache_dir()
 CACHE_PATH = _cache_path("agent-context")
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
 KB_DIR = REPO_ROOT / "KNOWLEDGE-BASE"
+
+
+def _agents_dir_for(worktree_path: str | None) -> Path:
+    """Resolve `.claude/agents/` for this call. `None` preserves the
+    pre-existing module-level `AGENTS_DIR` (primary tree, what tests
+    monkeypatch); an explicit `worktree_path` resolves the CALLER's own
+    worktree instead — MCP stdio is fixed-CWD, so omitting it from inside an
+    engineer worktree silently mirrors the stale primary agents set rather
+    than the worktree's own in-flight edits. Mirrors `_ledger_path_for` in
+    `auto_improvement.py`."""
+    if worktree_path:
+        return resolve_caller_root(worktree_path) / ".claude" / "agents"
+    return AGENTS_DIR
+
+
+def _kb_dir_for(worktree_path: str | None) -> Path:
+    """Sibling of `_agents_dir_for` for the `owns_kb:` KB root."""
+    if worktree_path:
+        return resolve_caller_root(worktree_path) / "KNOWLEDGE-BASE"
+    return KB_DIR
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -219,13 +240,17 @@ def _compact_extract(md: str, max_lines: int = 50) -> str:
 
 
 # ── Bundle-SHA per agent (all sources concatenated) ──────────────────────────
-def _bundle_sources(agent_md: Path) -> tuple[str, list[Path]]:
+def _bundle_sources(agent_md: Path, kb_dir: Path | None = None) -> tuple[str, list[Path]]:
     """Compute (bundle_sha, [sources]) for an agent.
 
     bundle_sha = sha256(agent.md.bytes ‖ each owned_kb.bytes), in path order.
     Missing owned-KB paths are still INCLUDED in the SHA stream (as empty
     bytes) so they re-trigger rebuild when they appear later.
+
+    `kb_dir`: override the `owns_kb:` root (worktree-aware `refresh()` passes
+    the CALLER's own KNOWLEDGE-BASE/); defaults to the module-level `KB_DIR`.
     """
+    kb_dir = kb_dir if kb_dir is not None else KB_DIR
     if not agent_md.exists():
         return "", []
     fm, _body = _split_frontmatter(agent_md.read_text(encoding="utf-8"))
@@ -234,7 +259,7 @@ def _bundle_sources(agent_md: Path) -> tuple[str, list[Path]]:
     hasher.update(agent_md.read_bytes())
     sources: list[Path] = [agent_md]
     for rel in paths_decl:
-        kb = KB_DIR / rel
+        kb = kb_dir / rel
         sources.append(kb)
         hasher.update(b"\x00")  # boundary
         hasher.update(rel.encode("utf-8"))
@@ -245,21 +270,33 @@ def _bundle_sources(agent_md: Path) -> tuple[str, list[Path]]:
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
-def refresh(force: bool = False, agent_name: str | None = None) -> dict:
+def refresh(
+    force: bool = False, agent_name: str | None = None, worktree_path: str | None = None,
+) -> dict:
     """Re-populate cache rows. Idempotent.
 
     Per-agent bundle_sha is compared vs cache_meta; matches short-circuit
     (unless `force=True`). `agent_name=...` limits scope to one agent.
 
+    `worktree_path`: read `.claude/agents/*.md` + each agent's owned KB from
+    the CALLER's own worktree instead of the primary tree. MCP stdio is a
+    fixed-CWD process bound to the primary at startup, so omitting
+    `worktree_path` from inside an engineer worktree silently mirrors the
+    STALE primary agent set rather than the worktree's own in-flight edits.
+    The CACHE ITSELF is unaffected — it lives at the shared Tier-1
+    `.claude/cache/agent-context.sqlite`.
+
     Returns:
       {ok, status('in-sync'|'rebuilt'), refreshed=[agent_names], rows_written}
     """
-    if not AGENTS_DIR.is_dir():
+    agents_dir = _agents_dir_for(worktree_path)
+    kb_dir = _kb_dir_for(worktree_path)
+    if not agents_dir.is_dir():
         return {"ok": True, "status": "in-sync", "refreshed": [], "rows_written": 0}
     conn = _connect()
     _init_schema(conn)
 
-    targets: list[Path] = sorted(AGENTS_DIR.glob("*.md"))
+    targets: list[Path] = sorted(agents_dir.glob("*.md"))
     if agent_name:
         targets = [p for p in targets if p.stem == agent_name]
     refreshed: list[str] = []
@@ -268,7 +305,7 @@ def refresh(force: bool = False, agent_name: str | None = None) -> dict:
 
     for agent_md in targets:
         stem = agent_md.stem
-        bundle_sha, _sources = _bundle_sources(agent_md)
+        bundle_sha, _sources = _bundle_sources(agent_md, kb_dir)
         cache_key = f"bundle_sha:{stem}"
         if not force:
             cur = conn.execute(
@@ -287,7 +324,7 @@ def refresh(force: bool = False, agent_name: str | None = None) -> dict:
         rows.append((stem, "frontmatter", None, fm, _sha_bytes(fm.encode("utf-8")), now))
         rows.append((stem, "body", None, body, _sha_bytes(body.encode("utf-8")), now))
         for rel in _parse_owns_kb(fm):
-            kb = KB_DIR / rel
+            kb = kb_dir / rel
             if not kb.exists():
                 continue  # keeper flags missing owns_kb; cache silently skips
             extract = _compact_extract(kb.read_text(encoding="utf-8"))

@@ -72,15 +72,19 @@ git and asserts the allowlist, the dev-only-push boundary, and the rebase-retry.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from tools.noctus.dev._benign_stash import (
     BENIGN_REFRESH_PATTERNS,
     classify_dirty as _shared_classify_dirty,
+    commit_ledger_rows as _shared_commit_ledger_rows,
+    partition_ledger as _shared_partition_ledger,
     pop_stash as _shared_pop_stash,
     stash_benign as _shared_stash_benign,
     # Reused by `_dirty_ledger_rel_paths`: porcelain lines must be parsed by the
@@ -518,6 +522,23 @@ def _pop_stash(runner, wt_path: str, ref: str | None, verbose: bool = False) -> 
         log_prefix="task_branch.integrate",
     )
 
+
+def _commit_ledger_rows_in_worktree(
+    runner, wt_path: str, ledger: list[str], verbose: bool = False
+) -> str | None:
+    """Commit — never stash — dirty ``project-history/*.ndjson`` rows before the
+    rebase. The shared stash stack (`.git/refs/stash`, one stack across every
+    worktree of this repo) is loss-shaped for append-only ledger data — see
+    ``_benign_stash.is_ledger_ndjson``'s docstring for the 2026-09-16 near-loss
+    this closes. A ledger row is `is_benign()` too, so without this split it
+    silently rode along in the SAME stash as `.claude/cache/*` — safe for a
+    cache file (a rebuild), not for the only copy of an append-only fact."""
+    return _shared_commit_ledger_rows(
+        lambda *a: runner(["git", "-C", wt_path, *a]),
+        ledger,
+        log_prefix="task_branch.integrate",
+    )
+
 # ── env auto-wire (the §5a verification-env recipe, mechanized) ──────────────
 # A fresh worktree is a clean git checkout: node_modules/ is gitignored ⇒ ABSENT,
 # so a vite build / vitest run inside the worktree fails for want of deps. The
@@ -753,6 +774,35 @@ def _apply_env_wiring(wire: list[dict], fs: FsOps) -> tuple[list[dict], list[dic
     return created, failed
 
 
+def _compact_wire_list(items: list[dict], *, sample_n: int = 5) -> dict[str, Any]:
+    """Compact a `would_wire`/`wired`/`skipped` list to `{count, sample}`.
+
+    A real repo's `wire_env` run enumerates every top-level package in every
+    product frontend's `node_modules` — ~18,840 entries / ~1.2MB on the
+    live fleet — which overflows the caller's tool-result budget on EVERY
+    `action='start' wire_env=True` call, dry-run or not. The full list
+    survives on disk (see `_write_wire_env_report`) so nothing is actually
+    lost; pass `verbose=True` on the tool to get the full lists back inline
+    instead of this compact form."""
+    return {"count": len(items), "sample": items[:sample_n]}
+
+
+def _write_wire_env_report(primary_root: str, slug: str, report: dict[str, Any]) -> str:
+    """Persist the FULL wire_env plan/result to a gitignored per-repo file —
+    `.claude/cache/wire-env-reports/<slug>.json` (the same `.claude/cache/`
+    gitignore leg the keeper-mirror caches already use) — so the compact
+    tool-result stays small without losing the detail. Overwritten on each
+    call for that slug (last-run-only; the point is recoverability, not
+    history). Returns the absolute path written."""
+    out_dir = os.path.join(primary_root, ".claude", "cache", "wire-env-reports")
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{slug}.json")
+    payload = {**report, "written_at": datetime.now(timezone.utc).isoformat()}
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+    return out_path
+
+
 def _settle_structural_caches(verbose: bool = False) -> dict[str, Any]:
     """Settle the Tier-1 SHARED structural caches against the at-rest primary
     tree at the end of a cross-tree integrate/cleanup.
@@ -923,7 +973,17 @@ def task_branch(
             if wire_env:
                 proot, wt_root = _roots()
                 would, skipped = _plan_env_wiring(proot, wt_root, fsops)
-                plan_extra = {"wire_env": True, "would_wire": would, "skipped": skipped}
+                if verbose:
+                    plan_extra = {"wire_env": True, "would_wire": would, "skipped": skipped}
+                else:
+                    report_path = _write_wire_env_report(
+                        proot, slug, {"wire_env": True, "would_wire": would, "skipped": skipped})
+                    plan_extra = {
+                        "wire_env": True,
+                        "would_wire": _compact_wire_list(would),
+                        "skipped": _compact_wire_list(skipped),
+                        "full_report": report_path,
+                    }
             return {**plan, **plan_extra, "status": "planned", "exit_code": 0,
                     "message": f"will fork {branch} off {remote}/{dev_branch} ({dev[:9]}) at "
                                f"{wt_path}{' + auto-wire the §5a verification env' if wire_env else ''}. "
@@ -934,15 +994,27 @@ def task_branch(
             return {**plan, "status": "error", "exit_code": 1,
                     "error": f"worktree add failed: {err.strip() or out.strip()}"}
         wired_extra: dict[str, Any] = {}
+        wired_count = 0
         if wire_env:
             proot, wt_root = _roots()
             would, skipped = _plan_env_wiring(proot, wt_root, fsops)
             created, failed = _apply_env_wiring(would, fsops)
-            wired_extra = {"wire_env": True, "wired": created,
-                           "skipped": skipped + failed}
+            wired_count = len(created)
+            all_skipped = skipped + failed
+            if verbose:
+                wired_extra = {"wire_env": True, "wired": created, "skipped": all_skipped}
+            else:
+                report_path = _write_wire_env_report(
+                    proot, slug, {"wire_env": True, "wired": created, "skipped": all_skipped})
+                wired_extra = {
+                    "wire_env": True,
+                    "wired": _compact_wire_list(created),
+                    "skipped": _compact_wire_list(all_skipped),
+                    "full_report": report_path,
+                }
         return {**plan, **wired_extra, "status": "started", "exit_code": 0,
                 "message": f"created {wt_path} on {branch}"
-                           f"{' + wired %d env symlink(s)' % len(wired_extra['wired']) if wire_env else ''}. "
+                           f"{' + wired %d env symlink(s)' % wired_count if wire_env else ''}. "
                            f"Work there (cd {wt_path}), commit on {branch}, then "
                            f"noctus.dev.task_branch action='integrate' slug='{slug}'."}
 
@@ -996,17 +1068,35 @@ def task_branch(
         if verbose:
             logger.debug("task_branch.integrate: classifying dirty files in %s", wt_path)
         benign_files, real_files = _classify_dirty_files(runner, wt_path)
-        if real_files and not benign_files:
-            # Real dirty files with no benign files — block before even trying to
-            # rebase (saves one rebase attempt + abort cycle).
+        # `project-history/*.ndjson` ledger rows are benign but must NEVER be
+        # stashed — the stash stack is shared with every other worktree of
+        # this repo (see `_benign_stash.is_ledger_ndjson`; 2026-09-16 near-loss,
+        # recovered by hand at `3789fefc`). Commit them instead; only the
+        # genuinely-derived remainder (`.claude/cache/*`, KB-count docs) is
+        # still stash-and-popped below.
+        ledger_files, stash_files = _shared_partition_ledger(benign_files)
+        if ledger_files:
+            if verbose:
+                logger.debug("task_branch.integrate: committing %d ledger row(s) "
+                             "instead of stashing: %s", len(ledger_files), ledger_files)
+            if _commit_ledger_rows_in_worktree(runner, wt_path, ledger_files, verbose) is None:
+                # Best-effort fell through (e.g. a pre-commit hook already staged
+                # the identical content moments earlier, leaving a git index
+                # quirk with nothing real left to commit) — fall back to the
+                # historically-safe stash rather than leaving these paths
+                # unresolved and blocking the rebase.
+                stash_files = ledger_files + stash_files
+        if real_files and not stash_files:
+            # Real dirty files with no stashable benign files — block before even
+            # trying to rebase (saves one rebase attempt + abort cycle).
             if verbose:
                 logger.debug("task_branch.integrate: real dirty files block rebase: %s",
                              real_files)
-        elif benign_files:
+        elif stash_files:
             if verbose:
                 logger.debug("task_branch.integrate: found %d benign artifact(s) to stash: %s",
-                             len(benign_files), benign_files)
-            benign_stashed = _stash_benign_artifacts(runner, wt_path, benign_files, verbose)
+                             len(stash_files), stash_files)
+            benign_stashed = _stash_benign_artifacts(runner, wt_path, stash_files, verbose)
             if benign_stashed and verbose:
                 logger.debug("task_branch.integrate: benign artifacts stashed; "
                              "proceeding with rebase")
@@ -1372,6 +1462,10 @@ def register(server) -> None:
             "build / vitest can run THERE; all gitignored ⇒ never staged; "
             "best-effort (missing/real-dir paths reported in skipped, never "
             "clobbered) and dry-run-honored (reports would_wire without confirm). "
+            "wire_env's would_wire/wired/skipped default to a COMPACT "
+            "{count, sample} shape + a full_report path (a real repo enumerates "
+            "~18,840 symlink entries there, which overflows the tool-result "
+            "budget) — pass verbose=True for the full inline lists instead. "
             "status: status|planned|started|integrated|conflict|"
             "up_to_date|cleaned|partial|blocked|error."
         ),
@@ -1381,13 +1475,17 @@ def register(server) -> None:
         slug: str | None = None,
         confirm: bool = False,
         wire_env: bool = False,
+        verbose: bool = False,
     ) -> dict:
-        return task_branch(action=action, slug=slug, confirm=confirm, wire_env=wire_env)
+        return task_branch(action=action, slug=slug, confirm=confirm,
+                           wire_env=wire_env, verbose=verbose)
 
 
 __all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_BENIGN_REFRESH_PATTERNS",
            "_assert_push_targets_dev", "_parse_worktrees", "_branch_for_path",
            "_is_dirty_excluding_gitignored", "_classify_dirty_files",
            "_rebase_in_progress", "_stash_benign_artifacts", "_pop_stash",
+           "_commit_ledger_rows_in_worktree",
            "_plan_env_wiring", "_apply_env_wiring",
+           "_compact_wire_list", "_write_wire_env_report",
            "FsOps", "register"]

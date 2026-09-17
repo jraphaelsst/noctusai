@@ -32,6 +32,7 @@ dispatch protocol.
 """
 import json
 import re
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -141,7 +142,22 @@ def _product_proposals_dir(
 
 
 def _slug(title):
-    return title.lower().replace(" ", "-").replace("'", "").replace("/", "-")[:50]
+    """Filesystem-safe slug for a proposal filename.
+
+    Accent-folds first (NFKD + drop combining marks) so a pt-BR title like
+    "Título com Acentuação: revisão/ajuste" degrades to plain ASCII instead
+    of leaving the accented codepoints in the filename, then collapses every
+    run of non `[a-z0-9_]` (spaces, slashes, colons, punctuation — anything
+    the old `.replace(" ", "-").replace("'", "").replace("/", "-")` chain
+    missed) into a single `-`, strips leading/trailing dashes, and truncates.
+    Underscores survive (`criar_meta` stays `criar_meta`) — only genuinely
+    unsafe/noisy characters are folded.
+    """
+    folded = unicodedata.normalize("NFKD", title or "")
+    ascii_only = folded.encode("ascii", "ignore").decode("ascii").lower()
+    slug = re.sub(r"[^a-z0-9_]+", "-", ascii_only)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return slug[:50].rstrip("-") or "untitled"
 
 
 def _project_slug(project: str) -> str:

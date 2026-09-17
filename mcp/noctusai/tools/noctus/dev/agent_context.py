@@ -37,11 +37,18 @@ def register(server) -> None:
             "`.claude/agents/*.md` + each agent's owned KB. Per-agent "
             "bundle_sha guard short-circuits in-sync agents (force=True "
             "rebuilds anyway). `agent_name=...` limits scope to one agent. "
-            "Auto-run by pre-commit on agent.md OR owned-KB change."
+            "Auto-run by pre-commit on agent.md OR owned-KB change. Pass "
+            "`worktree_path` when called from inside a git worktree so the "
+            "agent set is read from THAT worktree, not the MCP server's "
+            "fixed-CWD primary — omitting it silently mirrors the stale "
+            "primary agents."
         ),
     )
-    def _refresh(force: bool = False, agent_name: str | None = None) -> dict:
-        return acc.refresh(force=force, agent_name=agent_name)
+    def _refresh(
+        force: bool = False, agent_name: str | None = None,
+        worktree_path: str | None = None,
+    ) -> dict:
+        return acc.refresh(force=force, agent_name=agent_name, worktree_path=worktree_path)
 
     @server.tool(
         name="noctus.dev.agent_context_list",

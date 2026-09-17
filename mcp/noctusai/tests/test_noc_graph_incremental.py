@@ -488,3 +488,45 @@ class TestSemanticFingerprintDeterminism:
         # Drop a node → fingerprint must change (node-id-set is an input).
         g1.nodes = g1.nodes[:-1]
         assert semantic_neighbor_fingerprint(g1, repo) != fp1
+
+
+class TestWorktreePathResolution:
+    """`refresh()` without `worktree_path` silently graphs the PRIMARY tree
+    (bound at MCP-server-startup CWD), even when called from inside an
+    engineer worktree carrying its own in-flight edits. `worktree_path`
+    (validated via `workspace.resolve_caller_root`) takes precedence over a
+    raw `repo_root` override. Mirrors the sibling worktree_path tests on
+    `auto_improvement.py` / `keeper_pattern_cache.py` / `agent_context_cache.py`."""
+
+    @staticmethod
+    def _mark_as_worktree(repo: Path) -> None:
+        # `resolve_caller_root` only checks EXISTENCE of `.git` + the marker
+        # file — no real git init needed.
+        (repo / ".git").write_text("gitdir: /nowhere\n")
+        (repo / ".noctusai-workspace").write_text("test\n")
+
+    def test_worktree_path_resolves_to_the_same_root_as_repo_root(self, repo, tmp_cache):
+        self._mark_as_worktree(repo)
+        via_repo_root = ngc.refresh(force=True, repo_root=repo)
+        assert via_repo_root["status"] == "refreshed"
+
+        via_worktree_path = ngc.refresh(force=True, worktree_path=str(repo))
+        assert via_worktree_path["status"] == "refreshed"
+        assert via_worktree_path["source_sha"] == via_repo_root["source_sha"]
+
+    def test_worktree_path_takes_precedence_over_repo_root(self, repo, tmp_path, tmp_cache):
+        self._mark_as_worktree(repo)
+        unrelated = tmp_path / "unrelated-repo-root"
+        unrelated.mkdir()
+
+        res = ngc.refresh(force=True, repo_root=unrelated, worktree_path=str(repo))
+        # A refresh against `repo` (real content) never matches the source_sha
+        # of an empty `unrelated` dir — proves worktree_path won, not repo_root.
+        empty_res = ngc.refresh(force=True, repo_root=unrelated)
+        assert res["source_sha"] != empty_res["source_sha"]
+
+    def test_worktree_path_rejects_non_worktree_dir(self, tmp_path, tmp_cache):
+        bogus = tmp_path / "not-a-worktree"
+        bogus.mkdir()
+        with pytest.raises(ValueError):
+            ngc.refresh(worktree_path=str(bogus))

@@ -74,7 +74,24 @@ _ALL_CACHES = (
 )
 
 
-def detect_stale_caches(repo_root: Path | None = None) -> list[str]:
+def _resolve_effective_root(
+    repo_root: Path | None, worktree_path: str | None,
+) -> Path | None:
+    """`worktree_path` (validated via `workspace.resolve_caller_root`) takes
+    precedence over a raw `repo_root` override when both are given — mirrors
+    the `resolve_caller_root` convention `noctus.dev.pytest` / `tunnel_config`
+    already use. MCP stdio is fixed-CWD, so a structural-cache refresh called
+    from inside an engineer's worktree needs an explicit path to avoid
+    silently reading the stale primary tree."""
+    if worktree_path:
+        from workspace import resolve_caller_root
+        return Path(resolve_caller_root(worktree_path))
+    return repo_root
+
+
+def detect_stale_caches(
+    repo_root: Path | None = None, worktree_path: str | None = None,
+) -> list[str]:
     """Return the subset of caches whose source has drifted since last refresh.
 
     Lightweight check — opens each cache's freshness keeper and includes
@@ -83,10 +100,13 @@ def detect_stale_caches(repo_root: Path | None = None) -> list[str]:
 
     Args:
       repo_root: optional override (defaults to settings.REPO_ROOT).
+      worktree_path: a validated git worktree root; takes precedence over
+        `repo_root` when both are given (see `_resolve_effective_root`).
 
     Returns: list of cache names in `_ALL_CACHES` order whose source
     differs from the cached state.
     """
+    root = _resolve_effective_root(repo_root, worktree_path)
     stale: list[str] = []
     # Each cache has its own freshness keeper in compliance.py. We
     # invoke each, and consider the cache stale if ANY issues surface.
@@ -111,7 +131,7 @@ def detect_stale_caches(repo_root: Path | None = None) -> list[str]:
             stale.append(cache_name)
             continue
         try:
-            issues = keeper_fn(repo_root) if repo_root else keeper_fn()
+            issues = keeper_fn(root) if root else keeper_fn()
         except Exception:  # noqa: BLE001 — defensive
             stale.append(cache_name)
             continue
@@ -125,6 +145,7 @@ def refresh_all(
     skip: list[str] | None = None,
     only: list[str] | None = None,
     only_stale: bool = False,
+    worktree_path: str | None = None,
 ) -> dict[str, Any]:
     """Refresh keeper-mirror caches.
 
@@ -145,6 +166,12 @@ def refresh_all(
       only: explicit allowlist; supersedes `skip`. Names must be in
         `_ALL_CACHES`; unknown names surface in warnings.
       only_stale: pre-check freshness keepers; refresh only stale caches.
+      worktree_path: a validated (via `workspace.resolve_caller_root`) git
+        worktree root, threaded to every STRUCTURAL sub-cache refresh
+        (keeper-patterns / agent-context / auto-improvement / noc-graph) so
+        each reads the CALLER's own worktree instead of the MCP server's
+        fixed-CWD primary. The embedding caches (kb/code) are unaffected —
+        out of scope for this parameter; they stay primary-scoped.
 
     Returns: orchestration summary `{ok, ts, refreshed, failures,
     total_rows_written, warnings, skipped, selection_mode}`.
@@ -159,7 +186,7 @@ def refresh_all(
         active = requested & valid
         selection_mode = "only"
     elif only_stale:
-        stale = detect_stale_caches()
+        stale = detect_stale_caches(worktree_path=worktree_path)
         active = set(stale)
         unknown = set()
         selection_mode = "only-stale"
@@ -184,8 +211,9 @@ def refresh_all(
     if "keeper-patterns" in active:
         try:
             from . import keeper_pattern_cache as kpc
-            result, err = _refresh_one("keeper-patterns",
-                                       lambda: kpc.refresh(force=force))
+            result, err = _refresh_one(
+                "keeper-patterns",
+                lambda: kpc.refresh(force=force, worktree_path=worktree_path))
             refreshed["keeper-patterns"] = result
             if err:
                 failures.append("keeper-patterns")
@@ -198,8 +226,9 @@ def refresh_all(
     if "agent-context" in active:
         try:
             from . import agent_context_cache as acc
-            result, err = _refresh_one("agent-context",
-                                       lambda: acc.refresh(force=force))
+            result, err = _refresh_one(
+                "agent-context",
+                lambda: acc.refresh(force=force, worktree_path=worktree_path))
             refreshed["agent-context"] = result
             if err:
                 failures.append("agent-context")
@@ -212,8 +241,9 @@ def refresh_all(
     if "auto-improvement" in active:
         try:
             from . import auto_improvement as ai
-            result, err = _refresh_one("auto-improvement",
-                                       lambda: ai.refresh(force=force))
+            result, err = _refresh_one(
+                "auto-improvement",
+                lambda: ai.refresh(force=force, worktree_path=worktree_path))
             refreshed["auto-improvement"] = result
             if err:
                 failures.append("auto-improvement")
@@ -258,8 +288,9 @@ def refresh_all(
     if "noc-graph" in active:
         try:
             from . import noc_graph_cache as ng
-            result, err = _refresh_one("noc-graph",
-                                       lambda: ng.refresh(force=force))
+            result, err = _refresh_one(
+                "noc-graph",
+                lambda: ng.refresh(force=force, worktree_path=worktree_path))
             refreshed["noc-graph"] = result
             if err:
                 failures.append("noc-graph")
@@ -336,8 +367,16 @@ def should_skip_cache_refresh(changed_paths: list[str]) -> bool:
 _STRUCTURAL_CACHES = ("keeper-patterns", "agent-context", "auto-improvement", "noc-graph", "absorptions")
 
 
-def settle_structural_caches(repo_root: Path | None = None) -> dict[str, Any]:
+def settle_structural_caches(
+    repo_root: Path | None = None, worktree_path: str | None = None,
+) -> dict[str, Any]:
     """Heal-on-contact for the zero-OpenAI STRUCTURAL caches.
+
+    `worktree_path`: a validated (via `workspace.resolve_caller_root`) git
+    worktree root — takes precedence over `repo_root` when both are given.
+    Threaded through to both the freshness check AND the healing refresh so
+    a call from inside an engineer worktree settles THAT worktree's caches,
+    not the MCP server's fixed-CWD primary.
 
     WHY (the durable guarantee): the eager refresh hooks have gaps no
     event-catching fix can close — git SKIPS the post-merge hook on a
@@ -355,12 +394,16 @@ def settle_structural_caches(repo_root: Path | None = None) -> dict[str, Any]:
     ``{ok, healed:[names], stale_embedding:[names], detail}``.
     KB § PATTERNS/common/cache-auto-freshness.md § Heal-on-contact.
     """
-    stale_all = detect_stale_caches(repo_root)
+    effective_root = _resolve_effective_root(repo_root, worktree_path)
+    stale_all = detect_stale_caches(effective_root)
     stale_structural = [c for c in stale_all if c in _STRUCTURAL_CACHES]
     stale_embedding = [c for c in stale_all if c not in _STRUCTURAL_CACHES]
     if not stale_structural:
         return {"ok": True, "healed": [], "stale_embedding": stale_embedding, "detail": None}
-    result = refresh_all(only=stale_structural)
+    refresh_kwargs: dict[str, Any] = {"only": stale_structural}
+    if worktree_path:
+        refresh_kwargs["worktree_path"] = worktree_path
+    result = refresh_all(**refresh_kwargs)
     failures = result.get("failures", [])
     return {
         "ok": result.get("ok", False),
@@ -385,15 +428,22 @@ def register(server) -> None:
             "Valid cache names: keeper-patterns / agent-context / "
             "auto-improvement / kb-embeddings / code-embeddings.\n"
             "Optional `force=True` to rebuild even when source_sha matches.\n"
-            "Returns per-cache outcome + failures + total_rows_written + "
-            "selection_mode. KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md."
+            "Pass `worktree_path` when called from inside a git worktree so "
+            "the STRUCTURAL sub-caches (keeper-patterns / agent-context / "
+            "auto-improvement / noc-graph) read THAT worktree's tree, not "
+            "the MCP server's fixed-CWD primary; embedding caches are "
+            "unaffected. Returns per-cache outcome + failures + "
+            "total_rows_written + selection_mode. "
+            "KB § CONTEXT/PATTERNS/common/cache-auto-freshness.md."
         ),
     )
     def _refresh(force: bool = False,
                  skip: list[str] | None = None,
                  only: list[str] | None = None,
-                 only_stale: bool = False) -> dict:
-        return refresh_all(force=force, skip=skip, only=only, only_stale=only_stale)
+                 only_stale: bool = False,
+                 worktree_path: str | None = None) -> dict:
+        return refresh_all(force=force, skip=skip, only=only, only_stale=only_stale,
+                           worktree_path=worktree_path)
 
     @server.tool(
         name="noctus.dev.detect_stale_caches",
@@ -402,11 +452,14 @@ def register(server) -> None:
             "return the list of cache names whose source differs from the "
             "cached state. NO refresh happens — this is the predicate "
             "powering `refresh_all_caches(only_stale=True)`. Lightweight "
-            "compared to a full refresh; useful for status displays."
+            "compared to a full refresh; useful for status displays. Pass "
+            "`worktree_path` when called from inside a git worktree so the "
+            "structural caches' freshness is checked against THAT "
+            "worktree's tree, not the MCP server's fixed-CWD primary."
         ),
     )
-    def _detect() -> list[str]:
-        return detect_stale_caches()
+    def _detect(worktree_path: str | None = None) -> list[str]:
+        return detect_stale_caches(worktree_path=worktree_path)
 
     @server.tool(
         name="noctus.dev.settle_structural_caches",
@@ -418,12 +471,16 @@ def register(server) -> None:
             "cannot — git skips post-merge on fast-forward merges, out-of-commit "
             "ndjson appends never fire pre-commit, and the Tier-1 shared cache sees "
             "cross-tree integrate transients. Embedding caches are NOT touched "
-            "(OpenAI cost → they stay warn-only). Returns {ok, healed, "
-            "stale_embedding}. KB § PATTERNS/common/cache-auto-freshness.md."
+            "(OpenAI cost → they stay warn-only). Pass `worktree_path` when "
+            "called from inside a git worktree so the structural caches settle "
+            "against THAT worktree's tree, not the MCP server's fixed-CWD "
+            "primary. Returns {ok, healed, stale_embedding}. "
+            "KB § PATTERNS/common/cache-auto-freshness.md."
         ),
     )
-    def _settle(repo_root: str | None = None) -> dict:
-        return settle_structural_caches(Path(repo_root) if repo_root else None)
+    def _settle(repo_root: str | None = None, worktree_path: str | None = None) -> dict:
+        return settle_structural_caches(
+            Path(repo_root) if repo_root else None, worktree_path=worktree_path)
 
 
 __all__ = [

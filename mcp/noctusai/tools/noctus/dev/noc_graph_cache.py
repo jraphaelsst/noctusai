@@ -426,8 +426,19 @@ def get_cached_source_sha(repo_root: Optional[Path] = None) -> str | None:
 _HISTORY_DECORATION_KEYS = ("ai_events", "ai_last_stage", "ai_last_ts", "ai_stages_seen")
 
 
-def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, Any]:
+def refresh(
+    force: bool = False, repo_root: Optional[Path] = None,
+    worktree_path: str | None = None,
+) -> dict[str, Any]:
     """Rebuild the graph + mirror it into the SQLite cache.
+
+    `worktree_path`: a validated (via `workspace.resolve_caller_root`) git
+    worktree root — takes precedence over `repo_root` when both are given.
+    MCP stdio is a fixed-CWD process bound to the primary tree at startup,
+    so omitting this from inside an engineer worktree silently graphs the
+    STALE primary tree rather than the worktree's own in-flight edits.
+    Mirrors the `resolve_caller_root` convention `noctus.dev.pytest` /
+    `tunnel_config` / `auto_improvement.refresh` already use.
 
     Three paths:
 
@@ -469,7 +480,11 @@ def refresh(force: bool = False, repo_root: Optional[Path] = None) -> dict[str, 
     GIL. Outside the server (CLI, tests, scripts) this branch never fires —
     `refresh()`'s in-process behavior is UNCHANGED there.
     """
-    root = repo_root or REPO_ROOT
+    if worktree_path:
+        from workspace import resolve_caller_root  # lazy: avoids import cost otherwise
+        root = Path(resolve_caller_root(worktree_path))
+    else:
+        root = repo_root or REPO_ROOT
     cache_p = cache_path(root)
     live_sha = compute_source_sha(root)
 

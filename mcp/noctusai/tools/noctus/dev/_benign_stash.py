@@ -186,6 +186,105 @@ def is_benign(path: str, patterns: tuple[str, ...] = BENIGN_REFRESH_PATTERNS) ->
     return any(fnmatch.fnmatch(path, pat) for pat in patterns)
 
 
+# ``project-history/*.ndjson`` — same glob as the first entry of
+# ``BENIGN_REFRESH_PATTERNS`` above, named separately because it drives a
+# DIFFERENT decision (commit vs stash) than "is this benign at all".
+_LEDGER_NDJSON_GLOB = "project-history/*.ndjson"
+
+
+def is_ledger_ndjson(path: str) -> bool:
+    """True iff ``path`` is one of the append-only ``project-history/*.ndjson``
+    ledgers.
+
+    🔴 WHY THESE ARE NEVER STASHED (2026-09-16 — a real cross-session
+    near-loss, recovered by hand in ``dev`` at ``3789fefc``). A ledger row is
+    ``is_benign()`` too (it matches the SAME glob in
+    ``BENIGN_REFRESH_PATTERNS``), so the naive read is "benign ⇒ safe to
+    stash-and-pop, same as a cache file". It is not: ``.git/refs/stash`` is
+    ONE stack shared by the primary checkout and every worktree of this repo
+    (the exact mechanism ``stash_benign``'s SHA-not-bool docstring already
+    documents for a different symptom). Sweeping 25 unpushed rows from
+    ``project-history/*.ndjson`` (branch-tree, worktree-salvage,
+    auto-improvement, …) into that shared stack — even with a perfectly
+    correct SHA-addressed restore — is loss-SHAPED: the entry can be popped
+    by the wrong session, dropped by a cleanup pass that doesn't know it
+    holds live data, or simply never restored if the caller errors before
+    the ``finally``. A cache file surviving that is a cheap rebuild. A
+    ledger row surviving that is the only copy of an append-only fact.
+
+    The fix does not need the stash at all: every ``project-history/*.ndjson``
+    ledger carries ``merge=union`` in ``.gitattributes`` and is append-only,
+    so a ``chore(ledger)`` commit of just these paths rebases conflict-free
+    onto anything — see :func:`commit_ledger_rows`. ``.claude/cache/*`` and
+    the regenerated KB-count docs carry no such durability requirement and
+    stay in the stash-and-pop path.
+    """
+    return fnmatch.fnmatch(path, _LEDGER_NDJSON_GLOB)
+
+
+def partition_ledger(paths: list[str]) -> tuple[list[str], list[str]]:
+    """Split an already-``is_benign`` path list into ``(ledger, stashable)``.
+
+    ``ledger`` — ``project-history/*.ndjson`` rows (see :func:`is_ledger_ndjson`)
+    — the caller must COMMIT these, never stash them.
+    ``stashable`` — every other known-benign artifact (``.claude/cache/*``, the
+    regenerated KB-count docs, ``PROJECT-HISTORY.md``) — genuinely derived,
+    still safe to stash-and-pop.
+    """
+    ledger = [p for p in paths if is_ledger_ndjson(p)]
+    stashable = [p for p in paths if not is_ledger_ndjson(p)]
+    return ledger, stashable
+
+
+LEDGER_COMMIT_MESSAGE = "chore(ledger): ship the append-only ledger rows written this run"
+
+
+def commit_ledger_rows(
+    run_git: RunGit,
+    ledger_paths: list[str],
+    *,
+    commit_msg: str = LEDGER_COMMIT_MESSAGE,
+    log_prefix: str = "benign_stash",
+) -> str | None:
+    """Commit — never stash — the dirty ``project-history/*.ndjson`` rows so the
+    working tree is clean enough to rebase, without the shared-stash loss class
+    documented on :func:`is_ledger_ndjson`. Path-scoped (``git add --
+    <ledger_paths>`` then ``git commit -- <ledger_paths>``), so nothing else
+    rides into this commit. The commit lands on the CURRENT branch, so it
+    replays through the caller's subsequent rebase like any other commit —
+    append-only + ``merge=union`` makes that conflict-free by construction.
+
+    Returns a truthy value on success — the new HEAD sha when resolvable, else
+    the sentinel string ``"committed"`` (the commit itself succeeded; only the
+    SHA lookup came back empty, same "not addressable" edge case
+    :func:`stash_benign` already tolerates for its own SHA resolution).
+    Returns ``None`` ONLY when there was nothing to commit or `git add` /
+    `git commit` itself failed (best-effort — a failure here is logged and
+    the paths stay dirty, so the caller can fall back to stashing them rather
+    than silently losing the distinction between "committed" and "failed").
+    """
+    if not ledger_paths:
+        return None
+    logger.debug("%s: committing %d ledger row(s) instead of stashing: %s",
+                 log_prefix, len(ledger_paths), ledger_paths)
+    rc_a, _out_a, err_a = run_git("add", "--", *ledger_paths)
+    if rc_a != 0:
+        logger.warning(
+            "%s: git add of ledger path(s) failed (%s); leaving them dirty "
+            "rather than stashing — they will surface as blocking dirt, "
+            "never silently lost", log_prefix, (err_a or "").strip())
+        return None
+    rc_c, _out_c, err_c = run_git("commit", "-m", commit_msg, "--", *ledger_paths)
+    if rc_c != 0:
+        logger.warning("%s: git commit of ledger path(s) failed (%s)",
+                       log_prefix, (err_c or "").strip())
+        return None
+    rc_r, out_r, _err_r = run_git("rev-parse", "HEAD")
+    sha = (out_r or "").strip().splitlines()[0].strip() if rc_r == 0 and (out_r or "").strip() else None
+    logger.debug("%s: committed %d ledger row(s) as %s", log_prefix, len(ledger_paths), sha or "?")
+    return sha or "committed"
+
+
 def strip_status_code(raw: str) -> str:
     """Strip the porcelain status columns from one ``git status --porcelain``
     line, returning the path.
@@ -377,8 +476,10 @@ def dirty_blocked_result(real: list[str], dev_ref: str) -> dict[str, Any]:
 
 
 __all__ = [
-    "BENIGN_REFRESH_PATTERNS", "STASH_MESSAGE", "RunGit",
+    "BENIGN_REFRESH_PATTERNS", "STASH_MESSAGE", "LEDGER_COMMIT_MESSAGE", "RunGit",
     "_kb_counts_regenerated_rel_paths",
-    "is_benign", "strip_status_code", "classify_porcelain", "classify_dirty",
-    "stash_message", "stash_benign", "pop_stash", "dirty_blocked_result",
+    "is_benign", "is_ledger_ndjson", "partition_ledger",
+    "strip_status_code", "classify_porcelain", "classify_dirty",
+    "stash_message", "stash_benign", "pop_stash", "commit_ledger_rows",
+    "dirty_blocked_result",
 ]

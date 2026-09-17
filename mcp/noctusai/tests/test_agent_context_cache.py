@@ -182,3 +182,45 @@ class TestCompactExtract:
         md = "# T\n\nIntro\n" + "".join(f"## H{i}\nL{i}\n" for i in range(100))
         out = acc._compact_extract(md, max_lines=30)
         assert len(out.splitlines()) <= 30
+
+
+class TestWorktreePathScoping:
+    """`refresh()` without `worktree_path` silently mirrors the PRIMARY tree's
+    `.claude/agents/*.md` + owned KB (bound at MCP-server-startup CWD), even
+    when called from inside an engineer worktree carrying its own in-flight
+    agent/KB edits. Mirrors `TestWorktreePathScoping` in
+    `test_auto_improvement.py`."""
+
+    @staticmethod
+    def _make_fake_worktree(tmp_path, name):
+        # `resolve_caller_root` only checks EXISTENCE of `.git` + the marker
+        # file — no real git init needed.
+        wt = tmp_path / name
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text("gitdir: /nowhere\n")
+        (wt / ".noctusai-workspace").write_text("test\n")
+        (wt / ".claude" / "agents").mkdir(parents=True)
+        (wt / "KNOWLEDGE-BASE").mkdir(parents=True)
+        return wt
+
+    def test_refresh_reads_worktree_agents_not_primary(self, tmp_repo):
+        wt = self._make_fake_worktree(tmp_repo, "wt")
+        _write_agent(wt, "wt-only-agent",
+            "name: wt-only-agent\ndescription: x\ntools: Read\nowns_kb: []",
+            "worktree-local, uncommitted")
+        assert not (tmp_repo / ".claude" / "agents" / "wt-only-agent.md").exists()
+
+        r = acc.refresh(force=True, worktree_path=str(wt))
+        assert r["status"] == "rebuilt"
+        assert "wt-only-agent" in r["refreshed"]
+
+        # Omitting worktree_path stays scoped to the (empty) primary — the
+        # worktree-only agent must never silently leak into the primary read.
+        r_primary = acc.refresh(force=True)
+        assert "wt-only-agent" not in r_primary["refreshed"]
+
+    def test_refresh_worktree_path_rejects_non_worktree_dir(self, tmp_repo, tmp_path):
+        bogus = tmp_path / "not-a-worktree"
+        bogus.mkdir()
+        with pytest.raises(ValueError):
+            acc.refresh(worktree_path=str(bogus))

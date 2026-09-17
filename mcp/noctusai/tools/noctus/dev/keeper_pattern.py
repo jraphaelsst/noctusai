@@ -39,11 +39,14 @@ def register(server) -> None:
             "Re-populate the keeper-pattern cache from `compliance.py` + "
             "colocated test fixtures. Idempotent — `force=False` "
             "short-circuits when `source_sha` matches. Auto-run by "
-            "pre-commit on `compliance.py` change."
+            "pre-commit on `compliance.py` change. Pass `worktree_path` "
+            "when called from inside a git worktree so `compliance.py` is "
+            "read from THAT worktree, not the MCP server's fixed-CWD "
+            "primary — omitting it silently mirrors the stale primary copy."
         ),
     )
-    def _refresh(force: bool = False) -> dict:
-        return kpc.refresh(force=force)
+    def _refresh(force: bool = False, worktree_path: str | None = None) -> dict:
+        return kpc.refresh(force=force, worktree_path=worktree_path)
 
     @server.tool(
         name="noctus.dev.keeper_pattern_list",

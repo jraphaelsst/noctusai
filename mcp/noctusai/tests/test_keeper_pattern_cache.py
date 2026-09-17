@@ -179,3 +179,73 @@ class TestListKeepers:
         assert len(names) > 10
         assert len(names) == len(set(names))
         assert any("agent_format" in n for n in names)
+
+
+class TestWorktreePathScoping:
+    """`refresh()` without `worktree_path` silently mirrors the PRIMARY tree's
+    `compliance.py` (bound at MCP-server-startup CWD), even when called from
+    inside an engineer worktree carrying its own in-flight keeper edits.
+    Mirrors `TestWorktreePathScoping` in `test_auto_improvement.py`."""
+
+    @staticmethod
+    def _make_fake_worktree(tmp_path, name):
+        # `resolve_caller_root` only checks EXISTENCE of `.git` + the marker
+        # file — no real git init needed.
+        wt = tmp_path / name
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text("gitdir: /nowhere\n")
+        (wt / ".noctusai-workspace").write_text("test\n")
+        comp_dir = wt / "mcp" / "noctusai" / "tools" / "noctus" / "dev"
+        comp_dir.mkdir(parents=True)
+        (comp_dir / "compliance.py").write_text(
+            "def check_worktree_only_keeper(repo_root=None):\n"
+            "    '''A keeper that exists ONLY in this worktree's compliance.py.'''\n"
+            "    return []\n"
+        )
+        (wt / "mcp" / "noctusai" / "tests").mkdir(parents=True)
+        return wt
+
+    @staticmethod
+    def _keeper_names_in_cache(cache_path) -> set[str]:
+        # Query the sqlite cache DIRECTLY (never through `lookup()`) — `lookup()`
+        # has its own lazy-freshness self-heal that would re-run `refresh()`
+        # WITHOUT `worktree_path` the moment the cached `source_sha` (the
+        # worktree's) no longer matches `_source_sha()`'s own default (the
+        # primary's), silently reverting the very state this test verifies.
+        conn = sqlite3.connect(str(cache_path))
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT keeper_name FROM keeper_patterns"
+            ).fetchall()
+        finally:
+            conn.close()
+        return {r[0] for r in rows}
+
+    def test_refresh_reads_worktree_compliance_not_primary(self, tmp_path, monkeypatch):
+        _isolate_cache(tmp_path, monkeypatch)
+        wt = self._make_fake_worktree(tmp_path, "wt")
+
+        r = kpc.refresh(force=True, worktree_path=str(wt))
+        assert r["status"] == "rebuilt"
+        assert r["resolved_compliance_src"] == str(
+            wt / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py"
+        )
+        names = self._keeper_names_in_cache(kpc.CACHE_PATH)
+        assert "check_worktree_only_keeper" in names, (
+            "the worktree-only keeper must be visible via worktree_path")
+
+        # Omitting worktree_path stays scoped to the REAL primary compliance.py —
+        # the worktree-only keeper must never silently leak into that read.
+        r_primary = kpc.refresh(force=True)
+        assert r_primary["resolved_compliance_src"] == str(kpc.COMPLIANCE_SRC)
+        primary_names = self._keeper_names_in_cache(kpc.CACHE_PATH)
+        assert "check_worktree_only_keeper" not in primary_names, (
+            "the worktree-only keeper leaked into the primary read")
+
+    def test_refresh_worktree_path_rejects_non_worktree_dir(self, tmp_path, monkeypatch):
+        _isolate_cache(tmp_path, monkeypatch)
+        bogus = tmp_path / "not-a-worktree"
+        bogus.mkdir()
+        import pytest
+        with pytest.raises(ValueError):
+            kpc.refresh(worktree_path=str(bogus))

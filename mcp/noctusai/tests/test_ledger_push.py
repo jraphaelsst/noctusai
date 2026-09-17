@@ -50,6 +50,10 @@ class FakeRunner:
     ahead        : shas returned by `git rev-list origin/dev..HEAD`.
     diff_tree    : changed files returned by `git diff-tree` (per ahead-commit).
     rebase_rc    : return code for `git rebase <ref>` (0 clean, 1 conflict).
+    extra_dirty  : additional ` M <path>\\n` lines appended to the bare
+                   `git status --porcelain` response (the push-leg's
+                   benign-stash precheck) — used to model a SECOND dirty
+                   file alongside `ledger_rel` (e.g. a co-dirty cache file).
     """
 
     def __init__(
@@ -64,6 +68,7 @@ class FakeRunner:
         diff_tree: str = "project-history/branch-tree.ndjson\n",
         rebase_rc: int = 0,
         ledger_rel: str = "project-history/branch-tree.ndjson",
+        extra_dirty: tuple[str, ...] = (),
     ):
         self.status_dirty = status_dirty
         self.status_rc = status_rc
@@ -74,6 +79,7 @@ class FakeRunner:
         self.diff_tree = diff_tree
         self.rebase_rc = rebase_rc
         self.ledger_rel = ledger_rel
+        self.extra_dirty = extra_dirty
         self.calls: list[list[str]] = []
         self._push_i = 0
         self.stash_sha = "f" * 40
@@ -84,7 +90,9 @@ class FakeRunner:
         if sub == "status":
             if self.status_rc != 0:
                 return self.status_rc, "", "status failed"
-            return 0, (f" M {self.ledger_rel}\n" if self.status_dirty else ""), ""
+            lines = f" M {self.ledger_rel}\n" if self.status_dirty else ""
+            lines += "".join(f" M {p}\n" for p in self.extra_dirty)
+            return 0, lines, ""
         if sub == "add":
             return self.add_rc, "", "" if self.add_rc == 0 else "add failed"
         if sub == "commit":
@@ -194,7 +202,13 @@ class TestPathScopedCommit:
 # ── already_committed=True (push an existing HEAD) ─────────────────────────────
 class TestAlreadyCommitted:
     def test_skips_commit_leg(self):
-        r = FakeRunner(push_rcs=[0])
+        # status_dirty=False: this test is about the PATH-SCOPED commit leg
+        # being skipped, not the push-leg's benign-stash precheck — with a
+        # dirty default ledger file present, THAT leg would now legitimately
+        # issue its own add/commit (a ledger row is committed, never
+        # stashed — see `_benign_stash.is_ledger_ndjson`), which would muddy
+        # this test's "no add, no commit" claim without being a regression.
+        r = FakeRunner(push_rcs=[0], status_dirty=False)
         res = LP.commit_and_ff_push_ledger(
             runner=r,
             rel_paths=[
@@ -368,10 +382,15 @@ class TestBenignStashUnblocksTheRebase:
     def test_hook_dirtied_ledger_is_stashed_so_the_push_succeeds(self):
         """The exact recurring failure: the tree is dirty ONLY with a known-benign
         hook artifact. It must be stashed, the rebase must run, the push must
-        succeed, and the artifact must be restored."""
+        succeed, and the artifact must be restored.
+
+        Uses a `.claude/cache/*` artifact (not a `project-history/*.ndjson`
+        ledger) — a ledger row is `is_benign()` too but must be COMMITTED,
+        never stashed (see `_benign_stash.is_ledger_ndjson`); that split is
+        covered separately by `TestLedgerRowsAreCommittedNeverStashed`."""
         r = FakeRunner(status_dirty=True, push_rcs=[0],
                        diff_tree="project-history/worktree-salvage.ndjson\n",
-                       ledger_rel="project-history/vector-costs.ndjson")
+                       ledger_rel=".claude/cache/noc-graph.sqlite")
         res = LP.commit_and_ff_push_ledger(
             runner=r, rel_paths=["project-history/worktree-salvage.ndjson"],
             already_committed=True,
@@ -415,7 +434,7 @@ class TestBenignStashUnblocksTheRebase:
         stashed-and-forgotten artifact is its own drift."""
         r = FakeRunner(status_dirty=True, push_rcs=[1, 1],
                        diff_tree="project-history/worktree-salvage.ndjson\n",
-                       ledger_rel="project-history/vector-costs.ndjson")
+                       ledger_rel=".claude/cache/noc-graph.sqlite")
         res = LP.commit_and_ff_push_ledger(
             runner=r, rel_paths=["project-history/worktree-salvage.ndjson"],
             already_committed=True,
@@ -438,3 +457,53 @@ class TestBenignStashUnblocksTheRebase:
         flat = " ".join(" ".join(c) for c in r.calls)
         for banned in ("--force", "-f ", "-X", "reset --hard", "autoStash"):
             assert banned not in flat, f"banned token {banned!r} issued: {flat}"
+
+
+# ── 2026-09-16: the ledger/cache split ──────────────────────────────────────
+# A real cross-session near-loss (25 unpushed ledger rows, recovered by hand
+# in dev at `3789fefc`) came from this exact push-leg pre-check sweeping a
+# dirty `project-history/*.ndjson` row into the shared stash stack alongside
+# ordinary derived artifacts. `is_benign()` alone cannot tell them apart (a
+# ledger row matches it too); `partition_ledger` / `commit_ledger_rows` do.
+class TestLedgerRowsAreCommittedNeverStashed:
+    def test_dirty_ledger_and_cache_file_ledger_committed_only_cache_stashed(self):
+        r = FakeRunner(
+            status_dirty=True, push_rcs=[0],
+            ledger_rel="project-history/auto-improvement.ndjson",
+            extra_dirty=(".claude/cache/noc-graph.sqlite",),
+        )
+        res = LP.commit_and_ff_push_ledger(
+            runner=r, rel_paths=["project-history/branch-tree.ndjson"],
+            already_committed=True,
+        )
+        assert res == {"ok": True, "status": "pushed", "pushed": True}
+
+        adds = [c for c in r.calls if _sub(c) == "add"]
+        commits = [c for c in r.calls if _sub(c) == "commit"]
+        assert len(adds) == 1 and adds[0][-1] == "project-history/auto-improvement.ndjson"
+        assert len(commits) == 1 and commits[0][-1] == "project-history/auto-improvement.ndjson"
+
+        stash_pushes = [c for c in r.calls if _sub(c) == "stash" and "push" in c]
+        assert stash_pushes, "the co-dirty cache file must still be stashed"
+        for push in stash_pushes:
+            assert ".claude/cache/noc-graph.sqlite" in push
+            assert "project-history/auto-improvement.ndjson" not in push
+
+    def test_ledger_only_dirty_tree_commits_and_never_touches_stash(self):
+        """No other benign artifact dirty besides the ledger row — the push
+        must proceed WITHOUT ever calling `git stash`."""
+        r = FakeRunner(
+            status_dirty=True, push_rcs=[0],
+            ledger_rel="project-history/worktree-salvage.ndjson",
+        )
+        res = LP.commit_and_ff_push_ledger(
+            runner=r, rel_paths=["project-history/branch-tree.ndjson"],
+            already_committed=True,
+        )
+        assert res == {"ok": True, "status": "pushed", "pushed": True}
+        assert not any(_sub(c) == "stash" for c in r.calls), (
+            "a ledger-only dirty tree must never invoke git stash"
+        )
+        commits = [c for c in r.calls if _sub(c) == "commit"]
+        assert len(commits) == 1
+        assert commits[0][-1] == "project-history/worktree-salvage.ndjson"

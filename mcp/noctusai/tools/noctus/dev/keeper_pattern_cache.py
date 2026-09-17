@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from settings import REPO_ROOT
+from workspace import resolve_caller_root
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 from .cache_backend import (
@@ -61,11 +62,36 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _source_sha() -> str:
+def _compliance_src_for(worktree_path: str | None) -> Path:
+    """Resolve the `compliance.py` SOURCE to hash/parse for this call. `None`
+    (the default) preserves the pre-existing module-level `COMPLIANCE_SRC` —
+    the primary tree, and what tests monkeypatch. An explicit `worktree_path`
+    resolves the CALLER's own worktree copy instead — MCP stdio is a
+    fixed-CWD process bound to the primary at startup, so omitting
+    `worktree_path` from inside an engineer worktree silently mirrors the
+    STALE primary `compliance.py`, never the worktree's own in-flight edits.
+    Mirrors the `_ledger_path_for` convention in `auto_improvement.py`."""
+    if worktree_path:
+        return (
+            resolve_caller_root(worktree_path)
+            / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py"
+        )
+    return COMPLIANCE_SRC
+
+
+def _tests_dir_for(worktree_path: str | None) -> Path:
+    """Sibling of `_compliance_src_for` for the colocated fixture tests dir."""
+    if worktree_path:
+        return resolve_caller_root(worktree_path) / "mcp" / "noctusai" / "tests"
+    return TESTS_DIR
+
+
+def _source_sha(worktree_path: str | None = None) -> str:
     """SHA-256 of `compliance.py` — the single source of truth for keeper patterns."""
-    if not COMPLIANCE_SRC.exists():
+    src = _compliance_src_for(worktree_path)
+    if not src.exists():
         return ""
-    return hashlib.sha256(COMPLIANCE_SRC.read_bytes()).hexdigest()
+    return hashlib.sha256(src.read_bytes()).hexdigest()
 
 
 def _connect() -> sqlite3.Connection:
@@ -119,12 +145,14 @@ def _parse(path: Path) -> ast.Module | None:
         return None
 
 
-def _extract_keepers_from_compliance() -> list[dict]:
+def _extract_keepers_from_compliance(worktree_path: str | None = None) -> list[dict]:
     """AST-walk for `def check_*(...)` function defs + docstring 1st-line."""
-    tree = _parse(COMPLIANCE_SRC)
+    src = _compliance_src_for(worktree_path)
+    tree = _parse(src)
     if tree is None:
         return []
-    rel = str(COMPLIANCE_SRC.relative_to(REPO_ROOT))
+    root = resolve_caller_root(worktree_path) if worktree_path else REPO_ROOT
+    rel = str(src.relative_to(root))
     out: list[dict] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef):
@@ -148,13 +176,15 @@ def _extract_keepers_from_compliance() -> list[dict]:
     return out
 
 
-def _extract_set_membership() -> list[dict]:
+def _extract_set_membership(worktree_path: str | None = None) -> list[dict]:
     """AST-walk for `_HARNESS_*_AGENTS = frozenset({...})` assignments — pulls
     set members as `Constant(str)` elements."""
-    tree = _parse(COMPLIANCE_SRC)
+    src = _compliance_src_for(worktree_path)
+    tree = _parse(src)
     if tree is None:
         return []
-    rel = str(COMPLIANCE_SRC.relative_to(REPO_ROOT))
+    root = resolve_caller_root(worktree_path) if worktree_path else REPO_ROOT
+    rel = str(src.relative_to(root))
     out: list[dict] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
@@ -200,14 +230,16 @@ def _extract_set_membership() -> list[dict]:
     return out
 
 
-def _extract_fixtures_from_tests() -> list[dict]:
+def _extract_fixtures_from_tests(worktree_path: str | None = None) -> list[dict]:
     """AST-walk each test file: find the `from tools.noctus.dev.compliance
     import check_X` statement (binds the test to its keeper), then find
     frontmatter-shaped `Constant(str)` literals."""
     out: list[dict] = []
-    if not TESTS_DIR.exists():
+    tests_dir = _tests_dir_for(worktree_path)
+    root = resolve_caller_root(worktree_path) if worktree_path else REPO_ROOT
+    if not tests_dir.exists():
         return out
-    for tf in sorted(TESTS_DIR.glob("test_*.py")):
+    for tf in sorted(tests_dir.glob("test_*.py")):
         tree = _parse(tf)
         if tree is None:
             continue
@@ -225,7 +257,7 @@ def _extract_fixtures_from_tests() -> list[dict]:
                     break
         if not keeper:
             continue
-        rel = str(tf.relative_to(REPO_ROOT))
+        rel = str(tf.relative_to(root))
         for node in ast.walk(tree):
             if not (
                 isinstance(node, ast.Constant) and isinstance(node.value, str)
@@ -257,13 +289,23 @@ def _extract_fixtures_from_tests() -> list[dict]:
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
-def refresh(force: bool = False) -> dict:
+def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
     """Re-populate permanent rows from `compliance.py` + tests. Idempotent.
 
+    `worktree_path`: read the SOURCE `compliance.py` + tests from the
+    CALLER's own worktree instead of the primary tree. MCP stdio is a
+    fixed-CWD process bound to the primary at startup, so omitting
+    `worktree_path` from inside an engineer worktree silently mirrors the
+    STALE primary `compliance.py` rather than the worktree's own in-flight
+    edits. The CACHE ITSELF is unaffected — it lives at the shared Tier-1
+    `.claude/cache/keeper-patterns.sqlite`; `worktree_path` only changes
+    which source tree is hashed + parsed.
+
     Returns a status dict: ``{ok, status('in-sync'|'rebuilt'), source_sha,
-    rows_written}``. ``force=True`` bypasses the in-sync short-circuit.
+    rows_written, resolved_compliance_src}``. ``force=True`` bypasses the
+    in-sync short-circuit.
     """
-    sha_now = _source_sha()
+    sha_now = _source_sha(worktree_path)
     conn = _connect()
     _init_schema(conn)
     if not force:
@@ -276,12 +318,13 @@ def refresh(force: bool = False) -> dict:
                 "status": "in-sync",
                 "source_sha": sha_now,
                 "rows_written": 0,
+                "resolved_compliance_src": str(_compliance_src_for(worktree_path)),
             }
     conn.execute("DELETE FROM keeper_patterns WHERE scope='permanent'")
     rows = (
-        _extract_keepers_from_compliance()
-        + _extract_set_membership()
-        + _extract_fixtures_from_tests()
+        _extract_keepers_from_compliance(worktree_path)
+        + _extract_set_membership(worktree_path)
+        + _extract_fixtures_from_tests(worktree_path)
     )
     now = _now_iso()
     conn.executemany(
@@ -318,6 +361,7 @@ def refresh(force: bool = False) -> dict:
         "status": "rebuilt",
         "source_sha": sha_now,
         "rows_written": len(rows),
+        "resolved_compliance_src": str(_compliance_src_for(worktree_path)),
     }
 
 
