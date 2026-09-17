@@ -4,8 +4,18 @@ Pytest configuration and shared fixtures for Community backend tests.
 The seed product uses the framework (noctusai_seed), so patches target
 the framework's database module rather than product-level modules.
 """
+import os as _os
 import sys as _sys
 from pathlib import Path as _Path
+
+# Hermetic Redis: the WhatsApp webhook router builds its dedup store at IMPORT
+# time from `settings.redis_url`. The repo's root `.env` (loaded by the
+# toolkit, e.g. `predeploy_check`) carries the fleet's `REDIS_URL`
+# (`noctus-redis`, unreachable outside the fleet), which made 4 webhook tests
+# fail locally while CI — which has no REDIS_URL — stayed green. Clear it
+# BEFORE `app.config` is first imported so every run uses the in-memory
+# fallback CI uses.
+_os.environ["REDIS_URL"] = ""
 
 _REPO = _Path(__file__).resolve().parents[4]
 _LIB = _REPO / "seed" / "lib" / "backend"
