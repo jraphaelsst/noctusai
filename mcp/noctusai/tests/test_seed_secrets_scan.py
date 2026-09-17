@@ -202,3 +202,27 @@ class TestFindSecretNeverLeaksTheValue:
         result = find_secret(f"aws key: {token}")
         assert result == "aws_access_key_id"
         assert token not in result
+
+
+class TestCodePathExemptionDoesNotHideSecrets:
+    """Security review of the `/` exemption (2026-09-17): lowercase hex
+    secrets after a `/` must still be caught."""
+
+    def test_hex_webhook_secret_in_url_is_flagged(self):
+        url = "https://hooks.example.com/webhook/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b"
+        assert find_secret(f"POST to {url}") is not None
+
+    def test_hex_api_key_after_a_slash_is_flagged(self):
+        assert find_secret("keys/a1b2c3d4e5f60718293a4b5c6d7e8f90") is not None
+
+    def test_hex_bot_token_in_url_is_flagged(self):
+        url = "https://api.telegram.org/bot/f3a9c1d2e4b5a6978877665544332211aa"
+        assert find_secret(url) is not None
+
+    def test_the_original_code_path_is_still_not_flagged(self):
+        assert find_secret("see backend/app/services/agent_runner.py") is None
+
+    def test_real_stripe_secret_prefixes_are_named(self):
+        for prefix in ("sk_live_", "rk_live_", "sk_test_"):
+            content = f"STRIPE={prefix}" + "a" * 24
+            assert find_secret(content) == "stripe_live_or_restricted_key", prefix

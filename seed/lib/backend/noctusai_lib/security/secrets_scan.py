@@ -55,6 +55,10 @@ from collections import Counter
 _KNOWN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("stripe_publishable_key", re.compile(r"pk_[A-Za-z0-9]{16,}")),
     ("stripe_secret_key", re.compile(r"sk-[A-Za-z0-9]{16,}")),
+    # Stripe's REAL secret/restricted key prefixes. The `sk-` entry above
+    # never matched them; they were caught only because they are mixed-case
+    # (entropy) — named here so a lowercase-looking one cannot slip by.
+    ("stripe_live_or_restricted_key", re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}")),
     ("github_pat", re.compile(r"ghp_[A-Za-z0-9]{20,}")),
     ("aws_access_key_id", re.compile(r"AKIA[A-Z0-9]{12,}")),
     ("pem_private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -154,6 +158,17 @@ def _looks_like_code_path(token: str) -> bool:
     segments = token.split("/")
     if len(segments) < 2:
         return False
+    # 4. No segment may contain a BLOB: an `_`-free run of 16+ chars with a
+    #    digit (extension stripped). Without this, a lowercase hex secret
+    #    after a `/` in a URL (`com/webhook/e3b0c442…` — the tokenizer stops
+    #    at `.`, so the host tail joins the token) passed rules 1-3 as one
+    #    long "identifier". Judged per `_`-word so a real name like
+    #    `adr_0001_agent_design` (short words) still reads as a path.
+    for segment in segments:
+        stem = segment.split(".", 1)[0]
+        for word in stem.split("_"):
+            if len(word) >= 16 and any(c.isdigit() for c in word):
+                return False
     for segment in segments[:-1]:
         if not _CODE_PATH_SEGMENT_RE.match(segment):
             return False
