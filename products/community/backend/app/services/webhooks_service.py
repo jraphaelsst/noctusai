@@ -103,9 +103,20 @@ def _extract_amount_cents(event: GatewayEvent) -> Optional[int]:
 
 
 class WebhooksService:
-    def __init__(self, client: Any, *, inbox: EventInbox) -> None:
+    def __init__(self, client: Any, *, inbox: EventInbox, org_id: Any) -> None:
         self._client = client
         self._inbox = inbox
+        # Slice C (user decision 2026-09-17): defense-in-depth org scoping.
+        # Community is single-tenant today (one org per deployment), so
+        # this was never reachable in practice — but `_resolve_assinatura`
+        # previously matched ANY row by `id`/`(gateway, assinatura_
+        # externa_id)` with no org filter at all. Scoping the query here
+        # means a resolved `assinatura` row's `org_id` is ALWAYS this
+        # service's `org_id` by construction (every read/write below that
+        # trusts `assinatura["org_id"]` — e.g. `_upsert_pagamento`'s
+        # inserted row, the `MembrosService(...,
+        # org_id=assinatura["org_id"])` calls — inherits that guarantee).
+        self._org_id = str(org_id)
 
     async def handle(self, event: GatewayEvent) -> None:
         """Claim → dispatch → (release + re-raise) on failure.
@@ -154,6 +165,7 @@ class WebhooksService:
                 self._client.table(_ASSINATURAS_TABLE)
                 .select("*")
                 .eq("id", str(event.external_reference))
+                .eq("org_id", self._org_id)
                 .maybe_single()
                 .execute()
             ).data
@@ -165,6 +177,7 @@ class WebhooksService:
                 .select("*")
                 .eq("gateway", event.gateway)
                 .eq("assinatura_externa_id", event.subscription_id_at_gateway)
+                .eq("org_id", self._org_id)
                 .execute()
                 .data
                 or []

@@ -80,7 +80,7 @@ class _BrokenClient:
 class TestAmendmentA1FirstPaymentActivation:
     def test_charge_paid_activates_first_payment(self):
         client = _client()
-        service = WebhooksService(client, inbox=FakeEventInbox())
+        service = WebhooksService(client, inbox=FakeEventInbox(), org_id=ORG_ID)
         event = make_fake_gateway_event(
             gateway="stripe", kind="charge_paid",
             external_reference=ASSINATURA_1, subscription_id_at_gateway="sub_1",
@@ -112,7 +112,7 @@ class TestAmendmentA1FirstPaymentActivation:
 
     def test_charge_paid_for_unknown_assinatura_is_noop_200(self):
         client = _client()
-        service = WebhooksService(client, inbox=FakeEventInbox())
+        service = WebhooksService(client, inbox=FakeEventInbox(), org_id=ORG_ID)
         event = make_fake_gateway_event(
             gateway="stripe", kind="charge_paid",
             external_reference="does-not-exist", charge_id_at_gateway="ch_x",
@@ -131,7 +131,7 @@ class TestAmendmentA4IllegalTransitions:
                 cancelada_em="2026-01-02T00:00:00+00:00",
             )],
         )
-        service = WebhooksService(client, inbox=FakeEventInbox())
+        service = WebhooksService(client, inbox=FakeEventInbox(), org_id=ORG_ID)
         event = make_fake_gateway_event(
             gateway="stripe", kind="charge_paid", external_reference=ASSINATURA_1,
             subscription_id_at_gateway="sub_1", charge_id_at_gateway="ch_2",
@@ -166,7 +166,7 @@ class TestAmendmentA4IllegalTransitions:
             )],
             membro_rows=[_membro_row(status="ativo", plano_id=PLANO_1)],
         )
-        service = WebhooksService(client, inbox=FakeEventInbox())
+        service = WebhooksService(client, inbox=FakeEventInbox(), org_id=ORG_ID)
 
         cancel_event = make_fake_gateway_event(
             gateway="stripe", kind="subscription_updated", external_reference=ASSINATURA_1,
@@ -203,7 +203,7 @@ class TestAmendmentA5ReleaseOnFailure:
     def test_handler_raising_after_claim_leaves_event_reclaimable(self):
         client = _BrokenClient(_client(), raise_on_table="membros")
         inbox = FakeEventInbox()
-        service = WebhooksService(client, inbox=inbox)
+        service = WebhooksService(client, inbox=inbox, org_id=ORG_ID)
         event = make_fake_gateway_event(
             gateway="stripe", kind="charge_paid", external_reference=ASSINATURA_1,
             subscription_id_at_gateway="sub_1", charge_id_at_gateway="ch_1",
@@ -222,7 +222,7 @@ class TestAmendmentA5ReleaseOnFailure:
     def test_duplicate_delivery_is_a_proven_noop(self):
         client = _client()
         inbox = FakeEventInbox()
-        service = WebhooksService(client, inbox=inbox)
+        service = WebhooksService(client, inbox=inbox, org_id=ORG_ID)
         event = make_fake_gateway_event(
             gateway="stripe", kind="charge_paid", external_reference=ASSINATURA_1,
             subscription_id_at_gateway="sub_1", charge_id_at_gateway="ch_1",
@@ -242,7 +242,7 @@ class TestAmendmentA8PausadaNeverWebhookDriven:
         client = _client(
             assinatura_rows=[_assinatura_row(estado="pausada", assinatura_externa_id="sub_1")],
         )
-        service = WebhooksService(client, inbox=FakeEventInbox())
+        service = WebhooksService(client, inbox=FakeEventInbox(), org_id=ORG_ID)
         event = make_fake_gateway_event(
             gateway="stripe", kind="subscription_updated", external_reference=ASSINATURA_1,
             subscription_id_at_gateway="sub_1", subscription_status="active",
@@ -267,7 +267,7 @@ class TestAmendmentA11PixImageNulledOnPago:
                 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
             }],
         )
-        service = WebhooksService(client, inbox=FakeEventInbox())
+        service = WebhooksService(client, inbox=FakeEventInbox(), org_id=ORG_ID)
         event = make_fake_gateway_event(
             gateway="asaas", kind="charge_paid", external_reference=ASSINATURA_1,
             subscription_id_at_gateway="sub_asaas_1", charge_id_at_gateway="pay_1",
@@ -288,7 +288,7 @@ class TestChargeRefundedNoStatusChange:
             assinatura_rows=[_assinatura_row(estado="ativa", assinatura_externa_id="sub_1")],
             membro_rows=[_membro_row(status="ativo", plano_id=PLANO_1)],
         )
-        service = WebhooksService(client, inbox=FakeEventInbox())
+        service = WebhooksService(client, inbox=FakeEventInbox(), org_id=ORG_ID)
         event = make_fake_gateway_event(
             gateway="stripe", kind="charge_refunded", external_reference=ASSINATURA_1,
             subscription_id_at_gateway="sub_1", charge_id_at_gateway="ch_refund_1",

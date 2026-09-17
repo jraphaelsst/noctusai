@@ -42,6 +42,28 @@ Stripe · Asaas · WAHA (WhatsApp, incl. group operations) · LiveKit · Supabas
 LLM via `noctusai_lib.integrations.llm`. Development runs on NoctusAI's own accounts, and
 Mônica's accounts are swapped in later through configuration only.
 
+## WhatsApp — não conectado por enquanto
+
+Slice C (2026-09-17, user decision "community uses social-wiring's
+mechanisms") ships the connection MECHANISM — `Configurações → WhatsApp →
+Conexões` (`app/routers/whatsapp_connections_router.py`, admin-only) —
+but no number is paired yet. `NOC-REMEDIATE[community-waha-pairing]`
+marks the mount site.
+
+Pairing needs a DEDICATED number + its OWN WAHA instance/session: the
+live WAHA server is Core's, single-session, and its `default` session
+already belongs to `social-wiring`. Sharing it here would mix
+community's messages into social-wiring's inbox and risk the paired
+number being banned. Until a dedicated WAHA instance exists for
+community, the connections UI lets an admin save credentials, but
+`GET /api/whatsapp/connections` returns an empty list and `POST` 503s
+(`WAHA server not configured`) in every environment.
+
+The org's `community_waha_*` settings stay the fallback path
+(`app.dependencies.resolve_community_waha_client`) — a saved connection
+row, once one exists, takes priority automatically; no code change
+needed when pairing eventually happens.
+
 ## Running
 
 ```bash

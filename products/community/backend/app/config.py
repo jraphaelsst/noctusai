@@ -14,6 +14,18 @@ class SeedSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:community"
 
+    # ── Slice C: org-scoped managed API keys + WhatsApp connections
+    # (`app/routers/api_keys_router.py`, `app/routers/whatsapp_connections_
+    # router.py`) — same mechanisms social-wiring's Slice A lifted to
+    # `noctusai_lib.security.api_keys` / `noctusai_lib.integrations.
+    # whatsapp.connection_store`. Fernet key for BOTH stores
+    # (`community.credentials` + `community.whatsapp_connections`,
+    # migration 011). Already present in the prod container (user
+    # decision 2026-09-17) — empty here is the early-dev / fresh-clone
+    # default, which 503s the write paths instead of persisting
+    # plaintext (see `noctusai_lib.security.api_keys.require_fernet`).
+    encryption_key: str = ""
+
     # ── Webhook receiver (consumed by app/routers/webhook_router.py) ──
     # Empty by default → ``webhook_endpoint(bypass_when_unset=True)``
     # accepts unsigned payloads with a WARNING (early-dev only). Set in

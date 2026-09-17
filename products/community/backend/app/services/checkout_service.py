@@ -28,6 +28,7 @@ is not achievable for Stripe without a seed enhancement. See
 """
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -43,6 +44,7 @@ from noctusai_lib.integrations.payments.checkout import (
 )
 from noctusai_lib.integrations.payments.types import Money
 from noctusai_lib.integrations.turnstile import TurnstileVerifier, make_turnstile_verifier
+from noctusai_lib.security.api_keys import resolve_api_key
 
 from app.config import settings
 
@@ -67,29 +69,45 @@ class CheckoutServiceError(Exception):
         self.status_code = status_code
 
 
-def _default_hosted_checkout_factory(gateway: str) -> HostedCheckout:
-    """Build the `HostedCheckout` for `gateway` from configured settings.
+def _default_hosted_checkout_factory(gateway: str, *, org_id: str) -> HostedCheckout:
+    """Build the `HostedCheckout` for `gateway` from this org's resolved
+    key (Slice C: `resolve_api_key` — this org's `community.credentials`
+    override first, then the seed's `org_settings` -> `platform_settings`
+    -> env chain, so `settings.stripe_secret_key` / `.asaas_api_key`
+    stay a working env-var fallback unchanged).
 
-    An empty api key routes to `FakeHostedCheckout` — mirrors
+    An unresolved key routes to `FakeHostedCheckout` — mirrors
     `make_hosted_checkout`'s own `use_fake` early-dev posture, so a
     fresh clone's tests (and a not-yet-configured deploy) never need
     real Stripe/Asaas credentials to boot.
     """
     if gateway == "stripe":
-        if not settings.stripe_secret_key:
+        key = resolve_api_key("stripe_secret_key", org_id)
+        if not key:
             return make_hosted_checkout(use_fake=True)
-        return make_hosted_checkout(provider="stripe", stripe_api_key=settings.stripe_secret_key)
-    if not settings.asaas_api_key:
+        return make_hosted_checkout(provider="stripe", stripe_api_key=key)
+    key = resolve_api_key("asaas_api_key", org_id)
+    if not key:
         return make_hosted_checkout(use_fake=True)
     return make_hosted_checkout(
-        provider="asaas",
-        asaas_api_key=settings.asaas_api_key,
-        asaas_base_url=settings.asaas_base_url,
+        provider="asaas", asaas_api_key=key, asaas_base_url=settings.asaas_base_url,
     )
 
 
-def _default_turnstile_verifier() -> TurnstileVerifier:
-    return make_turnstile_verifier(secret=settings.community_turnstile_secret or None)
+def _default_turnstile_verifier(org_id: str) -> TurnstileVerifier:
+    """Same resolution order as the hosted-checkout factory above, plus
+    a THIRD tier — `settings.community_turnstile_secret` — kept as a
+    belt-and-suspenders fallback for the pre-Slice-C env-var name
+    (`COMMUNITY_TURNSTILE_SECRET`, documented in `deploy/fleet/
+    docker-compose.prod.yml`) since it predates the `turnstile_secret_
+    key` spec name `resolve_api_key`'s env tier reads
+    (`TURNSTILE_SECRET_KEY`)."""
+    secret = (
+        resolve_api_key("turnstile_secret_key", org_id)
+        or settings.community_turnstile_secret
+        or None
+    )
+    return make_turnstile_verifier(secret=secret)
 
 
 def _parse_asaas_date_or_none(value: Any) -> Optional[str]:
@@ -121,8 +139,10 @@ class CheckoutService:
     ) -> None:
         self._client = client
         self._org_id = str(org_id)
-        self._hosted_checkout_factory = hosted_checkout_factory or _default_hosted_checkout_factory
-        self._turnstile = turnstile_verifier or _default_turnstile_verifier()
+        self._hosted_checkout_factory = hosted_checkout_factory or functools.partial(
+            _default_hosted_checkout_factory, org_id=self._org_id
+        )
+        self._turnstile = turnstile_verifier or _default_turnstile_verifier(self._org_id)
         # Config values read HERE (constructor time), not per-call — the
         # DI seam a test uses to exercise the abuse-cap branches with a
         # small cap, without monkeypatching `app.config.settings`

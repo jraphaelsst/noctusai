@@ -17,7 +17,7 @@ import uuid as _uuid
 from typing import Any
 from uuid import UUID
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 
 from noctusai_seed import (
     create_database_module,
@@ -271,12 +271,61 @@ def actor_uuid(user: Any) -> UUID | None:
     return coerce_org_uuid(raw)
 
 
-def get_community_waha_client():
-    from noctusai_lib.integrations.whatsapp import get_whatsapp_client
+def resolve_community_waha_client(*, org_id: UUID, admin_client: Any):
+    """The WAHA client module 3's routers actually talk to.
+
+    Slice C (user decision 2026-09-17): prefers `org_id`'s
+    `community.whatsapp_connections` row (base_url + decrypted api_key +
+    session_name — a line saved via `Configurações → WhatsApp →
+    Conexões`), falling back to the static `community_waha_*` settings
+    when no connection is stored yet OR encryption is unconfigured —
+    the SAME fallback `get_community_waha_client` always had, so a
+    fresh clone / a deploy that hasn't paired a number (the expected
+    state right now, per `NOC-REMEDIATE[community-waha-pairing]`) keeps
+    working exactly as before.
+
+    `admin_client` is the DI seam (`KB § PATTERNS/backend/di-test-seam.md`)
+    — `get_community_waha_client` binds it to `get_admin_client()`; tests
+    call this directly with a `MockSupabaseClient` instead of patching
+    the module-level factory.
+    """
+    from noctusai_lib.integrations.whatsapp import (
+        build_whatsapp_connection_store,
+        get_whatsapp_client,
+    )
+    from noctusai_lib.security.api_keys import EncryptionNotConfigured
+
+    record = None
+    try:
+        store = build_whatsapp_connection_store(
+            admin_client, encryption_key=settings.encryption_key, schema="community",
+        )
+        connections = store.list_connections(org_id=org_id)
+        if connections:
+            record = store.get_connection(
+                connection_id=connections[0].id, org_id=org_id, decrypt=True
+            )
+    except EncryptionNotConfigured:
+        record = None
+
+    if record is not None:
+        return get_whatsapp_client(
+            base_url=record.base_url or None,
+            api_key=record.api_key,
+            session=record.session_name,
+            external_base_url=settings.community_waha_external_base_url or None,
+        )
 
     return get_whatsapp_client(
         base_url=settings.community_waha_base_url or None,
         api_key=settings.community_waha_api_key or None,
         session=settings.community_waha_session,
         external_base_url=settings.community_waha_external_base_url or None,
+    )
+
+
+def get_community_waha_client(auth: tuple = Depends(get_current_user_org)):
+    _user, _token, raw_org = auth
+    return resolve_community_waha_client(
+        org_id=coerce_org_uuid(raw_org), admin_client=get_admin_client()
     )

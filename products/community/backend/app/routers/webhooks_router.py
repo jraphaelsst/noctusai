@@ -30,9 +30,10 @@ from noctusai_lib.integrations.payments.webhook_events import (
     PaymentWebhookSignatureError,
     parse_webhook_event,
 )
+from noctusai_lib.security.api_keys import resolve_api_key
 
 from app.config import settings
-from app.dependencies import http_error, get_admin_client
+from app.dependencies import http_error, get_admin_client, resolve_public_org_id
 from app.rate_limit import limiter
 from app.services.webhooks_service import WebhooksService
 
@@ -46,13 +47,22 @@ _INBOX_TABLE = "webhook_eventos"
 
 async def _receive(gateway: str, request: Request) -> dict:
     body = await request.body()
+
+    # Slice C (user decision 2026-09-17): resolve THIS single-tenant
+    # product's org first — `resolve_api_key` needs it to check the
+    # org-scoped `community.credentials` override before the platform
+    # chain's `settings.stripe_webhook_secret`/`.asaas_webhook_token`
+    # env-var fallback (unchanged). A misconfigured deploy (no active
+    # license) 503s here rather than accepting an unverifiable webhook.
+    org_id = resolve_public_org_id()
+
     try:
         event = parse_webhook_event(
             body,
             request.headers,
             gateway=gateway,
-            stripe_webhook_secret=settings.stripe_webhook_secret or None,
-            asaas_webhook_token=settings.asaas_webhook_token or None,
+            stripe_webhook_secret=resolve_api_key("stripe_webhook_secret", str(org_id)) or None,
+            asaas_webhook_token=resolve_api_key("asaas_webhook_token", str(org_id)) or None,
         )
     except PaymentWebhookSignatureError as exc:
         logger.warning("webhooks: %s signature verification failed: %s", gateway, exc.detail)
@@ -62,7 +72,7 @@ async def _receive(gateway: str, request: Request) -> dict:
     inbox = make_event_inbox(
         supabase_client=client, schema_name=_INBOX_SCHEMA, table_name=_INBOX_TABLE,
     )
-    service = WebhooksService(client, inbox=inbox)
+    service = WebhooksService(client, inbox=inbox, org_id=org_id)
     await service.handle(event)
     return {"received": True}
 

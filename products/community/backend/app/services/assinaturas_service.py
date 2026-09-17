@@ -12,12 +12,14 @@ gateway adapter.
 """
 from __future__ import annotations
 
+import functools
 import logging
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 
 from noctusai_lib.integrations.payments import PaymentGatewayError, make_payment_gateway
+from noctusai_lib.security.api_keys import resolve_api_key
 
 from app.config import settings
 from app.services.membros_service import MembrosService
@@ -38,20 +40,22 @@ class AssinaturasServiceError(Exception):
         self.status_code = status_code
 
 
-def _default_gateway_factory(gateway: str):
+def _default_gateway_factory(gateway: str, *, org_id: str):
     """Mirrors `checkout_service._default_hosted_checkout_factory`'s
-    empty-credential-⇒-Fake posture, but for the headless
-    `PaymentGateway` (cancel_subscription lives there, not on
-    `HostedCheckout`)."""
+    org-scoped-resolve-⇒-Fake-on-miss posture (Slice C: `resolve_api_key`
+    — org override first, `settings.stripe_secret_key`/`.asaas_api_key`'s
+    env fallback unchanged), but for the headless `PaymentGateway`
+    (cancel_subscription lives there, not on `HostedCheckout`)."""
     if gateway == "stripe":
-        if not settings.stripe_secret_key:
+        key = resolve_api_key("stripe_secret_key", org_id)
+        if not key:
             return make_payment_gateway(use_fake=True)
-        return make_payment_gateway(provider="stripe", stripe_api_key=settings.stripe_secret_key)
-    if not settings.asaas_api_key:
+        return make_payment_gateway(provider="stripe", stripe_api_key=key)
+    key = resolve_api_key("asaas_api_key", org_id)
+    if not key:
         return make_payment_gateway(use_fake=True)
     return make_payment_gateway(
-        provider="asaas", asaas_api_key=settings.asaas_api_key,
-        asaas_base_url=settings.asaas_base_url,
+        provider="asaas", asaas_api_key=key, asaas_base_url=settings.asaas_base_url,
     )
 
 
@@ -65,7 +69,9 @@ class AssinaturasService:
     ) -> None:
         self._client = client
         self._org_id = str(org_id)
-        self._gateway_factory = gateway_factory or _default_gateway_factory
+        self._gateway_factory = gateway_factory or functools.partial(
+            _default_gateway_factory, org_id=self._org_id
+        )
 
     # ── reads ────────────────────────────────────────────────────────
 

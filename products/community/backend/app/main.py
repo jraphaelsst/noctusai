@@ -23,10 +23,12 @@ over `gpt-4o-mini`):
         llm_config=default_llm_config(default_chat_model="gpt-4o"),
     )
 """
+from noctusai_lib.config.credentials import register_credential_override
 from noctusai_seed import create_product_app
 from app.config import settings
 from app.rate_limit import limiter
 from app.routers.aplicacoes_router import router as aplicacoes_router
+from app.routers.api_keys_router import router as api_keys_router
 from app.routers.assinaturas_router import router as assinaturas_router
 from app.routers.checkout_router import router as checkout_router
 from app.routers.example_router import router as example_router
@@ -35,16 +37,48 @@ from app.routers.pagamentos_router import router as pagamentos_router
 from app.routers.planos_router import router as planos_router
 from app.routers.webhook_router import router as webhook_router
 from app.routers.webhooks_router import router as webhooks_router
+from app.routers.whatsapp_connections_router import router as whatsapp_connections_router
 from app.routers.whatsapp_flags_router import router as whatsapp_flags_router
 from app.routers.whatsapp_grupos_router import router as whatsapp_grupos_router
 from app.routers.whatsapp_lotes_router import router as whatsapp_lotes_router
 from app.routers.whatsapp_transmissoes_router import router as whatsapp_transmissoes_router
 from app.routers.whatsapp_webhook_router import router as whatsapp_webhook_router
 
+# ─── Tier 0: the operator-entered, encrypted key store ───────────────
+#
+# Slice C (user decision 2026-09-17, "community uses social-wiring's
+# mechanisms"): `Configurações → Chaves de API` writes stripe/asaas/
+# turnstile keys into `community.credentials`, Fernet-encrypted.
+# Reading them back is NOT automatic — the seed chain (`org_settings` →
+# `platform_settings` → env) knows nothing about a product-local store.
+# Registered BEFORE `create_product_app` so no request can race it. Same
+# shape as `social-wiring`'s own `_local_api_key` closure — see
+# `noctusai_lib.security.api_keys.make_local_credential_override`'s
+# docstring for the "why not just call resolve_credential from inside
+# it" answer (it would recurse).
+def _local_api_key(key: str, org_id):
+    from app.services.api_keys_store import API_KEY_SPECS, build_community_api_key_store
+    from noctusai_lib.security.api_keys import get_spec, read_local_api_key
+
+    if org_id is None or get_spec(key, API_KEY_SPECS) is None:
+        return None
+    stored = read_local_api_key(build_community_api_key_store(), str(org_id), key)
+    return (stored.tokens or {}).get("value") if stored else None
+
+
+register_credential_override(_local_api_key)
+
 app = create_product_app(
     name="Community",
     schema="community",
     settings=settings,
+    # 🔴 Sem esta chave, o produto não deve subir em produção — Slice C
+    # (user decision 2026-09-17): `community.credentials` +
+    # `community.whatsapp_connections` (migration 011) RECUSAM gravar
+    # sem ela (`EncryptionNotConfigured` → 503) em vez de guardar em
+    # claro. Sem a chave, a UI de Chaves de API e a de Conexões WhatsApp
+    # ficam inoperantes. Já presente no container de produção.
+    required_prod_config=["ENCRYPTION_KEY"],
     version="0.1.0",
     limiter=limiter,
     standard_routers=["health", "notificacoes", "team"],
@@ -63,7 +97,10 @@ app = create_product_app(
     # `/api/webhooks/whatsapp` — distinct from the inherited
     # `webhook_router`'s `/api/webhooks/example` and module 2's
     # `/api/webhooks/{stripe,asaas}`) are module 3's
-    # (community-m3-contract.md).
+    # (community-m3-contract.md). `api_keys_router` / `whatsapp_
+    # connections_router` are Slice C's (this dispatch, 2026-09-17) —
+    # both admin-only; WhatsApp connections mount the mechanism only,
+    # no number is paired (`NOC-REMEDIATE[community-waha-pairing]`).
     routers=[
         example_router, webhook_router, planos_router, membros_router,
         aplicacoes_router, checkout_router, webhooks_router,
@@ -71,6 +108,7 @@ app = create_product_app(
         whatsapp_grupos_router, whatsapp_lotes_router,
         whatsapp_transmissoes_router, whatsapp_flags_router,
         whatsapp_webhook_router,
+        api_keys_router, whatsapp_connections_router,
     ],
     # Module 3 registers `community.moderacao_whatsapp` (AI-flagged
     # WhatsApp moderation) in `app/services/ai_consent_features.py` —
