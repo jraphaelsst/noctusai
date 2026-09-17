@@ -48,6 +48,7 @@ from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import financiamento_service as financiamento_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub import negociacao_service as negociacao_svc
+from app.modules.card_hub.assinatura_router import router as assinatura_router
 from app.modules.card_hub.auth import auth_parts
 from app.modules.card_hub.contrato_gerador.router import (
     router as contrato_gerador_router,
@@ -105,6 +106,9 @@ router = APIRouter(prefix="/api/clientes", tags=["card_hub"])
 router.include_router(negociacao_estruturada_router)
 # F5 — contract generation (GET .../contratos/{id}/geracao, POST .../gerar).
 router.include_router(contrato_gerador_router)
+# Contract signing (migration 134) — .../contratos/{id}/assinatura[/cancelar].
+# The webhook (§3.4) is NOT here — see `assinatura_router.py`'s own docstring.
+router.include_router(assinatura_router)
 
 #: Shared with the included routers — see `card_hub/auth.py`.
 _auth_parts = auth_parts

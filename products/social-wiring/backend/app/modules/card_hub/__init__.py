@@ -59,6 +59,8 @@ Routes
     POST                    /api/clientes/{id}/contratos/{cid}/versoes
     GET                     /api/clientes/{id}/contratos/{cid}/versoes/{vid}/url
     DELETE                  /api/clientes/{id}/contratos/{cid}/versoes/{vid}
+    POST/GET                /api/clientes/{id}/contratos/{cid}/assinatura
+    POST                    /api/clientes/{id}/contratos/{cid}/assinatura/cancelar
     GET                     /api/clientes/{id}/negociacao/estruturada
     POST/PATCH/DELETE       /api/clientes/{id}/negociacao/parcelas[/{pid}]
     POST                    /api/clientes/{id}/negociacao/parcelas/dividir-saldo
