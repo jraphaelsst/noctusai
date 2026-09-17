@@ -117,7 +117,16 @@ class TestSincronizarRoster:
     def test_matches_participant_by_phone_and_updates_counts(self):
         svc, mock = _svc(
             grupos=[_grupo_row()],
-            membros=[{"id": MEMBRO_ID, "telefone": "+5511974693365"}],
+            # `org_id` and `nome` are NOT optional padding. The roster lookup is
+            # org-scoped (`.eq("org_id", …)`) and `membro_nome` is denormalized
+            # from `membros.nome`, so a fixture missing either silently asserts
+            # the unmatched path while looking like it asserts a match.
+            membros=[{
+                "id": MEMBRO_ID,
+                "org_id": str(ORG),
+                "nome": "Ana",
+                "telefone": "+5511974693365",
+            }],
         )
         waha = FakeWahaClient()
         waha.fake_groups[CHAT_ID] = asyncio.run(waha.create_group("Grupo Oficial", ["5511974693365@c.us"]))
@@ -132,6 +141,34 @@ class TestSincronizarRoster:
         grupo_atualizado = asyncio.run(svc.get(grupo_id=GRUPO_ID))
         assert grupo_atualizado["participantes_observados"] == 1
         assert grupo_atualizado["sincronizado_em"] is not None
+
+    def test_a_member_of_ANOTHER_org_is_never_matched_by_phone(self):
+        """🔴 The reason the roster lookup is org-scoped. Phone numbers are not
+        org-unique, so an unscoped match would attach one tenant's member to
+        another tenant's group roster — and `get_roster` would then hand that
+        member's name and phone to the wrong managers.
+
+        This pins the property the previous fixture accidentally hid: it had no
+        `org_id`, so the match it claimed to prove never actually ran."""
+        svc, _ = _svc(
+            grupos=[_grupo_row()],
+            membros=[{
+                "id": MEMBRO_ID,
+                "org_id": "99999999-9999-9999-9999-999999999999",
+                "nome": "Ana",
+                "telefone": "+5511974693365",
+            }],
+        )
+        waha = FakeWahaClient()
+        waha.fake_groups[CHAT_ID] = asyncio.run(
+            waha.create_group("Grupo Oficial", ["5511974693365@c.us"])
+        )
+
+        asyncio.run(svc.sincronizar_roster(grupo_id=GRUPO_ID, waha_client=waha))
+        roster = asyncio.run(svc.get_roster(grupo_id=GRUPO_ID))
+        assert roster[0]["membro_id"] is None
+        assert roster[0]["membro_nome"] is None
+        assert roster[0]["telefone"] is None
 
     def test_unmatched_participant_has_no_membro_id(self):
         svc, mock = _svc(grupos=[_grupo_row()], membros=[])
