@@ -1,0 +1,14 @@
+consented_by: joaoraphaelsst@gmail.com
+consented_on: 2026-09-17
+consent_ref: 'community-modules-1-3-2026-09#soft-launch'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "I authorize community to be published to production."
+  prompt_source: queued
+  tier: performative
+  evidence_rank: canonical-exact/other
+  candidates_considered: 9
+  session_id: a597cd33-92e1-4ca3-8923-cbd4c96f1195
+  transcript_sha256: 237dcf8270f436dc52aeffd0c8f33c7ced66b9bcd4bc43bc0e29f2c94d5de5fa
+  recorded_at: 2026-09-17T04:28:46+00:00
