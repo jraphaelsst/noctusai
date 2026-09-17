@@ -486,6 +486,45 @@ services:
     # hostname (e.g. Swarm/K8s pod churn).
 
 
+  # ── community 8017 — community management center (members, tiers,
+  # payments, WhatsApp) for one paid women's community, client Mônica
+  # Tangerino. Prod exposure consented by the user 2026-09-17
+  # (deploy/consent/community.prod.yml, canonical phrase verified against
+  # the session transcript). Prod is first contact for this image (dev
+  # fleet dormant), so it ships hardened from day one, same shape as
+  # academia-de-reciclagem above.
+  #
+  # Payment + captcha keys (COMMUNITY_STRIPE_*, COMMUNITY_ASAAS_*,
+  # COMMUNITY_TURNSTILE_SECRET) all default to "" in app/config.py, so the
+  # container boots WITHOUT them and the checkout endpoints fail closed
+  # instead of taking money with a broken gateway. Set them in the VPS
+  # root .env when the accounts exist; nothing here needs to change.
+  community:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-community:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-community
+    expose:
+      - "8017"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8017/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    # /tmp only: Starlette spools multipart parts over 1MB to a tempfile,
+    # and the public application form accepts a POST body. mode=1777
+    # mirrors standard /tmp semantics so the `noctus` user can write its
+    # own spill files without a writable root.
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    mem_limit: 512m
+
+
 networks:
   noctus-net:
     name: noctus-net

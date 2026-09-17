@@ -93,6 +93,11 @@ routes:
   - hostname: orbity.noctusai.com
     service:  http://orbity:8010
 
+  # ── community (prod exposure consented 2026-09-17; see
+  # deploy/consent/community.prod.yml) ─────────────────────────────────
+  - hostname: community.noctusai.com
+    service:  http://community:8017
+
   - hostname: igig.noctusai.com
     service:  http://igig:8013
 

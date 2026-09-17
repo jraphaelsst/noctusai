@@ -46,6 +46,8 @@ ingress:
     service: http://agents:8016
   - hostname: orbity.noctusai.com
     service: http://orbity:8010
+  - hostname: community.noctusai.com
+    service: http://community:8017
   - hostname: igig.noctusai.com
     service: http://igig:8013
   - hostname: p-studio.noctusai.com
