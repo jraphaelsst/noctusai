@@ -258,6 +258,47 @@ Composes `integrations.media` for "bytes → text" rather than re-doing it; owns
 
 🔴 **Consumer contract: compare, do not reconcile.** social-wiring writes the document's name to `clientes.nome_oficial` and never touches the registration's `nome` / `nome_completo`. Merging them would answer "how accurate is our registration data against official documents?" exactly once, destructively, per row. `social_wiring.vw_nome_conferencia` (migration 071) is the surface that keeps the question answerable.
 
+### `integrations/signature/` — E-signature envelopes, D4Sign only (Protocol+Fake+Real+factory)
+
+Built 2026-09-17 (Slice S-A of `projects/signature-integration-CONTRACT.md`) so a generated
+contract (PDF) can go out for signature and come back as a signed version. Provider scope is
+**D4Sign only** — 7 of 8 sample contracts named it at authoring time; the Protocol admits
+ClickSign/DocuSign later without a shape change, but neither is implemented in this pass.
+
+**Why a seed module and not product code (F1).** `erp-imobiliario`'s
+`signature_provider.py` is a scaffold that lies: its D4Sign branch posts `{"url": ...}` where
+the real upload contract is a binary body (the document is never actually uploaded), and its
+DocuSign branch returns `uuid4().hex` with `"dry_run": False` — a mock reporting itself as
+real. That file is not lifted; it is replaced by this module in a later slice
+(replication-to-seed symmetry).
+
+🔴 **No silent fallback, anywhere — the single most important rule in this module.** There is
+no `_enviar_interno`. `make_signature_adapter(real=True, ...)` never returns a Fake: a missing
+credential raises `ProvedorNaoConfigurado` naming WHICH ONE (`exc.faltando`), because at
+authoring time zero orgs on the platform had D4Sign credentials configured (contract §0/F2) —
+a credential-less org must get a named refusal, never a mocked envelope. `validar_webhook`
+never returns `None`; a bad/absent HMAC raises `WebhookInvalido`.
+
+| Symbol | Purpose |
+|---|---|
+| `Signatario(nome, email, cpf, papel, ordem=0)` | One person who must sign, as the caller knows them. `cpf` validation (`documents.cpf.is_valid`, reused rather than a second mod-11) is the product's job, not this type's. |
+| `DocumentoParaAssinar(nome, conteudo, mime_type="application/pdf")` | `conteudo` is the ACTUAL bytes — never a URL (F1's fix). |
+| `EnvelopeCriado` / `EventoAssinatura` / `SignatarioRemoto` | Return shapes for `criar_envelope` / `consultar` / `validar_webhook` / `cancelar`. |
+| `SignatureAdapter` Protocol | `await criar_envelope(documento, signatarios)`, `await consultar(external_id)`, `await baixar_assinado(external_id)` (raises `DocumentoAssinadoIndisponivel` before `status == "concluido"`), `validar_webhook(corpo, cabecalhos)` (**sync** — pure verify+parse, no I/O), `await cancelar(external_id, motivo)`. |
+| `SignatureError` + `ProvedorNaoConfigurado` / `WebhookInvalido` / `DocumentoAssinadoIndisponivel` / `ProvedorIndisponivel` / `EnvelopeRecusado` | Plain-`Exception` taxonomy (not `AppException` — a signature call can run in a request handler, a job, or the webhook receiver; the product's router/service translates to its own HTTP error shape). |
+| `FakeSignatureAdapter()` | Deterministic, stateful in-memory double. `marcar_assinado(external_id, email)` (test-only) flips one signatory; all signed ⇒ `concluido`. |
+| `D4SignAdapter(api_token, crypt_key, safe_uuid, transport=None)` | Real adapter. Auth by query string (`?tokenAPI=&cryptKey=` — D4Sign rejects these as headers); one `httpx.AsyncClient` held for the adapter's lifetime; `transport=` is the `httpx.MockTransport` DI seam. HMAC webhook verification via `noctusai_lib.security.webhook_signatures.verify_hmac_sha256_hex` against the `Content-HMAC` header. Imported lazily from `__init__` (no httpx client machinery pulled into the Fake-by-default import path). |
+| `make_signature_adapter(*, real=False, provedor="d4sign", org_id=None, resolver=resolve_credential)` | Factory. Fake by default. `resolver` is the Class-B DI test seam (`KB § PATTERNS/backend/di-test-seam.md`) — tests inject a fake resolver, never `monkeypatch.setattr` the credentials module. |
+
+🔴 **Unverified against a live provider (contract §0/F2).** Every D4Sign request/response shape
+is unit-tested against the wire shapes `projects/signature-integration-CONTRACT.md` §1.4 pins,
+not a live account — none existed on the platform at authoring time. Two shapes fall outside
+what §1.4 pins explicitly and are marked `NOC-REMEDIATE` in `real.py`: the signing-portal
+`link_assinatura` URL (the upload response only documents `{"uuid": ...}`), and each
+`SignatarioRemoto.external_id` (the `createlist` response shape isn't pinned, so a synthetic
+id is used instead of trusting an unverified vendor field). No slice may claim "verified end to
+end" until D4Sign credentials land.
+
 ### `domain/sql_templates.py` — Authoring-time helpers for canonical SQL DDL
 
 Pure string-emission helpers for the conventions every product schema reuses. Adopted 2026-05-01 by `projects/sql-templates-absorption/` after the migration scanner flagged 88 `SET search_path` + 21 `updated_at trigger` + 14 `auth.uid()` subquery occurrences as recurrence-rule trips. Existing migration files stay verbatim (replay-log rule); the helpers are for fresh migrations + the scaffold tool.
