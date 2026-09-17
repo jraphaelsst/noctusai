@@ -35,6 +35,11 @@ from app.routers.pagamentos_router import router as pagamentos_router
 from app.routers.planos_router import router as planos_router
 from app.routers.webhook_router import router as webhook_router
 from app.routers.webhooks_router import router as webhooks_router
+from app.routers.whatsapp_flags_router import router as whatsapp_flags_router
+from app.routers.whatsapp_grupos_router import router as whatsapp_grupos_router
+from app.routers.whatsapp_lotes_router import router as whatsapp_lotes_router
+from app.routers.whatsapp_transmissoes_router import router as whatsapp_transmissoes_router
+from app.routers.whatsapp_webhook_router import router as whatsapp_webhook_router
 
 app = create_product_app(
     name="Community",
@@ -52,14 +57,23 @@ app = create_product_app(
     # inherited `webhook_router`'s `/api/webhooks/example`) /
     # `assinaturas_router` / `pagamentos_router` are module 2's
     # (community-m2-contract.md, including its SECURITY AMENDMENTS +
-    # PRODUCT DECISIONS sections).
+    # PRODUCT DECISIONS sections). `whatsapp_grupos_router` /
+    # `whatsapp_lotes_router` / `whatsapp_transmissoes_router` /
+    # `whatsapp_flags_router` / `whatsapp_webhook_router` (mounted at
+    # `/api/webhooks/whatsapp` — distinct from the inherited
+    # `webhook_router`'s `/api/webhooks/example` and module 2's
+    # `/api/webhooks/{stripe,asaas}`) are module 3's
+    # (community-m3-contract.md).
     routers=[
         example_router, webhook_router, planos_router, membros_router,
         aplicacoes_router, checkout_router, webhooks_router,
         assinaturas_router, pagamentos_router,
+        whatsapp_grupos_router, whatsapp_lotes_router,
+        whatsapp_transmissoes_router, whatsapp_flags_router,
+        whatsapp_webhook_router,
     ],
-    # Uncomment when this product registers AI features in
-    # `app/services/ai_consent_features.py` (each product owns its
-    # consent catalog — see KB § PATTERNS/lgpd.md § 9):
-    # consent_features="app.services.ai_consent_features",
+    # Module 3 registers `community.moderacao_whatsapp` (AI-flagged
+    # WhatsApp moderation) in `app/services/ai_consent_features.py` —
+    # each product owns its consent catalog (KB § PATTERNS/lgpd.md § 9).
+    consent_features="app.services.ai_consent_features",
 )

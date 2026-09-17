@@ -76,5 +76,33 @@ class SeedSettings(ProductSettings):
     # webhook secrets above) — a missing `turnstile_token` still 403s.
     community_turnstile_secret: str = ""
 
+    # ── Module 3: WhatsApp (community-m3-contract.md) ──
+    # D4: community gets its OWN WAHA session on its OWN instance — a
+    # separate container from the shared WAHA `default` session social-
+    # wiring already owns. Empty `base_url` → `get_whatsapp_client()`
+    # returns `FakeWahaClient` (same configured-vs-not signal every other
+    # seed adapter factory uses); a fresh clone boots and tests pass with
+    # zero real WAHA credentials.
+    community_waha_base_url: str = ""
+    community_waha_api_key: str = ""
+    community_waha_session: str = "default"
+    community_waha_external_base_url: str = ""
+    # Contract §3 item 19: "HMAC required (the secret is always set in
+    # prod)". Empty by default (early-dev bypass — same posture as
+    # `example_webhook_secret` above); set in `.env` to enforce.
+    community_waha_webhook_hmac_secret: str = ""
+
+    # D2 caps — config values, never literals in the service.
+    lote_max_itens: int = 20
+    lote_chunk: int = 5
+    lotes_aplicados_max_dia: int = 5
+    lote_expira_horas: int = 24
+
+    # D1: message text IS stored by default (AI-flagged moderation with a
+    # human acting is impossible without it). `"metrica"` leaves
+    # `conteudo` NULL — the right default for a deployment that doesn't
+    # want AI moderation.
+    modo_ingest: str = "moderacao"
+
 
 settings = SeedSettings()

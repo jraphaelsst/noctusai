@@ -244,3 +244,39 @@ def coerce_org_uuid(raw_org: Any) -> UUID:
         return UUID(str(raw_org))
     except (ValueError, TypeError):
         return _uuid.uuid5(_uuid.NAMESPACE_OID, str(raw_org))
+
+
+# ── Module 3: WhatsApp (community-m3-contract.md, D4) ─────────────────
+#
+# Community gets its OWN WAHA session on its OWN instance (D4) — a
+# separate container from whatever other product's WAHA session exists.
+# `get_whatsapp_client()` is the seed's Fake+Real+factory
+# (`KB § PATTERNS/backend/seed-fake-real-adapter.md`): an unset
+# `community_waha_base_url` returns `FakeWahaClient`, so this product
+# boots and its tests pass with zero real WAHA credentials.
+
+
+def actor_uuid(user: Any) -> UUID | None:
+    """Coerce the ACTING user's id to a UUID for audit-trail columns
+    (`proposto_por` / `confirmado_por` / `criada_por` / `resolvido_por`).
+
+    Same test-fixture-compatible coercion `coerce_org_uuid` applies to
+    `org_id` (a real Supabase auth user id IS a UUID in production; test
+    fixtures use an opaque non-UUID label like `"test-user-123"`),
+    applied here to the acting user instead of the org.
+    """
+    raw = getattr(user, "id", None)
+    if not raw:
+        return None
+    return coerce_org_uuid(raw)
+
+
+def get_community_waha_client():
+    from noctusai_lib.integrations.whatsapp import get_whatsapp_client
+
+    return get_whatsapp_client(
+        base_url=settings.community_waha_base_url or None,
+        api_key=settings.community_waha_api_key or None,
+        session=settings.community_waha_session,
+        external_base_url=settings.community_waha_external_base_url or None,
+    )
