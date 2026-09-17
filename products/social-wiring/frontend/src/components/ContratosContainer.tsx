@@ -17,6 +17,7 @@
  * regardless — this only keeps the operator from being offered one. While the
  * deal has no imóvel yet the picker lists every transcribed matrícula.
  */
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
@@ -42,6 +43,7 @@ export function ContratosContainer({
   // The deal's imóvel — narrows the matrícula picker (see header note).
   const negociacao = useNegociacao(clienteId);
   const imovelCodigo = negociacao.data?.imovel_codigo ?? null;
+  const [contratoIniciadoId, setContratoIniciadoId] = useState<string | null>(null);
 
   // 🔴 Two signals off `data`, never `isLoading`: it is false mid-refetch, so
   // an empty/error branch keyed off it would lie over data that is still
@@ -58,6 +60,21 @@ export function ContratosContainer({
       errorMessage={query.error instanceof Error ? query.error.message : null}
       onRetry={() => query.refetch()}
       onNovoContrato={onNovoContrato}
+      onGerarContrato={() =>
+        mutations.iniciar.mutate(undefined, {
+          onSuccess: (res) => {
+            setContratoIniciadoId(res.contrato.id);
+            toast.success(
+              res.geracao.pronto
+                ? "Contrato criado — pronto para gerar."
+                : "Contrato criado — confira os dados que faltam para gerar.",
+            );
+          },
+          onError: (err) => toastServerError(err, "Não foi possível iniciar o contrato."),
+        })
+      }
+      iniciandoGeracao={mutations.iniciar.isPending}
+      contratoIniciadoId={contratoIniciadoId}
       addingVersaoContratoId={
         mutations.addVersao.isPending
           ? (mutations.addVersao.variables?.contratoId ?? null)

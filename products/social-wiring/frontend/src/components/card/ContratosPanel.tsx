@@ -80,6 +80,13 @@ interface Props {
   errorMessage?: string | null;
   onRetry: () => void;
   onNovoContrato: () => void;
+  /** "Gerar contrato" — starts a contract the generator fills. Optional:
+   *  the button is omitted while the caller has not wired it. */
+  onGerarContrato?: () => void;
+  iniciandoGeracao?: boolean;
+  /** The contract the last "Gerar contrato" click created — its matrícula
+   *  and generator sections open on mount, since those are the next steps. */
+  contratoIniciadoId?: string | null;
   addingVersaoContratoId?: string | null;
   patchingContratoId?: string | null;
   deletingVersaoId?: string | null;
@@ -123,6 +130,9 @@ export default function ContratosPanel({
   errorMessage,
   onRetry,
   onNovoContrato,
+  onGerarContrato,
+  iniciandoGeracao = false,
+  contratoIniciadoId,
   addingVersaoContratoId,
   patchingContratoId,
   deletingVersaoId,
@@ -146,6 +156,23 @@ export default function ContratosPanel({
         <h3 className="text-sm font-semibold">Contratos</h3>
         <div className="flex items-center gap-2">
           {isRefreshing && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+          {onGerarContrato && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={iniciandoGeracao}
+              onClick={onGerarContrato}
+              data-testid="contrato-gerar-btn"
+            >
+              {iniciandoGeracao ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Gerar contrato
+            </Button>
+          )}
           <Button
             type="button"
             size="sm"
@@ -184,8 +211,8 @@ export default function ContratosPanel({
 
       {!showSkeleton && !isError && lista.length === 0 && (
         <p className="text-sm text-muted-foreground" data-testid="contratos-vazio">
-          Nenhum contrato neste card ainda. Envie o .docx ou PDF — os contratos
-          gerados automaticamente também aparecem aqui.
+          Nenhum contrato neste card ainda. Clique em “Gerar contrato” para
+          gerá-lo a partir dos dados do card, ou envie o .docx ou PDF.
         </p>
       )}
 
@@ -209,6 +236,7 @@ export default function ContratosPanel({
               onDownload={(versaoId, formato) => onDownload(contrato.id, versaoId, formato)}
               renderMatriculaAtos={renderMatriculaAtos}
               renderGeradorContrato={renderGeradorContrato}
+              recemIniciado={contratoIniciadoId === contrato.id}
             />
           ))}
         </div>
@@ -233,6 +261,7 @@ function ContratoCard({
   onDownload,
   renderMatriculaAtos,
   renderGeradorContrato,
+  recemIniciado = false,
 }: {
   contrato: ContratoOut;
   addingVersao: boolean;
@@ -252,12 +281,13 @@ function ContratoCard({
   onDownload: (versaoId: string, formato?: "pdf" | "docx") => void;
   renderMatriculaAtos?: (contratoId: string) => ReactNode;
   renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
+  recemIniciado?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [historicoAberto, setHistoricoAberto] = useState(false);
-  const [matriculaAberta, setMatriculaAberta] = useState(false);
-  const [geradorAberto, setGeradorAberto] = useState(false);
+  const [matriculaAberta, setMatriculaAberta] = useState(recemIniciado);
+  const [geradorAberto, setGeradorAberto] = useState(recemIniciado);
 
   // Local drafts for the two migration-114 fields — a plain string, parsed
   // only on save. `prazo_pendencias_dias` null reads as "" (the placeholder

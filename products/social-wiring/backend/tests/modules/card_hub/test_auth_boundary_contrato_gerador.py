@@ -13,6 +13,7 @@ _CONTRATO_ID = str(uuid4())
 _ROUTES: tuple[tuple[str, str], ...] = (
     ("get", "/api/clientes/{cliente_id}/contratos/{contrato_id}/geracao"),
     ("post", "/api/clientes/{cliente_id}/contratos/{contrato_id}/gerar"),
+    ("post", "/api/clientes/{cliente_id}/contratos/gerar"),
 )
 
 

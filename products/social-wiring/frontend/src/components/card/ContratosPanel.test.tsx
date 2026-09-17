@@ -117,7 +117,8 @@ describe("ContratosPanel", () => {
     const { screen } = await render({ contratos: [] });
     const empty = screen.getByTestId("contratos-vazio");
     expect(empty.textContent).toContain("Nenhum contrato");
-    expect(empty.textContent).toContain("gerados automaticamente");
+    expect(empty.textContent).toContain("Gerar contrato");
+    expect(empty.textContent).toContain(".docx ou PDF");
   });
 
   it("renders the list with título, modelo and the current version", async () => {
@@ -304,6 +305,41 @@ describe("ContratosPanel", () => {
     fireEvent.click(screen.getByTestId("contrato-matricula-toggle-c1"));
     expect(renderMatriculaAtos).toHaveBeenCalledWith("c1");
     expect(screen.getByTestId("matricula-stub").textContent).toBe("c1");
+  });
+
+  // ─── "Gerar contrato" header button ────────────────────────────────────
+  it("omits the header 'Gerar contrato' button when onGerarContrato is not wired", async () => {
+    const { screen } = await render({ contratos: [] });
+    expect(screen.queryByTestId("contrato-gerar-btn")).toBeNull();
+  });
+
+  it("the header 'Gerar contrato' button fires onGerarContrato and is disabled while it runs", async () => {
+    const onGerarContrato = vi.fn();
+    const { screen, fireEvent, rerender, props } = await render({ contratos: [], onGerarContrato });
+    fireEvent.click(screen.getByTestId("contrato-gerar-btn"));
+    expect(onGerarContrato).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <ContratosPanel
+        {...({ ...props, iniciandoGeracao: true } as unknown as Parameters<typeof ContratosPanel>[0])}
+      />,
+    );
+    expect((screen.getByTestId("contrato-gerar-btn") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("the contract a 'Gerar contrato' click created opens on its generator section", async () => {
+    const renderGeradorContrato = vi.fn((contratoId: string, aberto: boolean) => (
+      <div data-testid={`gerador-stub-${contratoId}`}>{`${contratoId}:${aberto}`}</div>
+    ));
+    const semVersao = contrato({ id: "c2", origem: "gerado", versao_atual: null });
+    await render({
+      contratos: [contrato(), semVersao],
+      renderGeradorContrato,
+      contratoIniciadoId: "c2",
+    });
+    expect(renderGeradorContrato).toHaveBeenCalledWith("c2", true);
+    expect(renderGeradorContrato).toHaveBeenCalledWith("c1", false);
+    expect(renderGeradorContrato).not.toHaveBeenCalledWith("c1", true);
   });
 
   // ─── F5 — "Gerar contrato" render prop ─────────────────────────────────

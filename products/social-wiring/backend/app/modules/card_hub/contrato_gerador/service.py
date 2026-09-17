@@ -18,6 +18,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.modules.card_hub import contratos_service as contratos_svc
+from app.modules.card_hub import services as svc
 from app.modules.card_hub.contrato_gerador.carregador import carregar
 from app.modules.card_hub.contrato_gerador.contexto import snapshot_sha256
 from app.modules.card_hub.contrato_gerador.dados import DadosContrato
@@ -118,6 +119,47 @@ def obter_geracao(
     }
 
 
+#: Title of a contract started from the card's "Gerar contrato" button —
+#: the instrument's own name (see this package's docstring).
+TITULO_GERADO = "Promessa de Venda e Compra"
+
+
+def iniciar(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    *,
+    usuario_id: Optional[Any],
+    politica: Politica,
+) -> dict:
+    """Start a generated contract for this deal: create the contract row
+    (`contratos_svc.criar_para_gerar`), set its modelo to the one the deal's
+    data derives, and return it with the readiness report — so the card can
+    show "what is missing" at once. Nothing is rendered here; v1 comes from
+    `gerar` once `pronto`."""
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    row = contratos_svc.criar_para_gerar(
+        client,
+        org_id,
+        atendimento_id,
+        titulo=TITULO_GERADO,
+        modelo="compra_venda",
+        criado_por=usuario_id,
+    )
+    contrato_id = UUID(row["id"])
+    dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
+    derivado = modelo_derivado(derivar_switches(dados, politica))
+    if derivado != row["modelo"]:
+        contratos_svc.definir_modelo(client, org_id, contrato_id, derivado)
+        row["modelo"] = derivado
+    return {
+        "contrato": contratos_svc.saida(client, org_id, row),
+        "geracao": obter_geracao(
+            client, org_id, cliente_id, contrato_id, usuario_id=usuario_id, politica=politica
+        ),
+    }
+
+
 async def gerar(
     client: Any,
     storage: StorageBackend,
@@ -176,5 +218,6 @@ __all__ = [
     "data_assinatura",
     "gerar",
     "hoje",
+    "iniciar",
     "obter_geracao",
 ]

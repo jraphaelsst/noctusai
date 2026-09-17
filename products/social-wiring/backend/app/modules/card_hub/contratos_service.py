@@ -291,6 +291,64 @@ async def criar(
     return _contrato_saida(client, org_id, row)
 
 
+def criar_para_gerar(
+    client: Any,
+    org_id: UUID,
+    atendimento_id: UUID,
+    *,
+    titulo: str,
+    modelo: str,
+    criado_por: Optional[UUID],
+) -> dict:
+    """A contract the F5 generator will fill — origem='gerado', NO version yet.
+
+    Unlike `criar` (an upload always carries its v1), the generator cannot
+    produce a version before the contract exists: the matrícula acts it
+    transcribes are selected PER CONTRACT (`atendimento_contrato_matricula_atos`)
+    and the signature date / pendências prazo live on this row. So the row is
+    the generator's input, created first and honestly marked `rascunho` with
+    zero versions — the panel already renders that state — and v1 lands via
+    `contrato_gerador.service.gerar` once the readiness check passes.
+    """
+    if modelo not in MODELOS:
+        raise ValidationError_(
+            f"modelo inválido: {modelo!r}. Permitidos: {', '.join(MODELOS)}",
+            field="modelo",
+        )
+    row = {
+        "id": str(uuid4()),
+        "org_id": str(org_id),
+        "atendimento_id": str(atendimento_id),
+        "titulo": titulo,
+        "modelo": modelo,
+        "status": "rascunho",
+        "status_em": None,
+        "status_por": None,
+        "origem": "gerado",
+        "criado_por": str(criado_por) if criado_por else None,
+        "deleted_at": None,
+        "delete_motivo": None,
+        "delete_solicitado_por": None,
+        "created_at": now_iso(),
+        "updated_at": None,
+    }
+    _t(client, TABLE).insert(row).execute()
+    return row
+
+
+def definir_modelo(client: Any, org_id: UUID, contrato_id: UUID, modelo: str) -> None:
+    """Set the modelo the generator derived — `criar_para_gerar`'s row is
+    created before the data can be read, so its modelo is corrected here."""
+    _t(client, TABLE).update({"modelo": modelo, "updated_at": now_iso()}).eq(
+        "org_id", str(org_id)
+    ).eq("id", str(contrato_id)).execute()
+
+
+def saida(client: Any, org_id: UUID, row: dict) -> dict:
+    """Public view of one contract row — the same shape `listar` returns."""
+    return _contrato_saida(client, org_id, row)
+
+
 async def nova_versao(
     client: Any,
     storage: StorageBackend,

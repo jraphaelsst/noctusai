@@ -158,6 +158,13 @@ export interface GerarContratoResult {
   avisos: GeracaoAviso[];
 }
 
+/** `POST .../contratos/gerar` — the card's "Gerar contrato" button: the new
+ *  (versionless, `origem: "gerado"`) contract plus its readiness report. */
+export interface IniciarContratoResult {
+  contrato: ContratoOut;
+  geracao: ContratoGeracaoStatus;
+}
+
 interface ContratoIncompletoDetails {
   faltando?: GeracaoFaltando[];
   bloqueios?: GeracaoBloqueio[];
@@ -478,5 +485,19 @@ export function useContratoMutations(clienteId: string) {
     },
   });
 
-  return { create, addVersao, patch, deleteVersao, deleteContrato, getUrl, gerar };
+  /**
+   * `iniciar` — POST .../contratos/gerar. Creates the contract to generate
+   * (the matrícula acts are chosen per contract, so it must exist first) and
+   * seeds its `geracao` query with the readiness report that came back, so
+   * the card opens on "what is missing" without a second request.
+   */
+  const iniciar = useMutation({
+    mutationFn: () => api.post<IniciarContratoResult>(`${base(clienteId)}/gerar`, {}),
+    onSuccess: (data) => {
+      qc.setQueryData(GERACAO_KEY(clienteId, data.contrato.id), data.geracao);
+      invalidate();
+    },
+  });
+
+  return { create, addVersao, patch, deleteVersao, deleteContrato, getUrl, gerar, iniciar };
 }

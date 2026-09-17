@@ -690,3 +690,49 @@ class TestAssinaturaData:
         _contrato_over(scoped, ids, prazo_pendencias_dias=0)
         geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
         assert "PRAZO_PENDENCIAS_INVALIDO" in {b["codigo"] for b in geracao["bloqueios"]}
+
+
+class TestIniciar:
+    """POST /contratos/gerar — the card's "Gerar contrato" button."""
+
+    def _iniciar(self, client, ids: dict):
+        return client.post(f"/api/clientes/{ids['cliente']}/contratos/gerar", headers=_auth())
+
+    def test_it_creates_a_generated_draft_with_no_version_and_its_readiness(self, client, scoped, fake_storage):
+        ids = _seed_base(scoped)
+        r = self._iniciar(client, ids)
+        assert r.status_code == 201, r.text
+        body = r.json()
+        contrato, geracao = body["contrato"], body["geracao"]
+
+        novo = [c for c in _rows(scoped, "atendimento_contratos") if c["id"] == contrato["id"]]
+        assert len(novo) == 1
+        assert novo[0]["origem"] == "gerado" and novo[0]["status"] == "rascunho"
+        assert novo[0]["atendimento_id"] == ids["atendimento"]
+        assert contrato["versoes"] == [] and contrato["versao_atual"] is None
+        assert _rows(scoped, "atendimento_contrato_versoes") == []
+
+        # The modelo is the DERIVED one (a sparse card derives à vista), so the
+        # generator never opens on a "modelo diverge" warning.
+        assert contrato["modelo"] == novo[0]["modelo"] == "compra_venda_a_vista"
+        assert geracao["contrato_id"] == contrato["id"]
+        assert geracao["modelo_confere"] is True
+        assert geracao["pronto"] is False and geracao["faltando"]
+
+    def test_on_a_complete_card_only_the_per_contract_selection_is_missing(self, client, scoped, fake_storage):
+        """The matrícula acts are chosen PER CONTRACT — a new contract has none
+        yet, and that is the one thing the readiness report names."""
+        ids = _seed_completo(scoped)
+        body = self._iniciar(client, ids).json()
+        assert body["contrato"]["modelo"] == "compra_venda"
+        assert {f["campo"] for f in body["geracao"]["faltando"]} == {"matricula.atos"}
+
+    def test_a_card_with_no_open_atendimento_is_refused_and_writes_nothing(self, client, scoped, fake_storage):
+        """Same `cliente_id` resolution every contratos route inherits: no
+        atendimento in this org -> 409 AMBIGUOUS_ATENDIMENTO, before any write."""
+        _seed_base(scoped)
+        antes = _rows(scoped, "atendimento_contratos")
+        r = client.post(f"/api/clientes/{uuid4()}/contratos/gerar", headers=_auth())
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["code"] == "AMBIGUOUS_ATENDIMENTO"
+        assert _rows(scoped, "atendimento_contratos") == antes

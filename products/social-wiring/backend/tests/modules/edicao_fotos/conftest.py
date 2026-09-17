@@ -273,7 +273,11 @@ def _zero_filled(domain: tuple, counts: dict) -> dict:
 def _simulate_fotos_painel(harness: "Harness", params: dict) -> dict:
     org_id = params.get("p_org_id")
     p_desde, p_ate = params.get("p_desde"), params.get("p_ate")
-    hoje = date.today()
+    # `CURRENT_DATE` in the RPC is the DB session's date — UTC, the same zone
+    # every `created_at` below is in. `date.today()` is the MACHINE's zone,
+    # which made this simulator drop today's rows on a dev laptop between
+    # 21:00 and midnight in São Paulo (UTC already tomorrow).
+    hoje = datetime.now(timezone.utc).date()
     desde = date.fromisoformat(p_desde) if p_desde else hoje - timedelta(days=30)
     ate = date.fromisoformat(p_ate) if p_ate else hoje
 

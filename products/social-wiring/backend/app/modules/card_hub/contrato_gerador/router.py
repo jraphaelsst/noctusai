@@ -1,10 +1,14 @@
-"""`/api/clientes/{cliente_id}/contratos/{contrato_id}/{geracao,gerar}` — F5.
+"""`/api/clientes/{cliente_id}/contratos/{contrato_id}/{geracao,gerar}` and
+`POST /api/clientes/{cliente_id}/contratos/gerar` (start one) — F5.
 
 A separate file, `include_router`'d into `card_hub/router.py`'s `router` with
 one line (same layout `negociacao_estruturada_router.py` uses), so every path
 inherits `/api/clientes` and registers once in card_hub's existing
 `ModuleRegistration`. Both paths are 4 segments ending in a literal distinct
 from `versoes`, so they cannot shadow or be shadowed by the contratos routes.
+The 3-segment start route ends in the literal `gerar`; the only other
+3-segment POST is `/{cliente_id}/contratos` itself, and `{contrato_id}` 3rd
+segments are PATCH/DELETE only (and UUID-typed) — no overlap.
 
 Auth is asserted strictly (`== 401`) in
 `tests/modules/card_hub/test_auth_boundary_contrato_gerador.py`.
@@ -36,6 +40,25 @@ class GerarContratoBody(StrictHttpModel):
     #: contract (migration 114), then to today in São Paulo — see
     #: `service.data_assinatura`.
     assinatura_data: Optional[date] = None
+
+
+@router.post("/{cliente_id}/contratos/gerar", status_code=201)
+async def post_contrato_iniciar_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    politica=Depends(get_politica_contrato),
+) -> dict:
+    """The card's "Gerar contrato" button: creates the contract to generate
+    and returns `{contrato, geracao}` — see `service.iniciar`."""
+    user, org_id = auth_parts(auth)
+    return service.iniciar(
+        client,
+        org_id,
+        cliente_id,
+        usuario_id=getattr(user, "id", None),
+        politica=politica,
+    )
 
 
 @router.get("/{cliente_id}/contratos/{contrato_id}/geracao")
