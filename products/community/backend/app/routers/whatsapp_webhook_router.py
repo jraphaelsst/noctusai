@@ -31,7 +31,9 @@ secret`, unset ⇒ bypass — early-dev only, exactly as `create_whatsapp_
 webhook_router` behaves above). `NOC-REMEDIATE[community-waha-pairing]`:
 no number is paired yet (see `products/community/README.md`).
 """
-from __future__ import annotations
+# No `from __future__ import annotations`: slowapi's @limiter.limit inspects
+# the endpoint signature at runtime and breaks on PEP 563 string annotations
+# (repo check check_slowapi_with_pep563).
 
 import logging
 

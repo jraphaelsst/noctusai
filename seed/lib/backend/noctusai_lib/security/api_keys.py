@@ -66,13 +66,28 @@ from typing import Any, Callable, Iterable, Literal, Optional
 
 from cryptography.fernet import Fernet
 
-from noctusai_lib.config.credentials import resolve_credential
 from noctusai_lib.domain.sql_templates import rls_subquery_policy, service_role_bypass
 from noctusai_lib.security.token_store import (
     CredentialStore,
     StoredCredential,
     make_credential_store,
 )
+
+
+def resolve_credential(key: str, org_id: Optional[str] = None) -> Optional[str]:
+    """Lazy proxy to ``noctusai_lib.config.credentials.resolve_credential``.
+
+    Imported at CALL time, not module load: that module pulls
+    ``integrations.database`` → the ``supabase`` client, and this module is
+    re-exported from ``noctusai_lib.security`` and (via ``connection_store``)
+    ``noctusai_lib.integrations.whatsapp``. MCP servers put ``mcp/`` on
+    ``sys.path``, where ``mcp/supabase`` shadows the client package — an
+    eager import broke every MCP server that imports the WhatsApp package
+    (CI run 35249595416). Keeping the seam lazy leaves those imports light.
+    """
+    from noctusai_lib.config.credentials import resolve_credential as _real
+
+    return _real(key, org_id)
 
 logger = logging.getLogger(__name__)
 
