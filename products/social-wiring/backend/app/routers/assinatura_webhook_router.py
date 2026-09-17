@@ -30,8 +30,17 @@ this is a deliberate design call surfaced to the tech-lead, not a re-guess
 of an underspecified contract point: §1.4/§1.5 do not name a per-org
 webhook URL shape, so a single shared platform credential is the only
 verifiable reading absent one.
+
+🔴 NO ``from __future__ import annotations`` IN THIS MODULE.
+``@limiter.limit`` (slowapi) resolves the endpoint's ``Request`` parameter
+by INSPECTING THE SIGNATURE AT RUNTIME. PEP 563 turns every annotation
+into a string, so slowapi finds no ``Request``, and the route raises at
+call time instead of at import — a failure that no unit test importing the
+module would see. Same gotcha fixed in ``063ac09d`` for the community
+api_keys router; gated by ``TestCheckSlowapiWithPep563``. Every annotation
+below (``str``, ``Request``, the imported alias, ``dict``) resolves
+eagerly, so the import buys nothing here anyway.
 """
-from __future__ import annotations
 
 import logging
 
