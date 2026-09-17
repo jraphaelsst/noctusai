@@ -55,6 +55,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+#: DATE columns an import snapshot carries as ISO strings. Postgres casts
+#: them (`(p_snapshot->>'data')::date`); the fake must too, or its
+#: natural-key lookup (`data=date(...)`) never matches a stored string and
+#: every re-import of the same timeline section becomes a NEW row.
+_IMPORT_DATE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "timeline_event": ("data",),
+    "decision": ("data",),
+}
+
 #: NOT NULL columns without a default, per imported entity (migration 006) —
 #: what the real `import_bundle` RPC would refuse. `id`/`org_id`/timestamps
 #: and the natural-key column the fake sets itself are covered elsewhere.
@@ -595,6 +604,11 @@ class FakeKnowledgeStore:
         (23502) on the first prod import, 2026-09-17."""
         if entity_type not in _ENTITY_TYPE_TABLE:
             raise Invalid(f"import_entity: unknown entity_type {entity_type}")
+
+        snapshot = dict(snapshot)
+        for coluna in _IMPORT_DATE_COLUMNS.get(entity_type, ()):
+            if isinstance(snapshot.get(coluna), str):
+                snapshot[coluna] = date.fromisoformat(snapshot[coluna])
 
         existing = self._lookup_by_natural_key(org_id, entity_type, natural_key)
 

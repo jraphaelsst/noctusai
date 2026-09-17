@@ -304,3 +304,20 @@ class TestFakeRefusesWhatPostgresRefuses:
                        git_sha="sha1", committed_at="2026-01-01T00:00:00Z")]
         await run_import(store, ORG_ID, lines, USER_ID)
         assert [e["titulo"] for e in store.timeline_events] == ["Endurecimento do P2"]
+
+
+    @pytest.mark.asyncio
+    async def test_the_same_timeline_section_across_commits_is_one_event(self):
+        """Postgres keeps ONE event with a revision per commit; the fake used to
+        compare a stored date STRING with a `date` and duplicate the row."""
+        store = FakeKnowledgeStore()
+        content = "## 2026-09-11 — Fundação\n\nTexto.\n"
+        lines = [
+            _line("KNOWLEDGE-BASE/HISTORICO/TIMELINE.md", content,
+                  git_sha="sha1", committed_at="2026-01-01T00:00:00Z"),
+            _line("KNOWLEDGE-BASE/HISTORICO/TIMELINE.md", content + "Mais.\n",
+                  git_sha="sha2", committed_at="2026-01-02T00:00:00Z"),
+        ]
+        await run_import(store, ORG_ID, lines, USER_ID)
+        assert len(store.timeline_events) == 1
+        assert len([r for r in store.kb_revisions if r["entity_type"] == "timeline_event"]) == 2
