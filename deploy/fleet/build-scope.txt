@@ -6,7 +6,7 @@
 # drift class `check_hardcoded_product_slug_set` exists to prevent.
 #
 # WHY THIS EXISTS. `build-and-push.yml` used to treat any change under `seed/**` as
-# "rebuild the WHOLE fleet", because a shared base moved. With 14 services in
+# "rebuild the WHOLE fleet", because a shared base moved. With 15 services in
 # `docker-compose.prod.yml` that meant a full rebuild for a one-line edit — including
 # products that are `ativo=false` in the catalog and that we do not touch.
 #
@@ -26,11 +26,12 @@
 # ESCAPE HATCH: a manual `workflow_dispatch` run ignores this file entirely — pass an
 # explicit `products` list, or leave it empty to rebuild every fleet slug.
 #
-# Last refresh: 2026-09-16 — 4 live + 1 platform.
+# Last refresh: 2026-09-17 — 5 live + 1 platform.
 # Excluded (inactive): adconnect, daily-life, dev-team, erp-imobiliario, igig, orbity, p-studio, personal-finance, therapy-platform
 
 academia-de-reciclagem
 agents
+community
 core
 seed
 social-wiring
