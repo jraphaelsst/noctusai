@@ -13,10 +13,17 @@ afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
 });
 
-import GeradorContratoSection from "./GeradorContratoSection";
+import GeradorContratoSection, { type FaltandoComDestino } from "./GeradorContratoSection";
 import { ContratoGeracaoError, type ContratoGeracaoStatus } from "@/hooks/useContratos";
 
-function status(over: Partial<ContratoGeracaoStatus> = {}): ContratoGeracaoStatus {
+// `faltando` widened to `FaltandoComDestino`: the runtime payload carries
+// `destino` on every item (`derivacao.py:100-193`) even though `useContratos`'
+// own `GeracaoFaltando` doesn't declare it yet (out of scope for this slice).
+type StatusOver = Omit<Partial<ContratoGeracaoStatus>, "faltando"> & {
+  faltando?: FaltandoComDestino[];
+};
+
+function status(over: StatusOver = {}): ContratoGeracaoStatus {
   return {
     contrato_id: "c1",
     pronto: true,
@@ -28,7 +35,7 @@ function status(over: Partial<ContratoGeracaoStatus> = {}): ContratoGeracaoStatu
     bloqueios: [],
     avisos: [],
     ...over,
-  };
+  } as ContratoGeracaoStatus;
 }
 
 function baseProps(over: Record<string, unknown> = {}) {
@@ -52,13 +59,30 @@ function baseProps(over: Record<string, unknown> = {}) {
 // lets the module namespace's UNBOUND `getByTestId(container, id)` (2-3
 // args) win over the render result's BOUND one-arg version, same footgun
 // `ContratosPanel.test.tsx` sidesteps by only ever calling `screen.<query>`.
+//
+// Wrapped in `MemoryRouter`: `FaltandoLinha` renders a real `<Link>` for a
+// routable `destino`, same requirement as `ImovelContratoCard.test.tsx`.
 async function render(over: Record<string, unknown> = {}) {
   const rtl = await import("@testing-library/react");
+  const { MemoryRouter } = await import("react-router-dom");
   const props = baseProps(over);
   rtl.render(
-    <GeradorContratoSection {...(props as unknown as Parameters<typeof GeradorContratoSection>[0])} />,
+    <MemoryRouter>
+      <GeradorContratoSection {...(props as unknown as Parameters<typeof GeradorContratoSection>[0])} />
+    </MemoryRouter>,
   );
   return { ...rtl, props };
+}
+
+/** A `destino` shaped exactly like `Destinos.para` (`derivacao.py:100-193`). */
+function destino(over: Record<string, unknown> = {}) {
+  return {
+    tela: "certidoes",
+    rota: "/certidoes",
+    ancora: null,
+    ids: {},
+    ...over,
+  };
 }
 
 describe("GeradorContratoSection", () => {
@@ -103,9 +127,27 @@ describe("GeradorContratoSection", () => {
       status: status({
         pronto: false,
         faltando: [
-          { campo: "cpf", rotulo: "CPF do comprador", onde: "partes", parte_id: "p1" },
-          { campo: "rg", rotulo: "RG do comprador", onde: "partes", parte_id: "p1" },
-          { campo: "matricula", rotulo: "Matrícula transcrita", onde: "matricula", parte_id: null },
+          {
+            campo: "cpf",
+            rotulo: "CPF do comprador",
+            onde: "partes",
+            parte_id: "p1",
+            destino: destino({ tela: "card_partes", rota: "/clientes", ancora: "geral" }),
+          },
+          {
+            campo: "rg",
+            rotulo: "RG do comprador",
+            onde: "partes",
+            parte_id: "p1",
+            destino: destino({ tela: "card_partes", rota: "/clientes", ancora: "geral" }),
+          },
+          {
+            campo: "matricula",
+            rotulo: "Matrícula transcrita",
+            onde: "matricula",
+            parte_id: null,
+            destino: destino({ tela: "matriculas", rota: "/matriculas" }),
+          },
         ],
       }),
     });
@@ -116,6 +158,93 @@ describe("GeradorContratoSection", () => {
     expect(bloco.textContent).toContain("Matrícula");
     expect(bloco.textContent).toContain("Matrícula transcrita");
     expect(screen.getAllByText("CPF do comprador")).toHaveLength(1);
+  });
+
+  it("🔴 a routable destino renders an actionable link pointing at its route", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "matricula",
+            rotulo: "Matrícula transcrita",
+            onde: "matricula",
+            parte_id: null,
+            destino: destino({ tela: "matriculas", rota: "/matriculas", ancora: null }),
+          },
+        ],
+      }),
+    });
+    const link = screen.getByTestId(
+      "gerador-contrato-faltando-link-matricula-",
+    ) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/matriculas");
+    expect(
+      screen.queryByTestId("gerador-contrato-faltando-guidance-matricula-"),
+    ).toBeNull();
+  });
+
+  it("🔴 a routable destino with an anchor names the settings tab as a caption, never a query param", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "razao_social",
+            rotulo: "Razão social da imobiliária",
+            onde: "imobiliaria",
+            parte_id: null,
+            destino: destino({
+              tela: "configuracoes",
+              rota: "/configuracoes",
+              ancora: "imobiliaria",
+            }),
+          },
+        ],
+      }),
+    });
+    const link = screen.getByTestId(
+      "gerador-contrato-faltando-link-razao_social-",
+    ) as HTMLAnchorElement;
+    // The route itself, no fabricated `?tab=`/`#` the Settings page doesn't
+    // read yet — the tab name is a plain-text caption next to the link.
+    expect(link.getAttribute("href")).toBe("/configuracoes");
+    expect(link.getAttribute("href")).not.toContain("?");
+    expect(link.getAttribute("href")).not.toContain("#");
+    expect(screen.getByTestId("gerador-contrato-faltando").textContent).toContain(
+      "(aba Imobiliária)",
+    );
+  });
+
+  it("🔴 a card-scoped destino renders guidance naming the subpage, never a fabricated deep link", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "cpf",
+            rotulo: "CPF do comprador",
+            onde: "partes",
+            parte_id: "p1",
+            destino: destino({
+              tela: "card_partes",
+              rota: "/clientes",
+              ancora: "geral",
+              ids: { cliente_id: "cli1", parte_id: "p1" },
+            }),
+          },
+        ],
+      }),
+    });
+    const guidance = screen.getByTestId("gerador-contrato-faltando-guidance-cpf-p1");
+    expect(guidance.textContent).toContain("CPF do comprador");
+    expect(guidance.textContent).toContain("Geral");
+    // No `<a>`/`<Link>` at all for a card destino — `/clientes` alone is not
+    // a deep link into the card's `geral` subpage, so nothing renders as one.
+    expect(guidance.querySelector("a")).toBeNull();
+    expect(
+      screen.queryByTestId("gerador-contrato-faltando-link-cpf-p1"),
+    ).toBeNull();
   });
 
   it("🔴 `bloqueios` render as errors, distinct from `avisos` as warnings", async () => {
