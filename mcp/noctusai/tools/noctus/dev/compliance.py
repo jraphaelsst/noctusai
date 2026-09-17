@@ -12530,6 +12530,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/defer-is-not-resolve.md",
     "CONTEXT/PATTERNS/common/absorption-ships-consume-docs.md",
     "CONTEXT/PATTERNS/common/storage-hygiene.md",
+    "CONTEXT/PATTERNS/common/claim-vs-evidence-shared-state.md",  # universal commons: never destroy shared state on a written claim (merged flag / pointer status / benign label) — check the state itself, fail closed on unknown; applies to every lens that removes a worktree, drops a stash or deletes a branch
     "CONTEXT/PATTERNS/common/methodology-codification-pipeline.md",
     "CONTEXT/PATTERNS/common/repetitive-task-skill-codification.md",  # universal commons: DRY for procedures — sibling of methodology-codification-pipeline + project-execution recurrence rule, applies to every lens that authors procedures
     "CONTEXT/PATTERNS/common/build-learn-cache-mindset.md",  # universal commons: body-DRY for artifact knowledge — sibling of code-DRY + skill-DRY + methodology-codification-pipeline, applies to every lens that builds/refactors/bugfixes/integrates/deploys any artifact
