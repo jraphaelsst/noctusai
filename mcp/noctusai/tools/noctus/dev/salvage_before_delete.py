@@ -162,8 +162,13 @@ def salvage_before_delete(
       }
     """
     if repo_root is None:
-        from settings import REPO_ROOT
-        repo_root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): this is a repo-global operation
+        # (worktree-salvage ledger / .claude/worktrees enumeration / roadmap
+        # lookup) — must resolve to the PRIMARY checkout even when the MCP
+        # server booted with cwd inside a worktree. See
+        # workspace.get_ledger_root() docstring.
+        from settings import LEDGER_ROOT
+        repo_root = LEDGER_ROOT
     repo_root = Path(repo_root)
 
     preserved: list[str] = []

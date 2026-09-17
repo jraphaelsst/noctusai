@@ -54,12 +54,15 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from settings import REPO_ROOT
+from settings import LEDGER_ROOT
 
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-LEDGER_PATH = REPO_ROOT / "project-history" / "dispatch-budget.ndjson"
+# LEDGER_ROOT (never REPO_ROOT): repo-global append-only ledger — must
+# land in the PRIMARY checkout even when the MCP server booted with cwd
+# inside a worktree. See workspace.get_ledger_root() docstring.
+LEDGER_PATH = LEDGER_ROOT / "project-history" / "dispatch-budget.ndjson"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

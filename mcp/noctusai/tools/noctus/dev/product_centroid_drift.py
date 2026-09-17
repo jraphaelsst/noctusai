@@ -45,8 +45,11 @@ def _now_iso() -> str:
 
 
 def _ledger_path() -> Path:
-    from settings import REPO_ROOT
-    return REPO_ROOT / "project-history" / "product-drift.ndjson"
+    # LEDGER_ROOT (never REPO_ROOT): repo-global append-only ledger — must
+    # land in the PRIMARY checkout even when the MCP server booted with
+    # cwd inside a worktree. See workspace.get_ledger_root() docstring.
+    from settings import LEDGER_ROOT
+    return LEDGER_ROOT / "project-history" / "product-drift.ndjson"
 
 
 def _classify(path: str) -> str:

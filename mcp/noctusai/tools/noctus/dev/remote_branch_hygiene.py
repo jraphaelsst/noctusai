@@ -166,8 +166,13 @@ def classify_remote_branches(
       }
     """
     if repo_root is None:
-        from settings import REPO_ROOT
-        repo_root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): this is a repo-global operation
+        # (worktree-salvage ledger / .claude/worktrees enumeration / roadmap
+        # lookup) — must resolve to the PRIMARY checkout even when the MCP
+        # server booted with cwd inside a worktree. See
+        # workspace.get_ledger_root() docstring.
+        from settings import LEDGER_ROOT
+        repo_root = LEDGER_ROOT
     repo_root = Path(repo_root)
 
     # Fetch to make sure our remote refs are up-to-date.
@@ -236,8 +241,13 @@ def delete_integrated_engineer_remote(
       reason: human-readable why
     """
     if repo_root is None:
-        from settings import REPO_ROOT
-        repo_root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): this is a repo-global operation
+        # (worktree-salvage ledger / .claude/worktrees enumeration / roadmap
+        # lookup) — must resolve to the PRIMARY checkout even when the MCP
+        # server booted with cwd inside a worktree. See
+        # workspace.get_ledger_root() docstring.
+        from settings import LEDGER_ROOT
+        repo_root = LEDGER_ROOT
     repo_root = Path(repo_root)
 
     if branch in _PROTECTED_BRANCHES:

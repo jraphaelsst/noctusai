@@ -49,11 +49,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from settings import REPO_ROOT
+from settings import LEDGER_ROOT, REPO_ROOT
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-BASELINE_DIR = REPO_ROOT / "project-history" / "kb-baselines"
+# LEDGER_ROOT (never REPO_ROOT) — repo-global append-only ledger dir; must
+# land in the PRIMARY checkout even when the MCP server booted with cwd
+# inside a worktree. See workspace.get_ledger_root() docstring.
+BASELINE_DIR = LEDGER_ROOT / "project-history" / "kb-baselines"
 
 # How many NEW findings (vs. latest baseline) constitute "drift worth flagging".
 _DRIFT_THRESHOLD = 5
@@ -115,7 +118,7 @@ def _load_baselines() -> list[dict]:
         except (OSError, json.JSONDecodeError):
             continue
         payload["_baseline_id"] = f.stem
-        payload["_path"] = str(f.relative_to(REPO_ROOT))
+        payload["_path"] = str(f.relative_to(LEDGER_ROOT))
         out.append(payload)
     out.sort(key=lambda p: p.get("ratified_at", ""))
     return out
@@ -182,7 +185,7 @@ def ratify(
         "ratified_at": ratified_at,
         "finding_count": len(findings),
         "kb_corpus_sha": corpus_sha,
-        "path": str(target.relative_to(REPO_ROOT)),
+        "path": str(target.relative_to(LEDGER_ROOT)),
     }
 
 

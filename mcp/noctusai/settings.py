@@ -27,13 +27,24 @@ from pathlib import Path
 
 from noctusai_lib.config.settings import BaseAppSettings
 
-from workspace import get_noctusai_home
+from workspace import get_ledger_root, get_noctusai_home
 
 
 Settings = BaseAppSettings
 
 REPO_ROOT: Path = get_noctusai_home()
 PRODUCTS_DIR: Path = REPO_ROOT / "products"
+
+# LEDGER_ROOT resolves to the PRIMARY checkout even when the MCP server
+# booted with cwd inside a worktree (get_ledger_root() UNWRAPS the
+# worktree boundary that REPO_ROOT/get_noctusai_home() deliberately stops
+# at). Repo-global append-only ledgers (project-history/*.ndjson) import
+# THIS constant, never REPO_ROOT, for their default/implicit write target
+# — a worktree is ephemeral and a ledger row written only there dies with
+# it (KB § PATTERNS/common/claim-vs-evidence-shared-state.md; the fifth
+# confirmed incident of the family, 2026-09-17). Equal to REPO_ROOT
+# whenever the server did NOT boot inside a worktree.
+LEDGER_ROOT: Path = get_ledger_root()
 
 
 # accept-with-rationale: "MCP settings shim ships its own local
@@ -60,4 +71,11 @@ def resolve_test_python() -> str:
     return str(cand) if cand.exists() else sys.executable
 
 
-__all__ = ["Settings", "get_settings", "REPO_ROOT", "PRODUCTS_DIR", "resolve_test_python"]
+__all__ = [
+    "Settings",
+    "get_settings",
+    "REPO_ROOT",
+    "LEDGER_ROOT",
+    "PRODUCTS_DIR",
+    "resolve_test_python",
+]

@@ -54,7 +54,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from settings import REPO_ROOT
+from settings import LEDGER_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,10 @@ logger = logging.getLogger(__name__)
 #: The DURABLE, git-tracked ledger. Written by EXACTLY ONE thing: `drain_spool()`,
 #: called from the pre-commit hook. Never appended to directly by a running tool —
 #: see SPOOL_PATH for why.
-LEDGER_PATH = REPO_ROOT / "project-history" / "vector-costs.ndjson"
+# LEDGER_ROOT (never REPO_ROOT): repo-global append-only ledger — must
+# land in the PRIMARY checkout even when the MCP server booted with cwd
+# inside a worktree. See workspace.get_ledger_root() docstring.
+LEDGER_PATH = LEDGER_ROOT / "project-history" / "vector-costs.ndjson"
 
 #: The UNTRACKED write-ahead spool (gitignored). Every cost row lands here first.
 #:
@@ -83,7 +86,7 @@ LEDGER_PATH = REPO_ROOT / "project-history" / "vector-costs.ndjson"
 #: with whatever is being committed — folded in, never a commit of their own.
 #: Readers concatenate both, so an un-drained row is never missing from a report.
 #: KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.
-SPOOL_PATH = REPO_ROOT / "project-history" / ".vector-costs-spool.ndjson"
+SPOOL_PATH = LEDGER_ROOT / "project-history" / ".vector-costs-spool.ndjson"
 
 # ── Cost table ────────────────────────────────────────────────────────────────
 # USD per 1 million tokens.

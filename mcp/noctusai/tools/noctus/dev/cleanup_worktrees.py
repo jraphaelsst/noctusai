@@ -51,8 +51,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from settings import REPO_ROOT
-from workspace import resolve_caller_root
+from settings import LEDGER_ROOT, REPO_ROOT
+from workspace import resolve_caller_root, unwrap_worktree_root
 from tools.noctus.dev import _worktree_staleness as wts
 from tools.noctus.dev import _worktree_salvage as wsv
 
@@ -224,7 +224,12 @@ def cleanup_stale_worktrees(
     elif worktree_path is not None:
         root = resolve_caller_root(worktree_path)
     else:
-        root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): the caller asked for neither an
+        # explicit repo_root NOR their own worktree — the implicit default
+        # must still resolve to the PRIMARY checkout, not wherever the MCP
+        # server's REPO_ROOT happened to drift to. See
+        # workspace.get_ledger_root() docstring.
+        root = LEDGER_ROOT
 
     worktree_dir = root / ".claude" / "worktrees"
 
@@ -498,8 +503,17 @@ def cleanup_stale_worktrees(
 
     _git(root, "worktree", "prune")
     # Extract-before-delete: write recovery pointers to the tracked ledger
-    # (caller commits it, like ledger.ndjson).
-    salvage_ledger = wsv.record_sweep(root, removed_records)
+    # (caller commits it, like ledger.ndjson). `unwrap_worktree_root(root)`
+    # corrects `root` ONLY when it is itself a worktree (an explicit
+    # `worktree_path` — correct for enumerating THAT worktree's own
+    # `.claude/worktrees/`, which is empty/nonexistent by construction, but
+    # wrong for the recovery-pointer ledger, which must never land in a
+    # worktree that can be torn down); any OTHER explicit `root` (a test's
+    # synthetic repo, an already-correct primary) passes through unchanged.
+    # See workspace.unwrap_worktree_root() docstring.
+    salvage_ledger = wsv.record_sweep(
+        unwrap_worktree_root(root) or root, removed_records
+    )
 
     logger.info(
         "cleanup_stale_worktrees: %d removed, %d failed, %d locked-skipped",

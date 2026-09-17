@@ -39,8 +39,11 @@ VALID_OUTCOMES = frozenset({"landed", "drift-found", "failed", "escalated"})
 
 
 def _ledger_path() -> Path:
-    from settings import REPO_ROOT
-    return REPO_ROOT / "project-history" / "dispatch-budget.ndjson"
+    # LEDGER_ROOT (never REPO_ROOT): repo-global append-only ledger — must
+    # land in the PRIMARY checkout even when the MCP server booted with
+    # cwd inside a worktree. See workspace.get_ledger_root() docstring.
+    from settings import LEDGER_ROOT
+    return LEDGER_ROOT / "project-history" / "dispatch-budget.ndjson"
 
 
 def _now_iso() -> str:
@@ -94,8 +97,8 @@ def log_completion(
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"write failed: {str(e)[:200]}"}
     try:
-        from settings import REPO_ROOT
-        rel = str(path.relative_to(REPO_ROOT))
+        from settings import LEDGER_ROOT
+        rel = str(path.relative_to(LEDGER_ROOT))
     except (ImportError, ValueError):
         rel = str(path)
     return {"ok": True, "entry": entry, "ledger_path": rel}

@@ -42,11 +42,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from settings import REPO_ROOT
+from settings import LEDGER_ROOT, REPO_ROOT
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-BASELINE_DIR = REPO_ROOT / "project-history" / "code-baselines"
+# LEDGER_ROOT (never REPO_ROOT) — this is a repo-global append-only ledger
+# dir; it must land in the PRIMARY checkout even when the MCP server booted
+# with cwd inside a worktree. See workspace.get_ledger_root() docstring.
+BASELINE_DIR = LEDGER_ROOT / "project-history" / "code-baselines"
 
 # How many NEW pairs (vs. latest baseline) constitute drift worth flagging.
 # Smaller than kb_baseline's 5 because code-corpus signal is sparser —
@@ -126,7 +129,7 @@ def _load_baselines() -> list[dict]:
         except (OSError, json.JSONDecodeError):
             continue
         payload["_baseline_id"] = f.stem
-        payload["_path"] = str(f.relative_to(REPO_ROOT))
+        payload["_path"] = str(f.relative_to(LEDGER_ROOT))
         out.append(payload)
     out.sort(key=lambda p: p.get("ratified_at", ""))
     return out
@@ -192,7 +195,7 @@ def ratify(
         "ratified_at": ratified_at,
         "pair_count": len(matches),
         "code_corpus_sha": corpus_sha,
-        "path": str(target.relative_to(REPO_ROOT)),
+        "path": str(target.relative_to(LEDGER_ROOT)),
     }
 
 

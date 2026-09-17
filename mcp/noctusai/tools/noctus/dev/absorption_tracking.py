@@ -68,7 +68,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from settings import REPO_ROOT
+from settings import LEDGER_ROOT
 
 from .cache_backend import (
     apply_locking_pragmas,
@@ -79,7 +79,10 @@ from .cache_backend import (
 # ── Paths ────────────────────────────────────────────────────────────────────
 CACHE_DIR = _cache_dir()
 CACHE_PATH = _cache_path("absorptions")
-LEDGER_PATH = REPO_ROOT / "project-history" / "absorptions.ndjson"
+# LEDGER_ROOT (never REPO_ROOT): repo-global append-only ledger — must
+# land in the PRIMARY checkout even when the MCP server booted with cwd
+# inside a worktree. See workspace.get_ledger_root() docstring.
+LEDGER_PATH = LEDGER_ROOT / "project-history" / "absorptions.ndjson"
 
 # ── Allowed enums ─────────────────────────────────────────────────────────────
 LIFECYCLE_STAGES = frozenset({"cloned", "diagnosed", "uplifting", "porting", "teardown", "done"})
@@ -241,7 +244,7 @@ def log_entry(
         )
 
     try:
-        ledger_path = str(LEDGER_PATH.relative_to(REPO_ROOT))
+        ledger_path = str(LEDGER_PATH.relative_to(LEDGER_ROOT))
     except ValueError:
         ledger_path = str(LEDGER_PATH)
     return {"ok": True, "entry": entry, "ledger_path": ledger_path}

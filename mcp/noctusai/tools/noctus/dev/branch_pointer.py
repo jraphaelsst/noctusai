@@ -46,22 +46,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from settings import REPO_ROOT
+from settings import LEDGER_ROOT, REPO_ROOT
 
 from tools.noctus.dev._ledger_push import commit_and_ff_push_ledger
 
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
+# LEDGER_ROOT (never REPO_ROOT) for the ledger FILE path — repo-global
+# append-only ledger; must resolve to the PRIMARY checkout even when the
+# MCP server booted with cwd inside a worktree (see
+# workspace.get_ledger_root() docstring). NOTE: this is defense-in-depth
+# only — the append/update path commits + FF-pushes to origin/dev in the
+# SAME call regardless of which checkout hosts the commit, so a row is
+# durable on origin/dev before this function returns in the common case;
+# this constant only matters if that push fails.
 LEDGER_REL = "project-history/branch-tree.ndjson"
-LEDGER_PATH: Path = REPO_ROOT / LEDGER_REL
+LEDGER_PATH: Path = LEDGER_ROOT / LEDGER_REL
 # Repo-tracked, human-accessible MIRROR — kept byte-identical to the canonical
 # ledger BY CONSTRUCTION (every write goes to both; the check_branch_tree_mirror
 # keeper hard-blocks any drift). Both are project-history/*.ndjson ⇒ merge=union +
 # cache-exempt. KB § PATTERNS/architect/branch-tree-tracking.md (§2 the mirror).
 MIRROR_NAME = "branch-tree.mirror.ndjson"
 MIRROR_REL = "project-history/" + MIRROR_NAME
-MIRROR_PATH: Path = REPO_ROOT / MIRROR_REL
+MIRROR_PATH: Path = LEDGER_ROOT / MIRROR_REL
 
 # ── Cache-exemption sentinel ──────────────────────────────────────────────────
 # ONLY these paths (the ledger + its mirror) are exempt — any other staged file

@@ -48,7 +48,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from settings import REPO_ROOT
+from settings import LEDGER_ROOT, REPO_ROOT
 from workspace import resolve_caller_root
 
 
@@ -61,7 +61,10 @@ from .cache_backend import (
 
 CACHE_DIR = _cache_dir()
 CACHE_PATH = _cache_path("auto-improvement")
-LEDGER_PATH = REPO_ROOT / "project-history" / "auto-improvement.ndjson"
+# LEDGER_ROOT (never REPO_ROOT): repo-global append-only ledger — must land
+# in the PRIMARY checkout even when the MCP server booted with cwd inside
+# a worktree. See workspace.get_ledger_root() docstring.
+LEDGER_PATH = LEDGER_ROOT / "project-history" / "auto-improvement.ndjson"
 
 # Allowed enums (defensive; loud-fail on unknown values so typos don't grow stalely).
 SCOPES = frozenset({"scoped", "broad"})
@@ -227,7 +230,7 @@ def log_entry(
     # `relative_to` may fail when tests monkeypatch LEDGER_PATH out of REPO_ROOT;
     # fall back to the absolute path so the return shape stays stable.
     try:
-        ledger_path = str(LEDGER_PATH.relative_to(REPO_ROOT))
+        ledger_path = str(LEDGER_PATH.relative_to(LEDGER_ROOT))
     except ValueError:
         ledger_path = str(LEDGER_PATH)
     return {"ok": True, "entry": entry, "ledger_path": ledger_path}

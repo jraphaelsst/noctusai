@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from settings import REPO_ROOT
-from workspace import resolve_caller_root
+from workspace import resolve_caller_root, unwrap_worktree_root
 from tools.noctus.dev import _worktree_staleness as wts
 from tools.noctus.dev import _worktree_salvage as wsv
 
@@ -645,7 +645,14 @@ def _sweep_worktrees(
             except OSError:
                 failed += 1
     _git(root, "worktree", "prune")
-    ledger = wsv.record_sweep(root, removed_records)
+    # `unwrap_worktree_root(root)` corrects `root` ONLY when it is itself a
+    # worktree (an explicit `worktree_path` — correct for scoping the
+    # artifacts/environments SCAN to the caller's own tree, but wrong for
+    # the recovery-pointer ledger, which must never land in a worktree that
+    # can be torn down); any OTHER explicit `root` (a test's synthetic repo,
+    # an already-correct primary) passes through unchanged. See
+    # workspace.unwrap_worktree_root() docstring.
+    ledger = wsv.record_sweep(unwrap_worktree_root(root) or root, removed_records)
     if ledger:
         notes.append(f"recorded {len(removed_records)} recovery pointer(s) → {ledger}")
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

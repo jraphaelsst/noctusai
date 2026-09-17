@@ -25,6 +25,11 @@ def tmp_baselines(tmp_path, monkeypatch):
     baseline_dir.mkdir(parents=True)
     monkeypatch.setattr(cb, "BASELINE_DIR", baseline_dir)
     monkeypatch.setattr(cb, "REPO_ROOT", tmp_path)
+    # LEDGER_ROOT (never REPO_ROOT) is what `_load_baselines`/`ratify`
+    # actually derive `relative_to()` against post-fix (see
+    # workspace.get_ledger_root() docstring) — must match BASELINE_DIR's
+    # tmp root or `f.relative_to(LEDGER_ROOT)` raises ValueError.
+    monkeypatch.setattr(cb, "LEDGER_ROOT", tmp_path)
     # Seed a fake mcp/ tree so the keeper proceeds past the tracked-roots guard.
     (tmp_path / "mcp").mkdir()
     # Seed a fake code-embeddings cache with deterministic rows for sha calc.

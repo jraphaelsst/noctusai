@@ -44,12 +44,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from settings import REPO_ROOT
+from settings import LEDGER_ROOT
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-SIGNALS_PATH = REPO_ROOT / "project-history" / "vector-signals.ndjson"
-DECISIONS_PATH = REPO_ROOT / "project-history" / "vector-calibration.ndjson"
+# LEDGER_ROOT (never REPO_ROOT): repo-global append-only ledgers — must
+# land in the PRIMARY checkout even when the MCP server booted with cwd
+# inside a worktree. See workspace.get_ledger_root() docstring.
+SIGNALS_PATH = LEDGER_ROOT / "project-history" / "vector-signals.ndjson"
+DECISIONS_PATH = LEDGER_ROOT / "project-history" / "vector-calibration.ndjson"
 
 # Allowed signal types — tracked for typo defense + future analyzer routing.
 SIGNAL_TYPES = frozenset({
@@ -111,7 +114,7 @@ def log_signal(
     with SIGNALS_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     try:
-        rel = str(SIGNALS_PATH.relative_to(REPO_ROOT))
+        rel = str(SIGNALS_PATH.relative_to(LEDGER_ROOT))
     except ValueError:
         rel = str(SIGNALS_PATH)
     return {"ok": True, "entry": entry, "ledger_path": rel}
@@ -156,7 +159,7 @@ def log_decision(
     with DECISIONS_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     try:
-        rel = str(DECISIONS_PATH.relative_to(REPO_ROOT))
+        rel = str(DECISIONS_PATH.relative_to(LEDGER_ROOT))
     except ValueError:
         rel = str(DECISIONS_PATH)
     return {"ok": True, "entry": entry, "ledger_path": rel}

@@ -242,6 +242,102 @@ def get_noctusai_home(start: Path | None = None) -> Path:
     return get_workspace_context(start).noctusai_home
 
 
+def get_ledger_root(start: Path | None = None) -> Path:
+    """Resolve the root for repo-global append-only ledgers (``project-history/*.ndjson``).
+
+    ``get_noctusai_home()`` deliberately STOPS at the worktree boundary
+    (``_detect_worktree_root``, codified 2026-05-26, N=3) so code-editing
+    tools (scaffold, propagate, ...) land their output in the CALLER's own
+    worktree — the right answer when the write is a scoped, committable
+    part of THAT worktree's own branch.
+
+    Repo-global append-only ledgers are the opposite case. A ledger row
+    (session-end-sweep summaries, auto-improvement findings, vector-cost
+    batches, ...) records a CLAIM about shared platform state — durable
+    only once it lands in a checkout that gets committed + pushed to
+    ``origin/dev``. A worktree is ephemeral (cleaned up, abandoned, or torn
+    down by a stale-worktree sweep); a ledger row written only there is
+    "evidence" that can vanish with the worktree — the exact failure mode
+    ``KB § PATTERNS/common/claim-vs-evidence-shared-state.md`` names. This
+    is the fifth confirmed incident of the family (2026-09-17):
+    ``session_end_sweep`` fell back to ``settings.REPO_ROOT`` (itself bound
+    at MCP-server-boot time via the worktree-boundary override) and wrote
+    two ``worktree-salvage.ndjson`` rows into
+    ``.claude/worktrees/worktree-liveness-not-just-ledger/project-history/``
+    — recovered only because a human/agent noticed and manually carried
+    them onto ``dev`` (commits ``8e1fe1ee`` / part of ``2ff68e2c``); earlier
+    the same night, 7 stash entries held 25 more unpushed ledger rows for
+    the identical underlying reason (recovered in ``3789fefc``).
+
+    This function does NOT change ``get_noctusai_home()``'s general
+    contract — that override stays correct for code-editing tools. It is a
+    SEPARATE resolver for the SEPARATE "where does a repo-global ledger
+    write land" question: it UNWRAPS the worktree boundary instead of
+    stopping at it, so a ledger writer invoked with cwd inside
+    ``.../<primary>/.claude/worktrees/<slug>/`` still resolves to
+    ``<primary>``.
+
+    Resolution (mirrors ``get_workspace_context``'s priority order):
+      1. ``NOCTUSAI_HOME`` env override — explicit lever, honored
+         identically to ``get_noctusai_home()`` (an operator who set this
+         wants ALL resolution, ledgers included, redirected there).
+      2. Worktree-boundary detection (``_detect_worktree_root``) — but
+         UNWRAP back to the primary checkout
+         (``.../<primary>/.claude/worktrees/<slug>`` -> ``<primary>``)
+         instead of stopping at the worktree, the opposite of
+         ``get_noctusai_home()``'s behavior. Reuses the same boundary
+         parser rather than a second one.
+      3. Not inside a worktree — identical to ``get_noctusai_home()``
+         (marker walk / file-relative fallback).
+    """
+    env_home = os.environ.get("NOCTUSAI_HOME")
+    if env_home:
+        home = Path(env_home).expanduser().resolve()
+        if home.is_dir():
+            return home
+        logger.warning(
+            "NOCTUSAI_HOME=%s does not point to a directory — falling "
+            "through to worktree-unwrap / marker discovery for ledger root",
+            env_home,
+        )
+
+    cwd = (start or Path.cwd()).resolve()
+    unwrapped = unwrap_worktree_root(cwd)
+    if unwrapped is not None:
+        return unwrapped
+
+    # Not inside a worktree: identical resolution to get_noctusai_home().
+    return get_noctusai_home(start)
+
+
+def unwrap_worktree_root(path: Path) -> Path | None:
+    """If ``path`` lives inside a ``.../<primary>/.claude/worktrees/<slug>/``
+    tree, return that worktree's PRIMARY checkout; else ``None``.
+
+    Pure structural unwrap — no env override, no marker walk, no
+    file-relative fallback. This is the narrow primitive
+    ``get_ledger_root()`` is built from, and is ALSO the right tool for a
+    call site that must correct an explicit, caller-supplied root ONLY
+    when it happens to be a worktree, while leaving any other explicit
+    root (a test's synthetic tmp repo, an already-correct primary path)
+    completely unchanged. ``get_ledger_root()`` itself is NOT that tool for
+    an explicit-root call site: its own "not inside a worktree" branch
+    falls through to ``get_noctusai_home()``'s marker-walk +
+    file-relative-fallback chain, which for an arbitrary directory with no
+    ``.noctusai-workspace`` marker anywhere in its ancestry returns the
+    REAL production noc root — not the caller's root, unchanged. Used by
+    ``mole.py`` / ``cleanup_worktrees.py``'s salvage-ledger call sites,
+    where ``root`` may legitimately be a caller's own worktree (correct
+    for scoping an artifacts/environments SCAN there) but the recovery-
+    pointer ledger write must still land in that worktree's primary.
+    """
+    wt_root = _detect_worktree_root(path)
+    if wt_root is None:
+        return None
+    # Unwrap: <primary>/.claude/worktrees/<slug> -> <primary>
+    return wt_root.parent.parent.parent
+
+
 def get_workspace_state_dir(start: Path | None = None) -> Path:
     """Resolve the per-workspace MCP state directory.
 
@@ -346,6 +442,8 @@ __all__ = [
     "get_workspace_context",
     "get_workspace_root",
     "get_noctusai_home",
+    "get_ledger_root",
+    "unwrap_worktree_root",
     "get_workspace_state_dir",
     "get_default_workspace_context",
     "resolve_caller_root",

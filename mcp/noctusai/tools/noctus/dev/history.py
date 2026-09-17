@@ -67,7 +67,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 # REPO_ROOT comes from settings per the centralization rule
 # (`feedback_mcp_path_constants_from_settings.md`).
-from settings import REPO_ROOT
+from settings import LEDGER_ROOT, REPO_ROOT
 from workspace import resolve_caller_root
 
 # Shared tokenizer cascade — N=2 absorption with cost_evaluation.
@@ -403,7 +403,12 @@ def history_record(
     elif worktree_path is not None:
         root = resolve_caller_root(worktree_path)
     else:
-        root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): the caller asked for neither an
+        # explicit repo_root NOR their own worktree — the implicit default
+        # must still resolve to the PRIMARY checkout, not wherever the MCP
+        # server's REPO_ROOT happened to drift to. See
+        # workspace.get_ledger_root() docstring.
+        root = LEDGER_ROOT
     project_dir = _resolve_project_path(project_path, root)
     slug = slug_override.strip() if slug_override else _derive_slug(project_dir)
     if not slug:
@@ -761,7 +766,12 @@ def render_project_history(
     elif worktree_path is not None:
         root = resolve_caller_root(worktree_path)
     else:
-        root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): the caller asked for neither an
+        # explicit repo_root NOR their own worktree — the implicit default
+        # must still resolve to the PRIMARY checkout, not wherever the MCP
+        # server's REPO_ROOT happened to drift to. See
+        # workspace.get_ledger_root() docstring.
+        root = LEDGER_ROOT
     ledger = ledger_path or (root / "project-history" / "ledger.ndjson")
     output = output_path or (root / "project-history" / "PROJECT-HISTORY.md")
 
@@ -1096,7 +1106,12 @@ def backfill_project_history(
     elif worktree_path is not None:
         repo = resolve_caller_root(worktree_path)
     else:
-        repo = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): the caller asked for neither an
+        # explicit repo_root NOR their own worktree — the implicit default
+        # must still resolve to the PRIMARY checkout, not wherever the MCP
+        # server's REPO_ROOT happened to drift to. See
+        # workspace.get_ledger_root() docstring.
+        repo = LEDGER_ROOT
 
     ledger_path = repo / "project-history" / "ledger.ndjson"
     existing_keys = _backfill_load_existing_keys(ledger_path)

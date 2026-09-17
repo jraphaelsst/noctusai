@@ -136,9 +136,12 @@ def _default_run_local(cmd: list[str], cwd: str | None = None) -> tuple[int, str
     repo-global ops (fetch / worktree add|remove|list|prune / branch -d).
     REPO_ROOT is imported lazily so module import stays light and the test
     (which injects `run`) never pays the settings import cost."""
-    from settings import REPO_ROOT  # lazy: avoids import-time noctusai_lib cost
+    # LEDGER_ROOT (never REPO_ROOT): repo-global ops must run against the
+    # PRIMARY checkout even when the MCP server booted with cwd inside a
+    # worktree. See workspace.get_ledger_root() docstring.
+    from settings import LEDGER_ROOT  # lazy: avoids import-time noctusai_lib cost
 
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or str(REPO_ROOT))
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd or str(LEDGER_ROOT))
     return r.returncode, (r.stdout or ""), (r.stderr or "")
 
 
@@ -371,8 +374,11 @@ def _resolve_primary_root(primary_root: str | None) -> str:
     """
     if primary_root is not None:
         return primary_root
-    from settings import REPO_ROOT  # lazy: keeps the injected test path settings-free
-    return str(REPO_ROOT)
+    # LEDGER_ROOT (never REPO_ROOT): must resolve to the PRIMARY checkout
+    # even when the MCP server booted with cwd inside a worktree. See
+    # workspace.get_ledger_root() docstring.
+    from settings import LEDGER_ROOT  # lazy: keeps the injected test path settings-free
+    return str(LEDGER_ROOT)
 
 
 def _dirty_ledger_rel_paths(runner, root: str) -> list[str]:
@@ -964,8 +970,10 @@ def task_branch(
         def _roots() -> tuple[str, str]:
             root = primary_root
             if root is None:
-                from settings import REPO_ROOT  # lazy: avoids import cost otherwise
-                root = str(REPO_ROOT)
+                # LEDGER_ROOT (never REPO_ROOT): must be the PRIMARY checkout.
+                # See workspace.get_ledger_root() docstring.
+                from settings import LEDGER_ROOT  # lazy: avoids import cost otherwise
+                root = str(LEDGER_ROOT)
             return root, os.path.join(root, worktrees_dir, slug)
 
         if not confirm:
@@ -1191,8 +1199,10 @@ def task_branch(
             # unrelated collision elsewhere in the repo never false-blocks an
             # integrate that has nothing to do with it.
             if introduced_migration_dirs and migration_check_fn is not None:
-                from settings import REPO_ROOT as _REPO_ROOT  # lazy, mirrors _default_run_local
-                abs_wt_path = str((_REPO_ROOT / wt_path).resolve())
+                # LEDGER_ROOT (never REPO_ROOT): must be the PRIMARY checkout.
+                # See workspace.get_ledger_root() docstring.
+                from settings import LEDGER_ROOT as _LEDGER_ROOT  # lazy, mirrors _default_run_local
+                abs_wt_path = str((_LEDGER_ROOT / wt_path).resolve())
                 try:
                     mig_findings = migration_check_fn(abs_wt_path)
                 except Exception as exc:  # never let the checker crash integrate
@@ -1335,8 +1345,11 @@ def task_branch(
             from tools.noctus.dev import _worktree_salvage as _wsv  # lazy import
             recorder = _wsv.record_sweep
         if root is None:
-            from settings import REPO_ROOT  # lazy: only when not injected
-            root = str(REPO_ROOT)
+            # LEDGER_ROOT (never REPO_ROOT): the recovery-pointer ledger must
+            # land in the PRIMARY checkout. See workspace.get_ledger_root()
+            # docstring.
+            from settings import LEDGER_ROOT  # lazy: only when not injected
+            root = str(LEDGER_ROOT)
         rec_path = recorder(Path(root), [{
             "path": wt_path, "branch": branch, "sha": head,
             "reason": "task_branch cleanup (learn-before-delete)"}])
@@ -1390,8 +1403,10 @@ def task_branch(
                     "error": f"worktree remove refused (has real uncommitted changes — "
                              f"integrate or discard first): {err.strip() or out.strip()}"}
         # Only gitignored files present — safe to force-remove (verified clean).
-        from settings import REPO_ROOT  # lazy: only when not injected
-        abs_wt = wt_path if os.path.isabs(wt_path) else os.path.join(str(REPO_ROOT), wt_path)
+        # LEDGER_ROOT (never REPO_ROOT): must be the PRIMARY checkout. See
+        # workspace.get_ledger_root() docstring.
+        from settings import LEDGER_ROOT  # lazy: only when not injected
+        abs_wt = wt_path if os.path.isabs(wt_path) else os.path.join(str(LEDGER_ROOT), wt_path)
         rc2, _o2, err2 = runner(["git", "worktree", "remove", "--force", abs_wt])
         if rc2 != 0:
             return {**plan, "status": "error", "exit_code": 1, "salvage_ledger": salvage_ledger,

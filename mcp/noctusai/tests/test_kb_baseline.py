@@ -27,6 +27,11 @@ def tmp_baselines(tmp_path, monkeypatch):
     baseline_dir.mkdir(parents=True)
     monkeypatch.setattr(kbb, "BASELINE_DIR", baseline_dir)
     monkeypatch.setattr(kbb, "REPO_ROOT", tmp_path)
+    # LEDGER_ROOT (never REPO_ROOT) is what `_load_baselines`/`ratify`
+    # actually derive `relative_to()` against post-fix (see
+    # workspace.get_ledger_root() docstring) — must match BASELINE_DIR's
+    # tmp root or `f.relative_to(LEDGER_ROOT)` raises ValueError.
+    monkeypatch.setattr(kbb, "LEDGER_ROOT", tmp_path)
     # Seed a tiny KB so _kb_corpus_sha returns something stable.
     kb_dir = tmp_path / "KNOWLEDGE-BASE"
     kb_dir.mkdir()

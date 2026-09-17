@@ -164,8 +164,13 @@ def scan(repo_root: Path | None = None) -> dict[str, Any]:
       }
     """
     if repo_root is None:
-        from settings import REPO_ROOT
-        repo_root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): this is a repo-global operation
+        # (worktree-salvage ledger / .claude/worktrees enumeration / roadmap
+        # lookup) — must resolve to the PRIMARY checkout even when the MCP
+        # server booted with cwd inside a worktree. See
+        # workspace.get_ledger_root() docstring.
+        from settings import LEDGER_ROOT
+        repo_root = LEDGER_ROOT
     repo_root = Path(repo_root)
 
     rc, current_out, _ = _run_git(["branch", "--show-current"], cwd=repo_root)
@@ -273,8 +278,13 @@ def delete_integrated(repo_root: Path | None = None, dry_run: bool = True) -> di
       {ok, deleted: [...names], skipped: [{name, reason}], errors: [...]}
     """
     if repo_root is None:
-        from settings import REPO_ROOT
-        repo_root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): this is a repo-global operation
+        # (worktree-salvage ledger / .claude/worktrees enumeration / roadmap
+        # lookup) — must resolve to the PRIMARY checkout even when the MCP
+        # server booted with cwd inside a worktree. See
+        # workspace.get_ledger_root() docstring.
+        from settings import LEDGER_ROOT
+        repo_root = LEDGER_ROOT
     repo_root = Path(repo_root)
     result = scan(repo_root=repo_root)
     deleted: list[str] = []

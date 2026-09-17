@@ -5,9 +5,9 @@
 > sufficient. Check the state itself. If liveness cannot be established, REFUSE — unknown is
 > not consent.
 
-Born 2026-09-16/17: **four** distinct instances of the same shape landed in a single day, one of
+Born 2026-09-16/17: **five** distinct instances of the same shape landed within two days, one of
 them destroying two engineers' in-flight work. Each tool asked a cheap question whose answer
-*looked* authoritative, and acted irreversibly on it.
+*looked* authoritative, and acted irreversibly (or, for the fifth, silently mis-durably) on it.
 
 ---
 
@@ -24,7 +24,7 @@ The failure is always the same: the tool reads a claim, treats it as evidence, a
 The claim is usually *true most of the time* — which is why it got trusted, and why the bug
 survives review.
 
-## The four instances (all 2026-09-16/17, all in `mcp/noctusai/tools/noctus/dev/`)
+## The five instances (all 2026-09-16/17, all in `mcp/noctusai/tools/noctus/dev/`)
 
 1. **`0 commits ahead` read as "merged".** `cleanup_stale_worktrees force=True` removed 9
    worktrees, two of which had been created ~6 minutes earlier with engineers working in them.
@@ -44,6 +44,28 @@ survives review.
    They are also the durable ledgers agents append rows to. The auto-stash swept 25 unpushed
    rows into the shared stash; they survived only because the session that later dropped those
    entries recovered them first (`3789fefc`) and archived the dropped stashes.
+5. **`REPO_ROOT`, bound once at MCP-server-boot, read as "the durable checkout".** Every
+   `project-history/*.ndjson` writer's default root was `settings.REPO_ROOT` —
+   `workspace.get_noctusai_home()`, which deliberately STOPS at a `.claude/worktrees/<slug>/`
+   boundary so code-editing tools land in the caller's own worktree (correct for THAT job). A
+   ledger writer trusting that same value as "where durable state lives" is a claim, not
+   evidence: the evidence — is this path physically under `.claude/worktrees/`, an ephemeral
+   tree torn down by the next sweep? — was never checked. `session_end_sweep` fell back to
+   `REPO_ROOT` and wrote two summary rows into a worktree's own
+   `project-history/worktree-salvage.ndjson`; `deliver_trailing_ledgers`'s own "primary checkout
+   MUST be on `dev`" safety net also skipped (that worktree's HEAD was on a feature branch, not
+   `dev`), so nothing pushed them either. Recovered only by a human noticing.
+
+## A fifth failure axis: implicit resolution masquerading as a durability guarantee
+
+Instances 1-4 are a tool reading a WRITTEN claim (a status field, an ancestry check) instead of
+live evidence. Instance 5 is the same shape one layer down: a tool reading an IMPLICIT
+resolution (a module constant computed once, from wherever the process happened to boot) as if
+it were a structural guarantee ("this is the repo"), when the actual guarantee it needed
+("this is somewhere durable, not a worktree") was never asserted. The fix is the same posture —
+name what you actually need (durability, not "the resolver's default") and check for it
+explicitly (`workspace.get_ledger_root()` — unwraps the worktree boundary instead of trusting
+whatever the boundary-stopped resolver returned).
 
 ## How to apply
 
@@ -77,6 +99,10 @@ survives review.
   fail-open closed (instances 2 and 3).
 - `_benign_stash` / `task_branch` — ledgers get a `chore(ledger)` commit instead of a stash;
   caches and regenerated docs stay stashable (instance 4).
+- `feat/ledger-writes-target-primary` — `workspace.get_ledger_root()` (unwraps the worktree
+  boundary `get_noctusai_home()` deliberately stops at) + `settings.LEDGER_ROOT`; every
+  `project-history/*.ndjson` writer's implicit default now resolves there, never to wherever
+  the MCP server happened to boot (instance 5).
 
 > Sibling rules: `KB § PATTERNS/common/methodology-execution-discipline.md` (verdict-channel
 > integrity — the exit code you read must belong to what you are judging; same "is this answer

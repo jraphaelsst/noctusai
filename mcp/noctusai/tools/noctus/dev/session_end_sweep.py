@@ -345,8 +345,20 @@ def sweep(
       }
     """
     if repo_root is None:
-        from settings import REPO_ROOT
-        repo_root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): this sweep is inherently repo-global
+        # (it enumerates .claude/worktrees/ — which only physically exists
+        # under the PRIMARY checkout — and appends a summary row to
+        # project-history/worktree-salvage.ndjson). REPO_ROOT/get_noctusai_home()
+        # deliberately STOPS at the worktree boundary, so if the MCP server
+        # booted with cwd inside a worktree, REPO_ROOT resolves there too —
+        # the fifth confirmed incident of the ledger-into-worktree family
+        # (2026-09-17): two summary rows landed in a worktree's
+        # project-history/worktree-salvage.ndjson AND deliver_trailing_ledgers
+        # below skipped (that worktree's HEAD wasn't on `dev`), so nothing
+        # pushed them either — recovered only by a human noticing. See
+        # workspace.get_ledger_root() docstring.
+        from settings import LEDGER_ROOT
+        repo_root = LEDGER_ROOT
     repo_root = Path(repo_root)
     _run_git(["fetch", "origin", "--quiet"], cwd=repo_root)
 

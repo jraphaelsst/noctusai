@@ -28,9 +28,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# Import REPO_ROOT from settings per the centralization rule
-# (`feedback_mcp_path_constants_from_settings.md`).
-from settings import REPO_ROOT
+# Import LEDGER_ROOT from settings per the centralization rule
+# (`feedback_mcp_path_constants_from_settings.md`). Not REPO_ROOT: this
+# module's every root-resolution site is a repo-global project-history/
+# write, which must land in the PRIMARY checkout even when the MCP server
+# booted with cwd inside a worktree. See workspace.get_ledger_root() docstring.
+from settings import LEDGER_ROOT
 from workspace import resolve_caller_root
 
 # Sibling history-record tool — same file imports are cheap; tools share
@@ -266,7 +269,12 @@ def archive(
     elif worktree_path is not None:
         root = resolve_caller_root(worktree_path)
     else:
-        root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): the caller asked for neither an
+        # explicit repo_root NOR their own worktree — the implicit default
+        # must still resolve to the PRIMARY checkout, not wherever the MCP
+        # server's REPO_ROOT happened to drift to. See
+        # workspace.get_ledger_root() docstring.
+        root = LEDGER_ROOT
     target = Path(target_path)
     if not target.is_absolute():
         target = (root / target_path).resolve()
@@ -489,7 +497,12 @@ def archive_clean(
     elif worktree_path is not None:
         root = resolve_caller_root(worktree_path)
     else:
-        root = REPO_ROOT
+        # LEDGER_ROOT (never REPO_ROOT): the caller asked for neither an
+        # explicit repo_root NOR their own worktree — the implicit default
+        # must still resolve to the PRIMARY checkout, not wherever the MCP
+        # server's REPO_ROOT happened to drift to. See
+        # workspace.get_ledger_root() docstring.
+        root = LEDGER_ROOT
 
     archive_projects = (root / "archive" / "projects")
     rel_archive_dir = "archive/projects"
