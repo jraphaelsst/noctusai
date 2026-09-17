@@ -5,13 +5,15 @@ or the value a manager keeps for their Asaas configuration) WITHOUT
 touching `planos.py` / `planos_service.py` — a separate table
 (`plano_gateway_refs`, migration 008), a separate service.
 
-Upsert is implemented as select-then-insert-or-update rather than a
-`.upsert()` call: the in-repo `MockSupabaseClient.upsert()` documents
-upsert propagation as a follow-up (it returns the CURRENT data, not the
-mutated row — see `noctusai_lib/testing/mocks.py`), so relying on it
-would make this service's behavior untestable and silently different
-from real Postgrest. Same rationale the sibling module-1 services give
-for sorting/pagination in Python.
+Upsert is a single atomic `.upsert(..., on_conflict="plano_id,gateway")`
+against the `plano_gateway_refs_plano_gateway_unique` constraint
+(migration 008). It was originally written as select-then-insert-or-update
+because `MockSupabaseClient.upsert()` returned the CURRENT rows instead
+of the written ones, which made a real upsert untestable; that gap was
+fixed in the seed (c7bbf253), so the workaround is gone. The atomic form
+is also the CORRECT one: two concurrent PUTs for the same
+`(plano_id, gateway)` both saw "no existing row" under the old shape and
+the second insert died on the unique constraint (a 500 for that caller).
 """
 from __future__ import annotations
 
@@ -65,27 +67,7 @@ class GatewayRefsService:
     async def upsert(self, *, plano_id: str, gateway: str, ref_externo: str) -> dict:
         if not self._plano_exists(plano_id):
             raise GatewayRefsServiceError("Plano não encontrado.", status_code=404)
-        existing = (
-            self._client.table(_TABLE)
-            .select("*")
-            .eq("org_id", self._org_id)
-            .eq("plano_id", plano_id)
-            .eq("gateway", gateway)
-            .maybe_single()
-            .execute()
-        ).data
         now = datetime.now(timezone.utc).isoformat()
-        if existing:
-            result = (
-                self._client.table(_TABLE)
-                .update({"ref_externo": ref_externo})
-                .eq("org_id", self._org_id)
-                .eq("id", str(existing["id"]))
-                .execute()
-            )
-            if result.data:
-                return result.data[0]
-            return {**existing, "ref_externo": ref_externo, "updated_at": now}
         row = {
             "id": str(uuid4()),
             "org_id": self._org_id,
@@ -95,7 +77,11 @@ class GatewayRefsService:
             "created_at": now,
             "updated_at": now,
         }
-        result = self._client.table(_TABLE).insert(row).execute()
+        result = (
+            self._client.table(_TABLE)
+            .upsert(row, on_conflict="plano_id,gateway")
+            .execute()
+        )
         if not result.data:
             raise GatewayRefsServiceError("Falha ao salvar referência de gateway.")
         return result.data[0]
