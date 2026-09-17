@@ -20,9 +20,11 @@ The template spec derived from the 8 samples (no personal data) is kept locally,
 | T0 | Already fired — recurrence N=3 | Three retention-sweep primitives with no scheduler (`NOC-REMEDIATE[retention-sweep-scheduler]`) | DRY rule: N=3 must formalize; retention dates are stamped but nothing purges, so the user's LGPD retention choice is not enforced |
 | T4 | A third copy of a card/matrícula route helper appears | `_auth_parts` duplicated in `imovel_hub/router.py` + `matriculas/router.py` (N=2 left after card_hub consolidated) | Consolidate before the third copy ships |
 
-**Today's status (2026-09-16)**: T1 **fired and applied** — the office answered all 15 questions on 2026-09-15 and each answer is now generator behavior. T2 **fired and delivered** — the F6 data wave shipped (migrations 114–118 + panels), and all six contract variants generate. T3 **fired** — this deploy. T0 still open (three retention sweeps, no scheduler). T4 still open (`_auth_parts` duplicated, N=2).
+**Today's status (2026-09-17)**: T1 **fired and applied** — the office answered all 15 questions on 2026-09-15 and each answer is now generator behavior. T2 **fired and delivered** — the F6 data wave shipped (migrations 114–118 + panels), and all six contract variants generate. T3 **fired and landed** — migrations 114–120 are applied to the live schema (verified 2026-09-17 by probing `information_schema`, not the ledger) and the image is deployed and healthy. T0 **partly closed** — `financiamento_service.configure()` now registers a 24h sweep that also drives `documento_store.varrer_expirados`; only `estrutura_service.purgar_texto_expirado` (CPF-bearing matrícula text) is still unwired, and the marker's docstring at `estrutura_service.py:203` is now stale in claiming all three are. T4 **closed** — `_auth_parts` is a one-line alias to the shared `card_hub/auth.py:auth_parts`.
 
-> **Every slice carries TWO recipes.** Test-recipes are green at merge (numbers in the decision log). The verify-recipes below are live-state checks — none can run until T3 applies the migrations.
+> 🔴 **The pipeline has still never produced a contract.** Live counts (2026-09-17): 1 contract (`rascunho`), **0 generated versions**, 0 witnesses, 0 rows in `org_dados_cadastrais`, 0 clientes with `estado_civil` or `data_casamento`, and 12 `cliente_documentos` with **0** successful extractions. Every Phase-4 verify recipe below is therefore still UNRUN against real data. The code is deployed; the data is not entered.
+
+> **Every slice carries TWO recipes.** Test-recipes are green at merge (numbers in the decision log). The verify-recipes below are live-state checks. T3 has fired, so every one of them is now RUNNABLE and none has been run — that is the open work, not a blocked dependency.
 
 ## Phase 1 — structured data + gated generator (SHIPPED to `dev`, not deployed)
 
@@ -68,7 +70,7 @@ The template spec derived from the 8 samples (no personal data) is kept locally,
 
 | # | Title | Files | Trigger | Verify recipe |
 |---|---|---|---|---|
-| P4.1 | Apply migrations **114–118** in order, then run every P1.x and P2.x verify recipe | `products/social-wiring/backend/migrations/114…118` | T3 — **firing 2026-09-16** | The live schema carries `atendimento_negociacao_termos`, `matricula_ato_detalhes`, `certidao_consultas.situacao_cadastral`, `clientes.data_casamento` and the `imovel_documentos` extraction columns; each recipe passes. **Judge applied state from the schema, never from `supabase_migrations`** — that ledger is incomplete for social-wiring (its last row is 101 while the schema was current through 113) |
+| P4.1 | Apply migrations **114–118** in order, then run every P1.x and P2.x verify recipe | `products/social-wiring/backend/migrations/114…118` | T3 — **fired; migrations applied 2026-09-16, verified 2026-09-17** | The live schema carries `atendimento_negociacao_termos`, `matricula_ato_detalhes`, `certidao_consultas.situacao_cadastral`, `clientes.data_casamento` and the `imovel_documentos` extraction columns; each recipe passes. **Judge applied state from the schema, never from `supabase_migrations`** — that ledger is incomplete for social-wiring (its last row is 101 while the schema was current through 113) |
 
 ## Phase 5 — enforce retention (T0 already fired — schedule next)
 
@@ -91,9 +93,9 @@ The template spec derived from the 8 samples (no personal data) is kept locally,
 
 - ~~**Q-office**~~: **answered 2026-09-15** — all 15, applied in P3.1.
 - ~~**Q-titular**~~: **answered** — certidões got a titular path (`certidoes_por_cliente`), not a parte row.
-- **Q-artifact** 🔴 **open, user's decision**: the saved version is an **ABNT PDF**, while the 2026-09-14 decision was an editable `.docx` (PDF only at signing). The `.docx` is now an internal intermediate — contract §5 and the pre-existing tests make PDF the stored artifact. Keep PDF, or store both?
+- ~~**Q-artifact**~~: **answered — store BOTH** (migration `120_contrato_versao_docx_artifact.sql` + `bc20077f`, FE download wired in `9cc8d848`). One version row: the ABNT PDF is the row's artifact, the `.docx` is a sibling object at `{storage_path}.docx` recorded in `docx_storage_path`/`docx_tamanho_bytes`, retrieved via `url_versao(formato='docx')`. ⚠️ `projects/abnt-formatting-CONTRACT.md:108,119` still says PDF-only and carries no amendment line — reconcile it.
 - **Q-template**: does the office want to edit the clause wording in Word later? Today the wording is reviewable text in `contrato_gerador/modelo_texto.py`.
-- **Q-identity-docs** 🔴 **open, user's decision**: the `rg` and `cpf` upload types are still `ativo = false` (migration 057 withholds them pending a human LGPD intake), so identity extraction runs only from certidões de casamento/nascimento. Run the intake and enable them, or leave as is?
+- ~~**Q-identity-docs**~~: **answered — enabled.** Migration `119_cliente_identidade_ativacao.sql:44-52` flips `rg` and `cpf` to `ativo = true` (LGPD intake closed 2026-09-16); all 11 rows of `cliente_documento_tipos` are active in the live DB, both with `identidade = true`, `retencao_dias = 1825`.
 - **Q-procuração**: procurador/inventariante contracts stay refused — no sample carries that wording. The office owes a sample before it can be built.
 - **Still homeless by design** (named refusals, never invented values): `onus_quitacao='ja_quitado'` (stored by 114, no sample clause → `ONUS_QUITACAO_SEM_REDACAO`), `obrigacoes_vendedor` and `permuta_obrigacoes_entrega` (stored, no clause prints → aviso), and the permuta quote rendering without rich-text formatting.
 
