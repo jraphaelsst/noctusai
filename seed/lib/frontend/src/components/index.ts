@@ -19,6 +19,43 @@ export type {
   StatusPaginaStatus,
 } from './StatusPaginaPanel';
 
+// API keys — org-scoped, operator-settable managed credentials (lifted from
+// social-wiring's Settings "Chaves de API" tab as a pure addition).
+export { createApiKeysHooks, ApiKeysPanel } from './api-keys';
+export type {
+  ApiKeysHooks,
+  CreateApiKeysHooksOptions,
+  ApiKeyOption,
+  ApiKeySource,
+  ApiKeyStatus,
+  ApiKeysStatus,
+  ApiKeyTestResult,
+  ApiKeySave,
+  ApiKeysPanelProps,
+} from './api-keys';
+
+// WhatsApp connections — multi-line WAHA connection management (lifted from
+// social-wiring's Conexoes/Conexao pages as a pure addition).
+export {
+  createWhatsAppConnectionsHooks,
+  WhatsAppConnectionsPage,
+  CreateConnectionDialog,
+  ConnectionDetailDialog as WhatsAppConnectionDetailDialog,
+} from './whatsapp-connections';
+export type {
+  WhatsAppConnectionsHooks,
+  CreateWhatsAppConnectionsHooksOptions,
+  WhatsAppConnectionLine,
+  WhatsAppConnectionStatus,
+  WhatsAppConnectionQr,
+  WhatsAppConnectionRecoverResult,
+  WhatsAppConnectionWebhookResult,
+  CreateWhatsAppConnectionBody,
+  UpdateWhatsAppConnectionBody,
+  ConfigureWhatsAppConnectionWebhookBody,
+  WhatsAppConnectionsPageProps,
+} from './whatsapp-connections';
+
 // Detail — THE one record-detail modal. Layout lives here; the field list
 // is a descriptor the consumer builds once per entity, so a table row, a
 // kanban card and a search result all open the SAME modal and a new field

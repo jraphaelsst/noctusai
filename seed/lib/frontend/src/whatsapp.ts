@@ -4,27 +4,79 @@
  * Two seed hook factories, same injection pattern as `createLLMHooks`
  * (the product passes its own authenticated `createApiClient()`):
  *
- * - `createWhatsAppConnectionHooks` wraps the `whatsapp_admin` standard
- *   router (`/api/whatsapp/connection/*`) — any WhatsApp-chatbot product
- *   gets the whole pairing UX (live status, QR scan, restart, logout,
- *   webhook wiring).
+ * - `createWhatsAppConnectionsHooks` wraps the MULTI-connection
+ *   `/api/whatsapp/connections/*` router (per-user "lines": one row =
+ *   one WAHA server URL + session + API key) — any WhatsApp-chatbot
+ *   product gets the whole multi-line pairing UX (list, create, update,
+ *   delete, live status, QR scan, start/restart/logout, the
+ *   start→restart→logout+start recovery ladder, and webhook wiring).
+ *   Lifted 2026-09-17 from `products/social-wiring`
+ *   (`hooks/useWhatsAppConnections.ts` +
+ *   `backend/app/routers/whatsapp_connections_router.py`) as a PURE
+ *   ADDITION — social-wiring keeps its own local copy for now.
+ *   Reworked from the single-session `createWhatsAppConnectionHooks`
+ *   (removed 2026-09-17): confirmed zero product imports of that name or
+ *   of its backend, `whatsapp_admin_router.py` (grepped repo-wide before
+ *   the rename — only the barrel re-export and an archived reference
+ *   remained).
  * - `createWhatsAppIntakeHooks` wraps the intake/flow-monitor router
  *   (`/api/whatsapp/intake/conversations*`) — a read-only live window
  *   into WhatsApp conversation state + recent message history, plus the
- *   "cancel stuck flow" action.
+ *   "cancel stuck flow" action. UNCHANGED — live consumer:
+ *   `products/social-wiring/frontend/src/hooks/useWhatsAppIntake.ts`.
  *
  * Presentation (pt-BR labels, cards, polling cadence overrides) stays in
- * the product; this module is locale-agnostic.
+ * the product; this module is locale-agnostic. The multi-connection
+ * factory has a sibling presentational organ family at
+ * `./components/whatsapp-connections` (`WhatsAppConnectionsPage`,
+ * `CreateConnectionDialog`, `ConnectionDetailDialog`).
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiClient } from './api';
 
 // ---------------------------------------------------------------------------
-// Connection types — mirror the backend DTOs (whatsapp_admin_router.py)
+// Multi-connection types — mirror the backend DTOs
+// (app/schemas/whatsapp_connection.py). Deliberately excludes the
+// social-wiring-specific chatbot-intake extension fields
+// (auto_reply_enabled / authorized_numbers / bound_chats / marca_id) — those
+// are per-product routing config for SW's own chatbot feature, not part of
+// generic WAHA connection-line management. A product that needs them can
+// extend `WhatsAppConnectionLine` locally.
 // ---------------------------------------------------------------------------
 
-export interface WhatsAppConnection {
-  configured: boolean;
+export interface WhatsAppConnectionLine {
+  id: string;
+  label: string;
+  /** Derived server-side (the shared WAHA server URL); read-only. */
+  base_url: string;
+  /** Derived server-side (the WAHA session name this line drives); read-only. */
+  session_name: string;
+  /** Auto-minted public inbound webhook URL; read-only. */
+  webhook_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Create payload — the backend derives `base_url` / `session_name` /
+ * `webhook_url` server-side. Only `label` + `api_key` are user-supplied.
+ */
+export interface CreateWhatsAppConnectionBody {
+  label: string;
+  api_key: string;
+}
+
+/**
+ * Update payload — all fields optional (omit to leave unchanged).
+ * `api_key` is write-only rotation: re-supply only to rotate the stored key.
+ */
+export interface UpdateWhatsAppConnectionBody {
+  label?: string;
+  api_key?: string;
+}
+
+export interface WhatsAppConnectionStatus {
+  connection_id: string;
   status: string | null;
   paired: boolean;
   me_id: string | null;
@@ -33,22 +85,33 @@ export interface WhatsAppConnection {
   error: string | null;
 }
 
-export interface WhatsAppQr {
+export interface WhatsAppConnectionQr {
+  connection_id: string;
   scannable: boolean;
   status: string | null;
   png_base64: string | null;
 }
 
-export interface WhatsAppWebhookResult {
+/** Converged state after the start→restart→logout+start recovery ladder. */
+export interface WhatsAppConnectionRecoverResult {
+  connection_id: string;
+  status: string | null;
+  paired: boolean;
+  /** Which rung the ladder converged at: already_working / start / restart / logout_start. */
+  stage: string;
+}
+
+export interface ConfigureWhatsAppConnectionWebhookBody {
+  url: string;
+  events?: string[];
+}
+
+export interface WhatsAppConnectionWebhookResult {
+  connection_id: string;
   ok: boolean;
   url: string;
   events: string[];
   status: string | null;
-}
-
-export interface ConfigureWebhookBody {
-  url: string;
-  events?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -86,23 +149,95 @@ export interface IntakeCancelResult {
 }
 
 // ---------------------------------------------------------------------------
-// Connection hook factory — takes an api client, returns bound hooks
+// Multi-connection hook factory — takes an api client, returns bound hooks
 // ---------------------------------------------------------------------------
 
-export function createWhatsAppConnectionHooks(api: ApiClient) {
-  const KEY = ['whatsapp', 'connection'] as const;
+export interface CreateWhatsAppConnectionsHooksOptions {
+  /** Default `/api/whatsapp/connections`. */
+  basePath?: string;
+}
+
+const DEFAULT_CONNECTIONS_BASE_PATH = '/api/whatsapp/connections';
+
+export function createWhatsAppConnectionsHooks(
+  api: ApiClient,
+  options: CreateWhatsAppConnectionsHooksOptions = {},
+) {
+  const basePath = options.basePath ?? DEFAULT_CONNECTIONS_BASE_PATH;
+  const KEY = ['whatsapp', 'connections', basePath] as const;
 
   /**
-   * Live session status. Polls while not paired so the UI reflects the
-   * QR→pairing→WORKING transition without a manual refresh; backs off
-   * once paired (status is then stable).
+   * The list of connection lines. 🔴 TWO loading signals, never a bare
+   * `isLoading`/`isFetching`: `showSkeleton` only on the first load,
+   * `isRefreshing` for a quiet refetch over data already on screen (a
+   * create/update/delete invalidates this query).
    */
-  function useWhatsAppConnection(options?: { pollMs?: number }) {
-    return useQuery<WhatsAppConnection>({
+  function useConnections() {
+    const query = useQuery({
       queryKey: KEY,
-      queryFn: () => api.get('/api/whatsapp/connection'),
+      queryFn: () => api.get<WhatsAppConnectionLine[]>(basePath),
+    });
+    return {
+      ...query,
+      showSkeleton: query.isPending && !query.data,
+      isRefreshing: query.isFetching && !!query.data,
+    };
+  }
+
+  function useConnectionMutations() {
+    const qc = useQueryClient();
+    const invalidate = () => qc.invalidateQueries({ queryKey: KEY });
+
+    const create = useMutation<
+      WhatsAppConnectionLine,
+      unknown,
+      CreateWhatsAppConnectionBody
+    >({
+      mutationFn: (body) => api.post<WhatsAppConnectionLine>(basePath, body),
+      onSuccess: invalidate,
+    });
+
+    const update = useMutation<
+      WhatsAppConnectionLine,
+      unknown,
+      { id: string; body: UpdateWhatsAppConnectionBody }
+    >({
+      mutationFn: ({ id, body }) =>
+        api.patch<WhatsAppConnectionLine>(
+          `${basePath}/${encodeURIComponent(id)}`,
+          body,
+        ),
+      onSuccess: invalidate,
+    });
+
+    const remove = useMutation<unknown, unknown, string>({
+      mutationFn: (id) =>
+        api.delete(`${basePath}/${encodeURIComponent(id)}`),
+      onSuccess: invalidate,
+    });
+
+    return { create, update, remove };
+  }
+
+  /**
+   * Live session status for one line. Polls while not paired so the UI
+   * reflects the QR→pairing→WORKING transition without a manual refresh;
+   * backs off once paired (status is then stable).
+   */
+  function useConnectionStatus(
+    connectionId: string | null,
+    enabled = true,
+    options?: { pollMs?: number },
+  ) {
+    return useQuery<WhatsAppConnectionStatus>({
+      queryKey: [...KEY, connectionId, 'status'],
+      queryFn: () =>
+        api.get<WhatsAppConnectionStatus>(
+          `${basePath}/${encodeURIComponent(connectionId ?? '')}/status`,
+        ),
+      enabled: enabled && !!connectionId,
       refetchInterval: (query) => {
-        const data = query.state.data as WhatsAppConnection | undefined;
+        const data = query.state.data as WhatsAppConnectionStatus | undefined;
         if (data?.paired) return false;
         return options?.pollMs ?? 5000;
       },
@@ -110,52 +245,120 @@ export function createWhatsAppConnectionHooks(api: ApiClient) {
   }
 
   /**
-   * QR image (base64 PNG). Polls while the session is scannable so a
-   * rotated QR refreshes; stops once a scan completes (scannable false).
+   * QR image (base64 PNG) for one line. Only fetched while `enabled`; polls
+   * so a rotated QR refreshes. Only WORKING (paired) stops the poll — every
+   * other status (STOPPED / STARTING / FAILED) is a transient the caller
+   * must poll THROUGH to reach SCAN_QR_CODE.
    */
-  function useWhatsAppQr(enabled: boolean, options?: { pollMs?: number }) {
-    return useQuery<WhatsAppQr>({
-      queryKey: [...KEY, 'qr'],
-      queryFn: () => api.get('/api/whatsapp/connection/qr'),
-      enabled,
+  function useConnectionQr(
+    connectionId: string | null,
+    enabled: boolean,
+    options?: { pollMs?: number },
+  ) {
+    return useQuery<WhatsAppConnectionQr>({
+      queryKey: [...KEY, connectionId, 'qr'],
+      queryFn: () =>
+        api.get<WhatsAppConnectionQr>(
+          `${basePath}/${encodeURIComponent(connectionId ?? '')}/qr`,
+        ),
+      enabled: enabled && !!connectionId,
       refetchInterval: (query) => {
-        const data = query.state.data as WhatsAppQr | undefined;
-        if (data && !data.scannable) return false;
-        return options?.pollMs ?? 8000;
+        const data = query.state.data as WhatsAppConnectionQr | undefined;
+        if (data?.status === 'WORKING') return false;
+        return options?.pollMs ?? 3000;
       },
     });
   }
 
-  function useWhatsAppActions() {
+  function useConnectionActions() {
     const qc = useQueryClient();
-    const invalidate = () => {
-      qc.invalidateQueries({ queryKey: KEY });
+    const invalidate = (id: string) => {
+      qc.invalidateQueries({ queryKey: [...KEY, id, 'status'] });
+      qc.invalidateQueries({ queryKey: [...KEY, id, 'qr'] });
     };
 
-    const useRestart = () =>
-      useMutation<WhatsAppConnection>({
-        mutationFn: () => api.post('/api/whatsapp/connection/restart'),
-        onSuccess: invalidate,
-      });
+    const start = useMutation<WhatsAppConnectionStatus, unknown, string>({
+      mutationFn: (id) =>
+        api.post<WhatsAppConnectionStatus>(
+          `${basePath}/${encodeURIComponent(id)}/start`,
+        ),
+      onSuccess: (_d, id) => invalidate(id),
+    });
 
-    const useLogout = () =>
-      useMutation<WhatsAppConnection>({
-        mutationFn: () => api.post('/api/whatsapp/connection/logout'),
-        onSuccess: invalidate,
-      });
+    const restart = useMutation<WhatsAppConnectionStatus, unknown, string>({
+      mutationFn: (id) =>
+        api.post<WhatsAppConnectionStatus>(
+          `${basePath}/${encodeURIComponent(id)}/restart`,
+        ),
+      onSuccess: (_d, id) => invalidate(id),
+    });
 
-    const useConfigureWebhook = () =>
-      useMutation<WhatsAppWebhookResult, unknown, ConfigureWebhookBody>({
-        mutationFn: (body) =>
-          api.post('/api/whatsapp/connection/webhook', body),
-        onSuccess: invalidate,
-      });
+    const logout = useMutation<WhatsAppConnectionStatus, unknown, string>({
+      mutationFn: (id) =>
+        api.post<WhatsAppConnectionStatus>(
+          `${basePath}/${encodeURIComponent(id)}/logout`,
+        ),
+      onSuccess: (_d, id) => invalidate(id),
+    });
 
-    return { useRestart, useLogout, useConfigureWebhook };
+    return { start, restart, logout };
   }
 
-  return { useWhatsAppConnection, useWhatsAppQr, useWhatsAppActions };
+  /**
+   * The start→restart→logout+start recovery ladder. Primary reconnect
+   * action: a session holding stored-but-dead credentials answers
+   * `restart` by retrying those dead credentials and hangs in STARTING
+   * until WAHA's watchdog force-stops it; only `logout` clears the stored
+   * credentials so NOWEB can re-enter SCAN_QR_CODE. `start`/`restart`/
+   * `logout` remain individually callable via `useConnectionActions`.
+   */
+  function useRecoverConnection() {
+    const qc = useQueryClient();
+    return useMutation<WhatsAppConnectionRecoverResult, unknown, string>({
+      mutationFn: (id) =>
+        api.post<WhatsAppConnectionRecoverResult>(
+          `${basePath}/${encodeURIComponent(id)}/recover`,
+          {},
+        ),
+      onSuccess: (_data, id) => {
+        qc.invalidateQueries({ queryKey: [...KEY, id, 'status'] });
+        qc.invalidateQueries({ queryKey: [...KEY, id, 'qr'] });
+      },
+    });
+  }
+
+  function useConfigureConnectionWebhook() {
+    const qc = useQueryClient();
+    return useMutation<
+      WhatsAppConnectionWebhookResult,
+      unknown,
+      { id: string; body: ConfigureWhatsAppConnectionWebhookBody }
+    >({
+      mutationFn: ({ id, body }) =>
+        api.post<WhatsAppConnectionWebhookResult>(
+          `${basePath}/${encodeURIComponent(id)}/webhook`,
+          body,
+        ),
+      // Invalidates the whole list — a re-registered webhook can change
+      // `webhook_url` on the line, which only the list/get shape carries.
+      onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    });
+  }
+
+  return {
+    useConnections,
+    useConnectionMutations,
+    useConnectionStatus,
+    useConnectionQr,
+    useConnectionActions,
+    useRecoverConnection,
+    useConfigureConnectionWebhook,
+  };
 }
+
+export type WhatsAppConnectionsHooks = ReturnType<
+  typeof createWhatsAppConnectionsHooks
+>;
 
 // ---------------------------------------------------------------------------
 // Intake-monitor hook factory — takes an api client, returns bound hooks

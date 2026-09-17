@@ -1,0 +1,34 @@
+name: ApiKeysPanel
+path: seed/lib/frontend/src/components/api-keys/ApiKeysPanel.tsx
+phase: pure-addition
+registered_at: "2026-09-17"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Lifted from products/social-wiring (Settings.tsx 'Chaves de API' tab, ~:972, + hooks/useSettings.ts:604-704) as a PURE ADDITION — social-wiring itself is untouched in this pass; it still runs its own local copy."
+  - "Pairs with the sibling hooks factory createApiKeysHooks (same directory): the panel takes a `hooks: ApiKeysHooks` instance built by the CALLER via createApiKeysHooks(api, { basePath? }) — mirrors the createPipelineHooks/PipelineBoard injection idiom (the factory is called once by the consumer and its hook-function bag is passed down as a prop), not an internally-owned api prop."
+  - "Wire contract is social-wiring's CURRENT backend, frozen: GET/PUT/DELETE /api/settings/api-keys[/{key}] + POST /api/settings/api-keys/{key}/test, typed exactly from app/schemas/settings.py (ApiKeyStatus/ApiKeysStatus/ApiKeyOptionOut/ApiKeyTestResult) and app/services/api_keys_store.py (ApiKeySpec)."
+  - "Renders masked hint + source badge (local/platform/env) per key, a free-text SET field OR a <select> when `options` is non-empty (a CHOICE setting per ApiKeySpec.options), a 'Testar' action gated on `testable`, and remove. Loading (Skeleton) / empty / error / success are all distinct branches; loading uses showSkeleton/isRefreshing from the hooks, never a bare isLoading/isFetching."
+  - "A write-path 503 (backend ENCRYPTION_KEY missing) is rendered as an HONEST distinct message ('Servidor sem chave de criptografia configurada'), not folded into a generic save-failure string — both in the panel's own query-error branch and in createApiKeysHooks' mutation onError handlers."
+  - "Deliberately does NOT gate on admin/owner role — social-wiring's own Settings page only mounts the 'Chaves de API' tab for an admin; the same policy belongs at the mount site, not duplicated here."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "OpenAI is out of credits at lift time (2026-09-17) — this organ's semantic embedding into the code-embeddings cache (register_organ) could not run; only the .organ.yaml sidecar + git history carry its provenance until the cache is refreshed with credits restored."
+
+alternatives_considered:
+  - "Folding the mutations' onSuccess/onError toasts into the component instead of the hooks factory. Rejected: matches the existing createApiKeysHooks / createPipelineHooks idiom where the hooks own their own toast side effects, so a consumer building a custom UI on the factory alone still gets consistent operator feedback."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

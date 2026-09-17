@@ -1,0 +1,35 @@
+name: WhatsAppConnectionsPage
+path: seed/lib/frontend/src/components/whatsapp-connections/WhatsAppConnectionsPage.tsx
+phase: pure-addition
+registered_at: "2026-09-17"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Lifted from products/social-wiring (pages/Conexoes.tsx WhatsApp card section + pages/Conexao.tsx + components/ConnectionDetailDialog.tsx, QR panel ~:114-122) as a PURE ADDITION — social-wiring itself is untouched in this pass; it still runs its own richer copy (marca scoping, auto-reply toggle, authorized-numbers + bound-chats editors)."
+  - "Composed of three components under this directory: WhatsAppConnectionsPage (list + create + detail composition), CreateConnectionDialog (label + WAHA api_key form), ConnectionDetailDialog (status badge + QR panel + start/restart/logout + the start→restart→logout+start recovery ladder + webhook display/reconfigure). All three are also exported standalone for a product that wants its own list layout."
+  - "Data layer is createWhatsAppConnectionsHooks (seed/lib/frontend/src/whatsapp.ts) — a REWORK of the formerly single-session createWhatsAppConnectionHooks (removed, zero consumers) into the multi-connection shape mirroring social-wiring's backend_connections_router.py: list/create/update/delete + per-line status/qr/start/restart/logout/recover/webhook. Same hooks-factory injection idiom as createPipelineHooks/PipelineBoard — the CALLER calls createWhatsAppConnectionsHooks(api) once and passes the resulting hook-function bag down as the `hooks` prop."
+  - "WhatsAppConnectionLine deliberately EXCLUDES social-wiring's chatbot-intake extension fields (auto_reply_enabled / authorized_numbers / bound_chats / marca_id) — those are per-product routing config for SW's own chatbot feature, not generic WAHA connection-line management. A product needing them extends the type locally."
+  - "WhatsAppConnectionsPage accepts optional `emptyState` and `banner` ReactNode slots so a product can render e.g. 'Integração futura — nenhuma conexão pareada.' instead of the default empty-state copy, or a top banner (availability notice, upsell) above the list."
+  - "Loading uses showSkeleton/isRefreshing (never a bare isLoading/isFetching) on both useConnections (the list) and per-row useConnectionStatus (live status polling per line, stops polling once paired) / useConnectionQr (polls until status === WORKING, NOT merely !scannable — a single transient non-scannable reply must not kill the poll permanently, per social-wiring's own 2026-08-03 production incident)."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "OpenAI is out of credits at lift time (2026-09-17) — this organ family's semantic embedding into the code-embeddings cache (register_organ) could not run; only the .organ.yaml sidecar + git history carry its provenance until the cache is refreshed with credits restored."
+  - "social-wiring's own backend `whatsapp_admin_router.py` (the single-session router the OLD createWhatsAppConnectionHooks wrapped) is being removed by a sibling seed-backend slice; grepped repo-wide before this rework and confirmed zero product imports of the old hook name or that router — safe to rework in place."
+
+alternatives_considered:
+  - "Reusing the existing IntegrationCard/IntegrationCardModal organs (design-system/integrations) for the connection list. Rejected: social-wiring's own Conexoes.tsx already has to cast its WhatsAppConnectionLine through `unknown` to fit IntegrationCard's OAuth-account-shaped props (org_id/created_at fields the WAHA line model doesn't carry) — a purpose-built, simpler list avoids inheriting that impedance mismatch."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

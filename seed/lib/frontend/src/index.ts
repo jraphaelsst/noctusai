@@ -44,13 +44,19 @@ export type {
   SetCredentialsBody,
 } from './llm';
 
-// WhatsApp connection-admin + intake-monitor hooks
-export { createWhatsAppConnectionHooks, createWhatsAppIntakeHooks } from './whatsapp';
+// WhatsApp multi-connection-admin + intake-monitor hooks
+export { createWhatsAppConnectionsHooks, createWhatsAppIntakeHooks } from './whatsapp';
 export type {
-  WhatsAppConnection,
-  WhatsAppQr,
-  WhatsAppWebhookResult,
-  ConfigureWebhookBody,
+  CreateWhatsAppConnectionsHooksOptions,
+  WhatsAppConnectionsHooks,
+  WhatsAppConnectionLine,
+  CreateWhatsAppConnectionBody,
+  UpdateWhatsAppConnectionBody,
+  WhatsAppConnectionStatus,
+  WhatsAppConnectionQr,
+  WhatsAppConnectionRecoverResult,
+  ConfigureWhatsAppConnectionWebhookBody,
+  WhatsAppConnectionWebhookResult,
   IntakeConversation,
   IntakeMessage,
   IntakeConversationDetail,
