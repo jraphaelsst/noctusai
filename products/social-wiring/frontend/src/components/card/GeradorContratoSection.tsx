@@ -11,11 +11,13 @@
  */
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   Loader2,
   RefreshCw,
   Sparkles,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +32,8 @@ import {
   type GeracaoOnde,
 } from "@/hooks/useContratos";
 
+import { CARD_SUBPAGES, type CardSubpageKey } from "./CardSidebarNav";
+
 /** pt-BR group headers for `faltando[].onde` — the readiness list is grouped
  *  by WHERE to go fill the field, not just what field it is. */
 const ONDE_ROTULOS: Record<GeracaoOnde, string> = {
@@ -43,6 +47,41 @@ const ONDE_ROTULOS: Record<GeracaoOnde, string> = {
   contrato: "Contrato",
 };
 
+/**
+ * `faltando[].destino` — `derivacao.py:100-193`'s `Destinos.para` output,
+ * attached to EVERY `faltando` item so the UI can link instead of asking the
+ * operator to find the screen. Not yet declared on `GeracaoFaltando` itself
+ * (`useContratos.ts` is owned by a different slice in this drop); the
+ * runtime payload already carries it, so this extends the type locally
+ * rather than touch a file this slice doesn't own.
+ */
+export interface GeracaoDestino {
+  tela: string;
+  rota: string;
+  ancora: string | null;
+  ids: {
+    cliente_id?: string;
+    contrato_id?: string;
+    parte_id?: string;
+    imovel_codigo?: string;
+  };
+}
+
+export type FaltandoComDestino = GeracaoFaltando & { destino?: GeracaoDestino };
+
+/** Card subpage labels, canonical source (`CardSidebarNav.CARD_SUBPAGES`) —
+ *  never a second hand-written copy of the rail's labels. */
+const SUBPAGE_LABEL: Partial<Record<CardSubpageKey, string>> = Object.fromEntries(
+  CARD_SUBPAGES.map((s) => [s.key, s.label]),
+);
+
+/** `configuracoes`' tab labels the way `Settings.tsx` writes its `TabsTrigger`
+ *  text — that page owns tab selection (no `?tab=`/hash reader exists there
+ *  today), so this is a caption next to the link, never a query param. */
+const CONFIGURACOES_ABA_ROTULOS: Partial<Record<string, string>> = {
+  imobiliaria: "Imobiliária",
+};
+
 function agruparPorOnde(faltando: GeracaoFaltando[]): [GeracaoOnde, GeracaoFaltando[]][] {
   const grupos = new Map<GeracaoOnde, GeracaoFaltando[]>();
   for (const item of faltando) {
@@ -51,6 +90,66 @@ function agruparPorOnde(faltando: GeracaoFaltando[]): [GeracaoOnde, GeracaoFalta
     grupos.set(item.onde, lista);
   }
   return Array.from(grupos.entries());
+}
+
+/**
+ * One `faltando` item, rendered actionable off its own `destino`.
+ *
+ * 🔴 A card-scoped destino (`tela` prefixed `card_`) points at a
+ * `ClienteCardDialog` subpage the dialog owns in LOCAL STATE — there is no
+ * URL that opens it (`derivacao.py:110-116`'s carve-out), and
+ * `GeradorContratoContainer` has no callback wired down from the dialog to
+ * switch it either. Inventing a query param the SPA ignores would be a dead
+ * link wearing a link's clothes, so this renders guidance text naming the
+ * subpage instead. A genuinely routable destino (its own SPA route) renders
+ * a real `<Link>`.
+ */
+function FaltandoLinha({ item }: { item: FaltandoComDestino }) {
+  const destino = item.destino;
+
+  if (!destino) {
+    // No `destino` on the payload — same rendering as before this slice.
+    return <li>{item.rotulo}</li>;
+  }
+
+  if (destino.tela.startsWith("card_")) {
+    const subpageLabel = destino.ancora
+      ? SUBPAGE_LABEL[destino.ancora as CardSubpageKey] ?? destino.ancora
+      : null;
+    return (
+      <li data-testid={`gerador-contrato-faltando-guidance-${item.campo}-${item.parte_id ?? ""}`}>
+        {item.rotulo}
+        {subpageLabel && (
+          <span className="block text-muted-foreground/70">
+            Abra o card do cliente, aba &ldquo;{subpageLabel}&rdquo;.
+          </span>
+        )}
+      </li>
+    );
+  }
+
+  const abaRotulo = destino.ancora ? CONFIGURACOES_ABA_ROTULOS[destino.ancora] : undefined;
+  return (
+    <li className="flex items-center justify-between gap-2">
+      <span>
+        {item.rotulo}
+        {abaRotulo && <span className="text-muted-foreground/70"> (aba {abaRotulo})</span>}
+      </span>
+      <Button
+        asChild
+        type="button"
+        variant="link"
+        size="sm"
+        className="h-auto shrink-0 gap-1 p-0 text-xs font-normal"
+        data-testid={`gerador-contrato-faltando-link-${item.campo}-${item.parte_id ?? ""}`}
+      >
+        <Link to={destino.rota}>
+          Resolver
+          <ArrowRight className="h-3 w-3" />
+        </Link>
+      </Button>
+    </li>
+  );
 }
 
 interface Props {
@@ -179,7 +278,7 @@ export default function GeradorContratoSection({
               <p className="text-xs font-medium">{ONDE_ROTULOS[onde] ?? onde}</p>
               <ul className="ml-3 list-disc text-xs text-muted-foreground">
                 {itens.map((item) => (
-                  <li key={`${item.campo}-${item.parte_id ?? ""}`}>{item.rotulo}</li>
+                  <FaltandoLinha key={`${item.campo}-${item.parte_id ?? ""}`} item={item} />
                 ))}
               </ul>
             </div>
