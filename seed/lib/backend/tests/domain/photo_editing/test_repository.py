@@ -378,15 +378,12 @@ def test_supabase_rule_edit_and_effective_guide_listing() -> None:
             org_id="org-2", guia_estilo_id="guia-1", conjunto_regras_id=None, texto="t3", sha256="s3"
         )
 
-        # NOC-REMEDIATE[mock-count-exact-ignores-predicates] — the seed mock's
-        # `count="exact"` snapshots `len(table)` at `.select()` time, before
-        # any `.eq()` narrows it (`mocks.py` `count=len(self._data) if
-        # count == "exact" else None`), so `total` here is the WHOLE table
-        # (3), not the org-scoped count (2); `data` itself IS correctly
-        # filtered. Assert on the filtered rows, not the mock's `total`.
-        # 2026-09-16.
-        page, _total = await repo.list_effective_guides(ORG, limit=10)
+        # `count="exact"` now reflects the `.eq("org_id", ORG)`-narrowed
+        # rows (2), not the whole `fotos_guias_efetivos` table (3) — fixed
+        # 2026-09-16 (was NOC-REMEDIATE[mock-count-exact-ignores-predicates]).
+        page, total = await repo.list_effective_guides(ORG, limit=10)
         assert {g.id for g in page} == {first.id, second.id}
+        assert total == 2
 
     run(scenario())
 

@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
 
 from noctusai_lib.integrations.documents.formatting import FormatRange
+from noctusai_lib.integrations.llm.credit_probe import QUOTA_MARKERS
 from noctusai_lib.integrations.documents.types import TextSource
 
 logger = logging.getLogger(__name__)
@@ -155,15 +156,13 @@ def _classify_failure(exc: Exception) -> str:
     by asserting the mapping directly rather than by waiting for prod.
     """
     text = f"{type(exc).__name__}: {exc}".lower()
-    if any(s in text for s in (
-        # OpenAI
-        "insufficient_quota", "credit_balance_exhausted", "no credits remaining",
-        "exceeded your current quota",
-        # Anthropic
-        "credit_balance_too_low", "credit balance is too low",
-        # both
-        "billing",
-    )):
+    # The 6 vendor-agnostic quota markers are the seed's single canonical
+    # list (`noctusai_lib.integrations.llm.credit_probe.QUOTA_MARKERS`) — this
+    # module and `social-wiring/app/routers/settings_router.py` used to each
+    # hand-maintain their own copy of the same tuple (N=3; DRY N≥3 rule).
+    # `"billing"` stays local: it is a looser, transcription-specific catch
+    # not shared by the other two call sites.
+    if any(s in text for s in QUOTA_MARKERS) or "billing" in text:
         return "insufficient_quota"
     if "rate limit" in text or "rate_limit" in text or "429" in text:
         return "rate_limited"

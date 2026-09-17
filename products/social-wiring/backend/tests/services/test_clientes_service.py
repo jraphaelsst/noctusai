@@ -914,14 +914,10 @@ class TestReadSurface:
         assert len(board["items"]) == 11
 
         touches = svc.get_touches(client, ORG, k1_cliente["id"], page=1, page_size=50)
-        # NOT `touches["total"]`: `MockSelectBuilder`'s `count="exact"` is
-        # fixed at `.select()` time from the UNFILTERED table (a confirmed
-        # mock limitation — count ignores subsequent `.eq()` filters), so
-        # it always reports the full `cliente_touches` row count here, not
-        # this cliente's 3. `items` (the actually-filtered rows) is the
-        # honest assertion; real PostgREST returns a correctly filtered
-        # count.
         assert len(touches["items"]) == 3  # L1, L2, M1
+        # `count="exact"` now reflects the `.eq("cliente_id", ...)`-filtered
+        # rows, not the whole `cliente_touches` table — fixed 2026-09-16.
+        assert touches["total"] == 3
 
     def test_update_cliente(self):
         client = _seed_full_fixture()

@@ -238,14 +238,10 @@ class TestListClientes:
         resp = client.get("/api/clientes", headers=_auth())
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        # NOT `body["total"]`: `MockSelectBuilder`'s `count="exact"` is
-        # fixed at `.select()` time from the UNFILTERED table (a confirmed
-        # mock limitation, documented identically in
-        # `test_clientes_service.py::TestReadSurface`), so it reports the
-        # full table (2), not the ativo-filtered subset. `items` (the
-        # actually-filtered rows) is the honest assertion; real PostgREST
-        # returns a correctly filtered count.
         assert {c["id"] for c in body["items"]} == {a1}
+        # `count="exact"` now reflects the `.eq("ativo", True)`-filtered
+        # rows (1), not the whole table (2) — fixed 2026-09-16.
+        assert body["total"] == 1
 
     def test_ativo_false_shows_inactive(self, client, scoped):
         a1, a2 = str(uuid4()), str(uuid4())

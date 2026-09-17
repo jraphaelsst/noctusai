@@ -77,17 +77,13 @@ class TestCardResumo:
         resp = client.get(f"/api/clientes/{cid}/card", headers=_auth())
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        # NOT `body["badges"]["notas"] == 2`: `MockSelectBuilder`'s
-        # `count="exact"` is fixed at `.select()` time from the
-        # UNFILTERED table (the same confirmed mock limitation
-        # `test_clientes_router.py::TestListClientes` documents) — it
-        # reports the whole `cliente_notas` table (3 rows: 1 descricao +
-        # 2 comentário), not the `tipo='comentario'`-filtered subset real
-        # PostgREST returns. `tem_descricao`/`descricao` below are the
-        # honest assertions here — both read via `.eq(...).is_(...)`
-        # predicate evaluation, which the mock DOES apply correctly; only
-        # its `count="exact"` shortcut is blind to filters.
-        assert body["badges"]["notas"] == 3
+        # `notas` counts COMMENTS only (`tipo='comentario'`) — 2 of the 3
+        # seeded `cliente_notas` rows (the 3rd is `tipo='descricao'`, its
+        # own `tem_descricao` badge below). The mock's `count="exact"` now
+        # reflects the `.eq("tipo", "comentario")`-filtered rows, not the
+        # whole table (fixed 2026-09-16 — it used to snapshot `len(table)`
+        # at `.select()` time, before the filter chain even ran).
+        assert body["badges"]["notas"] == 2
         assert body["badges"]["tem_descricao"] is True
         assert body["descricao"]["corpo"]
         assert body["badges"]["documentos"] == 1

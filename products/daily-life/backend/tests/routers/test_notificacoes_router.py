@@ -34,8 +34,13 @@ class TestContagem:
     """GET /api/notificacoes/contagem"""
 
     def test_contagem(self, client):
+        # `.eq("user_id", ...).eq("read", False)` — both keys are required
+        # (mock's `count="exact"` reflects the filtered rows, not len(table);
+        # fixed 2026-09-16).
         client.mock_supabase.set_table_data("notifications", [
-            {"id": "n1"}, {"id": "n2"}, {"id": "n3"},
+            {"id": "n1", "user_id": "test-user-123", "read": False},
+            {"id": "n2", "user_id": "test-user-123", "read": False},
+            {"id": "n3", "user_id": "test-user-123", "read": False},
         ])
         resp = client.get("/api/notificacoes/contagem")
         assert resp.status_code == 200

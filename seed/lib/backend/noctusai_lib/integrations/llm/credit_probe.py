@@ -8,8 +8,15 @@ fix). The marker list that tells them apart already existed twice —
 `integrations/documents/transcription._classify_failure` and social-wiring's
 settings key tester — and edicao-fotos W8's processing panel would have been
 the third copy (`CLAUDE.md` §1 DRY: N=3 ⇒ formalize). This is that copy's
-home; the two earlier sites are the migration backlog (see
-`KB § INTEGRATIONS/image-edit.md`).
+home; the two earlier sites now import `QUOTA_MARKERS` from here instead of
+hand-maintaining their own tuple (2026-09-16). Both still run their OWN HTTP
+call + status-code ladder (their surrounding control flow is genuinely
+product-specific — one classifies from a bare exception's text with no
+status code at all, the other builds vendor-specific PT-BR messages) — only
+the marker LIST itself was the literal duplicate; migrating the full call to
+`OpenAICreditProbe`/`classify_provider_failure` is future work once those
+call sites gain an httpx-client injection seam + test coverage of their own
+(see `KB § INTEGRATIONS/image-edit.md`).
 
 SHAPE — Protocol + Fake + Real + factory
 ────────────────────────────────────────

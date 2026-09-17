@@ -89,8 +89,12 @@ class TestNotificationFlow:
         assert len(data) == 1
 
     def test_count_unread(self, client):
+        # `.eq("user_id", ...).eq("read", False)` — the mock's
+        # `count="exact"` now reflects the FILTERED row count (fixed
+        # 2026-09-16; it used to snapshot `len(table)` regardless of filters).
         client._mock_supabase.set_table_data("notifications", [
-            {"id": "n1"}, {"id": "n2"},
+            {"id": "n1", "user_id": "test-user-123", "read": False},
+            {"id": "n2", "user_id": "test-user-123", "read": False},
         ])
         resp = client.get("/api/notificacoes/contagem")
         assert resp.status_code == 200

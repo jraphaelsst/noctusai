@@ -7,7 +7,9 @@ Builder hierarchy (postgrest 0.17.2):
     .insert(...)     → MockQueryBuilder    (execute only)
     .update(...)     → MockFilterBuilder   (filters, execute)
     .delete()        → MockFilterBuilder
-    .upsert(...)     → MockFilterBuilder
+    .upsert(...)     → MockQueryBuilder    (execute only — matches supabase-py's
+                                             SyncQueryRequestBuilder return type;
+                                             not filterable, same as insert)
 
 All builders support optional response queues for sequential test scenarios.
 
@@ -32,6 +34,17 @@ Write-to-read propagation (added 2026-05-10):
       filter-wiring; before the fix, `.select().eq(...).execute()` returned
       ALL seeded rows regardless of predicates, masking ~43 latent test bugs
       across 7 products).
+    - UPSERT resolves `on_conflict` (default `"id"`, comma-separated for a
+      composite key) against the shared list: a row whose conflict-key
+      columns match an existing row is merged into it (`dict.update`,
+      real-PostgREST semantics — the payload's keys win, columns the
+      payload omits are left untouched); a row with no match is inserted
+      (auto-id, same as INSERT). Returns the written rows (post-merge for
+      updates, post-auto-id for inserts) in `response.data`, tracked in
+      `upserted_payloads` (raw, pre-merge payload — mirrors
+      `inserted_payloads`/`updated_payloads`). Added 2026-09-16 (closes
+      the "upsert is a documented no-op" gap several products worked
+      around with a manual SELECT-then-insert-or-update).
     - When `set_sequential_responses(...)` is configured for the table, the
       queue dictates the response AND propagation / predicate-filtering is
       suppressed (lets tests simulate insert failures without implicit data
@@ -846,7 +859,7 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
     def __init__(
         self,
         data=None,
-        count=None,
+        count_exact: bool = False,
         response_queue=None,
         response_idx=None,
         *,
@@ -860,7 +873,12 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         # reference so reads see writes.
         self._data = data if data is not None else []
         self._single_mode = False
-        self._count = count
+        # `count_exact` only records the INTENT (`.select(..., count="exact")`
+        # was requested); the actual count is computed in `execute()` against
+        # `_filtered_rows()` so it reflects `.eq()`/etc. narrowing — see
+        # `MockRequestBuilder.select()`.
+        self._count_exact = count_exact
+        self._count: Optional[int] = None
         self._response_queue = response_queue
         self._response_idx = response_idx
         self._validate_schema = validate_schema
@@ -952,15 +970,21 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
         if self._response_queue is not None:
             return self._do_execute()
         filtered = self._filtered_rows()
+        # Real PostgREST's `count="exact"` reflects the rows matching the
+        # FILTER, independent of any `.range()`/`.limit()` window applied for
+        # pagination — computed here (not at `.select()` time) so `.eq()`/etc.
+        # chained afterward are already reflected in `_predicates`.
+        count = len(filtered) if self._count_exact and isinstance(filtered, list) else None
+        self._count = count
         if self._single_mode:
             # `.single()`/`.maybe_single()` request the
             # `vnd.pgrst.object+json` shape, not a `Range` window — no
             # row-cap window applies (the result is 0 or 1 row either way).
             data = filtered[0] if filtered else None
             self._single_mode = False
-            return MockSupabaseResponse(data=data, count=self._count)
+            return MockSupabaseResponse(data=data, count=count)
         data = self._windowed_rows(filtered) if isinstance(filtered, list) else filtered
-        return MockSupabaseResponse(data=data, count=self._count)
+        return MockSupabaseResponse(data=data, count=count)
 
 
 # ---------------------------------------------------------------------------
@@ -1142,6 +1166,9 @@ class MockRequestBuilder:
         # insert-side pattern. The list collects every dict passed to
         # `update(...)`, in call order.
         self.updated_payloads: list = []
+        # Mirror of `inserted_payloads`/`updated_payloads` for `.upsert(...)`
+        # calls — the raw payload as passed, before conflict resolution.
+        self.upserted_payloads: list = []
         # Materialize the seed data as a fresh mutable list with deep-copied
         # rows. Callers that passed a dict (single row), a tuple, or shared a
         # list with another builder all get a stable, owned-by-this-builder
@@ -1235,10 +1262,16 @@ class MockRequestBuilder:
         # Pass the SHARED LIST REFERENCE so mutations (already-applied or
         # subsequent inside the same chain — though that's atypical) are
         # visible. The select builder reads through the reference at
-        # execute() time.
+        # execute() time. `count_exact` only records THAT an exact count was
+        # requested — the actual number is computed at execute() time, after
+        # `.eq()`/`.gt()`/etc. have narrowed `_predicates` (real PostgREST's
+        # `count="exact"` reflects the FILTERED row count, not the table
+        # size; precomputing `len(self._data)` here — the pre-2026-09-16
+        # behavior — silently returned the whole-table count for every
+        # filtered query).
         return MockSelectBuilder(
             self._data,
-            count=len(self._data) if count == "exact" else None,
+            count_exact=(count == "exact"),
             response_queue=self._response_queue,
             response_idx=self._response_idx,
             **self._builder_kwargs(),
@@ -1382,6 +1415,23 @@ class MockRequestBuilder:
         )
 
     def upsert(self, data=None, *a, **k):
+        """Insert-or-update on the conflict key, matching supabase-py.
+
+        `on_conflict` (default `"id"`, comma-separated for a composite key)
+        names the column(s) real PostgREST checks for a conflicting row. A
+        payload row whose conflict-key columns match an EXISTING row is
+        merged into it (`dict.update` — payload keys win, columns the
+        payload omits are left as-is, same as a real `MERGE`/`UPDATE`); one
+        with no match is inserted (auto-id, same as `insert()`).
+        `ignore_duplicates=True` mirrors `Prefer: resolution=ignore-
+        duplicates` — a conflicting row is left untouched and NOT included
+        in the response (only newly-inserted rows come back).
+
+        Returns `MockQueryBuilder` (not `MockFilterBuilder`) — real
+        supabase-py's `.upsert()` returns a `SyncQueryRequestBuilder`, the
+        same non-filterable type `.insert()` returns; there is no
+        `.upsert(...).eq(...)` in the real API.
+        """
         self._check_table_known("upsert")
         if self._validate_schema:
             _validate_payload_keys(
@@ -1396,16 +1446,65 @@ class MockRequestBuilder:
                 data,
                 operation="upsert",
             )
-        # Upsert propagation is deferred to a follow-up project (needs
-        # conflict-target tracking via `on_conflict`). For now, the call
-        # returns a filter builder with the shared list but no mutation
-        # kind — execute() falls through to _do_execute which returns the
-        # current data. Documented in §4 of PROJECT.md.
-        return MockFilterBuilder(
-            self._data,
+
+        on_conflict = k.get("on_conflict") or "id"
+        conflict_cols = tuple(c.strip() for c in on_conflict.split(",") if c.strip())
+        ignore_duplicates = bool(k.get("ignore_duplicates", False))
+
+        # Normalize to list-of-dicts — same shape insert() uses.
+        if isinstance(data, list):
+            payload_rows = list(data)
+        elif data is not None:
+            payload_rows = [data]
+        else:
+            payload_rows = []
+
+        # Track raw payloads (pre-merge) — mirrors inserted_payloads/
+        # updated_payloads so tests can assert the write happened.
+        if isinstance(data, list):
+            self.upserted_payloads.extend(data)
+        elif data is not None:
+            self.upserted_payloads.append(data)
+
+        response_rows = []
+        for row in payload_rows:
+            if not isinstance(row, dict):
+                response_rows.append(row)
+                continue
+            match_idx = None
+            if conflict_cols and all(col in row for col in conflict_cols):
+                for idx, existing in enumerate(self._data):
+                    if isinstance(existing, dict) and all(
+                        existing.get(col) == row.get(col) for col in conflict_cols
+                    ):
+                        match_idx = idx
+                        break
+            if match_idx is not None:
+                if ignore_duplicates:
+                    # Left untouched, and NOT part of the response — real
+                    # PostgREST's `resolution=ignore-duplicates` only ever
+                    # returns the rows it actually inserted.
+                    continue
+                merged = dict(self._data[match_idx])
+                merged.update(row)
+                if self._response_queue is None:
+                    self._data[match_idx] = merged
+                response_rows.append(merged)
+            else:
+                new_row = dict(row)
+                if not new_row.get("id"):
+                    self._auto_id_seq += 1
+                    table_label = self._table or "row"
+                    new_row["id"] = f"mock-{table_label}-{self._auto_id_seq}"
+                if self._response_queue is None:
+                    self._data.append(new_row)
+                response_rows.append(new_row)
+
+        return MockQueryBuilder(
+            response_rows,
             response_queue=self._response_queue,
             response_idx=self._response_idx,
-            **self._builder_kwargs_with_constraints(),
+            **self._builder_kwargs(),
         )
 
     def delete(self, *a, **k):

@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.integrations.llm.credit_probe import QUOTA_MARKERS
 from noctusai_lib.integrations.whatsapp import chat_id_for_phone, get_whatsapp_client
 
 from app.config import SocialWiringSettings, settings
@@ -1177,8 +1178,13 @@ async def _test_openai_key(value: str) -> ApiKeyTestResult:
         # seen in prod 2026-09-03, where "Erro inesperado: HTTP 429" gave the
         # operator no reason to check billing.
         body = (resp.text or "").lower()
-        if any(s in body for s in ("insufficient_quota", "credit_balance_exhausted",
-                                   "no credits remaining", "exceeded your current quota")):
+        # `QUOTA_MARKERS` is the seed's single canonical marker list
+        # (`noctusai_lib.integrations.llm.credit_probe`) — this used to be a
+        # locally hand-maintained copy of the same 4 OpenAI-relevant strings
+        # (DRY N≥3: also duplicated in `documents/transcription.py` and the
+        # canonical helper itself). The 2 Anthropic-only phrases it also
+        # carries cannot appear in an OpenAI response body.
+        if any(s in body for s in QUOTA_MARKERS):
             return ApiKeyTestResult(
                 key="openai_api_key",
                 success=False,
@@ -1251,8 +1257,12 @@ async def _test_anthropic_key(value: str) -> ApiKeyTestResult:
             success=False,
             message="API Key inválida ou expirada.",
         )
-    if resp.status_code in (400, 429) and any(
-        s in corpo for s in ("credit_balance_too_low", "insufficient", "quota")
+    # `QUOTA_MARKERS` covers `credit_balance_too_low` (the exact phrase this
+    # branch used to hand-maintain alone); `"insufficient"`/`"quota"` stay
+    # local — a broader, Anthropic-specific catch beyond the canonical set
+    # (dropping them would narrow this branch's existing coverage).
+    if resp.status_code in (400, 429) and (
+        any(s in corpo for s in QUOTA_MARKERS) or "insufficient" in corpo or "quota" in corpo
     ):
         return ApiKeyTestResult(
             key="anthropic_api_key",

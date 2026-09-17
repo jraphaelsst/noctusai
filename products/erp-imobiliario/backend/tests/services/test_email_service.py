@@ -216,7 +216,10 @@ class TestGetEstatisticas:
                 {"status": "aberto"},
                 {"status": "aberto"},
             ],
-            "email_templates": [{"id": "t1"}, {"id": "t2"}],
+            # `.eq("ativo", True)` — both need the key set (mock's
+            # `count="exact"` now reflects the filtered rows, not
+            # len(table); fixed 2026-09-16).
+            "email_templates": [{"id": "t1", "ativo": True}, {"id": "t2", "ativo": True}],
         })
 
         from app.services.email_service import EmailService
