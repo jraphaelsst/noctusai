@@ -1,9 +1,21 @@
 """
-Unit tests for AssinaturaService — document preparation, webhook processing, cancellation, summary.
-"""
-import pytest
-from unittest.mock import MagicMock
+Unit tests for AssinaturaService — document preparation (via the seed
+`signature` IO module), webhook processing, cancellation, summary.
 
+Provider interaction is exercised through the constructor's
+`adapter_factory` / `http_client` DI seams (`KB § PATTERNS/backend/
+di-test-seam.md`) — never by monkeypatching `AssinaturaService` or the
+seed module's internals.
+"""
+import httpx
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+from noctusai_lib.integrations.signature import (
+    FakeSignatureAdapter,
+    ProvedorNaoConfigurado,
+    make_signature_adapter,
+)
 from tests.conftest import MockSupabaseClient, MockSupabaseResponse
 
 
@@ -31,6 +43,43 @@ def _make_db_for_insert(inserted_record):
     return db
 
 
+def _fake_http_client(conteudo: bytes = b"%PDF-1.4 fake doc") -> AsyncMock:
+    """An `httpx.AsyncClient` double whose `.get()` returns a 200 with
+    *conteudo* — the DI seam `AssinaturaService._baixar_documento` reaches
+    for instead of hitting the network (mirrors
+    `test_certidoes_service.py`'s `AsyncMock(spec=httpx.AsyncClient)`)."""
+    resp = httpx.Response(200, content=conteudo, request=httpx.Request("GET", "https://x/doc.pdf"))
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=resp)
+    return client
+
+
+def _fake_adapter_factory(adapter=None):
+    """An `adapter_factory` DI seam that always returns *adapter* (a fresh
+    `FakeSignatureAdapter()` by default), ignoring the `real=`/`provedor=`/
+    `org_id=` kwargs `AssinaturaService` always passes."""
+    instance = adapter if adapter is not None else FakeSignatureAdapter()
+
+    def _factory(*, real, provedor, org_id):
+        return instance
+
+    return _factory, instance
+
+
+def _sem_credenciais_factory():
+    """An `adapter_factory` that drives the REAL `make_signature_adapter`
+    through its own `resolver` DI seam with every credential missing —
+    proving `real=True` + no credentials refuses rather than silently
+    returning a Fake. No monkeypatching: `resolver` is the seed's own seam."""
+
+    def _factory(*, real, provedor, org_id):
+        return make_signature_adapter(
+            real=real, provedor=provedor, org_id=org_id, resolver=lambda key, org: None
+        )
+
+    return _factory
+
+
 # ---------------------------------------------------------------------------
 # EVENT_STATUS_MAP
 # ---------------------------------------------------------------------------
@@ -55,23 +104,28 @@ class TestEventStatusMap:
 
 
 # ---------------------------------------------------------------------------
-# preparar_envio
+# preparar_envio — happy path through the Fake
 # ---------------------------------------------------------------------------
 
-class TestPrepararEnvio:
+class TestPrepararEnvioHappyPath:
 
     @pytest.mark.asyncio
-    async def test_creates_assinatura_record(self):
+    async def test_creates_assinatura_record_via_fake_adapter(self):
         inserted = {
             "id": "a-1",
             "documento_nome": "Contrato.pdf",
             "status": "enviado",
-            "provedor": "interno",
+            "provedor": "d4sign",
         }
         db = _make_db_for_insert(inserted)
+        factory, fake = _fake_adapter_factory()
 
         from app.services.assinatura_service import AssinaturaService
-        svc = AssinaturaService(db, "user-1")
+        svc = AssinaturaService(
+            db, "user-1",
+            adapter_factory=factory,
+            http_client=_fake_http_client(),
+        )
 
         result = await svc.preparar_envio(
             documento_nome="Contrato.pdf",
@@ -79,58 +133,139 @@ class TestPrepararEnvio:
             signatarios=[
                 {"nome": "Joao", "email": "joao@example.com", "papel": "comprador"},
             ],
-            provedor="interno",
+            provedor="d4sign",
             contrato_id="c-100",
         )
 
         assert result is not None
         assert result["status"] == "enviado"
+        # The Fake actually ran criar_envelope — proves the adapter swap is wired.
+        assert fake.calls == [("criar_envelope", "Contrato.pdf")]
 
     @pytest.mark.asyncio
-    async def test_signatarios_get_pending_status(self):
-        from app.services.assinatura_service import AssinaturaService
-
-        # We test the internal logic: signatarios_com_status construction
-        svc = AssinaturaService(MockSupabaseClient(), "user-1")
-
-        signatarios = [
-            {"nome": "A", "email": "a@x.com", "papel": "comprador"},
-            {"nome": "B", "email": "b@x.com", "papel": "vendedor"},
-        ]
-
-        # Manually replicate what preparar_envio does
-        signatarios_com_status = []
-        for s in signatarios:
-            signatarios_com_status.append({
-                **s,
-                "status": "pendente",
-                "assinado_em": None,
-            })
-
-        assert len(signatarios_com_status) == 2
-        assert all(s["status"] == "pendente" for s in signatarios_com_status)
-        assert all(s["assinado_em"] is None for s in signatarios_com_status)
-
-    @pytest.mark.asyncio
-    async def test_link_assinatura_is_generated(self):
-        """The signing link should be a valid-looking URL."""
-        inserted = {
-            "id": "a-1",
-            "link_assinatura": "https://assinaturas.noctus.app/assinar/abc123",
-            "status": "enviado",
-        }
-        db = _make_db_for_insert(inserted)
+    async def test_insert_payload_carries_envelope_fields(self):
+        db = _make_db_for_insert({"id": "a-1", "status": "enviado"})
+        factory, _fake = _fake_adapter_factory()
 
         from app.services.assinatura_service import AssinaturaService
-        svc = AssinaturaService(db, "user-1")
-
-        result = await svc.preparar_envio(
-            documento_nome="Doc.pdf",
-            documento_url=None,
-            signatarios=[{"nome": "X", "email": "x@x.com", "papel": "parte"}],
+        svc = AssinaturaService(
+            db, "user-1",
+            adapter_factory=factory,
+            http_client=_fake_http_client(),
         )
 
-        assert result is not None
+        await svc.preparar_envio(
+            documento_nome="Doc.pdf",
+            documento_url="https://storage.example.com/doc.pdf",
+            signatarios=[{"nome": "X", "email": "x@x.com", "papel": "parte"}],
+            provedor="d4sign",
+        )
+
+        insert_call = db._tables["assinaturas"].insert.call_args
+        payload = insert_call.args[0]
+        assert payload["link_assinatura"].startswith("https://fake.assinatura.local/")
+        assert payload["external_id"].startswith("fake-")
+        assert payload["provedor"] == "d4sign"
+        assert payload["signatarios"][0]["status"] == "pendente"
+        assert payload["signatarios"][0]["assinado_em"] is None
+        # dry_run is gone — there is no more mock-dressed-as-real concept.
+        assert "dry_run" not in payload["historico"][0]
+
+
+# ---------------------------------------------------------------------------
+# preparar_envio — refusals (no silent fallback)
+# ---------------------------------------------------------------------------
+
+class TestPrepararEnvioRefusals:
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_org_is_refused_not_mocked(self):
+        """real=True + no D4Sign credentials -> ProvedorNaoConfigurado,
+        never a mock envelope (contract F1/§0)."""
+        db = _make_db_for_insert({"id": "a-1"})
+
+        from app.services.assinatura_service import AssinaturaService
+        svc = AssinaturaService(
+            db, "user-1",
+            org_id="org-1",
+            adapter_factory=_sem_credenciais_factory(),
+            http_client=_fake_http_client(),
+        )
+
+        with pytest.raises(ProvedorNaoConfigurado) as exc_info:
+            await svc.preparar_envio(
+                documento_nome="Contrato.pdf",
+                documento_url="https://storage.example.com/contrato.pdf",
+                signatarios=[{"nome": "Joao", "email": "joao@example.com", "papel": "comprador"}],
+                provedor="d4sign",
+            )
+
+        assert "d4sign_api_token" in exc_info.value.faltando
+        assert "d4sign_crypt_key" in exc_info.value.faltando
+        assert "d4sign_safe_uuid" in exc_info.value.faltando
+        # No row was ever inserted for a refused envelope.
+        db._tables["assinaturas"].insert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unsupported_provider_named_in_refusal(self):
+        """ClickSign/DocuSign are not implemented in this pass — an org
+        pointing at either gets a typed refusal naming it, not a silent
+        fallback to a mock (contract §5)."""
+        db = _make_db_for_insert({"id": "a-1"})
+        factory, fake = _fake_adapter_factory()
+
+        from app.services.assinatura_service import AssinaturaService
+        svc = AssinaturaService(db, "user-1", adapter_factory=factory)
+
+        for provedor in ("clicksign", "docusign", "interno"):
+            with pytest.raises(ProvedorNaoConfigurado) as exc_info:
+                await svc.preparar_envio(
+                    documento_nome="Contrato.pdf",
+                    documento_url="https://storage.example.com/contrato.pdf",
+                    signatarios=[{"nome": "Joao", "email": "joao@example.com", "papel": "comprador"}],
+                    provedor=provedor,
+                )
+            assert provedor in exc_info.value.faltando[0]
+
+        # The Fake was never reached for any of them — refusal happens
+        # before any adapter call.
+        assert fake.calls == []
+
+    @pytest.mark.asyncio
+    async def test_missing_documento_url_raises_value_error(self):
+        db = _make_db_for_insert({"id": "a-1"})
+        factory, fake = _fake_adapter_factory()
+
+        from app.services.assinatura_service import AssinaturaService
+        svc = AssinaturaService(db, "user-1", adapter_factory=factory)
+
+        with pytest.raises(ValueError):
+            await svc.preparar_envio(
+                documento_nome="Doc.pdf",
+                documento_url=None,
+                signatarios=[{"nome": "X", "email": "x@x.com", "papel": "parte"}],
+                provedor="d4sign",
+            )
+        assert fake.calls == []
+
+    @pytest.mark.asyncio
+    async def test_document_download_failure_propagates(self):
+        db = _make_db_for_insert({"id": "a-1"})
+        factory, _fake = _fake_adapter_factory()
+
+        broken_client = AsyncMock(spec=httpx.AsyncClient)
+        broken_client.get = AsyncMock(side_effect=httpx.ConnectError("boom"))
+
+        from app.services.assinatura_service import AssinaturaService
+        svc = AssinaturaService(db, "user-1", adapter_factory=factory, http_client=broken_client)
+
+        with pytest.raises(httpx.HTTPError):
+            await svc.preparar_envio(
+                documento_nome="Doc.pdf",
+                documento_url="https://storage.example.com/doc.pdf",
+                signatarios=[{"nome": "X", "email": "x@x.com", "papel": "parte"}],
+                provedor="d4sign",
+            )
 
 
 # ---------------------------------------------------------------------------
