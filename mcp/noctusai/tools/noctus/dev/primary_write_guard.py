@@ -98,6 +98,27 @@ _ALWAYS_WRITE = {
     "truncate", "install", "ln", "chmod", "chown", "rsync", "unzip", "tar",
 }
 
+#: `SOURCE… DEST` commands: the sources are READS, and the only write is the
+#: destination. Judging every path-looking argument as a target refused
+#: `cp <primary-file> <scratchpad-dest>` — copying OUT of the primary, which
+#: this guard has no business blocking (hit for real 2026-09-17, three times in
+#: one session, while trying to preserve a file BEFORE removing it).
+#:
+#: `mv` is deliberately ABSENT: it creates the destination *and* removes the
+#: source, so both really are writes. So are `tar`/`unzip`/`dd`/`tee`/`patch`,
+#: whose target is flag- or stdin-driven rather than positional — narrowing
+#: those would be a guess, and a guess here fails OPEN.
+_DEST_ONLY_WRITE = {"cp", "install", "rsync", "ln"}
+
+#: GNU `-t DIR` / `--target-directory=DIR` inverts the argument order, so the
+#: destination is that flag's operand and NOT the last positional.
+_TARGET_DIR_FLAGS = {"-t", "--target-directory"}
+
+#: `git reset` modes that touch the WORKING TREE. The pathspec form
+#: (`git reset -- <paths>`) touches only the index, which is why it is eligible
+#: for the ledger exemption; these three are not.
+_RESET_WORKTREE_FLAGS = {"--hard", "--merge", "--keep"}
+
 #: `git` subcommands that mutate the working tree or the index of the checkout
 #: they run in. `pull`, `fetch`, `merge`, `push`, `worktree`, `tag` and `branch`
 #: are NOT here: syncing and integrating the primary checkout on `dev` is the
@@ -688,6 +709,63 @@ def _ledger_pathspecs(tail: Sequence[str], cwd: str) -> bool:
     return all(_under_ledger(p, cwd) for p in paths)
 
 
+def _primary_diverged(ctx: GuardContext) -> bool:
+    """Has the primary checkout diverged from its own upstream?
+
+    Only used to DECIDE WHETHER TO MENTION the sync remedy in a refusal, never
+    to allow anything — so an unanswerable probe simply means "no hint", which
+    leaves the refusal exactly as it was before.
+
+    WHY THE HINT EXISTS (2026-09-17). `_is_sync_to_remote_git` below already
+    permits `git reset --hard <remote-tracking-ref>` precisely for a diverged
+    primary, but the refusal text only ever named `task_branch`. An agent that
+    hit the wall on `git reset`, `git stash` and `rm` in turn was never told
+    the one command that works: this session concluded the state was an
+    unbreakable deadlock and had begun escalating to the user before reading
+    this module and finding the exemption. A gate whose escape hatch is real
+    but undiscoverable from its own refusal is, in practice, a gate without one.
+    """
+    answered, out = _run_git_checked(
+        ["-C", ctx.primary_root, "rev-list", "--count", "--left-right",
+         f"{ctx.branch}...origin/{ctx.branch}"],
+        None,
+    )
+    if not answered or not out:
+        return False
+    parts = out.split()
+    if len(parts) != 2 or not all(p.isdigit() for p in parts):
+        return False
+    ahead, behind = int(parts[0]), int(parts[1])
+    # Diverged = local has commits the remote does not AND vice versa. A tree
+    # that is merely behind fast-forwards, and `pull` is already exempt.
+    return ahead > 0 and behind > 0
+
+
+def _dest_only_candidates(args: Sequence[str]) -> list[str] | None:
+    """The DESTINATION operand of a `SOURCE… DEST` command, or None.
+
+    None means "could not be identified unambiguously", and the caller then
+    keeps judging every argument — narrowing on a guess would fail OPEN, which
+    is the one direction this module never errs in.
+
+    Two shapes, both off the commands' own `-h`:
+      · `-t DIR` / `--target-directory[=]DIR` — the destination is that
+        operand, because the flag inverts the usual argument order.
+      · otherwise the LAST path-looking positional, with at least two present:
+        one positional cannot be split into a source and a destination, and
+        `cp x` on its own is a usage error rather than a write we should guess at.
+    """
+    tokens = list(args)
+    for i, tok in enumerate(tokens):
+        if tok in _TARGET_DIR_FLAGS:
+            return [tokens[i + 1]] if i + 1 < len(tokens) else None
+        if tok.startswith("--target-directory="):
+            value = tok.split("=", 1)[1]
+            return [value] if value else None
+    positional = [a for a in tokens if _looks_like_path(a)]
+    return [positional[-1]] if len(positional) >= 2 else None
+
+
 def _is_ledger_only_git(sub: str, args: Sequence[str], cwd: str) -> bool:
     """Is this `git add`/`commit`/`restore` confined to the append-only ledgers?
 
@@ -761,6 +839,25 @@ def _is_ledger_only_git(sub: str, args: Sequence[str], cwd: str) -> bool:
         # No separator: only `restore` is unambiguous, since it never takes a
         # branch to switch to. `checkout dev` must stay refused.
         return _ledger_pathspecs(tail, cwd) if sub == "restore" else False
+
+    if sub == "reset":
+        # 🔴 THE INDEX-SIDE TWIN of `restore`, overlooked by the 2026-08-27 fix
+        # above (added 2026-09-17). That fix cured "a ledger may be DIRTIED but
+        # not CLEANED" for the WORKING TREE and left the INDEX behind: a stale
+        # staged entry on `project-history/vector-costs.ndjson` — put there by
+        # the very ledger writers this module exempts — could not be unstaged,
+        # and an un-unstageable index blocks the `rebase` that re-syncs the
+        # primary. Same asymmetry, same argument, one subcommand.
+        #
+        # ONLY the pathspec form qualifies. After `--` git parses every token as
+        # a path, so this shape provably cannot move HEAD; the ref forms
+        # (`reset --hard origin/dev`, `reset HEAD~3`) are decided by
+        # `_is_sync_to_remote_git` or stay refused. The worktree-touching modes
+        # are excluded outright rather than assumed harmless.
+        tail = _strip_redirections(args[args.index(sub) + 1:])
+        if "--" not in tail or _RESET_WORKTREE_FLAGS & set(tail):
+            return False
+        return _ledger_pathspecs(tail[tail.index("--") + 1:], cwd)
 
     if sub == "commit":
         rest = list(args[args.index(sub) + 1:])
@@ -957,6 +1054,14 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
 
         if name in _ALWAYS_WRITE:
             candidates = [a for a in args if _looks_like_path(a)]
+            if name in _DEST_ONLY_WRITE:
+                dest = _dest_only_candidates(args)
+                if dest is not None:
+                    # Sources are reads; only the destination is written. When
+                    # the destination cannot be named unambiguously
+                    # `_dest_only_candidates` returns None and we stay on the
+                    # conservative all-arguments path below.
+                    candidates = dest
             positional = [t for t in (_resolve(a, cwd) for a in candidates) if t]
             targets += positional
             if len(positional) < len(candidates) or not candidates:
@@ -1034,6 +1139,13 @@ def decide(
                "judged against its effective working directory — name an absolute "
                "path outside the primary checkout if that is wrong."
                if uncertain else "")
+            + (f"\nNOTE: this primary has DIVERGED from origin/{ctx.branch}, so it can "
+               f"no longer fast-forward. Re-syncing it is sanctioned and allowed: "
+               f"`git reset --hard origin/{ctx.branch}`. Nothing you can lose lives "
+               f"here — every write is refused except regenerated artifacts and "
+               f"append-only ledgers. Preserve any ledger rows first "
+               f"(`git diff origin/{ctx.branch}...HEAD > <path outside the repo>`)."
+               if _primary_diverged(ctx) else "")
         ),
     }
 

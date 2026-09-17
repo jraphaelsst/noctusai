@@ -1020,3 +1020,119 @@ def test_git_pull_stays_allowed():
     """Deliberately absent from `_GIT_WRITE_SUBCOMMANDS` — the documented
     remedy for primary/origin divergence, not a work write."""
     assert _decide("Bash", {"command": "git pull --ff-only"}, cwd=PRIMARY) is None
+
+
+# ── dest-only write semantics: cp/install/rsync/ln (2026-09-17) ───────────
+#
+# THE INCIDENT. Trying to preserve a primary file BEFORE removing it, the
+# obvious `cp <primary-file> <scratchpad-dest>` was refused — on the SOURCE.
+# `cp` reads arg 1 and writes the last, so the guard was denying a pure
+# read-OUT-of the primary. Hit three times in one session while doing exactly
+# the salvage-before-delete the methodology asks for.
+
+SCRATCH = "/tmp/scratch"
+
+
+def test_copying_OUT_of_the_primary_is_allowed():
+    """🔴 THE regression. `cp` writes its DESTINATION, not its source."""
+    assert _decide("Bash", {"command": f"cp {PRIMARY}/CLAUDE.md {SCRATCH}/c.md"}) is None
+
+
+def test_copying_INTO_the_primary_is_still_refused():
+    """The direction that matters must keep failing."""
+    verdict = _decide("Bash", {"command": f"cp {SCRATCH}/c.md {PRIMARY}/CLAUDE.md"})
+    assert verdict is not None
+    assert any(t.endswith("CLAUDE.md") for t in verdict["targets"])
+
+
+def test_the_dest_only_set_all_behave_the_same_way():
+    for name in ("cp", "install", "rsync", "ln"):
+        out = f"{name}: out"
+        into = f"{name}: into"
+        assert _decide("Bash", {"command": f"{name} {PRIMARY}/a {SCRATCH}/b"}) is None, out
+        assert _decide("Bash", {"command": f"{name} {SCRATCH}/b {PRIMARY}/a"}) is not None, into
+
+
+def test_mv_is_NOT_dest_only_because_it_removes_its_source():
+    """`mv` creates the destination AND deletes the source, so moving a file
+    OUT of the primary really is a primary write. Deliberately excluded."""
+    verdict = _decide("Bash", {"command": f"mv {PRIMARY}/CLAUDE.md {SCRATCH}/c.md"})
+    assert verdict is not None
+    assert any(t.endswith("CLAUDE.md") for t in verdict["targets"])
+
+
+def test_a_target_directory_flag_inverts_the_argument_order():
+    """`-t DIR SOURCE…` puts the destination FIRST; the last positional is a
+    source. Reading the last token would invert the verdict."""
+    assert _decide(
+        "Bash", {"command": f"cp -t {SCRATCH} {PRIMARY}/CLAUDE.md"}
+    ) is None
+    assert _decide(
+        "Bash", {"command": f"cp --target-directory={SCRATCH} {PRIMARY}/CLAUDE.md"}
+    ) is None
+    assert _decide(
+        "Bash", {"command": f"cp -t {PRIMARY} {SCRATCH}/c.md"}
+    ) is not None
+
+
+def test_a_single_positional_stays_conservative():
+    """One positional cannot be split into a source and a destination, so the
+    guard must NOT narrow — it falls back to judging every argument."""
+    assert _decide("Bash", {"command": f"cp {PRIMARY}/CLAUDE.md"}) is not None
+
+
+def test_an_unexpandable_dest_still_falls_back_to_the_cwd():
+    """A `$VAR` destination is unnameable; narrowing to it would allow a write
+    the guard cannot see. Must stay refused via the uncertain path."""
+    verdict = _decide("Bash", {"command": f"cp {PRIMARY}/CLAUDE.md $DEST"}, cwd=PRIMARY)
+    assert verdict is not None
+    assert verdict["uncertain"]
+
+
+# ── git reset of a ledger: the index-side twin of restore (2026-09-17) ────
+#
+# The 2026-08-27 pass fixed "a ledger may be DIRTIED but not CLEANED" for the
+# WORKING TREE (`restore`/`checkout --`) and missed the INDEX. A stale staged
+# entry on a ledger — put there by the ledger writers this module exempts —
+# could not be unstaged, and an un-unstageable index blocks the rebase that
+# re-syncs the primary. That is the deadlock this closes.
+
+def test_git_reset_of_a_ledger_pathspec_is_allowed():
+    assert _decide(
+        "Bash",
+        {"command": "git reset -- project-history/vector-costs.ndjson"},
+        cwd=PRIMARY,
+    ) is None
+
+
+def test_git_reset_of_a_source_pathspec_is_still_refused():
+    assert _decide(
+        "Bash", {"command": "git reset -- products/core/backend/app/main.py"}, cwd=PRIMARY
+    ) is not None
+
+
+def test_git_reset_mixing_ledger_and_source_is_refused():
+    assert _decide(
+        "Bash",
+        {"command": "git reset -- project-history/branch-tree.ndjson products/core/x.py"},
+        cwd=PRIMARY,
+    ) is not None
+
+
+def test_a_PATHLESS_git_reset_is_still_refused():
+    """Without `--` a lone token is ambiguous between a path and a ref, and the
+    pathless forms are the destructive ones."""
+    for cmd in (
+        "git reset",
+        "git reset project-history/vector-costs.ndjson",
+        "git reset HEAD~3",
+    ):
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None, cmd
+
+
+def test_worktree_touching_reset_modes_are_refused_even_on_a_ledger():
+    """`--hard`/`--merge`/`--keep` reach the working tree, so the index-only
+    argument that justifies this exemption does not hold for them."""
+    for flag in ("--hard", "--merge", "--keep"):
+        cmd = f"git reset {flag} -- project-history/vector-costs.ndjson"
+        assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None, cmd
