@@ -2,7 +2,10 @@
 Assinatura Digital Router — Digital signature management.
 
 Manages sending documents for signature, tracking signing status,
-processing webhook callbacks from providers, and audit trails.
+processing webhook callbacks from providers, and audit trails. Sending
+itself is delegated to the seed `signature` IO module — see
+`app.services.assinatura_service` and
+`projects/signature-integration-CONTRACT.md` §5.
 
 -- CREATE TABLE assinaturas (
 --   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -13,6 +16,7 @@ processing webhook callbacks from providers, and audit trails.
 --   status text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'enviado', 'assinado', 'recusado', 'expirado', 'cancelado')),
 --   provedor text NOT NULL DEFAULT 'interno' CHECK (provedor IN ('interno', 'clicksign', 'docusign', 'd4sign')),
 --   link_assinatura text,
+--   external_id text,  -- migration 047: the provider's envelope id
 --   signatarios jsonb NOT NULL DEFAULT '[]',
 --   historico jsonb NOT NULL DEFAULT '[]',
 --   data_envio timestamptz,
@@ -26,9 +30,15 @@ import json
 import logging
 from typing import Optional, Literal, List
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import Field
 
+from noctusai_lib.integrations.signature import (
+    EnvelopeRecusado,
+    ProvedorIndisponivel,
+    ProvedorNaoConfigurado,
+)
 from noctusai_lib.security.webhook_signatures import (
     ResolvedSecret,
     VerifiedWebhook,
@@ -115,7 +125,12 @@ class EnviarAssinaturaRequest(StrictHttpModel):
     documento_url: Optional[str] = Field(default=None, max_length=1000)
     contrato_id: Optional[str] = None
     signatarios: List[Signatario] = Field(..., min_length=1, description="Lista de signatarios (minimo 1)")
-    provedor: Optional[Literal["interno", "clicksign", "docusign", "d4sign"]] = "interno"
+    # "interno"/"clicksign"/"docusign" are still accepted on the wire for
+    # backward compatibility, but only "d4sign" is actually supported —
+    # anything else is refused with ASSINATURA_PROVEDOR_NAO_CONFIGURADO-
+    # shaped 503 naming the provider (contract §5). Default flips to the
+    # one provider that works.
+    provedor: Optional[Literal["interno", "clicksign", "docusign", "d4sign"]] = "d4sign"
 
 
 class WebhookPayload(StrictHttpModel):
@@ -132,25 +147,74 @@ class AssinaturaUpdate(StrictHttpModel):
     data_expiracao: Optional[str] = None
 
 
+# --- Dependencies ---
+#
+# Exposed as module-level FastAPI dependencies (not built inline in each
+# handler) so tests can override them via `app.dependency_overrides[...]`
+# instead of patching `AssinaturaService` methods (`KB § PATTERNS/backend/
+# di-test-seam.md` — patching our own class would stop exercising it).
+
+def get_assinatura_service(auth = Depends(get_current_user)) -> AssinaturaService:
+    """User-scoped `AssinaturaService` for the authenticated endpoints."""
+    user, token = auth
+    db = get_user_client(token)
+    return AssinaturaService(db, user.id, org_id=get_org_id(user))
+
+
+def get_assinatura_service_webhook() -> AssinaturaService:
+    """Admin-scoped `AssinaturaService` for the unauthenticated webhook —
+    no `auth` to derive a user/org from; identity is `"webhook"`."""
+    db = get_admin_client()
+    return AssinaturaService(db, user_id="webhook")
+
+
 # --- Endpoints ---
 
 @router.post("/enviar")
-async def enviar_assinatura(body: EnviarAssinaturaRequest, auth = Depends(get_current_user)):
+async def enviar_assinatura(
+    body: EnviarAssinaturaRequest,
+    auth = Depends(get_current_user),
+    service: AssinaturaService = Depends(get_assinatura_service),
+):
     """Send a document for digital signing."""
     user, token = auth
-    db = get_user_client(token)
-
-    service = AssinaturaService(db, user.id, org_id=get_org_id(user))
 
     signatarios_data = [s.model_dump() for s in body.signatarios]
 
-    assinatura = await service.preparar_envio(
-        documento_nome=body.documento_nome,
-        documento_url=body.documento_url,
-        signatarios=signatarios_data,
-        provedor=body.provedor or "interno",
-        contrato_id=body.contrato_id,
-    )
+    try:
+        assinatura = await service.preparar_envio(
+            documento_nome=body.documento_nome,
+            documento_url=body.documento_url,
+            signatarios=signatarios_data,
+            provedor=body.provedor or "d4sign",
+            contrato_id=body.contrato_id,
+        )
+    except ProvedorNaoConfigurado as exc:
+        # Covers both "credentials missing" and "provider not supported in
+        # this version" (assinatura_service raises the same exception for
+        # an unsupported provedor, naming it in `faltando` — contract §5).
+        raise HTTPException(
+            status_code=503,
+            detail=f"Plataforma de assinatura não configurada: {', '.join(exc.faltando)}",
+        )
+    except EnvelopeRecusado:
+        raise HTTPException(
+            status_code=502,
+            detail="A plataforma de assinatura recusou o envio do documento.",
+        )
+    except ProvedorIndisponivel:
+        raise HTTPException(
+            status_code=502,
+            detail="A plataforma de assinatura está indisponível no momento.",
+        )
+    except httpx.HTTPError:
+        logger.error("Falha ao baixar documento para assinatura", exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail="Não foi possível baixar o documento para assinatura.",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     if not assinatura:
         raise HTTPException(status_code=500, detail="Erro ao enviar documento para assinatura")
@@ -202,12 +266,13 @@ async def listar_assinaturas(
 
 
 @router.get("/resumo")
-async def resumo_assinaturas(auth = Depends(get_current_user)):
+async def resumo_assinaturas(
+    auth = Depends(get_current_user),
+    service: AssinaturaService = Depends(get_assinatura_service),
+):
     """Get signature summary: counts by status."""
     user, token = auth
     db = get_user_client(token)
-
-    service = AssinaturaService(db, user.id)
 
     result = db.table("assinaturas").select("*").execute()
     assinaturas = result.data or []
@@ -239,6 +304,7 @@ async def processar_webhook(
         bypass_when_unset=True,
         log_prefix="assinaturas-webhook",
     ),
+    service: AssinaturaService = Depends(get_assinatura_service_webhook),
 ):
     """
     Callback endpoint for signing provider events.
@@ -256,9 +322,6 @@ async def processar_webhook(
 
     body = WebhookPayload.model_validate(payload_dict)
 
-    db = get_admin_client()
-    service = AssinaturaService(db, user_id="webhook")
-
     updated = await service.processar_webhook(
         assinatura_id=body.assinatura_id,
         evento=body.evento,
@@ -274,12 +337,14 @@ async def processar_webhook(
 
 
 @router.delete("/{assinatura_id}")
-async def cancelar_assinatura(assinatura_id: str, auth = Depends(get_current_user)):
+async def cancelar_assinatura(
+    assinatura_id: str,
+    auth = Depends(get_current_user),
+    service: AssinaturaService = Depends(get_assinatura_service),
+):
     """Cancel a signing request."""
     user, token = auth
-    db = get_user_client(token)
 
-    service = AssinaturaService(db, user.id)
     cancelled = await service.cancelar(assinatura_id)
 
     if not cancelled:
