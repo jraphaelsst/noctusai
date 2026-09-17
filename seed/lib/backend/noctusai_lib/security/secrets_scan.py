@@ -70,6 +70,18 @@ _KNOWN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 # such phrase into short (<28 char) words, so it never reaches the
 # entropy check at all; real secrets (base64, hex, JWT segments, AWS
 # keys) essentially never rely on a literal hyphen to encode information.
+#
+# `/` stays IN the character class (unlike `-`): base64's own alphabet
+# uses `/`, so a real secret can legitimately contain one — stripping it
+# from the tokenizer, mirroring the hyphen fix, would silently chop a
+# 40+ char secret at every `/` into fragments that can each duck under
+# the 28-char minimum (a worse false negative than the false positive
+# below). Instead the `/`-shaped false positive (a source path like
+# ``backend/app/services/agent_runner``, all-lowercase, 33 chars,
+# ~3.84 bits/char once slashes are folded into the entropy calc — right
+# past ``_ENTROPY_THRESHOLD``) is handled downstream in ``find_secret``
+# by classifying the WHOLE already-tokenized string via
+# ``_looks_like_code_path`` before the entropy check ever runs.
 _TOKEN_RE = re.compile(r"[A-Za-z0-9+/_=]{28,}")
 # bits/char. Pure hex (16 symbols) tops out at 4.0 and real hex secrets
 # land a little under that (~3.9); random base64/mixed-case tokens sit
@@ -77,6 +89,16 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9+/_=]{28,}")
 # near 0) never comes close.
 _ENTROPY_THRESHOLD = 3.5
 _ENTROPY_PATTERN_NAME = "high_entropy_token"
+
+# A `/`-segment that looks like a lowercase code/path identifier:
+# letters/digits/underscore only, starting with a letter — no uppercase,
+# no `+`, no `=`. Requiring lowercase-only is what keeps a real
+# mixed-case base64 secret (which almost always carries at least one
+# uppercase char across a 28+ char run) from ever matching this branch.
+_CODE_PATH_SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+# The last segment of a path may additionally carry a short lowercase
+# file extension (`.py`, `.md`, `.sql`, `.yml`, ...).
+_CODE_PATH_LAST_SEGMENT_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9]{1,10})?$")
 
 
 def _shannon_entropy(token: str) -> float:
@@ -88,6 +110,57 @@ def _shannon_entropy(token: str) -> float:
     return -sum(
         (count / length) * math.log2(count / length) for count in counts.values()
     )
+
+
+def _looks_like_code_path(token: str) -> bool:
+    """True when a `/`-containing token that cleared ``_TOKEN_RE`` is a
+    source/asset path, not a secret — the `/` analogue of the hyphen
+    exclusion documented above ``_TOKEN_RE``.
+
+    Deliberate, conservative shape (a detector that MISSES a real key is
+    worse than a false positive, per the brief):
+
+    1. Every segment (split on `/`) must match the lowercase-identifier
+       grammar ``_CODE_PATH_SEGMENT_RE`` — no uppercase, no `+`/`=`. A
+       real base64/hex secret containing `/` (e.g. mixed-case, digits,
+       `+`, `=` padding) fails this immediately and still falls through
+       to the entropy check below, unaffected. This is what keeps a
+       genuine ``.../ABCdef123.../...`` secret flagged.
+    2. The final segment may additionally carry a short lowercase
+       extension (``_CODE_PATH_LAST_SEGMENT_RE``) — real file paths
+       (``.../secrets_scan.py``, ``.../docs/SPEC.md``).
+    3. A MAJORITY of segments must contain no digit. Ordinary source
+       trees / doc slugs are words (``backend``, ``services``,
+       ``agent_runner``) with digits appearing rarely (a version
+       segment like ``v2``). An adversarial random blob chopped into
+       short "path-shaped" pieces to dodge detection (e.g.
+       ``k3j9x/q8w2z/...``) mixes a digit into nearly EVERY segment,
+       because its source alphabet is base36/base62-ish — so it fails
+       this check and is deliberately left to the entropy heuristic
+       below (i.e. still flaggable). This is the documented, deliberate
+       call for that class: length/shape alone can't tell a short real
+       path segment (``app``, 3 chars) from a short random one, but
+       digit-density across segments can.
+
+    A token with no `/` at all (a single unbroken lowercase run, no
+    path structure) never reaches this function — see the call site in
+    ``find_secret``, which only invokes it when ``"/" in token``. That
+    class's behaviour is UNCHANGED by this fix: it is still scored by
+    ``_shannon_entropy`` alone, exactly as before (documented, not
+    silently altered — see
+    ``TestCodePathFalsePositives::test_lowercase_only_token_with_no_slash_is_still_flagged``
+    in ``mcp/noctusai/tests/test_seed_secrets_scan.py``).
+    """
+    segments = token.split("/")
+    if len(segments) < 2:
+        return False
+    for segment in segments[:-1]:
+        if not _CODE_PATH_SEGMENT_RE.match(segment):
+            return False
+    if not _CODE_PATH_LAST_SEGMENT_RE.match(segments[-1]):
+        return False
+    digit_segments = sum(1 for seg in segments if any(c.isdigit() for c in seg))
+    return digit_segments * 2 <= len(segments)
 
 
 def find_secret(content: str) -> str | None:
@@ -106,6 +179,8 @@ def find_secret(content: str) -> str | None:
             return name
 
     for token in _TOKEN_RE.findall(content):
+        if "/" in token and _looks_like_code_path(token):
+            continue
         if _shannon_entropy(token) >= _ENTROPY_THRESHOLD:
             return _ENTROPY_PATTERN_NAME
 
