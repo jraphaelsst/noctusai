@@ -357,20 +357,33 @@ def refresh(
     }
 
 
-def lookup(agent_name: str) -> dict:
+def lookup(agent_name: str, worktree_path: str | None = None) -> dict:
     """Return the compact bundle for one agent.
+
+    `worktree_path`: read `.claude/agents/<agent_name>.md` + its owned KB
+    from the CALLER's own worktree instead of the primary tree — sibling
+    of `refresh(worktree_path=...)`. Omitting it inside an MCP tool call
+    (the server is fixed-CWD, bound at startup) silently reads the STALE
+    primary copy for the "live" side of the freshness compare below, which
+    used to also silently WRITE that wrong (primary) bundle_sha back into
+    `cache_meta` on the self-heal path — clobbering a correct
+    `refresh(agent_name=..., worktree_path=...)` a caller had just done.
+    Fixed 2026-09-17 alongside `check_agent_context_cache_freshness`'s
+    matching `repo_root` gap. KB § PATTERNS/common/agent-context-architecture.md.
 
     Lazy freshness leg: compute live bundle_sha vs cached; mismatch ⇒
     rebuild this agent before answering. Returns:
       {ok, agent_name, frontmatter, body, owned_kb: [{path, extract}],
        bundle_sha, cached_at}
     """
-    agent_md = AGENTS_DIR / f"{agent_name}.md"
+    agents_dir = _agents_dir_for(worktree_path)
+    kb_dir = _kb_dir_for(worktree_path)
+    agent_md = agents_dir / f"{agent_name}.md"
     if not agent_md.exists():
         return {"ok": False, "error": f"agent {agent_name!r} not found"}
-    live_sha, _ = _bundle_sources(agent_md)
+    live_sha, _ = _bundle_sources(agent_md, kb_dir)
     if not CACHE_PATH.exists():
-        refresh(agent_name=agent_name)
+        refresh(agent_name=agent_name, worktree_path=worktree_path)
     conn = _connect()
     _init_schema(conn)
     cur = conn.execute(
@@ -380,7 +393,7 @@ def lookup(agent_name: str) -> dict:
     row = cur.fetchone()
     if not row or row["value"] != live_sha:
         conn.close()
-        refresh(agent_name=agent_name)
+        refresh(agent_name=agent_name, worktree_path=worktree_path)
         conn = _connect()
         _init_schema(conn)
     cur = conn.execute(
@@ -422,11 +435,39 @@ def list_agents() -> list[str]:
     return out
 
 
-def get_bundle_sha(agent_name: str) -> tuple[str, str | None]:
+def get_bundle_sha(
+    agent_name: str, repo_root: Path | None = None
+) -> tuple[str, str | None]:
     """Return (live_bundle_sha, cached_bundle_sha) — supports the
-    freshness keeper. Cached value is None if cache missing/unread."""
-    agent_md = AGENTS_DIR / f"{agent_name}.md"
-    live, _ = _bundle_sources(agent_md)
+    freshness keeper.
+
+    `repo_root`: compute the LIVE side against THIS tree's
+    `.claude/agents/<agent_name>.md` + `KNOWLEDGE-BASE/` instead of the
+    module-level `AGENTS_DIR`/`KB_DIR` — which are frozen at whatever CWD
+    the (possibly long-running, fixed-CWD MCP-server) process first
+    imported this module from.
+
+    THE BUG THIS CLOSES (2026-09-17): `check_agent_context_cache_freshness`
+    always passed its OWN `repo_root` (a worktree, when invoked scoped) but
+    this function silently ignored it and fell back to the frozen primary
+    `AGENTS_DIR` — so a correctly-worktree-scoped
+    `refresh(agent_name=..., worktree_path=...)` (which DOES write
+    `cache_meta['bundle_sha:<agent>']` keyed off the worktree's edited
+    file — that write path was never broken) could NEVER satisfy this
+    check: the "live" side kept being recomputed off the PRIMARY's
+    unedited copy, so the mismatch persisted no matter how many times the
+    scoped refresh re-ran. The observed "cache_meta never updates" symptom
+    was actually "the verifier reads the wrong tree, forever" — the write
+    was fine, the read was wrong. Reproduced + regression-tested in
+    `test_agent_context_cache.py::TestScopedRefreshCrossTreeParity`.
+    KB § PATTERNS/common/agent-context-architecture.md § scoped-refresh
+    parity.
+
+    Cached value is None if cache missing/unread."""
+    agents_dir = (Path(repo_root) / ".claude" / "agents") if repo_root else AGENTS_DIR
+    kb_dir = (Path(repo_root) / "KNOWLEDGE-BASE") if repo_root else KB_DIR
+    agent_md = agents_dir / f"{agent_name}.md"
+    live, _ = _bundle_sources(agent_md, kb_dir)
     cached: str | None = None
     if CACHE_PATH.exists():
         try:

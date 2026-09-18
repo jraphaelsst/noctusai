@@ -2,10 +2,15 @@
 
 These exercise the real-estate scheduling domain — rules construction,
 the seed ``SchedulingEngine`` integration, and the
-propose→confirm→cancel→reschedule lifecycle — against a schema-
-validation-off ``MockSupabaseClient`` (the ``sched_*`` tables land in
-``001_social-wiring.sql`` via the architect's W2.3 splice, so the
-migration-derived schema cache is intentionally bypassed here).
+propose→confirm→cancel→reschedule lifecycle — against a schema-VALIDATING
+``MockSupabaseClient`` (``schema="social_wiring"``). A prior comment here
+claimed the ``sched_*`` tables' W2.3 splice into ``001_social-wiring.sql``
+meant "the migration-derived schema cache isn't aware of them" and
+disabled validation (the opt-out flag, now removed) — that turned out to
+be stale: the schema cache DOES resolve `sched_*` correctly once `schema=` is
+passed (2026-09-18 compliance-regression-baseline remediation pass;
+verified empirically — the full suite passes with validation genuinely
+active, not silently skipped on an unknown-table WARN+skip path).
 """
 from __future__ import annotations
 
@@ -61,10 +66,7 @@ def test_build_engine_default_conflicts_and_scorer():
 
 
 def _client_with(rows: list[dict]) -> MockSupabaseClient:
-    # validate_schema=False — the sched_* tables are spliced into 001 by
-    # the architect (W2.3 marker); the schema cache isn't aware of them
-    # during this scoped engineer run.
-    return MockSupabaseClient(rows, validate_schema=False)
+    return MockSupabaseClient(rows, schema="social_wiring")
 
 
 def test_lookup_property_not_found_returns_found_false():

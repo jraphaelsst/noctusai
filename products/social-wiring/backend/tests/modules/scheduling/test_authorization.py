@@ -29,7 +29,7 @@ def test_looks_like_lid_shapes():
 
 def _svc(rows: list[dict]) -> AuthorizationService:
     return AuthorizationService(
-        MockSupabaseClient(rows, validate_schema=False), org_id=_ORG
+        MockSupabaseClient(rows, schema="social_wiring"), org_id=_ORG
     )
 
 

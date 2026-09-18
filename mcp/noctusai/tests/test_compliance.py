@@ -247,53 +247,47 @@ class TestMockSchemaValidation:
             issues = check_mock_schema_validation(PRODUCTS_DIR / name)
             assert issues == [], f"{name} opt-out is flagged: {issues}"
 
-    def _mk_product_with_tree(self, files: dict[str, str]) -> Path:
-        """Build a fake product tree from a {relpath-under-backend/tests: content} map."""
-        tmp = Path(tempfile.mkdtemp(prefix="mock_schema_test_"))
-        for rel, content in files.items():
-            path = tmp / "backend" / "tests" / rel
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
-        return tmp
-
-    def test_non_conftest_file_is_scanned_2026_09_17(self):
-        """A DIRECT `MockSupabaseClient(validate_schema=False)` inside an
-        individual test module (not the shared conftest fixture) must be
-        caught — this is the widened-coverage gap the schema-drift-gate
-        slice closed (adconnect/social-wiring/agents/personal-finance were
-        all doing this invisibly to the pre-2026-09-17 conftest-only scan)."""
-        product = self._mk_product_with_tree({
-            "services/test_foo.py": "db = MockSupabaseClient(validate_schema=False)\n",
-        })
-        issues = check_mock_schema_validation(product)
+    def test_widened_scan_covers_the_whole_tests_tree_not_just_conftest(self):
+        """2026-09-18 widening: a per-test-file opt-out with no local
+        rationale, elsewhere in `backend/tests/`, must be caught — the exact
+        gap the narrower (conftest.py-only) scan had."""
+        tmp = Path(tempfile.mkdtemp(prefix="mock_schema_wide_test_"))
+        (tmp / "backend" / "tests" / "services").mkdir(parents=True)
+        (tmp / "backend" / "tests" / "conftest.py").write_text("# clean\n")
+        (tmp / "backend" / "tests" / "services" / "test_x.py").write_text(
+            "db = MockSupabaseClient(validate_schema=False)\n"
+        )
+        issues = check_mock_schema_validation(tmp)
         assert len(issues) == 1
-        assert issues[0]["file"] == "backend/tests/services/test_foo.py"
+        assert "services/test_x.py" in issues[0]["file"]
 
-    def test_conftest_rationale_covers_every_file_in_the_product(self):
-        """ONE argued rationale in the shared conftest.py — the erp/therapy/
-        adconnect precedent — grants amnesty to every other file that
-        inherits the same opt-out, so the rule doesn't force the same
-        paragraph pasted into N files."""
-        product = self._mk_product_with_tree({
-            "conftest.py": "# schema-drift: tracked by follow-up reconciliation\nMOCK = MockSupabaseClient(validate_schema=False)\n",
-            "services/test_bar.py": "db = MockSupabaseClient(validate_schema=False)\n",
-        })
-        assert check_mock_schema_validation(product) == []
+    def test_widened_scan_accepts_a_local_rationale_per_file(self):
+        """The rationale must be co-located in the SAME file — but does not
+        need to duplicate the full drift list; a pointer back to the
+        product's conftest.py (where the full list lives) is sufficient,
+        mirroring the real adconnect/therapy-platform remediation shape."""
+        tmp = Path(tempfile.mkdtemp(prefix="mock_schema_wide_ok_test_"))
+        (tmp / "backend" / "tests" / "services").mkdir(parents=True)
+        (tmp / "backend" / "tests" / "conftest.py").write_text("# clean\n")
+        (tmp / "backend" / "tests" / "services" / "test_x.py").write_text(
+            "# schema-drift: inherits conftest.py's rationale\n"
+            "db = MockSupabaseClient(validate_schema=False)\n"
+        )
+        assert check_mock_schema_validation(tmp) == []
 
-    def test_no_rationale_anywhere_flags_every_offending_file(self):
-        """A product with NEITHER a per-file NOR a conftest-level rationale
-        is flagged file-by-file — no free pass just for having *a*
-        conftest.py."""
-        product = self._mk_product_with_tree({
-            "conftest.py": "# no rationale here\n",
-            "services/test_a.py": "db = MockSupabaseClient(validate_schema=False)\n",
-            "services/test_b.py": "db = MockSupabaseClient(validate_schema=False)\n",
-        })
-        issues = check_mock_schema_validation(product)
-        assert {i["file"] for i in issues} == {
-            "backend/tests/services/test_a.py",
-            "backend/tests/services/test_b.py",
-        }
+    def test_real_known_opt_outs_all_carry_a_local_reason(self):
+        """The FULL current real-tree inventory (2026-09-18
+        compliance-regression-baseline pass): every remaining genuine
+        opt-out (adconnect / erp-imobiliario / therapy-platform) must have
+        been given a local, co-located reason. Products remediated in the
+        same pass (agents / social-wiring / personal-finance) are expected
+        to be issue-free too — they carry no more opt-outs at all."""
+        for name in (
+            "adconnect", "erp-imobiliario", "therapy-platform",
+            "agents", "social-wiring", "personal-finance",
+        ):
+            issues = check_mock_schema_validation(PRODUCTS_DIR / name)
+            assert issues == [], f"{name} has an unexplained opt-out: {issues}"
 
 
 # ---------------------------------------------------------------------------
@@ -4224,3 +4218,133 @@ class TestLedgerDrainAfterSettle:
         from tools.noctus.dev.compliance import check_ledger_drain_after_settle
         kinds = [i["kind"] for i in check_ledger_drain_after_settle(tmp_path)]
         assert kinds == ["ledger-drain-source-missing"]
+
+
+class TestPredeployLegVerifyOrBlock:
+    """Item 2 (2026-09-17, gate-integrity closure): every `DEFAULT_CHECKS`
+    leg in `predeploy_check.py` must VERIFY or BLOCK — never silently
+    `ok=True` on a state it never checked. Verified both ways: a keeper
+    only proven to pass on the fixed tree is a keeper nobody has shown can
+    fail (mirrors `TestLedgerDrainAfterSettle` above)."""
+
+    def _write(self, tmp_path, default_checks: list[str], run_check_body: str):
+        src = tmp_path / "mcp" / "noctusai" / "tools" / "noctus" / "dev"
+        src.mkdir(parents=True, exist_ok=True)
+        checks_literal = ", ".join(repr(c) for c in default_checks)
+        (src / "predeploy_check.py").write_text(
+            f"DEFAULT_CHECKS: list[str] = [{checks_literal}]\n\n"
+            f"def _default_run_check(check, product, root):\n{run_check_body}\n"
+            "    return False, f\"unknown check '{check}'\"\n",
+            encoding="utf-8",
+        )
+        return tmp_path
+
+    def test_real_predeploy_check_passes_cleanly(self):
+        """Read-only smoke against the live tree: every leg shipped today
+        must pass — this keeper must not false-positive on real, correct
+        code (the same discipline `test_audit_deploy_local_real_repo_passes`
+        applies to the sibling D3 gate)."""
+        from settings import REPO_ROOT  # noqa: E402
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        issues = check_predeploy_leg_verify_or_block(repo_root=Path(REPO_ROOT))
+        assert issues == [], issues
+
+    def test_unconditional_true_with_no_skip_marker_is_flagged(self, tmp_path):
+        """THE dangerous shape: an exception-swallowed / unconditional
+        `return True` with no failure branch and no admission it skipped."""
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        root = self._write(tmp_path, ["risky_leg"], (
+            "    if check == 'risky_leg':\n"
+            "        try:\n"
+            "            result = some_external_probe()\n"
+            "        except Exception:\n"
+            "            return True, 'could not verify, assuming fine'\n"
+            "        return result, 'checked'\n"
+        ))
+        issues = check_predeploy_leg_verify_or_block(root)
+        symbols = [i["symbol"] for i in issues]
+        assert "predeploy-leg-unverified-ok" in symbols
+        assert "risky_leg" in issues[0]["issue"]
+
+    def test_explicit_skip_marker_is_allowed(self, tmp_path):
+        """The legitimate exception: a leg with nothing to verify, as long
+        as it SAYS so (mirrors `frontend_build`'s dependencies-not-installed
+        short-circuit)."""
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        root = self._write(tmp_path, ["opt_in_leg"], (
+            "    if check == 'opt_in_leg':\n"
+            "        snapshot = resolve_snapshot(root)\n"
+            "        if snapshot is None:\n"
+            "            return True, 'opt_in_leg SKIPPED — no snapshot resolvable'\n"
+            "        return snapshot.ok, 'checked'\n"
+        ))
+        assert check_predeploy_leg_verify_or_block(root) == []
+
+    def test_lowercase_skipped_marker_is_also_allowed(self, tmp_path):
+        """The two spellings that already coexist in the real file
+        ('SKIPPED —' vs '(skipped)') must both satisfy the same rule —
+        the keeper matches case-insensitively on purpose."""
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        root = self._write(tmp_path, ["dir_leg"], (
+            "    if check == 'dir_leg':\n"
+            "        d = root / 'x'\n"
+            "        if not d.exists():\n"
+            "            return True, f'no dir for {product} (skipped)'\n"
+            "        return True, 'ok'\n"
+        ))
+        # The second `return True, 'ok'` has NO skip marker and NO preceding
+        # `return False` — it IS a genuine finding on this synthetic leg
+        # (unlike frontend_build's real happy path, which returns a COMPUTED
+        # r.returncode == 0, never a bare literal True).
+        issues = check_predeploy_leg_verify_or_block(root)
+        assert any(i["symbol"] == "predeploy-leg-unverified-ok" for i in issues)
+
+    def test_verified_ok_after_a_real_failure_branch_is_allowed(self, tmp_path):
+        """The genuine 'ran a real check, it passed' shape: a `return False`
+        exists earlier in the SAME block, so the trailing literal `True` is
+        the audited happy path, not a bare pass-through."""
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        root = self._write(tmp_path, ["audited_leg"], (
+            "    if check == 'audited_leg':\n"
+            "        audit = run_audit(root, product)\n"
+            "        if audit['violations']:\n"
+            "            return False, 'violated: ' + str(audit['violations'])\n"
+            "        return True, 'audited_leg ok'\n"
+        ))
+        assert check_predeploy_leg_verify_or_block(root) == []
+
+    def test_computed_boolean_return_is_exempt(self, tmp_path):
+        """A COMPUTED result (`r.returncode == 0`) can genuinely evaluate
+        False — it is not a hardcoded 'trust me' `True` and needs neither a
+        skip marker nor a preceding failure branch."""
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        root = self._write(tmp_path, ["shell_leg"], (
+            "    if check == 'shell_leg':\n"
+            "        r = run_subprocess(root, product)\n"
+            "        return r.returncode == 0, r.output\n"
+        ))
+        assert check_predeploy_leg_verify_or_block(root) == []
+
+    def test_default_checks_entry_with_no_runner_block_is_flagged(self, tmp_path):
+        """`DEFAULT_CHECKS` lists a leg with no matching `if` in
+        `_default_run_check` at all — a derived-from-code gap, not a
+        hand-maintained list to forget updating."""
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        root = self._write(tmp_path, ["ghost_leg"], "    pass\n")
+        issues = check_predeploy_leg_verify_or_block(root)
+        assert any(i["symbol"] == "predeploy-leg-missing-runner" for i in issues)
+
+    def test_missing_source_file_returns_empty_not_error(self, tmp_path):
+        """No `predeploy_check.py` in this tree (a non-noc test fixture) is
+        silent-skip, not a crash — mirrors every other file-scoped keeper's
+        'absent tree' convention."""
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        assert check_predeploy_leg_verify_or_block(tmp_path) == []
+
+    def test_unparseable_source_is_a_loud_finding(self, tmp_path):
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        src = tmp_path / "mcp" / "noctusai" / "tools" / "noctus" / "dev"
+        src.mkdir(parents=True, exist_ok=True)
+        (src / "predeploy_check.py").write_text("def broken(:\n", encoding="utf-8")
+        issues = check_predeploy_leg_verify_or_block(tmp_path)
+        assert issues and issues[0]["symbol"] == "predeploy-leg-parse-error"

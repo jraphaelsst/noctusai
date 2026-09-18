@@ -10,9 +10,25 @@ Same shape as `keeper-pattern-cache` and `agent-context-cache`:
 
 | Leg | Mechanism |
 |---|---|
-| Eager pre-commit refresh | `scripts/hooks/pre-commit`: if `project-history/auto-improvement.ndjson` is staged → `cli.py --refresh-auto-improvement-cache` runs before the commit lands. |
+| Eager pre-commit refresh | `scripts/hooks/pre-commit`: if `project-history/auto-improvement.ndjson` is staged → `cli.py --refresh-auto-improvement-cache --worktree-path "$REPO_ROOT"` runs before the commit lands. |
 | Lazy query-time refresh | `auto_improvement.query()` compares `cache_meta.source_sha` vs live `sha256(ndjson)`; mismatch → rebuilds + answers — cache self-heals on use. |
 | Loud freshness gate | `check_auto_improvement_cache_freshness` (severity high) — fails `validate` when stale. |
+
+🔴 **Cross-tree source-parity (2026-09-17/18).** `refresh()`'s SOURCE ndjson is
+`settings.LEDGER_ROOT`-pinned (deliberate — ledger durability, a worktree is
+ephemeral) and is NOT touched by the CLI's generic `--worktree-path` override
+(that only rebinds `REPO_ROOT`/`PRODUCTS_DIR`). `refresh(worktree_path=...)`
+already has the escape hatch (`_ledger_path_for`), but the CLI's
+`--refresh-auto-improvement-cache` handler used to drop the parsed
+`--worktree-path` on the floor instead of threading it through — so the
+freshness check (correctly worktree-scoped) and the refresh (silently
+primary-scoped) compared two DIFFERENT trees, and the gate's own suggested
+remedy could never satisfy it. Fixed by threading `args.worktree_path` into
+`ai.refresh(...)` in `cli.py`. Always pass `--worktree-path <your worktree>`
+(CLI) / `worktree_path=` (MCP `noctus.dev.auto_improvement_refresh`) when
+refreshing from inside a worktree — full analysis + the general rule for
+future ledger-backed caches: `cache-auto-freshness.md` § Cross-tree
+refresh/check source-parity.
 
 ## Storage layout
 

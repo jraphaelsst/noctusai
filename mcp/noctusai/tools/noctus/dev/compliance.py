@@ -1155,45 +1155,37 @@ def check_product_service_worker(product_path: Path) -> list[dict]:
 
 
 def check_mock_schema_validation(product_path: Path) -> list[dict]:
-    """Verify NO test file (conftest.py OR any individual test module) opts
-    OUT of MockSupabaseClient schema validation without an explicit
+    """Verify NO test file under `backend/tests/` opts OUT of
+    MockSupabaseClient schema validation without an explicit, local
     rationale comment.
 
     Default as of `mock-supabase-schema-validation` Phase 4 (2026-04-24) is
-    `validate_schema=True`. A file that passes `validate_schema=False` must
-    include a nearby comment explaining WHY (pointing at the follow-up
+    `validate_schema=True`. A test file that passes `validate_schema=False`
+    must include a comment explaining WHY (pointing at the follow-up
     reconciliation project that will flip it back).
 
-    🔴 2026-09-17 (schema-drift-gate slice): widened from conftest.py-only
-    to every `.py` file under `backend/tests/` — a `MockSupabaseClient(
-    validate_schema=False, ...)` constructed DIRECTLY inside a test module
-    (not just the shared conftest fixture) was invisible to this detector
-    for exactly as long as products/adconnect, /social-wiring, /agents,
-    /personal-finance had been doing it. `MockSupabaseClient` was mocked
-    away by the very tests meant to exercise the real schema — closing the
-    gap per file, not just per shared-fixture, is the whole point: turning
-    off schema validation must be a visible, argued decision EVERYWHERE it
-    happens, not just where a product happened to centralize it.
-
-    Detection rules (per file):
-      - `validate_schema=False` literally present AND neither the file
-        itself NOR the product's `backend/tests/conftest.py` contains a
-        comment mentioning `schema-drift` / `reconciliation` / `follow-up`
-        / `TODO` → warning with severity=high. A conftest-level rationale
-        covers every file in the product (the erp/therapy/adconnect
-        precedent: ONE argued paragraph in conftest.py, not the same
-        paragraph pasted into every test file that inherits the mock) —
-        but a product with NO rationale anywhere is flagged file-by-file,
-        same as before.
-      - `MockSupabaseClient()` with no flag, or `validate_schema=True` →
-        fine (the default is now True).
+    Detection rules:
+      - If a file passes `validate_schema=False` literally AND the SAME
+        file contains no comment mentioning `schema-drift` / `reconciliation`
+        / `follow-up` → warning with severity=high.
+      - `MockSupabaseClient()` with no flag → fine (the default is now True).
       - A file that doesn't instantiate `MockSupabaseClient` at all → skip.
 
     This closes the "silent opt-out" loophole: a product CAN drop validation
     if the drift is too big to fix in-session, but the next agent inherits
-    the rationale and the pointer to the remediation project — either in the
-    file itself or in the one conftest.py every file under `backend/tests/`
-    can reasonably be expected to share.
+    the rationale and the pointer to the remediation project.
+
+    Widened 2026-09-18 (compliance-regression-baseline codification pass):
+    the original scan covered ONLY `backend/tests/conftest.py`. Per-test-file
+    opt-outs elsewhere in the tree (a router/service test copy-pasting
+    `MockSupabaseClient(validate_schema=False, ...)` from a conftest fixture
+    without carrying the rationale forward) were invisible to it — the exact
+    "baselined debt with no recorded reason" gap the codified rule below
+    closes: **a baselined opt-out MUST carry a reason in the same file it
+    lives in; an opt-out with no local reason is itself a finding, not
+    accepted debt.** See `KB § PATTERNS/compliance/testing.md` § Known
+    opt-outs + `KB § PATTERNS/compliance/compliance-regression-baseline.md`
+    § Baselined debt must carry a reason.
     """
     issues: list[dict] = []
     name = product_path.name
@@ -1209,41 +1201,39 @@ def check_mock_schema_validation(product_path: Path) -> list[dict]:
         "follow up",
         "TODO",
     )
-
-    def _has_rationale(text: str) -> bool:
-        lowered = text.lower()
-        return any(kw.lower() in lowered for kw in rationale_keywords)
-
-    conftest = tests_dir / "conftest.py"
-    conftest_has_rationale = conftest.is_file() and _has_rationale(conftest.read_text())
-
     for test_file in sorted(tests_dir.rglob("*.py")):
-        content = test_file.read_text()
-
-        # Opt-out detector — string-match `validate_schema=False` anywhere in file.
+        try:
+            content = test_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        # Opt-out detector — string-match `validate_schema=False` anywhere.
         if "validate_schema=False" not in content:
             continue
-
-        # Rationale detector — this file, OR the product's shared conftest.
-        if _has_rationale(content) or conftest_has_rationale:
+        # Rationale detector — the SAME file must carry it (co-located,
+        # not "somewhere else in the product" — a reader of THIS file must
+        # never have to go hunting for why).
+        has_rationale = any(kw.lower() in content.lower() for kw in rationale_keywords)
+        if has_rationale:
             continue
 
+        try:
+            rel = test_file.relative_to(product_path)
+        except ValueError:
+            rel = test_file
         issues.append({
             "product": name,
-            "file": str(test_file.relative_to(product_path)),
+            "file": str(rel),
             "issue": (
                 "MockSupabaseClient is constructed with `validate_schema=False` but "
                 "this file has no rationale comment. Silent opt-out from schema "
                 "validation re-opens the silent-fail class closed by the "
-                "`mock-supabase-schema-validation` project (and the class behind "
-                "the erp.assinaturas.external_id / erp.tool_call_audits / "
-                "erp.llm_preferences bugs, 2026-09-17 — none surfaced in tests "
-                "because the mock never checked the real schema). Either flip back "
-                "to `validate_schema=True` (default) or add a comment block naming "
-                "the drift points + the follow-up reconciliation project that will "
+                "`mock-supabase-schema-validation` project. Either flip back to "
+                "`validate_schema=True` (default) or add a comment naming the "
+                "drift points + the follow-up reconciliation project that will "
                 "resolve them (see `products/therapy-platform/projects/"
                 "therapy-audio-lifecycle-schema-reconciliation/` for the reference "
-                "shape)."
+                "shape). A baselined opt-out with no recorded reason is not accepted "
+                "debt — it is the finding."
             ),
             "severity": "high",
         })
@@ -12969,9 +12959,231 @@ def check_all_products() -> tuple[int, list]:
     # (declared == baseline); fires only on the set-difference.
     # KB § PATTERNS/devops/prod-exposure-consent.md.
     all_issues.extend(check_prod_exposure_consent())
+    # predeploy-leg-verify-or-block (2026-09-17, gate-integrity closure) — every
+    # DEFAULT_CHECKS leg in predeploy_check.py must either verify or block; a
+    # leg that can return ok=True on an unverifiable state defeats the whole
+    # gate. KB § PATTERNS/devops/predeploy-leg-verify-or-block.md.
+    all_issues.extend(check_predeploy_leg_verify_or_block())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
     return platform_score, all_issues
+
+
+# ── predeploy-leg-verify-or-block (2026-09-17) ───────────────────────────────
+def _extract_check_name(test: ast.expr) -> str | None:
+    """Match the `check == "<name>"` shape used by every leg's `if` in
+    `_default_run_check`. Returns None for anything else (defensive — a
+    non-matching `if` is simply not a leg dispatch, not an error)."""
+    if not isinstance(test, ast.Compare):
+        return None
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+        return None
+    left, right = test.left, test.comparators[0]
+    for a, b in ((left, right), (right, left)):
+        if isinstance(a, ast.Name) and a.id == "check" and isinstance(b, ast.Constant) and isinstance(b.value, str):
+            return b.value
+    return None
+
+
+def _flatten_statements(body: list[ast.stmt]) -> list[ast.stmt]:
+    """Pre-order flatten of a statement list, recursing into `If`/`Try`
+    bodies (the only nesting shapes `_default_run_check`'s legs actually
+    use) so a linear line-order scan sees every `Return` in source order.
+    Not a general control-flow analyzer — sufficient for this file's
+    straight-line-with-early-return leg shape."""
+    out: list[ast.stmt] = []
+    for stmt in body:
+        out.append(stmt)
+        if isinstance(stmt, ast.If):
+            out.extend(_flatten_statements(stmt.body))
+            out.extend(_flatten_statements(stmt.orelse))
+        elif isinstance(stmt, ast.Try):
+            out.extend(_flatten_statements(stmt.body))
+            for handler in stmt.handlers:
+                out.extend(_flatten_statements(handler.body))
+            out.extend(_flatten_statements(stmt.orelse))
+            out.extend(_flatten_statements(stmt.finalbody))
+    return out
+
+
+def _return_bool_literal(node: ast.Return) -> bool | None:
+    """True/False iff `node` is `return True[, msg]` / `return False[, msg]`
+    (bare or as the first element of a 2-tuple); None for anything else
+    (a COMPUTED result, e.g. `return r.returncode == 0, ...` — exempt by
+    construction, since a computed boolean can genuinely evaluate False)."""
+    val = node.value
+    if isinstance(val, ast.Tuple) and val.elts:
+        val = val.elts[0]
+    if isinstance(val, ast.Constant) and isinstance(val.value, bool):
+        return val.value
+    return None
+
+
+def _return_message_text(node: ast.Return) -> str:
+    """Best-effort static string extraction from `return True, <msg>` for the
+    'skip' marker check. Handles a plain string constant and an f-string's
+    LITERAL segments (ignoring interpolated `{...}` expressions — a skip
+    marker is always in the literal part of every current leg's message)."""
+    val = node.value
+    if not isinstance(val, ast.Tuple) or len(val.elts) < 2:
+        return ""
+    msg = val.elts[1]
+    parts: list[str] = []
+
+    def _walk(n: ast.expr) -> None:
+        if isinstance(n, ast.Constant) and isinstance(n.value, str):
+            parts.append(n.value)
+        elif isinstance(n, ast.JoinedStr):
+            for v in n.values:
+                _walk(v)
+        elif isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add):
+            _walk(n.left)
+            _walk(n.right)
+
+    _walk(msg)
+    return "".join(parts)
+
+
+def check_predeploy_leg_verify_or_block(repo_root: Path | None = None) -> list[dict]:
+    """Stage-4 keeper (2026-09-17, gate-integrity closure): every leg in
+    `predeploy_check.py`'s `DEFAULT_CHECKS` must either VERIFY (its `ok`
+    reflects a real check that could fail) or BLOCK (fail-closed on an
+    unverifiable state) — never silently report `ok=True` because it
+    couldn't tell. `schema_exposure` already does this correctly (a
+    `not_configured`/`unavailable`/`error` result there returns `ok=False`,
+    never a silent pass) but nothing structurally stopped a FUTURE leg from
+    shipping the opposite: an early `return True` on a state it never
+    actually checked.
+
+    The legitimate exception — a leg that has NOTHING to verify (no
+    frontend dir, no prod-env snapshot fed, `node_modules` not installed
+    locally) — is allowed, but ONLY when the skip is EXPLICIT: its message
+    must contain "skip" (case-insensitive; covers both this file's
+    "SKIPPED —" and "(skipped)" spellings). `frontend_build`'s
+    dependencies-not-installed short-circuit (shipped 2026-09-17) is
+    exactly this legitimate shape and passes cleanly.
+
+    Predicate, derived from the CODE (never a hand-list — `DEFAULT_CHECKS`
+    + `_default_run_check` are AST-parsed): for every `if check == "<leg>":`
+    block matching a `DEFAULT_CHECKS` entry, every LITERAL `return True[,
+    msg]` (a hardcoded boolean — a COMPUTED result like `return
+    r.returncode == 0, ...` is exempt by construction, since it can
+    genuinely evaluate False) must be either (a) skip-marked, or (b)
+    textually preceded, within the same block, by at least one `return
+    False` — evidence the leg actually branches on a real failure
+    condition before reaching this True. This is a heuristic, not a full
+    control-flow verifier (KB § PATTERNS/devops/predeploy-leg-verify-or-block.md
+    documents the limitation) — it is precise on every leg shipped today
+    and catches the concrete dangerous shape (an unconditional/exception-
+    swallowed `return True` with no adjacent failure branch and no
+    admission it skipped).
+
+    Also flags: a `DEFAULT_CHECKS` entry with no matching `if` block at all
+    (the runner would silently fall through to the `unknown check` catch-all
+    — itself a `return False`, so NOT a false-green, but still a drift the
+    keeper should name).
+
+    Severity high (a predeploy gate is the last check before prod).
+    """
+    root = repo_root or REPO_ROOT
+    path = root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "predeploy_check.py"
+    file_label = "mcp/noctusai/tools/noctus/dev/predeploy_check.py"
+    if not path.is_file():
+        return []
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError as exc:
+        return [{
+            "file": file_label,
+            "issue": f"predeploy_check.py unparseable — cannot verify leg posture: {exc}",
+            "severity": "high",
+            "symbol": "predeploy-leg-parse-error",
+        }]
+
+    default_checks: list[str] = []
+    run_check_fn: ast.FunctionDef | None = None
+    for node in ast.walk(tree):
+        # `DEFAULT_CHECKS: list[str] = [...]` is an AnnAssign (annotated), not
+        # a plain Assign — both shapes are derived so a future de-annotation
+        # doesn't silently break this keeper's own derivation.
+        is_default_checks_target = (
+            (isinstance(node, ast.Assign)
+             and any(isinstance(t, ast.Name) and t.id == "DEFAULT_CHECKS" for t in node.targets))
+            or (isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name) and node.target.id == "DEFAULT_CHECKS")
+        )
+        if is_default_checks_target and isinstance(node.value, ast.List):
+            for elt in node.value.elts:
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                    default_checks.append(elt.value)
+        if isinstance(node, ast.FunctionDef) and node.name == "_default_run_check":
+            run_check_fn = node
+
+    if not default_checks or run_check_fn is None:
+        return [{
+            "file": file_label,
+            "issue": (
+                "could not derive DEFAULT_CHECKS / _default_run_check from "
+                "predeploy_check.py — keeper cannot verify leg posture (names "
+                "likely renamed; update this keeper alongside the rename)"
+            ),
+            "severity": "high",
+            "symbol": "predeploy-leg-derivation-failed",
+        }]
+
+    issues: list[dict] = []
+    covered: set[str] = set()
+    for stmt in run_check_fn.body:
+        if not isinstance(stmt, ast.If):
+            continue
+        name = _extract_check_name(stmt.test)
+        if name is None or name not in default_checks:
+            continue
+        covered.add(name)
+        saw_return_false = False
+        for sub in _flatten_statements(stmt.body):
+            if not isinstance(sub, ast.Return):
+                continue
+            lit = _return_bool_literal(sub)
+            if lit is False:
+                saw_return_false = True
+                continue
+            if lit is True:
+                if saw_return_false:
+                    continue  # a real failure branch was checked first
+                msg = _return_message_text(sub)
+                if "skip" in msg.lower():
+                    continue  # explicit, surfaced skip — allowed
+                issues.append({
+                    "file": file_label,
+                    "issue": (
+                        f"predeploy leg '{name}' (line {sub.lineno}) returns "
+                        "ok=True with no preceding failure branch and no "
+                        "explicit 'skip' marker in its message — this can "
+                        "silently report 'ready' on a state it never verified. "
+                        "Either check a real condition before this return (add "
+                        "a `return False` branch it could take), or make the "
+                        "skip explicit (message must contain 'skip')."
+                    ),
+                    "severity": "high",
+                    "symbol": "predeploy-leg-unverified-ok",
+                })
+            # a computed-boolean return (lit is None) is exempt by construction
+
+    for name in default_checks:
+        if name not in covered:
+            issues.append({
+                "file": file_label,
+                "issue": (
+                    f"DEFAULT_CHECKS lists '{name}' but `_default_run_check` has "
+                    f"no `if check == {name!r}:` block for it — it would fall "
+                    "through to the `unknown check` catch-all (a `return False`, "
+                    "so not a false-green, but the leg is effectively unimplemented)."
+                ),
+                "severity": "high",
+                "symbol": "predeploy-leg-missing-runner",
+            })
+    return issues
 
 
 # ── CLAUDE.md router-discipline (claude-md-router-discipline, Stage-4 2026-05-25) ──
@@ -13971,15 +14183,39 @@ def check_agent_context_cache_freshness(repo_root: Path | None = None) -> list[d
             "symbol": "agent-context-cache-module-error",
         })
         return issues
+    # `repo_root` MUST thread into `get_bundle_sha` — it computes the LIVE
+    # side of the compare, not just the cache_meta READ side. Omitting this
+    # was the 2026-09-17 bug: `get_bundle_sha` silently recomputed "live"
+    # off the module's frozen primary `AGENTS_DIR` regardless of `root`, so
+    # a correctly worktree-scoped `refresh(agent_name=..., worktree_path=...)`
+    # could never satisfy this check — the write was fine, the read wasn't
+    # worktree-aware. KB § PATTERNS/common/agent-context-architecture.md
+    # § scoped-refresh parity.
     for agent_md in sorted(agents_dir.glob("*.md")):
         stem = agent_md.stem
-        live, cached_sha = get_bundle_sha(stem)
+        live, cached_sha = get_bundle_sha(stem, repo_root=root)
+        # The remedy text below MUST match what actually fixes this: a bare
+        # `--refresh-agent-context-cache --agent <stem>` (CLI, no worktree
+        # awareness) or `noctus.dev.agent_context_refresh(agent_name=...)`
+        # (MCP, defaults to the server's fixed-CWD primary) BOTH silently
+        # no-op the fix when `root` is a worktree other than that CWD — the
+        # exact dead-end this keeper's own error message used to walk
+        # people into. Always name the worktree-aware form.
+        _remedy = (
+            f"`--refresh-agent-context-cache --agent {stem} --worktree-path {root}` "
+            f"(CLI) or `noctus.dev.agent_context_refresh(agent_name={stem!r}, "
+            f"worktree_path={str(root)!r})` (MCP) — a bare "
+            f"`--refresh-agent-context-cache --agent {stem}` / "
+            f"`agent_context_refresh(agent_name={stem!r})` without the "
+            f"worktree silently targets the WRONG tree when `root` isn't the "
+            f"caller's own fixed CWD and will NOT fix this"
+        )
         if cached_sha is None:
             issues.append({
                 "product": "<harness>", "file": f".claude/agents/{stem}.md",
                 "issue": (
                     f"agent-context cache MISSING entry for `{stem}` — run "
-                    f"`--refresh-agent-context-cache --agent {stem}`"
+                    f"{_remedy}"
                 ),
                 "severity": "high",
                 "symbol": "agent-context-cache-missing-agent",
@@ -13991,7 +14227,7 @@ def check_agent_context_cache_freshness(repo_root: Path | None = None) -> list[d
                 "issue": (
                     f"agent-context cache STALE for `{stem}` — "
                     f"cached.bundle_sha={cached_sha[:12]} ≠ live={live[:12]}; "
-                    f"run `--refresh-agent-context-cache --agent {stem}`"
+                    f"run {_remedy}"
                 ),
                 "severity": "high",
                 "symbol": "agent-context-cache-stale",

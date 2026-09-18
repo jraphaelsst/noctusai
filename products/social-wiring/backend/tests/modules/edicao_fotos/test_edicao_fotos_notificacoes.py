@@ -50,7 +50,7 @@ def _build(
     preferences: InMemoryNotificationPreferencesRepository,
     *, email_sender=None, whatsapp_client=None,
 ) -> tuple[MockSupabaseClient, MultiChannelBatchReadyNotifier, FakeWahaClient]:
-    core = MockSupabaseClient(validate_schema=False)
+    core = MockSupabaseClient(schema="social_wiring")
     core.set_table_data(
         "noctus_users",
         [

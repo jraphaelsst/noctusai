@@ -206,3 +206,102 @@ def test_scan_wiring_unknown_product_typed_error():
         assert payload["ok"] is False
         assert "does not exist" in payload["error"]
         assert proc.returncode == 2, proc.returncode
+
+
+# ---------------------------------------------------------------------------
+# `--refresh-auto-improvement-cache --worktree-path <wt>` (2026-09-18): a
+# SECOND instance of item 1's defect class. `auto_improvement.py`'s
+# `LEDGER_PATH` is pinned to `settings.LEDGER_ROOT` (deliberately unwraps
+# the worktree boundary back to the primary — ledger durability), which is
+# NOT rebound by the CLI's generic `--worktree-path` -> `settings.REPO_ROOT`
+# override (unlike `agent_context_cache`'s `AGENTS_DIR`). The CLI's own
+# `--refresh-auto-improvement-cache` handler also dropped the parsed
+# `args.worktree_path` on the floor instead of threading it into
+# `ai.refresh(worktree_path=...)` — so the refresh ALWAYS cached the
+# PRIMARY's ndjson sha regardless of `--worktree-path`, while
+# `check_auto_improvement_cache_freshness(repo_root=<worktree>)` (correctly
+# worktree-scoped) compared against the WORKTREE's own ndjson — a
+# structurally unsatisfiable "STALE" verdict no matter how many times the
+# suggested remedy re-ran. KB § PATTERNS/common/scoped-auto-improvement.md
+# § cross-tree refresh/check parity.
+# ---------------------------------------------------------------------------
+
+def _make_auto_improvement_worktree(tmp: Path, ndjson_lines: list[str]) -> Path:
+    """A fake worktree carrying its OWN `project-history/auto-improvement.ndjson`
+    — deliberately DIFFERENT content than whatever the real primary checkout's
+    copy holds, so a refresh that silently reads the primary instead of this
+    worktree is caught by a content mismatch, not just a path check.
+
+    `.git` is a real (if uninitialized) DIRECTORY here, not a worktree-stub
+    `gitdir:` FILE — `cache_backend._git_common_dir` falls back to
+    `<root>/.git` for a non-repo, and that fallback must be able to `mkdir`
+    a `noctusai/cache/` subdirectory under it.
+    """
+    wt = tmp / "wt"
+    (wt / ".git").mkdir(parents=True)
+    (wt / ".noctusai-workspace").write_text(
+        "workspace_kind=primary\nworkspace_name=test-worktree\n",
+    )
+    ph = wt / "project-history"
+    ph.mkdir(parents=True)
+    (ph / "auto-improvement.ndjson").write_text(
+        "".join(line + "\n" for line in ndjson_lines), encoding="utf-8",
+    )
+    return wt
+
+
+_ONE_LINE = '{"ts": "2026-09-18T00:00:00+00:00", "agent": "t", "scope": "scoped", "kind": "improvement", "target": "*", "description": "d1", "status": "s1-emergent", "source_ref": null}'
+_TWO_LINES = [_ONE_LINE, _ONE_LINE.replace("d1", "d2")]
+
+
+def test_refresh_auto_improvement_cache_reads_the_worktree_not_the_primary():
+    """The core regression: refresh with `--worktree-path <wt>` must hash +
+    cache THAT worktree's ndjson — not silently fall back to whatever
+    `LEDGER_ROOT` resolves to (the primary checkout, real content unrelated
+    to this test's fixture)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        wt = _make_auto_improvement_worktree(Path(tmpdir), [_ONE_LINE])
+        proc = _run_cli(
+            "--refresh-auto-improvement-cache",
+            "--worktree-path", str(wt),
+        )
+        combined = proc.stdout + proc.stderr
+        assert proc.returncode == 0, combined
+        assert "worktree override:" in combined, combined
+        # Real content, not zero rows — proves it read A ndjson, not an
+        # empty/missing one.
+        assert "rebuilt — 1 rows" in combined or "rebuilt — 1 row" in combined, combined
+
+
+def test_refresh_then_check_agree_on_the_same_worktree():
+    """THE bug, end-to-end: refresh via the CLI's suggested remedy, then
+    the freshness check against the SAME worktree must report fresh — not
+    a structurally unsatisfiable STALE that no amount of re-running the
+    remedy could ever clear."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        wt = _make_auto_improvement_worktree(Path(tmpdir), _TWO_LINES)
+        refresh_proc = _run_cli(
+            "--refresh-auto-improvement-cache",
+            "--worktree-path", str(wt),
+        )
+        assert refresh_proc.returncode == 0, refresh_proc.stdout + refresh_proc.stderr
+
+        check_proc = _run_cli(
+            "--check-auto-improvement-cache-freshness",
+            "--worktree-path", str(wt),
+        )
+        combined = check_proc.stdout + check_proc.stderr
+        assert check_proc.returncode == 0, (
+            "freshness check reported STALE right after a scoped refresh of "
+            f"the SAME worktree — the exact 'remedy doesn't work' bug: {combined}"
+        )
+        assert "fresh" in combined.lower(), combined
+
+        # Repeating the refresh must not matter either way — regression
+        # against a flake, not just a single lucky pass.
+        for _ in range(2):
+            _run_cli("--refresh-auto-improvement-cache", "--worktree-path", str(wt))
+        check_proc2 = _run_cli(
+            "--check-auto-improvement-cache-freshness", "--worktree-path", str(wt),
+        )
+        assert check_proc2.returncode == 0, check_proc2.stdout + check_proc2.stderr

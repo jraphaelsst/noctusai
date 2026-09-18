@@ -9,6 +9,15 @@ Exercises the four return shapes + edge cases:
 - custom ``key_col``
 - integration with the canonical ``MockSupabaseClient`` (seed-real-data,
   per "no monkey-patching" rule).
+
+Schema-validation rationale: `validate_schema=False` here inherits the
+~20 documented therapy schema-drift points tracked by
+`products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`
+(see `tests/conftest.py` for the full list). (2026-09-18
+compliance-regression-baseline inventory pass — empirically re-confirmed:
+flipping validate_schema=True across the product's conftest + this file
+surfaces real `MockSchemaError`s matching that list, e.g.
+`therapy.therapist_settings has no column 'session_duration_minutes'`.)
 """
 import pytest
 

@@ -4,6 +4,14 @@ Service-level tests for admin Phase 2 additions.
 Covers ``list_appointments_for_admin`` (DTO shape), ``admin_dashboard_metrics``
 (aggregation math), ``suspend_entity`` (404 + invalid-type branches), and
 the Phase-5 reject-flow audit-column invariants.
+
+Schema-validation rationale: `validate_schema=False` here inherits the
+~20 documented therapy schema-drift points tracked by
+`products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`
+(see `tests/conftest.py` for the full list). (2026-09-18
+compliance-regression-baseline inventory pass — empirically re-confirmed
+by flipping validate_schema=True and observing real MockSchemaError
+failures matching that tracked list.)
 """
 from datetime import datetime, timezone
 

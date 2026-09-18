@@ -55,7 +55,7 @@ def test_unknown_tool_returns_structured_payload_not_exception():
 
 def test_live_lookup_property_missing_argument():
     svc = SchedulingService(
-        MockSupabaseClient([], validate_schema=False),
+        MockSupabaseClient([], schema="social_wiring"),
         org_id=_ORG,
         rules=build_rules(),
     )
@@ -68,7 +68,7 @@ def test_live_lookup_property_missing_argument():
 
 def test_live_lookup_property_not_found_status():
     svc = SchedulingService(
-        MockSupabaseClient([], validate_schema=False),
+        MockSupabaseClient([], schema="social_wiring"),
         org_id=_ORG,
         rules=build_rules(),
     )
@@ -93,7 +93,7 @@ def test_live_lookup_property_success():
         }
     ]
     svc = SchedulingService(
-        MockSupabaseClient(rows, validate_schema=False),
+        MockSupabaseClient(rows, schema="social_wiring"),
         org_id=_ORG,
         rules=build_rules(),
     )

@@ -2402,3 +2402,44 @@ class TestResolvePrimaryRoot:
         """
         from tools.noctus.dev.task_branch import _resolve_primary_root
         assert _resolve_primary_root(None) != "None"
+
+
+class TestWireEnvDefaultCannotSilentlyRegress:
+    """Item 3 (2026-09-17): `wire_env` defaulting to `False` — "an opt-in flag
+    nobody remembered to pass" — was the ROOT CAUSE of four false-red
+    incidents in one session before `afc292cc` flipped it to `True`. The
+    pure `task_branch()` signature and the `register()` MCP wrapper were
+    SEPARATELY defaulted before — that is exactly how they drifted apart in
+    the first place (one could flip back without the other noticing). This
+    regression gate asserts BOTH defaults directly off the live signatures,
+    not off behavior — a future edit that silently re-introduces
+    `wire_env: bool = False` on either one fails HERE, not four incidents
+    later. KB § PATTERNS/common/self-branching-mode.md § 5a."""
+
+    def test_pure_function_default_is_true(self):
+        import inspect
+        from tools.noctus.dev.task_branch import task_branch
+        sig = inspect.signature(task_branch)
+        assert sig.parameters["wire_env"].default is True
+
+    def test_register_wrapper_default_is_true(self):
+        """Capture the ACTUAL closure `register()` binds to the MCP tool —
+        not a hand-copied expectation — via a fake server whose `.tool(...)`
+        decorator is a no-op passthrough (mirrors
+        `test_predeploy_check.py::test_tool_registers_with_dotted_name`)."""
+        import inspect
+        from tools.noctus.dev import task_branch as T
+
+        captured: dict = {}
+
+        class _Srv:
+            def tool(self, name, description):
+                def deco(fn):
+                    captured["fn"] = fn
+                    return fn
+                return deco
+
+        T.register(_Srv())
+        assert "fn" in captured, "register() did not register noctus.dev.task_branch"
+        sig = inspect.signature(captured["fn"])
+        assert sig.parameters["wire_env"].default is True

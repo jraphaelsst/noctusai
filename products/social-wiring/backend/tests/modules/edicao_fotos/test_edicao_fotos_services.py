@@ -117,7 +117,7 @@ def test_real_source_lists_through_the_seed_adapter() -> None:
 
 
 def _notifier(repo):
-    core = MockSupabaseClient(validate_schema=False)
+    core = MockSupabaseClient(schema="social_wiring")
     return core, InAppBatchReadyNotifier(core_client=lambda: core, repo=repo)
 
 

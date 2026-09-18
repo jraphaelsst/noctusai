@@ -44,7 +44,7 @@ class TestDefaultCategoriasShape:
 
 class TestSeedDefaultCategories:
     def test_inserts_19_rows_for_fresh_org(self):
-        db = MockSupabaseClient(validate_schema=False)
+        db = MockSupabaseClient(schema="personal-finance")
         db.set_table_data("categorias", [])  # no existing system seeds
 
         inserted = _run(seed_default_categories(db, "org-1"))
@@ -57,7 +57,7 @@ class TestSeedDefaultCategories:
         assert {p["nome"] for p in payloads} == {r["nome"] for r in PF_DEFAULT_CATEGORIAS}
 
     def test_idempotent_when_already_seeded(self):
-        db = MockSupabaseClient(validate_schema=False)
+        db = MockSupabaseClient(schema="personal-finance")
         # Simulate already-seeded org — at least one is_sistema row exists.
         # `org_id` must equal the org being seeded ("org-2") because the
         # idempotency pre-check filters `.eq("org_id", org_id).eq("is_sistema", True)`.
@@ -72,7 +72,7 @@ class TestSeedDefaultCategories:
 
 class TestEnsurePfPersonalOrg:
     def test_creates_org_with_pf_template_and_seeds_categorias(self):
-        db = MockSupabaseClient(validate_schema=False)
+        db = MockSupabaseClient(schema="personal-finance")
         db.set_table_data("noctus_users", [])
         db.set_table_data("organizations", [])
         db.set_table_data("categorias", [])
@@ -97,7 +97,7 @@ class TestEnsurePfPersonalOrg:
         assert all(c["org_id"] == org_id for c in cats)
 
     def test_returns_existing_org_without_re_seeding(self):
-        db = MockSupabaseClient(validate_schema=False)
+        db = MockSupabaseClient(schema="personal-finance")
         db.set_table_data(
             "noctus_users",
             [{"id": "u-2", "email": "b@x.com", "org_id": "org-existing"}],

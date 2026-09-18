@@ -52,6 +52,11 @@ def _bearer(role: str) -> dict[str, str]:
 def _make_client(role: str) -> tuple[TestClient, MockSupabaseClient]:
     """Build a TestClient + MockSupabaseClient pair where the auth resolution
     yields a user with the given product-native role."""
+    # `validate_schema=False` inherits the same rationale as conftest.py:
+    # relatorios_sellout (and other adconnect tables touched here) carry an
+    # `org_id` column at runtime the migration does not declare — tracked by
+    # the same schema-drift follow-up referenced there (2026-09-18 inventory
+    # pass; not a new gap, no local investigation needed beyond that one).
     mock_sb = MockSupabaseClient(validate_schema=False, schema="adconnect")
     mock_sb.auth.get_user = MagicMock(
         return_value=MockUserResponse(MockUser(role=role, org_id=ORG_ID))

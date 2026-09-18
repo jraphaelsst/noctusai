@@ -4,6 +4,15 @@ Pure-function tests of the rewards engine.
 Seeds the mock Supabase with two reward rules + one sellout report, drives
 `accrue_for_sellout_approval`, and asserts the resulting ledger writes hit
 the right rules with the right amounts.
+
+Schema-validation rationale: every `MockSupabaseClient(validate_schema=False,
+schema="adconnect")` call in this file inherits the same schema-drift
+rationale documented in full in `conftest.py` — several adconnect tables
+(e.g. `relatorios_sellout`, `pedidos`) carry an `org_id` column at runtime
+the migration does not declare. Follow-up: the same reconciliation project
+conftest.py points at. (2026-09-18 compliance-regression-baseline inventory
+pass — empirically re-confirmed by flipping validate_schema=True and
+observing the exact `has no column 'org_id'` failure this rationale predicts.)
 """
 from __future__ import annotations
 

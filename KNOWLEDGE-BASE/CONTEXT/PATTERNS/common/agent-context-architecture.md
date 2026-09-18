@@ -84,6 +84,30 @@ Severity `high`. Wires into `check_all_products` + `cli.py --validate` + pre-com
 | Lazy query-time refresh | `agent_context_cache.lookup()` compares `cache_meta.agent_<name>_sha` vs live `sha256(<agent>.md + concat(owned_kb))`; mismatch → rebuilds + answers. |
 | Loud freshness gate | `check_agent_context_cache_freshness` (severity high): cache missing / unreadable / stale → fails `validate`. Sibling of `check_keeper_cache_freshness`. |
 
+🔴 **Scoped-refresh cross-tree parity (fixed 2026-09-17/18).** `get_bundle_sha()`
+(the function `check_agent_context_cache_freshness` calls per-agent for the
+"live" side of the compare) had NO `repo_root` parameter — it always
+recomputed off the module-level `AGENTS_DIR`, correct for a fresh CLI
+subprocess (whose `REPO_ROOT` resolves off `Path.cwd()`) but WRONG when
+the long-running, fixed-CWD MCP server calls it against a `repo_root` that
+isn't its own boot-time CWD. A scoped
+`refresh(agent_name=X, worktree_path=W)` (called via the
+`noctus.dev.agent_context_refresh` MCP tool) correctly wrote
+`cache_meta['bundle_sha:X']` keyed off `W` all along — the WRITE side was
+never broken — but `check_agent_context_cache_freshness(repo_root=W)`
+compared it against the wrong (frozen-primary) "live" sha, so the mismatch
+could never resolve no matter how many times the scoped refresh re-ran.
+`lookup()` had the identical gap on its self-heal path, and would actively
+CLOBBER a correct scoped write the instant anyone called
+`noctus.dev.agent_context(...)` afterward. Fixed by threading
+`repo_root`/`worktree_path` through `get_bundle_sha` and `lookup()`
+respectively (`mcp/noctusai/tools/noctus/dev/agent_context_cache.py`) —
+regression-tested in `test_agent_context_cache.py::TestScopedRefreshCrossTreeParity`
+with a direct sqlite assertion (not just a passing refresh call). A SECOND,
+structurally different instance of the same class hit `auto-improvement`
+the same session — see `cache-auto-freshness.md` § Cross-tree
+refresh/check source-parity for the general rule + the full inventory.
+
 **Schema sketch** (final shape lands in Phase B):
 
 ```sql
