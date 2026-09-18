@@ -363,7 +363,16 @@ async def _upload_to_storage(
     org_id: Optional[str],
     subfolder: Optional[str] = None,
 ) -> Optional[str]:
-    """Upload PDF bytes to Supabase Storage and return public URL."""
+    """Upload PDF bytes to Supabase Storage and return the storage PATH.
+
+    🔴 Returns the PATH, never a URL — `erp-certidoes` is a PRIVATE bucket
+    (see `migrations/048_storage_no_public_buckets.sql`; the 2026-09-17
+    leak). Callers persist this into `certidao_resultados.arquivo_path`;
+    a fetchable signed URL is minted at READ time from that path
+    (`StorageService.get_signed_url`), never stored — a persisted URL
+    would either be a public link (the leak) or a signed link that goes
+    stale the moment its TTL passes.
+    """
     from app.services.storage_service import StorageService
 
     if not org_id:
@@ -375,7 +384,7 @@ async def _upload_to_storage(
             pdf_bytes, filename, "application/pdf",
             categoria="certidoes", subfolder=subfolder,
         )
-        return result.get("url")
+        return result.get("path")
     except Exception as e:
         logger.error("Storage upload failed: %s", e)
         return None
@@ -470,7 +479,13 @@ async def _process_single_certidao(
         return
 
     file_url = result["file_url"]
+    # 🔴 `arquivo_url` stays the EXTERNAL InfoSimples URL only for as long
+    # as the file has NOT been copied into our own (private) bucket —
+    # once it has, `arquivo_path` is the source of truth and `arquivo_url`
+    # is cleared (a stale external URL must not linger in a row that now
+    # has our own copy). See `migrations/048_storage_no_public_buckets.sql`.
     arquivo_url = file_url
+    arquivo_path: Optional[str] = None
     is_html = config["response_format"] == "html"
 
     # Download document and persist to Supabase Storage so we don't
@@ -506,12 +521,13 @@ async def _process_single_certidao(
 
             if pdf_bytes:
                 filename = f"{config['tipo']}_{uuid.uuid4().hex[:8]}.pdf"
-                stored_url = await _upload_to_storage(
+                stored_path = await _upload_to_storage(
                     pdf_bytes, filename, db, consulta.get("org_id"),
                     subfolder=consulta.get("nome"),
                 )
-                if stored_url:
-                    arquivo_url = stored_url
+                if stored_path:
+                    arquivo_path = stored_path
+                    arquivo_url = None  # our own copy supersedes the external URL
         else:
             logger.warning(
                 "Failed to download file for %s from %s, keeping original URL",
@@ -536,6 +552,7 @@ async def _process_single_certidao(
     update_data = {
         "status": "sucesso",
         "arquivo_url": arquivo_url,
+        "arquivo_path": arquivo_path,
         "arquivo_nome": f"{config['tipo']}.pdf",
         "analise_ia": analise,
         "api_response": result["raw_response"],
@@ -851,9 +868,11 @@ async def process_manual_upload(
         "status": "processando",
     }).eq("id", resultado_id).execute()
 
-    # 1. Upload to Supabase Storage — same pattern as _process_single_certidao
+    # 1. Upload to Supabase Storage — same pattern as _process_single_certidao.
+    # Manual upload always lands in OUR bucket (no external-URL fallback
+    # case here), so `arquivo_path` is the only outcome — never a URL.
     filename = f"{tipo}_{uuid.uuid4().hex[:8]}.pdf"
-    arquivo_url = await _upload_to_storage(
+    arquivo_path = await _upload_to_storage(
         pdf_bytes, filename, db, org_id,
         subfolder=consulta.get("nome"),
     )
@@ -870,7 +889,8 @@ async def process_manual_upload(
     # 4. Update resultado → sucesso (same fields as automated flow)
     update_data: dict = {
         "status": "sucesso",
-        "arquivo_url": arquivo_url,
+        "arquivo_url": None,  # our own copy — never a persisted URL
+        "arquivo_path": arquivo_path,
         "arquivo_nome": f"{tipo}.pdf",
         "analise_ia": analise,
         "api_response": None,
@@ -883,7 +903,17 @@ async def process_manual_upload(
     # 5. Recalculate consulta status — same function as automated flow
     _atualizar_status_consulta(consulta_id, db)
 
-    return update_data
+    # The router merges this dict straight into its response body for
+    # immediate UI feedback — mint a fresh SIGNED url for that one-time
+    # response only (never persisted; `update_data` above is what was
+    # written to the DB, and it correctly carries no URL).
+    response_data = dict(update_data)
+    if arquivo_path:
+        from app.services.storage_service import StorageService
+        response_data["arquivo_url"] = StorageService(db, org_id).get_signed_url(
+            arquivo_path, categoria="certidoes"
+        )
+    return response_data
 
 
 async def _extract_pdf_text(

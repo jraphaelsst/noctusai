@@ -365,6 +365,97 @@ org_record = org_res.data or {"id": org_id, "nome": "Você"}
 
 **2026-05-11 cross-schema-organization-audit.** Audit across all 11 non-core products surfaced exactly 0 REAL_BUG, 0 WORKS_BY_LUCK after the PF fix. Only one digest-shape service (PF `monthly_narrative`) fetched `organizations`; sister digest services (daily-life `weekly_review`, mailing `campaign_debrief`, ERP `metas_digest`, core `audit_digest`) either don't reach `organizations` (their digests are product-data-only) or live in core and therefore correctly default to public. Therapy `ai_pipeline.py` was already using the explicit-DI `core_db` shape pre-audit. Per-product code count for the cross-schema-reach concern remains 0 outside the natural call sites.
 
+## Storage buckets — never public
+
+**The bug (erp-certidoes, 2026-09-17).** `erp-certidoes` (102 objects / 21MB of
+CPF-bearing certidões — full names, debt/restriction findings) and
+`erp-geral` were declared `public = true` in
+`products/erp-imobiliario/backend/migrations/001_erp_imobiliario.sql` +
+`011_storage_buckets.sql`. Anyone with (or able to guess/enumerate) an
+object URL could fetch a certidão fully unauthenticated.
+
+**🔴 "RLS is on" is NOT "the data is protected" the moment a bucket is
+public.** `storage.objects` had RLS ENABLED, with 17 policies (`erp_storage_*`
+— org-scoped via `(storage.foldername(name))[1]`, see § RLS self-reference
+recursion above for the pattern shape). They gave **ZERO** protection,
+because Supabase Storage serves a **public** bucket's objects via the
+`/object/public/{bucket}/{path}` route — a route that does not evaluate
+`storage.objects` RLS **at all**. Only the `/object/authenticated/...` and
+`/object/sign/...` routes do. A public bucket routes every request around
+the policy engine entirely; the 17 policies were evaluated for exactly zero
+of the leaked requests.
+
+**The rule is absolute, no exception (owner directive, 2026-09-17): zero
+public buckets, in every product, forever.** Not "avoid where possible" —
+there is no legitimate reason to declare `public = true` on this platform.
+The sanctioned alternative, always:
+
+```sql
+-- ❌ never — bypasses storage.objects RLS entirely
+INSERT INTO storage.buckets (id, name, public) VALUES ('x', 'x', true);
+
+-- ✅ private bucket + a short-TTL SIGNED url minted AT READ TIME, never persisted
+INSERT INTO storage.buckets (id, name, public) VALUES ('x', 'x', false);
+```
+```python
+# app/services/storage_service.py (erp-imobiliario) or
+# noctusai_lib.integrations.storage + documento_store.py's `.url()` /
+# contratos_service.url_versao (social-wiring — the canonical
+# Protocol+Fake+Real adapter shape; see § Migrations above for why
+# consuming an existing mechanism beats inventing a second one)
+signed = storage.get_signed_url(path, categoria="certidoes")  # or storage.signed_url(bucket=..., key=path, expires_in_seconds=300)
+```
+
+Persist the storage **PATH**, never a URL — a public URL is the leak; a
+signed URL goes stale the moment its TTL passes and would freeze a broken
+link into the row forever. Mint the signed URL fresh, on every read, from
+the persisted path.
+
+**Two-legged gate, both blocking, neither skippable, NEITHER has any
+override — the ONE deliberate exception to this codebase's own
+accept-with-rationale convention (owner directive: "not even with my
+explicit permission... find THE CORRECT AND SECURE WAY"):**
+
+- **Static** — `noctus.dev.compliance.check_storage_bucket_public`
+  (pre-commit, severity `critical`). Three legs: (A) a migration's
+  `INSERT INTO storage.buckets` / `UPDATE storage.buckets SET public =
+  true`; (B) any `get_public_url(` / `getPublicUrl(` call site anywhere on
+  the platform — that method only makes sense against a public bucket, so
+  there must be zero call sites in the end state; (C) a runtime
+  `create_bucket(...)` passing `public=True`. Scoped to the files STAGED in
+  the current commit (the same idiom `check_conflict_markers` uses) — so
+  the IMMUTABLE historical declarations in 001/011 (which will say `true`
+  forever, by design — see § Migrations above) never re-block a future
+  commit that never touches them. A full-tree audit (`paths=None`) still
+  finds them, deliberately, and is therefore NOT wired into any
+  whole-platform sweep (a permanently-red gate gets ignored).
+- **Live** — `noctus.dev.check_storage_no_public_buckets`, wired into
+  `noctus.dev.predeploy_check` as the `storage_bucket_public` leg. Queries
+  the RUNNING `storage.buckets` table; FAILS on any `public = true` row,
+  and FAILS — never skips — when it cannot verify at all (mirrors the
+  `schema_exposure` leg's identical fail-closed posture: "we couldn't
+  check" must never read as "it's fine"). Read-only by construction: no
+  `apply` / `confirm` / any write parameter exists anywhere in this tool —
+  the fix (flip the bucket private) is a manual `ALTER`/dashboard action
+  the operator runs directly, never something a tool could be asked to
+  undo later.
+
+**Forward fix, immutable history.** `products/erp-imobiliario/backend/
+migrations/048_storage_no_public_buckets.sql` is the codified live fix —
+NOT an edit to 001/011 (a migration is a record of what WAS applied, never
+a mutable snapshot of current intent; see § Migrations above). It flips
+both buckets private (idempotent `UPDATE ... WHERE public = true`), adds
+`certidao_resultados.arquivo_path`, and backfills the pre-existing
+public-URL rows into that path column, clearing `arquivo_url`.
+
+**Wider surface, flagged not fixed (2026-09-17 audit — in scope only where
+clearly wrong):** none of the platform's 5 bucket declarations (erp × 2,
+social-wiring × 3) set `file_size_limit` or `allowed_mime_types` at the
+bucket level — every product relies entirely on its own application-layer
+`validate_file`/`ALLOWED_TYPES`/`MAX_FILE_SIZE` checks. A fleet-wide
+gap, not erp-specific; flagged for a future slice, not expanded into this
+one.
+
 ## Provisioning
 
 Trigger `on_license_change` fires when `public.product_licenses` changes. Auto-provisions product defaults (initial teams, seed rows, roles) in the product's schema.

@@ -68,6 +68,7 @@ from app.services.certidoes_service import (
     cancelar_processamento,
     _get_tjsp_last_request_at,
 )
+from app.services.storage_service import StorageService
 from noctusai_lib.api import StrictHttpModel
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,26 @@ router = APIRouter(prefix="/api/certidoes", tags=["Certidões"])
 # Throttle staleness recovery — run at most once per 60 seconds
 _last_stale_check: float = 0.0
 _STALE_CHECK_INTERVAL = 60.0
+
+
+def _resolve_resultado_download_url(item: dict, storage) -> Optional[str]:
+    """Resolve a fetchable URL for one `certidao_resultados` row.
+
+    🔴 `erp-certidoes` is a PRIVATE bucket — `arquivo_url` is NEVER a
+    persisted, directly-fetchable link into our own storage
+    (`migrations/048_storage_no_public_buckets.sql`, the 2026-09-17 leak).
+    When the row carries its own copy (`arquivo_path`), a short-TTL SIGNED
+    url is minted HERE, at read time, and never stored — the sanctioned
+    pattern (`KB § PATTERNS/backend/database-rls.md § Storage buckets —
+    never public`). When there is no `arquivo_path` (the file was never
+    copied into our bucket — a download/upload failure fallback), the
+    row's own `arquivo_url` is the genuine EXTERNAL InfoSimples URL and is
+    returned unchanged.
+    """
+    path = item.get("arquivo_path")
+    if path:
+        return storage.get_signed_url(path, categoria="certidoes")
+    return item.get("arquivo_url")
 
 
 # --------------- Schemas ---------------
@@ -244,6 +265,7 @@ async def obter_consulta(consulta_id: str, auth = Depends(get_current_user)):
     """Get a consultation with all its certificate results."""
     user, token = auth
     db = get_user_client(token)
+    org_id = get_org_id(user)
 
     consulta = db.table("certidao_consultas").select("*").eq(
         "id", consulta_id
@@ -257,6 +279,14 @@ async def obter_consulta(consulta_id: str, auth = Depends(get_current_user)):
 
     data = consulta.data
     res_list = resultados.data or []
+    if org_id and any(r.get("arquivo_path") for r in res_list):
+        # Admin client — same reasoning `excluir_consulta` already
+        # documents: a user-scoped client fails `list_buckets()` and
+        # `StorageService` falls back to dry-run, which would mint a MOCK
+        # url instead of a real signed one.
+        storage = StorageService(get_admin_client(), org_id)
+        for r in res_list:
+            r["arquivo_url"] = _resolve_resultado_download_url(r, storage)
     data["resultados"] = res_list
     data["concluidas"] = sum(1 for r in res_list if r.get("status") == "sucesso")
     data["erros"] = sum(1 for r in res_list if r.get("status") == "erro")
@@ -353,7 +383,7 @@ async def excluir_consulta(consulta_id: str, auth = Depends(get_current_user)):
     # client — user client fails list_buckets() and StorageService falls to dry-run)
     if org_id:
         resultados = db.table("certidao_resultados").select(
-            "arquivo_url"
+            "arquivo_path"
         ).eq("consulta_id", consulta_id).execute()
         admin_db = get_admin_client()
         _delete_storage_files(resultados.data or [], org_id, admin_db)
@@ -403,6 +433,7 @@ async def download_consulta_zip(
     """Download all successful certificates from a consultation as a ZIP file."""
     user, token = auth
     db = get_user_client(token)
+    org_id = get_org_id(user)
 
     consulta = db.table("certidao_consultas").select(
         "id, nome, documento"
@@ -411,7 +442,7 @@ async def download_consulta_zip(
         raise HTTPException(status_code=404, detail="Consulta não encontrada")
 
     resultados = db.table("certidao_resultados").select(
-        "arquivo_url, arquivo_nome, nome_display"
+        "arquivo_url, arquivo_path, arquivo_nome, nome_display"
     ).eq("consulta_id", consulta_id).eq(
         "status", "sucesso"
     ).order("ordem").execute()
@@ -423,9 +454,14 @@ async def download_consulta_zip(
             detail="Nenhuma certidão disponível para download",
         )
 
+    # Resolve a fetchable URL per item — a signed url for our own bucket
+    # (never persisted), or the genuine external URL as a fallback. See
+    # `_resolve_resultado_download_url`'s docstring.
+    storage = StorageService(get_admin_client(), org_id) if org_id else None
+
     # Download all files concurrently
     async def _fetch(client: httpx.AsyncClient, item: dict) -> Optional[tuple]:
-        url = item.get("arquivo_url")
+        url = _resolve_resultado_download_url(item, storage) if storage else item.get("arquivo_url")
         if not url:
             return None
         try:
@@ -599,20 +635,20 @@ def _delete_storage_files(resultados: list, org_id: str, db) -> None:
 
     Uses the Supabase storage API directly (not StorageService) to avoid the
     dry-run fallback that silently skips real deletions.
+
+    🔴 Reads `arquivo_path` directly — NOT a `/object/public/{bucket}/...`
+    URL shape. `erp-certidoes` is a PRIVATE bucket
+    (`migrations/048_storage_no_public_buckets.sql`); a public-route URL to
+    parse no longer exists (and parsing one back out of a signed URL would
+    be fragile — the persisted PATH is the one stable identifier a row
+    carries for its own file). Callers select `arquivo_path`, not
+    `arquivo_url`.
     """
     bucket = "erp-certidoes"
-    bucket_base = f"/object/public/{bucket}/"
 
-    paths_to_delete: list[str] = []
-    for r in resultados:
-        url = r.get("arquivo_url")
-        if not url or bucket_base not in url:
-            logger.debug("Skipping non-storage URL: %s", url)
-            continue
-        path = url.split(bucket_base, 1)[1]
-        # Strip trailing query string — get_public_url appends "?" to URLs
-        path = path.split("?", 1)[0]
-        paths_to_delete.append(path)
+    paths_to_delete: list[str] = [
+        r["arquivo_path"] for r in resultados if r.get("arquivo_path")
+    ]
 
     if not paths_to_delete:
         logger.info("No storage files to delete for this consulta")

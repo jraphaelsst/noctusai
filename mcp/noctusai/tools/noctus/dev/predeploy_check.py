@@ -54,6 +54,7 @@ DEFAULT_CHECKS: list[str] = [
     "required_prod_env_present",  # newly-required-at-boot env keys (seed baseline) present in prod snapshot
     "cors_roster_complete",  # backstop: every registry slug has a CORS-resolvable origin
     "schema_exposure",  # PGRST106 class — product's declared schema is in authenticator's pgrst.db_schemas
+    "storage_bucket_public",  # zero public storage.buckets, platform-wide, no exception — owner directive 2026-09-17
     "env_fleet_manifest",  # every deploy/fleet/env.fleet.keys name has a non-empty value in a fed .env.fleet snapshot
 ]
 
@@ -773,6 +774,22 @@ def _default_run_check(
             f"schema_exposure ok — {product}'s schema is exposed to PostgREST "
             f"({result['exposed_schemas']})"
         )
+    if check == "storage_bucket_public":
+        # Platform-wide (product arg unused — a bucket belongs to the whole
+        # Supabase project, not to one product's schema; "zero public
+        # buckets, in every product, forever" per the owner directive
+        # 2026-09-17). Mirrors schema_exposure's fail-closed posture
+        # EXACTLY: not_configured / error / a genuine public bucket ALL
+        # block — this is the ONE leg in this file with NO write/override
+        # path at all (see check_storage_no_public_buckets's own
+        # docstring for why). The static half of this gate is
+        # noctus.dev.compliance.check_storage_bucket_public (pre-commit).
+        from . import check_storage_no_public_buckets as _csnpb
+
+        result = _csnpb.check_storage_no_public_buckets()
+        if result["status"] != "clean":
+            return False, f"storage_bucket_public BLOCKED ({result['status']}) — {result['error']}"
+        return True, "storage_bucket_public ok — no public bucket in storage.buckets"
     if check == "env_fleet_manifest":
         # Platform-wide (product arg unused), opt-in: SKIPs loudly (ok=True)
         # when no deploy/fleet/env.fleet.keys manifest or no .env.fleet
@@ -943,8 +960,12 @@ def register(server) -> None:
             "/ a .env.prod, else it SKIPs loudly, schema_exposure — the "
             "product's declared DB schema must be in the authenticator role's "
             "pgrst.db_schemas exposed list (PGRST106 class; UNLIKE every other "
-            "leg this one FAILS, never skips, when it can't verify), and "
-            "env_fleet_manifest — every deploy/fleet/env.fleet.keys name has a "
+            "leg this one FAILS, never skips, when it can't verify), "
+            "storage_bucket_public — the LIVE storage.buckets table must have "
+            "zero public=true rows, platform-wide, no exception (owner "
+            "directive 2026-09-17; FAILS, never skips, on any non-clean "
+            "status, and has NO write/override path anywhere in this repo), "
+            "and env_fleet_manifest — every deploy/fleet/env.fleet.keys name has a "
             "non-empty value in a .env.fleet snapshot fed via env_fleet_path / "
             "NOCTUS_ENV_FLEET_FILE, else it SKIPs loudly), CLASSIFIES any "
             "failure against the known boundary-contract classes, AUTO-FIXES "

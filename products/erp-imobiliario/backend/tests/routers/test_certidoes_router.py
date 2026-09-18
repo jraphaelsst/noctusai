@@ -35,6 +35,7 @@ SAMPLE_RESULTADO = {
     "status": "pendente",
     "analise_ia": None,
     "arquivo_url": None,
+    "arquivo_path": None,
     "arquivo_nome": None,
     "api_response": None,
     "erro_mensagem": None,
@@ -342,6 +343,49 @@ class TestObterConsulta:
         data = resp.json()["data"]
         assert data["resultados"] == []
 
+    def test_resultado_with_arquivo_path_receives_a_fresh_signed_url(self, client):
+        """🔴 The core regression for the 2026-09-17 fix: a resultado
+        whose file lives in our (now-private) bucket must have its
+        `arquivo_url` resolved to a freshly-minted SIGNED url at READ
+        time — never the stale/absent value the row carries at rest."""
+        resultado_com_path = {**SAMPLE_RESULTADO, "arquivo_path": "test-org-123/certidoes/abc123.pdf"}
+        client._mock_supabase.set_table_data("certidao_consultas", SAMPLE_CONSULTA)
+        client._mock_supabase.set_table_data("certidao_resultados", [resultado_com_path])
+        client._mock_supabase.storage.list_buckets.return_value = []
+        client._mock_supabase.storage.from_.return_value.create_signed_url.return_value = {
+            "signedURL": "https://signed.example.com/test-org-123/certidoes/abc123.pdf?token=xyz",
+        }
+
+        resp = client.get("/api/certidoes/consultas/consulta-001")
+
+        assert resp.status_code == 200
+        resultado = resp.json()["data"]["resultados"][0]
+        assert resultado["arquivo_url"] == (
+            "https://signed.example.com/test-org-123/certidoes/abc123.pdf?token=xyz"
+        )
+        client._mock_supabase.storage.from_.return_value.create_signed_url.assert_called_with(
+            "test-org-123/certidoes/abc123.pdf", 3600
+        )
+
+    def test_resultado_without_arquivo_path_keeps_external_url_unchanged(self, client):
+        """A resultado that was never copied into our bucket (the download/
+        upload-failure fallback) keeps its genuine EXTERNAL InfoSimples URL
+        untouched — no signed-url minting is attempted for it."""
+        resultado_externo = {
+            **SAMPLE_RESULTADO,
+            "arquivo_url": "https://api.infosimples.com/receipts/abc123",
+            "arquivo_path": None,
+        }
+        client._mock_supabase.set_table_data("certidao_consultas", SAMPLE_CONSULTA)
+        client._mock_supabase.set_table_data("certidao_resultados", [resultado_externo])
+
+        resp = client.get("/api/certidoes/consultas/consulta-001")
+
+        assert resp.status_code == 200
+        resultado = resp.json()["data"]["resultados"][0]
+        assert resultado["arquivo_url"] == "https://api.infosimples.com/receipts/abc123"
+        client._mock_supabase.storage.from_.return_value.create_signed_url.assert_not_called()
+
 
 # --------------- POST /api/certidoes/consultas/{id}/reprocessar ---------------
 
@@ -372,7 +416,7 @@ class TestReprocessarConsulta:
         client._mock_supabase.set_table_data("certidao_consultas", SAMPLE_CONSULTA)
         client._mock_supabase.set_table_data("certidao_resultados", [SAMPLE_RESULTADO])
         with patch("app.routers.certidoes.log_action", mock_log), \
-             patch("app.routers.certidoes.schedule_tjsp_for_org"):
+             patch("app.routers.certidoes.schedule_tjsp_for_org"):  # self-patch-ok: schedule_tjsp_for_org spawns asyncio.create_task; under TestClient there's no long-lived loop to await it, and this test asserts the log_action call, not scheduler dispatch. Same rationale as test_reprocessa_com_sucesso above.
             client.post("/api/certidoes/consultas/consulta-001/reprocessar")
         mock_log.assert_called_once()
         call_args = mock_log.call_args
@@ -409,3 +453,22 @@ class TestExcluirConsulta:
         call_args = mock_log.call_args
         assert call_args[0][1] == "excluir"
         assert call_args[0][2] == "certidao_consulta"
+
+    def test_exclui_deletes_storage_files_by_arquivo_path(self, client):
+        """🔴 `_delete_storage_files` reads `arquivo_path` directly now —
+        NOT a `/object/public/{bucket}/...` URL to parse (that route no
+        longer exists; `erp-certidoes` is private). Regression for the
+        2026-09-17 fix."""
+        resultado_com_path = {
+            **SAMPLE_RESULTADO,
+            "arquivo_path": "test-org-123/certidoes/abc123.pdf",
+        }
+        client._mock_supabase.set_table_data("certidao_consultas", [SAMPLE_CONSULTA])
+        client._mock_supabase.set_table_data("certidao_resultados", [resultado_com_path])
+
+        resp = client.delete("/api/certidoes/consultas/consulta-001")
+
+        assert resp.status_code == 200
+        client._mock_supabase.storage.from_.return_value.remove.assert_called_once_with(
+            ["test-org-123/certidoes/abc123.pdf"]
+        )
