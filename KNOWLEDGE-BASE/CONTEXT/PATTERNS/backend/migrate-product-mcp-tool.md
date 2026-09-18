@@ -129,6 +129,73 @@ The result payload's `schema_source` field says which path fired
 (`explicit_override` / `main_py_declaration` / `slug_fallback`) — a fallback
 is never silently indistinguishable from a verified derivation.
 
+## Stale-tree refusal (2026-09-17 incident)
+
+`migrate_product` reads migration files from a filesystem tree
+(`products/<slug>/backend/migrations/`), never from git history — so a tree
+that is **behind its upstream** silently omits any migration added upstream,
+with no signal that anything is missing. On 2026-09-17, during a real prod
+deploy, the primary checkout was 26 commits behind `origin/dev` and did not
+contain `134_contrato_assinatura.sql` at all. The dry-run confidently printed
+a pending set that OMITTED the migration actually being deployed — a
+reassuring, green-looking output computed against the wrong tree. That is a
+silent error in the CLAUDE.md §1 sense: the dangerous behaviour (trust
+whatever tree happens to be checked out) was the *default*.
+
+**The fix — refuse-not-null.** Before reading a single migration file,
+`migrate_product` now inspects the tree it is about to read from and
+REFUSES — `status='refused_stale_tree'`, `exit_code=1`, never a warning the
+caller can miss — whenever ANY of these is true:
+
+1. **Behind its upstream** — `HEAD..<upstream>` is non-empty
+   (`git rev-list --count`).
+2. **Uncommitted changes under `products/*/backend/migrations/`** anywhere
+   in the tree — staged, unstaged, OR untracked (`git status --porcelain`,
+   filtered to that path prefix). An added-but-uncommitted migration is the
+   same unreviewed-state problem as an edited one.
+3. **Any git query the check depends on fails**, or the tree isn't a git
+   work tree at all — fail-closed by construction (`GitQueryError`): an
+   unanswerable question is treated as untrustworthy, never silently as
+   clean. This is deliberately the same posture as the third leg of
+   `predeploy_check`'s `schema_exposure` check ("FAILS, never skips, when
+   it can't verify").
+
+The refusal's `error` message names the inspected tree (absolute path), its
+branch, `commits_behind`, and the exact remedy
+(`` `git merge --ff-only <upstream>` ``, or pass `worktree_path=` /
+`repo_root=` to pin a different tree). The full verdict also always rides
+along as the `stale_tree` key on **every** returned status — dry_run /
+applied / up_to_date / error / refused_stale_tree alike — never only on the
+refusal path.
+
+**`worktree_path=`** pins BOTH which tree the staleness check inspects AND
+where migrations are read from — same parameter name and semantics as
+`predeploy_check`'s (the MCP server is one long-running stdio process fixed
+at whatever directory it booted in; there is no way to auto-detect a
+caller's cwd). Omit it to target the primary checkout.
+
+**`allow_stale_tree: bool = False`** is the documented escape hatch — same
+shape as `deploy_image`'s `skip_ancestry_check` — for the rare deliberate
+case (e.g. a human has already manually diffed the pending set against what
+is actually merged upstream). Setting it True is almost always wrong; the
+staleness check still runs and its verdict still rides on `stale_tree` even
+when bypassed, so the override is visible in the result, never silent.
+
+**GitRunner Protocol + Fake + Real** (mirrors `SqlExecutor`'s shape exactly,
+`KB § PATTERNS/backend/seed-fake-real-adapter.md`): `GitRunner` Protocol
+(`.run(root, args) → str`, raises `GitQueryError` on any failure) →
+`FakeGitRunner` (unit tests — zero real git processes) →
+`SubprocessGitRunner` (the live tool, 15s-bounded). Tests inject
+`git_runner=FakeGitRunner(responses={...}, fail_on={...})` — never shell out
+to a real repo.
+
+Verdict-channel integrity note: this gate is the same discipline as
+`KB § PATTERNS/common/methodology-execution-discipline.md`'s "verdict-channel
+integrity" rule (the exit code you read must belong to what you are
+judging) — a dry-run's `pending` list is a verdict about a specific tree,
+and reading it without first verifying that tree is exactly the silent
+mismatch the rule warns about.
+
 ## Signature
 
 ```python
@@ -140,13 +207,18 @@ migrate_product(
     schema: str | None = None,   # override the DERIVED schema
     executor: SqlExecutor | None = None,  # injection seam for tests
     products_dir: Path | None = None,     # injection seam for tests
+    worktree_path: str | None = None,     # pins the inspected + read tree
+    allow_stale_tree: bool = False,       # escape hatch — almost always wrong
+    repo_root: str | Path | None = None,  # test seam — wins over worktree_path
+    git_runner: GitRunner | None = None,  # injection seam for tests
 ) → dict
 ```
 
 Return shape:
 ```json
 {
-    "status": "dry_run | applied | up_to_date | not_configured | error",
+    "status": "dry_run | applied | up_to_date | not_configured | error | refused_stale_tree",
+    "exit_code": 0,
     "product": "...",
     "schema": "...",
     "schema_source": "explicit_override | main_py_declaration | slug_fallback",
@@ -154,7 +226,17 @@ Return shape:
     "applied": ["001_seed.sql", "..."],
     "skipped_already_applied": ["002_crm.sql"],
     "pending": ["003_rls.sql"],
-    "error": null
+    "error": null,
+    "stale_tree": {
+        "stale": false,
+        "check": null,
+        "branch": "dev",
+        "upstream": "origin/dev",
+        "commits_behind": 0,
+        "dirty_migration_files": [],
+        "detail": "clean"
+    },
+    "allow_stale_tree": false
 }
 ```
 
@@ -278,8 +360,17 @@ produces). Files without a leading numeric prefix are silently skipped (logged a
 
 - `KB § PATTERNS/backend/database-rls.md` — migration conventions + RLS
 - `KB § PATTERNS/backend/seed-fake-real-adapter.md` — IO seam shape
+  (`SqlExecutor` AND `GitRunner` both follow it)
 - `KB § PATTERNS/architect/mcp-first-scripts.md` — MCP-first principle
+- `KB § PATTERNS/common/methodology-execution-discipline.md` —
+  verdict-channel integrity (the stale-tree refusal is this rule made
+  concrete for a dry-run's pending-migrations list)
 - `KB § GUIDES/new-product.md` — PostgREST schema-exposure onboarding leg
   (the sibling gap: a new product's DATA schema must ALSO be exposed, or
   every REST call 404s with `PGRST106`)
+- `noctus.dev.predeploy_check` — shares the `worktree_path=` parameter name
+  and semantics, and the same "FAILS, never skips, when it can't verify"
+  fail-closed posture (its `schema_exposure` leg)
+- `noctus.dev.deploy_image` — `allow_stale_tree`'s escape-hatch shape
+  mirrors `skip_ancestry_check`
 - `noctus.dev.scaffold_migration` — creates the next numbered migration file

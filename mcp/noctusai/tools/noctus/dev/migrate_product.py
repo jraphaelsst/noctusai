@@ -107,6 +107,58 @@ schema. DRY-RUN by default; ``confirm=True`` required to write. Idempotent
 (``ON CONFLICT (filename) DO NOTHING`` on the copy). See its docstring for
 the full contract. Registered as ``noctus.dev.repair_migration_ledger``.
 
+STALE-TREE REFUSAL (added 2026-09-17 — the incident)
+------------------------------------------------------
+``migrate_product`` reads migration files from a filesystem tree
+(``products/<slug>/backend/migrations/``), not from git history — so a
+tree that is BEHIND its upstream silently omits any migration added
+upstream, and the dry-run this tool prints has no way to know it is
+missing anything. On 2026-09-17, during a real prod deploy, the primary
+checkout was 26 commits behind ``origin/dev`` and did not contain
+``134_contrato_assinatura.sql`` at all. The dry-run confidently listed a
+pending set that OMITTED the migration actually being deployed — a
+reassuring, green-looking output computed against the wrong tree. That is
+a silent error in the CLAUDE.md §1 sense: the dangerous behaviour (trust
+whatever tree happens to be checked out) was the *default*.
+
+``migrate_product`` now REFUSES — status ``'refused_stale_tree'``,
+``exit_code=1`` — before reading a single migration file, whenever the
+tree it is about to read from is not verifiably trustworthy:
+
+  1. It is BEHIND its upstream tracking ref (``HEAD..<upstream>`` is
+     non-empty).
+  2. It has uncommitted changes (staged, unstaged, or untracked) under
+     ``products/*/backend/migrations/`` anywhere in the tree.
+  3. Any git query the check depends on fails, or the tree is not a git
+     work tree at all — this is fail-closed by construction: an
+     unanswerable question is treated as untrustworthy, NEVER silently as
+     clean (that is exactly the bug being fixed).
+
+The refusal names the inspected tree (absolute path), its branch, its
+upstream, ``commits_behind``, and the exact remedy
+(``git merge --ff-only <upstream>``, or pass ``worktree_path=``/
+``repo_root=`` to pin a different tree) in ``error``. The full staleness
+verdict also always rides along as the ``stale_tree`` key on every
+returned result (dry_run/applied/up_to_date/error/refused_stale_tree
+alike) — never only on the refusal path — so a caller that deliberately
+bypasses the gate (see below) can still see what was found.
+
+``worktree_path=`` pins BOTH which tree the staleness check inspects and
+where migrations are read from (mirrors ``predeploy_check``'s parameter
+of the same name and semantics exactly) — the MCP server is one
+long-running stdio process fixed at whatever directory it booted in, so a
+caller working inside a worktree MUST say so explicitly; there is no way
+to auto-detect a caller's cwd. Omitting it checks/reads the primary.
+
+``allow_stale_tree: bool = False`` is the documented escape hatch (same
+shape as ``deploy_image``'s ``skip_ancestry_check``) for the rare
+deliberate case — e.g. a human has already visually diffed the pending
+set and knows it is complete. Using it is almost always wrong: it exists
+so a genuinely-informed override doesn't have to fork the tool, not so a
+caller can silence the gate out of impatience. When set, the staleness
+check still runs and its (now non-fatal) verdict still rides on
+``stale_tree`` in the result — the bypass is visible, never silent.
+
 KB § PATTERNS/backend/migrate-product-mcp-tool.md
 """
 from __future__ import annotations
@@ -117,12 +169,14 @@ import json
 import logging
 import os
 import re
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
 
-from settings import PRODUCTS_DIR
+from settings import PRODUCTS_DIR, REPO_ROOT
+from workspace import resolve_caller_root
 
 logger = logging.getLogger(__name__)
 
@@ -437,6 +491,269 @@ def make_sql_executor(
 
 
 # ---------------------------------------------------------------------------
+# Stale-tree refusal — GitRunner Protocol + Fake + Real (see module
+# docstring "STALE-TREE REFUSAL")
+# ---------------------------------------------------------------------------
+
+
+class GitQueryError(Exception):
+    """A git query the staleness gate depends on could not be answered.
+
+    Deliberately its own exception (not a bare ``RuntimeError``) so
+    ``_check_tree_staleness`` can catch precisely this and nothing else —
+    fail-closed by construction: every code path that cannot determine an
+    answer raises this and is treated as untrustworthy, never as clean.
+    """
+
+
+@runtime_checkable
+class GitRunner(Protocol):
+    """Narrow DI seam: run one read-only git query in ``root``.
+
+    Returns stdout, stripped. Raises :class:`GitQueryError` on ANY failure
+    (non-zero exit, git missing, not a work tree, timeout) — a runner must
+    never return a placeholder/empty value to signal failure, because an
+    empty value is indistinguishable from a genuine (if unlikely) empty
+    answer. Mirrors the ``SqlExecutor`` Protocol+Fake+Real+factory shape
+    used above for the Supabase side of this same tool.
+    """
+
+    def run(self, root: Path, args: list[str]) -> str:
+        ...  # pragma: no cover
+
+
+class FakeGitRunner:
+    """In-memory git runner for unit tests — spawns zero real git processes.
+
+    ``responses`` maps an exact args-tuple (e.g.
+    ``("rev-parse", "--abbrev-ref", "HEAD")``) to the canned stdout string.
+    ``fail_on`` is a set of args-tuples that raise :class:`GitQueryError`
+    instead (simulates "not a git repo" / any git failure). An args-tuple
+    with neither a response nor a fail_on entry returns ``""`` — tests
+    should configure every call the staleness check will actually make.
+    ``calls`` accumulates every args-tuple passed to ``run`` (assertions on
+    call order/count).
+    """
+
+    def __init__(
+        self,
+        *,
+        responses: dict[tuple[str, ...], str] | None = None,
+        fail_on: set[tuple[str, ...]] | None = None,
+    ) -> None:
+        self.responses: dict[tuple[str, ...], str] = responses or {}
+        self.fail_on: set[tuple[str, ...]] = fail_on or set()
+        self.calls: list[tuple[str, ...]] = []
+
+    def run(self, root: Path, args: list[str]) -> str:
+        key = tuple(args)
+        self.calls.append(key)
+        if key in self.fail_on:
+            raise GitQueryError(f"fake failure for: git {' '.join(args)}")
+        return self.responses.get(key, "")
+
+
+class SubprocessGitRunner:
+    """Real runner: shells out to the system ``git`` binary.
+
+    A bounded timeout (15s) keeps a hung git process (e.g. a credential
+    prompt on a misconfigured remote) from blocking a dry-run forever —
+    a timeout is a query failure like any other (``GitQueryError``), never
+    silently treated as clean.
+    """
+
+    _TIMEOUT_S = 15
+
+    def run(self, root: Path, args: list[str]) -> str:
+        try:
+            proc = subprocess.run(
+                ["git", *args],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=self._TIMEOUT_S,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise GitQueryError(
+                f"git {' '.join(args)} failed to run in {root}: {exc}"
+            ) from exc
+        if proc.returncode != 0:
+            detail = proc.stderr.strip() or proc.stdout.strip() or "no output"
+            raise GitQueryError(
+                f"git {' '.join(args)} exited {proc.returncode} in {root}: {detail}"
+            )
+        return proc.stdout.strip()
+
+
+_DEFAULT_GIT_RUNNER = SubprocessGitRunner()
+
+# Matches a path under products/<slug>/backend/migrations/ inside
+# `git status --porcelain` output (rule 2 of the stale-tree refusal).
+_MIGRATION_PATH_RE = re.compile(r"^products/[^/]+/backend/migrations/")
+
+
+def _dirty_migration_paths(porcelain_output: str) -> list[str]:
+    """Extract every path under ``products/*/backend/migrations/`` touched
+    by an uncommitted change, from ``git status --porcelain`` output.
+
+    Handles porcelain v1's ``XY <path>`` shape and the rename shape
+    ``XY <old> -> <new>`` (the new path is the one that matters). Staged,
+    unstaged, AND untracked changes all count — a migration file added
+    locally but not yet committed is exactly the kind of unreviewed state
+    this gate exists to catch, same as an edited one.
+    """
+    paths: list[str] = []
+    for line in porcelain_output.splitlines():
+        if len(line) <= 3:
+            continue
+        path_part = line[3:]
+        if " -> " in path_part:
+            path_part = path_part.split(" -> ", 1)[1]
+        path_part = path_part.strip().strip('"')
+        if _MIGRATION_PATH_RE.match(path_part):
+            paths.append(path_part)
+    return sorted(set(paths))
+
+
+def _check_tree_staleness(root: Path, *, git_runner: GitRunner) -> dict[str, Any]:
+    """Determine whether ``root``'s git tree is trustworthy to read
+    migrations from. See module docstring "STALE-TREE REFUSAL".
+
+    Fail-closed: any query this needs that cannot be answered is reported
+    as untrustworthy (``check="query_failed"``) — never silently as clean.
+
+    Returns::
+
+        {
+            "stale": bool,
+            "check": "behind" | "dirty_migrations" | "query_failed" | None,
+            "branch": str | None,
+            "upstream": str | None,
+            "commits_behind": int | None,
+            "dirty_migration_files": list[str],
+            "detail": str,  # concrete, human-readable — no tree/remedy text
+                             # (the caller composes the full refusal message,
+                             # which always names the tree + remedy too).
+        }
+    """
+    base: dict[str, Any] = {
+        "stale": False,
+        "check": None,
+        "branch": None,
+        "upstream": None,
+        "commits_behind": None,
+        "dirty_migration_files": [],
+        "detail": "clean",
+    }
+
+    try:
+        branch = git_runner.run(root, ["rev-parse", "--abbrev-ref", "HEAD"])
+    except GitQueryError as exc:
+        return {
+            **base,
+            "stale": True,
+            "check": "query_failed",
+            "detail": f"could not determine the current branch: {exc}",
+        }
+    if not branch:
+        return {
+            **base,
+            "stale": True,
+            "check": "query_failed",
+            "detail": "could not determine the current branch (empty git output)",
+        }
+
+    try:
+        upstream = git_runner.run(
+            root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]
+        )
+    except GitQueryError as exc:
+        return {
+            **base,
+            "stale": True,
+            "check": "query_failed",
+            "branch": branch,
+            "detail": (
+                f"branch {branch!r} has no resolvable upstream tracking ref, "
+                f"so freshness cannot be verified: {exc}"
+            ),
+        }
+    if not upstream:
+        return {
+            **base,
+            "stale": True,
+            "check": "query_failed",
+            "branch": branch,
+            "detail": f"branch {branch!r} has no upstream tracking ref configured",
+        }
+
+    try:
+        behind_raw = git_runner.run(root, ["rev-list", "--count", f"HEAD..{upstream}"])
+        commits_behind = int(behind_raw)
+    except (GitQueryError, ValueError) as exc:
+        return {
+            **base,
+            "stale": True,
+            "check": "query_failed",
+            "branch": branch,
+            "upstream": upstream,
+            "detail": f"could not compute commits behind {upstream}: {exc}",
+        }
+
+    if commits_behind > 0:
+        return {
+            "stale": True,
+            "check": "behind",
+            "branch": branch,
+            "upstream": upstream,
+            "commits_behind": commits_behind,
+            "dirty_migration_files": [],
+            "detail": (
+                f"{commits_behind} commit(s) behind {upstream} — a migration "
+                f"file added upstream would be silently invisible to this run"
+            ),
+        }
+
+    try:
+        status_raw = git_runner.run(root, ["status", "--porcelain"])
+    except GitQueryError as exc:
+        return {
+            **base,
+            "stale": True,
+            "check": "query_failed",
+            "branch": branch,
+            "upstream": upstream,
+            "commits_behind": commits_behind,
+            "detail": f"could not query git status: {exc}",
+        }
+
+    dirty = _dirty_migration_paths(status_raw)
+    if dirty:
+        return {
+            "stale": True,
+            "check": "dirty_migrations",
+            "branch": branch,
+            "upstream": upstream,
+            "commits_behind": commits_behind,
+            "dirty_migration_files": dirty,
+            "detail": (
+                "uncommitted changes under products/*/backend/migrations/: "
+                + ", ".join(dirty)
+            ),
+        }
+
+    return {
+        "stale": False,
+        "check": None,
+        "branch": branch,
+        "upstream": upstream,
+        "commits_behind": commits_behind,
+        "dirty_migration_files": [],
+        "detail": "clean",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Tracking-table DDL
 # ---------------------------------------------------------------------------
 
@@ -519,6 +836,9 @@ def _schema_migrations_exists_sql(schema: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+_ERROR_STATUSES = frozenset({"error", "not_configured", "refused_stale_tree"})
+
+
 def migrate_product(
     product: str,
     *,
@@ -528,6 +848,10 @@ def migrate_product(
     schema: str | None = None,
     executor: SqlExecutor | None = None,
     products_dir: Path | None = None,
+    worktree_path: str | None = None,
+    allow_stale_tree: bool = False,
+    repo_root: str | Path | None = None,
+    git_runner: GitRunner | None = None,
 ) -> dict[str, Any]:
     """Apply pending migrations for ``product`` to the Supabase database.
 
@@ -544,18 +868,70 @@ def migrate_product(
                       DERIVATION") — not the naive slug transform.
         executor:     Injection seam for tests (``FakeSqlExecutor``).
                       When None, resolved from env via ``make_sql_executor``.
-        products_dir: Override ``PRODUCTS_DIR`` (injection seam for tests).
+        products_dir: Override the migrations-source directory (injection
+                      seam for tests). When omitted, derived from
+                      ``worktree_path`` if given, else ``PRODUCTS_DIR``.
+        worktree_path: Pins BOTH which tree the stale-tree check inspects
+                      AND where migrations are read from — same parameter
+                      name and semantics as ``predeploy_check``. The MCP
+                      server is one long-running process fixed at whatever
+                      directory it booted in; a caller working inside a
+                      git worktree MUST pass this explicitly. Omit to
+                      target the primary checkout.
+        allow_stale_tree: Escape hatch for the stale-tree refusal (see
+                      module docstring "STALE-TREE REFUSAL"). Default
+                      False. Setting this True is almost always wrong —
+                      it exists for the rare case a human has already
+                      manually verified the tree is safe to read from
+                      (e.g. visually diffed the pending set against what
+                      is actually merged upstream), not as a way to
+                      silence the gate out of impatience. The staleness
+                      verdict still computes and still rides on the
+                      ``stale_tree`` key even when bypassed — never silent.
+        repo_root:    Explicit override for the tree the stale-tree check
+                      inspects (test seam — wins over ``worktree_path``,
+                      same precedence convention as ``check_merge_debt`` /
+                      ``predeploy_check``).
+        git_runner:   Injection seam for tests (``FakeGitRunner``). When
+                      None, resolved to the real ``SubprocessGitRunner``.
 
     Returns a dict with keys::
 
-        status, product, schema, schema_source, project_ref, applied,
-        skipped_already_applied, pending, error
+        status ('dry_run' | 'applied' | 'up_to_date' | 'not_configured' |
+                'error' | 'refused_stale_tree'),
+        exit_code (0 on every non-error status, 1 otherwise),
+        product, schema, schema_source, project_ref, applied,
+        skipped_already_applied, pending, error, stale_tree,
+        allow_stale_tree
     """
-    derived_schema, schema_source = _resolve_schema(product, schema, products_dir)
+    resolved_products_dir: Path
+    if products_dir is not None:
+        resolved_products_dir = products_dir
+    elif worktree_path:
+        resolved_products_dir = Path(resolve_caller_root(worktree_path)) / "products"
+    else:
+        resolved_products_dir = PRODUCTS_DIR
+
+    git_root: Path
+    if repo_root is not None:
+        git_root = Path(repo_root)
+    elif worktree_path:
+        git_root = Path(resolve_caller_root(worktree_path))
+    else:
+        git_root = Path(REPO_ROOT)
+
+    derived_schema, schema_source = _resolve_schema(
+        product, schema, resolved_products_dir
+    )
+
+    stale_tree = _check_tree_staleness(
+        git_root, git_runner=git_runner or _DEFAULT_GIT_RUNNER
+    )
 
     def _result(status: str, **overrides: Any) -> dict[str, Any]:
         base: dict[str, Any] = {
             "status": status,
+            "exit_code": 1 if status in _ERROR_STATUSES else 0,
             "product": product,
             "schema": derived_schema,
             "schema_source": schema_source,
@@ -564,9 +940,38 @@ def migrate_product(
             "skipped_already_applied": [],
             "pending": [],
             "error": None,
+            "stale_tree": stale_tree,
+            "allow_stale_tree": allow_stale_tree,
         }
         base.update(overrides)
         return base
+
+    # ── Refuse a stale/dirty/unverifiable tree BEFORE reading migrations ──────
+    # (KB § PATTERNS/backend/migrate-product-mcp-tool.md "STALE-TREE REFUSAL":
+    # the 2026-09-17 incident — a dry-run computed a confident pending list
+    # against a tree 26 commits behind origin/dev that didn't even contain
+    # the migration being deployed. Fail-closed by construction: this check
+    # runs — and can refuse — before any Supabase credential is touched.)
+    if stale_tree["stale"] and not allow_stale_tree:
+        remedy = (
+            f"git merge --ff-only {stale_tree['upstream']}"
+            if stale_tree["upstream"]
+            else "fetch and set an upstream tracking ref for this branch"
+        )
+        return _result(
+            "refused_stale_tree",
+            error=(
+                f"migrate_product refused to read migrations from an "
+                f"untrustworthy tree at {git_root} (branch "
+                f"{stale_tree['branch']!r}, commits_behind="
+                f"{stale_tree['commits_behind']}): {stale_tree['detail']} "
+                f"Remedy: `{remedy}` in that tree, or pass worktree_path= "
+                f"(or repo_root= in tests) to pin a different, up-to-date "
+                f"tree. If you have manually verified this tree is safe, "
+                f"pass allow_stale_tree=True (see docstring — almost "
+                f"always wrong)."
+            ),
+        )
 
     # ── Resolve executor ──────────────────────────────────────────────────────
     if executor is None:
@@ -587,7 +992,7 @@ def migrate_product(
         )
 
     # ── Resolve migrations directory ──────────────────────────────────────────
-    mig_dir = _migrations_dir(product, products_dir)
+    mig_dir = _migrations_dir(product, resolved_products_dir)
     if not mig_dir.exists():
         return _result("error", error=f"migrations directory not found: {mig_dir}")
 
@@ -976,8 +1381,23 @@ def register(server) -> None:
             "The target schema is DERIVED from the product's own "
             "create_product_app(schema=\"...\") declaration in app/main.py "
             "(AST-parsed) — not a naive slug transform; pass schema= to override. "
-            "Returns {status, product, schema, schema_source, project_ref, applied, "
-            "skipped_already_applied, pending, error}. "
+            "REFUSES (status='refused_stale_tree', exit_code=1 — never a silent "
+            "green) before reading any migration file when the tree it would "
+            "read from is untrustworthy: behind its upstream, has uncommitted "
+            "changes under products/*/backend/migrations/, or any needed git "
+            "query fails (fail-closed — never assumed clean). The 2026-09-17 "
+            "incident this closes: a prod dry-run silently omitted a migration "
+            "because the primary checkout was 26 commits behind origin/dev. "
+            "Pass worktree_path when called from inside a git worktree — pins "
+            "BOTH which tree is checked and which tree migrations are read "
+            "from, same parameter name+semantics as predeploy_check. "
+            "allow_stale_tree=True is the documented escape hatch (almost "
+            "always wrong — see the tool's docstring) for a human-verified "
+            "deliberate override; the staleness verdict still rides on the "
+            "stale_tree key even when bypassed. "
+            "Returns {status, exit_code, product, schema, schema_source, "
+            "project_ref, applied, skipped_already_applied, pending, error, "
+            "stale_tree, allow_stale_tree}. "
             "KB § PATTERNS/backend/migrate-product-mcp-tool.md."
         ),
     )
@@ -987,6 +1407,8 @@ def register(server) -> None:
         target: str | None = None,
         project_ref: str = "nyplttplcoyiiqjrvtiw",
         schema: str | None = None,
+        worktree_path: str | None = None,
+        allow_stale_tree: bool = False,
     ) -> dict:
         return migrate_product(
             product=product,
@@ -994,6 +1416,8 @@ def register(server) -> None:
             target=target,
             project_ref=project_ref,
             schema=schema,
+            worktree_path=worktree_path,
+            allow_stale_tree=allow_stale_tree,
         )
 
     @server.tool(
@@ -1042,6 +1466,10 @@ __all__ = [
     "FakeSqlExecutor",
     "SupabaseMgmtExecutor",
     "make_sql_executor",
+    "GitQueryError",
+    "GitRunner",
+    "FakeGitRunner",
+    "SubprocessGitRunner",
     "register",
     "_slug_to_schema",
     "_quote_ident",
@@ -1055,4 +1483,6 @@ __all__ = [
     "_copy_ledger_rows_sql",
     "_delete_phantom_ledger_rows_sql",
     "_checksum",
+    "_check_tree_staleness",
+    "_dirty_migration_paths",
 ]
