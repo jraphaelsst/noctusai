@@ -168,6 +168,7 @@ def main():
     parser.add_argument("--check-prod-exposure-consent", action="store_true", help="Prod-promotion consent gate: a product's FIRST arrival on deploy/fleet/docker-compose.prod.yml, deploy/tunnel/ingress.yml, or ALL_SLUGS in scripts/infra/build-and-push.sh IS the production-promotion decision (:latest ships it with no later gate) — requires a user-authored deploy/consent/<slug>.prod.yml in an isolated prior commit. Severity high. KB § PATTERNS/devops/prod-exposure-consent.md.")
     parser.add_argument("--check-prod-compose-hardening-parity", action="store_true", help="deploy/fleet/docker-compose.prod.yml's agents + academia-de-reciclagem security blocks (cap_drop/cap_add/security_opt/read_only/tmpfs/mem_limit) must stay byte-identical to noctus.dev.propagate's _C_HARDENING_AGENTS/_C_HARDENING_ACADEMIA — the one propagate source the dev-shape composes already reuse. A hand-copy into the separate prod compose can silently drift a security control. Severity high. KB § PATTERNS/devops/containerization.md.")
     parser.add_argument("--check-prod-compose-env-manifest-sync", action="store_true", help="deploy/fleet/env.fleet.keys must document every ${VAR} docker-compose.prod.yml + compose.infra.prod.yml interpolate from deploy/fleet/.env.fleet (compose-parse-time, NOT the root .env env_file: loads) — and a secret-shaped var (*_KEY/*_TOKEN/*_SECRET/*_PASSWORD) must never rely on a silently-empty default. 2026-09-16: JULIA_ANTHROPIC_API_KEY resolved to '' this way while /api/health stayed 200. Severity high. KB § GUIDES/production-deploy.md § 6.")
+    parser.add_argument("--check-contract-field-provenance-map", action="store_true", help="social-wiring's F5 contract generator (card_hub/contrato_gerador) emits ~140 distinct dotted placeholder tokens (AST-derived: modelo_texto.py's TEMPLATE string + contexto.montar_contexto's + derivacao.derivar_switches's return-dict keys — no hand-maintained list on the code side); every token must have a provenance row (clause, source document type, extractor code path, confirmed storage, confirm/promote step, status) in the literal § 3 token-inventory table of KNOWLEDGE-BASE/CONTEXT/PRODUCTS/social-wiring/CONTRACT-FIELD-PROVENANCE-MAP.md. Severity high. KB § CONTEXT/PRODUCTS/social-wiring/CONTRACT-FIELD-PROVENANCE-MAP.md § 3.")
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
     parser.add_argument("--check-canonical-organ-consumption", action="store_true", help="Keeper: products must consume canonical cached organs from @noctusai/lib — no local re-implementations. Named-seam extensions allowed when declared. Severity high. KB § PATTERNS/architect/products-consume-canonical-organs.md.")
     parser.add_argument("--check-auth-boundary-false-green", action="store_true", help="Keeper: auth-boundary test assertions must NOT pair 401 with a maskable code — `status_code in (401, 404)` or `in (401, 422)` is a false-green escape hatch (route-absent ⇒ 404, or body-validation-before-auth ⇒ 422; test passes even when auth never fired). Only static AST analysis catches this class. Severity warning (advisory). KB § PATTERNS/compliance/auth-boundary-false-green.md.")
@@ -799,6 +800,17 @@ def main():
         print(f"  {RED}✗ {len(issues)} prod-compose-env-manifest-sync issue(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_contract_field_provenance_map:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_contract_field_provenance_map
+        issues = check_contract_field_provenance_map(repo_root=REPO_ROOT)
+        if not issues:
+            print(f"  {GREEN}✓ contract-field-provenance-map: every contrato_gerador placeholder has a documented row.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} contract-field-provenance-map issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i['file']} — {i['issue']}")
         sys.exit(1)
     elif args.check_prod_exposure_consent:
         from tools.noctus.dev.compliance import check_prod_exposure_consent

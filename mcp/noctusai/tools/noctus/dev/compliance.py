@@ -18354,3 +18354,214 @@ def check_prod_compose_env_manifest_sync(repo_root: Path | None = None) -> list[
         })
 
     return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_contract_field_provenance_map` — social-wiring's F5 contract
+# generator (`card_hub/contrato_gerador`) prints ~140 distinct dotted
+# placeholder tokens; the provenance of each (which document/table it comes
+# from, which endpoint promotes an extracted suggestion into the confirmed
+# value the generator reads) is hand-documented in KNOWLEDGE-BASE/CONTEXT/
+# PRODUCTS/social-wiring/CONTRACT-FIELD-PROVENANCE-MAP.md § 3. A hand-typed
+# inventory drifts the moment a clause is added to `modelo_texto.py` without
+# a matching doc row — exactly the class CLAUDE.md § 1 names ("hand-
+# maintained lists drift and break the fleet — derive, don't sync by hand").
+#
+# Derivation is AST-only, zero hand-maintained stoplist on the CODE side:
+#   1. `modelo_texto.py`'s module-level `TEMPLATE = r"""..."""` string is
+#      lifted via `ast.parse` (a real AST read, not a text grep), then a
+#      regex collects every dotted `root.attr[.attr...]` identifier chain
+#      inside a Jinja `{{ ... }}` / `{% ... %}` / `{%p ... %}` block.
+#   2. `contexto.py::montar_contexto`'s own `return {...}` dict literal is
+#      AST-walked for its top-level string keys (the bare top-level Jinja
+#      context names — `imovel`, `certidoes`, `preco`, ...) minus the five
+#      pure-formatting-machinery keys (`cl`/`par`/`brl`/`dias`/`pct_extenso`).
+#   3. `derivacao.py::derivar_switches`'s `return {...}` dict literal is
+#      AST-walked the same way for its 14 `tem_*`/`a_vista`/`ad_corpus`
+#      switch keys (spread into the same context via `**sw`).
+#
+# The doc side is checked against a literal appendix table (§3's "token
+# inventory") whose first column is a lone backtick-quoted token per row —
+# NOT the prose §2 tables, which group tokens under `<key>` wildcards and
+# `V.*`/`C.*` shorthand for human readability and are not a stable parse
+# target. See that doc's own § 3 "Named limitation" note for what this
+# derivation does NOT catch (loop-local template aliases that never reach
+# `modelo_texto.py` as a further dotted token) and why: `jinja2` is not a
+# declared dependency of `mcp/noctusai` (only of `seed/lib/backend`), so a
+# full `jinja2.Environment().parse()` AST walk would add a new cross-package
+# dependency for one keeper — the same class of drift
+# `check_seed_declared_imports` exists to catch, and this keeper declines to
+# introduce it.
+# ---------------------------------------------------------------------------
+
+_CONTRACT_GERADOR_REL = (
+    "products/social-wiring/backend/app/modules/card_hub/contrato_gerador"
+)
+_CONTRACT_PROVENANCE_MAP_REL = (
+    "KNOWLEDGE-BASE/CONTEXT/PRODUCTS/social-wiring/"
+    "CONTRACT-FIELD-PROVENANCE-MAP.md"
+)
+#: Pure formatting/derivation helpers `montar_contexto` also returns —
+#: never a data placeholder with its own provenance row.
+_CONTRACT_CONTEXT_MACHINERY_KEYS = frozenset({"cl", "par", "brl", "dias", "pct_extenso"})
+_CONTRACT_JINJA_BLOCK_RE = re.compile(r"\{\{.*?\}\}|\{%p?.*?%\}", re.S)
+_CONTRACT_DOTTED_IDENT_RE = re.compile(
+    r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+\b"
+)
+#: Jinja loop builtins, not data the generator's context supplies.
+_CONTRACT_JINJA_BUILTIN_TOKENS = frozenset({"loop.index", "loop.last"})
+#: A markdown table row whose first cell is EXACTLY one backtick-quoted
+#: token (nothing else in the cell) — the § 3 appendix's shape. Rows in § 2
+#: that group several tokens under one cell (`` `cl.<key>.ORD` / `cl.<key>.
+#: ref` ``, `` `V.*`, `C.*` ``) do NOT match: the closing backtick is not
+#: immediately followed by the next `|`.
+_CONTRACT_DOC_TOKEN_ROW_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.M)
+
+
+def _contract_gerador_template_source(modelo_path: Path) -> str:
+    """The `TEMPLATE = r\"\"\"...\"\"\"` module-level string, via real AST —
+    never a text grep. Raises `ValueError` if the shape has changed."""
+    tree = ast.parse(modelo_path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "TEMPLATE" for t in node.targets):
+            continue
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            return node.value.value
+    raise ValueError(
+        f"{modelo_path}: no module-level `TEMPLATE = \"\"\"...\"\"\"` string "
+        "assignment found — modelo_texto.py's shape has changed; update "
+        "_contract_gerador_template_source to match."
+    )
+
+
+def _contract_gerador_function_return_dict_keys(path: Path, func_name: str) -> set[str]:
+    """String keys of `func_name`'s own `return {...}` dict literal, via AST.
+    Raises `ValueError` if the function or the dict-literal return is gone —
+    a signal the source has been refactored, not a silent empty result."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    keys: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == func_name):
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Return) and isinstance(sub.value, ast.Dict):
+                for k in sub.value.keys:
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                        keys.add(k.value)
+    if not keys:
+        raise ValueError(
+            f"{path}: function {func_name!r} has no `return {{...}}` dict "
+            "literal with string keys — its shape has changed."
+        )
+    return keys
+
+
+def _contract_gerador_placeholder_tokens(root: Path) -> set[str]:
+    """The full AST-derived placeholder-token set: every dotted identifier
+    chain the rendered template reads, plus every bare top-level context key
+    and switch name it is built from. See this function's module-level
+    comment block for the three-source derivation."""
+    base = root / _CONTRACT_GERADOR_REL
+    dotted: set[str] = set()
+    for block in _CONTRACT_JINJA_BLOCK_RE.findall(
+        _contract_gerador_template_source(base / "modelo_texto.py")
+    ):
+        dotted.update(_CONTRACT_DOTTED_IDENT_RE.findall(block))
+    dotted -= _CONTRACT_JINJA_BUILTIN_TOKENS
+
+    ctx_keys = _contract_gerador_function_return_dict_keys(
+        base / "contexto.py", "montar_contexto"
+    ) - _CONTRACT_CONTEXT_MACHINERY_KEYS
+    switch_keys = _contract_gerador_function_return_dict_keys(
+        base / "derivacao.py", "derivar_switches"
+    )
+    return dotted | ctx_keys | switch_keys
+
+
+def check_contract_field_provenance_map(repo_root: Path | None = None) -> list[dict]:
+    """Every placeholder `contrato_gerador`'s template/context emits must have
+    a provenance row in `CONTRACT-FIELD-PROVENANCE-MAP.md` § 3's literal
+    token-inventory table (clause, source document type, extractor code
+    path, confirmed storage, confirm/promote step, status) — a field cannot
+    reach the F5 instrument without a documented, verifiable origin.
+
+    Derivation is AST-only (no hand-maintained placeholder list on the CODE
+    side); see the module-level comment block above this function for the
+    three-source walk. Missing the whole map doc, or the generator module
+    itself being renamed/removed, are reported as their own single issue
+    rather than crashing. Severity `high` — the exact hand-maintained-list-
+    drift class KB § PATTERNS/devops/product-lockfile-and-slug-drift.md
+    catalogues, applied to a KB doc instead of a CI manifest. KB §
+    CONTEXT/PRODUCTS/social-wiring/CONTRACT-FIELD-PROVENANCE-MAP.md § 3/§ 5.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    base = root / _CONTRACT_GERADOR_REL
+    modelo_path = base / "modelo_texto.py"
+    map_path = root / _CONTRACT_PROVENANCE_MAP_REL
+
+    if not modelo_path.is_file():
+        # The generator module doesn't exist on this tree (renamed, removed,
+        # or a fixture repo that never had it) — nothing to gate.
+        return issues
+
+    try:
+        code_tokens = _contract_gerador_placeholder_tokens(root)
+    except (SyntaxError, OSError, UnicodeDecodeError, ValueError) as exc:
+        logger.debug(
+            "check_contract_field_provenance_map: cannot derive placeholder "
+            "tokens from %s (%s)", base, exc,
+        )
+        return issues
+
+    if not map_path.is_file():
+        issues.append({
+            "product": "social-wiring",
+            "file": _CONTRACT_PROVENANCE_MAP_REL,
+            "issue": (
+                f"contrato_gerador emits {len(code_tokens)} placeholder "
+                f"tokens (modelo_texto.py + contexto.py + derivacao.py) but "
+                f"{_CONTRACT_PROVENANCE_MAP_REL} does not exist. Every "
+                "placeholder needs a documented provenance row (clause, "
+                "source document type, extractor code path, confirmed "
+                "storage, confirm/promote step, status)."
+            ),
+            "severity": "high",
+        })
+        return issues
+
+    try:
+        doc_text = map_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "check_contract_field_provenance_map: cannot read %s (%s)",
+            map_path, exc,
+        )
+        return issues
+
+    doc_tokens = set(_CONTRACT_DOC_TOKEN_ROW_RE.findall(doc_text))
+
+    for token in sorted(code_tokens - doc_tokens):
+        issues.append({
+            "product": "social-wiring",
+            "file": _CONTRACT_PROVENANCE_MAP_REL,
+            "issue": (
+                f"contract placeholder `{token}` is emitted by "
+                "contrato_gerador (modelo_texto.py's TEMPLATE, or "
+                "contexto.montar_contexto's / derivacao.derivar_switches's "
+                "return-dict keys) but has no row in "
+                f"{_CONTRACT_PROVENANCE_MAP_REL} § 3's literal token-"
+                "inventory table. Add a `| `" + token + "` | <§2 group> |` "
+                "row there, plus its full provenance row in § 2 (clause, "
+                "source document type, extractor code path, confirmed "
+                "storage, confirm/promote step, status) — a field cannot "
+                "enter the F5 instrument without a documented, verifiable "
+                "origin. KB § CONTEXT/PRODUCTS/social-wiring/"
+                "CONTRACT-FIELD-PROVENANCE-MAP.md § 3."
+            ),
+            "severity": "high",
+        })
+
+    return issues
