@@ -254,11 +254,30 @@ class TestRollbackProperty:
 
 
 class TestVerifyDbGuards:
-    def test_not_configured_when_no_executor_resolves(self):
+    def test_not_configured_when_no_executor_resolves(self, monkeypatch):
+        """`executor=None` with no credentials resolvable -> not_configured,
+        never a silent skip. Ambient-env absence is NOT enough to assert
+        this hermetically: within the full test-suite process, an earlier
+        test file's `configure_credentials(...)` call (real repo `.env`
+        Supabase creds, used legitimately elsewhere) can leave the DB-first
+        credential tier ABLE to resolve a real PAT for THIS test too — which
+        would make `make_sql_executor()` return a REAL executor and this
+        test's probe SQL would run against live production. Caught live
+        2026-09-18: the full `mcp/noctusai/tests/` sweep actually executed
+        `_ANY_PROBE`'s trivial fixture SQL against
+        nyplttplcoyiiqjrvtiw.supabase.co (harmlessly — the wrap_rollback_only
+        guarantee held — but a test must never depend on that for its own
+        hermeticity). Same external-seam neutralization
+        `test_check_storage_no_public_buckets.py` /
+        `test_ensure_schema_exposure.py` / `test_migrate_product.py` use.
+        """
+        monkeypatch.delenv("SUPABASE_ACCESS_TOKEN", raising=False)
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential",
+            lambda *a, **k: None,
+        )
         result = verify_db_guards(executor=None, registry=(_ANY_PROBE,))
-        # No credentials in this test process (and none should be reached
-        # for) — make_sql_executor() returns None without network access.
-        assert result["status"] in ("not_configured",)
+        assert result["status"] == "not_configured"
         assert result["ok"] is False
 
     def test_empty_registry_is_an_error_not_a_silent_clean(self):
