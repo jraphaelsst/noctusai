@@ -11,7 +11,11 @@
 4. Accent/case/separator tolerance, and singular/plural for PROPRIETÁRIO(S).
 5. A label NOT at the start of a line (prose merely using the word) is never
    mistaken for a block header.
-6. Every offset is a valid slice; `rotulo_start/end` sit inside `start`.
+6. THE REGRESSION FOUND AGAINST REAL DOCUMENTS: the last block stops before
+   the abertura's closing locale+date and the officer's signature (`O
+   Oficial,` / `O Oficial Substituto,`) instead of swallowing them.
+7. No block's slice starts or ends with whitespace, on every fixture.
+8. Every offset is a valid slice; `rotulo_start/end` sit inside `start`.
 
 All names, numbers and addresses are invented.
 """
@@ -38,6 +42,46 @@ ABERTURA_SEM_PROPRIETARIOS = (
     "TESTE EXEMPLAR.\n"
     "CADASTRO MUNICIPAL: Contribuinte nº 998.877-6.\n"
     "REGISTRO ANTERIOR: Matrícula nº 5.500 deste registro.\n"
+)
+
+# Real-shaped closing, "O Oficial," variant — modelled on a production
+# document's structure only (invented lot/cadastro/matrícula numbers, city,
+# date and officer name).
+ABERTURA_FECHO_OFICIAL = (
+    "IMÓVEL: Um lote de terreno sob o nº 15 da quadra C, situado na Rua das "
+    "Palmeiras Inventadas, com a área de 300,00m², confrontando com parte "
+    "do lote nº 20, e com os lotes nºs 18 e 19.\n"
+    "\n"
+    "CADASTRO MUNICIPAL: Contribuinte nº 456.789-0.\n"
+    "\n"
+    "PROPRIETÁRIOS: FULANO DE TESTE EXEMPLAR, brasileiro, casado.\n"
+    "\n"
+    "REGISTRO ANTERIOR: R-05/M-12.345 de 10/02/1995, do Registro de "
+    "Imóveis de Osasco/SP.\n"
+    "\n"
+    "Cotia, 20 de junho de 2018. O Oficial, ________ (Fulano Exemplo da "
+    "Silva).\n"
+)
+
+# Same shape, "O Oficial Substituto," variant.
+ABERTURA_FECHO_SUBSTITUTO = (
+    "IMÓVEL: Um apartamento nº 55, no 5º andar do Edifício Exemplo, com "
+    "área privativa de 90,00m².\n"
+    "\n"
+    "CADASTRO MUNICIPAL: Contribuinte nº 998.877-6.\n"
+    "\n"
+    "REGISTRO ANTERIOR: R-11/M-33.221 de 05/04/2001, do Registro de "
+    "Imóveis de Campinas/SP.\n"
+    "\n"
+    "Cotia, 01 de setembro de 2015. O Oficial Substituto, ________ "
+    "(Beltrana Exemplo Souza).\n"
+)
+
+TODAS_AS_ABERTURAS = (
+    ABERTURA_TODOS_OS_ROTULOS,
+    ABERTURA_SEM_PROPRIETARIOS,
+    ABERTURA_FECHO_OFICIAL,
+    ABERTURA_FECHO_SUBSTITUTO,
 )
 
 
@@ -88,10 +132,15 @@ class TestRotuloAusente:
         assert campos == ["descricao_imovel", "cadastro_municipal", "registro_anterior"]
         assert "proprietarios" not in campos
 
-    def test_last_block_runs_to_the_end_of_the_window(self):
+    def test_last_block_runs_to_the_end_of_the_window_minus_trailing_whitespace(self):
+        # No _FIM_ABERTURA terminator in this fixture, so the fallback is
+        # `end` — but the value is still trimmed of the trailing "\n".
         texto = ABERTURA_SEM_PROPRIETARIOS
         blocos = _segmentar(texto)
-        assert blocos[-1].end == len(texto)
+        assert texto[blocos[-1].end :] == "\n"
+        assert texto[blocos[-1].start : blocos[-1].end] == (
+            "Matrícula nº 5.500 deste registro."
+        )
 
     def test_no_labels_at_all_yields_no_blocks(self):
         assert _segmentar("Apenas um parágrafo qualquer, sem rótulos.\n") == ()
@@ -147,8 +196,56 @@ class TestPalavraNoMeioDeFraseNaoAbreBloco:
         assert [b.campo for b in blocos] == ["cadastro_municipal"]
 
 
+class TestFechoDaAbertura:
+    """The regression found against real documents: the last block stopping
+    before the closing locale+date and the officer's signature."""
+
+    def test_oficial_variant_stops_before_the_closing(self):
+        texto = ABERTURA_FECHO_OFICIAL
+        blocos = _segmentar(texto)
+        ultimo = blocos[-1]
+        assert ultimo.campo == "registro_anterior"
+        valor = texto[ultimo.start : ultimo.end]
+        assert valor == (
+            "R-05/M-12.345 de 10/02/1995, do Registro de Imóveis de Osasco/SP."
+        )
+        assert "Cotia" not in valor
+        assert "Oficial" not in valor
+
+    def test_oficial_substituto_variant_stops_before_the_closing(self):
+        texto = ABERTURA_FECHO_SUBSTITUTO
+        blocos = _segmentar(texto)
+        ultimo = blocos[-1]
+        assert ultimo.campo == "registro_anterior"
+        valor = texto[ultimo.start : ultimo.end]
+        assert valor == (
+            "R-11/M-33.221 de 05/04/2001, do Registro de Imóveis de Campinas/SP."
+        )
+        assert "Cotia" not in valor
+        assert "Substituto" not in valor
+
+    def test_earlier_blocks_are_unaffected_by_the_closing_terminator(self):
+        for texto in (ABERTURA_FECHO_OFICIAL, ABERTURA_FECHO_SUBSTITUTO):
+            blocos = _segmentar(texto)
+            campos = [b.campo for b in blocos]
+            assert campos[0] == "descricao_imovel"
+            assert campos[-1] == "registro_anterior"
+            # No spillover: every block's own text stays inside itself.
+            for a, b in zip(blocos, blocos[1:]):
+                assert a.end <= b.start
+
+
+class TestNenhumBlocoComEspacoNasBordas:
+    def test_no_block_starts_or_ends_with_whitespace_on_any_fixture(self):
+        for texto in TODAS_AS_ABERTURAS:
+            for b in _segmentar(texto):
+                valor = texto[b.start : b.end]
+                assert valor == valor.strip(), (texto, b)
+                assert valor  # trimming never eats the whole value here
+
+
 class TestOffsetsSaoValidos:
     def test_every_block_is_a_valid_slice(self):
-        for texto in (ABERTURA_TODOS_OS_ROTULOS, ABERTURA_SEM_PROPRIETARIOS):
+        for texto in TODAS_AS_ABERTURAS:
             for b in _segmentar(texto):
                 assert 0 <= b.rotulo_start <= b.rotulo_end <= b.start <= b.end <= len(texto)
