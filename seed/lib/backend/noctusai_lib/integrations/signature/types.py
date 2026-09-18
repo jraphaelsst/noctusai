@@ -99,8 +99,20 @@ class SignatureAdapter(Protocol):
     (via `make_signature_adapter`) and never branches on which it got."""
 
     async def criar_envelope(
-        self, documento: DocumentoParaAssinar, signatarios: Sequence[Signatario]
-    ) -> EnvelopeCriado: ...
+        self,
+        documento: DocumentoParaAssinar,
+        signatarios: Sequence[Signatario],
+        *,
+        mensagem: str | None = None,
+    ) -> EnvelopeCriado:
+        """`mensagem` is the operator-typed text from contract §3.1's
+        optional `mensagem` field (<= 500 chars). `None` ⇒ the adapter's
+        own default copy. Surfaced as a keyword-only Protocol parameter
+        2026-09-17 — earlier versions of this Protocol had no way for a
+        caller to pass it through at all, so `D4SignAdapter` always sent a
+        fixed string regardless of what an operator typed
+        (`NOC-REMEDIATE[d4sign-sendtosigner-message]`, contract §1.6)."""
+        ...
 
     async def consultar(self, external_id: str) -> EventoAssinatura: ...
 

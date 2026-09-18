@@ -4,18 +4,26 @@ Pinned wire shapes only; **no live D4Sign account was available while
 building this** (contract §0/F2 — zero signing credentials exist on the
 platform at authoring time), so every request/response shape below is
 unit-tested against the wire shapes §1.4 documents, not verified against
-a live response. Two shapes fall outside what §1.4 pins explicitly and
-are called out at their call site instead of asserted as fact:
+a live response. Six corners fall outside what §1.4 pins explicitly and
+are each named with a `NOC-REMEDIATE[d4sign-*]` marker at their call site
+instead of asserted as fact — every one of them has a NAMED, executable
+assertion in `noctusai_lib.testing.d4sign_harness` (contract §1.6):
 
-- `link_assinatura` on `criar_envelope`'s return value — the upload step's
-  documented response is `{"uuid": ...}` only, with no signing-portal URL.
-  A `https://secure.d4sign.com.br/documents/{uuid}` link is synthesized
-  from the well-known D4Sign document-viewer path; TODO verify against a
-  live account once credentials land (`NOC-REMEDIATE[d4sign-portal-link]`).
-- `SignatarioRemoto.external_id` per signer — the `createlist` response
-  shape is not part of the pinned contract (§1.4 only pins its request
-  body), so each signer's id is synthesized as `f"{external_id}:{email}"`
-  rather than trusting an unverified vendor field.
+1. `d4sign-portal-link` — `link_assinatura` synthesized from the
+   uuid-only upload response.
+2. `d4sign-signer-external-id` — `SignatarioRemoto.external_id` per
+   signer synthesized; `createlist`'s response shape isn't pinned.
+3. `d4sign-webhook-type-post` — the webhook's `type_post` vocabulary
+   reuses the `statusId` table; unconfirmed against a live delivery.
+4. `d4sign-status-per-signer` — `consultar`'s per-signer detail; §1.4
+   pins only `statusId`, so `EventoAssinatura.signatarios` stays `()`.
+5. `d4sign-sendtosigner-message` — whether D4Sign actually surfaces a
+   caller-supplied `mensagem` to signers (length/encoding limits).
+6. `d4sign-error-body-shape` — `_mensagem_provedor`'s field-name guess
+   (`message`/`error`/`erro`) for a 4xx/5xx error body.
+
+See `projects/signature-integration-CONTRACT.md` §1.6 for the credential
+drop-in path that turns each of these from a guess into an answer.
 
 🔴 There is no silent fallback anywhere in this file. A transport failure,
 timeout or 5xx raises `ProvedorIndisponivel`; a 4xx raises `EnvelopeRecusado`
@@ -27,8 +35,9 @@ constructed.
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import datetime, timezone
-from typing import Any, Mapping, cast
+from typing import Any, Callable, Mapping, Optional, Sequence, cast
 from urllib.parse import parse_qs
 
 import httpx
@@ -50,8 +59,34 @@ from noctusai_lib.integrations.signature.types import (
 )
 from noctusai_lib.security.webhook_signatures import verify_hmac_sha256_hex
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_BASE_URL = "https://secure.d4sign.com.br/api/v1"
 DEFAULT_TIMEOUT_SECONDS = 30.0
+
+#: `response_hook(step, body)` — fired after every successfully-parsed wire
+#: response, `step` being one of `"uploadbinary"`, `"createlist"`,
+#: `"sendtosigner"`, `"status"`, `"download"`, `"cancel"`. Purely an
+#: OBSERVATION seam for `noctusai_lib.testing.d4sign_harness` (contract
+#: §1.6) to inspect raw vendor JSON the parsed return values don't carry —
+#: it changes NO production behaviour (default `None`, no-op) and a raising
+#: hook never breaks a real call (caught + logged at DEBUG, never raised).
+ResponseHook = Callable[[str, dict], None]
+
+
+def _classificar_etapa(path: str) -> str:
+    if path.endswith("/uploadbinary"):
+        return "uploadbinary"
+    if path.endswith("/createlist"):
+        return "createlist"
+    if path.endswith("/sendtosigner"):
+        return "sendtosigner"
+    if path.endswith("/download"):
+        return "download"
+    if path.endswith("/cancel"):
+        return "cancel"
+    return "status"  # GET /documents/{uuid}
+
 
 #: Shared token-bucket name — see `noctusai_lib.integrations.rate_limit`.
 #: One bucket for every org's D4Sign traffic; a slow org can't starve a
@@ -65,7 +100,8 @@ RATE_LIMIT_BUCKET = "d4sign"
 #: NOT pinned by the contract as a separate vocabulary, and reusing the
 #: statusId table is the only defensible reading absent a live account to
 #: confirm the webhook's own code list against —
-#: `NOC-REMEDIATE[d4sign-webhook-type-post]`).
+#: `NOC-REMEDIATE[d4sign-webhook-type-post]: confirm type_post shares the
+#: statusId vocabulary against a real webhook delivery — 2026-09-17`).
 _STATUS_POR_ID: dict[str, StatusAssinatura] = {
     "1": "pendente",
     "2": "pendente",
@@ -76,10 +112,13 @@ _STATUS_POR_ID: dict[str, StatusAssinatura] = {
     "7": "expirado",
 }
 
-#: `sendtosigner`'s "message" field has no source in the Protocol —
-#: `criar_envelope(documento, signatarios)` carries no message parameter
-#: (contract §1.1). Using a fixed default here is a known gap; surface to
-#: the tech-lead if a product needs this to be operator-editable copy.
+#: `sendtosigner`'s "message" field default — used whenever a caller
+#: doesn't supply `criar_envelope(..., mensagem=...)`. Whether D4Sign
+#: actually surfaces this text to signers (in the notification e-mail, with
+#: what length/encoding limits) is unverified without a live account
+#: (`NOC-REMEDIATE[d4sign-sendtosigner-message]: confirm the live vendor
+#: honours/displays a caller-supplied sendtosigner message the same way it
+#: is sent, before treating this as a settled UX surface — 2026-09-17`).
 _MENSAGEM_ENVIO_PADRAO = "Você recebeu um documento para assinatura eletrônica."
 
 
@@ -104,7 +143,14 @@ def _cabecalho(cabecalhos: Mapping[str, str], nome: str) -> str | None:
 def _mensagem_provedor(response: httpx.Response) -> str | None:
     """Best-effort provider error text — D4Sign's error body shape isn't
     pinned by the contract, so this degrades to raw text rather than
-    assuming a JSON field name that might not exist."""
+    assuming a JSON field name that might not exist.
+
+    NOC-REMEDIATE[d4sign-error-body-shape]: the `message`/`error`/`erro`
+    key guess below is untested against a live 4xx/5xx body — confirm
+    against a real error response before trusting `EnvelopeRecusado.
+    details["provedor_mensagem"]` as anything more than best-effort text
+    — 2026-09-17.
+    """
     try:
         body = response.json()
     except ValueError:
@@ -137,12 +183,14 @@ class D4SignAdapter:
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
         transport: httpx.AsyncBaseTransport | None = None,
+        response_hook: Optional[ResponseHook] = None,
     ) -> None:
         self._crypt_key = crypt_key
         self._safe_uuid = safe_uuid
         self._base_url = base_url.rstrip("/")
         self._params = {"tokenAPI": api_token, "cryptKey": crypt_key}
         self._client = httpx.AsyncClient(timeout=timeout, transport=transport)
+        self._response_hook = response_hook
 
     async def aclose(self) -> None:
         """Release the held `AsyncClient`. Optional — call at shutdown for
@@ -171,15 +219,31 @@ class D4SignAdapter:
                 provedor_mensagem=_mensagem_provedor(response),
             )
         if not response.content:
-            return {}
-        try:
-            body = response.json()
-        except ValueError:
-            return {}
-        return body if isinstance(body, dict) else {}
+            corpo: dict = {}
+        else:
+            try:
+                parsed = response.json()
+            except ValueError:
+                parsed = {}
+            corpo = parsed if isinstance(parsed, dict) else {}
+
+        if self._response_hook is not None:
+            # Observation-only seam (contract §1.6) — a raising hook must
+            # never take a real D4Sign call down.
+            try:
+                self._response_hook(_classificar_etapa(path), corpo)
+            except Exception:  # noqa: BLE001 - instrumentation, never fatal
+                logger.debug(
+                    "D4SignAdapter.response_hook raised; ignoring", exc_info=True
+                )
+        return corpo
 
     async def criar_envelope(
-        self, documento: DocumentoParaAssinar, signatarios: list[Signatario]
+        self,
+        documento: DocumentoParaAssinar,
+        signatarios: Sequence[Signatario],
+        *,
+        mensagem: Optional[str] = None,
     ) -> EnvelopeCriado:
         # Step 1 — upload. The document BYTES go up here (F1's fix; erp's
         # scaffold posted a URL instead).
@@ -217,23 +281,32 @@ class D4SignAdapter:
             },
         )
 
-        # Step 3 — send to signers.
+        # Step 3 — send to signers. `mensagem` (contract §3.1's optional,
+        # operator-typed field) is plumbed through when supplied; whether
+        # D4Sign actually surfaces it is `d4sign-sendtosigner-message`.
         await self._request(
             "POST",
             f"/documents/{external_id}/sendtosigner",
             json_body={
-                "message": _MENSAGEM_ENVIO_PADRAO,
+                "message": mensagem if mensagem else _MENSAGEM_ENVIO_PADRAO,
                 "skip_email": "0",
                 "workflow": "0",
             },
         )
 
-        # createlist's response shape isn't pinned (see module docstring) —
-        # synthesize a stable per-signer id from what IS known.
+        # NOC-REMEDIATE[d4sign-signer-external-id]: `createlist`'s response
+        # shape is not part of the pinned contract (§1.4 only pins its
+        # request body), so each signer's id is synthesized from what IS
+        # known rather than trusting an unverified vendor field — 2026-09-17.
         remotos = tuple(
             SignatarioRemoto(email=s.email, external_id=f"{external_id}:{s.email}")
             for s in signatarios
         )
+        # NOC-REMEDIATE[d4sign-portal-link]: the upload step's documented
+        # response is `{"uuid": ...}` only — this link is synthesized from
+        # the well-known D4Sign document-viewer path, not read off a vendor
+        # field, until a live account confirms whether one exists —
+        # 2026-09-17.
         return EnvelopeCriado(
             external_id=external_id,
             link_assinatura=f"https://secure.d4sign.com.br/documents/{external_id}",
@@ -250,9 +323,10 @@ class D4SignAdapter:
             status=status,
             provedor="d4sign",
             ocorrido_em=datetime.now(timezone.utc),
-            # D4Sign's per-signer detail in this response isn't pinned by
-            # the contract (§1.4 documents `statusId` only) — left empty
-            # rather than trusting an unverified field shape.
+            # NOC-REMEDIATE[d4sign-status-per-signer]: D4Sign's per-signer
+            # detail on this response isn't pinned by the contract (§1.4
+            # documents `statusId` only) — left empty rather than trusting
+            # an unverified field shape — 2026-09-17.
             signatarios=(),
             documento_assinado_disponivel=status == "concluido",
         )

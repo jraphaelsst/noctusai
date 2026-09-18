@@ -56,6 +56,12 @@ class _EnvelopeState:
     signatarios: list[SignatarioRemoto] = field(default_factory=list)
     status: StatusAssinatura = "pendente"
     criado_em: datetime = field(default_factory=_agora)
+    #: the caller-supplied `criar_envelope(..., mensagem=...)`, or `None`
+    #: when the caller relied on the adapter's own default copy — a test
+    #: double, not a real adapter, so recorded verbatim rather than
+    #: substituted with a default (that substitution is `D4SignAdapter`'s
+    #: job, contract §1.6 marker `d4sign-sendtosigner-message`).
+    mensagem: str | None = None
 
 
 class FakeSignatureAdapter:
@@ -90,7 +96,11 @@ class FakeSignatureAdapter:
         return estado
 
     async def criar_envelope(
-        self, documento: DocumentoParaAssinar, signatarios: list[Signatario]
+        self,
+        documento: DocumentoParaAssinar,
+        signatarios: list[Signatario],
+        *,
+        mensagem: str | None = None,
     ) -> EnvelopeCriado:
         self.calls.append(("criar_envelope", documento.nome))
         material = documento.nome.encode("utf-8") + b"|" + b",".join(
@@ -103,7 +113,10 @@ class FakeSignatureAdapter:
         )
         criado_em = _agora()
         self._envelopes[external_id] = _EnvelopeState(
-            documento=documento, signatarios=list(remotos), criado_em=criado_em
+            documento=documento,
+            signatarios=list(remotos),
+            criado_em=criado_em,
+            mensagem=mensagem,
         )
         return EnvelopeCriado(
             external_id=external_id,
