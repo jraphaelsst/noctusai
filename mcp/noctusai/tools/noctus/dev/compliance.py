@@ -4486,6 +4486,341 @@ def check_pipefail_grep_q(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_piped_exit_code_pattern` — flags the verdict-channel-integrity
+# footgun (KB § PATTERNS/common/methodology-execution-discipline.md § 6):
+# reading `$?` (or gating an `if`/`&&`/`||`) off a PIPELINE reads the LAST
+# stage's exit status, never the command whose result is actually being
+# judged. Two real 2026-09-17 incidents, same session:
+#   `if git merge --no-edit -q "$b" 2>&1 | tail -1; then ... else CONFLICT` —
+#     the merge succeeded; the conditional read `tail`'s status. Reported
+#     "CONFLICT" on a clean merge.
+#   `npx tsc --noEmit 2>&1 | tail -5 && echo "tsc-rc=$?"` printed as a gate
+#     result — `$?` there is `tail`'s, not `tsc`'s.
+# Sibling of `check_pipefail_grep_q` (same SIGPIPE-141 neighborhood, a
+# DIFFERENT root cause): that one fires WHEN pipefail IS set (`grep -q`'s
+# SIGPIPE propagates through it); this one fires when pipefail is NOT
+# EFFECTIVELY active for the surface — a plain `.sh`/hook needs `set -o
+# pipefail` explicit, a GitHub Actions `bash`-shell `run:` step has it BY
+# DEFAULT (`bash --noprofile --norc -eo pipefail {0}`), so the same shape
+# there is a readability nit, not an actual wrong verdict.
+# ---------------------------------------------------------------------------
+
+#  `(?<!\|)...(?!\|)` on both sides — a bare pipe is neither preceded NOR
+# followed by another `|`, so NEITHER character of a `||` (logical OR) is
+# ever mistaken for one.
+_BARE_PIPE_RE = re.compile(r"(?<!\|)\|(?!\|)")
+_DOLLAR_Q_RE = re.compile(r"\$\?")
+_PIPE_INTO_FILTER_CONDITION_RE = re.compile(
+    r"(?<!\|)\|(?!\|)\s*(tail|head|grep|sed|awk|cat)\b[^|;&]*(;\s*then\b|&&|\|\|)"
+)
+_KEEPER_ALLOW_PIPED_EXIT_CODE = "noctusai-keeper: allow-piped-exit-code"
+_GHA_NON_PIPEFAIL_SHELLS = {"sh", "pwsh", "cmd", "python", "python3"}
+
+
+def _strip_trailing_shell_comment(line: str) -> str:
+    """Snap off a trailing whitespace-preceded `# ...` comment so an inline
+    example in a comment can't fire, without eating `--option#value`-shaped
+    flags. Mirrors the same trick `check_pipefail_grep_q` uses."""
+    m = re.search(r"(?<=\s)#", line)
+    return line[: m.start()] if m else line
+
+
+_TRAILING_OR_TRUE_RE = re.compile(r"^\s*true\b")
+
+
+def _scan_shell_text_for_piped_exit_code(text: str) -> dict[str, list]:
+    """Line-scan ONE shell script's/step's text for shape 1 (`$?` read
+    after a bare pipe, same-line or the very next line) and shape 2 (a pipe
+    into a pager/filter used directly as an `if`/`&&`/`||` condition).
+
+    Returns ``{"shape1": [line_no, ...], "shape2": [(line_no, filter_name),
+    ...]}`` (1-based, relative to ``text``) — shape 2 carries the matched
+    filter name because severity treats `grep` differently below (see
+    `_piped_exit_code_findings`: `grep`'s exit status is the textbook-
+    correct way to test for a match, so `| grep ...; then` is USUALLY
+    intentional — unlike `tail`/`head`/`sed`/`awk`/`cat`, whose exit
+    status is almost never meaningful).
+
+    A `... || true` tail (the standard "don't let this pipeline's status
+    propagate" idiom — the exact OPPOSITE of the bug: the author is
+    explicitly discarding the exit code, not accidentally misreading it)
+    is excluded from shape 2 entirely, matched or not.
+
+    A `# noctusai-keeper: allow-piped-exit-code` comment on the offending
+    line suppresses it — the same opt-out shape
+    `check_config_extends_product_settings` documents.
+
+    PRECISION/RECALL: this is a line-based regex scan, not a real shell
+    parser (none is vendored in this environment — see the module's
+    "ADDING A NEW DETECTOR" note and `check_pipefail_grep_q`, its closest
+    sibling, for the same tradeoff). Known false-negatives: a `|` or `$?`
+    inside a quoted string is not distinguished from a real one; a
+    pipeline split across a `\\`-continued line is not tracked across the
+    join. Known residual false-positive: `| grep ...` used as a condition
+    is flagged (severity `warning`) even though it is usually intentional
+    — kept because the brief names `grep` explicitly among the filter
+    set; a human glance (or the opt-out marker) resolves it. Every other
+    limitation degrades toward UNDER-reporting, never toward flagging a
+    clean line.
+    """
+    shape1: list[int] = []
+    shape2: list[tuple[int, str]] = []
+    prev_had_bare_pipe = False
+    for line_no, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue  # $? survives a blank/comment-only line unchanged
+        if _KEEPER_ALLOW_PIPED_EXIT_CODE in raw:
+            prev_had_bare_pipe = False
+            continue
+        scan_line = _strip_trailing_shell_comment(raw)
+        pipe_positions = [m.start() for m in _BARE_PIPE_RE.finditer(scan_line)]
+        has_bare_pipe = bool(pipe_positions)
+        dollar_q_positions = [m.start() for m in _DOLLAR_Q_RE.finditer(scan_line)]
+
+        same_line_hit = has_bare_pipe and dollar_q_positions and any(
+            p > pipe_positions[-1] for p in dollar_q_positions
+        )
+        next_line_hit = (
+            prev_had_bare_pipe and not has_bare_pipe and bool(dollar_q_positions)
+        )
+        if same_line_hit or next_line_hit:
+            shape1.append(line_no)
+
+        for m in _PIPE_INTO_FILTER_CONDITION_RE.finditer(scan_line):
+            operator = m.group(2)
+            remainder = scan_line[m.end():]
+            if operator == "||" and _TRAILING_OR_TRUE_RE.match(remainder):
+                continue  # `| filter ... || true` — status explicitly discarded
+            shape2.append((line_no, m.group(1)))
+
+        prev_had_bare_pipe = has_bare_pipe
+    return {"shape1": shape1, "shape2": shape2}
+
+
+def _iter_shell_scripts(root: Path):
+    """Yield ``(relative_path, text)`` for every ``.sh`` file repo-wide plus
+    the extensionless git-hook entrypoints under ``scripts/hooks/`` — the
+    shell surfaces the rule names (``scripts/``, git hooks, any ``.sh``)."""
+    skip_dirs = {
+        "node_modules", ".venv", "venv", "dist", "build", "__pycache__",
+        ".git", ".pytest_cache", ".mypy_cache",
+    }
+    for p in sorted(root.rglob("*.sh")):
+        if any(part in skip_dirs for part in p.parts):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", p, exc)
+            continue
+        yield str(p.relative_to(root)), text
+    hooks_dir = root / "scripts" / "hooks"
+    if hooks_dir.exists():
+        for p in sorted(hooks_dir.iterdir()):
+            if not p.is_file() or p.suffix:
+                continue  # `.sh`/.py hooks are handled by the glob above / excluded
+            try:
+                text = p.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", p, exc)
+                continue
+            first_line = text.splitlines()[0] if text else ""
+            if not first_line.startswith("#!") or "sh" not in first_line:
+                continue  # not a shell script (e.g. a python hook entrypoint)
+            yield str(p.relative_to(root)), text
+
+
+def _gha_effective_shell_has_pipefail(step: dict, job: dict, doc: dict) -> bool:
+    """GitHub Actions runs a ``bash``-shell ``run:`` step as
+    ``bash --noprofile --norc -eo pipefail {0}`` BY DEFAULT on a Linux
+    runner — pipefail is already active with no `set -o pipefail` line
+    needed. That auto-append happens ONLY for the unset-default and for
+    the literal recognized keyword ``shell: bash`` — a CUSTOM template
+    override (e.g. ``shell: bash -e {0}``, containing a space or a
+    ``{0}`` placeholder) is taken LITERALLY by GitHub Actions and does
+    NOT get `-o pipefail` appended for you; that case is resolved by
+    checking whether the template itself mentions ``pipefail``. Any other
+    named shell (``sh``, ``pwsh``, ``cmd``, ``python``, ...) never
+    defaults to pipefail. Resolution order: step > job
+    ``defaults.run.shell`` > workflow ``defaults.run.shell`` > unset
+    (the implicit ``bash`` default on every runner this fleet uses)."""
+    shell = (
+        step.get("shell")
+        or ((job.get("defaults") or {}).get("run") or {}).get("shell")
+        or ((doc.get("defaults") or {}).get("run") or {}).get("shell")
+    )
+    if not shell:
+        return True  # unset -> GHA's own implicit `-eo pipefail` default
+    shell_str = str(shell).strip()
+    if shell_str == "bash":
+        return True  # the recognized keyword -> GHA's `-eo pipefail` template
+    if " " in shell_str or "{" in shell_str:
+        # a custom template — GHA runs it VERBATIM, no auto-append
+        return "pipefail" in shell_str
+    return shell_str not in _GHA_NON_PIPEFAIL_SHELLS
+
+
+def _iter_workflow_run_steps(root: Path):
+    """Yield ``(label, run_text, effective_pipefail)`` for every ``run:``
+    step in ``.github/workflows/*.yml``. PyYAML-parsed (already a toolkit
+    dependency — see `check_ci_test_matrix_coverage` et al.) rather than a
+    line-based block-scalar heuristic, so indentation quirks can't
+    misparse which lines belong to the `run:` block."""
+    wf_dir = root / ".github" / "workflows"
+    if not wf_dir.exists():
+        return
+    import yaml
+
+    for wf_path in sorted(wf_dir.glob("*.yml")):
+        try:
+            doc = yaml.safe_load(wf_path.read_text(encoding="utf-8")) or {}
+        except (yaml.YAMLError, OSError) as exc:
+            logger.debug("compliance: cannot parse workflow %s (%s)", wf_path, exc)
+            continue
+        jobs = doc.get("jobs") if isinstance(doc, dict) else None
+        if not isinstance(jobs, dict):
+            continue
+        for job_name, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            steps = job.get("steps") or []
+            for idx, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    continue
+                run = step.get("run")
+                if not isinstance(run, str):
+                    continue
+                step_desc = f", step={idx}"
+                if step.get("name"):
+                    step_desc += f" '{step['name']}'"
+                label = f"{wf_path.relative_to(root)} (job={job_name}{step_desc})"
+                yield label, run, _gha_effective_shell_has_pipefail(step, job, doc)
+
+
+def _piped_exit_code_findings(
+    surface: str, hits: dict[str, list], has_pipefail: bool
+) -> list[dict]:
+    """Compose the 3 finding kinds (shape1 / shape2 / missing-pipefail) for
+    one already-scanned surface. Shared by the `.sh`/hook path and the
+    workflow `run:`-step path so the message shape stays identical.
+
+    Severity: `grep` shape-2 hits are ALWAYS `warning` — `| grep ...;
+    then` is the textbook-correct way to test for a match, so it is
+    usually intentional (unlike `tail`/`head`/`sed`/`awk`/`cat`, whose
+    exit status is almost never meaningful) — and a `grep`-only hit does
+    NOT trigger the missing-pipefail finding, since pipefail changes
+    nothing about whether that usage is correct. Every other hit is
+    `high` when there is no effective pipefail (the verdict is
+    DEFINITELY wrong), `warning` when there is (technically correct,
+    still unreadable at a glance).
+    """
+    findings: list[dict] = []
+    base_severity = "warning" if has_pipefail else "high"
+    non_grep_shape2 = [ln for ln, filt in hits["shape2"] if filt != "grep"]
+    for line_no in hits["shape1"]:
+        findings.append({
+            "product": "<scripts>",
+            "file": surface,
+            "issue": (
+                f"`{surface}` line {line_no}: reads `$?` off a PIPELINE — that "
+                f"reads the LAST stage's exit status (e.g. `tail`/`grep`), not "
+                f"the command actually being judged. Capture it inside the "
+                f"pipeline's own subshell (`out=$(cmd); rc=$?`), or drop the "
+                f"pipe. See KB § PATTERNS/common/"
+                f"methodology-execution-discipline.md § 6."
+            ),
+            "severity": base_severity,
+        })
+    for line_no, filt in hits["shape2"]:
+        findings.append({
+            "product": "<scripts>",
+            "file": surface,
+            "issue": (
+                f"`{surface}` line {line_no}: pipes into `{filt}` and uses "
+                f"that PIPELINE directly as an if/&&/|| condition — the "
+                f"verdict is `{filt}`'s exit status, not the piped-from "
+                f"command's" + (
+                    " (usually intentional for `grep` — a match/no-match "
+                    "check — but worth a glance if the UPSTREAM command's "
+                    "own failure also matters here)"
+                    if filt == "grep" else ""
+                ) + ". See KB § PATTERNS/common/"
+                "methodology-execution-discipline.md § 6."
+            ),
+            "severity": "warning" if filt == "grep" else base_severity,
+        })
+    if (hits["shape1"] or non_grep_shape2) and not has_pipefail:
+        all_lines = sorted(set(hits["shape1"]) | set(non_grep_shape2))
+        findings.append({
+            "product": "<scripts>",
+            "file": surface,
+            "issue": (
+                f"`{surface}` has {len(hits['shape1']) + len(non_grep_shape2)} "
+                f"piped-verdict pattern(s) (line(s) {all_lines}) with no "
+                f"effective pipefail — the exit code these lines read is "
+                f"DEFINITELY not the pipeline's true status, not merely "
+                f"fragile. Add `set -o pipefail` (script/hook) or use a "
+                f"`shell: bash` step (GitHub Actions defaults `bash` to "
+                f"pipefail already)."
+            ),
+            "severity": "high",
+        })
+    return findings
+
+
+def check_piped_exit_code_pattern(repo_root: Path | None = None) -> list[dict]:
+    """Detect the verdict-channel-integrity footgun: `$?` (or an
+    `if`/`&&`/`||` condition) read off a PIPELINE — which reads the LAST
+    stage's exit status, never the command whose result is actually being
+    judged. See `KB § PATTERNS/common/methodology-execution-discipline.md`
+    § 6 "Verdict-channel integrity" for the two real 2026-09-17 incidents
+    that motivated this keeper, and `noctus.dev.gate_sweep` for the
+    structural replacement (own subprocess, own returncode, per gate).
+
+    Scans every ``.sh`` file repo-wide, the extensionless git-hook
+    entrypoints under ``scripts/hooks/``, and every ``run:`` step in
+    ``.github/workflows/*.yml``.
+
+    Three finding kinds per surface (see `_piped_exit_code_findings`):
+      - `$?` read after a bare pipe (shape 1);
+      - a pipe into a pager/filter used directly as an if/&&/|| condition
+        (shape 2);
+      - no effective pipefail backing either of the above (severity
+        always `high` — the verdict is DEFINITELY wrong, not merely
+        fragile). Void for a plain `bash`-shell GitHub Actions step
+        (pipefail is on by default there); real for a `.sh`/hook missing
+        an explicit `set -o pipefail`, and for a workflow step whose
+        `shell:` is `sh`/`pwsh`/`cmd`/etc.
+
+    Severity: `high` when there is no effective pipefail; `warning` when
+    pipefail IS effectively active (the construct is technically correct
+    but unreadable at a glance — a reviewer can't tell it's safe without
+    checking).
+
+    Opt-out: a `# noctusai-keeper: allow-piped-exit-code` comment on the
+    offending line suppresses it (mirrors the
+    `check_config_extends_product_settings` opt-out convention — no new
+    suppression convention invented here).
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for rel, text in _iter_shell_scripts(root):
+        hits = _scan_shell_text_for_piped_exit_code(text)
+        has_pipefail = bool(_PIPEFAIL_RE.search(text))
+        issues.extend(_piped_exit_code_findings(rel, hits, has_pipefail))
+
+    for label, run_text, has_pipefail in _iter_workflow_run_steps(root):
+        hits = _scan_shell_text_for_piped_exit_code(run_text)
+        issues.extend(_piped_exit_code_findings(label, hits, has_pipefail))
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_new_script_lacks_mcp_analog` — enforces the MCP-first-scripts rule
 # (`KB § PATTERNS/architect/mcp-first-scripts.md`): every top-level `scripts/*.sh` /
 # `scripts/*.py` MUST have a row in the classification manifest (§3 of that
@@ -12002,6 +12337,9 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_mcp_path_via_settings())
     all_issues.extend(check_mcp_write_tool_worktree_arg())
     all_issues.extend(check_pipefail_grep_q())
+    # verdict-channel integrity (2026-09-17) — $?/if/&&/|| read off a
+    # pipeline reads the LAST stage's status, not the judged command's.
+    all_issues.extend(check_piped_exit_code_pattern())
     all_issues.extend(check_new_script_lacks_mcp_analog())
     all_issues.extend(check_doc_tool_reference_drift())
     # social-wiring-absorption W5.7a / W5.9a Stage-4 codification.

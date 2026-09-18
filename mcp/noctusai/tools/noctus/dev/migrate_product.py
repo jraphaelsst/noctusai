@@ -582,7 +582,17 @@ class SubprocessGitRunner:
             raise GitQueryError(
                 f"git {' '.join(args)} exited {proc.returncode} in {root}: {detail}"
             )
-        return proc.stdout.strip()
+        # `.rstrip()`, NEVER `.strip()` — a multi-line porcelain output's
+        # FIRST line can legitimately start with a leading space (the git
+        # status-code column, e.g. ` M path` for "modified, not staged").
+        # `.strip()` trims that leading space off the WHOLE blob (not
+        # per-line), shifting every char of that first line's `line[3:]`
+        # status-code slice by one and silently eating the path's first
+        # character (`KNOWLEDGE-BASE/...` -> `NOWLEDGE-BASE/...`). Found
+        # 2026-09-17 building `noctus.dev.gate_sweep`'s real (non-Fake)
+        # `git status --porcelain` path — a corner `FakeGitRunner`-only
+        # tests can never exercise, since the Fake returns exact strings.
+        return proc.stdout.rstrip()
 
 
 _DEFAULT_GIT_RUNNER = SubprocessGitRunner()
