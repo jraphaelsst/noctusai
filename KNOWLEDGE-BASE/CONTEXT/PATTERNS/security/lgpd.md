@@ -289,4 +289,61 @@ A data category can be **built, wired end-to-end, and deliberately not turned on
 | Access logging | `cliente_documento_acessos`, already wired — `acao` in `view` / `extract` / `delete` (migration 057/068), unchanged by activation. |
 | Owner decision | User, 2026-09-16 (roadmap `social-wiring-contract-automation-2026-09.md`, question Q-identity-docs). |
 
+## 12. Public storage buckets bypass RLS entirely (erp-certidoes leak, 2026-09-17)
+
+`erp-certidoes` — 102 objects, 21MB of certidões carrying CPF, full names,
+and debt/restriction findings — and `erp-geral` were declared `public =
+true` in `products/erp-imobiliario/backend/migrations/001_erp_
+imobiliario.sql` + `011_storage_buckets.sql`. Anyone with (or able to
+guess/enumerate) an object URL could fetch a certidão fully
+unauthenticated — no auth header, no session, nothing.
+
+**🔴 The keeper-principle lesson: "RLS is enabled" is a FACT about the
+table, not a GUARANTEE about the data.** `storage.objects` had RLS enabled
+with 17 policies — org-scoped, correctly written, the same pattern this
+file's own §2–§3 lens would have approved. They gave **zero** protection,
+because Supabase Storage serves a **public** bucket's objects via the
+`/object/public/{bucket}/{path}` route, and that route does not evaluate
+`storage.objects` RLS **at all** — only `/object/authenticated/...` and
+`/object/sign/...` do. The LGPD keeper lens (§1) is "does this architecture
+protect personal data", not "is RLS turned on somewhere near this data" —
+the bucket's `public` flag is a SEPARATE gate the RLS policies cannot see
+past, in either direction. A reviewer who checked "RLS enabled? yes, 17
+policies, org-scoped, looks right" and stopped there would have signed off
+on the leak.
+
+**The generalization.** Any storage layer with more than one access
+route — public URL, signed URL, authenticated RLS-checked read — has to be
+audited on EVERY route, not the route the reviewer happens to think of
+first. A single wrong flag on the BUCKET (not a row, not a policy) silently
+overrides every RLS policy on every OBJECT in it. This is the storage
+analogue of `check_status_pagina_role_parity`'s lesson
+(`KB § PATTERNS/frontend/status-pagina-dev-visibility.md`) — a filter
+upstream of RLS (there: the SELECT policy predicate; here: the bucket's
+own `public` column) can make correctly-written downstream RLS
+irrelevant.
+
+**Fix + gate — owner directive: NO exception, ever, not even with
+explicit permission.** Live buckets flipped private 2026-09-17. Forward
+migration `048_storage_no_public_buckets.sql` codifies it (001/011 stay
+immutable — see `KB § PATTERNS/backend/database-rls.md § Storage buckets —
+never public` for the full mechanism). Two-legged gate, both blocking,
+neither skippable, neither with an override: static
+`noctus.dev.compliance.check_storage_bucket_public` (pre-commit) + live
+`noctus.dev.check_storage_no_public_buckets` (wired into
+`predeploy_check`). This is the ONE keeper on the platform explicitly
+carrying no allowlist / suppression marker / accept-with-rationale escape
+hatch — a public bucket is never the correct answer, so there is no
+rationale that could make one acceptable.
+
+**LGPD flag filed for this class:** certidão PDFs (CPF, nome completo,
+débitos/restrições) held in `erp-certidoes` — basis Art. 7 V (cumprimento
+de obrigação legal/regulatória, due-diligence imobiliária), retention per
+the certidões feature's own lifecycle (deleted with the consulta —
+`app/routers/certidoes.py::excluir_consulta` /
+`_delete_storage_files`), access now exclusively via short-TTL signed URL
+minted at read time — never a persisted or public link. See
+`KB § PATTERNS/backend/database-rls.md § Storage buckets — never public`
+for the canonical pattern.
+
 **Activation ships as data, never as code.** `119_cliente_identidade_ativacao.sql` is a single `UPDATE ... SET ativo = true WHERE tipo_documento IN ('rg', 'cpf')` — no `CREATE TABLE`, no `ALTER TABLE`, no new CHECK. The lesson generalizes: when a category is withheld pending an intake, wire everything downstream of the gate FIRST (extraction, retention, access log) and leave literally one boolean for the activation migration to flip once the register entry above exists — a withheld category with unfinished downstream wiring would make "flip the flag" the wrong migration to write.

@@ -346,6 +346,36 @@ if [[ -n "$STAGED_MIGRATIONS" ]] && have_py; then
     fi
 fi
 
+# ─── 6b-quinquies. Storage-bucket-public gate (blocking, critical, NO ─────
+# allowlist / suppression marker — owner directive 2026-09-17) ────────────
+# Keeper `check_storage_bucket_public`. THE INCIDENT: erp-certidoes (102
+# CPF-bearing objects) + erp-geral were declared `public = true`; the
+# /object/public/{bucket}/{path} route bypasses storage.objects RLS
+# entirely, so the 17 policies gating that table gave ZERO protection.
+# Three legs, all `critical`, all blocking: (A) a migration declares/re-opens
+# a public bucket, (B) a `get_public_url(`/`getPublicUrl(` call site (only
+# makes sense against a public bucket — must be zero platform-wide), (C) a
+# runtime `create_bucket(...)` with `public=True`. Unlike this hook's other
+# gates, this one has NO --force / allowlist / accept-with-rationale path —
+# a public bucket is never the correct answer on this platform. The keeper's
+# own message names the sanctioned alternative (short-TTL signed URL minted
+# at read time) so refusing never dead-ends into `--no-verify`.
+STAGED_STORAGE_SURFACE=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/migrations/.*\.sql|products/.*\.(py|ts|tsx)|noctusai_lib/.*\.py|mcp/.*\.py|templates/.*\.(py|ts|tsx))$' || true)
+if [[ -n "$STAGED_STORAGE_SURFACE" ]] && have_py; then
+    echo "[pre-commit] Checking for a public storage bucket surface..."
+    STAGED_STORAGE_SURFACE_CSV=$(echo "$STAGED_STORAGE_SURFACE" | paste -sd, -)
+    if ! "$PY" "$CLI" --check-storage-bucket-public --paths "$STAGED_STORAGE_SURFACE_CSV" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] storage-bucket-public check FAILED. Commit aborted." >&2
+        echo "[pre-commit] A public Supabase Storage bucket bypasses storage.objects RLS" >&2
+        echo "[pre-commit] entirely (the /object/public/... route evaluates no policy at all)." >&2
+        echo "[pre-commit] There is NO override for this gate. Use a short-TTL signed URL" >&2
+        echo "[pre-commit] minted at read time instead — StorageService.get_signed_url /" >&2
+        echo "[pre-commit] noctusai_lib.integrations.storage. See KB § PATTERNS/backend/" >&2
+        echo "[pre-commit] database-rls.md § Storage buckets — never public." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6c. Prod-exposure consent gate (blocking, only when a prod-exposure ──
 # surface OR a consent record is staged) ─────────────────────────────────
 # Keeper `check_prod_exposure_consent` + `KB § PATTERNS/devops/prod-

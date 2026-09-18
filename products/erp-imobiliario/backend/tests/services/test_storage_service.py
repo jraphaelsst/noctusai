@@ -154,12 +154,19 @@ class TestUploadDryRun:
 class TestUploadReal:
 
     @pytest.mark.asyncio
-    async def test_real_upload_returns_url(self):
+    async def test_real_upload_returns_signed_url_not_public_url(self):
+        """Upload must NEVER call get_public_url — both buckets are
+        private (2026-09-17 erp-certidoes leak). It mints a short-TTL
+        SIGNED url via create_signed_url instead, and also returns the
+        storage `path` so a caller can mint a fresh signed URL later
+        without persisting this one."""
         mock_client = MagicMock()
         mock_client.storage.list_buckets.return_value = []  # storage available
         mock_bucket = MagicMock()
         mock_bucket.upload.return_value = None
-        mock_bucket.get_public_url.return_value = "https://storage.real/org-1/photo.jpg"
+        mock_bucket.create_signed_url.return_value = {
+            "signedURL": "https://storage.real/org-1/photo.jpg?token=signed-abc",
+        }
         mock_client.storage.from_.return_value = mock_bucket
 
         from app.services.storage_service import StorageService
@@ -168,8 +175,11 @@ class TestUploadReal:
         result = await svc.upload(b"data", "photo.jpg", "image/jpeg", "geral")
 
         assert result["dry_run"] is False
-        assert result["url"] == "https://storage.real/org-1/photo.jpg"
+        assert result["url"] == "https://storage.real/org-1/photo.jpg?token=signed-abc"
+        assert result["path"]
         mock_bucket.upload.assert_called_once()
+        mock_bucket.create_signed_url.assert_called_once()
+        mock_bucket.get_public_url.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_upload_exception_propagates(self):

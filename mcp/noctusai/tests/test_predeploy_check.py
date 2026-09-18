@@ -895,6 +895,7 @@ def test_audit_env_fleet_manifest_present_pure():
 
 def test_default_checks_include_new_legs():
     assert "schema_exposure" in PC.DEFAULT_CHECKS
+    assert "storage_bucket_public" in PC.DEFAULT_CHECKS
     assert "env_fleet_manifest" in PC.DEFAULT_CHECKS
     assert "schema_drift" in PC.DEFAULT_CHECKS
 
@@ -912,6 +913,18 @@ def test_schema_drift_runner_not_configured_is_a_failure(monkeypatch, tmp_path):
         }
     )
     ok, msg = PC._default_run_check("schema_drift", "erp-imobiliario", tmp_path)
+
+
+# ── storage_bucket_public leg (2026-09-17 erp-certidoes public-bucket leak) ──
+def test_storage_bucket_public_runner_not_configured_is_a_failure(monkeypatch, tmp_path):
+    """Mirrors schema_exposure's fail-closed posture exactly — this leg has
+    NO write/override path anywhere, so a bare 'couldn't verify' must block
+    just as hard as a genuine violation does."""
+    monkeypatch.delenv("SUPABASE_ACCESS_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "noctusai_lib.config.credentials.resolve_credential", lambda *a, **k: None
+    )
+    ok, msg = PC._default_run_check("storage_bucket_public", "erp-imobiliario", tmp_path)
     assert ok is False
     assert "BLOCKED" in msg
     assert "not_configured" in msg
@@ -980,3 +993,46 @@ def test_schema_drift_runner_scopes_to_the_one_product(monkeypatch, tmp_path):
     monkeypatch.setattr(SD, "check_schema_drift", _fake)
     PC._default_run_check("schema_drift", "orbity", tmp_path)
     assert captured["product"] == "orbity"
+def test_storage_bucket_public_runner_passes_when_clean(monkeypatch, tmp_path):
+    from tools.noctus.dev import check_storage_no_public_buckets as CSNPB
+
+    monkeypatch.setattr(
+        CSNPB,
+        "check_storage_no_public_buckets",
+        lambda **kw: {"status": "clean", "public_buckets": [], "error": None},
+    )
+    ok, msg = PC._default_run_check("storage_bucket_public", "erp-imobiliario", tmp_path)
+    assert ok is True
+    assert "storage_bucket_public ok" in msg
+
+
+def test_storage_bucket_public_runner_fails_on_violation(monkeypatch, tmp_path):
+    """THE INCIDENT shape — a live public bucket blocks predeploy."""
+    from tools.noctus.dev import check_storage_no_public_buckets as CSNPB
+
+    monkeypatch.setattr(
+        CSNPB,
+        "check_storage_no_public_buckets",
+        lambda **kw: {
+            "status": "violation",
+            "public_buckets": [{"id": "erp-certidoes", "name": "erp-certidoes"}],
+            "error": "public bucket(s) found LIVE: [{'id': 'erp-certidoes', ...}]",
+        },
+    )
+    ok, msg = PC._default_run_check("storage_bucket_public", "erp-imobiliario", tmp_path)
+    assert ok is False
+    assert "BLOCKED" in msg
+    assert "erp-certidoes" in msg
+
+
+def test_storage_bucket_public_runner_fails_on_query_error_never_skips(monkeypatch, tmp_path):
+    from tools.noctus.dev import check_storage_no_public_buckets as CSNPB
+
+    monkeypatch.setattr(
+        CSNPB,
+        "check_storage_no_public_buckets",
+        lambda **kw: {"status": "error", "public_buckets": [], "error": "connection refused"},
+    )
+    ok, msg = PC._default_run_check("storage_bucket_public", "erp-imobiliario", tmp_path)
+    assert ok is False
+    assert "BLOCKED" in msg

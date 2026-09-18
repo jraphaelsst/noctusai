@@ -3,6 +3,18 @@ Storage Service — Supabase Storage integration for file uploads.
 
 Handles property photos, documents, inspection images, and other file uploads.
 Falls back to mock/dry-run mode when Supabase Storage is not configured.
+
+🔴 Both buckets are PRIVATE (`erp-certidoes` + `erp-geral` — see
+`migrations/048_storage_no_public_buckets.sql`; declaring them `public =
+true` bypasses `storage.objects` RLS entirely, the 2026-09-17 erp-certidoes
+leak). `upload()` therefore never calls the public-URL API — it mints a
+short-TTL SIGNED url (same `get_signed_url` a caller can request again
+later against the returned `path`), which is the ONLY sanctioned way to
+hand a client a fetchable link. `noctus.dev.check_storage_bucket_public`
+(pre-commit, `critical`, no override) refuses any call site of the
+public-URL API (Python's `get_public_url` / JS's `getPublicUrl`, each
+called as a function) anywhere on the platform — see KB § PATTERNS/
+backend/database-rls.md § Storage buckets — never public.
 """
 import logging
 import re
@@ -12,7 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Supabase Storage buckets
+# Supabase Storage buckets — both PRIVATE. Never flip either to public; see
+# the module docstring above.
 BUCKETS = {
     "certidoes": "erp-certidoes",
     "geral": "erp-geral",
@@ -25,6 +38,14 @@ ALLOWED_TYPES = {
 }
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+#: Default TTL for a signed URL minted immediately after upload — generous
+#: enough for the caller's own request/response round-trip to still be
+#: valid, short enough that a leaked response body doesn't stay live.
+#: Callers needing a fresh link later call `get_signed_url()` again against
+#: the returned `path` — never persist this URL (it expires; persist the
+#: `path`).
+UPLOAD_SIGNED_URL_TTL_SECONDS = 3600
 
 
 class StorageService:
@@ -124,10 +145,18 @@ class StorageService:
                 file_bytes,
                 file_options={"content-type": content_type},
             )
-            public_url = self.client.storage.from_(bucket).get_public_url(path)
-            logger.info(f"[STORAGE] Uploaded: {filename} -> {public_url}")
+            # 🔴 Never call the public-URL API here — both buckets are
+            # private (see module docstring). A signed URL is the ONLY fetchable link we
+            # ever hand back; it expires, so a caller that needs one later
+            # must mint a fresh one via `get_signed_url(path, categoria)`
+            # against the `path` this dict also returns — never persist
+            # this `url`.
+            signed_url = self.get_signed_url(
+                path, categoria=categoria, expires_in=UPLOAD_SIGNED_URL_TTL_SECONDS
+            )
+            logger.info(f"[STORAGE] Uploaded: {filename} -> {path}")
             return {
-                "url": public_url,
+                "url": signed_url,
                 "path": path,
                 "bucket": bucket,
                 "size": len(file_bytes),

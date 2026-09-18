@@ -78,6 +78,7 @@ def register_all(server) -> None:
     from . import spa_smoke
     from . import ensure_product_url_roster
     from . import ensure_schema_exposure
+    from . import check_storage_no_public_buckets
     from . import lgpd
     from . import master_prompts
     from . import merge_debt
@@ -203,6 +204,7 @@ def register_all(server) -> None:
     spa_smoke.register(server)
     ensure_product_url_roster.register(server)
     ensure_schema_exposure.register(server)
+    check_storage_no_public_buckets.register(server)
     lgpd.register(server)
     master_prompts.register(server)
     merge_debt.register(server)

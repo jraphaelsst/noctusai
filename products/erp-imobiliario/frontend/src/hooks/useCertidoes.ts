@@ -10,7 +10,16 @@ export interface CertidaoResultado {
   ordem: number;
   status: 'pendente' | 'processando' | 'na_fila' | 'sucesso' | 'erro';
   analise_ia?: string;
+  /** Freshly-resolved fetchable link, minted server-side at read time
+   * (a short-TTL SIGNED url when the file lives in our private bucket,
+   * or the raw external URL as a fallback) — never a persisted public
+   * link. See KB § PATTERNS/backend/database-rls.md § Storage buckets —
+   * never public. */
   arquivo_url?: string;
+  /** Storage path (private bucket) when the file was copied into our own
+   * storage — informational only; the frontend never needs to derive a
+   * URL from it (the backend already did, into `arquivo_url` above). */
+  arquivo_path?: string;
   arquivo_nome?: string;
   erro_mensagem?: string;
   created_at: string;

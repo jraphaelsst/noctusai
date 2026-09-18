@@ -10824,6 +10824,362 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
     return findings
 
 
+# ---------------------------------------------------------------------------
+# `check_storage_bucket_public` — a public Supabase Storage bucket bypasses
+# storage.objects RLS ENTIRELY. THE INCIDENT (2026-09-17): erp-certidoes (102
+# objects / 21MB of CPF-bearing certidões) and erp-geral were declared
+# `public = true` in `products/erp-imobiliario/backend/migrations/001_erp_
+# imobiliario.sql` + `011_storage_buckets.sql`. `storage.objects` had RLS
+# ENABLED with 17 policies scoping access by org — and they gave ZERO
+# protection, because Supabase Storage serves a PUBLIC bucket's objects via
+# the `/object/public/{bucket}/{path}` route, which does not evaluate RLS at
+# all (only the `/object/authenticated/...` and `/object/sign/...` routes
+# do). "RLS is on" was a false sense of safety. Anyone with an object URL —
+# guessable or leaked — could fetch a certidão unauthenticated.
+#
+# THE RULE IS ABSOLUTE, BY EXPLICIT OWNER DIRECTIVE (2026-09-17): zero public
+# buckets, in every product, forever. Unlike this file's OTHER SQL-scanning
+# keepers (`check_migration_number_collision`'s `_ACCEPTED_MIGRATION_
+# DUPLICATES`, `check_function_search_path_pinned`'s comment-suppressible
+# false-positive path), **this keeper carries NO allowlist, NO suppression
+# marker, and NO accept-with-rationale escape hatch — that is a deliberate
+# exception to this file's own convention, not an oversight.** A public
+# bucket is never the correct answer on this platform; the correct answer is
+# always a short-TTL signed URL minted by an authorized, org-scoped endpoint
+# at read time (`app.services.storage_service.StorageService.get_signed_url`
+# / `noctusai_lib.integrations.storage` + `documento_store.py`'s `.url()` /
+# `contratos_service.url_versao` — see `KB § PATTERNS/backend/database-rls.md
+# § Storage buckets — never public`). Every finding this keeper raises names
+# that alternative in its own message, so refusing never dead-ends the
+# engineer into reaching for `--no-verify` instead.
+#
+# THREE LEGS, each independently sufficient to flag (no leg is "softer"
+# than another — all three are `critical`, all three BLOCK):
+#
+#   Leg A — a migration DECLARES a public bucket: `INSERT INTO
+#   storage.buckets (...) VALUES (..., true, ...)` or `UPDATE storage.buckets
+#   SET public = true`. Scans every `products/*/backend/migrations/*.sql`
+#   (the glob already covers `products/seed/` — the seed IS a `products/*`
+#   directory; `templates/product-seed/` is a generated MIRROR of
+#   `products/seed/`, kept in sync by `noctus.dev.sync_seed_template` /
+#   the pre-commit hook, so scanning the seed's own copy is sufficient and
+#   scanning both would only double-report the same drift).
+#
+#   Leg B — a call site NAMES the public-URL API at all:
+#   `get_public_url(` (Python, `supabase-py`) or `getPublicUrl(`
+#   (`@supabase/supabase-js`). This method only makes semantic sense against
+#   a bucket that IS public — calling it against a private bucket returns a
+#   URL that 400s. There should be ZERO call sites platform-wide in the end
+#   state; any occurrence is flagged regardless of product, test-vs-prod, or
+#   the target bucket's declared state, because the call site itself is the
+#   footgun — it will start silently returning unfetchable garbage the
+#   moment anyone (correctly) flips the bucket private, exactly as it did
+#   here. Scans `.py` / `.ts` / `.tsx` under `products/`, `noctusai_lib/`,
+#   `mcp/`, `templates/` (excluding `node_modules/`).
+#
+#   Leg C — a RUNTIME bucket creation via the Supabase client SDK
+#   (`create_bucket(...)`) passes an explicit `public=True` / `public: true`.
+#   Nobody on this platform creates buckets at runtime today (every bucket is
+#   migration-declared, reviewed by Leg A) — this leg exists so a FUTURE
+#   runtime-creation path can never reopen the hole Leg A closes for the
+#   migration path.
+#
+# PRECISION LIMITS (documented per this file's own fallback convention —
+# `pglast` is NOT a runtime dependency of this toolkit; it appears ONLY
+# inside colocated migration-PINNING tests via `pytest.importorskip`
+# (`test_migration_127_fotos_storage_buckets.py` etc.), never as a
+# production import. This keeper follows the same regex/text-matching
+# convention as its siblings `check_function_search_path_pinned` /
+# `check_rls_policy_self_reference` / `check_migration_number_collision` —
+# a deliberate, precedented choice, not a shortcut):
+#
+#   - Leg A only evaluates an `INSERT` when the statement carries an
+#     EXPLICIT column list naming `public` (the shape every migration on
+#     this platform actually uses — `(id, name, public)`). An `INSERT`
+#     with no column list is NOT flagged: Supabase's own column default for
+#     `public` is `false`, so an insert that never names the column cannot
+#     make a bucket public. An `INSERT` with a column list that OMITS
+#     `public` is likewise not flagged for the same reason.
+#   - A column list present but UNPARSEABLE (nested parens/quotes beyond
+#     what this scanner's naive top-level comma-split handles) falls back to
+#     a bare `TRUE` boolean-literal text search across the whole VALUES
+#     clause — lower precision, documented as a `critical` "ambiguous —
+#     manual verification required" finding rather than silently skipped
+#     (no-silent-errors, `CLAUDE.md` §1).
+#   - Leg C does not attempt to model per-SDK default values for an omitted
+#     `public` kwarg — only an EXPLICIT `public=True`/`public: true` is
+#     flagged. There are zero `create_bucket(` call sites on this platform
+#     today (verified 2026-09-17), so this leg has no live false-positive
+#     surface to calibrate against yet.
+# ---------------------------------------------------------------------------
+
+_STORAGE_BUCKETS_INSERT_RE = re.compile(
+    r"INSERT\s+INTO\s+storage\.buckets\s*"
+    r"(?:\((?P<columns>[^)]*)\)\s*)?"
+    r"VALUES\s*(?P<values>.*?);",
+    re.IGNORECASE | re.DOTALL,
+)
+_STORAGE_BUCKETS_UPDATE_RE = re.compile(
+    r"UPDATE\s+storage\.buckets\s+SET\s+(?P<set_clause>.*?)"
+    r"(?:\bWHERE\b|;)",
+    re.IGNORECASE | re.DOTALL,
+)
+_STORAGE_BUCKETS_UPDATE_PUBLIC_TRUE_RE = re.compile(
+    r"\bpublic\s*=\s*true\b", re.IGNORECASE,
+)
+_GET_PUBLIC_URL_RE = re.compile(r"\bget_public_url\s*\(|\bgetPublicUrl\s*\(")
+_CREATE_BUCKET_RE = re.compile(r"\bcreate_bucket\s*\(", re.IGNORECASE)
+_CREATE_BUCKET_PUBLIC_TRUE_RE = re.compile(
+    r"\bpublic\s*[:=]\s*(?:True|true)\b",
+)
+
+_STORAGE_SANCTIONED_ALTERNATIVE = (
+    "A public Supabase Storage bucket bypasses storage.objects RLS entirely "
+    "(the /object/public/{bucket}/{path} route serves objects without "
+    "evaluating any policy) — this rule has NO override, NO suppression "
+    "marker, and NO accept-with-rationale escape hatch (owner directive, "
+    "2026-09-17). The sanctioned alternative is a short-TTL signed URL "
+    "minted by an authorized, org-scoped endpoint at read time — see "
+    "app.services.storage_service.StorageService.get_signed_url / "
+    "noctusai_lib.integrations.storage (documento_store.py's .url(), "
+    "contratos_service.url_versao) and "
+    "KB § PATTERNS/backend/database-rls.md § Storage buckets — never public."
+)
+
+# NOT a suppression allowlist (this keeper has none — see the function
+# docstring). This excludes the TWO files that DEFINE Legs B/C themselves
+# (this file + the CLI dispatcher) from Legs B/C's own scan. Their
+# docstrings/help-text/comments necessarily quote the literal patterns
+# being detected (`` `get_public_url(` ``, `` `create_bucket(...)` ``) so a
+# reviewer can recognize them — a naive text scanner cannot distinguish
+# that prose from a real call site, and excluding two specific,
+# hand-named, non-content-scoped files structurally cannot hide a real
+# violation anywhere else in the codebase (tests included). Leg A is
+# unaffected (it only scans `*.sql`, so no overlap is possible).
+_STORAGE_KEEPER_SELF_REFERENCE_PATHS: frozenset[str] = frozenset({
+    "mcp/noctusai/tools/noctus/dev/compliance.py",
+    "mcp/noctusai/cli.py",
+})
+
+
+def _split_top_level_commas(text: str) -> list[str]:
+    """Split ``text`` on commas that are not nested inside `(...)` or a
+    quoted string. Sufficient for the narrow shape actually used in this
+    repo's `storage.buckets` VALUES tuples (`('id', 'id', true)` — no
+    nested function calls, no escaped quotes). NOT a general SQL tokenizer —
+    documented as a precision limit above."""
+    parts: list[str] = []
+    depth = 0
+    quote: str | None = None
+    current: list[str] = []
+    for ch in text:
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            current.append(ch)
+            continue
+        if ch == "(":
+            depth += 1
+            current.append(ch)
+            continue
+        if ch == ")":
+            depth -= 1
+            current.append(ch)
+            continue
+        if ch == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    if current:
+        parts.append("".join(current))
+    return parts
+
+
+def _storage_insert_has_public_true(columns: str | None, values: str) -> str | None:
+    """Returns 'true' | 'ambiguous' | None for one INSERT statement's
+    VALUES clause. See the Leg A precision-limits note above for the
+    column-list-required rule."""
+    if not columns or "public" not in columns.lower():
+        return None
+    col_names = [c.strip().strip('"').lower() for c in columns.split(",")]
+    try:
+        public_idx = col_names.index("public")
+    except ValueError:
+        return None
+
+    # Each top-level tuple in VALUES is `(...)`. Extract them individually.
+    tuples = re.findall(r"\(([^()]*)\)", values)
+    if not tuples:
+        # Column list named `public` but no parseable tuple — fall back to
+        # a bare boolean-literal scan (documented precision limit).
+        return "ambiguous" if re.search(r"\btrue\b", values, re.IGNORECASE) else None
+
+    for tup in tuples:
+        cells = _split_top_level_commas(tup)
+        if public_idx >= len(cells):
+            continue
+        cell = cells[public_idx].strip()
+        if cell.lower() == "true":
+            return "true"
+    return None
+
+
+def check_storage_bucket_public(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """Flag any path by which a Supabase Storage bucket could end up
+    `public = true`, or by which code could only make sense against one.
+
+    See the module-level comment block immediately above for the incident,
+    the three legs, and the documented precision limits. Severity is
+    `critical` on every leg — this keeper has no allowlist and no
+    suppression marker (deliberate exception to this file's own
+    accept-with-rationale convention; see the module comment).
+
+    **`paths=None` (default, full-tree audit mode) vs. `paths=[...]`
+    (pre-commit mode) — why both exist and why this is NOT a suppression
+    mechanism.** `products/erp-imobiliario/backend/migrations/001_erp_
+    imobiliario.sql` and `011_storage_buckets.sql` are IMMUTABLE HISTORY —
+    the live incident fix (bucket flipped to `public=false` in the DB on
+    2026-09-17) is codified forward by a NEW migration (048), never by
+    editing 001/011, because a migration is a record of what WAS applied,
+    not a mutable snapshot of current intent. Those two files will say
+    `true` FOREVER. A full-tree scan (`paths=None`) therefore ALWAYS
+    reports them — this is correct for an ad-hoc audit ("does the
+    on-disk migration history contain a public-bucket declaration
+    anywhere") and is why `check_storage_bucket_public` is deliberately
+    NOT wired into any whole-platform sweep (`check_all_products` /
+    `noctus.dev.validate`) — a permanently-red whole-platform gate gets
+    ignored (this file's own `check_migration_applied_ledger_drift`
+    states the identical reasoning). Pre-commit instead calls this with
+    `paths=<only the files staged in THIS commit>` (the same idiom
+    `check_conflict_markers` already uses) — 001/011 are never staged
+    again (nobody edits immutable history), so they never re-trip the
+    gate, while a NEW `public=true` declaration in a NEWLY staged file
+    blocks unconditionally. This is diff-scoping, not an allowlist: it
+    excludes NOTHING by content or reasoning, only by "was this file
+    actually touched in this commit" — the identical selectivity a
+    reviewer's own eyes would apply. The LIVE check
+    (`noctus.dev.check_storage_no_public_buckets` /
+    `predeploy_check`'s `storage_bucket_public` leg) is what proves the
+    RUNTIME database has no public bucket regardless of what any
+    migration file — old or new — says, closing the gap this diff-scoping
+    deliberately leaves in the static leg.
+
+    KB § PATTERNS/backend/database-rls.md § Storage buckets — never public.
+    KB § PATTERNS/security/lgpd.md § Public storage buckets bypass RLS
+    entirely.
+    """
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+
+    def _issue(file_rel: str, line: int, detail: str) -> dict:
+        return {
+            "file": file_rel,
+            "line": line,
+            "issue": f"{file_rel}:{line} {detail} {_STORAGE_SANCTIONED_ALTERNATIVE}",
+            "severity": "critical",
+        }
+
+    if paths is not None:
+        candidates = [root / p for p in paths]
+        sql_files = sorted(
+            p for p in candidates
+            if p.suffix == ".sql" and "backend/migrations" in p.as_posix()
+        )
+        src_files = sorted(
+            p for p in candidates
+            if p.suffix in (".py", ".ts", ".tsx") and "node_modules" not in p.parts
+        )
+    else:
+        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))
+        src_files = []
+        for pattern in ("*.py", "*.ts", "*.tsx"):
+            src_files += list(root.glob(f"products/**/{pattern}"))
+            src_files += list(root.glob(f"noctusai_lib/**/{pattern}"))
+            src_files += list(root.glob(f"mcp/**/{pattern}"))
+            src_files += list(root.glob(f"templates/**/{pattern}"))
+        src_files = sorted(p for p in src_files if "node_modules" not in p.parts)
+
+    # ── Leg A — migration SQL declaring a public bucket ────────────────
+    for sql_file in sql_files:
+        try:
+            content = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
+            continue
+        rel = str(sql_file.relative_to(root))
+
+        for m in _STORAGE_BUCKETS_INSERT_RE.finditer(content):
+            verdict = _storage_insert_has_public_true(m.group("columns"), m.group("values"))
+            if verdict is None:
+                continue
+            lineno = content[: m.start()].count("\n") + 1
+            if verdict == "true":
+                findings.append(_issue(
+                    rel, lineno,
+                    "`INSERT INTO storage.buckets` declares a bucket with "
+                    "`public = true`.",
+                ))
+            else:
+                findings.append(_issue(
+                    rel, lineno,
+                    "`INSERT INTO storage.buckets` has a `public` column "
+                    "but its VALUES tuple could not be parsed precisely "
+                    "(a bare TRUE literal is present in the statement) — "
+                    "ambiguous, manual verification required.",
+                ))
+
+        for m in _STORAGE_BUCKETS_UPDATE_RE.finditer(content):
+            set_clause = m.group("set_clause")
+            if _STORAGE_BUCKETS_UPDATE_PUBLIC_TRUE_RE.search(set_clause):
+                lineno = content[: m.start()].count("\n") + 1
+                findings.append(_issue(
+                    rel, lineno,
+                    "`UPDATE storage.buckets SET ... public = true` "
+                    "re-opens a bucket to the public route.",
+                ))
+
+    # ── Leg B / C — get_public_url / getPublicUrl / create_bucket(public=True) ──
+    for src_file in src_files:
+        rel = str(src_file.relative_to(root))
+        if rel in _STORAGE_KEEPER_SELF_REFERENCE_PATHS:
+            continue
+        try:
+            content = src_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", src_file, exc)
+            continue
+        for m in _GET_PUBLIC_URL_RE.finditer(content):
+            lineno = content[: m.start()].count("\n") + 1
+            findings.append(_issue(
+                rel, lineno,
+                "calls the public-URL API (`get_public_url` / "
+                "`getPublicUrl`), which only makes sense against a "
+                "public bucket — there must be zero call sites.",
+            ))
+
+        # ── Leg C — runtime bucket creation with public=True ────────────
+        for m in _CREATE_BUCKET_RE.finditer(content):
+            window = content[m.end(): m.end() + 400]
+            if _CREATE_BUCKET_PUBLIC_TRUE_RE.search(window):
+                lineno = content[: m.start()].count("\n") + 1
+                findings.append(_issue(
+                    rel, lineno,
+                    "`create_bucket(...)` passes `public=True` at "
+                    "runtime.",
+                ))
+
+    return findings
+
+
 def _describe_credential_sources_tried() -> str:
     """Human-readable summary of which ``supabase_access_token`` resolution
     tiers had a live value in THIS process's environment, for an honest SKIP
@@ -11702,6 +12058,14 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     # routes must never regress; no product may shadow them with a local copy.
     # KB § PATTERNS/frontend/consent-routes-mandate.md.
     "check_consent_routes_mounted": "tests/test_consent_routes_mandate.py",
+    # storage-no-public-buckets (2026-09-17) — the test file organizes its
+    # classes per LEG (TestLegA_MigrationInsert / TestLegB_.../ TestLegC_...
+    # / TestPathsScoping / TestNoAllowlistOrSuppression), not under one
+    # `Test<CamelDetector>` class, because the three legs + the paths-
+    # scoping duality are each substantial enough to warrant their own
+    # class. KB § PATTERNS/backend/database-rls.md § Storage buckets —
+    # never public.
+    "check_storage_bucket_public": "tests/test_storage_bucket_public_keeper.py",
 }
 
 
