@@ -57,6 +57,7 @@ from .client import (
 )
 from .config import KeyProvider, LLMConfig
 from .embeddings import generate_embedding, generate_embeddings_batch
+from .provider_choice import resolve_llm_provider
 from .vision import analyze_image, analyze_images
 from .refusal import analyze_image_with_refusal_retry, looks_like_refusal
 from .budget import (
@@ -195,6 +196,7 @@ __all__ = [
     "analyze_images",
     "looks_like_refusal",
     "analyze_image_with_refusal_retry",
+    "resolve_llm_provider",
     # Response cache (Phase 8)
     "CacheBackend",
     "InMemoryCacheBackend",

@@ -12,16 +12,35 @@ import io
 import logging
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 from xhtml2pdf import pisa
 
 from noctusai_lib.config.credentials import resolve_credential
-from noctusai_lib.integrations.llm import chat_completion
+from noctusai_lib.integrations.llm import chat_completion, resolve_llm_provider
 from noctusai_lib.primitives.tasks import schedule_coro
 
 logger = logging.getLogger(__name__)
+
+#: Which model writes the certidão analysis, PER PROVIDER — a map, not a
+#: string, because the model id is not portable across vendors (`gpt-4.1-
+#: mini` sent to Anthropic is a 404, and an operator who flipped the
+#: provider would read that as a broken key rather than a mismatched pin).
+#: Mirrors `social-wiring`'s `certidoes.service.ANALYSIS_MODELS` — same
+#: capability, same reasoning, kept product-local because the seed does
+#: not (yet) own a canonical "which model per provider" mapping for chat
+#: analysis (see the LLM-provider-sweep report's proposal to lift this).
+ANALYSIS_MODELS: dict[str, str] = {
+    "openai": "gpt-4.1-mini",
+    "anthropic": "claude-opus-5",
+    "gemini": "gemini-2.0-flash",
+}
+
+#: Must match `resolve_llm_provider`'s own default — an org that never
+#: opted in is analysed by this vendor and its pre-flight key-check must
+#: agree, or the operator sees "chave configurada" and a failure together.
+DEFAULT_ANALYSIS_PROVIDER = "openai"
 
 
 # --------------- Certificate Registry ---------------
@@ -381,11 +400,17 @@ async def _upload_to_storage(
         return None
 
 
-async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[str]:
+async def _analyze_with_ai(
+    text: str,
+    org_id: Optional[str] = None,
+    *,
+    provider_resolver: Callable[..., str] = resolve_llm_provider,
+) -> Optional[str]:
     """Send document text/summary to the seed `chat_completion` wrapper for analysis.
 
-    Returns a fallback marker if OpenAI key is not configured (AI analysis
-    is optional — the certificate itself is still valid without it).
+    Returns a fallback marker if the selected provider's key is not
+    configured (AI analysis is optional — the certificate itself is still
+    valid without it).
 
     Refactored 2026-05-11 (LLM-ERP rollout, Step A): replaced raw
     `httpx.post("https://api.openai.com/v1/chat/completions", ...)` with
@@ -394,11 +419,30 @@ async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[
     which the raw-httpx path bypassed. The pre-flight `resolve_credential`
     check is kept so we surface a friendly Portuguese message at the
     Certidão UI instead of bubbling up `LLMNotConfigured`.
+
+    `provider_resolver` is a DI seam (bound default, never patched — see
+    `KB § PATTERNS/backend/di-test-seam.md`) so a test can assert the vendor
+    switch is wired without reaching the real `org_settings` chain.
     """
-    api_key = resolve_credential("openai_api_key", org_id)
+    # 🔴 Manual switch, not a fallback — see `resolve_llm_provider`'s module
+    # docstring. Unset (every org today) resolves to "openai", so this is
+    # behaviour-preserving; an operator flips a single `org_settings` row
+    # (`llm_chat_provider`) to move this org's certidão analysis to
+    # Anthropic without a code change.
+    provider = provider_resolver(
+        "chat", org_id, allowed=tuple(ANALYSIS_MODELS)
+    )
+    modelo = ANALYSIS_MODELS.get(provider, ANALYSIS_MODELS[DEFAULT_ANALYSIS_PROVIDER])
+    api_key = resolve_credential(f"{provider}_api_key", org_id)
     if not api_key:
-        logger.warning("AI analysis skipped — openai_api_key not configured")
-        return "[Análise IA não disponível — OpenAI API Key não configurada em Configurações > Chaves de API]"
+        logger.warning(
+            "AI analysis skipped — %s_api_key not configured (selected provider)",
+            provider,
+        )
+        return (
+            f"[Análise IA não disponível — {provider} API Key não configurada "
+            "em Configurações > Chaves de API]"
+        )
 
     try:
         return await chat_completion(
@@ -414,7 +458,8 @@ async def _analyze_with_ai(text: str, org_id: Optional[str] = None) -> Optional[
                 },
                 {"role": "user", "content": text},
             ],
-            model="gpt-4.1-mini",
+            model=modelo,
+            provider=provider,
             org_id=org_id,
             max_tokens=1000,
         )
