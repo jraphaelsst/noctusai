@@ -553,6 +553,31 @@ if [[ -n "$STAGED_UPLOAD_ROUTES" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-sexies. Contract field provenance map gate (blocking, only when the ─
+# F5 generator or its map doc changed) ────────────────────────────────────
+# Keeper `check_contract_field_provenance_map` + `KB § CONTEXT/PRODUCTS/
+# social-wiring/CONTRACT-FIELD-PROVENANCE-MAP.md § 3`. FOURTH surface of the
+# same hand-maintained-list-drift class as 6e-ter/6e-quater/6e-quinquies
+# above, applied to social-wiring's F5 instrument generator's ~140 dotted
+# placeholder tokens (modelo_texto.py's TEMPLATE string + contexto.
+# montar_contexto's + derivacao.derivar_switches's return-dict keys, all
+# AST-derived — no hand-maintained list on the code side). A placeholder
+# with no documented provenance row (clause / source document type /
+# extractor code path / confirmed storage / confirm-promote step / status)
+# can silently print a value nobody can trace back to where it came from.
+# Fires on any change to the generator's three source files or the map doc
+# itself — no auto-fix (declaring provenance is a human call), so the
+# message points at the missing row, not a repair tool.
+STAGED_CONTRACT_GERADOR=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/social-wiring/backend/app/modules/card_hub/contrato_gerador/(modelo_texto|contexto|derivacao)\.py|KNOWLEDGE-BASE/CONTEXT/PRODUCTS/social-wiring/CONTRACT-FIELD-PROVENANCE-MAP\.md)$' || true)
+if [[ -n "$STAGED_CONTRACT_GERADOR" ]] && have_py; then
+    echo "[pre-commit] contrato_gerador generator or its provenance map staged — checking field provenance coverage..."
+    if ! "$PY" "$CLI" --check-contract-field-provenance-map --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] CONTRACT-FIELD-PROVENANCE-MAP check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Add the missing token row to KNOWLEDGE-BASE/CONTEXT/PRODUCTS/social-wiring/CONTRACT-FIELD-PROVENANCE-MAP.md § 3's literal token-inventory table, plus its full provenance row in § 2 (clause, source document type, extractor code path, confirmed storage, confirm/promote step, status)." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6f. Lying-loading-state gate (advisory, only when a product frontend ──
 # .tsx changed) ──────────────────────────────────────────────────────────
 # Keeper `check_lying_loading_state` + `KB § PATTERNS/frontend/lying-
