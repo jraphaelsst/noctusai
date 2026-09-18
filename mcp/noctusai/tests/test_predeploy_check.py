@@ -41,6 +41,45 @@ def test_classify_unknown_returns_none():
     assert PC.classify_failure("some entirely novel failure shape") is None
 
 
+def test_classify_known_npm_root_hoist_cannot_find_package_esm_phrasing():
+    """2026-09-17 incident 3: node's ESM resolution error is `Cannot find
+    package 'X'`, not `Cannot find module 'X'` — the CJS phrasing the
+    original regex covered. Both must classify the same way."""
+    c = PC.classify_failure(
+        "Error: Cannot find package 'lovable-tagger' imported from "
+        "/repo/products/erp-imobiliario/frontend/vite.config.ts"
+    )
+    assert c is not None and c["class_id"] == "npm_root_hoist"
+    assert c["matched"] == "lovable-tagger"
+
+
+# ── frontend_build self-diagnosis (2026-09-17 incident 3) ────────────────
+# A fresh worktree's node_modules is gitignored ⇒ ABSENT; `_default_run_check`
+# must say so BEFORE shelling into vite, not surface the raw vendor error.
+def test_default_run_check_frontend_build_skips_when_node_modules_missing(tmp_path):
+    fe = tmp_path / "products" / "erp-imobiliario" / "frontend"
+    fe.mkdir(parents=True)
+    ok, msg = PC._default_run_check("frontend_build", "erp-imobiliario", tmp_path)
+    assert ok is True
+    assert "SKIPPED" in msg and "node_modules" in msg
+    assert "npm install" in msg
+    assert "not a deploy blocker" in msg
+
+
+def test_default_run_check_frontend_build_skips_when_node_modules_empty(tmp_path):
+    """An EXISTING-but-empty node_modules (a stray .package-lock.json, no
+    real packages) is not "ready" either — same self-diagnosis path."""
+    fe = tmp_path / "products" / "erp-imobiliario" / "frontend"
+    (fe / "node_modules").mkdir(parents=True)
+    ok, msg = PC._default_run_check("frontend_build", "erp-imobiliario", tmp_path)
+    assert ok is True and "SKIPPED" in msg
+
+
+def test_default_run_check_frontend_build_no_frontend_dir_still_skips(tmp_path):
+    ok, msg = PC._default_run_check("frontend_build", "no-such-product", tmp_path)
+    assert ok is True and "skipped" in msg
+
+
 # ── orchestration (all IO injected) ──────────────────────────────
 def _now():
     return dt.datetime(2026, 5, 22, 12, 0, 0)

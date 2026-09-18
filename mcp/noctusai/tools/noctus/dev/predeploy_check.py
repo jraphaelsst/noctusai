@@ -38,6 +38,7 @@ import subprocess
 from typing import Any, Callable
 
 from deploy_state import DEPLOY_LOCAL_FILES
+from node_env import node_deps_ready
 from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
 
@@ -68,7 +69,18 @@ PROJECT_SLUG = "deploy-hardening-and-dev-isolation"
 _KNOWN: list[dict[str, Any]] = [
     {
         "class_id": "npm_root_hoist",
-        "rx": re.compile(r"TS2307: Cannot find module '([^']+)'|Cannot find module '([^']+)'"),
+        # `Cannot find package 'X'` is Node's ESM-resolution phrasing (vs the
+        # CJS `Cannot find module 'X'`) — vite/esbuild surface either
+        # depending on how the missing specifier is imported. Both reach
+        # here only when `node_modules` IS provisioned but ONE entry is
+        # missing (see `frontend_build`'s node_deps_ready pre-check below,
+        # which now intercepts the "nothing is installed at all" case
+        # before it can masquerade as this class — the 2026-09-17
+        # incident-3 false-red).
+        "rx": re.compile(
+            r"TS2307: Cannot find module '([^']+)'|Cannot find module '([^']+)'|"
+            r"Cannot find package '([^']+)'"
+        ),
         "boundary": "B1 build-injection",
         "explanation": (
             "A frontend dependency resolves in dev (root-hoisted node_modules) "
@@ -632,6 +644,25 @@ def _default_run_check(
         fe = root / "products" / product / "frontend"
         if not fe.exists():
             return True, f"no frontend dir for {product} (skipped)"
+        # 2026-09-17 incident 3: a fresh worktree's `node_modules` is
+        # gitignored ⇒ ABSENT, and `npx vite build` then fails with a raw
+        # vendor error (`Cannot find package 'lovable-tagger'`) that reads
+        # exactly like a real code break during a production deploy — it
+        # was a missing local install, not a break. Distinguish "deps not
+        # installed" (a LOCAL environment gap; the production Docker build
+        # always runs a fresh `npm ci` and is unaffected) from "build is
+        # broken" BEFORE shelling into vite, via the shared node_env
+        # predicate every node-toolchain gate now uses.
+        if not node_deps_ready(fe):
+            return True, (
+                f"frontend_build SKIPPED — {fe}/node_modules is missing or "
+                "empty (node_modules is gitignored; a fresh worktree/clone "
+                "never has one). This is a LOCAL environment gap, not a "
+                "deploy blocker — the production Docker build always runs a "
+                "fresh `npm ci`. To verify the build locally: "
+                "`noctus.dev.task_branch(action='start', wire_env=True)` "
+                f"already provisions this by default, or `cd {fe} && npm install`."
+            )
         r = subprocess.run(["npx", "vite", "build"], cwd=fe, capture_output=True, text=True)
         return r.returncode == 0, (r.stdout + r.stderr)
     if check == "backend_tests":

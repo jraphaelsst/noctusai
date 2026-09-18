@@ -576,14 +576,75 @@ def _commit_ledger_rows_in_worktree(
 # every skip is REPORTED (never silent), and a real (non-symlink) node_modules
 # already in the worktree is left untouched (never nested, never clobbered).
 
-# Seed frontend packages whose node_modules we mirror in (relative to a tree root).
+# FALLBACK ONLY — today's known seed-frontend / @noctusai-repoint pair. The
+# live source of truth is DERIVED per product from its own `package.json`
+# (`_derive_product_repoints` below): a `file:../../../seed/X/frontend`
+# dependency IS the declaration of "this product needs X's node_modules
+# mirrored + re-pointed". Hardcoding this list and applying it to every
+# product blindly is exactly the "hand-maintained lists drift" anti-pattern
+# (§1) — a product that adds a THIRD seed frontend dependency, or one that
+# genuinely doesn't need one of the two, would silently mis-wire. These two
+# tuples are used ONLY when a product's `package.json` is absent/unreadable/
+# malformed (a fixture tree without one, or a product mid-migration) so
+# behavior degrades gracefully instead of wiring nothing.
 _SEED_FRONTENDS = ("seed/lib/frontend", "seed/framework/frontend")
-# The two file:-deps every product frontend resolves from its node_modules, and
-# the seed package each must re-point at (so worktree lib/framework edits are seen).
 _NOCTUSAI_REPOINTS = (
     ("@noctusai/lib", "seed/lib/frontend"),
     ("@noctusai/seed", "seed/framework/frontend"),
 )
+
+
+def _derive_product_repoints(primary_root: str, rel_fe: str, fs: "FsOps") -> list[tuple[str, str]]:
+    """This product's `@noctusai/*` seed re-points, DERIVED from its OWN
+    `package.json` `file:` dependencies — never assumed. A dependency value
+    of `file:../../../seed/X/frontend` resolves (relative to `rel_fe`) to
+    the repo-relative target `seed/X/frontend`; only deps landing under the
+    top-level `seed/` tree are re-pointed (a product's other `file:` deps,
+    if any, are none of wire_env's business).
+
+    Falls back to the static `_NOCTUSAI_REPOINTS` default when the
+    `package.json` is absent/unreadable/malformed, or declares no seed
+    `file:` dep at all — see the module-level comment above these
+    constants. `noctus.dev.task_branch`'s own colocated test
+    (`test_derive_product_repoints_matches_real_products`) runs THIS
+    function against the real repo tree so a future drift between the
+    convention and the fallback is caught by CI, not discovered by hand.
+    """
+    raw = fs.read_text(os.path.join(primary_root, rel_fe, "package.json"))
+    if raw is None:
+        return list(_NOCTUSAI_REPOINTS)
+    try:
+        manifest = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return list(_NOCTUSAI_REPOINTS)
+    deps: dict[str, Any] = {}
+    for section in ("dependencies", "devDependencies"):
+        section_val = manifest.get(section) if isinstance(manifest, dict) else None
+        if isinstance(section_val, dict):
+            deps.update(section_val)
+    out: list[tuple[str, str]] = []
+    for name, value in sorted(deps.items()):
+        if not isinstance(value, str) or not value.startswith("file:"):
+            continue
+        target = os.path.normpath(os.path.join(rel_fe, value[len("file:"):]))
+        if target.split(os.sep)[0] != "seed":
+            continue  # a file:-dep outside seed/ is not wire_env's concern
+        out.append((name, target))
+    return out or list(_NOCTUSAI_REPOINTS)
+
+
+def _derive_seed_frontends(primary_root: str, fs: "FsOps") -> list[str]:
+    """The set of seed-frontend packages whose `node_modules` gets whole-dir
+    mirrored into the worktree — DERIVED as the union of every product's
+    `_derive_product_repoints` targets, never a hand-maintained slug list.
+    Falls back to the static `_SEED_FRONTENDS` default when no product
+    yields any (an empty/product-less tree has nothing to derive FROM)."""
+    found: set[str] = set()
+    for slug in fs.list_product_frontends(primary_root):
+        rel_fe = f"products/{slug}/frontend"
+        for _dep, seed_rel in _derive_product_repoints(primary_root, rel_fe, fs):
+            found.add(seed_rel)
+    return sorted(found) if found else list(_SEED_FRONTENDS)
 
 
 class FsOps:
@@ -617,6 +678,16 @@ class FsOps:
 
     def symlink(self, target: str, link: str) -> None:
         os.symlink(target, link)
+
+    def read_text(self, p: str) -> str | None:
+        """`p`'s text content, or `None` if it does not exist / cannot be
+        read — used to derive a product's `@noctusai/*` seed re-points from
+        its OWN `package.json` (see `_derive_product_repoints`) instead of
+        assuming every product wants the same hand-maintained pair."""
+        try:
+            return Path(p).read_text(encoding="utf-8")
+        except OSError:
+            return None
 
 
 def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[dict], list[dict]]:
@@ -672,7 +743,10 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
         src = os.path.join(primary_root, rel)
         link = os.path.join(wt_root, rel)
         if not fs.exists(src):
-            skipped.append({"link": link, "reason": f"primary toolkit node_modules absent: {src}"})
+            skipped.append({"link": link, "reason": (
+                f"primary toolkit node_modules absent: {src} — the PRIMARY "
+                f"checkout itself was never provisioned; run `npm install` "
+                f"in {os.path.join(primary_root, 'mcp', 'noctusai', 'node')} first")})
             return
         if fs.is_dir(link) and not fs.is_symlink(link):
             skipped.append({"link": link, "reason": "real node_modules already present in worktree"})
@@ -689,7 +763,10 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
         src = os.path.join(primary_root, rel_pkg, "node_modules")
         link = os.path.join(wt_root, rel_pkg, "node_modules")
         if not fs.exists(src):
-            skipped.append({"link": link, "reason": f"primary node_modules absent: {src}"})
+            skipped.append({"link": link, "reason": (
+                f"primary node_modules absent: {src} — the PRIMARY checkout "
+                f"itself was never provisioned; run `npm install` in "
+                f"{os.path.join(primary_root, rel_pkg)} first")})
             return
         if fs.is_dir(link):  # a REAL node_modules already in the worktree — never clobber/nest
             skipped.append({"link": link, "reason": "real node_modules already present in worktree"})
@@ -705,7 +782,10 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
         src = os.path.join(primary_root, rel_fe, "node_modules")
         link_dir = os.path.join(wt_root, rel_fe, "node_modules")
         if not fs.exists(src):
-            skipped.append({"link": link_dir, "reason": f"primary node_modules absent: {src}"})
+            skipped.append({"link": link_dir, "reason": (
+                f"primary node_modules absent: {src} — the PRIMARY checkout "
+                f"itself was never provisioned; run `npm install` in "
+                f"{os.path.join(primary_root, rel_fe)} first")})
             return
         if fs.is_dir(link_dir):  # a REAL node_modules already in the worktree
             # (genuine local install, OR an already-overlaid worktree) — never
@@ -721,21 +801,25 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
             wire.append({"link": link_dir, "target": None, "kind": "ensure_real_dir"})
         for entry in fs.list_dir(src):
             if entry == "@noctusai":
-                continue  # worktree-owned; wired below via _NOCTUSAI_REPOINTS
+                continue  # worktree-owned; wired below via the derived repoints
             wire.append({"link": os.path.join(link_dir, entry),
                         "target": os.path.join(src, entry), "kind": "node_modules_entry"})
 
     # seed packages first (the @noctusai re-points below point INTO the WORKTREE's
-    # own copies of these, never through the product node_modules symlink)
-    for rel_pkg in _SEED_FRONTENDS:
+    # own copies of these, never through the product node_modules symlink).
+    # DERIVED from what products actually declare (`_derive_seed_frontends`),
+    # not a hand-maintained slug list.
+    for rel_pkg in _derive_seed_frontends(primary_root, fs):
         _link_whole_node_modules(rel_pkg)
 
-    # every product/<slug>/frontend with a primary node_modules → overlay + re-point
+    # every product/<slug>/frontend with a primary node_modules → overlay + re-point,
+    # each product's OWN `package.json` deciding which seed package(s) it re-points
+    # (`_derive_product_repoints`) — never a single fleet-wide assumption.
     for slug in fs.list_product_frontends(primary_root):
         rel_fe = f"products/{slug}/frontend"
         _link_product_node_modules(rel_fe)
         nm = os.path.join(wt_root, rel_fe, "node_modules")
-        for dep, seed_rel in _NOCTUSAI_REPOINTS:
+        for dep, seed_rel in _derive_product_repoints(primary_root, rel_fe, fs):
             link = os.path.join(nm, dep)
             target = os.path.join(wt_root, seed_rel)
             if not fs.exists(target):
@@ -866,7 +950,7 @@ def task_branch(
     worktrees_dir: str = ".claude/worktrees",
     branch_prefix: str = "feat/",
     max_retries: int = 5,
-    wire_env: bool = False,
+    wire_env: bool = True,
     primary_root: str | None = None,
     run: Callable[..., tuple[int, str, str]] | None = None,
     fs: FsOps | None = None,
@@ -891,16 +975,25 @@ def task_branch(
     `integrate` branch below for why blocking here is safe (no legitimate
     first-mover casualty, unlike pre-commit Leg B).
 
-    `wire_env=True` (only meaningful on `action='start'`) auto-wires the §5a
-    verification-env recipe into the fresh worktree AFTER it exists: symlink the
-    PRIMARY tree's per-package `node_modules` into the worktree + re-point each
-    product frontend's `@noctusai/{lib,seed}` file:-deps at the WORKTREE's own
-    seed copies, so a vite build / vitest run inside the worktree sees the
-    worktree's edits. All target paths are gitignored ⇒ never staged. Honors
-    dry-run: without `confirm` it REPORTS the plan (the symlinks it WOULD create)
-    without touching the filesystem. Best-effort: missing primary node_modules /
-    a real node_modules already in the worktree are REPORTED in `skipped`, never
-    silent, never clobbered."""
+    `wire_env` (only meaningful on `action='start'`; DEFAULTS TO TRUE — a
+    fresh worktree must come ready to run gates, `KB § PATTERNS/common/
+    self-branching-mode.md § 5a`) auto-wires the §5a verification-env recipe
+    into the fresh worktree AFTER it exists: symlink the PRIMARY tree's
+    per-package `node_modules` into the worktree + re-point each product
+    frontend's `@noctusai/*` file:-deps (DERIVED from that product's own
+    `package.json`, never a hardcoded pair — see `_derive_product_repoints`)
+    at the WORKTREE's own seed copies, so a vite build / vitest run inside
+    the worktree sees the worktree's edits — and so `noctus.dev.
+    predeploy_check` / the MCP toolkit's own pytest suite don't false-red on
+    a missing local install (the 2026-09-17 four-incidents-one-session
+    recurrence this formalizes). Pass `wire_env=False` to skip it (e.g. a
+    doc-only slice on a large repo where the symlink pass is pure overhead).
+    All target paths are gitignored ⇒ never staged. Honors dry-run: without
+    `confirm` it REPORTS the plan (the symlinks it WOULD create) without
+    touching the filesystem. Best-effort: missing primary node_modules (the
+    reason names the exact `npm install` to run) / a real node_modules
+    already in the worktree are REPORTED in `skipped`, never silent, never
+    clobbered."""
     runner = run or _default_run_local
     fsops = fs or FsOps()
     # End-of-integrate/cleanup structural-cache settle (see _settle_structural_caches).
@@ -914,6 +1007,16 @@ def task_branch(
     # to a real `check_migration_number_collision` filesystem scan.
     migration_check_fn = migration_check if migration_check is not None else (
         _default_migration_collision_check if run is None else None)
+    # wire_env defaults True (KB § self-branching-mode.md § 5a — "a fresh
+    # worktree must come ready to run gates"), but ONLY in the real
+    # production path OR when the caller supplies an explicit primary_root.
+    # Same "production-only" rule as settle_fn/migration_check_fn just
+    # above: an injected `run` (a test/custom context) with no explicit
+    # primary_root means the "worktree" this call reasons about doesn't
+    # physically exist on disk — silently falling back to the REAL repo
+    # tree here would write REAL symlinks into the caller's actual
+    # `.claude/worktrees/<slug>` as a side effect of running a unit test.
+    wire_env = wire_env and (primary_root is not None or run is None)
 
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
@@ -998,9 +1101,24 @@ def task_branch(
                                "Pass confirm=True. Then work THERE + commit; "
                                "integrate with action='integrate'."}
         rc, out, err = git("worktree", "add", wt_path, "-b", branch, f"{remote}/{dev_branch}")
+        already_existed = False
         if rc != 0:
-            return {**plan, "status": "error", "exit_code": 1,
-                    "error": f"worktree add failed: {err.strip() or out.strip()}"}
+            # Idempotent retrofit (the "worktree created outside task_branch"
+            # edge case): a worktree that ALREADY EXISTS on exactly THIS
+            # branch — forked by a bare `git worktree add`, or `start` being
+            # re-run after `wire_env` shipped — is not a failure to surface;
+            # `start` becomes "ensure this worktree exists + is wired", so
+            # the retrofit path is a real re-runnable command, not a dead
+            # end that sends the caller to a manual symlink recipe. Any
+            # OTHER failure (path exists on a DIFFERENT branch, a genuine
+            # git error) still surfaces as an error, unchanged.
+            _rc_list, list_out, _e = git("worktree", "list", "--porcelain")
+            existing_branch = _branch_for_path(list_out if _rc_list == 0 else "", wt_path)
+            if existing_branch == branch:
+                already_existed = True
+            else:
+                return {**plan, "status": "error", "exit_code": 1,
+                        "error": f"worktree add failed: {err.strip() or out.strip()}"}
         wired_extra: dict[str, Any] = {}
         wired_count = 0
         if wire_env:
@@ -1021,7 +1139,9 @@ def task_branch(
                     "full_report": report_path,
                 }
         return {**plan, **wired_extra, "status": "started", "exit_code": 0,
-                "message": f"created {wt_path} on {branch}"
+                "already_existed": already_existed,
+                "message": f"{'reused already-existing' if already_existed else 'created'} "
+                           f"{wt_path} on {branch}"
                            f"{' + wired %d env symlink(s)' % wired_count if wire_env else ''}. "
                            f"Work there (cd {wt_path}), commit on {branch}, then "
                            f"noctus.dev.task_branch action='integrate' slug='{slug}'."}
@@ -1470,26 +1590,30 @@ def register(server) -> None:
             "deletes the merged branch. Writes are "
             "DRY-RUN by default — pass confirm=True. Pushes ONLY to dev (main/"
             "prod move via noctus.dev.release); FF/rebase-only, never force/reset/"
-            "switch. action='start' wire_env=True ALSO auto-wires the §5a "
-            "verification env into the fresh worktree (symlink the PRIMARY tree's "
-            "per-package node_modules in + re-point each product frontend's "
-            "@noctusai/{lib,seed} deps at the worktree's seed copies) so a vite "
-            "build / vitest can run THERE; all gitignored ⇒ never staged; "
-            "best-effort (missing/real-dir paths reported in skipped, never "
-            "clobbered) and dry-run-honored (reports would_wire without confirm). "
-            "wire_env's would_wire/wired/skipped default to a COMPACT "
-            "{count, sample} shape + a full_report path (a real repo enumerates "
-            "~18,840 symlink entries there, which overflows the tool-result "
-            "budget) — pass verbose=True for the full inline lists instead. "
-            "status: status|planned|started|integrated|conflict|"
-            "up_to_date|cleaned|partial|blocked|error."
+            "switch. action='start' wire_env DEFAULTS TO TRUE — every fresh "
+            "worktree auto-wires the §5a verification env by construction "
+            "(symlink the PRIMARY tree's per-package node_modules in + re-point "
+            "each product frontend's @noctusai/* deps, DERIVED from that "
+            "product's own package.json, at the worktree's seed copies) so a "
+            "vite build / vitest / noctus.dev.predeploy_check can run THERE "
+            "without false-redding on a missing local install (pass "
+            "wire_env=False to skip for a doc-only slice); all gitignored ⇒ "
+            "never staged; best-effort (missing/real-dir paths reported in "
+            "skipped — a missing PRIMARY node_modules names the exact `npm "
+            "install` to run — never clobbered) and dry-run-honored (reports "
+            "would_wire without confirm). wire_env's would_wire/wired/skipped "
+            "default to a COMPACT {count, sample} shape + a full_report path (a "
+            "real repo enumerates ~18,840 symlink entries there, which "
+            "overflows the tool-result budget) — pass verbose=True for the "
+            "full inline lists instead. status: status|planned|started|"
+            "integrated|conflict|up_to_date|cleaned|partial|blocked|error."
         ),
     )
     def _task_branch(
         action: str = "status",
         slug: str | None = None,
         confirm: bool = False,
-        wire_env: bool = False,
+        wire_env: bool = True,
         verbose: bool = False,
     ) -> dict:
         return task_branch(action=action, slug=slug, confirm=confirm,
