@@ -225,6 +225,53 @@ itself — its answer was read as current when the code producing it was not.
 
 See `mcp/noctusai/tools/noctus/dev/toolkit_freshness.py`. — 2026-09-18
 
+### 8. Structure-green is not behaviour-green — a guard is verified only by observing it REFUSE
+
+> Rebase note: this section was originally authored as §7, at which point
+> §7 above ("a stale interpreter...") did not exist on any reachable ref —
+> confirmed by fetching `origin/dev` at the time. It has since landed;
+> this section is renumbered §8 on rebase, content otherwise unchanged.
+
+Principle 4 says a green that cannot go red proves nothing; principle 6
+says the channel carrying a verdict can lie even when the check itself is
+sound. This is a third, distinct failure mode: the check confirms the
+guarded OBJECT exists, and reports that as if it proved the object DOES
+anything. It does not. A trigger, a CHECK constraint, an RLS policy — each
+can be declared, migrated, and structurally scanned as "present" while
+never once having been exercised.
+
+**All four found in one day (2026-09-17), each independently:**
+
+| Check | Reported | Reality |
+|---|---|---|
+| "RLS enabled, 17 policies on `storage.objects`" | green | the bucket was `public = true`; `/object/public/…` bypasses RLS entirely. 102 CPF-bearing certidões were world-readable. |
+| `install-hooks.sh` allowlist in a keeper | green | shell variable indirection meant it matched nothing — the exemption was dead code |
+| a migration test for a write-once trigger | green | it greps `pg_get_functiondef` for the RAISE text; it never fires the trigger |
+| a docx assertion | green | `\n` renders as `<w:br/>`, so the asserted substring could never appear either way |
+
+The honest root cause is not carelessness — for the database case
+specifically, there is no dev/staging fleet to exercise a guard against
+(`KB § PATTERNS/devops/dev-fleet-dormant.md`), so a migration test is
+structural BY NECESSITY, and every reviewer has accepted that as the best
+available proof. It is not: existence is not behaviour.
+
+**The fix, not just the diagnosis.** `noctus.dev.verify_db_guards` runs the
+EXACT operation a declared DB guard claims to refuse, against production,
+inside a transaction that is rolled back by construction (not by
+convention — see that tool's `wrap_rollback_only` for the three
+independent reasons a probe run through it can never commit). The refusal
+IS the pass; an operation that SUCCEEDS is the finding, at whatever
+severity the guard's own rationale names. `noctus.dev.predeploy_check`'s
+`db_guards` leg composes it, fail-closed like every sibling live-DB leg
+(`schema_exposure` / `schema_drift` / `storage_bucket_public`) — "we
+couldn't verify" is never read as "it's fine". The gate↔methodology-sync
+backstop is `check_migration_guard_has_probe`: a migration that ships a
+NEW trigger/CHECK/UNIQUE guard with no registered probe is blocked at
+commit time, so this does not quietly regress the moment the next guard
+ships.
+
+⇒ **A structural check that a guard exists is a hypothesis about its
+behaviour, not proof of it — proof requires watching it refuse.**
 ### 9. Resolve the root from the artefact under evaluation, never from the ambient cwd
 
 `Path.cwd()` and "wherever this module's `__file__` happens to resolve"

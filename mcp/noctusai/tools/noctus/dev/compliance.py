@@ -11170,6 +11170,189 @@ def check_storage_bucket_public(
     return findings
 
 
+# ---------------------------------------------------------------------------
+# `check_migration_guard_has_probe` — the gate↔methodology-sync backstop
+# for `noctus.dev.verify_db_guards` (2026-09-18): "structure-green is not
+# behaviour-green" only stays fixed if the NEXT guard a migration ships is
+# forced to carry an executable proof, not just a structural one. Sibling
+# of `check_migration_number_collision` (same "one migration file" scope)
+# and `check_detector_has_regression_test` (same "a new X needs a Y"
+# shape) — never a naive whole-file grep: detection is STATEMENT-scoped
+# via `noctusai_lib.testing.migration_parser._walk_statements` (the same
+# dollar-quote/string-literal-aware splitter `MockSupabaseClient`'s schema
+# cache is built from), so a mention of "CREATE TRIGGER" inside a comment,
+# a docstring-shaped string, or ANOTHER statement's `$$`-quoted body can
+# never trip this the way a bare `grep -c "CREATE TRIGGER"` would.
+# ---------------------------------------------------------------------------
+
+_GUARD_TRIGGER_FUNCTION_RE = re.compile(
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+"
+    r"(?:[a-zA-Z_][a-zA-Z_0-9]*\.)?(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)\s*\([^)]*\)\s*"
+    r"RETURNS\s+trigger\b",
+    re.IGNORECASE,
+)
+_GUARD_ADD_CONSTRAINT_RE = re.compile(
+    r"ADD\s+CONSTRAINT\s+(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)\s+(?P<kind>CHECK|UNIQUE)\b",
+    re.IGNORECASE,
+)
+_GUARD_INLINE_CONSTRAINT_CHECK_RE = re.compile(
+    r"CONSTRAINT\s+(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)\s+CHECK\b",
+    re.IGNORECASE,
+)
+_GUARD_UNIQUE_INDEX_RE = re.compile(
+    r"CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<name>[a-zA-Z_][a-zA-Z_0-9]*)\b",
+    re.IGNORECASE,
+)
+
+#: `(file, guard_name, rationale)` — a genuine guard-shaped DDL object that
+#: legitimately has NO behaviour probe. Co-located rationale, same shape as
+#: `_HOOKS_BYPASS_ALLOWLIST` / `check_mock_schema_validation`'s opt-out.
+#: Empty on purpose today: this keeper is diff-scoped (see `paths=` below,
+#: same idiom `check_storage_bucket_public` already establishes) rather
+#: than a whole-corpus sweep, so it never retroactively flags the existing
+#: migration history — only a migration TOUCHED in the commit under review.
+#: RLS POLICY is deliberately OUT of this keeper's detected-shape set
+#: entirely (not merely allowlisted): `noctus.dev.verify_db_guards`'s
+#: `SqlExecutor` runs via the Supabase Management API with elevated
+#: privileges that BYPASS row-level security outright, so a probe run
+#: through it can never observe an RLS policy refuse anything — every such
+#: probe would report a permanent, unfixable `permitted` false-positive.
+#: Proving RLS behaviour needs a role/JWT-impersonation seam
+#: (`SET LOCAL ROLE authenticated; SELECT set_config('request.jwt.claims',
+#: ..., true);` ahead of the probe statement, itself transaction-scoped —
+#: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
+#: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
+_GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = ()
+
+
+def _detect_guard_objects(sql_text: str) -> list[dict]:
+    """`[{"guard_name": ..., "kind": ...}] for every GENUINE guard object a
+    migration DEFINES — a trigger function whose body actually `RAISE
+    EXCEPTION`s (a passive `updated_at`-style trigger function is NOT a
+    guard and is never flagged), a named CHECK/UNIQUE constraint (`ADD
+    CONSTRAINT` or inline inside `CREATE TABLE`), or a `CREATE UNIQUE
+    INDEX`. Statement-scoped and statement-KIND-dispatched (only
+    `ADD CONSTRAINT` inside an `ALTER TABLE` statement, only an inline
+    `CONSTRAINT ... CHECK` inside a `CREATE TABLE` statement) so the two
+    named-CHECK shapes can never double-count each other.
+
+    KNOWN LIMITATION (documented, not silently swallowed): an UNNAMED
+    column-level `CHECK (...)` (e.g. `campo TEXT CHECK (campo IN (...))`)
+    is NOT detected — reconstructing Postgres's auto-generated
+    `<table>_<column>_check` name reliably for arbitrary column-check
+    syntax is unbounded work for a static scan. `noctus.dev.
+    verify_db_guards` still ships a real probe for that specific shape
+    (see its `matricula_abertura_blocos.campo.allowed_values` entry); only
+    this DETECTOR's coverage of it is a gap.
+    """
+    from noctusai_lib.testing.migration_parser import (
+        _strip_block_comments,
+        _strip_line_comments,
+        _walk_statements,
+    )
+
+    cleaned = _strip_block_comments(_strip_line_comments(sql_text))
+    guards: list[dict] = []
+    for stmt in _walk_statements(cleaned):
+        head = stmt.lstrip()[:40].upper()
+        if head.startswith("CREATE FUNCTION") or head.startswith("CREATE OR REPLACE FUNCTION"):
+            m = _GUARD_TRIGGER_FUNCTION_RE.search(stmt)
+            if m and "RAISE EXCEPTION" in stmt.upper():
+                guards.append({"guard_name": m.group("name"), "kind": "trigger_function"})
+        elif head.startswith("ALTER TABLE"):
+            for m in _GUARD_ADD_CONSTRAINT_RE.finditer(stmt):
+                kind = "check_constraint" if m.group("kind").upper() == "CHECK" else "unique_constraint"
+                guards.append({"guard_name": m.group("name"), "kind": kind})
+        elif head.startswith("CREATE TABLE") or head.startswith("CREATE UNLOGGED TABLE"):
+            for m in _GUARD_INLINE_CONSTRAINT_CHECK_RE.finditer(stmt):
+                guards.append({"guard_name": m.group("name"), "kind": "check_constraint"})
+        elif head.startswith("CREATE UNIQUE INDEX"):
+            m = _GUARD_UNIQUE_INDEX_RE.search(stmt)
+            if m:
+                guards.append({"guard_name": m.group("name"), "kind": "unique_constraint"})
+    return guards
+
+
+def check_migration_guard_has_probe(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """A migration that defines a genuine guard (trigger/CHECK/UNIQUE) must
+    have a corresponding behaviour probe registered in `noctus.dev.
+    verify_db_guards`'s `DEFAULT_REGISTRY` — the gate↔methodology-sync
+    backstop (`KB § PATTERNS/common/gate-methodology-sync.md`) for that
+    tool. Without this, the next guard someone ships is "structurally
+    verified" (the trigger/CHECK exists) and NOTHING checks it actually
+    refuses what it claims to — exactly the class of bug `verify_db_guards`
+    exists to catch (`KB § PATTERNS/common/methodology-execution-
+    discipline.md § 8`).
+
+    `paths=None` (full-tree audit) vs. `paths=[...]` (pre-commit,
+    diff-scoped) — the SAME split `check_storage_bucket_public` already
+    establishes, and for the identical reason: a full-tree sweep would
+    permanently flag the (many) existing guard-bearing migrations this
+    dispatch did not retrofit probes for, and a permanently-red gate gets
+    ignored. Pre-commit calls this with `paths=<staged migration files>`
+    so ONLY a migration actually touched in the commit under review is
+    checked — forward-looking, per the brief this keeper was built to
+    satisfy ("that is what stops this recurring — otherwise the NEXT
+    guard ships structurally verified only").
+
+    Severity `high`. See `_GUARD_PROBE_ALLOWLIST` for the one sanctioned
+    opt-out shape (co-located rationale required, never a bare
+    suppression).
+    """
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+
+    from .verify_db_guards import REGISTERED_GUARD_NAMES
+
+    if paths is not None:
+        sql_files = sorted(
+            root / p for p in paths
+            if (root / p).suffix == ".sql" and "backend/migrations" in (root / p).as_posix()
+        )
+    else:
+        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))
+
+    allowlisted = {(f, name) for f, name, _r in _GUARD_PROBE_ALLOWLIST}
+
+    for sql_file in sql_files:
+        try:
+            content = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
+            continue
+        rel = str(sql_file.relative_to(root))
+        seen_names: set[str] = set()
+        for guard in _detect_guard_objects(content):
+            name = guard["guard_name"]
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            if name in REGISTERED_GUARD_NAMES or (rel, name) in allowlisted:
+                continue
+            findings.append({
+                "product": sql_file.parents[2].name,
+                "file": rel,
+                "issue": (
+                    f"{rel} defines a {guard['kind']} `{name}` with no "
+                    "registered behaviour probe in noctus.dev.verify_db_guards's "
+                    "DEFAULT_REGISTRY. A structural check (does the trigger/"
+                    "constraint EXIST) is not proof it refuses anything — add a "
+                    "GuardProbe there proving the refusal, or (if this specific "
+                    "guard genuinely cannot be probed today — e.g. it needs RLS "
+                    "role-impersonation this tool's SqlExecutor structurally "
+                    "cannot do) add a `(file, guard_name, rationale)` entry to "
+                    "`_GUARD_PROBE_ALLOWLIST` in compliance.py. See "
+                    "KB § PATTERNS/common/methodology-execution-discipline.md § 8."
+                ),
+                "severity": "high",
+            })
+    return findings
+
+
 def _describe_credential_sources_tried() -> str:
     """Human-readable summary of which ``supabase_access_token`` resolution
     tiers had a live value in THIS process's environment, for an honest SKIP

@@ -135,6 +135,7 @@ def register_all(server) -> None:
     from . import vector_calibration
     from . import vector_costs
     from . import vectorize
+    from . import verify_db_guards
     from . import vps
     from . import vps_exec
     from . import vps_exec_sql
@@ -262,6 +263,7 @@ def register_all(server) -> None:
     vector_calibration.register(server)
     vector_costs.register(server)
     vectorize.register(server)
+    verify_db_guards.register(server)
     vps.register(server)
     vps_exec.register(server)
     vps_exec_sql.register(server)

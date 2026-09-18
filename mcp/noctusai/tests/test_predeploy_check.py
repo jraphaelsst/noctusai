@@ -898,6 +898,7 @@ def test_default_checks_include_new_legs():
     assert "storage_bucket_public" in PC.DEFAULT_CHECKS
     assert "env_fleet_manifest" in PC.DEFAULT_CHECKS
     assert "schema_drift" in PC.DEFAULT_CHECKS
+    assert "db_guards" in PC.DEFAULT_CHECKS
 
 
 # ── schema_drift leg (2026-09-17 live-schema-vs-declared class) ───────────
@@ -1036,3 +1037,85 @@ def test_storage_bucket_public_runner_fails_on_query_error_never_skips(monkeypat
     ok, msg = PC._default_run_check("storage_bucket_public", "erp-imobiliario", tmp_path)
     assert ok is False
     assert "BLOCKED" in msg
+
+
+# ── db_guards leg (structure-green is not behaviour-green, 2026-09-18) ──────
+def test_db_guards_runner_skips_loudly_when_no_probe_registered(monkeypatch, tmp_path):
+    """A product with no registered behaviour probes (and no platform-wide
+    ones either, for this test) SKIPs (ok=True) — an honest 'nothing to
+    verify here', distinct from 'we couldn't verify' below. In the SHIPPED
+    registry a platform-wide probe (zero-public-buckets) always applies
+    regardless of product, so this test isolates the skip branch with a
+    registry that has neither a product-specific nor a platform-wide
+    entry."""
+    from tools.noctus.dev import verify_db_guards as VDG
+
+    other_product_probe = VDG.GuardProbe(
+        id="other.probe", product="some-other-product", schema="s",
+        guard_name="g", kind="write_refusal", migrations=(),
+        rationale="not for this product", sql=VDG.DEFAULT_REGISTRY[0].sql,
+    )
+    monkeypatch.setattr(VDG, "DEFAULT_REGISTRY", (other_product_probe,))
+    ok, msg = PC._default_run_check("db_guards", "a-product-with-no-probes-at-all", tmp_path)
+    assert ok is True
+    assert "SKIPPED" in msg
+
+
+def test_db_guards_runner_not_configured_is_a_failure(monkeypatch, tmp_path):
+    from tools.noctus.dev import verify_db_guards as VDG
+
+    monkeypatch.setattr(
+        VDG,
+        "verify_db_guards",
+        lambda **kw: {
+            "ok": False, "status": "not_configured", "checked": 0,
+            "results": [], "findings": [], "failures": [],
+            "error": "NOC-REMEDIATE[credentials]: no supabase_access_token resolved.",
+        },
+    )
+    ok, msg = PC._default_run_check("db_guards", "social-wiring", tmp_path)
+    assert ok is False
+    assert "BLOCKED" in msg
+    assert "not_configured" in msg
+
+
+def test_db_guards_runner_fails_on_a_finding_never_a_silent_pass(monkeypatch, tmp_path):
+    """THE core shape this tool exists for: a guard that structurally
+    exists but does NOT refuse the write it claims to."""
+    from tools.noctus.dev import verify_db_guards as VDG
+
+    monkeypatch.setattr(
+        VDG,
+        "verify_db_guards",
+        lambda **kw: {
+            "ok": False, "status": "violations_found", "checked": 6,
+            "results": [], "failures": [],
+            "findings": [{
+                "probe_id": "matricula_extracoes.ruido.frozen_after_concluida",
+                "guard_name": "matricula_extracoes_protege_concluida",
+                "status": "finding", "outcome": "permitted", "severity": "high",
+                "detail": "UPDATE succeeded — the write-once guard did not fire",
+            }],
+        },
+    )
+    ok, msg = PC._default_run_check("db_guards", "social-wiring", tmp_path)
+    assert ok is False
+    assert "BLOCKED" not in msg  # this is the VIOLATED phrasing, not a couldn't-verify one
+    assert "VIOLATED" in msg
+    assert "matricula_extracoes_protege_concluida" in msg
+
+
+def test_db_guards_runner_passes_when_clean(monkeypatch, tmp_path):
+    from tools.noctus.dev import verify_db_guards as VDG
+
+    monkeypatch.setattr(
+        VDG,
+        "verify_db_guards",
+        lambda **kw: {
+            "ok": True, "status": "clean", "checked": 6,
+            "results": [], "findings": [], "failures": [], "error": None,
+        },
+    )
+    ok, msg = PC._default_run_check("db_guards", "social-wiring", tmp_path)
+    assert ok is True
+    assert "db_guards ok" in msg

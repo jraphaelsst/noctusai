@@ -58,6 +58,7 @@ DEFAULT_CHECKS: list[str] = [
     "schema_exposure",  # PGRST106 class — product's declared schema is in authenticator's pgrst.db_schemas
     "schema_drift",  # does the live schema actually contain what migrations/ORM declare? (2026-09-17 class)
     "storage_bucket_public",  # zero public storage.buckets, platform-wide, no exception — owner directive 2026-09-17
+    "db_guards",  # a declared DB guard (trigger/CHECK/UNIQUE) actually REFUSES what it claims — structure-green is not behaviour-green (2026-09-18)
     "env_fleet_manifest",  # every deploy/fleet/env.fleet.keys name has a non-empty value in a fed .env.fleet snapshot
 ]
 
@@ -855,6 +856,57 @@ def _default_run_check(
         if result["status"] != "clean":
             return False, f"storage_bucket_public BLOCKED ({result['status']}) — {result['error']}"
         return True, "storage_bucket_public ok — no public bucket in storage.buckets"
+    if check == "db_guards":
+        # THE structure-green-is-not-behaviour-green gate (owner directive
+        # 2026-09-18, KB § PATTERNS/common/methodology-execution-discipline.md
+        # § 8): a declared DB guard (trigger/CHECK/UNIQUE) is verified ONLY
+        # by observing it REFUSE the exact operation it claims to refuse —
+        # not by confirming it exists. Scoped to probes registered for
+        # THIS product PLUS platform-wide ones (product="<platform>", e.g.
+        # the zero-public-buckets state assertion — same posture as the
+        # storage_bucket_public leg above). A product with no registered
+        # probes at all SKIPs loudly (ok=True) — most products have none
+        # registered yet; that is an honest "nothing to verify here", not
+        # the same "we couldn't verify" the not_configured/error/finding
+        # states below are. Once ANY probe is registered for a product,
+        # not_configured / error / a finding ALL block — same fail-closed
+        # posture as schema_exposure/schema_drift/storage_bucket_public:
+        # "we couldn't check" must never read as "it's fine".
+        from . import verify_db_guards as _vdg
+
+        scoped = tuple(
+            p for p in _vdg.DEFAULT_REGISTRY if p.product in (product, "<platform>")
+        )
+        if not scoped:
+            return True, (
+                f"db_guards SKIPPED — no behaviour probes registered for "
+                f"{product} (or platform-wide) yet. See "
+                "noctus.dev.verify_db_guards's DEFAULT_REGISTRY."
+            )
+        result = _vdg.verify_db_guards(registry=scoped)
+        if result["status"] in ("not_configured", "error", "unverified"):
+            return False, (
+                f"db_guards BLOCKED ({result['status']}) — "
+                f"{result.get('error') or 'one or more guard probes could not be verified'}: "
+                + "; ".join(
+                    f"{f['probe_id']}: {f['detail']}" for f in result.get("failures", [])[:5]
+                )
+            )
+        if result["status"] == "violations_found":
+            details = "; ".join(
+                f"{f['probe_id']} ({f['guard_name']}): {f['detail']}"
+                for f in result["findings"][:5]
+            )
+            return False, (
+                f"db_guards VIOLATED — a declared guard did NOT refuse the "
+                f"operation it claims to refuse: {details}. See "
+                f"noctus.dev.verify_db_guards() for full findings. "
+                f"See KB § PATTERNS/common/methodology-execution-discipline.md § 8."
+            )
+        return True, (
+            f"db_guards ok — {result['checked']} behaviour probe(s) verified "
+            f"a genuine refusal for {product} (+ platform-wide)"
+        )
     if check == "env_fleet_manifest":
         # Platform-wide (product arg unused), opt-in: SKIPs loudly (ok=True)
         # when no deploy/fleet/env.fleet.keys manifest or no .env.fleet
@@ -1032,12 +1084,18 @@ def register(server) -> None:
             "orm_migration_drift; same fail-closed posture as schema_exposure — "
             "not_configured/undeterminable/error all BLOCK, never skip; the "
             "class behind erp.assinaturas.external_id / erp.tool_call_audits / "
-            "erp.llm_preferences, 2026-09-17), and "
-            "env_fleet_manifest — every deploy/fleet/env.fleet.keys name has a "
+            "erp.llm_preferences, 2026-09-17), "
             "storage_bucket_public — the LIVE storage.buckets table must have "
             "zero public=true rows, platform-wide, no exception (owner "
             "directive 2026-09-17; FAILS, never skips, on any non-clean "
             "status, and has NO write/override path anywhere in this repo), "
+            "db_guards — a declared DB guard (trigger/CHECK/UNIQUE) is "
+            "verified by RUNNING the exact operation it claims to refuse "
+            "inside a rollback-only transaction and observing whether it "
+            "actually raises (structure-green is not behaviour-green, "
+            "2026-09-18; SKIPs loudly when no probe is registered for this "
+            "product, else not_configured/error/unverified/a finding all "
+            "BLOCK — composes noctus.dev.verify_db_guards), "
             "and env_fleet_manifest — every deploy/fleet/env.fleet.keys name has a "
             "non-empty value in a .env.fleet snapshot fed via env_fleet_path / "
             "NOCTUS_ENV_FLEET_FILE, else it SKIPs loudly), CLASSIFIES any "
