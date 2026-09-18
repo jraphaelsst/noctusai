@@ -76,6 +76,11 @@ from noctusai_lib.integrations.documents.ladder import (
     looks_like_pdf,
 )
 from noctusai_lib.integrations.documents.matricula import find_matricula
+from noctusai_lib.integrations.documents.matricula_abertura import (
+    BlocoAbertura,
+    CampoAbertura,
+    segmentar_abertura,
+)
 from noctusai_lib.integrations.documents.matricula_atos import (
     AtoKind,
     MatriculaAto,
@@ -102,6 +107,12 @@ from noctusai_lib.integrations.documents.matricula_extractor import (
     MatriculaExtractor,
     MatriculaFields,
     make_matricula_extractor,
+)
+from noctusai_lib.integrations.documents.matricula_ruido import (
+    RuidoKind,
+    RuidoSpan,
+    detectar_ruido,
+    subtrair_ruido,
 )
 from noctusai_lib.integrations.documents.name import find_name, looks_like_a_name
 from noctusai_lib.integrations.documents.fake import (
@@ -166,6 +177,8 @@ def __getattr__(name: str):  # pragma: no cover - lazy proxy
 
 __all__ = [
     "AtoKind",
+    "BlocoAbertura",
+    "CampoAbertura",
     "DocumentTextLadder",
     "DocumentTranscriber",
     "ESTADO_CIVIL_VALORES",
@@ -187,6 +200,8 @@ __all__ = [
     "Paragraph",
     "ParagraphKind",
     "REGIME_BENS_VALORES",
+    "RuidoKind",
+    "RuidoSpan",
     "Run",
     "TextSource",
     "TranscribedPage",
@@ -194,6 +209,7 @@ __all__ = [
     "UnsupportedGlyphError",
     "ato_hint_span",
     "classify_kind",
+    "detectar_ruido",
     "find_birthdate",
     "has_raw_markup",
     "find_cpf",
@@ -221,5 +237,7 @@ __all__ = [
     "render_abnt_pdf",
     "render_word_html",
     "segment_matricula_atos",
+    "segmentar_abertura",
     "strip_accents_upper",
+    "subtrair_ruido",
 ]
