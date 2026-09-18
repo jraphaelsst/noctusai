@@ -194,16 +194,19 @@ mock = MockSupabaseClient(validate_schema=False, schema="erp")
 mock = MockSupabaseClient(validate_schema=True, strict_unknown_tables=True, schema="<product>")
 ```
 
-**Opt-out guardrail.** The keeper `check_mock_schema_validation` detector flags any `validate_schema=False` site that has no nearby rationale keyword (`schema-drift`, `reconciliation`, `follow-up`, `TODO`). Put the rationale inside the module docstring or in a `#` comment above the line.
+**Opt-out guardrail.** The keeper `check_mock_schema_validation` detector flags any `validate_schema=False` site that has no rationale keyword (`schema-drift`, `reconciliation`, `follow-up`, `TODO`) IN THE SAME FILE. Put the rationale inside the module docstring or in a `#` comment above the line. Widened 2026-09-18 to scan the FULL `backend/tests/` tree (was `conftest.py`-only) — see `KB § PATTERNS/compliance/compliance-regression-baseline.md` § Baselined debt must carry a reason for the codified rule + the per-product remediation shape.
 
 **Bypass for complex PostgREST expressions.** The validator bails (returns silently) on:
 - `.select("*, products(*)")` style joined selects (any `(` or `!` in the expression)
 - `.or_("status.eq.a,tier.gte.3")` PostgREST OR expressions
 - Unknown tables (not in any migration file) — logged as WARNING, not raised (Q4 of the mock-supabase project)
 
-**Known opt-outs** (expected to flip back once their reconciliation project ships):
-- `therapy-platform` — ~20 drifts tracked by `products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`.
-- `erp-imobiliario` — 8 drifts tracked by `products/erp-imobiliario/projects/erp-schema-drift-reconciliation/`.
+**Known opt-outs** (expected to flip back once their reconciliation project ships; each empirically re-confirmed 2026-09-18 by flipping `validate_schema=True` and observing the real `MockSchemaError`s below — never re-verify by reading a comment, verify by running the suite):
+- `therapy-platform` — ~20 drifts tracked by `products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/` (`conftest.py` + `test_bulk.py` + `test_scheduling_service.py` + `test_admin_service.py`; e.g. `therapy.therapist_settings has no column 'session_duration_minutes'`).
+- `erp-imobiliario` — 8 drifts tracked by `products/erp-imobiliario/projects/erp-schema-drift-reconciliation/` (`conftest.py`; e.g. `erp.whatsapp_config has no column 'webhook_secret'`).
+- `adconnect` — `relatorios_sellout` (and other org_id-bearing tables) carry an `org_id` column at runtime the migration doesn't declare (`conftest.py` + `test_admin_router.py` + `test_rewards_engine.py` + `test_admin_service.py`; e.g. `adconnect.relatorios_sellout has no column 'org_id'`). No dedicated reconciliation project filed yet — the rationale lives in `conftest.py`, referenced by the other 3 files.
+
+**Remediated 2026-09-18** (were opt-outs with NO local reason; flipping caused zero failures, so the flag was removed rather than baselined): `agents` (`test_approvals_store.py`, `test_transcripts_store.py` — needed `schema="agents"` added), `social-wiring` (6 files across `scheduling`/`edicao_fotos`/`services` — needed `schema="social_wiring"` added; the mock had been silently NOT validating at all, since an unqualified schema is an unknown-table WARN+skip, not a real absence of drift), `personal-finance` (`test_onboarding_service.py` — needed `schema="personal-finance"` added).
 
 Shipped 2026-04-24 across 4 phases (originating project archived after close). Parser source: `seed/lib/backend/noctusai_lib/testing/migration_parser.py`. Schema cache: `seed/lib/backend/noctusai_lib/testing/_schema_cache.py`. Error class: `seed/lib/backend/noctusai_lib/testing/schema_errors.py`. Keeper detector for silent opt-outs: `mcp/noctusai/tools/compliance.py::check_mock_schema_validation`.
 

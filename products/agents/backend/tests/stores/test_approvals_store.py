@@ -227,7 +227,7 @@ class TestSupabaseApprovalStoreConsumeQueryShape:
         org_id, approval_id = uuid4(), uuid4()
         client = MockSupabaseClient(
             [_supabase_row(org_id=org_id, approval_id=approval_id)],
-            validate_schema=False,
+            schema="agents",
         )
         store = SupabaseApprovalStore(client)
 
@@ -244,7 +244,7 @@ class TestSupabaseApprovalStoreConsumeQueryShape:
         org_id, approval_id = uuid4(), uuid4()
         client = MockSupabaseClient(
             [_supabase_row(org_id=org_id, approval_id=approval_id, decision="pendente")],
-            validate_schema=False,
+            schema="agents",
         )
         store = SupabaseApprovalStore(client)
 
@@ -257,7 +257,7 @@ class TestSupabaseApprovalStoreConsumeQueryShape:
         already = datetime(2026, 9, 14, 12, 5, tzinfo=timezone.utc).isoformat()
         client = MockSupabaseClient(
             [_supabase_row(org_id=org_id, approval_id=approval_id, consumed_at=already)],
-            validate_schema=False,
+            schema="agents",
         )
         store = SupabaseApprovalStore(client)
 
@@ -269,7 +269,7 @@ class TestSupabaseApprovalStoreConsumeQueryShape:
         org_id, approval_id = uuid4(), uuid4()
         client = MockSupabaseClient(
             [_supabase_row(org_id=org_id, approval_id=approval_id)],
-            validate_schema=False,
+            schema="agents",
         )
         store = SupabaseApprovalStore(client)
 

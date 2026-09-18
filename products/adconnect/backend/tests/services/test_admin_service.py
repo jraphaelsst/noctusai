@@ -37,6 +37,11 @@ DIST_B = "22222222-2222-2222-2222-222222222222"
 
 
 def _mk_db() -> MockSupabaseClient:
+    # `validate_schema=False` inherits the same rationale as conftest.py:
+    # relatorios_sellout (and other adconnect tables touched here) carry an
+    # `org_id` column at runtime the migration does not declare — tracked by
+    # the same schema-drift follow-up referenced there (2026-09-18 inventory
+    # pass; not a new gap, no local investigation needed beyond that one).
     db = MockSupabaseClient(validate_schema=False, schema="adconnect")
     db.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser(org_id=ORG_ID)))
     return db

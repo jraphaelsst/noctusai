@@ -243,7 +243,7 @@ class TestSupabaseTranscriptStoreDeleteSessionQueryShape:
                 entry_uuid="u4",
             ),
         ]
-        client = MockSupabaseClient(rows, validate_schema=False)
+        client = MockSupabaseClient(rows, schema="agents")
         store = SupabaseTranscriptStore(client)
 
         removed = store.delete_session(org_id, conv_id, "sess-old")
@@ -251,7 +251,7 @@ class TestSupabaseTranscriptStoreDeleteSessionQueryShape:
         assert removed == 1
 
     def test_deleting_a_session_with_no_rows_removes_nothing(self):
-        client = MockSupabaseClient([], validate_schema=False)
+        client = MockSupabaseClient([], schema="agents")
         store = SupabaseTranscriptStore(client)
 
         assert store.delete_session(uuid4(), uuid4(), "never-existed") == 0

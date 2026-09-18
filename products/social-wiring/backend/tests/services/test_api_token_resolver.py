@@ -65,11 +65,14 @@ def _row(
 def _client_with(rows: list[dict]) -> MockSupabaseClient:
     """Build a mock client seeded with the rows the resolver SELECTs.
 
-    `validate_schema=False` because `MockSupabaseClient` would otherwise
-    require the migration cache to include the schema-qualified table —
-    out of scope for unit tests of the resolver itself.
+    Schema validation is genuinely ON (`schema="social_wiring"`) — a prior
+    opt-out flag here claimed the schema-qualified table was "out of scope
+    for unit tests of the resolver itself"; that turned out to be an
+    unnecessary opt-out (2026-09-18 compliance-regression-baseline
+    remediation pass — verified empirically, the suite passes with
+    validation genuinely active).
     """
-    return MockSupabaseClient(rows, validate_schema=False)
+    return MockSupabaseClient(rows, schema="social_wiring")
 
 
 class TestResolveSuccess:

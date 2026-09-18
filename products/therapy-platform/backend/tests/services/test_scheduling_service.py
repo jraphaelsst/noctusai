@@ -5,7 +5,11 @@ _resolve_clinic_buffer (via generate_candidate_slots), book_appointment,
 cancel_appointment, resolve_calendar_for_therapist. Engine internals are
 covered upstream in `seed/lib/backend/tests/domain/scheduling/`.
 
-DB shape: `MockSupabaseClient(validate_schema=False, schema="therapy")`.
+DB shape: `MockSupabaseClient(validate_schema=False, schema="therapy")` —
+inherits the ~20 documented therapy schema-drift points tracked by
+`products/therapy-platform/projects/therapy-audio-lifecycle-schema-reconciliation/`
+(see `tests/conftest.py` for the full list; 2026-09-18
+compliance-regression-baseline inventory pass — empirically re-confirmed).
 GCal adapter: explicit `FakeCalendarAdapter()` injection (bypassing the
 resolver path which is exercised in router tests).
 """

@@ -75,6 +75,55 @@ authoritative. This is one instance of the general worktree-sensitivity map —
 see [[branching]] §2 (the tools that read the working tree + the safe
 protocol).
 
+## Baselined debt must carry a reason (2026-09-18)
+
+Three rules, codified after the `validate_schema=False` inventory pass
+(`erp-imobiliario` / `therapy-platform` / `adconnect` — the class behind
+the erp.assinaturas.external_id / erp.tool_call_audits / erp.llm_preferences
+production bugs: three real schema gaps hid behind the opt-out flag
+precisely because nobody ever tried turning it back on and writing down
+what happened):
+
+1. **A baselined finding must carry a recorded reason.** A baseline entry
+   with no reason is not accepted debt — it is forgetting with extra
+   steps. For `validate_schema=False` specifically, `check_mock_schema_validation`
+   makes this MECHANICAL, not just a documentation convention: the keeper
+   scans the FULL `backend/tests/` tree (widened 2026-09-18 — the original
+   scan covered only `conftest.py`) and flags any `validate_schema=False`
+   site whose OWN file has no rationale comment naming
+   `schema-drift`/`reconciliation`/`follow-up`/`TODO`. An unexplained
+   opt-out fails compliance directly — there is no "baseline it silently"
+   escape hatch for this specific class; the reason must be co-located in
+   the file, not merely known to whoever wrote it. Other debt classes that
+   lack an equivalent mechanical detector still rely on the discipline
+   (cite the triage decision in the refresh commit, per § Refresh contract
+   above) — say so plainly rather than implying this doc alone enforces it
+   fleet-wide for every keeper.
+
+2. **When re-enabling a suppressed check FAILS, that failure IS the
+   finding — never force it green.** The correct response to "I flipped
+   `validate_schema=True` and it broke" is: revert to `False`, record
+   EXACTLY what broke (the real `MockSchemaError` — table + column +
+   which code path hit it), and leave the opt-out with that now-verified
+   reason. Do not paper over a genuine schema gap by adjusting the mock's
+   seed data or loosening an assertion to make the flip "pass" — that
+   converts a named, understood gap into a silent one, which is the exact
+   erp-class failure mode this rule exists to prevent.
+
+3. **Never sweep.** A single change across N products for one reason is
+   the "no quick fixes / wrong level" shape (`KB § 01-PHILOSOPHY.md`).
+   Flip one product's opt-out, run THAT product's own suite, decide
+   (revert-with-reason or keep-remediated), THEN move to the next. The
+   2026-09-18 pass did exactly this across 6 products serially — 3
+   genuinely could not be re-enabled (adconnect, erp-imobiliario,
+   therapy-platform — each confirmed by an empirical flip-and-observe,
+   not by re-reading a stale comment) and 3 had NO real gap at all
+   (agents, social-wiring, personal-finance — the opt-out was pure
+   unexplained debt with zero cost to remove; social-wiring's additionally
+   needed `schema="social_wiring"` added, since the mock was silently
+   NOT validating at all — an unqualified schema is an unknown-table
+   WARN+skip, not a real absence of drift).
+
 ## Where it lives
 
 - Baseline fixture: `mcp/noctusai/tests/compliance_baseline.json`
