@@ -200,6 +200,13 @@ def run_probe(probe: GuardProbe, executor: "_mp.SqlExecutor") -> dict[str, Any]:
     probe) comes back as a typed result with `status="failure"`.
     """
     base: dict[str, Any] = {
+        # Both `id` and `probe_id` on purpose: `id` is the plain/expected
+        # field name for a caller reading this result generically (2026-
+        # 09-18 — an external runner printed `?` for every probe reading
+        # a bare `id`); `probe_id` stays for this module's own consumers
+        # (predeploy_check.py's db_guards leg, this file's own tests) —
+        # same value, never allowed to drift apart.
+        "id": probe.id,
         "probe_id": probe.id,
         "product": probe.product,
         "schema": probe.schema,
@@ -262,6 +269,33 @@ def run_probe(probe: GuardProbe, executor: "_mp.SqlExecutor") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _sql_lit(text: str) -> str:
+    """Escape `text` for safe interpolation INSIDE a single-quoted SQL
+    string literal — doubles every `'` (the standard SQL escape; the same
+    thing `quote_literal()` does server-side, done client-side here since
+    these strings are message TEXT, not values bound by the driver).
+
+    THE BUG THIS CLOSES (caught live against prod, 2026-09-18): every
+    `no_fixture` message below interpolates a Python string (a fixture
+    predicate like `status = 'concluida'`, or a free-text description)
+    DIRECTLY into a single-quoted `RAISE EXCEPTION '...'` literal. Any
+    unescaped `'` in that string terminates the literal early — for
+    `status = 'concluida'` the message became
+    `'...matching [status = '` + bare `concluida] to probe ...'` as loose
+    SQL tokens, a syntax error the executor reported as a generic
+    `42601`, which the runner could not distinguish from "cannot
+    classify" and reported as `failure` — while the guard underneath was
+    completely healthy. A probe that appears to run and verifies
+    nothing is exactly the class of bug this whole module exists to
+    eliminate; see `KB § PATTERNS/common/methodology-execution-
+    discipline.md § 8`. Applied to EVERY interpolated value that lands
+    inside a message literal below — including ones that do not
+    currently contain a quote — because "currently safe" is not a
+    property a future registry entry can be trusted to preserve.
+    """
+    return (text or "").replace("'", "''")
+
+
 def _frozen_column_probe(
     *,
     schema: str,
@@ -282,14 +316,22 @@ def _frozen_column_probe(
     classification still checks `guard_fragment` against the caught
     `SQLERRM`, so a value that (surprisingly) trips a DIFFERENT
     constraint first is reported `ambiguous`, never a false `refused`.
+
+    `fixture_predicate` is used TWICE, for two different purposes: raw
+    (unescaped) in the `WHERE` clause, where it must stay executable SQL
+    code — and `_sql_lit`-escaped in the `no_fixture` MESSAGE, where it is
+    inert text inside a string literal. Conflating the two is exactly the
+    quote-escaping bug this shape now guards against.
     """
+    predicate_lit = _sql_lit(fixture_predicate)
+    guard_fragment_lit = _sql_lit(guard_fragment)
     return _do_block(f"""
 DECLARE
   v_id uuid;
 BEGIN
   SELECT id INTO v_id FROM {schema}.{table} WHERE {fixture_predicate} LIMIT 1;
   IF v_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in {schema}.{table} matching [{fixture_predicate}] to probe {column} against';
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in {schema}.{table} matching [{predicate_lit}] to probe {column} against';
   END IF;
   BEGIN
     UPDATE {schema}.{table} SET {column} = {bad_value_sql} WHERE id = v_id;
@@ -297,7 +339,7 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
       RAISE;
-    ELSIF SQLERRM LIKE '%{guard_fragment}%' THEN
+    ELSIF SQLERRM LIKE '%{guard_fragment_lit}%' THEN
       RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
     ELSE
       RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
@@ -325,12 +367,15 @@ def _insert_check_probe(
     `SELECT ... LIMIT 1` would otherwise silently insert nothing and the
     probe would misreport `permitted` for having tested nothing at all —
     the exact "ambiguous result treated as a pass" shape this tool exists
-    to refuse).
+    to refuse). `fixture_description` and `guard_fragment` are `_sql_lit`
+    -escaped before landing inside a message literal — see `_sql_lit`.
     """
+    desc_lit = _sql_lit(fixture_description)
+    guard_fragment_lit = _sql_lit(guard_fragment)
     return _do_block(f"""
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM {fixture_from}) THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {fixture_description}';
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {desc_lit}';
   END IF;
   BEGIN
     INSERT INTO {schema}.{table} ({columns_sql})
@@ -339,7 +384,7 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
       RAISE;
-    ELSIF SQLERRM LIKE '%{guard_fragment}%' THEN
+    ELSIF SQLERRM LIKE '%{guard_fragment_lit}%' THEN
       RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
     ELSE
       RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
@@ -359,16 +404,20 @@ def _state_assertion_probe(
     no fixture — every rollback here is a structural no-op (nothing was
     ever mutated), included anyway for uniformity (every probe, of both
     kinds, goes through the exact same `wrap_rollback_only` seam).
+    `clean_message` / `violation_message_prefix` are `_sql_lit`-escaped —
+    see `_sql_lit`.
     """
+    clean_lit = _sql_lit(clean_message)
+    violation_lit = _sql_lit(violation_message_prefix)
     return _do_block(f"""
 DECLARE
   v_count bigint;
 BEGIN
   {select_count_sql}
   IF v_count > 0 THEN
-    RAISE EXCEPTION 'NOC_PROBE:violation: {violation_message_prefix} % row(s)', v_count;
+    RAISE EXCEPTION 'NOC_PROBE:violation: {violation_lit} % row(s)', v_count;
   END IF;
-  RAISE EXCEPTION 'NOC_PROBE:clean: {clean_message}';
+  RAISE EXCEPTION 'NOC_PROBE:clean: {clean_lit}';
 END;
 """)
 
@@ -587,7 +636,7 @@ DECLARE
 BEGIN
   SELECT id, org_id INTO v_extracao_id, v_org_id FROM {_SW_SCHEMA}.{_MATRICULA_TABLE} LIMIT 1;
   IF v_extracao_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_ABERTURA_FIXTURE_DESC}';
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(_ABERTURA_FIXTURE_DESC)}';
   END IF;
   BEGIN
     INSERT INTO {_SW_SCHEMA}.{_ABERTURA_TABLE}

@@ -362,3 +362,91 @@ class TestRegistrySanity:
     def test_every_probe_ends_in_a_sentinel_raising_branch_for_permitted(self):
         for probe in DEFAULT_REGISTRY:
             assert "NOC_PROBE:permitted" in probe.sql or "NOC_PROBE:violation" in probe.sql
+
+    def test_every_probe_wrapped_sql_parses_as_exactly_three_statements(self):
+        """Structural sanity check (statement-count only — see the NEXT
+        test for the actual quote-escaping regression guard, and its
+        docstring for why THIS check alone would not have caught that
+        bug): `noctusai_lib.testing.migration_parser._walk_statements`
+        (the same dollar-quote/string-aware splitter
+        `check_migration_guard_has_probe` uses) must see every wrapped
+        probe as exactly `BEGIN;` / one DO block / `ROLLBACK;`. This DOES
+        catch a different malformation class — an unbalanced dollar-tag,
+        an unclosed paren, a stray top-level `;` outside any string —
+        just not a Postgres-GRAMMAR-level defect inside an otherwise
+        lexically-balanced string (the walker tracks quote/paren
+        NESTING, not RAISE EXCEPTION's own argument grammar)."""
+        from noctusai_lib.testing.migration_parser import _walk_statements
+
+        for probe in DEFAULT_REGISTRY:
+            wrapped = wrap_rollback_only(probe.sql)
+            stmts = [s for s in _walk_statements(wrapped) if s.strip()]
+            assert len(stmts) == 3, (
+                f"{probe.id}: expected exactly 3 statements "
+                f"(BEGIN;/DO block/ROLLBACK;), got {len(stmts)}: {stmts}"
+            )
+            assert stmts[0].strip() == "BEGIN;", probe.id
+            assert stmts[1].strip().startswith("DO $noc_probe$"), probe.id
+            assert stmts[2].strip() == "ROLLBACK;", probe.id
+
+    def test_a_predicate_containing_a_quote_round_trips_through_the_shape_helpers(self):
+        """THE actual regression test for the 2026-09-18 quote-escaping
+        bug (caught live against prod, not by any test before this one).
+
+        🔴 Verified by hand that the PRECEDING test (statement-count via
+        `_walk_statements`) does NOT catch this bug and must not be
+        mistaken for doing so: `status = 'concluida'` contributes an
+        EVEN number of embedded quotes (one open, one close) to the
+        message literal, so the walker's naive quote-toggle counting
+        nets back to "not in a string" at the same point regardless of
+        whether the escape ran — it still sees exactly one DO block,
+        because splitting on TOP-LEVEL statement boundaries doesn't need
+        the walker to understand RAISE EXCEPTION's own argument grammar.
+        Postgres's real parser does need that, and rejects
+        `'...literal1' concluida] to probe...'literal2'` as a malformed
+        argument list — a defect this offline tool structurally cannot
+        see. This test instead asserts the one thing that DOES prove the
+        fix: the ESCAPED form (a doubled quote) must be the literal text
+        `_sql_lit` produced, landing inside the rendered SQL. That
+        assertion fails against the pre-fix generator (confirmed by hand
+        against the actual pre-fix source before writing this test) and
+        passes against the fixed one — the negative control this
+        methodology requires of every guard-shaped check.
+        """
+        from tools.noctus.dev.verify_db_guards import (
+            _frozen_column_probe,
+            _insert_check_probe,
+        )
+
+        quoted_predicate = "status = 'concluida'"
+        frozen_sql = _frozen_column_probe(
+            schema="s", table="t", column="c",
+            fixture_predicate=quoted_predicate,
+            bad_value_sql="'x'",
+            guard_fragment="cannot 'change' this",
+        )
+        # The escaped form (doubled quote) must appear in the rendered
+        # SQL — proof the predicate's text actually reached the message
+        # through `_sql_lit`, not merely that no error was raised.
+        assert "status = ''concluida''" in frozen_sql
+        # And the RAW (single-quote) form must NOT appear inside the
+        # no_fixture message — that shape is exactly the pre-fix defect.
+        assert "matching [status = 'concluida']" not in frozen_sql
+
+        insert_sql = _insert_check_probe(
+            schema="s", table="t", columns_sql="a, b", values_sql="1, 2",
+            fixture_from="s.t",
+            fixture_description="no row matching status = 'concluida' here",
+            guard_fragment='constraint "it\'s a test"',
+        )
+        assert "status = ''concluida''" in insert_sql
+        assert "matching status = 'concluida' here" not in insert_sql
+
+    def test_run_probe_result_carries_both_id_and_probe_id(self):
+        """2026-09-18: an external runner reading a bare `id` field printed
+        `?` for every probe because run_probe only ever returned
+        `probe_id`. Both keys must carry the same value."""
+        ex = _CannedExecutor(ok=False, error="NOC_PROBE:refused: fixture")
+        result = run_probe(_ANY_PROBE, ex)
+        assert result["id"] == _ANY_PROBE.id
+        assert result["probe_id"] == _ANY_PROBE.id
