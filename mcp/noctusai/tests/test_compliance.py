@@ -247,6 +247,54 @@ class TestMockSchemaValidation:
             issues = check_mock_schema_validation(PRODUCTS_DIR / name)
             assert issues == [], f"{name} opt-out is flagged: {issues}"
 
+    def _mk_product_with_tree(self, files: dict[str, str]) -> Path:
+        """Build a fake product tree from a {relpath-under-backend/tests: content} map."""
+        tmp = Path(tempfile.mkdtemp(prefix="mock_schema_test_"))
+        for rel, content in files.items():
+            path = tmp / "backend" / "tests" / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        return tmp
+
+    def test_non_conftest_file_is_scanned_2026_09_17(self):
+        """A DIRECT `MockSupabaseClient(validate_schema=False)` inside an
+        individual test module (not the shared conftest fixture) must be
+        caught — this is the widened-coverage gap the schema-drift-gate
+        slice closed (adconnect/social-wiring/agents/personal-finance were
+        all doing this invisibly to the pre-2026-09-17 conftest-only scan)."""
+        product = self._mk_product_with_tree({
+            "services/test_foo.py": "db = MockSupabaseClient(validate_schema=False)\n",
+        })
+        issues = check_mock_schema_validation(product)
+        assert len(issues) == 1
+        assert issues[0]["file"] == "backend/tests/services/test_foo.py"
+
+    def test_conftest_rationale_covers_every_file_in_the_product(self):
+        """ONE argued rationale in the shared conftest.py — the erp/therapy/
+        adconnect precedent — grants amnesty to every other file that
+        inherits the same opt-out, so the rule doesn't force the same
+        paragraph pasted into N files."""
+        product = self._mk_product_with_tree({
+            "conftest.py": "# schema-drift: tracked by follow-up reconciliation\nMOCK = MockSupabaseClient(validate_schema=False)\n",
+            "services/test_bar.py": "db = MockSupabaseClient(validate_schema=False)\n",
+        })
+        assert check_mock_schema_validation(product) == []
+
+    def test_no_rationale_anywhere_flags_every_offending_file(self):
+        """A product with NEITHER a per-file NOR a conftest-level rationale
+        is flagged file-by-file — no free pass just for having *a*
+        conftest.py."""
+        product = self._mk_product_with_tree({
+            "conftest.py": "# no rationale here\n",
+            "services/test_a.py": "db = MockSupabaseClient(validate_schema=False)\n",
+            "services/test_b.py": "db = MockSupabaseClient(validate_schema=False)\n",
+        })
+        issues = check_mock_schema_validation(product)
+        assert {i["file"] for i in issues} == {
+            "backend/tests/services/test_a.py",
+            "backend/tests/services/test_b.py",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Tier 1.5 G3 — AI-feature wiring completeness
