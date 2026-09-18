@@ -34,6 +34,7 @@ from noctusai_lib.integrations.documents.transcription import (
     _has_underline,
     _is_bold_span,
     _merge_adjacent_ranges,
+    has_raw_markup,
     parse_markup,
 )
 from noctusai_lib.integrations.documents.types import TextSource
@@ -549,6 +550,44 @@ class TestParseMarkupNeverRaisesOnMalformedInput:
         for r in ranges:
             assert 0 <= r.start < r.end <= len(texto)
             assert r.bold or r.underline
+
+
+class TestHasRawMarkup:
+    """The standalone detector a caller downstream of transcription uses to
+    ask "was this text ever run through `parse_markup`" — same token
+    `_MARKUP_TOKEN_RE` `parse_markup` itself matches on."""
+
+    @pytest.mark.parametrize(
+        "texto", ["**bold**", "<u>underline</u>", "</u>", "a **b** c <u>d", None, ""]
+    )
+    def test_positive_and_empty_cases(self, texto) -> None:
+        if not texto:
+            assert has_raw_markup(texto) is False
+        else:
+            assert has_raw_markup(texto) is True
+
+    def test_plain_text_is_false(self) -> None:
+        assert has_raw_markup("nenhuma marcacao aqui, so texto normal") is False
+
+    def test_the_abnt_redaction_idiom_is_not_a_false_positive(self) -> None:
+        """`* * *` (space-separated) is a real registry idiom, not `**` —
+        `parse_markup` already treats it as literal; this detector must
+        agree, or a clean transcription would be flagged as markered."""
+        assert has_raw_markup("R.1 * * *") is False
+
+    def test_agrees_with_parse_markup_on_a_malformed_reply(self) -> None:
+        """The exact case `parse_markup` keeps literal (an odd `**` count) —
+        `has_raw_markup` must say True for the SAME input `parse_markup`
+        could not fully parse."""
+        bruto = "primeiro **fechado** mas **nunca fecha"
+        texto, _ranges = parse_markup(bruto)
+        assert has_raw_markup(texto) is True
+
+    def test_a_fully_parsed_markup_string_is_clean_afterwards(self) -> None:
+        """The output of a WELL-FORMED `parse_markup` call has every marker
+        stripped — `has_raw_markup` on the result must be False."""
+        texto, _ranges = parse_markup("um **termo em negrito** qualquer")
+        assert has_raw_markup(texto) is False
 
 
 class TestOnePromptConstantForEveryProvider:

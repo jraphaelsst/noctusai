@@ -33,7 +33,7 @@ from decimal import Decimal
 from typing import Optional
 
 from noctusai_lib.domain.texto_ptbr import formatar_brl
-from noctusai_lib.integrations.documents import is_same_as_cpf
+from noctusai_lib.integrations.documents import has_raw_markup, is_same_as_cpf
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 
 from app.modules.card_hub.contrato_gerador import frases
@@ -573,6 +573,20 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
             "MATRICULA_DE_OUTRO_IMOVEL",
             "Os atos selecionados são de uma matrícula de outro imóvel.",
         )
+    # 🔴 The highest-value check in this file: text with a literal `**`/`<u>`
+    # marker reaching a SIGNED DEED is the actual harm — a pre-migration-135
+    # transcription (or a malformed vision reply `parse_markup` had to keep
+    # literal) quoted verbatim into a legal instrument. This runs on the
+    # ACTUAL quoted text (the selected acts' concatenation), independent of
+    # `matricula_extracoes.possui_marcacao_bruta`, so it also catches a
+    # markered act inside an otherwise-clean extraction.
+    if d.matricula.texto and has_raw_markup(d.matricula.texto):
+        av.bloqueia(
+            "MATRICULA_COM_MARCACAO_BRUTA",
+            "O texto da matrícula selecionado contém marcação de formatação "
+            "bruta (** ou <u>) em vez de negrito/sublinhado — a transcrição "
+            "precisa ser reenviada antes de entrar no contrato.",
+        )
     if not im.titulo_aquisitivo_confirmado:
         av.falta("matricula.titulo_aquisitivo", "Título aquisitivo confirmado na matrícula", "matricula")
     # [§6.1 #8] Migration 115 stores the CONFIRMED wording on the imóvel.
@@ -803,6 +817,13 @@ def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
                 f"matricula.permuta.{imovel.permuta_ativo_id}.atos",
                 "Atos da matrícula do imóvel dado em permuta selecionados para o contrato",
                 "matricula",
+            )
+        elif has_raw_markup(imovel.descricao_matricula or ""):
+            av.bloqueia(
+                "MATRICULA_COM_MARCACAO_BRUTA",
+                "O texto da matrícula do imóvel dado em permuta contém "
+                "marcação de formatação bruta (** ou <u>) — a transcrição "
+                "precisa ser reenviada antes de entrar no contrato.",
             )
         for campo, rotulo in (
             ("inscricao_municipal", "Inscrição municipal do imóvel da permuta"),

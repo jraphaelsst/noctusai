@@ -48,12 +48,16 @@ const mockUseExtracoes = vi.fn();
 const mockUseExtracao = vi.fn();
 const mockUseUpload = vi.fn();
 const mockUseDelete = vi.fn();
+const mockUseRetranscrever = vi.fn();
+const mockUseArquivoOriginal = vi.fn();
 
 vi.mock("@/hooks/useMatriculas", () => ({
   useMatriculaExtracoes: mockUseExtracoes,
   useMatriculaExtracao: mockUseExtracao,
   useUploadMatricula: mockUseUpload,
   useDeleteExtracao: mockUseDelete,
+  useRetranscreverExtracao: mockUseRetranscrever,
+  useArquivoOriginalExtracao: mockUseArquivoOriginal,
 }));
 
 // ─── F2: atos + fontes hook mocks ────────────────────────────────────────────
@@ -118,6 +122,10 @@ type Extracao = {
   texto_html?: string | null;
   status: "pendente" | "processando" | "concluida" | "erro";
   erro_mensagem: string | null;
+  imovel_documento_id?: string | null;
+  arquivo_origem_id?: string | null;
+  substituida_por?: string | null;
+  possui_marcacao_bruta?: boolean;
   created_at: string;
 };
 
@@ -131,6 +139,10 @@ function makeExtracao(overrides: Partial<Extracao> = {}): Extracao {
     texto_html: null,
     status: "concluida",
     erro_mensagem: null,
+    imovel_documento_id: null,
+    arquivo_origem_id: null,
+    substituida_por: null,
+    possui_marcacao_bruta: false,
     created_at: "2026-01-15T10:00:00Z",
     ...overrides,
   };
@@ -152,6 +164,8 @@ const mockDeleteMutate = vi.fn();
 const mockRefetch = vi.fn();
 const mockDefinirFontesMutate = vi.fn();
 const mockConfirmarDetalhesMutate = vi.fn();
+const mockRetranscreverMutate = vi.fn();
+const mockArquivoOriginalMutate = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -159,6 +173,8 @@ beforeEach(() => {
   mockUseExtracao.mockReturnValue(makeQuery({ data: null }));
   mockUseUpload.mockReturnValue({ mutate: mockUploadMutate, isPending: false });
   mockUseDelete.mockReturnValue({ mutate: mockDeleteMutate, isPending: false });
+  mockUseRetranscrever.mockReturnValue({ mutate: mockRetranscreverMutate, isPending: false });
+  mockUseArquivoOriginal.mockReturnValue({ mutate: mockArquivoOriginalMutate, isPending: false });
   mockUseAtos.mockReturnValue(makeQuery({ data: { atos: [] } }));
   mockUseFontes.mockReturnValue(
     makeQuery({ data: { sugestoes: { titulo_aquisitivo: null, onus: [] }, titulo_aquisitivo: null, onus: null } }),
@@ -340,6 +356,127 @@ describe("Matriculas — result pane", () => {
     expect(getByText("Copiar")).toBeTruthy();
     // The old copy-plain-text-only action is gone, not just renamed.
     expect(queryByText("Copiar Texto")).toBeNull();
+  });
+});
+
+// ─── Migration 135 — source retention, retranscribe, raw-markup legibility ──
+
+describe("Matriculas — ver original / retranscrever (migration 135)", () => {
+  it("shows 'Ver original' and 'Retranscrever' for a concluded row with a retained linked source", async () => {
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ texto_extraido: "texto", imovel_documento_id: "doc-1" }) }),
+    );
+    const { getByText } = await renderPage();
+
+    expect(getByText("Ver original")).toBeTruthy();
+    expect(getByText("Retranscrever")).toBeTruthy();
+  });
+
+  it("shows both for a concluded row with a retained STANDALONE source too", async () => {
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ texto_extraido: "texto", arquivo_origem_id: "arq-1" }) }),
+    );
+    const { getByText } = await renderPage();
+
+    expect(getByText("Ver original")).toBeTruthy();
+    expect(getByText("Retranscrever")).toBeTruthy();
+  });
+
+  it("hides both when the row kept no retained source (a pre-135 legacy row)", async () => {
+    mockUseExtracao.mockReturnValue(makeQuery({ data: makeExtracao({ texto_extraido: "texto" }) }));
+    const { queryByText } = await renderPage();
+
+    expect(queryByText("Ver original")).toBeNull();
+    expect(queryByText("Retranscrever")).toBeNull();
+  });
+
+  it("hides 'Retranscrever' (but keeps 'Ver original') once the row has already been superseded", async () => {
+    mockUseExtracao.mockReturnValue(
+      makeQuery({
+        data: makeExtracao({ texto_extraido: "texto", imovel_documento_id: "doc-1", substituida_por: "nova-id" }),
+      }),
+    );
+    const { getByText, queryByText } = await renderPage();
+
+    expect(getByText("Ver original")).toBeTruthy();
+    expect(queryByText("Retranscrever")).toBeNull();
+    expect(getByText(/substituída por uma retranscrição mais recente/i)).toBeTruthy();
+  });
+
+  it("clicking 'Retranscrever' mutates with the extraction id and selects the new row on success", async () => {
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ id: "extracao-1", texto_extraido: "texto", imovel_documento_id: "doc-1" }) }),
+    );
+    mockRetranscreverMutate.mockImplementation((id: string, opts?: { onSuccess?: (d: unknown) => void }) => {
+      opts?.onSuccess?.({ id: "extracao-2" });
+    });
+    const { getByText, fireEvent } = await renderPage();
+
+    fireEvent.click(getByText("Retranscrever"));
+    expect(mockRetranscreverMutate).toHaveBeenCalledWith("extracao-1", expect.objectContaining({ onSuccess: expect.any(Function) }));
+  });
+
+  it("clicking 'Ver original' opens the signed url in a new tab", async () => {
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ id: "extracao-1", texto_extraido: "texto", arquivo_origem_id: "arq-1" }) }),
+    );
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    mockArquivoOriginalMutate.mockImplementation((id: string, opts?: { onSuccess?: (d: unknown) => void }) => {
+      opts?.onSuccess?.({ url: "https://signed.example/x", expires_at: "2026-01-01T00:00:00Z" });
+    });
+    const { getByText, fireEvent } = await renderPage();
+
+    fireEvent.click(getByText("Ver original"));
+    expect(mockArquivoOriginalMutate).toHaveBeenCalledWith("extracao-1", expect.any(Object));
+    expect(openSpy).toHaveBeenCalledWith("https://signed.example/x", "_blank", "noopener,noreferrer");
+    openSpy.mockRestore();
+  });
+
+  it("🔴 warns when the transcription still carries raw **/<u> markup, and points at 'Retranscrever' when a source is retained", async () => {
+    mockUseExtracao.mockReturnValue(
+      makeQuery({
+        data: makeExtracao({
+          texto_extraido: "Texto com **marcação",
+          possui_marcacao_bruta: true,
+          arquivo_origem_id: "arq-1",
+        }),
+      }),
+    );
+    const { getByTestId, getByText } = await renderPage();
+
+    expect(getByTestId("matricula-marcacao-bruta-aviso")).toBeTruthy();
+    expect(getByText(/Use "Retranscrever" para corrigir/)).toBeTruthy();
+  });
+
+  it("🔴 the raw-markup warning names 're-upload' instead when there is no retained source to retranscribe from", async () => {
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ texto_extraido: "Texto com **marcação", possui_marcacao_bruta: true }) }),
+    );
+    const { getByTestId } = await renderPage();
+
+    expect(getByTestId("matricula-marcacao-bruta-aviso").textContent).toMatch(/envie o arquivo novamente/i);
+  });
+
+  it("does not show the raw-markup warning for a clean transcription", async () => {
+    mockUseExtracao.mockReturnValue(
+      makeQuery({ data: makeExtracao({ texto_extraido: "texto limpo", possui_marcacao_bruta: false }) }),
+    );
+    const { queryByTestId } = await renderPage();
+
+    expect(queryByTestId("matricula-marcacao-bruta-aviso")).toBeNull();
+  });
+
+  it("shows the same raw-markup badge and 'substituída' badge in the history row", async () => {
+    mockUseExtracoes.mockReturnValue(
+      makeQuery({
+        data: [makeExtracao({ id: "e1", possui_marcacao_bruta: true }), makeExtracao({ id: "e2", substituida_por: "e3" })],
+      }),
+    );
+    const { getByTestId, getByText } = await renderPage();
+
+    expect(getByTestId("matricula-row-e1").querySelector("svg")).toBeTruthy();
+    expect(getByTestId("matricula-row-e2")).toBeTruthy();
+    expect(getByText("substituída")).toBeTruthy();
   });
 });
 

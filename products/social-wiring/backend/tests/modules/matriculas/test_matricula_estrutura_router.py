@@ -107,9 +107,13 @@ class TestUploadLinkedToAnImovel:
         assert client.mock_supabase.table("matricula_extracoes").inserted_payloads == []
         assert background_db.updates == []
 
-    def test_without_codigo_the_legacy_shape_is_unchanged(
+    def test_without_codigo_no_imovel_link_is_written(
         self, client, scoped, fake_storage, fake_extractor, stub_transcriber, background_db
     ):
+        """The unlinked shape stays unlinked — no `codigo` / imóvel document.
+        It no longer discards the bytes though (migration 135); that's
+        covered in `test_retranscricao.py::TestStandaloneUploadRetainsTheSource`.
+        """
         seed(scoped, registry=[registry_row()])
         client.mock_supabase.set_table_data("matricula_extracoes", [])
 

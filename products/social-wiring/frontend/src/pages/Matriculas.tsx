@@ -42,6 +42,8 @@ import {
   useMatriculaExtracao,
   useUploadMatricula,
   useDeleteExtracao,
+  useRetranscreverExtracao,
+  useArquivoOriginalExtracao,
   readableError,
 } from '@/hooks/useMatriculas';
 import {
@@ -102,6 +104,9 @@ import {
   FileUp,
   ChevronDown,
   Sparkles,
+  AlertTriangle,
+  ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
 import { TableSkeleton } from '@noctusai/lib/design-system';
 import { copyRichText } from '@noctusai/lib/clipboard';
@@ -141,6 +146,8 @@ export default function Matriculas() {
   const { data: selected } = useMatriculaExtracao(selectedId || undefined);
   const uploadMutation = useUploadMatricula();
   const deleteMutation = useDeleteExtracao();
+  const retranscreverMutation = useRetranscreverExtracao();
+  const arquivoOriginalMutation = useArquivoOriginalExtracao();
 
   // 🔴 DEEP-LINK: `ImovelCartorioCard`'s título-aquisitivo/ônus badges land
   // here as `/matriculas?extracao=<id>` — auto-open that extraction once,
@@ -246,6 +253,39 @@ export default function Matriculas() {
       setDeleteId(null);
     }
   };
+
+  // Re-run transcription of a concluded extraction from its RETAINED source
+  // (migration 135) — never rewrites `selected`; the backend supersedes and
+  // this selects the NEW row so its progress tracks live, same UX as a
+  // fresh upload's `handleUpload` onSuccess.
+  const handleRetranscrever = useCallback((id: string) => {
+    retranscreverMutation.mutate(id, {
+      onSuccess: (data) => setSelectedId(data.id),
+    });
+  }, [retranscreverMutation]);
+
+  // Open the SOURCE PDF (linked or standalone-retained) in a new tab so a
+  // human can audit the transcription against it — the signed URL is
+  // short-TTL and minted per click, never stored.
+  const handleVerOriginal = useCallback((id: string) => {
+    arquivoOriginalMutation.mutate(id, {
+      onSuccess: (data) => window.open(data.url, '_blank', 'noopener,noreferrer'),
+    });
+  }, [arquivoOriginalMutation]);
+
+  // A row can be re-transcribed only when it has a retained source
+  // (linked OR standalone, migration 135) AND has not already been
+  // superseded by a newer transcription.
+  const podeRetranscrever = useCallback(
+    (ext: { imovel_documento_id: string | null; arquivo_origem_id: string | null; substituida_por: string | null }) =>
+      !ext.substituida_por && (!!ext.imovel_documento_id || !!ext.arquivo_origem_id),
+    [],
+  );
+  const temFonteRetida = useCallback(
+    (ext: { imovel_documento_id: string | null; arquivo_origem_id: string | null }) =>
+      !!ext.imovel_documento_id || !!ext.arquivo_origem_id,
+    [],
+  );
 
   const handleNewExtraction = () => {
     setSelectedId(null);
@@ -365,8 +405,42 @@ export default function Matriculas() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-lg">Texto Extraído</CardTitle>
-              {isComplete && (
+              {isComplete && selected && (
                 <div className="flex gap-2">
+                  {temFonteRetida(selected) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleVerOriginal(selected.id)}
+                      disabled={arquivoOriginalMutation.isPending}
+                      aria-label="Ver PDF original"
+                      title="Abre o PDF de origem para conferir o texto contra o documento"
+                    >
+                      {arquivoOriginalMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      ) : (
+                        <ExternalLink className="h-3 w-3 mr-1" />
+                      )}
+                      Ver original
+                    </Button>
+                  )}
+                  {podeRetranscrever(selected) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleRetranscrever(selected.id)}
+                      disabled={retranscreverMutation.isPending}
+                      aria-label="Retranscrever a partir do PDF original"
+                      title="Gera uma nova transcrição a partir do PDF original guardado"
+                    >
+                      {retranscreverMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3 w-3 mr-1" />
+                      )}
+                      Retranscrever
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -426,6 +500,36 @@ export default function Matriculas() {
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <XCircle className="h-10 w-10 text-red-400 mb-4" />
                 <p>Não foi possível extrair o texto</p>
+              </div>
+            )}
+
+            {isComplete && selected && selected.possui_marcacao_bruta && (
+              <div
+                data-testid="matricula-marcacao-bruta-aviso"
+                className="mb-4 flex items-start gap-2 p-4 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-900"
+              >
+                <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-500 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium text-sm text-amber-800 dark:text-amber-400">
+                    Este texto contém marcação de formatação bruta
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Trechos aparecem com <code>**</code> ou <code>&lt;u&gt;</code> literais em vez de
+                    negrito/sublinhado. Não cite este texto em um contrato — o gerador recusa
+                    fazê-lo automaticamente. {temFonteRetida(selected)
+                      ? 'Use "Retranscrever" para corrigir.'
+                      : 'Esta transcrição não guardou o PDF original; envie o arquivo novamente.'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {isComplete && selected?.substituida_por && (
+              <div
+                data-testid="matricula-substituida-aviso"
+                className="mb-4 p-3 bg-muted/50 rounded-lg text-sm text-muted-foreground"
+              >
+                Esta versão foi substituída por uma retranscrição mais recente do mesmo documento.
               </div>
             )}
 
@@ -509,6 +613,17 @@ export default function Matriculas() {
                         <div className="flex items-center gap-2">
                           <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                           <span className="font-medium truncate max-w-[200px]">{ext.nome_arquivo}</span>
+                          {ext.possui_marcacao_bruta && (
+                            <AlertTriangle
+                              className="h-3.5 w-3.5 text-amber-600 dark:text-amber-500 shrink-0"
+                              aria-label="Contém marcação de formatação bruta"
+                            />
+                          )}
+                          {ext.substituida_por && (
+                            <Badge variant="outline" className="text-[10px] shrink-0">
+                              substituída
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
@@ -541,6 +656,28 @@ export default function Matriculas() {
                               title="Reenviar"
                             >
                               <Upload className="h-3 w-3 text-muted-foreground" />
+                            </Button>
+                          )}
+                          {ext.status === 'concluida' && temFonteRetida(ext) && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleVerOriginal(ext.id)}
+                              disabled={arquivoOriginalMutation.isPending}
+                              title="Ver PDF original"
+                            >
+                              <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                            </Button>
+                          )}
+                          {ext.status === 'concluida' && podeRetranscrever(ext) && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleRetranscrever(ext.id)}
+                              disabled={retranscreverMutation.isPending}
+                              title="Retranscrever a partir do original"
+                            >
+                              <RefreshCw className="h-3 w-3 text-muted-foreground" />
                             </Button>
                           )}
                           <Button

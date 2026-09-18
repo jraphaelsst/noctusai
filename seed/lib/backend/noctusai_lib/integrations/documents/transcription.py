@@ -1011,6 +1011,22 @@ def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
     return texto, _merge_adjacent_ranges(ranges)
 
 
+def has_raw_markup(text: Optional[str]) -> bool:
+    """Does `text` still carry a literal `**`/`<u>`/`</u>` marker?
+
+    The SAME token `_MARKUP_TOKEN_RE` `parse_markup` strips — exposed
+    separately because a caller downstream of transcription (a contract
+    generator, a legibility flag on a listing) needs to ask "was this text
+    ever run through `parse_markup`, or is it pre-migration-113 raw vision
+    output with the markers still baked in" without re-deriving the pattern.
+    `**`/`<u>`/`</u>` reaching a signed legal instrument verbatim is the
+    actual harm `parse_markup` exists to prevent; a caller that only reads
+    `texto_extraido` back out (never re-transcribes) needs its own way to
+    catch a row `parse_markup` never got to run on. `None`/empty → `False`.
+    """
+    return bool(_MARKUP_TOKEN_RE.search(text or ""))
+
+
 def make_document_transcriber(
     *,
     real: bool = False,
@@ -1072,5 +1088,6 @@ __all__ = [
     "TranscribedPage",
     "Transcription",
     "make_document_transcriber",
+    "has_raw_markup",
     "parse_markup",
 ]

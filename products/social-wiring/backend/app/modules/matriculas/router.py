@@ -98,6 +98,7 @@ from app.modules.imovel_hub.deps import (
     get_matricula_extractor_factory,
     get_storage_backend,
 )
+from app.modules.matriculas import arquivos_service as arquivos_svc
 from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.modules.matriculas import titulo_service as titulo_svc
 from app.modules.matriculas.deps import (
@@ -150,7 +151,8 @@ MAX_BODY_PATH_OVERRIDES = {"/api/matriculas/extrair": MAX_FILE_SIZE}
 #: is megabytes nobody on that screen reads.
 _COLUNAS_LISTA = (
     "id,nome_arquivo,tamanho_bytes,num_paginas,status,erro_mensagem,"
-    "codigo,imovel_documento_id,created_at"
+    "codigo,imovel_documento_id,arquivo_origem_id,substituida_por,"
+    "possui_marcacao_bruta,created_at"
 )
 
 
@@ -222,7 +224,10 @@ async def extrair_matricula(
     """Upload a matrícula PDF and start text extraction in the background.
 
     With `codigo`, the PDF is KEPT as that imóvel's `matricula` document and
-    the extraction is linked to it; without, the legacy unlinked shape.
+    the extraction is linked to it. Without, the standalone shape — the PDF
+    is STILL kept (migration 135, `arquivos_svc`), just not attached to any
+    imóvel, so the transcription can be re-run and audited against its
+    source the same way a linked one can.
     """
     user, token, org_id = _auth_parts(auth)
     db = get_user_client(token)
@@ -265,6 +270,21 @@ async def extrair_matricula(
             "codigo": codigo_canonico,
             "imovel_documento_id": documento["id"],
         }
+    else:
+        # 🔴 Migration 135: the standalone shape used to discard `pdf_bytes`
+        # right here — nothing downstream of this branch ever saw them
+        # again. Retained through the SAME `DocumentoStore` mechanism the
+        # linked branch above uses, just with no imóvel to own the row.
+        arquivo = await arquivos_svc.guardar(
+            matriculas_client,
+            storage,
+            UUID(org_id),
+            filename=file.filename or "matricula.pdf",
+            content_type="application/pdf",
+            data=pdf_bytes,
+            enviado_por=getattr(user, "id", None),
+        )
+        vinculo = {"arquivo_origem_id": arquivo["id"]}
 
     # 🔴 `org_id` is deliberately absent: migration 092 defaults the column
     # to `public.current_org_id()`, the same trusted source RLS reads. The
@@ -497,6 +517,59 @@ async def excluir_extracao(
     delete_or_404(db, TABLE, ("id", extracao_id), message="Extração não encontrada")
 
     return ok_response("Extração excluída com sucesso")
+
+
+@router.post("/extracoes/{extracao_id}/retranscrever")
+async def retranscrever_extracao(
+    extracao_id: str,
+    background_tasks: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+    background_db=Depends(get_background_client),
+    storage=Depends(get_storage_backend),
+    transcriber_factory: TranscriberFactory = Depends(get_transcriber_factory),
+):
+    """Re-run transcription of a concluded extraction from its RETAINED
+    source (migration 135) — linked or standalone. SUPERSEDES: a new row is
+    created and the caller's history keeps the old one, marked
+    `substituida_por`. 409 (via `estrutura_svc.criar_retranscricao`) when the
+    extraction is not concluded, was already superseded, or kept no source
+    to re-run from (a pre-135 row — it still needs a fresh upload).
+    """
+    user, _token, org_id = _auth_parts(auth)
+    _exigir_credenciais(org_id)
+
+    nova = estrutura_svc.criar_retranscricao(
+        client, UUID(org_id), extracao_id, usuario_id=getattr(user, "id", None)
+    )
+    storage_path = nova.pop("storage_path")
+    background_tasks.add_task(
+        _run_extraction_de_documento,
+        nova["id"], storage_path, org_id, background_db, storage, transcriber_factory,
+    )
+    return success_response(nova)
+
+
+@router.get("/extracoes/{extracao_id}/arquivo-original")
+async def arquivo_original_route(
+    extracao_id: str,
+    auth=Depends(get_current_user_org),
+    matriculas_client=Depends(get_matriculas_client),
+    storage=Depends(get_storage_backend),
+):
+    """A short-TTL signed URL for the SOURCE PDF this extraction was
+    transcribed from — so 'Visualizar' can show text next to source (the
+    audit this whole slice exists for). 409 when nothing was retained (a
+    pre-135 row — see `estrutura_svc.obter_url_arquivo_original`)."""
+    user, _token, org_id = _auth_parts(auth)
+    resultado = await estrutura_svc.obter_url_arquivo_original(
+        matriculas_client,
+        storage,
+        UUID(org_id),
+        extracao_id,
+        usuario_id=getattr(user, "id", None),
+    )
+    return success_response(resultado)
 
 
 # ─── the structured half (migration 109) ──────────────────────────────────

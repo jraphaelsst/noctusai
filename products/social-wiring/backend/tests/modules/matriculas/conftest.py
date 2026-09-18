@@ -230,6 +230,9 @@ def extracao_row(
     status: str = "concluida",
     codigo: str | None = CODIGO,
     imovel_documento_id: str | None = None,
+    arquivo_origem_id: str | None = None,
+    substituida_por: str | None = None,
+    possui_marcacao_bruta: bool = False,
 ) -> dict:
     return {
         "id": id_ or str(uuid4()),
@@ -243,8 +246,31 @@ def extracao_row(
         "erro_mensagem": None,
         "codigo": codigo,
         "imovel_documento_id": imovel_documento_id,
+        "arquivo_origem_id": arquivo_origem_id,
+        "substituida_por": substituida_por,
+        "possui_marcacao_bruta": possui_marcacao_bruta,
         "created_at": "2026-02-01T00:00:00+00:00",
         "updated_at": "2026-02-01T00:00:00+00:00",
+    }
+
+
+def arquivo_row(id_: str | None = None) -> dict:
+    """A `matricula_extracao_arquivos` row (migration 135) — the standalone
+    shape's retained PDF."""
+    aid = id_ or str(uuid4())
+    return {
+        "id": aid,
+        "org_id": ORG_ID,
+        "storage_path": f"{ORG_ID}/matriculas/{aid}",
+        "nome_original": "matricula-standalone.pdf",
+        "mime_type": "application/pdf",
+        "tamanho_bytes": 4096,
+        "tipo_documento": "matricula",
+        "enviado_por": None,
+        "deleted_at": None,
+        "delete_motivo": None,
+        "retencao_ate": None,
+        "created_at": "2026-01-02T00:00:00+00:00",
     }
 
 
@@ -306,6 +332,7 @@ def seed(
     extracoes=None,
     atos=None,
     documentos=None,
+    arquivos=None,
     dados=None,
     contratos=None,
     selecao=None,
@@ -322,6 +349,8 @@ def seed(
     scoped.set_table_data("permuta_ativos", permutas or [])
     scoped.set_table_data("imovel_documentos", documentos or [])
     scoped.set_table_data("imovel_documento_acessos", [])
+    # Migration 135 — the standalone shape's retained-PDF table.
+    scoped.set_table_data("matricula_extracao_arquivos", arquivos or [])
     scoped.set_table_data("imovel_dados", dados or [])
     scoped.set_table_data("atendimento_contratos", contratos or [])
     scoped.set_table_data("atendimento_contrato_matricula_atos", selecao or [])

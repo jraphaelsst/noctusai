@@ -66,6 +66,21 @@ export interface MatriculaExtracao {
    *  when it came from `POST /extracoes/de-documento` rather than a direct
    *  upload. */
   imovel_documento_id: string | null;
+  /** The standalone retained-PDF row (migration 135) this extraction was
+   *  transcribed from, for an upload made with no `codigo`. Mutually
+   *  exclusive with `imovel_documento_id` — never both set. */
+  arquivo_origem_id: string | null;
+  /** Set once this extraction has been RE-transcribed — points at the new
+   *  row. `null` means this is the current/live version. A superseded row
+   *  is kept (never deleted) but should not offer "Retranscrever" again. */
+  substituida_por: string | null;
+  /** True when `texto_extraido` still carries a literal `**`/`<u>` marker
+   *  instead of parsed bold/underline — a pre-migration-135 transcription
+   *  (no source to fix it from) or a malformed vision reply. The text must
+   *  not be quoted into a contract as-is; the backend's contract generator
+   *  refuses it independently of this flag, but the operator should not
+   *  wait for that refusal to find out. */
+  possui_marcacao_bruta: boolean;
   created_at: string;
 }
 
@@ -215,6 +230,54 @@ export function useDeleteExtracao() {
     },
     onError: (error: Error) => {
       toast.error('Erro ao excluir', { description: readableError(error) });
+    },
+  });
+}
+
+/**
+ * Re-run transcription of a CONCLUDED extraction from its retained source
+ * (migration 135) — `POST /extracoes/{id}/retranscrever`. SUPERSEDES: the
+ * backend inserts a new row and marks the old one `substituida_por`; both
+ * lists refetch so the history table shows the new row and the old one's
+ * updated state in the same pass. 409 when there is nothing retained to
+ * re-run from (a pre-135 extraction) — the server's own sentence names that.
+ */
+export function useRetranscreverExtracao() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string): Promise<MatriculaExtracao> => {
+      const result = await api.post(`/api/matriculas/extracoes/${id}/retranscrever`);
+      return result.data as MatriculaExtracao;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
+      queryClient.invalidateQueries({ queryKey: ['matricula-extracao'] });
+      toast.success('Retranscrição iniciada!');
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao retranscrever', { description: readableError(error) });
+    },
+  });
+}
+
+/**
+ * A short-TTL signed URL for the SOURCE PDF an extraction was transcribed
+ * from — `GET /extracoes/{id}/arquivo-original`. Minted fresh per request
+ * (never cached across a long session — `expires_at` is short), which is
+ * why this is a mutation (fire-on-click) rather than a query. 409 when the
+ * extraction kept no source (a pre-135 row).
+ */
+export function useArquivoOriginalExtracao() {
+  return useMutation({
+    mutationFn: async (id: string): Promise<{ url: string; expires_at: string }> => {
+      const result = await api.get(`/api/matriculas/extracoes/${id}/arquivo-original`);
+      return result.data as { url: string; expires_at: string };
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao abrir o documento original', {
+        description: readableError(error),
+      });
     },
   });
 }

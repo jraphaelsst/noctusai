@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.documents import has_raw_markup
 from noctusai_lib.integrations.documents.formatting import ranges_to_json
 
 from app.modules.imovel_hub.deps import BUCKET as IMOVEL_BUCKET
@@ -229,16 +230,37 @@ async def processar_extracao(
             if dias
             else None
         )
-        # 🔴 NOC-REMEDIATE[transcricao-formatacao-backfill]: 5 rows in prod
-        # already hold `texto_extraido` with literal `**bold**`/`<u>…</u>`
-        # markers baked into the PLAIN TEXT (the OLD vision prompt, before
-        # the seed learned to parse markup into ranges). Migration 111's
-        # write-once trigger refuses to let `texto_extraido` be REWRITTEN
-        # once `status = 'concluida'`, and this write never touches an
-        # existing row either — so those five stay unformatted (`formatacao`
-        # keeps its `'[]'` column default) until someone re-transcribes
-        # them. Every row landing HERE, from this write onward, is correct.
-        # — 2026-09-14
+        # CLOSED (was NOC-REMEDIATE[transcricao-formatacao-backfill]): the
+        # marker undercounted its own finding — ALL 6 prod rows at the time
+        # (not "5 in prod"), which is 100% of the corpus, not a minority. It
+        # also named a destination ("until re-transcribed") that did not
+        # exist yet: the standalone upload path discarded `pdf_bytes` right
+        # after this function returned, so there was nothing left to
+        # re-transcribe FROM. Migration 135 (`arquivos_svc`, `estrutura_svc.
+        # criar_retranscricao`) closes both gaps — the source is retained
+        # going forward, and a concluded extraction can be superseded by a
+        # fresh transcription of it without fighting the write-once guard.
+        # The 6 pre-135 rows keep no source (135's own header says so) and
+        # cannot be repaired by this or any future change; migration 135's
+        # backfill flags them `possui_marcacao_bruta = true` so an operator
+        # can SEE the defect instead of it hiding in `texto_extraido`, and
+        # `contrato_gerador.derivacao` refuses to generate a contract off
+        # markered text regardless of this column. — 2026-09-17
+        possui_marcacao_bruta = has_raw_markup(resultado.text)
+        if possui_marcacao_bruta:
+            # A NEW transcription should never reach here — `parse_markup`
+            # (the seed's transcriber) strips every well-formed `**`/`<u>`
+            # marker before `resultado.text` exists. Landing here means a
+            # malformed vision reply left one unbalanced/stray (kept literal
+            # ON PURPOSE by `parse_markup` rather than guessed at) — logged
+            # so it is investigated, not silently swept into the same bucket
+            # as the pre-135 legacy rows.
+            logger.warning(
+                "Matrícula %s: transcribed text still carries a raw "
+                "**/<u> marker — parse_markup kept it literal (unbalanced "
+                "or malformed vision reply)",
+                extracao_id,
+            )
         _marcar(
             db, extracao_id, org_id,
             status="concluida",
@@ -246,6 +268,7 @@ async def processar_extracao(
             formatacao=ranges_to_json(resultado.formatting),
             num_paginas=resultado.num_paginas,
             retencao_ate=retencao_ate,
+            possui_marcacao_bruta=possui_marcacao_bruta,
         )
 
         # The acts (migration 109), as offsets into the text that just landed.
