@@ -942,7 +942,18 @@ def _default_migration_collision_check(abs_wt_path: str) -> list[dict]:
     return check_migration_number_collision(repo_root=Path(abs_wt_path))
 
 
-@_toolkit_freshness.warn_gate("task_branch")
+def _task_branch_is_write(bound_args: dict) -> bool:
+    """`task_branch`'s REFUSE predicate (2026-09-18, the incident tool
+    itself): only the MUTATING actions — `start` / `integrate` / `cleanup`
+    — with `confirm=True` are a write. `action='status'` is always a read
+    regardless of `confirm` (it never inspects the flag)."""
+    return (
+        bound_args.get("action") in {"start", "integrate", "cleanup"}
+        and bool(bound_args.get("confirm", False))
+    )
+
+
+@_toolkit_freshness.refuse_gate("task_branch", write_predicate=_task_branch_is_write)
 def task_branch(
     action: str = "status",
     slug: str | None = None,
@@ -1607,8 +1618,19 @@ def register(server) -> None:
             "default to a COMPACT {count, sample} shape + a full_report path (a "
             "real repo enumerates ~18,840 symlink entries there, which "
             "overflows the tool-result budget) — pass verbose=True for the "
-            "full inline lists instead. status: status|planned|started|"
-            "integrated|conflict|up_to_date|cleaned|partial|blocked|error."
+            "full inline lists instead. TOOLKIT-STALENESS GUARD (2026-09-18, "
+            "the incident this tool caused): a confirm=True call on a "
+            "MUTATING action (start/integrate/cleanup) REFUSES (status="
+            "'refused_stale_toolkit', exit_code=1) when this MCP server's "
+            "own module graph has drifted from disk since it was imported "
+            "— a stale task_branch once silently stopped provisioning "
+            "worktrees while still reporting status='started', exit 0. "
+            "action='status' and any confirm=False plan call are only "
+            "warned (toolkit_stale + a warnings entry), never refused. "
+            "allow_stale_toolkit=True is the escape hatch (almost always "
+            "wrong). See noctus.dev.toolkit_freshness. "
+            "status: status|planned|started|integrated|conflict|up_to_date|"
+            "cleaned|partial|blocked|refused_stale_toolkit|error."
         ),
     )
     def _task_branch(
@@ -1617,9 +1639,11 @@ def register(server) -> None:
         confirm: bool = False,
         wire_env: bool = True,
         verbose: bool = False,
+        allow_stale_toolkit: bool = False,
     ) -> dict:
         return task_branch(action=action, slug=slug, confirm=confirm,
-                           wire_env=wire_env, verbose=verbose)
+                           wire_env=wire_env, verbose=verbose,
+                           allow_stale_toolkit=allow_stale_toolkit)
 
 
 __all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_BENIGN_REFRESH_PATTERNS",

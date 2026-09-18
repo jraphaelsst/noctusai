@@ -78,6 +78,26 @@ def _minimal_fake_git():
     return run
 
 
+def _fake_git_with_refs(refs: dict[str, str]):
+    """A slightly richer fake for `action='start'` dry-run: resolves the
+    given ref names (e.g. `origin/dev`) via `rev-parse`, everything else
+    answers empty/ok — zero real git processes."""
+    calls: list[tuple] = []
+
+    def run(cmd, cwd=None):
+        calls.append((cmd, cwd))
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "rev-parse":
+            sha = refs.get(cmd[-1])
+            return (0, sha + "\n", "") if sha else (1, "", "bad ref")
+        if sub == "worktree":
+            return (0, "", "")
+        return (0, "", "")
+
+    run.calls = calls
+    return run
+
+
 SHELL = '<html><body><div id="root"></div><script src="/assets/index-abc.js"></script></body></html>'
 BUNDLE = ("// app\n" + "x" * 20_000).encode()
 
@@ -167,7 +187,8 @@ def test_check_is_cheap_under_a_burst_of_calls():
 
 
 # ---------------------------------------------------------------------------
-# WARN posture: predeploy_check, deploy_verify, spa_smoke, task_branch
+# WARN posture: predeploy_check, deploy_verify, spa_smoke,
+# task_branch action='status' / any confirm=False plan call
 # ---------------------------------------------------------------------------
 
 
@@ -192,11 +213,27 @@ def test_spa_smoke_warns_and_still_answers_when_stale(stale_toolkit, monkeypatch
     assert any("toolkit_stale" in w for w in r["warnings"])
 
 
-def test_task_branch_warns_and_still_answers_when_stale(stale_toolkit):
+def test_task_branch_status_action_warns_and_still_answers_when_stale(stale_toolkit):
     r = T.task_branch(action="status", run=_minimal_fake_git())
     assert r["status"] == "status"  # never refused — WARN posture still answers
     assert r["toolkit_stale"] is True
     assert any("toolkit_stale" in w for w in r["warnings"])
+
+
+def test_task_branch_status_action_never_refused_even_with_confirm_true(stale_toolkit):
+    """`action='status'` never inspects `confirm` — it must stay WARN-only
+    regardless of what a caller passes for it."""
+    r = T.task_branch(action="status", confirm=True, run=_minimal_fake_git())
+    assert r["status"] != "refused_stale_toolkit"
+    assert r["toolkit_stale"] is True
+
+
+def test_task_branch_start_dry_run_is_only_warned_not_refused_when_stale(stale_toolkit):
+    """confirm=False never provisions anything — WARN, never REFUSE."""
+    fake = _fake_git_with_refs({"origin/dev": "d0"})
+    r = T.task_branch(action="start", slug="feat-x", confirm=False, run=fake)
+    assert r["status"] != "refused_stale_toolkit"
+    assert r["toolkit_stale"] is True
 
 
 def test_warn_posture_fresh_call_carries_no_warning(fresh_toolkit):
@@ -208,7 +245,8 @@ def test_warn_posture_fresh_call_carries_no_warning(fresh_toolkit):
 
 
 # ---------------------------------------------------------------------------
-# REFUSE posture: migrate_product, release, deploy_image (confirm=True only)
+# REFUSE posture: migrate_product, release, deploy_image (confirm=True only),
+# and task_branch's MUTATING actions (start/integrate/cleanup, confirm=True)
 # ---------------------------------------------------------------------------
 
 
@@ -278,7 +316,48 @@ def test_deploy_image_refuses_the_write_when_stale(stale_toolkit):
     assert any("toolkit_stale" in w for w in r["warnings"])
 
 
+# task_branch is the INCIDENT tool: "mutates prod" was never the real line —
+# "can a stale version silently produce a plausible-looking wrong result?"
+# is. A stale `action=start confirm=True` once returned status='started',
+# exit 0, and a worktree that looked fine, while silently skipping the
+# .env/node_modules provisioning. Zero fakes needed below — the refusal
+# short-circuits before task_branch's body (and therefore any real git
+# call) ever runs.
+def test_task_branch_refuses_start_when_stale_and_confirmed(stale_toolkit):
+    r = T.task_branch(action="start", slug="feat-x", confirm=True)
+    assert r["status"] == "refused_stale_toolkit"
+    assert r["exit_code"] == 1
+    assert r["toolkit_stale"] is True
+    assert any("toolkit_stale" in w for w in r["warnings"])
+
+
+def test_task_branch_refuses_integrate_when_stale_and_confirmed(stale_toolkit):
+    r = T.task_branch(action="integrate", slug="feat-x", confirm=True)
+    assert r["status"] == "refused_stale_toolkit"
+    assert r["exit_code"] == 1
+    assert r["toolkit_stale"] is True
+
+
+def test_task_branch_refuses_cleanup_when_stale_and_confirmed(stale_toolkit):
+    r = T.task_branch(action="cleanup", slug="feat-x", confirm=True)
+    assert r["status"] == "refused_stale_toolkit"
+    assert r["exit_code"] == 1
+    assert r["toolkit_stale"] is True
+
+
+def test_task_branch_allow_stale_toolkit_reaches_the_real_function(stale_toolkit):
+    """The escape hatch must actually bypass the refusal — proven here by
+    the REAL function's own `requires slug` validation firing (it can only
+    fire if task_branch's body actually ran)."""
+    r = T.task_branch(action="start", confirm=True, allow_stale_toolkit=True,
+                       run=_minimal_fake_git())
+    assert r["status"] != "refused_stale_toolkit"
+    assert r["status"] == "error" and "requires slug" in r["error"]
+
+
 def test_refuse_posture_fresh_write_is_never_refused(fresh_toolkit):
     """Positive control: a fresh toolkit never manufactures a refusal."""
     r = REL.release(stage="promote", confirm=True)
     assert r["status"] != "refused_stale_toolkit"
+    assert T.task_branch(action="start", slug="feat-x", confirm=True,
+                          run=_fake_git_with_refs({"origin/dev": "d0"}))["status"] != "refused_stale_toolkit"

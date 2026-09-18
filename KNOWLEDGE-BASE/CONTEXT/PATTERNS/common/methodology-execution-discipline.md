@@ -190,19 +190,32 @@ itself — its answer was read as current when the code producing it was not.
   did the process load," not "what exists on disk"), then re-stats on demand.
   TTL-cached (default 5s) so a burst of tool calls costs one stat pass, not
   one per call.
-- **Refuse vs. warn is drawn at "does this write to production," not at "is
-  this tool high-stakes."** `predeploy_check` / `deploy_verify` / `spa_smoke`
-  / `task_branch` are read-only or dev-scoped-and-recoverable — they still
-  answer when stale, but carry `toolkit_stale: true` + a loud `warnings`
-  entry naming the remedy (never silently as-if-current).
-  `migrate_product` / `release` / `deploy_image` gate their actual write
-  behind `confirm=True` already (the existing dry-run convention); a
-  `confirm=False` preview is warned like the read-only tools, but a
-  `confirm=True` call — the one that writes to a database, pushes
-  main/prod, or swaps a running container — REFUSES
-  (`status='refused_stale_toolkit'`, mirroring `migrate_product`'s own
-  `refused_stale_tree` vocabulary) unless the caller explicitly passes
-  `allow_stale_toolkit=True` (recorded on the return, never silent).
+- **Refuse vs. warn is drawn at "can a stale version silently produce a
+  plausible-looking wrong result?" — not "does this write to production."**
+  "Writes to production" was the first-pass proxy and it was wrong: it would
+  have left `task_branch` — the tool that CAUSED this incident — in the
+  warn-only bucket, because a worktree/branch on `dev` isn't production. But
+  a stale `task_branch action=start confirm=True` is the textbook case the
+  rule exists for: it returned `status: "started"`, exit 0, and a worktree
+  that LOOKED fine, while silently skipping the `.env`/`node_modules`
+  provisioning — a full day of engineer dispatches ran against unprovisioned
+  trees before anyone noticed, and it manufactured phantom red tests a
+  competent engineer then reasonably mislabelled "pre-existing." Nobody knew
+  there was anything to recover, so "recoverable via `mole`" was never the
+  relevant axis either. So: `task_branch`'s MUTATING actions (`start` /
+  `integrate` / `cleanup`, `confirm=True`) REFUSE when stale, same as
+  `migrate_product` / `release` / `deploy_image`'s `confirm=True` write —
+  `action='status'` (never inspects `confirm`) stays warn-only, as does any
+  `confirm=False` preview across all four tools (a preview that never
+  mutates anything is safe to still answer, loudly labelled, rather than
+  refuse outright — refusing it would make "let me just check the plan"
+  useless while stale). `predeploy_check` / `deploy_verify` / `spa_smoke`
+  have no write path at all, so they are warn-only unconditionally. Every
+  REFUSE case is `status='refused_stale_toolkit'` (mirroring
+  `migrate_product`'s own `refused_stale_tree` vocabulary) unless the caller
+  explicitly passes `allow_stale_toolkit=True` (recorded on the return,
+  never silent); every WARN case carries `toolkit_stale: true` + a loud
+  `warnings` entry naming the remedy (never silently as-if-current).
 - **The remedy is always a restart, never a hot-reload.** Swapping code
   under a live module graph mid-call is a worse failure mode than reporting
   staleness — `/mcp` in Claude Code re-imports the toolkit from disk.

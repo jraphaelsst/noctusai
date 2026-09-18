@@ -273,27 +273,46 @@ def refuse_gate(
     tool_name: str,
     confirm_kwarg: str | None = "confirm",
     ttl_seconds: float = _DEFAULT_TTL_SECONDS,
+    write_predicate: Callable[[dict[str, Any]], bool] | None = None,
 ) -> Callable:
-    """Decorator for the REFUSE posture (irreversible-against-production
-    mutation): ``migrate_product``, ``release``, ``deploy_image``.
+    """Decorator for the REFUSE posture: ``migrate_product``, ``release``,
+    ``deploy_image``, and ``task_branch``'s mutating actions.
 
-    Refuse-vs-warn line drawn here: all three already gate their actual
-    WRITE behind ``confirm=True`` (dry-run by default, same convention as
-    ``allow_stale_tree`` / ``allow_inactive``). A ``confirm=False`` call is
-    a preview — it never touches production, so it is safe to still answer
-    with a loud warning (the WARN behaviour) rather than refuse outright,
-    which would make the tool useless for "let me just check the plan"
-    while stale. Only a ``confirm=True`` call — the one that actually
-    writes to a database / pushes a branch / swaps a running container —
-    is refused when stale, unless the caller explicitly passes
-    ``allow_stale_toolkit=True`` (an escape hatch that is recorded on the
-    return, never silent, mirroring ``allow_stale_tree``).
+    Refuse-vs-warn line: **can a stale version silently produce a
+    plausible-looking wrong result?** — not "does it touch prod." (The
+    2026-09-18 incident's worked example: a stale ``task_branch action=
+    start`` returned ``status: "started"``, exit 0, and a worktree that
+    LOOKED fine, while silently omitting the `.env`/`node_modules`
+    provisioning — a full day of engineer dispatches ran against
+    unprovisioned trees before anyone noticed. `task_branch` never
+    touches production; it still belongs in this posture because its
+    stale answer was indistinguishable from a correct one.)
+
+    ``migrate_product`` / ``release`` / ``deploy_image`` already gate their
+    actual WRITE behind ``confirm=True`` (dry-run by default, same
+    convention as ``allow_stale_tree`` / ``allow_inactive``) — the default
+    ``confirm_kwarg="confirm"`` heuristic covers all three. A ``confirm=
+    False`` call is a preview — it never touches anything, so it is safe
+    to still answer with a loud warning (the WARN behaviour) rather than
+    refuse outright, which would make the tool useless for "let me just
+    check the plan" while stale.
+
+    ``task_branch`` needs a richer predicate than "confirm alone" — only
+    its MUTATING actions (``start`` / ``integrate`` / ``cleanup``) with
+    ``confirm=True`` are a write; ``action='status'`` is always a read
+    regardless of ``confirm``. Pass ``write_predicate`` (given the bound
+    arguments dict, defaults applied) to override the confirm-kwarg
+    heuristic entirely for that shape.
+
+    Either way, a refused write is refused unless the caller explicitly
+    passes ``allow_stale_toolkit=True`` (an escape hatch that is recorded
+    on the return, never silent, mirroring ``allow_stale_tree``).
 
     Adds a keyword-only ``allow_stale_toolkit: bool = False`` to every
     decorated function WITHOUT changing its underlying signature (popped
     out of ``kwargs`` before the real call) — the MCP-facing
-    ``register()`` wrapper in each of the three modules declares the
-    param explicitly so it is a real, documented tool argument.
+    ``register()`` wrapper in each decorated module declares the param
+    explicitly so it is a real, documented tool argument.
     """
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -305,7 +324,17 @@ def refuse_gate(
         @functools.wraps(fn)
         def wrapper(*args: Any, allow_stale_toolkit: bool = False, **kwargs: Any) -> Any:
             is_write = False
-            if confirm_kwarg is not None:
+            if write_predicate is not None:
+                bound_args: dict[str, Any] = dict(kwargs)
+                if sig is not None:
+                    try:
+                        bound = sig.bind_partial(*args, **kwargs)
+                        bound.apply_defaults()
+                        bound_args = dict(bound.arguments)
+                    except TypeError:
+                        pass
+                is_write = bool(write_predicate(bound_args))
+            elif confirm_kwarg is not None:
                 if confirm_kwarg in kwargs:
                     is_write = bool(kwargs[confirm_kwarg])
                 elif sig is not None:
@@ -354,10 +383,16 @@ def register(server) -> None:
             "re-imports mcp/noctusai/** from disk.' The high-stakes tools "
             "(predeploy_check, deploy_verify, spa_smoke, migrate_product, "
             "release, deploy_image, task_branch) carry this verdict on their "
-            "own return automatically (toolkit_stale + a warnings entry; the "
-            "three that mutate production — migrate_product, release, "
-            "deploy_image — REFUSE their actual write, not just warn, when "
-            "stale). This tool always does a fresh stat pass (never the "
+            "own return automatically (toolkit_stale + a warnings entry). "
+            "Refuse-vs-warn is drawn on 'can a stale version silently "
+            "produce a plausible-looking wrong result', not 'does it touch "
+            "prod': migrate_product/release/deploy_image REFUSE their "
+            "confirm=True write, and task_branch REFUSES its confirm=True "
+            "start/integrate/cleanup (the incident tool itself — a stale "
+            "start once returned status='started' exit 0 while silently "
+            "skipping provisioning); action='status' and every confirm="
+            "False preview stay warn-only. This tool always does a fresh "
+            "stat pass (never the "
             "TTL-cached answer other tools use internally for cheapness) — "
             "calling it IS asking 'right now'. KB § PATTERNS/common/"
             "methodology-execution-discipline.md § 7."
