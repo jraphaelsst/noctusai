@@ -11527,6 +11527,305 @@ def check_primary_checkout_commit(
     return findings
 
 
+# ── `check_git_hooks_bypass` — the STATIC backstop for a HARDCODED hooks ──
+# bypass (script/CI/Python), sibling of the PreToolUse `decide_git_bypass`
+# gate (`primary_write_guard.py`). See that function's docstring for the
+# incident this pair exists for. This keeper covers what the runtime gate
+# structurally cannot: a bypass shape typed once into a tracked FILE — a
+# helper script, a Makefile recipe, a CI workflow step, a `subprocess.run(...)`
+# call — rather than into a live Bash command.
+# ---------------------------------------------------------------------------
+
+#: `(path, line-content-substring, rationale)` — a genuine SET of
+#: `core.hooksPath` that is not a bypass of THIS repo's own hooks. Co-located
+#: rationale, same shape as `check_mock_schema_validation`'s allowlist.
+#: Deliberately NOT weakened to match anything else: a hit outside this exact
+#: list is a real finding, not an exemption waiting to be written.
+_HOOKS_BYPASS_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    (
+        "scripts/bootstrap/bootstrap-seed-workspace.sh",
+        "git config core.hooksPath .githooks",
+        "Provisions a BRAND-NEW, separate sibling seed-workspace repo "
+        '(`cd "$TARGET" && git init -q && git config core.hooksPath '
+        ".githooks`) — it points a freshly created repository at its OWN "
+        "real hook directory (`.githooks/`, installed by the same script "
+        "just before this line), ENABLING hooks rather than disabling them. "
+        "It never touches THIS repo's config; `$TARGET` is always a "
+        "different `.git` than the one this keeper protects.",
+    ),
+)
+
+#: Process-spawning call names (matched via `_call_name`'s `.method` suffix
+#: form) whose first positional argument is a command to reconstruct.
+_HOOKS_BYPASS_SPAWN_SUFFIXES = (
+    ".run", ".Popen", ".call", ".check_call", ".check_output",
+    ".getoutput", ".getstatusoutput", ".system", ".popen",
+)
+
+#: `echo`/`printf` as the line's own leading word means the marker (if any)
+#: can only be inside one of THEIR string arguments — an informational
+#: message (`scripts/hooks/pre-push`'s own "re-run with: git push
+#: --no-verify" refusal text), never a second command on the same physical
+#: line (a `;`/`&&` continuation is already a separate segment by the time
+#: this is checked).
+_MESSAGE_LEADER_RE = re.compile(r"^(?:echo|printf)\b")
+
+from tools.noctus.dev.primary_write_guard import (  # noqa: E402
+    HOOK_BYPASS_ALLOW_ENV,
+    _git_config_env_injection,
+    _git_hooks_bypass_reason,
+    _normalize as _hooks_bypass_normalize,
+    _segments as _hooks_bypass_segments,
+    _strip_redirections as _hooks_bypass_strip_redirections,
+    _tokens as _hooks_bypass_tokens,
+)
+
+
+def _hooks_bypass_string_from_expr(node: ast.expr) -> str | None:
+    """Best-effort static string value of one AST expression. A literal
+    string or an f-string's LITERAL segments only — an interpolated
+    `{var}` is dropped (blanked), never guessed at, mirroring the runtime
+    gate's own `_is_unresolvable` posture: a value we cannot read statically
+    is not a value we can convict."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            v.value if isinstance(v, ast.Constant) and isinstance(v.value, str) else ""
+            for v in node.values
+        )
+    return None
+
+
+def _hooks_bypass_argv_text(node: ast.Call) -> str | None:
+    """Reconstructed command text for one process-spawning call, or None
+    when the argv is not statically knowable (a variable, a function
+    result, a non-literal list element). Handles the two shapes this
+    codebase actually uses: `subprocess.run(["git", …])` (a list/tuple of
+    strings) and `os.system("git …")` / `subprocess.run("git …", shell=True)`
+    (a single string)."""
+    if not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, (ast.List, ast.Tuple)):
+        parts: list[str] = []
+        for el in first.elts:
+            s = _hooks_bypass_string_from_expr(el)
+            if s is None:
+                return None
+            parts.append(s)
+        return " ".join(parts)
+    return _hooks_bypass_string_from_expr(first)
+
+
+def _hooks_bypass_reason_for_command(command_text: str) -> str | None:
+    """The ONE reason-lookup shared by every file kind below — reuses the
+    exact predicate the PreToolUse gate runs at write-time, so a file scan
+    and a live command are judged by the identical rule (no drift between
+    the two halves of this gate)."""
+    command = _hooks_bypass_normalize(command_text)
+    reason = _git_config_env_injection(command)
+    if reason is not None:
+        return reason
+    for segment in _hooks_bypass_segments(command):
+        seg = segment.strip()
+        if not seg or _MESSAGE_LEADER_RE.match(seg):
+            continue
+        reason = _git_hooks_bypass_reason(_hooks_bypass_strip_redirections(_hooks_bypass_tokens(seg)))
+        if reason is not None:
+            return reason
+    return None
+
+
+def _python_hooks_bypass_hits(source: str) -> list[tuple[int, str]]:
+    """`[(lineno, reason), ...]` for every process-spawning call in `source`
+    whose statically-known command text is a git hooks bypass. AST-scoped —
+    a `NOC-REMEDIATE`-style comment, a docstring, an f-string built purely
+    for a `logger.warning(...)`/return value, and a test's `assert "…" in
+    brief` are structurally NOT the first argument of a `subprocess.*`/
+    `os.system`/`os.popen` call, so none of them are ever visited here."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    out: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node.func) not in _HOOKS_BYPASS_SPAWN_SUFFIXES:
+            continue
+        text = _hooks_bypass_argv_text(node)
+        if not text:
+            continue
+        reason = _hooks_bypass_reason_for_command(text)
+        if reason is not None:
+            out.append((getattr(node, "lineno", 0) or 0, reason))
+    return out
+
+
+def _shell_hooks_bypass_hits(text: str) -> list[tuple[int, str]]:
+    """`[(lineno, reason), ...]` for a shell script / Makefile / CI-YAML's
+    tracked text. Line-scoped (not `_strip_heredocs`-aware, unlike the
+    runtime gate): a documented simplification — no tracked `.sh`/CI file in
+    this corpus embeds a git-bypass shape inside a heredoc body, and the
+    false-positive-vs-full-lexer tradeoff mirrors `scan_remediation_markers`'
+    own "Other code" simplification for the same class of file. A comment
+    line (`#` leader — covers both shell `#` and YAML `#`) and an
+    echo/printf message line are excluded up front; `_git_config_env_injection`
+    additionally scans the whole line for the env-injection shape before the
+    segment-by-segment argv scan (an `export …` assignment and its `git …`
+    consumer are frequently on separate lines, which this per-line loop
+    cannot correlate — same narrower-than-the-runtime-gate tradeoff)."""
+    out: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        reason = _hooks_bypass_reason_for_command(stripped)
+        if reason is not None:
+            out.append((lineno, reason))
+    return out
+
+
+def _hooks_bypass_is_shebang_shell(path: Path) -> bool:
+    """Extensionless files (`scripts/hooks/pre-commit`, `pre-push`, …) that
+    are still real shell scripts — recognized by their own shebang rather
+    than by a hardcoded filename list, so a future hook file is covered by
+    construction."""
+    try:
+        first_line = path.read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
+    except OSError:
+        return False
+    return first_line.startswith("#!") and bool(re.search(r"\b(ba)?sh\b|zsh", first_line))
+
+
+def check_git_hooks_bypass(
+    repo_root: Path | None = None, paths: list[str] | None = None,
+) -> list[dict]:
+    """Refuse a TRACKED FILE that hardcodes a git hooks bypass.
+
+    **The gap this closes.** `decide_git_bypass` (`primary_write_guard.py`)
+    refuses the bypass shape at WRITE time, for a Bash command actually run
+    through the harness. It cannot see a bypass typed once into a helper
+    script, a Makefile recipe, a CI workflow step, or a `subprocess.run(...)`
+    call and then invoked indirectly (`bash scripts/foo.sh`) — the runtime
+    gate only parses the literal command TEXT handed to the tool, and a
+    script invocation is opaque to it by design (same limitation the
+    primary-write gate has for anything it did not itself observe). This
+    keeper is the backstop: it scans the FILES.
+
+    **Scope.** `.py` (AST — only a process-spawning call's own argument, see
+    `_python_hooks_bypass_hits`), `.sh` + `Makefile`/`makefile` + an
+    extensionless shebang script (`scripts/hooks/pre-commit`, `pre-push`, …),
+    and `.github/workflows/*.yml` — the EXECUTABLE surfaces. `.md` is
+    deliberately out of scope: prose cannot execute a git invocation, and
+    every one of the ~140 tracked `--no-verify`/`core.hooksPath` mentions in
+    this corpus that is not one of the shapes above is a `.md` doc
+    explaining or forbidding the very thing this keeper detects (CLAUDE.md
+    §4, `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`,
+    `.claude/agents/engineer-seed.md` §2/§9, `.claude/skills/noc-dep-update/
+    SKILL.md`, `.claude/commands/gc.md`, archived `PROJECT.md`/`findings.md`
+    history) — scanning them would flag the very documents that teach the
+    rule this keeper enforces. `archive/**` and `project-history/*.ndjson`
+    are excluded for the same reason `scan_remediation_markers` excludes
+    them: a frozen patch / an append-only event log is a RECORD of past
+    text, not live code — scanning it asks "is this still open?" of a
+    snapshot that cannot be fixed without falsifying the record.
+
+    **Detection.** Reuses `primary_write_guard`'s exact predicate
+    (`_git_hooks_bypass_reason` / `_git_config_env_injection`) — the SAME
+    rule the PreToolUse gate runs at write time, imported rather than
+    re-implemented, so the two halves of this gate can never silently drift
+    apart (the class of bug `check_primary_checkout_commit`'s own docstring
+    names: "the two gates DISAGREE").
+
+    **No general escape-hatch comment.** Unlike `check_mock_schema_validation`,
+    there is no `# hooks-bypass-ok: <reason>` inline allowlist — an inline
+    comment lives in the SAME file as the bypass it excuses, which is
+    exactly what a `-c core.hooksPath=…` override already looks like
+    ("being careful"). The only allowlist is `_HOOKS_BYPASS_ALLOWLIST`
+    above: co-located here, in the keeper itself, reviewed the same way a
+    code change to the keeper is reviewed — never authored by the file
+    being exempted.
+
+    **Escape hatch for the underlying ACT.** `HOOK_BYPASS_ALLOW_ENV`
+    (`NOCTUS_ALLOW_HOOK_BYPASS=1`) is the runtime gate's env-var hatch, not
+    this keeper's — a script that legitimately needs to bypass hooks (there
+    is currently no such script) sets that env var when it runs; it does
+    not get a free pass here for merely existing in the tree.
+
+    Pass `paths` to scope to an explicit subset (the pre-commit hook hands
+    it the staged files, mirroring `check_conflict_markers`); a full sweep
+    (`paths=None`) walks `git ls-files`.
+    """
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+
+    if paths is not None:
+        candidates = list(paths)
+    else:
+        try:
+            tracked = subprocess.run(
+                ["git", "-C", str(root), "ls-files"],
+                capture_output=True, text=True, timeout=60, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return findings
+        if tracked.returncode != 0:
+            return findings
+        candidates = [ln for ln in tracked.stdout.splitlines() if ln.strip()]
+
+    for rel in candidates:
+        if not rel or rel.endswith(".md") or rel.endswith(".ndjson") or rel.startswith("archive/"):
+            continue
+        path = root / rel
+        if not path.is_file():
+            continue
+
+        is_py = rel.endswith(".py")
+        is_shell = rel.endswith(".sh") or path.name in ("Makefile", "makefile")
+        is_ci_yaml = rel.startswith(".github/workflows/") and rel.endswith((".yml", ".yaml"))
+        if not (is_py or is_shell or is_ci_yaml):
+            if "." in path.name:
+                continue  # a real extension we don't scan (binary, data, …)
+            if not _hooks_bypass_is_shebang_shell(path):
+                continue
+            is_shell = True
+
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        hits = _python_hooks_bypass_hits(text) if is_py else _shell_hooks_bypass_hits(text)
+        if not hits:
+            continue
+        lines = text.splitlines()
+        for lineno, reason in hits:
+            line_content = lines[lineno - 1].strip() if 0 < lineno <= len(lines) else ""
+            if any(rel == p and sub in line_content for p, sub, _ in _HOOKS_BYPASS_ALLOWLIST):
+                continue
+            findings.append({
+                "product": rel.split("/")[1] if rel.startswith("products/") else "<repo>",
+                "file": f"{rel}:{lineno}",
+                "issue": (
+                    f"{reason} This is the SILENT rationalization shape "
+                    f"`KB § PATTERNS/common/bypass-rationalization-anti-"
+                    f"patterns.md` catalogues — it reads as being careful "
+                    f"about hooks, not skipping them, and nothing else "
+                    f"catches it. Remove the override; a genuine, human-"
+                    f"authorized exception is gated behind "
+                    f"`{HOOK_BYPASS_ALLOW_ENV}=1` set in the invoking shell "
+                    f"(never inline in the command/script itself), with the "
+                    f"rationale in the commit that adds it."
+                ),
+                "severity": "high",
+            })
+    return findings
+
+
 #: Env keys whose value decides WHAT THE SUITE TALKS TO — a credential, an
 #: endpoint, or a behaviour switch. A conftest must ASSIGN these; deferring to
 #: whatever the developer exported is how a test run reaches production.
@@ -12964,6 +13263,12 @@ def check_all_products() -> tuple[int, list]:
     # leg that can return ok=True on an unverifiable state defeats the whole
     # gate. KB § PATTERNS/devops/predeploy-leg-verify-or-block.md.
     all_issues.extend(check_predeploy_leg_verify_or_block())
+    # gate-silent-hook-bypass (2026-09-18) — a hardcoded `-c core.hooksPath=…`/
+    # `--config-env`/`GIT_CONFIG_KEY_*=core.hooksPath`/`--no-verify` in a
+    # tracked script, Makefile, CI workflow, or `subprocess.*` call is the
+    # backstop for `decide_git_bypass` (PreToolUse) — the SILENT bypass shape
+    # in KB § PATTERNS/common/bypass-rationalization-anti-patterns.md.
+    all_issues.extend(check_git_hooks_bypass())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
     return platform_score, all_issues

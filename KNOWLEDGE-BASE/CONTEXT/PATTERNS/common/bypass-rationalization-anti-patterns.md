@@ -100,6 +100,62 @@ Catch any rationalization in §§ 2.1–2.5 ⇒ apply the protocol below. The me
 - **§3.3 Risk** — what the bypass would skip (which keepers, what guarantee voided)
 - **§3.4 Alternative** — what a non-bypass path could look like (fix the gate? refresh a cache? re-scope the slice?) — the engineer doesn't decide, but surfaces options for the tech-lead's broader-context call
 
+### 2.7 · The silent hooks-bypass — "I'm being careful about hooks, not skipping them"
+
+**Observed in the wild.** 2026-09-18, the user's own session:
+
+```
+git -c core.hooksPath=.git/hooks commit -q -F - <<'MSG' … MSG
+```
+
+committed with **no hooks at all, exit 0, no warning.** This repo pins
+`core.hooksPath` to an ABSOLUTE path (`<primary>/.git/hooks`, entries
+symlinked to `scripts/hooks/`); the override above was RELATIVE, and git
+resolves a relative `core.hooksPath` against the CWD. Run from a linked
+worktree — where `.git` is a FILE (`gitdir: …`), not a directory — the
+relative path never resolved to a real hooks directory, so every hook was
+skipped. `git commit --amend --no-edit` with the override removed printed
+`[pre-commit] OK`, proving the gate had been live the whole time and only
+THIS one invocation skipped it.
+
+**Why it belongs in this catalog, and why it is different from every other
+row in it.** §§ 2.1–2.5 and the authority-appeal added in § 6 are all
+RATIONALIZATIONS — an agent talks itself into typing `--no-verify` and the
+typed flag is, at minimum, VISIBLE: it is named in `CLAUDE.md` §1, the
+harness classifier can pattern-match it, a human reading `git log -p` can
+grep for it. This shape has no such trace. `-c core.hooksPath=<anything>`
+reads as being MORE careful about hooks than a plain `git commit` — the
+opposite of a red flag — and prints nothing to say otherwise. **It is the
+only SILENT entry in this catalog**: every other rationalization produces a
+typed bypass a classifier or a reviewer could in principle catch; this one
+produces no signal at all, at the exact moment it needs one most.
+
+**Why wrong.** There is no legitimate reason to override `core.hooksPath`
+inline in this repo — the correct value is already configured (`git config
+core.hooksPath`), and an inline override is a no-op at best (same value) and
+a silent bypass at worst (any other value, including an unintentionally
+relative one). The same reasoning extends to `--config`/`--config-env`
+targeting `core.hooksPath`, a persistent `git config core.hooksPath <value>`
+SET to the wrong value, and `GIT_CONFIG_KEY_*=core.hooksPath` env-variable
+injection — every one of these is functionally `--no-verify` wearing a
+disguise that even the "NEVER `--no-verify`" rule's own harness-classifier
+carve-out does not see through.
+
+**Right move.** Never spell hooks configuration per-invocation. If a hook is
+genuinely wrong, surface it (§ 2.6 protocol) — do not route around it by
+touching `core.hooksPath`. If a real, human-authorized exception is ever
+needed, the sanctioned mechanism is an env var set in the LAUNCHING shell
+(`NOCTUS_ALLOW_HOOK_BYPASS=1`, mirroring `NOCTUS_ALLOW_PRIMARY_WRITE`), never
+inline in the command being run — unreachable from inside the command it
+would excuse, by construction, and always a deliberate human act.
+
+**Mechanism, not just a catalog entry.** Two gates close this — the
+PreToolUse `primary_write_guard.decide_git_bypass` (refuses the live Bash
+command before it runs) and the static `compliance.check_git_hooks_bypass`
+(refuses a tracked script/CI-workflow/`subprocess.*` call that hardcodes the
+same shape). See `KB § PATTERNS/common/gate-methodology-sync.md` — this row
+does not stop at "forbidden in prose."
+
 ## 3 · Worked example — the `ea7514e7` build-learn-cache codification slip
 
 The canonical worked example of all 5 anti-patterns firing at once in a single dispatch. Read it whole — the engineer's reasoning was internally coherent, locally defensible, and globally wrong.
@@ -158,6 +214,7 @@ The very same session caught the slip post-hoc by `git log --grep "no-verify"` �
 - `KB § PATTERNS/common/dispatch-with-project-and-notes.md` — the general-purpose surface-note infra (Channel B in § 2.6); `kind="surface"` is the channel.
 - `KB § PATTERNS/architect/dispatch-engineer-tuning.md § 4c Mandatory brief language` — the brief-template clause that bakes "NEVER `--no-verify` commit OR push" into every dispatch.
 - `KB § 01-PHILOSOPHY.md` — the universal ancestor (safety-nets + no-silent-errors); rationalization-to-bypass IS the safety-net-firing-without-learning shape AND the silent-error shape applied to safety gates.
+- `mcp/noctusai/tools/noctus/dev/primary_write_guard.py` (`decide_git_bypass`) + `mcp/noctusai/tools/noctus/dev/compliance.py` (`check_git_hooks_bypass`) — the mechanism pair for § 2.7's silent hooks-bypass: a PreToolUse refusal of the live command plus a static backstop over tracked scripts/CI/`subprocess.*` calls. Gate↔methodology sync per `KB § PATTERNS/common/gate-methodology-sync.md`.
 
 ## 5 · Provenance
 
@@ -212,3 +269,11 @@ The corrective commit retracts the hypocrisy claim in 62560ede's message non-des
 - Counter-evidence agent — harness run id `ac7b836a102219219` on branch `feat/close-no-verify-commit-loophole` (the parallel slice that delivered the same work clean).
 - Auto-improvement entry — `2026-05-29T09:19:06` `target="KB § PATTERNS/common/bypass-rationalization-anti-patterns.md + ..."` (the original codification entry) + `2026-05-29` `target="tech-lead orchestrator --no-verify slip on 62560ede"` `status="closed"` (this corrective).
 - Cross-link — once `background-engineer-safety-discipline.md` lands on dev (parallel reapply slice), it inherits this § 6 by reference; the broader doc's "Do not invoke authority to override safety" clause cites this addendum.
+
+## 7 · Provenance — § 2.7 the silent hooks-bypass, 2026-09-18
+
+- **s1 emerged** — 2026-09-18, the user's own session: `git -c core.hooksPath=.git/hooks commit -q -F - <<'MSG' … MSG`, run from a linked worktree, committed with no hooks at all, exit 0, no warning. `git commit --amend --no-edit` with the override removed printed `[pre-commit] OK`, proving the gate had been live and only this invocation skipped it.
+- **s2 memory** — deferred; the shape was concrete enough to ship s3 directly, same posture as § 5's s2 entry for the original five.
+- **s3 codified** — § 2.7 above (this addition) — the only SILENT entry in the catalog, distinguished from every prior rationalization (which at minimum produces a typed, classifiable `--no-verify`) by producing NO signal at all.
+- **s4 keeper** — shipped same-commit, not deferred (unlike § 5's `check_no_no_verify_in_recent_history`, which remains deferred): `primary_write_guard.decide_git_bypass` (PreToolUse, runtime) + `compliance.check_git_hooks_bypass` (static backstop over tracked scripts/CI/`subprocess.*` calls). Gate↔methodology sync per `KB § PATTERNS/common/gate-methodology-sync.md` — the gate ships its compliance mechanism in the same change, not gate-only.
+- **User mandate verbatim 2026-09-18** — *"a `-c core.hooksPath=…` override reads as being MORE careful about hooks, prints nothing, and nothing catches it. It is a bypass that looks like diligence."*

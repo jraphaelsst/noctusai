@@ -83,6 +83,12 @@ LEDGER_PREFIXES = ("project-history/",)
 
 ALLOW_ENV = "NOCTUS_ALLOW_PRIMARY_WRITE"
 
+#: Escape hatch for `decide_git_bypass` below — deliberately a SEPARATE env
+#: var from `ALLOW_ENV`: allowing a primary-checkout write says nothing about
+#: allowing a hooks bypass, and vice versa. See that function's docstring
+#: block for why this is a distinct concern living in the same module.
+HOOK_BYPASS_ALLOW_ENV = "NOCTUS_ALLOW_HOOK_BYPASS"
+
 #: Tools that name their target outright — no parsing, no ambiguity.
 _FILE_PATH_TOOLS = {
     "Edit": "file_path",
@@ -1146,6 +1152,339 @@ def decide(
                f"append-only ledgers. Preserve any ledger rows first "
                f"(`git diff origin/{ctx.branch}...HEAD > <path outside the repo>`)."
                if _primary_diverged(ctx) else "")
+        ),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# `decide_git_bypass` — refuse a git invocation that silently disables its
+# own hooks (SEPARATE concern from `decide()` above; see rationale below).
+# ═══════════════════════════════════════════════════════════════════════════
+"""
+**The incident.** `git -c core.hooksPath=.git/hooks commit -q -F - <<'MSG' …`
+committed with no hooks at all, exit 0, no warning. This repo configures
+`core.hooksPath` to an ABSOLUTE path (`<primary>/.git/hooks`, symlinked to
+`scripts/hooks/`); the override above was RELATIVE, and git resolves a
+relative `core.hooksPath` against the CWD. Run from a linked worktree — where
+`.git` is a FILE (`gitdir: …`), not a directory — `.git/hooks` under that cwd
+never existed, so every hook was skipped. `git commit --amend --no-edit` with
+the override removed printed `[pre-commit] OK`, proving the gate had been live
+all along and only THIS invocation skipped it.
+
+**Why this is worse than `--no-verify`.** `--no-verify` is named in CLAUDE.md
+§1, means "skip the gate" on its face, and the harness classifier catches it.
+A `-c core.hooksPath=…` override reads as being MORE careful about hooks,
+prints nothing, and nothing catches it. It is a bypass that looks like
+diligence — the one SILENT rationalization shape in
+`KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`.
+
+**Why this is a SEPARATE function, not a branch inside `decide()`.**
+`decide()` answers "does this write land in the wrong TREE" (primary checkout
+vs. worktree, on a shared branch). This answers "does this git invocation
+skip its own SAFETY MECHANISM" — true or false independent of which tree the
+write lands in, which branch is checked out, or whether the write is even
+guarded by `decide()` at all: bypassing hooks on a feature-branch worktree
+commit is just as bad as on the primary, because it is the commit ITSELF —
+not the destination — that stops being verified. Merging the two into one
+function would couple two independently-true-or-false questions behind one
+early-return, which is exactly the shape that made the 2026-08-18 primary-
+write slip invisible to the (unrelated) commit keeper: a gate answering two
+questions answers neither reliably.
+
+**Why this lives in THIS module rather than a new sibling file.** The
+by-path loader in `scripts/hooks/claude-guard-primary-write.py` pays this
+module's compile+exec cost on every Bash/Edit/Write call already (see the
+module docstring's "Design constraints"). A second `git_bypass_guard.py`
+loaded the same way would not meaningfully change that per-call cost (the
+bytes compiled are the same either way — one bigger file or two smaller
+ones) but WOULD force the wrapper into a second `importlib.util.
+spec_from_file_location(...).exec_module(...)` round-trip and, worse, would
+have to duplicate this file's shell-tokenizing primitives (`_normalize`,
+`_segments`, `_tokens`, `_strip_redirections`) — a by-path-loaded module
+cannot `import primary_write_guard` normally (it is registered in
+`sys.modules` under the wrapper's own synthetic name, not a resolvable
+package path), so the honest alternatives were "duplicate ~150 lines of
+already-audited quoting/heredoc/redirection logic" or "live here." A
+function, not a module: separate concern, same file, zero extra import.
+
+**Escape hatch.** `NOCTUS_ALLOW_HOOK_BYPASS=1` — same shape as `ALLOW_ENV`
+above (a PreToolUse hook reads its OWN process's `os.environ`, so this is
+unreachable from inside the denied command itself; see the module docstring's
+🔴 note, which applies here verbatim). There genuinely is no scripted
+legitimate use of `-c core.hooksPath=`/`--no-verify` in THIS repo — the one
+sanctioned `--no-verify` shape (`engineer-seed.md` §2, the architect's scoped
+commit in a dirty multi-agent tree) is a rare, deliberate, human-reviewed act,
+which is exactly what an env var — set once, by a person, in their own shell —
+is for.
+"""
+
+#: The config KEY this gate exists to protect, lower-cased for comparison
+#: (git itself lower-cases section/variable names when matching `-c`/
+#: `--config`, so a caller spelling it `Core.HooksPath` is not a loophole).
+_HOOKS_PATH_KEY = "core.hookspath"
+
+#: `git <sub>` verbs whose hooks are the whole point of this gate — the exact
+#: set named in the brief. `merge`/`rebase`/`am`/`cherry-pick` matter for the
+#: `-c core.hooksPath=`/`--config`/`--config-env` leg (any subcommand really,
+#: see below); `--no-verify`/`-n` only exists as a flag on `commit`/`push`.
+_HOOK_TRIGGERING_SUBCOMMANDS = {"commit", "push", "merge", "rebase", "am", "cherry-pick"}
+
+#: `-n`/`--no-verify` is `commit`'s alias for skipping hooks (`git commit -h`:
+#: "-n, --no-verify  bypass pre-commit and commit-msg hooks"). It is NOT an
+#: alias on `push` — `git push -h`: "-n, --[no-]dry-run  dry run" — a
+#: harmless, unrelated flag. Scoping `-n` detection to `commit` only is
+#: therefore load-bearing, not a simplification: treating `git push -n` as a
+#: hooks bypass would refuse an ordinary dry run on every use.
+_NO_VERIFY_SHORT_SUBCOMMANDS = {"commit"}
+#: `--no-verify` (long form) has no such trap — both `commit` and `push`
+#: accept only the one spelling, with the one meaning.
+_NO_VERIFY_LONG_SUBCOMMANDS = {"commit", "push"}
+
+#: Flags that consume the NEXT token as their operand, so the scanner does
+#: not mis-read that operand as the subcommand or another flag.
+_GIT_GLOBAL_FLAGS_WITH_OPERAND = {"-C", "--git-dir", "--work-tree", "--namespace"}
+
+#: `GIT_CONFIG_KEY_<n>=core.hooksPath` (paired with `GIT_CONFIG_VALUE_<n>=…`)
+#: is git's env-var config-injection mechanism — functionally identical to
+#: `-c core.hooksPath=…` but spelled as shell environment rather than argv,
+#: so a literal-string scan for `-c`/`--config` alone would miss it entirely.
+_GIT_CONFIG_ENV_KEY_RE = re.compile(
+    r"GIT_CONFIG_KEY_\d+\s*=\s*['\"]?core\.hookspath\b", re.IGNORECASE,
+)
+
+
+def _kv_key(value: str) -> str:
+    """The KEY half of a `key=value` (or bare `key`) operand, lower-cased."""
+    return value.split("=", 1)[0].strip().strip("'\"").lower()
+
+
+#: `git config` flags that make ANY subsequent invocation a READ, regardless
+#: of positional-argument count — `--get core.hooksPath` has two "args" the
+#: same as a SET would, but is unambiguously a read.
+_CONFIG_READ_ONLY_FLAGS = {
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch",
+    "--list", "-l", "--show-origin", "--show-scope",
+}
+#: Flags that mutate even with only ONE positional (the key) — `--unset core.
+#: hooksPath` removes the value rather than setting a new one, but a removal
+#: is still "core.hooksPath [changed to] anything other than the repo's
+#: configured absolute value" — the exact shape this leg exists to catch.
+_CONFIG_MUTATING_FLAGS = {"--unset", "--unset-all", "--replace-all", "--add"}
+
+
+def _git_config_hookspath_set_reason(config_args: Sequence[str]) -> str | None:
+    """Is `git config <config_args>` a MUTATION (not a read) of core.hooksPath?
+
+    `git config core.hooksPath` (one positional, no mutating flag) reads —
+    the explicit ALLOW case this module's own refusal text below names
+    ("a read, not an override"). `git config core.hooksPath <value>` (two
+    positionals) or `git config --unset core.hooksPath` mutates the PERSISTENT
+    config, which is a different, slower-acting version of the same harm an
+    inline `-c core.hooksPath=…` override causes: every git command run in
+    this checkout AFTER this one resolves hooks against the new value, not
+    just the one invocation that set it.
+
+    `--global`/`--system` scope makes this worse, not exempt: it affects
+    every OTHER checkout on the machine too, so it is flagged unconditionally
+    (never assumed correct-by-coincidence).
+    """
+    args = _strip_redirections(list(config_args))
+    flags = {a for a in args if a.startswith("-")}
+    if flags & _CONFIG_READ_ONLY_FLAGS:
+        return None
+    positionals = [a for a in args if not a.startswith("-")]
+    if not positionals or _kv_key(positionals[0]) != _HOOKS_PATH_KEY:
+        return None
+    is_mutation = len(positionals) >= 2 or bool(flags & _CONFIG_MUTATING_FLAGS)
+    if not is_mutation:
+        return None
+    scope = (
+        " with --global/--system scope (repo-INDEPENDENT — every checkout "
+        "on this machine, not just this one)"
+        if ({"--global", "--system"} & flags) else ""
+    )
+    change = f" to `{positionals[1]}`" if len(positionals) >= 2 else " (removed, via --unset)"
+    return (
+        f"`git config … core.hooksPath` is being SET{change}{scope} — this changes "
+        f"which hooks fire on EVERY subsequent git command in this checkout, not "
+        f"just this one invocation."
+    )
+
+
+def _find_git_start(tokens: Sequence[str]) -> int | None:
+    """Index of the first `git` token, or None.
+
+    Deliberately the FIRST occurrence only, and deliberately ANYWHERE in the
+    segment rather than only at position 0: `env X=Y git …`, a leading
+    `VAR=value` shell assignment, `xargs -I{} git …`, and a subshell's stray
+    `(` (which `shlex.split` reads as its own token when space-separated)
+    all put real argv before the real `git` token. Treating everything from
+    there on as the invocation's argv is a superset of "position 0 only" and
+    costs nothing extra to compute.
+    """
+    for i, tok in enumerate(tokens):
+        if os.path.basename(tok) == "git":
+            return i
+    return None
+
+
+def _git_hooks_bypass_reason(tokens: Sequence[str]) -> str | None:
+    """A violation reason for ONE segment's tokens, or None.
+
+    `tokens` is already `_tokens(segment)` with `_strip_redirections`
+    applied by the caller — this function does no shell parsing of its own,
+    only positional-argument reading, mirroring every other git-argument
+    reader in this module (`_is_ledger_only_git`, `_is_sync_to_remote_git`).
+    """
+    gi = _find_git_start(tokens)
+    if gi is None:
+        return None
+    rest = tokens[gi + 1:]
+    n = len(rest)
+    i = 0
+    sub = ""
+    while i < n:
+        tok = rest[i]
+
+        if tok in ("-c", "--config") and i + 1 < n:
+            if _kv_key(rest[i + 1]) == _HOOKS_PATH_KEY:
+                return (
+                    f"`git {tok} {rest[i + 1]}` overrides core.hooksPath inline for "
+                    f"this one invocation — every hook is skipped, silently."
+                )
+            i += 2
+            continue
+        if tok.startswith("--config="):
+            if _kv_key(tok[len("--config="):]) == _HOOKS_PATH_KEY:
+                return (
+                    f"`git {tok}` overrides core.hooksPath inline for this one "
+                    f"invocation — every hook is skipped, silently."
+                )
+            i += 1
+            continue
+        if tok == "--config-env" and i + 1 < n:
+            if _kv_key(rest[i + 1]) == _HOOKS_PATH_KEY:
+                return (
+                    f"`git {tok} {rest[i + 1]}` redirects core.hooksPath through an "
+                    f"environment variable — every hook is skipped, silently."
+                )
+            i += 2
+            continue
+        if tok.startswith("--config-env="):
+            if _kv_key(tok[len("--config-env="):]) == _HOOKS_PATH_KEY:
+                return (
+                    f"`git {tok}` redirects core.hooksPath through an environment "
+                    f"variable — every hook is skipped, silently."
+                )
+            i += 1
+            continue
+
+        if not sub:
+            if tok in _GIT_GLOBAL_FLAGS_WITH_OPERAND:
+                i += 2
+                continue
+            if not tok.startswith("-"):
+                sub = tok
+                if sub == "config":
+                    # `config`'s own args are a wholly different grammar
+                    # (`--global`/`--unset`/positionals) from `--no-verify`
+                    # below; hand off rather than fold it into this loop.
+                    return _git_config_hookspath_set_reason(rest[i + 1:])
+            i += 1
+            continue
+
+        # Inside the subcommand's own arguments now.
+        if sub in _NO_VERIFY_LONG_SUBCOMMANDS and tok == "--no-verify":
+            return f"`git {sub} --no-verify` skips the pre-{sub} hook entirely."
+        if (
+            sub in _NO_VERIFY_SHORT_SUBCOMMANDS
+            and tok.startswith("-")
+            and not tok.startswith("--")
+            and len(tok) > 1
+            and "n" in tok[1:]
+        ):
+            return (
+                f"`git {sub} {tok}` bundles `-n` (== `--no-verify` for `commit`) — "
+                f"skips the pre-commit and commit-msg hooks entirely."
+            )
+        i += 1
+    return None
+
+
+def _git_config_env_injection(command: str) -> str | None:
+    """`GIT_CONFIG_KEY_<n>=core.hooksPath` anywhere in the (normalized)
+    command text — see `_GIT_CONFIG_ENV_KEY_RE`'s docstring above. Whole-text
+    regex rather than segment/token scanning: the paired `GIT_CONFIG_KEY_n`/
+    `GIT_CONFIG_VALUE_n` assignments and `GIT_CONFIG_COUNT` are frequently on
+    an EARLIER segment (`export …`) than the `git` invocation itself, so a
+    per-segment token reader would miss the cross-segment correlation.
+    """
+    if _GIT_CONFIG_ENV_KEY_RE.search(command):
+        return (
+            "a `GIT_CONFIG_KEY_*=core.hooksPath` environment-variable injection is "
+            "present — git's env-var config mechanism, functionally identical to "
+            "`-c core.hooksPath=…` but invisible to a plain argv scan."
+        )
+    return None
+
+
+def decide_git_bypass(
+    tool_name: str,
+    tool_input: dict[str, Any] | None = None,
+    allow_override: bool | None = None,
+) -> dict[str, Any] | None:
+    """None to allow; a dict describing the refusal otherwise.
+
+    Unlike `decide()` above, this does NOT depend on `GuardContext` — no
+    branch, no worktree, no primary-checkout test. A hooks bypass is exactly
+    as harmful on a feature-branch worktree commit as on the primary: the
+    hooks that stop running are the SAME ones either way. Only `Bash` is
+    relevant (a git hooks bypass is inherently a shell invocation; `Edit`/
+    `Write`/`NotebookEdit` cannot express one).
+    """
+    if allow_override is None:
+        allow_override = os.environ.get(HOOK_BYPASS_ALLOW_ENV, "") == "1"
+    if allow_override:
+        return None
+    if tool_name != "Bash":
+        return None
+
+    raw_command = (tool_input or {}).get("command") or ""
+    if not raw_command:
+        return None
+    command = _normalize(raw_command)
+
+    reason = _git_config_env_injection(command)
+    if reason is None:
+        for segment in _segments(command):
+            tokens = _strip_redirections(_tokens(segment))
+            reason = _git_hooks_bypass_reason(tokens)
+            if reason is not None:
+                break
+    if reason is None:
+        return None
+
+    return {
+        "tool": tool_name,
+        "reason": (
+            f"REFUSED — {reason}\n"
+            f"This repo already configures core.hooksPath (an absolute path — "
+            f"see `git config core.hooksPath`); any override is a no-op at best "
+            f"and a SILENT bypass at worst. A `-c core.hooksPath=…` override that "
+            f"reads as 'being careful about hooks' still skips every keeper "
+            f"(kb_sync · check_claude_md_router · check_eight_way_sync · "
+            f"keeper-pattern-cache refresh) with no warning and exit 0 — worse "
+            f"than `--no-verify`, which is at least named in CLAUDE.md §1 and "
+            f"caught by the harness classifier.\n"
+            f"Diagnose instead of overriding: `git config core.hooksPath` then "
+            f'`ls -la "$(git config core.hooksPath)"` — if that is empty or '
+            f"missing, the fix is `bash scripts/install-hooks.sh`, not a "
+            f"per-invocation override.\n"
+            f"If a real, human-authorized bypass is needed (e.g. the architect's "
+            f"scoped KB-autostage-hook exception, `engineer-seed.md` §2), the "
+            f"rationale belongs in the commit message and the ONLY sanctioned "
+            f"mechanism is `{HOOK_BYPASS_ALLOW_ENV}=1` set in the launching "
+            f"shell's environment — never inside the command being refused."
         ),
     }
 
