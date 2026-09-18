@@ -155,11 +155,64 @@ class TestDescricaoImovelBloco:
         assert "IMÓVEL:" not in texto
         assert "PROPRIETÁRIA" not in texto
 
-    def test_a_pre_136_extraction_has_no_block_and_is_none(self, scoped):
-        """No `matricula_abertura_blocos` rows at all (a row segmented before
-        migration 136, per the migration's own 'no backfill' contract) reads
-        as `None`, not an error — the caller (`contrato_gerador`) falls
-        back to the whole selection."""
+    def test_a_pre_136_extraction_heals_its_blocks_on_first_read(self, scoped):
+        """A row whose acts were pre-seeded WITHOUT going through
+        `persistir_atos` (segmented before migration 136 shipped — every row
+        that existed on 2026-09-18) has zero `matricula_abertura_blocos`
+        rows, exactly like a pre-136 row in prod. `_blocos_abertura` heals
+        it on the FIRST read that needs it: the abertura act's offsets are
+        frozen and `texto_extraido` is right there, so there is nothing to
+        derive the blocks FROM that a fresh read can't reach.
+
+        `ruido` stays `[]` for this row (detection never ran for it — see
+        `_ruido_da_extracao`'s docstring) — that is the accepted degraded
+        state (byte-for-byte, un-de-noised), never a wrong quote: `out
+        ["texto"]` below is asserted against `TEXTO` itself, not a
+        de-noised variant, and the `descricao_imovel` block resolves the
+        same way `formatacao`/every other field on this row does.
+        """
+        ext = extracao_row()
+        assert ext["ruido"] == []
+        contrato = contrato_row()
+        # Built ONCE — `linhas_de_atos` mints a fresh `uuid4()` id per call,
+        # so seeding from one list and looking the abertura id up from a
+        # SECOND call would race itself into a "não existe" false failure.
+        atos_seed = svc.linhas_de_atos(ext["id"], ORG_ID, segment_matricula_atos(TEXTO))
+        seed(
+            scoped,
+            extracoes=[ext],
+            contratos=[contrato],
+            negociacoes=[negociacao_row(contrato["atendimento_id"])],
+            # `atos=[...]` pre-seeded so `persistir_atos` never runs (that
+            # function only ever writes blocks on the SAME call that first
+            # segments an extraction's acts) — simulating a row segmented
+            # before this feature shipped.
+            atos=atos_seed,
+        )
+        abertura_id = next(a["id"] for a in atos_seed if a["kind"] == "abertura")
+        scoped.set_table_data(
+            "atendimento_contrato_matricula_atos",
+            _selecionar(contrato["id"], ext["id"], [{"id": abertura_id}]),
+        )
+
+        healed = svc.listar_atos(scoped, ORG, UUID(ext["id"]))["abertura_blocos"]
+        assert [b["campo"] for b in healed] == [
+            "descricao_imovel", "proprietarios", "registro_anterior",
+        ]
+
+        out = svc.obter_selecao(scoped, ORG, UUID(contrato["id"]))
+        assert out["texto"] == TEXTO[_ABERTURA[0] : _ABERTURA[1]]
+        assert out["descricao_imovel"] is not None
+        texto = out["descricao_imovel"]["texto"]
+        assert texto.startswith("Apartamento nº 12")
+        assert "IMÓVEL:" not in texto
+        assert "PROPRIETÁRIA" not in texto
+
+    def test_healed_blocks_are_not_rewritten_on_a_second_read(self, scoped):
+        """🔴 The never-re-segment guarantee, for blocks: once healed, a
+        second read must return the SAME ids at the SAME offsets — a
+        contract addressing a block by id (or an operator re-opening the
+        same page) must never see it move under them."""
         ext = extracao_row()
         contrato = contrato_row()
         seed(
@@ -167,17 +220,39 @@ class TestDescricaoImovelBloco:
             extracoes=[ext],
             contratos=[contrato],
             negociacoes=[negociacao_row(contrato["atendimento_id"])],
-            # `atos=[...]` pre-seeded so `persistir_atos` never runs (the
-            # only place abertura blocks are written) — simulating a row
-            # segmented before this feature shipped.
             atos=svc.linhas_de_atos(ext["id"], ORG_ID, segment_matricula_atos(TEXTO)),
         )
 
-        out = svc.obter_selecao(scoped, ORG, UUID(contrato["id"]))
-        # No selection was ever set for this contract -> defaults; assert
-        # the abertura block lookup path directly via listar_atos instead.
-        assert svc.listar_atos(scoped, ORG, UUID(ext["id"]))["abertura_blocos"] == []
-        assert out["descricao_imovel"] is None
+        primeira = svc.listar_atos(scoped, ORG, UUID(ext["id"]))["abertura_blocos"]
+        segunda = svc.listar_atos(scoped, ORG, UUID(ext["id"]))["abertura_blocos"]
+
+        assert len(primeira) == 3
+        assert [(b["id"], b["campo"], b["char_inicio"], b["char_fim"]) for b in primeira] == [
+            (b["id"], b["campo"], b["char_inicio"], b["char_fim"]) for b in segunda
+        ]
+
+    def test_a_purged_extraction_yields_no_blocks_and_does_not_raise(self, scoped):
+        """`purgar_texto_expirado` (migration 111) NULLs `texto_extraido`
+        but leaves `status='concluida'` and the acts/offsets in place —
+        there is nothing left to derive a block from, and the heal must
+        recognise that BEFORE it ever tries to slice into the (now empty)
+        text, not discover it via a `_fatia` offset-mismatch exception."""
+        ext = extracao_row()
+        atos_seed = svc.linhas_de_atos(ext["id"], ORG_ID, segment_matricula_atos(TEXTO))
+        ext["texto_extraido"] = None  # purged, same shape purgar_texto_expirado leaves
+        contrato = contrato_row()
+        seed(
+            scoped,
+            extracoes=[ext],
+            contratos=[contrato],
+            negociacoes=[negociacao_row(contrato["atendimento_id"])],
+            atos=atos_seed,
+        )
+
+        out = svc.listar_atos(scoped, ORG, UUID(ext["id"]))
+
+        assert out["abertura_blocos"] == []
+        assert out["atos"] == []
 
 
 class TestPermutaCitacaoMirrorsObjeto:
@@ -259,10 +334,12 @@ class TestPermutaCitacaoMirrorsObjeto:
         assert "IMÓVEL:" not in bloco["texto"]
         assert "PROPRIETÁRIA" not in bloco["texto"]
 
-    def test_a_pre_136_permuta_extraction_has_no_block_and_is_none(self, scoped):
-        """The identical `None`-fallback contract as the objeto sibling
-        test — a permuta extraction segmented before migration 136 has no
-        `matricula_abertura_blocos` rows and must never guess one."""
+    def test_a_pre_136_permuta_extraction_also_heals_its_blocks_on_read(self, scoped):
+        """The identical self-heal contract as the objeto sibling test — a
+        permuta extraction segmented before migration 136 gains its
+        `matricula_abertura_blocos` rows on read too, through the same
+        `_blocos_abertura` accessor `_descricao_imovel_bloco` calls
+        regardless of which group (`objeto` vs `permuta`) is quoting it."""
         permuta_ativo_id = str(uuid4())
         permuta_ext = extracao_row()
         contrato = contrato_row()
@@ -284,5 +361,10 @@ class TestPermutaCitacaoMirrorsObjeto:
 
         out = svc.obter_selecao(scoped, ORG, UUID(contrato["id"]))
 
-        assert svc.listar_atos(scoped, ORG, UUID(permuta_ext["id"]))["abertura_blocos"] == []
-        assert out["permutas"][0]["descricao_imovel"] is None
+        assert [
+            b["campo"]
+            for b in svc.listar_atos(scoped, ORG, UUID(permuta_ext["id"]))["abertura_blocos"]
+        ] == ["descricao_imovel", "proprietarios", "registro_anterior"]
+        bloco = out["permutas"][0]["descricao_imovel"]
+        assert bloco is not None
+        assert bloco["texto"].startswith("Apartamento nº 12")

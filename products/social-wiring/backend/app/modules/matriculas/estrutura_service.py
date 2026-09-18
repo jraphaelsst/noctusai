@@ -229,14 +229,11 @@ def persistir_atos(db: Any, extracao_id: str, org_id: Any, texto: str) -> int:
         # Migration 136 — the abertura's typed sub-spans (`IMÓVEL:`,
         # `CADASTRO MUNICIPAL:`, ...). Same posture as the details above: the
         # acts are already written and are the product; a failed block insert
-        # is logged at ERROR and does not roll anything back. Unlike the
-        # details above there is no separate read-time self-heal for this
-        # table — a fresh segmentation is the only time the abertura's own
-        # boundaries are known, so a row whose acts already existed BEFORE
-        # this feature shipped (and therefore never re-enters this branch)
-        # simply has no blocks, exactly like `ruido = []` for a pre-136 row —
-        # repaired the sanctioned way, by a re-transcription
-        # (`criar_retranscricao`, migration 135), never backfilled in place.
+        # is logged at ERROR and does not roll anything back. Also self-heals
+        # on read like the details above — `_blocos_abertura` mints missing
+        # blocks the first time anything asks for them, covering BOTH a
+        # failure right here and a row whose acts already existed before
+        # migration 136 shipped and therefore never took this branch at all.
         abertura = next((l for l in linhas if l["kind"] == "abertura"), None)
         if abertura is not None:
             try:
@@ -247,10 +244,10 @@ def persistir_atos(db: Any, extracao_id: str, org_id: Any, texto: str) -> int:
                     _t(db, ABERTURA_BLOCOS_TABLE).insert(
                         linhas_de_abertura_blocos(str(extracao_id), org, blocos)
                     ).execute()
-            except Exception as falha_abertura:  # noqa: BLE001 - acts landed; blocks heal via retranscrição
+            except Exception as falha_abertura:  # noqa: BLE001 - acts landed; blocks heal on read
                 logger.error(
-                    "matricula %s: acts persisted but its abertura blocks were not (%s) — "
-                    "repaired only by a re-transcription (criar_retranscricao)",
+                    "matricula %s: acts persisted but its abertura blocks were not "
+                    "(%s) — they are re-segmented on the next GET .../atos",
                     extracao_id,
                     falha_abertura,
                     exc_info=True,
@@ -415,13 +412,73 @@ def _bloco_abertura_saida(row: dict, texto: str) -> dict:
     }
 
 
-def _blocos_abertura(client: Any, org_id: UUID, extracao_id: Any) -> list[dict]:
+def _blocos_abertura(client: Any, org_id: UUID, extracao: dict) -> list[dict]:
     """`matricula_abertura_blocos` rows for one extraction, in document
-    order. `[]` for a pre-136 extraction (never backfilled — see
-    `persistir_atos`) or one with no abertura at all."""
+    order — healing a concluded extraction that has an abertura act but no
+    blocks yet.
+
+    That gap is real: `persistir_atos` only ever writes blocks on the SAME
+    call that first segments an extraction's acts, so a row whose acts were
+    already there before migration 136 shipped (which is every row that
+    existed on 2026-09-18) never enters that branch and is stuck at zero
+    blocks forever — unlike `matricula_atos` itself, which `_linhas_de_atos`
+    below already self-heals on read. Both are derived ENTIRELY from
+    `texto_extraido` (`segmentar_abertura` over the abertura act's own
+    frozen offsets), so nothing is actually missing here, only unwritten.
+
+    🔴 Never re-segments a row that already has blocks: the heal below only
+    ever runs when this extraction has ZERO rows in
+    `matricula_abertura_blocos` — the same discipline `persistir_atos`
+    holds for acts, and for the same reason (re-deriving would mint new ids
+    under offsets a future caller may come to address by id).
+
+    `[]` for an extraction with no abertura act at all, one whose abertura
+    text has no label `segmentar_abertura` recognises (see that function's
+    module docstring), or one whose `texto_extraido` was purged (migration
+    111) — there is nothing left to derive from, and that must come back
+    empty, never raise. The purged case is checked BEFORE reading the table
+    at all, same posture `_linhas_de_atos` takes for acts: a block's offsets
+    are meaningless once the text they point into is gone, so even a block
+    persisted before the purge must not be handed back as if it still
+    quoted something.
+    """
+    extracao_id = str(extracao["id"])
+    texto = extracao.get("texto_extraido")
+    if not texto:
+        return []
     rows = table_reads.paged_rows(
-        client, ABERTURA_BLOCOS_TABLE, org_id, eq_filters={"extracao_id": str(extracao_id)}
+        client, ABERTURA_BLOCOS_TABLE, org_id, eq_filters={"extracao_id": extracao_id}
     )
+    if not rows:
+        abertura = next(
+            (r for r in _linhas_de_atos(client, org_id, extracao) if r["kind"] == "abertura"),
+            None,
+        )
+        if abertura is not None:
+            try:
+                blocos = segmentar_abertura(
+                    texto, int(abertura["char_inicio"]), int(abertura["char_fim"])
+                )
+                if blocos:
+                    _t(client, ABERTURA_BLOCOS_TABLE).insert(
+                        linhas_de_abertura_blocos(extracao_id, _exigir_org(org_id), blocos)
+                    ).execute()
+            except Exception as falha:  # noqa: BLE001 - heal is best-effort; the re-read
+                # below is the source of truth regardless — a lost race against a
+                # concurrent healer looks identical to a genuine insert failure from
+                # here, and both are answered the same way: read what is actually there.
+                logger.error(
+                    "matricula %s: abertura blocks did not heal cleanly on read (%s)",
+                    extracao_id,
+                    falha,
+                    exc_info=True,
+                )
+            rows = table_reads.paged_rows(
+                client,
+                ABERTURA_BLOCOS_TABLE,
+                org_id,
+                eq_filters={"extracao_id": extracao_id},
+            )
     return sorted(rows, key=lambda r: r["char_inicio"])
 
 
@@ -451,7 +508,7 @@ def listar_atos(
     )
     for ato in atos:
         ato["detalhes"] = detalhes_svc.detalhes_saida(detalhes.get(str(ato["id"])), resolved)
-    blocos = _blocos_abertura(client, org_id, extracao["id"]) if rows else []
+    blocos = _blocos_abertura(client, org_id, extracao) if rows else []
     return {
         "extracao_id": extracao["id"],
         "status": extracao.get("status"),
@@ -1036,13 +1093,15 @@ def obter_selecao(
     all.
 
     `descricao_imovel` (migration 136): the `descricao_imovel` typed block
-    (`matricula_abertura_blocos`) for this extraction, as its own
-    noise-subtracted `{texto, formatacao}`, independent of which acts are
-    actually selected — `None` when the extraction has no such block (no
-    `IMÓVEL:` label recognised, or a pre-136 row). The contract's OBJETO
-    clause needs this SPECIFICALLY rather than the whole selection: a
-    de-furnitured abertura still ends in `PROPRIETÁRIOS: …`, which on a
-    resold property names the PREVIOUS owners.
+    (`matricula_abertura_blocos`, self-healed on read by `_blocos_abertura`
+    when this extraction has an abertura but no blocks yet) for this
+    extraction, as its own noise-subtracted `{texto, formatacao}`,
+    independent of which acts are actually selected — `None` when the
+    extraction has no such block (no `IMÓVEL:` label recognised, or no
+    abertura at all). The contract's OBJETO clause needs this SPECIFICALLY
+    rather than the whole selection: a de-furnitured abertura still ends in
+    `PROPRIETÁRIOS: …`, which on a resold property names the PREVIOUS
+    owners.
 
     The top-level quote is the OBJECT's (`papel='objeto'`), unchanged in
     shape. `permutas` (migration 115) lists one quote per property given in
@@ -1104,10 +1163,12 @@ def _descricao_imovel_bloco(
     extraction (contract `carregador.py`'s OBJETO clause needs the property
     description SPECIFICALLY, never the whole abertura/selection). `None`
     when the extraction has no such block (no `IMÓVEL:` label recognised, or
-    a pre-136 row) — the caller falls back to the whole quote.
+    no abertura at all — `_blocos_abertura` heals a pre-136 row's missing
+    blocks rather than answering `None` for it) — the caller falls back to
+    the whole quote.
     """
     bloco = next(
-        (b for b in _blocos_abertura(client, org_id, extracao["id"]) if b["campo"] == "descricao_imovel"),
+        (b for b in _blocos_abertura(client, org_id, extracao) if b["campo"] == "descricao_imovel"),
         None,
     )
     if bloco is None:
