@@ -163,6 +163,71 @@ Fake by default (seed rule). `real=True` + unknown `provedor` ⇒ `ValueError`. 
 credential ⇒ `ProvedorNaoConfigurado`. `resolver` is the Class-B DI test seam
 (`KB § PATTERNS/backend/di-test-seam.md`) — never monkeypatch the module attribute.
 
+### 1.6 · Sandbox + contract-verification harness (built 2026-09-17, no D4Sign account yet)
+
+F2 (§0) still holds: **no D4Sign account exists on the platform.** Until one does, every wire shape in
+`real.py` beyond what this section pins is a documented guess, each carrying its own
+`NOC-REMEDIATE[d4sign-*]` marker at its call site. This section is what a future session reads to turn
+each guess into an answer **fast** — the whole point of building this now instead of waiting for
+credentials to show up and re-discovering all six corners from scratch.
+
+**What exists:**
+
+- `noctusai_lib.testing.d4sign_sandbox.D4SignSandbox` — a runnable local stub speaking the wire shapes
+  THIS section pins (all 6 calls) plus a `_control/*` surface to advance an envelope through
+  pending → parcial → concluido and emit the matching webhook with a real `Content-HMAC` (computed
+  against the sandbox's own `crypt_key` — the exact function `real.py`'s `validar_webhook` verifies
+  against). Drive it in-process via `httpx.ASGITransport(app=sandbox.app())` (zero network, what every
+  test does) or run it standalone (`python -m noctusai_lib.testing.d4sign_sandbox --port 8790`) for a
+  human with curl/Postman.
+- `noctusai_lib.testing.d4sign_harness.run_contract_harness(mode=...)` — one named, executable
+  assertion per marker below, selected by `mode="sandbox"` (today) or `mode="real"` (once credentials
+  exist) — **never** by editing the harness. Every result carries a `status` from a closed vocabulary
+  (`sandbox_coherent` / `verified_live` / `contradicted_live` / `unverified_needs_live` /
+  `not_configured`) that makes a sandbox run structurally impossible to mistake for a live-vendor
+  confirmation — `verified_live`/`contradicted_live` are LITERALLY UNREACHABLE from `mode="sandbox"`.
+- `noctus.dev.d4sign_contract_verify` (MCP tool) — the same harness, agent-callable, mirroring
+  `noctus.dev.sso_smoke`'s honesty contract (missing credentials ⇒ every marker `not_configured`,
+  never a silent sandbox fallback).
+
+**The 6 markers, and what answers each one:**
+
+| # | Marker | Question | Answered by |
+|---|---|---|---|
+| 1 | `d4sign-portal-link` | Does `uploadbinary`'s response carry a real portal-link field, or is the synthesized `secure.d4sign.com.br/documents/{uuid}` URL correct? | `mode="real"`: inspect `raw_upload_response` for keys beyond `uuid`. |
+| 2 | `d4sign-signer-external-id` | Does `createlist`'s response carry a real per-signer id? | `mode="real"`: inspect `raw_createlist_response`. |
+| 3 | `d4sign-webhook-type-post` | Does `type_post` share the `statusId` vocabulary? | Needs a captured LIVE webhook (no D4Sign API can trigger a test delivery) — see below. |
+| 4 | `d4sign-status-per-signer` | Does `GET /documents/{uuid}` carry per-signer detail? | `mode="real"`: inspect `raw_status_response` for keys beyond `statusId`. |
+| 5 | `d4sign-sendtosigner-message` | Does D4Sign actually surface a caller-supplied message to signers? | Cannot auto-verify even with credentials — a human must check the real notification e-mail. Always `unverified_needs_live`. |
+| 6 | `d4sign-error-body-shape` | Does a 4xx/5xx body carry `message`/`error`/`erro`? | `mode="real"`: provoke a real 4xx and eyeball the evidence — human judgement call, not auto-verdict. |
+
+**Credential drop-in path (exactly what to set, where):**
+
+1. Set three org-scoped values through the platform credential chain (`noctusai_lib.config.credentials.
+   resolve_credential` — `org_settings` → `platform_settings` → env, per §1.4/§1.5):
+   `d4sign_api_token`, `d4sign_crypt_key`, `d4sign_safe_uuid`. Fastest path for a first manual run: env
+   vars `D4SIGN_API_TOKEN` / `D4SIGN_CRYPT_KEY` / `D4SIGN_SAFE_UUID` (tier 3, no DB write needed). For a
+   real org, insert rows into `public.org_settings` keyed by `(org_id, key)` instead — never a
+   product-local store (F1's `ProvedorNaoConfigurado` refusal only ever checks this one chain).
+2. Run `await run_contract_harness(mode="real", org_id="<org-uuid>")` (or the MCP tool
+   `noctus.dev.d4sign_contract_verify(mode="real", org_id=...)`). Markers 1/2/4/6 answer immediately
+   from the first real API round-trip the harness makes.
+3. Marker 3 (webhook vocabulary) additionally needs a captured live delivery: point the D4Sign
+   dashboard's webhook URL at any reachable receiver (a temporary tunnel is enough), sign a real test
+   document, save the raw POST body + headers as `{"body": "...", "headers": {...}}` to a JSON file,
+   and pass `captured_webhook_path=<that file>` to the same call.
+4. Marker 5 (sendtosigner message) never auto-resolves — open the notification e-mail a real signer
+   receives and confirm the operator-supplied `mensagem` (contract §3.1) appears as sent.
+5. **Once a marker's `status` comes back `verified_live`:** delete its `NOC-REMEDIATE[d4sign-*]` marker
+   in `real.py` and fold the confirmed shape into this section's pinned wire table (§1.4) — the marker's
+   job is done. **`contradicted_live`:** fix `real.py` to consume the real field instead of
+   guessing/synthesizing, THEN delete the marker. Never delete a marker on a `sandbox_coherent` or
+   `unverified_needs_live` result — those confirm nothing about the live vendor.
+
+🔴 Do not read a clean `mode="sandbox"` harness run as "verified end to end" (F2's own ban still
+applies) — `HarnessReport.all_verified_live` is hardcoded `False` whenever any marker is not
+`verified_live`, and no sandbox marker can ever be `verified_live` by construction.
+
 ---
 
 ## 2 · social-wiring — migration 134

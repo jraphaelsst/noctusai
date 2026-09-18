@@ -212,6 +212,16 @@ dependencies = [
 # gate work-around.
 testing = [
     "pytest>=7.0",
+    # `noctusai_lib.testing.d4sign_sandbox.serve()` runs the D4Sign sandbox
+    # as a real local HTTP server for a human driving it manually
+    # (curl/Postman) — an EXTRA for the same reason pytest is above: every
+    # product image would otherwise carry a server runtime to satisfy a
+    # surface automated tests never need (they use `httpx.ASGITransport`
+    # against the same `D4SignSandbox.app()`, no socket, no uvicorn). The
+    # import is try/except-guarded in `serve()` with an actionable error
+    # when this extra isn't installed. Version pinned to match the root
+    # `requirements.txt` (`uvicorn[standard]==0.31.1`).
+    "uvicorn>=0.31.1",
 ]
 
 [tool.setuptools.packages.find]

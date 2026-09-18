@@ -190,6 +190,89 @@ def test_criar_envelope_calls_sendtosigner() -> None:
     assert isinstance(body["message"], str) and body["message"]
 
 
+def test_criar_envelope_plumbs_a_caller_supplied_mensagem() -> None:
+    """Contract §3.1's optional `mensagem` field must reach sendtosigner
+    verbatim — before this, the Protocol had no parameter for it at all
+    and every envelope silently got the fixed default
+    (`NOC-REMEDIATE[d4sign-sendtosigner-message]`)."""
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/uploadbinary"):
+            return _json_response(200, {"uuid": "doc-uuid-3b"})
+        if request.url.path.endswith("/createlist"):
+            return _json_response(200, {})
+        if request.url.path.endswith("/sendtosigner"):
+            captured["sendtosigner"] = request
+            return _json_response(200, {})
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    adapter = _adapter(handler)
+    asyncio.run(
+        adapter.criar_envelope(
+            _documento(), _signatarios(), mensagem="Por favor assine até sexta."
+        )
+    )
+
+    body = json.loads(captured["sendtosigner"].content)
+    assert body["message"] == "Por favor assine até sexta."
+
+
+def test_criar_envelope_without_mensagem_uses_the_default() -> None:
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/uploadbinary"):
+            return _json_response(200, {"uuid": "doc-uuid-3c"})
+        if request.url.path.endswith("/createlist"):
+            return _json_response(200, {})
+        if request.url.path.endswith("/sendtosigner"):
+            captured["sendtosigner"] = request
+            return _json_response(200, {})
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    adapter = _adapter(handler)
+    asyncio.run(adapter.criar_envelope(_documento(), _signatarios(), mensagem=None))
+
+    body = json.loads(captured["sendtosigner"].content)
+    assert body["message"] == "Você recebeu um documento para assinatura eletrônica."
+
+
+def test_response_hook_observes_every_wire_response() -> None:
+    """The instrumentation seam `d4sign_harness.py` relies on — additive,
+    off by default, must never change what `criar_envelope` returns."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/uploadbinary"):
+            return _json_response(200, {"uuid": "doc-uuid-hook"})
+        if request.url.path.endswith("/createlist"):
+            return _json_response(200, {"message": "ok"})
+        if request.url.path.endswith("/sendtosigner"):
+            return _json_response(200, {"message": "ok"})
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    observed: list[tuple[str, dict]] = []
+    adapter = _adapter(handler, response_hook=lambda step, body: observed.append((step, body)))
+
+    envelope = asyncio.run(adapter.criar_envelope(_documento(), _signatarios()))
+
+    assert envelope.external_id == "doc-uuid-hook"
+    assert [step for step, _ in observed] == ["uploadbinary", "createlist", "sendtosigner"]
+    assert observed[0] == ("uploadbinary", {"uuid": "doc-uuid-hook"})
+
+
+def test_response_hook_exception_never_breaks_the_call() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _json_response(200, {"statusId": 4})
+
+    def boom(step: str, body: dict) -> None:
+        raise RuntimeError("instrumentation bug")
+
+    adapter = _adapter(handler, response_hook=boom)
+    evento = asyncio.run(adapter.consultar("doc-uuid-hook-2"))
+    assert evento.status == "concluido"
+
+
 def test_upload_with_no_uuid_raises_provedor_indisponivel() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _json_response(200, {})

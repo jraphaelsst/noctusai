@@ -58,6 +58,22 @@ def test_criar_envelope_is_deterministic() -> None:
     assert de_novo.external_id == envelope.external_id
 
 
+def test_criar_envelope_accepts_and_records_mensagem() -> None:
+    """Protocol conformance for the `mensagem` keyword every adapter must
+    accept (contract §1.6 / `NOC-REMEDIATE[d4sign-sendtosigner-message]`)."""
+    adapter = FakeSignatureAdapter()
+    envelope = asyncio.run(
+        adapter.criar_envelope(_documento(), _signatarios(), mensagem="oi")
+    )
+    assert adapter._envelopes[envelope.external_id].mensagem == "oi"
+
+
+def test_criar_envelope_mensagem_defaults_to_none() -> None:
+    adapter = FakeSignatureAdapter()
+    envelope = asyncio.run(adapter.criar_envelope(_documento(), _signatarios()))
+    assert adapter._envelopes[envelope.external_id].mensagem is None
+
+
 def test_full_lifecycle_create_sign_download() -> None:
     adapter = FakeSignatureAdapter()
     envelope = asyncio.run(adapter.criar_envelope(_documento(), _signatarios()))
