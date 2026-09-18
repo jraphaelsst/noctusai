@@ -113,6 +113,7 @@ from noctusai_lib.integrations.documents.transcription import (
     FakeDocumentTranscriber,
     TranscribedPage,
     Transcription,
+    has_raw_markup,
     make_document_transcriber,
 )
 from noctusai_lib.integrations.documents.text import (
@@ -194,6 +195,7 @@ __all__ = [
     "ato_hint_span",
     "classify_kind",
     "find_birthdate",
+    "has_raw_markup",
     "find_cpf",
     "find_data_casamento",
     "find_data_emissao",

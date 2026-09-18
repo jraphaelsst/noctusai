@@ -208,6 +208,38 @@ class TestGate:
         assert [b["codigo"] for b in av.bloqueios] == ["SOMA_PARCELAS_DIFERENTE_DO_PRECO"]
         assert not av.pronto
 
+    def test_matricula_text_with_raw_markup_blocks(self):
+        """Migration 135: a pre-retention transcription (or a malformed
+        vision reply `parse_markup` had to keep literal) must never reach a
+        signed deed with `**`/`<u>` still in it — the highest-value refusal
+        this slice adds."""
+        d = fx.variante(1)
+        d = replace(
+            d,
+            matricula=replace(
+                d.matricula, texto=fx.MATRICULA_TEXTO + " **negrito sem fechar"
+            ),
+        )
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert "MATRICULA_COM_MARCACAO_BRUTA" in _codigos(av.bloqueios)
+        assert not av.pronto
+
+    def test_clean_matricula_text_does_not_block(self):
+        _d, _pol, _sw, av = _avaliar(1)
+        assert "MATRICULA_COM_MARCACAO_BRUTA" not in _codigos(av.bloqueios)
+
+    def test_permuta_matricula_text_with_raw_markup_blocks(self):
+        d = fx.variante(5)  # V5: financiamento + permuta
+        alvo = d.permuta_imoveis[0]
+        d = replace(
+            d,
+            permuta_imoveis=[
+                replace(alvo, descricao_matricula=(alvo.descricao_matricula or "") + " <u>sem fechar")
+            ],
+        )
+        _d, _pol, _sw, av = _avaliar(5, d)
+        assert "MATRICULA_COM_MARCACAO_BRUTA" in _codigos(av.bloqueios)
+
     def test_rg_igual_ao_cpf_blocks(self):
         d = fx.variante(1)
         v = replace(d.vendedores[0], rg=d.vendedores[0].cpf)

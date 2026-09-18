@@ -72,9 +72,11 @@ vi.mock("@tanstack/react-query", () => {
 
 import {
   readableError,
+  useArquivoOriginalExtracao,
   useCriarExtracaoDeDocumento,
   useDeleteExtracao,
   useMatriculaExtracoes,
+  useRetranscreverExtracao,
   useUploadMatricula,
 } from "./useMatriculas";
 
@@ -148,6 +150,54 @@ describe("useCriarExtracaoDeDocumento", () => {
     expect(mockPost).toHaveBeenCalledWith("/api/matriculas/extracoes/de-documento", {
       codigo: "ONE9001",
       imovel_documento_id: "doc-1",
+    });
+  });
+});
+
+describe("useRetranscreverExtracao", () => {
+  it("POSTs to the retranscrever route with the extraction id and refetches both queries", async () => {
+    mockPost.mockResolvedValue({ data: { id: "e3", status: "pendente" } });
+    const hook = useRetranscreverExtracao() as any;
+    hook.mutate("extracao-1");
+    await vi.waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(mockPost).toHaveBeenCalledWith("/api/matriculas/extracoes/extracao-1/retranscrever");
+    await vi.waitFor(() =>
+      expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ["matricula-extracoes"] }),
+    );
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ["matricula-extracao"] });
+  });
+
+  it("🔴 shows the backend's own 409 sentence when nothing was retained to re-run from", async () => {
+    mockPost.mockRejectedValue(
+      new Error("[409] Esta extração não guardou o PDF de origem — envie o arquivo novamente para transcrever."),
+    );
+    const hook = useRetranscreverExtracao() as any;
+    hook.mutate("extracao-legacy");
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(toastError).toHaveBeenCalledWith("Erro ao retranscrever", {
+      description: "Esta extração não guardou o PDF de origem — envie o arquivo novamente para transcrever.",
+    });
+  });
+});
+
+describe("useArquivoOriginalExtracao", () => {
+  it("GETs the arquivo-original route and returns the signed url payload", async () => {
+    mockGet.mockResolvedValue({ data: { url: "https://signed.example/x", expires_at: "2026-01-01T00:05:00Z" } });
+    const hook = useArquivoOriginalExtracao() as any;
+    let resultado: unknown;
+    hook.mutate("extracao-1", { onSuccess: (r: unknown) => { resultado = r; } });
+    await vi.waitFor(() => expect(mockGet).toHaveBeenCalled());
+    expect(mockGet).toHaveBeenCalledWith("/api/matriculas/extracoes/extracao-1/arquivo-original");
+    await vi.waitFor(() => expect(resultado).toEqual({ url: "https://signed.example/x", expires_at: "2026-01-01T00:05:00Z" }));
+  });
+
+  it("🔴 toasts the backend's own 409 sentence when no source was retained", async () => {
+    mockGet.mockRejectedValue(new Error("[409] Esta extração não guardou o PDF de origem."));
+    const hook = useArquivoOriginalExtracao() as any;
+    hook.mutate("extracao-legacy");
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalled());
+    expect(toastError).toHaveBeenCalledWith("Erro ao abrir o documento original", {
+      description: "Esta extração não guardou o PDF de origem.",
     });
   });
 });

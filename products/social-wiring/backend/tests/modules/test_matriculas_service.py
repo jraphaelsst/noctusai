@@ -139,6 +139,28 @@ class TestTheStatusLifecycle:
         ]
 
     @pytest.mark.asyncio
+    async def test_possui_marcacao_bruta_is_false_for_clean_text(self):
+        db = _RecordingDB()
+        await processar_extracao(
+            "e-clean", b"%PDF", _ORG, db, transcriber=_StubTranscriber(_ok("P1"))
+        )
+        assert db.last["possui_marcacao_bruta"] is False
+
+    @pytest.mark.asyncio
+    async def test_possui_marcacao_bruta_is_true_for_a_stray_marker(self):
+        """A malformed vision reply — `parse_markup` keeps an unbalanced
+        `**`/`<u>` literal rather than guess at it (its own docstring), so
+        `resultado.text` can still carry one. Migration 135's flag exists to
+        catch exactly this going forward, not just the pre-135 legacy rows."""
+        db = _RecordingDB()
+        await processar_extracao(
+            "e-markup", b"%PDF", _ORG, db,
+            transcriber=_StubTranscriber(_ok("Texto com **negrito sem fechar")),
+        )
+        assert db.last["possui_marcacao_bruta"] is True
+        assert db.last["texto_extraido"] == "Texto com **negrito sem fechar"
+
+    @pytest.mark.asyncio
     async def test_the_row_is_marked_processando_before_any_work(self):
         """A row stuck at 'pendente' is indistinguishable from one nobody
         picked up, so the transition has to happen first."""

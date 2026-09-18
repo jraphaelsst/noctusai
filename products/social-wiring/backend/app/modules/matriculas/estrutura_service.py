@@ -66,6 +66,7 @@ from noctusai_lib.primitives.exceptions import (
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
+from app.modules.matriculas import arquivos_service as arquivos_svc
 from app.services import table_reads
 from app.services.documento_store import log_acesso_extracao, now_iso, today
 
@@ -419,6 +420,124 @@ def criar_extracao_de_documento(
     }
     _t(client, EXTRACOES_TABLE).insert(row).execute()
     return {**row, "storage_path": documento["storage_path"]}
+
+
+def criar_retranscricao(
+    client: Any, org_id: UUID, extracao_id: str, *, usuario_id: Optional[Any]
+) -> dict:
+    """Re-run transcription of a CONCLUDED extraction's retained source
+    (migration 135). SUPERSEDES: inserts a new `pendente` row carrying the
+    same `codigo` / `imovel_documento_id` / `arquivo_origem_id`, then marks
+    `anterior.substituida_por` — never touches `anterior.texto_extraido`, so
+    the write-once trigger (111) is never in tension with this.
+
+    409 when there is nothing to re-run from: the extraction is not yet
+    concluded, it was already superseded once, or (the pre-135 rows this
+    slice cannot repair — see `NOC-REMEDIATE`-turned-closed note in
+    `service.py`) it kept no retained source at all.
+    """
+    anterior = exigir_extracao(client, org_id, UUID(extracao_id))
+    if anterior.get("status") != STATUS_CONCLUIDA:
+        raise ConflictError(
+            "Só é possível retranscrever uma extração concluída.",
+            resource=EXTRACOES_TABLE,
+        )
+    if anterior.get("substituida_por"):
+        raise ConflictError(
+            "Esta extração já foi substituída por uma retranscrição mais "
+            "recente.",
+            resource=EXTRACOES_TABLE,
+        )
+
+    imovel_documento_id = anterior.get("imovel_documento_id")
+    arquivo_origem_id = anterior.get("arquivo_origem_id")
+    if imovel_documento_id:
+        documento = docs_svc.STORE.exigir(
+            client, org_id, anterior["codigo"], UUID(imovel_documento_id)
+        )
+        storage_path = documento["storage_path"]
+        nome_arquivo = documento.get("nome_original") or anterior["nome_arquivo"]
+    elif arquivo_origem_id:
+        arquivo = arquivos_svc.exigir(client, org_id, UUID(arquivo_origem_id))
+        storage_path = arquivo["storage_path"]
+        nome_arquivo = arquivo.get("nome_original") or anterior["nome_arquivo"]
+    else:
+        raise ConflictError(
+            "Esta extração não guardou o PDF de origem — envie o arquivo "
+            "novamente para transcrever.",
+            resource=EXTRACOES_TABLE,
+        )
+
+    nova_id = uuid4()
+    row = {
+        "id": str(nova_id),
+        "org_id": str(org_id),
+        "user_id": str(usuario_id) if usuario_id else None,
+        "nome_arquivo": nome_arquivo,
+        "tamanho_bytes": anterior.get("tamanho_bytes"),
+        "status": "pendente",
+        "codigo": anterior.get("codigo"),
+        "imovel_documento_id": imovel_documento_id,
+        "arquivo_origem_id": arquivo_origem_id,
+        "created_at": now_iso(),
+    }
+    _t(client, EXTRACOES_TABLE).insert(row).execute()
+    # 🔴 Marked AFTER the new row exists, never before: a failure between the
+    # insert above and this update would leave `anterior` un-superseded
+    # rather than pointing at a row that was never created.
+    _t(client, EXTRACOES_TABLE).update({"substituida_por": str(nova_id)}).eq(
+        "id", str(extracao_id)
+    ).eq("org_id", str(org_id)).execute()
+    return {**row, "storage_path": storage_path}
+
+
+async def obter_url_arquivo_original(
+    client: Any,
+    storage: Any,
+    org_id: UUID,
+    extracao_id: str,
+    *,
+    usuario_id: Optional[Any],
+    intent: str = "view",
+) -> dict:
+    """A short-TTL signed URL for the SOURCE PDF an extraction was
+    transcribed from — linked (`imovel_documentos`) or standalone
+    (`matricula_extracao_arquivos`, migration 135) — so a human can audit the
+    transcription against the original. 409 when nothing was retained (the
+    pre-135 unlinked rows).
+
+    Logs the access against the EXTRACTION (`documento_store.
+    log_acesso_extracao`) for the standalone case, since
+    `arquivos_svc.STORE` has no `acessos_table` of its own to log through —
+    see that module's docstring. The linked case already logs through
+    `docs_svc.STORE.url`'s own `imovel_documento_acessos` write (as a plain
+    `view`/`download`, not `extracao_id`-keyed — it has a real
+    `imovel_documentos` row to log against).
+    """
+    extracao = exigir_extracao(client, org_id, UUID(extracao_id))
+    imovel_documento_id = extracao.get("imovel_documento_id")
+    arquivo_origem_id = extracao.get("arquivo_origem_id")
+    if imovel_documento_id:
+        return await docs_svc.url_do_documento(
+            client,
+            storage,
+            org_id,
+            extracao["codigo"],
+            UUID(imovel_documento_id),
+            usuario_id=usuario_id,
+        )
+    if arquivo_origem_id:
+        signed = await arquivos_svc.url(
+            client, storage, org_id, UUID(arquivo_origem_id)
+        )
+        log_acesso_extracao(
+            client, docs_svc.STORE.acessos_table, org_id, extracao_id,
+            usuario_id, intent,
+        )
+        return signed
+    raise ConflictError(
+        "Esta extração não guardou o PDF de origem.", resource=EXTRACOES_TABLE
+    )
 
 
 # ─── the suggester ────────────────────────────────────────────────────────
@@ -1100,6 +1219,7 @@ __all__ = [
     "SELECAO_TABLE",
     "atos_da_extracao",
     "criar_extracao_de_documento",
+    "criar_retranscricao",
     "definir_fontes",
     "definir_selecao",
     "exigir_extracao",
@@ -1109,6 +1229,7 @@ __all__ = [
     "log_leitura_texto",
     "obter_fontes",
     "obter_selecao",
+    "obter_url_arquivo_original",
     "persistir_atos",
     "purgar_texto_expirado",
     "sugerir",
