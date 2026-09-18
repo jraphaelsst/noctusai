@@ -54,6 +54,7 @@ DEFAULT_CHECKS: list[str] = [
     "required_prod_env_present",  # newly-required-at-boot env keys (seed baseline) present in prod snapshot
     "cors_roster_complete",  # backstop: every registry slug has a CORS-resolvable origin
     "schema_exposure",  # PGRST106 class — product's declared schema is in authenticator's pgrst.db_schemas
+    "schema_drift",  # does the live schema actually contain what migrations/ORM declare? (2026-09-17 class)
     "env_fleet_manifest",  # every deploy/fleet/env.fleet.keys name has a non-empty value in a fed .env.fleet snapshot
 ]
 
@@ -773,6 +774,38 @@ def _default_run_check(
             f"schema_exposure ok — {product}'s schema is exposed to PostgREST "
             f"({result['exposed_schemas']})"
         )
+    if check == "schema_drift":
+        # Sibling of schema_exposure, same fail-closed posture: does the
+        # live schema actually contain what THIS product's migrations/ORM
+        # declare? not_configured / undeterminable / error are FAILURES
+        # here too — "we couldn't check" must not read as "it's fine" for
+        # the gate built specifically because erp.assinaturas.external_id /
+        # erp.tool_call_audits / erp.llm_preferences (2026-09-17) all
+        # looked fine right up until a real request hit them.
+        from . import schema_drift as _sd
+
+        result = _sd.check_schema_drift(product)
+        if result["status"] in ("not_configured", "undeterminable", "error"):
+            return False, (
+                f"schema_drift BLOCKED ({result['status']}) — "
+                f"{result.get('error') or 'could not verify the live schema'}"
+            )
+        if result["status"] == "drift_detected":
+            details = "; ".join(
+                f"{f['kind']}:{f['table']}" + (f".{f['column']}" if f.get("column") else "")
+                for f in result["findings"][:8]
+            )
+            return False, (
+                f"schema_drift VIOLATED — {product}'s declared schema disagrees "
+                f"with the live DB: {details}. See "
+                f"noctus.dev.schema_drift(product='{product}') for full findings. "
+                f"See KB § PATTERNS/backend/database-rls.md."
+            )
+        return True, (
+            f"schema_drift ok — {result['checked_tables']} table(s) checked, "
+            f"live schema matches {product}'s declared sources "
+            f"({result['sources_used']})"
+        )
     if check == "env_fleet_manifest":
         # Platform-wide (product arg unused), opt-in: SKIPs loudly (ok=True)
         # when no deploy/fleet/env.fleet.keys manifest or no .env.fleet
@@ -943,7 +976,13 @@ def register(server) -> None:
             "/ a .env.prod, else it SKIPs loudly, schema_exposure — the "
             "product's declared DB schema must be in the authenticator role's "
             "pgrst.db_schemas exposed list (PGRST106 class; UNLIKE every other "
-            "leg this one FAILS, never skips, when it can't verify), and "
+            "leg this one FAILS, never skips, when it can't verify), "
+            "schema_drift — does the live schema actually contain what the "
+            "product's migrations/ORM declare (missing_table / missing_column / "
+            "orm_migration_drift; same fail-closed posture as schema_exposure — "
+            "not_configured/undeterminable/error all BLOCK, never skip; the "
+            "class behind erp.assinaturas.external_id / erp.tool_call_audits / "
+            "erp.llm_preferences, 2026-09-17), and "
             "env_fleet_manifest — every deploy/fleet/env.fleet.keys name has a "
             "non-empty value in a .env.fleet snapshot fed via env_fleet_path / "
             "NOCTUS_ENV_FLEET_FILE, else it SKIPs loudly), CLASSIFIES any "

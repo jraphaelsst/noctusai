@@ -1155,38 +1155,52 @@ def check_product_service_worker(product_path: Path) -> list[dict]:
 
 
 def check_mock_schema_validation(product_path: Path) -> list[dict]:
-    """Verify the product's test conftest does not opt OUT of MockSupabaseClient
-    schema validation without an explicit rationale comment.
+    """Verify NO test file (conftest.py OR any individual test module) opts
+    OUT of MockSupabaseClient schema validation without an explicit
+    rationale comment.
 
     Default as of `mock-supabase-schema-validation` Phase 4 (2026-04-24) is
-    `validate_schema=True`. A conftest that passes `validate_schema=False`
-    must include a nearby comment explaining WHY (pointing at the follow-up
+    `validate_schema=True`. A file that passes `validate_schema=False` must
+    include a nearby comment explaining WHY (pointing at the follow-up
     reconciliation project that will flip it back).
 
-    Detection rules:
-      - If conftest passes `validate_schema=False` literally AND the file
-        contains no comment mentioning `schema-drift` / `reconciliation` /
-        `follow-up` → warning with severity=high.
-      - If conftest uses the shared `MockSupabaseClient()` with no flag →
+    🔴 2026-09-17 (schema-drift-gate slice): widened from conftest.py-only
+    to every `.py` file under `backend/tests/` — a `MockSupabaseClient(
+    validate_schema=False, ...)` constructed DIRECTLY inside a test module
+    (not just the shared conftest fixture) was invisible to this detector
+    for exactly as long as products/adconnect, /social-wiring, /agents,
+    /personal-finance had been doing it. `MockSupabaseClient` was mocked
+    away by the very tests meant to exercise the real schema — closing the
+    gap per file, not just per shared-fixture, is the whole point: turning
+    off schema validation must be a visible, argued decision EVERYWHERE it
+    happens, not just where a product happened to centralize it.
+
+    Detection rules (per file):
+      - `validate_schema=False` literally present AND neither the file
+        itself NOR the product's `backend/tests/conftest.py` contains a
+        comment mentioning `schema-drift` / `reconciliation` / `follow-up`
+        / `TODO` → warning with severity=high. A conftest-level rationale
+        covers every file in the product (the erp/therapy/adconnect
+        precedent: ONE argued paragraph in conftest.py, not the same
+        paragraph pasted into every test file that inherits the mock) —
+        but a product with NO rationale anywhere is flagged file-by-file,
+        same as before.
+      - `MockSupabaseClient()` with no flag, or `validate_schema=True` →
         fine (the default is now True).
-      - If conftest doesn't instantiate `MockSupabaseClient` at all → skip.
+      - A file that doesn't instantiate `MockSupabaseClient` at all → skip.
 
     This closes the "silent opt-out" loophole: a product CAN drop validation
     if the drift is too big to fix in-session, but the next agent inherits
-    the rationale and the pointer to the remediation project.
+    the rationale and the pointer to the remediation project — either in the
+    file itself or in the one conftest.py every file under `backend/tests/`
+    can reasonably be expected to share.
     """
     issues: list[dict] = []
     name = product_path.name
-    conftest = product_path / "backend" / "tests" / "conftest.py"
-    if not conftest.exists():
-        return issues
-    content = conftest.read_text()
-
-    # Opt-out detector — string-match `validate_schema=False` anywhere in file.
-    if "validate_schema=False" not in content:
+    tests_dir = product_path / "backend" / "tests"
+    if not tests_dir.is_dir():
         return issues
 
-    # Rationale detector — look for any explanatory keyword.
     rationale_keywords = (
         "schema-drift",
         "schema drift",
@@ -1195,26 +1209,44 @@ def check_mock_schema_validation(product_path: Path) -> list[dict]:
         "follow up",
         "TODO",
     )
-    has_rationale = any(kw.lower() in content.lower() for kw in rationale_keywords)
-    if has_rationale:
-        return issues
 
-    issues.append({
-        "product": name,
-        "file": "backend/tests/conftest.py",
-        "issue": (
-            "MockSupabaseClient is constructed with `validate_schema=False` but "
-            "the conftest has no rationale comment. Silent opt-out from schema "
-            "validation re-opens the silent-fail class closed by the "
-            "`mock-supabase-schema-validation` project. Either flip back to "
-            "`validate_schema=True` (default) or add a comment block naming the "
-            "drift points + the follow-up reconciliation project that will "
-            "resolve them (see `products/therapy-platform/projects/"
-            "therapy-audio-lifecycle-schema-reconciliation/` for the reference "
-            "shape)."
-        ),
-        "severity": "high",
-    })
+    def _has_rationale(text: str) -> bool:
+        lowered = text.lower()
+        return any(kw.lower() in lowered for kw in rationale_keywords)
+
+    conftest = tests_dir / "conftest.py"
+    conftest_has_rationale = conftest.is_file() and _has_rationale(conftest.read_text())
+
+    for test_file in sorted(tests_dir.rglob("*.py")):
+        content = test_file.read_text()
+
+        # Opt-out detector — string-match `validate_schema=False` anywhere in file.
+        if "validate_schema=False" not in content:
+            continue
+
+        # Rationale detector — this file, OR the product's shared conftest.
+        if _has_rationale(content) or conftest_has_rationale:
+            continue
+
+        issues.append({
+            "product": name,
+            "file": str(test_file.relative_to(product_path)),
+            "issue": (
+                "MockSupabaseClient is constructed with `validate_schema=False` but "
+                "this file has no rationale comment. Silent opt-out from schema "
+                "validation re-opens the silent-fail class closed by the "
+                "`mock-supabase-schema-validation` project (and the class behind "
+                "the erp.assinaturas.external_id / erp.tool_call_audits / "
+                "erp.llm_preferences bugs, 2026-09-17 — none surfaced in tests "
+                "because the mock never checked the real schema). Either flip back "
+                "to `validate_schema=True` (default) or add a comment block naming "
+                "the drift points + the follow-up reconciliation project that will "
+                "resolve them (see `products/therapy-platform/projects/"
+                "therapy-audio-lifecycle-schema-reconciliation/` for the reference "
+                "shape)."
+            ),
+            "severity": "high",
+        })
     return issues
 
 

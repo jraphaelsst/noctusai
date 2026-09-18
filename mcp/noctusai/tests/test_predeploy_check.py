@@ -857,3 +857,87 @@ def test_audit_env_fleet_manifest_present_pure():
 def test_default_checks_include_new_legs():
     assert "schema_exposure" in PC.DEFAULT_CHECKS
     assert "env_fleet_manifest" in PC.DEFAULT_CHECKS
+    assert "schema_drift" in PC.DEFAULT_CHECKS
+
+
+# ── schema_drift leg (2026-09-17 live-schema-vs-declared class) ───────────
+def test_schema_drift_runner_not_configured_is_a_failure(monkeypatch, tmp_path):
+    """Same fail-closed posture as schema_exposure: not_configured BLOCKS,
+    never skips."""
+    from tools.noctus.dev import schema_drift as SD
+
+    monkeypatch.setattr(
+        SD, "check_schema_drift", lambda product, **kw: {
+            "status": "not_configured",
+            "error": "NOC-REMEDIATE[credentials]: no supabase_access_token resolved.",
+        }
+    )
+    ok, msg = PC._default_run_check("schema_drift", "erp-imobiliario", tmp_path)
+    assert ok is False
+    assert "BLOCKED" in msg
+    assert "not_configured" in msg
+
+
+def test_schema_drift_runner_undeterminable_is_a_failure(monkeypatch, tmp_path):
+    """Fail-closed: no migrations/ORM source found ⇒ BLOCK, not a silent pass."""
+    from tools.noctus.dev import schema_drift as SD
+
+    monkeypatch.setattr(
+        SD, "check_schema_drift", lambda product, **kw: {
+            "status": "undeterminable",
+            "error": "no schema-expectation source found for ghost-product",
+        }
+    )
+    ok, msg = PC._default_run_check("schema_drift", "ghost-product", tmp_path)
+    assert ok is False
+    assert "BLOCKED" in msg
+    assert "undeterminable" in msg
+
+
+def test_schema_drift_runner_passes_when_in_sync(monkeypatch, tmp_path):
+    from tools.noctus.dev import schema_drift as SD
+
+    monkeypatch.setattr(
+        SD, "check_schema_drift", lambda product, **kw: {
+            "status": "in_sync",
+            "findings": [],
+            "checked_tables": 12,
+            "sources_used": {"migrations": True, "orm": False},
+        }
+    )
+    ok, msg = PC._default_run_check("schema_drift", "erp-imobiliario", tmp_path)
+    assert ok is True
+    assert "schema_drift ok" in msg
+
+
+def test_schema_drift_runner_fails_when_drift_detected(monkeypatch, tmp_path):
+    from tools.noctus.dev import schema_drift as SD
+
+    monkeypatch.setattr(
+        SD, "check_schema_drift", lambda product, **kw: {
+            "status": "drift_detected",
+            "findings": [
+                {"kind": "missing_table", "table": "erp.llm_preferences", "column": None},
+            ],
+            "checked_tables": 12,
+            "sources_used": {"migrations": True, "orm": False},
+        }
+    )
+    ok, msg = PC._default_run_check("schema_drift", "erp-imobiliario", tmp_path)
+    assert ok is False
+    assert "VIOLATED" in msg
+    assert "erp.llm_preferences" in msg
+
+
+def test_schema_drift_runner_scopes_to_the_one_product(monkeypatch, tmp_path):
+    from tools.noctus.dev import schema_drift as SD
+
+    captured = {}
+
+    def _fake(product, **kw):
+        captured["product"] = product
+        return {"status": "in_sync", "findings": [], "checked_tables": 0, "sources_used": {}}
+
+    monkeypatch.setattr(SD, "check_schema_drift", _fake)
+    PC._default_run_check("schema_drift", "orbity", tmp_path)
+    assert captured["product"] == "orbity"

@@ -151,6 +151,58 @@ Numbered SQL files in `products/<name>/backend/migrations/001_*.sql`, `002_*.sql
 - Seed data, if any, goes in a separate `00X_seed_*.sql` file.
 - **Next number wins — but "next" is not `max(local NN) + 1`.** Use `noctus.dev.next_migration_number` (or just `noctus.dev.scaffold_migration`, which calls it internally) rather than eyeballing `ls migrations/`. See § Migration-number collision safety below.
 
+### Migrations mirror the code — the live-schema drift gate (2026-09-17)
+
+A migration FILE existing, being syntactically valid, and even being recorded
+"applied" in `schema_migrations` are three different facts from "the live
+schema actually has what the code reads and writes." Three real bugs, found
+the same day, all the same shape:
+
+1. `erp.assinaturas.external_id` — `assinatura_service.preparar_envio` had
+   inserted this key for months. No migration ever created the column
+   (`047_assinaturas_external_id.sql` added it after the fact).
+2. `erp.tool_call_audits` — `ai_service.py` + `audit_hook.py` write rows via
+   the seed `make_audit_writer`. Migration `030_tool_call_audits.sql` was
+   authored but never *applied* — erp's `schema_migrations` ledger was
+   empty (the pre-2026-09 phantom-schema bug wrote bookkeeping to
+   `erp_imobiliario` while DDL landed in `erp`), so "which migrations ran"
+   was unanswerable. Table absent.
+3. `erp.llm_preferences` — a live routed page (`App.tsx:283` →
+   `useLLMPreferences()`) called an endpoint backed by a table whose
+   migration (`017_llm_preferences.sql`) referenced `public.org_members`, a
+   table that has NEVER existed in this database, so it could never apply.
+   Table absent in every schema — a live dead page.
+
+All three survived because (a) the applied-ledger was unanswerable (now
+closed — ledgers reconciled, `noctus.dev.migrate_product` refuses a stale
+tree, § Migration ledger RLS above) and (b) the product's own tests ran
+`MockSupabaseClient(validate_schema=False)`, so a missing table/column was
+invisible to them (§ below, and `KB § PATTERNS/compliance/testing.md`).
+
+**`noctus.dev.schema_drift`** closes the remaining question: given a fully-
+applied migration set, does the live schema still match what the product's
+migrations (parsed by the SAME `noctusai_lib.testing.migration_parser`
+`MockSupabaseClient` uses) and any SQLAlchemy ORM models (`app/models/*.py`,
+AST-extracted, never executed) declare? It queries
+`information_schema.columns` via the same `SqlExecutor` DI seam
+`noctus.dev.migrate_product` uses. Findings: `missing_table` /
+`missing_column` (declared-vs-live) and `orm_migration_drift` (ORM mirror
+vs. migrations — offline, no live DB needed). A product with NEITHER a
+migrations dir NOR ORM models is `undeterminable` — a finding, never a
+silent pass (fail-closed).
+
+**Blind spot, by construction:** a column the code writes that NO migration
+(and no ORM model) ever declared — bug #1's own shape — agrees with itself
+on both sides of a migrations-vs-live diff, so `schema_drift` cannot see it.
+That gap is closed by a DIFFERENT leg: `check_mock_schema_validation`
+gating `validate_schema=False` (see `KB § PATTERNS/compliance/testing.md`)
+forces the product's OWN test suite to exercise every code call site
+against the real column set.
+
+Wired into `noctus.dev.predeploy_check` as the `schema_drift` leg (sibling
+of `schema_exposure`, same fail-closed posture — `not_configured` /
+`undeterminable` / `error` all BLOCK a deploy, never silently skip).
+
 ### Migration-number collision safety — cross-worktree, not just cross-file
 
 Two migrations sharing a numeric prefix have undefined apply-order. This bit twice: 2026-08-03 (three concurrent sessions each picked a number from `ls migrations/` + `git log origin/dev` — both blind to a sibling branch that hadn't pushed; two collided on `040`) and 2026-08-13 (a parallel worktree's migration merged and deployed FIRST; the other worktree, mid-authoring its own same-numbered file, had not rebased and so never saw it — ~1600 lines of rework before the tech-lead caught it at integration).
