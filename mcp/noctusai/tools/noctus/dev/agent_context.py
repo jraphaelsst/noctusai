@@ -23,12 +23,18 @@ def register(server) -> None:
             "paragraph + per-H2 first line). One round-trip replaces N "
             "Reads at dispatch time. Lazy-rebuilds if the live "
             "`bundle_sha = sha256(agent.md ∪ each owned_kb)` differs from "
-            "the cached value (the cache self-heals on use). "
+            "the cached value (the cache self-heals on use). Pass "
+            "`worktree_path` when called from inside a git worktree carrying "
+            "an in-flight edit to this agent's `.md` or owned KB — omitting "
+            "it reads the MCP server's fixed-CWD primary copy AND, on a "
+            "self-heal, silently overwrites a correctly worktree-scoped "
+            "`agent_context_refresh(..., worktree_path=...)` cache_meta "
+            "entry with the wrong (primary) bundle_sha. "
             "KB § PATTERNS/agent-context-architecture.md."
         ),
     )
-    def _agent_context(agent_name: str) -> dict:
-        return acc.lookup(agent_name)
+    def _agent_context(agent_name: str, worktree_path: str | None = None) -> dict:
+        return acc.lookup(agent_name, worktree_path=worktree_path)
 
     @server.tool(
         name="noctus.dev.agent_context_refresh",

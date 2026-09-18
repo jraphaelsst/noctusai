@@ -117,6 +117,94 @@ The durable fix can't depend on catching the event — it heals at **observation
 
 Net: **the structural-cache staleness warning never reaches the user** — it self-resolves the instant freshness is checked. Embedding staleness still surfaces (cost is a human decision).
 
+## Cross-tree refresh/check source-parity (2026-09-17/18)
+
+**The rule.** A cache validated against per-worktree content MUST be
+refreshable FROM that worktree — i.e. the freshness *check*'s "live" side
+and the *refresh*'s SOURCE read must resolve off the SAME tree for the
+SAME call. If the check reads `<root>/<source>` (worktree-scoped) while
+the refresh's source resolution silently pins to a DIFFERENT tree, the
+check can become **structurally unsatisfiable**: no number of re-runs of
+the refresh — including the CLI's own suggested remedy text — can ever
+make the two agree, because the mismatch isn't staleness, it's two
+different questions being compared.
+
+Under self-branching mode (all work happens in worktrees, by rule), this
+is not an edge case — it fires on the very first commit from a worktree
+that carries an in-flight edit to whatever the cache mirrors.
+
+**Two confirmed instances, two DIFFERENT root causes (same shape):**
+
+1. **`agent-context`** (item 1, 2026-09-17) — `get_bundle_sha()` (called by
+   `check_agent_context_cache_freshness`) had NO `repo_root`/`worktree_path`
+   parameter at all: it always recomputed "live" off the module-level
+   `AGENTS_DIR` — correct for a fresh CLI subprocess (whose `REPO_ROOT`
+   naturally resolves to whatever `Path.cwd()` is, worktree included) but
+   WRONG for a long-running MCP-server process bound to a fixed CWD at
+   boot. A scoped `refresh(agent_name=..., worktree_path=W)` correctly
+   wrote `cache_meta['bundle_sha:<agent>']` keyed off `W` — the refresh's
+   WRITE side was never broken — but the check's READ side ignored `W`
+   entirely. Fixed by threading `repo_root` into `get_bundle_sha` (and
+   `worktree_path` into `lookup()`, which had the same gap on its
+   self-heal path — see `agent-context-architecture.md`).
+
+2. **`auto-improvement`** (2026-09-17/18) — a DIFFERENT mechanism, same
+   symptom. `auto_improvement.py`'s `LEDGER_PATH` is pinned to
+   `settings.LEDGER_ROOT` (deliberately unwraps the worktree boundary back
+   to the PRIMARY checkout — ledger durability: a row appended only in an
+   ephemeral worktree must not die with it when the worktree is torn
+   down). `LEDGER_ROOT` is NOT rebound by the CLI's generic
+   `--worktree-path → settings.REPO_ROOT` override (that override touches
+   `REPO_ROOT`/`PRODUCTS_DIR` only). `check_auto_improvement_cache_freshness(repo_root=...)`
+   correctly resolves the ndjson off `repo_root` (a normal `REPO_ROOT`-style
+   read, so it DOES follow the override) — but the CLI's
+   `--refresh-auto-improvement-cache` handler simply never threaded the
+   parsed `args.worktree_path` into `ai.refresh(worktree_path=...)`, even
+   though `refresh()` already had that parameter and `_ledger_path_for()`
+   already correctly used it when given. The safety valve existed; the
+   dispatcher forgot to open it. Fixed by threading `worktree_path`
+   through the CLI handler (`mcp/noctusai/cli.py`).
+
+**Checked, NOT reproduced — `keeper-patterns` (2026-09-18):**
+`keeper_pattern_cache.py` resolves its source (`compliance.py`) via
+`REPO_ROOT`, never `LEDGER_ROOT` — `compliance.py` is a normal tracked
+source file, not a durable append-only ledger, so there is no reason for
+it to route through the primary-pinning constant. `REPO_ROOT` DOES follow
+the CLI's `--worktree-path` override (rebinds before any lazy `tools.*`
+import), so `refresh(force=...)` with no explicit `worktree_path` still
+reads the CORRECT (worktree) `compliance.py` in the CLI-subprocess path —
+confirmed by reading `_compliance_src_for`/`refresh` directly, not
+assumed. **Do not generalize "two siblings have it, so a third does too"
+without checking which resolution constant the third actually uses** —
+`REPO_ROOT`-resolved sources are safe by construction; `LEDGER_ROOT`-resolved
+ones are exactly where to look next.
+
+**Flagged, not yet fixed — `absorptions`** (2026-06-02 keeper,
+`check_absorptions_cache_freshness`, severity `warning`): same structural
+precondition as auto-improvement (`absorption_tracking.py`'s `LEDGER_PATH`
+is also `LEDGER_ROOT`-pinned) — AND worse, its `refresh()` doesn't even
+have a `worktree_path` parameter (only a raw `ledger: Path | None`), and
+`cli.py` has **no `--refresh-absorptions-cache` flag at all** despite the
+keeper's own docstring claiming one exists as the remediation. Lower
+urgency (advisory, non-blocking — heals via `settle_structural_caches`),
+but the "documented remedy doesn't exist" gap is real. Scoped follow-up:
+add the `worktree_path` parameter (mirroring `auto_improvement.py`'s
+`_ledger_path_for`) + the missing CLI flag + a `check_predeploy_leg_verify_or_block`-style
+regression test.
+
+**The general rule for the next cache author:** if your cache's source is
+a durable, append-only, repo-global ledger (candidates: anything under
+`project-history/*.ndjson` resolved via `LEDGER_ROOT`), your `refresh()`
+MUST accept a `worktree_path: str | None` parameter (mirroring
+`auto_improvement._ledger_path_for` / `agent_context_cache._agents_dir_for`)
+— AND every CALLER that can run from inside a worktree (the CLI dispatcher,
+any MCP tool wrapper) MUST thread it through. A parameter that exists but
+is never threaded is exactly as broken as one that was never added — grep
+`git grep -n "LEDGER_ROOT" mcp/noctusai/tools/noctus/dev/*.py` for the
+candidate set before shipping a new ledger-backed cache, and check both
+legs: does `refresh()` accept `worktree_path`, and does every one of its
+callers pass it through when it has one.
+
 ## Deferred follow-ups (next session candidates)
 
 1. **Embedding-model version stamp**: cache rows don't currently record the model name. If the seed lib upgrades `text-embedding-3-small` → `4-small`, dim mismatch errors only surface at retrieve time. A `model:` column per row + a startup check would auto-trigger force-refresh on model change.

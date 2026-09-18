@@ -171,6 +171,7 @@ def main():
     parser.add_argument("--check-contextualize-alignment", action="store_true", help="Keeper: CONTEXTUALIZE.md is the fresh-agent read map and must remain pointer-only (sibling discipline to check_claude_md_router). Enforces (a) file exists at repo root, (b) line cap, (c) every canonical-cores entry is referenced. Severity high.")
     parser.add_argument("--check-canonical-organ-consumption", action="store_true", help="Keeper: products must consume canonical cached organs from @noctusai/lib — no local re-implementations. Named-seam extensions allowed when declared. Severity high. KB § PATTERNS/architect/products-consume-canonical-organs.md.")
     parser.add_argument("--check-auth-boundary-false-green", action="store_true", help="Keeper: auth-boundary test assertions must NOT pair 401 with a maskable code — `status_code in (401, 404)` or `in (401, 422)` is a false-green escape hatch (route-absent ⇒ 404, or body-validation-before-auth ⇒ 422; test passes even when auth never fired). Only static AST analysis catches this class. Severity warning (advisory). KB § PATTERNS/compliance/auth-boundary-false-green.md.")
+    parser.add_argument("--check-predeploy-leg-verify-or-block", action="store_true", help="Keeper: every leg in predeploy_check.py's DEFAULT_CHECKS (AST-derived, never a hand-list) must VERIFY (its ok reflects a real check that could fail) or BLOCK (fail-closed on an unverifiable state) — never silently return ok=True because it couldn't tell. A legitimate 'nothing to verify' skip is allowed ONLY when the leg's own message names it (contains 'skip', case-insensitive) — e.g. frontend_build's dependencies-not-installed short-circuit. Severity high. KB § PATTERNS/devops/predeploy-leg-verify-or-block.md.")
     parser.add_argument("--check-consent-routes", action="store_true", help="Keeper: seed consent routes (/consent, /consent/privacy-policy, /consent/terms-of-use) must stay mounted in seed/framework/frontend/src/app.tsx + exported from index.ts; no product may shadow them with a local re-declaration. Severity high. KB § PATTERNS/frontend/consent-routes-mandate.md.")
     parser.add_argument("--check-hashlib-usedforsecurity", action="store_true", help="Keeper: a weak-hash call (hashlib.md5/sha1/new(\"md5\"|\"sha1\", ...)) in the Bandit scope (products/*/backend/app + seed/lib/backend/noctusai_lib) used for a non-security purpose MUST pass usedforsecurity=False, or Bandit B324 (High) hard-fails CI. AST-based; a `# noqa: S324` does NOT satisfy it. Severity error (baseline 0). KB § PATTERNS/backend/backend.md § Recurring CI-hygiene standards.")
     parser.add_argument("--check-migration-number-collision", action="store_true", help="Keeper: two migrations claiming the same numeric prefix. Leg A (high) = duplicate ON DISK in one product — apply-order is undefined. Leg B (warning) = the same number used by DIFFERENT files across local branches; whichever merges second must renumber. Catches the class `ls migrations/` and `git log origin/dev` both miss, because an unpushed sibling branch is invisible to both. MCP keeper check_migration_number_collision.")
@@ -606,7 +607,19 @@ def main():
                 print(f"  {GREEN}✓ auto-improvement refresh skipped — another process holds the lock.{RESET}")
                 sys.exit(0)
             from tools.noctus.dev import auto_improvement as ai
-            r = ai.refresh(force=args.force)
+            # 2026-09-18: `worktree_path` was silently dropped here — unlike
+            # `agent_context_cache`'s AGENTS_DIR (which follows the global
+            # `--worktree-path` -> settings.REPO_ROOT rebind above), this
+            # module's `LEDGER_PATH` is pinned to `settings.LEDGER_ROOT`,
+            # which DELIBERATELY unwraps the worktree boundary back to the
+            # primary checkout (ledger durability — see LEDGER_ROOT's own
+            # docstring) and is IMMUNE to that rebind. So a bare
+            # `--refresh-auto-improvement-cache --worktree-path <wt>` refreshed
+            # the cache from the PRIMARY's ndjson while the freshness check
+            # (correctly worktree-scoped via `repo_root`) compared it against
+            # the WORKTREE's — a structurally unsatisfiable "STALE" verdict,
+            # no matter how many times the suggested remedy re-ran. Thread it.
+            r = ai.refresh(force=args.force, worktree_path=args.worktree_path)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ auto-improvement cache in-sync (source_sha={r['source_sha'][:12]}; --force to rebuild).{RESET}")
         else:
@@ -1266,6 +1279,17 @@ def main():
             print(f"    {YELLOW}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
         # severity=warning only — do NOT block commits (informational gate).
         sys.exit(0)
+
+    elif args.check_predeploy_leg_verify_or_block:
+        from tools.noctus.dev.compliance import check_predeploy_leg_verify_or_block
+        issues = check_predeploy_leg_verify_or_block()
+        if not issues:
+            print(f"  {GREEN}✓ predeploy-leg-verify-or-block: every DEFAULT_CHECKS leg verifies or blocks.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} predeploy-leg-verify-or-block issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
 
     elif args.check_consent_routes:
         from tools.noctus.dev.compliance import check_consent_routes_mounted
