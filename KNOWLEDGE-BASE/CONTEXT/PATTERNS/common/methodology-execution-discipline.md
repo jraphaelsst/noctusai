@@ -104,6 +104,9 @@ Every one of these was a real misread, not a hypothetical:
 | `deploy_image` timing out (2026-08-13) | nothing — the call went quiet | prod was still serving the old image |
 | `noctus.dev.pytest` without `worktree_path` | "689 passed" | the WORKTREE's suite never ran |
 | `migrate_product` dry-run (2026-09-17) | a confident pending-migrations list | the primary was 26 commits behind `origin/dev` and didn't even contain the migration being deployed — see `KB § PATTERNS/backend/migrate-product-mcp-tool.md` § Stale-tree refusal |
+| "every gate green on the merged tip" (2026-09-17) | seed suite + both product suites, all green | `mcp/noctusai/tests/` was never run at all — CI then found 3 real failures there. Not a wrong RESULT; a claim about a SET made without checking the set was COMPLETE |
+| `if git merge --no-edit -q "$b" 2>&1 \| tail -1; then` (2026-09-17) | "CONFLICT" | the merge had succeeded; the condition read `tail`'s exit status, not `git merge`'s |
+| `npx tsc --noEmit 2>&1 \| tail -5 && echo "tsc-rc=$?"` (2026-09-17) | printed as the gate's result | `$?` there is `tail`'s — same session, an hour apart from the row above |
 
 The shape is constant: **a messenger's status was mistaken for the subject's
 status.** A pipe, a wrapper, a watcher, a notification and a timeout are all
@@ -127,11 +130,31 @@ same reading applies to any tool that goes quiet.
 - When a call goes quiet, get ground truth from an independent witness
   (`noctus.dev.deploy_verify` exists precisely for this) before concluding
   anything.
+- **The SET is a channel too.** "Every gate green" is only true if the
+  set of gates that ran is the set that was actually applicable — a
+  remembered set silently drops the one nobody thought to run.
+  `noctus.dev.gate_sweep` is the structural fix on THIS axis: it derives
+  which gates apply from the diff (never from memory), runs each as its
+  own subprocess with its own `.returncode`, and can only report
+  `status="green"` when every applicable gate has `ran=True AND
+  exit_code==0` — a gate that never ran forces `status="incomplete"`,
+  never `"green"`. Same posture as `noctus.dev.deploy_verify` on the
+  silence axis above: replace the remembered claim with a measured one.
+- The statically-visible half of the piped-`$?`/`if`-on-a-filter shape —
+  `check_piped_exit_code_pattern` (`--check-piped-exit-code-pattern`) —
+  scans every `.sh`, the `scripts/hooks/` entrypoints, and
+  `.github/workflows/*.yml` `run:` steps for exactly the two 2026-09-17
+  rows above (`$?`/if/&&/\|\| read off a pipeline whose last stage is
+  `tail`/`head`/`grep`/`sed`/`awk`/`cat`), and separately flags a script
+  that has the shape with no effective `pipefail` backing it (severity
+  escalates from "fragile" to "definitely wrong").
 
-NOC-REMEDIATE[codify]: a keeper for the statically-visible half — `<test-cmd>
-| tail|head` without `pipefail`, and `gh run watch --exit-status` used as a
-gate, in committed scripts/CI/docs. Deferred, not dropped: the live-agent half
-(a tool call in a transcript) is not reachable by a tree-walking predicate, so
-the keeper would cover the minority of instances; the structured-runner
-mechanism above addresses the majority first. Revisit when a committed-artifact
-instance actually bites. — 2026-09-02
+NOC-REMEDIATE[codify]: the piped-`$?`/pipe-into-filter half shipped as
+`check_piped_exit_code_pattern` (2026-09-17, this row). `gh run watch
+--exit-status` used as a gate remains deferred — a genuinely different
+shape (a watcher's own wrapped exit, not a piped tail/head) worth its own
+detector when an instance actually recurs, not force-fit into this one.
+The live-agent half (a tool call in a session transcript, e.g. the `npx
+tsc | tail -5 && echo "$?"` row above) stays out of a tree-walking
+predicate's reach by construction — `gate_sweep` addresses that half
+structurally (no channel to misread) rather than by detection. — 2026-09-17
