@@ -121,6 +121,29 @@ PARENTESES = (
 
 NARRATIVA_VENDA = "R-3/555 - Em 2017 venda a CICRANO FALSO por R$ 80.000,00.\n"
 
+#: The real-world shape that motivated the narrative role fallback: numbered,
+#: already-qualified transmitentes (no label at all) followed by a
+#: permuta verb whose object description ("por permuta o imóvel
+#: matriculado") sits between the verb and the buyer's own preposition.
+NARRATIVA_PERMUTA_JA_QUALIFICADOS = (
+    "R-4/33.222 - Em 10/09/2020. PERMUTA. Por escritura pública datada de 10 de "
+    "setembro de 2020, do 3º Tabelião de Notas de Cotia, livro 200, fls. 55, "
+    "1) RODRIGO EXEMPLO SOUZA, residente e domiciliado na Rua Amostra, nº 12, "
+    "Cotia-SP; e 2) TAUANE EXEMPLO SOUZA, residente e domiciliada na Rua Amostra, "
+    "nº 12, Cotia-SP, ambos já qualificados, transmitiram por permuta o imóvel "
+    "matriculado a MARIA FICTÍCIA ROCHA, brasileira, divorciada, secretária "
+    "executiva, RG nº 22.333.444-SSP/SP, CPF nº 111.222.333-96, residente e "
+    "domiciliada na Avenida Modelo, nº 500, Cotia-SP, pelo valor de R$ "
+    "250.000,00.\n"
+)
+
+#: A couple named together as the (unlabelled) buyer side — the cap this
+#: fallback used to apply (`achados[:1]`) would silently drop the second one.
+NARRATIVA_CASAL_ADQUIRENTE = (
+    "R-8/99.111 - Em 05/05/2022. VENDA. Por escritura, o imóvel foi vendido a "
+    "RODRIGO EXEMPLO SOUZA e TAUANE EXEMPLO SOUZA, brasileiros, casados.\n"
+)
+
 CONSTRUCAO = (
     "AV-2/555 - Em 2016 construcao. Averba-se a CONSTRUÇÃO de um prédio residencial com "
     "120,00m², conforme habite-se nº 55/2016. Dou fe.\n"
@@ -175,6 +198,7 @@ TODAS = [
     OUTORGANTES, PARENTESES, NARRATIVA_VENDA, CONSTRUCAO, PROMESSA, PERMUTA, DACAO,
     SEM_NATUREZA, CRUZEIROS, SO_VALOR_VENAL, DOIS_VALORES, DATAS_EM_CONFLITO,
     DATA_NO_FECHO, CPF_INVALIDO, CITACOES, MINUSCULAS_OCR,
+    NARRATIVA_PERMUTA_JA_QUALIFICADOS, NARRATIVA_CASAL_ADQUIRENTE,
 ]
 
 
@@ -404,6 +428,33 @@ def test_narrative_buyer_is_baixa():
 def test_parties_of_other_roles_are_not_transmitentes():
     d = extrair_detalhes_ato(PENHORA)
     assert d.transmitentes == () and d.adquirentes == ()
+
+
+def test_unlabelled_transmitentes_come_from_the_narrative_before_the_verb():
+    """No `TRANSMITENTE:` label anywhere — the numbered, already-qualified
+    pair before "transmitiram" is read off the narrative, and the buyer
+    after "por permuta o imóvel matriculado a" survives the object
+    description sitting between the verb and the preposition."""
+    d = extrair_detalhes_ato(NARRATIVA_PERMUTA_JA_QUALIFICADOS)
+    assert d.transmitentes == (
+        Parte("RODRIGO EXEMPLO SOUZA"),
+        Parte("TAUANE EXEMPLO SOUZA"),
+    )
+    assert d.transmitentes_confianca == "baixa"
+    assert d.adquirentes == (Parte("MARIA FICTÍCIA ROCHA", "111.222.333-96"),)
+    # unlabelled is always "baixa" here, even with a check-digit-valid CPF —
+    # same rule `test_narrative_buyer_is_baixa` already pins.
+    assert d.adquirentes_confianca == "baixa"
+
+
+def test_an_unlabelled_couple_is_two_adquirentes_not_one():
+    """The old `achados[:1]` cap would have dropped the second name here."""
+    d = extrair_detalhes_ato(NARRATIVA_CASAL_ADQUIRENTE)
+    assert d.adquirentes == (
+        Parte("RODRIGO EXEMPLO SOUZA"),
+        Parte("TAUANE EXEMPLO SOUZA"),
+    )
+    assert d.adquirentes_confianca == "baixa"
 
 
 # ─── credor ───────────────────────────────────────────────────────────────

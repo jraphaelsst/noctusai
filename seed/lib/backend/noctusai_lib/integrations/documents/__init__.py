@@ -108,6 +108,12 @@ from noctusai_lib.integrations.documents.matricula_extractor import (
     MatriculaFields,
     make_matricula_extractor,
 )
+from noctusai_lib.integrations.documents.matricula_qualificacao import (
+    Qualificacao,
+    QualificacaoConsolidada,
+    extrair_qualificacoes,
+    mesclar_qualificacoes,
+)
 from noctusai_lib.integrations.documents.matricula_ruido import (
     RuidoKind,
     RuidoSpan,
@@ -199,6 +205,8 @@ __all__ = [
     "MatriculaFields",
     "Paragraph",
     "ParagraphKind",
+    "Qualificacao",
+    "QualificacaoConsolidada",
     "REGIME_BENS_VALORES",
     "RuidoKind",
     "RuidoSpan",
@@ -210,6 +218,7 @@ __all__ = [
     "ato_hint_span",
     "classify_kind",
     "detectar_ruido",
+    "extrair_qualificacoes",
     "find_birthdate",
     "has_raw_markup",
     "find_cpf",
@@ -228,6 +237,7 @@ __all__ = [
     "make_document_transcriber",
     "make_identity_extractor",
     "make_matricula_extractor",
+    "mesclar_qualificacoes",
     "normalize",
     "normalize_lines",
     "paragraphs_from_docx",

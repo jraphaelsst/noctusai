@@ -593,6 +593,11 @@ _NAO_NOME = frozenset(
         "ESCRITURA", "INSTRUMENTO", "CONTRATO", "COMPRA", "VENDA", "DOACAO", "TITULO",
         "DIVIDA", "PAGAMENTO", "FINANCIAMENTO", "EMPRESTIMO", "OBRIGACOES", "OBRIGACAO",
         "CREDITO", "IMOVEL", "PRESENTE", "CEDULA", "VALOR", "QUANTIA", "FORMAL", "FAVOR",
+        # A person's name never opens with a preposition/conjunction — these
+        # start the escritura/instrumento preamble that the unlabelled
+        # TRANSMITENTE narrative fallback (`_partes`) walks across before
+        # reaching the first party's own numbered/semicolon-delimited block.
+        "POR", "PELO", "PELA", "CONFORME",
     }
 )
 
@@ -677,15 +682,32 @@ def _confianca_partes(achados: list[tuple[Parte, bool]], rotulado: bool) -> str:
     return BAIXA
 
 
-_NARRATIVA_ADQUIRENTE = _rx(
-    r"(?:VENDID[OA]S?|VENDA|VENDEU|VENDERAM|DOAD[OA]S?|DOACAO|TRANSMITID[OA]S?)"
-    r"\s+(?:(?:DO|O)\s+IMOVEL\s+)?(?:A|AO|AOS|AS|PARA)"
+#: Transmission verbs — the seller is the SUBJECT (before the verb), the
+#: buyer is the OBJECT (after the verb, past an optional description of
+#: what's being transferred, then a preposition). `{0,6}` tolerates the
+#: object-description clause real acts insert ("transmitiram POR PERMUTA O
+#: IMOVEL MATRICULADO a NOME") without letting the search run away — it
+#: still requires the FIRST bare `A/AO/AOS/AS/PARA` token to end it.
+_VERBOS_TRANSMISSAO = (
+    r"TRANSMITID[OA]S?|TRANSMITIU|TRANSMITIRAM|VENDID[OA]S?|VENDA|VENDEU|VENDERAM"
+    r"|ALIENOU|ALIENARAM|CEDEU|CEDERAM|PERMUTOU|PERMUTARAM|DOAD[OA]S?|DOACAO|DOOU|DOARAM"
 )
+
+_NARRATIVA_ADQUIRENTE = _rx(
+    rf"(?:{_VERBOS_TRANSMISSAO})(?:\s+[A-Z]+){{0,6}}?\s+(?:A|AO|AOS|AS|PARA)"
+)
+
+#: The bare verb, for the TRANSMITENTE side: whoever is named BEFORE it,
+#: back to the previous party boundary (or the act's own start), is on the
+#: transferring side — no preposition needed, since the subject precedes the
+#: verb directly in Portuguese sentence order.
+_NARRATIVA_TRANSMITENTE_VERBO = _rx(_VERBOS_TRANSMISSAO)
 
 
 def _partes(t: _Texto, corpo: int, blocos: list[tuple[str, int, int]]):
     trans = [x for lado, a, b in blocos if lado == "t" for x in _pessoas(t, a, b)]
     adq = [x for lado, a, b in blocos if lado == "a" for x in _pessoas(t, a, b)]
+    trans_rotulado = bool(trans)
     adq_rotulado = bool(adq)
     if not adq:
         for m in _NARRATIVA_ADQUIRENTE.finditer(t.norm, corpo):
@@ -693,11 +715,17 @@ def _partes(t: _Texto, corpo: int, blocos: list[tuple[str, int, int]]):
             fim = corte.start() if corte else len(t.norm)
             achados = _pessoas(t, m.end(), fim)
             if achados:
-                adq = achados[:1]
+                adq = achados
                 break
+    if not trans:
+        verbo = _NARRATIVA_TRANSMITENTE_VERBO.search(t.norm, corpo)
+        if verbo:
+            achados = _pessoas(t, corpo, verbo.start())
+            if achados:
+                trans = achados
     return (
         tuple(p for p, _ in trans),
-        _confianca_partes(trans, True),
+        _confianca_partes(trans, trans_rotulado),
         tuple(p for p, _ in adq),
         _confianca_partes(adq, adq_rotulado),
     )
