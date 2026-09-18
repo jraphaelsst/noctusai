@@ -183,6 +183,15 @@ _ISCA_DOCUMENTO = _rx(
 _JANELA_ISCA = 40
 
 
+def _isca_imediata(antes: str, rotulo_fim: int) -> bool:
+    """Only whitespace/colon between an isca label's end and the candidate
+    document — an isca label further BACK, with a DIFFERENT number's digits
+    sitting in between, does not apply to THIS document. Without this, a
+    real CPF that simply follows a `Selo digital:` decoy a few words later
+    in the same sentence gets rejected right along with the decoy."""
+    return re.fullmatch(r"[\s:]*", antes[rotulo_fim:]) is not None
+
+
 def _documentos_validos(norm: str) -> list["re.Match[str]"]:
     """Every checksum-valid CPF/CNPJ in `norm`, isca-guarded, ordered, with
     a CPF-shaped submatch of an already-found CNPJ dropped (they overlap on
@@ -193,7 +202,9 @@ def _documentos_validos(norm: str) -> list["re.Match[str]"]:
             if not cpf_cnpj_valido(m.group(1)):
                 continue
             antes = norm[max(0, m.start() - _JANELA_ISCA) : m.start()]
-            if _ISCA_DOCUMENTO.search(antes):
+            if any(
+                _isca_imediata(antes, rot.end()) for rot in _ISCA_DOCUMENTO.finditer(antes)
+            ):
                 continue
             achados.append(m)
     achados.sort(key=lambda m: m.start())
@@ -245,6 +256,12 @@ _PJ_MARCADOR = _rx(
 #: `ancora` is the previous person's boundary (or block start), and the
 #: prose of a verb clause sits between it and the name — exactly the prose
 #: `_nome_valido`'s shape check cannot, on its own, tell apart from a name.
+#: NOC-REMEDIATE[matricula-partes]: covers only "verb ... A <nome>" — a
+#: seller introduced as "vendido POR <nome>" (mirrors
+#: `matricula_ato_detalhes._NARRATIVA_TRANSMITENTE_VERBO`'s own gap) has no
+#: cue here either, so that shape's own CPF/name still resolves off the
+#: weaker structural `ancora` alone. Deferred until the real corpus shows
+#: it — 2026-09-18
 _NOME_INTRODUZIDO = _rx(
     r"(?:VENDID[OA]S?|VENDA|VENDEU|VENDERAM|DOAD[OA]S?|DOACAO|TRANSMITID[OA]S?"
     r"|TRANSMITIU|TRANSMITIRAM|ALIENOU|ALIENARAM|CEDEU|CEDERAM|PERMUTOU|PERMUTARAM"
@@ -322,9 +339,26 @@ _PROFISSAO_PARADA = _rx(
 
 _RG_ROTULO = _rx(r"CEDULA\s+DE\s+IDENTIDADE|R\.?\s*G\.?")
 _RG_CONECTOR = re.compile(r"[\s,:\-–—]*(?:N[ºO°]\.?\s*)?")
+#: The real corpus's RG shapes, all anchored on the SAME `num`: bare digits
+#: (dotted or not); an optional single-character check digit (`-3`/`-X` —
+#: the check digit can BE the letter X, same convention a CPF's own trailing
+#: digits never use but an RG's does); an optional órgão, either
+#: `SSP/SP`-shaped or a bare 2-letter UF (`-SP`, no `SSP`). The check digit
+#: and the órgão are two INDEPENDENT optional groups, not one — a number can
+#: carry either, both, or neither, and the órgão's own dash must not be
+#: mistaken for the check digit's.
 _RG_NUM = re.compile(
     r"(?P<num>\d[\d.]{1,13}\d|\d)"
-    r"(?:\s*-\s*(?P<orgao>[A-Z]{2,4}(?:/[A-Z]{2})?))?"
+    r"(?:-(?P<dv>[0-9X]))?"
+    r"(?:-(?P<orgao>[A-Z]{2,10}(?:/[A-Z]{2,3})?))?"
+)
+#: A hyphen-joined OCR/transcription artifact ("...-SELO DIGITAL: ...") is
+#: shaped exactly like an órgão (2+ uppercase letters) but is never one —
+#: the same decoy class `_ISCA_DOCUMENTO` guards for documents, guarded here
+#: for the órgão specifically since the real corpus puts a `Selo digital:`
+#: line right after an `RG nº` match in roughly two thirds of acts.
+_ORGAO_INVALIDO = frozenset(
+    {"SELO", "DIGITAL", "PROTOCOLO", "PROCESSO", "PRENOTACAO", "CERTIDAO", "PROT"}
 )
 
 #: `dom`/`dom2` capture the gender-bearing `domiciliad[oa]` word ON ITS OWN
@@ -370,10 +404,14 @@ def _rg(norm: str, ini: int, fim: int) -> tuple[Optional[tuple[int, int]], Optio
         pos2 = m_con.end() if m_con else pos
         m_num = _RG_NUM.match(norm, pos2, fim)
         if m_num:
-            orgao_span = (
-                (m_num.start("orgao"), m_num.end("orgao")) if m_num.group("orgao") else None
-            )
-            return (m_num.start("num"), m_num.end("num")), orgao_span
+            # the check digit, when present, is part of the NUMBER — never
+            # split off, never dropped.
+            fim_num = m_num.end("dv") if m_num.group("dv") else m_num.end("num")
+            orgao_texto = m_num.group("orgao")
+            orgao_span = None
+            if orgao_texto and orgao_texto.split("/")[0] not in _ORGAO_INVALIDO:
+                orgao_span = (m_num.start("orgao"), m_num.end("orgao"))
+            return (m_num.start("num"), fim_num), orgao_span
     return None, None
 
 
@@ -402,14 +440,43 @@ def _endereco(norm: str, ini: int, fim: int) -> Optional[tuple[tuple[int, int], 
     return (inicio, fim_endereco), (m.group("dom") or m.group("dom2"))
 
 
+#: Portuguese `-ista`/`-ante`/`-ente` profession nouns are EPICENE — the
+#: same spelling for both genders (`o/a motorista`, `o/a dentista`, `o/a
+#: gerente`) — so a plain "ends in A" check would read a male "motorista"
+#: as feminine. Excluded from `_genero_de_profissao` rather than trusted.
+_PROFISSAO_EPICENA = re.compile(r"(?:ISTA|ANTE|ENTE)$")
+
+
+def _genero_de_profissao(profissao: Optional[str]) -> Optional[str]:
+    """The gender-bearing FIRST word of a profession (`corretorA de
+    imóveis` -> `corretorA`, `engenheirO civil` -> `engenheirO`), skipped
+    when that word's own ending is epicene."""
+    if not profissao:
+        return None
+    primeira = profissao.split()[0].upper() if profissao.split() else ""
+    if _PROFISSAO_EPICENA.search(primeira):
+        return None
+    return primeira
+
+
 def _genero(*tokens: Optional[str]) -> Optional[Literal["m", "f"]]:
     """Gender from Portuguese grammatical agreement — the same "disagreement
-    is absence" rule every sibling parser in this package follows."""
+    is absence" rule every sibling parser in this package follows.
+
+    🔴 A trailing plural "s" is stripped before reading the vowel.
+    `_NACIONALIDADE` deliberately matches the plural ("ambos BRASILEIROS,
+    casados" — a shared, already-qualified pair) — `BRASILEIROS` ends in
+    "S", and a naive last-character read would silently agree with
+    NEITHER "a" nor "o" and drop a real, unambiguous signal on the floor.
+    """
     generos: set[str] = set()
     for tok in tokens:
         if not tok:
             continue
-        ultima = tok.rstrip().rstrip(".")[-1:]
+        limpo = tok.rstrip().rstrip(".")
+        if len(limpo) > 1 and limpo[-1] == "S":
+            limpo = limpo[:-1]
+        ultima = limpo[-1:]
         if ultima == "A":
             generos.add("f")
         elif ultima == "O":
@@ -484,7 +551,22 @@ def extrair_qualificacoes(text: str, start: int, end: int) -> tuple[Qualificacao
             endereco_span, domiciliada_raw = endereco_achado
             endereco = t.literal(*endereco_span)
 
-        genero = _genero(nacionalidade and nacionalidade.upper(), estado_civil_raw, domiciliada_raw)
+        # Gender: the PRIMARY signals are this person's own nacionalidade /
+        # estado_civil / profissão-first-word — every one of them matched
+        # strictly WITHIN this person's own pre-document attribute window,
+        # never in a shared or bled window. The address clause's
+        # domiciliad[oa] word is a real signal too (Larissa/Ivanir had
+        # nothing BUT a profissão to go on, and an address-only reading is
+        # the same shape), but it is a WEAKER one — its window runs from
+        # this document to the next person's boundary, which a messier real
+        # act can get wrong. It is only CONSULTED when no primary signal
+        # fired at all; it never gets to override or "tie-break" a primary
+        # read into a false disagreement.
+        genero = _genero(
+            nacionalidade and nacionalidade.upper(), estado_civil_raw, _genero_de_profissao(profissao)
+        )
+        if genero is None:
+            genero = _genero(domiciliada_raw)
 
         completo = bool(rg) and bool(nacionalidade or not pessoa_fisica)
         confianca = ALTA if completo else BAIXA

@@ -701,6 +701,14 @@ _NARRATIVA_ADQUIRENTE = _rx(
 #: back to the previous party boundary (or the act's own start), is on the
 #: transferring side — no preposition needed, since the subject precedes the
 #: verb directly in Portuguese sentence order.
+#: NOC-REMEDIATE[matricula-partes]: an UNNUMBERED, unlabelled seller
+#: introduced AFTER the verb ("o imóvel foi vendido POR JOÃO EXEMPLO, ...",
+#: the mirror of `_NARRATIVA_ADQUIRENTE`'s "...vendido A NOME") is not
+#: covered here — this fallback only reads the subject-before-verb shape,
+#: which still needs a structural boundary (numbered list / semicolon /
+#: block start) ahead of it. A symmetric "verb + POR + name" cue, mirrored
+#: in `matricula_qualificacao._NOME_INTRODUZIDO` too, would close it —
+#: deferred until the real corpus actually shows this shape — 2026-09-18
 _NARRATIVA_TRANSMITENTE_VERBO = _rx(_VERBOS_TRANSMISSAO)
 
 

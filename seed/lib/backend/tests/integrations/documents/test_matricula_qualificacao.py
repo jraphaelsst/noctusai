@@ -22,6 +22,8 @@ across the product/seed boundary).
 """
 from __future__ import annotations
 
+import pytest
+
 from noctusai_lib.integrations.documents.matricula_qualificacao import (
     Qualificacao,
     extrair_qualificacoes,
@@ -70,6 +72,18 @@ CPF_ROBERTO = _fmt_cpf(_cpf_sintetico("555666777"))  # 555.666.777-20
 CPF_CAMILA = _fmt_cpf(_cpf_sintetico("666777888"))  # 666.777.888-30
 CNPJ_EMPRESA = _fmt_cnpj(_cnpj_sintetico("112233445566"))  # 11.223.344/5566-13
 SELO_DIGITAL = _cpf_sintetico("999888777")  # checksum-valid, undotted — the decoy
+
+# One CPF per real RG shape (`RG_SHAPES` below), plus one for the plural
+# nacionalidade / profissão / epicene genero fixtures.
+CPF_RG_1 = _fmt_cpf(_cpf_sintetico("888111222"))
+CPF_RG_2 = _fmt_cpf(_cpf_sintetico("888222333"))
+CPF_RG_3 = _fmt_cpf(_cpf_sintetico("888333444"))
+CPF_RG_4 = _fmt_cpf(_cpf_sintetico("888444555"))
+CPF_RG_5 = _fmt_cpf(_cpf_sintetico("888555666"))
+CPF_RG_SELO = _fmt_cpf(_cpf_sintetico("888666777"))
+CPF_FLAVIA = _fmt_cpf(_cpf_sintetico("888777888"))
+CPF_FRANCES = _fmt_cpf(_cpf_sintetico("888888999"))
+CPF_MARCOS = _fmt_cpf(_cpf_sintetico("888999111"))
 
 
 # ─── fixtures ───────────────────────────────────────────────────────────────
@@ -141,6 +155,72 @@ ATO_POSTERIOR = (
     "Cotia-SP.\n"
 )
 
+#: The 5 real RG shapes the production corpus carries, an invented digit
+#: run per shape (`_ato_com_rg` builds a full act around one), and the
+#: (rg, órgão) each must round-trip to.
+def _ato_com_rg(cpf: str, rg_clausula: str) -> str:
+    return (
+        "R-9/44.111 - Em 01/01/2022. VENDA. Por escritura pública, o imóvel "
+        "foi vendido a REGINA AMOSTRA AZEVEDO, brasileira, divorciada, "
+        f"professora, {rg_clausula}, CPF nº {cpf}, residente e domiciliada "
+        "na Rua Amostra, nº 1, Cotia-SP.\n"
+    )
+
+
+RG_SHAPES: tuple[tuple[str, str, str, Optional[str]], ...] = (
+    ("dv_digito_com_ssp", "RG nº 13.045.678-4-SSP/SP", "13.045.678-4", "SSP/SP"),
+    ("sem_dv_com_ssp", "RG nº 7.123.456-SSP/SP", "7.123.456", "SSP/SP"),
+    ("sem_pontos", "RG nº 7123456-SSP/SP", "7123456", "SSP/SP"),
+    ("dv_letra_x", "RG nº 13.045.678-X-SSP/SP", "13.045.678-X", "SSP/SP"),
+    ("dv_digito_uf_nua", "RG nº 13.045.678-4-SP", "13.045.678-4", "SP"),
+)
+
+#: `RG nº ... .\nSelo digital: N` — the real corpus's most common shape
+#: right after an RG match (measured: ~9/14 acts). No dash joins them, so
+#: this is already safe by construction; kept as a regression fixture.
+COM_RG_E_SELO_SEM_TRACO = _ato_com_rg(
+    CPF_RG_SELO, "RG nº 9.876.543.\nSelo digital: 12345678901"
+)
+
+#: A hyphen-joined OCR artifact — the adversarial construction that
+#: specifically exercises `_ORGAO_INVALIDO` (see its own docstring): the
+#: decoy is shaped EXACTLY like a valid órgão (2+ uppercase letters right
+#: after a dash) and must still never be absorbed.
+COM_RG_E_SELO_COM_TRACO = _ato_com_rg(
+    CPF_RG_SELO, "RG nº 9.876.543-SELO DIGITAL: 12345678901"
+)
+
+#: A collectively-phrased ("ambos/ambas") nationality bleeding into an
+#: individual restatement is a real transcription inconsistency — the
+#: plural spelling must not silently drop an otherwise unambiguous signal.
+NACIONALIDADE_PLURAL = (
+    "R-9/55.222 - Em 03/03/2022. VENDA. Por escritura pública, o imóvel foi "
+    "vendido a FLÁVIA EXEMPLO ROCHA, brasileiras, solteira, comerciante, RG "
+    f"nº 12.345.678-SSP/SP, CPF nº {CPF_FLAVIA}, residente e domiciliada na "
+    "Rua Amostra, nº 40, Cotia-SP.\n"
+)
+
+#: `francês`/`inglês`/`japonês`/`chinês` are masculine nationalities that do
+#: NOT end in "o" — nacionalidade alone gives no gender signal here, so
+#: `genero` must come from the (also gendered) profissão instead.
+GENERO_SO_DA_PROFISSAO = (
+    "R-9/66.333 - Em 04/04/2022. VENDA. Por escritura pública, o imóvel foi "
+    "vendido a MARCOS EXEMPLO DUARTE, francês, engenheiro, RG nº "
+    f"22.333.444-SSP/SP, CPF nº {CPF_FRANCES}, residente e domiciliado na "
+    "Rua Amostra, nº 50, Cotia-SP.\n"
+)
+
+#: Same neutral nationality, the profissão is EPICENE (`motorista` — `o/a
+#: motorista`), and the address uses the `residente NA` phrasing that
+#: carries no gendered `domiciliad[oa]` word either — every signal genuinely
+#: gives nothing, so `genero` must stay `None`, not guess.
+GENERO_EPICENO_FICA_NONE = (
+    "R-9/77.444 - Em 05/05/2022. VENDA. Por escritura pública, o imóvel foi "
+    "vendido a PAULO EXEMPLO NUNES, francês, motorista, RG nº "
+    f"33.444.555-SSP/SP, CPF nº {CPF_MARCOS}, residente na Rua Amostra, nº "
+    "60, Cotia-SP.\n"
+)
+
 TODAS = [
     PERMUTA_JA_QUALIFICADOS,
     CEDULA_DE_IDENTIDADE,
@@ -149,7 +229,14 @@ TODAS = [
     NOME_COM_ASTERISCOS,
     COM_SELO_DIGITAL,
     ATO_POSTERIOR,
-]
+    COM_RG_E_SELO_SEM_TRACO,
+    COM_RG_E_SELO_COM_TRACO,
+    NACIONALIDADE_PLURAL,
+    GENERO_SO_DA_PROFISSAO,
+    GENERO_EPICENO_FICA_NONE,
+] + [_ato_com_rg(cpf, clausula) for cpf, (_id, clausula, _rg, _org) in zip(
+    (CPF_RG_1, CPF_RG_2, CPF_RG_3, CPF_RG_4, CPF_RG_5), RG_SHAPES
+)]
 
 
 # ─── invariants ─────────────────────────────────────────────────────────────
@@ -421,3 +508,60 @@ def test_to_json_round_trips_the_shape():
     assert dados["cpf_cnpj"] == q.cpf_cnpj
     mesclado = mesclar_qualificacoes([("R-3", (q,))])[0]
     assert mesclado.to_json()["origem"]["nome"] == "R-3"
+
+
+# ─── RG shapes: the check digit is part of the number, never dropped ───────
+
+
+@pytest.mark.parametrize("caso, clausula, rg_esperado, orgao_esperado", RG_SHAPES)
+def test_every_real_rg_shape_round_trips(caso, clausula, rg_esperado, orgao_esperado):
+    cpf = {
+        "dv_digito_com_ssp": CPF_RG_1,
+        "sem_dv_com_ssp": CPF_RG_2,
+        "sem_pontos": CPF_RG_3,
+        "dv_letra_x": CPF_RG_4,
+        "dv_digito_uf_nua": CPF_RG_5,
+    }[caso]
+    texto = _ato_com_rg(cpf, clausula)
+    (q,) = extrair_qualificacoes(texto, 0, len(texto))
+    assert q.rg == rg_esperado, caso
+    assert q.rg_orgao_expedidor == orgao_esperado, caso
+
+
+def test_rg_without_a_dash_before_selo_digital_stays_clean():
+    (q,) = extrair_qualificacoes(COM_RG_E_SELO_SEM_TRACO, 0, len(COM_RG_E_SELO_SEM_TRACO))
+    assert q.rg == "9.876.543"
+    assert q.rg_orgao_expedidor is None
+
+
+def test_a_hyphen_joined_selo_digital_is_never_absorbed_as_orgao():
+    """The adversarial case: `RG nº 9.876.543-SELO DIGITAL: ...` is shaped
+    EXACTLY like a valid `-ÓRGÃO` suffix (a dash then 2+ uppercase letters)
+    — `_ORGAO_INVALIDO` is the only thing standing between this and a
+    fabricated órgão."""
+    (q,) = extrair_qualificacoes(COM_RG_E_SELO_COM_TRACO, 0, len(COM_RG_E_SELO_COM_TRACO))
+    assert q.rg == "9.876.543"
+    assert q.rg_orgao_expedidor is None
+
+
+# ─── genero: widened, still never guessed ──────────────────────────────────
+
+
+def test_plural_nacionalidade_still_resolves_gender():
+    (q,) = extrair_qualificacoes(NACIONALIDADE_PLURAL, 0, len(NACIONALIDADE_PLURAL))
+    assert q.nacionalidade == "brasileiras"
+    assert q.genero == "f"
+
+
+def test_genero_falls_back_to_profissao_when_nacionalidade_is_gender_neutral():
+    (q,) = extrair_qualificacoes(GENERO_SO_DA_PROFISSAO, 0, len(GENERO_SO_DA_PROFISSAO))
+    assert q.nacionalidade == "francês"  # `francês` carries no -o/-a agreement
+    assert q.profissao == "engenheiro"
+    assert q.genero == "m"
+
+
+def test_genero_stays_none_when_every_signal_is_epicene_or_neutral():
+    (q,) = extrair_qualificacoes(GENERO_EPICENO_FICA_NONE, 0, len(GENERO_EPICENO_FICA_NONE))
+    assert q.nacionalidade == "francês"
+    assert q.profissao == "motorista"  # `o/a motorista` — no gendered form
+    assert q.genero is None
