@@ -38,6 +38,7 @@ owns_kb:
   - CONTEXT/backend/07-AUTH-SECURITY.md
   - CONTEXT/backend/08-DAILY-LIFE.md
   - CONTEXT/GUIDES/google-oauth-setup.md
+  - CONTEXT/GUIDES/matricula-source-recovery.md
   - CONTEXT/INTEGRATIONS/google.md
   - CONTEXT/INTEGRATIONS/meta.md
   - CONTEXT/INTEGRATIONS/whatsapp.md
@@ -96,7 +97,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Chatbot & scheduling** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md`.
 **Tests** → `KB § PATTERNS/backend/boundary-contract-tests.md`.
 **Realtime** → `KB § PATTERNS/common/realtime-sse-bus.md`.
-**Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § INTEGRATIONS/olx.md` · `KB § INTEGRATIONS/imovelweb.md` · `KB § INTEGRATIONS/fx-ptax.md` · `KB § INTEGRATIONS/payments.md` · `KB § INTEGRATIONS/live-rooms.md` · `KB § INTEGRATIONS/turnstile.md` · `KB § GUIDES/google-oauth-setup.md`.
+**Integrations** → `KB § INTEGRATIONS/google.md` · `KB § INTEGRATIONS/meta.md` · `KB § INTEGRATIONS/whatsapp.md` · `KB § INTEGRATIONS/vista.md` · `KB § INTEGRATIONS/oauth-patterns.md` · `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § INTEGRATIONS/olx.md` · `KB § INTEGRATIONS/imovelweb.md` · `KB § INTEGRATIONS/fx-ptax.md` · `KB § INTEGRATIONS/payments.md` · `KB § INTEGRATIONS/live-rooms.md` · `KB § INTEGRATIONS/turnstile.md` · `KB § GUIDES/google-oauth-setup.md` · `KB § GUIDES/matricula-source-recovery.md`.
 
 ## Composes-with (commons + cross-domain)
 `KB § PATTERNS/common/agent-context-architecture.md` · `cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `testing.md` (compliance-owned) · `webhook-signatures.md` (security-owned) · `.claude/agents/engineer-seed.md`.
