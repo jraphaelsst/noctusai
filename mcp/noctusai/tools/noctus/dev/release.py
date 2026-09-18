@@ -74,6 +74,7 @@ _BANNED_TOKENS = (
 # Reuse the deploy_pull rebuild oracle so a promote tells you whether the VPS
 # pull will need a container rebuild — DRY, one source of truth.
 from tools.noctus.dev.deploy_pull import _rebuild_decision  # noqa: E402
+from tools.noctus.dev import toolkit_freshness as _toolkit_freshness  # noqa: E402
 
 
 def _default_run_local(
@@ -179,6 +180,7 @@ def _ci_verdict(runner, sha: str, workflow: str = _CI_WORKFLOW) -> dict[str, Any
             "detail": f"every '{workflow}' run on {sha[:9]} was cancelled/skipped"}
 
 
+@_toolkit_freshness.refuse_gate("release")
 def release(
     stage: str = "status",
     confirm: bool = False,
@@ -400,15 +402,25 @@ def register(server) -> None:
             "by construction (never force/reset/checkout). It is the ONLY sanctioned "
             "setter of NOCTUS_ALLOW_MAIN_PUSH, and only for its own push. After a "
             "promote, run noctus.dev.deploy_pull to pull origin/prod onto the VPS. "
-            "status: status|planned|up_to_date|blocked|blessed|promoted|error."
+            "TOOLKIT-STALENESS GUARD (2026-09-18): a confirm=True call (the "
+            "one that actually pushes main/prod) REFUSES (status="
+            "'refused_stale_toolkit', exit_code=1) when this MCP server's own "
+            "module graph has drifted from disk since it was imported; a "
+            "confirm=False status/plan call is only warned. "
+            "allow_stale_toolkit=True is the escape hatch (almost always "
+            "wrong). See noctus.dev.toolkit_freshness. "
+            "status: status|planned|up_to_date|blocked|blessed|promoted|error|"
+            "refused_stale_toolkit."
         ),
     )
     def _release(
         stage: str = "status",
         confirm: bool = False,
         sha: str | None = None,
+        allow_stale_toolkit: bool = False,
     ) -> dict:
-        return release(stage=stage, confirm=confirm, sha=sha)
+        return release(stage=stage, confirm=confirm, sha=sha,
+                       allow_stale_toolkit=allow_stale_toolkit)
 
 
 __all__ = ["release", "_ALLOWED_GIT", "_BANNED_TOKENS", "register"]

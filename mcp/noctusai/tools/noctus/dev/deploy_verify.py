@@ -86,6 +86,7 @@ from settings import REPO_ROOT
 from workspace import resolve_caller_root
 
 from . import build_scope as _build_scope
+from . import toolkit_freshness as _toolkit_freshness
 from . import vps_exec as _vps_exec
 from .deploy_pull import _rebuild_decision
 
@@ -450,6 +451,7 @@ def _verify_one(
     return out
 
 
+@_toolkit_freshness.warn_gate("deploy_verify")
 def deploy_verify(
     products: list[str] | None = None,
     ssh_host: str = DEFAULT_HOST,

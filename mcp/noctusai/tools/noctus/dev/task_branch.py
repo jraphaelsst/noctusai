@@ -93,6 +93,7 @@ from tools.noctus.dev._benign_stash import (
     # into a different path.
     strip_status_code as _strip_status_code,
 )
+from tools.noctus.dev import toolkit_freshness as _toolkit_freshness
 
 logger = logging.getLogger(__name__)
 
@@ -941,6 +942,7 @@ def _default_migration_collision_check(abs_wt_path: str) -> list[dict]:
     return check_migration_number_collision(repo_root=Path(abs_wt_path))
 
 
+@_toolkit_freshness.warn_gate("task_branch")
 def task_branch(
     action: str = "status",
     slug: str | None = None,

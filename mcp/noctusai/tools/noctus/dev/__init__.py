@@ -130,6 +130,7 @@ def register_all(server) -> None:
     from . import testing
     from . import three_way_sync
     from . import tmp_cleanup
+    from . import toolkit_freshness
     from . import ts_ast_edit
     from . import vector_calibration
     from . import vector_costs
@@ -256,6 +257,7 @@ def register_all(server) -> None:
     testing.register(server)
     three_way_sync.register(server)
     tmp_cleanup.register(server)
+    toolkit_freshness.register(server)
     ts_ast_edit.register(server)
     vector_calibration.register(server)
     vector_costs.register(server)

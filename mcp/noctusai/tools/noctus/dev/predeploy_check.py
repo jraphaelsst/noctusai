@@ -44,6 +44,7 @@ from workspace import resolve_caller_root
 
 from . import check_framework_deps as _cfd
 from . import phase_learnings as _pl
+from . import toolkit_freshness as _toolkit_freshness
 
 # Default deploy-relevant checks, in run order. Each is (name, kind).
 DEFAULT_CHECKS: list[str] = [
@@ -911,6 +912,7 @@ def _render_report(product: str, unknowns: list[dict], when: str) -> str:
     return "\n".join(lines)
 
 
+@_toolkit_freshness.warn_gate("predeploy_check")
 def predeploy_check(
     product: str,
     checks: list[str] | None = None,

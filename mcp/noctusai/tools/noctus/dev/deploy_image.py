@@ -75,6 +75,7 @@ import urllib.request
 from typing import Any, Callable
 
 from . import _catalog_scope_guard
+from . import toolkit_freshness as _toolkit_freshness
 from ._vps_ssh import run_remote as _throttled_ssh
 
 # Browser User-Agent — Cloudflare WAF blocks the default urllib signature
@@ -275,6 +276,7 @@ def _curl_edge(hostname: str, timeout: int = 20) -> tuple[bool, str]:
         return False, f"edge timeout/unreachable after tunnel restart: {exc}"
 
 
+@_toolkit_freshness.refuse_gate("deploy_image")
 def deploy_image(
     product: str,
     ssh_host: str = "noctus-vps",
@@ -640,9 +642,18 @@ def register(server) -> None:
             "RUNNING container's own image id + revision label (not the pulled tag) and "
             "REFUSES status='deployed' (returns 'swap_unverified' instead, no "
             "auto-rollback) unless both verifiably match. status: planned | up_to_date | "
-            "deployed | swap_unverified | rolled_back | refused_catalog_scope | error. "
+            "deployed | swap_unverified | rolled_back | refused_catalog_scope | "
+            "refused_stale_toolkit | error. "
             "Independent standalone witness for the same ground truth: "
-            "noctus.dev.deploy_verify. See KB § GUIDES/production-deploy.md § 2a (C2) · "
+            "noctus.dev.deploy_verify. TOOLKIT-STALENESS GUARD (2026-09-18): a "
+            "confirm=True call REFUSES (status='refused_stale_toolkit', "
+            "container untouched) when this MCP server's own module graph has "
+            "drifted from disk since it was imported — swapping a running "
+            "container on stale logic is the case that actually hurts. A "
+            "confirm=False plan call is only warned. allow_stale_toolkit=True "
+            "is the escape hatch (almost always wrong). See "
+            "noctus.dev.toolkit_freshness. "
+            "See KB § GUIDES/production-deploy.md § 2a (C2) · "
             "KB § PATTERNS/architect/product-working-scope.md."
         ),
     )
@@ -654,9 +665,11 @@ def register(server) -> None:
         ssh_host: str = "noctus-vps",
         skip_ancestry_check: bool = False,
         allow_inactive: bool = False,
+        allow_stale_toolkit: bool = False,
     ) -> dict:
         return deploy_image(product, ssh_host=ssh_host, tag=tag, source=source, confirm=confirm,
-                            skip_ancestry_check=skip_ancestry_check, allow_inactive=allow_inactive)
+                            skip_ancestry_check=skip_ancestry_check, allow_inactive=allow_inactive,
+                            allow_stale_toolkit=allow_stale_toolkit)
 
 
 __all__ = ["deploy_image", "_poll_health", "_restart_tunnel", "_curl_edge", "_image_revision",

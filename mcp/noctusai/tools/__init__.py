@@ -36,5 +36,16 @@ def register_all(server) -> None:
     # register it explicitly so noctus.dev.kb_sync is MCP-exposed.
     kb_sync.register(server)
 
+    # 🔴 toolkit-staleness baseline (2026-09-18) — MUST be the LAST thing
+    # register_all does: every umbrella above has now finished importing
+    # its tool modules, so sys.modules holds the full mcp/noctusai module
+    # graph this process will ever answer with. Freezing {path: (mtime,
+    # size)} here — not lazily on first tool call — is what lets a LATER
+    # on-disk edit be detected as drift instead of silently becoming the
+    # new "fresh" baseline. See tools/noctus/dev/toolkit_freshness.py.
+    from .noctus.dev import toolkit_freshness
+
+    toolkit_freshness.capture_baseline()
+
 
 __all__ = ["register_all"]

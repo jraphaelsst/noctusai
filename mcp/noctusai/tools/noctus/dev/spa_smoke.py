@@ -43,6 +43,8 @@ from pathlib import Path
 
 from settings import REPO_ROOT
 
+from . import toolkit_freshness as _toolkit_freshness
+
 logger = logging.getLogger(__name__)
 
 #: WAF rule 1010 rejects non-browser User-Agents at the Cloudflare edge.
@@ -196,6 +198,7 @@ def smoke_product(
     return {"ok": not failures, "slug": slug, "url": base, "checks": checks, "failures": failures}
 
 
+@_toolkit_freshness.warn_gate("spa_smoke")
 def spa_smoke(
     products: list[str] | None = None,
     *,

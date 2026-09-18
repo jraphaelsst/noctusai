@@ -4,7 +4,7 @@
 
 Born 2026-05-30: ~330 dangling remote branches + an embedding-refresh tax + a history of `--no-verify` rationalizations had accumulated. Every one traced to a *behavioral* gap, not a missing tool. The tools were then built; this codifies the behavior.
 
-## The five principles
+## The principles
 
 ### 1. Close the loop — "works" ≠ "done"
 A task is done only when **nothing dangles**: branch integrated-or-salvaged, `origin` branch deleted post-integration, worktree removed, docs + caches synced, no orphan ref / pointer / temp file. **Whoever pushes a branch owns its cleanup on integration** — pushing for durability without later deleting is the literal source of the orphan-branch pile-up. The close-out checklist:
@@ -158,3 +158,56 @@ The live-agent half (a tool call in a session transcript, e.g. the `npx
 tsc | tail -5 && echo "$?"` row above) stays out of a tree-walking
 predicate's reach by construction — `gate_sweep` addresses that half
 structurally (no channel to misread) rather than by detection. — 2026-09-17
+
+### 7. A stale interpreter is verdict-channel integrity ONE LEVEL UP — the code you are JUDGING must be the code on disk
+
+Principle 6 says the exit code you read must belong to what you are judging.
+This is the same failure one layer down the stack: even a perfectly-read
+exit code is worthless if the CODE that produced it was never asked the
+current question.
+
+`mcp/noctusai` is imported once, into `sys.modules`, by a long-lived MCP
+server process. Python does not re-read a module's file after that — editing
+a tool's `.py` on disk does nothing to the code already resident in memory.
+The 2026-09-18 incident: a server had been running since 2026-09-16 18:45;
+`task_branch.py` was last modified 2026-09-18 01:15. For ~30 hours every
+`noctus.dev.*` call — including `predeploy_check`, `deploy_verify`,
+`spa_smoke`, `migrate_product` and `task_branch` itself — executed two-day-
+old code, and **nothing anywhere surfaced that.** Concretely:
+`task_branch action=start` silently stopped provisioning worktrees (the
+loaded code predated `wire_env`), so every worktree created that day lacked
+`.env` / `node_modules`, which then made a colocated test fail in a way an
+engineer reasonably — and wrongly — called "pre-existing."
+
+The shape is identical to principle 6's table: a messenger's status was
+mistaken for the subject's status. Here the messenger is the INTERPRETER
+itself — its answer was read as current when the code producing it was not.
+
+**In practice**
+- `noctus.dev.toolkit_freshness` detects it: at server-startup completion it
+  freezes `{path: (mtime, size)}` for every `mcp/noctusai` module actually
+  loaded (`sys.modules`, not a blind filesystem walk — the question is "what
+  did the process load," not "what exists on disk"), then re-stats on demand.
+  TTL-cached (default 5s) so a burst of tool calls costs one stat pass, not
+  one per call.
+- **Refuse vs. warn is drawn at "does this write to production," not at "is
+  this tool high-stakes."** `predeploy_check` / `deploy_verify` / `spa_smoke`
+  / `task_branch` are read-only or dev-scoped-and-recoverable — they still
+  answer when stale, but carry `toolkit_stale: true` + a loud `warnings`
+  entry naming the remedy (never silently as-if-current).
+  `migrate_product` / `release` / `deploy_image` gate their actual write
+  behind `confirm=True` already (the existing dry-run convention); a
+  `confirm=False` preview is warned like the read-only tools, but a
+  `confirm=True` call — the one that writes to a database, pushes
+  main/prod, or swaps a running container — REFUSES
+  (`status='refused_stale_toolkit'`, mirroring `migrate_product`'s own
+  `refused_stale_tree` vocabulary) unless the caller explicitly passes
+  `allow_stale_toolkit=True` (recorded on the return, never silent).
+- **The remedy is always a restart, never a hot-reload.** Swapping code
+  under a live module graph mid-call is a worse failure mode than reporting
+  staleness — `/mcp` in Claude Code re-imports the toolkit from disk.
+- A stale verdict must never be silently swallowed — same no-silent-errors
+  posture as principle 6's "silence is the sharpest case," applied to the
+  interpreter's own currency instead of a command's exit status.
+
+See `mcp/noctusai/tools/noctus/dev/toolkit_freshness.py`. — 2026-09-18

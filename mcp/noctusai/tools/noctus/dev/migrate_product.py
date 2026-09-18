@@ -216,6 +216,7 @@ from settings import PRODUCTS_DIR, REPO_ROOT
 from workspace import resolve_caller_root
 
 from . import _catalog_scope_guard
+from . import toolkit_freshness as _toolkit_freshness
 
 logger = logging.getLogger(__name__)
 
@@ -890,6 +891,7 @@ _ERROR_STATUSES = frozenset({
 })
 
 
+@_toolkit_freshness.refuse_gate("migrate_product")
 def migrate_product(
     product: str,
     *,
@@ -1490,9 +1492,19 @@ def register(server) -> None:
             "allow_inactive=True is the escape hatch (almost always wrong — see "
             "the tool's docstring) for a deliberate, supervised reactivation; "
             "the catalog_scope verdict still rides on the result when bypassed. "
+            "TOOLKIT-STALENESS GUARD (2026-09-18): a confirm=True call REFUSES "
+            "(status='refused_stale_toolkit', exit_code=1) when this MCP "
+            "server's own mcp/noctusai module graph has drifted from disk since "
+            "it was imported — acting on stale logic against production is the "
+            "case that actually hurts. A confirm=False (dry-run) call is never "
+            "refused, only warned (toolkit_stale + a warnings entry), since it "
+            "never touches the database. allow_stale_toolkit=True is the "
+            "escape hatch (almost always wrong). See "
+            "noctus.dev.toolkit_freshness. "
             "Returns {status, exit_code, product, schema, schema_source, "
             "project_ref, applied, skipped_already_applied, pending, error, "
-            "stale_tree, allow_stale_tree, catalog_scope, allow_inactive}. "
+            "stale_tree, allow_stale_tree, catalog_scope, allow_inactive, "
+            "toolkit_stale}. "
             "KB § PATTERNS/backend/migrate-product-mcp-tool.md · "
             "KB § PATTERNS/architect/product-working-scope.md."
         ),
@@ -1506,6 +1518,7 @@ def register(server) -> None:
         worktree_path: str | None = None,
         allow_stale_tree: bool = False,
         allow_inactive: bool = False,
+        allow_stale_toolkit: bool = False,
     ) -> dict:
         return migrate_product(
             product=product,
@@ -1516,6 +1529,7 @@ def register(server) -> None:
             worktree_path=worktree_path,
             allow_stale_tree=allow_stale_tree,
             allow_inactive=allow_inactive,
+            allow_stale_toolkit=allow_stale_toolkit,
         )
 
     @server.tool(
