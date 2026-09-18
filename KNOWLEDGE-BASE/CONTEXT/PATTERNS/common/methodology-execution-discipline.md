@@ -103,6 +103,7 @@ Every one of these was a real misread, not a hypothetical:
 | a backgrounded compound command | the wrapper's exit (a trailing `grep`) | pytest inside had exited 1 |
 | `deploy_image` timing out (2026-08-13) | nothing — the call went quiet | prod was still serving the old image |
 | `noctus.dev.pytest` without `worktree_path` | "689 passed" | the WORKTREE's suite never ran |
+| `migrate_product` dry-run (2026-09-17) | a confident pending-migrations list | the primary was 26 commits behind `origin/dev` and didn't even contain the migration being deployed — see `KB § PATTERNS/backend/migrate-product-mcp-tool.md` § Stale-tree refusal |
 
 The shape is constant: **a messenger's status was mistaken for the subject's
 status.** A pipe, a wrapper, a watcher, a notification and a timeout are all

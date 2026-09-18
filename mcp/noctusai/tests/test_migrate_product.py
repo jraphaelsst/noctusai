@@ -1,11 +1,17 @@
 """Tests for ``noctus.dev.migrate_product``.
 
-All tests are fully hermetic — they use ``FakeSqlExecutor`` and a tmp-path
-products directory, so zero real Supabase calls are made.
+All tests are fully hermetic — they use ``FakeSqlExecutor`` / ``FakeGitRunner``
+and a tmp-path products directory, so zero real Supabase calls AND zero real
+git processes are made.
 
 Test seam design:
   - ``executor=FakeSqlExecutor(...)`` injection avoids network.
   - ``products_dir=tmp_path/"products"`` injection avoids PRODUCTS_DIR.
+  - ``git_runner=FakeGitRunner(...)`` injection avoids shelling out to real
+    git (the stale-tree refusal gate's DI seam — every call below that
+    doesn't specifically test that gate uses ``_clean_git_runner()``, a
+    canned "fresh, clean, up-to-date" tree, so unrelated tests never trip
+    the new default-on refusal nor touch the real repo).
   - No monkey-patching of our own code (per KB § PATTERNS/compliance/testing.md).
   - ``patch.object`` is only used on ``urllib.request`` (external service) in
     the ``SupabaseMgmtExecutor`` smoke test, which is the allowed carve-out.
@@ -24,11 +30,15 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "seed" / "lib" / "backend"))
 
 from tools.noctus.dev.migrate_product import (  # noqa: E402
+    FakeGitRunner,
     FakeSqlExecutor,
+    GitQueryError,
     SupabaseMgmtExecutor,
+    _check_tree_staleness,
     _checksum,
     _copy_ledger_rows_sql,
     _delete_phantom_ledger_rows_sql,
+    _dirty_migration_paths,
     _ensure_tracking_table_sql,
     _fetch_applied_sql,
     _quote_ident,
@@ -53,6 +63,24 @@ def _make_products_dir(tmp_path: Path) -> Path:
     p = tmp_path / "products"
     p.mkdir()
     return p
+
+
+def _clean_git_runner() -> FakeGitRunner:
+    """A FakeGitRunner reporting a fresh, clean, up-to-date tree.
+
+    Used by every test below that is NOT specifically exercising the
+    stale-tree refusal gate, so those tests keep testing what they were
+    testing (Supabase migration logic) without tripping the new
+    default-on gate — and without shelling out to the real repo.
+    """
+    return FakeGitRunner(
+        responses={
+            ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+            ("rev-list", "--count", "HEAD..origin/dev"): "0",
+            ("status", "--porcelain"): "",
+        }
+    )
 
 
 def _make_main_py(products_dir: Path, product_slug: str, body: str) -> Path:
@@ -240,7 +268,7 @@ class TestDryRun:
         )
         fake = FakeSqlExecutor()  # tracking table returns no rows → all pending
 
-        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products)
+        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["status"] == "dry_run"
         assert result["pending"] == ["001_seed.sql", "002_crm.sql"]
@@ -254,7 +282,7 @@ class TestDryRun:
             products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")]
         )
         fake = FakeSqlExecutor()
-        migrate_product("orbity", confirm=False, executor=fake, products_dir=products)
+        migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
         # The only SQL calls should be ensure-table + fetch-applied (2), NOT
         # the migration body itself.
         assert len(fake.executed) == 2
@@ -275,7 +303,7 @@ class TestDryRun:
                 "SELECT filename": [{"filename": "001_seed.sql"}]
             }
         )
-        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products)
+        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["status"] == "dry_run"
         assert result["pending"] == ["002_crm.sql"]
@@ -300,7 +328,7 @@ class TestConfirmApply:
         )
         fake = FakeSqlExecutor()
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products)
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["status"] == "applied"
         assert result["applied"] == ["001_seed.sql", "002_crm.sql"]
@@ -313,7 +341,7 @@ class TestConfirmApply:
         _make_migration_files(products, "orbity", [("001_seed.sql", sql_001)])
         fake = FakeSqlExecutor()
 
-        migrate_product("orbity", confirm=True, executor=fake, products_dir=products)
+        migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         # executed should contain: ensure_table + fetch_applied + migration_sql + record_sql
         assert any(sql_001 in s for s in fake.executed), "migration body was not executed"
@@ -341,7 +369,7 @@ class TestConfirmApply:
             }
         )
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products)
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["status"] == "up_to_date"
         assert result["applied"] == []
@@ -362,7 +390,7 @@ class TestConfirmApply:
         )
         fake = FakeSqlExecutor(fail_on={sql_002})
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products)
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["status"] == "error"
         assert "002_bad.sql" in result["error"]
@@ -395,6 +423,7 @@ class TestTargetFilter:
             target="001_seed.sql",
             executor=fake,
             products_dir=products,
+            git_runner=_clean_git_runner(),
         )
 
         assert result["pending"] == ["001_seed.sql"]
@@ -412,6 +441,7 @@ class TestTargetFilter:
             target="999_does_not_exist.sql",
             executor=fake,
             products_dir=products,
+            git_runner=_clean_git_runner(),
         )
 
         assert result["status"] == "error"
@@ -429,7 +459,7 @@ class TestEdgeCases:
         _make_migration_files(products, "orbity", [])
         fake = FakeSqlExecutor()
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products)
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["status"] == "up_to_date"
         assert result["applied"] == []
@@ -439,7 +469,7 @@ class TestEdgeCases:
         products = _make_products_dir(tmp_path)
         fake = FakeSqlExecutor()
 
-        result = migrate_product("nonexistent", confirm=False, executor=fake, products_dir=products)
+        result = migrate_product("nonexistent", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["status"] == "error"
         assert "nonexistent" in result["error"]
@@ -458,7 +488,7 @@ class TestEdgeCases:
         )
         fake = FakeSqlExecutor()
 
-        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products)
+        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["pending"] == ["001_valid.sql"]
 
@@ -475,7 +505,7 @@ class TestEdgeCases:
             lambda *a, **k: None,
         )
 
-        result = migrate_product("orbity", products_dir=products)  # no executor
+        result = migrate_product("orbity", products_dir=products, git_runner=_clean_git_runner())  # no executor
 
         assert result["status"] == "not_configured"
         assert "SUPABASE_ACCESS_TOKEN" in result["error"]
@@ -495,6 +525,7 @@ class TestEdgeCases:
             schema="custom_schema",
             executor=fake,
             products_dir=products,
+            git_runner=_clean_git_runner(),
         )
 
         assert result["schema"] == "custom_schema"
@@ -509,7 +540,7 @@ class TestEdgeCases:
         )
         fake = FakeSqlExecutor(fail_on={"CREATE TABLE IF NOT EXISTS"})
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products)
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["status"] == "error"
         assert "schema_migrations" in result["error"]
@@ -527,6 +558,7 @@ class TestEdgeCases:
             project_ref="testrefabcdef1234567",
             executor=fake,
             products_dir=products,
+            git_runner=_clean_git_runner(),
         )
 
         assert result["project_ref"] == "testrefabcdef1234567"
@@ -719,7 +751,7 @@ class TestMigrateProductUsesDerivedSchema:
         fake = FakeSqlExecutor()
 
         result = migrate_product(
-            "erp-imobiliario", confirm=True, executor=fake, products_dir=products
+            "erp-imobiliario", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner()
         )
 
         assert result["schema"] == "erp"
@@ -732,7 +764,7 @@ class TestMigrateProductUsesDerivedSchema:
         _make_migration_files(products, "orbity", [])
         fake = FakeSqlExecutor()
 
-        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products)
+        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
 
         assert result["schema"] == "orbity"
         assert result["schema_source"] == "slug_fallback"
@@ -883,6 +915,373 @@ class TestRepairLedger:
         exists_sql = _schema_migrations_exists_sql("personal-finance")
         assert "to_regclass" in exists_sql
         assert '"personal-finance".schema_migrations' in exists_sql
+
+
+# ---------------------------------------------------------------------------
+# Stale-tree refusal (the 2026-09-17 incident) —
+# KB § PATTERNS/backend/migrate-product-mcp-tool.md "STALE-TREE REFUSAL"
+# ---------------------------------------------------------------------------
+
+
+class TestCheckTreeStaleness:
+    """Unit tests for the `_check_tree_staleness` helper in isolation."""
+
+    def test_clean_tree_is_not_stale(self, tmp_path):
+        result = _check_tree_staleness(tmp_path, git_runner=_clean_git_runner())
+        assert result["stale"] is False
+        assert result["check"] is None
+        assert result["commits_behind"] == 0
+        assert result["dirty_migration_files"] == []
+
+    def test_behind_upstream_is_stale(self, tmp_path):
+        runner = FakeGitRunner(
+            responses={
+                ("rev-parse", "--abbrev-ref", "HEAD"): "main",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+                ("rev-list", "--count", "HEAD..origin/dev"): "26",
+            }
+        )
+        result = _check_tree_staleness(tmp_path, git_runner=runner)
+        assert result["stale"] is True
+        assert result["check"] == "behind"
+        assert result["commits_behind"] == 26
+        assert result["upstream"] == "origin/dev"
+        assert "26 commit" in result["detail"]
+
+    def test_dirty_migrations_is_stale(self, tmp_path):
+        runner = FakeGitRunner(
+            responses={
+                ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+                ("rev-list", "--count", "HEAD..origin/dev"): "0",
+                ("status", "--porcelain"): (
+                    " M products/erp-imobiliario/backend/migrations/"
+                    "134_contrato_assinatura.sql\n"
+                ),
+            }
+        )
+        result = _check_tree_staleness(tmp_path, git_runner=runner)
+        assert result["stale"] is True
+        assert result["check"] == "dirty_migrations"
+        assert result["dirty_migration_files"] == [
+            "products/erp-imobiliario/backend/migrations/134_contrato_assinatura.sql"
+        ]
+
+    def test_untracked_migration_file_counts_as_dirty(self, tmp_path):
+        """Untracked (not just modified) files under migrations/ also count —
+        an added-but-uncommitted migration is exactly the unreviewed state
+        this gate exists to catch."""
+        runner = FakeGitRunner(
+            responses={
+                ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+                ("rev-list", "--count", "HEAD..origin/dev"): "0",
+                ("status", "--porcelain"): (
+                    "?? products/erp-imobiliario/backend/migrations/999_new.sql\n"
+                ),
+            }
+        )
+        result = _check_tree_staleness(tmp_path, git_runner=runner)
+        assert result["stale"] is True
+        assert result["check"] == "dirty_migrations"
+
+    def test_dirty_files_outside_migrations_are_ignored(self, tmp_path):
+        runner = FakeGitRunner(
+            responses={
+                ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+                ("rev-list", "--count", "HEAD..origin/dev"): "0",
+                ("status", "--porcelain"): (
+                    " M products/erp-imobiliario/backend/app/main.py\n?? scratch.txt\n"
+                ),
+            }
+        )
+        result = _check_tree_staleness(tmp_path, git_runner=runner)
+        assert result["stale"] is False
+
+    def test_not_a_git_repo_refuses(self, tmp_path):
+        """Branch detection failing (e.g. `fatal: not a git repository`) is
+        a query failure — refuse, never silently assume clean."""
+        runner = FakeGitRunner(fail_on={("rev-parse", "--abbrev-ref", "HEAD")})
+        result = _check_tree_staleness(tmp_path, git_runner=runner)
+        assert result["stale"] is True
+        assert result["check"] == "query_failed"
+
+    def test_no_upstream_configured_refuses(self, tmp_path):
+        runner = FakeGitRunner(
+            responses={("rev-parse", "--abbrev-ref", "HEAD"): "feat/x"},
+            fail_on={("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")},
+        )
+        result = _check_tree_staleness(tmp_path, git_runner=runner)
+        assert result["stale"] is True
+        assert result["check"] == "query_failed"
+        assert result["branch"] == "feat/x"
+
+    def test_rev_list_failure_refuses(self, tmp_path):
+        runner = FakeGitRunner(
+            responses={
+                ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+            },
+            fail_on={("rev-list", "--count", "HEAD..origin/dev")},
+        )
+        result = _check_tree_staleness(tmp_path, git_runner=runner)
+        assert result["stale"] is True
+        assert result["check"] == "query_failed"
+
+    def test_status_query_failure_refuses(self, tmp_path):
+        runner = FakeGitRunner(
+            responses={
+                ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+                ("rev-list", "--count", "HEAD..origin/dev"): "0",
+            },
+            fail_on={("status", "--porcelain")},
+        )
+        result = _check_tree_staleness(tmp_path, git_runner=runner)
+        assert result["stale"] is True
+        assert result["check"] == "query_failed"
+
+
+class TestDirtyMigrationPaths:
+    def test_extracts_migration_paths_only(self):
+        porcelain = (
+            " M products/erp-imobiliario/backend/migrations/134_x.sql\n"
+            "?? products/orbity/backend/migrations/002_new.sql\n"
+            " M products/erp-imobiliario/backend/app/main.py\n"
+        )
+        assert _dirty_migration_paths(porcelain) == [
+            "products/erp-imobiliario/backend/migrations/134_x.sql",
+            "products/orbity/backend/migrations/002_new.sql",
+        ]
+
+    def test_handles_rename_shape(self):
+        porcelain = (
+            "R  products/orbity/backend/migrations/001_old.sql -> "
+            "products/orbity/backend/migrations/001_new.sql\n"
+        )
+        assert _dirty_migration_paths(porcelain) == [
+            "products/orbity/backend/migrations/001_new.sql"
+        ]
+
+    def test_empty_output_is_clean(self):
+        assert _dirty_migration_paths("") == []
+
+
+class TestMigrateProductStaleTreeGate:
+    """Integration: `migrate_product()` refuses / proceeds per the
+    stale-tree gate end-to-end."""
+
+    @staticmethod
+    def _behind_git_runner(n: int = 26) -> FakeGitRunner:
+        return FakeGitRunner(
+            responses={
+                ("rev-parse", "--abbrev-ref", "HEAD"): "main",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+                ("rev-list", "--count", "HEAD..origin/dev"): str(n),
+            }
+        )
+
+    @staticmethod
+    def _dirty_git_runner() -> FakeGitRunner:
+        return FakeGitRunner(
+            responses={
+                ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+                ("rev-list", "--count", "HEAD..origin/dev"): "0",
+                ("status", "--porcelain"): (
+                    " M products/erp-imobiliario/backend/migrations/"
+                    "134_contrato_assinatura.sql\n"
+                ),
+            }
+        )
+
+    @staticmethod
+    def _query_failure_git_runner() -> FakeGitRunner:
+        return FakeGitRunner(fail_on={("rev-parse", "--abbrev-ref", "HEAD")})
+
+    def _make_fake_worktree(self, root: Path) -> Path:
+        """Same shape as `test_scaffold_migration.py`'s helper of the same
+        name — a directory `resolve_caller_root` accepts as a real worktree
+        (a `.git` entry + the `.noctusai-workspace` marker)."""
+        root.mkdir(parents=True, exist_ok=True)
+        (root / ".git").write_text("gitdir: /tmp/fake/.git\n", encoding="utf-8")
+        (root / ".noctusai-workspace").write_text(
+            "workspace_kind=primary\n"
+            "workspace_name=fake\n"
+            f"noctusai_home={root}\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def test_behind_upstream_tree_refuses(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(
+            products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")]
+        )
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity",
+            confirm=False,
+            executor=fake,
+            products_dir=products,
+            repo_root=tmp_path,
+            git_runner=self._behind_git_runner(26),
+        )
+
+        assert result["status"] == "refused_stale_tree"
+        assert result["exit_code"] == 1
+        assert result["pending"] == []
+        assert result["applied"] == []
+        assert result["stale_tree"]["stale"] is True
+        assert result["stale_tree"]["check"] == "behind"
+        assert result["stale_tree"]["commits_behind"] == 26
+        # The message names the tree (absolute path), the branch, the
+        # commits-behind count, and the exact remedy.
+        assert str(tmp_path) in result["error"]
+        assert "'main'" in result["error"]
+        assert "26" in result["error"]
+        assert "git merge --ff-only origin/dev" in result["error"]
+        assert "worktree_path" in result["error"]
+        # Refuses BEFORE touching Supabase at all.
+        assert fake.executed == []
+
+    def test_dirty_migrations_tree_refuses(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(
+            products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")]
+        )
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity",
+            confirm=False,
+            executor=fake,
+            products_dir=products,
+            repo_root=tmp_path,
+            git_runner=self._dirty_git_runner(),
+        )
+
+        assert result["status"] == "refused_stale_tree"
+        assert result["exit_code"] == 1
+        assert result["stale_tree"]["check"] == "dirty_migrations"
+        assert "134_contrato_assinatura.sql" in result["error"]
+        assert fake.executed == []
+
+    def test_clean_up_to_date_tree_proceeds(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(
+            products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")]
+        )
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity",
+            confirm=False,
+            executor=fake,
+            products_dir=products,
+            repo_root=tmp_path,
+            git_runner=_clean_git_runner(),
+        )
+
+        assert result["status"] == "dry_run"
+        assert result["exit_code"] == 0
+        assert result["pending"] == ["001_seed.sql"]
+        assert result["stale_tree"]["stale"] is False
+        assert result["error"] is None
+
+    def test_allow_stale_tree_bypasses_and_records_refusal(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(
+            products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")]
+        )
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity",
+            confirm=False,
+            executor=fake,
+            products_dir=products,
+            repo_root=tmp_path,
+            git_runner=self._behind_git_runner(26),
+            allow_stale_tree=True,
+        )
+
+        assert result["status"] == "dry_run"
+        assert result["exit_code"] == 0
+        assert result["pending"] == ["001_seed.sql"]
+        assert result["allow_stale_tree"] is True
+        # The bypass is recorded, never silent: the verdict still rides on
+        # the result even though it was not acted on.
+        assert result["stale_tree"]["stale"] is True
+        assert result["stale_tree"]["check"] == "behind"
+        assert result["stale_tree"]["commits_behind"] == 26
+
+    def test_failed_git_query_refuses_never_assumes_clean(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(
+            products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")]
+        )
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity",
+            confirm=False,
+            executor=fake,
+            products_dir=products,
+            repo_root=tmp_path,
+            git_runner=self._query_failure_git_runner(),
+        )
+
+        assert result["status"] == "refused_stale_tree"
+        assert result["exit_code"] == 1
+        assert result["stale_tree"]["check"] == "query_failed"
+        assert fake.executed == []
+
+    def test_worktree_path_pins_the_inspected_and_read_tree(self, tmp_path):
+        """worktree_path= pins BOTH which tree the staleness check inspects
+        AND where migrations are read from — mirrors predeploy_check's
+        parameter of the same name and semantics exactly."""
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        _make_migration_files(
+            wt / "products",
+            "orbity",
+            [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")],
+        )
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity",
+            confirm=False,
+            executor=fake,
+            worktree_path=str(wt),
+            git_runner=_clean_git_runner(),
+        )
+
+        assert result["status"] == "dry_run"
+        assert result["pending"] == ["001_seed.sql"]
+
+    def test_worktree_path_stale_tree_refuses(self, tmp_path):
+        """The pinned worktree, not the primary, is what gets judged."""
+        wt = self._make_fake_worktree(tmp_path / "wt")
+        _make_migration_files(
+            wt / "products",
+            "orbity",
+            [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")],
+        )
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity",
+            confirm=False,
+            executor=fake,
+            worktree_path=str(wt),
+            git_runner=self._behind_git_runner(3),
+        )
+
+        assert result["status"] == "refused_stale_tree"
+        assert str(wt.resolve()) in result["error"]
 
 
 # ---------------------------------------------------------------------------
