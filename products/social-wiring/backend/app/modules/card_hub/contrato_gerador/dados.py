@@ -258,7 +258,22 @@ class PermutaImovel:
     """
 
     permuta_ativo_id: str
+    #: The WHOLE selection's quote, unchanged in shape — kept as the
+    #: fallback `contexto._descricao_matricula_permuta` uses when the
+    #: extraction carries no `descricao_imovel` block (see below).
     descricao_matricula: Optional[str] = None
+    #: [migration 136] The `descricao_imovel` typed block for THIS ativo's
+    #: extraction (`obter_selecao()['permutas'][i]['descricao_imovel']`),
+    #: for the SAME reason the OBJETO clause needs it instead of
+    #: `descricao_matricula` above: a de-furnitured abertura still ends in
+    #: `PROPRIETÁRIOS: …`, which on a resold property names the PREVIOUS
+    #: owners. Unlike the OBJETO clause this text is never bold/underlined
+    #: (`{{ p.texto }}` in `modelo_texto.py` is a plain var, not a `{{r }}`
+    #: rich-text slot — the permuta parcela line has no formatting story at
+    #: all), so there is no companion `_formatacao` field here. `None` when
+    #: the extraction carries no such block — `contexto.py` falls back to
+    #: `descricao_matricula` above and logs that it did.
+    descricao_imovel_texto: Optional[str] = None
     #: The catalog imóvel's address when the ativo points at one, otherwise the
     #: ativo's OWN address snapshot — a property brought as swap currency is
     #: often not a catalog listing at all (migration 101's `permuta_ativos`

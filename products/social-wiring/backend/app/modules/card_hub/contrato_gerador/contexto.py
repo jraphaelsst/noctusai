@@ -29,7 +29,12 @@ from noctusai_lib.integrations.docx_render import DocxRenderAdapter
 
 from app.modules.card_hub.contrato_gerador import frases
 from app.modules.card_hub.contrato_gerador.concordancia import lado, normalizar_genero
-from app.modules.card_hub.contrato_gerador.dados import DadosContrato, Pessoa, signatarios
+from app.modules.card_hub.contrato_gerador.dados import (
+    DadosContrato,
+    Pessoa,
+    PermutaImovel,
+    signatarios,
+)
 from app.modules.card_hub.contrato_gerador.derivacao import (
     antigos_proprietarios,
     certidoes_imovel,
@@ -63,6 +68,31 @@ def _generos(pessoas: list[Pessoa]) -> list[str]:
     return [normalizar_genero(p.genero) or "m" for p in pessoas]
 
 
+def _descricao_matricula_permuta(i: PermutaImovel, d: DadosContrato) -> str:
+    """Migration 136: the SAME narrowing `_descricao_matricula_rica` applies
+    to the OBJETO clause, for the SAME reason — a de-furnitured abertura
+    still ends in `PROPRIETÁRIOS: …`, which on a resold property names the
+    PREVIOUS owners, and this text is quoted into the same deed. Unlike the
+    OBJETO clause this is plain text (`{{ p.texto }}` is not a `{{r }}`
+    rich-text slot — the permuta parcela line has no formatting story), so
+    there is no `formatacao` to carry alongside it.
+
+    Falls back to `i.descricao_matricula` (the whole selection, the pre-136
+    behaviour) ONLY when the extraction carries no `descricao_imovel` block
+    — logged at WARNING so the fallback is visible, never silent.
+    """
+    if i.descricao_imovel_texto is not None:
+        return i.descricao_imovel_texto
+    logger.warning(
+        "contrato %s: permuta ativo %s sem bloco 'descricao_imovel' — a "
+        "parcela de permuta usa a seleção inteira (comportamento anterior "
+        "à migração 136)",
+        d.contrato_id,
+        i.permuta_ativo_id,
+    )
+    return i.descricao_matricula or ""
+
+
 def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C) -> str:
     """The permuta parcela (spec §2.3 `p.tipo == 'permuta'`) — its value is the
     parcela's own, and each imóvel is one `permuta_ativos` link (114) carrying
@@ -70,7 +100,7 @@ def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C) -> str:
     imoveis = d.permuta_imoveis
     nomes = juntar([(p.nome or "").upper() for p in signatarios(d.compradores)])
     descricoes = " E ".join(
-        f"{i.descricao_matricula} Imóvel devidamente cadastrado pela Prefeitura Municipal de "
+        f"{_descricao_matricula_permuta(i, d)} Imóvel devidamente cadastrado pela Prefeitura Municipal de "
         f"{i.endereco.cidade} sob nº {i.inscricao_municipal} e caracterizado na Matrícula Nº "
         f"{frases.matricula_numero(i.matricula_numero)} do {i.cartorio}."
         for i in imoveis

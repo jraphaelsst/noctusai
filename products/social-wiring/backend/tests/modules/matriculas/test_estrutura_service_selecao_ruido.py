@@ -178,3 +178,111 @@ class TestDescricaoImovelBloco:
         # the abertura block lookup path directly via listar_atos instead.
         assert svc.listar_atos(scoped, ORG, UUID(ext["id"]))["abertura_blocos"] == []
         assert out["descricao_imovel"] is None
+
+
+class TestPermutaCitacaoMirrorsObjeto:
+    """`_citacao` is called once per group — `papel='objeto'` AND every
+    `papel='permuta'` group — so a permuta ativo's OWN matrícula quote gets
+    the identical noise-subtraction and `descricao_imovel` narrowing the
+    top-level objeto quote gets above. These mirror
+    `TestCitacaoSubtractsRuido`/`TestDescricaoImovelBloco`, scoped to
+    `out["permutas"][0]` instead of the top-level `out`. No objeto
+    selection is seeded at all — `obter_selecao` computes `permutas`
+    independent of whether an objeto quote exists."""
+
+    def _seed_permuta(self, scoped, *, ruido=None):
+        permuta_ext = extracao_row(ruido=ruido)
+        contrato = contrato_row()
+        seed(
+            scoped,
+            extracoes=[permuta_ext],
+            contratos=[contrato],
+            negociacoes=[negociacao_row(contrato["atendimento_id"])],
+        )
+        atos = _atos_by_kind(scoped, permuta_ext["id"])
+        return permuta_ext, contrato, atos
+
+    def _selecionar_permuta(
+        self, contrato_id: str, permuta_ativo_id: str, extracao_id: str, atos_em_ordem: list[dict]
+    ) -> list[dict]:
+        return [
+            {
+                "id": str(uuid4()),
+                "org_id": ORG_ID,
+                "contrato_id": contrato_id,
+                "extracao_id": extracao_id,
+                "ato_id": ato["id"],
+                "ordem": ordem,
+                "papel": "permuta",
+                "permuta_ativo_id": permuta_ativo_id,
+                "selecionado_por": None,
+                "created_at": "2026-04-01T00:00:00+00:00",
+            }
+            for ordem, ato in enumerate(atos_em_ordem, start=1)
+        ]
+
+    def test_a_permuta_quote_also_drops_its_furniture(self, scoped):
+        permuta_ativo_id = str(uuid4())
+        permuta_ext, contrato, atos = self._seed_permuta(scoped, ruido=_RUIDO)
+        scoped.set_table_data(
+            "atendimento_contrato_matricula_atos",
+            self._selecionar_permuta(
+                contrato["id"], permuta_ativo_id, permuta_ext["id"],
+                [atos[("abertura", None)]],
+            ),
+        )
+
+        out = svc.obter_selecao(scoped, ORG, UUID(contrato["id"]))
+        permuta_quote = out["permutas"][0]
+
+        assert permuta_quote["permuta_ativo_id"] == permuta_ativo_id
+        assert TEXTO[0:_CABECALHO_FIM] not in permuta_quote["texto"]
+        assert "IMÓVEL: Apartamento" in permuta_quote["texto"]
+        assert permuta_quote["texto"] == TEXTO[_CABECALHO_FIM : _ABERTURA[1]]
+
+    def test_a_permuta_descricao_imovel_is_exposed_and_excludes_the_label(self, scoped):
+        permuta_ativo_id = str(uuid4())
+        permuta_ext, contrato, atos = self._seed_permuta(scoped)
+        scoped.set_table_data(
+            "atendimento_contrato_matricula_atos",
+            self._selecionar_permuta(
+                contrato["id"], permuta_ativo_id, permuta_ext["id"],
+                [atos[("abertura", None)]],
+            ),
+        )
+
+        out = svc.obter_selecao(scoped, ORG, UUID(contrato["id"]))
+        bloco = out["permutas"][0]["descricao_imovel"]
+
+        assert bloco is not None
+        assert bloco["texto"].startswith("Apartamento nº 12")
+        assert "IMÓVEL:" not in bloco["texto"]
+        assert "PROPRIETÁRIA" not in bloco["texto"]
+
+    def test_a_pre_136_permuta_extraction_has_no_block_and_is_none(self, scoped):
+        """The identical `None`-fallback contract as the objeto sibling
+        test — a permuta extraction segmented before migration 136 has no
+        `matricula_abertura_blocos` rows and must never guess one."""
+        permuta_ativo_id = str(uuid4())
+        permuta_ext = extracao_row()
+        contrato = contrato_row()
+        seed(
+            scoped,
+            extracoes=[permuta_ext],
+            contratos=[contrato],
+            negociacoes=[negociacao_row(contrato["atendimento_id"])],
+            atos=svc.linhas_de_atos(permuta_ext["id"], ORG_ID, segment_matricula_atos(TEXTO)),
+        )
+        atos = _atos_by_kind(scoped, permuta_ext["id"])
+        scoped.set_table_data(
+            "atendimento_contrato_matricula_atos",
+            self._selecionar_permuta(
+                contrato["id"], permuta_ativo_id, permuta_ext["id"],
+                [atos[("abertura", None)]],
+            ),
+        )
+
+        out = svc.obter_selecao(scoped, ORG, UUID(contrato["id"]))
+
+        assert svc.listar_atos(scoped, ORG, UUID(permuta_ext["id"]))["abertura_blocos"] == []
+        assert out["permutas"][0]["descricao_imovel"] is None

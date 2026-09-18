@@ -272,10 +272,17 @@ def _permuta_imoveis(
             **{campo: catalogo[campo] for campo in _CAMPOS_ENDERECO if catalogo.get(campo)},
         }
         texto = (citacao.get("texto") or "").strip()
+        # Migration 136 — the SAME narrowing the OBJETO clause gets
+        # (`selecao["descricao_imovel"]`, computed by `_citacao` for every
+        # group including permutas). `contexto.py` is where the "prefer
+        # this, else fall back to `texto` above and log it" decision lives
+        # — this module only carries the value across, never decides.
+        descricao_imovel_texto = ((citacao.get("descricao_imovel") or {}).get("texto") or "").strip()
         saida.append(
             PermutaImovel(
                 permuta_ativo_id=ativo_id,
                 descricao_matricula=texto or None,
+                descricao_imovel_texto=descricao_imovel_texto or None,
                 endereco=_endereco(fonte_endereco, prefixo=""),
                 inscricao_municipal=imovel_dados.get("prefeitura_cadastro_imobiliario"),
                 matricula_numero=imovel_dados.get("numero_matricula"),

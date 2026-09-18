@@ -144,6 +144,52 @@ class TestTextoRenderizado:
             assert linha in xml
         assert any(fx.MATRICULA_TEXTO in p for p in r.paragrafos)
 
+    def test_descricao_imovel_block_narrows_the_imovel_clause_when_present(self):
+        """Migration 136: when the extraction carries a `descricao_imovel`
+        typed block, the IMÓVEL: clause quotes JUST that block — never the
+        whole selection (`fx.MATRICULA_TEXTO`, which in a real de-furnitured
+        abertura would still end in `PROPRIETÁRIOS: …`, naming the wrong
+        parties on a resold property). `d.matricula.texto` is used NOWHERE
+        else in `contexto.py`, so its own second line (a citation of act
+        R.1, never part of the property description) is a clean marker for
+        "the whole selection leaked in" that the narrowed clause must not
+        contain."""
+        narrow = (
+            "O apartamento nº 11 do Edifício Exemplo, situado na Rua Fictícia, "
+            "nº 100, Bairro Modelo, com área privativa de 80,00m2."
+        )
+        r1_citation = "R.1/12.345 - Prot. 1.000 - Por escritura pública, o imóvel foi transmitido a FULANO DE TAL."
+        assert fx.MATRICULA_TEXTO == f"MATRÍCULA Nº 12.345 - IMÓVEL: {narrow}\n{r1_citation}"
+        d = fx.variante(1)
+        d = replace(d, matricula=replace(d.matricula, descricao_imovel_texto=narrow))
+
+        r = _render(1, d)
+        xml = documento.document_xml(r.docx)
+
+        assert narrow in xml
+        assert r1_citation not in xml
+
+    def test_missing_descricao_imovel_block_falls_back_and_logs(self, caplog):
+        """The pre-136 fixture shape (`descricao_imovel_texto=None`, every
+        existing variant) must render EXACTLY as before (same shape as
+        `test_matricula_literal_text_is_byte_identical_in_document_xml`) —
+        and the fallback must be visible, not silent
+        (`KB § 01-PHILOSOPHY.md`)."""
+        d = fx.variante(1)
+        assert d.matricula.descricao_imovel_texto is None
+
+        with caplog.at_level("WARNING"):
+            r = _render(1, d)
+
+        xml = documento.document_xml(r.docx)
+        for linha in fx.MATRICULA_TEXTO.split("\n"):
+            assert linha in xml
+        assert any(fx.MATRICULA_TEXTO in p for p in r.paragrafos)
+        assert any(
+            "descricao_imovel" in rec.message and "seleção inteira" in rec.message
+            for rec in caplog.records
+        )
+
     def test_multa_rescisoria_is_the_sinal(self):
         texto = "\n".join(_render(1).paragrafos)
         assert "multa rescisória no valor de R$ 50.000,00 (cinquenta mil reais)" in texto
@@ -524,6 +570,43 @@ class TestQ13Permuta:
         assert ("As despesas decorrentes da transmissão de cada imóvel, tais como emolumentos de cartório, "
                 "registro e ITBI, serão suportadas pela parte que o recebe.") in texto
         assert "serão suportadas pela COMPRADORA" not in texto
+
+    def test_permuta_imovel_narrows_to_descricao_imovel_when_present(self):
+        """Migration 136 — the identical defect the OBJETO clause had:
+        `fx.MATRICULA_PERMUTA_TEXTO` is a whole selection that, in a real
+        de-furnitured abertura, could end in `PROPRIETÁRIOS: …` naming the
+        PREVIOUS owners of the swapped property. `descricao_imovel_texto`
+        set narrows the permuta parcela line to just the typed block —
+        unlike the OBJETO clause this text is plain (no `{{r }}` rich-text
+        slot exists for the permuta line), so a plain substring check on
+        the rendered text is the whole story."""
+        narrow = "A casa térrea situada na Avenida Amostra, nº 5, com dois dormitórios."
+        d = fx.variante(5)
+        ativo = replace(d.permuta_imoveis[0], descricao_imovel_texto=narrow)
+        d = replace(d, permuta_imoveis=[ativo])
+
+        texto = _texto(5, d)
+
+        assert narrow in texto
+        assert fx.MATRICULA_PERMUTA_TEXTO not in texto
+
+    def test_permuta_imovel_falls_back_and_logs_when_no_block(self, caplog):
+        """The pre-136 fixture shape (`descricao_imovel_texto=None`, the
+        default `fx.permuta_imovel()` builds) renders EXACTLY as before —
+        and, same as the OBJETO clause, the fallback is logged, not silent."""
+        d = fx.variante(5)
+        assert d.permuta_imoveis[0].descricao_imovel_texto is None
+
+        with caplog.at_level("WARNING"):
+            texto = _texto(5, d)
+
+        assert fx.MATRICULA_PERMUTA_TEXTO in texto
+        assert any(
+            "descricao_imovel" in rec.message
+            and "permuta" in rec.message
+            and "seleção inteira" in rec.message
+            for rec in caplog.records
+        )
 
 
 class TestQ14Assinaturas:
