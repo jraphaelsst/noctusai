@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools.noctus.dev import build_scope as BS  # noqa: E402
 from tools.noctus.dev import deploy_image as DI  # noqa: E402
 
 
@@ -138,6 +139,11 @@ class FakeDocker:
 def _run(fake, **kw):
     kw.setdefault("startup_grace", 0)  # tests: a failing probe → unhealthy immediately
     kw.setdefault("poll_interval", 5)
+    # Zero real catalog I/O by default — "core" is always in-scope via
+    # _catalog_scope_guard's ALWAYS_BUILD passthrough regardless of what this
+    # returns, but injecting it keeps every pre-existing test from touching
+    # the real Supabase catalog / build-scope.txt fallback file.
+    kw.setdefault("live_products_fn", lambda: [])
     return DI.deploy_image("core", run_remote=fake, sleep=lambda s: None, now=_now, **kw)
 
 
@@ -266,6 +272,84 @@ def test_pull_failure_aborts_without_touching_container():
     r = _run(f, confirm=True)
     assert r["status"] == "error" and "pull" in r["reason"]
     assert f.count("up") == 0
+
+
+# ── CATALOG-SCOPE GUARD (2026-09-17 incident) ──────────────────────
+# `_run()` injects `live_products_fn=lambda: []` by default — "core" is
+# always in-scope via `_catalog_scope_guard`'s ALWAYS_BUILD passthrough
+# regardless, so every test above this section exercises the real
+# refusal-vs-proceed branch unaffected. These tests flip `live_products_fn`
+# explicitly to exercise the guard itself, on a NON-core product (so
+# ALWAYS_BUILD can't accidentally paper over a broken check).
+def test_catalog_scope_refuses_when_product_not_in_live_set():
+    """The exact incident shape: a product absent from the catalog's live
+    set (ativo=false OR deploy_scope != 'live') must refuse before any
+    SSH/docker call."""
+    f = FakeDocker()
+    r = DI.deploy_image("erp-imobiliario", run_remote=f, sleep=lambda s: None, now=_now,
+                        confirm=True, live_products_fn=lambda: ["orbity", "core"])
+    assert r["status"] == "refused_catalog_scope" and r["exit_code"] == 1
+    assert r["catalog_scope"]["in_scope"] is False
+    assert "erp-imobiliario" in r["error"]
+    assert "2026-09-17" in r["error"]
+    assert "allow_inactive" in r["error"]
+    assert f.calls == []  # container untouched — no SSH/docker call at all
+
+
+def test_catalog_scope_refuses_on_dry_run_too():
+    """The refusal applies regardless of confirm — an out-of-scope product
+    can't even be PLANNED, mirroring the stale-tree gate's own convention."""
+    f = FakeDocker()
+    r = DI.deploy_image("erp-imobiliario", run_remote=f, sleep=lambda s: None, now=_now,
+                        confirm=False, live_products_fn=lambda: ["orbity"])
+    assert r["status"] == "refused_catalog_scope"
+    assert f.calls == []
+
+
+def test_catalog_scope_proceeds_when_product_is_live():
+    """"core" is unconditionally in-scope via ALWAYS_BUILD (see `_run()`'s
+    default), so the normal happy path (already exercised by every other
+    test above) also proves the guard doesn't get in the way of a live
+    product — and the passing catalog_scope verdict rides on the result."""
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=True)
+    assert r["status"] == "deployed"
+    assert r["catalog_scope"]["in_scope"] is True
+
+
+def test_catalog_scope_allow_inactive_bypasses_and_records_finding(tmp_path, monkeypatch):
+    """Force even "core" out of scope (an unresolvable catalog, so
+    ALWAYS_BUILD's normal passthrough never fires) to prove allow_inactive
+    genuinely bypasses the refusal rather than the test merely observing
+    the always-in-scope default — and that the bypass is never silent."""
+    monkeypatch.setattr(BS, "SCOPE_PATH", tmp_path / "nope.txt")
+
+    def _boom():
+        raise RuntimeError("no creds")
+
+    f = FakeDocker(running="G0", latest="NEW", health=("up",))
+    r = _run(f, confirm=True, live_products_fn=_boom, allow_inactive=True)
+    assert r["status"] == "deployed"
+    assert r["allow_inactive"] is True
+    # The bypass is recorded, never silent.
+    assert r["catalog_scope"]["in_scope"] is False
+    assert r["catalog_scope"]["catalog_source"] == "unavailable"
+
+
+def test_catalog_scope_lookup_failure_refuses_never_assumes_live(tmp_path, monkeypatch):
+    """Fail-closed: neither the live catalog nor the build-scope.txt
+    fallback can answer → refuse, never assume the product may proceed."""
+    monkeypatch.setattr(BS, "SCOPE_PATH", tmp_path / "nope.txt")
+
+    def _boom():
+        raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set")
+
+    f = FakeDocker()
+    r = DI.deploy_image("erp-imobiliario", run_remote=f, sleep=lambda s: None, now=_now,
+                        confirm=True, live_products_fn=_boom)
+    assert r["status"] == "refused_catalog_scope"
+    assert r["catalog_scope"]["catalog_source"] == "unavailable"
+    assert f.calls == []
 
 
 # ── PROD-PIN ancestry guard (2026-07-20) ──────────────────────────

@@ -12,6 +12,11 @@ Test seam design:
     doesn't specifically test that gate uses ``_clean_git_runner()``, a
     canned "fresh, clean, up-to-date" tree, so unrelated tests never trip
     the new default-on refusal nor touch the real repo).
+  - ``live_products_fn=_live_catalog_fn(<slug>)`` injection avoids the real
+    Supabase catalog / ``build-scope.txt`` fallback (the catalog-scope
+    refusal gate's DI seam — every call below that isn't specifically
+    testing ``TestMigrateProductCatalogScopeGate`` whitelists the product
+    under test so it never trips the new default-on refusal).
   - No monkey-patching of our own code (per KB § PATTERNS/compliance/testing.md).
   - ``patch.object`` is only used on ``urllib.request`` (external service) in
     the ``SupabaseMgmtExecutor`` smoke test, which is the allowed carve-out.
@@ -29,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "seed" / "lib" / "backend"))
 
+from tools.noctus.dev import build_scope as BS  # noqa: E402
 from tools.noctus.dev.migrate_product import (  # noqa: E402
     FakeGitRunner,
     FakeSqlExecutor,
@@ -81,6 +87,16 @@ def _clean_git_runner() -> FakeGitRunner:
             ("status", "--porcelain"): "",
         }
     )
+
+
+def _live_catalog_fn(*slugs: str):
+    """An in-scope catalog stub — same DI-seam role as ``_clean_git_runner()``,
+    but for the 2026-09-17 catalog-scope guard. Every test below that is NOT
+    specifically exercising the catalog-scope refusal injects this (with the
+    product slug under test) so that new default-on gate never fires for
+    unrelated Supabase-migration-logic tests, and none of them touch the
+    real catalog / ``build-scope.txt`` fallback file."""
+    return lambda: list(slugs)
 
 
 def _make_main_py(products_dir: Path, product_slug: str, body: str) -> Path:
@@ -268,7 +284,7 @@ class TestDryRun:
         )
         fake = FakeSqlExecutor()  # tracking table returns no rows → all pending
 
-        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         assert result["status"] == "dry_run"
         assert result["pending"] == ["001_seed.sql", "002_crm.sql"]
@@ -282,7 +298,7 @@ class TestDryRun:
             products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")]
         )
         fake = FakeSqlExecutor()
-        migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
         # The only SQL calls should be ensure-table + fetch-applied (2), NOT
         # the migration body itself.
         assert len(fake.executed) == 2
@@ -303,7 +319,7 @@ class TestDryRun:
                 "SELECT filename": [{"filename": "001_seed.sql"}]
             }
         )
-        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         assert result["status"] == "dry_run"
         assert result["pending"] == ["002_crm.sql"]
@@ -328,7 +344,7 @@ class TestConfirmApply:
         )
         fake = FakeSqlExecutor()
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         assert result["status"] == "applied"
         assert result["applied"] == ["001_seed.sql", "002_crm.sql"]
@@ -341,7 +357,7 @@ class TestConfirmApply:
         _make_migration_files(products, "orbity", [("001_seed.sql", sql_001)])
         fake = FakeSqlExecutor()
 
-        migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         # executed should contain: ensure_table + fetch_applied + migration_sql + record_sql
         assert any(sql_001 in s for s in fake.executed), "migration body was not executed"
@@ -369,7 +385,7 @@ class TestConfirmApply:
             }
         )
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         assert result["status"] == "up_to_date"
         assert result["applied"] == []
@@ -390,7 +406,7 @@ class TestConfirmApply:
         )
         fake = FakeSqlExecutor(fail_on={sql_002})
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         assert result["status"] == "error"
         assert "002_bad.sql" in result["error"]
@@ -424,6 +440,7 @@ class TestTargetFilter:
             executor=fake,
             products_dir=products,
             git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["pending"] == ["001_seed.sql"]
@@ -442,6 +459,7 @@ class TestTargetFilter:
             executor=fake,
             products_dir=products,
             git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["status"] == "error"
@@ -459,7 +477,7 @@ class TestEdgeCases:
         _make_migration_files(products, "orbity", [])
         fake = FakeSqlExecutor()
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         assert result["status"] == "up_to_date"
         assert result["applied"] == []
@@ -469,7 +487,7 @@ class TestEdgeCases:
         products = _make_products_dir(tmp_path)
         fake = FakeSqlExecutor()
 
-        result = migrate_product("nonexistent", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("nonexistent", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("nonexistent"))
 
         assert result["status"] == "error"
         assert "nonexistent" in result["error"]
@@ -488,7 +506,7 @@ class TestEdgeCases:
         )
         fake = FakeSqlExecutor()
 
-        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         assert result["pending"] == ["001_valid.sql"]
 
@@ -505,7 +523,7 @@ class TestEdgeCases:
             lambda *a, **k: None,
         )
 
-        result = migrate_product("orbity", products_dir=products, git_runner=_clean_git_runner())  # no executor
+        result = migrate_product("orbity", products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))  # no executor
 
         assert result["status"] == "not_configured"
         assert "SUPABASE_ACCESS_TOKEN" in result["error"]
@@ -526,6 +544,7 @@ class TestEdgeCases:
             executor=fake,
             products_dir=products,
             git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["schema"] == "custom_schema"
@@ -540,7 +559,7 @@ class TestEdgeCases:
         )
         fake = FakeSqlExecutor(fail_on={"CREATE TABLE IF NOT EXISTS"})
 
-        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("orbity", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         assert result["status"] == "error"
         assert "schema_migrations" in result["error"]
@@ -559,6 +578,7 @@ class TestEdgeCases:
             executor=fake,
             products_dir=products,
             git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["project_ref"] == "testrefabcdef1234567"
@@ -751,7 +771,8 @@ class TestMigrateProductUsesDerivedSchema:
         fake = FakeSqlExecutor()
 
         result = migrate_product(
-            "erp-imobiliario", confirm=True, executor=fake, products_dir=products, git_runner=_clean_git_runner()
+            "erp-imobiliario", confirm=True, executor=fake, products_dir=products,
+            git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("erp-imobiliario"),
         )
 
         assert result["schema"] == "erp"
@@ -764,7 +785,7 @@ class TestMigrateProductUsesDerivedSchema:
         _make_migration_files(products, "orbity", [])
         fake = FakeSqlExecutor()
 
-        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner())
+        result = migrate_product("orbity", confirm=False, executor=fake, products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
 
         assert result["schema"] == "orbity"
         assert result["schema_source"] == "slug_fallback"
@@ -1128,6 +1149,7 @@ class TestMigrateProductStaleTreeGate:
             products_dir=products,
             repo_root=tmp_path,
             git_runner=self._behind_git_runner(26),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["status"] == "refused_stale_tree"
@@ -1161,6 +1183,7 @@ class TestMigrateProductStaleTreeGate:
             products_dir=products,
             repo_root=tmp_path,
             git_runner=self._dirty_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["status"] == "refused_stale_tree"
@@ -1183,6 +1206,7 @@ class TestMigrateProductStaleTreeGate:
             products_dir=products,
             repo_root=tmp_path,
             git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["status"] == "dry_run"
@@ -1205,6 +1229,7 @@ class TestMigrateProductStaleTreeGate:
             products_dir=products,
             repo_root=tmp_path,
             git_runner=self._behind_git_runner(26),
+            live_products_fn=_live_catalog_fn("orbity"),
             allow_stale_tree=True,
         )
 
@@ -1232,6 +1257,7 @@ class TestMigrateProductStaleTreeGate:
             products_dir=products,
             repo_root=tmp_path,
             git_runner=self._query_failure_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["status"] == "refused_stale_tree"
@@ -1257,6 +1283,7 @@ class TestMigrateProductStaleTreeGate:
             executor=fake,
             worktree_path=str(wt),
             git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["status"] == "dry_run"
@@ -1278,10 +1305,155 @@ class TestMigrateProductStaleTreeGate:
             executor=fake,
             worktree_path=str(wt),
             git_runner=self._behind_git_runner(3),
+            live_products_fn=_live_catalog_fn("orbity"),
         )
 
         assert result["status"] == "refused_stale_tree"
         assert str(wt.resolve()) in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Catalog-scope refusal gate (2026-09-17 incident — same day as the
+# stale-tree gate above, same shape, different question: "should this
+# product be touched at all?" rather than "is the tree trustworthy?").
+# ---------------------------------------------------------------------------
+
+
+class TestMigrateProductCatalogScopeGate:
+    """Integration: `migrate_product()` refuses / proceeds per the
+    catalog-scope gate end-to-end. Zero real Supabase / catalog I/O —
+    `live_products_fn` is injected exactly like `git_runner` is above."""
+
+    def _fixture(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(
+            products, "erp-imobiliario",
+            [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS erp;")],
+        )
+        return products, FakeSqlExecutor()
+
+    def test_inactive_product_refuses(self, tmp_path):
+        """ativo=false — the exact erp-imobiliario incident shape: the
+        product simply isn't in the catalog's live set at all."""
+        products, fake = self._fixture(tmp_path)
+
+        result = migrate_product(
+            "erp-imobiliario", confirm=False, executor=fake, products_dir=products,
+            git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity", "core"),
+        )
+
+        assert result["status"] == "refused_catalog_scope"
+        assert result["exit_code"] == 1
+        assert result["pending"] == []
+        assert result["applied"] == []
+        assert result["catalog_scope"]["in_scope"] is False
+        assert "erp-imobiliario" in result["error"]
+        assert "2026-09-17" in result["error"]
+        assert "allow_inactive" in result["error"]
+        # Refuses BEFORE touching Supabase at all — no credential, no SQL.
+        assert fake.executed == []
+
+    def test_deploy_scope_dev_refuses(self, tmp_path):
+        """ativo=true but deploy_scope='dev' — CLAUDE.md §1's other
+        non-live combination ('ativo+dev ⇒ dev only'). The live-catalog
+        query (`ativo=true AND deploy_scope='live'`) already excludes this
+        row server-side, so from the guard's perspective it is the same
+        'not in the live set' — this test pins that the dev-scope case is
+        covered too, not just the fully-inactive one."""
+        products, fake = self._fixture(tmp_path)
+
+        result = migrate_product(
+            "erp-imobiliario", confirm=True, executor=fake, products_dir=products,
+            git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "refused_catalog_scope"
+        assert result["exit_code"] == 1
+        assert fake.executed == []
+
+    def test_ativo_live_product_proceeds(self, tmp_path):
+        """The normal case: the product IS in the catalog's live set —
+        migrate_product proceeds exactly as before, and the (now-passing)
+        catalog_scope verdict still rides on the result."""
+        products, fake = self._fixture(tmp_path)
+
+        result = migrate_product(
+            "erp-imobiliario", confirm=False, executor=fake, products_dir=products,
+            git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("erp-imobiliario", "orbity"),
+        )
+
+        assert result["status"] == "dry_run"
+        assert result["exit_code"] == 0
+        assert result["pending"] == ["001_seed.sql"]
+        assert result["catalog_scope"]["in_scope"] is True
+
+    def test_allow_inactive_bypasses_and_records_finding(self, tmp_path):
+        """The documented escape hatch: proceeds despite the product being
+        out of catalog scope, but the bypass is never silent — the
+        unfavorable catalog_scope verdict still rides on the result."""
+        products, fake = self._fixture(tmp_path)
+
+        result = migrate_product(
+            "erp-imobiliario", confirm=False, executor=fake, products_dir=products,
+            git_runner=_clean_git_runner(),
+            live_products_fn=_live_catalog_fn("orbity"),
+            allow_inactive=True,
+        )
+
+        assert result["status"] == "dry_run"
+        assert result["exit_code"] == 0
+        assert result["pending"] == ["001_seed.sql"]
+        assert result["allow_inactive"] is True
+        assert result["catalog_scope"]["in_scope"] is False
+
+    def test_catalog_lookup_failure_refuses_never_assumes_live(self, tmp_path, monkeypatch):
+        """Fail-closed: when neither the live catalog NOR the checked-in
+        build-scope.txt fallback can answer the question, migrate_product
+        refuses — 'cannot tell' is never 'allowed'."""
+        products, fake = self._fixture(tmp_path)
+        monkeypatch.setattr(BS, "SCOPE_PATH", tmp_path / "nope.txt")
+
+        def _boom():
+            raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set")
+
+        result = migrate_product(
+            "erp-imobiliario", confirm=False, executor=fake, products_dir=products,
+            git_runner=_clean_git_runner(),
+            live_products_fn=_boom,
+        )
+
+        assert result["status"] == "refused_catalog_scope"
+        assert result["exit_code"] == 1
+        assert result["catalog_scope"]["catalog_source"] == "unavailable"
+        assert result["catalog_scope"]["in_scope"] is False
+        assert fake.executed == []
+
+    def test_catalog_scope_refusal_precedes_stale_tree_check(self, tmp_path):
+        """The catalog-scope gate is checked first — a product that is
+        BOTH out-of-scope AND behind an upstream tree is refused for being
+        out-of-scope, the higher-level question."""
+        products, fake = self._fixture(tmp_path)
+        behind = FakeGitRunner(
+            responses={
+                ("rev-parse", "--abbrev-ref", "HEAD"): "main",
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+                ("rev-list", "--count", "HEAD..origin/dev"): "26",
+            }
+        )
+
+        result = migrate_product(
+            "erp-imobiliario", confirm=False, executor=fake, products_dir=products,
+            repo_root=tmp_path, git_runner=behind,
+            live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "refused_catalog_scope"
+        # The staleness verdict still computed (it rides on every result),
+        # even though it was never the reason for the refusal.
+        assert result["stale_tree"]["stale"] is True
 
 
 # ---------------------------------------------------------------------------
