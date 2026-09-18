@@ -81,6 +81,7 @@ from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
 from app.modules.matriculas import arquivos_service as arquivos_svc
+from app.modules.matriculas import qualificacao_service as qualificacao_svc
 from app.services import table_reads
 from app.services.documento_store import log_acesso_extracao, now_iso, today
 
@@ -252,6 +253,23 @@ def persistir_atos(db: Any, extracao_id: str, org_id: Any, texto: str) -> int:
                     falha_abertura,
                     exc_info=True,
                 )
+
+        # Migration 137 — each party's qualificação, consolidated across acts
+        # and matched against this org's clientes, as a SUGGESTION. Same
+        # posture as the two blocks above: the acts are already written and
+        # are the product; a failed qualification insert is logged at ERROR
+        # and self-heals on the next read
+        # (`qualificacao_svc.qualificacoes_da_extracao` mints missing rows).
+        try:
+            qualificacao_svc.persistir_sugestoes(db, org, str(extracao_id), texto or "", linhas)
+        except Exception as falha_qualificacao:  # noqa: BLE001 - acts landed; qualificações heal on read
+            logger.error(
+                "matricula %s: acts persisted but their party qualifications were "
+                "not (%s) — they are re-read on the next GET .../atos",
+                extracao_id,
+                falha_qualificacao,
+                exc_info=True,
+            )
     return len(linhas)
 
 
@@ -293,6 +311,10 @@ def purgar_texto_expirado(client: Any, org_id: UUID) -> int:
         # Migration 115 — party names / CPFs READ OUT of this text are the
         # same personal data; they must not outlive the text they came from.
         detalhes_svc.purgar_da_extracao(client, org_id, row["id"])
+        # Migration 137 — a qualificação row carries the SAME class of data
+        # (name, CPF/CNPJ, RG, endereço, profissão) and often MORE of it per
+        # person than a detalhes row does. Same purge, same reason.
+        qualificacao_svc.purgar_da_extracao(client, org_id, row["id"])
     return len(rows)
 
 
@@ -503,8 +525,18 @@ def listar_atos(
     rows = _linhas_de_atos(client, org_id, extracao)
     atos = [_ato_saida(r, texto) for r in rows]
     detalhes = detalhes_svc.detalhes_por_ato(client, org_id, extracao, rows) if rows else {}
+    qualificacoes = (
+        qualificacao_svc.qualificacoes_da_extracao(client, org_id, extracao, rows)
+        if rows
+        else []
+    )
     resolved = table_reads.resolve_actors(
-        {d.get("confirmado_por") for d in detalhes.values()} - {None}
+        (
+            {d.get("confirmado_por") for d in detalhes.values()}
+            | {q.get("confirmado_por") for q in qualificacoes}
+            | {q.get("descartado_por") for q in qualificacoes}
+        )
+        - {None}
     )
     for ato in atos:
         ato["detalhes"] = detalhes_svc.detalhes_saida(detalhes.get(str(ato["id"])), resolved)
@@ -517,6 +549,13 @@ def listar_atos(
         "atos": atos,
         "ruido": extracao.get("ruido") or [],
         "abertura_blocos": [_bloco_abertura_saida(r, texto) for r in blocos],
+        # Migration 137 — the matrícula's parties, consolidated across acts
+        # and matched against this org's clientes. `[]` for an extraction
+        # with no R/AV acts, or whose text carries no checksum-valid
+        # CPF/CNPJ anywhere.
+        "qualificacoes": [
+            qualificacao_svc.qualificacao_saida(row, resolved) for row in qualificacoes
+        ],
     }
 
 

@@ -56,6 +56,17 @@ def get_background_client() -> Any:
     return get_admin_client()
 
 
+def get_notification_service() -> Any:
+    """The admin-adjudication notifier (migration 138), built the same way
+    `leadgen_webhook_service._build_notifier` already does —
+    `build_notification_service(admin_supabase)`, no second construction
+    path. Used by `qualificacao_service.confirmar` to announce a
+    `cliente_campo_conflitos` row this module just opened."""
+    from app.services.notification_service import build_notification_service
+
+    return build_notification_service(get_admin_client())
+
+
 def _build_transcriber(org_id: Optional[str]) -> DocumentTranscriber:
     """One org's transcriber, with ITS manually-selected vision provider.
 

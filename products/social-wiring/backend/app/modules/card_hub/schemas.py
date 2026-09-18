@@ -313,6 +313,16 @@ class ExtracaoSugestaoBody(StrictHttpModel):
     item_key: Optional[str] = None
 
 
+class DecidirConflitoBody(StrictHttpModel):
+    """An admin's decision on a `cliente_campo_conflitos` row (migration
+    138). `aceitar=True` overwrites `clientes.<campo>` with the extracted
+    value (the prior value stays on the conflict row, permanently);
+    `aceitar=False` leaves `clientes` untouched — the value already there
+    keeps prevailing."""
+
+    aceitar: bool
+
+
 class DocumentoChecklistPatchBody(StrictHttpModel):
     """Set or clear the human override on one canonical item.
 

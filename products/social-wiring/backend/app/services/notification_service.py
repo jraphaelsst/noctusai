@@ -264,6 +264,126 @@ class NotificationService:
             marca_id=marca_id,
         )
 
+    async def notify_field_conflict(
+        self, *, org_id: UUID, conflito: dict[str, Any], cliente_nome: str
+    ) -> DispatchOutcome:
+        """Fan-out an admin-adjudication alert for a `cliente_campo_conflitos`
+        row (migration 138) — an extracted value disagreeing with what a
+        human already typed.
+
+        🔴 REUSES `_dispatch` exactly like `notify_upload` / `notify_new_lead`
+        — no second WhatsApp path. A recipient with a `whatsapp_number`
+        already gets one via `_dispatch`'s existing per-channel fan-out; this
+        method only composes WHAT is said, never how it is sent.
+
+        Recipients: the org-wide tier (`_fetch_recipients_scoped(marca_id=
+        None)`) — a field conflict on a `clientes` row has no
+        `social_wiring.clients` (a DIFFERENT table — the org's own
+        sub-tenant) to scope to the way a lead does, so every admin
+        notification uses the same fallback tier `notify_new_lead` falls
+        back to when a lead is unattributed.
+
+        WHY THE MESSAGE CARRIES BOTH VALUES, NOT A LINK ALONE
+        -------------------------------------------------------
+        Owner directive: "Both solution will provide the admins with the
+        typed data, and the extracted from docs data, so admins can compare
+        both". `_build_conflict_message` renders `valor_anterior` (typed /
+        prior) beside `valor_proposto` (extracted) plus `origem_proposto` —
+        the deed-facing comparison — directly in the WhatsApp text and the
+        email body, not merely a link to go look.
+
+        🔴 WHY THE MESSAGE LINKS BACK RATHER THAN ACCEPTING A REPLY
+        --------------------------------------------------------------
+        WhatsApp is a text channel with no interactive buttons in this
+        integration (`noctusai_lib.integrations.whatsapp` sends/receives
+        plain text). A "reply SIM to approve" scheme would authorise the
+        decision against the SENDER'S PHONE NUMBER, which is not the same
+        thing as an authenticated admin session — anyone who can send from,
+        spoof, or later reuse that number could adjudicate. So the message
+        is a NOTIFICATION only: it links to
+        `{frontend_base_url}/clientes/conflitos/{conflito_id}`, and the
+        actual accept/reject action happens ONLY through
+        `identidade_extracao_service.resolver_conflito`, called by an
+        authenticated request that has already passed `get_current_user_org`
+        — the SAME authorisation boundary every other write in this product
+        goes through. No new auth mechanism, no deep-link token, no
+        phone-number trust. `resolver_conflito` is naturally idempotent
+        (refuses a non-`'pendente'` row) so a same-conflict decision
+        attempted from two tabs / two admins is first-decision-wins by
+        construction, not by any race-handling this method adds.
+        NOC-REMEDIATE[cliente-conflito-frontend]: the notifications panel +
+        approve/deny buttons this links to is frontend-engineer scope, not
+        built in this pass. — 2026-09-18
+        """
+        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+        if not recipients:
+            logger.warning(
+                "notify_field_conflict: conflito %s (org=%s) opened but NO "
+                "active notification recipient is configured — nobody was "
+                "alerted. Add one under Configuração → Configurações "
+                "(notifications).",
+                conflito.get("id"), org_id,
+            )
+            return DispatchOutcome()
+
+        message = self._build_conflict_message(conflito, cliente_nome=cliente_nome)
+        return await self._dispatch(
+            kind="conflito", org_id=org_id, recipients=recipients, message=message
+        )
+
+    def _build_conflict_message(
+        self, conflito: dict[str, Any], *, cliente_nome: str
+    ) -> dict[str, str]:
+        """Compose the side-by-side comparison the owner's directive
+        requires — same subject/html/text shape as the other composers.
+        `origem_proposto` and `fonte_tabela` tell the admin WHERE the
+        extracted value came from, so they can judge without leaving the
+        message."""
+        from app.config import settings
+
+        campo = conflito.get("campo", "")
+        anterior = conflito.get("valor_anterior") or "(vazio)"
+        proposto = conflito.get("valor_proposto") or "(vazio)"
+        origem_proposto = conflito.get("origem_proposto") or "desconhecida"
+        confianca = conflito.get("confianca_proposta") or "desconhecida"
+        link = (
+            f"{settings.frontend_base_url.rstrip('/')}"
+            f"/clientes/conflitos/{conflito.get('id')}"
+            if settings.frontend_base_url else ""
+        )
+
+        subject = f"[Social Wiring] Divergência em {campo} — {cliente_nome}"
+        text_lines = [
+            f"⚖️ Divergência de dado extraído: {cliente_nome}",
+            f"Campo: {campo}",
+            f"📝 Valor atual (digitado/confirmado): {anterior}",
+            f"📄 Valor extraído (fonte: {origem_proposto}, confiança: {confianca}): {proposto}",
+        ]
+        if link:
+            text_lines.append(f"👉 Decidir: {link}")
+        text_lines.extend(["", "Enviado pelo Social Wiring."])
+        text = "\n".join(text_lines)
+
+        link_html = (
+            f"<p style='margin:16px 0 0'><a href='{link}' "
+            f"style='display:inline-block;padding:10px 16px;background:#2563eb;"
+            f"color:#fff;text-decoration:none;border-radius:6px'>Comparar e decidir"
+            f"</a></p>" if link else ""
+        )
+        html = (
+            "<div style='font-family:sans-serif;max-width:560px'>"
+            "<h2 style='margin:0 0 8px'>⚖️ Divergência de dado extraído</h2>"
+            f"<h3 style='margin:0 0 12px;font-weight:500'>{cliente_nome} — {campo}</h3>"
+            f"<p style='margin:0 0 4px'>📝 Valor atual: <b>{anterior}</b></p>"
+            f"<p style='margin:0 0 4px'>📄 Valor extraído "
+            f"(fonte: {origem_proposto}, confiança: {confianca}): <b>{proposto}</b></p>"
+            f"{link_html}"
+            "<p style='color:#888;font-size:12px;margin:24px 0 0'>"
+            "Enviado pelo Social Wiring.</p>"
+            "</div>"
+        )
+        return {"subject": subject, "html": html, "text": text}
+
     # ─── Reusable fan-out core ──────────────────────────────────────────
     async def _dispatch(
         self,

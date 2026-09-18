@@ -37,6 +37,7 @@ from noctusai_lib.integrations.documents import (
 )
 from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 from noctusai_lib.integrations.storage import FakeStorageBackend
+from noctusai_lib.primitives.exceptions import ValidationError_
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 BUCKET = "social-wiring-documentos"
@@ -514,6 +515,123 @@ class TestEstadoCivilERegimeBensSaoExtraidos:
             extractor=FakeIdentityExtractor(self._com_civil()),
         )
         assert _cliente(scoped, cid)["estado_civil"] == "divorciado"
+
+    @pytest.mark.asyncio
+    async def test_a_disagreeing_value_opens_an_admin_conflict_138(self, client, scoped):
+        """Migration 138 (owner directive): the old silent skip is now a
+        `cliente_campo_conflitos` row — the human value still prevails
+        (previous test) AND the disagreement is now recorded for an admin,
+        with the prior value preserved as the way back."""
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"estado_civil": "divorciado", "estado_civil_origem": "manual"},
+        )
+        resultado = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_civil()),
+        )
+
+        assert resultado["conflitos_abertos"] == ["estado_civil"]
+        conflitos = scoped.table("cliente_campo_conflitos").select("*").execute().data
+        assert len(conflitos) == 1
+        conflito = conflitos[0]
+        assert conflito["campo"] == "estado_civil"
+        assert conflito["valor_anterior"] == "divorciado"
+        assert conflito["origem_anterior"] == "manual"
+        assert conflito["valor_proposto"] == "casado"
+        assert conflito["origem_proposto"] == "certidao_casamento"
+        assert conflito["status"] == "pendente"
+
+        # A second read of the SAME disagreement does not pile up a second
+        # pending conflict (the partial UNIQUE index's own job, mirrored
+        # here in the pre-check).
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_civil()),
+        )
+        assert len(scoped.table("cliente_campo_conflitos").select("*").execute().data) == 1
+
+    def test_resolver_conflito_accept_overwrites_and_keeps_the_way_back(self, scoped):
+        cid, _did = str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, estado_civil="divorciado", estado_civil_origem="manual",
+        )])
+        conflito_id = str(uuid4())
+        scoped.set_table_data("cliente_campo_conflitos", [{
+            "id": conflito_id, "org_id": ORG_ID, "cliente_id": cid,
+            "campo": "estado_civil",
+            "valor_anterior": "divorciado", "origem_anterior": "manual",
+            "valor_proposto": "casado", "origem_proposto": "certidao_casamento",
+            "confianca_proposta": "alta",
+            "fonte_tabela": "cliente_documentos", "fonte_id": str(uuid4()),
+            "status": "pendente", "notificado_em": None,
+            "decidido_por": None, "decidido_em": None,
+        }])
+        admin_id = str(uuid4())
+
+        resp = svc.resolver_conflito(
+            scoped, ORG_UUID, UUID(conflito_id), aceitar=True, decidido_por=UUID(admin_id)
+        )
+
+        assert resp["status"] == "aceito"
+        assert resp["decidido_por"] == admin_id
+        assert resp["valor_anterior"] == "divorciado"  # the way back, untouched
+        cliente = _cliente(scoped, cid)
+        assert cliente["estado_civil"] == "casado"
+        assert cliente["estado_civil_origem"] == "certidao_casamento"
+        assert cliente["estado_civil_confirmado_por"] == admin_id
+
+    def test_resolver_conflito_reject_leaves_the_cliente_untouched(self, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, estado_civil="divorciado", estado_civil_origem="manual",
+        )])
+        conflito_id = str(uuid4())
+        scoped.set_table_data("cliente_campo_conflitos", [{
+            "id": conflito_id, "org_id": ORG_ID, "cliente_id": cid,
+            "campo": "estado_civil",
+            "valor_anterior": "divorciado", "origem_anterior": "manual",
+            "valor_proposto": "casado", "origem_proposto": "certidao_casamento",
+            "confianca_proposta": "alta",
+            "fonte_tabela": "cliente_documentos", "fonte_id": str(uuid4()),
+            "status": "pendente", "notificado_em": None,
+            "decidido_por": None, "decidido_em": None,
+        }])
+
+        resp = svc.resolver_conflito(
+            scoped, ORG_UUID, UUID(conflito_id), aceitar=False, decidido_por=UUID(str(uuid4()))
+        )
+
+        assert resp["status"] == "rejeitado"
+        assert _cliente(scoped, cid)["estado_civil"] == "divorciado"
+
+    def test_resolver_conflito_is_idempotent_first_decision_wins(self, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, estado_civil="divorciado", estado_civil_origem="manual",
+        )])
+        conflito_id = str(uuid4())
+        scoped.set_table_data("cliente_campo_conflitos", [{
+            "id": conflito_id, "org_id": ORG_ID, "cliente_id": cid,
+            "campo": "estado_civil",
+            "valor_anterior": "divorciado", "origem_anterior": "manual",
+            "valor_proposto": "casado", "origem_proposto": "certidao_casamento",
+            "confianca_proposta": "alta",
+            "fonte_tabela": "cliente_documentos", "fonte_id": str(uuid4()),
+            "status": "pendente", "notificado_em": None,
+            "decidido_por": None, "decidido_em": None,
+        }])
+
+        svc.resolver_conflito(
+            scoped, ORG_UUID, UUID(conflito_id), aceitar=True, decidido_por=UUID(str(uuid4()))
+        )
+        with pytest.raises(ValidationError_):
+            svc.resolver_conflito(
+                scoped, ORG_UUID, UUID(conflito_id), aceitar=False, decidido_por=UUID(str(uuid4()))
+            )
+        # The FIRST decision's write stands — a rejected second attempt
+        # never flips estado_civil back.
+        assert _cliente(scoped, cid)["estado_civil"] == "casado"
 
     @pytest.mark.asyncio
     async def test_a_pending_suggestion_rides_the_extras_surface(self, client, scoped):

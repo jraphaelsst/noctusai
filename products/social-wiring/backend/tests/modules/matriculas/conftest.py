@@ -197,6 +197,32 @@ def background_db(client):
     restaurar()
 
 
+class FakeNotificationService:
+    """Records every `notify_field_conflict` call instead of touching WAHA
+    / SMTP / `notification_recipients` — migration 138's DI seam."""
+
+    def __init__(self) -> None:
+        self.conflitos: list[dict] = []
+
+    async def notify_field_conflict(self, *, org_id, conflito, cliente_nome):
+        self.conflitos.append(
+            {"org_id": str(org_id), "conflito": conflito, "cliente_nome": cliente_nome}
+        )
+        from app.services.notification_service import DispatchOutcome
+
+        return DispatchOutcome()
+
+
+@pytest.fixture
+def fake_notification_service(client):
+    from app.modules.matriculas.deps import get_notification_service
+
+    fake = FakeNotificationService()
+    restaurar = _instalar(get_notification_service, lambda: fake)
+    yield fake
+    restaurar()
+
+
 @pytest.fixture
 def com_credencial():
     """The org's vision key resolves. Patches the CREDENTIAL RESOLVER (an
@@ -345,6 +371,8 @@ def seed(
     negociacoes=None,
     detalhes=None,
     permutas=None,
+    qualificacoes=None,
+    clientes=None,
 ) -> None:
     """Every table this flow reads, set explicitly — an unset table would
     carry rows over from whatever an earlier test seeded."""
@@ -354,6 +382,12 @@ def seed(
     # Migration 136 — the abertura's typed sub-spans.
     scoped.set_table_data("matricula_abertura_blocos", abertura_blocos or [])
     scoped.set_table_data("matricula_ato_detalhes", detalhes or [])
+    # Migration 137 — party qualification suggestions + the clientes they
+    # may match against.
+    scoped.set_table_data("matricula_qualificacoes", qualificacoes or [])
+    scoped.set_table_data("clientes", clientes or [])
+    # Migration 138 — admin-adjudicated field conflicts.
+    scoped.set_table_data("cliente_campo_conflitos", [])
     scoped.set_table_data("permuta_ativos", permutas or [])
     scoped.set_table_data("imovel_documentos", documentos or [])
     scoped.set_table_data("imovel_documento_acessos", [])

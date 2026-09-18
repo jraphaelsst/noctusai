@@ -80,6 +80,7 @@ from app.modules.card_hub.schemas import (
     ChecklistItemUpdateBody,
     ChecklistUpdateBody,
     ClienteTagsSetBody,
+    DecidirConflitoBody,
     DocumentoChecklistPatchBody,
     ExtracaoSugestaoBody,
     MembrosSetBody,
@@ -994,6 +995,50 @@ async def descartar_extracao_route(
         client, org_id, cliente_id, documento_id,
         item_key=body.item_key if body else None,
         user_id=getattr(user, "id", None),
+    )
+
+
+# ─── Admin-adjudicated field conflicts (migration 138) ─────────────────
+#
+# Any CAMPOS-driven extraction (identity documents here, matrícula
+# qualification in `app.modules.matriculas`) that disagrees with an
+# existing `clientes` value lands here instead of silently applying or
+# silently skipping — see `identidade_extracao_service.aplicar_campos_ao
+# _cliente` / `.resolver_conflito`.
+
+
+@router.get("/conflitos")
+async def listar_conflitos_route(
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> list:
+    """Every pending field conflict in the org — the admin's queue. Each
+    row carries `valor_anterior` (typed/prior) beside `valor_proposto`
+    (extracted) plus `origem_proposto` — the comparison an admin needs to
+    decide without opening anything else."""
+    _user, org_id = _auth_parts(auth)
+    return identidade_svc.conflitos_pendentes(client, org_id)
+
+
+@router.put("/conflitos/{conflito_id}/decidir")
+async def decidir_conflito_route(
+    conflito_id: UUID,
+    body: DecidirConflitoBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Accept or reject a pending conflict. Accepting overwrites
+    `clientes.<campo>` with the extracted value (the prior value stays on
+    the conflict row); rejecting leaves `clientes` untouched. Refuses
+    (422) a conflict that already has a decision — idempotent,
+    first-decision-wins."""
+    user, org_id = _auth_parts(auth)
+    return identidade_svc.resolver_conflito(
+        client,
+        org_id,
+        conflito_id,
+        aceitar=body.aceitar,
+        decidido_por=getattr(user, "id", None),
     )
 
 

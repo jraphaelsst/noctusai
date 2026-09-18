@@ -431,21 +431,119 @@ def _log_acesso_extracao(client: Any, org_id: UUID, documento_id: UUID) -> None:
     ).execute()
 
 
-def _aplicar_ao_cliente(
+CONFLITOS_TABLE = "cliente_campo_conflitos"
+
+
+def _conflito_pendente_existente(
+    client: Any, org_id: UUID, cliente_id: UUID, campo: str
+) -> Optional[dict]:
+    rows = (
+        _t(client, CONFLITOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .eq("campo", campo)
+        .eq("status", "pendente")
+        .limit(1)
+        .execute()
+    ).data or []
+    return rows[0] if rows else None
+
+
+def _registrar_conflito(
     client: Any,
     org_id: UUID,
     cliente_id: UUID,
-    documento_id: UUID,
-    tipo_documento: str,
-    fields: IdentityFields,
-) -> dict[str, bool]:
+    campo: CampoExtraido,
+    *,
+    valor_anterior: Any,
+    origem_anterior: Optional[str],
+    valor_proposto: Any,
+    origem_proposto: str,
+    confianca_proposta: Optional[str],
+    fonte_tabela: Optional[str],
+    fonte_id: Optional[UUID],
+) -> Optional[dict]:
+    """Migration 138 (owner directive, 2026-09-18, supersedes part of
+    097/110's original design). A `sobrescreve=False` field that DISAGREES
+    with what is already on `clientes` is no longer a silent skip: it opens
+    (or reuses) a `cliente_campo_conflitos` row for an admin to adjudicate
+    via `resolver_conflito`. `valor_anterior` is snapshotted HERE, once, and
+    never touched again — the "way back" the directive requires.
+
+    Returns the NEW row when one was actually inserted (so the caller can
+    notify), or `None` when a pending conflict for this (cliente, campo)
+    already existed — the partial UNIQUE index would refuse a second insert
+    anyway; checking first avoids a doomed write AND a duplicate
+    notification for a conflict an admin hasn't looked at yet.
+    """
+    existente = _conflito_pendente_existente(client, org_id, cliente_id, campo.item_key)
+    if existente is not None:
+        return None
+    linha = {
+        "id": str(uuid4()),
+        "org_id": str(org_id),
+        "cliente_id": str(cliente_id),
+        "campo": campo.item_key,
+        "valor_anterior": valor_anterior,
+        "origem_anterior": origem_anterior,
+        "valor_proposto": valor_proposto,
+        "origem_proposto": origem_proposto,
+        "confianca_proposta": confianca_proposta,
+        "fonte_tabela": fonte_tabela,
+        "fonte_id": str(fonte_id) if fonte_id else None,
+        "status": "pendente",
+        "notificado_em": None,
+        "decidido_por": None,
+        "decidido_em": None,
+        "created_at": _now(),
+    }
+    _t(client, CONFLITOS_TABLE).insert(linha).execute()
+    return linha
+
+
+def aplicar_campos_ao_cliente(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    origem: str,
+    lidos: dict[str, tuple[Any, str, Optional[str], bool]],
+    *,
+    campos: tuple[CampoExtraido, ...] = CAMPOS,
+    documento_id: Optional[UUID] = None,
+    rg_orgao_expedidor: Optional[str] = None,
+    fonte_tabela: Optional[str] = None,
+    fonte_id: Optional[UUID] = None,
+) -> tuple[dict[str, bool], list[dict]]:
     """Write what may be written onto the client record.
 
-    Returns `{item_key: foi_aplicado}`, so the caller can tell "read it and
-    used it" from "read it and correctly declined to" per field.
+    Generic over `campos`/`lidos` (migration 137) so a second source can
+    reuse the SAME field-level mechanics — `sobrescreve`, first-writer-wins,
+    the rg==cpf guard, the provenance quintet — without forking this
+    function. `identidade_extracao_service.extrair_identidade` is one
+    caller (`campos=CAMPOS`, its own `_valores_lidos(fields)` as `lidos`);
+    `app.modules.matriculas.qualificacao_service.confirmar` is another
+    (`campos=CAMPOS_QUALIFICACAO`, built from a `Qualificacao`).
+
+    `documento_id=None` means this source has no `cliente_documentos` row to
+    point at — the column is written as an explicit NULL, the same as an
+    `origem='manual'` write already leaves it today, never left stale
+    pointing at an unrelated document.
+
+    🔴 Migration 138 (owner directive, 2026-09-18): a `sobrescreve=False`
+    field whose EXISTING value disagrees with the new reading no longer
+    silently skips. It registers a `cliente_campo_conflitos` row instead —
+    see `_registrar_conflito` — for admin adjudication
+    (`resolver_conflito`). A field with NO existing value still applies
+    unattended exactly as before; this is not a conflict, there is nothing
+    to protect.
+
+    Returns `({item_key: foi_aplicado}, [conflito, ...])` — the second list
+    holds every NEWLY opened conflict this call raised, so the caller can
+    fire an admin notification (this function itself never does async I/O).
     """
     colunas: list[str] = ["id"]
-    for campo in CAMPOS:
+    for campo in campos:
         colunas += [campo.item_key, campo.origem]
     rows = (
         _t(client, CLIENTES_TABLE)
@@ -456,16 +554,16 @@ def _aplicar_ao_cliente(
         .execute()
     ).data or []
     if not rows:
-        return {c.item_key: False for c in CAMPOS}
+        return {c.item_key: False for c in campos}, []
 
     atual = rows[0]
-    lidos = _valores_lidos(fields)
     updates: dict[str, Any] = {}
     aplicados: dict[str, bool] = {}
+    conflitos: list[dict] = []
     now = _now()
 
-    for campo in CAMPOS:
-        valor, _confianca, _rotulo, pode = lidos[campo.item_key]
+    for campo in campos:
+        valor, confianca, _rotulo, pode = lidos[campo.item_key]
         aplicados[campo.item_key] = False
         if not pode or valor is None:
             continue
@@ -487,9 +585,29 @@ def _aplicar_ao_cliente(
         presente = atual.get(campo.item_key)
 
         if not campo.sobrescreve:
-            # First writer wins. A value already present — or one a human
-            # typed, even if it somehow reads empty — is left alone.
-            if presente or atual.get(campo.origem) == "manual":
+            if presente:
+                # A real disagreement -> admin adjudication (138), never a
+                # silent skip. `_mesmo_nome` is string-equality-modulo-
+                # accents/case/spacing, the same comparison the sobrescreve
+                # branch below already trusts for "nothing actually changed".
+                if not _mesmo_nome(str(presente), str(valor)):
+                    novo = _registrar_conflito(
+                        client, org_id, cliente_id, campo,
+                        valor_anterior=presente,
+                        origem_anterior=atual.get(campo.origem),
+                        valor_proposto=valor,
+                        origem_proposto=origem,
+                        confianca_proposta=confianca,
+                        fonte_tabela=fonte_tabela,
+                        fonte_id=fonte_id,
+                    )
+                    if novo is not None:
+                        conflitos.append(novo)
+                continue
+            # An operator who explicitly typed then cleared the field
+            # (`origem='manual'`, value now empty) is still respected —
+            # same edge case 097's original comment named.
+            if atual.get(campo.origem) == "manual":
                 continue
         else:
             # A document-owned field: the newest reading is the best answer.
@@ -502,8 +620,8 @@ def _aplicar_ao_cliente(
                 continue
 
         updates[campo.item_key] = valor
-        updates[campo.origem] = tipo_documento
-        updates[campo.documento_id] = str(documento_id)
+        updates[campo.origem] = origem
+        updates[campo.documento_id] = str(documento_id) if documento_id else None
         updates[campo.em] = now
         aplicados[campo.item_key] = True
 
@@ -511,15 +629,113 @@ def _aplicar_ao_cliente(
         # not become one. An issuing body with no number identifies nothing,
         # and a number without its issuer is an incomplete qualification on a
         # contract, so the pair is written together under the RG's decision or
-        # not at all. `IdentityFields.rg_orgao` carries the same note.
-        if campo.item_key == "rg" and fields.rg_orgao:
-            updates["rg_orgao_expedidor"] = fields.rg_orgao
+        # not at all. `IdentityFields.rg_orgao` / `Qualificacao
+        # .rg_orgao_expedidor` carry the same note.
+        if campo.item_key == "rg" and rg_orgao_expedidor:
+            updates["rg_orgao_expedidor"] = rg_orgao_expedidor
 
     if updates:
         updates["updated_at"] = now
         _t(client, CLIENTES_TABLE).update(updates).eq("id", str(cliente_id)).execute()
 
-    return aplicados
+    return aplicados, conflitos
+
+
+def conflitos_pendentes(
+    client: Any, org_id: UUID, cliente_id: Optional[UUID] = None
+) -> list[dict]:
+    """The admin's queue — every unresolved `cliente_campo_conflitos` row,
+    newest first. `cliente_id=None` lists every pending conflict in the org."""
+    query = (
+        _t(client, CONFLITOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("status", "pendente")
+    )
+    if cliente_id is not None:
+        query = query.eq("cliente_id", str(cliente_id))
+    rows = query.execute().data or []
+    return sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
+
+
+def resolver_conflito(
+    client: Any, org_id: UUID, conflito_id: UUID, *, aceitar: bool, decidido_por: Optional[UUID]
+) -> dict:
+    """An admin decides a pending conflict (migration 138).
+
+    ACCEPT: the proposed (extracted) value overwrites `clientes.<campo>` —
+    the same provenance-quintet write `confirmar_sugestao` already makes for
+    a human-vouched value, `confirmado_por=decidido_por` because an admin is
+    exactly that. `valor_anterior` on the conflict row is left untouched —
+    it is the permanent way back, not a working copy to clear.
+
+    REJECT: `clientes` is not touched at all — the value already there (the
+    human input, or whatever prevailed before) simply keeps prevailing.
+
+    Refuses (`ValidationError_`) a conflict that already has a decision —
+    an admin's decision, once made, is not silently replaced by a second
+    click.
+
+    NOC-REMEDIATE[identidade-conflito-notificacao]: `extrair_identidade`'s
+    background job (RG/CPF/CNH/certidão reads) does not yet have a
+    `NotificationService` wired into its DI chain
+    (`app.modules.card_hub.deps` / the background-task client factories), so
+    a conflict raised from THAT call site is recorded but not yet actively
+    announced — `conflitos_pendentes` still surfaces it. The matrícula
+    surface (`app.modules.matriculas.qualificacao_service.confirmar`) IS
+    wired end-to-end, via `app.modules.matriculas.deps
+    .get_notification_service`. Wiring the same provider into card_hub's
+    background path is a bounded, separate follow-up. — 2026-09-18
+    """
+    rows = (
+        _t(client, CONFLITOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("id", str(conflito_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise NotFoundError(CONFLITOS_TABLE, str(conflito_id))
+    conflito = rows[0]
+    if conflito.get("status") != "pendente":
+        raise ValidationError_(
+            "Este conflito já foi decidido.", field="status"
+        )
+
+    now = _now()
+    patch: dict[str, Any] = {
+        "status": "aceito" if aceitar else "rejeitado",
+        "decidido_por": str(decidido_por) if decidido_por else None,
+        "decidido_em": now,
+    }
+    _t(client, CONFLITOS_TABLE).update(patch).eq("id", str(conflito_id)).execute()
+
+    if aceitar:
+        campo = CAMPO_POR_CHAVE.get(conflito["campo"])
+        item_key = conflito["campo"]
+        updates: dict[str, Any] = {
+            item_key: conflito["valor_proposto"],
+            "updated_at": now,
+        }
+        if campo is not None:
+            updates[campo.origem] = conflito["origem_proposto"]
+            updates[campo.em] = now
+            updates[campo.confirmado_por] = str(decidido_por) if decidido_por else None
+            updates[campo.confirmado_em] = now
+        else:
+            # A field outside identidade_extracao_service.CAMPOS (e.g. a
+            # future CAMPOS_QUALIFICACAO-only entry with no quintet of its
+            # own) — write the bare value; no provenance columns to also set.
+            logger.warning(
+                "resolver_conflito: campo %r has no CAMPOS quintet — writing "
+                "the bare value only", item_key,
+            )
+        _t(client, CLIENTES_TABLE).update(updates).eq(
+            "id", str(conflito["cliente_id"])
+        ).execute()
+
+    return {**conflito, **patch}
 
 
 async def extrair_identidade(
@@ -645,9 +861,31 @@ async def extrair_identidade(
     marcacoes["extracao_data_emissao_rotulo"] = fields.data_emissao_rotulo
     _marcar(client, documento_id, **marcacoes)
 
-    aplicados = _aplicar_ao_cliente(
-        client, org_id, cliente_id, documento_id, doc["tipo_documento"], fields
+    aplicados, conflitos = aplicar_campos_ao_cliente(
+        client,
+        org_id,
+        cliente_id,
+        doc["tipo_documento"],
+        lidos,
+        documento_id=documento_id,
+        rg_orgao_expedidor=fields.rg_orgao,
+        fonte_tabela=DOCUMENTOS_TABLE,
+        fonte_id=documento_id,
     )
+    if conflitos:
+        # 🔴 Migration 138: a conflict is recorded synchronously above; the
+        # LIVE admin notification is not wired from this background job in
+        # this pass — see NOC-REMEDIATE[identidade-conflito-notificacao]
+        # on `resolver_conflito`'s module docstring. The conflict is never
+        # invisible: `conflitos_pendentes` and `sugestoes_pendentes` both
+        # surface it without depending on the notification having fired.
+        logger.info(
+            "extracao %s: %d campo(s) opened an admin conflict instead of "
+            "applying unattended: %s",
+            documento_id,
+            len(conflitos),
+            [c["campo"] for c in conflitos],
+        )
     return {
         "status": "ok" if achou_algo else "sem_dados",
         "data_nascimento": lidos["data_nascimento"][0],
@@ -657,6 +895,7 @@ async def extrair_identidade(
         "fonte": fields.source.value,
         "tentativas": tentativas,
         "aplicado_ao_cliente": aplicados,
+        "conflitos_abertos": [c["campo"] for c in conflitos],
     }
 
 

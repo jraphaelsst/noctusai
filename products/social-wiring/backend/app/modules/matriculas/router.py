@@ -100,11 +100,13 @@ from app.modules.imovel_hub.deps import (
 )
 from app.modules.matriculas import arquivos_service as arquivos_svc
 from app.modules.matriculas import estrutura_service as estrutura_svc
+from app.modules.matriculas import qualificacao_service as qualificacao_svc
 from app.modules.matriculas import titulo_service as titulo_svc
 from app.modules.matriculas.deps import (
     TranscriberFactory,
     get_background_client,
     get_matriculas_client,
+    get_notification_service,
     get_transcriber_factory,
 )
 from app.modules.matriculas.schemas import (
@@ -686,6 +688,48 @@ async def confirmar_detalhes_route(
             ato_id,
             valores=body.model_dump(include=body.model_fields_set),
             usuario_id=getattr(user, "id", None),
+        )
+    )
+
+
+# ─── party qualification (137) ─────────────────────────────────────────────
+
+
+@router.put("/qualificacoes/{qualificacao_id}/confirmar")
+async def confirmar_qualificacao_route(
+    qualificacao_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+    notification_service=Depends(get_notification_service),
+):
+    """Confirm a matrícula party's qualification. Applies every field it
+    carries onto the matched cliente, when `vinculo_status == 'vinculado'`.
+    A field that disagrees with an existing value opens an admin conflict
+    (migration 138) and is announced via `notification_service` instead of
+    being applied."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        await qualificacao_svc.confirmar(
+            client,
+            UUID(org_id),
+            qualificacao_id,
+            usuario_id=getattr(user, "id", None),
+            notification_service=notification_service,
+        )
+    )
+
+
+@router.put("/qualificacoes/{qualificacao_id}/descartar")
+async def descartar_qualificacao_route(
+    qualificacao_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Turn down a matrícula party's qualification. The reading is kept."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        qualificacao_svc.descartar(
+            client, UUID(org_id), qualificacao_id, usuario_id=getattr(user, "id", None)
         )
     )
 
