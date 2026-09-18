@@ -10,9 +10,19 @@ cartório compares the quote against its own book. So:
 - the split comes from the SEED (`segment_matricula_atos`), never re-done here;
 - acts are persisted as OFFSETS into `matricula_extracoes.texto_extraido` —
   no table in this flow carries a copy of an act's text;
-- every text this module returns is `texto_extraido[inicio:fim]`, and nothing
-  else. There is no strip, no join separator, no normalisation on the way out.
-  `normalize` is used ONLY to MATCH suggestion terms, never to produce output.
+- every text `listar_atos` returns is `texto_extraido[inicio:fim]`, and
+  nothing else — no strip, no join separator, no normalisation on the way
+  out. `normalize` is used ONLY to MATCH suggestion terms, never to produce
+  output.
+  🔴 UPDATED BY MIGRATION 136 — the one exception is the CONTRACT QUOTE
+  (`_citacao`/`obter_selecao`): each act's slice is first `subtrair_ruido`'d
+  against the extraction's `ruido` (page furniture detected at transcription
+  time), so a header/footer that landed inside an act is never quoted into a
+  deed. The quote is therefore `texto_extraido[inicio:fim]` MINUS its noise
+  spans, joined back together with no separator — still no strip, no
+  normalisation, just fewer bytes. `ruido = []` (nothing detected, or a row
+  from before migration 136) is the one case where the quote is still the
+  untouched slice, unchanged from before.
 
 IMMUTABILITY IS WHAT MAKES OFFSETS SAFE
 ---------------------------------------
@@ -46,10 +56,14 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import (
+    BlocoAbertura,
     MatriculaAto,
+    RuidoSpan,
     ato_hint_span,
     normalize,
     segment_matricula_atos,
+    segmentar_abertura,
+    subtrair_ruido,
 )
 from noctusai_lib.integrations.documents.abnt import clip_ranges
 from noctusai_lib.integrations.documents.formatting import (
@@ -74,6 +88,9 @@ logger = logging.getLogger(__name__)
 
 EXTRACOES_TABLE = "matricula_extracoes"
 ATOS_TABLE = "matricula_atos"
+#: Migration 136 — the abertura's typed sub-spans (`descricao_imovel`,
+#: `cadastro_municipal`, `proprietarios`, `registro_anterior`).
+ABERTURA_BLOCOS_TABLE = "matricula_abertura_blocos"
 SELECAO_TABLE = "atendimento_contrato_matricula_atos"
 CONTRATOS_TABLE = "atendimento_contratos"
 NEGOCIACAO_TABLE = "atendimento_negociacao"
@@ -151,6 +168,28 @@ def linhas_de_atos(
     ]
 
 
+def linhas_de_abertura_blocos(
+    extracao_id: str, org_id: str, blocos: tuple[BlocoAbertura, ...]
+) -> list[dict]:
+    """Seed segmenter output (`matricula_abertura.segmentar_abertura`) ->
+    `matricula_abertura_blocos` rows. Offsets only — same discipline as
+    `linhas_de_atos`."""
+    return [
+        {
+            "id": str(uuid4()),
+            "org_id": org_id,
+            "extracao_id": extracao_id,
+            "campo": bloco.campo,
+            "char_inicio": bloco.start,
+            "char_fim": bloco.end,
+            "rotulo_inicio": bloco.rotulo_start,
+            "rotulo_fim": bloco.rotulo_end,
+            "created_at": now_iso(),
+        }
+        for bloco in blocos
+    ]
+
+
 def persistir_atos(db: Any, extracao_id: str, org_id: Any, texto: str) -> int:
     """Segment `texto` and insert its acts. Returns how many were written.
 
@@ -186,6 +225,36 @@ def persistir_atos(db: Any, extracao_id: str, org_id: Any, texto: str) -> int:
                 falha,
                 exc_info=True,
             )
+
+        # Migration 136 — the abertura's typed sub-spans (`IMÓVEL:`,
+        # `CADASTRO MUNICIPAL:`, ...). Same posture as the details above: the
+        # acts are already written and are the product; a failed block insert
+        # is logged at ERROR and does not roll anything back. Unlike the
+        # details above there is no separate read-time self-heal for this
+        # table — a fresh segmentation is the only time the abertura's own
+        # boundaries are known, so a row whose acts already existed BEFORE
+        # this feature shipped (and therefore never re-enters this branch)
+        # simply has no blocks, exactly like `ruido = []` for a pre-136 row —
+        # repaired the sanctioned way, by a re-transcription
+        # (`criar_retranscricao`, migration 135), never backfilled in place.
+        abertura = next((l for l in linhas if l["kind"] == "abertura"), None)
+        if abertura is not None:
+            try:
+                blocos = segmentar_abertura(
+                    texto or "", abertura["char_inicio"], abertura["char_fim"]
+                )
+                if blocos:
+                    _t(db, ABERTURA_BLOCOS_TABLE).insert(
+                        linhas_de_abertura_blocos(str(extracao_id), org, blocos)
+                    ).execute()
+            except Exception as falha_abertura:  # noqa: BLE001 - acts landed; blocks heal via retranscrição
+                logger.error(
+                    "matricula %s: acts persisted but its abertura blocks were not (%s) — "
+                    "repaired only by a re-transcription (criar_retranscricao)",
+                    extracao_id,
+                    falha_abertura,
+                    exc_info=True,
+                )
     return len(linhas)
 
 
@@ -333,12 +402,44 @@ def atos_da_extracao(client: Any, org_id: UUID, extracao: dict) -> list[dict]:
     return _linhas_de_atos(client, org_id, extracao)
 
 
+def _bloco_abertura_saida(row: dict, texto: str) -> dict:
+    inicio, fim = int(row["char_inicio"]), int(row["char_fim"])
+    return {
+        "id": row["id"],
+        "campo": row["campo"],
+        "char_inicio": inicio,
+        "char_fim": fim,
+        "rotulo_inicio": row.get("rotulo_inicio"),
+        "rotulo_fim": row.get("rotulo_fim"),
+        "texto": _fatia(texto, inicio, fim),
+    }
+
+
+def _blocos_abertura(client: Any, org_id: UUID, extracao_id: Any) -> list[dict]:
+    """`matricula_abertura_blocos` rows for one extraction, in document
+    order. `[]` for a pre-136 extraction (never backfilled — see
+    `persistir_atos`) or one with no abertura at all."""
+    rows = table_reads.paged_rows(
+        client, ABERTURA_BLOCOS_TABLE, org_id, eq_filters={"extracao_id": str(extracao_id)}
+    )
+    return sorted(rows, key=lambda r: r["char_inicio"])
+
+
 def listar_atos(
     client: Any, org_id: UUID, extracao_id: UUID, *, usuario_id: Optional[Any] = None
 ) -> dict:
     """The acts as literal slices, each with its typed `detalhes` (migration
     115; `None` for the abertura). One `text_view` log covers the details
-    too: they are readings OF the text this response already hands back."""
+    too: they are readings OF the text this response already hands back.
+
+    Migration 136 — also carries `ruido` (the extraction's detected page
+    furniture, `[]` when none) and `abertura_blocos` (the abertura's typed
+    sub-spans, `[]` when there is no abertura or none was recognised) — both
+    as literal slices of the SAME `texto`, so the FE can highlight furniture
+    and typed blocks in place. Unlike `atos`, these are NOT noise-subtracted:
+    this endpoint shows the raw transcription; only the contract quote
+    (`obter_selecao`) subtracts.
+    """
     extracao = exigir_extracao(client, org_id, extracao_id)
     log_leitura_texto(client, org_id, extracao_id, usuario_id)
     texto = extracao.get("texto_extraido") or ""
@@ -350,12 +451,15 @@ def listar_atos(
     )
     for ato in atos:
         ato["detalhes"] = detalhes_svc.detalhes_saida(detalhes.get(str(ato["id"])), resolved)
+    blocos = _blocos_abertura(client, org_id, extracao["id"]) if rows else []
     return {
         "extracao_id": extracao["id"],
         "status": extracao.get("status"),
         "codigo": extracao.get("codigo"),
         "total": len(atos),
         "atos": atos,
+        "ruido": extracao.get("ruido") or [],
+        "abertura_blocos": [_bloco_abertura_saida(r, texto) for r in blocos],
     }
 
 
@@ -857,26 +961,44 @@ def _exigir_contrato(client: Any, org_id: UUID, contrato_id: UUID) -> dict:
     return rows[0]
 
 
+def _ruido_da_extracao(extracao: dict) -> tuple[RuidoSpan, ...]:
+    """`matricula_extracoes.ruido` (migration 136) -> `RuidoSpan`s
+    `subtrair_ruido` consumes. `paginas` is not persisted — the shape guard
+    (`matricula_ruido_valido`) only requires `start`/`end`/`kind` — and
+    `subtrair_ruido` never reads it, so a placeholder `()` stands in for it
+    here. `[]`/absent `ruido` (a pre-136 row, or nothing detected) yields
+    `()`, under which `subtrair_ruido` is a no-op."""
+    return tuple(
+        RuidoSpan(start=int(item["start"]), end=int(item["end"]), kind=item["kind"], paginas=())
+        for item in (extracao.get("ruido") or [])
+    )
+
+
 def _rebase_formatacao_da_selecao(
-    atos: list[dict], formatacao_extracao: tuple[FormatRange, ...]
+    spans: list[tuple[int, int]], formatacao_extracao: tuple[FormatRange, ...]
 ) -> tuple[FormatRange, ...]:
     """The extraction's DOCUMENT-level `formatacao` (offsets into the whole
-    `texto_extraido`, migration 113) -> ranges local to `atos`' own
-    concatenated output text (`"".join(a["texto"] for a in atos)`),
-    contract §5's "re-based onto the selected text".
+    `texto_extraido`, migration 113) -> ranges local to the OUTPUT text
+    `spans` concatenates (`"".join(texto[s:e] for s, e in spans)`), contract
+    §5's "re-based onto the selected text".
 
-    Each act is `[char_inicio, char_fim)` of `texto_extraido`; a range is
-    clipped PER act (a range crossing an act boundary is split, same rule
-    `abnt.paragraphs_from_text` applies at paragraph boundaries — reused
-    via `clip_ranges`, not re-derived), then shifted from "0 inside this
-    act" to its position in the OUTPUT text by the cumulative length of
-    the acts already emitted. Acts are walked in `atos`' own (contract)
-    order, not extraction order, matching how `texto` itself is built.
+    General over ANY ordered list of `[start, end)` spans into
+    `texto_extraido` — not just one per act. Migration 136: a caller quoting
+    an act ALSO subtracts its noise first (`subtrair_ruido`), so one act can
+    contribute more than one span here; feeding the sub-spans through this
+    same function (rather than the whole act range) is what keeps a
+    formatting run that straddled a now-removed noise span correct. A range
+    is clipped PER span (a range crossing a span boundary is split, same
+    rule `abnt.paragraphs_from_text` applies at paragraph boundaries —
+    reused via `clip_ranges`, not re-derived), then shifted from "0 inside
+    this span" to its position in the OUTPUT text by the cumulative length
+    of the spans already emitted. `spans` is walked in the caller's own
+    (contract/quote) order, not extraction order, matching how the output
+    text itself is built.
     """
     out: list[FormatRange] = []
     deslocamento = 0
-    for ato in atos:
-        inicio, fim = ato["char_inicio"], ato["char_fim"]
+    for inicio, fim in spans:
         for r in clip_ranges(formatacao_extracao, inicio, fim):
             out.append(
                 FormatRange(
@@ -901,11 +1023,26 @@ def obter_selecao(
 
     `texto` is the plain concatenation of the slices — no separator is added,
     because the segmenter's spans already carry their own line breaks.
-    Selecting every act in matrícula order therefore yields `texto_extraido`
-    byte for byte. `formatacao` is `texto`'s own bold/underline ranges,
-    re-based from the extraction's document-level ranges (contract
-    `projects/abnt-formatting-CONTRACT.md` §5) — `[]` for a selection made
-    before the source carried formatting at all.
+    🔴 UPDATED BY MIGRATION 136: each act's slice is FIRST `subtrair_ruido`'d
+    against the extraction's `ruido` (detected page furniture), so selecting
+    every act in matrícula order yields `texto_extraido` MINUS its noise
+    spans, not `texto_extraido` byte for byte — a page header/footer landing
+    inside an act must never be quoted into a deed. `ruido = []` (nothing
+    detected, or a row from before migration 136) is the one case where the
+    older invariant still holds exactly: byte for byte. `formatacao` is
+    `texto`'s own bold/underline ranges, re-based from the extraction's
+    document-level ranges (contract `projects/abnt-formatting-CONTRACT.md`
+    §5) — `[]` for a selection made before the source carried formatting at
+    all.
+
+    `descricao_imovel` (migration 136): the `descricao_imovel` typed block
+    (`matricula_abertura_blocos`) for this extraction, as its own
+    noise-subtracted `{texto, formatacao}`, independent of which acts are
+    actually selected — `None` when the extraction has no such block (no
+    `IMÓVEL:` label recognised, or a pre-136 row). The contract's OBJETO
+    clause needs this SPECIFICALLY rather than the whole selection: a
+    de-furnitured abertura still ends in `PROPRIETÁRIOS: …`, which on a
+    resold property names the PREVIOUS owners.
 
     The top-level quote is the OBJECT's (`papel='objeto'`), unchanged in
     shape. `permutas` (migration 115) lists one quote per property given in
@@ -925,6 +1062,7 @@ def obter_selecao(
         "atos": [],
         "texto": "",
         "formatacao": [],
+        "descricao_imovel": None,
         "permutas": [],
         "selecionado_por": None,
         "selecionado_em": None,
@@ -953,6 +1091,36 @@ def obter_selecao(
     return saida
 
 
+def _descricao_imovel_bloco(
+    client: Any,
+    org_id: UUID,
+    extracao: dict,
+    texto: str,
+    ruido: tuple[RuidoSpan, ...],
+) -> Optional[dict]:
+    """The `descricao_imovel` typed block (migration 136) for this
+    extraction, noise-subtracted and its own `formatacao` re-based —
+    independent of which acts `selecao` actually picked, keyed only by the
+    extraction (contract `carregador.py`'s OBJETO clause needs the property
+    description SPECIFICALLY, never the whole abertura/selection). `None`
+    when the extraction has no such block (no `IMÓVEL:` label recognised, or
+    a pre-136 row) — the caller falls back to the whole quote.
+    """
+    bloco = next(
+        (b for b in _blocos_abertura(client, org_id, extracao["id"]) if b["campo"] == "descricao_imovel"),
+        None,
+    )
+    if bloco is None:
+        return None
+    inicio, fim = int(bloco["char_inicio"]), int(bloco["char_fim"])
+    spans = subtrair_ruido(inicio, fim, ruido)
+    formatacao = _rebase_formatacao_da_selecao(spans, ranges_from_json(extracao.get("formatacao")))
+    return {
+        "texto": "".join(_fatia(texto, s, e) for s, e in spans),
+        "formatacao": ranges_to_json(formatacao),
+    }
+
+
 def _citacao(
     client: Any,
     org_id: UUID,
@@ -960,16 +1128,23 @@ def _citacao(
     selecao: list[dict],
     usuario_id: Optional[Any],
 ) -> dict:
-    """One group's quote — `selecao` is ordered and shares one extraction."""
+    """One group's quote — `selecao` is ordered and shares one extraction.
+
+    🔴 Migration 136: each act's slice is subtracted against the
+    extraction's `ruido` BEFORE it is quoted — see the module docstring's
+    "UPDATED BY MIGRATION 136" note and `obter_selecao`'s docstring.
+    """
     extracao = exigir_extracao(client, org_id, selecao[0]["extracao_id"])
     # 🔴 A quote (migration 111) — this returns the literal text of every
     # selected act, so a caller reading it is exactly as much a text access
     # as `listar_atos` or `GET /extracoes/{id}`.
     log_leitura_texto(client, org_id, extracao["id"], usuario_id)
     texto = extracao.get("texto_extraido") or ""
+    ruido = _ruido_da_extracao(extracao)
     por_id = {str(r["id"]): r for r in _linhas_de_atos(client, org_id, extracao)}
 
     atos = []
+    spans: list[tuple[int, int]] = []
     for sel in selecao:
         row = por_id.get(str(sel["ato_id"]))
         if row is None:
@@ -981,6 +1156,14 @@ def _citacao(
                 f"existe na extração {extracao['id']}"
             )
         inicio, fim = int(row["char_inicio"]), int(row["char_fim"])
+        # Migration 136 — the noise this act carries (a page header/footer
+        # that landed inside its span) is never quoted: `subtrair_ruido`
+        # returns the act's own ordered, disjoint sub-spans with every noise
+        # span cut out. `ruido = ()` (nothing detected, or a pre-136 row) is
+        # a no-op: `subtrair_ruido` returns `((inicio, fim),)` unchanged, so
+        # this act's quote is exactly what it was before migration 136.
+        subspans = subtrair_ruido(inicio, fim, ruido)
+        spans.extend(subspans)
         atos.append(
             {
                 "ato_id": str(row["id"]),
@@ -989,12 +1172,12 @@ def _citacao(
                 "numero": row.get("numero"),
                 "char_inicio": inicio,
                 "char_fim": fim,
-                "texto": _fatia(texto, inicio, fim),
+                "texto": "".join(_fatia(texto, s, e) for s, e in subspans),
             }
         )
 
     formatacao = _rebase_formatacao_da_selecao(
-        atos, ranges_from_json(extracao.get("formatacao"))
+        spans, ranges_from_json(extracao.get("formatacao"))
     )
     return {
         "extracao_id": str(extracao["id"]),
@@ -1002,6 +1185,7 @@ def _citacao(
         "atos": atos,
         "texto": "".join(a["texto"] for a in atos),
         "formatacao": ranges_to_json(formatacao),
+        "descricao_imovel": _descricao_imovel_bloco(client, org_id, extracao, texto, ruido),
     }
 
 

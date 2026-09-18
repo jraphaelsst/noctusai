@@ -233,6 +233,7 @@ def extracao_row(
     arquivo_origem_id: str | None = None,
     substituida_por: str | None = None,
     possui_marcacao_bruta: bool = False,
+    ruido: list | None = None,
 ) -> dict:
     return {
         "id": id_ or str(uuid4()),
@@ -249,6 +250,10 @@ def extracao_row(
         "arquivo_origem_id": arquivo_origem_id,
         "substituida_por": substituida_por,
         "possui_marcacao_bruta": possui_marcacao_bruta,
+        # Migration 136 — page furniture as offsets into `texto`. `[]` by
+        # default (every existing test's fixture stays untouched); a test
+        # exercising `_citacao`'s subtraction passes its own spans.
+        "ruido": ruido if ruido is not None else [],
         "created_at": "2026-02-01T00:00:00+00:00",
         "updated_at": "2026-02-01T00:00:00+00:00",
     }
@@ -331,6 +336,7 @@ def seed(
     registry=None,
     extracoes=None,
     atos=None,
+    abertura_blocos=None,
     documentos=None,
     arquivos=None,
     dados=None,
@@ -345,6 +351,8 @@ def seed(
     scoped.set_table_data("imovel_registry", registry or [])
     scoped.set_table_data("matricula_extracoes", extracoes or [])
     scoped.set_table_data("matricula_atos", atos or [])
+    # Migration 136 — the abertura's typed sub-spans.
+    scoped.set_table_data("matricula_abertura_blocos", abertura_blocos or [])
     scoped.set_table_data("matricula_ato_detalhes", detalhes or [])
     scoped.set_table_data("permuta_ativos", permutas or [])
     scoped.set_table_data("imovel_documentos", documentos or [])

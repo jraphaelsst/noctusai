@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import asdict
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -55,6 +56,8 @@ from app.modules.card_hub.contrato_gerador.politica import (
     Politica,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _generos(pessoas: list[Pessoa]) -> list[str]:
     return [normalizar_genero(p.genero) or "m" for p in pessoas]
@@ -82,16 +85,35 @@ def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C) -> str:
 
 def _descricao_matricula_rica(d: DadosContrato, adapter: DocxRenderAdapter) -> Any:
     """The matrícula quote as a docxtpl `{{r ... }}` context value (contract
-    §5): bold/underline PER RUN, built from `d.matricula.formatacao`
-    (already re-based onto `d.matricula.texto` by `obter_selecao`) —
-    `[]` renders the quote plain, exactly as before this feature existed.
+    §5): bold/underline PER RUN — `[]` renders the quote plain, exactly as
+    before this feature existed.
+
+    🔴 Migration 136: the IMÓVEL: clause quotes the `descricao_imovel`
+    typed block SPECIFICALLY (`d.matricula.descricao_imovel_texto` /
+    `_formatacao`), never the whole abertura/selection — a de-furnitured
+    abertura still ends in `PROPRIETÁRIOS: …`, which on a resold property
+    names the PREVIOUS owners and would put the wrong parties in a deed.
+    Falls back to the whole selection (`d.matricula.texto` / `formatacao`,
+    the pre-136 behaviour) ONLY when the extraction carries no such block —
+    logged at WARNING so the fallback is visible, never silent.
 
     `.rstrip()` matches the plain-string behaviour it replaces; ranges are
     re-clipped to the (possibly shortened) stripped length so a range
     touching only the stripped trailing whitespace never overflows it.
     """
-    texto = d.matricula.texto.rstrip()
-    ranges = clip_ranges(d.matricula.formatacao, 0, len(texto))
+    if d.matricula.descricao_imovel_texto is not None:
+        texto = d.matricula.descricao_imovel_texto.rstrip()
+        ranges = clip_ranges(d.matricula.descricao_imovel_formatacao, 0, len(texto))
+    else:
+        logger.warning(
+            "contrato %s: matrícula %s sem bloco 'descricao_imovel' — a "
+            "cláusula IMÓVEL: usa a seleção inteira (comportamento anterior "
+            "à migração 136)",
+            d.contrato_id,
+            d.matricula.codigo,
+        )
+        texto = d.matricula.texto.rstrip()
+        ranges = clip_ranges(d.matricula.formatacao, 0, len(texto))
     return adapter.rich_text(runs_from_ranges(texto, ranges))
 
 

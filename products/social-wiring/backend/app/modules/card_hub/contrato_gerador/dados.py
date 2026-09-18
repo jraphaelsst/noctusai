@@ -233,6 +233,18 @@ class Matricula:
     #: for a selection made before the source was (re-)transcribed with
     #: formatting — the quote still renders, just unformatted.
     formatacao: tuple[FormatRange, ...] = ()
+    #: [migration 136] The `descricao_imovel` typed block
+    #: (`obter_selecao()['descricao_imovel']`), already noise-subtracted and
+    #: its own `formatacao` re-based onto IT (not onto `texto` above). The
+    #: OBJETO clause's `IMÓVEL:` quote must be JUST the property
+    #: description, never the whole abertura/selection: a de-furnitured
+    #: abertura still ends in `PROPRIETÁRIOS: …`, which on a resold property
+    #: names the PREVIOUS owners. `None` when the selection's extraction
+    #: carries no such block (no `IMÓVEL:` label recognised, or a pre-136
+    #: row) — `contexto._descricao_matricula_rica` falls back to `texto` /
+    #: `formatacao` above and logs that it did.
+    descricao_imovel_texto: Optional[str] = None
+    descricao_imovel_formatacao: tuple[FormatRange, ...] = ()
 
 
 @dataclass

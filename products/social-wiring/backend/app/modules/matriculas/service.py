@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from noctusai_lib.config.credentials import resolve_credential
-from noctusai_lib.integrations.documents import has_raw_markup
+from noctusai_lib.integrations.documents import detectar_ruido, has_raw_markup
 from noctusai_lib.integrations.documents.formatting import ranges_to_json
 
 from app.modules.imovel_hub.deps import BUCKET as IMOVEL_BUCKET
@@ -261,6 +261,18 @@ async def processar_extracao(
                 "or malformed vision reply)",
                 extracao_id,
             )
+        # 🔴 Migration 136 — computed and written on this SAME call, never a
+        # follow-up. The acts below are deliberately written in their own
+        # try (they self-heal: `estrutura_service.listar_atos` re-segments a
+        # concluded extraction with no acts on its first read) but `ruido`
+        # CANNOT self-heal the same way — it needs `resultado.pages`, which
+        # cease to exist the moment this function returns, and migration
+        # 136's write-once guard freezes `ruido` once `status='concluida'`.
+        # If it is not on the text write, it is lost for good.
+        ruido = [
+            {"start": r.start, "end": r.end, "kind": r.kind}
+            for r in detectar_ruido(resultado.pages)
+        ]
         _marcar(
             db, extracao_id, org_id,
             status="concluida",
@@ -269,6 +281,7 @@ async def processar_extracao(
             num_paginas=resultado.num_paginas,
             retencao_ate=retencao_ate,
             possui_marcacao_bruta=possui_marcacao_bruta,
+            ruido=ruido,
         )
 
         # The acts (migration 109), as offsets into the text that just landed.

@@ -408,6 +408,13 @@ def carregar(
             texto=selecao.get("texto") or "",
             num_atos=len(selecao.get("atos") or []),
             formatacao=ranges_from_json(selecao.get("formatacao")),
+            # Migration 136 — `None` (no `descricao_imovel` block for this
+            # extraction) reads as `None` through both fields; `contexto.py`
+            # is the one place that decides the fallback.
+            descricao_imovel_texto=(selecao.get("descricao_imovel") or {}).get("texto"),
+            descricao_imovel_formatacao=ranges_from_json(
+                (selecao.get("descricao_imovel") or {}).get("formatacao")
+            ),
         ),
         valor_negociado=_dec(estruturada.get("valor_negociado")),
         pct_comissao=_dec(negociacao.get("pct_comissao")),

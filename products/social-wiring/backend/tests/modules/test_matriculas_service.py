@@ -139,6 +139,53 @@ class TestTheStatusLifecycle:
         ]
 
     @pytest.mark.asyncio
+    async def test_ruido_e_persistida_junto_com_o_texto(self):
+        """Migration 136: `detectar_ruido(resultado.pages)` rides the SAME
+        write that lands `texto_extraido` — never a follow-up. It CANNOT be
+        a follow-up: `resultado.pages` (the page boundaries the detector
+        needs) cease to exist the moment this function returns, and the
+        migration's write-once guard freezes `ruido` once
+        `status='concluida'` — if it is not on the text write, it is lost."""
+        from noctusai_lib.integrations.documents import detectar_ruido
+
+        p1 = TranscribedPage(
+            number=1, source=TextSource.OCR,
+            text="CABECALHO LINHA UM\nCABECALHO LINHA DOIS\nEste ato fala sobre o imovel Alfa.",
+        )
+        p2 = TranscribedPage(
+            number=2, source=TextSource.OCR,
+            text="CABECALHO LINHA UM\nCABECALHO LINHA DOIS\nEste outro ato fala sobre o imovel Beta.",
+        )
+        resultado = Transcription(pages=(p1, p2), num_paginas=2)
+        esperado = [
+            {"start": s.start, "end": s.end, "kind": s.kind}
+            for s in detectar_ruido((p1, p2))
+        ]
+        assert esperado, "fixture must actually trigger a detected header"
+
+        db = _RecordingDB()
+        await processar_extracao(
+            "e-ruido", b"%PDF", _ORG, db, transcriber=_StubTranscriber(resultado)
+        )
+
+        assert db.last["ruido"] == esperado
+        assert db.last["texto_extraido"] == resultado.text
+        # Same UPDATE call as the text — never a follow-up write.
+        assert [u.get("status") for u in db.updates] == ["processando", "concluida"]
+        assert "ruido" in db.updates[-1] and "texto_extraido" in db.updates[-1]
+
+    @pytest.mark.asyncio
+    async def test_no_pages_multi_page_furniture_yields_an_empty_ruido(self):
+        """A single-page (or furniture-free) transcription is the common
+        case and must not error or invent noise — `[]`, same as before this
+        feature existed."""
+        db = _RecordingDB()
+        await processar_extracao(
+            "e-sem-ruido", b"%PDF", _ORG, db, transcriber=_StubTranscriber(_ok("P1"))
+        )
+        assert db.last["ruido"] == []
+
+    @pytest.mark.asyncio
     async def test_possui_marcacao_bruta_is_false_for_clean_text(self):
         db = _RecordingDB()
         await processar_extracao(
