@@ -40,7 +40,7 @@ import subprocess
 import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from pydantic import BaseModel, Field
 
@@ -11572,8 +11572,10 @@ _MESSAGE_LEADER_RE = re.compile(r"^(?:echo|printf)\b")
 
 from tools.noctus.dev.primary_write_guard import (  # noqa: E402
     HOOK_BYPASS_ALLOW_ENV,
+    _CHMOD_KNOWN_FLAGS,
     _git_config_env_injection,
     _git_hooks_bypass_reason,
+    _mode_removes_exec,
     _normalize as _hooks_bypass_normalize,
     _segments as _hooks_bypass_segments,
     _strip_redirections as _hooks_bypass_strip_redirections,
@@ -11699,6 +11701,60 @@ def _hooks_bypass_is_shebang_shell(path: Path) -> bool:
     return first_line.startswith("#!") and bool(re.search(r"\b(ba)?sh\b|zsh", first_line))
 
 
+def _tracked_candidates(root: Path, paths: list[str] | None) -> list[str]:
+    """`paths` verbatim when given (the pre-commit hook's staged-set scope,
+    mirroring `check_conflict_markers`); else the full `git ls-files` sweep.
+    Shared by every "scan every tracked executable-surface file" keeper
+    below so the tracked-file listing has exactly one implementation.
+    """
+    if paths is not None:
+        return list(paths)
+    try:
+        tracked = subprocess.run(
+            ["git", "-C", str(root), "ls-files"],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if tracked.returncode != 0:
+        return []
+    return [ln for ln in tracked.stdout.splitlines() if ln.strip()]
+
+
+def _iter_executable_surface_files(
+    root: Path, candidates: list[str],
+) -> Iterator[tuple[str, Path, bool, str]]:
+    """`(rel, path, is_py, text)` for every candidate that is an EXECUTABLE
+    surface — `.py` / `.sh` / `Makefile` / a `.github/workflows/*.yml(aml)`
+    / an extensionless shebang script. `.md` (prose cannot execute),
+    `.ndjson` (append-only event logs), and `archive/**` (frozen history —
+    see `scan_remediation_markers`'s identical reasoning) are excluded up
+    front. Shared by `check_git_hooks_bypass` and `check_git_hook_file_
+    tampering` — one file-classification implementation for both.
+    """
+    for rel in candidates:
+        if not rel or rel.endswith(".md") or rel.endswith(".ndjson") or rel.startswith("archive/"):
+            continue
+        path = root / rel
+        if not path.is_file():
+            continue
+
+        is_py = rel.endswith(".py")
+        is_shell = rel.endswith(".sh") or path.name in ("Makefile", "makefile")
+        is_ci_yaml = rel.startswith(".github/workflows/") and rel.endswith((".yml", ".yaml"))
+        if not (is_py or is_shell or is_ci_yaml):
+            if "." in path.name:
+                continue  # a real extension we don't scan (binary, data, …)
+            if not _hooks_bypass_is_shebang_shell(path):
+                continue
+
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        yield rel, path, is_py, text
+
+
 def check_git_hooks_bypass(
     repo_root: Path | None = None, paths: list[str] | None = None,
 ) -> list[dict]:
@@ -11763,42 +11819,8 @@ def check_git_hooks_bypass(
     if not root.exists():
         return findings
 
-    if paths is not None:
-        candidates = list(paths)
-    else:
-        try:
-            tracked = subprocess.run(
-                ["git", "-C", str(root), "ls-files"],
-                capture_output=True, text=True, timeout=60, check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return findings
-        if tracked.returncode != 0:
-            return findings
-        candidates = [ln for ln in tracked.stdout.splitlines() if ln.strip()]
-
-    for rel in candidates:
-        if not rel or rel.endswith(".md") or rel.endswith(".ndjson") or rel.startswith("archive/"):
-            continue
-        path = root / rel
-        if not path.is_file():
-            continue
-
-        is_py = rel.endswith(".py")
-        is_shell = rel.endswith(".sh") or path.name in ("Makefile", "makefile")
-        is_ci_yaml = rel.startswith(".github/workflows/") and rel.endswith((".yml", ".yaml"))
-        if not (is_py or is_shell or is_ci_yaml):
-            if "." in path.name:
-                continue  # a real extension we don't scan (binary, data, …)
-            if not _hooks_bypass_is_shebang_shell(path):
-                continue
-            is_shell = True
-
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-
+    candidates = _tracked_candidates(root, paths)
+    for rel, path, is_py, text in _iter_executable_surface_files(root, candidates):
         hits = _python_hooks_bypass_hits(text) if is_py else _shell_hooks_bypass_hits(text)
         if not hits:
             continue
@@ -11824,6 +11846,308 @@ def check_git_hooks_bypass(
                 "severity": "high",
             })
     return findings
+
+
+# ── `check_git_hook_file_tampering` — the STATIC backstop for the FILE- ────
+# tampering variant of the same concern (`decide_hook_integrity`,
+# `primary_write_guard.py`): a tracked script/CI-workflow/`subprocess.*` call
+# that removes, truncates, un-executables, or overwrites `.git/hooks/*`, or
+# writes `.git/config` directly, disables a hook exactly as effectively as
+# `-c core.hooksPath=…` does and is invisible to `check_git_hooks_bypass`
+# above (that keeper's predicate is git-ARGV-shaped; this is a plain file op).
+# ---------------------------------------------------------------------------
+
+#: `(path, line-content-substring, rationale)` — the one genuine, sanctioned
+#: file operation under `.git/hooks/` this corpus contains: the installer
+#: itself removing the OLD symlink before recreating it pointing at the
+#: tracked source. Co-located rationale, same shape as `_HOOKS_BYPASS_
+#: ALLOWLIST` above.
+_HOOK_FILE_TAMPERING_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    (
+        "scripts/hooks/install-hooks.sh",
+        'rm -f "$HOOKS_DIR/pre-commit"',
+        "The sanctioned installer: removes the OLD symlink immediately "
+        "before recreating it pointing at the tracked `scripts/hooks/"
+        "pre-commit` (the very next line). Net effect is a WORKING hook, "
+        "not a disabled one — the opposite of the vector this keeper "
+        "exists for.",
+    ),
+    (
+        "scripts/hooks/install-hooks.sh",
+        'rm -f "$HOOKS_DIR/pre-push"',
+        "Same installer, same pattern, for pre-push.",
+    ),
+    (
+        "scripts/hooks/install-hooks.sh",
+        'rm -f "$HOOKS_DIR/post-merge"',
+        "Same installer, same pattern, for post-merge.",
+    ),
+    (
+        "scripts/hooks/install-hooks.sh",
+        'rm -f "$HOOKS_DIR/post-checkout"',
+        "Same installer, same pattern, for post-checkout.",
+    ),
+    (
+        "scripts/hooks/install-hooks.sh",
+        'rm -f "$HOOKS_DIR/post-commit"',
+        "Retires a LEGACY post-commit hook whose seed-sync duty moved to "
+        "pre-commit — guarded by the script's own `grep -q "
+        '"sync-seed-template"` check just above (only removes ITS OWN '
+        "former hook, never an arbitrary one), and this is a genuine "
+        "retirement (no `ln` recreates post-commit afterward) rather than "
+        "a disable-and-replace.",
+    ),
+)
+
+#: Truncating/removing/un-executabling shell verbs whose TARGET, if it names
+#: a path under `.git/hooks/` or `.git/config`, is the file-tampering vector.
+#: `chmod` is handled separately (mode-aware — `+x` is a repair, not this).
+_HOOK_TAMPERING_VERBS = frozenset({"rm", "mv", "cp", "tee", "install", "ln", "truncate"})
+
+#: Path-text shapes that denote the guarded region, matched as a SUBSTRING
+#: of the resolved target — a text-level analog of `primary_write_guard`'s
+#: `_under_git_hooks_dir`/`_is_git_config_file`, since a static file scan has
+#: no live `git rev-parse --git-common-dir` to resolve through (there is no
+#: worktree-vs-primary ambiguity for TRACKED source text: every relative
+#: `.git/hooks/…`/`.git/config` mention in a script is written against
+#: wherever it runs, and the only tracked file that does so is the
+#: allowlisted installer).
+_GUARDED_PATH_TEXT_RE = re.compile(
+    r"""(?:^|[\s'"/=(])\.git/hooks(?:/|$|[\s'")])"""
+    r"""|(?:^|[\s'"/=(])\.git/config(?:$|[\s'")])"""
+)
+
+#: `VAR=…literal…/hooks` / `VAR=…literal…/config` assignments — the minimal
+#: variable-aliasing this keeper resolves. `scripts/hooks/install-hooks.sh`
+#: itself writes `HOOKS_DIR="$REPO_ROOT/.git/hooks"` then uses `"$HOOKS_DIR/
+#: pre-commit"` — a LITERAL text scan for `.git/hooks` would never see that
+#: second line at all (nothing in it spells `.git/hooks`), which would make
+#: `_HOOK_FILE_TAMPERING_ALLOWLIST`'s install-hooks.sh entries dead code
+#: (never reached, since detection itself never fires there) rather than a
+#: real exemption from a real detection. Anything deeper — a variable built
+#: across multiple assignments, command substitution, an indirect `${!VAR}`
+#: — is out of scope and stays undetected, the same "unresolvable → not
+#: flagged" posture `_hooks_bypass_argv_text` uses throughout this file.
+_HOOKS_VAR_ASSIGN_RE = re.compile(
+    r'^\s*([A-Za-z_][A-Za-z0-9_]*)=.*\.git/(?:hooks|config)\b', re.MULTILINE,
+)
+
+
+def _hook_path_var_names(text: str) -> frozenset[str]:
+    """Variable names whose assignment's value contains a literal guarded
+    path — see `_HOOKS_VAR_ASSIGN_RE`'s docstring above."""
+    return frozenset(m.group(1) for m in _HOOKS_VAR_ASSIGN_RE.finditer(text))
+
+
+def _path_matches_guarded(token: str, var_names: frozenset[str]) -> bool:
+    """Is `token` (a shell/argv word) the guarded path, either LITERALLY
+    (`.git/hooks/pre-commit`) or through one of `var_names`'s ALIASES
+    (`"$HOOKS_DIR/pre-commit"`, `${HOOKS_DIR}/pre-commit`)?"""
+    if _GUARDED_PATH_TEXT_RE.search(token):
+        return True
+    return any(re.search(rf"\$\{{?{re.escape(v)}\}}?(?:/|$)", token) for v in var_names)
+
+
+def _hook_tampering_reason(tokens: list[str], var_names: frozenset[str] = frozenset()) -> str | None:
+    """A violation reason for ONE segment's tokens, or None. Mirrors
+    `_git_hooks_bypass_reason`'s shape — including `_find_git_start`'s
+    "the verb may be ANYWHERE in the segment" reasoning (a leading `env
+    X=Y`, a YAML `- run:` bullet-and-key prefix that tokenizes as its own
+    leading tokens, a subshell's stray `(`) — but judges plain filesystem
+    verbs against the GUARDED-PATH-TEXT shape (optionally through
+    `var_names`'s aliasing) rather than judging `git` argv against the
+    hooksPath/no-verify shape.
+    """
+    idx = next(
+        (i for i, t in enumerate(tokens) if t in _HOOK_TAMPERING_VERBS or t == "chmod"),
+        None,
+    )
+    if idx is None:
+        return None
+    name = tokens[idx]
+    rest = tokens[idx + 1:]
+    if name == "chmod":
+        args = [a for a in rest if a not in _CHMOD_KNOWN_FLAGS]
+        if len(args) < 2:
+            return None
+        mode, paths = args[0], args[1:]
+        if not _mode_removes_exec(mode):
+            return None
+        for p in paths:
+            if _path_matches_guarded(p, var_names):
+                return f"`chmod {mode} {p}` un-executables a git hook file."
+        return None
+    if name == "ln":
+        # `ln -s scripts/hooks/<name> .git/hooks/<name>` re-links the hook
+        # AT THE TRACKED SOURCE — the sanctioned reinstall pattern
+        # (`scripts/hooks/install-hooks.sh`), a repair, not a disable. Only
+        # an `ln` whose SOURCE points elsewhere (`/dev/null`, `/bin/true`,
+        # …) is the tampering shape.
+        positional = [a for a in rest if not a.startswith("-")]
+        if len(positional) < 2:
+            return None
+        source, dest = positional[0], positional[-1]
+        if "scripts/hooks/" in source or "scripts\\hooks\\" in source:
+            return None
+        if _path_matches_guarded(dest, var_names):
+            return f"`ln … {source} {dest}` replaces a git hook file with a symlink to an untracked source."
+        return None
+    for a in rest:
+        if not a.startswith("-") and _path_matches_guarded(a, var_names):
+            return f"`{name} … {a}` writes/removes a git hook file directly."
+    return None
+
+
+def _shell_hook_tampering_hits(text: str) -> list[tuple[int, str]]:
+    """`[(lineno, reason), ...]` — mirrors `_shell_hooks_bypass_hits`'s
+    line-scoped, comment-excluding scan, judged against
+    `_hook_tampering_reason` instead.
+
+    🔴 The redirect leg is checked BEFORE the message-leader exclusion,
+    deliberately: `check_git_hooks_bypass`'s `_MESSAGE_LEADER_RE` exists to
+    skip an `echo "text"`/`printf "text"` INFORMATIONAL message (the leading
+    word alone proves nothing is written). Here that reasoning inverts —
+    `echo … >> .git/config` IS the write mechanism, `echo` is simply the
+    command that PRODUCES the text being redirected. Filtering every
+    echo/printf LINE outright would blind this leg to exactly the shape
+    `check_git_hooks_bypass`'s own KB-doc example warns about (writing
+    `hooksPath = /dev/null` into `.git/config` via a plain `echo >>`).
+    """
+    var_names = _hook_path_var_names(text)
+    out: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # A real redirect (`> .git/hooks/pre-commit`, `>> .git/config`) is a
+        # write regardless of which command precedes it — checked as its own
+        # shape rather than via `_hooks_bypass_tokens`, which does not read
+        # shell redirection grammar at all.
+        redirect_m = re.search(r">>?\s*([\"']?\S+)", stripped)
+        if redirect_m and _path_matches_guarded(redirect_m.group(1).strip("\"'"), var_names):
+            out.append((lineno, "a truncating/appending redirect writes a git hook file directly."))
+            continue
+        if _MESSAGE_LEADER_RE.match(stripped):
+            continue
+        for segment in _hooks_bypass_segments(stripped):
+            seg = segment.strip()
+            if not seg or _MESSAGE_LEADER_RE.match(seg):
+                continue
+            reason = _hook_tampering_reason(
+                _hooks_bypass_strip_redirections(_hooks_bypass_tokens(seg)), var_names,
+            )
+            if reason is not None:
+                out.append((lineno, reason))
+                break
+    return out
+
+
+def check_git_hook_file_tampering(
+    repo_root: Path | None = None, paths: list[str] | None = None,
+) -> list[dict]:
+    """Refuse a TRACKED FILE that removes, truncates, un-executables, or
+    overwrites a git hook FILE directly, or writes `.git/config`.
+
+    **The gap this closes.** `check_git_hooks_bypass` catches a hardcoded
+    `-c core.hooksPath=…`/`--no-verify` shape — a git INVOCATION. It cannot
+    see `rm .git/hooks/pre-commit`, `> .git/hooks/pre-commit`, `chmod -x
+    .git/hooks/pre-commit`, or `echo … >> .git/config` hardcoded into a
+    script — none of those are `git` commands at all, and git silently skips
+    a missing or non-executable hook with no error. Sibling of the runtime
+    `decide_hook_integrity` gate (`primary_write_guard.py`) — see that
+    function's docstring for the fuller rationale, which applies verbatim
+    here one layer down (files instead of live commands).
+
+    **Detection is TEXT-shaped, not argv-resolved** — unlike the runtime
+    gate, a static scan has no live `git rev-parse --git-common-dir` to
+    resolve a relative `.git/hooks/…` through a worktree's `gitdir:`
+    indirection. That is fine here: every relative mention in TRACKED
+    source resolves against wherever the script eventually runs, and this
+    keeper's job is "does this file's text contain the pattern at all" —
+    the runtime gate is what judges an actual invocation's real target.
+
+    **The one allowlisted case.** `scripts/hooks/install-hooks.sh` removes
+    each OLD hook symlink immediately before recreating it pointing at the
+    tracked source — the sanctioned re-install flow, not a disable. Every
+    entry lives in `_HOOK_FILE_TAMPERING_ALLOWLIST` with its own rationale.
+
+    Same scope (`.py`/`.sh`/Makefile/CI-yaml/shebang-script, `.md`/`archive/`
+    /`.ndjson` excluded) as `check_git_hooks_bypass`, via the shared
+    `_iter_executable_surface_files` walker — one file-classification
+    implementation for both keepers.
+    """
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+
+    candidates = _tracked_candidates(root, paths)
+    for rel, path, is_py, text in _iter_executable_surface_files(root, candidates):
+        hits = _python_hook_tampering_hits(text) if is_py else _shell_hook_tampering_hits(text)
+        if not hits:
+            continue
+        lines = text.splitlines()
+        for lineno, reason in hits:
+            line_content = lines[lineno - 1].strip() if 0 < lineno <= len(lines) else ""
+            if any(rel == p and sub in line_content for p, sub, _ in _HOOK_FILE_TAMPERING_ALLOWLIST):
+                continue
+            findings.append({
+                "product": rel.split("/")[1] if rel.startswith("products/") else "<repo>",
+                "file": f"{rel}:{lineno}",
+                "issue": (
+                    f"{reason} Disabling a hook FILE is the same act as "
+                    f"redirecting `core.hooksPath`, just aimed at the file "
+                    f"instead of the git invocation — see "
+                    f"`KB § PATTERNS/common/bypass-rationalization-anti-"
+                    f"patterns.md` § 2.7. Fix the TRACKED source "
+                    f"(`scripts/hooks/<name>`) and re-run `bash scripts/"
+                    f"install-hooks.sh`; never edit anything under `.git/` "
+                    f"directly. A genuine, human-authorized exception is "
+                    f"gated behind `{HOOK_BYPASS_ALLOW_ENV}=1` set in the "
+                    f"invoking shell, with the rationale in the commit that "
+                    f"adds it."
+                ),
+                "severity": "high",
+            })
+    return findings
+
+
+def _python_hook_tampering_hits(source: str) -> list[tuple[int, str]]:
+    """`[(lineno, reason), ...]` for every process-spawning call in `source`
+    whose statically-known command text is a hook-FILE tampering shape —
+    the Python analog of `_shell_hook_tampering_hits`, sharing the exact
+    argv-reconstruction (`_hooks_bypass_argv_text`) `_python_hooks_bypass_
+    hits` already uses."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    var_names = _hook_path_var_names(source)
+    out: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node.func) not in _HOOKS_BYPASS_SPAWN_SUFFIXES:
+            continue
+        text = _hooks_bypass_argv_text(node)
+        if not text:
+            continue
+        normalized = _hooks_bypass_normalize(text)
+        for segment in _hooks_bypass_segments(normalized):
+            seg = segment.strip()
+            if not seg:
+                continue
+            reason = _hook_tampering_reason(
+                _hooks_bypass_strip_redirections(_hooks_bypass_tokens(seg)), var_names,
+            )
+            if reason is not None:
+                out.append((getattr(node, "lineno", 0) or 0, reason))
+                break
+        else:
+            redirect_m = re.search(r">>?\s*([\"']?\S+)", normalized)
+            if redirect_m and _path_matches_guarded(redirect_m.group(1).strip("\"'"), var_names):
+                out.append((getattr(node, "lineno", 0) or 0, "a truncating/appending redirect writes a git hook file directly."))
+    return out
 
 
 #: Env keys whose value decides WHAT THE SUITE TALKS TO — a credential, an
@@ -13269,6 +13593,12 @@ def check_all_products() -> tuple[int, list]:
     # backstop for `decide_git_bypass` (PreToolUse) — the SILENT bypass shape
     # in KB § PATTERNS/common/bypass-rationalization-anti-patterns.md.
     all_issues.extend(check_git_hooks_bypass())
+    # gate-silent-hook-bypass sibling (2026-09-18) — a tracked `rm`/truncating
+    # redirect/`chmod -x`/overwrite of `.git/hooks/*`, or a direct `.git/
+    # config` write, disables a hook exactly as effectively and is invisible
+    # to check_git_hooks_bypass (that one is git-ARGV-shaped; this is a plain
+    # file op). Backstop for the runtime `decide_hook_integrity` gate.
+    all_issues.extend(check_git_hook_file_tampering())
 
     platform_score = round(sum(scores) / len(scores)) if scores else 100
     return platform_score, all_issues

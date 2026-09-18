@@ -1489,6 +1489,242 @@ def decide_git_bypass(
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# `decide_hook_integrity` — refuse tampering with the HOOK FILES THEMSELVES.
+# ═══════════════════════════════════════════════════════════════════════════
+"""
+**Why this exists, on top of `decide_git_bypass`.** `-c core.hooksPath=…` and
+`--no-verify` are not the only way to make a hook stop running. `rm .git/
+hooks/pre-commit`, `> .git/hooks/pre-commit` (truncate), `chmod -x .git/
+hooks/pre-commit`, or writing `.git/config` directly (`Edit`/`Write`, or a
+Bash `echo >> .git/config`) all disable a hook exactly as effectively —
+git silently skips a missing or non-executable hook, no error, no warning —
+and none of them are a `git` invocation at all, so `decide_git_bypass`'s
+argv-shaped detection cannot see them. `decide()` above cannot help either:
+`.git/` is DELIBERATELY excluded from its guarded region (see that function's
+own docstring and `is_guarded_path`) precisely because git's own metadata is
+where legitimate worktree management, ledger commits, and sync-to-remote
+resets all have to write. Walking that exclusion back would break more than
+it protects.
+
+**The fix is a narrow deny-list INSIDE the excluded region, not a wider
+region.** This function does not touch `is_guarded_path` or `decide()` at
+all. It asks one question, orthogonal to "is this the primary checkout on a
+shared branch": does this write target `<git-common-dir>/hooks/*` or
+`<git-common-dir>/config`? Everything else under `.git/` — `HEAD`, `index`,
+`refs/`, `worktrees/`, `objects/` — stays exactly as unguarded as it always
+was; the worktree-add/remove, ledger-commit, and `git gc`-class operations
+the primary-write guard fights to allow never touch `hooks/` or `config` and
+are untouched by this function.
+
+**Resolving through `gitdir:` — the reason this is not a path-string
+special-case.** A linked worktree's `.git` is a FILE containing `gitdir:
+<primary>/.git/worktrees/<name>`, not a directory — and `core.hooksPath`
+(when unset, as here it is NOT: see the module docstring — but even when it
+IS set, the value lives in the SHARED `config`) resolves to the PRIMARY's
+`hooks/` regardless of which worktree a command runs from. `git rev-parse
+--path-format=absolute --git-common-dir`, run FROM the candidate cwd, is
+what actually performs that resolution — the same probe `discover_context`
+already uses — so a `rm .git/hooks/pre-commit` typed from inside a worktree
+is judged against the PRIMARY's real hooks directory, not a non-existent
+`<worktree>/.git/hooks/` that a naive string-join would compute.
+
+**Reuses `bash_write_targets` wholesale for the generic shapes.** `rm`, `mv`,
+`cp` (dest-only), `tee`, `install`, `ln`, and every real-redirect
+(`>`/`>>`/fused forms) already compute correctly-resolved write targets in
+that function; this only adds the ONE judgment `bash_write_targets` does not
+make and should not — `chmod`'s MODE matters here (`+x` repairs a hook,
+`-x`/an all-even octal disables one) where it never mattered for the
+primary-write question (any chmod on a guarded path was already suspect
+there, mode notwithstanding).
+
+**Same escape hatch, deliberately.** `HOOK_BYPASS_ALLOW_ENV` — this is the
+SAME category of bypass as `decide_git_bypass`'s (disabling a hook), just
+aimed at the file instead of the git invocation; a second, differently-named
+env var would only fragment the one legitimate override path documented in
+`engineer-seed.md` §2.
+"""
+
+#: Chmod's own recognized flags — never a mode, never a path.
+_CHMOD_KNOWN_FLAGS = frozenset({
+    "-R", "--recursive", "-v", "--verbose", "-c", "--changes",
+    "-f", "--silent", "--quiet",
+})
+
+
+def _resolve_git_common_dir(cwd: str) -> str | None:
+    """The repo's shared `.git` dir, resolved THROUGH a linked worktree's
+    `gitdir:` indirection. `git rev-parse --git-common-dir` does that
+    resolution for us — see the module docstring above for why this must
+    not be a manual path join. Returns None when `cwd` is not inside any
+    git repo (never blocks on that; the caller treats None as "cannot see").
+    """
+    out = _run_git(["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"], None)
+    return out or None
+
+
+def _under_git_hooks_dir(path: str, common: str) -> bool:
+    return _within(path, os.path.join(common, "hooks"))
+
+
+def _is_git_config_file(path: str, common: str) -> bool:
+    return os.path.normpath(path) == os.path.normpath(os.path.join(common, "config"))
+
+
+def _mode_removes_exec(mode: str) -> bool:
+    """Does chmod `mode` take the exec bit AWAY (or land on a mode with no
+    exec bit anywhere)? `+x` and an explicit `=…x…` clause ADD it — a
+    REPAIR, and must not match. A numeric mode is judged by whether ANY of
+    its (up to three) permission digits is odd (1/3/5/7 — has the exec bit).
+    Ambiguous input (empty, or a symbolic clause naming neither) is treated
+    as REMOVING — the safe direction for this gate: there is no legitimate
+    reason to chmod anything under `.git/hooks/` except re-adding exec, so an
+    unreadable mode is never assumed to be that one legitimate case.
+    """
+    mode = mode.strip()
+    if not mode:
+        return True
+    if mode.isdigit():
+        digits = mode[-3:] if len(mode) >= 3 else mode
+        return not any(d in "1357" for d in digits)
+    if "+x" in mode or re.search(r"=[^,]*x", mode):
+        return False
+    return True
+
+
+def _chmod_targets(command: str, cwd: str) -> tuple[list[str], list[str]]:
+    """`(all_targets, disabling_targets)` for every `chmod` in `command`.
+
+    `bash_write_targets` already adds a chmod's target to ITS OWN result
+    list, mode-blind (correct for "did work land under a guarded path",
+    where any chmod is suspect regardless of mode). That mode-blindness is
+    WRONG for this gate — `chmod +x` is a repair — so `decide_hook_integrity`
+    must SUBTRACT `all_targets` from the generic scan's chmod contribution
+    and add back only `disabling_targets` (mode removes exec, see
+    `_mode_removes_exec`). Returning both from one pass keeps the
+    tokenizing/positional-extraction logic written exactly once.
+    """
+    all_targets: list[str] = []
+    disabling: list[str] = []
+    for segment in _segments(_normalize(command)):
+        tokens = _strip_redirections(_tokens(segment))
+        idx = next((i for i, t in enumerate(tokens) if os.path.basename(t) == "chmod"), None)
+        if idx is None:
+            continue
+        positional = [t for t in tokens[idx + 1:] if t not in _CHMOD_KNOWN_FLAGS]
+        if not positional:
+            continue
+        mode, paths = positional[0], positional[1:]
+        resolved = [r for r in (_resolve(p, cwd) for p in paths) if r]
+        all_targets.extend(resolved)
+        if resolved and _mode_removes_exec(mode):
+            disabling.extend(resolved)
+    return all_targets, disabling
+
+
+def _ln_relink_safe_targets(command: str, cwd: str) -> list[str]:
+    """Resolved DESTINATION targets of every `ln` whose SOURCE points at
+    `scripts/hooks/` — the sanctioned reinstall pattern (`ln -s scripts/
+    hooks/pre-commit .git/hooks/pre-commit`, exactly what `scripts/hooks/
+    install-hooks.sh` runs). `bash_write_targets` treats `ln` as dest-only
+    (correctly — the source is a READ), but is mode/source-blind the same
+    way it is chmod-mode-blind: it cannot tell "pointing a hook symlink at
+    the TRACKED source" (a repair) from "pointing it at `/dev/null`" (a
+    disable). Anything whose source is NOT under `scripts/hooks/` stays
+    caught by the generic scan — this only carves out the one shape that
+    is provably always safe.
+    """
+    safe: list[str] = []
+    for segment in _segments(_normalize(command)):
+        tokens = _strip_redirections(_tokens(segment))
+        idx = next((i for i, t in enumerate(tokens) if os.path.basename(t) == "ln"), None)
+        if idx is None:
+            continue
+        positional = [t for t in tokens[idx + 1:] if not t.startswith("-")]
+        if len(positional) < 2:
+            continue
+        source, dest = positional[0], positional[-1]
+        if "scripts/hooks/" not in source and "scripts\\hooks\\" not in source:
+            continue
+        resolved = _resolve(dest, cwd)
+        if resolved:
+            safe.append(resolved)
+    return safe
+
+
+def decide_hook_integrity(
+    tool_name: str,
+    tool_input: dict[str, Any] | None = None,
+    cwd: str | None = None,
+    allow_override: bool | None = None,
+) -> dict[str, Any] | None:
+    """None to allow; a dict describing the refusal otherwise.
+
+    Covers `Edit`/`Write`/`MultiEdit`/`NotebookEdit` (any write whose target
+    resolves under `.git/hooks/` or to `.git/config`) and `Bash` (the same
+    two targets, reached via `rm`/`mv`/`cp`/a truncating or any real
+    redirect/`tee`/`install`/`ln` — all already computed by
+    `bash_write_targets` — plus the mode-aware `chmod` leg above).
+    """
+    if allow_override is None:
+        allow_override = os.environ.get(HOOK_BYPASS_ALLOW_ENV, "") == "1"
+    if allow_override:
+        return None
+
+    cwd = cwd or os.getcwd()
+    common = _resolve_git_common_dir(cwd)
+    if common is None:
+        return None  # not a git repo, or the probe failed — cannot see, must not block
+
+    def _flagged(paths: Iterable[str]) -> list[str]:
+        return sorted({p for p in paths if _under_git_hooks_dir(p, common) or _is_git_config_file(p, common)})
+
+    if tool_name in _FILE_PATH_TOOLS:
+        raw = (tool_input or {}).get(_FILE_PATH_TOOLS[tool_name]) or ""
+        target = _resolve(raw, cwd) if raw else ""
+        hits = _flagged([target]) if target else []
+    elif tool_name == "Bash":
+        command = (tool_input or {}).get("command") or ""
+        if not command:
+            return None
+        generic_targets, _ = bash_write_targets(command, cwd)
+        chmod_all, chmod_disabling = _chmod_targets(command, cwd)
+        ln_safe = _ln_relink_safe_targets(command, cwd)
+        # Subtract chmod's own (mode-blind) contribution and any `ln`
+        # re-linking the tracked source, then add back only the mode-AWARE
+        # chmod-disabling subset — see `_chmod_targets`'s and `_ln_relink_
+        # safe_targets`'s docstrings for why the generic scan alone would
+        # wrongly flag a repairing `chmod +x` or `ln -s scripts/hooks/x
+        # .git/hooks/x`.
+        non_special_generic = [t for t in generic_targets if t not in chmod_all and t not in ln_safe]
+        hits = sorted(set(_flagged(non_special_generic)) | set(_flagged(chmod_disabling)))
+    else:
+        return None
+
+    if not hits:
+        return None
+
+    shown = ", ".join(os.path.relpath(h, common) for h in hits[:4])
+    return {
+        "tool": tool_name,
+        "reason": (
+            f"REFUSED — this would touch `{shown}` under the repo's own git "
+            f"directory ({common}). Removing, truncating, overwriting, or "
+            f"un-executabling a file under `.git/hooks/`, or writing `.git/"
+            f"config` directly, disables a hook exactly as effectively as "
+            f"`-c core.hooksPath=…` does — and just as silently: git skips a "
+            f"missing or non-executable hook with no error at all.\n"
+            f"If a hook is genuinely broken, fix the TRACKED source it is "
+            f"symlinked from (`scripts/hooks/<name>`) and re-run `bash "
+            f"scripts/install-hooks.sh` — never edit anything under `.git/` "
+            f"directly.\n"
+            f"The only sanctioned mechanism to genuinely bypass hooks is "
+            f"`{HOOK_BYPASS_ALLOW_ENV}=1` set in the launching shell's "
+            f"environment — never inside the command being refused."
+        ),
+    }
+
+
 def findings(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
     """`decide` in the keeper finding shape, for MCP/compliance consumers."""
     verdict = decide(*args, **kwargs)

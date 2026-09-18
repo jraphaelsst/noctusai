@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """PreToolUse hook — refuse a write aimed at the primary checkout on a shared
-branch, AND (separately) refuse a git invocation that disables its own hooks.
+branch, refuse a git invocation that disables its own hooks, AND refuse
+tampering with the hook FILES themselves (`.git/hooks/*`, `.git/config`).
 
 Thin adapter. Every decision lives in
 `mcp/noctusai/tools/noctus/dev/primary_write_guard.py` — `decide()` for the
-primary-checkout-write concern, `decide_git_bypass()` for the hooks-bypass
-concern (deliberately two independent functions in the SAME module; see that
-function's docstring for why). This file only speaks the harness's hook
-protocol (JSON on stdin → a permission decision on stdout), and loads that
-ONE module ONCE per call — checking both concerns costs no additional
-`importlib` round-trip, only two extra function calls on an already-loaded
-module.
+primary-checkout-write concern, `decide_git_bypass()` for the git-invocation
+hooks-bypass concern, `decide_hook_integrity()` for the file-tampering
+variant of the same concern (three independent functions in the SAME module;
+see each function's own docstring for why they are separate). This file only
+speaks the harness's hook protocol (JSON on stdin → a permission decision on
+stdout), and loads that ONE module ONCE per call — checking all three
+concerns costs no additional `importlib` round-trip, only extra function
+calls on an already-loaded module.
 
 Two deliberate properties:
 
@@ -57,13 +59,16 @@ def main() -> int:
     tool_input = payload.get("tool_input") or {}
     try:
         guard = _load_guard()
-        # Hooks-bypass is checked FIRST: it is the universal, branch- and
-        # location-independent concern (see `decide_git_bypass`'s own
-        # docstring), so a command that is both a hooks bypass AND a
+        # Hooks-bypass and hook-integrity are checked FIRST: both are
+        # universal, branch- and location-independent concerns (see each
+        # function's own docstring), so a command that is also a
         # primary-checkout write gets the more specific reason.
+        cwd = payload.get("cwd")
         verdict = guard.decide_git_bypass(tool_name, tool_input)
         if verdict is None:
-            verdict = guard.decide(tool_name, tool_input, payload.get("cwd"))
+            verdict = guard.decide_hook_integrity(tool_name, tool_input, cwd)
+        if verdict is None:
+            verdict = guard.decide(tool_name, tool_input, cwd)
     except Exception as exc:  # fail open — see the module docstring
         print(f"claude-guard-primary-write: guard unavailable ({exc}) — not blocking", file=sys.stderr)
         return 0

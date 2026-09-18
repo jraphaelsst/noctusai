@@ -149,12 +149,18 @@ needed, the sanctioned mechanism is an env var set in the LAUNCHING shell
 inline in the command being run — unreachable from inside the command it
 would excuse, by construction, and always a deliberate human act.
 
-**Mechanism, not just a catalog entry.** Two gates close this — the
-PreToolUse `primary_write_guard.decide_git_bypass` (refuses the live Bash
-command before it runs) and the static `compliance.check_git_hooks_bypass`
-(refuses a tracked script/CI-workflow/`subprocess.*` call that hardcodes the
-same shape). See `KB § PATTERNS/common/gate-methodology-sync.md` — this row
-does not stop at "forbidden in prose."
+**Mechanism, not just a catalog entry.** Four gates close this, in two
+pairs. The git-INVOCATION shape: PreToolUse `primary_write_guard.
+decide_git_bypass` (refuses the live Bash command before it runs) and the
+static `compliance.check_git_hooks_bypass` (refuses a tracked script/
+CI-workflow/`subprocess.*` call that hardcodes the same shape). The FILE-
+TAMPERING shape — `rm`/truncate/`chmod -x`/overwrite of `.git/hooks/*`, or a
+direct `.git/config` write, which disables a hook exactly as effectively and
+is invisible to the git-argv pair (there is no `git` invocation at all):
+PreToolUse `decide_hook_integrity` and the static `check_git_hook_file_
+tampering`. See `KB § PATTERNS/common/gate-methodology-sync.md` — this row
+does not stop at "forbidden in prose," and it does not stop at the ONE
+mechanism an attacker would think of first either.
 
 ## 3 · Worked example — the `ea7514e7` build-learn-cache codification slip
 
@@ -215,6 +221,7 @@ The very same session caught the slip post-hoc by `git log --grep "no-verify"` �
 - `KB § PATTERNS/architect/dispatch-engineer-tuning.md § 4c Mandatory brief language` — the brief-template clause that bakes "NEVER `--no-verify` commit OR push" into every dispatch.
 - `KB § 01-PHILOSOPHY.md` — the universal ancestor (safety-nets + no-silent-errors); rationalization-to-bypass IS the safety-net-firing-without-learning shape AND the silent-error shape applied to safety gates.
 - `mcp/noctusai/tools/noctus/dev/primary_write_guard.py` (`decide_git_bypass`) + `mcp/noctusai/tools/noctus/dev/compliance.py` (`check_git_hooks_bypass`) — the mechanism pair for § 2.7's silent hooks-bypass: a PreToolUse refusal of the live command plus a static backstop over tracked scripts/CI/`subprocess.*` calls. Gate↔methodology sync per `KB § PATTERNS/common/gate-methodology-sync.md`.
+- `primary_write_guard.decide_hook_integrity` + `compliance.check_git_hook_file_tampering` — the SAME concern's file-tampering variant: `rm`/truncate/`chmod -x`/overwrite of `.git/hooks/*`, or a direct `.git/config` write, disables a hook exactly as effectively as `-c core.hooksPath=…` and is invisible to the pair above (that one is git-ARGV-shaped; this is a plain filesystem op). Resolves through a linked worktree's `gitdir:` indirection rather than a naive `<cwd>/.git` join, so a worktree-relative attack against the PRIMARY's real hooks dir is still caught. `chmod`/`ln` are mode-/source-aware (`+x` and re-linking the tracked `scripts/hooks/<name>` are repairs, not violations).
 
 ## 5 · Provenance
 
@@ -277,3 +284,4 @@ The corrective commit retracts the hypocrisy claim in 62560ede's message non-des
 - **s3 codified** — § 2.7 above (this addition) — the only SILENT entry in the catalog, distinguished from every prior rationalization (which at minimum produces a typed, classifiable `--no-verify`) by producing NO signal at all.
 - **s4 keeper** — shipped same-commit, not deferred (unlike § 5's `check_no_no_verify_in_recent_history`, which remains deferred): `primary_write_guard.decide_git_bypass` (PreToolUse, runtime) + `compliance.check_git_hooks_bypass` (static backstop over tracked scripts/CI/`subprocess.*` calls). Gate↔methodology sync per `KB § PATTERNS/common/gate-methodology-sync.md` — the gate ships its compliance mechanism in the same change, not gate-only.
 - **User mandate verbatim 2026-09-18** — *"a `-c core.hooksPath=…` override reads as being MORE careful about hooks, prints nothing, and nothing catches it. It is a bypass that looks like diligence."*
+- **Follow-up, same day** — the tech-lead verified the git-argv gate LIVE (not from the report alone) and confirmed it held, then named the file-tampering vector directly: *"`Edit`/`Write`/`MultiEdit` targeting `.git/config`… `rm`/`>`/`chmod -x` on `.git/hooks/pre-commit` — git skips a missing or non-executable hook silently… close both narrowly. Do NOT walk back `.git/`-exclusion generally."* `decide_hook_integrity` + `check_git_hook_file_tampering` ship the SAME escape hatch (`HOOK_BYPASS_ALLOW_ENV`) and reuse `bash_write_targets`/`_segments`/`_tokens` wholesale rather than re-parsing shell grammar — the narrow deny-list the mandate asked for, INSIDE the `.git/`-excluded region rather than a wider one.
