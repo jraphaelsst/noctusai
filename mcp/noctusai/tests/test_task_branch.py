@@ -212,6 +212,57 @@ def test_start_requires_slug():
     assert res["status"] == "error" and "requires slug" in res["error"]
 
 
+class FakeGitWorktreeAlreadyExists(FakeGit):
+    """`worktree add` fails ("already exists") on the FIRST call; `worktree
+    list --porcelain` reports the path already checked out on `existing_
+    branch` (defaults to the branch `start` would have created)."""
+
+    def __init__(self, *args, existing_branch=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.existing_branch = existing_branch
+
+    def __call__(self, cmd, cwd=None):
+        self.calls.append((cmd, cwd))
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "worktree" and len(cmd) > 2 and cmd[2] == "add":
+            return (1, "", f"fatal: '{cmd[3]}' already exists")
+        if sub == "worktree" and len(cmd) > 2 and cmd[2] == "list":
+            path = ".claude/worktrees/x"
+            branch = self.existing_branch or "feat/x"
+            return (0, f"worktree {path}\nHEAD b0\nbranch refs/heads/{branch}\n\n", "")
+        return super().__call__(cmd, cwd=cwd)
+
+
+def test_start_retrofits_an_existing_worktree_on_the_same_branch(tmp_path):
+    """The 'worktree created outside task_branch' edge case: `git worktree
+    add` fails because the path already exists, but `worktree list` shows
+    it's already checked out on exactly the branch `start` would create —
+    NOT an error, `start` just wires it (idempotent retrofit)."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "x"
+    _seed_primary(primary, slugs=("alpha",))
+    _seed_worktree_tree(wt_root)
+    fake = FakeGitWorktreeAlreadyExists(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+
+    res = T.task_branch(action="start", slug="x", confirm=True,
+                        primary_root=str(primary), run=fake)
+    assert res["status"] == "started" and res["exit_code"] == 0
+    assert res["already_existed"] is True
+    assert "reused already-existing" in res["message"]
+    # wire_env still ran (default True) — the retrofit's whole point
+    assert (wt_root / "seed/lib/frontend/node_modules").is_symlink()
+
+
+def test_start_worktree_add_failure_on_a_different_branch_still_errors(tmp_path):
+    """The failure is NOT retrofit-eligible when the existing path is on a
+    DIFFERENT branch than `start` would create — a real conflict, still
+    surfaced as an error exactly as before."""
+    fake = FakeGitWorktreeAlreadyExists(
+        refs={"origin/dev": "d0"}, anc=_anc_pairs([]), existing_branch="feat/something-else")
+    res = T.task_branch(action="start", slug="x", confirm=True, run=fake)
+    assert res["status"] == "error" and "worktree add failed" in res["error"]
+
+
 # ── integrate ──
 def test_integrate_dry_run_plans_rebase_and_push():
     fake = FakeGit(
@@ -724,6 +775,85 @@ def test_plan_env_wiring_lists_expected_symlink_targets(tmp_path):
     assert skipped == []
 
 
+# ── derive-don't-hardcode (2026-09-17): the @noctusai re-points + the seed ──
+# frontends whose node_modules get mirrored are DERIVED from each product's
+# own package.json `file:` deps, not a fleet-wide assumed pair — the
+# fixtures above have NO package.json, so they exercise the documented
+# fallback (`_derive_product_repoints` returns the static `_NOCTUSAI_
+# REPOINTS` default); these exercise the LIVE derivation.
+def test_derive_product_repoints_falls_back_when_package_json_absent(tmp_path):
+    primary = tmp_path / "primary"
+    _seed_primary(primary, slugs=("alpha",))
+    pairs = T._derive_product_repoints(str(primary), "products/alpha/frontend", T.FsOps())
+    assert dict(pairs) == dict(T._NOCTUSAI_REPOINTS)
+
+
+def test_derive_product_repoints_reads_real_package_json(tmp_path):
+    """A product whose package.json declares a THIRD seed `file:` dep gets
+    wired for THAT dep too — proof the derivation actually drives wiring,
+    not just a cosmetic fallback."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "theta"
+    _seed_primary(primary, slugs=("theta",))
+    _seed_worktree_tree(wt_root)
+    (primary / "seed" / "extra-widget" / "frontend" / "node_modules").mkdir(parents=True, exist_ok=True)
+    (wt_root / "seed" / "extra-widget" / "frontend").mkdir(parents=True, exist_ok=True)
+    fe = primary / "products" / "theta" / "frontend"
+    fe.mkdir(parents=True, exist_ok=True)
+    fe.joinpath("package.json").write_text(json.dumps({
+        "dependencies": {
+            "@noctusai/lib": "file:../../../seed/lib/frontend",
+            "@noctusai/seed": "file:../../../seed/framework/frontend",
+            "@noctusai/extra-widget": "file:../../../seed/extra-widget/frontend",
+            "react": "^18.0.0",  # a non-file: dep must never be treated as a repoint
+        },
+    }))
+
+    pairs = T._derive_product_repoints(str(primary), "products/theta/frontend", T.FsOps())
+    assert dict(pairs) == {
+        "@noctusai/lib": "seed/lib/frontend",
+        "@noctusai/seed": "seed/framework/frontend",
+        "@noctusai/extra-widget": "seed/extra-widget/frontend",
+    }
+
+    wire, _skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+    links = {w["link"] for w in wire}
+    extra_link = str(wt_root / "products/theta/frontend/node_modules/@noctusai/extra-widget")
+    assert extra_link in links
+    # the derived seed_frontends set picked up the THIRD seed package too
+    assert str(wt_root / "seed/extra-widget/frontend/node_modules") in links
+
+
+def test_derive_product_repoints_ignores_malformed_package_json(tmp_path):
+    """A truncated/invalid package.json degrades to the documented static
+    fallback — never a crash, never silently wiring nothing."""
+    primary = tmp_path / "primary"
+    _seed_primary(primary, slugs=("beta",))
+    fe = primary / "products" / "beta" / "frontend"
+    fe.joinpath("package.json").write_text("{not json")
+    pairs = T._derive_product_repoints(str(primary), "products/beta/frontend", T.FsOps())
+    assert dict(pairs) == dict(T._NOCTUSAI_REPOINTS)
+
+
+def test_derive_product_repoints_matches_real_products():
+    """Sanity net (the "add a check that the derivation still matches
+    reality" requirement): run the REAL derivation against a REAL product's
+    `package.json` on THIS repo — not a fixture — so a future drift away
+    from the `file:../../../seed/X/frontend` convention is caught by CI,
+    not discovered by hand mid-incident."""
+    from settings import REPO_ROOT
+
+    for slug in ("erp-imobiliario", "core", "social-wiring"):
+        rel_fe = f"products/{slug}/frontend"
+        if not (REPO_ROOT / rel_fe / "package.json").exists():
+            continue
+        pairs = T._derive_product_repoints(str(REPO_ROOT), rel_fe, T.FsOps())
+        assert dict(pairs) == {
+            "@noctusai/lib": "seed/lib/frontend",
+            "@noctusai/seed": "seed/framework/frontend",
+        }, f"{slug}'s real package.json no longer derives the canonical seed re-points"
+
+
 def test_plan_env_wiring_reports_missing_toolkit_node_modules(tmp_path):
     """Absent toolkit node_modules → REPORTED, not silently omitted."""
     primary = tmp_path / "primary"
@@ -782,6 +912,10 @@ def test_plan_env_wiring_reports_missing_primary_node_modules(tmp_path):
     nm_skips = [s for s in skipped if "primary node_modules absent" in s["reason"]]
     assert len(nm_skips) == 3  # 2 seed pkgs + 1 product frontend
     assert all(w["kind"] == "@noctusai" for w in wire)
+    # the honest edge case the brief names explicitly: the PRIMARY checkout
+    # itself was never `npm install`'d — the reason must NAME the fix, not
+    # just report the symptom.
+    assert all("npm install" in s["reason"] for s in nm_skips)
 
 
 def test_plan_env_wiring_converts_stale_product_symlink_to_real_dir(tmp_path):
@@ -919,12 +1053,55 @@ def test_start_wire_env_skips_real_node_modules_never_clobbers(tmp_path):
     assert "real node_modules already present" in reasons
 
 
-def test_start_without_wire_env_is_unchanged(tmp_path):
-    # the default path stays exactly as before — no wire_env key, no plan
+def test_start_under_fake_run_without_primary_root_never_touches_real_disk(tmp_path):
+    """`wire_env` DEFAULTS TO TRUE (2026-09-17 fix — see
+    `test_start_wire_env_defaults_true_with_explicit_primary_root` below),
+    but under an injected `run` (this test's FakeGit) with no explicit
+    `primary_root`, the guard right after `migration_check_fn` neutralizes
+    it — exactly like `settle_fn`/`migration_check_fn` already do — so this
+    call NEVER falls back to `settings.LEDGER_ROOT` (the REAL repo) and
+    writes real symlinks into whoever's `.claude/worktrees/feat-x` as a
+    side effect of running the test suite. This is the test-safety net, not
+    a product feature — a caller who wants wire_env under a fake runner
+    passes `primary_root` explicitly (every wire_env test above does)."""
     fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
     res = T.task_branch(action="start", slug="feat-x", confirm=False, run=fake)
     assert res["status"] == "planned"
     assert "wire_env" not in res and "would_wire" not in res
+
+
+def test_start_wire_env_defaults_true_with_explicit_primary_root(tmp_path):
+    """The actual 2026-09-17 fix: a fresh worktree must come ready to run
+    gates BY CONSTRUCTION — `wire_env` is no longer something the caller
+    has to remember to opt into. Same fixture as `test_start_wire_env_
+    confirm_creates_symlinks` but with NO `wire_env=` kwarg at all."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "feat-default-on"
+    _seed_primary(primary, slugs=("alpha",))
+    _seed_worktree_tree(wt_root)
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+
+    res = T.task_branch(action="start", slug="feat-default-on", confirm=True,
+                        verbose=True, primary_root=str(primary), run=fake)
+    assert res["status"] == "started" and res["wire_env"] is True
+    seed_nm = wt_root / "seed/lib/frontend/node_modules"
+    assert seed_nm.is_symlink()
+
+
+def test_start_wire_env_false_explicitly_opts_out(tmp_path):
+    """`wire_env=False` still works as an explicit opt-out (e.g. a doc-only
+    slice on a large repo where the symlink pass is pure overhead)."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "feat-opt-out"
+    _seed_primary(primary, slugs=("alpha",))
+    _seed_worktree_tree(wt_root)
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+
+    res = T.task_branch(action="start", slug="feat-opt-out", confirm=True,
+                        wire_env=False, primary_root=str(primary), run=fake)
+    assert res["status"] == "started"
+    assert "wire_env" not in res and "would_wire" not in res and "wired" not in res
+    assert not (wt_root / "seed/lib/frontend/node_modules").exists()
 
 
 # ── 2026-09-16: wire_env's would_wire/wired/skipped overflow the caller's ────
