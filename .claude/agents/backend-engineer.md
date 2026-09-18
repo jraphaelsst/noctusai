@@ -14,6 +14,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/di-test-seam.md
   - CONTEXT/PATTERNS/backend/llm-tool-audit.md
   - CONTEXT/PATTERNS/backend/llm-usage.md
+  - CONTEXT/PATTERNS/backend/llm-provider-selection.md
   - CONTEXT/PATTERNS/backend/notifications.md
   - CONTEXT/PATTERNS/backend/logging.md
   - CONTEXT/PATTERNS/backend/logging-at-except.md
@@ -93,7 +94,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Data & migrations** → `KB § PATTERNS/backend/database-rls.md` · `KB § backend/04-DATABASE.md` · `KB § PATTERNS/backend/migrate-product-mcp-tool.md`.
 **Domain (per-product backend)** → `KB § backend/01-CORE.md` · `KB § backend/02-ERP.md` · `KB § backend/03-PF.md` · `KB § backend/05-AI-FEATURES.md` · `KB § backend/06-THERAPY.md` · `KB § backend/07-AUTH-SECURITY.md` · `KB § backend/08-DAILY-LIFE.md`.
 **Logging & observability** → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md` · `KB § PATTERNS/backend/notifications.md`.
-**LLM & AI** → `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/photo-editing-seed.md` (AI photo-editing engine: `PhotoEditingPorts` + job handlers).
+**LLM & AI** → `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/llm-provider-selection.md` (the fleet-wide chat/vision/embedding/audio vendor map + the `resolve_llm_provider` manual switch) · `KB § PATTERNS/backend/photo-editing-seed.md` (AI photo-editing engine: `PhotoEditingPorts` + job handlers).
 **Chatbot & scheduling** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md`.
 **Tests** → `KB § PATTERNS/backend/boundary-contract-tests.md`.
 **Realtime** → `KB § PATTERNS/common/realtime-sse-bus.md`.

@@ -185,6 +185,92 @@ class TestSeedErrorCodesReachUsersAsPortuguese:
         assert "mupdf exploded" in db.last["erro_mensagem"]
 
 
+class TestVisionProviderSwitch:
+    """LLM-provider-dependency-sweep (2026-09-18): when no `transcriber` is
+    injected, `processar_extracao` builds the real seed transcriber and must
+    pass it a `provider` resolved via `provider_resolver` rather than
+    leaving it un-overridden — the un-overridden path is what pins this
+    product's matrícula reading to OpenAI with no operator lever, exactly
+    the gap the OpenAI-quota incident surfaced.
+
+    🔴 Manual switch, not a fallback: no test here exercises an
+    auto-failover, because there is none. An org's choice comes from
+    `org_settings` via `resolve_llm_provider`; `provider_resolver` and
+    `transcriber_factory` are real DI seams — bound defaults
+    `processar_extracao` accepts as parameters — never a patch of the
+    module's own attributes (`KB § PATTERNS/backend/di-test-seam.md`).
+    """
+
+    @pytest.mark.asyncio
+    async def test_unset_org_setting_still_asks_for_openai_explicitly(self):
+        """Behaviour-preserving: the real `resolve_llm_provider` (no test
+        seam override) reads an unset `org_settings` row and returns
+        "openai" — the SAME vendor `make_document_transcriber(provider=None)`
+        would have defaulted to before this change."""
+        db = _RecordingDB()
+        captured: dict = {}
+
+        class _FakeTranscriber:
+            async def transcribe(self, content, **kw):
+                return _ok("P1")
+
+        def _capturing_factory(**kwargs):
+            captured.update(kwargs)
+            return _FakeTranscriber()
+
+        await processar_extracao(
+            "e6", b"%PDF", "org-1", db,
+            transcriber=None,
+            transcriber_factory=_capturing_factory,
+        )
+
+        assert captured["provider"] == "openai"
+        assert captured["org_id"] == "org-1"
+
+    @pytest.mark.asyncio
+    async def test_an_org_settings_row_routes_to_the_chosen_vendor(self):
+        """The lever the operator actually pulls: an `org_settings` row for
+        `llm_vision_provider` changes the vendor the seed transcriber is
+        built with, with no code change — exercised here via the real
+        `provider_resolver` DI seam, standing in for a resolved
+        `org_settings` value."""
+        db = _RecordingDB()
+        captured: dict = {}
+
+        class _FakeTranscriber:
+            async def transcribe(self, content, **kw):
+                return _ok("P1")
+
+        def _capturing_factory(**kwargs):
+            captured.update(kwargs)
+            return _FakeTranscriber()
+
+        await processar_extracao(
+            "e7", b"%PDF", "org-1", db,
+            transcriber=None,
+            provider_resolver=lambda capability, org_id, **kw: "anthropic",
+            transcriber_factory=_capturing_factory,
+        )
+
+        assert captured["provider"] == "anthropic"
+
+    @pytest.mark.asyncio
+    async def test_an_injected_transcriber_skips_resolution_entirely(self):
+        """The test seam still bypasses provider resolution — a
+        `provider_resolver` that would raise if called proves it never is
+        when `transcriber` is given."""
+        db = _RecordingDB()
+
+        def _boom(*a, **kw):
+            raise AssertionError("provider_resolver must not run when transcriber is injected")
+
+        await processar_extracao(
+            "e8", b"%PDF", "org-1", db,
+            transcriber=_StubTranscriber(_ok("P1")),
+            provider_resolver=_boom,
+        )
+
+
 class TestCheckRequiredCredentials:
     def test_sem_openai_retorna_mensagem(self):
         with patch(

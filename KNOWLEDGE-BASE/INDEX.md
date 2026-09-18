@@ -114,6 +114,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── lenses-applied-trailer.md
 │   │   │   ├── lgpd.md
 │   │   │   ├── llm-bot-security.md
+│   │   │   ├── llm-provider-selection.md
 │   │   │   ├── llm-tool-audit.md
 │   │   │   ├── llm-usage.md
 │   │   │   ├── logging-at-except.md
@@ -305,6 +306,7 @@ KNOWLEDGE-BASE/
 | Proposals & improvements (two systems — per-project folders, ONE bundled proposal per phase, promote boundary) | `CONTEXT/PATTERNS/common/proposals-and-improvements.md` |
 | LGPD awareness (keeper principle, the five questions, noctus.dev.lgpd_flag tool) | `CONTEXT/PATTERNS/security/lgpd.md` |
 | LLM usage tracking (SupabaseUsageSink, /api/llm/usage, cost estimation, RLS scoping) | `CONTEXT/PATTERNS/backend/llm-usage.md` |
+| LLM provider selection — fleet-wide map of every chat/vision/embedding/audio call site's vendor dependency; the lightweight `resolve_llm_provider(capability, org_id, allowed=..., default="openai")` manual switch (reads `org_settings`/`platform_settings`/env under `llm_<capability>_provider`, never auto-fails-over); which products already have a switch (social-wiring's 3 named settings) vs. which are still openai-only by default; strictly-pinned classification (embeddings/audio → Anthropic is a real capability gap; embeddings/audio → Gemini is a missing `GEMINI_API_KEY`, not a capability gap); the MCP dev toolkit's embedding funnel has no switch mechanism at all (highest-severity SPOF); silent-failure call sites where a dead provider reads as "no results" (`kb_search`/`code_search`) or fail-open (community's moderation) instead of a visible error | `CONTEXT/PATTERNS/backend/llm-provider-selection.md` |
 | Logging convention (when-to-log, level guide, no-`# silent-ok` rule, correlation IDs) | `CONTEXT/PATTERNS/backend/logging.md` |
 | Seed-lib layout (6 layers — primitives/config/testing/integrations/domain/api — where to put new helpers, where to find existing ones) | `CONTEXT/PATTERNS/architect/seed-lib-layout.md` |
 | Agent reading & research discipline (narrow-read first; Explore delegation rule forthcoming) | `CONTEXT/PATTERNS/common/agent-reading-discipline.md` |

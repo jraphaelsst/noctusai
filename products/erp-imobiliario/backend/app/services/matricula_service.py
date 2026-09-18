@@ -27,10 +27,12 @@ same ladder, and social-wiring's inbound-document path will make three.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from noctusai_lib.config.credentials import resolve_credential
 from noctusai_lib.integrations.documents import make_document_transcriber
+from noctusai_lib.integrations.documents.transcription import OCR_MODELS
+from noctusai_lib.integrations.llm import resolve_llm_provider
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +78,22 @@ async def processar_extracao(
     org_id: Optional[str],
     db,
     transcriber=None,
+    provider_resolver: Callable[..., str] = resolve_llm_provider,
+    transcriber_factory: Callable[..., object] = make_document_transcriber,
 ) -> None:
     """Full extraction pipeline — runs as a background task.
 
-    `transcriber` is a test seam. Left unset, the real seed transcriber is
-    built per call so the org's credential is resolved at extraction time
-    rather than at import time.
+    `transcriber` is a test seam: pass one directly to skip construction
+    (and provider resolution) entirely.
+
+    `provider_resolver` / `transcriber_factory` are two narrower test seams
+    — bound defaults (per `KB § PATTERNS/backend/di-test-seam.md` Class-B),
+    never patched — so a test can assert the vision-provider switch is
+    wired without faking `transcriber` itself. `provider_resolver` defaults
+    to `resolve_llm_provider`, which reads `org_settings`'s
+    `llm_vision_provider` row (unset today for every org, so this call is
+    behaviour-preserving); `transcriber_factory` defaults to the real seed
+    `make_document_transcriber`.
     """
     try:
         db.table("matricula_extracoes").update({
@@ -89,7 +101,19 @@ async def processar_extracao(
         }).eq("id", extracao_id).execute()
 
         if transcriber is None:
-            transcriber = make_document_transcriber(real=True, org_id=org_id)
+            # 🔴 Manual switch, not a fallback — see `resolve_llm_provider`'s
+            # module docstring. Unset (the default state for every org today)
+            # resolves to "openai", so this is behaviour-preserving; an
+            # operator flips a single `org_settings` row
+            # (`llm_vision_provider`) to move THIS org's matrícula reading to
+            # Anthropic without a code change, the same lever already used
+            # for social-wiring on 2026-09-17.
+            provider = provider_resolver(
+                "vision", org_id, allowed=tuple(OCR_MODELS)
+            )
+            transcriber = transcriber_factory(
+                real=True, org_id=org_id, provider=provider
+            )
 
         resultado = await transcriber.transcribe(
             pdf_bytes, mimetype="application/pdf"

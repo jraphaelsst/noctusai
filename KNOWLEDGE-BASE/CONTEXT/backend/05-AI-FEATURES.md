@@ -4,8 +4,13 @@
 > `chat_completion`, `generate_embedding`, `transcribe_audio`, `analyze_image`.
 > The seed framework auto-wires `configure_credentials()` + default
 > `LLMConfig` during `create_product_app()`. Products inherit multi-provider
-> access (OpenAI real; Anthropic + Gemini guarded stubs) without writing any
-> LLM plumbing. Credential resolution is 3-tier (org_settings →
+> access (OpenAI, Anthropic, and Gemini are all real, working providers —
+> Anthropic has no embeddings or audio endpoint, Gemini supports all four
+> capabilities) without writing any LLM plumbing. `default_provider` is
+> "openai" fleet-wide; moving a call site to another vendor needs an
+> explicit `resolve_llm_provider(...)` switch — see
+> `KB § PATTERNS/backend/llm-provider-selection.md` for the full map + which
+> products already have one. Credential resolution is 3-tier (org_settings →
 > platform_settings → env). Full reference:
 > `KNOWLEDGE-BASE/CONTEXT/04-SHARED-LIBRARY.md` (LLM section).
 >
