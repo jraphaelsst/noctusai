@@ -28,13 +28,42 @@ and `docker compose {pull,up}` — never `rmi`/`prune`/`down`/`rm`/`system`, so 
 can neither delete the rollback image nor tear the fleet down (a colocated test
 asserts no banned token is ever emitted).
 
-IO is injectable (`run_remote`, `sleep`, `now`) so the colocated test drives
-every path — planned / up_to_date / deployed / swap_unverified / rolled_back /
-error — with zero real SSH and zero real waiting. `noctus.dev.deploy_verify`
-is the sibling INDEPENDENT witness — callable standalone, with no dependency
-on this tool having run at all (the exact property the 2026-08-13 incident
-was missing: this tool timed out and disconnected mid-swap, and nothing but a
-manual `docker inspect` caught it).
+CATALOG-SCOPE GUARD (2026-09-17 incident — see `_catalog_scope_guard.py`): the
+very first thing this function does, before any SSH/docker call, is refuse
+(`status='refused_catalog_scope'`, container untouched) unless `product` is
+`ativo=true AND deploy_scope='live'` in the product catalog (or `core`). This
+closes the actual production incident — `deploy_image` reported `deployed` +
+healthy + swap-verified for `erp-imobiliario`, which is `ativo=false,
+deploy_scope='dev'`, because none of the OTHER gates below ask "should this be
+touched at all?", only "did the touch land cleanly?". Escape hatch:
+`allow_inactive=True` (deliberately waking a dormant product; almost always
+wrong). The resolved `catalog_scope` verdict rides on every returned payload,
+success or refusal alike — never silent.
+
+IO is injectable (`run_remote`, `sleep`, `now`, `live_products_fn`) so the
+colocated test drives every path — planned / up_to_date / deployed /
+swap_unverified / rolled_back / refused_catalog_scope / error — with zero real
+SSH and zero real waiting. `noctus.dev.deploy_verify` is the sibling
+INDEPENDENT witness — callable standalone, with no dependency on this tool
+having run at all (the exact property the 2026-08-13 incident was missing:
+this tool timed out and disconnected mid-swap, and nothing but a manual
+`docker inspect` caught it).
+
+WHY THE STALE-GHCR SYMPTOM DOESN'T ALSO NEED A "revision == prod tip" CHECK:
+the 2026-09-17 incident noted `erp-imobiliario`'s pulled `:latest` was built
+from an older revision than `origin/prod`, because `build-scope.txt` derives
+from `deploy_scope='live'` — an inactive product's image is BY CONSTRUCTION
+never rebuilt at the prod tip. The existing PROD-PIN ancestry guard
+(`_prod_ancestor_check`) already runs and stays exactly as scoped: it asserts
+the baked revision is NOT AHEAD of `origin/prod` — it does not, and must not,
+assert EQUALITY with the prod tip, because staleness-behind-tip is the
+documented NORMAL steady state for a genuinely live product too (see
+`deploy_verify.py`'s "raw sha inequality is the WRONG drift predicate";
+`build-and-push.yml` only rebuilds a product's own image when ITS OWN files
+or `seed/` changed). The CATALOG-SCOPE GUARD above is what actually closes
+this: an `inativo`/`dev`-scope product can no longer reach this function's
+deploy path at all, so its permanently-stale image can never be pulled onto
+prod in the first place. No redundant second ancestry-style check was added.
 """
 from __future__ import annotations
 
@@ -45,6 +74,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Callable
 
+from . import _catalog_scope_guard
 from ._vps_ssh import run_remote as _throttled_ssh
 
 # Browser User-Agent — Cloudflare WAF blocks the default urllib signature
@@ -263,12 +293,30 @@ def deploy_image(
     edge_hostname: str | None = None,
     http: Callable | None = None,
     skip_ancestry_check: bool = False,
+    allow_inactive: bool = False,
+    live_products_fn: Callable[[], list[str]] | None = None,
 ) -> dict[str, Any]:
     """Atomic image redeploy of `product` with C2 rollback. Dry-run unless
     `confirm`. After a successful recreate, restarts noctus-tunnel so
     cloudflared re-resolves its origin connection (leg a). When
     `edge_hostname` is provided, also curls the public hostname with a
     browser UA to confirm CF-edge reachability (leg b).
+
+    CATALOG-SCOPE GUARD (2026-09-17): before touching SSH/docker at all,
+    REFUSES (`status='refused_catalog_scope'`, fail-closed, container
+    untouched) unless `product` is `ativo=true AND deploy_scope='live'` in
+    the product catalog (or `core`) — reusing
+    `deploy_verify._resolve_live_products`'s catalog resolution (see
+    `_catalog_scope_guard.py`), never a second hand-rolled catalog read.
+    This is the incident: this exact function reported `status='deployed'`
+    for `erp-imobiliario` (`ativo=false, deploy_scope='dev'`) and applied
+    a migration to it, discovered only afterwards by `deploy_verify`'s
+    `skipped_inactive` classification. `allow_inactive=True` is the
+    documented escape hatch — legitimate ONLY for a deliberate, supervised
+    reactivation of a dormant product, almost always wrong otherwise; the
+    resolved `catalog_scope` verdict rides on the result either way, never
+    silently. `live_products_fn` is a test-only injection seam (mirrors
+    `deploy_verify`'s own parameter of the same name).
 
     PROD-PIN ancestry guard (2026-07-20): when `tag == 'latest'` and
     `source == 'pull'`, a `:latest` pull is a floating GHCR tag that moves on
@@ -295,13 +343,31 @@ def deploy_image(
     both verifiably match what was intended. `noctus.dev.deploy_verify` is
     the independent, standalone check for the same ground truth.
 
-    status ∈ {planned, up_to_date, deployed, swap_unverified, rolled_back, error}.
+    status ∈ {planned, up_to_date, deployed, swap_unverified, rolled_back,
+    refused_catalog_scope, error}.
     Never raises on an operational failure — it returns it (no silent errors)."""
     if not product or not product.strip():
         return {"ok": False, "status": "error", "exit_code": 1, "error": "product required"}
     if source not in ("pull", "local"):
         return {"ok": False, "status": "error", "exit_code": 1,
                 "error": f"source must be 'pull' (GHCR) or 'local' (build-on-VPS), got {source!r}"}
+
+    # ── CATALOG-SCOPE GUARD (2026-09-17 incident) — the very first check,
+    #    before any SSH/docker call: refuse a product the catalog does not
+    #    say is ativo=true+deploy_scope='live' (or core). See
+    #    _catalog_scope_guard.py for the full incident + reasoning. ──
+    catalog_scope = _catalog_scope_guard.check_catalog_scope(product, live_products_fn)
+    if not catalog_scope["in_scope"] and not allow_inactive:
+        return {
+            "ok": False, "status": _catalog_scope_guard.REFUSED_STATUS, "exit_code": 1,
+            "product": product, "catalog_scope": catalog_scope, "allow_inactive": allow_inactive,
+            "error": _catalog_scope_guard.catalog_scope_refusal_reason(
+                product, catalog_scope,
+                action="deploy", escape_hatch="allow_inactive",
+                untouched_clause="Container untouched — no SSH/docker command was run.",
+            ),
+        }
+
     runner = run_remote or (lambda cmd: _run_remote_default(ssh_host, cmd))
     napper = sleep or _time.sleep
     clock = now or _dt.datetime.utcnow
@@ -323,6 +389,7 @@ def deploy_image(
         "ok": True, "product": product, "container": container, "ssh_host": ssh_host,
         "image": f"{image}:{tag}", "source": source, "current_image_id": current_image_id,
         "previous_tag": f"{image}:previous",
+        "catalog_scope": catalog_scope, "allow_inactive": allow_inactive,
     }
 
     acquire = (f"compose pull {product}" if source == "pull"
@@ -554,7 +621,16 @@ def register(server) -> None:
             "GHCR model §2 ①) compose-pulls the new image; source='local' "
             "(build-on-VPS model §2 ②) swaps an already-built local tag (no pull). "
             "BY CONSTRUCTION limited to a safe docker allowlist (inspect/image/tag/"
-            "ps + compose pull/up) — never rmi/prune/down/rm. PROD-PIN ancestry guard "
+            "ps + compose pull/up) — never rmi/prune/down/rm. CATALOG-SCOPE GUARD "
+            "(2026-09-17): REFUSES (status='refused_catalog_scope', fail-closed, "
+            "container untouched) before any SSH/docker call unless the product is "
+            "ativo=true AND deploy_scope='live' in the product catalog (or core) — "
+            "reuses deploy_verify's catalog resolution. Closes the incident: this "
+            "tool once deployed+migrated erp-imobiliario (ativo=false, "
+            "deploy_scope='dev') and reported success. allow_inactive=True is the "
+            "escape hatch for a deliberate, supervised reactivation — almost always "
+            "wrong; the catalog_scope verdict rides on every returned payload. "
+            "PROD-PIN ancestry guard "
             "(2026-07-20): a tag='latest' + source='pull' deploy REFUSES (fail-closed, "
             "container untouched) unless the pulled image's baked git revision is a "
             "verified ancestor of origin/prod — closes the hole where a floating "
@@ -564,9 +640,10 @@ def register(server) -> None:
             "RUNNING container's own image id + revision label (not the pulled tag) and "
             "REFUSES status='deployed' (returns 'swap_unverified' instead, no "
             "auto-rollback) unless both verifiably match. status: planned | up_to_date | "
-            "deployed | swap_unverified | rolled_back | error. Independent standalone "
-            "witness for the same ground truth: noctus.dev.deploy_verify. See "
-            "KB § GUIDES/production-deploy.md § 2a (C2)."
+            "deployed | swap_unverified | rolled_back | refused_catalog_scope | error. "
+            "Independent standalone witness for the same ground truth: "
+            "noctus.dev.deploy_verify. See KB § GUIDES/production-deploy.md § 2a (C2) · "
+            "KB § PATTERNS/architect/product-working-scope.md."
         ),
     )
     def _deploy_image(
@@ -576,9 +653,10 @@ def register(server) -> None:
         source: str = "pull",
         ssh_host: str = "noctus-vps",
         skip_ancestry_check: bool = False,
+        allow_inactive: bool = False,
     ) -> dict:
         return deploy_image(product, ssh_host=ssh_host, tag=tag, source=source, confirm=confirm,
-                            skip_ancestry_check=skip_ancestry_check)
+                            skip_ancestry_check=skip_ancestry_check, allow_inactive=allow_inactive)
 
 
 __all__ = ["deploy_image", "_poll_health", "_restart_tunnel", "_curl_edge", "_image_revision",

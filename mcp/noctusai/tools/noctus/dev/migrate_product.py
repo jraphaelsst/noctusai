@@ -159,7 +159,44 @@ caller can silence the gate out of impatience. When set, the staleness
 check still runs and its (now non-fatal) verdict still rides on
 ``stale_tree`` in the result — the bypass is visible, never silent.
 
-KB § PATTERNS/backend/migrate-product-mcp-tool.md
+CATALOG-SCOPE REFUSAL (added 2026-09-17 — the same incident)
+--------------------------------------------------------------
+The same 2026-09-17 incident this tool's stale-tree gate above closes also
+included ``migrate_product`` applying migrations to ``erp`` for
+``erp-imobiliario`` — ``ativo=false, deploy_scope='dev'`` in the product
+catalog. CLAUDE.md §1: "The product catalog IS the working guide —
+ativo+live ⇒ work in prod, ativo+dev ⇒ dev only, inativo ⇒ don't touch"
+(``KB § PATTERNS/architect/product-working-scope.md``). Nothing in this
+tool asked that question before writing to Supabase.
+
+``migrate_product`` now REFUSES — status ``'refused_catalog_scope'``,
+``exit_code=1`` — before touching any credential or migration file,
+whenever ``product`` is not ``ativo=true AND deploy_scope='live'`` in the
+catalog (or ``core``). Same status-key convention as
+``'refused_stale_tree'`` above; same "verdict rides on every return" rule
+— the resolved ``catalog_scope`` dict is present on ``dry_run`` /
+``applied`` / ``up_to_date`` / ``error`` / ``not_configured`` /
+``refused_stale_tree`` / ``refused_catalog_scope`` alike, never only on
+the refusal path.
+
+This check REUSES ``deploy_verify._resolve_live_products`` (via the
+shared ``_catalog_scope_guard`` module — also consumed by
+``noctus.dev.deploy_image``) rather than a second hand-rolled catalog
+query (§1: grep for the existing mechanism before designing one).
+Fail-closed: a catalog read that cannot be answered at all (neither the
+live catalog nor the checked-in ``build-scope.txt`` fallback resolves) is
+treated as NOT in scope — "cannot tell" is never "allowed".
+
+``allow_inactive: bool = False`` is the documented escape hatch — same
+shape and same warning as ``allow_stale_tree`` above: legitimate ONLY for
+a deliberate, supervised reactivation of a dormant product (e.g. a human
+has confirmed the catalog row is about to be flipped to ``ativo=true``
+and wants the schema ready first), almost always wrong otherwise. The
+bypass is never silent — ``catalog_scope``/``allow_inactive`` still ride
+on the result.
+
+KB § PATTERNS/backend/migrate-product-mcp-tool.md ·
+KB § PATTERNS/architect/product-working-scope.md
 """
 from __future__ import annotations
 
@@ -177,6 +214,8 @@ from typing import Any, Callable, Protocol, runtime_checkable
 
 from settings import PRODUCTS_DIR, REPO_ROOT
 from workspace import resolve_caller_root
+
+from . import _catalog_scope_guard
 
 logger = logging.getLogger(__name__)
 
@@ -846,7 +885,9 @@ def _schema_migrations_exists_sql(schema: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-_ERROR_STATUSES = frozenset({"error", "not_configured", "refused_stale_tree"})
+_ERROR_STATUSES = frozenset({
+    "error", "not_configured", "refused_stale_tree", _catalog_scope_guard.REFUSED_STATUS,
+})
 
 
 def migrate_product(
@@ -860,8 +901,10 @@ def migrate_product(
     products_dir: Path | None = None,
     worktree_path: str | None = None,
     allow_stale_tree: bool = False,
+    allow_inactive: bool = False,
     repo_root: str | Path | None = None,
     git_runner: GitRunner | None = None,
+    live_products_fn: Callable[[], list[str]] | None = None,
 ) -> dict[str, Any]:
     """Apply pending migrations for ``product`` to the Supabase database.
 
@@ -904,15 +947,28 @@ def migrate_product(
                       ``predeploy_check``).
         git_runner:   Injection seam for tests (``FakeGitRunner``). When
                       None, resolved to the real ``SubprocessGitRunner``.
+        allow_inactive: Escape hatch for the catalog-scope refusal (see
+                      module docstring "CATALOG-SCOPE REFUSAL"). Default
+                      False. Setting this True is almost always wrong —
+                      it exists for a deliberate, supervised reactivation
+                      of a dormant product, not as a way to silence the
+                      gate out of impatience. The resolved ``catalog_scope``
+                      verdict still rides on the result even when bypassed
+                      — never silent.
+        live_products_fn: Injection seam for tests — same parameter name
+                      and semantics as ``deploy_verify``'s own seam of the
+                      same name (threaded through ``_catalog_scope_guard``).
+                      When None, resolved against the live catalog with a
+                      ``build-scope.txt`` fallback.
 
     Returns a dict with keys::
 
         status ('dry_run' | 'applied' | 'up_to_date' | 'not_configured' |
-                'error' | 'refused_stale_tree'),
+                'error' | 'refused_stale_tree' | 'refused_catalog_scope'),
         exit_code (0 on every non-error status, 1 otherwise),
         product, schema, schema_source, project_ref, applied,
         skipped_already_applied, pending, error, stale_tree,
-        allow_stale_tree
+        allow_stale_tree, catalog_scope, allow_inactive
     """
     resolved_products_dir: Path
     if products_dir is not None:
@@ -938,6 +994,8 @@ def migrate_product(
         git_root, git_runner=git_runner or _DEFAULT_GIT_RUNNER
     )
 
+    catalog_scope = _catalog_scope_guard.check_catalog_scope(product, live_products_fn)
+
     def _result(status: str, **overrides: Any) -> dict[str, Any]:
         base: dict[str, Any] = {
             "status": status,
@@ -952,9 +1010,26 @@ def migrate_product(
             "error": None,
             "stale_tree": stale_tree,
             "allow_stale_tree": allow_stale_tree,
+            "catalog_scope": catalog_scope,
+            "allow_inactive": allow_inactive,
         }
         base.update(overrides)
         return base
+
+    # ── Refuse a product the catalog doesn't say is live BEFORE anything else ──
+    # (KB § PATTERNS/backend/migrate-product-mcp-tool.md "CATALOG-SCOPE REFUSAL":
+    # the same 2026-09-17 incident — migrate_product wrote to `erp` for
+    # erp-imobiliario, ativo=false/deploy_scope='dev'. Fail-closed: this check
+    # runs — and can refuse — before any Supabase credential is touched.)
+    if not catalog_scope["in_scope"] and not allow_inactive:
+        return _result(
+            _catalog_scope_guard.REFUSED_STATUS,
+            error=_catalog_scope_guard.catalog_scope_refusal_reason(
+                product, catalog_scope,
+                action="migrate", escape_hatch="allow_inactive",
+                untouched_clause="No migration file was read and no SQL was run.",
+            ),
+        )
 
     # ── Refuse a stale/dirty/unverifiable tree BEFORE reading migrations ──────
     # (KB § PATTERNS/backend/migrate-product-mcp-tool.md "STALE-TREE REFUSAL":
@@ -1405,10 +1480,21 @@ def register(server) -> None:
             "always wrong — see the tool's docstring) for a human-verified "
             "deliberate override; the staleness verdict still rides on the "
             "stale_tree key even when bypassed. "
+            "CATALOG-SCOPE GUARD (2026-09-17, same incident): REFUSES "
+            "(status='refused_catalog_scope', exit_code=1) before touching any "
+            "credential or migration file unless the product is ativo=true AND "
+            "deploy_scope='live' in the product catalog (or core) — reuses "
+            "deploy_verify's catalog resolution, never a second hand-rolled "
+            "read. Closes the incident: this tool once wrote to `erp` for "
+            "erp-imobiliario (ativo=false, deploy_scope='dev'). "
+            "allow_inactive=True is the escape hatch (almost always wrong — see "
+            "the tool's docstring) for a deliberate, supervised reactivation; "
+            "the catalog_scope verdict still rides on the result when bypassed. "
             "Returns {status, exit_code, product, schema, schema_source, "
             "project_ref, applied, skipped_already_applied, pending, error, "
-            "stale_tree, allow_stale_tree}. "
-            "KB § PATTERNS/backend/migrate-product-mcp-tool.md."
+            "stale_tree, allow_stale_tree, catalog_scope, allow_inactive}. "
+            "KB § PATTERNS/backend/migrate-product-mcp-tool.md · "
+            "KB § PATTERNS/architect/product-working-scope.md."
         ),
     )
     def _migrate_product(
@@ -1419,6 +1505,7 @@ def register(server) -> None:
         schema: str | None = None,
         worktree_path: str | None = None,
         allow_stale_tree: bool = False,
+        allow_inactive: bool = False,
     ) -> dict:
         return migrate_product(
             product=product,
@@ -1428,6 +1515,7 @@ def register(server) -> None:
             schema=schema,
             worktree_path=worktree_path,
             allow_stale_tree=allow_stale_tree,
+            allow_inactive=allow_inactive,
         )
 
     @server.tool(
