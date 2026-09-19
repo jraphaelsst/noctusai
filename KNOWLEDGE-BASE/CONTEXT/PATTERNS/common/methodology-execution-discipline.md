@@ -224,3 +224,67 @@ itself — its answer was read as current when the code producing it was not.
   interpreter's own currency instead of a command's exit status.
 
 See `mcp/noctusai/tools/noctus/dev/toolkit_freshness.py`. — 2026-09-18
+
+### 9. Resolve the root from the artefact under evaluation, never from the ambient cwd
+
+`Path.cwd()` and "wherever this module's `__file__` happens to resolve"
+both FEEL like reasonable defaults for "which tree am I working against,"
+and both are wrong the moment the process running the check and the tree
+being checked can differ — which a worktree fleet guarantees will happen
+routinely, not exceptionally. This is the wrong-tree family
+(`project-history/roadmaps/julia-agents-academia-2026-09.md` calls it
+"tool drift (wrong-tree family, N≥5)" for a narrower slice of it); the
+root-resolution shape specifically has now recurred at N≥4:
+
+1. **`noctus.dev.migrate_product` / `tunnel_config check`** reading the
+   MCP server's stale PRIMARY checkout regardless of which worktree the
+   caller was actually standing in — `tunnel_config check` reported
+   `in_sync` while the live tunnel lacked both hosts; `migrate_product`
+   listed no agent `009`. Both tools now accept `worktree_path` and pin
+   resolution to it explicitly rather than defaulting to cwd or the
+   server's own location.
+2. **`absorption_tracking`'s ledger path** — a DELIBERATE instance of the
+   same shape, not a bug: `LEDGER_ROOT` (never `REPO_ROOT`) is pinned to
+   land in the PRIMARY checkout "even when the MCP server booted with cwd
+   inside a worktree," because the ledger is repo-global and append-only
+   — a worktree-relative resolution would fork it. Named here because the
+   FIX in both directions is the same discipline: decide, explicitly and
+   in one place, which root a tool means, and never let it default to
+   "wherever the process happens to be standing."
+3. **`noctusai_lib.testing._schema_cache._find_repo_root`, round 1**
+   (2026-08-23) — walked up from `Path(__file__)` first. A worktree's
+   tests, invoked WITHOUT PYTHONPATH scoped at the worktree, imported the
+   PRIMARY checkout's `noctusai_lib`, so `__file__` landed in the
+   primary; a column that existed only in the worktree's migration was
+   silently "unknown" to the mock schema validator instead of failing
+   the test that depended on it.
+4. **The same function, round 2** (2026-09-18) — the round-1 fix had
+   swapped the order to prefer `Path.cwd()`. Invoke pytest with an
+   absolute path into a worktree's test file while the shell's cwd is
+   still the PRIMARY checkout, using the sanctioned worktree-scoped
+   invocation (which correctly scopes PYTHONPATH, so `__file__` now
+   lands in the worktree) — cwd, checked first, won anyway. The mock
+   built its schema from the PRIMARY's migrations while validating the
+   WORKTREE's code: `MockSchemaError: ... has no column ...` for a
+   column that plainly existed. The tests were right; the invocation
+   (cwd left pointing at the primary) was not — and the resolver could
+   not tell the difference because it never SAID two candidates
+   disagreed.
+
+N≥3 formalizes per the DRY recurrence rule (`KB § PATTERNS/architect/
+project-execution.md`); this is 4. The invariant, stated once instead of
+rediscovered per-tool: **whichever candidate is a FACT about what is
+actually executing/being-evaluated (an explicit `worktree_path` /
+`module_file` parameter, or — failing that — the importing module's own
+resolved location) outranks whichever candidate is merely AMBIENT
+(`Path.cwd()`, the shell's location, unrelated to what got loaded or what
+is under test).** And per instance 4 specifically: a fixed precedence
+order between two ambient-ish candidates will eventually be wrong in
+BOTH directions as invocation shapes vary, so the fix is never "pick an
+order and stop" alone — a genuine disagreement between candidates must
+also be LOGGED, not resolved in silence, so the next mismatch costs a
+log line instead of an hour of confused debugging. See
+`noctusai_lib.testing._schema_cache._find_repo_root` for the worked
+implementation (explicit override → explicit `start`/`module_file` →
+artefact-under-evaluation → ambient cwd, with a loud warning on
+disagreement). — 2026-09-18/19
