@@ -176,6 +176,145 @@ def test_constraint_lines_excluded():
     assert "fk_org" not in cols
 
 
+# ---------------------------------------------------------------------------
+# Constraint-keyword tokenization — both spellings, every keyword
+# (2026-09-18: `UNIQUE(a, b)` with no space before the paren was parsed as
+# a column literally named `UNIQUE`; five real tables in the fleet corpus
+# hit this shape. `\b` matches on either side of `(` exactly as it does
+# before whitespace, so the fix is one regex built from the SAME
+# `_CONSTRAINT_KEYWORDS` tuple the spaced form already used — every
+# keyword needs the no-space case exercised, not just the one that fired.)
+# ---------------------------------------------------------------------------
+
+
+def test_unique_constraint_unspaced_not_parsed_as_column():
+    """`social_wiring.contacts`' real shape (001_social-wiring.sql):
+    `UNIQUE(org_id, email)` — no space before the paren."""
+    sql = """
+    CREATE TABLE social_wiring.contacts (
+        id UUID PRIMARY KEY,
+        org_id UUID,
+        email TEXT,
+        UNIQUE(org_id, email)
+    );
+    """
+    result = parse_sql(sql)
+    cols = result["social_wiring.contacts"]
+    assert cols == {"id", "org_id", "email"}
+    assert "UNIQUE" not in cols
+
+
+def test_unique_constraint_spaced_not_parsed_as_column():
+    """The other real spelling in the corpus (core's `002_missing_tables.sql`):
+    `UNIQUE (org_id, key)` — a space before the paren."""
+    sql = """
+    CREATE TABLE core.settings (
+        id UUID PRIMARY KEY,
+        org_id UUID,
+        key TEXT,
+        UNIQUE (org_id, key)
+    );
+    """
+    result = parse_sql(sql)
+    cols = result["core.settings"]
+    assert cols == {"id", "org_id", "key"}
+    assert "UNIQUE" not in cols
+
+
+def test_primary_key_unspaced_not_parsed_as_column():
+    sql = """
+    CREATE TABLE erp.demo (
+        org_id UUID,
+        codigo TEXT,
+        PRIMARY KEY(org_id, codigo)
+    );
+    """
+    result = parse_sql(sql)
+    cols = result["erp.demo"]
+    assert cols == {"org_id", "codigo"}
+    assert "PRIMARY" not in cols
+
+
+def test_foreign_key_unspaced_not_parsed_as_column():
+    sql = """
+    CREATE TABLE erp.demo (
+        id UUID PRIMARY KEY,
+        org_id UUID,
+        FOREIGN KEY(org_id) REFERENCES orgs(id)
+    );
+    """
+    result = parse_sql(sql)
+    cols = result["erp.demo"]
+    assert cols == {"id", "org_id"}
+    assert "FOREIGN" not in cols
+
+
+def test_check_unspaced_not_parsed_as_column():
+    sql = """
+    CREATE TABLE erp.demo (
+        id UUID PRIMARY KEY,
+        status TEXT,
+        CHECK(status <> '')
+    );
+    """
+    result = parse_sql(sql)
+    cols = result["erp.demo"]
+    assert cols == {"id", "status"}
+    assert "CHECK" not in cols
+
+
+def test_constraint_unspaced_not_parsed_as_column():
+    sql = """
+    CREATE TABLE erp.demo (
+        id UUID PRIMARY KEY,
+        org_id UUID,
+        CONSTRAINT(fk_org) FOREIGN KEY (org_id) REFERENCES orgs(id)
+    );
+    """
+    # (Not valid Postgres — CONSTRAINT always takes a bare name, never a
+    # paren'd one — but the tokenizer must still not read the keyword
+    # itself as a column name for ANY spelling of the boundary.)
+    result = parse_sql(sql)
+    cols = result["erp.demo"]
+    assert cols == {"id", "org_id"}
+    assert "CONSTRAINT" not in cols
+
+
+def test_exclude_unspaced_not_parsed_as_column():
+    """`EXCLUDE` never appears unspaced in the real corpus (it always
+    takes a `USING gist (...)` clause with intervening tokens), but the
+    keyword itself must never be readable as a column name."""
+    sql = """
+    CREATE TABLE erp.demo (
+        id UUID PRIMARY KEY,
+        during TSTZRANGE,
+        EXCLUDE(during WITH &&)
+    );
+    """
+    result = parse_sql(sql)
+    cols = result["erp.demo"]
+    assert cols == {"id", "during"}
+    assert "EXCLUDE" not in cols
+
+
+def test_like_unspaced_not_parsed_as_column():
+    """`LIKE` never appears unspaced in the real corpus either — same
+    defensive coverage as EXCLUDE above. A real column alongside the
+    `LIKE(...)` clause proves the keyword text is excluded rather than
+    becoming a phantom column (an all-`LIKE` body has nothing else to
+    assert against)."""
+    sql = """
+    CREATE TABLE erp.demo_copy (
+        id UUID PRIMARY KEY,
+        LIKE(erp.demo)
+    );
+    """
+    result = parse_sql(sql)
+    cols = result["erp.demo_copy"]
+    assert cols == {"id"}
+    assert "LIKE" not in cols
+
+
 def test_nested_parens_in_types_and_defaults():
     sql = """
     CREATE TABLE erp.priced (
@@ -432,3 +571,175 @@ class TestRename:
             """
         )
         assert "social_wiring.b" in schema
+
+
+# ---------------------------------------------------------------------------
+# Dynamic DDL blind spots (2026-09-18) — a table identifier resolved at
+# runtime via `EXECUTE format('...%I...', t)` cannot be seen by a regex
+# parser; the fix is not to pretend it can, but to STOP staying silent
+# about it. Real shape: `social-wiring`'s `046_clients_to_marcas.sql`, six
+# tables' `client_id` renamed to `marca_id` inside a `FOREACH t IN ARRAY
+# [...] LOOP EXECUTE format('ALTER TABLE social_wiring.%I RENAME COLUMN
+# client_id TO marca_id', t)`.
+# ---------------------------------------------------------------------------
+
+
+def test_dynamic_rename_column_is_a_named_blind_spot_not_a_phantom_column():
+    sql = """
+    DO $$
+    DECLARE
+      t TEXT;
+    BEGIN
+      FOREACH t IN ARRAY ARRAY['integration_accounts', 'whatsapp_connections']
+      LOOP
+        EXECUTE format('ALTER TABLE social_wiring.%I RENAME COLUMN client_id TO marca_id', t);
+      END LOOP;
+    END
+    $$;
+    """
+    blind: list[dict] = []
+    schema = parse_sql(sql, source_label="046_clients_to_marcas.sql", blind_spots=blind)
+    # No table was fabricated for either name — the parser never guesses.
+    assert "social_wiring.integration_accounts" not in schema
+    assert "social_wiring.whatsapp_connections" not in schema
+    assert len(blind) == 1
+    spot = blind[0]
+    assert spot["class"] == "rename_column"
+    assert spot["old_column"] == "client_id"
+    assert spot["new_column"] == "marca_id"
+    assert spot["file"] == "046_clients_to_marcas.sql"
+
+
+def test_dynamic_add_column_is_a_named_blind_spot():
+    sql = """
+    DO $$
+    BEGIN
+      EXECUTE format('ALTER TABLE erp.%I ADD COLUMN IF NOT EXISTS marca_id UUID', 'foo');
+    END
+    $$;
+    """
+    blind: list[dict] = []
+    parse_sql(sql, source_label="099_dynamic_add.sql", blind_spots=blind)
+    assert len(blind) == 1
+    assert blind[0]["class"] == "add_column"
+    assert blind[0]["column"] == "marca_id"
+    assert blind[0]["file"] == "099_dynamic_add.sql"
+
+
+def test_dynamic_drop_column_is_a_named_blind_spot():
+    sql = """
+    DO $$
+    BEGIN
+      EXECUTE format('ALTER TABLE erp.%I DROP COLUMN legacy_flag', 'foo');
+    END
+    $$;
+    """
+    blind: list[dict] = []
+    parse_sql(sql, source_label="099_dynamic_drop.sql", blind_spots=blind)
+    assert len(blind) == 1
+    assert blind[0]["class"] == "drop_column"
+    assert blind[0]["column"] == "legacy_flag"
+
+
+def test_dynamic_add_column_does_not_fabricate_a_phantom_schema_table():
+    """Found while building the blind-spot detector, not in the original
+    diagnosis: `_ALTER_TABLE_HEAD_RE` used to backtrack on `erp.%I` (the
+    dynamic table placeholder isn't a valid `_IDENT`) and bind `table` to
+    the SCHEMA name instead — `_alter_table_segments` then ran the static
+    ADD-COLUMN scan against that bogus head and fabricated a phantom table
+    `public.erp` holding the dynamic clause's column. RENAME COLUMN never
+    hit this because its mutation is gated on `existing is not None`; ADD
+    COLUMN has no such gate. No corpus migration currently uses dynamic
+    ADD/DROP COLUMN, so this never fired live — but the same class of
+    statement this slice's blind-spot detector now exists FOR must not
+    also corrupt the static schema map."""
+    sql = """
+    DO $$
+    BEGIN
+      EXECUTE format('ALTER TABLE erp.%I ADD COLUMN IF NOT EXISTS x TEXT', 'foo');
+    END
+    $$;
+    """
+    schema = parse_sql(sql)
+    assert schema == {}
+    assert "public.erp" not in schema
+
+
+def test_dynamic_ddl_blind_spots_default_off_is_a_pure_noop():
+    """Omitting `blind_spots` (every pre-existing caller, incl.
+    `MockSupabaseClient`) must not change parse behaviour at all."""
+    sql = """
+    DO $$
+    BEGIN
+      EXECUTE format('ALTER TABLE erp.%I ADD COLUMN IF NOT EXISTS x TEXT', 'foo');
+    END
+    $$;
+    """
+    # No blind_spots kwarg passed — must not raise, must not populate
+    # anything the caller can't ask for.
+    schema = parse_sql(sql)
+    assert schema == {}
+
+
+def test_dynamic_policy_and_index_renames_are_not_blind_spots():
+    """RLS-policy / index / constraint-NAME-only dynamic EXECUTEs are out
+    of this parser's scope already (it never tracked those) — they must
+    not become noise in the blind-spot list. Real shape: the OTHER three
+    dynamic statements in `046_clients_to_marcas.sql` (constraint rename,
+    index rename, policy rename) that sit right next to the one genuine
+    column-rename blind spot."""
+    sql = """
+    DO $$
+    DECLARE r RECORD;
+    BEGIN
+      FOR r IN SELECT 1
+      LOOP
+        EXECUTE format('ALTER TABLE %s RENAME CONSTRAINT %I TO %I', 'x', 'a', 'b');
+      END LOOP;
+    END
+    $$;
+    DO $$
+    DECLARE r RECORD;
+    BEGIN
+      FOR r IN SELECT 1
+      LOOP
+        EXECUTE format('ALTER INDEX social_wiring.%I RENAME TO %I', 'a', 'b');
+      END LOOP;
+    END
+    $$;
+    DO $$
+    DECLARE r RECORD;
+    BEGIN
+      FOR r IN SELECT 1
+      LOOP
+        EXECUTE format('ALTER POLICY %I ON social_wiring.marcas RENAME TO %I', 'a', 'b');
+      END LOOP;
+    END
+    $$;
+    """
+    blind: list[dict] = []
+    parse_sql(sql, blind_spots=blind)
+    assert blind == []
+
+
+def test_dynamic_rls_enable_is_not_a_blind_spot():
+    """The overwhelming majority of the corpus's dynamic EXECUTEs are
+    `ENABLE ROW LEVEL SECURITY` / `DROP POLICY` loops over every table in a
+    schema (erp/igig/social-wiring/core all do this) — these must stay
+    silent, not flood the blind-spot list with noise on every migration
+    run."""
+    sql = """
+    DO $$
+    DECLARE tbl TEXT;
+    BEGIN
+      FOR tbl IN SELECT table_name FROM information_schema.tables
+      LOOP
+        EXECUTE format('ALTER TABLE erp.%I ENABLE ROW LEVEL SECURITY', tbl);
+        EXECUTE format('DROP POLICY IF EXISTS %I ON erp.%I', tbl || '_select_policy', tbl);
+      END LOOP;
+    END
+    $$;
+    """
+    blind: list[dict] = []
+    parse_sql(sql, blind_spots=blind)
+    assert blind == []

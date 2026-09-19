@@ -26,6 +26,8 @@ from tools.noctus.dev.migrate_product import FakeSqlExecutor  # noqa: E402
 from tools.noctus.dev.schema_drift import (  # noqa: E402
     _compare,
     _compare_orm_vs_migrations,
+    _downgrade_dynamic_ddl_false_positives,
+    _dynamic_blind_spot_detail,
     _live_columns_sql,
     _migration_declared_schema,
     _orm_declared_schema,
@@ -78,9 +80,10 @@ class TestMigrationDeclaredSchema:
     def test_no_migrations_dir_returns_empty_and_not_found(self, tmp_path):
         products_dir = tmp_path / "products"
         products_dir.mkdir()
-        declared, found = _migration_declared_schema("ghost", products_dir)
+        declared, found, blind = _migration_declared_schema("ghost", products_dir)
         assert declared == {}
         assert found is False
+        assert blind == []
 
     def test_parses_create_table(self, tmp_path):
         products_dir = tmp_path / "products"
@@ -93,9 +96,10 @@ class TestMigrationDeclaredSchema:
                 ");\n"
             )),
         ])
-        declared, found = _migration_declared_schema("erp-imobiliario", products_dir)
+        declared, found, blind = _migration_declared_schema("erp-imobiliario", products_dir)
         assert found is True
         assert declared["erp.llm_preferences"] == {"org_id", "provider"}
+        assert blind == []
 
     def test_parses_add_column_bug_1_shape(self, tmp_path):
         """erp.assinaturas.external_id — an ALTER TABLE ADD COLUMN on top
@@ -111,9 +115,10 @@ class TestMigrationDeclaredSchema:
                 "    ADD COLUMN IF NOT EXISTS external_id text;\n"
             )),
         ])
-        declared, found = _migration_declared_schema("erp-imobiliario", products_dir)
+        declared, found, blind = _migration_declared_schema("erp-imobiliario", products_dir)
         assert found is True
         assert declared["erp.assinaturas"] == {"id", "status", "external_id"}
+        assert blind == []
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +241,111 @@ class TestCompare:
         orm = {"erp.tool_call_audits": {"id"}}
         migrations = {"erp.tool_call_audits": {"id", "tool_name"}}
         assert _compare_orm_vs_migrations(orm, migrations) == []
+
+
+# ---------------------------------------------------------------------------
+# _dynamic_blind_spot_detail
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicBlindSpotDetail:
+    def test_rename_column_names_old_and_new(self):
+        detail = _dynamic_blind_spot_detail({
+            "class": "rename_column", "old_column": "client_id", "new_column": "marca_id",
+            "file": "046_clients_to_marcas.sql",
+        })
+        assert "046_clients_to_marcas.sql" in detail
+        assert "client_id" in detail and "marca_id" in detail
+        assert "%I" in detail
+
+    def test_unknown_class_still_produces_a_string(self):
+        detail = _dynamic_blind_spot_detail({"class": "something_new", "file": "x.sql"})
+        assert "x.sql" in detail
+        assert "verify manually" in detail
+
+
+# ---------------------------------------------------------------------------
+# _downgrade_dynamic_ddl_false_positives — the social-wiring 046 shape
+# ---------------------------------------------------------------------------
+
+
+class TestDowngradeDynamicDdlFalsePositives:
+    def test_rename_column_downgrades_when_live_has_the_new_name(self):
+        """The real bug: migrations declare client_id (never saw the
+        dynamic rename), live has marca_id instead — corroborated, so the
+        missing_column finding is downgraded, not dropped silently and not
+        kept as a blocking finding."""
+        findings = [{
+            "kind": "missing_column", "table": "social_wiring.integration_accounts",
+            "column": "client_id", "source": "migrations", "severity": "high",
+            "detail": "x",
+        }]
+        live = {"social_wiring.integration_accounts": {"id", "marca_id"}}
+        dynamic = [{
+            "class": "rename_column", "old_column": "client_id", "new_column": "marca_id",
+            "column": None, "file": "046_clients_to_marcas.sql",
+        }]
+        kept, downgraded = _downgrade_dynamic_ddl_false_positives(findings, live, dynamic)
+        assert kept == []
+        assert len(downgraded) == 1
+        assert "client_id" in downgraded[0] and "marca_id" in downgraded[0]
+        assert "verify manually" in downgraded[0]
+
+    def test_rename_column_NOT_downgraded_without_live_corroboration(self):
+        """Same dynamic blind spot exists, but THIS table's live schema has
+        neither client_id nor marca_id — no evidence this table went
+        through the dynamic rename at all, so a genuinely unrelated
+        missing_column finding on the same column name must still block."""
+        findings = [{
+            "kind": "missing_column", "table": "social_wiring.unrelated_table",
+            "column": "client_id", "source": "migrations", "severity": "high",
+            "detail": "x",
+        }]
+        live = {"social_wiring.unrelated_table": {"id"}}  # no marca_id either
+        dynamic = [{
+            "class": "rename_column", "old_column": "client_id", "new_column": "marca_id",
+            "column": None, "file": "046_clients_to_marcas.sql",
+        }]
+        kept, downgraded = _downgrade_dynamic_ddl_false_positives(findings, live, dynamic)
+        assert kept == findings
+        assert downgraded == []
+
+    def test_drop_column_downgrades_on_name_match_alone(self):
+        findings = [{
+            "kind": "missing_column", "table": "erp.legacy",
+            "column": "old_flag", "source": "migrations", "severity": "high",
+            "detail": "x",
+        }]
+        live = {"erp.legacy": {"id"}}
+        dynamic = [{
+            "class": "drop_column", "old_column": None, "new_column": None,
+            "column": "old_flag", "file": "099_dynamic_drop.sql",
+        }]
+        kept, downgraded = _downgrade_dynamic_ddl_false_positives(findings, live, dynamic)
+        assert kept == []
+        assert len(downgraded) == 1
+        assert "old_flag" in downgraded[0]
+
+    def test_missing_table_findings_pass_through_untouched(self):
+        findings = [{
+            "kind": "missing_table", "table": "erp.ghost", "column": None,
+            "source": "migrations", "severity": "high", "detail": "x",
+        }]
+        kept, downgraded = _downgrade_dynamic_ddl_false_positives(findings, {}, [])
+        assert kept == findings
+        assert downgraded == []
+
+    def test_negative_control_unrelated_missing_column_still_a_finding(self):
+        """No dynamic blind spots at all — a real missing_column must never
+        be swallowed."""
+        findings = [{
+            "kind": "missing_column", "table": "erp.assinaturas",
+            "column": "external_id", "source": "migrations", "severity": "high",
+            "detail": "x",
+        }]
+        kept, downgraded = _downgrade_dynamic_ddl_false_positives(findings, {}, [])
+        assert kept == findings
+        assert downgraded == []
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +497,92 @@ class TestCheckSchemaDrift:
         drift = [f for f in result["findings"] if f["kind"] == "orm_migration_drift"]
         assert len(drift) == 1
         assert drift[0]["column"] == "extra_field"
+
+    def test_dynamic_rename_column_is_in_sync_not_drift_detected(self, tmp_path):
+        """End-to-end recreation of social-wiring's 046_clients_to_marcas.sql
+        shape: a migration set that declares `client_id` (never sees the
+        dynamic per-table rename), a live schema that actually has
+        `marca_id` (the rename DID apply, just not visible to this
+        parser). Before this slice: 1 confident missing_column finding,
+        status='drift_detected', blocking every deploy. After: 0 findings,
+        1 corroborated blind spot, status='in_sync'."""
+        products_dir = tmp_path / "products"
+        _make_main_py(products_dir, "social-wiring", "social_wiring")
+        _make_migrations(products_dir, "social-wiring", [
+            ("001_social-wiring.sql", (
+                "CREATE TABLE social_wiring.integration_accounts ("
+                "id UUID PRIMARY KEY, client_id UUID);\n"
+            )),
+            ("046_clients_to_marcas.sql", (
+                "DO $$\n"
+                "DECLARE t TEXT;\n"
+                "BEGIN\n"
+                "  FOREACH t IN ARRAY ARRAY['integration_accounts']\n"
+                "  LOOP\n"
+                "    EXECUTE format("
+                "'ALTER TABLE social_wiring.%I RENAME COLUMN client_id TO marca_id', t"
+                ");\n"
+                "  END LOOP;\n"
+                "END\n"
+                "$$;\n"
+            )),
+        ])
+        live_rows = [
+            {"table_name": "integration_accounts", "column_name": "id"},
+            {"table_name": "integration_accounts", "column_name": "marca_id"},
+        ]
+        result = check_schema_drift(
+            "social-wiring", executor=_live_executor(live_rows), products_dir=products_dir,
+        )
+        assert result["status"] == "in_sync"
+        assert result["ok"] is True
+        assert result["findings"] == []
+        assert any("client_id" in b and "marca_id" in b for b in result["blind_spots"])
+
+    def test_dynamic_ddl_elsewhere_does_not_mask_an_unrelated_real_bug(self, tmp_path):
+        """Negative control: the SAME product carries the dynamic-rename
+        blind spot AND a genuinely missing, unrelated column on a
+        different table — that second one must still block. Downgrading
+        must never become a product-wide amnesty."""
+        products_dir = tmp_path / "products"
+        _make_main_py(products_dir, "social-wiring", "social_wiring")
+        _make_migrations(products_dir, "social-wiring", [
+            ("001_social-wiring.sql", (
+                "CREATE TABLE social_wiring.integration_accounts ("
+                "id UUID PRIMARY KEY, client_id UUID);\n"
+                "CREATE TABLE social_wiring.contacts (id UUID PRIMARY KEY);\n"
+            )),
+            ("046_clients_to_marcas.sql", (
+                "DO $$\n"
+                "DECLARE t TEXT;\n"
+                "BEGIN\n"
+                "  FOREACH t IN ARRAY ARRAY['integration_accounts']\n"
+                "  LOOP\n"
+                "    EXECUTE format("
+                "'ALTER TABLE social_wiring.%I RENAME COLUMN client_id TO marca_id', t"
+                ");\n"
+                "  END LOOP;\n"
+                "END\n"
+                "$$;\n"
+            )),
+            ("047_bug.sql", (
+                "ALTER TABLE social_wiring.contacts "
+                "ADD COLUMN IF NOT EXISTS whatsapp_id TEXT;\n"
+            )),
+        ])
+        live_rows = [
+            {"table_name": "integration_accounts", "column_name": "id"},
+            {"table_name": "integration_accounts", "column_name": "marca_id"},
+            {"table_name": "contacts", "column_name": "id"},  # whatsapp_id never applied live
+        ]
+        result = check_schema_drift(
+            "social-wiring", executor=_live_executor(live_rows), products_dir=products_dir,
+        )
+        assert result["status"] == "drift_detected"
+        real = [f for f in result["findings"] if f["kind"] == "missing_column"]
+        assert len(real) == 1
+        assert real[0]["table"] == "social_wiring.contacts"
+        assert real[0]["column"] == "whatsapp_id"
 
 
 class TestRegistration:

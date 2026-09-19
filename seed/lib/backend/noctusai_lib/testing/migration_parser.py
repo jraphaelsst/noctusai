@@ -61,10 +61,25 @@ _CREATE_TABLE_HEAD_RE = re.compile(
 # the first was silently missing from the mock schema registry — across
 # ~20 fleet migrations — so a test touching one failed with "table has no
 # column X" naming a column the migration plainly adds.
+#
+# `(?!\.)` at the end is load-bearing, found while building the dynamic-DDL
+# blind-spot detector (2026-09-18). `ALTER TABLE erp.%I ADD COLUMN x TEXT`
+# (schema literal, table a runtime `%I` placeholder — `_dynamic_ddl_blind_
+# spots` handles THAT case as a declared unknown) does not fail to match
+# here; it MISmatches. `_IDENT` cannot consume `%I`, so the optional
+# `schema.` group backtracks away and the engine instead binds `table` to
+# `erp` alone — the SCHEMA name, reinterpreted as a bare table. The
+# static ADD/DROP-COLUMN scan below then runs against that bogus head and
+# fabricates a phantom table named after the schema (`public.erp`) holding
+# whatever column the dynamic clause names. A schema is never itself
+# immediately followed by `.` unless it WAS a `schema.table` qualifier that
+# failed to resolve — a genuine bare table name never is — so refusing to
+# match in that shape turns a silent corruption into the same clean "no
+# match, nothing fabricated" the dynamic-DDL detector already expects.
 _ALTER_TABLE_HEAD_RE = re.compile(
     rf"\bALTER\s+TABLE(?:\s+IF\s+EXISTS)?\s+"
     rf"(?:ONLY\s+)?"
-    rf"(?:(?P<schema>{_IDENT})\.)?(?P<table>{_IDENT})\b",
+    rf"(?:(?P<schema>{_IDENT})\.)?(?P<table>{_IDENT})(?!\.)\b",
     re.IGNORECASE,
 )
 
@@ -99,6 +114,106 @@ _RENAME_COLUMN_CLAUSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# Dynamic DDL — genuinely unresolvable, and that fact must be SAID, not
+# silently missed.
+#
+# `EXECUTE format('ALTER TABLE %s.%I RENAME COLUMN old TO new', schema, t)`
+# builds its DDL at runtime from a loop variable (`social-wiring`'s
+# migration 046: a `FOREACH t IN ARRAY [...]` over six literal table names,
+# rename applied via `%I`). No regex over the migration file can know what
+# `t` resolves to on any given loop iteration — that is not a gap in this
+# parser's cleverness, it is what "dynamic" means. Pretending otherwise
+# (resolving the FOREACH/ARRAY literal to special-case this migration's
+# shape) would be a fork wearing a parser's clothes; the file's own
+# docstring is explicit that a hand-rolled REGEX parser, not a PL/pgSQL
+# interpreter, is the deliberate scope.
+#
+# What CAN be said truthfully: the format() TEMPLATE's other arguments —
+# the column names in a RENAME COLUMN/ADD COLUMN/DROP COLUMN clause — are
+# ordinary literal text in every migration seen so far (only the table/
+# object identifier is parameterized via %I/%s), so those are reported.
+# The table itself is not, and is never guessed. Before this, the whole
+# statement was invisible: `_ALTER_TABLE_HEAD_RE` requires a real
+# identifier, `%I` isn't one, so no `_alter_table_segments` entry was ever
+# produced for it — not a false answer, just a total silence. This makes
+# that silence a NAMED blind spot instead.
+_DYNAMIC_EXEC_QUOTED_RE = re.compile(
+    r"\bEXECUTE\s+(?:format\s*\(\s*)?'((?:[^']|'')*)'",
+    re.IGNORECASE,
+)
+
+# The `$tag$ ... $tag$` sibling of the quoted form above — same idiom, a
+# dollar-quoted string instead of `'...'` (used elsewhere in the corpus for
+# EXECUTE format() bodies that themselves contain single quotes). No known
+# migration puts column DDL inside one today, but the RLS/policy EXECUTEs
+# that DO use this form make it cheap insurance rather than a gap that
+# reopens the moment a future migration does.
+_DYNAMIC_EXEC_DOLLAR_RE = re.compile(
+    r"\bEXECUTE\s+format\s*\(\s*\$(?P<tag>[A-Za-z_][A-Za-z0-9_]*|)\$"
+    r"(?P<body>[\s\S]*?)\$(?P=tag)\$",
+    re.IGNORECASE,
+)
+
+
+def _classify_dynamic_ddl(body: str) -> list[dict[str, str | None]]:
+    """Given the literal SQL text passed to `EXECUTE [format(]...`, return
+    the column/table-shape DDL classes it carries. Empty when the dynamic
+    statement doesn't touch a table's columns at all — RLS/policy/index/
+    trigger/constraint-NAME-only EXECUTEs are the overwhelming majority of
+    the corpus's dynamic SQL and are out of this parser's scope already
+    (see module docstring); flagging those as blind spots would be noise
+    that trains people to ignore the real ones.
+    """
+    upper = body.upper()
+    if "ALTER TABLE" not in upper:
+        return []
+    found: list[dict[str, str | None]] = []
+    for m in _RENAME_COLUMN_CLAUSE_RE.finditer(body):
+        found.append({
+            "class": "rename_column",
+            "old_column": m.group("old"),
+            "new_column": m.group("new"),
+            "column": None,
+        })
+    for m in _ADD_COLUMN_CLAUSE_RE.finditer(body):
+        found.append({
+            "class": "add_column",
+            "old_column": None,
+            "new_column": None,
+            "column": m.group("column"),
+        })
+    for m in _DROP_COLUMN_CLAUSE_RE.finditer(body):
+        found.append({
+            "class": "drop_column",
+            "old_column": None,
+            "new_column": None,
+            "column": m.group("column"),
+        })
+    for m in _RENAME_TABLE_CLAUSE_RE.finditer(body):
+        found.append({
+            "class": "rename_table",
+            "old_column": None,
+            "new_column": None,
+            "column": None,
+            "new_table": m.group("new_table"),
+        })
+    return found
+
+
+def _dynamic_ddl_blind_spots(stmt: str, source_label: str) -> list[dict[str, str | None]]:
+    """Scan one already-split statement for `EXECUTE`-wrapped DDL this
+    parser cannot resolve; tag every hit with `source_label` (the migration
+    file) so a caller can name exactly where the unknown lives."""
+    bodies: list[str] = [m.group(1) for m in _DYNAMIC_EXEC_QUOTED_RE.finditer(stmt)]
+    bodies += [m.group("body") for m in _DYNAMIC_EXEC_DOLLAR_RE.finditer(stmt)]
+    spots: list[dict[str, str | None]] = []
+    for body in bodies:
+        for entry in _classify_dynamic_ddl(body):
+            entry["file"] = source_label
+            spots.append(entry)
+    return spots
+
 
 def _alter_table_segments(stmt: str):
     """Yield `(schema, table, body)` per ALTER TABLE head in `stmt`.
@@ -122,6 +237,24 @@ _CONSTRAINT_KEYWORDS = (
     "CHECK",
     "EXCLUDE",
     "LIKE",  # CREATE TABLE foo (LIKE other INCLUDING ALL) — not a column
+)
+
+# Word-boundary-aware, NOT whitespace-split. `_is_constraint_line` used to
+# tokenize via `line.split(maxsplit=1)` and compare `head[0].upper()` against
+# `_CONSTRAINT_KEYWORDS` — correct for `UNIQUE (org_id, slug)` (the keyword
+# is its own whitespace-delimited token) but wrong for `UNIQUE(org_id, email)`
+# (no space before the paren): `split()` yields `"UNIQUE(org_id,"` as the
+# first token, which matches NO keyword, so the line fell through to
+# `_COLUMN_HEAD_RE` and was parsed as a column literally named `UNIQUE`.
+# Five real tables in the fleet corpus hit this exact shape (2026-09-18).
+# `\b` matches on either side of `(` (a non-word char) exactly as it does
+# before whitespace, so switching to a regex match built FROM the same
+# `_CONSTRAINT_KEYWORDS` tuple closes the gap for every entry at once — not
+# just the one spelling that happened to fire — and any future addition to
+# the tuple inherits the fix automatically.
+_CONSTRAINT_HEAD_RE = re.compile(
+    r"^\s*(?:" + "|".join(_CONSTRAINT_KEYWORDS) + r")\b",
+    re.IGNORECASE,
 )
 
 # ---------------------------------------------------------------------------
@@ -312,11 +445,9 @@ _COLUMN_HEAD_RE = re.compile(rf"^\s*(?P<name>{_IDENT})\b", re.IGNORECASE)
 
 def _is_constraint_line(line: str) -> bool:
     stripped = line.lstrip()
-    head = stripped.split(maxsplit=1)
-    if not head:
+    if not stripped:
         return True  # empty → treat as skip
-    first = head[0].upper()
-    return first in _CONSTRAINT_KEYWORDS
+    return bool(_CONSTRAINT_HEAD_RE.match(stripped))
 
 
 def _parse_column_names(body: str) -> list[str]:
@@ -345,6 +476,7 @@ def parse_sql(
     *,
     source_label: str = "<unknown>",
     into: dict[str, set[str]] | None = None,
+    blind_spots: list[dict[str, str | None]] | None = None,
 ) -> dict[str, set[str]]:
     """Parse a blob of SQL into a `{qualified_table: {columns}}` map.
 
@@ -355,6 +487,14 @@ def parse_sql(
     rename, a `DROP COLUMN` — is only meaningful when the parse can see
     what earlier files built. Passing a shared map is how `parse_files`
     models that; omitting it parses one blob in isolation.
+
+    `blind_spots`, when passed, is APPENDED to (never replaced) with one
+    dict per genuinely-unresolvable dynamic-DDL statement encountered (see
+    `_dynamic_ddl_blind_spots`) — `EXECUTE format(...)`/`EXECUTE '...'`
+    carrying `ALTER TABLE`/`RENAME`/`ADD COLUMN`/`DROP COLUMN` whose target
+    table is a runtime placeholder (`%I`). Omitting it (the default) is a
+    pure no-op for every existing caller — `MockSupabaseClient` doesn't
+    need the list, only `noctus.dev.schema_drift` does.
     """
     sql_clean = _strip_block_comments(_strip_line_comments(sql))
 
@@ -369,6 +509,17 @@ def parse_sql(
         # Just skip wholesale; they don't define tables.
         if re.search(r"\bCREATE(\s+OR\s+REPLACE)?\s+FUNCTION\b", upper):
             continue
+
+        # Dynamic DDL — `EXECUTE format(...)`/`EXECUTE '...'` whose target
+        # table is a runtime placeholder. Checked BEFORE (not instead of)
+        # the static ADD/DROP/RENAME scans below: those still run over the
+        # same `stmt` text and stay harmless no-ops against a dynamic
+        # `%I` target (no static identifier to attribute the mutation to),
+        # so nothing here changes what the static passes already do — this
+        # only adds the declared-unknown the caller was missing.
+        if blind_spots is not None and "EXECUTE" in upper:
+            blind_spots.extend(_dynamic_ddl_blind_spots(stmt, source_label))
+
         # DO $$ ... $$ blocks: may contain ALTER TABLE ADD COLUMN guards.
         # Run the ALTER regex regardless — it'll find matches inside DO
         # body when the whole statement is concatenated.
@@ -436,8 +587,16 @@ def parse_sql(
     return schema_map
 
 
-def parse_files(paths: Iterable[Path]) -> dict[str, set[str]]:
-    """Parse multiple migration files in order, merging into one schema map."""
+def parse_files(
+    paths: Iterable[Path],
+    *,
+    blind_spots: list[dict[str, str | None]] | None = None,
+) -> dict[str, set[str]]:
+    """Parse multiple migration files in order, merging into one schema map.
+
+    `blind_spots`, when passed, is appended to across every file — see
+    `parse_sql`'s docstring for the shape.
+    """
     # ONE accumulating map, threaded through every file in order — not a
     # per-file parse merged at the end. The old shape could only ever ADD:
     # each file was parsed against an empty map, so a later migration's
@@ -451,7 +610,7 @@ def parse_files(paths: Iterable[Path]) -> dict[str, set[str]]:
         except OSError as exc:
             logger.warning("mock-schema: could not read %s: %s — skipping", path, exc)
             continue
-        parse_sql(sql, source_label=str(path), into=merged)
+        parse_sql(sql, source_label=str(path), into=merged, blind_spots=blind_spots)
     return merged
 
 

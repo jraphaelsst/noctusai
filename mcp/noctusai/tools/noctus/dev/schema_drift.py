@@ -134,23 +134,29 @@ logger = logging.getLogger(__name__)
 
 def _migration_declared_schema(
     product_slug: str, products_dir: Path | None = None
-) -> tuple[dict[str, set[str]], bool]:
+) -> tuple[dict[str, set[str]], bool, list[dict[str, str | None]]]:
     """``{qualified_table: {columns}}`` derived from THIS product's own
     ``backend/migrations/*.sql`` — scoped to one product (never the whole
     fleet; ``get_schema_map()``'s cache walks every product, which is right
     for ``MockSupabaseClient`` but wrong for a per-product drift compare).
 
-    Returns ``(schema_map, migrations_dir_found)`` — the second element lets
-    the caller distinguish "found the dir, it parsed to zero tables" (real,
-    if unusual) from "no migrations dir at all" (an undeterminable finding).
+    Returns ``(schema_map, migrations_dir_found, dynamic_ddl_blind_spots)``.
+    The second element lets the caller distinguish "found the dir, it
+    parsed to zero tables" (real, if unusual) from "no migrations dir at
+    all" (an undeterminable finding). The third is every ``EXECUTE
+    format(...)``/``EXECUTE '...'`` DDL statement the parser could not
+    resolve (target table a runtime ``%I`` placeholder) — see
+    ``noctusai_lib.testing.migration_parser._dynamic_ddl_blind_spots``.
     """
     migrations_dir = _mp._migrations_dir(product_slug, products_dir)
     if not migrations_dir.is_dir():
-        return {}, False
+        return {}, False, []
     from noctusai_lib.testing.migration_parser import parse_files
 
     files = sorted(migrations_dir.glob("*.sql"))
-    return parse_files(files), True
+    dynamic_blind_spots: list[dict[str, str | None]] = []
+    schema_map = parse_files(files, blind_spots=dynamic_blind_spots)
+    return schema_map, True, dynamic_blind_spots
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +320,112 @@ def _compare(
     return findings
 
 
+def _dynamic_blind_spot_detail(spot: dict[str, str | None]) -> str:
+    """Human-readable line for one parser-reported dynamic-DDL blind spot
+    (see `noctusai_lib.testing.migration_parser._dynamic_ddl_blind_spots`)
+    — always surfaced, independent of whether it corroborated a downgrade
+    below (a dynamic statement whose class never collides with anything in
+    `declared` is still a thing this tool could not see)."""
+    cls = spot.get("class")
+    file = spot.get("file") or "<unknown file>"
+    if cls == "rename_column":
+        return (
+            f"{file}: dynamic RENAME COLUMN {spot.get('old_column')!r} -> "
+            f"{spot.get('new_column')!r} via EXECUTE — the target table is "
+            "resolved at runtime ('%I'), so this tool cannot determine which "
+            "table(s) it applies to."
+        )
+    if cls == "add_column":
+        return (
+            f"{file}: dynamic ADD COLUMN {spot.get('column')!r} via EXECUTE — "
+            "the target table is resolved at runtime ('%I'), so this tool "
+            "cannot determine which table(s) it applies to."
+        )
+    if cls == "drop_column":
+        return (
+            f"{file}: dynamic DROP COLUMN {spot.get('column')!r} via EXECUTE — "
+            "the target table is resolved at runtime ('%I'), so this tool "
+            "cannot determine which table(s) it applies to."
+        )
+    if cls == "rename_table":
+        return (
+            f"{file}: dynamic ALTER TABLE ... RENAME TO {spot.get('new_table')!r} "
+            "via EXECUTE — the source table is resolved at runtime ('%I'), so "
+            "this tool cannot determine which table it applies to."
+        )
+    return f"{file}: dynamic DDL via EXECUTE could not be resolved statically — verify manually."
+
+
+def _downgrade_dynamic_ddl_false_positives(
+    findings: list[dict[str, Any]],
+    live: dict[str, set[str]],
+    dynamic_blind_spots: list[dict[str, str | None]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """A `missing_column` finding whose column was ALSO the subject of an
+    unresolvable dynamic rename/drop somewhere in this product's migrations
+    is not distinguishable from real drift by static analysis — the exact
+    shape ``social-wiring``'s ``046_clients_to_marcas.sql`` produced for six
+    tables (``client_id`` -> ``marca_id`` via a per-table ``EXECUTE
+    format(...)`` loop). Blocking every deploy on a finding this tool
+    cannot actually confirm trains people to bypass the gate, so it is
+    downgraded to a named, "verify manually" blind spot instead — a
+    genuine `missing_column` with no such corroboration is untouched and
+    still blocks (see the module docstring / KB § PATTERNS/backend/
+    database-rls.md for the reasoning).
+
+    `rename_column` requires the LIVE table to actually carry the rename's
+    `new_column` — positive evidence THIS table went through exactly that
+    rename, not just "a same-named column was renamed on some other table
+    somewhere". `drop_column` has no equivalent positive signal (a dropped
+    column leaves nothing live to corroborate against), so it downgrades on
+    column-name match alone — deliberately the weaker, noisier case; still
+    strictly better than a confident wrong answer.
+    """
+    rename_targets: dict[str, set[str]] = {}
+    drop_targets: set[str] = set()
+    for spot in dynamic_blind_spots:
+        cls = spot.get("class")
+        if cls == "rename_column" and spot.get("old_column"):
+            rename_targets.setdefault(spot["old_column"], set()).add(spot.get("new_column") or "")
+        elif cls == "drop_column" and spot.get("column"):
+            drop_targets.add(spot["column"])
+
+    kept: list[dict[str, Any]] = []
+    downgraded: list[str] = []
+    for finding in findings:
+        if finding["kind"] != "missing_column":
+            kept.append(finding)
+            continue
+        table = finding["table"]
+        column = finding["column"]
+        new_candidates = rename_targets.get(column)
+        corroborating = (live.get(table) or set()) & new_candidates if new_candidates else set()
+        if corroborating:
+            new_name = sorted(corroborating)[0]
+            downgraded.append(
+                f"{table}.{column}: migrations declare this column but the live "
+                f"table lacks it and instead has {new_name!r} — a dynamic "
+                f"EXECUTE-based RENAME COLUMN elsewhere in this product's "
+                f"migrations renames {column!r} to {new_name!r} on a runtime-"
+                "resolved table; this table is very likely one of its targets, "
+                "but the parser cannot prove which tables a dynamic statement "
+                "touched — verify manually, not a confirmed finding."
+            )
+            continue
+        if column in drop_targets:
+            downgraded.append(
+                f"{table}.{column}: migrations declare this column but the live "
+                f"table lacks it, and a dynamic EXECUTE-based DROP COLUMN "
+                f"elsewhere in this product's migrations drops a column named "
+                f"{column!r} on a runtime-resolved table — this table may be one "
+                "of its targets; the parser cannot prove which tables a dynamic "
+                "statement touched — verify manually, not a confirmed finding."
+            )
+            continue
+        kept.append(finding)
+    return kept, downgraded
+
+
 def _compare_orm_vs_migrations(
     orm: dict[str, set[str]], migrations: dict[str, set[str]]
 ) -> list[dict[str, Any]]:
@@ -389,10 +501,14 @@ def check_schema_drift(
 
     schema, schema_source = _mp._resolve_schema(product, None, products_dir)
 
-    migrations_map, migrations_found = _migration_declared_schema(product, products_dir)
+    migrations_map, migrations_found, dynamic_blind_spots = _migration_declared_schema(
+        product, products_dir
+    )
     orm_map, orm_blind_spots = _orm_declared_schema(product, schema, products_dir)
 
-    blind_spots = list(orm_blind_spots)
+    blind_spots = list(orm_blind_spots) + [
+        _dynamic_blind_spot_detail(spot) for spot in dynamic_blind_spots
+    ]
     sources_used = {"migrations": migrations_found, "orm": bool(orm_map)}
 
     if not migrations_found and not orm_map:
@@ -458,7 +574,12 @@ def check_schema_drift(
         )
 
     live = _rows_to_live_schema(schema, fetch.get("rows"))
-    findings += _compare(declared, live, source="migrations+orm" if orm_map else "migrations")
+    live_findings = _compare(declared, live, source="migrations+orm" if orm_map else "migrations")
+    live_findings, downgraded = _downgrade_dynamic_ddl_false_positives(
+        live_findings, live, dynamic_blind_spots
+    )
+    findings += live_findings
+    blind_spots += downgraded
 
     status = "drift_detected" if findings else "in_sync"
     return _result(
@@ -516,5 +637,7 @@ __all__ = [
     "_rows_to_live_schema",
     "_compare",
     "_compare_orm_vs_migrations",
+    "_dynamic_blind_spot_detail",
+    "_downgrade_dynamic_ddl_false_positives",
     "register",
 ]
