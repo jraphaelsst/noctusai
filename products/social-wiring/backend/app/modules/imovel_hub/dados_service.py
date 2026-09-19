@@ -131,6 +131,18 @@ CAMPOS_ONUS_FONTE: tuple[str, ...] = (
 #: phrase and the ônus creditor. Written ONLY by `matriculas.titulo_service`
 #: (an operator's PUT), never by the PATCH route and never by a suggester —
 #: the suggestion is recomputed from the acts on every read, not stored.
+#: Migration 139 — the CONFIRMED short address ("situado à ...") the posse
+#: clauses print. Same shape/trust model as the pair above: an operator
+#: reads the matrícula and types it; never a recomputed suggestion, never the
+#: `imoveis` CRM mirror's público endereço (which some tenants deliberately
+#: publish as the portaria/gatehouse address rather than the real one — see
+#: `contrato_gerador/dados.py`'s `Imovel.endereco` docstring).
+CAMPOS_ENDERECO_CONTRATO: tuple[str, ...] = (
+    "endereco_registro_texto",
+    "endereco_registro_confirmado_por",
+    "endereco_registro_confirmado_em",
+)
+
 CAMPOS_TEXTO_CONTRATO: tuple[str, ...] = (
     "titulo_aquisitivo_texto",
     "titulo_aquisitivo_texto_confirmado_por",
@@ -138,7 +150,7 @@ CAMPOS_TEXTO_CONTRATO: tuple[str, ...] = (
     "onus_credor",
     "onus_credor_confirmado_por",
     "onus_credor_confirmado_em",
-)
+) + CAMPOS_ENDERECO_CONTRATO
 
 
 def _now() -> str:
@@ -348,6 +360,13 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
             resolved, row.get("onus_credor_confirmado_por")
         ),
         "onus_credor_confirmado_em": row.get("onus_credor_confirmado_em"),
+        # Migration 139 — the confirmed short address override the posse
+        # clauses print when set (see `CAMPOS_ENDERECO_CONTRATO`).
+        "endereco_registro_texto": row.get("endereco_registro_texto"),
+        "endereco_registro_confirmado_por": table_reads.actor(
+            resolved, row.get("endereco_registro_confirmado_por")
+        ),
+        "endereco_registro_confirmado_em": row.get("endereco_registro_confirmado_em"),
         "updated_at": row.get("updated_at"),
     }
 
@@ -363,6 +382,7 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("onus_fonte_confirmado_por"),
         (row or {}).get("titulo_aquisitivo_texto_confirmado_por"),
         (row or {}).get("onus_credor_confirmado_por"),
+        (row or {}).get("endereco_registro_confirmado_por"),
     }
     return _saida(codigo, row, table_reads.resolve_actors(ids))
 
@@ -532,6 +552,7 @@ def extracao_referenciada(client: Any, org_id: UUID, extracao_id: Any) -> bool:
 
 __all__ = [
     "CAMPOS_EDITAVEIS",
+    "CAMPOS_ENDERECO_CONTRATO",
     "CAMPOS_ONUS_FONTE",
     "CAMPOS_PROVENIENCIA",
     "CAMPOS_TEXTO_CONTRATO",

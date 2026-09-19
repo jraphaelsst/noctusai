@@ -820,6 +820,57 @@ END;
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring.imovel_dados_endereco_registro_confirmado CHECK
+# (migration 139).
+# ---------------------------------------------------------------------------
+#
+# Borrows `(org_id, codigo)` from an `imoveis` (Vista mirror) row that has NO
+# `imovel_dados` row yet, rather than from `imovel_dados` itself — the mirror
+# is populated by the sync regardless of whether anyone has authored cartório
+# data, so it is far more likely to have a usable fixture; borrowing from
+# `imovel_dados` directly would risk a PRIMARY KEY collision with an existing
+# row (a duplicate-key error, not the CHECK under test) instead of a clean
+# `no_fixture` when every imóvel already has one.
+
+_IMOVEL_DADOS_TABLE = "imovel_dados"
+_ENDERECO_REGISTRO_FIXTURE_FROM = (
+    f"(SELECT i.org_id AS org_id, i.codigo AS codigo FROM {_SW_SCHEMA}.imoveis i "
+    f"WHERE NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.{_IMOVEL_DADOS_TABLE} d "
+    f"WHERE d.org_id = i.org_id AND d.codigo = i.codigo) LIMIT 1) AS fx"
+)
+_ENDERECO_REGISTRO_FIXTURE_DESC = (
+    f"no {_SW_SCHEMA}.imoveis row without an existing {_SW_SCHEMA}."
+    f"{_IMOVEL_DADOS_TABLE} row to probe a fresh insert against"
+)
+
+_ENDERECO_REGISTRO_PROBE = GuardProbe(
+    id="imovel_dados.endereco_registro.confirmed_pair",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_dados_endereco_registro_confirmado",
+    kind="write_refusal",
+    migrations=("139_imovel_endereco_registro.sql",),
+    rationale=(
+        "endereco_registro_texto (the posse clause's operator-confirmed "
+        "address override — endereco-portaria-vs-imovel) and its "
+        "confirmation timestamp must be set/cleared together: an address "
+        "with no confirmation stamp is indistinguishable from an "
+        "unreviewed suggestion, and printing an unreviewed address into a "
+        "signed deed is exactly the risk this feature exists to close."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table=_IMOVEL_DADOS_TABLE,
+        columns_sql="org_id, codigo, endereco_registro_texto, endereco_registro_confirmado_em",
+        values_sql="fx.org_id, fx.codigo, 'Rua Teste, nº 1', NULL",
+        fixture_from=_ENDERECO_REGISTRO_FIXTURE_FROM,
+        fixture_description=_ENDERECO_REGISTRO_FIXTURE_DESC,
+        guard_fragment='constraint "imovel_dados_endereco_registro_confirmado"',
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — zero public storage.buckets (platform-wide; the LGPD guard).
 # ---------------------------------------------------------------------------
 #
@@ -866,6 +917,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _RUIDO_SHAPE_PROBE,
     *_ABERTURA_PROBES,
     _ABERTURA_UNIQUE_PROBE,
+    _ENDERECO_REGISTRO_PROBE,
     _STORAGE_BUCKETS_PROBE,
 )
 

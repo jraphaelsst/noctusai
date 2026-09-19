@@ -445,6 +445,45 @@ The reference adapter's `IMOVEL_LIST_FIELDS` constant carries the
 calibrated set; future tenants may have different splits and need their
 own probe pass — see §6 for the calibration gap.
 
+🔴 **`Endereco`/`Numero` can be a DELIBERATE DECOY — never treat them as
+"the property's address" without checking the tenant's policy.** On
+`oneconsu-rest` (ONE Consultoria Imobiliária), the office publishes the
+PORTARIA (gatehouse) street/number in these two fields — the public listing
+is visible to agents outside the firm, and the office does not want them
+harvesting the real property address from it. The actual address lives only
+on the matrícula (the registry document), never synced back into `Endereco`/
+`Numero`/`Complemento` here: this API surface has no distinct
+"endereço interno"/registry-address field for this tenant — confirmed
+against the full 107-candidate, 32-accepted `/imoveis/detalhes` probe in
+`noctusai_lib.integrations.vista.calibration.CANDIDATE_IMOVEL_DETAIL_FIELDS`
+(measured live 2026-09-04) — there is nothing to ask Vista to add to the
+sync; a distinct field would have to be requested from Vista as a product
+change (see §9 for the support-request shape).
+
+Corroborating evidence this is policy, not bad data (one worked example,
+imóvel `ONE7515`): `Numero`/`Endereco` name a street that does not appear in
+the matrícula's own quoted description, while the matrícula NÚMERO and AREA
+both match closely (`AreaTotal` 1052 vs. the registry's 1.050,24 m² — well
+within measurement/rounding noise) — four independent signals corroborating
+it is the SAME property, with only the street differing, and that difference
+being the one thing the tenant's policy deliberately changes.
+
+**Consequence for any consumer that prints or quotes this address** (a
+contract, a legal notice, anything a bank or a lawyer might read): source the
+address from the matrícula, never from `imoveis.logradouro`/`.numero` (the
+DB mirror of this `Endereco`/`Numero` pair) — `social-wiring`'s
+`card_hub.contrato_gerador` is the first consumer that hit this
+(`derivacao.resolver_endereco_posse`, backed by the seed's
+`noctusai_lib.integrations.documents.matricula_endereco.derivar_endereco` —
+the abertura's own street plus the LATEST averbação that officialises a
+número, since a número is often assigned well after the abertura and a
+property can be renumbered more than once). `Endereco`/`.Cidade`/`.UF`/
+`.Bairro` are NOT called out by this policy (only the street + number are
+substituted) and stay safe for labelling/geography. See
+`products/social-wiring/backend/app/modules/card_hub/contrato_gerador/
+dados.py`'s `Imovel.endereco` docstring for the code-level warning, and
+`derivacao.py`'s "imóvel/matrícula address" section for the full mechanism.
+
 #### `/imoveis/detalhes` quirks
 
 - Accepts the same `pesquisa.fields` shape, but the **field set differs from

@@ -87,6 +87,10 @@ from noctusai_lib.integrations.documents.matricula_atos import (
     ato_hint_span,
     segment_matricula_atos,
 )
+from noctusai_lib.integrations.documents.matricula_endereco import (
+    EnderecoMatricula,
+    derivar_endereco,
+)
 from noctusai_lib.integrations.documents.matricula_ato_detalhes import (
     NATUREZAS_ATO,
     NATUREZAS_COM_CREDOR,
@@ -188,6 +192,7 @@ __all__ = [
     "DocumentTextLadder",
     "DocumentTranscriber",
     "ESTADO_CIVIL_VALORES",
+    "EnderecoMatricula",
     "ExtractionConfidence",
     "FakeDocumentTranscriber",
     "FakeIdentityExtractor",
@@ -217,6 +222,7 @@ __all__ = [
     "UnsupportedGlyphError",
     "ato_hint_span",
     "classify_kind",
+    "derivar_endereco",
     "detectar_ruido",
     "extrair_qualificacoes",
     "find_birthdate",

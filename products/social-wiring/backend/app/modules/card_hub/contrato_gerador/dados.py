@@ -195,7 +195,20 @@ class Imovel:
     codigo: str
     titulo: Optional[str] = None
     empreendimento: Optional[str] = None
+    #: 🔴 [endereco-portaria-vs-imovel] The CRM/Vista mirror's PÚBLICO
+    #: endereço (`imoveis.logradouro`/`.numero`/`.complemento`). At at least
+    #: one tenant this is a DELIBERATE DECOY: the office publishes the
+    #: portaria/gatehouse address here — visible to agents outside the firm —
+    #: and keeps the real property address only on the matrícula, so outside
+    #: agents cannot harvest it. Safe for `cidade`/`uf`/labelling and for the
+    #: coherence check below; NEVER print `.logradouro`/`.numero` as the
+    #: property's location in a clause — use `endereco_registro_texto`.
     endereco: Endereco = field(default_factory=Endereco)
+    #: The CRM/Vista `AreaTotal` (m²) — used only by the coherence check
+    #: below (never printed): a genuinely different property tends to differ
+    #: by far more than measurement/rounding noise, so it is a much stronger
+    #: signal than the (decoy-prone) street.
+    area_total: Optional[Decimal] = None
     numero_matricula: Optional[str] = None
     numero_registro_imoveis: Optional[str] = None
     inscricao_municipal: Optional[str] = None
@@ -218,6 +231,13 @@ class Imovel:
     ultima_transferencia_transmitentes: tuple[str, ...] = ()
     #: [§6.1 #14] The imóvel's own certidões (migration 118).
     certidoes: tuple[CertidaoImovel, ...] = ()
+    #: 🔴 [endereco-portaria-vs-imovel, migration 139] The short address
+    #: ("situado à ...") an OPERATOR confirmed after reading the matrícula
+    #: (`imovel_dados.endereco_registro_texto`) — never a recomputed
+    #: suggestion, never `endereco` above. This is what the posse clauses
+    #: print; `None` is `faltando`, not a fallback to the CRM's público
+    #: endereço. See this class's `endereco` docstring for why.
+    endereco_registro_texto: Optional[str] = None
 
 
 @dataclass
@@ -274,17 +294,23 @@ class PermutaImovel:
     #: the extraction carries no such block — `contexto.py` falls back to
     #: `descricao_matricula` above and logs that it did.
     descricao_imovel_texto: Optional[str] = None
-    #: The catalog imóvel's address when the ativo points at one, otherwise the
-    #: ativo's OWN address snapshot — a property brought as swap currency is
-    #: often not a catalog listing at all (migration 101's `permuta_ativos`
-    #: carries its own profile for exactly that case). `contexto` derives the
-    #: printed short form; the loader never formats.
+    #: The catalog imóvel's PÚBLICO endereço when the ativo points at one,
+    #: otherwise the ativo's OWN address snapshot — a property brought as
+    #: swap currency is often not a catalog listing at all (migration 101's
+    #: `permuta_ativos` carries its own profile for exactly that case). Same
+    #: decoy risk as `Imovel.endereco` (see its docstring) — safe for
+    #: labelling, never for the posse clause; `contexto` used to derive the
+    #: printed short form from here, but no longer does.
     endereco: Endereco = field(default_factory=Endereco)
     inscricao_municipal: Optional[str] = None
     matricula_numero: Optional[str] = None
     cartorio: Optional[str] = None
     #: How many acts this imóvel's quote is built from — 0 = no quote selected.
     num_atos: int = 0
+    #: 🔴 [endereco-portaria-vs-imovel, migration 139] Same field, same rule
+    #: as `Imovel.endereco_registro_texto` — the operator-confirmed short
+    #: address the permuta posse clause prints. `None` is `faltando`.
+    endereco_registro_texto: Optional[str] = None
 
 
 @dataclass

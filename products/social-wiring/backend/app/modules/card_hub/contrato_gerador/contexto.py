@@ -47,6 +47,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     parcelas_ordenadas,
     pessoas_certificadas,
     prazo_pendencias,
+    resolver_endereco_posse,
     tipos_exigidos,
 )
 from app.modules.card_hub.contrato_gerador.numeracao import (
@@ -213,11 +214,27 @@ def montar_contexto(
 
     # ── imóvel ──
     e = im.endereco
+    # 🔴 [endereco-portaria-vs-imovel] `titulo_curto` is the deed's CAPTION
+    # line only (spec §3 header, never a "situado à" clause) — it still
+    # falls back to `e.logradouro`/`e.numero` when there is no
+    # `empreendimento`, which carries the SAME decoy risk `endereco_curto`
+    # used to (see `dados.Imovel.endereco`'s docstring). Left AS-IS: this
+    # slice's tested scope is the posse clauses; flagging here for whoever
+    # picks this up next rather than silently expanding scope.
     if im.empreendimento:
         titulo_curto = f"{im.empreendimento} – {e.complemento}" if e.complemento else im.empreendimento
     else:
         titulo_curto = f"{e.logradouro}, nº {e.numero}"
     em_condominio = EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO and bool(im.empreendimento)
+    # The posse clauses' address — NEVER `e` (the CRM's público endereço, a
+    # deliberate portaria/gatehouse decoy at at least one tenant). Gated
+    # `faltando` by `derivacao._imovel`, so this is never `None` here.
+    endereco_curto = resolver_endereco_posse(
+        im.endereco_registro_texto,
+        d.matricula.descricao_imovel_texto or d.matricula.texto,
+        d.matricula.texto,
+    )
+    assert endereco_curto is not None  # gated
     imovel = {
         "titulo_curto": titulo_curto,
         "cidade": e.cidade,
@@ -226,7 +243,7 @@ def montar_contexto(
         "inscricao_municipal": im.inscricao_municipal,
         "matricula_numero": frases.matricula_numero(im.numero_matricula),
         "cartorio": im.numero_registro_imoveis,
-        "endereco_curto": frases.endereco_curto(e),
+        "endereco_curto": endereco_curto,
         "em_condominio": em_condominio,
     }
 
@@ -353,8 +370,18 @@ def montar_contexto(
     }
     permuta: dict[str, Any] = {}
     if sw["tem_permuta"]:
+        # Same rule as `imovel["endereco_curto"]` above — NEVER
+        # `d.permuta_imoveis[0].endereco` (the CRM's público endereço).
+        # Gated `faltando` by `derivacao._permuta`, so never `None` here.
+        permuta_imovel = d.permuta_imoveis[0]
+        endereco_curto_permuta = resolver_endereco_posse(
+            permuta_imovel.endereco_registro_texto,
+            permuta_imovel.descricao_imovel_texto or permuta_imovel.descricao_matricula or "",
+            permuta_imovel.descricao_matricula or "",
+        )
+        assert endereco_curto_permuta is not None  # gated
         permuta = {
-            "endereco_curto": frases.endereco_curto(d.permuta_imoveis[0].endereco),
+            "endereco_curto": endereco_curto_permuta,
             "posse_prazo": termos.permuta_posse_prazo_dias,
             "posse_marco_texto": frases.posse_marco_texto(
                 termos.permuta_posse_marco or "",

@@ -198,6 +198,10 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
         titulo=catalogo.get("titulo"),
         empreendimento=catalogo.get("empreendimento"),
         endereco=_endereco(catalogo, prefixo=""),
+        # Migration 093 — the CRM/Vista mirror's own m², used only by the
+        # `derivacao` coherence check (never printed) — see `dados.Imovel
+        # .area_total`'s docstring.
+        area_total=_dec(catalogo.get("area_total")),
         numero_matricula=dados.get("numero_matricula"),
         numero_registro_imoveis=dados.get("numero_registro_imoveis"),
         inscricao_municipal=dados.get("prefeitura_cadastro_imobiliario"),
@@ -208,6 +212,10 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
         # Migration 115 — the operator's CONFIRMED wording, never the suggestion.
         titulo_aquisitivo_texto=dados.get("titulo_aquisitivo_texto"),
         onus_credor=dados.get("onus_credor"),
+        # Migration 139 — the operator-confirmed OVERRIDE for the posse
+        # clause's address (an escape hatch; `derivacao.resolver_endereco_
+        # posse` derives from the matrícula when this is unset).
+        endereco_registro_texto=dados.get("endereco_registro_texto"),
         ultima_transferencia_em=_data(ultima.get("data_registro")),
         ultima_transferencia_transmitentes=tuple(
             t["nome"] for t in antigos.get("transmitentes") or [] if t.get("nome")
@@ -288,6 +296,13 @@ def _permuta_imoveis(
                 matricula_numero=imovel_dados.get("numero_matricula"),
                 cartorio=imovel_dados.get("numero_registro_imoveis"),
                 num_atos=len(citacao.get("atos") or []),
+                # Migration 139 — same operator-confirmed OVERRIDE as
+                # `Imovel.endereco_registro_texto`. Only reachable when this
+                # ativo IS a catalog imóvel (`codigo` set, same guard the
+                # rest of this row's `imovel_dados` reads already use); an
+                # ativo with no catalog code has no `imovel_dados` row to
+                # confirm an override in, so it always derives.
+                endereco_registro_texto=imovel_dados.get("endereco_registro_texto"),
             )
         )
     return saida

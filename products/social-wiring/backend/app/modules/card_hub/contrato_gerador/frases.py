@@ -69,14 +69,6 @@ def endereco_texto(e: Endereco) -> str:
     return f"{texto} - {e.bairro} - {e.cidade}/{(e.uf or '').upper()} – CEP: {cep(e.cep)}"
 
 
-def endereco_curto(e: Endereco) -> str:
-    """The ONE address string for an imóvel (spec §5.2 #12)."""
-    texto = f"{e.logradouro}, nº {e.numero}"
-    if e.complemento:
-        texto += f" - {e.complemento}"
-    return texto
-
-
 def matricula_numero(valor: Optional[str]) -> str:
     """"12345" -> "12.345"; anything not purely digits prints as stored."""
     bruto = (valor or "").strip()

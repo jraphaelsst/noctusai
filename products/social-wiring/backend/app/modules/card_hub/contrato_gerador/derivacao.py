@@ -27,13 +27,14 @@ unwritten clauses (`ja_quitado`, `obrigacoes_vendedor`,
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from noctusai_lib.domain.texto_ptbr import formatar_brl
-from noctusai_lib.integrations.documents import has_raw_markup, is_same_as_cpf
+from noctusai_lib.domain.texto_ptbr import formatar_brl, parse_brl
+from noctusai_lib.integrations.documents import derivar_endereco, has_raw_markup, is_same_as_cpf
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 
 from app.modules.card_hub.contrato_gerador import frases
@@ -95,6 +96,147 @@ SUFIXO_PJ_BAIXADA = "Baixada"
 
 #: The imóvel certidão group's print order (spec §2.5).
 ORDEM_CERTIDOES_IMOVEL: tuple[str, ...] = ("matricula", "cnd_iptu", "cnd_condominio")
+
+
+# ─── imóvel/matrícula address (2026-09-19) ─────────────────────────────────
+#
+# 🔴 At at least one tenant, the CRM/Vista mirror's PÚBLICO `imoveis.endereco`
+# is a DELIBERATE DECOY: the office publishes the portaria/gatehouse address
+# there — visible to agents outside the firm — and keeps the real property
+# address only on the matrícula, so outside agents cannot harvest it. See
+# `dados.Imovel.endereco`'s docstring and `KB § INTEGRATIONS/vista.md`.
+#
+# The posse clauses ("...a posse do imóvel situado à ...") must print the
+# REGISTRY's own address, never that CRM field — a bank or a lawyer
+# rejecting a signed instrument over a wrong address is a real business
+# risk, not a hypothetical. `resolver_endereco_posse` below sources it, in
+# order: (1) an operator-CONFIRMED override (`imovel_dados.
+# endereco_registro_texto`, migration 139 — an escape hatch for a
+# matrícula whose phrasing defeats derivation), else (2) DERIVED from the
+# matrícula itself via the seed's `derivar_endereco` (the abertura's street
+# + the LATEST averbação that officialises a número, or an explicit "s/nº").
+# `None` — logradouro could not be confidently derived at all — is a named
+# `faltando`, never a fallback to the CRM address: printing the gatehouse is
+# worse than refusing.
+#
+# This is a SEPARATE signal from the coherence check just below:
+# `_verificar_coerencia_endereco` compares the CRM's published street AND
+# area against the matrícula and only ever `avisa`, never `bloqueia` — for
+# the street per the office's explicit instruction (the divergence is the
+# EXPECTED state under this business rule); for area because nobody has yet
+# validated, against real data, that a beyond-tolerance mismatch never fires
+# on a genuine same-property match (see `_verificar_coerencia_endereco`'s
+# own docstring for the promotion recommendation). The one RELIABLE "this
+# might be a different property" signal that already blocks is the
+# matrícula NUMBER (`MATRICULA_DE_OUTRO_IMOVEL` in `_imovel` below).
+
+
+def resolver_endereco_posse(
+    confirmado: Optional[str], texto_imovel: str, texto_atos: str
+) -> Optional[str]:
+    """The short address ("Rua X, nº 100" / "Rua X, s/nº") a posse clause
+    prints — the operator-confirmed override when set, else derived from the
+    matrícula. `None` means neither source resolved a street: a genuine gap
+    the caller must gate on (`Avaliacao.falta`), never a fallback to the CRM."""
+    if confirmado:
+        return confirmado
+    endereco = derivar_endereco(texto_imovel, texto_atos)
+    if not endereco.logradouro:
+        return None
+    if endereco.numero:
+        return f"{endereco.logradouro}, nº {endereco.numero}"
+    if endereco.numero_confirmado_ausente:
+        return f"{endereco.logradouro}, s/nº"
+    return None
+
+
+#: [endereco-portaria-vs-imovel] Tolerance for the imóvel/matrícula AREA
+#: coherence aviso (`_verificar_coerencia_endereco` below). An ABSOLUTE m²
+#: tolerance rather than a percentage: the divergence this catches is
+#: measurement/rounding noise between a brokerage-entered gross figure and
+#: the registry's precise one (the reference case: 1052 vs 1.050,24 m² —
+#: 1,76 m² apart), which does not scale with property size the way a
+#: genuinely different property would (typically hundreds/thousands of m²
+#: off). 2 m² comfortably covers that noise without hiding a real mismatch.
+TOLERANCIA_AREA_M2 = Decimal("2")
+
+#: "área [total|privativa|construída|do terreno] de 1.050,24 m²" / "...m2" —
+#: matched against an accent/case-folded copy of the text (see
+#: `_dobra_acentos`); the captured group is the BRL-shaped number
+#: (`noctusai_lib.domain.texto_ptbr.parse_brl` already parses exactly this
+#: "1.234,56" shape, reused rather than re-derived).
+_AREA_RE = re.compile(
+    r"AREA\s*(?:TOTAL|PRIVATIVA|CONSTRUIDA|DO\s+TERRENO)?\s*(?:DE|:)?\s*"
+    r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})\s*M[²2]"
+)
+
+
+def _dobra_acentos(texto: str) -> str:
+    """Upper-case, accent-stripped — same fold `parse_brl`'s BRL grammar
+    does not need but this module's free-text matching does (comparing a
+    CRM street name / hunting an "área ... m²" phrase inside prose)."""
+    sem_acento = "".join(
+        ch for ch in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(ch)
+    )
+    return sem_acento.upper()
+
+
+def _area_da_matricula(texto: str) -> Optional[Decimal]:
+    """The first "área ... de X m²" figure quoted in `texto`, or `None` when
+    none is found — never a guess, the caller treats `None` as "no signal",
+    not as a mismatch."""
+    if not texto:
+        return None
+    m = _AREA_RE.search(_dobra_acentos(texto))
+    if not m:
+        return None
+    try:
+        # The regex's captured group always carries `,\d{2}` — the same
+        # shape `parse_brl` parses (its `formatar_brl` inverse).
+        return parse_brl(m.group(1))
+    except ValueError:
+        return None
+
+
+def _verificar_coerencia_endereco(
+    av: Avaliacao,
+    *,
+    logradouro: Optional[str],
+    area: Optional[Decimal],
+    texto_matricula: str,
+    rotulo: str,
+) -> None:
+    """[owner-approved 2026-09-19] WARNING-ONLY: the CRM's público
+    logradouro is NOT a reliable "same property?" signal under the portaria
+    business rule (divergence is the EXPECTED state there), so a mismatch
+    only ever `avisa`, never `bloqueia`. AREA is a much stronger signal —
+    there is no policy reason to publish a fake square footage — but it is
+    ALSO only an `avisa` here: this platform has not yet observed it in
+    practice, and a false `bloqueia` on a legitimate rounding/measurement
+    difference would refuse a real contract on a signal nobody has
+    validated. Recommendation for a later pass: once real data confirms area
+    divergence beyond tolerance never fires on a genuine same-property
+    match, promote IT (not the street) to a `bloqueia`."""
+    if logradouro and texto_matricula:
+        alvo = _dobra_acentos(logradouro).strip()
+        corpo = _dobra_acentos(texto_matricula)
+        if alvo and alvo not in corpo:
+            av.avisa(
+                "ENDERECO_DIVERGENTE_DA_MATRICULA",
+                f"O logradouro público do CRM {rotulo} ('{logradouro}') não aparece na "
+                "descrição da matrícula — pode ser a política de publicar o endereço da "
+                "portaria em vez do imóvel; confira o endereço confirmado do registro "
+                "antes de assinar.",
+            )
+    if area is not None:
+        area_matricula = _area_da_matricula(texto_matricula)
+        if area_matricula is not None and abs(area - area_matricula) > TOLERANCIA_AREA_M2:
+            av.avisa(
+                "AREA_DIVERGENTE_DA_MATRICULA",
+                f"A área do CRM {rotulo} ({area} m²) diverge da área citada na matrícula "
+                f"({area_matricula} m²) além da tolerância de {TOLERANCIA_AREA_M2} m² — "
+                "confirme se é o mesmo imóvel.",
+            )
 
 
 # ─── destino: where a missing field is fixed ──────────────────────────────
@@ -597,6 +739,34 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
             "matricula",
         )
 
+    # 🔴 [endereco-portaria-vs-imovel] The posse clause's address — NEVER
+    # `im.endereco` (the CRM/Vista mirror's público endereço; a deliberate
+    # portaria/gatehouse decoy at at least one tenant — see this module's
+    # "imóvel/matrícula address" section above). Confirmed override, else
+    # derived from the matrícula; `None` is a named gap, never a fallback.
+    # No atos selected yet for THIS contract is ALREADY named above
+    # (`matricula.atos`) — without an override, there is nothing here to
+    # derive FROM, so this stays quiet rather than repeating the same root
+    # cause under a second name.
+    if not resolver_endereco_posse(
+        im.endereco_registro_texto,
+        d.matricula.descricao_imovel_texto or d.matricula.texto,
+        d.matricula.texto,
+    ) and (im.endereco_registro_texto or (d.matricula.texto or "").strip()):
+        av.falta(
+            "imovel.endereco_registro_texto",
+            "Endereço do imóvel confirmado a partir do registro (nunca o endereço "
+            "público do CRM)",
+            "imovel",
+        )
+    _verificar_coerencia_endereco(
+        av,
+        logradouro=im.endereco.logradouro,
+        area=im.area_total,
+        texto_matricula=d.matricula.descricao_imovel_texto or d.matricula.texto,
+        rotulo="do imóvel",
+    )
+
     if not im.situacao_onus:
         av.falta("imovel.situacao_onus", "Situação de ônus do imóvel", "imovel")
     elif im.situacao_onus not in ONUS_SUPORTADOS:
@@ -839,6 +1009,29 @@ def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
         ):
             if not getattr(imovel.endereco, campo):
                 av.falta(f"{alvo}.{campo}", rotulo, "imovel")
+        # 🔴 [endereco-portaria-vs-imovel] Same rule as `_imovel` above — the
+        # permuta posse clause prints the REGISTRY address, never
+        # `imovel.endereco` (same decoy risk as the main imóvel's). No atos
+        # selected for this ativo is ALREADY named above (`...atos`); stays
+        # quiet then rather than repeating the same root cause twice.
+        if not resolver_endereco_posse(
+            imovel.endereco_registro_texto,
+            imovel.descricao_imovel_texto or imovel.descricao_matricula or "",
+            imovel.descricao_matricula or "",
+        ) and (imovel.endereco_registro_texto or (imovel.descricao_matricula or "").strip()):
+            av.falta(
+                f"{alvo}.endereco_registro_texto",
+                "Endereço do imóvel da permuta confirmado a partir do registro "
+                "(nunca o endereço público do CRM)",
+                "imovel",
+            )
+        _verificar_coerencia_endereco(
+            av,
+            logradouro=imovel.endereco.logradouro,
+            area=None,
+            texto_matricula=imovel.descricao_imovel_texto or imovel.descricao_matricula or "",
+            rotulo="do imóvel da permuta",
+        )
     _posse(
         av,
         d,
