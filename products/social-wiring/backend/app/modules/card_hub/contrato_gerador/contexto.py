@@ -214,27 +214,34 @@ def montar_contexto(
 
     # ── imóvel ──
     e = im.endereco
-    # 🔴 [endereco-portaria-vs-imovel] `titulo_curto` is the deed's CAPTION
-    # line only (spec §3 header, never a "situado à" clause) — it still
-    # falls back to `e.logradouro`/`e.numero` when there is no
-    # `empreendimento`, which carries the SAME decoy risk `endereco_curto`
-    # used to (see `dados.Imovel.endereco`'s docstring). Left AS-IS: this
-    # slice's tested scope is the posse clauses; flagging here for whoever
-    # picks this up next rather than silently expanding scope.
-    if im.empreendimento:
-        titulo_curto = f"{im.empreendimento} – {e.complemento}" if e.complemento else im.empreendimento
-    else:
-        titulo_curto = f"{e.logradouro}, nº {e.numero}"
-    em_condominio = EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO and bool(im.empreendimento)
-    # The posse clauses' address — NEVER `e` (the CRM's público endereço, a
-    # deliberate portaria/gatehouse decoy at at least one tenant). Gated
-    # `faltando` by `derivacao._imovel`, so this is never `None` here.
+    # The posse clauses' AND (below) the title's address — NEVER `e` (the
+    # CRM's público endereço, a deliberate portaria/gatehouse decoy at at
+    # least one tenant). Gated `faltando` by `derivacao._imovel`, so this is
+    # never `None` here.
     endereco_curto = resolver_endereco_posse(
         im.endereco_registro_texto,
         d.matricula.descricao_imovel_texto or d.matricula.texto,
         d.matricula.texto,
     )
     assert endereco_curto is not None  # gated
+    # 🔴 [endereco-portaria-vs-imovel] `titulo_curto` is the INSTRUMENT'S OWN
+    # TITLE (`modelo_texto.TEMPLATE`'s opening line) — used to fall back to
+    # `e.logradouro`/`e.numero` (the SAME CRM decoy) whenever there is no
+    # `empreendimento`; ONE7515 only escaped this because it happens to
+    # carry one ("Euroville - Km 23"). Reuses the SAME resolved,
+    # registry-derived `endereco_curto` the posse clauses print, rather than
+    # a separate loteamento-name extraction: a street+número reads correctly
+    # for any property (a loteamento's own "situado na Alameda X" IS its
+    # street), the mechanism is already built and tested for the posse
+    # clauses, and reusing it means one value to keep correct instead of
+    # two. `empreendimento` still wins when present — it names the
+    # condomínio/edifício, which reads better in a title than a street ever
+    # would.
+    if im.empreendimento:
+        titulo_curto = f"{im.empreendimento} – {e.complemento}" if e.complemento else im.empreendimento
+    else:
+        titulo_curto = endereco_curto
+    em_condominio = EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO and bool(im.empreendimento)
     imovel = {
         "titulo_curto": titulo_curto,
         "cidade": e.cidade,

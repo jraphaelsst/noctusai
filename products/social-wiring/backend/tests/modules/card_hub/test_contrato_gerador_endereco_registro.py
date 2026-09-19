@@ -27,6 +27,13 @@ WHAT THESE PIN
    phrase in the matrícula quote) REFUSES generation
    (`imovel.endereco_registro_texto` faltando) rather than falling back to
    the CRM's público endereço.
+7. The INSTRUMENT'S OWN TITLE (`imovel.titulo_curto`, `modelo_texto.
+   TEMPLATE`'s opening line) carries `empreendimento` when present, the
+   SAME registry-derived address the posse clauses print when it is not —
+   NEVER the CRM's público street in either branch — and refuses when
+   neither `empreendimento` nor a registry address is available. This is
+   the branch `ONE7515` never exercised (it happens to carry an
+   `empreendimento`): every OTHER property falls through to it.
 
 All names, streets and matrícula numbers are invented — nothing here is
 copied from a real CRM or matrícula.
@@ -36,7 +43,9 @@ from __future__ import annotations
 from dataclasses import replace
 from decimal import Decimal
 
+from app.modules.card_hub.contrato_gerador import contexto as contexto_mod
 from app.modules.card_hub.contrato_gerador import derivacao, documento
+from app.modules.card_hub.contrato_gerador.numeracao import ContadorParagrafos
 from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
 
@@ -77,6 +86,13 @@ def _render(d):
     pol, sw, av = _avaliar(d)
     assert av.pronto, (av.faltando, av.bloqueios)
     return documento.renderizar(get_docx_render_adapter(real=True), d, sw, pol, fx.ASSINATURA)
+
+
+def _contexto(d):
+    pol, sw, av = _avaliar(d)
+    assert av.pronto, (av.faltando, av.bloqueios)
+    adapter = get_docx_render_adapter(real=True)
+    return contexto_mod.montar_contexto(d, sw, pol, fx.ASSINATURA, ContadorParagrafos(None), adapter)
 
 
 class TestPosseClauseUsaEnderecoDoRegistro:
@@ -146,3 +162,42 @@ class TestSemEnderecoDerivavelRecusaGeracao:
         r = _render(d)
         texto = "\n".join(r.paragrafos)
         assert "Rua Confirmada, nº 1" in texto
+
+
+class TestTituloCurtoUsaEnderecoDoRegistro:
+    """The instrument's own TITLE — `modelo_texto.TEMPLATE`'s opening line,
+    `imovel.titulo_curto` — has the SAME decoy risk `endereco_curto` had: it
+    falls back to the CRM's público `logradouro`/`numero` whenever there is
+    no `empreendimento`. `base_v1()` always carries one ("Edifício
+    Exemplo"), so every OTHER test in this module exercises only the SAFE
+    branch — these pin the branch that was untested."""
+
+    def test_com_empreendimento_o_titulo_usa_o_empreendimento_nao_a_rua(self):
+        d = _com_matricula_de_registro()  # base_v1() keeps "Edifício Exemplo"
+        assert d.imovel.empreendimento == "Edifício Exemplo"
+
+        ctx = _contexto(d)
+        assert ctx["imovel"]["titulo_curto"] == "Edifício Exemplo – Apto 11"
+        assert "Rua Fictícia" not in ctx["imovel"]["titulo_curto"]
+
+    def test_sem_empreendimento_o_titulo_usa_o_endereco_do_registro(self):
+        d = _com_matricula_de_registro()
+        d = replace(d, imovel=replace(d.imovel, empreendimento=None))
+
+        ctx = _contexto(d)
+        assert ctx["imovel"]["titulo_curto"] == "Alameda Fictícia, nº 535"
+        assert "Rua Fictícia" not in ctx["imovel"]["titulo_curto"]
+        # Same resolved value the posse clause prints — one source, not two.
+        assert ctx["imovel"]["titulo_curto"] == ctx["imovel"]["endereco_curto"]
+
+    def test_sem_empreendimento_e_sem_endereco_derivavel_o_titulo_recusa(self):
+        """The branch nobody exercised: no `empreendimento` AND nothing the
+        matrícula quote lets the generator derive. A deed that will not
+        generate beats one with the gatehouse in its own title."""
+        d = fx.base_v1()
+        d = replace(d, imovel=replace(d.imovel, empreendimento=None))
+        d = replace(d, matricula=replace(d.matricula, texto=MATRICULA_TEXTO_SEM_MARCADOR_DE_ENDERECO))
+
+        _pol, _sw, av = _avaliar(d)
+        assert av.pronto is False
+        assert "imovel.endereco_registro_texto" in {f["campo"] for f in av.faltando}
