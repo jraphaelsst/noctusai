@@ -107,6 +107,7 @@ Every one of these was a real misread, not a hypothetical:
 | "every gate green on the merged tip" (2026-09-17) | seed suite + both product suites, all green | `mcp/noctusai/tests/` was never run at all — CI then found 3 real failures there. Not a wrong RESULT; a claim about a SET made without checking the set was COMPLETE |
 | `if git merge --no-edit -q "$b" 2>&1 \| tail -1; then` (2026-09-17) | "CONFLICT" | the merge had succeeded; the condition read `tail`'s exit status, not `git merge`'s |
 | `npx tsc --noEmit 2>&1 \| tail -5 && echo "tsc-rc=$?"` (2026-09-17) | printed as the gate's result | `$?` there is `tail`'s — same session, an hour apart from the row above |
+| `noctus.dev.task_branch payload={action:'start',…}` (2026-09-19) | `ok: true` + a 32-worktree listing | **no worktree was created.** `payload` is not a parameter of that tool; FastMCP registers its handler with `validate_input=False`, so the unknown key was dropped and every declared parameter fell back to its default — and that tool's default `action` is the READ-ONLY `"status"`. Four consecutive calls "succeeded" doing nothing. The messenger here is the **argument binder**: it answered a question nobody asked. Closed by `install_strict_tool_arguments()` (refuses unknown args) + keeper `check_mcp_tools_reject_unknown_args` |
 
 The shape is constant: **a messenger's status was mistaken for the subject's
 status.** A pipe, a wrapper, a watcher, a notification and a timeout are all

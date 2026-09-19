@@ -200,6 +200,65 @@ def offload_blocking(fn):
     return _threaded
 
 
+def install_strict_tool_arguments(server: FastMCP) -> dict[str, frozenset[str]]:
+    """Refuse a tool call that carries an argument the tool does not declare.
+
+    **The silent-error this closes.** FastMCP registers its tool handler with
+    ``validate_input=False`` (``mcp/server/fastmcp/server.py`` ``_setup_handlers``),
+    so the lowlevel server never validates incoming arguments against the tool's
+    own ``inputSchema``; pydantic then DROPS any field the signature does not
+    declare. A caller typo — ``payload={...}``, ``slugg=``, ``dry_run=`` — is
+    therefore discarded in silence and every declared parameter falls back to its
+    default. For ``noctus.dev.task_branch`` that default is ``action="status"``,
+    which is READ-ONLY and returns ``ok: true`` with a full worktree listing, so a
+    failed ``start`` / ``integrate`` / ``cleanup`` is indistinguishable from a
+    successful status call. Lived incident 2026-09-19: four consecutive calls
+    "succeeded" while doing nothing (`KB § 01-PHILOSOPHY.md`, no silent errors).
+
+    **Why this is the enforcement point and the schema is not.** Setting
+    ``additionalProperties: false`` on the advertised schema was measured and is
+    provably NOT enforced server-side — a bogus argument still returned a
+    defaulted ``ok: true``. It is set here anyway, but only as a hint to clients
+    that DO validate; it can never be the gate. Equally, patching
+    ``FastMCP.call_tool`` would miss: ``_setup_handlers`` binds that method at
+    construction, so the live request path still holds the original. The manager
+    is resolved per-call (``self._tool_manager.call_tool(...)``), so wrapping it
+    is on the real path for stdio traffic and for direct ``server.call_tool``
+    callers alike.
+
+    Returns the ``{tool_name: allowed_arg_names}`` registry it enforces, so the
+    keeper (``check_mcp_tools_reject_unknown_args``) can assert coverage.
+    """
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    allowed: dict[str, frozenset[str]] = {}
+    for tool in server._tool_manager.list_tools():
+        schema = tool.parameters if isinstance(tool.parameters, dict) else {}
+        allowed[tool.name] = frozenset((schema.get("properties") or {}).keys())
+        # Hint for validating clients; NOT the enforcement (see docstring).
+        schema.setdefault("additionalProperties", False)
+
+    manager = server._tool_manager
+    _orig_call_tool = manager.call_tool
+
+    async def _strict_call_tool(name, arguments, *args, **kwargs):
+        known = allowed.get(name)
+        if known is not None and isinstance(arguments, dict):
+            unknown = sorted(set(arguments) - known)
+            if unknown:
+                raise ToolError(
+                    f"{name}: unknown argument(s) {unknown}. This tool accepts "
+                    f"{sorted(known)}. Refusing rather than silently ignoring "
+                    f"them — an ignored argument makes every parameter fall back "
+                    f"to its default, and for several tools that default is a "
+                    f"read-only no-op that returns ok:true."
+                )
+        return await _orig_call_tool(name, arguments, *args, **kwargs)
+
+    manager.call_tool = _strict_call_tool  # type: ignore[method-assign]
+    return allowed
+
+
 def build_server() -> FastMCP:
     server = FastMCP(
         name="noctusai",
@@ -233,6 +292,9 @@ def build_server() -> FastMCP:
 
     server.tool = _tool  # type: ignore[method-assign]
     register_all(server)
+    # AFTER register_all — the registry is built from what each tool actually
+    # advertises, so it can never drift from the published schema.
+    install_strict_tool_arguments(server)
     return server
 
 

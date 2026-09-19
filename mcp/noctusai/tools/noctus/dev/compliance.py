@@ -19983,3 +19983,117 @@ def check_contract_field_provenance_map(repo_root: Path | None = None) -> list[d
         })
 
     return issues
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MCP tools must refuse unknown arguments (2026-09-19 incident).
+#
+# FastMCP registers its tool handler with `validate_input=False`, so the
+# lowlevel server never validates a call against the advertised inputSchema,
+# and pydantic then DROPS any undeclared field. Every declared parameter
+# therefore falls back to its default — and for `noctus.dev.task_branch` the
+# default `action` is `"status"`: read-only, `ok: true`, indistinguishable from
+# a real result. A caller typo (`payload=`, `slugg=`) silently becomes a
+# successful no-op.
+#
+# `server.install_strict_tool_arguments()` is the compliance-by-construction
+# mechanism (it REFUSES the call). This keeper is only the backstop: it pins
+# that the installer still exists and is still invoked AFTER `register_all`,
+# because an installer that runs BEFORE registration builds an empty registry
+# and silently guards nothing — the same failure shape one level up.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STRICT_ARGS_INSTALLER = "install_strict_tool_arguments"
+
+
+def check_mcp_tools_reject_unknown_args(repo_root: Path | None = None) -> list[dict]:
+    """`build_server()` must install the strict-argument gate after `register_all`."""
+    root = repo_root or REPO_ROOT
+    rel = "mcp/noctusai/server.py"
+    path = root / rel
+    issues: list[dict] = []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError:
+        return [{
+            "product": "<mcp>",
+            "file": rel,
+            "issue": f"`{rel}` is unreadable — cannot verify the strict-argument gate.",
+            "severity": "high",
+        }]
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [{
+            "product": "<mcp>",
+            "file": rel,
+            "issue": f"`{rel}` does not parse ({exc}) — cannot verify the gate.",
+            "severity": "high",
+        }]
+
+    defines_installer = any(
+        isinstance(node, ast.FunctionDef) and node.name == _STRICT_ARGS_INSTALLER
+        for node in ast.walk(tree)
+    )
+    if not defines_installer:
+        issues.append({
+            "product": "<mcp>",
+            "file": rel,
+            "issue": (
+                f"`{rel}` no longer defines `{_STRICT_ARGS_INSTALLER}()`. Without it "
+                f"every MCP tool silently discards unknown arguments and falls back "
+                f"to its defaults — for `noctus.dev.task_branch` that default is the "
+                f"read-only `action='status'`, so a failed start/integrate/cleanup "
+                f"returns ok:true and looks successful (2026-09-19 incident)."
+            ),
+            "severity": "high",
+        })
+
+    build = next(
+        (n for n in ast.walk(tree)
+         if isinstance(n, ast.FunctionDef) and n.name == "build_server"),
+        None,
+    )
+    if build is None:
+        issues.append({
+            "product": "<mcp>",
+            "file": rel,
+            "issue": f"`{rel}` no longer defines `build_server()` — cannot verify the gate is wired.",
+            "severity": "high",
+        })
+        return issues
+
+    called_at: dict[str, int] = {}
+    for node in ast.walk(build):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            called_at.setdefault(node.func.id, node.lineno)
+
+    if _STRICT_ARGS_INSTALLER not in called_at:
+        issues.append({
+            "product": "<mcp>",
+            "file": rel,
+            "issue": (
+                f"`build_server()` never calls `{_STRICT_ARGS_INSTALLER}(server)`, so "
+                f"no tool refuses unknown arguments. Defining the installer without "
+                f"invoking it is gate-only — the mechanism must ship wired "
+                f"(KB § PATTERNS/common/gate-methodology-sync.md)."
+            ),
+            "severity": "high",
+        })
+    elif "register_all" in called_at and called_at[_STRICT_ARGS_INSTALLER] < called_at["register_all"]:
+        issues.append({
+            "product": "<mcp>",
+            "file": rel,
+            "issue": (
+                f"`build_server()` calls `{_STRICT_ARGS_INSTALLER}()` at line "
+                f"{called_at[_STRICT_ARGS_INSTALLER]}, BEFORE `register_all()` at line "
+                f"{called_at['register_all']}. The registry is built from the tools that "
+                f"are already registered, so installing first guards an EMPTY set — the "
+                f"gate would pass every call while appearing to be wired."
+            ),
+            "severity": "high",
+        })
+
+    return issues
