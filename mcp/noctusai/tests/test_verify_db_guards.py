@@ -337,6 +337,68 @@ class TestVerifyDbGuards:
 # ---------------------------------------------------------------------------
 
 
+class TestSelfProvisioning:
+    """2026-09-19: the matricula_extracoes frozen-column probes moved from
+    a dynamic-fixture design (search for an existing row matching a
+    predicate) to self-provisioning (INSERT their own specimen row(s))
+    after a live prod run showed `codigo`/`imovel_documento_id` reporting
+    a PERMANENT `no_fixture` — zero matching rows in prod, a state that
+    was never going to change, which would have made `predeploy_check`'s
+    `db_guards` leg permanently red for a reason unrelated to
+    correctness. These tests pin that every frozen-column probe is
+    self-provisioning by construction, not by accident."""
+
+    def _matricula_frozen_column_probes(self):
+        return [
+            p for p in DEFAULT_REGISTRY
+            if p.guard_name == "matricula_extracoes_protege_concluida"
+        ]
+
+    def test_every_frozen_column_probe_inserts_its_own_specimen_row(self):
+        probes = self._matricula_frozen_column_probes()
+        assert len(probes) == 6
+        for probe in probes:
+            assert "INSERT INTO social_wiring.matricula_extracoes" in probe.sql, (
+                f"{probe.id} does not self-provision a matricula_extracoes row"
+            )
+
+    def test_codigo_probe_self_provisions_its_fk_target(self):
+        probe = next(p for p in DEFAULT_REGISTRY if p.id == "matricula_extracoes.codigo.frozen_after_set")
+        assert "INSERT INTO social_wiring.imovel_registry" in probe.sql
+
+    def test_imovel_documento_id_probe_self_provisions_its_full_fk_chain(self):
+        probe = next(
+            p for p in DEFAULT_REGISTRY
+            if p.id == "matricula_extracoes.imovel_documento_id.frozen_after_set"
+        )
+        assert "INSERT INTO social_wiring.imovel_registry" in probe.sql
+        assert "INSERT INTO social_wiring.imoveis" in probe.sql
+        assert "INSERT INTO social_wiring.imovel_documentos" in probe.sql
+
+    def test_arquivo_origem_id_probe_self_provisions_its_fk_target(self):
+        probe = next(
+            p for p in DEFAULT_REGISTRY
+            if p.id == "matricula_extracoes.arquivo_origem_id.frozen_after_set"
+        )
+        assert "INSERT INTO social_wiring.matricula_extracao_arquivos" in probe.sql
+
+    def test_substituida_por_probe_self_provisions_both_of_its_own_rows(self):
+        probe = next(
+            p for p in DEFAULT_REGISTRY
+            if p.id == "matricula_extracoes.substituida_por.frozen_after_set"
+        )
+        # Two INSERTs into matricula_extracoes: the superseded row, then
+        # the row under test — self-referential, no other table involved.
+        assert probe.sql.count("INSERT INTO social_wiring.matricula_extracoes") == 2
+
+    def test_the_only_remaining_no_fixture_dependency_is_the_org_id_borrow(self):
+        """Every frozen-column probe's `no_fixture` branch fires ONLY for
+        the shared org_id borrow — never for a column-specific ambient
+        predicate (the exact shape that broke live)."""
+        for probe in self._matricula_frozen_column_probes():
+            assert "no existing social_wiring.matricula_extracoes row to borrow an org_id from" in probe.sql
+
+
 class TestRegistrySanity:
     def test_registry_is_non_empty(self):
         assert len(DEFAULT_REGISTRY) >= 10

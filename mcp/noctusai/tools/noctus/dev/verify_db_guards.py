@@ -42,6 +42,29 @@ or `"state_assertion"` — read live state, expect it to be clean), and
 `sql` — the probe BODY, always exactly one `DO $noc_probe$ ... $noc_probe$;`
 statement (see `_do_block`).
 
+SELF-PROVISIONING — the default, not the exception (2026-09-19). Every
+`write_refusal` probe in `DEFAULT_REGISTRY` provisions its OWN specimen
+row(s) via `INSERT`, inside the SAME rolled-back transaction, rather than
+depending on production already holding data in the state under test.
+This closed a real defect: the first version of the
+`matricula_extracoes.codigo` / `.imovel_documento_id` probes searched for
+an EXISTING row matching a predicate, and a live prod run showed both
+predicates matching ZERO rows — not transiently, but because no
+extraction had ever been linked to an imóvel, a state that was never
+going to change on its own. That made those two probes permanently
+`no_fixture`, which `predeploy_check`'s `db_guards` leg (correctly, by
+the fail-closed rule above) treats as blocking — a gate red FOREVER for a
+reason unrelated to whether the guard works, "a red gate everyone learns
+to ignore" arriving through ambient data state rather than a structural
+blind spot. See `_self_provisioned_frozen_column_probe` for the pattern
+(borrow one real `org_id` — the one ambient dependency every probe of
+this shape still has, and correctly still `no_fixture` on a genuinely
+org-less database — then INSERT whatever FK-satisfying row(s) THIS
+column's guard needs, cascading up to three tables deep for
+`imovel_documento_id`). `_frozen_column_probe` (dynamic-fixture,
+pre-2026-09-19) remains as the documented fallback for a future guard
+whose fixture genuinely cannot be safely fabricated — not the default.
+
 CLASSIFICATION CHANNEL — one mechanism for every probe, both kinds.
 Every probe body, regardless of outcome, ends by RAISE'ing a sentinel
 exception of the shape ``NOC_PROBE:<outcome>: <detail>`` — computed and
@@ -306,16 +329,34 @@ def _frozen_column_probe(
     guard_fragment: str,
 ) -> str:
     """UPDATE an EXISTING row's `column` to `bad_value_sql`, expecting the
-    row-level guard to raise. Dynamic fixture (`fixture_predicate`) — never
-    a fabricated row — because these columns carry real FK/semantic
-    weight (`codigo`, `imovel_documento_id`, ...) that a synthetic row
-    cannot safely satisfy. No fixture found -> `no_fixture` (a FAILURE,
-    never a skip). The guard fires inside a `BEFORE UPDATE` trigger,
-    which runs BEFORE Postgres validates any FK/CHECK on the new row
-    value, so `bad_value_sql` need not itself be a valid value — but
-    classification still checks `guard_fragment` against the caught
-    `SQLERRM`, so a value that (surprisingly) trips a DIFFERENT
-    constraint first is reported `ambiguous`, never a false `refused`.
+    row-level guard to raise. Dynamic fixture (`fixture_predicate`) —
+    depends on ambient production data already being in the state under
+    test, rather than provisioning it fresh.
+
+    🔴 THE FALLBACK SHAPE, NOT THE DEFAULT (2026-09-19). This was the
+    ORIGINAL design for every `matricula_extracoes` frozen-column probe;
+    it was replaced in the registry by
+    `_self_provisioned_frozen_column_probe` after a live prod run showed
+    `codigo`/`imovel_documento_id` reporting a PERMANENT `no_fixture`
+    (zero matching rows in prod, and no reason to expect that will ever
+    change) — which would have made `predeploy_check`'s `db_guards` leg
+    permanently red for a reason unrelated to correctness, "a gate
+    everyone learns to ignore" arriving through data state instead of a
+    structural blind spot. Self-provisioning removes the ambient
+    dependency entirely by inserting its own specimen row(s) inside the
+    same rolled-back transaction. Kept here — still exported, still
+    tested — as the documented exception path for a FUTURE guard whose
+    fixture genuinely cannot be safely fabricated (e.g. an FK chain into
+    a table this module has no business writing to, or one gated by a
+    trigger with an un-auditable side effect); reach for
+    `_self_provisioned_frozen_column_probe` first.
+
+    The guard fires inside a `BEFORE UPDATE` trigger, which runs BEFORE
+    Postgres validates any FK/CHECK on the new row value, so
+    `bad_value_sql` need not itself be a valid value — but classification
+    still checks `guard_fragment` against the caught `SQLERRM`, so a
+    value that (surprisingly) trips a DIFFERENT constraint first is
+    reported `ambiguous`, never a false `refused`.
 
     `fixture_predicate` is used TWICE, for two different purposes: raw
     (unescaped) in the `WHERE` clause, where it must stay executable SQL
@@ -438,7 +479,54 @@ _MATRICULA_MIGRATIONS = (
 )
 
 
-def _matricula_probe(probe_id: str, column: str, fixture_predicate: str, bad_value_sql: str) -> GuardProbe:
+def _self_provisioned_frozen_column_probe(
+    *,
+    probe_id: str,
+    column: str,
+    declare_extra: str,
+    setup_sql: str,
+    bad_value_sql: str,
+    rationale_extra: str,
+) -> GuardProbe:
+    """SELF-PROVISIONING variant of the frozen-column write-once probe
+    (2026-09-19 — see module docstring "SELF-PROVISIONING" section for
+    why this replaced the earlier dynamic-fixture design). `setup_sql`
+    INSERTs whatever synthetic row(s) this specific column needs (built
+    fresh, inside the SAME rolled-back transaction) and MUST end with
+    `v_id` set to the row under test. The only remaining external
+    dependency, shared by every probe of this shape, is an existing
+    `org_id` to borrow (see the SELECT immediately below) — see the
+    module docstring for why that is a fundamentally different, much
+    weaker dependency than "this SPECIFIC column has a non-null value
+    somewhere", and correctly still `no_fixture` (never a skip) on a
+    genuinely org-less database.
+    """
+    guard_fragment_lit = _sql_lit(_MATRICULA_GUARD_FRAGMENT)
+    sql = _do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_id uuid;
+{declare_extra}
+BEGIN
+  SELECT org_id INTO v_org_id FROM {_SW_SCHEMA}.{_MATRICULA_TABLE} LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no existing {_SW_SCHEMA}.{_MATRICULA_TABLE} row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+{setup_sql}
+  BEGIN
+    UPDATE {_SW_SCHEMA}.{_MATRICULA_TABLE} SET {column} = {bad_value_sql} WHERE id = v_id;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE {_SW_SCHEMA}.{_MATRICULA_TABLE}.{column} for id=% succeeded — the write-once guard did not fire', v_id;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
     return GuardProbe(
         id=probe_id,
         product="social-wiring",
@@ -454,55 +542,126 @@ def _matricula_probe(probe_id: str, column: str, fixture_predicate: str, bad_val
             "after the fact would silently change what an already-signed "
             "instrument is understood to have quoted. Same function, "
             "extended by 135/136 without weakening what 111 established for "
-            "the earlier columns."
+            "the earlier columns. " + rationale_extra
         ),
-        sql=_frozen_column_probe(
-            schema=_SW_SCHEMA,
-            table=_MATRICULA_TABLE,
-            column=column,
-            fixture_predicate=fixture_predicate,
-            bad_value_sql=bad_value_sql,
-            guard_fragment=_MATRICULA_GUARD_FRAGMENT,
-        ),
+        sql=sql,
     )
 
 
+# A fresh, collision-proof "código" value for the two probes that need one
+# (`codigo` itself, and `imovel_documento_id`'s FK chain, which also needs
+# a `codigo` — see the module docstring). Hyphens stripped only for
+# readability in error messages; uniqueness comes from gen_random_uuid().
+_FRESH_CODIGO_DECL = "v_codigo text := 'NOC-PROBE-' || replace(gen_random_uuid()::text, '-', '');"
+
 _MATRICULA_PROBES: tuple[GuardProbe, ...] = (
-    _matricula_probe(
-        "matricula_extracoes.texto_extraido.frozen_after_concluida",
-        "texto_extraido",
-        "status = 'concluida'",
-        "'NOC-PROBE-' || gen_random_uuid()::text",
+    _self_provisioned_frozen_column_probe(
+        probe_id="matricula_extracoes.texto_extraido.frozen_after_concluida",
+        column="texto_extraido",
+        declare_extra="",
+        setup_sql=f"""
+  INSERT INTO {_SW_SCHEMA}.{_MATRICULA_TABLE} (org_id, user_id, nome_arquivo, status, texto_extraido)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe.pdf', 'concluida', 'texto de prova do probe')
+  RETURNING id INTO v_id;
+""",
+        bad_value_sql="'NOC-PROBE-' || gen_random_uuid()::text",
+        rationale_extra="Self-provisions a throwaway `concluida` row — no ambient fixture required.",
     ),
-    _matricula_probe(
-        "matricula_extracoes.codigo.frozen_after_set",
-        "codigo",
-        "codigo IS NOT NULL",
-        "COALESCE(codigo, '') || '-noc-probe'",
+    _self_provisioned_frozen_column_probe(
+        probe_id="matricula_extracoes.codigo.frozen_after_set",
+        column="codigo",
+        declare_extra=f"  {_FRESH_CODIGO_DECL}",
+        setup_sql=f"""
+  INSERT INTO {_SW_SCHEMA}.imovel_registry (org_id, codigo_canonical) VALUES (v_org_id, v_codigo);
+  INSERT INTO {_SW_SCHEMA}.{_MATRICULA_TABLE} (org_id, user_id, nome_arquivo, status, codigo)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe.pdf', 'pendente', v_codigo)
+  RETURNING id INTO v_id;
+""",
+        bad_value_sql="COALESCE(codigo, '') || '-noc-probe'",
+        rationale_extra=(
+            "Self-provisions a throwaway `imovel_registry` row so `codigo`'s "
+            "own composite FK (org_id, codigo) -> imovel_registry(org_id, "
+            "codigo_canonical) is satisfied without depending on prod already "
+            "having a linked extraction (which, as of 2026-09-18, it does not "
+            "— this is the exact ambient-data dependency that turned "
+            "`no_fixture` into a false, permanent predeploy block)."
+        ),
     ),
-    _matricula_probe(
-        "matricula_extracoes.imovel_documento_id.frozen_after_set",
-        "imovel_documento_id",
-        "imovel_documento_id IS NOT NULL",
-        "gen_random_uuid()",
+    _self_provisioned_frozen_column_probe(
+        probe_id="matricula_extracoes.imovel_documento_id.frozen_after_set",
+        column="imovel_documento_id",
+        declare_extra=f"  {_FRESH_CODIGO_DECL}\n  v_doc_id uuid;",
+        setup_sql=f"""
+  INSERT INTO {_SW_SCHEMA}.imovel_registry (org_id, codigo_canonical) VALUES (v_org_id, v_codigo);
+  INSERT INTO {_SW_SCHEMA}.imoveis (org_id, codigo) VALUES (v_org_id, v_codigo);
+  INSERT INTO {_SW_SCHEMA}.imovel_documentos
+    (org_id, codigo, storage_path, nome_original, mime_type, tamanho_bytes, tipo_documento)
+  VALUES (v_org_id, v_codigo, 'noc-probe/path.pdf', 'noc-probe.pdf', 'application/pdf', 0, 'matricula')
+  RETURNING id INTO v_doc_id;
+  INSERT INTO {_SW_SCHEMA}.{_MATRICULA_TABLE} (org_id, user_id, nome_arquivo, status, codigo, imovel_documento_id)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe.pdf', 'pendente', v_codigo, v_doc_id)
+  RETURNING id INTO v_id;
+""",
+        bad_value_sql="gen_random_uuid()",
+        rationale_extra=(
+            "The deepest FK chain in this registry: `imovel_documento_id` -> "
+            "imovel_documentos(id), whose OWN composite FK (org_id, codigo) -> "
+            "imoveis(org_id, codigo) needs a real imóvel row, AND the sibling "
+            "CHECK `imovel_documento_id IS NULL OR codigo IS NOT NULL` needs "
+            "`codigo` set too (its own FK to imovel_registry, same as the "
+            "`codigo` probe above). All three (imovel_registry, imoveis, "
+            "imovel_documentos) are self-provisioned fresh — verified to carry "
+            "no INSERT trigger (only a BEFORE UPDATE updated_at-touch on the "
+            "first two) and no NOT-NULL column beyond what is set here, so "
+            "this INSERT chain has no unaccounted side effect."
+        ),
     ),
-    _matricula_probe(
-        "matricula_extracoes.arquivo_origem_id.frozen_after_set",
-        "arquivo_origem_id",
-        "arquivo_origem_id IS NOT NULL",
-        "gen_random_uuid()",
+    _self_provisioned_frozen_column_probe(
+        probe_id="matricula_extracoes.arquivo_origem_id.frozen_after_set",
+        column="arquivo_origem_id",
+        declare_extra="  v_arquivo_id uuid;",
+        setup_sql=f"""
+  INSERT INTO {_SW_SCHEMA}.matricula_extracao_arquivos (org_id, storage_path, nome_original, mime_type, tamanho_bytes)
+  VALUES (v_org_id, 'noc-probe/path.pdf', 'noc-probe.pdf', 'application/pdf', 0)
+  RETURNING id INTO v_arquivo_id;
+  INSERT INTO {_SW_SCHEMA}.{_MATRICULA_TABLE} (org_id, user_id, nome_arquivo, status, arquivo_origem_id)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe.pdf', 'pendente', v_arquivo_id)
+  RETURNING id INTO v_id;
+""",
+        bad_value_sql="gen_random_uuid()",
+        rationale_extra="Self-provisions a throwaway `matricula_extracao_arquivos` row (no triggers, no further FKs).",
     ),
-    _matricula_probe(
-        "matricula_extracoes.substituida_por.frozen_after_set",
-        "substituida_por",
-        "substituida_por IS NOT NULL",
-        "gen_random_uuid()",
+    _self_provisioned_frozen_column_probe(
+        probe_id="matricula_extracoes.substituida_por.frozen_after_set",
+        column="substituida_por",
+        declare_extra="  v_superseded_id uuid;",
+        setup_sql=f"""
+  INSERT INTO {_SW_SCHEMA}.{_MATRICULA_TABLE} (org_id, user_id, nome_arquivo, status)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe-superseded.pdf', 'concluida')
+  RETURNING id INTO v_superseded_id;
+  INSERT INTO {_SW_SCHEMA}.{_MATRICULA_TABLE} (org_id, user_id, nome_arquivo, status, substituida_por)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe.pdf', 'concluida', v_superseded_id)
+  RETURNING id INTO v_id;
+""",
+        bad_value_sql="gen_random_uuid()",
+        rationale_extra=(
+            "Self-referential — provisions its OWN two rows (the "
+            "'superseded' row `substituida_por` points at, plus the row "
+            "under test) entirely within `matricula_extracoes` itself, no "
+            "other table involved."
+        ),
     ),
-    _matricula_probe(
-        "matricula_extracoes.ruido.frozen_after_concluida",
-        "ruido",
-        "status = 'concluida'",
-        "'[{\"start\":0,\"end\":1,\"kind\":\"noc_probe\"}]'::jsonb",
+    _self_provisioned_frozen_column_probe(
+        probe_id="matricula_extracoes.ruido.frozen_after_concluida",
+        column="ruido",
+        declare_extra="",
+        setup_sql=f"""
+  INSERT INTO {_SW_SCHEMA}.{_MATRICULA_TABLE} (org_id, user_id, nome_arquivo, status)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe.pdf', 'concluida')
+  RETURNING id INTO v_id;
+""",
+        bad_value_sql="'[{\"start\":0,\"end\":1,\"kind\":\"noc_probe\"}]'::jsonb",
+        rationale_extra="Self-provisions a throwaway `concluida` row (`ruido` defaults to `[]`) — no ambient fixture required.",
     ),
 )
 
