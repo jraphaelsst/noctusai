@@ -55,10 +55,10 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock3,
-  Download,
+  FileDown,
+  FileType2,
   ExternalLink,
   Eye,
-  FileText,
   Loader2,
   Plus,
   RefreshCw,
@@ -71,6 +71,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { TooltipIconButton } from "@/components/card/TooltipIconButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Collapsible,
@@ -723,43 +724,28 @@ function _VersaoAtualRow({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
+        <TooltipIconButton
+          label="Abrir"
+          icon={Eye}
           onClick={() => onOpen(versao.id)}
-          data-testid={`contrato-abrir-${contratoId}`}
-        >
-          <Eye className="mr-1 h-3.5 w-3.5" />
-          Abrir
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
+          testId={`contrato-abrir-${contratoId}`}
+        />
+        <TooltipIconButton
+          label="Baixar PDF"
+          icon={FileDown}
           onClick={() => onDownload(versao.id)}
-          data-testid={`contrato-baixar-${contratoId}`}
-        >
-          <Download className="mr-1 h-3.5 w-3.5" />
-          Baixar
-        </Button>
+          testId={`contrato-baixar-${contratoId}`}
+        />
         {/* Migration 120 — only ever `true` on a `gerado` version. */}
         {versao.docx_disponivel && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
+          <TooltipIconButton
+            label="Baixar .docx"
+            icon={baixandoDocx ? Loader2 : FileType2}
+            iconClassName={baixandoDocx ? "animate-spin" : undefined}
             disabled={baixandoDocx}
             onClick={() => onDownload(versao.id, "docx")}
-            data-testid={`contrato-baixar-docx-${contratoId}`}
-          >
-            {baixandoDocx ? (
-              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FileText className="mr-1 h-3.5 w-3.5" />
-            )}
-            Baixar .docx
-          </Button>
+            testId={`contrato-baixar-docx-${contratoId}`}
+          />
         )}
       </div>
     </div>
@@ -813,43 +799,40 @@ function VersaoRow({
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <Button type="button" size="icon" variant="ghost" className="h-7 w-7" onClick={onOpen}>
-          <Eye className="h-3.5 w-3.5" />
-        </Button>
-        <Button type="button" size="icon" variant="ghost" className="h-7 w-7" onClick={onDownload}>
-          <Download className="h-3.5 w-3.5" />
-        </Button>
+        <TooltipIconButton
+          label="Abrir"
+          icon={Eye}
+          className="h-7 w-7"
+          onClick={onOpen}
+          testId={`contrato-versao-abrir-${versao.id}`}
+        />
+        <TooltipIconButton
+          label="Baixar PDF"
+          icon={FileDown}
+          className="h-7 w-7"
+          onClick={onDownload}
+          testId={`contrato-versao-baixar-${versao.id}`}
+        />
         {versao.docx_disponivel && (
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
+          <TooltipIconButton
+            label="Baixar .docx"
+            icon={baixandoDocx ? Loader2 : FileType2}
+            iconClassName={baixandoDocx ? "animate-spin" : undefined}
             className="h-7 w-7"
             disabled={baixandoDocx}
             onClick={onDownloadDocx}
-            title="Baixar .docx"
-            aria-label="Baixar .docx"
-            data-testid={`contrato-versao-baixar-docx-${versao.id}`}
-          >
-            {baixandoDocx ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FileText className="h-3.5 w-3.5" />
-            )}
-          </Button>
+            testId={`contrato-versao-baixar-docx-${versao.id}`}
+          />
         )}
         {podeExcluir && (
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
+          <TooltipIconButton
+            label="Excluir versão"
+            icon={Trash2}
             className="h-7 w-7"
             disabled={deleting}
             onClick={onExcluir}
-            data-testid={`contrato-versao-excluir-${versao.id}`}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+            testId={`contrato-versao-excluir-${versao.id}`}
+          />
         )}
       </div>
     </div>

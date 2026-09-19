@@ -403,6 +403,21 @@ describe("ContratosPanel", () => {
     expect(onDownload).toHaveBeenCalledWith("c1", "v9", undefined);
   });
 
+  it("🔴 every icon-only action on the current-version row has an accessible name", async () => {
+    // Before this row went icon-only these buttons had neither text nor
+    // aria-label on the history row — invisible to a screen reader and to a
+    // keyboard user. `TooltipIconButton` makes the caption and the accessible
+    // name the same string by construction; this pins that they are present.
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v9", docx_disponivel: true }) })],
+    });
+    expect(screen.getByTestId("contrato-abrir-c1").getAttribute("aria-label")).toBe("Abrir");
+    expect(screen.getByTestId("contrato-baixar-c1").getAttribute("aria-label")).toBe("Baixar PDF");
+    expect(screen.getByTestId("contrato-baixar-docx-c1").getAttribute("aria-label")).toBe(
+      "Baixar .docx",
+    );
+  });
+
   // ─── "Baixar .docx" (migration 120) ────────────────────────────────────
   it("🔴 'Baixar .docx' is hidden on the current-version row without docx_disponivel", async () => {
     const { screen } = await render({
@@ -418,7 +433,10 @@ describe("ContratosPanel", () => {
       onDownload,
     });
     const botao = screen.getByTestId("contrato-baixar-docx-c1");
-    expect(botao.textContent).toContain("Baixar .docx");
+    // Icon-only: the caption lives on `aria-label` (and the hover tooltip),
+    // never in `textContent`. Asserting the ACCESSIBLE NAME is the stronger
+    // check — a screen-reader user and a sighted user must get the same word.
+    expect(botao.getAttribute("aria-label")).toBe("Baixar .docx");
     fireEvent.click(botao);
     expect(onDownload).toHaveBeenCalledWith("c1", "v9", "docx");
   });
