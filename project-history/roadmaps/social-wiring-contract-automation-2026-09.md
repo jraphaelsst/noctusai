@@ -22,7 +22,17 @@ The template spec derived from the 8 samples (no personal data) is kept locally,
 
 **Today's status (2026-09-17)**: T1 **fired and applied** — the office answered all 15 questions on 2026-09-15 and each answer is now generator behavior. T2 **fired and delivered** — the F6 data wave shipped (migrations 114–118 + panels), and all six contract variants generate. T3 **fired and landed** — migrations 114–120 are applied to the live schema (verified 2026-09-17 by probing `information_schema`, not the ledger) and the image is deployed and healthy. T0 **partly closed** — `financiamento_service.configure()` now registers a 24h sweep that also drives `documento_store.varrer_expirados`; only `estrutura_service.purgar_texto_expirado` (CPF-bearing matrícula text) is still unwired, and the marker's docstring at `estrutura_service.py:203` is now stale in claiming all three are. T4 **closed** — `_auth_parts` is a one-line alias to the shared `card_hub/auth.py:auth_parts`.
 
-> 🔴 **The pipeline has still never produced a contract.** Live counts (2026-09-17): 1 contract (`rascunho`), **0 generated versions**, 0 witnesses, 0 rows in `org_dados_cadastrais`, 0 clientes with `estado_civil` or `data_casamento`, and 12 `cliente_documentos` with **0** successful extractions. Every Phase-4 verify recipe below is therefore still UNRUN against real data. The code is deployed; the data is not entered.
+> 🟡 **The pipeline HAS now produced a contract — but not yet from a real card.**
+> 2026-09-18: a full `.docx` + ABNT PDF rendered from the **real Euroville matrícula**
+> (81 paragraphs, 42 KB docx, 17 KB PDF), with the `objeto` clause quoting
+> `descricao_imovel` byte-identical to the registry and **no page furniture, no
+> emolumentos table, no prior owners, no ONR URL**. Parties were the synthetic
+> fixtures. So the GENERATOR is proven end-to-end against real registry data; what
+> remains is real card data, and one correctness defect (see Q-endereco).
+>
+> Live counts (2026-09-19): 2 live contracts (`rascunho`), **0 generated versions**,
+> 0 witnesses, 0 rows in `org_dados_cadastrais`, 9 matrícula extractions (2 uploaded
+> by the office on 2026-09-18 — the system is in daily use).
 
 > **Every slice carries TWO recipes.** Test-recipes are green at merge (numbers in the decision log). The verify-recipes below are live-state checks. T3 has fired, so every one of them is now RUNNABLE and none has been run — that is the open work, not a blocked dependency.
 
@@ -94,12 +104,89 @@ The template spec derived from the 8 samples (no personal data) is kept locally,
 - ~~**Q-office**~~: **answered 2026-09-15** — all 15, applied in P3.1.
 - ~~**Q-titular**~~: **answered** — certidões got a titular path (`certidoes_por_cliente`), not a parte row.
 - ~~**Q-artifact**~~: **answered — store BOTH** (migration `120_contrato_versao_docx_artifact.sql` + `bc20077f`, FE download wired in `9cc8d848`). One version row: the ABNT PDF is the row's artifact, the `.docx` is a sibling object at `{storage_path}.docx` recorded in `docx_storage_path`/`docx_tamanho_bytes`, retrieved via `url_versao(formato='docx')`. ⚠️ `projects/abnt-formatting-CONTRACT.md:108,119` still says PDF-only and carries no amendment line — reconcile it.
+- 🔴 **Q-endereco**: **OPEN, blocks the first real contract.** `modelo_texto.py`'s
+  two posse clauses render `{{ imovel.endereco_curto }}`, sourced from
+  `imoveis.logradouro`. One Consultoria deliberately stores the **PORTARIA
+  (gatehouse) address** in that public field — the real address is withheld so
+  agents outside the firm cannot harvest it. A deed would therefore name the
+  gatehouse as the property whose possession transfers. The owner's ruling
+  (2026-09-19): the decoy is for the public listing ONLY; *"the contract and all
+  bureaucracy must be 100% compliant… if ANY thing is out of the correct data and
+  form the bank is gonna cancel that contract and probably any lawyer shall do the
+  same."* Vista exposes **no** internal-address field (calibrated set checked —
+  `Endereco`/`Numero`/`Complemento`/`CEP`/`Bairro`/`Cidade`/`UF` only), so the
+  address must be assembled from the matrícula: street + loteamento + município
+  from the **abertura**, official number from the **averbação that officialised it**
+  (Euroville: `Av-03`, nº 535 — and if several averbações renumber, the LATEST
+  wins). `s/nº` is a legitimate registry state, not an error.
+- **Q-pj-certidoes**: signed sample 08 requires certidões in TWO blocks — 12 for
+  Regina Maria Pelosi as PF and 11 for `61.862.069 REGINA MARIA PELOSI - Empresa
+  Baixada`. 23 total, not 12. The generator already models this (`grupos_pj`, the
+  5-year-baixada policy); the gap is that the card has no PJ registered. Check every
+  party for a CNPJ before emitting.
 - **Q-template**: does the office want to edit the clause wording in Word later? Today the wording is reviewable text in `contrato_gerador/modelo_texto.py`.
 - ~~**Q-identity-docs**~~: **answered — enabled.** Migration `119_cliente_identidade_ativacao.sql:44-52` flips `rg` and `cpf` to `ativo = true` (LGPD intake closed 2026-09-16); all 11 rows of `cliente_documento_tipos` are active in the live DB, both with `identidade = true`, `retencao_dias = 1825`.
 - **Q-procuração**: procurador/inventariante contracts stay refused — no sample carries that wording. The office owes a sample before it can be built.
 - **Still homeless by design** (named refusals, never invented values): `onus_quitacao='ja_quitado'` (stored by 114, no sample clause → `ONUS_QUITACAO_SEM_REDACAO`), `obrigacoes_vendedor` and `permuta_obrigacoes_entrega` (stored, no clause prints → aviso), and the permuta quote rendering without rich-text formatting.
 
 ## Decision log
+
+### 2026-09-18/19 — the extraction wave
+
+- **Page furniture is stripped by POSITION, never by repetition.** A certidão's
+  running headers/footers land inside act spans because the segmenter's contract is
+  "NOTHING IS DROPPED". The naive "a repeated line is furniture" rule was disproven
+  on real data first: the officer's signature repeats 3–5× and is genuine registry
+  content. Detection runs at transcription time against `TranscriptionResult.pages`,
+  where page boundaries still exist. `texto_extraido` is never rewritten — noise is
+  stored as offset ranges (migration 136, `ruido`) and subtracted at quote time, so
+  the audit artefact and the write-once trigger stay intact.
+- **`objeto` binds to a TYPED abertura block, not the whole abertura.** A
+  de-furnitured abertura still ends in `PROPRIETÁRIOS: …`, which on a resold
+  property names the PREVIOUS owners. `matricula_abertura_blocos` (136) holds
+  `descricao_imovel` / `cadastro_municipal` / `proprietarios` / `registro_anterior`
+  as offsets. Verified on two real documents from different providers: 4/4 blocks
+  each, `descricao_imovel` byte-identical to the registry.
+- **`ruido` cannot self-heal; abertura blocks CAN.** Noise needs
+  `TranscriptionResult.pages`, which never persist — so it must land on the same
+  write as the text, and migration 136 freezes it on conclusion. Blocks need only
+  `texto_extraido`, so they self-heal on first read (same trigger as the acts).
+  Mixing these up cost a follow-up slice.
+- **Party extraction: anchor on the validated CPF, not on a label.**
+  `_ROTULO_PARTE` required `VENDEDOR:`-style labels; real registry acts are
+  narrative prose. Result was **0 parties across 16 acts**. Rewritten to anchor on a
+  checksum-valid CPF/CNPJ and walk backward to the name, harvesting the rigid
+  qualification formula. Measured on 5 real matrículas: **14 people, all `alta`** —
+  nacionalidade / profissão / RG / órgão expedidor / gênero all 14/14. Gender is
+  inferred from Portuguese agreement, and `derivacao` refuses to generate without
+  it, so the masculine fallback in `frases._g` is unreachable.
+- **Extracted data is SUGGESTED; an admin adjudicates a conflict.** Owner ruling
+  2026-09-18, superseding 110's `sobrescreve=False`: notify admins (in-app +
+  WhatsApp, both showing typed vs extracted side by side), accept ⇒ the document
+  value overwrites, reject ⇒ the human value prevails. 🔴 The REASON for
+  `sobrescreve=False` survives: `cliente_campo_conflitos` (138) keeps a **permanent
+  `valor_anterior` snapshot**, because "on rejection prevails the human input" is
+  unhonourable if the prior value is gone. WhatsApp is a notification channel, never
+  an authorization channel — it carries a deep link; the decision goes through
+  normal authenticated request handling.
+
+### 2026-09-18/19 — methodology (the session's real theme)
+
+**Structure-green is not behaviour-green.** Nearly every defect found was a check
+that passes whether or not the thing works: RLS "enabled" over a public bucket; an
+allowlist made dead by shell variable indirection; a migration test grepping a
+trigger's source instead of firing it; a docx assertion that could never fail
+(`\n` → `<w:br/>`); the whole MCP toolkit silently running two-day-old code. Three
+gates now close the family — `verify_db_guards` (executable refusal, rolled back,
+12/12 live), `toolkit_freshness` (refuses confirmed writes on stale code), and
+`check_migration_guard_has_probe` (a new trigger/CHECK must register a probe).
+KB § PATTERNS/common/methodology-execution-discipline.md §§ 7–9.
+
+**Resolve the root from the artefact, never from the ambient cwd** (§ 9, N≥4).
+`_find_repo_root` preferred `Path.cwd()` over `Path(__file__)`, so a worktree's
+tests validated against the PRIMARY's migrations. It had already flip-flopped twice;
+the durable fix is the **loud warning when the two disagree**, not a third reorder.
+
 
 - **2026-09-14**: Seed placement — civil-status fields, matrícula act segmenter, `docx_render` (docxtpl, LGPL server-side) and pt-BR text helpers in the seed; certidão parsers, negociação tables and generator rules in the product.
 - **2026-09-14**: Migrations 105/106 (and everything after) are applied at the next deploy, not now.
